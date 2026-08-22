@@ -1463,7 +1463,7 @@ pub fn compile(request: ImagingRequest) -> Result<CompiledProblem, CompileProble
         numerics: &numerics,
     });
     let numerics_id = canonical_numerics_id(&numerics);
-    let product_graph = compile_product_graph(problem_id, &geometry, &reconstruction, &products);
+    let product_graph = compile_product_graph(&geometry, &reconstruction, &products);
     Ok(CompiledProblem {
         problem_id,
         numerics_id,

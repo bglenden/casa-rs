@@ -5,15 +5,17 @@
 use std::{collections::BTreeMap, fmt};
 
 use crate::{
-    AxisOrder, CompiledGeometry, CompiledGeometryId, CompiledImageDomain, CompiledProblemId,
-    DirectionCoordinateSpec, ImageAxis, ImageDomainRole, LogicalIdentity, PolarizationCoordinate,
-    PrimaryBeamValidityPolicy, ProductKind, ProductNormalization, ProductNormalizationBoundary,
-    ProductRequirements, ReconstructionBasis, ReconstructionContract, RestoringBeamPolicy,
-    SpectralCoordinateSpec, TaylorValidityPolicy, compiled_problem::CanonicalEncoder,
+    AxisOrder, CompiledGeometry, CompiledGeometryId, CompiledImageDomain, DirectionCoordinateSpec,
+    ImageAxis, ImageDomainRole, LogicalIdentity, NormalStateNormalization, PolarizationCoordinate,
+    PrimaryBeamValidityPolicy, ProductBlankingPolicy, ProductBoundaryOperation, ProductKind,
+    ProductNormalization, ProductNormalizationBoundary, ProductRequirements,
+    ProductSupportComparison, ReconstructionBasis, ReconstructionContract, RestoringBeamPolicy,
+    SpectralCoordinateSpec, TaylorSupportReference, TaylorValidityPolicy,
+    compiled_problem::CanonicalEncoder,
 };
 
 const PRODUCT_GRAPH_IDENTITY_DOMAIN: &[u8] = b"casa-rs-product-graph";
-const PRODUCT_GRAPH_IDENTITY_VERSION: u32 = 1;
+const PRODUCT_GRAPH_IDENTITY_VERSION: u32 = 2;
 
 /// Stable compiler-derived identity of one complete product topology.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -235,6 +237,8 @@ pub enum ProductSchema {
     LogicalCollectionV1,
     /// Version-one metadata embedded in image members rather than separately published.
     EmbeddedImageMetadataV1,
+    /// Version-one internal image input that participates in topology but is not published.
+    InternalImageF32V1,
 }
 
 /// One immutable product node in topological and publication order.
@@ -428,23 +432,29 @@ struct GraphBuilder<'a> {
 }
 
 impl<'a> GraphBuilder<'a> {
-    fn compile(mut self, problem_id: CompiledProblemId) -> ProductGraph {
+    fn compile(mut self) -> ProductGraph {
         for (domain_index, domain) in self.geometry.domains().iter().enumerate() {
             for product in self.products.products() {
                 self.compile_product(domain_index, domain, *product);
             }
         }
+        let publication_members = self
+            .nodes
+            .iter()
+            .filter(|node| node.schema == ProductSchema::ImageF32V1)
+            .map(|node| node.node_id)
+            .collect::<Box<[_]>>();
+        let graph_id = graph_id(
+            self.products.normalization_boundary(),
+            &self.nodes,
+            &publication_members,
+        );
         let publication = ProductPublication {
             protocol: AtomicStoreProtocol,
-            members: self
-                .nodes
-                .iter()
-                .filter(|node| node.schema == ProductSchema::ImageF32V1)
-                .map(|node| node.node_id)
-                .collect(),
+            members: publication_members,
         };
         ProductGraph {
-            graph_id: graph_id(problem_id),
+            graph_id,
             normalization_boundary: self.products.normalization_boundary().clone(),
             nodes: self.nodes.into_boxed_slice(),
             publication,
@@ -597,14 +607,11 @@ impl<'a> GraphBuilder<'a> {
                     .products
                     .contains(ProductKind::PbCorrectedSpectralIndex)
                 {
-                    self.add_image(
+                    self.add_internal_image(
                         domain_index,
                         domain,
                         ProductRole::PrimaryBeamSpectralIndex,
-                        ".pb.alpha".to_string(),
-                        ProductAxisKind::SkyImage,
                         ProductUnit::Dimensionless,
-                        None,
                         ProductBeamRule::None,
                         ProductValidityRule::PrimaryBeam(self.products.validity().primary_beam()),
                         [primary_beam],
@@ -678,7 +685,15 @@ impl<'a> GraphBuilder<'a> {
             }
             ProductKind::SpectralIndex => {
                 let terms = [ProductTerm::Taylor(0), ProductTerm::Taylor(1)];
-                let dependencies = self.nodes_for(domain_index, terms.map(ProductRole::Model));
+                let dependencies = terms
+                    .into_iter()
+                    .flat_map(|term| {
+                        [
+                            self.node_id(domain_index, ProductRole::Residual(term)),
+                            self.node_id(domain_index, ProductRole::RestoredImage(term)),
+                        ]
+                    })
+                    .collect::<Vec<_>>();
                 self.add_image(
                     domain_index,
                     domain,
@@ -694,6 +709,15 @@ impl<'a> GraphBuilder<'a> {
             }
             ProductKind::SpectralIndexError => {
                 let alpha = self.node_id(domain_index, ProductRole::SpectralIndex);
+                let terms = [ProductTerm::Taylor(0), ProductTerm::Taylor(1)];
+                let dependencies = std::iter::once(alpha)
+                    .chain(terms.into_iter().flat_map(|term| {
+                        [
+                            self.node_id(domain_index, ProductRole::Residual(term)),
+                            self.node_id(domain_index, ProductRole::RestoredImage(term)),
+                        ]
+                    }))
+                    .collect::<Vec<_>>();
                 self.add_image(
                     domain_index,
                     domain,
@@ -704,7 +728,7 @@ impl<'a> GraphBuilder<'a> {
                     None,
                     self.derived_beam(domain_index),
                     ProductValidityRule::Taylor(self.products.validity().taylor()),
-                    [alpha],
+                    dependencies,
                 );
             }
             ProductKind::PbCorrectedSpectralIndex => {
@@ -810,6 +834,34 @@ impl<'a> GraphBuilder<'a> {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn add_internal_image(
+        &mut self,
+        domain_index: usize,
+        domain: &CompiledImageDomain,
+        role: ProductRole,
+        unit: ProductUnit,
+        beam: ProductBeamRule,
+        validity: ProductValidityRule,
+        dependencies: impl IntoIterator<Item = ProductNodeId>,
+    ) -> ProductNodeId {
+        self.add_node(
+            domain_index,
+            domain,
+            NodeProjection {
+                role,
+                name: None,
+                axis_kind: ProductAxisKind::SkyImage,
+                unit,
+                normalization: None,
+                beam,
+                validity,
+                schema: ProductSchema::InternalImageF32V1,
+            },
+            dependencies,
+        )
+    }
+
     fn add_node(
         &mut self,
         domain_index: usize,
@@ -904,7 +956,6 @@ impl<'a> GraphBuilder<'a> {
 }
 
 pub(crate) fn compile_product_graph(
-    problem_id: CompiledProblemId,
     geometry: &CompiledGeometry,
     reconstruction: &ReconstructionContract,
     products: &ProductRequirements,
@@ -916,15 +967,254 @@ pub(crate) fn compile_product_graph(
         nodes: Vec::new(),
         node_ids: BTreeMap::new(),
     }
-    .compile(problem_id)
+    .compile()
 }
 
-fn graph_id(problem_id: CompiledProblemId) -> ProductGraphId {
+fn graph_id(
+    normalization_boundary: &ProductNormalizationBoundary,
+    nodes: &[ProductNode],
+    publication_members: &[ProductNodeId],
+) -> ProductGraphId {
     let mut encoder = CanonicalEncoder::new();
     encoder.bytes(PRODUCT_GRAPH_IDENTITY_DOMAIN);
     encoder.u32(PRODUCT_GRAPH_IDENTITY_VERSION);
-    encoder.digest(problem_id.as_bytes());
+    encode_normalization_boundary(&mut encoder, normalization_boundary);
+    encoder.usize(nodes.len());
+    for node in nodes {
+        encode_node(&mut encoder, node);
+    }
+    encoder.u8(0);
+    encoder.usize(publication_members.len());
+    for member in publication_members {
+        encoder.usize(member.ordinal());
+    }
     ProductGraphId(LogicalIdentity::from_sha256(encoder.finish()))
+}
+
+fn encode_normalization_boundary(
+    encoder: &mut CanonicalEncoder,
+    boundary: &ProductNormalizationBoundary,
+) {
+    encoder.u8(match boundary.input() {
+        NormalStateNormalization::Unnormalized => 0,
+    });
+    encoder.usize(boundary.operations().len());
+    for operation in boundary.operations() {
+        match operation {
+            ProductBoundaryOperation::Normalize(normalization) => {
+                encoder.u8(0);
+                encode_normalization(encoder, *normalization);
+            }
+            ProductBoundaryOperation::ScaleResidual => encoder.u8(1),
+            ProductBoundaryOperation::Restore(policy) => {
+                encoder.u8(2);
+                encode_restoring_beam(encoder, *policy);
+            }
+            ProductBoundaryOperation::CorrectPrimaryBeam => encoder.u8(3),
+            ProductBoundaryOperation::BlankInvalid => encoder.u8(4),
+            ProductBoundaryOperation::ConvertUnits => encoder.u8(5),
+        }
+    }
+}
+
+fn encode_node(encoder: &mut CanonicalEncoder, node: &ProductNode) {
+    encoder.usize(node.node_id.ordinal());
+    encode_role(encoder, node.role);
+    match &node.name {
+        Some(name) => {
+            encoder.u8(1);
+            encoder.bytes(name.as_bytes());
+        }
+        None => encoder.u8(0),
+    }
+    encoder.u8(match node.axes.kind {
+        ProductAxisKind::SkyImage => 0,
+        ProductAxisKind::PlaneState => 1,
+        ProductAxisKind::Metadata => 2,
+    });
+    encoder.digest(node.axes.geometry_id.as_bytes());
+    match &node.axes.domain {
+        ImageDomainRole::Main => encoder.u8(0),
+        ImageDomainRole::Outlier(name) => {
+            encoder.u8(1);
+            encoder.bytes(name.as_bytes());
+        }
+    }
+    for axis in node.axes.order.positions() {
+        encoder.u8(match axis {
+            ImageAxis::DirectionLongitude => 0,
+            ImageAxis::DirectionLatitude => 1,
+            ImageAxis::Polarization => 2,
+            ImageAxis::Spectral => 3,
+        });
+    }
+    for extent in node.axes.shape {
+        encoder.usize(extent);
+    }
+    encoder.usize(node.axes.polarization.len());
+    for coordinate in &node.axes.polarization {
+        encoder.u8(polarization_tag(*coordinate));
+    }
+    encoder.u8(match node.unit {
+        ProductUnit::NotApplicable => 0,
+        ProductUnit::JyPerBeam => 1,
+        ProductUnit::JyPerPixel => 2,
+        ProductUnit::Dimensionless => 3,
+        ProductUnit::VisibilityWeight => 4,
+    });
+    match node.normalization {
+        Some(normalization) => {
+            encoder.u8(1);
+            encode_normalization(encoder, normalization);
+        }
+        None => encoder.u8(0),
+    }
+    encode_beam_rule(encoder, node.beam);
+    encode_validity_rule(encoder, node.validity);
+    encoder.u8(match node.schema {
+        ProductSchema::ImageF32V1 => 0,
+        ProductSchema::LogicalCollectionV1 => 1,
+        ProductSchema::EmbeddedImageMetadataV1 => 2,
+        ProductSchema::InternalImageF32V1 => 3,
+    });
+    encoder.usize(node.dependencies.len());
+    for dependency in &node.dependencies {
+        encoder.usize(dependency.ordinal());
+    }
+}
+
+fn encode_role(encoder: &mut CanonicalEncoder, role: ProductRole) {
+    match role {
+        ProductRole::Psf(term) => encode_term_role(encoder, 0, term),
+        ProductRole::Residual(term) => encode_term_role(encoder, 1, term),
+        ProductRole::Model(term) => encode_term_role(encoder, 2, term),
+        ProductRole::RestoredImage(term) => encode_term_role(encoder, 3, term),
+        ProductRole::SumWeights(term) => encode_term_role(encoder, 4, term),
+        ProductRole::CleanMask => encoder.u8(5),
+        ProductRole::Weight(term) => encode_term_role(encoder, 6, term),
+        ProductRole::PrimaryBeam(term) => encode_term_role(encoder, 7, term),
+        ProductRole::PrimaryBeamSpectralIndex => encoder.u8(8),
+        ProductRole::Sensitivity => encoder.u8(9),
+        ProductRole::PbCorrectedImage(term) => encode_term_role(encoder, 10, term),
+        ProductRole::TaylorCoefficientSet => encoder.u8(11),
+        ProductRole::SpectralIndex => encoder.u8(12),
+        ProductRole::SpectralIndexError => encoder.u8(13),
+        ProductRole::PbCorrectedSpectralIndex => encoder.u8(14),
+        ProductRole::BeamMetadata => encoder.u8(15),
+    }
+}
+
+fn encode_term_role(encoder: &mut CanonicalEncoder, tag: u8, term: ProductTerm) {
+    encoder.u8(tag);
+    match term {
+        ProductTerm::Single => encoder.u8(0),
+        ProductTerm::Taylor(term) => {
+            encoder.u8(1);
+            encoder.usize(term);
+        }
+    }
+}
+
+fn encode_beam_rule(encoder: &mut CanonicalEncoder, beam: ProductBeamRule) {
+    match beam {
+        ProductBeamRule::None => encoder.u8(0),
+        ProductBeamRule::Fitted => encoder.u8(1),
+        ProductBeamRule::Restoring(policy) => {
+            encoder.u8(2);
+            encode_restoring_beam(encoder, policy);
+        }
+        ProductBeamRule::Inherit(node) => {
+            encoder.u8(3);
+            encoder.usize(node.ordinal());
+        }
+        ProductBeamRule::Metadata(policy) => {
+            encoder.u8(4);
+            encode_restoring_beam(encoder, policy);
+        }
+    }
+}
+
+fn encode_validity_rule(encoder: &mut CanonicalEncoder, validity: ProductValidityRule) {
+    match validity {
+        ProductValidityRule::All => encoder.u8(0),
+        ProductValidityRule::FinalNormalState => encoder.u8(1),
+        ProductValidityRule::PrimaryBeam(policy) => {
+            encoder.u8(2);
+            encode_primary_beam_validity(encoder, policy);
+        }
+        ProductValidityRule::Taylor(policy) => {
+            encoder.u8(3);
+            encode_taylor_validity(encoder, policy);
+        }
+        ProductValidityRule::TaylorAndPrimaryBeam {
+            taylor,
+            primary_beam,
+        } => {
+            encoder.u8(4);
+            encode_taylor_validity(encoder, taylor);
+            encode_primary_beam_validity(encoder, primary_beam);
+        }
+    }
+}
+
+fn encode_primary_beam_validity(encoder: &mut CanonicalEncoder, policy: PrimaryBeamValidityPolicy) {
+    encoder.u32(policy.cutoff().to_bits());
+    encode_support_comparison(encoder, policy.comparison());
+    encode_blanking(encoder, policy.blanking());
+}
+
+fn encode_taylor_validity(encoder: &mut CanonicalEncoder, policy: TaylorValidityPolicy) {
+    encoder.u8(match policy.reference() {
+        TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum => 0,
+    });
+    encoder.u32(policy.peak_fraction().to_bits());
+    encode_support_comparison(encoder, policy.comparison());
+    encode_blanking(encoder, policy.blanking());
+}
+
+fn encode_support_comparison(encoder: &mut CanonicalEncoder, comparison: ProductSupportComparison) {
+    encoder.u8(match comparison {
+        ProductSupportComparison::StrictlyGreater => 0,
+    });
+}
+
+fn encode_blanking(encoder: &mut CanonicalEncoder, blanking: ProductBlankingPolicy) {
+    encoder.u8(match blanking {
+        ProductBlankingPolicy::ZeroAndFalseMask => 0,
+    });
+}
+
+fn encode_normalization(encoder: &mut CanonicalEncoder, normalization: ProductNormalization) {
+    encoder.u8(match normalization {
+        ProductNormalization::UnitResponse => 0,
+        ProductNormalization::FlatNoise => 1,
+        ProductNormalization::FlatSky => 2,
+    });
+}
+
+fn encode_restoring_beam(encoder: &mut CanonicalEncoder, policy: RestoringBeamPolicy) {
+    encoder.u8(match policy {
+        RestoringBeamPolicy::None => 0,
+        RestoringBeamPolicy::PerPlane => 1,
+        RestoringBeamPolicy::Common => 2,
+    });
+}
+
+fn polarization_tag(coordinate: PolarizationCoordinate) -> u8 {
+    match coordinate {
+        PolarizationCoordinate::StokesI => 0,
+        PolarizationCoordinate::StokesQ => 1,
+        PolarizationCoordinate::StokesU => 2,
+        PolarizationCoordinate::StokesV => 3,
+        PolarizationCoordinate::LinearXx => 4,
+        PolarizationCoordinate::LinearXy => 5,
+        PolarizationCoordinate::LinearYx => 6,
+        PolarizationCoordinate::LinearYy => 7,
+        PolarizationCoordinate::CircularRr => 8,
+        PolarizationCoordinate::CircularRl => 9,
+        PolarizationCoordinate::CircularLr => 10,
+        PolarizationCoordinate::CircularLl => 11,
+    }
 }
 
 fn product_axes(

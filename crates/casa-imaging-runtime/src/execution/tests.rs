@@ -20,6 +20,7 @@ use casa_imaging_model::{
     StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct, WeightDensityScope,
     WeightingContract, WeightingScheme, compile,
 };
+use sha2::{Digest, Sha256};
 
 #[path = "../../tests/common/mod.rs"]
 mod common;
@@ -809,6 +810,7 @@ fn physical_work_binding(dag: ExecutionDag) -> PhysicalWorkBinding {
     )
     .expect("complete test prediction");
     let problem = compiled_problem();
+    let product_graph_id = problem.product_graph().graph_id();
     let bounds =
         crate::PublicationResourceBounds::new(1, 1, 1, 0).expect("unit publication bounds");
     let layouts = crate::PublicationLayoutLedger::new(
@@ -820,7 +822,10 @@ fn physical_work_binding(dag: ExecutionDag) -> PhysicalWorkBinding {
             .enumerate()
             .map(|(index, product_node)| {
                 crate::PublicationPhysicalLayout::new(
-                    crate::PublicationParticipant::Product(*product_node),
+                    crate::PublicationParticipant::Product {
+                        graph_id: product_graph_id,
+                        node_id: *product_node,
+                    },
                     crate::ArtifactIdentity::from_sha256(
                         [u8::try_from(index + 1).expect("small fixture"); 32],
                     ),
@@ -865,6 +870,7 @@ fn physical_work_binding(dag: ExecutionDag) -> PhysicalWorkBinding {
 #[test]
 fn publication_layout_ledger_names_every_atomic_member_and_staging_event() {
     let problem = compiled_problem();
+    let product_graph_id = problem.product_graph().graph_id();
     let producer = WorkNodeId::new("stage-products");
     let terminal = WorkDependency::Work(producer.clone());
     let allocation = AllocationId::new("product-writer");
@@ -878,7 +884,10 @@ fn publication_layout_ledger_names_every_atomic_member_and_staging_event() {
         .enumerate()
         .map(|(index, product_node)| {
             crate::PublicationPhysicalLayout::new(
-                crate::PublicationParticipant::Product(*product_node),
+                crate::PublicationParticipant::Product {
+                    graph_id: product_graph_id,
+                    node_id: *product_node,
+                },
                 crate::ArtifactIdentity::from_sha256([u8::try_from(index + 1).unwrap(); 32]),
                 crate::PhysicalLayoutId::from_sha256([u8::try_from(index + 11).unwrap(); 32]),
                 crate::PublicationStaging::new(
@@ -917,7 +926,7 @@ fn publication_layout_ledger_names_every_atomic_member_and_staging_event() {
             .iter()
             .filter(|entry| matches!(
                 entry.participant(),
-                crate::PublicationParticipant::Product(_)
+                crate::PublicationParticipant::Product { .. }
             ))
             .count(),
         problem.product_graph().publication().members().len()
@@ -3687,6 +3696,27 @@ fn receipt_store_checkpoints_atomically_rejects_corruption_and_enforces_retentio
         Err(crate::ReceiptError::IntegrityMismatch)
     ));
 
+    let mut foreign_node: serde_json::Value =
+        serde_json::from_slice(&original).expect("receipt JSON");
+    foreign_node["receipt"]["plan"]["publication_layouts"][0]["participant"]["node_ordinal"] =
+        serde_json::Value::from(999_u64);
+    let payload = serde_json::to_vec(&foreign_node["receipt"]).expect("receipt payload");
+    foreign_node["payload_sha256"] = serde_json::Value::from(
+        Sha256::digest(payload)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>(),
+    );
+    fs::write(
+        &path,
+        serde_json::to_vec_pretty(&foreign_node).expect("foreign-node JSON"),
+    )
+    .expect("write foreign-node receipt");
+    assert!(matches!(
+        store.open(first.attempt_id()),
+        Err(crate::ReceiptError::IntegrityMismatch)
+    ));
+
     let mut unsupported: serde_json::Value =
         serde_json::from_slice(&original).expect("receipt JSON");
     unsupported["schema"]["version"] = serde_json::Value::from(999_u64);
@@ -3784,9 +3814,10 @@ fn reopened_receipt_carries_exact_publication_layout_evidence() {
     assert_eq!(
         reopened.publication_participant(expected.artifact()),
         Some(match expected.participant() {
-            crate::PublicationParticipant::Product(node) => {
+            crate::PublicationParticipant::Product { graph_id, node_id } => {
                 crate::ReceiptPublicationParticipant::Product {
-                    node_ordinal: node.ordinal(),
+                    graph_identity: graph_id.as_bytes(),
+                    node_ordinal: node_id.ordinal(),
                 }
             }
             crate::PublicationParticipant::ModelData(measurement_set) => {

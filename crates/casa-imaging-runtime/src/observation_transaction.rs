@@ -15,6 +15,7 @@ use std::{
 
 use casa_imaging_model::{
     CompiledProblem, CompiledProblemId, MeasurementSetIdentity, ObservationTransactionId,
+    ProductGraphId,
 };
 
 use crate::{
@@ -104,6 +105,7 @@ impl ObservationTransactionWork {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BoundObservationTransaction {
     problem_id: CompiledProblemId,
+    product_graph_id: ProductGraphId,
     transaction_id: ObservationTransactionId,
     physical_work_id: PhysicalWorkId,
     work: ObservationTransactionWork,
@@ -114,6 +116,12 @@ impl BoundObservationTransaction {
     #[must_use]
     pub const fn problem_id(&self) -> CompiledProblemId {
         self.problem_id
+    }
+
+    /// Return the exact compiler-owned product topology validated for publication.
+    #[must_use]
+    pub const fn product_graph_id(&self) -> ProductGraphId {
+        self.product_graph_id
     }
 
     /// Return the logical read/write contract this physical work implements.
@@ -172,18 +180,21 @@ pub(crate) fn bind_observation_transaction(
         .iter()
         .map(|source| source.measurement_set())
         .collect::<BTreeSet<_>>();
-    let expected_products = problem
-        .product_graph()
+    let product_graph = problem.product_graph();
+    let expected_products = product_graph
         .publication()
         .members()
         .iter()
-        .copied()
+        .map(|node_id| crate::PublicationParticipant::Product {
+            graph_id: product_graph.graph_id(),
+            node_id: *node_id,
+        })
         .collect::<BTreeSet<_>>();
     let declared_products = publication_layouts
         .entries()
         .iter()
         .filter_map(|entry| match entry.participant() {
-            crate::PublicationParticipant::Product(node) => Some(node),
+            product @ crate::PublicationParticipant::Product { .. } => Some(product),
             crate::PublicationParticipant::ModelData(_) => None,
         })
         .collect::<BTreeSet<_>>();
@@ -203,7 +214,7 @@ pub(crate) fn bind_observation_transaction(
         .iter()
         .filter_map(|entry| match entry.participant() {
             crate::PublicationParticipant::ModelData(measurement_set) => Some(measurement_set),
-            crate::PublicationParticipant::Product(_) => None,
+            crate::PublicationParticipant::Product { .. } => None,
         })
         .collect::<BTreeSet<_>>();
     if declared_model_data != expected_model_data {
@@ -244,7 +255,7 @@ pub(crate) fn bind_observation_transaction(
         .filter(|entry| {
             matches!(
                 entry.participant(),
-                crate::PublicationParticipant::Product(_)
+                crate::PublicationParticipant::Product { .. }
             )
         })
         .map(|entry| entry.staging().terminal().clone())
@@ -261,6 +272,7 @@ pub(crate) fn bind_observation_transaction(
     validate_measurement_set_lock_identities(&measurement_sets, dag.nodes(), &work)?;
     Ok(BoundObservationTransaction {
         problem_id: problem.problem_id(),
+        product_graph_id: product_graph.graph_id(),
         transaction_id: contract.transaction_id(),
         physical_work_id: dag.physical_work_id(),
         work,

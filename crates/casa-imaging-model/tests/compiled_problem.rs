@@ -249,7 +249,7 @@ fn compiler_owns_the_exact_product_graph_and_atomic_publication_contract() {
     let reordered = compile_request(specification(true), inputs(true)).expect("compile reordered");
 
     assert_eq!(graph.graph_id(), reordered.product_graph().graph_id());
-    assert_eq!(graph.schema_version(), 1);
+    assert_eq!(graph.schema_version(), 2);
     assert_eq!(
         graph
             .nodes()
@@ -299,22 +299,29 @@ fn compiler_owns_the_exact_product_graph_and_atomic_publication_contract() {
         spectral_index.validity(),
         ProductValidityRule::Taylor(product_validity().taylor())
     );
-    assert!(
-        spectral_index.dependencies().contains(
-            &graph
-                .node(ProductRole::Model(ProductTerm::Taylor(0)))
-                .unwrap()
-                .node_id()
+    let mut alpha_sources = [0, 1]
+        .into_iter()
+        .flat_map(|term| {
+            [
+                graph
+                    .node(ProductRole::Residual(ProductTerm::Taylor(term)))
+                    .expect("principal-residual Taylor node")
+                    .node_id(),
+                graph
+                    .node(ProductRole::RestoredImage(ProductTerm::Taylor(term)))
+                    .expect("restored-image Taylor node")
+                    .node_id(),
+            ]
+        })
+        .collect::<Vec<_>>();
+    alpha_sources.sort_unstable();
+    assert_eq!(spectral_index.dependencies(), alpha_sources);
+    assert!(spectral_index.dependencies().iter().all(|dependency| {
+        !matches!(
+            graph.nodes()[dependency.ordinal()].role(),
+            ProductRole::Model(_)
         )
-    );
-    assert!(
-        spectral_index.dependencies().contains(
-            &graph
-                .node(ProductRole::Model(ProductTerm::Taylor(1)))
-                .unwrap()
-                .node_id()
-        )
-    );
+    }));
 
     assert_eq!(
         graph.publication().members(),
@@ -337,6 +344,146 @@ fn compiler_owns_the_exact_product_graph_and_atomic_publication_contract() {
             .publication()
             .protocol()
             .has_infallible_terminal_promotion()
+    );
+}
+
+#[test]
+fn product_graph_identity_is_content_derived_and_stable_across_unrelated_problem_inputs() {
+    let first = compile_request(specification(false), inputs(false)).expect("compile first");
+    let different_numerics = compile_request(
+        ProblemSpecification::new(
+            science(),
+            reconstruction(),
+            weighting(),
+            products(false),
+            read_only_transaction(),
+            NumericsContract::new(
+                vec![NumericPrecision::F32, NumericPrecision::F64],
+                ReductionPolicy::DeterministicPairwise,
+                FiniteValuePolicy::FlagInputRejectGenerated,
+                NumericalStage::ALL
+                    .into_iter()
+                    .map(|stage| (stage, StageErrorBudget::new(1.0e-7, 1.0e-3)))
+                    .collect(),
+            ),
+        ),
+        inputs(false),
+    )
+    .expect("compile with different numerics");
+    let different_products = compile_request(
+        ProblemSpecification::new(
+            science(),
+            reconstruction(),
+            weighting(),
+            ProductRequirements::new(
+                products(false)
+                    .products()
+                    .iter()
+                    .copied()
+                    .chain([ProductKind::Mask])
+                    .collect(),
+                ProductNormalization::FlatNoise,
+                RestoringBeamPolicy::PerPlane,
+                product_validity(),
+            ),
+            read_only_transaction(),
+            numerics(false),
+        ),
+        inputs(false),
+    )
+    .expect("compile with different product topology");
+
+    assert_ne!(first.problem_id(), different_numerics.problem_id());
+    assert_eq!(
+        first.product_graph().graph_id(),
+        different_numerics.product_graph().graph_id()
+    );
+    assert_ne!(
+        first.product_graph().graph_id(),
+        different_products.product_graph().graph_id()
+    );
+    assert_eq!(
+        first.product_graph().graph_id().as_bytes(),
+        [
+            215, 69, 55, 25, 33, 207, 246, 75, 127, 97, 39, 252, 48, 167, 26, 163, 137, 238, 241,
+            38, 74, 130, 171, 57, 145, 182, 214, 31, 234, 72, 93, 113,
+        ]
+    );
+}
+
+#[test]
+fn spectral_index_error_and_pb_correction_name_every_scientific_input() {
+    let products = ProductRequirements::new(
+        products(false)
+            .products()
+            .iter()
+            .copied()
+            .chain([
+                ProductKind::PrimaryBeam,
+                ProductKind::SpectralIndexError,
+                ProductKind::PbCorrectedSpectralIndex,
+            ])
+            .collect(),
+        ProductNormalization::FlatNoise,
+        RestoringBeamPolicy::PerPlane,
+        product_validity(),
+    );
+    let compiled = compile_request(
+        ProblemSpecification::new(
+            ScientificContract::new(
+                SpectralContract::new(SpectralSampling::Identity, SpectralCoupling::Independent),
+                MeasurementEquationContract::new(InstrumentResponse::PrimaryBeam, inner_products()),
+            ),
+            reconstruction(),
+            weighting(),
+            products,
+            read_only_transaction(),
+            numerics(false),
+        ),
+        inputs_with_instrument(),
+    )
+    .expect("compile PB-corrected Taylor products");
+    let graph = compiled.product_graph();
+    let alpha = graph
+        .node(ProductRole::SpectralIndex)
+        .expect("spectral-index product");
+    let mut alpha_sources = alpha.dependencies().to_vec();
+    let alpha_error = graph
+        .node(ProductRole::SpectralIndexError)
+        .expect("spectral-index-error product");
+    alpha_sources.push(alpha.node_id());
+    alpha_sources.sort_unstable();
+    assert_eq!(alpha_error.dependencies(), alpha_sources);
+
+    let pb_alpha = graph
+        .node(ProductRole::PrimaryBeamSpectralIndex)
+        .expect("internal primary-beam spectral index");
+    assert_eq!(pb_alpha.name(), None);
+    assert_eq!(pb_alpha.schema(), ProductSchema::InternalImageF32V1);
+    assert_eq!(
+        pb_alpha.dependencies(),
+        [graph
+            .node(ProductRole::PrimaryBeam(ProductTerm::Taylor(0)))
+            .expect("primary-beam Taylor-zero product")
+            .node_id()]
+    );
+    assert!(!graph.publication().members().contains(&pb_alpha.node_id()));
+    assert!(
+        graph
+            .nodes()
+            .iter()
+            .all(|node| node.name() != Some(".pb.alpha"))
+    );
+
+    let corrected_alpha = graph
+        .node(ProductRole::PbCorrectedSpectralIndex)
+        .expect("PB-corrected spectral index");
+    assert!(corrected_alpha.dependencies().contains(&pb_alpha.node_id()));
+    assert!(
+        graph
+            .publication()
+            .members()
+            .contains(&corrected_alpha.node_id())
     );
 }
 

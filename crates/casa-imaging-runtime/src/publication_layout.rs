@@ -8,7 +8,7 @@ use std::{
     fmt,
 };
 
-use casa_imaging_model::{MeasurementSetIdentity, ProductNodeId};
+use casa_imaging_model::{MeasurementSetIdentity, ProductGraphId, ProductNodeId};
 
 use crate::{AllocationId, ArtifactIdentity, IoBufferKind, WorkDependency, WorkNodeId};
 
@@ -47,8 +47,13 @@ impl fmt::Display for PhysicalLayoutId {
 /// Semantic member of one coordinated atomic publication.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum PublicationParticipant {
-    /// One exact compiler-owned product graph node.
-    Product(ProductNodeId),
+    /// One exact node bound to its compiler-derived product graph identity.
+    Product {
+        /// Exact compiler-derived topology containing the node.
+        graph_id: ProductGraphId,
+        /// Graph-local node identity within that topology.
+        node_id: ProductNodeId,
+    },
     /// The optional `MODEL_DATA` member for one MeasurementSet.
     ModelData(MeasurementSetIdentity),
 }

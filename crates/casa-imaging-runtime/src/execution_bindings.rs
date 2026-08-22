@@ -10,8 +10,9 @@ use std::{
 use casa_imaging_model::{
     CompiledGeometry, CompiledGeometryId, CompiledProblem, CompiledProblemId, NumericsContract,
     NumericsContractId, ObservationReadSet, ObservationSnapshotId, ObservationTransactionContract,
-    ObservationWriteSet, ProblemInputIdentities, ProductRequirements, ReconstructionContract,
-    ReferenceDataKind, RequiredCapability, ScientificContract, WeightingOperatorContract,
+    ObservationWriteSet, ProblemInputIdentities, ProductGraphId, ProductRequirements,
+    ReconstructionContract, ReferenceDataKind, RequiredCapability, ScientificContract,
+    WeightingOperatorContract,
 };
 use sha2::{Digest, Sha256};
 
@@ -33,7 +34,7 @@ use crate::{
 };
 
 const EXECUTION_PLAN_IDENTITY_DOMAIN: &[u8] = b"casa-rs-execution-plan";
-const EXECUTION_PLAN_IDENTITY_VERSION: u32 = 7;
+const EXECUTION_PLAN_IDENTITY_VERSION: u32 = 8;
 const RESOURCE_POLICY_IDENTITY_DOMAIN: &[u8] = b"casa-rs-resource-policy";
 const RESOURCE_POLICY_IDENTITY_VERSION: u32 = 1;
 
@@ -1051,7 +1052,7 @@ fn validate_publication_layouts(
     }
 
     let mut staged_by_producer = BTreeMap::<WorkNodeId, u64>::new();
-    let mut writer_by_producer = BTreeMap::<(WorkNodeId, IoBufferKind), u64>::new();
+    let mut io_by_node = BTreeMap::<(WorkNodeId, IoBufferKind), u64>::new();
     let mut bytes_by_allocation = BTreeMap::<AllocationId, u64>::new();
     for layout in layouts.entries() {
         let staging = layout.staging();
@@ -1064,13 +1065,7 @@ fn validate_publication_layouts(
                 ),
             }
         })?;
-        let terminal_is_declared = match staging.terminal() {
-            crate::WorkDependency::Work(node) => node == &producer.id && producer.fences.is_empty(),
-            crate::WorkDependency::Fence(fence) => {
-                fence.node() == &producer.id && producer.fences.contains(&fence.kind())
-            }
-        };
-        if !terminal_is_declared {
+        if !is_declared_completion(dag, staging.terminal(), Some(&producer.id)) {
             return invalid_publication_layout(format!(
                 "artifact {} terminal is not a declared completion of {}",
                 layout.artifact(),
@@ -1107,9 +1102,9 @@ fn validate_publication_layouts(
             .copied()
             .unwrap_or(0)
             .saturating_add(layout.resource_bounds().staged_storage_bytes());
-        *writer_by_producer
+        *io_by_node
             .entry((producer.id.clone(), staging.writer_buffer_kind()))
-            .or_default() = writer_by_producer
+            .or_default() = io_by_node
             .get(&(producer.id.clone(), staging.writer_buffer_kind()))
             .copied()
             .unwrap_or(0)
@@ -1121,6 +1116,75 @@ fn validate_publication_layouts(
             .copied()
             .unwrap_or(0)
             .saturating_add(layout.resource_bounds().writer_buffer_bytes());
+
+        if let Some(mapped) = staging.mapped_page_cache() {
+            let mapped_producer = dag.nodes().get(mapped.producer()).ok_or_else(|| {
+                PhysicalWorkBindingError::InvalidPublicationLayout {
+                    reason: format!(
+                        "artifact {} names absent mapped producer {}",
+                        layout.artifact(),
+                        mapped.producer().as_str()
+                    ),
+                }
+            })?;
+            if !is_declared_completion(dag, mapped.terminal(), None) {
+                return invalid_publication_layout(format!(
+                    "artifact {} mapped terminal is not a declared completion event",
+                    layout.artifact()
+                ));
+            }
+            let release_id = dependency_node(mapped.terminal());
+            let release = &dag.nodes()[release_id];
+            let mapped_allocation = dag
+                .logical_allocations()
+                .get(mapped.allocation())
+                .ok_or_else(|| PhysicalWorkBindingError::InvalidPublicationLayout {
+                    reason: format!(
+                        "artifact {} names absent mapped allocation {}",
+                        layout.artifact(),
+                        mapped.allocation().as_str()
+                    ),
+                })?;
+            if mapped_allocation.purpose
+                != crate::AllocationPurpose::IoBuffer(IoBufferKind::MappedPageCache)
+                || mapped_allocation.lifetime.acquire_at != mapped_producer.id
+                || !mapped_producer
+                    .allocations
+                    .iter()
+                    .any(|usage| usage.allocation == mapped_allocation.id)
+                || release.kind != WorkKind::Release
+                || !release
+                    .allocations
+                    .iter()
+                    .any(|usage| usage.allocation == mapped_allocation.id)
+                || !mapped_allocation
+                    .lifetime
+                    .release_after
+                    .contains(mapped.terminal())
+            {
+                return invalid_publication_layout(format!(
+                    "artifact {} mapped allocation is not acquired by its producer and retained through its release event",
+                    layout.artifact()
+                ));
+            }
+            let required = layout.resource_bounds().mapped_page_cache_bytes();
+            for node in [&mapped_producer.id, &release.id] {
+                *io_by_node
+                    .entry((node.clone(), IoBufferKind::MappedPageCache))
+                    .or_default() = io_by_node
+                    .get(&(node.clone(), IoBufferKind::MappedPageCache))
+                    .copied()
+                    .unwrap_or(0)
+                    .saturating_add(required);
+            }
+            *bytes_by_allocation
+                .entry(mapped_allocation.id.clone())
+                .or_default() = bytes_by_allocation
+                .get(&mapped_allocation.id)
+                .copied()
+                .unwrap_or(0)
+                .saturating_add(required);
+        }
     }
     for (producer, required) in staged_by_producer {
         let declared = dag.nodes()[&producer]
@@ -1141,23 +1205,23 @@ fn validate_publication_layouts(
             ));
         }
     }
-    for ((producer, kind), required) in writer_by_producer {
-        let node = &dag.nodes()[&producer];
+    for ((node_id, kind), required) in io_by_node {
+        let node = &dag.nodes()[&node_id];
         let claimed = node
             .claims
             .iter()
             .filter(|claim| claim.resource == LeaseResource::IoBuffer(kind))
             .map(|claim| claim.amount)
             .fold(0_u64, u64::saturating_add);
-        let predicted = prediction.stages()[&producer]
+        let predicted = prediction.stages()[&node_id]
             .io()
             .iter()
             .find(|io| io.kind() == kind)
             .map_or(0, |io| io.bytes());
         if claimed < required || predicted < required {
             return invalid_publication_layout(format!(
-                "producer {} requires {required} {} bytes, claims {claimed}, predicts {predicted}",
-                producer.as_str(),
+                "node {} requires {required} {} bytes, claims {claimed}, predicts {predicted}",
+                node_id.as_str(),
                 io_buffer_name(kind)
             ));
         }
@@ -1189,7 +1253,39 @@ fn validate_publication_layouts(
             layouts.final_storage_bytes()
         ));
     }
+    let mapped_demand = demand.io_buffers.bytes(IoBufferKind::MappedPageCache);
+    if mapped_demand < layouts.mapped_page_cache_bytes() {
+        return invalid_publication_layout(format!(
+            "resource demand exposes {mapped_demand}/{} mapped/page-cache bytes",
+            layouts.mapped_page_cache_bytes()
+        ));
+    }
     Ok(())
+}
+
+fn is_declared_completion(
+    dag: &ExecutionDag,
+    event: &crate::WorkDependency,
+    expected_node: Option<&WorkNodeId>,
+) -> bool {
+    let node_id = dependency_node(event);
+    if expected_node.is_some_and(|expected| expected != node_id) {
+        return false;
+    }
+    let Some(node) = dag.nodes().get(node_id) else {
+        return false;
+    };
+    match event {
+        crate::WorkDependency::Work(_) => node.fences.is_empty(),
+        crate::WorkDependency::Fence(fence) => node.fences.contains(&fence.kind()),
+    }
+}
+
+fn dependency_node(dependency: &crate::WorkDependency) -> &WorkNodeId {
+    match dependency {
+        crate::WorkDependency::Work(node) => node,
+        crate::WorkDependency::Fence(fence) => fence.node(),
+    }
 }
 
 fn invalid_publication_layout<T>(reason: impl Into<String>) -> Result<T, PhysicalWorkBindingError> {
@@ -1423,6 +1519,7 @@ impl PlanningBindings {
 pub struct ExecutionPlan {
     plan_id: ExecutionPlanId,
     problem_id: CompiledProblemId,
+    product_graph_id: ProductGraphId,
     problem_inputs: ProblemInputIdentities,
     geometry: CompiledGeometryId,
     numerics: NumericsContractId,
@@ -1448,6 +1545,12 @@ impl ExecutionPlan {
     #[must_use]
     pub const fn problem_id(&self) -> CompiledProblemId {
         self.problem_id
+    }
+
+    /// Return the exact compiler-derived product topology sealed by this plan.
+    #[must_use]
+    pub const fn product_graph_id(&self) -> ProductGraphId {
+        self.product_graph_id
     }
 
     /// Return the exact observation snapshot identity.
@@ -1630,6 +1733,7 @@ pub fn plan<E>(
     let mut plan = ExecutionPlan {
         plan_id: ExecutionPlanId([0; 32]),
         problem_id: problem.problem_id(),
+        product_graph_id: problem.product_graph().graph_id(),
         problem_inputs: problem.inputs().clone(),
         geometry: problem.geometry().geometry_id(),
         numerics: problem.numerics_id(),
@@ -1676,6 +1780,8 @@ impl RunBindings {
 pub enum BindingKind {
     /// Compiled problem identity.
     CompiledProblem,
+    /// Compiler-derived product-topology identity.
+    ProductGraph,
     /// Observation snapshot identity.
     ObservationSnapshot,
     /// Compiled coordinate and image-domain geometry identity.
@@ -2813,6 +2919,8 @@ fn validate_bindings<E>(
 ) -> Result<(), RunError<E>> {
     let mismatch = if plan.problem_id != problem.problem_id() {
         Some(BindingKind::CompiledProblem)
+    } else if plan.product_graph_id != problem.product_graph().graph_id() {
+        Some(BindingKind::ProductGraph)
     } else if plan.geometry != problem.geometry().geometry_id() {
         Some(BindingKind::CompiledGeometry)
     } else if plan.problem_inputs.reference_data() != current.problem_inputs.reference_data() {
@@ -2837,6 +2945,7 @@ fn validate_bindings<E>(
 fn binding_name(binding: BindingKind) -> &'static str {
     match binding {
         BindingKind::CompiledProblem => "compiled_problem",
+        BindingKind::ProductGraph => "product_graph",
         BindingKind::ObservationSnapshot => "observation_snapshot",
         BindingKind::CompiledGeometry => "compiled_geometry",
         BindingKind::ReferenceDataSnapshots => "reference_data_snapshots",
@@ -2900,6 +3009,7 @@ fn execution_plan_id(plan: &ExecutionPlan) -> ExecutionPlanId {
     encoder.bytes(EXECUTION_PLAN_IDENTITY_DOMAIN);
     encoder.u32(EXECUTION_PLAN_IDENTITY_VERSION);
     encoder.digest(plan.problem_id.as_bytes());
+    encoder.digest(plan.product_graph_id.as_bytes());
     encoder.digest(plan.problem_inputs.observation().identity().as_bytes());
     encoder.digest(plan.geometry.as_bytes());
     encoder.usize(plan.problem_inputs.reference_data().len());
@@ -2963,9 +3073,10 @@ fn execution_plan_id(plan: &ExecutionPlan) -> ExecutionPlanId {
     encoder.usize(plan.publication_layouts.entries().len());
     for layout in plan.publication_layouts.entries() {
         match layout.participant() {
-            crate::PublicationParticipant::Product(node) => {
+            crate::PublicationParticipant::Product { graph_id, node_id } => {
                 encoder.u8(0);
-                encoder.usize(node.ordinal());
+                encoder.digest(graph_id.as_bytes());
+                encoder.usize(node_id.ordinal());
             }
             crate::PublicationParticipant::ModelData(measurement_set) => {
                 encoder.u8(1);
@@ -2981,6 +3092,15 @@ fn execution_plan_id(plan: &ExecutionPlan) -> ExecutionPlanId {
         );
         encoder.string(io_buffer_name(layout.staging().writer_buffer_kind()));
         encoder.string(layout.staging().writer_allocation().as_str());
+        match layout.staging().mapped_page_cache() {
+            Some(mapped) => {
+                encoder.u8(1);
+                encoder.string(mapped.producer().as_str());
+                encode_dependencies(&mut encoder, &BTreeSet::from([mapped.terminal().clone()]));
+                encoder.string(mapped.allocation().as_str());
+            }
+            None => encoder.u8(0),
+        }
         let bounds = layout.resource_bounds();
         encoder.u64(bounds.staged_storage_bytes());
         encoder.u64(bounds.final_storage_bytes());
@@ -2995,6 +3115,7 @@ fn encode_observation_transaction(
     transaction: &BoundObservationTransaction,
 ) {
     encoder.digest(transaction.problem_id().as_bytes());
+    encoder.digest(transaction.product_graph_id().as_bytes());
     encoder.digest(transaction.transaction_id().as_bytes());
     encoder.digest(transaction.physical_work_id().as_bytes());
     let work = transaction.work();

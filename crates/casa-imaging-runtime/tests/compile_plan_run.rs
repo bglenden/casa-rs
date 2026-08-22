@@ -45,16 +45,16 @@ use casa_imaging_runtime::{
     MemoryDemand, MemoryView, MemoryViewKind, ObservationTransactionWork, PhysicalLayoutId,
     PhysicalSlot, PhysicalSlotId, PhysicalWorkBinding, PhysicalWorkBindingError, PlanError,
     PlanPrediction, PlannedArtifact, PlannerCostModelProfileId, PlanningBindings,
-    PredictionConfidence, PredictionUncertainty, PublicationLayoutLedger, PublicationParticipant,
-    PublicationPhysicalLayout, PublicationResourceBounds, PublicationStaging, QueueDemand,
-    QueueResource, QueueResourceId, QuiescencePoint, RateDemand, RateResource, RateResourceId,
-    RateUnit, ReceiptFailureKind, ReceiptRetention, ReceiptStatus, RedactedPath, ResourceAuthority,
-    ResourceClaim, ResourceError, ResourceHeadroom, ResourceMeasurement, ResourceOverride,
-    ResourcePolicy, ResourceTopology, RunBindings, RunController, RunDirective, RunError,
-    RunToCompletion, RuntimeOverheadDemand, ScalingMetadata, SlotCompatibility, StagePrediction,
-    StorageDomain, StorageDomainId, StorageMode, WorkDependency, WorkDomain, WorkExecutionContext,
-    WorkImplementation, WorkImplementationId, WorkKind, WorkMeasurements, WorkNode, WorkNodeId,
-    plan as authority_plan, run as authority_run,
+    PredictionConfidence, PredictionUncertainty, PublicationLayoutLedger, PublicationMappedStaging,
+    PublicationParticipant, PublicationPhysicalLayout, PublicationResourceBounds,
+    PublicationStaging, QueueDemand, QueueResource, QueueResourceId, QuiescencePoint, RateDemand,
+    RateResource, RateResourceId, RateUnit, ReceiptFailureKind, ReceiptRetention, ReceiptStatus,
+    RedactedPath, ResourceAuthority, ResourceClaim, ResourceError, ResourceHeadroom,
+    ResourceMeasurement, ResourceOverride, ResourcePolicy, ResourceTopology, RunBindings,
+    RunController, RunDirective, RunError, RunToCompletion, RuntimeOverheadDemand, ScalingMetadata,
+    SlotCompatibility, StagePrediction, StorageDomain, StorageDomainId, StorageMode,
+    WorkDependency, WorkDomain, WorkExecutionContext, WorkImplementation, WorkImplementationId,
+    WorkKind, WorkMeasurements, WorkNode, WorkNodeId, plan as authority_plan, run as authority_run,
 };
 
 fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
@@ -587,13 +587,14 @@ fn physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
 fn product_participants(
     problem: &casa_imaging_model::CompiledProblem,
 ) -> Vec<PublicationParticipant> {
+    let graph_id = problem.product_graph().graph_id();
     problem
         .product_graph()
         .publication()
         .members()
         .iter()
         .copied()
-        .map(PublicationParticipant::Product)
+        .map(|node_id| PublicationParticipant::Product { graph_id, node_id })
         .collect()
 }
 
@@ -605,13 +606,14 @@ fn physical_work_for_problem(
     problem: &casa_imaging_model::CompiledProblem,
     implementation_byte: u8,
 ) -> PhysicalWorkBinding {
+    let graph_id = problem.product_graph().graph_id();
     let participants = problem
         .product_graph()
         .publication()
         .members()
         .iter()
         .copied()
-        .map(PublicationParticipant::Product)
+        .map(|node_id| PublicationParticipant::Product { graph_id, node_id })
         .chain(
             problem
                 .observation_transaction()
@@ -706,6 +708,7 @@ fn physical_work_with_model_staging(implementation_byte: u8) -> PhysicalWorkBind
 
 fn physical_work_with_early_publication_buffer(implementation_byte: u8) -> PhysicalWorkBinding {
     let problem = compile(request(1)).expect("early-publication physical-work problem");
+    let graph_id = problem.product_graph().graph_id();
     physical_work_with_transaction_staging(
         implementation_byte,
         problem
@@ -714,7 +717,7 @@ fn physical_work_with_early_publication_buffer(implementation_byte: u8) -> Physi
             .members()
             .iter()
             .copied()
-            .map(PublicationParticipant::Product)
+            .map(|node_id| PublicationParticipant::Product { graph_id, node_id })
             .collect(),
         false,
         true,
@@ -837,7 +840,7 @@ fn transaction_binding(
 ) -> PhysicalWorkBinding {
     let product_count = participants
         .iter()
-        .filter(|participant| matches!(participant, PublicationParticipant::Product(_)))
+        .filter(|participant| matches!(participant, PublicationParticipant::Product { .. }))
         .count() as u64;
     let member_count = participants.len() as u64;
     let initial = WorkNodeId::new("transaction-check");
@@ -1406,7 +1409,7 @@ fn transaction_binding(
                 .enumerate()
                 .map(|(index, participant)| {
                     let (producer, terminal, kind, allocation) = match participant {
-                        PublicationParticipant::Product(_) => (
+                        PublicationParticipant::Product { .. } => (
                             product.clone(),
                             WorkDependency::Work(product.clone()),
                             IoBufferKind::Serialization,
@@ -2034,6 +2037,53 @@ fn release_failure_physical_work(
         default_product_participants(),
         false,
         false,
+    )
+}
+
+fn mapped_publication_candidate(
+    producer: WorkNodeId,
+    terminal: WorkDependency,
+    allocation: AllocationId,
+) -> Result<PhysicalWorkBinding, PhysicalWorkBindingError> {
+    let base = release_failure_physical_work(6, 8, false);
+    let mapped = PublicationMappedStaging::new(producer, terminal, allocation)
+        .expect("mapped producer and release differ");
+    let layouts = PublicationLayoutLedger::new(
+        base.publication_layouts()
+            .entries()
+            .iter()
+            .map(|layout| {
+                let writer = layout.staging();
+                PublicationPhysicalLayout::new(
+                    layout.participant(),
+                    layout.artifact(),
+                    layout.layout_id(),
+                    PublicationStaging::new(
+                        writer.producer().clone(),
+                        writer.terminal().clone(),
+                        writer.writer_buffer_kind(),
+                        writer.writer_allocation().clone(),
+                    )
+                    .expect("existing writer staging")
+                    .with_mapped_page_cache(mapped.clone()),
+                    PublicationResourceBounds::new(
+                        layout.resource_bounds().staged_storage_bytes(),
+                        layout.resource_bounds().final_storage_bytes(),
+                        layout.resource_bounds().writer_buffer_bytes(),
+                        100,
+                    )
+                    .expect("mapped publication bounds"),
+                )
+            })
+            .collect(),
+    )
+    .expect("one mapped layout per participant");
+    PhysicalWorkBinding::new(
+        base.execution_dag().clone(),
+        base.prediction().clone(),
+        base.artifacts().to_vec(),
+        base.observation_transaction().clone(),
+        layouts,
     )
 }
 
@@ -2849,7 +2899,7 @@ fn versioned_request_compiles_before_physical_planning() {
 
 #[test]
 fn plan_seals_physical_work_and_every_required_binding() {
-    assert_eq!(ExecutionPlanId::SCHEMA_VERSION, 7);
+    assert_eq!(ExecutionPlanId::SCHEMA_VERSION, 8);
     let problem = compile(request(1)).expect("logical compilation");
     let expected_problem_id = problem.problem_id();
     let bindings = PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4));
@@ -2861,6 +2911,10 @@ fn plan_seals_physical_work_and_every_required_binding() {
     .expect("physical planning");
 
     assert_eq!(execution_plan.problem_id(), problem.problem_id());
+    assert_eq!(
+        execution_plan.product_graph_id(),
+        problem.product_graph().graph_id()
+    );
     assert_eq!(
         execution_plan.geometry_id(),
         problem.geometry().geometry_id()
@@ -2888,6 +2942,10 @@ fn plan_seals_physical_work_and_every_required_binding() {
         problem.problem_id()
     );
     assert_eq!(
+        execution_plan.observation_transaction().product_graph_id(),
+        problem.product_graph().graph_id()
+    );
+    assert_eq!(
         execution_plan.observation_transaction().transaction_id(),
         problem.observation_transaction().transaction_id()
     );
@@ -2902,8 +2960,8 @@ fn plan_seals_physical_work_and_every_required_binding() {
     assert_eq!(
         execution_plan.plan_id().as_bytes(),
         [
-            55, 75, 226, 136, 37, 77, 129, 124, 119, 91, 6, 110, 221, 105, 244, 63, 237, 228, 217,
-            170, 92, 31, 155, 139, 33, 114, 92, 236, 196, 116, 204, 193,
+            72, 213, 244, 9, 44, 54, 148, 112, 243, 26, 15, 197, 239, 246, 212, 71, 71, 197, 162,
+            22, 44, 91, 86, 42, 42, 212, 48, 183, 202, 2, 96, 175,
         ]
     );
 }
@@ -2932,10 +2990,102 @@ fn transaction_seal_rejects_omitted_product_graph_publication_member() {
 
     let error = result.expect_err("one omitted product must fail the exact plan seal");
     assert!(
-        error
-            .to_string()
-            .contains("publication product nodes {ProductNodeId(0)} do not match graph members")
+        error.to_string().contains("publication product nodes")
+            && error.to_string().contains("do not match graph members")
     );
+}
+
+#[test]
+fn transaction_seal_rejects_matching_ordinals_from_a_foreign_product_graph() {
+    let problem = compile(request_with_products(
+        1,
+        geometry(255.0),
+        vec![ProductKind::Psf, ProductKind::Residual],
+    ))
+    .expect("expected product graph");
+    let foreign = compile(request_with_products(
+        1,
+        geometry(255.0),
+        vec![ProductKind::Psf, ProductKind::Model],
+    ))
+    .expect("foreign product graph with matching node ordinals");
+    assert_ne!(
+        problem.product_graph().graph_id(),
+        foreign.product_graph().graph_id()
+    );
+    assert_eq!(
+        problem.product_graph().publication().members(),
+        foreign.product_graph().publication().members()
+    );
+
+    let result = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| {
+            Ok::<_, io::Error>(physical_work_with_product_staging(
+                6,
+                product_participants(&foreign),
+            ))
+        },
+    );
+
+    let error = result.expect_err("foreign product graph must fail the transaction seal");
+    assert!(matches!(error, PlanError::ObservationTransaction(_)));
+    assert!(error.to_string().contains("do not match graph members"));
+}
+
+#[test]
+fn mapped_publication_staging_binds_its_producer_release_allocation_and_plan_identity() {
+    let problem = compile(request(1)).expect("logical compilation");
+    let bindings = || PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4));
+    let valid = mapped_publication_candidate(
+        WorkNodeId::new("1-prepare-mapping"),
+        WorkDependency::Work(WorkNodeId::new("2-release-mapping")),
+        AllocationId::new("execute-failed-mapping"),
+    )
+    .expect("producer-owned mapped staging retained through its release");
+    let mapped_plan =
+        plan(&problem, bindings(), |_, _| Ok::<_, ()>(valid)).expect("mapped publication planning");
+    let unmapped_plan = plan(&problem, bindings(), |_, _| {
+        Ok::<_, ()>(release_failure_physical_work(6, 8, false))
+    })
+    .expect("otherwise identical unmapped publication planning");
+    assert_ne!(mapped_plan.plan_id(), unmapped_plan.plan_id());
+
+    for (producer, terminal, allocation, expected) in [
+        (
+            WorkNodeId::new("0-independent-io"),
+            WorkDependency::Work(WorkNodeId::new("2-release-mapping")),
+            AllocationId::new("execute-failed-mapping"),
+            "not acquired by its producer",
+        ),
+        (
+            WorkNodeId::new("1-prepare-mapping"),
+            WorkDependency::Fence(FenceId::new(
+                WorkNodeId::new("0-independent-io"),
+                FenceKind::Io,
+            )),
+            AllocationId::new("execute-failed-mapping"),
+            "not acquired by its producer",
+        ),
+        (
+            WorkNodeId::new("1-prepare-mapping"),
+            WorkDependency::Work(WorkNodeId::new("2-release-mapping")),
+            AllocationId::new("transaction-product-writer-buffer"),
+            "not acquired by its producer",
+        ),
+    ] {
+        let error = mapped_publication_candidate(producer, terminal, allocation)
+            .expect_err("mismatched mapped staging must be rejected");
+        assert!(
+            matches!(
+                error,
+                PhysicalWorkBindingError::InvalidPublicationLayout { .. }
+            ),
+            "{error}"
+        );
+        assert!(error.to_string().contains(expected), "{error}");
+    }
 }
 
 #[test]
@@ -3537,7 +3687,7 @@ fn receipt_finalize_failure_after_publish_returns_success_and_reopens_prepared_e
     assert_eq!(outcome, ExecutionOutcome::Succeeded);
     assert!(publication_launched.load(Ordering::SeqCst));
     assert_eq!(visible_generation.load(Ordering::SeqCst), 1);
-    assert_eq!(receipt.schema_version(), 5);
+    assert_eq!(receipt.schema_version(), 6);
     assert_eq!(receipt.status(), ReceiptStatus::PublicationPrepared);
     for layout in execution_plan.publication_layouts().entries() {
         assert_eq!(
@@ -4041,7 +4191,7 @@ fn run_persists_a_reopenable_receipt_with_exact_identities_and_every_plan_node()
         .expect("reopen durable receipt");
 
     assert_eq!(outcome, ExecutionOutcome::Succeeded);
-    assert_eq!(receipt.schema_version(), 5);
+    assert_eq!(receipt.schema_version(), 6);
     assert_eq!(receipt.route_matrix_schema_version(), 1);
     assert_eq!(receipt.route_matrix_contract_revision(), 1);
     assert_eq!(receipt.route_disposition(), "native");
@@ -4079,6 +4229,10 @@ fn run_persists_a_reopenable_receipt_with_exact_identities_and_every_plan_node()
     assert_eq!(receipt.status(), ReceiptStatus::Completed);
     assert_eq!(receipt.plan_identity(), execution_plan.plan_id().as_bytes());
     assert_eq!(receipt.problem_identity(), problem.problem_id().as_bytes());
+    assert_eq!(
+        receipt.product_graph_identity(),
+        problem.product_graph().graph_id().as_bytes()
+    );
     assert_eq!(
         receipt.geometry_identity(),
         problem.geometry().geometry_id().as_bytes()
@@ -4203,7 +4357,7 @@ fn receipt_reopens_the_complete_versioned_effective_problem_projection() {
         .expect("antenna generation")
         .to_string();
 
-    assert_eq!(projected.schema_version(), 2);
+    assert_eq!(projected.schema_version(), 3);
     assert_eq!(projected, &CompiledProblemEvidence::project(&problem));
     assert_eq!(
         projected.field("science.spectral.sampling"),
@@ -4278,6 +4432,16 @@ fn receipt_reopens_the_complete_versioned_effective_problem_projection() {
         Some("weight")
     );
     assert_eq!(projected.field("products.requested.0"), Some("psf"));
+    assert_eq!(
+        projected.field("products.graph.identity"),
+        Some(problem.product_graph().graph_id().to_string().as_str())
+    );
+    assert_eq!(projected.field("products.graph.schema_version"), Some("2"));
+    assert_eq!(projected.field("products.graph.nodes.0.ordinal"), Some("0"));
+    assert_eq!(
+        projected.field("products.graph.publication.members.0"),
+        Some("0")
+    );
     assert_eq!(
         projected.field("products.normalization_boundary.input"),
         Some("unnormalized")
@@ -4435,7 +4599,11 @@ fn receipt_reopens_the_complete_selected_plan_projection() {
     );
     assert_eq!(
         receipt.artifact_identities(),
-        BTreeSet::from([cache_artifact])
+        execution_plan
+            .artifacts()
+            .iter()
+            .map(PlannedArtifact::identity)
+            .collect()
     );
     assert_eq!(
         receipt.cache_identities(),
