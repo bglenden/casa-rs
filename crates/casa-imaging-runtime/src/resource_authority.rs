@@ -3466,6 +3466,7 @@ fn detect_unified_metal_device() -> bool {
     metal_inventory_available(hardware_support, process_access, has_unified_memory)
 }
 
+#[cfg(target_os = "macos")]
 fn metal_inventory_available(
     hardware_support: bool,
     process_access: bool,
