@@ -1028,10 +1028,9 @@ fn optimize_phase_step(
     let x0 = current_chi_square;
     apply_step(gains, last_gains, delta, 1.0);
     let mut x1 = chi_square_complex64(graph, weights, stats, gains);
-    let x2;
     let expanded;
 
-    if x1 < x0 {
+    let x2 = if x1 < x0 {
         expanded = true;
         apply_step(gains, last_gains, delta, 2.0 * step);
         let mut trial_x2 = chi_square_complex64(graph, weights, stats, gains);
@@ -1042,7 +1041,7 @@ fn optimize_phase_step(
             apply_step(gains, last_gains, delta, 2.0 * step);
             trial_x2 = chi_square_complex64(graph, weights, stats, gains);
         }
-        x2 = trial_x2;
+        trial_x2
     } else {
         expanded = false;
         step *= 0.5;
@@ -1056,8 +1055,8 @@ fn optimize_phase_step(
             apply_step(gains, last_gains, delta, step);
             x1 = chi_square_complex64(graph, weights, stats, gains);
         }
-        x2 = trial_x2;
-    }
+        trial_x2
+    };
 
     let denominator = x0 - 2.0 * x1 + x2;
     let opt_factor = if denominator.abs() > 0.0 {
@@ -1095,10 +1094,9 @@ fn optimize_phase_step_graphs(
     let x0 = current_chi_square;
     apply_step_graphs(gains, last_gains, deltas, 1.0);
     let mut x1 = chi_square_phase_graphs(prepared, gains);
-    let x2;
     let expanded;
 
-    if x1 < x0 {
+    let x2 = if x1 < x0 {
         expanded = true;
         apply_step_graphs(gains, last_gains, deltas, 2.0 * step);
         let mut trial_x2 = chi_square_phase_graphs(prepared, gains);
@@ -1109,7 +1107,7 @@ fn optimize_phase_step_graphs(
             apply_step_graphs(gains, last_gains, deltas, 2.0 * step);
             trial_x2 = chi_square_phase_graphs(prepared, gains);
         }
-        x2 = trial_x2;
+        trial_x2
     } else {
         expanded = false;
         step *= 0.5;
@@ -1123,8 +1121,8 @@ fn optimize_phase_step_graphs(
             apply_step_graphs(gains, last_gains, deltas, step);
             x1 = chi_square_phase_graphs(prepared, gains);
         }
-        x2 = trial_x2;
-    }
+        trial_x2
+    };
 
     let denominator = x0 - 2.0 * x1 + x2;
     let opt_factor = if denominator.abs() > 0.0 {

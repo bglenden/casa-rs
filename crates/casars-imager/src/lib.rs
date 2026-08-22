@@ -23850,9 +23850,7 @@ fn force_standard_gridder_mode(mut prepared: PreparedInput) -> PreparedInput {
             plane.gridder_mode = GridderMode::Standard;
         }
         PreparedInput::Cube(cube) => {
-            for mode in &mut cube.gridder_modes {
-                *mode = GridderMode::Standard;
-            }
+            cube.gridder_modes.fill(GridderMode::Standard);
         }
     }
     prepared
