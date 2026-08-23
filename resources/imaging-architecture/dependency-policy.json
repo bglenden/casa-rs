@@ -162,7 +162,7 @@
     {
       "id": "t15-private-walking-skeleton",
       "roots": [
-        "crates/casa-imaging-runtime/tests/compile_plan_run"
+        "crates/casa-imaging-runtime/tests/walking_skeleton/mod.rs"
       ],
       "extensions": [
         ".rs"
@@ -200,6 +200,7 @@
           "casa_imaging_runtime::ReceiptPublicationParticipant::ModelData": 1,
           "casa_imaging_runtime::ReceiptPublicationParticipant::Product": 1
         },
+        "composition_message": "T15 walking skeleton must not include or redirect Rust source",
         "privacy_message": "T15 walking skeleton must remain private test code",
         "glob_message": "T15 walking skeleton must not use glob imports",
         "import_message": "T15 walking skeleton imports outside its exact allowlist",
@@ -367,6 +368,7 @@
           "casa_imaging_runtime::StorageUseKind::FinalOutput": 1,
           "casa_imaging_runtime::StorageUseKind::StagedOutput": 3
         },
+        "composition_message": "T15 parent compile_plan_run support must not include or redirect Rust source",
         "privacy_message": "T15 parent compile_plan_run support must remain private test code",
         "glob_message": "T15 parent compile_plan_run support must not use glob imports",
         "import_message": "T15 parent compile_plan_run support imports outside its exact allowlist",

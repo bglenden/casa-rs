@@ -79,7 +79,6 @@ fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
 
 mod common;
 
-#[path = "compile_plan_run/walking_skeleton.rs"]
 mod walking_skeleton;
 
 use common::{identity, problem_inputs};

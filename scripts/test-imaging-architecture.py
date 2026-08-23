@@ -94,6 +94,38 @@ class ArchitecturePolicyTests(unittest.TestCase):
     def setUp(self) -> None:
         self.policy = load_policy()
 
+    def assert_rustc_accepts(
+        self, source_text: str, extra_sources: dict[str, str] | None = None
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            probe = root / "rustc-probe.rs"
+            probe.write_text(source_text, encoding="utf-8")
+            for relative, contents in (extra_sources or {}).items():
+                target = root / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(contents, encoding="utf-8")
+            result = subprocess.run(
+                [
+                    "rustc",
+                    "--crate-name",
+                    "t15_policy_probe",
+                    "--crate-type",
+                    "lib",
+                    "--edition",
+                    "2024",
+                    "--emit",
+                    "metadata",
+                    "-o",
+                    str(root / "probe.rmeta"),
+                    str(probe),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_rejects_every_undeclared_native_layer_edge(self) -> None:
         allowed = {
             (source, target)
@@ -514,7 +546,9 @@ class ArchitecturePolicyTests(unittest.TestCase):
                 tempfile.TemporaryDirectory() as directory,
             ):
                 root = Path(directory)
-                fixture = root / boundary["roots"][0] / "walking_skeleton.rs"
+                fixture = root / boundary["roots"][0]
+                if fixture.suffix != ".rs":
+                    fixture /= "walking_skeleton.rs"
                 fixture.parent.mkdir(parents=True)
                 fixture.write_text(source, encoding="utf-8")
                 with self.assertRaisesRegex(checker.ArchitectureError, message):
@@ -554,7 +588,9 @@ class ArchitecturePolicyTests(unittest.TestCase):
                 tempfile.TemporaryDirectory() as directory,
             ):
                 root = Path(directory)
-                fixture = root / boundary["roots"][0] / "walking_skeleton.rs"
+                fixture = root / boundary["roots"][0]
+                if fixture.suffix != ".rs":
+                    fixture /= "walking_skeleton.rs"
                 fixture.parent.mkdir(parents=True)
                 fixture.write_text(source_text, encoding="utf-8")
                 with self.assertRaisesRegex(
@@ -564,6 +600,151 @@ class ArchitecturePolicyTests(unittest.TestCase):
                     checker.validate_source_boundaries(
                         {"source_boundaries": [boundary]}, root
                     )
+
+    def test_t15_boundaries_reject_rustc_valid_include_authority_injection(
+        self,
+    ) -> None:
+        payload = (
+            "pub struct IncludedPublicAuthority;\n"
+            "struct FutureWeightingResult;\n"
+            "fn synthetic_runner() {}\n"
+        )
+        for identifier, fixture_name, invocation in [
+            (
+                "t15-private-walking-skeleton",
+                "walking_skeleton.rs",
+                'include!("injected.rs");\n',
+            ),
+            (
+                "t15-private-walking-skeleton",
+                "walking_skeleton.rs",
+                'r#include!("injected.rs");\n',
+            ),
+            (
+                "t15-private-parent-support",
+                None,
+                'std::include! { "injected.rs" }\n',
+            ),
+        ]:
+            boundary = next(
+                value
+                for value in self.policy["source_boundaries"]
+                if value["id"] == identifier
+            )
+            with (
+                self.subTest(boundary=identifier),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                self.assert_rustc_accepts(invocation, {"injected.rs": payload})
+                root = Path(directory)
+                fixture = root / boundary["roots"][0]
+                canonical = REPO_ROOT / boundary["roots"][0]
+                if fixture_name is not None and fixture.suffix != ".rs":
+                    fixture /= fixture_name
+                    canonical /= fixture_name
+                fixture.parent.mkdir(parents=True, exist_ok=True)
+                fixture.write_text(
+                    canonical.read_text(encoding="utf-8")
+                    + "\n"
+                    + invocation.replace("injected.rs", "../../../../injected.rs"),
+                    encoding="utf-8",
+                )
+                with self.assertRaisesRegex(
+                    checker.ArchitectureError,
+                    r"must not include or redirect Rust source",
+                ):
+                    checker.validate_source_boundaries(
+                        {"source_boundaries": [boundary]}, root
+                    )
+
+    def test_t15_boundaries_reject_rustc_valid_path_redirects(self) -> None:
+        payload = (
+            "pub struct RedirectedPublicAuthority;\n"
+            "pub struct FutureWeightingResult;\n"
+            "pub fn synthetic_runner() {}\n"
+        )
+        for identifier, attribute in [
+            ("t15-private-walking-skeleton", "path"),
+            ("t15-private-walking-skeleton", "r#path"),
+            ("t15-private-parent-support", "cfg_attr(all(), r#path"),
+        ]:
+            boundary = next(
+                value
+                for value in self.policy["source_boundaries"]
+                if value["id"] == identifier
+            )
+            with (
+                self.subTest(boundary=identifier),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root = Path(directory)
+                if attribute.startswith("cfg_attr"):
+                    probe_attribute = f'#[{attribute} = "injected.rs")]\n'
+                else:
+                    probe_attribute = f'#[{attribute} = "injected.rs"]\n'
+                self.assert_rustc_accepts(
+                    probe_attribute + "mod redirected;\n",
+                    {"injected.rs": payload},
+                )
+                fixture = root / boundary["roots"][0]
+                if fixture.suffix != ".rs":
+                    fixture /= "walking_skeleton.rs"
+                fixture.parent.mkdir(parents=True, exist_ok=True)
+                redirected_attribute = probe_attribute.replace(
+                    "injected.rs", "../../../../injected.rs"
+                )
+                fixture.write_text(
+                    redirected_attribute + "mod redirected;\n",
+                    encoding="utf-8",
+                )
+                with self.assertRaisesRegex(
+                    checker.ArchitectureError,
+                    r"must not include or redirect Rust source",
+                ):
+                    checker.validate_source_boundaries(
+                        {"source_boundaries": [boundary]}, root
+                    )
+
+    def test_t15_boundaries_reject_rustc_valid_raw_macro_export_attributes(
+        self,
+    ) -> None:
+        for source_text in [
+            "#[r#macro_export]\nmacro_rules! leaked_macro { () => {}; }\n",
+            (
+                "#[cfg_attr(all(), r#macro_export)]\n"
+                "macro_rules! conditionally_leaked_macro { () => {}; }\n"
+            ),
+        ]:
+            self.assert_rustc_accepts(source_text)
+            for identifier, label in [
+                ("t15-private-walking-skeleton", "T15 walking skeleton"),
+                (
+                    "t15-private-parent-support",
+                    "T15 parent compile_plan_run support",
+                ),
+            ]:
+                boundary = next(
+                    value
+                    for value in self.policy["source_boundaries"]
+                    if value["id"] == identifier
+                )
+                with (
+                    self.subTest(boundary=identifier, source=source_text),
+                    tempfile.TemporaryDirectory() as directory,
+                ):
+                    root = Path(directory)
+                    fixture = root / boundary["roots"][0]
+                    if fixture.suffix != ".rs":
+                        fixture /= "walking_skeleton.rs"
+                    fixture.parent.mkdir(parents=True, exist_ok=True)
+                    fixture.write_text(source_text, encoding="utf-8")
+                    with self.assertRaisesRegex(
+                        checker.ArchitectureError,
+                        rf"{label} must remain private test code",
+                    ):
+                        checker.validate_source_boundaries(
+                            {"source_boundaries": [boundary]}, root
+                        )
 
     def test_t15_rust_lexer_ignores_policy_words_in_comments_and_literals(self) -> None:
         source = r"""
@@ -602,7 +783,9 @@ fn private_probe() {
                 tempfile.TemporaryDirectory() as directory,
             ):
                 root = Path(directory)
-                fixture = root / boundary["roots"][0] / "walking_skeleton.rs"
+                fixture = root / boundary["roots"][0]
+                if fixture.suffix != ".rs":
+                    fixture /= "walking_skeleton.rs"
                 fixture.parent.mkdir(parents=True)
                 fixture.write_text(source_text, encoding="utf-8")
                 with self.assertRaisesRegex(
@@ -684,7 +867,7 @@ fn private_probe() {
             ):
                 root = Path(directory)
                 fixture = root / boundary["roots"][0]
-                if fixture_name is not None:
+                if fixture_name is not None and fixture.suffix != ".rs":
                     fixture /= fixture_name
                 fixture.parent.mkdir(parents=True)
                 fixture.write_text(source_text, encoding="utf-8")

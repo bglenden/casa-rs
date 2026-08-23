@@ -55,7 +55,7 @@ ACCEPTED_LOGICAL_GRAPH_SHA256 = (
     "7101b6d90196b1ea3d3c750080d703bb5e305e91c8ac19553e1dda7ed58c4e33"
 )
 ACCEPTED_SOURCE_BOUNDARIES_SHA256 = (
-    "dc56cc6b6eb40e69b7eff8f956ff4785a0890d7fe75f16e7c837b42ba80f9ed0"
+    "4ba3bbdea40c6b32fef85b556bd98764ca40d4bc8650a561ea2273c18851003b"
 )
 ACCEPTED_FROZEN_TRANSITIONAL_EDGES_SHA256 = (
     "0077e28528d2160616d34e17fb7124586f346557917e0bfac99b0dff6739a1d1"
@@ -625,6 +625,7 @@ def validate_rust_allowlist_policy(value: Any, context: str) -> None:
         "allowed_imports",
         "allowed_items",
         "allowed_qualified_paths",
+        "composition_message",
         "privacy_message",
         "glob_message",
         "import_message",
@@ -677,6 +678,7 @@ def validate_rust_allowlist_policy(value: Any, context: str) -> None:
                 f"{context}.allowed_qualified_paths[{qualified_path!r}] must be a positive integer"
             )
     for name in [
+        "composition_message",
         "privacy_message",
         "glob_message",
         "import_message",
@@ -1145,18 +1147,75 @@ def rust_tokens(source: str, path: str) -> list[RustToken]:
 
 
 def rust_identifier(token: RustToken) -> bool:
-    value = token.text
-    if value.startswith("r#"):
-        value = value[2:]
+    value = rust_identifier_text(token)
+    return value is not None
+
+
+def rust_identifier_text(token: RustToken) -> str | None:
+    value = token.text.removeprefix("r#")
     return (
-        bool(value)
+        value
+        if bool(value)
         and (value[0].isalpha() or value[0] == "_")
         and all(character.isalnum() or character == "_" for character in value[1:])
+        else None
     )
 
 
+def rust_attribute_spans(
+    tokens: list[RustToken], path: str
+) -> list[tuple[int, int]]:
+    spans: list[tuple[int, int]] = []
+    index = 0
+    while index < len(tokens):
+        if tokens[index].text != "#":
+            index += 1
+            continue
+        opening = index + 1
+        if opening < len(tokens) and tokens[opening].text == "!":
+            opening += 1
+        if opening >= len(tokens) or tokens[opening].text != "[":
+            index += 1
+            continue
+        depth = 1
+        cursor = opening + 1
+        while cursor < len(tokens) and depth:
+            if tokens[cursor].text == "[":
+                depth += 1
+            elif tokens[cursor].text == "]":
+                depth -= 1
+            cursor += 1
+        if depth:
+            raise ArchitectureError(
+                f"cannot parse Rust attribute boundary {path}:{tokens[index].line}"
+            )
+        spans.append((opening + 1, cursor - 1))
+        index = cursor
+    return spans
+
+
+def rust_composition_violation(
+    tokens: list[RustToken], path: str
+) -> tuple[str, int] | None:
+    for index, token in enumerate(tokens):
+        if (
+            rust_identifier_text(token) == "include"
+            and index + 1 < len(tokens)
+            and tokens[index + 1].text == "!"
+        ):
+            return "include! invocation", token.line
+    for start, end in rust_attribute_spans(tokens, path):
+        for index in range(start, end - 1):
+            if (
+                rust_identifier_text(tokens[index]) == "path"
+                and tokens[index + 1].text == "="
+            ):
+                return "#[path] module target", tokens[index].line
+    return None
+
+
 def rust_source_inventory(
-    source: str, path: str
+    source: str, path: str, *, tokens: list[RustToken] | None = None
 ) -> tuple[
     list[tuple[str, int]],
     list[tuple[str, int]],
@@ -1164,12 +1223,16 @@ def rust_source_inventory(
     list[int],
     list[int],
 ]:
-    tokens = rust_tokens(source, path)
+    if tokens is None:
+        tokens = rust_tokens(source, path)
     imports: list[tuple[str, int]] = []
     items: list[tuple[str, int]] = []
     public_lines = [token.line for token in tokens if token.text == "pub"]
     macro_export_lines = [
-        token.line for token in tokens if token.text == "macro_export"
+        tokens[index].line
+        for start, end in rust_attribute_spans(tokens, path)
+        for index in range(start, end)
+        if rust_identifier_text(tokens[index]) == "macro_export"
     ]
     ignored: set[int] = set()
 
@@ -1286,8 +1349,22 @@ def rust_allowlist_violations(
     boundary: dict[str, Any], source: str, relative: str
 ) -> list[dict[str, Any]]:
     policy = boundary["rust_allowlist"]
+    tokens = rust_tokens(source, relative)
+    composition = rust_composition_violation(tokens, relative)
+    if composition is not None:
+        match, line = composition
+        return [
+            {
+                "path": relative,
+                "pattern": "rust-composition",
+                "match": match,
+                "context": match,
+                "line": line,
+                "message": policy["composition_message"],
+            }
+        ]
     imports, qualified_paths, items, privacy_lines, glob_lines = rust_source_inventory(
-        source, relative
+        source, relative, tokens=tokens
     )
     if privacy_lines:
         return [
