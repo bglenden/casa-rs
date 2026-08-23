@@ -11,7 +11,7 @@
 <a href=#11 id=11 data-nosnippet>11</a>    ProductNormalization, ProductNormalizationBoundary, ProductRequirements,
 <a href=#12 id=12 data-nosnippet>12</a>    ProductSupportComparison, ReconstructionBasis, ReconstructionContract, RestoringBeamPolicy,
 <a href=#13 id=13 data-nosnippet>13</a>    SpectralCoordinateSpec, TaylorSupportReference, TaylorValidityPolicy,
-<a href=#14 id=14 data-nosnippet>14</a>    compiled_problem::CanonicalEncoder,
+<a href=#14 id=14 data-nosnippet>14</a>    compiled_problem::{CanonicalEncoder, polarization_tag},
 <a href=#15 id=15 data-nosnippet>15</a>};
 <a href=#16 id=16 data-nosnippet>16</a>
 <a href=#17 id=17 data-nosnippet>17</a><span class="kw">const </span>PRODUCT_GRAPH_IDENTITY_DOMAIN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"casa-rs-product-graph"</span>;
@@ -1200,86 +1200,69 @@
 <a href=#1200 id=1200 data-nosnippet>1200</a>    });
 <a href=#1201 id=1201 data-nosnippet>1201</a>}
 <a href=#1202 id=1202 data-nosnippet>1202</a>
-<a href=#1203 id=1203 data-nosnippet>1203</a><span class="kw">fn </span>polarization_tag(coordinate: PolarizationCoordinate) -&gt; u8 {
-<a href=#1204 id=1204 data-nosnippet>1204</a>    <span class="kw">match </span>coordinate {
-<a href=#1205 id=1205 data-nosnippet>1205</a>        PolarizationCoordinate::StokesI =&gt; <span class="number">0</span>,
-<a href=#1206 id=1206 data-nosnippet>1206</a>        PolarizationCoordinate::StokesQ =&gt; <span class="number">1</span>,
-<a href=#1207 id=1207 data-nosnippet>1207</a>        PolarizationCoordinate::StokesU =&gt; <span class="number">2</span>,
-<a href=#1208 id=1208 data-nosnippet>1208</a>        PolarizationCoordinate::StokesV =&gt; <span class="number">3</span>,
-<a href=#1209 id=1209 data-nosnippet>1209</a>        PolarizationCoordinate::LinearXx =&gt; <span class="number">4</span>,
-<a href=#1210 id=1210 data-nosnippet>1210</a>        PolarizationCoordinate::LinearXy =&gt; <span class="number">5</span>,
-<a href=#1211 id=1211 data-nosnippet>1211</a>        PolarizationCoordinate::LinearYx =&gt; <span class="number">6</span>,
-<a href=#1212 id=1212 data-nosnippet>1212</a>        PolarizationCoordinate::LinearYy =&gt; <span class="number">7</span>,
-<a href=#1213 id=1213 data-nosnippet>1213</a>        PolarizationCoordinate::CircularRr =&gt; <span class="number">8</span>,
-<a href=#1214 id=1214 data-nosnippet>1214</a>        PolarizationCoordinate::CircularRl =&gt; <span class="number">9</span>,
-<a href=#1215 id=1215 data-nosnippet>1215</a>        PolarizationCoordinate::CircularLr =&gt; <span class="number">10</span>,
-<a href=#1216 id=1216 data-nosnippet>1216</a>        PolarizationCoordinate::CircularLl =&gt; <span class="number">11</span>,
-<a href=#1217 id=1217 data-nosnippet>1217</a>    }
-<a href=#1218 id=1218 data-nosnippet>1218</a>}
-<a href=#1219 id=1219 data-nosnippet>1219</a>
-<a href=#1220 id=1220 data-nosnippet>1220</a><span class="kw">fn </span>product_axes(
-<a href=#1221 id=1221 data-nosnippet>1221</a>    geometry: <span class="kw-2">&amp;</span>CompiledGeometry,
-<a href=#1222 id=1222 data-nosnippet>1222</a>    domain: <span class="kw-2">&amp;</span>CompiledImageDomain,
-<a href=#1223 id=1223 data-nosnippet>1223</a>    reconstruction: <span class="kw-2">&amp;</span>ReconstructionContract,
-<a href=#1224 id=1224 data-nosnippet>1224</a>    kind: ProductAxisKind,
-<a href=#1225 id=1225 data-nosnippet>1225</a>) -&gt; ProductAxes {
-<a href=#1226 id=1226 data-nosnippet>1226</a>    <span class="kw">let </span>direction_pixels = <span class="kw">match </span>kind {
-<a href=#1227 id=1227 data-nosnippet>1227</a>        ProductAxisKind::SkyImage =&gt; domain.shape().pixels(),
-<a href=#1228 id=1228 data-nosnippet>1228</a>        ProductAxisKind::PlaneState =&gt; [<span class="number">1</span>, <span class="number">1</span>],
-<a href=#1229 id=1229 data-nosnippet>1229</a>        ProductAxisKind::Metadata =&gt; [<span class="number">0</span>, <span class="number">0</span>],
-<a href=#1230 id=1230 data-nosnippet>1230</a>    };
-<a href=#1231 id=1231 data-nosnippet>1231</a>    <span class="kw">let </span>polarization = reconstruction.polarization().coordinates();
-<a href=#1232 id=1232 data-nosnippet>1232</a>    <span class="kw">let </span>spectral = <span class="kw">if </span>kind == ProductAxisKind::Metadata {
-<a href=#1233 id=1233 data-nosnippet>1233</a>        <span class="number">0
-<a href=#1234 id=1234 data-nosnippet>1234</a>    </span>} <span class="kw">else </span>{
-<a href=#1235 id=1235 data-nosnippet>1235</a>        geometry.spectral().output_channels()
-<a href=#1236 id=1236 data-nosnippet>1236</a>    };
-<a href=#1237 id=1237 data-nosnippet>1237</a>    <span class="kw">let </span><span class="kw-2">mut </span>shape = [<span class="number">0</span>; <span class="number">4</span>];
-<a href=#1238 id=1238 data-nosnippet>1238</a>    <span class="kw">for </span>(position, axis) <span class="kw">in </span>domain.axes().positions().iter().enumerate() {
-<a href=#1239 id=1239 data-nosnippet>1239</a>        shape[position] = <span class="kw">match </span>axis {
-<a href=#1240 id=1240 data-nosnippet>1240</a>            ImageAxis::DirectionLongitude =&gt; direction_pixels[<span class="number">0</span>],
-<a href=#1241 id=1241 data-nosnippet>1241</a>            ImageAxis::DirectionLatitude =&gt; direction_pixels[<span class="number">1</span>],
-<a href=#1242 id=1242 data-nosnippet>1242</a>            ImageAxis::Polarization <span class="kw">if </span>kind != ProductAxisKind::Metadata =&gt; polarization.len(),
-<a href=#1243 id=1243 data-nosnippet>1243</a>            ImageAxis::Spectral <span class="kw">if </span>kind != ProductAxisKind::Metadata =&gt; spectral,
-<a href=#1244 id=1244 data-nosnippet>1244</a>            ImageAxis::Polarization | ImageAxis::Spectral =&gt; <span class="number">0</span>,
-<a href=#1245 id=1245 data-nosnippet>1245</a>        };
-<a href=#1246 id=1246 data-nosnippet>1246</a>    }
-<a href=#1247 id=1247 data-nosnippet>1247</a>    ProductAxes {
-<a href=#1248 id=1248 data-nosnippet>1248</a>        kind,
-<a href=#1249 id=1249 data-nosnippet>1249</a>        geometry_id: geometry.geometry_id(),
-<a href=#1250 id=1250 data-nosnippet>1250</a>        domain: domain.role().clone(),
-<a href=#1251 id=1251 data-nosnippet>1251</a>        order: domain.axes().clone(),
-<a href=#1252 id=1252 data-nosnippet>1252</a>        shape,
-<a href=#1253 id=1253 data-nosnippet>1253</a>        direction: domain.direction(),
-<a href=#1254 id=1254 data-nosnippet>1254</a>        spectral: geometry.spectral().clone(),
-<a href=#1255 id=1255 data-nosnippet>1255</a>        polarization: polarization.into(),
-<a href=#1256 id=1256 data-nosnippet>1256</a>    }
-<a href=#1257 id=1257 data-nosnippet>1257</a>}
-<a href=#1258 id=1258 data-nosnippet>1258</a>
-<a href=#1259 id=1259 data-nosnippet>1259</a><span class="kw">fn </span>product_name(stem: <span class="kw-2">&amp;</span>str, term: ProductTerm, pb_corrected: bool) -&gt; String {
-<a href=#1260 id=1260 data-nosnippet>1260</a>    <span class="kw">match </span>(term, pb_corrected) {
-<a href=#1261 id=1261 data-nosnippet>1261</a>        (ProductTerm::Single, <span class="bool-val">false</span>) =&gt; <span class="macro">format!</span>(<span class="string">".{stem}"</span>),
-<a href=#1262 id=1262 data-nosnippet>1262</a>        (ProductTerm::Single, <span class="bool-val">true</span>) =&gt; <span class="macro">format!</span>(<span class="string">".{stem}.pbcor"</span>),
-<a href=#1263 id=1263 data-nosnippet>1263</a>        (ProductTerm::Taylor(term), <span class="bool-val">false</span>) =&gt; <span class="macro">format!</span>(<span class="string">".{stem}.tt{term}"</span>),
-<a href=#1264 id=1264 data-nosnippet>1264</a>        (ProductTerm::Taylor(term), <span class="bool-val">true</span>) =&gt; <span class="macro">format!</span>(<span class="string">".{stem}.tt{term}.pbcor"</span>),
+<a href=#1203 id=1203 data-nosnippet>1203</a><span class="kw">fn </span>product_axes(
+<a href=#1204 id=1204 data-nosnippet>1204</a>    geometry: <span class="kw-2">&amp;</span>CompiledGeometry,
+<a href=#1205 id=1205 data-nosnippet>1205</a>    domain: <span class="kw-2">&amp;</span>CompiledImageDomain,
+<a href=#1206 id=1206 data-nosnippet>1206</a>    reconstruction: <span class="kw-2">&amp;</span>ReconstructionContract,
+<a href=#1207 id=1207 data-nosnippet>1207</a>    kind: ProductAxisKind,
+<a href=#1208 id=1208 data-nosnippet>1208</a>) -&gt; ProductAxes {
+<a href=#1209 id=1209 data-nosnippet>1209</a>    <span class="kw">let </span>direction_pixels = <span class="kw">match </span>kind {
+<a href=#1210 id=1210 data-nosnippet>1210</a>        ProductAxisKind::SkyImage =&gt; domain.shape().pixels(),
+<a href=#1211 id=1211 data-nosnippet>1211</a>        ProductAxisKind::PlaneState =&gt; [<span class="number">1</span>, <span class="number">1</span>],
+<a href=#1212 id=1212 data-nosnippet>1212</a>        ProductAxisKind::Metadata =&gt; [<span class="number">0</span>, <span class="number">0</span>],
+<a href=#1213 id=1213 data-nosnippet>1213</a>    };
+<a href=#1214 id=1214 data-nosnippet>1214</a>    <span class="kw">let </span>polarization = reconstruction.polarization().coordinates();
+<a href=#1215 id=1215 data-nosnippet>1215</a>    <span class="kw">let </span>spectral = <span class="kw">if </span>kind == ProductAxisKind::Metadata {
+<a href=#1216 id=1216 data-nosnippet>1216</a>        <span class="number">0
+<a href=#1217 id=1217 data-nosnippet>1217</a>    </span>} <span class="kw">else </span>{
+<a href=#1218 id=1218 data-nosnippet>1218</a>        geometry.spectral().output_channels()
+<a href=#1219 id=1219 data-nosnippet>1219</a>    };
+<a href=#1220 id=1220 data-nosnippet>1220</a>    <span class="kw">let </span><span class="kw-2">mut </span>shape = [<span class="number">0</span>; <span class="number">4</span>];
+<a href=#1221 id=1221 data-nosnippet>1221</a>    <span class="kw">for </span>(position, axis) <span class="kw">in </span>domain.axes().positions().iter().enumerate() {
+<a href=#1222 id=1222 data-nosnippet>1222</a>        shape[position] = <span class="kw">match </span>axis {
+<a href=#1223 id=1223 data-nosnippet>1223</a>            ImageAxis::DirectionLongitude =&gt; direction_pixels[<span class="number">0</span>],
+<a href=#1224 id=1224 data-nosnippet>1224</a>            ImageAxis::DirectionLatitude =&gt; direction_pixels[<span class="number">1</span>],
+<a href=#1225 id=1225 data-nosnippet>1225</a>            ImageAxis::Polarization <span class="kw">if </span>kind != ProductAxisKind::Metadata =&gt; polarization.len(),
+<a href=#1226 id=1226 data-nosnippet>1226</a>            ImageAxis::Spectral <span class="kw">if </span>kind != ProductAxisKind::Metadata =&gt; spectral,
+<a href=#1227 id=1227 data-nosnippet>1227</a>            ImageAxis::Polarization | ImageAxis::Spectral =&gt; <span class="number">0</span>,
+<a href=#1228 id=1228 data-nosnippet>1228</a>        };
+<a href=#1229 id=1229 data-nosnippet>1229</a>    }
+<a href=#1230 id=1230 data-nosnippet>1230</a>    ProductAxes {
+<a href=#1231 id=1231 data-nosnippet>1231</a>        kind,
+<a href=#1232 id=1232 data-nosnippet>1232</a>        geometry_id: geometry.geometry_id(),
+<a href=#1233 id=1233 data-nosnippet>1233</a>        domain: domain.role().clone(),
+<a href=#1234 id=1234 data-nosnippet>1234</a>        order: domain.axes().clone(),
+<a href=#1235 id=1235 data-nosnippet>1235</a>        shape,
+<a href=#1236 id=1236 data-nosnippet>1236</a>        direction: domain.direction(),
+<a href=#1237 id=1237 data-nosnippet>1237</a>        spectral: geometry.spectral().clone(),
+<a href=#1238 id=1238 data-nosnippet>1238</a>        polarization: polarization.into(),
+<a href=#1239 id=1239 data-nosnippet>1239</a>    }
+<a href=#1240 id=1240 data-nosnippet>1240</a>}
+<a href=#1241 id=1241 data-nosnippet>1241</a>
+<a href=#1242 id=1242 data-nosnippet>1242</a><span class="kw">fn </span>product_name(stem: <span class="kw-2">&amp;</span>str, term: ProductTerm, pb_corrected: bool) -&gt; String {
+<a href=#1243 id=1243 data-nosnippet>1243</a>    <span class="kw">match </span>(term, pb_corrected) {
+<a href=#1244 id=1244 data-nosnippet>1244</a>        (ProductTerm::Single, <span class="bool-val">false</span>) =&gt; <span class="macro">format!</span>(<span class="string">".{stem}"</span>),
+<a href=#1245 id=1245 data-nosnippet>1245</a>        (ProductTerm::Single, <span class="bool-val">true</span>) =&gt; <span class="macro">format!</span>(<span class="string">".{stem}.pbcor"</span>),
+<a href=#1246 id=1246 data-nosnippet>1246</a>        (ProductTerm::Taylor(term), <span class="bool-val">false</span>) =&gt; <span class="macro">format!</span>(<span class="string">".{stem}.tt{term}"</span>),
+<a href=#1247 id=1247 data-nosnippet>1247</a>        (ProductTerm::Taylor(term), <span class="bool-val">true</span>) =&gt; <span class="macro">format!</span>(<span class="string">".{stem}.tt{term}.pbcor"</span>),
+<a href=#1248 id=1248 data-nosnippet>1248</a>    }
+<a href=#1249 id=1249 data-nosnippet>1249</a>}
+<a href=#1250 id=1250 data-nosnippet>1250</a>
+<a href=#1251 id=1251 data-nosnippet>1251</a><span class="kw">fn </span>is_zeroth(term: ProductTerm) -&gt; bool {
+<a href=#1252 id=1252 data-nosnippet>1252</a>    <span class="macro">matches!</span>(term, ProductTerm::Single | ProductTerm::Taylor(<span class="number">0</span>))
+<a href=#1253 id=1253 data-nosnippet>1253</a>}
+<a href=#1254 id=1254 data-nosnippet>1254</a>
+<a href=#1255 id=1255 data-nosnippet>1255</a><span class="kw">fn </span>canonical_ids&lt;T: Ord&gt;(values: <span class="kw">impl </span>IntoIterator&lt;Item = T&gt;) -&gt; Box&lt;[T]&gt; {
+<a href=#1256 id=1256 data-nosnippet>1256</a>    <span class="kw">let </span><span class="kw-2">mut </span>values = values.into_iter().collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#1257 id=1257 data-nosnippet>1257</a>    values.sort_unstable();
+<a href=#1258 id=1258 data-nosnippet>1258</a>    values.dedup();
+<a href=#1259 id=1259 data-nosnippet>1259</a>    values.into_boxed_slice()
+<a href=#1260 id=1260 data-nosnippet>1260</a>}
+<a href=#1261 id=1261 data-nosnippet>1261</a>
+<a href=#1262 id=1262 data-nosnippet>1262</a><span class="kw">fn </span>write_hex(formatter: <span class="kw-2">&amp;mut </span>fmt::Formatter&lt;<span class="lifetime">'_</span>&gt;, bytes: <span class="kw-2">&amp;</span>[u8]) -&gt; fmt::Result {
+<a href=#1263 id=1263 data-nosnippet>1263</a>    <span class="kw">for </span>byte <span class="kw">in </span>bytes {
+<a href=#1264 id=1264 data-nosnippet>1264</a>        <span class="macro">write!</span>(formatter, <span class="string">"{byte:02x}"</span>)<span class="question-mark">?</span>;
 <a href=#1265 id=1265 data-nosnippet>1265</a>    }
-<a href=#1266 id=1266 data-nosnippet>1266</a>}
-<a href=#1267 id=1267 data-nosnippet>1267</a>
-<a href=#1268 id=1268 data-nosnippet>1268</a><span class="kw">fn </span>is_zeroth(term: ProductTerm) -&gt; bool {
-<a href=#1269 id=1269 data-nosnippet>1269</a>    <span class="macro">matches!</span>(term, ProductTerm::Single | ProductTerm::Taylor(<span class="number">0</span>))
-<a href=#1270 id=1270 data-nosnippet>1270</a>}
-<a href=#1271 id=1271 data-nosnippet>1271</a>
-<a href=#1272 id=1272 data-nosnippet>1272</a><span class="kw">fn </span>canonical_ids&lt;T: Ord&gt;(values: <span class="kw">impl </span>IntoIterator&lt;Item = T&gt;) -&gt; Box&lt;[T]&gt; {
-<a href=#1273 id=1273 data-nosnippet>1273</a>    <span class="kw">let </span><span class="kw-2">mut </span>values = values.into_iter().collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#1274 id=1274 data-nosnippet>1274</a>    values.sort_unstable();
-<a href=#1275 id=1275 data-nosnippet>1275</a>    values.dedup();
-<a href=#1276 id=1276 data-nosnippet>1276</a>    values.into_boxed_slice()
-<a href=#1277 id=1277 data-nosnippet>1277</a>}
-<a href=#1278 id=1278 data-nosnippet>1278</a>
-<a href=#1279 id=1279 data-nosnippet>1279</a><span class="kw">fn </span>write_hex(formatter: <span class="kw-2">&amp;mut </span>fmt::Formatter&lt;<span class="lifetime">'_</span>&gt;, bytes: <span class="kw-2">&amp;</span>[u8]) -&gt; fmt::Result {
-<a href=#1280 id=1280 data-nosnippet>1280</a>    <span class="kw">for </span>byte <span class="kw">in </span>bytes {
-<a href=#1281 id=1281 data-nosnippet>1281</a>        <span class="macro">write!</span>(formatter, <span class="string">"{byte:02x}"</span>)<span class="question-mark">?</span>;
-<a href=#1282 id=1282 data-nosnippet>1282</a>    }
-<a href=#1283 id=1283 data-nosnippet>1283</a>    <span class="prelude-val">Ok</span>(())
-<a href=#1284 id=1284 data-nosnippet>1284</a>}
+<a href=#1266 id=1266 data-nosnippet>1266</a>    <span class="prelude-val">Ok</span>(())
+<a href=#1267 id=1267 data-nosnippet>1267</a>}
 </code></pre></div></section></main></body></html>
