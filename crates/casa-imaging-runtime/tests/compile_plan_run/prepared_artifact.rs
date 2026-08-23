@@ -4,6 +4,13 @@ use super::*;
 
 const PREPARED_PAYLOAD_BYTES: u64 = (3 * 3 + 5 * 5) * 8;
 
+fn directory_entry_names(path: &std::path::Path) -> BTreeSet<std::ffi::OsString> {
+    fs::read_dir(path)
+        .expect("directory inventory")
+        .map(|entry| entry.expect("directory entry").file_name())
+        .collect()
+}
+
 fn forged_rejection_identity(
     planned: ArtifactIdentity,
     rejection: PreparedArtifactRejection,
@@ -2618,8 +2625,17 @@ fn orphan_staging_is_included_in_reuse_budget_and_receipt_evidence() {
             &prepared_storage_resource(&over_budget_descriptor, StorageUseKind::PersistentCache,),
             &ClaimLifetime::Work,
         ),
-        None,
-        "an uncapped overrun is rejected before receipt checkpointing"
+        Some(over_budget.cache_bytes() + 1),
+        "failure_measurements must retain the uncensored private-store overrun"
+    );
+    assert!(
+        receipt
+            .stage_actual_io(
+                &over_budget_descriptor.work_node_id(operation),
+                IoBufferKind::StorageManager,
+            )
+            .is_some_and(|(_, operations)| operations > 0),
+        "completed private-store inspection I/O must remain in the failure receipt"
     );
 }
 
@@ -2863,7 +2879,32 @@ fn prepared_resource_overrun_fails_closed_without_censoring_the_peak() {
             ResourceMeasurement::new(claim.resource.clone(), claim.lifetime.clone(), peak)
         })
         .collect();
-    let evidence = WorkMeasurements::new(resources, Vec::new(), Vec::new());
+    let actual_io = (321, 7);
+    let io = vec![IoMeasurement::new(
+        IoBufferKind::StorageManager,
+        actual_io.0,
+        actual_io.1,
+    )];
+    let ledger = descriptor.eviction_artifact(operation);
+    let artifacts = vec![
+        ArtifactMeasurement::new(
+            descriptor.identity(),
+            Some(ArtifactIdentity::from_sha256([157; 32])),
+            ArtifactDisposition::Built,
+            PREPARED_PAYLOAD_BYTES,
+            None,
+        )
+        .expect("materialized prepared-artifact evidence"),
+        ArtifactMeasurement::new(
+            ledger.identity(),
+            Some(ArtifactIdentity::from_sha256([158; 32])),
+            ArtifactDisposition::Loaded,
+            37,
+            None,
+        )
+        .expect("completed cache-mutation evidence"),
+    ];
+    let evidence = WorkMeasurements::new(resources, io, artifacts);
     let prepared_id = descriptor.work_implementation_id(operation);
     let registry = PreparedSuiteRegistry {
         id: registry(3),
@@ -2926,13 +2967,66 @@ fn prepared_resource_overrun_fails_closed_without_censoring_the_peak() {
             &LeaseResource::IoBuffer(IoBufferKind::StorageManager),
             &ClaimLifetime::Work,
         ),
-        None,
-        "invalid overrun evidence must not be checkpointed as if it were valid"
+        Some(reservation.resident_buffer_bytes() + 1),
+        "the immutable failure receipt must retain the uncensored observed overrun"
+    );
+    assert_eq!(
+        receipt.stage_actual_io(&node_id, IoBufferKind::StorageManager),
+        Some(actual_io),
+        "completed I/O must survive the evidence-contract failure"
+    );
+    assert_eq!(
+        receipt.artifact_disposition(descriptor.identity()),
+        Some(ArtifactDisposition::Built)
+    );
+    assert_eq!(
+        receipt.artifact_actual_bytes(ledger.identity()),
+        Some(37),
+        "completed cache mutations must survive the evidence-contract failure"
     );
 }
 
 #[test]
 fn public_prepared_cache_evicts_deterministically_and_rejects_casa_boundaries() {
+    for marker in ["table.dat", "table.info", "table.f0", "table.lock"] {
+        let table_root = tempfile::tempdir().expect("ordinary-named casacore table root");
+        fs::write(table_root.path().join(marker), b"casacore table marker")
+            .expect("casacore table marker");
+        let before = directory_entry_names(table_root.path());
+        assert!(matches!(
+            PreparedArtifactStore::open(table_root.path(), prepared_budget()),
+            Err(PreparedArtifactError::CasaVisiblePath(_))
+        ));
+        assert_eq!(directory_entry_names(table_root.path()), before);
+    }
+
+    let table_root = tempfile::tempdir().expect("nested casacore table root");
+    fs::write(
+        table_root.path().join("table.info"),
+        b"casacore table marker",
+    )
+    .expect("nested casacore table marker");
+    let before = directory_entry_names(table_root.path());
+    let nested_private_root = table_root.path().join("private-cache");
+    assert!(matches!(
+        PreparedArtifactStore::open(&nested_private_root, prepared_budget()),
+        Err(PreparedArtifactError::CasaVisiblePath(_))
+    ));
+    assert_eq!(directory_entry_names(table_root.path()), before);
+
+    #[cfg(unix)]
+    {
+        let symlink_parent = tempfile::tempdir().expect("casacore table symlink parent");
+        let symlink_root = symlink_parent.path().join("private-cache");
+        std::os::unix::fs::symlink(table_root.path(), &symlink_root)
+            .expect("casacore table symlink");
+        assert!(matches!(
+            PreparedArtifactStore::open(&symlink_root, prepared_budget()),
+            Err(PreparedArtifactError::CasaVisiblePath(_))
+        ));
+        assert_eq!(directory_entry_names(table_root.path()), before);
+    }
+
     let casa_root = tempfile::tempdir().expect("CASA-looking root contents");
     fs::create_dir(casa_root.path().join("foo.im")).expect("generic CASA image directory");
     assert!(matches!(

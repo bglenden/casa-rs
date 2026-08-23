@@ -1227,6 +1227,9 @@ impl ExecutionReceipt {
     }
 
     /// Return the adapter-reported peak for one admitted resource/lifetime pair.
+    ///
+    /// A failed node retains the uncensored observed peak, including a value
+    /// above the admitted amount that caused an evidence-contract failure.
     #[must_use]
     pub fn actual_resource_peak(
         &self,
@@ -4721,7 +4724,9 @@ fn validate_plan_projection(
                 && node.claims.iter().all(|claim| {
                     is_redacted_text(&claim.resource)
                         && claim_lifetime_is_valid(&claim.lifetime)
-                        && claim.actual_peak.is_none_or(|peak| peak <= claim.amount)
+                        && claim.actual_peak.is_none_or(|peak| {
+                            peak <= claim.amount || node.status == ReceiptStatus::Failed
+                        })
                 })
                 && node.io.iter().all(|io| {
                     io_buffer_is_valid(&io.kind)

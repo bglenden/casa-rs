@@ -2572,19 +2572,11 @@ fn validate_measurements(
                 lifetime: key.1,
             });
         }
-        let Some(planned) = claims.get(&key) else {
+        if !claims.contains_key(&key) {
             return Err(ExecutionEvidenceError::UnplannedResource {
                 node: node.clone(),
                 resource: key.0,
                 lifetime: key.1,
-            });
-        };
-        if measurement.peak() > *planned {
-            return Err(ExecutionEvidenceError::ResourcePeakExceeded {
-                node: node.clone(),
-                resource: key.0,
-                planned: *planned,
-                actual: measurement.peak(),
             });
         }
     }
@@ -2638,13 +2630,33 @@ fn validate_measurements(
         .filter(|artifact| artifact.node() == node)
         .map(|artifact| (artifact.identity(), artifact))
         .collect::<BTreeMap<_, _>>();
-    validate_artifact_measurements(
+    let artifact_error = match validate_artifact_measurements(
         node,
         work.node().kind,
         &planned_artifacts,
         measurements,
         require_all_artifacts,
-    )
+    ) {
+        Ok(()) => None,
+        Err(error @ ExecutionEvidenceError::RejectedArtifact { .. }) => Some(error),
+        Err(error) => return Err(error),
+    };
+
+    if let Some(error) = measured_claims.iter().find_map(|(key, actual)| {
+        let planned = claims
+            .get(key)
+            .expect("measured resource was proven plan-listed");
+        (*actual > *planned).then(|| ExecutionEvidenceError::ResourcePeakExceeded {
+            node: node.clone(),
+            resource: key.0.clone(),
+            planned: *planned,
+            actual: *actual,
+        })
+    }) {
+        return Err(error);
+    }
+
+    artifact_error.map_or(Ok(()), Err)
 }
 
 fn validate_artifact_measurements(
@@ -3135,20 +3147,22 @@ where
                                 }
                             }
                             Err(error) => {
-                                let rejected_artifact = matches!(
+                                let record_failed_measurements = matches!(
                                     &error,
                                     ExecutionEvidenceError::RejectedArtifact { .. }
+                                        | ExecutionEvidenceError::ResourcePeakExceeded { .. }
                                 );
                                 if pending.is_none() {
                                     pending = Some(PendingRunError::Evidence(error));
                                 }
                                 controller_stopped = true;
                                 let mut receipt_error = receipt.fences_launched(&node_id).err();
-                                if rejected_artifact {
-                                    // Retain the typed rejection evidence in the
-                                    // durable receipt before failing the cache
-                                    // node closed. A rejected warm artifact is
-                                    // not a successful cache result.
+                                if record_failed_measurements {
+                                    // Retain structurally valid completed
+                                    // evidence in the durable failure receipt.
+                                    // Rejected warm artifacts and uncensored
+                                    // resource overruns remain failures rather
+                                    // than successful cache results.
                                     if let Err(error) = receipt
                                         .work_failed_with_measurements(&node_id, &measurements)
                                         && receipt_error.is_none()
@@ -3195,11 +3209,22 @@ where
                                     defer_receipt_error(&mut scheduler, &mut pending, error);
                                 }
                             }
-                            Some((_, Err(error))) => {
+                            Some((measurements, Err(error))) => {
+                                let record_failed_measurements = matches!(
+                                    &error,
+                                    ExecutionEvidenceError::ResourcePeakExceeded { .. }
+                                );
                                 if pending.is_none() {
                                     pending = Some(PendingRunError::Evidence(error));
                                 }
-                                let _ = receipt.work_failed(&node_id);
+                                let receipt_result = if record_failed_measurements {
+                                    receipt.work_failed_with_measurements(&node_id, measurements)
+                                } else {
+                                    receipt.work_failed(&node_id)
+                                };
+                                if let Err(error) = receipt_result {
+                                    defer_receipt_error(&mut scheduler, &mut pending, error);
+                                }
                             }
                             None => {
                                 let _ = receipt.work_failed(&node_id);

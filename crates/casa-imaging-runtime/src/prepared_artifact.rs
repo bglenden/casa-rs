@@ -4279,12 +4279,17 @@ fn validate_existing_private_ancestors(path: &Path) -> Result<PathBuf, PreparedA
         let metadata = ancestor.symlink_metadata()?;
         let canonical = fs::canonicalize(ancestor)?;
         reject_casa_visible_root(&canonical)?;
-        if (index == 0 && metadata.file_type().is_symlink()) || !canonical.is_dir() {
+        if !canonical.is_dir() {
             return Err(PreparedArtifactError::UnknownCacheEntry(
                 ancestor.to_path_buf(),
             ));
         }
         reject_casa_cache_contents(&canonical)?;
+        if index == 0 && metadata.file_type().is_symlink() {
+            return Err(PreparedArtifactError::UnknownCacheEntry(
+                ancestor.to_path_buf(),
+            ));
+        }
         nearest.get_or_insert(canonical);
     }
     nearest.ok_or_else(|| PreparedArtifactError::UnknownCacheEntry(path.to_path_buf()))
@@ -4399,11 +4404,21 @@ fn reject_casa_cache_contents(root: &Path) -> Result<(), PreparedArtifactError> 
         let name = path
             .file_name()
             .ok_or_else(|| PreparedArtifactError::UnknownCacheEntry(path.clone()))?;
-        if casa_visible_name(&name.to_string_lossy()) {
+        let name = name.to_string_lossy();
+        if casa_visible_name(&name) || casacore_table_marker_name(&name) {
             return Err(PreparedArtifactError::CasaVisiblePath(path));
         }
     }
     Ok(())
+}
+
+fn casacore_table_marker_name(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    matches!(name.as_str(), "table.dat" | "table.info" | "table.lock")
+        || name
+            .strip_prefix("table.f")
+            .and_then(|suffix| suffix.as_bytes().first())
+            .is_some_and(u8::is_ascii_digit)
 }
 
 fn casa_visible_name(name: &str) -> bool {
