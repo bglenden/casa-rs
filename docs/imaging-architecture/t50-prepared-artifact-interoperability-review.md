@@ -47,12 +47,24 @@ validation. A later native backend may translate an
 after it maps the adapter's exact paired metadata into the T50 descriptor; that
 integration is outside T50 and must appear as explicit plan-listed work.
 
-Generation and cold load therefore accept only bounded absolute regular-file
-source descriptors. The runtime opens one source at a time under the cache
-node's lease, rejects CASA image, MeasurementSet, and table ancestry, and folds
-source-descriptor residency and source-read traffic into the same physical
-buffer reservation used for private-store streaming. This execution-local path
-contract is not a CASA cache reader and is never persisted as provenance.
+Generation executes through the implementation adapter selected by the
+canonical registry and fills only the store-owned bounded buffer; it cannot
+copy caller-selected source paths. Cold load accepts content-committed regular
+files only through a source artifact listed in the canonical plan, owned by an
+exact predecessor/import node, and retained in that predecessor's receipt.
+The load node verifies the source identity and digests while its lease is live,
+opens one source at a time, rejects CASA image, MeasurementSet, and table
+ancestry, and accounts source-descriptor residency and source-read traffic in
+the same physical reservation used for private-store streaming. Execution-local
+locators are neither identity-bearing provenance nor persisted in the cache.
+
+Prepared-artifact identity commits only to the registry/catalog owner,
+implementation version, compiled scientific commitments, artifact kind, and
+canonical named layout. Cache-root identity, byte and entry budgets, streaming
+policy, and eviction policy belong only to `CacheIdentity`, so relocating the
+same immutable bytes or changing cache policy cannot change content identity.
+Provider/catalog metadata is obtained through the exact implementation
+registry record; callers cannot pass an owner record directly to a descriptor.
 
 T50 also does not add or expand a provider-contract bundle. The private cache is
 an execution implementation detail. It uses ADR-0010's canonical

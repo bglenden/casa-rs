@@ -2102,6 +2102,12 @@ impl<'a> WorkExecutionContext<'a> {
             .filter(move |artifact| artifact.node() == node)
     }
 
+    pub(crate) fn plan_artifact(self, identity: ArtifactIdentity) -> Option<&'a PlannedArtifact> {
+        self.planned_artifacts
+            .iter()
+            .find(|artifact| artifact.identity() == identity)
+    }
+
     /// Return the canonical prediction for this exact node.
     #[must_use]
     pub const fn stage_prediction(self) -> &'a StagePrediction {
@@ -2397,6 +2403,19 @@ pub trait ImplementationRegistry {
 
     /// Resolve one implementation without substituting another candidate.
     fn resolve(&self, id: &WorkImplementationId) -> Option<&Self::Implementation>;
+
+    /// Resolve the canonical provider/catalog registration for preparation
+    /// owned by one implementation in this exact registry snapshot.
+    ///
+    /// Registries that do not own prepared artifacts leave this absent. A
+    /// prepared descriptor can only mint its closed owner through this lookup;
+    /// caller-authored provider strings are not accepted by the descriptor.
+    fn prepared_artifact_registration(
+        &self,
+        _implementation: &WorkImplementationId,
+    ) -> Option<&crate::prepared_artifact::PreparedArtifactRegistration> {
+        None
+    }
 }
 
 /// Immutable scheduler state exposed to a run controller without exposing the

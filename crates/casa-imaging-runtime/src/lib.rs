@@ -37,12 +37,13 @@ pub use observation_transaction::{
 pub use prepared_artifact::{
     PreparedArtifact, PreparedArtifactAwInterpretation, PreparedArtifactBudget,
     PreparedArtifactCellKey, PreparedArtifactDescriptor, PreparedArtifactError,
-    PreparedArtifactKernelAlgorithm, PreparedArtifactKernelKey, PreparedArtifactKind,
-    PreparedArtifactOperation, PreparedArtifactOrder, PreparedArtifactOwner,
-    PreparedArtifactPlaneDescriptor, PreparedArtifactPrecision, PreparedArtifactRejection,
-    PreparedArtifactReservation, PreparedArtifactReuseOutcome, PreparedArtifactScientificKey,
-    PreparedArtifactSegmentDescriptor, PreparedArtifactSegmentInput,
-    PreparedArtifactSpectralMapKey, PreparedArtifactStore, PreparedArtifactUvAffine,
+    PreparedArtifactGenerator, PreparedArtifactKernelAlgorithm, PreparedArtifactKernelKey,
+    PreparedArtifactKind, PreparedArtifactLoadSource, PreparedArtifactOperation,
+    PreparedArtifactOrder, PreparedArtifactPlaneDescriptor, PreparedArtifactPrecision,
+    PreparedArtifactRegistration, PreparedArtifactRejection, PreparedArtifactReservation,
+    PreparedArtifactReuseOutcome, PreparedArtifactScientificKey, PreparedArtifactSegmentDescriptor,
+    PreparedArtifactSourceSegment, PreparedArtifactSpectralMapKey, PreparedArtifactStore,
+    PreparedArtifactUvAffine,
 };
 pub use publication_layout::{
     PhysicalLayoutId, PublicationBoundKind, PublicationLayoutError, PublicationLayoutLedger,
