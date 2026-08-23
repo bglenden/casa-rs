@@ -44,7 +44,13 @@ reconstruction completions and depends only inward on the model.
 and depends inward on the model plus reconstruction's opaque executable-problem
 brand. That reconstruction edge is limited to admitting owner-prepared model
 inputs at the execution and receipt boundary; runtime does not own or invoke
-reprojection algorithms.
+reprojection algorithms. Runtime also owns content-addressed prepared
+implementation artifacts: exact compatibility
+identity, bounded generation or load, integrity validation, private atomic
+caching, and deterministic eviction. That private casa-rs cache is not Product
+Graph authority or a CASA-visible persisted format. Existing CASA CFS/WTCFS
+directories remain read-only interoperability inputs supplied through the
+validated legacy adapter; the runtime neither mutates them nor creates sidecars.
 `casa-imaging-router` is the application-layer owner of the one pre-plan
 migration decision. It compiles the logical request, derives every applicable
 matrix row, records the authoritative row evidence, and invokes exactly one

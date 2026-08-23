@@ -96,6 +96,18 @@ digest_identity!(
     "Stable content identity of one cache namespace and compatibility contract."
 );
 
+impl ArtifactIdentity {
+    pub(crate) const fn from_owner_digest(digest: [u8; 32]) -> Self {
+        Self(digest)
+    }
+}
+
+impl CacheIdentity {
+    pub(crate) const fn from_owner_digest(digest: [u8; 32]) -> Self {
+        Self(digest)
+    }
+}
+
 /// Fixed-point confidence in a conservative planner prediction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PredictionConfidence(u32);
@@ -1944,6 +1956,8 @@ impl<'a> CompiledWorkContext<'a> {
 pub struct WorkExecutionContext<'a> {
     compiled: CompiledWorkContext<'a>,
     scheduled: &'a crate::execution::WorkExecutionContext,
+    planned_artifacts: &'a [PlannedArtifact],
+    stage_prediction: &'a StagePrediction,
     observation_consistency: Option<&'a ObservationTransactionContract>,
     observation_reads: Option<&'a ObservationReadSet>,
     model_writes: Option<&'a ObservationWriteSet>,
@@ -1986,6 +2000,20 @@ impl<'a> WorkExecutionContext<'a> {
     #[must_use]
     pub fn allocations(self) -> &'a [crate::WorkAllocationCapability] {
         self.scheduled.allocations()
+    }
+
+    /// Return the canonical plan-listed artifacts owned by this exact node.
+    pub fn planned_artifacts(self) -> impl Iterator<Item = &'a PlannedArtifact> + 'a {
+        let node = &self.scheduled.node().id;
+        self.planned_artifacts
+            .iter()
+            .filter(move |artifact| artifact.node() == node)
+    }
+
+    /// Return the canonical prediction for this exact node.
+    #[must_use]
+    pub const fn stage_prediction(self) -> &'a StagePrediction {
+        self.stage_prediction
     }
 
     /// Return the expected observation state only for the initial consistency check.
@@ -2538,63 +2566,69 @@ fn validate_work_measurements(
 
 fn work_execution_context<'a>(
     problem: &'a CompiledProblem,
-    transaction: &BoundObservationTransaction,
+    plan: &'a ExecutionPlan,
     work: &'a crate::execution::WorkExecutionContext,
 ) -> WorkExecutionContext<'a> {
     let compiled = CompiledWorkContext { problem };
-    let transaction_work = transaction.work();
+    let transaction_work = plan.observation_transaction.work();
+    let common = |observation_consistency,
+                  observation_reads,
+                  model_writes,
+                  publication,
+                  publication_resources| WorkExecutionContext {
+        compiled,
+        scheduled: work,
+        planned_artifacts: &plan.artifacts,
+        stage_prediction: &plan.prediction.stages[&work.node().id],
+        observation_consistency,
+        observation_reads,
+        model_writes,
+        publication,
+        publication_resources,
+    };
     if work.node().kind == WorkKind::ObservationRead {
-        WorkExecutionContext {
-            compiled,
-            scheduled: work,
-            observation_consistency: None,
-            observation_reads: Some(problem.observation_transaction().read_set()),
-            model_writes: None,
-            publication: None,
-            publication_resources: None,
-        }
+        common(
+            None,
+            Some(problem.observation_transaction().read_set()),
+            None,
+            None,
+            None,
+        )
     } else if transaction_work.model_column_staging() == Some(&work.node().id) {
-        WorkExecutionContext {
-            compiled,
-            scheduled: work,
-            observation_consistency: None,
-            observation_reads: None,
-            model_writes: Some(problem.observation_transaction().write_set()),
-            publication: None,
-            publication_resources: None,
-        }
+        common(
+            None,
+            None,
+            Some(problem.observation_transaction().write_set()),
+            None,
+            None,
+        )
     } else if transaction_work.commit() == &work.node().id {
-        WorkExecutionContext {
-            compiled,
-            scheduled: work,
-            observation_consistency: None,
-            observation_reads: None,
-            model_writes: None,
-            publication: Some(problem.observation_transaction()),
-            publication_resources: None,
-        }
+        common(
+            None,
+            None,
+            None,
+            Some(problem.observation_transaction()),
+            None,
+        )
     } else {
-        WorkExecutionContext {
-            compiled,
-            scheduled: work,
-            observation_consistency: (transaction_work.initial_consistency_check()
-                == &work.node().id)
+        common(
+            (transaction_work.initial_consistency_check() == &work.node().id)
                 .then_some(problem.observation_transaction()),
-            observation_reads: None,
-            model_writes: None,
-            publication: None,
-            publication_resources: None,
-        }
+            None,
+            None,
+            None,
+            None,
+        )
     }
 }
 
 fn publication_execution_context<'a>(
     problem: &'a CompiledProblem,
-    transaction: &BoundObservationTransaction,
+    plan: &'a ExecutionPlan,
     work: &'a crate::execution::WorkExecutionContext,
     reservation: &'a PublicationReservation,
 ) -> WorkExecutionContext<'a> {
-    let mut context = work_execution_context(problem, transaction, work);
+    let mut context = work_execution_context(problem, plan, work);
     context.publication_resources = Some(PublicationResources { reservation });
     context
 }
@@ -2854,7 +2888,7 @@ where
                     }
                     continue;
                 }
-                let context = work_execution_context(problem, &plan.observation_transaction, &work);
+                let context = work_execution_context(problem, plan, &work);
                 match implementation.execute(context) {
                     Ok(measurements) => {
                         if work.node().kind == WorkKind::Publication {
@@ -3035,8 +3069,7 @@ where
                 };
                 let implementation = implementations[&work.node().implementation];
                 let fence_work = work.for_fence(fence.kind());
-                let context =
-                    work_execution_context(problem, &plan.observation_transaction, &fence_work);
+                let context = work_execution_context(problem, plan, &fence_work);
                 if let Err(source) = implementation.wait_for_fence(context, fence.kind()) {
                     if pending.is_none() {
                         pending = Some(PendingRunError::Execution {
@@ -3158,12 +3191,7 @@ where
                     ))
                 })?;
                 let implementation = implementations[&work.node().implementation];
-                let context = publication_execution_context(
-                    problem,
-                    &plan.observation_transaction,
-                    work,
-                    &resources,
-                );
+                let context = publication_execution_context(problem, plan, work, &resources);
                 let prepared = receipt.prepare_publication().map_err(RunError::Receipt)?;
                 match implementation.publish(context) {
                     Ok(()) => {

@@ -6,6 +6,7 @@ mod execution;
 mod execution_bindings;
 mod observation_transaction;
 mod publication_layout;
+mod prepared_artifact;
 mod receipt;
 mod resource_authority;
 
@@ -38,6 +39,14 @@ pub use publication_layout::{
     PublicationMappedStaging, PublicationParticipant, PublicationPhysicalLayout,
     PublicationResourceBounds, PublicationResourceBoundsError, PublicationStaging,
     PublicationStagingError,
+};
+pub use prepared_artifact::{
+    PreparedArtifact, PreparedArtifactAvailability, PreparedArtifactBudget,
+    PreparedArtifactDescriptor, PreparedArtifactError, PreparedArtifactKind,
+    PreparedArtifactOperation, PreparedArtifactOrder, PreparedArtifactOwner,
+    PreparedArtifactPlaneDescriptor, PreparedArtifactPrecision, PreparedArtifactReservation,
+    PreparedArtifactSegmentDescriptor, PreparedArtifactSegmentInput, PreparedArtifactStore,
+    PreparedArtifactUvAffine,
 };
 pub use receipt::{
     BuildIdentity, CompiledProblemEvidence, ExecutionAttemptId, ExecutionProvenance,
