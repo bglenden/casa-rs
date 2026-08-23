@@ -493,6 +493,78 @@ class ArchitecturePolicyTests(unittest.TestCase):
                         {"source_boundaries": [boundary]}, root
                     )
 
+    def test_t15_walking_skeleton_rejects_every_public_rust_item_form(self) -> None:
+        boundary = next(
+            value
+            for value in self.policy["source_boundaries"]
+            if value["id"] == "t15-private-walking-skeleton"
+        )
+        public_items = [
+            "pub(crate) async fn leaked_async() {}\n",
+            "pub union LeakedUnion { value: u64 }\n",
+            "pub const LEAKED_CONST: usize = 0;\n",
+            "pub static LEAKED_STATIC: usize = 0;\n",
+            "pub static mut LEAKED_MUT_STATIC: usize = 0;\n",
+            "pub(in crate::private) type LeakedType = usize;\n",
+            'pub(crate) unsafe extern "C" fn leaked_ffi() {}\n',
+            "pub struct LeakedStruct;\n",
+            "pub enum LeakedEnum {}\n",
+            "pub trait LeakedTrait {}\n",
+            "pub mod leaked_module {}\n",
+            "pub use super::private_item;\n",
+            "pub macro leaked_macro() {}\n",
+            "pub macro_rules! leaked_macro_rules { () => {}; }\n",
+        ]
+        for source_text in public_items:
+            with (
+                self.subTest(source=source_text),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root = Path(directory)
+                fixture = root / boundary["roots"][0] / "walking_skeleton.rs"
+                fixture.parent.mkdir(parents=True)
+                fixture.write_text(source_text, encoding="utf-8")
+                with self.assertRaisesRegex(
+                    checker.ArchitectureError,
+                    r"T15 walking skeleton must remain private test code",
+                ):
+                    checker.validate_source_boundaries(
+                        {"source_boundaries": [boundary]}, root
+                    )
+
+    def test_t15_parent_support_boundary_rejects_public_items_and_authority_aliases(
+        self,
+    ) -> None:
+        boundary = next(
+            value
+            for value in self.policy["source_boundaries"]
+            if value["id"] == "t15-private-parent-support"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / boundary["roots"][0]
+            source.parent.mkdir(parents=True)
+            source.write_text("fn private_support() {}\n", encoding="utf-8")
+            checker.validate_source_boundaries(
+                {"source_boundaries": [boundary]}, root
+            )
+            for source_text, message in [
+                (
+                    "pub(crate) fn leaked_support() {}\n",
+                    r"T15 parent compile_plan_run support must remain private test code",
+                ),
+                (
+                    "struct ExecutionScheduler;\n",
+                    r"T15 parent compile_plan_run support creates alternate execution authority",
+                ),
+            ]:
+                with self.subTest(source=source_text):
+                    source.write_text(source_text, encoding="utf-8")
+                    with self.assertRaisesRegex(checker.ArchitectureError, message):
+                        checker.validate_source_boundaries(
+                            {"source_boundaries": [boundary]}, root
+                        )
+
     def test_transitional_frontend_boundary_rejects_forbidden_symbol_replacement(
         self,
     ) -> None:

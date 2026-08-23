@@ -53,7 +53,7 @@ ACCEPTED_LOGICAL_GRAPH_SHA256 = (
     "7101b6d90196b1ea3d3c750080d703bb5e305e91c8ac19553e1dda7ed58c4e33"
 )
 ACCEPTED_SOURCE_BOUNDARIES_SHA256 = (
-    "f952ec8446432d2c57c2f9217b32c9d920a52e6331b3807ceff273861a4f1a8a"
+    "5a62611b91d9a2cf4898b84caceff41bcfe6397b08fb4a549d20dc8c08c04d13"
 )
 ACCEPTED_FROZEN_TRANSITIONAL_EDGES_SHA256 = (
     "0077e28528d2160616d34e17fb7124586f346557917e0bfac99b0dff6739a1d1"
@@ -878,11 +878,15 @@ def source_boundary_violations(
     extensions = set(boundary["extensions"])
     for root_text in boundary["roots"]:
         root = repo_root / root_text
-        if not root.is_dir():
+        if root.is_file():
+            paths = [root]
+        elif root.is_dir():
+            paths = sorted(root.rglob("*"))
+        else:
             raise ArchitectureError(
                 f"source boundary {boundary['id']} cannot read root {root_text}"
             )
-        for path in sorted(root.rglob("*")):
+        for path in paths:
             if not path.is_file() or path.suffix not in extensions:
                 continue
             try:

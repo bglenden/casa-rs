@@ -169,7 +169,7 @@
       ],
       "forbidden_patterns": [
         {
-          "regex": "(?m)^\\s*pub(?:\\([^\\n)]*\\))?\\s+(?:struct|enum|trait|type|fn|mod|use)\\b",
+          "regex": "(?m)^\\s*pub(?:\\s*\\([^\\n)]*\\))?\\s+(?:(?:async|unsafe|const|extern(?:\\s+\"[^\"]+\")?|default)\\s+)*(?:struct|enum|union|trait|type|fn|const|static(?:\\s+mut)?|mod|use|extern\\s+crate|macro(?:_rules!)?)(?=\\s|[<{])",
           "message": "T15 walking skeleton must remain private test code"
         },
         {
@@ -183,6 +183,26 @@
         {
           "regex": "\\b(?:ExecutionScheduler|NativeEnginePort|LegacyWholeRunEnginePort|authority_plan|authority_run)\\b",
           "message": "T15 walking skeleton creates alternate execution authority"
+        }
+      ],
+      "accepted_violation_digest": null
+    },
+    {
+      "id": "t15-private-parent-support",
+      "roots": [
+        "crates/casa-imaging-runtime/tests/compile_plan_run.rs"
+      ],
+      "extensions": [
+        ".rs"
+      ],
+      "forbidden_patterns": [
+        {
+          "regex": "(?m)^\\s*pub(?:\\s*\\([^\\n)]*\\))?\\s+(?:(?:async|unsafe|const|extern(?:\\s+\"[^\"]+\")?|default)\\s+)*(?:struct|enum|union|trait|type|fn|const|static(?:\\s+mut)?|mod|use|extern\\s+crate|macro(?:_rules!)?)(?=\\s|[<{])",
+          "message": "T15 parent compile_plan_run support must remain private test code"
+        },
+        {
+          "regex": "\\b(?:ExecutionScheduler|NativeEnginePort|LegacyWholeRunEnginePort|authority_plan|authority_run)\\b",
+          "message": "T15 parent compile_plan_run support creates alternate execution authority"
         }
       ],
       "accepted_violation_digest": null
