@@ -8,7 +8,7 @@ use std::{
     fmt,
     fs::{self, File, OpenOptions},
     io::{self, BufReader, Read, Write},
-    mem::size_of,
+    mem::{size_of, size_of_val},
     path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard, OnceLock, Weak},
 };
@@ -56,6 +56,11 @@ const MAX_MANIFEST_SEGMENTS: usize = 64;
 const MAX_ENTRY_FILES: usize = 2;
 const STREAMING_BUFFER_CEILING: usize = 64 * 1024;
 const MAX_CACHE_COMPONENT_BYTES: usize = 255;
+const MAX_IDENTIFIER_BYTES: usize = 256;
+// Source descriptors are execution-local paths, not persisted names. Bounding
+// them makes their complete owned residency plan-visible without relying on a
+// platform-specific PATH_MAX value.
+const MAX_SOURCE_PATH_BYTES: usize = 4 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct CacheInventoryEntry {
@@ -1339,6 +1344,9 @@ pub struct PreparedArtifactReservation {
     persistent_cache_bytes: u64,
     entry_bytes: u64,
     temporary_staging_bytes: u64,
+    source_read_bytes: u64,
+    file_descriptors: u64,
+    source_descriptor_bytes: u64,
     streaming_buffer_bytes: u64,
     resident_buffer_bytes: u64,
 }
@@ -1362,6 +1370,30 @@ impl PreparedArtifactReservation {
         self.temporary_staging_bytes
     }
 
+    /// Return the hard source-file byte-read ceiling.
+    ///
+    /// Generation and load reserve the exact payload bytes plus one bounded
+    /// oversize probe per named segment. Reuse has no external source read.
+    #[must_use]
+    pub const fn source_read_bytes(self) -> u64 {
+        self.source_read_bytes
+    }
+
+    /// Return the peak file-descriptor claim for the complete operation.
+    ///
+    /// Generation and load hold the private-store lock, staged payload, and at
+    /// most one sequential source file. Reuse never opens a source file.
+    #[must_use]
+    pub const fn file_descriptors(self) -> u64 {
+        self.file_descriptors
+    }
+
+    /// Return the source-descriptor component of the resident-memory claim.
+    #[must_use]
+    pub const fn source_descriptor_bytes(self) -> u64 {
+        self.source_descriptor_bytes
+    }
+
     /// Return the streaming-buffer component of the resident-buffer claim.
     #[must_use]
     pub const fn streaming_buffer_bytes(self) -> u64 {
@@ -1375,17 +1407,48 @@ impl PreparedArtifactReservation {
     }
 }
 
-/// One private named byte stream supplied to generation or load.
-pub struct PreparedArtifactSegmentInput<'a> {
-    name: &'a str,
-    source: &'a mut dyn Read,
+/// One private named regular-file source supplied to generation or load.
+///
+/// The store opens this path only while the plan node's resource lease is
+/// live, reads source files sequentially, and owns the only streaming buffer.
+/// Consequently callers cannot hide an arbitrary reader, resident payload, or
+/// file descriptor behind this boundary. The source path is execution-local;
+/// it is neither persisted nor treated as CASA-cache provenance.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PreparedArtifactSegmentInput {
+    name: Box<str>,
+    source: Box<Path>,
 }
 
-impl<'a> PreparedArtifactSegmentInput<'a> {
-    /// Bind a byte stream to one descriptor segment name.
-    #[must_use]
-    pub fn new(name: &'a str, source: &'a mut dyn Read) -> Self {
-        Self { name, source }
+impl PreparedArtifactSegmentInput {
+    /// Maximum encoded bytes in one execution-local source path.
+    ///
+    /// This capability bound is independent of the host's path limit and lets
+    /// planning reserve source-descriptor residency before the file exists.
+    pub const MAX_PATH_BYTES: usize = MAX_SOURCE_PATH_BYTES;
+
+    /// Bind one absolute, bounded source path to a descriptor segment name.
+    ///
+    /// The file may be produced by an earlier plan node and therefore need not
+    /// exist until this input is consumed. Relative and unbounded paths fail
+    /// before execution so their interpretation and residency cannot depend on
+    /// process state.
+    pub fn new(
+        name: impl Into<String>,
+        source: impl Into<PathBuf>,
+    ) -> Result<Self, PreparedArtifactError> {
+        let name = name.into();
+        let source = source.into();
+        if !valid_segment_name(&name)
+            || !source.is_absolute()
+            || source.as_os_str().as_encoded_bytes().len() > Self::MAX_PATH_BYTES
+        {
+            return Err(PreparedArtifactError::InvalidSource);
+        }
+        Ok(Self {
+            name: name.into_boxed_str(),
+            source: source.into_boxed_path(),
+        })
     }
 }
 
@@ -1527,9 +1590,25 @@ impl PreparedArtifactStore {
         let streaming_buffer_bytes = u64::try_from(streaming_buffer_len(self.budget, descriptor)?)
             .map_err(|_| PreparedArtifactError::ArtifactTooLarge)?;
         let inventory_resident_bytes = inventory_resident_reservation(&self.cache, self.budget)?;
+        let source_descriptor_bytes = if operation == PreparedArtifactOperation::Reuse {
+            0
+        } else {
+            source_descriptor_reservation(descriptor.segments.len())?
+        };
+        let source_read_bytes = if operation == PreparedArtifactOperation::Reuse {
+            0
+        } else {
+            payload_bytes
+                .checked_add(
+                    u64::try_from(descriptor.segments.len())
+                        .map_err(|_| PreparedArtifactError::ArtifactTooLarge)?,
+                )
+                .ok_or(PreparedArtifactError::ArtifactTooLarge)?
+        };
         let resident_buffer_bytes = streaming_buffer_bytes
             .checked_add(MANIFEST_RESIDENT_BYTES)
             .and_then(|bytes| bytes.checked_add(inventory_resident_bytes))
+            .and_then(|bytes| bytes.checked_add(source_descriptor_bytes))
             .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
         Ok(PreparedArtifactReservation {
             persistent_cache_bytes: self.budget.cache_bytes,
@@ -1539,6 +1618,13 @@ impl PreparedArtifactStore {
             } else {
                 entry_bytes
             },
+            source_read_bytes,
+            file_descriptors: if operation == PreparedArtifactOperation::Reuse {
+                2
+            } else {
+                3
+            },
+            source_descriptor_bytes,
             streaming_buffer_bytes,
             resident_buffer_bytes,
         })
@@ -1552,7 +1638,7 @@ impl PreparedArtifactStore {
         &self,
         context: &WorkExecutionContext<'_>,
         descriptor: &PreparedArtifactDescriptor,
-        segments: &mut [PreparedArtifactSegmentInput<'_>],
+        segments: &[PreparedArtifactSegmentInput],
     ) -> Result<(PreparedArtifact, WorkMeasurements), PreparedArtifactError> {
         self.publish(
             context,
@@ -1572,7 +1658,7 @@ impl PreparedArtifactStore {
         &self,
         context: &WorkExecutionContext<'_>,
         descriptor: &PreparedArtifactDescriptor,
-        segments: &mut [PreparedArtifactSegmentInput<'_>],
+        segments: &[PreparedArtifactSegmentInput],
     ) -> Result<(PreparedArtifact, WorkMeasurements), PreparedArtifactError> {
         self.publish(
             context,
@@ -1716,11 +1802,12 @@ impl PreparedArtifactStore {
         descriptor: &PreparedArtifactDescriptor,
         operation: PreparedArtifactOperation,
         disposition: ArtifactDisposition,
-        segments: &mut [PreparedArtifactSegmentInput<'_>],
+        segments: &[PreparedArtifactSegmentInput],
     ) -> Result<(PreparedArtifact, WorkMeasurements), PreparedArtifactError> {
         let reservation = self.reservation(descriptor, operation)?;
         validate_plan_binding(*context, descriptor, operation, reservation)?;
         let mut evidence = ValidationEvidence::new(self.budget);
+        evidence.observe_source_inputs(segments);
         let mut lock = match self.lock(&mut evidence) {
             Ok(lock) => lock,
             Err(error) => {
@@ -1774,7 +1861,7 @@ impl PreparedArtifactStore {
         &self,
         descriptor: &PreparedArtifactDescriptor,
         disposition: ArtifactDisposition,
-        segments: &mut [PreparedArtifactSegmentInput<'_>],
+        segments: &[PreparedArtifactSegmentInput],
         reservation: PreparedArtifactReservation,
         evidence: &mut ValidationEvidence,
     ) -> Result<(ValidatedArtifact, ArtifactDisposition, u64), PreparedArtifactError> {
@@ -1801,10 +1888,11 @@ impl PreparedArtifactStore {
             let mut payload_hasher = Sha256::new();
             let mut offset = 0_u64;
             let mut manifest_segments = Vec::with_capacity(descriptor.segments.len());
-            for (segment, input) in descriptor.segments.iter().zip(segments.iter_mut()) {
+            for (segment, input) in descriptor.segments.iter().zip(segments) {
                 let bytes = segment.byte_len()?;
+                let mut source = self.open_segment_source(input, segment, evidence)?;
                 let digest = stream_segment(
-                    input.source,
+                    &mut source,
                     &mut payload,
                     &mut payload_hasher,
                     &mut buffer,
@@ -1934,6 +2022,36 @@ impl PreparedArtifactStore {
         match (result, cleanup) {
             (Ok(result), Ok(())) => Ok(result),
             (Err(error), _) | (Ok(_), Err(error)) => Err(error),
+        }
+    }
+
+    fn open_segment_source(
+        &self,
+        input: &PreparedArtifactSegmentInput,
+        segment: &PreparedArtifactSegmentDescriptor,
+        evidence: &mut ValidationEvidence,
+    ) -> Result<File, PreparedArtifactError> {
+        reject_casa_visible_root(&input.source)?;
+        evidence.source_read_operation();
+        let source = fs::canonicalize(&input.source).map_err(map_incomplete)?;
+        evidence.observe_canonical_source_path(&source);
+        reject_casa_source_path(&source, evidence)?;
+        if source.starts_with(&self.root) {
+            return Err(PreparedArtifactError::InvalidSource);
+        }
+        evidence.source_read_operation();
+        let file = File::open(&source).map_err(map_incomplete)?;
+        evidence.observe_file_descriptors(3);
+        evidence.source_read_operation();
+        let metadata = file.metadata().map_err(map_incomplete)?;
+        if !metadata.file_type().is_file() {
+            return Err(PreparedArtifactError::InvalidSource);
+        }
+        let expected = segment.byte_len()?;
+        match metadata.len().cmp(&expected) {
+            std::cmp::Ordering::Less => Err(PreparedArtifactError::IncompleteArtifact),
+            std::cmp::Ordering::Greater => Err(PreparedArtifactError::OversizedArtifact),
+            std::cmp::Ordering::Equal => Ok(file),
         }
     }
 
@@ -2109,25 +2227,26 @@ impl PreparedArtifactStore {
                 .to_string_lossy();
             evidence.store_read_operation();
             let metadata = path.symlink_metadata()?;
-            if name.starts_with(STAGING_PREFIX) {
+            let bytes = if name.starts_with(STAGING_PREFIX) {
                 if !metadata.file_type().is_dir() {
                     return Err(PreparedArtifactError::UnknownCacheEntry(path));
                 }
-                continue;
-            }
-            let digest = decode_digest(&name)
-                .filter(|digest| name == encode_hex(digest))
-                .ok_or_else(|| PreparedArtifactError::UnknownCacheEntry(path.clone()))?;
-            let identity = ArtifactIdentity::from_owner_digest(digest);
-            let bytes = if metadata.file_type().is_dir() {
-                if identity != planned {
-                    validate_entry_inventory(&path, evidence)?;
-                }
                 directory_size_counted(&path, evidence)?
-            } else if identity == planned {
-                metadata.len()
             } else {
-                return Err(PreparedArtifactError::UnknownCacheEntry(path));
+                let digest = decode_digest(&name)
+                    .filter(|digest| name == encode_hex(digest))
+                    .ok_or_else(|| PreparedArtifactError::UnknownCacheEntry(path.clone()))?;
+                let identity = ArtifactIdentity::from_owner_digest(digest);
+                if metadata.file_type().is_dir() {
+                    if identity != planned {
+                        validate_entry_inventory(&path, evidence)?;
+                    }
+                    directory_size_counted(&path, evidence)?
+                } else if identity == planned {
+                    metadata.len()
+                } else {
+                    return Err(PreparedArtifactError::UnknownCacheEntry(path));
+                }
             };
             total = total
                 .checked_add(bytes)
@@ -2136,6 +2255,7 @@ impl PreparedArtifactStore {
                 .checked_add(1)
                 .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
         }
+        evidence.observe_cache_bytes(total);
         if total > self.budget.cache_bytes {
             return Err(PreparedArtifactError::CacheBudgetExceeded {
                 required: total,
@@ -2148,7 +2268,6 @@ impl PreparedArtifactStore {
                 budget: self.budget.entries,
             });
         }
-        evidence.observe_cache_bytes(total);
         Ok(total)
     }
 
@@ -2591,8 +2710,10 @@ pub enum PreparedArtifactError {
     MissingReservation(&'static str),
     /// The node attempted to combine prepared-cache work with product publication.
     ProductAuthorityViolation,
-    /// Named byte streams did not exactly match the canonical descriptor order.
+    /// Named sources did not exactly match the canonical descriptor order.
     SegmentMismatch,
+    /// A source descriptor was relative, unbounded, non-regular, or cache-owned.
+    InvalidSource,
     /// A stream or published entry ended before its exact size.
     IncompleteArtifact,
     /// A stream or published entry exceeded its exact size.
@@ -2625,7 +2746,7 @@ pub enum PreparedArtifactError {
     PublicationConflict,
     /// A non-staging path did not belong to the private cache schema.
     UnknownCacheEntry(PathBuf),
-    /// The configured path is or contains a CASA-visible cache name.
+    /// A configured cache or source path belongs to CASA-visible persistence.
     CasaVisiblePath(PathBuf),
     /// An in-process cache lock was poisoned by a prior panic.
     PoisonedStore,
@@ -2688,7 +2809,10 @@ impl fmt::Display for PreparedArtifactError {
             Self::ProductAuthorityViolation => formatter
                 .write_str("prepared-artifact cache work cannot own Product Graph publication"),
             Self::SegmentMismatch => formatter
-                .write_str("prepared-artifact streams do not match the canonical named segments"),
+                .write_str("prepared-artifact sources do not match the canonical named segments"),
+            Self::InvalidSource => formatter.write_str(
+                "prepared-artifact source must be a bounded absolute regular-file path outside the private cache",
+            ),
             Self::IncompleteArtifact => formatter.write_str("prepared artifact is incomplete"),
             Self::OversizedArtifact => {
                 formatter.write_str("prepared artifact exceeds its exact planned size")
@@ -2723,7 +2847,7 @@ impl fmt::Display for PreparedArtifactError {
             }
             Self::CasaVisiblePath(path) => write!(
                 formatter,
-                "prepared-artifact cache path is CASA-visible: {}",
+                "prepared-artifact path is CASA-visible: {}",
                 path.display()
             ),
             Self::PoisonedStore => formatter.write_str("prepared-artifact cache lock is poisoned"),
@@ -3071,7 +3195,7 @@ fn validate_plan_declaration(
     require_claim(
         node,
         |resource| matches!(resource, LeaseResource::FileDescriptors),
-        2,
+        reservation.file_descriptors,
         "file descriptors",
     )?;
     require_claim(
@@ -3104,24 +3228,29 @@ fn validate_plan_declaration(
             "temporary staging storage",
         )?;
     }
-    // Generation and load use one Vec as both the caller-source read buffer
+    // Generation and load use one Vec as both the file-source read buffer
     // and the private-store write buffer. The complete resident envelope,
-    // including that Vec, therefore has one StorageManager claim and one
-    // MemoryDemand-backed slot. Source and store traffic remain separately
-    // counted inside ValidationEvidence before being emitted as the complete
-    // private-store I/O measurement.
+    // including source descriptors and that Vec, therefore has one
+    // StorageManager claim and one MemoryDemand-backed slot. Source and store
+    // traffic remain separately counted inside ValidationEvidence before being
+    // folded into the complete private-store I/O measurement. A second
+    // SourceReadAhead claim would describe a physical allocation that does not
+    // exist and would charge the same unified memory twice.
     let required_io = [IoBufferKind::StorageManager];
     let predicted = stage
         .io()
         .iter()
         .map(|prediction| prediction.kind())
         .collect::<BTreeSet<_>>();
-    let payload_bytes = descriptor.payload_bytes()?;
+    let minimum_storage_io_bytes = reservation
+        .entry_bytes
+        .checked_add(reservation.source_read_bytes)
+        .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
     if predicted.len() != required_io.len()
         || required_io.iter().any(|kind| !predicted.contains(kind))
         || stage.io().iter().any(|prediction| {
             let minimum_bytes = match prediction.kind() {
-                IoBufferKind::StorageManager => reservation.entry_bytes.max(payload_bytes),
+                IoBufferKind::StorageManager => minimum_storage_io_bytes,
                 _ => u64::MAX,
             };
             prediction.bytes() < minimum_bytes || prediction.operations() == 0
@@ -3386,14 +3515,14 @@ fn rejection_for(error: &PreparedArtifactError) -> Option<PreparedArtifactReject
 
 fn validate_segment_inputs(
     descriptor: &PreparedArtifactDescriptor,
-    inputs: &[PreparedArtifactSegmentInput<'_>],
+    inputs: &[PreparedArtifactSegmentInput],
 ) -> Result<(), PreparedArtifactError> {
     if inputs.len() != descriptor.segments.len()
         || descriptor
             .segments
             .iter()
             .zip(inputs)
-            .any(|(segment, input)| segment.name != input.name)
+            .any(|(segment, input)| segment.name != input.name.as_ref())
     {
         Err(PreparedArtifactError::SegmentMismatch)
     } else {
@@ -3429,7 +3558,7 @@ fn streaming_buffer_len(
 }
 
 fn stream_segment(
-    input: &mut dyn Read,
+    input: &mut File,
     output: &mut dyn Write,
     payload_hasher: &mut Sha256,
     buffer: &mut [u8],
@@ -3446,7 +3575,7 @@ fn stream_segment(
         limit -= limit % scalar_bytes;
         read_exact_counted(input, &mut buffer[..limit], evidence, IoClass::SourceRead)?;
         validate_finite(&buffer[..limit], segment.precision, &segment.name, scalar)?;
-        evidence.source_validation();
+        evidence.source_read_operation();
         write_all_counted(output, &buffer[..limit], evidence, IoClass::StoreWrite)?;
         payload_hasher.update(&buffer[..limit]);
         segment_hasher.update(&buffer[..limit]);
@@ -3537,6 +3666,8 @@ struct ValidationEvidence {
     entry_path_inventory_bytes: u64,
     manifest_bytes: u64,
     streaming_buffer_bytes: u64,
+    source_descriptor_bytes: u64,
+    canonical_source_path_bytes: u64,
     cache_bytes_peak: u64,
     locks_peak: u64,
     file_descriptors_peak: u64,
@@ -3557,7 +3688,7 @@ impl ValidationEvidence {
         evidence
     }
 
-    fn source_validation(&mut self) {
+    fn source_read_operation(&mut self) {
         self.record(IoClass::SourceRead, 0);
     }
 
@@ -3584,6 +3715,18 @@ impl ValidationEvidence {
 
     fn observe_source_read_buffer(&mut self, bytes: u64) {
         self.observe_streaming_buffer(bytes);
+    }
+
+    fn observe_source_inputs(&mut self, inputs: &[PreparedArtifactSegmentInput]) {
+        self.source_descriptor_bytes = observed_source_descriptor_bytes(inputs);
+        self.refresh_resident_peak();
+    }
+
+    fn observe_canonical_source_path(&mut self, path: &Path) {
+        self.canonical_source_path_bytes = self
+            .canonical_source_path_bytes
+            .max(observed_owned_path_bytes(path));
+        self.refresh_resident_peak();
     }
 
     fn observe_streaming_buffer(&mut self, bytes: u64) {
@@ -3616,6 +3759,8 @@ impl ValidationEvidence {
             self.entry_path_inventory_bytes,
             self.manifest_bytes,
             self.streaming_buffer_bytes,
+            self.source_descriptor_bytes,
+            self.canonical_source_path_bytes,
         ]
         .into_iter()
         .fold(0_u64, u64::saturating_add);
@@ -4063,6 +4208,35 @@ fn reject_casa_visible_root(path: &Path) -> Result<(), PreparedArtifactError> {
     }
 }
 
+fn reject_casa_source_path(
+    path: &Path,
+    evidence: &mut ValidationEvidence,
+) -> Result<(), PreparedArtifactError> {
+    reject_casa_visible_root(path)?;
+    for ancestor in path.ancestors().skip(1) {
+        let table_dat = ancestor.join("table.dat");
+        let table_info = ancestor.join("table.info");
+        evidence.source_read_operation();
+        let has_table_dat = match table_dat.symlink_metadata() {
+            Ok(metadata) => metadata.file_type().is_file(),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => false,
+            Err(error) => return Err(error.into()),
+        };
+        evidence.source_read_operation();
+        let has_table_info = match table_info.symlink_metadata() {
+            Ok(metadata) => metadata.file_type().is_file(),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => false,
+            Err(error) => return Err(error.into()),
+        };
+        if has_table_dat || has_table_info {
+            return Err(PreparedArtifactError::CasaVisiblePath(
+                ancestor.to_path_buf(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn reject_casa_cache_contents(root: &Path) -> Result<(), PreparedArtifactError> {
     for entry in fs::read_dir(root)? {
         let path = entry?.path();
@@ -4077,7 +4251,11 @@ fn reject_casa_cache_contents(root: &Path) -> Result<(), PreparedArtifactError> 
 }
 
 fn casa_visible_name(name: &str) -> bool {
-    name.to_ascii_lowercase().ends_with(".im")
+    let name = name.to_ascii_lowercase();
+    name.ends_with(".im")
+        || name.ends_with(".ms")
+        || name.starts_with("cfs_")
+        || name.starts_with("wtcfs_")
 }
 
 fn valid_segment_name(name: &str) -> bool {
@@ -4091,7 +4269,7 @@ fn valid_segment_name(name: &str) -> bool {
 
 fn valid_identifier(value: &str) -> bool {
     !value.is_empty()
-        && value.len() <= 256
+        && value.len() <= MAX_IDENTIFIER_BYTES
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'@'))
@@ -4115,6 +4293,20 @@ fn observed_vec_resident_bytes<T>(values: &Vec<T>) -> u64 {
         .saturating_mul(size_of::<T>())
         .saturating_add(size_of::<Vec<T>>());
     u64::try_from(bytes).unwrap_or(u64::MAX)
+}
+
+fn observed_source_descriptor_bytes(inputs: &[PreparedArtifactSegmentInput]) -> u64 {
+    let bytes = size_of_val(inputs).saturating_add(inputs.iter().fold(0_usize, |total, input| {
+        total
+            .saturating_add(input.name.len())
+            .saturating_add(input.source.as_os_str().as_encoded_bytes().len())
+    }));
+    u64::try_from(bytes).unwrap_or(u64::MAX)
+}
+
+fn observed_owned_path_bytes(path: &Path) -> u64 {
+    u64::try_from(size_of::<PathBuf>().saturating_add(path.as_os_str().as_encoded_bytes().len()))
+        .unwrap_or(u64::MAX)
 }
 
 fn observed_path_inventory_bytes(paths: &Vec<Box<Path>>) -> u64 {
@@ -4211,6 +4403,23 @@ fn inventory_resident_reservation(
         .and_then(|bytes| bytes.checked_add(cache_entries))
         .and_then(|bytes| bytes.checked_add(evictions))
         .ok_or(PreparedArtifactError::ArtifactTooLarge)
+}
+
+fn source_descriptor_reservation(segments: usize) -> Result<u64, PreparedArtifactError> {
+    let input_bytes = size_of::<PreparedArtifactSegmentInput>()
+        .checked_add(MAX_IDENTIFIER_BYTES)
+        .and_then(|bytes| bytes.checked_add(MAX_SOURCE_PATH_BYTES))
+        .and_then(|bytes| bytes.checked_mul(segments))
+        .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
+    let canonical_path_bytes = size_of::<PathBuf>()
+        .checked_add(MAX_SOURCE_PATH_BYTES)
+        .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
+    u64::try_from(
+        input_bytes
+            .checked_add(canonical_path_bytes)
+            .ok_or(PreparedArtifactError::ArtifactTooLarge)?,
+    )
+    .map_err(|_| PreparedArtifactError::ArtifactTooLarge)
 }
 
 fn path_inventory_resident_reservation(
@@ -4537,6 +4746,90 @@ mod tests {
                 .exists(),
             "the recoverable staging entry proves the eviction rename completed"
         );
+    }
+
+    #[test]
+    fn warm_reuse_budget_counts_orphan_staging_bytes_entries_and_residency() {
+        let bytes_directory = tempfile::tempdir().expect("staging byte-budget cache");
+        let bytes_budget = PreparedArtifactBudget::new(100, 3, 1).expect("staging byte budget");
+        let bytes_store =
+            PreparedArtifactStore::open(bytes_directory.path(), bytes_budget).expect("byte store");
+        let staging = bytes_store.cache.join(format!("{STAGING_PREFIX}bytes"));
+        fs::create_dir(&staging).expect("staging byte directory");
+        fs::write(staging.join(MANIFEST_FILE), [0_u8; 64]).expect("staging manifest");
+        fs::write(staging.join(PAYLOAD_FILE), [0_u8; 64]).expect("staging payload");
+        let mut bytes_evidence = ValidationEvidence::new(bytes_budget);
+
+        assert!(matches!(
+            bytes_store.validate_raw_budget(
+                ArtifactIdentity::from_owner_digest([1; 32]),
+                &mut bytes_evidence,
+            ),
+            Err(PreparedArtifactError::CacheBudgetExceeded {
+                required: 128,
+                budget: 100,
+            })
+        ));
+        assert_eq!(bytes_evidence.cache_bytes_peak, 128);
+        assert!(bytes_evidence.entry_path_inventory_bytes > 0);
+        assert!(bytes_evidence.resident_buffer_bytes > 0);
+
+        let entries_directory = tempfile::tempdir().expect("staging entry-budget cache");
+        let entries_budget =
+            PreparedArtifactBudget::new(1_000, 1, 1).expect("staging entry budget");
+        let entries_store = PreparedArtifactStore::open(entries_directory.path(), entries_budget)
+            .expect("entry store");
+        for suffix in ["first", "second"] {
+            fs::create_dir(
+                entries_store
+                    .cache
+                    .join(format!("{STAGING_PREFIX}{suffix}")),
+            )
+            .expect("staging entry directory");
+        }
+        let mut entries_evidence = ValidationEvidence::new(entries_budget);
+
+        assert!(matches!(
+            entries_store.validate_raw_budget(
+                ArtifactIdentity::from_owner_digest([2; 32]),
+                &mut entries_evidence,
+            ),
+            Err(PreparedArtifactError::CacheEntryBudgetExceeded {
+                required: 2,
+                budget: 1,
+            })
+        ));
+        assert!(entries_evidence.root_path_inventory_bytes > 0);
+        assert!(entries_evidence.resident_buffer_bytes > 0);
+    }
+
+    #[test]
+    fn source_descriptor_residency_is_bounded_and_observed() {
+        let directory = tempfile::tempdir().expect("source descriptor residency");
+        let source = directory.path().join("imaging.bin");
+        let inputs = [PreparedArtifactSegmentInput::new("imaging", source.clone())
+            .expect("bounded source descriptor")];
+        let budget = PreparedArtifactBudget::new(1, 1, 1).expect("source descriptor budget");
+        let mut evidence = ValidationEvidence::new(budget);
+
+        evidence.observe_source_inputs(&inputs);
+        evidence.observe_canonical_source_path(&source);
+
+        assert_eq!(
+            evidence.source_descriptor_bytes,
+            observed_source_descriptor_bytes(&inputs)
+        );
+        assert_eq!(
+            evidence.canonical_source_path_bytes,
+            observed_owned_path_bytes(&source)
+        );
+        assert!(
+            source_descriptor_reservation(inputs.len()).expect("source reservation")
+                >= evidence
+                    .source_descriptor_bytes
+                    .saturating_add(evidence.canonical_source_path_bytes)
+        );
+        assert!(evidence.resident_buffer_bytes > evidence.source_descriptor_bytes);
     }
 
     #[test]

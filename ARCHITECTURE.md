@@ -1,7 +1,7 @@
 # Architecture
 
 Truth class: current descriptive
-Last reality check: 2026-08-22
+Last reality check: 2026-08-23
 Verification: just docs-check
 
 ## System purpose
@@ -69,7 +69,16 @@ no hidden lookup, integrity work, or eviction. That private casa-rs cache is not
 Product Graph authority or a CASA-visible persisted format. Existing CASA
 CFS/WTCFS directories remain read-only interoperability inputs supplied through
 the validated legacy adapter; the runtime neither mutates them nor creates
-sidecars.
+sidecars. Generation and load accept only bounded absolute regular-file source
+descriptors, open at most one source while the execution lease is live, and
+reject CASA image, MeasurementSet, or table ancestry. Their reservation exposes
+the source-read ceiling and three-descriptor peak; reuse reserves two
+descriptors and no source reads. Source descriptors, the canonicalized source
+path, and the shared streaming buffer are charged inside one
+`StorageManager`-backed physical-memory allocation rather than a duplicate
+`SourceReadAhead` slot. Every `WorkImplementation` also states its failure
+measurement policy explicitly; there is no default that can silently discard
+completed I/O or mutation evidence.
 `casa-imaging-router` is the application-layer owner of the one pre-plan
 migration decision. It compiles the logical request, derives every applicable
 matrix row, records the authoritative row evidence, and invokes exactly one

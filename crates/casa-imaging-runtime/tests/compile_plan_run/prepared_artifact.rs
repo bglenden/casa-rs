@@ -18,7 +18,64 @@ struct PreparedOperationAdapter {
     operation: PreparedArtifactOperation,
     store: PreparedArtifactStore,
     descriptor: PreparedArtifactDescriptor,
+    sources: Option<PreparedSourceFiles>,
     observed: Mutex<Option<PreparedObserved>>,
+}
+
+struct PreparedSourceFiles {
+    _directory: tempfile::TempDir,
+    imaging: PathBuf,
+    weight: PathBuf,
+}
+
+impl PreparedSourceFiles {
+    fn new() -> Self {
+        let directory = tempfile::tempdir().expect("prepared source directory");
+        let imaging_path = directory.path().join("imaging.bin");
+        let weight_path = directory.path().join("weight.bin");
+        let (imaging, weight) = prepared_payloads();
+        fs::write(&imaging_path, imaging).expect("prepared imaging source");
+        fs::write(&weight_path, weight).expect("prepared weight source");
+        Self {
+            _directory: directory,
+            imaging: imaging_path,
+            weight: weight_path,
+        }
+    }
+
+    fn inputs(&self) -> Result<[PreparedArtifactSegmentInput; 2], PreparedArtifactError> {
+        Ok([
+            PreparedArtifactSegmentInput::new("imaging", self.imaging.clone())?,
+            PreparedArtifactSegmentInput::new("weight", self.weight.clone())?,
+        ])
+    }
+}
+
+impl PreparedOperationAdapter {
+    fn new(
+        operation: PreparedArtifactOperation,
+        store: PreparedArtifactStore,
+        descriptor: PreparedArtifactDescriptor,
+    ) -> Self {
+        let id = descriptor.work_implementation_id(operation);
+        Self::with_id(id, operation, store, descriptor)
+    }
+
+    fn with_id(
+        id: WorkImplementationId,
+        operation: PreparedArtifactOperation,
+        store: PreparedArtifactStore,
+        descriptor: PreparedArtifactDescriptor,
+    ) -> Self {
+        Self {
+            id,
+            operation,
+            store,
+            descriptor,
+            sources: (operation != PreparedArtifactOperation::Reuse).then(PreparedSourceFiles::new),
+            observed: Mutex::new(None),
+        }
+    }
 }
 
 struct PreparedFailureAdapter {
@@ -72,18 +129,21 @@ impl WorkImplementation for PreparedOperationAdapter {
     }
 
     fn execute(&self, context: WorkExecutionContext<'_>) -> Result<WorkMeasurements, Self::Error> {
-        let (mut imaging, mut weight) = prepared_payloads();
-        let mut imaging = Cursor::new(&mut imaging);
-        let mut weight = Cursor::new(&mut weight);
-        let mut inputs = [
-            PreparedArtifactSegmentInput::new("imaging", &mut imaging),
-            PreparedArtifactSegmentInput::new("weight", &mut weight),
-        ];
+        let inputs = self
+            .sources
+            .as_ref()
+            .map(PreparedSourceFiles::inputs)
+            .transpose()
+            .map_err(prepared_io_error)?;
         let (observed, measurements) = match self.operation {
             PreparedArtifactOperation::Generate => {
                 let (artifact, measurements) = self
                     .store
-                    .generate(&context, &self.descriptor, &mut inputs)
+                    .generate(
+                        &context,
+                        &self.descriptor,
+                        inputs.as_ref().expect("generate source files"),
+                    )
                     .map_err(prepared_io_error)?;
                 (
                     PreparedObserved::Materialized {
@@ -96,7 +156,11 @@ impl WorkImplementation for PreparedOperationAdapter {
             PreparedArtifactOperation::Load => {
                 let (artifact, measurements) = self
                     .store
-                    .load(&context, &self.descriptor, &mut inputs)
+                    .load(
+                        &context,
+                        &self.descriptor,
+                        inputs.as_ref().expect("load source files"),
+                    )
                     .map_err(prepared_io_error)?;
                 (
                     PreparedObserved::Materialized {
@@ -411,7 +475,10 @@ fn prepared_physical_work(
         views: vec![CapacityViewId::new("host-memory")],
     });
     alternative.demand.locks = CountDemand::new(2, 2);
-    alternative.demand.file_descriptors = CountDemand::new(2, 2);
+    alternative.demand.file_descriptors = CountDemand::new(
+        reservation.file_descriptors(),
+        reservation.file_descriptors(),
+    );
     alternative.demand.io_buffers.storage_manager_bytes = reservation.resident_buffer_bytes();
     alternative
         .demand
@@ -442,7 +509,7 @@ fn prepared_physical_work(
         },
         ResourceClaim {
             resource: LeaseResource::FileDescriptors,
-            amount: 2,
+            amount: reservation.file_descriptors(),
             lifetime: ClaimLifetime::Work,
         },
         ResourceClaim {
@@ -575,7 +642,12 @@ fn prepared_physical_work(
     let prepared_stage =
         StagePrediction::new(prepared_node.id.clone(), 1_000).with_io(vec![IoPrediction::new(
             IoBufferKind::StorageManager,
-            reservation.persistent_cache_bytes(),
+            reservation.persistent_cache_bytes().max(
+                reservation
+                    .entry_bytes()
+                    .checked_add(reservation.source_read_bytes())
+                    .expect("bounded prepared I/O prediction"),
+            ),
             10_000,
         )]);
     let release_stage = StagePrediction::new(release_id, 100).with_io(vec![IoPrediction::new(
@@ -681,13 +753,7 @@ fn execute_prepared_operation(
         |_, _| Ok::<_, ()>(prepared_physical_work(&descriptor, &store, operation)),
     )
     .expect("prepared operation plan");
-    let adapter = PreparedOperationAdapter {
-        id: descriptor.work_implementation_id(operation),
-        operation,
-        store,
-        descriptor,
-        observed: Mutex::new(None),
-    };
+    let adapter = PreparedOperationAdapter::new(operation, store, descriptor);
     let (registry, id) = prepared_registry(adapter);
     let result = run_prepared(
         problem,
@@ -788,6 +854,13 @@ fn prepared_streaming_residency_is_admitted_once_without_overlapping_slots() {
     let reservation = store
         .reservation(&descriptor, PreparedArtifactOperation::Generate)
         .expect("single-charge prepared reservation");
+    assert_eq!(
+        reservation.source_read_bytes(),
+        PREPARED_PAYLOAD_BYTES + 2,
+        "each exact segment has one bounded oversize probe"
+    );
+    assert!(reservation.source_descriptor_bytes() > 0);
+    assert_eq!(reservation.file_descriptors(), 3);
     let work = prepared_physical_work(&descriptor, &store, PreparedArtifactOperation::Generate);
 
     let prepared_demands = work
@@ -848,6 +921,89 @@ fn prepared_streaming_residency_is_admitted_once_without_overlapping_slots() {
 }
 
 #[test]
+fn prepared_sources_are_bounded_accounted_files_and_never_casa_tables() {
+    assert!(matches!(
+        PreparedArtifactSegmentInput::new("imaging", PathBuf::from("relative.bin")),
+        Err(PreparedArtifactError::InvalidSource)
+    ));
+    assert!(matches!(
+        PreparedArtifactSegmentInput::new(
+            "imaging",
+            PathBuf::from(format!(
+                "/{}",
+                "x".repeat(PreparedArtifactSegmentInput::MAX_PATH_BYTES + 1)
+            )),
+        ),
+        Err(PreparedArtifactError::InvalidSource)
+    ));
+
+    let problem = compile(request(1)).expect("CASA-source problem");
+    let cache_directory = tempfile::tempdir().expect("CASA-source private cache");
+    let store = PreparedArtifactStore::open(cache_directory.path(), prepared_budget())
+        .expect("CASA-source store");
+    let descriptor = prepared_descriptor(&store, &problem);
+    let operation = PreparedArtifactOperation::Generate;
+    let plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| Ok::<_, ()>(prepared_physical_work(&descriptor, &store, operation)),
+    )
+    .expect("CASA-source plan");
+    let casa_table = tempfile::tempdir().expect("CASA table source");
+    fs::write(casa_table.path().join("table.dat"), b"CASA table marker")
+        .expect("CASA table marker");
+    let (imaging, _) = prepared_payloads();
+    let casa_imaging = casa_table.path().join("imaging.bin");
+    fs::write(&casa_imaging, imaging).expect("CASA-contained source bytes");
+    let mut adapter = PreparedOperationAdapter::new(operation, store, descriptor.clone());
+    adapter
+        .sources
+        .as_mut()
+        .expect("generation sources")
+        .imaging = casa_imaging;
+    let (registry, _) = prepared_registry(adapter);
+    let receipts_directory = tempfile::tempdir().expect("CASA-source receipts");
+    let receipts = ExecutionReceiptStore::new(
+        receipts_directory.path(),
+        ReceiptRetention::new(4, 1_000_000).expect("CASA-source retention"),
+    )
+    .expect("CASA-source receipt store");
+    let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([164; 32]);
+    let error = run_prepared(
+        &problem,
+        &plan,
+        &registry,
+        receipts.bind(execution_provenance(
+            attempt,
+            BuildIdentity::from_sha256([165; 32]),
+        )),
+    )
+    .expect_err("CASA table bytes cannot enter through the private source contract");
+    assert!(matches!(
+        error,
+        RunError::Execution { source, .. } if source.to_string().contains("CASA-visible")
+    ));
+    let receipt = receipts.open(attempt).expect("CASA-source receipt");
+    assert_eq!(receipt.status(), ReceiptStatus::Failed);
+    assert_eq!(receipt.failure_kind(), Some(ReceiptFailureKind::Adapter));
+    assert_eq!(
+        receipt.actual_resource_peak(
+            &descriptor.work_node_id(operation),
+            &LeaseResource::FileDescriptors,
+            &ClaimLifetime::Work,
+        ),
+        Some(2),
+        "the failed source open retains its lock-and-staging descriptor peak"
+    );
+    assert_eq!(
+        fs::read_dir(cache_directory.path().join("objects-v1"))
+            .expect("rolled-back source cache")
+            .count(),
+        0
+    );
+}
+
+#[test]
 fn public_prepared_generate_load_and_reuse_are_plan_and_receipt_bound() {
     let problem = compile(request(1)).expect("prepared compiled problem");
     let receipts_directory = tempfile::tempdir().expect("prepared receipts");
@@ -865,6 +1021,11 @@ fn public_prepared_generate_load_and_reuse_are_plan_and_receipt_bound() {
     let generated_reservation = generated_store
         .reservation(&generated_descriptor, PreparedArtifactOperation::Generate)
         .expect("generated reservation");
+    assert_eq!(
+        generated_reservation.source_read_bytes(),
+        PREPARED_PAYLOAD_BYTES + 2
+    );
+    assert_eq!(generated_reservation.file_descriptors(), 3);
     assert!(
         generated_reservation.resident_buffer_bytes()
             > generated_reservation.streaming_buffer_bytes() + 64 * 1024,
@@ -882,13 +1043,11 @@ fn public_prepared_generate_load_and_reuse_are_plan_and_receipt_bound() {
         },
     )
     .expect("generate plan");
-    let generate_adapter = PreparedOperationAdapter {
-        id: generated_descriptor.work_implementation_id(PreparedArtifactOperation::Generate),
-        operation: PreparedArtifactOperation::Generate,
-        store: generated_store,
-        descriptor: generated_descriptor.clone(),
-        observed: Mutex::new(None),
-    };
+    let generate_adapter = PreparedOperationAdapter::new(
+        PreparedArtifactOperation::Generate,
+        generated_store,
+        generated_descriptor.clone(),
+    );
     let (generate_registry, generate_id) = prepared_registry(generate_adapter);
     let generate_attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([91; 32]);
     run_prepared(
@@ -940,7 +1099,7 @@ fn public_prepared_generate_load_and_reuse_are_plan_and_receipt_bound() {
             &LeaseResource::FileDescriptors,
             &ClaimLifetime::Work,
         ),
-        Some(2)
+        Some(generated_reservation.file_descriptors())
     );
     assert_eq!(
         generate_receipt.actual_resource_peak(
@@ -1074,13 +1233,11 @@ fn public_prepared_generate_load_and_reuse_are_plan_and_receipt_bound() {
         },
     )
     .expect("reuse plan");
-    let reuse_adapter = PreparedOperationAdapter {
-        id: reuse_descriptor.work_implementation_id(PreparedArtifactOperation::Reuse),
-        operation: PreparedArtifactOperation::Reuse,
-        store: reuse_store,
-        descriptor: reuse_descriptor.clone(),
-        observed: Mutex::new(None),
-    };
+    let reuse_adapter = PreparedOperationAdapter::new(
+        PreparedArtifactOperation::Reuse,
+        reuse_store,
+        reuse_descriptor.clone(),
+    );
     let (reuse_registry, reuse_id) = prepared_registry(reuse_adapter);
     let reuse_attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([93; 32]);
     run_prepared(
@@ -1153,13 +1310,11 @@ fn public_prepared_generate_load_and_reuse_are_plan_and_receipt_bound() {
         },
     )
     .expect("load plan");
-    let load_adapter = PreparedOperationAdapter {
-        id: loaded_descriptor.work_implementation_id(PreparedArtifactOperation::Load),
-        operation: PreparedArtifactOperation::Load,
-        store: loaded_store,
-        descriptor: loaded_descriptor.clone(),
-        observed: Mutex::new(None),
-    };
+    let load_adapter = PreparedOperationAdapter::new(
+        PreparedArtifactOperation::Load,
+        loaded_store,
+        loaded_descriptor.clone(),
+    );
     let (load_registry, load_id) = prepared_registry(load_adapter);
     let load_attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([95; 32]);
     run_prepared(
@@ -1228,13 +1383,12 @@ fn public_prepared_generate_load_and_reuse_are_plan_and_receipt_bound() {
         },
     )
     .expect("operation mismatch plan");
-    let mismatch_adapter = PreparedOperationAdapter {
-        id: mismatch_descriptor.work_implementation_id(PreparedArtifactOperation::Generate),
-        operation: PreparedArtifactOperation::Load,
-        store: mismatch_store,
-        descriptor: mismatch_descriptor.clone(),
-        observed: Mutex::new(None),
-    };
+    let mismatch_adapter = PreparedOperationAdapter::with_id(
+        mismatch_descriptor.work_implementation_id(PreparedArtifactOperation::Generate),
+        PreparedArtifactOperation::Load,
+        mismatch_store,
+        mismatch_descriptor.clone(),
+    );
     let (mismatch_registry, _) = prepared_registry(mismatch_adapter);
     let mismatch_attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([103; 32]);
     let mismatch_error = run_prepared(
@@ -1361,13 +1515,11 @@ fn public_prepared_generate_load_and_reuse_are_plan_and_receipt_bound() {
         },
     )
     .expect("owner mismatch plan");
-    let owner_mismatch_adapter = PreparedOperationAdapter {
-        id: spoofed_owner_descriptor.work_implementation_id(PreparedArtifactOperation::Generate),
-        operation: PreparedArtifactOperation::Generate,
-        store: owner_mismatch_store,
-        descriptor: spoofed_owner_descriptor,
-        observed: Mutex::new(None),
-    };
+    let owner_mismatch_adapter = PreparedOperationAdapter::new(
+        PreparedArtifactOperation::Generate,
+        owner_mismatch_store,
+        spoofed_owner_descriptor,
+    );
     let (owner_mismatch_registry, _) = prepared_registry(owner_mismatch_adapter);
     let owner_mismatch_attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([105; 32]);
     let owner_mismatch_error = run_prepared(
@@ -1730,13 +1882,11 @@ fn public_prepared_reuse_receipts_fail_closed_rejections() {
         },
     )
     .expect("missing reuse plan");
-    let missing_adapter = PreparedOperationAdapter {
-        id: missing_descriptor.work_implementation_id(PreparedArtifactOperation::Reuse),
-        operation: PreparedArtifactOperation::Reuse,
-        store: missing_store,
-        descriptor: missing_descriptor.clone(),
-        observed: Mutex::new(None),
-    };
+    let missing_adapter = PreparedOperationAdapter::new(
+        PreparedArtifactOperation::Reuse,
+        missing_store,
+        missing_descriptor.clone(),
+    );
     let (missing_registry, missing_id) = prepared_registry(missing_adapter);
     let missing_attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([97; 32]);
     let missing_result = run_prepared(
@@ -1809,13 +1959,11 @@ fn public_prepared_reuse_receipts_fail_closed_rejections() {
         },
     )
     .expect("corrupt seed plan");
-    let generate_adapter = PreparedOperationAdapter {
-        id: generate_descriptor.work_implementation_id(PreparedArtifactOperation::Generate),
-        operation: PreparedArtifactOperation::Generate,
-        store: generate_store,
-        descriptor: generate_descriptor.clone(),
-        observed: Mutex::new(None),
-    };
+    let generate_adapter = PreparedOperationAdapter::new(
+        PreparedArtifactOperation::Generate,
+        generate_store,
+        generate_descriptor.clone(),
+    );
     let (generate_registry, _) = prepared_registry(generate_adapter);
     let seed_attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([99; 32]);
     run_prepared(
@@ -1854,13 +2002,11 @@ fn public_prepared_reuse_receipts_fail_closed_rejections() {
         },
     )
     .expect("corrupt reuse plan");
-    let corrupt_adapter = PreparedOperationAdapter {
-        id: corrupt_descriptor.work_implementation_id(PreparedArtifactOperation::Reuse),
-        operation: PreparedArtifactOperation::Reuse,
-        store: corrupt_store,
-        descriptor: corrupt_descriptor.clone(),
-        observed: Mutex::new(None),
-    };
+    let corrupt_adapter = PreparedOperationAdapter::new(
+        PreparedArtifactOperation::Reuse,
+        corrupt_store,
+        corrupt_descriptor.clone(),
+    );
     let (corrupt_registry, corrupt_id) = prepared_registry(corrupt_adapter);
     let corrupt_attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([101; 32]);
     let corrupt_result = run_prepared(
@@ -2300,6 +2446,133 @@ fn failed_prepared_receipt_retains_materialization_eviction_and_io_evidence() {
 }
 
 #[test]
+fn orphan_staging_is_included_in_reuse_budget_and_receipt_evidence() {
+    let problem = compile(request(1)).expect("orphan-staging problem");
+    let receipts_directory = tempfile::tempdir().expect("orphan-staging receipts");
+    let receipts = ExecutionReceiptStore::new(
+        receipts_directory.path(),
+        ReceiptRetention::new(4, 1_000_000).expect("orphan-staging retention"),
+    )
+    .expect("orphan-staging receipt store");
+
+    let cache_directory = tempfile::tempdir().expect("bounded orphan-staging cache");
+    let store = PreparedArtifactStore::open(cache_directory.path(), prepared_budget())
+        .expect("bounded orphan-staging store");
+    let staging = cache_directory.path().join("objects-v1/.staging-orphan");
+    fs::create_dir(&staging).expect("bounded orphan-staging directory");
+    fs::write(staging.join("manifest.json"), [0_u8; 91]).expect("bounded orphan manifest");
+    fs::write(staging.join("payload.bin"), [0_u8; 173]).expect("bounded orphan payload");
+    let orphan_bytes = 264;
+    let descriptor = prepared_descriptor(&store, &problem);
+    let operation = PreparedArtifactOperation::Reuse;
+    let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([160; 32]);
+    assert_eq!(
+        execute_prepared_operation(
+            &problem,
+            &receipts,
+            store,
+            descriptor.clone(),
+            operation,
+            PreparedRunExpectation {
+                attempt_byte: 160,
+                build_byte: 161,
+                expect_rejection: true,
+            },
+        ),
+        PreparedObserved::Rejected(PreparedArtifactRejection::Missing)
+    );
+    let receipt = receipts
+        .open(attempt)
+        .expect("bounded orphan-staging receipt");
+    assert_rejection_evidence(
+        &receipt,
+        &descriptor,
+        operation,
+        PreparedArtifactRejection::Missing,
+    );
+    assert_eq!(
+        receipt.actual_resource_peak(
+            &descriptor.work_node_id(operation),
+            &prepared_storage_resource(&descriptor, StorageUseKind::PersistentCache),
+            &ClaimLifetime::Work,
+        ),
+        Some(orphan_bytes),
+        "orphan staging bytes must remain visible in rejection evidence"
+    );
+
+    let over_budget_directory = tempfile::tempdir().expect("over-budget orphan-staging cache");
+    let over_budget =
+        PreparedArtifactBudget::new(20_000, 4, 64).expect("over-budget orphan-staging policy");
+    let over_budget_store = PreparedArtifactStore::open(over_budget_directory.path(), over_budget)
+        .expect("over-budget orphan-staging store");
+    let oversized_staging = over_budget_directory
+        .path()
+        .join("objects-v1/.staging-oversized");
+    fs::create_dir(&oversized_staging).expect("oversized staging directory");
+    fs::write(
+        oversized_staging.join("payload.bin"),
+        vec![0_u8; usize::try_from(over_budget.cache_bytes() + 1).expect("small test budget")],
+    )
+    .expect("oversized staging payload");
+    let over_budget_descriptor = prepared_descriptor(&over_budget_store, &problem);
+    let over_budget_plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| {
+            Ok::<_, ()>(prepared_physical_work(
+                &over_budget_descriptor,
+                &over_budget_store,
+                operation,
+            ))
+        },
+    )
+    .expect("over-budget orphan-staging plan");
+    let over_budget_adapter =
+        PreparedOperationAdapter::new(operation, over_budget_store, over_budget_descriptor.clone());
+    let (over_budget_registry, _) = prepared_registry(over_budget_adapter);
+    let over_budget_attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([162; 32]);
+    let error = run_prepared(
+        &problem,
+        &over_budget_plan,
+        &over_budget_registry,
+        receipts.bind(execution_provenance(
+            over_budget_attempt,
+            BuildIdentity::from_sha256([163; 32]),
+        )),
+    )
+    .expect_err("orphan staging above the hard cache ceiling must fail closed");
+    assert!(matches!(
+        error,
+        RunError::Evidence(ExecutionEvidenceError::ResourcePeakExceeded {
+            resource: LeaseResource::Storage {
+                use_kind: StorageUseKind::PersistentCache,
+                ..
+            },
+            planned,
+            actual,
+            ..
+        }) if planned == over_budget.cache_bytes() && actual == over_budget.cache_bytes() + 1
+    ));
+    let receipt = receipts
+        .open(over_budget_attempt)
+        .expect("over-budget orphan-staging receipt");
+    assert_eq!(receipt.status(), ReceiptStatus::Failed);
+    assert_eq!(
+        receipt.failure_kind(),
+        Some(ReceiptFailureKind::EvidenceContract)
+    );
+    assert_eq!(
+        receipt.actual_resource_peak(
+            &over_budget_descriptor.work_node_id(operation),
+            &prepared_storage_resource(&over_budget_descriptor, StorageUseKind::PersistentCache,),
+            &ClaimLifetime::Work,
+        ),
+        None,
+        "an uncapped overrun is rejected before receipt checkpointing"
+    );
+}
+
+#[test]
 fn malformed_rejection_evidence_is_rejected_without_partial_receipt_mutation() {
     let problem = compile(request(1)).expect("malformed rejection problem");
     let cache_directory = tempfile::tempdir().expect("malformed rejection cache");
@@ -2318,94 +2591,103 @@ fn malformed_rejection_evidence_is_rejected_without_partial_receipt_mutation() {
         .claims
         .iter()
         .map(|claim| ResourceMeasurement::new(claim.resource.clone(), claim.lifetime.clone(), 0))
-        .collect();
+        .collect::<Vec<_>>();
     let io = plan.prediction().stages()[&node_id]
         .io()
         .iter()
         .map(|prediction| IoMeasurement::new(prediction.kind(), 0, 1))
-        .collect();
+        .collect::<Vec<_>>();
     let ledger = descriptor.eviction_artifact(operation);
-    let evidence = WorkMeasurements::new(
-        resources,
-        io,
-        vec![
-            ArtifactMeasurement::new(
-                descriptor.identity(),
-                Some(PreparedArtifactRejection::Missing.evidence_identity(descriptor.identity())),
-                ArtifactDisposition::RejectedStale,
-                0,
-                None,
-            ),
-            ArtifactMeasurement::new(
-                ledger.identity(),
-                Some(ArtifactIdentity::from_sha256([212; 32])),
-                ArtifactDisposition::Staged,
-                0,
-                None,
-            ),
-        ],
-    );
     let prepared_id = descriptor.work_implementation_id(operation);
-    let registry = PreparedSuiteRegistry {
-        id: registry(3),
-        implementations: BTreeMap::from([
-            (
-                implementation(6),
-                PreparedSuiteImplementation::Base(Box::new(prepared_base_executor(
-                    &descriptor,
-                    operation,
-                ))),
-            ),
-            (
-                prepared_id.clone(),
-                PreparedSuiteImplementation::Failure(Box::new(PreparedFailureAdapter {
-                    id: prepared_id,
-                    evidence,
-                    succeed: true,
-                })),
-            ),
-        ]),
-    };
     let receipts_directory = tempfile::tempdir().expect("malformed rejection receipts");
     let receipts = ExecutionReceiptStore::new(
         receipts_directory.path(),
         ReceiptRetention::new(4, 1_000_000).expect("malformed rejection retention"),
     )
     .expect("malformed rejection receipt store");
-    let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([153; 32]);
-
-    let error = run_prepared(
-        &problem,
-        &plan,
-        &registry,
-        receipts.bind(execution_provenance(
-            attempt,
-            BuildIdentity::from_sha256([154; 32]),
-        )),
-    )
-    .expect_err("malformed rejection evidence must fail closed");
-    assert!(matches!(
-        error,
-        RunError::Evidence(ExecutionEvidenceError::ArtifactDispositionMismatch {
-            artifact,
-            ..
-        }) if artifact == ledger.identity()
-    ));
-
-    let receipt = receipts.open(attempt).expect("malformed rejection receipt");
-    assert_eq!(receipt.status(), ReceiptStatus::Failed);
-    assert_eq!(
-        receipt.failure_kind(),
-        Some(ReceiptFailureKind::EvidenceContract)
-    );
-    assert!(receipt.stage_actual_elapsed_nanos(&node_id).is_some());
-    assert_eq!(receipt.artifact_actual_bytes(descriptor.identity()), None);
-    assert_eq!(receipt.artifact_actual_bytes(ledger.identity()), None);
-    assert_eq!(
-        receipt.actual_resource_peak(&node_id, &LeaseResource::Workers, &ClaimLifetime::Work,),
+    let malformed = [
         None,
-        "invalid evidence must not be checkpointed partially"
-    );
+        Some(ArtifactIdentity::from_sha256([212; 32])),
+        Some(PreparedArtifactRejection::Missing.evidence_identity(ledger.identity())),
+    ];
+    for (index, observed) in malformed.into_iter().enumerate() {
+        let evidence = WorkMeasurements::new(
+            resources.clone(),
+            io.clone(),
+            vec![
+                ArtifactMeasurement::new(
+                    descriptor.identity(),
+                    observed,
+                    ArtifactDisposition::RejectedStale,
+                    0,
+                    None,
+                ),
+                ArtifactMeasurement::new(
+                    ledger.identity(),
+                    Some(ArtifactIdentity::from_sha256([213; 32])),
+                    ArtifactDisposition::Loaded,
+                    0,
+                    None,
+                ),
+            ],
+        );
+        let registry = PreparedSuiteRegistry {
+            id: registry(3),
+            implementations: BTreeMap::from([
+                (
+                    implementation(6),
+                    PreparedSuiteImplementation::Base(Box::new(prepared_base_executor(
+                        &descriptor,
+                        operation,
+                    ))),
+                ),
+                (
+                    prepared_id.clone(),
+                    PreparedSuiteImplementation::Failure(Box::new(PreparedFailureAdapter {
+                        id: prepared_id.clone(),
+                        evidence,
+                        succeed: true,
+                    })),
+                ),
+            ]),
+        };
+        let attempt_byte = 153 + u8::try_from(index).expect("small malformed-evidence index");
+        let build_byte = 157 + u8::try_from(index).expect("small malformed-evidence index");
+        let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([attempt_byte; 32]);
+
+        let error = run_prepared(
+            &problem,
+            &plan,
+            &registry,
+            receipts.bind(execution_provenance(
+                attempt,
+                BuildIdentity::from_sha256([build_byte; 32]),
+            )),
+        )
+        .expect_err("malformed rejection identity must fail closed");
+        assert!(matches!(
+            error,
+            RunError::Evidence(ExecutionEvidenceError::ArtifactDispositionMismatch {
+                artifact,
+                ..
+            }) if artifact == descriptor.identity()
+        ));
+
+        let receipt = receipts.open(attempt).expect("malformed rejection receipt");
+        assert_eq!(receipt.status(), ReceiptStatus::Failed);
+        assert_eq!(
+            receipt.failure_kind(),
+            Some(ReceiptFailureKind::EvidenceContract)
+        );
+        assert!(receipt.stage_actual_elapsed_nanos(&node_id).is_some());
+        assert_eq!(receipt.artifact_actual_bytes(descriptor.identity()), None);
+        assert_eq!(receipt.artifact_actual_bytes(ledger.identity()), None);
+        assert_eq!(
+            receipt.actual_resource_peak(&node_id, &LeaseResource::Workers, &ClaimLifetime::Work,),
+            None,
+            "invalid rejection identity must not be checkpointed partially"
+        );
+    }
 }
 
 #[test]

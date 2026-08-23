@@ -3,8 +3,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
-    fs,
-    io::{self, Cursor},
+    fs, io,
     path::{Path, PathBuf},
     sync::{
         Arc, Condvar, Mutex, OnceLock,
@@ -795,6 +794,13 @@ impl WorkImplementation for RecordingExecutor {
                 .collect();
         }
         Ok(WorkMeasurements::new(resources, io, artifacts))
+    }
+
+    fn failure_measurements<'error>(
+        &'error self,
+        _error: &'error Self::Error,
+    ) -> Option<&'error WorkMeasurements> {
+        None
     }
 
     fn wait_for_fence(
@@ -5617,7 +5623,7 @@ fn receipt_compares_planned_and_actual_io_artifacts_and_never_persists_paths() {
                     ),
                     ArtifactMeasurement::new(
                         cache,
-                        Some(ArtifactIdentity::from_sha256([35; 32])),
+                        Some(PreparedArtifactRejection::Missing.evidence_identity(cache)),
                         ArtifactDisposition::RejectedStale,
                         1_024,
                         None,
@@ -5768,7 +5774,7 @@ fn failed_publication_fence_never_records_a_published_output() {
                     ),
                     ArtifactMeasurement::new(
                         cache,
-                        None,
+                        Some(PreparedArtifactRejection::Missing.evidence_identity(cache)),
                         ArtifactDisposition::RejectedStale,
                         0,
                         None,

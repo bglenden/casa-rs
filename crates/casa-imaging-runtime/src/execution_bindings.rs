@@ -515,13 +515,16 @@ impl IoMeasurement {
 
 /// Actual result for one plan-listed artifact, containing no raw local path.
 ///
-/// For [`ArtifactDisposition::RejectedStale`], `observed` is typed rejection
-/// evidence rather than a materialized-content identity and `bytes` is the
-/// number of bytes inspected while rejecting the candidate. For a successful
-/// prepared-artifact operation, the associated I/O measurement covers the
-/// private-store lock, scans, metadata, payload/manifest reads and writes,
-/// synchronization, validation, and eviction work; consumer copies from the
-/// returned handle remain the consumer's separately measured work.
+/// For [`ArtifactDisposition::RejectedStale`], `observed` must contain typed
+/// rejection evidence bound to the planned identity rather than a
+/// materialized-content identity, and `bytes` is the number of bytes inspected
+/// while rejecting the candidate. Missing, arbitrary, or differently bound
+/// rejection identities fail the execution-evidence contract before receipt
+/// checkpointing. For a successful prepared-artifact operation, the associated
+/// I/O measurement covers the private-store lock, scans, metadata,
+/// payload/manifest reads and writes, synchronization, validation, and eviction
+/// work; consumer copies from the returned handle remain the consumer's
+/// separately measured work.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ArtifactMeasurement {
     planned: ArtifactIdentity,
@@ -2294,17 +2297,16 @@ pub trait WorkImplementation {
 
     /// Return completed synchronous evidence retained by an execution error.
     ///
-    /// The default reports none. Implementations that mutate durable state or
-    /// complete I/O before failing must retain those measurements in their
-    /// error and expose them here. The runtime validates the evidence against
-    /// the sealed node before writing it into the failed execution receipt;
-    /// artifacts not reached before failure may be omitted.
+    /// Every implementation must choose explicitly whether its error retains
+    /// evidence. An implementation that cannot mutate durable state or
+    /// complete I/O before failure returns `None`; all others retain those
+    /// measurements in the error and expose them here. The runtime validates
+    /// the evidence against the sealed node before writing it into the failed
+    /// execution receipt; artifacts not reached before failure may be omitted.
     fn failure_measurements<'error>(
         &'error self,
-        _error: &'error Self::Error,
-    ) -> Option<&'error WorkMeasurements> {
-        None
-    }
+        error: &'error Self::Error,
+    ) -> Option<&'error WorkMeasurements>;
 
     /// Block until one exact fence previously launched by [`Self::execute`]
     /// settles. An error means the fence settled unsuccessfully, so the
@@ -2623,6 +2625,21 @@ fn validate_measurements(
             )
         };
         if !disposition_matches_role {
+            return Err(ExecutionEvidenceError::ArtifactDispositionMismatch {
+                node: node.clone(),
+                artifact,
+                role: planned.role(),
+                disposition,
+            });
+        }
+        if disposition == ArtifactDisposition::RejectedStale
+            && measurement.observed_identity().is_none_or(|observed| {
+                crate::prepared_artifact::PreparedArtifactRejection::from_evidence_identity(
+                    artifact, observed,
+                )
+                .is_none()
+            })
+        {
             return Err(ExecutionEvidenceError::ArtifactDispositionMismatch {
                 node: node.clone(),
                 artifact,

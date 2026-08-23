@@ -47,6 +47,13 @@ validation. A later native backend may translate an
 after it maps the adapter's exact paired metadata into the T50 descriptor; that
 integration is outside T50 and must appear as explicit plan-listed work.
 
+Generation and cold load therefore accept only bounded absolute regular-file
+source descriptors. The runtime opens one source at a time under the cache
+node's lease, rejects CASA image, MeasurementSet, and table ancestry, and folds
+source-descriptor residency and source-read traffic into the same physical
+buffer reservation used for private-store streaming. This execution-local path
+contract is not a CASA cache reader and is never persisted as provenance.
+
 T50 also does not add or expand a provider-contract bundle. The private cache is
 an execution implementation detail. It uses ADR-0010's canonical
 `ArtifactIdentity`, `CacheIdentity`, plan nodes, resource/storage claims,
