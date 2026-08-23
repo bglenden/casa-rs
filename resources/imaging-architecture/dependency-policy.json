@@ -169,12 +169,16 @@
       ],
       "forbidden_patterns": [
         {
-          "regex": "(?m)^\\s*pub(?:\\s*\\([^\\n)]*\\))?\\s+(?:(?:async|unsafe|const|extern(?:\\s+\"[^\"]+\")?|default)\\s+)*(?:struct|enum|union|trait|type|fn|const|static(?:\\s+mut)?|mod|use|extern\\s+crate|macro(?:_rules!)?)(?=\\s|[<{])",
+          "regex": "(?m)^\\s*pub(?:\\s*\\([^)]*\\))?(?:(?:\\s|/\\*[\\s\\S]*?\\*/)+)(?:(?:async|unsafe|safe|const|extern(?:\\s+\"[^\"]+\")?|default)(?:(?:\\s|/\\*[\\s\\S]*?\\*/)+))*(?:struct|enum|union|trait|type|fn|const|static(?:\\s+mut)?|mod|use|extern(?:\\s+crate|\\s+\"[^\"]+\")?|macro(?:_rules!)?)(?=\\s|[<{])",
           "message": "T15 walking skeleton must remain private test code"
         },
         {
           "regex": "(?m)^\\s*(?:use|extern\\s+crate)\\s+(?!(?:casa_imaging_model|casa_imaging_runtime)\\b)(?:casa_[A-Za-z0-9_]+|casars(?:_[A-Za-z0-9_]+)?)\\b|\\b(?!(?:casa_imaging_model|casa_imaging_runtime)::)(?:casa_[A-Za-z0-9_]+|casars(?:_[A-Za-z0-9_]+)?)::",
           "message": "T15 walking skeleton imports a frontend, backend, router, or legacy owner"
+        },
+        {
+          "regex": "(?m)^\\s*use\\s+super\\s*::\\s*\\*\\s*;",
+          "message": "T15 walking skeleton must import parent support explicitly"
         },
         {
           "regex": "\\b(?:SelectedObservationCompletion|WeightingGeneration|WeightingReplayCompletion|CompleteDataCompletion|NormalStateGeneration|ModelDelta|SolverEvidence|ProductGeneration|ProductGenerationSeal|ProductGenerationAuthority)\\b",
@@ -197,8 +201,16 @@
       ],
       "forbidden_patterns": [
         {
-          "regex": "(?m)^\\s*pub(?:\\s*\\([^\\n)]*\\))?\\s+(?:(?:async|unsafe|const|extern(?:\\s+\"[^\"]+\")?|default)\\s+)*(?:struct|enum|union|trait|type|fn|const|static(?:\\s+mut)?|mod|use|extern\\s+crate|macro(?:_rules!)?)(?=\\s|[<{])",
+          "regex": "(?m)^\\s*pub(?:\\s*\\([^)]*\\))?(?:(?:\\s|/\\*[\\s\\S]*?\\*/)+)(?:(?:async|unsafe|safe|const|extern(?:\\s+\"[^\"]+\")?|default)(?:(?:\\s|/\\*[\\s\\S]*?\\*/)+))*(?:struct|enum|union|trait|type|fn|const|static(?:\\s+mut)?|mod|use|extern(?:\\s+crate|\\s+\"[^\"]+\")?|macro(?:_rules!)?)(?=\\s|[<{])",
           "message": "T15 parent compile_plan_run support must remain private test code"
+        },
+        {
+          "regex": "(?m)^\\s*(?:pub\\s+)?(?:use|extern\\s+crate)\\s+(?!(?:casa_imaging_model|casa_imaging_runtime)\\b)(?:casa_[A-Za-z0-9_]+|casars(?:_[A-Za-z0-9_]+)?)\\b|\\b(?!(?:casa_imaging_model|casa_imaging_runtime)::)(?:casa_[A-Za-z0-9_]+|casars(?:_[A-Za-z0-9_]+)?)::",
+          "message": "T15 parent compile_plan_run support imports a frontend, backend, router, or legacy owner"
+        },
+        {
+          "regex": "\\b(?:SelectedObservationCompletion|WeightingGeneration|WeightingReplayCompletion|CompleteDataCompletion|NormalStateGeneration|ModelDelta|SolverEvidence|ProductGeneration|ProductGenerationSeal|ProductGenerationAuthority)\\b",
+          "message": "T15 parent compile_plan_run support anticipates future completion or generation ownership"
         },
         {
           "regex": "\\b(?:ExecutionScheduler|NativeEnginePort|LegacyWholeRunEnginePort|authority_plan|authority_run)\\b",

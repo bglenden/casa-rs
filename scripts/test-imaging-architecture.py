@@ -475,6 +475,10 @@ class ArchitecturePolicyTests(unittest.TestCase):
                 r"T15 walking skeleton imports a frontend, backend, router, or legacy owner",
             ),
             (
+                "use super::*;\n",
+                r"T15 walking skeleton must import parent support explicitly",
+            ),
+            (
                 "struct SelectedObservationCompletion;\n",
                 r"T15 walking skeleton anticipates future completion or generation ownership",
             ),
@@ -514,6 +518,11 @@ class ArchitecturePolicyTests(unittest.TestCase):
             "pub use super::private_item;\n",
             "pub macro leaked_macro() {}\n",
             "pub macro_rules! leaked_macro_rules { () => {}; }\n",
+            "pub /* commented visibility */ fn leaked_commented() {}\n",
+            "pub(\n    in crate\n) fn leaked_multiline() {}\n",
+            "pub safe fn leaked_safe() {}\n",
+            'pub unsafe extern "C" {\n    pub fn leaked_foreign() {}\n}\n',
+            'unsafe extern "C" {\n    pub safe fn leaked_safe_foreign();\n}\n',
         ]
         for source_text in public_items:
             with (
@@ -552,6 +561,14 @@ class ArchitecturePolicyTests(unittest.TestCase):
                 (
                     "pub(crate) fn leaked_support() {}\n",
                     r"T15 parent compile_plan_run support must remain private test code",
+                ),
+                (
+                    "use casa_imaging_router::ImagingRouter;\n",
+                    r"T15 parent compile_plan_run support imports a frontend, backend, router, or legacy owner",
+                ),
+                (
+                    "struct SelectedObservationCompletion;\n",
+                    r"T15 parent compile_plan_run support anticipates future completion or generation ownership",
                 ),
                 (
                     "struct ExecutionScheduler;\n",
