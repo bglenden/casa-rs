@@ -542,6 +542,17 @@ fn implementation(byte: u8) -> WorkImplementationId {
     WorkImplementationId::new(format!("test-cpu-{byte}"))
 }
 
+fn artifact_measurement(
+    planned: ArtifactIdentity,
+    observed: Option<ArtifactIdentity>,
+    disposition: ArtifactDisposition,
+    bytes: u64,
+    path: Option<RedactedPath>,
+) -> ArtifactMeasurement {
+    ArtifactMeasurement::new(planned, observed, disposition, bytes, path)
+        .expect("test adapters only report externally constructible artifact dispositions")
+}
+
 fn recording_executor(
     byte: u8,
     failure: Option<&'static str>,
@@ -3095,14 +3106,8 @@ fn run_rejects_artifact_dispositions_that_contradict_plan_semantics() {
         (
             vec![IoMeasurement::new(IoBufferKind::SourceReadAhead, 4_096, 2)],
             vec![
-                ArtifactMeasurement::new(
-                    input,
-                    Some(input),
-                    ArtifactDisposition::Staged,
-                    4_096,
-                    None,
-                ),
-                ArtifactMeasurement::new(cache, None, ArtifactDisposition::RejectedStale, 0, None),
+                artifact_measurement(input, Some(input), ArtifactDisposition::Staged, 4_096, None),
+                artifact_measurement(cache, Some(cache), ArtifactDisposition::Reused, 0, None),
             ],
         ),
     )]);
@@ -5404,7 +5409,7 @@ fn receipt_reopens_the_complete_selected_plan_projection() {
         WorkNodeId::new("first-major-work"),
         (
             Vec::new(),
-            vec![ArtifactMeasurement::new(
+            vec![artifact_measurement(
                 cache_artifact,
                 Some(cache_artifact),
                 ArtifactDisposition::Built,
@@ -5614,17 +5619,17 @@ fn receipt_compares_planned_and_actual_io_artifacts_and_never_persists_paths() {
             (
                 vec![IoMeasurement::new(IoBufferKind::SourceReadAhead, 4_096, 2)],
                 vec![
-                    ArtifactMeasurement::new(
+                    artifact_measurement(
                         input,
                         Some(input),
                         ArtifactDisposition::Loaded,
                         4_096,
                         Some(input_path),
                     ),
-                    ArtifactMeasurement::new(
+                    artifact_measurement(
                         cache,
-                        Some(PreparedArtifactRejection::Missing.evidence_identity(cache)),
-                        ArtifactDisposition::RejectedStale,
+                        Some(cache),
+                        ArtifactDisposition::Reused,
                         1_024,
                         None,
                     ),
@@ -5635,7 +5640,7 @@ fn receipt_compares_planned_and_actual_io_artifacts_and_never_persists_paths() {
             WorkNodeId::new("transaction-commit"),
             (
                 vec![IoMeasurement::new(IoBufferKind::Publication, 2_048, 1)],
-                vec![ArtifactMeasurement::new(
+                vec![artifact_measurement(
                     output,
                     Some(ArtifactIdentity::from_sha256([36; 32])),
                     ArtifactDisposition::Staged,
@@ -5708,7 +5713,7 @@ fn receipt_compares_planned_and_actual_io_artifacts_and_never_persists_paths() {
     );
     assert_eq!(
         receipt.artifact_disposition(cache),
-        Some(ArtifactDisposition::RejectedStale)
+        Some(ArtifactDisposition::Reused)
     );
     assert_eq!(
         receipt.artifact_cache_identity(cache),
@@ -5765,20 +5770,14 @@ fn failed_publication_fence_never_records_a_published_output() {
             (
                 vec![IoMeasurement::new(IoBufferKind::SourceReadAhead, 4_096, 2)],
                 vec![
-                    ArtifactMeasurement::new(
+                    artifact_measurement(
                         input,
                         Some(input),
                         ArtifactDisposition::Loaded,
                         4_096,
                         None,
                     ),
-                    ArtifactMeasurement::new(
-                        cache,
-                        Some(PreparedArtifactRejection::Missing.evidence_identity(cache)),
-                        ArtifactDisposition::RejectedStale,
-                        0,
-                        None,
-                    ),
+                    artifact_measurement(cache, Some(cache), ArtifactDisposition::Reused, 0, None),
                 ],
             ),
         ),
@@ -5786,7 +5785,7 @@ fn failed_publication_fence_never_records_a_published_output() {
             WorkNodeId::new("transaction-commit"),
             (
                 vec![IoMeasurement::new(IoBufferKind::Publication, 2_048, 1)],
-                vec![ArtifactMeasurement::new(
+                vec![artifact_measurement(
                     output,
                     Some(staged_output),
                     ArtifactDisposition::Staged,

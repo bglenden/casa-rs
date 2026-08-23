@@ -534,10 +534,52 @@ pub struct ArtifactMeasurement {
     path: Option<RedactedPath>,
 }
 
+/// Rejection of an externally constructed artifact measurement.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ArtifactMeasurementError {
+    /// The disposition can only be emitted by its owning runtime module.
+    StoreOwnedDisposition(ArtifactDisposition),
+}
+
+impl fmt::Display for ArtifactMeasurementError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::StoreOwnedDisposition(disposition) => write!(
+                formatter,
+                "artifact disposition {disposition:?} requires store-owned evidence"
+            ),
+        }
+    }
+}
+
+impl Error for ArtifactMeasurementError {}
+
 impl ArtifactMeasurement {
     /// Report one plan-listed artifact's observed identity and final disposition.
-    #[must_use]
+    ///
+    /// [`ArtifactDisposition::RejectedStale`] is deliberately store-owned: a
+    /// generic execution adapter cannot mint it even if it reproduces the
+    /// deterministic identity stored in an execution receipt.
     pub const fn new(
+        planned: ArtifactIdentity,
+        observed: Option<ArtifactIdentity>,
+        disposition: ArtifactDisposition,
+        bytes: u64,
+        path: Option<RedactedPath>,
+    ) -> Result<Self, ArtifactMeasurementError> {
+        if matches!(disposition, ArtifactDisposition::RejectedStale) {
+            return Err(ArtifactMeasurementError::StoreOwnedDisposition(disposition));
+        }
+        Ok(Self {
+            planned,
+            observed,
+            disposition,
+            bytes,
+            path,
+        })
+    }
+
+    pub(crate) const fn new_store_owned(
         planned: ArtifactIdentity,
         observed: Option<ArtifactIdentity>,
         disposition: ArtifactDisposition,
@@ -2596,6 +2638,22 @@ fn validate_measurements(
         .filter(|artifact| artifact.node() == node)
         .map(|artifact| (artifact.identity(), artifact))
         .collect::<BTreeMap<_, _>>();
+    validate_artifact_measurements(
+        node,
+        work.node().kind,
+        &planned_artifacts,
+        measurements,
+        require_all_artifacts,
+    )
+}
+
+fn validate_artifact_measurements(
+    node: &WorkNodeId,
+    work_kind: WorkKind,
+    planned_artifacts: &BTreeMap<ArtifactIdentity, &PlannedArtifact>,
+    measurements: &WorkMeasurements,
+    require_all_artifacts: bool,
+) -> Result<(), ExecutionEvidenceError> {
     let mut measured_artifacts = BTreeMap::new();
     let mut rejected_artifact = None;
     for measurement in measurements.artifacts() {
@@ -2647,8 +2705,7 @@ fn validate_measurements(
                 disposition,
             });
         }
-        if work.node().kind == WorkKind::Cache && disposition == ArtifactDisposition::RejectedStale
-        {
+        if work_kind == WorkKind::Cache && disposition == ArtifactDisposition::RejectedStale {
             rejected_artifact.get_or_insert(artifact);
         }
     }
@@ -3782,4 +3839,77 @@ fn write_hex(formatter: &mut fmt::Formatter<'_>, bytes: &[u8]) -> fmt::Result {
         write!(formatter, "{byte:02x}")?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod artifact_measurement_tests {
+    use super::*;
+
+    #[test]
+    fn store_owned_rejection_requires_typed_identity_bound_to_planned_artifact() {
+        let node = WorkNodeId::new("cache");
+        let identity = ArtifactIdentity::from_sha256([1; 32]);
+        let other_identity = ArtifactIdentity::from_sha256([2; 32]);
+        let planned = PlannedArtifact::new(identity, node.clone(), ArtifactRole::Cache, None);
+        let planned_artifacts = BTreeMap::from([(identity, &planned)]);
+        let invalid = [
+            None,
+            Some(ArtifactIdentity::from_sha256([3; 32])),
+            Some(
+                crate::prepared_artifact::PreparedArtifactRejection::Missing
+                    .evidence_identity(other_identity),
+            ),
+        ];
+
+        for observed in invalid {
+            let measurements = WorkMeasurements::new(
+                Vec::new(),
+                Vec::new(),
+                vec![ArtifactMeasurement::new_store_owned(
+                    identity,
+                    observed,
+                    ArtifactDisposition::RejectedStale,
+                    0,
+                    None,
+                )],
+            );
+            assert!(matches!(
+                validate_artifact_measurements(
+                    &node,
+                    WorkKind::Cache,
+                    &planned_artifacts,
+                    &measurements,
+                    true,
+                ),
+                Err(ExecutionEvidenceError::ArtifactDispositionMismatch { artifact, .. })
+                    if artifact == identity
+            ));
+        }
+
+        let valid = WorkMeasurements::new(
+            Vec::new(),
+            Vec::new(),
+            vec![ArtifactMeasurement::new_store_owned(
+                identity,
+                Some(
+                    crate::prepared_artifact::PreparedArtifactRejection::Missing
+                        .evidence_identity(identity),
+                ),
+                ArtifactDisposition::RejectedStale,
+                0,
+                None,
+            )],
+        );
+        assert!(matches!(
+            validate_artifact_measurements(
+                &node,
+                WorkKind::Cache,
+                &planned_artifacts,
+                &valid,
+                true,
+            ),
+            Err(ExecutionEvidenceError::RejectedArtifact { artifact, .. })
+                if artifact == identity
+        ));
+    }
 }

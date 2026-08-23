@@ -4,6 +4,51 @@ use super::*;
 
 const PREPARED_PAYLOAD_BYTES: u64 = (3 * 3 + 5 * 5) * 8;
 
+fn forged_rejection_identity(
+    planned: ArtifactIdentity,
+    rejection: PreparedArtifactRejection,
+) -> ArtifactIdentity {
+    let tag = match rejection {
+        PreparedArtifactRejection::Missing => 0,
+        PreparedArtifactRejection::Incomplete => 1,
+        PreparedArtifactRejection::Incompatible => 2,
+        PreparedArtifactRejection::Corrupt => 3,
+        PreparedArtifactRejection::NonFinite => 4,
+    };
+    let mut hasher = Sha256::new();
+    hasher.update(b"casa-rs/private-prepared-artifact/rejection\0");
+    hasher.update(4_u32.to_le_bytes());
+    hasher.update(planned.as_bytes());
+    hasher.update([tag]);
+    ArtifactIdentity::from_sha256(hasher.finalize().into())
+}
+
+fn expected_orphan_staging_identity(name: &str, bytes: u64) -> ArtifactIdentity {
+    let mut hasher = Sha256::new();
+    hasher.update(b"casa-rs/private-prepared-artifact/orphan-staging-evidence\0");
+    hasher.update(4_u32.to_le_bytes());
+    hasher.update((name.len() as u64).to_le_bytes());
+    hasher.update(name.as_bytes());
+    hasher.update(bytes.to_le_bytes());
+    ArtifactIdentity::from_sha256(hasher.finalize().into())
+}
+
+fn expected_eviction_observed_identity(
+    ledger: ArtifactIdentity,
+    evictions: &[(ArtifactIdentity, u64)],
+) -> ArtifactIdentity {
+    let mut hasher = Sha256::new();
+    hasher.update(b"casa-rs/private-prepared-artifact/eviction-observed\0");
+    hasher.update(4_u32.to_le_bytes());
+    hasher.update(ledger.as_bytes());
+    hasher.update((evictions.len() as u64).to_le_bytes());
+    for (identity, bytes) in evictions {
+        hasher.update(identity.as_bytes());
+        hasher.update(bytes.to_le_bytes());
+    }
+    ArtifactIdentity::from_sha256(hasher.finalize().into())
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PreparedObserved {
     Materialized {
@@ -801,7 +846,11 @@ fn assert_rejection_evidence(
             .artifact_observed_identity(descriptor.identity())
             .expect("durable rejection evidence"),
     );
-    assert_eq!(observed, rejection.evidence_identity(descriptor.identity()));
+    assert_eq!(
+        observed,
+        forged_rejection_identity(descriptor.identity(), rejection),
+        "the durable schema retains the exact domain-bound rejection identity"
+    );
     assert_eq!(
         PreparedArtifactRejection::from_evidence_identity(descriptor.identity(), observed),
         Some(rejection)
@@ -1916,9 +1965,11 @@ fn public_prepared_reuse_receipts_fail_closed_rejections() {
     assert_eq!(
         missing_receipt.artifact_observed_identity(missing_descriptor.identity()),
         Some(
-            PreparedArtifactRejection::Missing
-                .evidence_identity(missing_descriptor.identity())
-                .as_bytes(),
+            forged_rejection_identity(
+                missing_descriptor.identity(),
+                PreparedArtifactRejection::Missing,
+            )
+            .as_bytes(),
         )
     );
     assert_eq!(
@@ -2360,14 +2411,14 @@ fn failed_prepared_receipt_retains_materialization_eviction_and_io_evidence() {
         resources,
         io,
         vec![
-            ArtifactMeasurement::new(
+            artifact_measurement(
                 descriptor.identity(),
                 Some(observed_materialized),
                 ArtifactDisposition::Built,
                 PREPARED_PAYLOAD_BYTES,
                 Some(RedactedPath::from_path(cache_directory.path())),
             ),
-            ArtifactMeasurement::new(
+            artifact_measurement(
                 ledger.identity(),
                 Some(observed_evictions),
                 ArtifactDisposition::Loaded,
@@ -2573,86 +2624,139 @@ fn orphan_staging_is_included_in_reuse_budget_and_receipt_evidence() {
 }
 
 #[test]
-fn malformed_rejection_evidence_is_rejected_without_partial_receipt_mutation() {
-    let problem = compile(request(1)).expect("malformed rejection problem");
-    let cache_directory = tempfile::tempdir().expect("malformed rejection cache");
-    let store = PreparedArtifactStore::open(cache_directory.path(), prepared_budget())
-        .expect("malformed rejection store");
-    let descriptor = prepared_descriptor(&store, &problem);
-    let operation = PreparedArtifactOperation::Reuse;
-    let plan = plan(
-        &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
-        |_, _| Ok::<_, ()>(prepared_physical_work(&descriptor, &store, operation)),
-    )
-    .expect("malformed rejection plan");
-    let node_id = descriptor.work_node_id(operation);
-    let resources = plan.execution_dag().nodes()[&node_id]
-        .claims
-        .iter()
-        .map(|claim| ResourceMeasurement::new(claim.resource.clone(), claim.lifetime.clone(), 0))
-        .collect::<Vec<_>>();
-    let io = plan.prediction().stages()[&node_id]
-        .io()
-        .iter()
-        .map(|prediction| IoMeasurement::new(prediction.kind(), 0, 1))
-        .collect::<Vec<_>>();
-    let ledger = descriptor.eviction_artifact(operation);
-    let prepared_id = descriptor.work_implementation_id(operation);
-    let receipts_directory = tempfile::tempdir().expect("malformed rejection receipts");
+fn cold_operations_account_and_deterministically_remove_orphan_staging() {
+    let problem = compile(request(1)).expect("cold orphan-staging problem");
+    let receipts_directory = tempfile::tempdir().expect("cold orphan-staging receipts");
     let receipts = ExecutionReceiptStore::new(
         receipts_directory.path(),
-        ReceiptRetention::new(4, 1_000_000).expect("malformed rejection retention"),
+        ReceiptRetention::new(8, 2_000_000).expect("cold orphan-staging retention"),
     )
-    .expect("malformed rejection receipt store");
-    let malformed = [
-        None,
-        Some(ArtifactIdentity::from_sha256([212; 32])),
-        Some(PreparedArtifactRejection::Missing.evidence_identity(ledger.identity())),
-    ];
-    for (index, observed) in malformed.into_iter().enumerate() {
-        let evidence = WorkMeasurements::new(
-            resources.clone(),
-            io.clone(),
-            vec![
-                ArtifactMeasurement::new(
-                    descriptor.identity(),
-                    observed,
-                    ArtifactDisposition::RejectedStale,
-                    0,
-                    None,
-                ),
-                ArtifactMeasurement::new(
-                    ledger.identity(),
-                    Some(ArtifactIdentity::from_sha256([213; 32])),
-                    ArtifactDisposition::Loaded,
-                    0,
-                    None,
-                ),
+    .expect("cold orphan-staging receipt store");
+
+    for (index, operation) in [
+        PreparedArtifactOperation::Generate,
+        PreparedArtifactOperation::Load,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let cache_directory = tempfile::tempdir().expect("cold orphan-staging cache");
+        let store = PreparedArtifactStore::open(cache_directory.path(), prepared_budget())
+            .expect("cold orphan-staging store");
+        let objects = cache_directory.path().join("objects-v1");
+        for (suffix, manifest_bytes, payload_bytes) in
+            [("zeta", 31_usize, 47_usize), ("alpha", 19, 23)]
+        {
+            let orphan = objects.join(format!(".staging-{suffix}"));
+            fs::create_dir(&orphan).expect("cold orphan directory");
+            fs::write(orphan.join("manifest.json"), vec![0_u8; manifest_bytes])
+                .expect("cold orphan manifest");
+            fs::write(orphan.join("payload.bin"), vec![0_u8; payload_bytes])
+                .expect("cold orphan payload");
+        }
+        let orphan_bytes = 120;
+        let descriptor = prepared_descriptor(&store, &problem);
+        let ledger = descriptor.eviction_artifact(operation);
+        let expected_ledger_observation = expected_eviction_observed_identity(
+            ledger.identity(),
+            &[
+                (expected_orphan_staging_identity(".staging-alpha", 42), 42),
+                (expected_orphan_staging_identity(".staging-zeta", 78), 78),
             ],
         );
-        let registry = PreparedSuiteRegistry {
-            id: registry(3),
-            implementations: BTreeMap::from([
-                (
-                    implementation(6),
-                    PreparedSuiteImplementation::Base(Box::new(prepared_base_executor(
-                        &descriptor,
-                        operation,
-                    ))),
-                ),
-                (
-                    prepared_id.clone(),
-                    PreparedSuiteImplementation::Failure(Box::new(PreparedFailureAdapter {
-                        id: prepared_id.clone(),
-                        evidence,
-                        succeed: true,
-                    })),
-                ),
-            ]),
-        };
-        let attempt_byte = 153 + u8::try_from(index).expect("small malformed-evidence index");
-        let build_byte = 157 + u8::try_from(index).expect("small malformed-evidence index");
+        let attempt_byte = 170 + u8::try_from(index).expect("small operation index");
+        let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([attempt_byte; 32]);
+
+        assert!(matches!(
+            execute_prepared_operation(
+                &problem,
+                &receipts,
+                store,
+                descriptor.clone(),
+                operation,
+                PreparedRunExpectation {
+                    attempt_byte,
+                    build_byte: attempt_byte + 2,
+                    expect_rejection: false,
+                },
+            ),
+            PreparedObserved::Materialized { .. }
+        ));
+        let receipt = receipts.open(attempt).expect("cold orphan-staging receipt");
+        assert_eq!(receipt.status(), ReceiptStatus::Completed);
+        assert_eq!(
+            receipt.artifact_actual_bytes(ledger.identity()),
+            Some(orphan_bytes)
+        );
+        assert_eq!(
+            receipt.artifact_observed_identity(ledger.identity()),
+            Some(expected_ledger_observation.as_bytes()),
+            "the ledger must commit the sorted orphan entry identities, count, and bytes"
+        );
+        assert!(
+            receipt
+                .actual_resource_peak(
+                    &descriptor.work_node_id(operation),
+                    &prepared_storage_resource(&descriptor, StorageUseKind::PersistentCache),
+                    &ClaimLifetime::Work,
+                )
+                .is_some_and(|bytes| bytes >= orphan_bytes),
+            "the pre-cleanup private-store peak must include orphan staging"
+        );
+        assert!(
+            fs::read_dir(&objects)
+                .expect("post-cleanup object inventory")
+                .all(|entry| !entry
+                    .expect("post-cleanup entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".staging-")),
+            "cold cleanup must remove every inspected orphan staging entry"
+        );
+    }
+}
+
+#[test]
+fn cold_operation_fails_before_deleting_over_budget_orphan_staging() {
+    let problem = compile(request(1)).expect("over-budget cold orphan problem");
+    let budget =
+        PreparedArtifactBudget::new(20_000, 4, 64).expect("over-budget cold orphan policy");
+    let receipts_directory = tempfile::tempdir().expect("over-budget cold orphan receipts");
+    let receipts = ExecutionReceiptStore::new(
+        receipts_directory.path(),
+        ReceiptRetention::new(4, 1_000_000).expect("over-budget cold orphan retention"),
+    )
+    .expect("over-budget cold orphan receipt store");
+
+    for (index, operation) in [
+        PreparedArtifactOperation::Generate,
+        PreparedArtifactOperation::Load,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let cache_directory = tempfile::tempdir().expect("over-budget cold orphan cache");
+        let store = PreparedArtifactStore::open(cache_directory.path(), budget)
+            .expect("over-budget cold orphan store");
+        let orphan = cache_directory
+            .path()
+            .join("objects-v1/.staging-over-budget");
+        fs::create_dir(&orphan).expect("over-budget cold orphan directory");
+        fs::write(
+            orphan.join("payload.bin"),
+            vec![0_u8; usize::try_from(budget.cache_bytes() + 1).expect("small cache budget")],
+        )
+        .expect("over-budget cold orphan payload");
+        let descriptor = prepared_descriptor(&store, &problem);
+        let plan = plan(
+            &problem,
+            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+            |_, _| Ok::<_, ()>(prepared_physical_work(&descriptor, &store, operation)),
+        )
+        .expect("over-budget cold orphan plan");
+        let adapter = PreparedOperationAdapter::new(operation, store, descriptor);
+        let (registry, _) = prepared_registry(adapter);
+        let attempt_byte = 174 + u8::try_from(index).expect("small cold operation index");
         let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([attempt_byte; 32]);
 
         let error = run_prepared(
@@ -2661,33 +2765,69 @@ fn malformed_rejection_evidence_is_rejected_without_partial_receipt_mutation() {
             &registry,
             receipts.bind(execution_provenance(
                 attempt,
-                BuildIdentity::from_sha256([build_byte; 32]),
+                BuildIdentity::from_sha256([attempt_byte + 2; 32]),
             )),
         )
-        .expect_err("malformed rejection identity must fail closed");
+        .expect_err("cold cleanup must fail closed before deleting over-budget staging");
         assert!(matches!(
             error,
-            RunError::Evidence(ExecutionEvidenceError::ArtifactDispositionMismatch {
-                artifact,
+            RunError::Evidence(ExecutionEvidenceError::ResourcePeakExceeded {
+                resource: LeaseResource::Storage {
+                    use_kind: StorageUseKind::PersistentCache,
+                    ..
+                },
+                planned,
+                actual,
                 ..
-            }) if artifact == descriptor.identity()
+            }) if planned == budget.cache_bytes() && actual == budget.cache_bytes() + 1
         ));
-
-        let receipt = receipts.open(attempt).expect("malformed rejection receipt");
+        assert!(
+            orphan.exists(),
+            "the rejected orphan must remain recoverable"
+        );
+        let receipt = receipts
+            .open(attempt)
+            .expect("over-budget cold orphan receipt");
         assert_eq!(receipt.status(), ReceiptStatus::Failed);
         assert_eq!(
             receipt.failure_kind(),
             Some(ReceiptFailureKind::EvidenceContract)
         );
-        assert!(receipt.stage_actual_elapsed_nanos(&node_id).is_some());
-        assert_eq!(receipt.artifact_actual_bytes(descriptor.identity()), None);
-        assert_eq!(receipt.artifact_actual_bytes(ledger.identity()), None);
-        assert_eq!(
-            receipt.actual_resource_peak(&node_id, &LeaseResource::Workers, &ClaimLifetime::Work,),
-            None,
-            "invalid rejection identity must not be checkpointed partially"
+    }
+}
+
+#[test]
+fn external_adapter_cannot_mint_rejected_stale_evidence() {
+    let planned = ArtifactIdentity::from_sha256([207; 32]);
+    let forged = forged_rejection_identity(planned, PreparedArtifactRejection::Missing);
+    let forged_for_another_artifact = forged_rejection_identity(
+        ArtifactIdentity::from_sha256([208; 32]),
+        PreparedArtifactRejection::Missing,
+    );
+
+    for observed in [
+        None,
+        Some(ArtifactIdentity::from_sha256([209; 32])),
+        Some(forged_for_another_artifact),
+        Some(forged),
+    ] {
+        assert!(
+            ArtifactMeasurement::new(
+                planned,
+                observed,
+                ArtifactDisposition::RejectedStale,
+                0,
+                None,
+            )
+            .is_err(),
+            "the public constructor must reject every stale-evidence identity, including a correctly bound forgery"
         );
     }
+    assert_eq!(
+        PreparedArtifactRejection::from_evidence_identity(planned, forged),
+        Some(PreparedArtifactRejection::Missing),
+        "durable receipt decoding remains public"
+    );
 }
 
 #[test]

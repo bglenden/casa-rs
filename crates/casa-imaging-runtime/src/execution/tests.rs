@@ -478,6 +478,13 @@ fn execution_provenance(
 }
 
 fn physical_work_binding(dag: ExecutionDag) -> PhysicalWorkBinding {
+    physical_work_binding_with_artifacts(dag, Vec::new())
+}
+
+fn physical_work_binding_with_artifacts(
+    dag: ExecutionDag,
+    artifacts: Vec<crate::PlannedArtifact>,
+) -> PhysicalWorkBinding {
     let initial = WorkNodeId::new("transaction-check");
     let read = WorkNodeId::new("transaction-read");
     let reconciliation = WorkNodeId::new("transaction-reconciliation");
@@ -996,6 +1003,219 @@ fn publication_layout_ledger_sums_asynchronous_exposure_across_producers() {
 
     assert_eq!(ledger.writer_buffer_bytes(), 60);
     assert_eq!(ledger.mapped_page_cache_bytes(), 80);
+}
+
+struct MalformedRejectionImplementation {
+    id: WorkImplementationId,
+    node: WorkNodeId,
+    artifact: crate::ArtifactIdentity,
+    ledger: crate::ArtifactIdentity,
+    observed: Option<crate::ArtifactIdentity>,
+}
+
+impl crate::WorkImplementation for MalformedRejectionImplementation {
+    type Error = std::convert::Infallible;
+
+    fn implementation_id(&self) -> &WorkImplementationId {
+        &self.id
+    }
+
+    fn execute(
+        &self,
+        context: crate::WorkExecutionContext<'_>,
+    ) -> Result<crate::WorkMeasurements, Self::Error> {
+        let resources = context
+            .node()
+            .claims
+            .iter()
+            .map(|claim| {
+                crate::ResourceMeasurement::new(claim.resource.clone(), claim.lifetime.clone(), 0)
+            })
+            .collect();
+        let io = context
+            .stage_prediction()
+            .io()
+            .iter()
+            .map(|prediction| crate::IoMeasurement::new(prediction.kind(), 0, 1))
+            .collect();
+        let artifacts = if context.node().id == self.node {
+            vec![
+                crate::ArtifactMeasurement::new_store_owned(
+                    self.artifact,
+                    self.observed,
+                    crate::ArtifactDisposition::RejectedStale,
+                    0,
+                    None,
+                ),
+                crate::ArtifactMeasurement::new_store_owned(
+                    self.ledger,
+                    Some(crate::ArtifactIdentity::from_sha256([213; 32])),
+                    crate::ArtifactDisposition::Loaded,
+                    0,
+                    None,
+                ),
+            ]
+        } else {
+            Vec::new()
+        };
+        Ok(crate::WorkMeasurements::new(resources, io, artifacts))
+    }
+
+    fn failure_measurements<'error>(
+        &'error self,
+        error: &'error Self::Error,
+    ) -> Option<&'error crate::WorkMeasurements> {
+        match *error {}
+    }
+
+    fn wait_for_fence(
+        &self,
+        _context: crate::WorkExecutionContext<'_>,
+        _fence: FenceKind,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn publish(&self, _context: crate::WorkExecutionContext<'_>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
+struct MalformedRejectionRegistry {
+    id: ImplementationRegistryId,
+    implementation: MalformedRejectionImplementation,
+}
+
+impl crate::ImplementationRegistry for MalformedRejectionRegistry {
+    type Implementation = MalformedRejectionImplementation;
+
+    fn registry_id(&self) -> ImplementationRegistryId {
+        self.id
+    }
+
+    fn resolve(&self, id: &WorkImplementationId) -> Option<&Self::Implementation> {
+        (id == &self.implementation.id).then_some(&self.implementation)
+    }
+}
+
+#[test]
+fn malformed_store_owned_rejection_is_rejected_without_partial_receipt_mutation() {
+    let problem = compiled_problem();
+    let node_id = WorkNodeId::new("malformed-rejection-cache");
+    let mut cache_node = cpu_node(node_id.as_str(), BTreeSet::new());
+    cache_node.kind = WorkKind::Cache;
+    cache_node.claims.push(ResourceClaim {
+        resource: crate::LeaseResource::ResidentCache,
+        amount: 1,
+        lifetime: ClaimLifetime::Work,
+    });
+    let mut specification = plan_spec(vec![cache_node]);
+    specification.resource_alternative.demand.caches = CacheDemand {
+        hard_resident_bytes: 1,
+        preferred_resident_bytes: 1,
+    };
+    specification.initial_knobs.cache_retention_bytes = 1;
+    let dag = ExecutionDag::new(specification).expect("malformed rejection physical work");
+    let artifact = crate::ArtifactIdentity::from_sha256([210; 32]);
+    let ledger = crate::ArtifactIdentity::from_sha256([211; 32]);
+    let cache = crate::CacheIdentity::from_sha256([212; 32]);
+    let physical = physical_work_binding_with_artifacts(
+        dag,
+        vec![
+            crate::PlannedArtifact::new(
+                artifact,
+                node_id.clone(),
+                crate::ArtifactRole::Cache,
+                Some(cache),
+            ),
+            crate::PlannedArtifact::new(ledger, node_id.clone(), crate::ArtifactRole::Input, None),
+        ],
+    );
+    let cost_model = PlannerCostModelProfileId::from_sha256([8; 32]);
+    let plan = plan(
+        &problem,
+        PlanningBindings::new(
+            ImplementationRegistryId::from_sha256([7; 32]),
+            ResourcePolicy::Exclusive,
+            cost_model,
+        ),
+        |_, _| Ok::<_, std::convert::Infallible>(physical),
+    )
+    .expect("malformed rejection plan");
+    let receipts_directory = tempfile::tempdir().expect("malformed rejection receipts");
+    let receipts = crate::ExecutionReceiptStore::new(
+        receipts_directory.path(),
+        crate::ReceiptRetention::new(4, 1_000_000).expect("receipt retention"),
+    )
+    .expect("malformed rejection receipt store");
+    let current = crate::RunBindings::new(
+        problem.inputs().clone(),
+        plan.resource_policy(),
+        plan.planner_cost_model_profile_id(),
+    );
+    let malformed = [
+        None,
+        Some(crate::ArtifactIdentity::from_sha256([214; 32])),
+        Some(
+            crate::prepared_artifact::PreparedArtifactRejection::Missing.evidence_identity(ledger),
+        ),
+    ];
+
+    for (index, observed) in malformed.into_iter().enumerate() {
+        let registry = MalformedRejectionRegistry {
+            id: ImplementationRegistryId::from_sha256([7; 32]),
+            implementation: MalformedRejectionImplementation {
+                id: WorkImplementationId::new("cpu-reference"),
+                node: node_id.clone(),
+                artifact,
+                ledger,
+                observed,
+            },
+        };
+        let attempt_byte = 153 + u8::try_from(index).expect("small malformed-evidence index");
+        let build_byte = 157 + u8::try_from(index).expect("small malformed-evidence index");
+        let attempt = crate::ExecutionAttemptId::from_sha256([attempt_byte; 32]);
+        let provenance =
+            execution_provenance(attempt, crate::BuildIdentity::from_sha256([build_byte; 32]));
+        let authority = io_authority();
+        let mut controller = crate::RunToCompletion;
+        let error = crate::run(
+            &problem,
+            &plan,
+            &current,
+            &registry,
+            &authority,
+            &mut controller,
+            receipts.bind(provenance),
+        )
+        .expect_err("malformed store-owned rejection identity must fail closed");
+        assert!(matches!(
+            error,
+            crate::RunError::Evidence(crate::ExecutionEvidenceError::ArtifactDispositionMismatch {
+                artifact: rejected,
+                ..
+            }) if rejected == artifact
+        ));
+
+        let receipt = receipts.open(attempt).expect("malformed rejection receipt");
+        assert_eq!(receipt.status(), crate::ReceiptStatus::Failed);
+        assert_eq!(
+            receipt.failure_kind(),
+            Some(crate::ReceiptFailureKind::EvidenceContract)
+        );
+        assert!(receipt.stage_actual_elapsed_nanos(&node_id).is_some());
+        assert_eq!(receipt.artifact_actual_bytes(artifact), None);
+        assert_eq!(receipt.artifact_actual_bytes(ledger), None);
+        assert_eq!(
+            receipt.actual_resource_peak(
+                &node_id,
+                &crate::LeaseResource::Workers,
+                &ClaimLifetime::Work,
+            ),
+            None,
+            "invalid rejection identity must not be checkpointed partially"
+        );
+    }
 }
 
 fn inactive_release_predecessor_plan(fenced_predecessor: bool) -> (ExecutionDag, WorkNodeId) {

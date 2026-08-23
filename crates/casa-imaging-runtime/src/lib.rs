@@ -11,7 +11,8 @@ mod receipt;
 mod resource_authority;
 
 pub use execution_bindings::{
-    ArtifactDisposition, ArtifactIdentity, ArtifactMeasurement, ArtifactRole,
+    ArtifactDisposition, ArtifactIdentity, ArtifactMeasurement, ArtifactMeasurementError,
+    ArtifactRole,
     AttemptBoundObservationCompletion, BindingKind, CacheIdentity, CompiledWorkContext,
     ExecutionEvidenceError, ExecutionPlan, ExecutionPlanId, ExecutionStatus,
     ImplementationRegistry, ImplementationRegistryId, IoMeasurement, IoPrediction,
