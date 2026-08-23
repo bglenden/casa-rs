@@ -11,6 +11,8 @@ import json
 import re
 import subprocess
 import sys
+from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -53,7 +55,7 @@ ACCEPTED_LOGICAL_GRAPH_SHA256 = (
     "7101b6d90196b1ea3d3c750080d703bb5e305e91c8ac19553e1dda7ed58c4e33"
 )
 ACCEPTED_SOURCE_BOUNDARIES_SHA256 = (
-    "4d5297c389a82a67c62b56898da475d9675bafd246d1d0440b7caa75837996a8"
+    "dc56cc6b6eb40e69b7eff8f956ff4785a0890d7fe75f16e7c837b42ba80f9ed0"
 )
 ACCEPTED_FROZEN_TRANSITIONAL_EDGES_SHA256 = (
     "0077e28528d2160616d34e17fb7124586f346557917e0bfac99b0dff6739a1d1"
@@ -523,8 +525,14 @@ def validate_whole_run_router_policy(
     require_string(router.get("dispatch_method"), "whole_run_router.dispatch_method")
     require_string_list(router.get("engine_ports"), "whole_run_router.engine_ports")
     source_path = Path(source)
-    if source_path.is_absolute() or ".." in source_path.parts or source_path.suffix != ".rs":
-        raise ArchitectureError("whole_run_router.source must be a repository Rust source")
+    if (
+        source_path.is_absolute()
+        or ".." in source_path.parts
+        or source_path.suffix != ".rs"
+    ):
+        raise ArchitectureError(
+            "whole_run_router.source must be a repository Rust source"
+        )
     if stable_digest(router) != ACCEPTED_WHOLE_RUN_ROUTER_SHA256:
         raise ArchitectureError(
             "whole-run migration router differs from the accepted owner"
@@ -547,15 +555,19 @@ def validate_source_boundary_policy(value: Any) -> None:
         context = f"source_boundaries[{index}]"
         if not isinstance(boundary, dict):
             raise ArchitectureError(f"{context} must be an object")
-        if set(boundary) != {
+        required_keys = {
             "id",
             "roots",
             "extensions",
             "forbidden_patterns",
             "accepted_violation_digest",
+        }
+        if set(boundary) not in {
+            frozenset(required_keys),
+            frozenset(required_keys | {"rust_allowlist"}),
         }:
             raise ArchitectureError(
-                f"{context} must contain id, roots, extensions, forbidden_patterns, and accepted_violation_digest only"
+                f"{context} must contain the source-boundary keys and optional rust_allowlist only"
             )
         identifier = require_string(boundary.get("id"), f"{context}.id")
         if identifier in identifiers:
@@ -574,9 +586,11 @@ def validate_source_boundary_policy(value: Any) -> None:
         if any(not extension.startswith(".") for extension in extensions):
             raise ArchitectureError(f"{context}.extensions must start with a dot")
         patterns = boundary.get("forbidden_patterns")
-        if not isinstance(patterns, list) or not patterns:
+        if not isinstance(patterns, list) or (
+            not patterns and "rust_allowlist" not in boundary
+        ):
             raise ArchitectureError(
-                f"{context}.forbidden_patterns must be a non-empty array"
+                f"{context}.forbidden_patterns must be a non-empty array unless rust_allowlist is present"
             )
         for pattern_index, pattern in enumerate(patterns):
             pattern_context = f"{context}.forbidden_patterns[{pattern_index}]"
@@ -594,6 +608,9 @@ def validate_source_boundary_policy(value: Any) -> None:
                 raise ArchitectureError(
                     f"{pattern_context}.regex is invalid: {error}"
                 ) from error
+        rust_allowlist = boundary.get("rust_allowlist")
+        if rust_allowlist is not None:
+            validate_rust_allowlist_policy(rust_allowlist, f"{context}.rust_allowlist")
         accepted_digest = boundary.get("accepted_violation_digest")
         if accepted_digest is not None and not re.fullmatch(
             r"[0-9a-f]{64}", str(accepted_digest)
@@ -601,6 +618,73 @@ def validate_source_boundary_policy(value: Any) -> None:
             raise ArchitectureError(
                 f"{context}.accepted_violation_digest must be null or a lowercase SHA-256 digest"
             )
+
+
+def validate_rust_allowlist_policy(value: Any, context: str) -> None:
+    required = {
+        "allowed_imports",
+        "allowed_items",
+        "allowed_qualified_paths",
+        "privacy_message",
+        "glob_message",
+        "import_message",
+        "path_message",
+        "item_message",
+        "inventory_message",
+    }
+    if not isinstance(value, dict) or set(value) != required:
+        raise ArchitectureError(
+            f"{context} must contain exact Rust imports, items, and violation messages"
+        )
+    imports = require_string_list(
+        value.get("allowed_imports"), f"{context}.allowed_imports"
+    )
+    if any("*" in item or item != item.strip() for item in imports):
+        raise ArchitectureError(
+            f"{context}.allowed_imports must contain exact non-glob paths"
+        )
+    items = value.get("allowed_items")
+    if not isinstance(items, dict) or not items:
+        raise ArchitectureError(f"{context}.allowed_items must be a non-empty object")
+    item_pattern = re.compile(
+        r"^(?:struct|enum|union|trait|type|fn|const|static|mod|macro|macro_rules):(?:r#)?[A-Za-z_][A-Za-z0-9_]*$"
+    )
+    for item, count in items.items():
+        if not isinstance(item, str) or item_pattern.fullmatch(item) is None:
+            raise ArchitectureError(
+                f"{context}.allowed_items contains invalid item {item!r}"
+            )
+        if not isinstance(count, int) or isinstance(count, bool) or count < 1:
+            raise ArchitectureError(
+                f"{context}.allowed_items[{item!r}] must be a positive integer"
+            )
+    qualified_paths = value.get("allowed_qualified_paths")
+    if not isinstance(qualified_paths, dict):
+        raise ArchitectureError(f"{context}.allowed_qualified_paths must be an object")
+    qualified_path_pattern = re.compile(
+        r"^(?:casa_[A-Za-z0-9_]+|casars(?:_[A-Za-z0-9_]+)?)(?:::(?:r#)?[A-Za-z_][A-Za-z0-9_]*)+$"
+    )
+    for qualified_path, count in qualified_paths.items():
+        if (
+            not isinstance(qualified_path, str)
+            or qualified_path_pattern.fullmatch(qualified_path) is None
+        ):
+            raise ArchitectureError(
+                f"{context}.allowed_qualified_paths contains invalid path {qualified_path!r}"
+            )
+        if not isinstance(count, int) or isinstance(count, bool) or count < 1:
+            raise ArchitectureError(
+                f"{context}.allowed_qualified_paths[{qualified_path!r}] must be a positive integer"
+            )
+    for name in [
+        "privacy_message",
+        "glob_message",
+        "import_message",
+        "path_message",
+        "item_message",
+        "inventory_message",
+    ]:
+        require_string(value.get(name), f"{context}.{name}")
 
 
 def edge_tuple(edge: Any, context: str) -> tuple[str, str, str]:
@@ -871,6 +955,431 @@ def validate_workspace(policy: dict[str, Any], metadata: dict[str, Any]) -> None
                 )
 
 
+@dataclass(frozen=True)
+class RustToken:
+    text: str
+    line: int
+
+
+def rust_tokens(source: str, path: str) -> list[RustToken]:
+    tokens: list[RustToken] = []
+    index = 0
+    line = 1
+
+    def consume_literal(start: int, prefix_length: int = 0) -> int:
+        nonlocal line
+        quote = source[start + prefix_length]
+        cursor = start + prefix_length + 1
+        while cursor < len(source):
+            character = source[cursor]
+            if character == "\\":
+                if cursor + 1 < len(source) and source[cursor + 1] == "\n":
+                    line += 1
+                cursor += 2
+                continue
+            if character == quote:
+                return cursor + 1
+            if character == "\n":
+                line += 1
+            cursor += 1
+        raise ArchitectureError(
+            f"cannot lex Rust boundary {path}: unterminated literal"
+        )
+
+    def raw_literal_end(start: int, prefix_length: int) -> int | None:
+        nonlocal line
+        cursor = start + prefix_length
+        hashes = 0
+        while cursor < len(source) and source[cursor] == "#":
+            hashes += 1
+            cursor += 1
+        if cursor >= len(source) or source[cursor] != '"':
+            return None
+        cursor += 1
+        terminator = '"' + "#" * hashes
+        end = source.find(terminator, cursor)
+        if end == -1:
+            raise ArchitectureError(
+                f"cannot lex Rust boundary {path}: unterminated raw literal"
+            )
+        line += source.count("\n", cursor, end + len(terminator))
+        return end + len(terminator)
+
+    while index < len(source):
+        character = source[index]
+        if character.isspace():
+            if character == "\n":
+                line += 1
+            index += 1
+            continue
+        if source.startswith("//", index):
+            newline = source.find("\n", index + 2)
+            if newline == -1:
+                break
+            index = newline
+            continue
+        if source.startswith("/*", index):
+            depth = 1
+            cursor = index + 2
+            while cursor < len(source) and depth:
+                if source.startswith("/*", cursor):
+                    depth += 1
+                    cursor += 2
+                elif source.startswith("*/", cursor):
+                    depth -= 1
+                    cursor += 2
+                else:
+                    if source[cursor] == "\n":
+                        line += 1
+                    cursor += 1
+            if depth:
+                raise ArchitectureError(
+                    f"cannot lex Rust boundary {path}: unterminated block comment"
+                )
+            index = cursor
+            continue
+
+        token_line = line
+        raw_prefix = next(
+            (
+                prefix
+                for prefix in ("br", "cr", "r")
+                if source.startswith(prefix, index)
+            ),
+            None,
+        )
+        if raw_prefix is not None:
+            end = raw_literal_end(index, len(raw_prefix))
+            if end is not None:
+                tokens.append(RustToken("<literal>", token_line))
+                index = end
+                continue
+        literal_prefix = next(
+            (
+                prefix
+                for prefix in ("b", "c", "")
+                if source.startswith(prefix + '"', index)
+            ),
+            None,
+        )
+        if literal_prefix is not None:
+            index = consume_literal(index, len(literal_prefix))
+            tokens.append(RustToken("<literal>", token_line))
+            continue
+        if source.startswith("b'", index):
+            index = consume_literal(index, 1)
+            tokens.append(RustToken("<literal>", token_line))
+            continue
+        if character == "'":
+            if (
+                index + 2 < len(source)
+                and source[index + 2] == "'"
+                and source[index + 1] not in {"'", "\\", "\n"}
+            ):
+                index += 3
+                tokens.append(RustToken("<literal>", token_line))
+                continue
+            if index + 1 < len(source) and source[index + 1] == "\\":
+                index = consume_literal(index)
+                tokens.append(RustToken("<literal>", token_line))
+                continue
+            cursor = index + 1
+            if cursor < len(source) and (
+                source[cursor].isalpha() or source[cursor] == "_"
+            ):
+                cursor += 1
+                while cursor < len(source) and (
+                    source[cursor].isalnum() or source[cursor] == "_"
+                ):
+                    cursor += 1
+                tokens.append(RustToken(source[index:cursor], token_line))
+                index = cursor
+                continue
+            index = consume_literal(index)
+            tokens.append(RustToken("<literal>", token_line))
+            continue
+        if (
+            source.startswith("r#", index)
+            and index + 2 < len(source)
+            and (source[index + 2].isalpha() or source[index + 2] == "_")
+        ):
+            cursor = index + 3
+            while cursor < len(source) and (
+                source[cursor].isalnum() or source[cursor] == "_"
+            ):
+                cursor += 1
+            tokens.append(RustToken(source[index:cursor], token_line))
+            index = cursor
+            continue
+        if character.isalpha() or character == "_":
+            cursor = index + 1
+            while cursor < len(source) and (
+                source[cursor].isalnum() or source[cursor] == "_"
+            ):
+                cursor += 1
+            tokens.append(RustToken(source[index:cursor], token_line))
+            index = cursor
+            continue
+        punctuation = next(
+            (
+                value
+                for value in (
+                    "::",
+                    "->",
+                    "=>",
+                    "..=",
+                    "...",
+                    "..",
+                    "<<",
+                    ">>",
+                    "&&",
+                    "||",
+                )
+                if source.startswith(value, index)
+            ),
+            character,
+        )
+        tokens.append(RustToken(punctuation, token_line))
+        index += len(punctuation)
+    return tokens
+
+
+def rust_identifier(token: RustToken) -> bool:
+    value = token.text
+    if value.startswith("r#"):
+        value = value[2:]
+    return (
+        bool(value)
+        and (value[0].isalpha() or value[0] == "_")
+        and all(character.isalnum() or character == "_" for character in value[1:])
+    )
+
+
+def rust_source_inventory(
+    source: str, path: str
+) -> tuple[
+    list[tuple[str, int]],
+    list[tuple[str, int]],
+    list[tuple[str, int]],
+    list[int],
+    list[int],
+]:
+    tokens = rust_tokens(source, path)
+    imports: list[tuple[str, int]] = []
+    items: list[tuple[str, int]] = []
+    public_lines = [token.line for token in tokens if token.text == "pub"]
+    macro_export_lines = [
+        token.line for token in tokens if token.text == "macro_export"
+    ]
+    ignored: set[int] = set()
+
+    index = 0
+    glob_lines: list[int] = []
+    while index < len(tokens):
+        if (
+            tokens[index].text == "extern"
+            and index + 1 < len(tokens)
+            and tokens[index + 1].text == "crate"
+        ):
+            cursor = index + 2
+            while cursor < len(tokens) and tokens[cursor].text != ";":
+                ignored.add(cursor)
+                cursor += 1
+            if cursor >= len(tokens):
+                raise ArchitectureError(
+                    f"cannot parse Rust extern crate boundary {path}:{tokens[index].line}"
+                )
+            name = tokens[index + 2].text if index + 2 < cursor else "<missing>"
+            imports.append((f"extern crate {name}", tokens[index].line))
+            ignored.update(range(index, cursor + 1))
+            index = cursor + 1
+            continue
+        if tokens[index].text != "use":
+            index += 1
+            continue
+        cursor = index + 1
+        brace_depth = 0
+        while cursor < len(tokens):
+            if tokens[cursor].text == "{":
+                brace_depth += 1
+            elif tokens[cursor].text == "}":
+                brace_depth -= 1
+            elif tokens[cursor].text == ";" and brace_depth == 0:
+                break
+            cursor += 1
+        if cursor >= len(tokens) or brace_depth != 0:
+            raise ArchitectureError(
+                f"cannot parse Rust use boundary {path}:{tokens[index].line}"
+            )
+        statement = tokens[index : cursor + 1]
+        imports.append(
+            (" ".join(token.text for token in statement), tokens[index].line)
+        )
+        if any(token.text == "*" for token in statement):
+            glob_lines.append(tokens[index].line)
+        ignored.update(range(index, cursor + 1))
+        index = cursor + 1
+
+    qualified_paths: list[tuple[str, int]] = []
+    casa_root = re.compile(r"^(?:casa_[A-Za-z0-9_]+|casars(?:_[A-Za-z0-9_]+)?)$")
+    for index, token in enumerate(tokens):
+        root = token.text[2:] if token.text.startswith("r#") else token.text
+        if (
+            index in ignored
+            or casa_root.fullmatch(root) is None
+            or index + 2 >= len(tokens)
+            or tokens[index + 1].text != "::"
+            or not rust_identifier(tokens[index + 2])
+        ):
+            continue
+        segments = [root, tokens[index + 2].text]
+        cursor = index + 3
+        while (
+            cursor + 1 < len(tokens)
+            and tokens[cursor].text == "::"
+            and rust_identifier(tokens[cursor + 1])
+        ):
+            segments.append(tokens[cursor + 1].text)
+            cursor += 2
+        qualified_paths.append(("::".join(segments), token.line))
+
+    item_keywords = {
+        "struct",
+        "enum",
+        "union",
+        "trait",
+        "type",
+        "fn",
+        "const",
+        "static",
+        "mod",
+        "macro",
+    }
+    for index, token in enumerate(tokens):
+        if index in ignored:
+            continue
+        if (
+            token.text == "macro_rules"
+            and index + 2 < len(tokens)
+            and tokens[index + 1].text == "!"
+            and rust_identifier(tokens[index + 2])
+        ):
+            items.append((f"macro_rules:{tokens[index + 2].text}", token.line))
+            continue
+        if token.text not in item_keywords or index + 1 >= len(tokens):
+            continue
+        name_index = index + 1
+        if token.text == "static" and tokens[name_index].text == "mut":
+            name_index += 1
+        if name_index < len(tokens) and rust_identifier(tokens[name_index]):
+            items.append((f"{token.text}:{tokens[name_index].text}", token.line))
+    return (
+        imports,
+        qualified_paths,
+        items,
+        public_lines + macro_export_lines,
+        glob_lines,
+    )
+
+
+def rust_allowlist_violations(
+    boundary: dict[str, Any], source: str, relative: str
+) -> list[dict[str, Any]]:
+    policy = boundary["rust_allowlist"]
+    imports, qualified_paths, items, privacy_lines, glob_lines = rust_source_inventory(
+        source, relative
+    )
+    if privacy_lines:
+        return [
+            {
+                "path": relative,
+                "pattern": "rust-privacy",
+                "match": "public Rust item",
+                "context": "public Rust item",
+                "line": min(privacy_lines),
+                "message": policy["privacy_message"],
+            }
+        ]
+    if glob_lines:
+        return [
+            {
+                "path": relative,
+                "pattern": "rust-glob",
+                "match": "glob import",
+                "context": "glob import",
+                "line": min(glob_lines),
+                "message": policy["glob_message"],
+            }
+        ]
+
+    allowed_imports = Counter(policy["allowed_imports"])
+    observed_imports: Counter[str] = Counter()
+    for imported, line in imports:
+        observed_imports[imported] += 1
+        if observed_imports[imported] > allowed_imports[imported]:
+            return [
+                {
+                    "path": relative,
+                    "pattern": "rust-import",
+                    "match": imported,
+                    "context": imported,
+                    "line": line,
+                    "message": policy["import_message"],
+                }
+            ]
+
+    allowed_items = Counter(policy["allowed_items"])
+    allowed_qualified_paths = Counter(policy["allowed_qualified_paths"])
+    observed_qualified_paths: Counter[str] = Counter()
+    for qualified_path, line in qualified_paths:
+        observed_qualified_paths[qualified_path] += 1
+        if (
+            observed_qualified_paths[qualified_path]
+            > allowed_qualified_paths[qualified_path]
+        ):
+            return [
+                {
+                    "path": relative,
+                    "pattern": "rust-qualified-path",
+                    "match": qualified_path,
+                    "context": qualified_path,
+                    "line": line,
+                    "message": policy["path_message"],
+                }
+            ]
+
+    observed_items: Counter[str] = Counter()
+    for item, line in items:
+        observed_items[item] += 1
+        if observed_items[item] > allowed_items[item]:
+            return [
+                {
+                    "path": relative,
+                    "pattern": "rust-item",
+                    "match": item,
+                    "context": item,
+                    "line": line,
+                    "message": policy["item_message"],
+                }
+            ]
+    if (
+        observed_imports != allowed_imports
+        or observed_qualified_paths != allowed_qualified_paths
+        or observed_items != allowed_items
+    ):
+        return [
+            {
+                "path": relative,
+                "pattern": "rust-inventory",
+                "match": "incomplete Rust inventory",
+                "context": "incomplete Rust inventory",
+                "line": 1,
+                "message": policy["inventory_message"],
+            }
+        ]
+    return []
+
+
 def source_boundary_violations(
     boundary: dict[str, Any], repo_root: Path = REPO_ROOT
 ) -> list[dict[str, Any]]:
@@ -896,6 +1405,8 @@ def source_boundary_violations(
                     f"source boundary {boundary['id']} cannot read {path}: {error}"
                 ) from error
             relative = str(path.relative_to(repo_root))
+            if boundary.get("rust_allowlist") is not None:
+                violations.extend(rust_allowlist_violations(boundary, source, relative))
             for pattern_index, forbidden in enumerate(boundary["forbidden_patterns"]):
                 for match in re.finditer(forbidden["regex"], source):
                     violations.append(

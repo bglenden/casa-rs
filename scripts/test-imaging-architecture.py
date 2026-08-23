@@ -121,6 +121,20 @@ class ArchitecturePolicyTests(unittest.TestCase):
         ):
             checker.validate_policy(policy)
 
+    def test_t15_allowlist_cannot_authorize_a_new_item_without_review(self) -> None:
+        policy = copy.deepcopy(self.policy)
+        boundary = next(
+            value
+            for value in policy["source_boundaries"]
+            if value["id"] == "t15-private-walking-skeleton"
+        )
+        boundary["rust_allowlist"]["allowed_items"]["fn:synthetic_runner"] = 1
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"source boundaries differ from the accepted policy",
+        ):
+            checker.validate_policy(policy)
+
     def test_every_surface_package_requires_a_logical_layer(self) -> None:
         policy = copy.deepcopy(self.policy)
         del policy["package_layers"]["casars-frontend-services"]
@@ -472,22 +486,33 @@ class ArchitecturePolicyTests(unittest.TestCase):
             ),
             (
                 "use casa_imaging_router::ImagingRouter;\n",
-                r"T15 walking skeleton imports a frontend, backend, router, or legacy owner",
+                r"T15 walking skeleton imports outside its exact allowlist",
             ),
             (
                 "use super::*;\n",
-                r"T15 walking skeleton must import parent support explicitly",
+                r"T15 walking skeleton must not use glob imports",
             ),
             (
                 "struct SelectedObservationCompletion;\n",
-                r"T15 walking skeleton anticipates future completion or generation ownership",
+                r"T15 walking skeleton declares an item outside its exact allowlist",
             ),
             (
                 "struct ExecutionScheduler;\n",
-                r"T15 walking skeleton creates alternate execution authority",
+                r"T15 walking skeleton declares an item outside its exact allowlist",
+            ),
+            (
+                "struct FutureWeightingResult;\n",
+                r"T15 walking skeleton declares an item outside its exact allowlist",
+            ),
+            (
+                "fn synthetic_runner() {}\n",
+                r"T15 walking skeleton declares an item outside its exact allowlist",
             ),
         ]:
-            with self.subTest(source=source), tempfile.TemporaryDirectory() as directory:
+            with (
+                self.subTest(source=source),
+                tempfile.TemporaryDirectory() as directory,
+            ):
                 root = Path(directory)
                 fixture = root / boundary["roots"][0] / "walking_skeleton.rs"
                 fixture.parent.mkdir(parents=True)
@@ -509,20 +534,19 @@ class ArchitecturePolicyTests(unittest.TestCase):
             "pub const LEAKED_CONST: usize = 0;\n",
             "pub static LEAKED_STATIC: usize = 0;\n",
             "pub static mut LEAKED_MUT_STATIC: usize = 0;\n",
-            "pub(in crate::private) type LeakedType = usize;\n",
+            "pub(in crate) type LeakedType = usize;\n",
             'pub(crate) unsafe extern "C" fn leaked_ffi() {}\n',
             "pub struct LeakedStruct;\n",
             "pub enum LeakedEnum {}\n",
             "pub trait LeakedTrait {}\n",
             "pub mod leaked_module {}\n",
             "pub use super::private_item;\n",
-            "pub macro leaked_macro() {}\n",
-            "pub macro_rules! leaked_macro_rules { () => {}; }\n",
             "pub /* commented visibility */ fn leaked_commented() {}\n",
+            "pub // line-commented visibility\nfn leaked_line_commented() {}\n",
             "pub(\n    in crate\n) fn leaked_multiline() {}\n",
-            "pub safe fn leaked_safe() {}\n",
-            'pub unsafe extern "C" {\n    pub fn leaked_foreign() {}\n}\n',
             'unsafe extern "C" {\n    pub safe fn leaked_safe_foreign();\n}\n',
+            "#[macro_export]\nmacro_rules! leaked_macro_rules { () => {}; }\n",
+            "#[cfg_attr(any(), macro_export)]\nmacro_rules! conditionally_exported { () => {}; }\n",
         ]
         for source_text in public_items:
             with (
@@ -541,6 +565,137 @@ class ArchitecturePolicyTests(unittest.TestCase):
                         {"source_boundaries": [boundary]}, root
                     )
 
+    def test_t15_rust_lexer_ignores_policy_words_in_comments_and_literals(self) -> None:
+        source = r"""
+fn private_probe() {
+    let _ = "pub fn string_only() {}";
+    let _ = r#"#[macro_export] macro_rules! string_only { () => {}; }"#;
+    let _ = "casa_imaging_router::StringOnly";
+    let _: &'static str = "lifetime";
+}
+// pub fn comment_only() {}
+/* outer #[macro_export] /* nested pub struct CommentOnly; */ */
+"""
+        imports, paths, items, privacy, globs = checker.rust_source_inventory(
+            source, "synthetic.rs"
+        )
+        self.assertEqual(imports, [])
+        self.assertEqual(paths, [])
+        self.assertEqual(items, [("fn:private_probe", 2)])
+        self.assertEqual(privacy, [])
+        self.assertEqual(globs, [])
+
+    def test_t15_walking_skeleton_rejects_every_glob_import_origin(self) -> None:
+        boundary = next(
+            value
+            for value in self.policy["source_boundaries"]
+            if value["id"] == "t15-private-walking-skeleton"
+        )
+        for source_text in [
+            "use super::*;\n",
+            "use crate::*;\n",
+            "use casa_imaging_runtime::*;\n",
+            "use casa_imaging_runtime::{ArtifactIdentity, *};\n",
+        ]:
+            with (
+                self.subTest(source=source_text),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root = Path(directory)
+                fixture = root / boundary["roots"][0] / "walking_skeleton.rs"
+                fixture.parent.mkdir(parents=True)
+                fixture.write_text(source_text, encoding="utf-8")
+                with self.assertRaisesRegex(
+                    checker.ArchitectureError,
+                    r"T15 walking skeleton must not use glob imports",
+                ):
+                    checker.validate_source_boundaries(
+                        {"source_boundaries": [boundary]}, root
+                    )
+
+    def test_t15_boundaries_reject_every_unallowlisted_private_item_form(self) -> None:
+        private_items = [
+            "struct RenamedStruct;\n",
+            "enum RenamedEnum {}\n",
+            "union RenamedUnion { value: u64 }\n",
+            "trait RenamedTrait {}\n",
+            "type RenamedType = usize;\n",
+            "fn renamed_function() {}\n",
+            "const RENAMED_CONST: usize = 0;\n",
+            "static RENAMED_STATIC: usize = 0;\n",
+            "mod renamed_module {}\n",
+            "macro_rules! renamed_macro { () => {}; }\n",
+        ]
+        for identifier, label in [
+            ("t15-private-walking-skeleton", "T15 walking skeleton"),
+            ("t15-private-parent-support", "T15 parent compile_plan_run support"),
+        ]:
+            boundary = next(
+                value
+                for value in self.policy["source_boundaries"]
+                if value["id"] == identifier
+            )
+            for source_text in private_items:
+                with (
+                    self.subTest(boundary=identifier, source=source_text),
+                    tempfile.TemporaryDirectory() as directory,
+                ):
+                    root = Path(directory)
+                    fixture = root / boundary["roots"][0]
+                    if fixture.suffix != ".rs":
+                        fixture /= "walking_skeleton.rs"
+                    fixture.parent.mkdir(parents=True)
+                    fixture.write_text(source_text, encoding="utf-8")
+                    with self.assertRaisesRegex(
+                        checker.ArchitectureError,
+                        rf"{label} declares an item outside its exact allowlist",
+                    ):
+                        checker.validate_source_boundaries(
+                            {"source_boundaries": [boundary]}, root
+                        )
+
+    def test_t15_boundaries_reject_unallowlisted_qualified_casa_paths(self) -> None:
+        for identifier, fixture_name, source_text, label in [
+            (
+                "t15-private-walking-skeleton",
+                "walking_skeleton.rs",
+                "fn walking_skeleton() {\n"
+                "    let _ = casa_imaging_runtime::FutureWeightingResult;\n"
+                "}\n",
+                "T15 walking skeleton",
+            ),
+            (
+                "t15-private-parent-support",
+                None,
+                "fn product_validity() {\n"
+                "    let _ = r#casa_imaging_router::RenamedRouter;\n"
+                "}\n",
+                "T15 parent compile_plan_run support",
+            ),
+        ]:
+            boundary = next(
+                value
+                for value in self.policy["source_boundaries"]
+                if value["id"] == identifier
+            )
+            with (
+                self.subTest(boundary=identifier),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root = Path(directory)
+                fixture = root / boundary["roots"][0]
+                if fixture_name is not None:
+                    fixture /= fixture_name
+                fixture.parent.mkdir(parents=True)
+                fixture.write_text(source_text, encoding="utf-8")
+                with self.assertRaisesRegex(
+                    checker.ArchitectureError,
+                    rf"{label} references a qualified CASA path outside its exact allowlist",
+                ):
+                    checker.validate_source_boundaries(
+                        {"source_boundaries": [boundary]}, root
+                    )
+
     def test_t15_parent_support_boundary_rejects_public_items_and_authority_aliases(
         self,
     ) -> None:
@@ -553,10 +708,14 @@ class ArchitecturePolicyTests(unittest.TestCase):
             root = Path(directory)
             source = root / boundary["roots"][0]
             source.parent.mkdir(parents=True)
-            source.write_text("fn private_support() {}\n", encoding="utf-8")
-            checker.validate_source_boundaries(
-                {"source_boundaries": [boundary]}, root
-            )
+            source.write_text("", encoding="utf-8")
+            with self.assertRaisesRegex(
+                checker.ArchitectureError,
+                r"T15 parent compile_plan_run support no longer matches its accepted import and item inventory",
+            ):
+                checker.validate_source_boundaries(
+                    {"source_boundaries": [boundary]}, root
+                )
             for source_text, message in [
                 (
                     "pub(crate) fn leaked_support() {}\n",
@@ -564,15 +723,27 @@ class ArchitecturePolicyTests(unittest.TestCase):
                 ),
                 (
                     "use casa_imaging_router::ImagingRouter;\n",
-                    r"T15 parent compile_plan_run support imports a frontend, backend, router, or legacy owner",
+                    r"T15 parent compile_plan_run support imports outside its exact allowlist",
                 ),
                 (
                     "struct SelectedObservationCompletion;\n",
-                    r"T15 parent compile_plan_run support anticipates future completion or generation ownership",
+                    r"T15 parent compile_plan_run support declares an item outside its exact allowlist",
                 ),
                 (
                     "struct ExecutionScheduler;\n",
-                    r"T15 parent compile_plan_run support creates alternate execution authority",
+                    r"T15 parent compile_plan_run support declares an item outside its exact allowlist",
+                ),
+                (
+                    "struct FutureWeightingResult;\n",
+                    r"T15 parent compile_plan_run support declares an item outside its exact allowlist",
+                ),
+                (
+                    "fn synthetic_runner() {}\n",
+                    r"T15 parent compile_plan_run support declares an item outside its exact allowlist",
+                ),
+                (
+                    "use casa_imaging_runtime::*;\n",
+                    r"T15 parent compile_plan_run support must not use glob imports",
                 ),
             ]:
                 with self.subTest(source=source_text):
