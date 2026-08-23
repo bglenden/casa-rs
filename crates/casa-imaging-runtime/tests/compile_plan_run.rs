@@ -442,7 +442,6 @@ fn recording_executor(
         publication_probe: None,
         observation_completions: None,
         observation_completion_failure: None,
-        publication_probe: None,
     }
 }
 
