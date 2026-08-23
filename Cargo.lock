@@ -643,6 +643,8 @@ name = "casa-imaging-runtime"
 version = "0.27.0"
 dependencies = [
  "casa-imaging-model",
+ "casa-ms",
+ "casa-test-support",
  "objc2-metal",
  "serde",
  "serde_json",
@@ -687,6 +689,7 @@ dependencies = [
  "flate2",
  "serde",
  "serde_json",
+ "sha2",
  "tar",
  "tempfile",
  "thiserror 2.0.18",
@@ -710,6 +713,7 @@ version = "0.27.0"
 dependencies = [
  "casa-coordinates",
  "casa-imaging",
+ "casa-imaging-model",
  "casa-logging",
  "casa-measures-data",
  "casa-provider-contracts",

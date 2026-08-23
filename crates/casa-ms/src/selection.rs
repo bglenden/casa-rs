@@ -1422,7 +1422,7 @@ fn load_structured_selection_columns(
     Ok(columns)
 }
 
-fn load_uvw_column(table: &Table, rows: &[usize]) -> MsResult<Vec<[f64; 3]>> {
+pub(crate) fn load_uvw_column(table: &Table, rows: &[usize]) -> MsResult<Vec<[f64; 3]>> {
     let accessor = table.column_accessor("UVW")?;
     if let Ok(cells) = accessor.array_cells_1d_typed_uncached(rows) {
         let SelectedArray1DCells::Float64(values) = cells else {

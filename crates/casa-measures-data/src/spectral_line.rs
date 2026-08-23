@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Spectral-line catalog data loaded from casacore `ephemerides/Lines`.
 
-use std::collections::HashMap;
+use std::mem::size_of;
 
 /// A single spectral-line row from casacore `ephemerides/Lines`.
 #[derive(Debug, Clone, PartialEq)]
@@ -31,20 +31,12 @@ impl SpectralLineEntry {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpectralLineCatalog {
     entries: Vec<SpectralLineEntry>,
-    by_name: HashMap<String, usize>,
 }
 
 impl SpectralLineCatalog {
     /// Build a catalog from explicitly provided entries.
     pub fn from_entries(entries: Vec<SpectralLineEntry>) -> Self {
-        let by_name = entries
-            .iter()
-            .enumerate()
-            .fold(HashMap::new(), |mut map, (index, entry)| {
-                map.entry(normalize_name(&entry.name)).or_insert(index);
-                map
-            });
-        Self { entries, by_name }
+        Self { entries }
     }
 
     /// Iterate over the catalog entries in source order.
@@ -59,12 +51,24 @@ impl SpectralLineCatalog {
 
     /// Look up a spectral line by case-insensitive name.
     pub fn get(&self, name: &str) -> Option<&SpectralLineEntry> {
-        self.by_name
-            .get(&normalize_name(name))
-            .and_then(|index| self.entries.get(*index))
+        let name = name.trim();
+        self.entries
+            .iter()
+            .find(|entry| entry.name.trim().eq_ignore_ascii_case(name))
     }
-}
 
-fn normalize_name(name: &str) -> String {
-    name.trim().to_ascii_uppercase()
+    pub(crate) fn retained_heap_bytes(&self) -> Option<usize> {
+        let mut bytes = self
+            .entries
+            .capacity()
+            .checked_mul(size_of::<SpectralLineEntry>())?;
+        for entry in &self.entries {
+            bytes = bytes
+                .checked_add(entry.name.capacity())?
+                .checked_add(entry.frequency_type.capacity())?
+                .checked_add(entry.source.capacity())?
+                .checked_add(entry.comment.capacity())?;
+        }
+        Some(bytes)
+    }
 }

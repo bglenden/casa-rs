@@ -7,6 +7,8 @@ mod geometry;
 mod measurement_equation;
 mod observation;
 mod product_graph;
+mod selected_observation;
+mod selected_observation_sample;
 mod transaction;
 
 pub use compiled_problem::{
@@ -44,14 +46,27 @@ pub use measurement_equation::{
 
 pub use observation::{
     AntennaBaseline, AntennaSelection, ColumnGeneration, CompileObservationError, ConsistencyToken,
-    CorrelationProduct, CorrelationSelection, CorrelationType, FlagPolicy, IdSelection,
-    IntentSelection, MeasurementSetIdentity, MetadataGeneration, MetadataTableKind,
-    ModelColumnState, MsColumnKind, ObservationConsistencyError, ObservationProvenanceId,
-    ObservationSelection, ObservationSnapshot, ObservationSnapshotId, ObservationSnapshotInput,
-    ObservationSource, ObservationSourceInput, ObservationSourceProvenance, ObservationSourceState,
-    ObservationState, ResolvedIntent, RowSelection, SelectedColumns, SelectedRows, SelectionBound,
+    CorrelationProduct, CorrelationSelection, CorrelationType, DataDescriptionSelection,
+    FlagPolicy, IdSelection, IntentSelection, MeasurementSetIdentity, MetadataGeneration,
+    MetadataTableKind, ModelColumnState, MsColumnKind, ObservationConsistencyError,
+    ObservationProvenanceId, ObservationSelection, ObservationSnapshot, ObservationSnapshotId,
+    ObservationSnapshotInput, ObservationSource, ObservationSourceInput,
+    ObservationSourceProvenance, ObservationSourceState, ObservationState, ResolvedIntent,
+    RowSelection, SelectedColumns, SelectedMainRow, SelectedRowManifestValidationError,
+    SelectedRowSequenceError, SelectedRowSequenceId, SelectedRows, SelectionBound,
     SourceGenerations, SpectralWindowSelection, TimeRange, TimeSelection, UvDistanceRange,
     UvDistanceUnit, UvSelection, VisibilityColumn, WeightColumn, compile_observation,
+};
+
+pub use selected_observation::{
+    SelectedObservationCommitment, SelectedObservationCommitmentId,
+    SelectedObservationInspectionError, SelectedObservationPassError, SelectedSampleEvaluation,
+};
+
+pub use selected_observation_sample::{
+    SelectedObservationGenerationId, SelectedObservationSample, SelectedPointingDirections,
+    SelectedPredictionTarget, SelectedSampleAddress, SelectedSampleCoordinates,
+    SelectedSampleMetadata, SelectedVisibilitySample,
 };
 
 pub use product_graph::{

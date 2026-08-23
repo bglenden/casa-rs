@@ -68,10 +68,12 @@ Additional constraints:
   managers select byte order explicitly and do not maintain local detectors or
   primitive codecs.
 - `casa-types` owns pure measures algorithms and the `MeasuresProvider`
-  contract. `casa-measures-data::MeasuresRuntime` is the explicit fallible I/O
-  implementation; applications acquire one runtime at an operation boundary
-  and pass it inward. Discovery never installs data, and installation is an
-  explicit caller-selected maintenance action.
+  contract, including the provider-owned immutable scientific-state identity
+  and exact retained-residency projection. `casa-measures-data::MeasuresRuntime`
+  is the explicit fallible I/O implementation; applications acquire one
+  runtime at an operation boundary and pass it inward. Discovery never
+  installs data, and installation is an explicit caller-selected maintenance
+  action.
 - `casa-tables` keeps the broader storage/write path crate-internal even when user-facing table APIs are exposed from the crate.
 - Large lattices and images cross `casa-tables` through the typed
   `TiledArrayStorage` seam; raw tiled-file mechanics remain crate-internal.
@@ -150,16 +152,80 @@ MeasurementSet field/time/UV/baseline/scan/observation/intent/array predicate,
 SPW/DDID/channel selection, correlation coordinate, selected data/flag/weight
 column, coordinate and metadata generation, independent optional `MODEL_DATA`
 state, consistency token, reference-data identity, and input-model identity.
-Selected MAIN rows remain a count plus an ordered-row digest; visibility
-samples, row arrays, chunks, and execution order are never retained. The
-snapshot is the storage owner's logical-manifest commitment, not an intrinsic
-digest of MeasurementSet bytes. Its identity is independent of source location
-and request order, while a separate provenance identity retains both. T17/#503
-adds a distinct content-derived Selected Observation generation from the
-actual canonical bounded sample stream and binds it back to the snapshot,
-access capability, and execution attempt; equal content never aliases the
-logical source commitment. Current legacy adapters still resolve selection
-expressions and evaluate rows; T17 owns their bounded transfer and deletion.
+Selected MAIN rows retain source and selected counts, the exact used-DDID set,
+the canonical ordered `(physical row, DATA_DESC_ID)` manifest, and its
+content-derived identity. Visibility samples, stored MAIN facts, content
+blocks, and execution order remain absent. The exact manifest lets retained
+access seek directly to sparse selected rows without reading the intervening
+physical row span. The snapshot is the
+storage owner's logical-manifest commitment, not an intrinsic digest of all
+MeasurementSet science bytes. Its identity is independent of source location
+and request order, while a separate provenance identity retains both.
+
+T17/#503 adds the native bounded Selected Observation path. `casa-ms` owns the
+retained read capability, canonical one-pass traversal, per-sample validation,
+and owner-minted terminal completion. Binding first reconciles the freshly
+probed selected-row, column, metadata, model-column, and consistency generations
+exactly with the compiled source snapshot. Its sole content plan may then read
+ahead into the explicitly charged live-block count and rotates those blocks in
+canonical consumer order; block size, read-ahead, and buffer slot are absent
+from content identity. The source budget charges the full retained lazy,
+read-locked MeasurementSet/Table object graph (schemas, keywords, column
+keywords, data-manager descriptors, paths, and lock state), the shared immutable
+selection and generation manifests, retained geometry and selected-coordinate
+catalogs, coordinate-construction and digest scratch, request and retained
+row-index vectors, POINTING queries/candidates/brackets/outputs, one-at-a-time
+variable direction-reference cell scratch, transient column-accessor names,
+and every simultaneously live content block before constructing the geometry
+engine or reading content.
+The canonical owner measures the allocated `Vec<BoundObservationSource>`
+capacity and charges its complete slot payload exactly once to the first
+source. That payload includes every inline identity, `MeasurementSet`, geometry
+engine, predicate and coordinate header, content plan, row-count flag, and
+padding; nested projections therefore charge only their heap allocations.
+While that owner is being built, it projects the complete live
+`Vec<ObservationSourceBinding>` graph before removing any binding. The
+first-source initialization peak charges the outer allocation at its actual
+capacity, every binding-owned `SourceGenerations` vector capacity, and each
+selected-row Arc allocation not already shared with a compiled source or an
+earlier binding. Outer slots already contain the inline source state, so
+per-source equality validation is allocation-free and does not recharge inline
+state or its manifests. The whole graph is charged once and is absent from
+retained residency after construction.
+Retained geometry and coordinate arrays use fixed boxed slices, including the
+mount-flag slice, so their payload is the exact immutable element count rather
+than a guessed collection capacity.
+Direction-reference evaluation borrows fixed and integer-mapped MEASINFO rather
+than cloning its retained `TabRefTypes`/`TabRefCodes` payload. The application
+also injects one explicitly acquired `SelectedObservationMeasures` capability.
+Its constructor accepts only the provider: the provider's prepared state
+supplies the inseparable authoritative identity, so a caller cannot relabel a
+foreign provider with the compiled Measures identity. `MeasuresRuntime`
+eagerly materializes all six immutable catalogs and derives that identity from
+their canonical scientific contents and snapshot provenance. Bounded binding
+rejects missing, foreign, opaque, or changed provider state; charges the
+provider's alignment-aware shared allocation and catalog residency once across
+the canonical source set; and rechecks both identity and residency before
+traversal and terminal completion. Geometry engines receive only that injected
+provider state and never discover runtime data inside the selected-observation
+path.
+`casa-imaging-model` owns the closed backend-free sample schema,
+compiler commitment, a closed validation pass, and a distinct content-derived
+generation computed from the actual canonical sample stream. Incremental
+inspection state and generation encoding never cross its public boundary. The storage
+completion binds logical snapshot identity, provenance, physical access,
+content generation, and retained-access traversal. After synchronous work
+completion and every declared fence, if any, of the owning ObservationRead node
+settles, the runtime supplies a fresh, affine authority that binds that opaque
+storage completion to the execution attempt, owning node, exact settled fence
+set, and live lease epoch. A physical I/O fence alone cannot mint this proof.
+Equal science content may share a content generation while remaining distinct
+logical source and access commitments; prediction destination is provenance and
+therefore cannot split prediction and residual views of the same content
+generation. The legacy
+`casars-imager` `MsSelection`/`resolve_selection` preparation route is removed:
+its frontend projection delegates to the same bounded `casa-ms` predicate as
+native Selected Observation access.
 
 The Compiled Problem also owns one compiler-derived Observation Transaction.
 Its canonical read set contains every consumed per-MS selection, selected MAIN

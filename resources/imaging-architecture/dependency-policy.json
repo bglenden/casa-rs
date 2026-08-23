@@ -94,7 +94,8 @@
       "casa-imaging-model"
     ],
     "casa-imaging-runtime": [
-      "casa-imaging-model"
+      "casa-imaging-model",
+      "casa-ms"
     ]
   },
   "whole_run_router": {
@@ -155,6 +156,22 @@
         {
           "regex": "(?m)^\\s*(?:pub\\s+)?(?:use|extern\\s+crate)\\s+(?:casa_imaging|casars_imager)\\b|\\b(?:casa_imaging|casars_imager)::",
           "message": "native runtime or whole-run router imports a legacy imaging API"
+        }
+      ],
+      "accepted_violation_digest": null
+    },
+    {
+      "id": "t17-selected-observation-provider-injection",
+      "roots": [
+        "crates/casa-ms/src/selected_observation"
+      ],
+      "extensions": [
+        ".rs"
+      ],
+      "forbidden_patterns": [
+        {
+          "regex": "\\bopen_measures_runtime\\b|\\bcasa_measures_data\\s*::\\s*(?:MeasuresRuntime|\\{[^}]*\\bMeasuresRuntime\\b)|\\bMeasuresRuntime::(?:open|open_discovered|discover_candidates)\\b|\\bopen_discovered\\b",
+          "message": "selected-observation source must receive an injected Measures provider and cannot discover MeasuresRuntime"
         }
       ],
       "accepted_violation_digest": null

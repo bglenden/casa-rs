@@ -193,6 +193,7 @@ class ArchitecturePolicyTests(unittest.TestCase):
         policy["native_package_workspace_dependencies"]["casa-imaging-runtime"] = [
             "casa-imaging-model",
             "casa-ms",
+            "casa-calibration",
         ]
         with self.assertRaisesRegex(
             checker.ArchitectureError,
@@ -354,11 +355,11 @@ class ArchitecturePolicyTests(unittest.TestCase):
     def test_native_package_rejects_undeclared_workspace_dependency(self) -> None:
         metadata = metadata_for_policy(self.policy)
         package(metadata, "casa-imaging-runtime")["dependencies"].append(
-            dependency("casa-ms")
+            dependency("casa-calibration")
         )
         with self.assertRaisesRegex(
             checker.ArchitectureError,
-            r"casa-imaging-runtime has undeclared workspace dependencies: \['casa-ms'\]",
+            r"casa-imaging-runtime has undeclared workspace dependencies: \['casa-calibration'\]",
         ):
             checker.validate_workspace(self.policy, metadata)
 
@@ -1527,6 +1528,370 @@ class MigrationMatrixTests(unittest.TestCase):
             r"source evidence token .* was not found",
         ):
             checker.validate_migration_matrix(matrix, self.policy)
+
+    def test_t17_runtime_completion_check_rejects_structural_bypasses(self) -> None:
+        path = REPO_ROOT / "crates/casa-imaging-runtime/src/execution_bindings.rs"
+        source = path.read_text(encoding="utf-8")
+        mutations = [
+            (
+                source.replace(
+                    "lease_epoch: u64,\n    owner_completion: casa_ms::SelectedObservationCompletion,\n}",
+                    "lease_epoch: u64,\n    owner_completion_digest: [u8; 32],\n}",
+                    1,
+                ),
+                "must retain casa-ms's concrete owner completion",
+            ),
+            (
+                source.replace(
+                    "owner_completion: casa_ms::SelectedObservationCompletion,\n    ) -> Result<AttemptBoundObservationCompletion, ObservationCompletionBindingError>",
+                    "owner_completion: T,\n    ) -> Result<AttemptBoundObservationCompletion<T>, ObservationCompletionBindingError>",
+                    1,
+                ),
+                "cannot accept caller-chosen proof types",
+            ),
+            (
+                source.replace(
+                    "            || owner_completion.observation_provenance_id() != self.observation_provenance_id\n",
+                    "",
+                    1,
+                ),
+                "must match the exact problem, snapshot, provenance, and commitment",
+            ),
+            (
+                source.replace(
+                    "if fence_transition_succeeded && let Some(completion) = observation_completion",
+                    "if let Some(completion) = observation_completion",
+                    1,
+                ),
+                "must bind owner completion exactly once",
+            ),
+        ]
+        for mutation, message in mutations:
+            with self.subTest(message=message):
+                self.assertNotEqual(mutation, source)
+                with self.assertRaisesRegex(checker.ArchitectureError, message):
+                    checker.validate_t17_runtime_completion_source(mutation, path)
+
+    def test_t17_resource_check_rejects_provider_and_accounting_bypasses(self) -> None:
+        paths = {
+            "measures": REPO_ROOT
+            / "crates/casa-ms/src/selected_observation/measures.rs",
+            "bound": REPO_ROOT
+            / "crates/casa-ms/src/selected_observation/bound_observation.rs",
+            "access": REPO_ROOT / "crates/casa-ms/src/selected_observation/access.rs",
+            "content_plan": REPO_ROOT
+            / "crates/casa-ms/src/selected_observation/content_plan.rs",
+            "engine": REPO_ROOT / "crates/casa-ms/src/derived/engine.rs",
+            "provider": REPO_ROOT / "crates/casa-types/src/measures/provider.rs",
+            "measures_runtime": REPO_ROOT / "crates/casa-measures-data/src/lib.rs",
+            "observation": REPO_ROOT / "crates/casa-imaging-model/src/observation.rs",
+        }
+        sources = {
+            name: path.read_text(encoding="utf-8") for name, path in paths.items()
+        }
+
+        def validate(overrides: dict[str, str] | None = None) -> None:
+            current = {**sources, **(overrides or {})}
+            checker.validate_t17_selected_observation_resource_sources(
+                current["measures"],
+                paths["measures"],
+                current["bound"],
+                paths["bound"],
+                current["access"],
+                paths["access"],
+                current["content_plan"],
+                paths["content_plan"],
+                current["engine"],
+                paths["engine"],
+                current["provider"],
+                paths["provider"],
+                current["measures_runtime"],
+                paths["measures_runtime"],
+                current["observation"],
+                paths["observation"],
+            )
+
+        validate()
+        mutations = [
+            (
+                "measures",
+                sources["measures"].replace(
+                    ".prepare_bounded_state()",
+                    ".opaque_bounded_state()",
+                    1,
+                ),
+                "must acquire and recheck provider-owned identity and residency",
+            ),
+            (
+                "measures",
+                sources["measures"].replace(
+                    "    pub fn new(\n        provider: Arc<dyn MeasuresProvider>,",
+                    "    pub fn new(\n        _identity: LogicalIdentity,\n        provider: Arc<dyn MeasuresProvider>,",
+                    1,
+                ),
+                "must acquire and recheck provider-owned identity and residency",
+            ),
+            (
+                "measures",
+                sources["measures"].replace(
+                    "Layout::array::<AtomicUsize>(2)",
+                    "Layout::new::<AtomicUsize>()",
+                    1,
+                ),
+                "provider allocation must remain alignment-aware and exactly charged",
+            ),
+            (
+                "provider",
+                sources["provider"].replace(
+                    "        Ok(None)\n", "        unreachable!()\n", 1
+                ),
+                "MeasuresProvider bounded state must default to opaque",
+            ),
+            (
+                "measures_runtime",
+                sources["measures_runtime"].replace(
+                    "        let igrf = self.igrf()?;\n", "", 1
+                ),
+                "MeasuresRuntime must eagerly stabilize and account every retained catalog",
+            ),
+            (
+                "measures_runtime",
+                sources["measures_runtime"].replace(
+                    "MeasuresRuntime::prepare_bounded_state(self)",
+                    "self.prepare_bounded_state()",
+                    1,
+                ),
+                "MeasuresRuntime must own one canonical scientific state identity",
+            ),
+            (
+                "measures_runtime",
+                sources["measures_runtime"].replace(
+                    "    state.sequence_len(igrf.nmax)?;\n", "", 1
+                ),
+                "MeasuresRuntime must own one canonical scientific state identity",
+            ),
+            (
+                "observation",
+                sources["observation"].replace(
+                    ".checked_add(self.generations.retained_owned_heap_bytes()?)",
+                    ".checked_add(0)",
+                    1,
+                ),
+                "current source state must project every unique nested allocation",
+            ),
+            (
+                "observation",
+                sources["observation"].replace(
+                    "Arc::ptr_eq(\n                &self.used_data_description_ids,",
+                    "not_ptr_eq(\n                &self.used_data_description_ids,",
+                    1,
+                ),
+                "current source state must project every unique nested allocation",
+            ),
+            (
+                "bound",
+                sources["bound"].replace("source_index == 0 {", "true {", 1),
+                "provider, source slots, and complete consumed binding graph must be charged exactly once",
+            ),
+            (
+                "bound",
+                sources["bound"].replace(
+                    "bindings\n            .capacity()",
+                    "bindings\n            .len()",
+                    1,
+                ),
+                "provider, source slots, and complete consumed binding graph must be charged exactly once",
+            ),
+            (
+                "bound",
+                sources["bound"].replace(
+                    ".additional_retained_heap_bytes(already_accounted_rows)",
+                    ".retained_manifest_bytes()",
+                    1,
+                ),
+                "provider, source slots, and complete consumed binding graph must be charged exactly once",
+            ),
+            (
+                "access",
+                sources["access"].replace(
+                    "            shared_bytes,\n            content_budget,",
+                    "            SelectedObservationSharedBytes::NONE,\n            content_budget,",
+                    1,
+                ),
+                "provider, source slots, and complete consumed binding graph must be charged exactly once",
+            ),
+            (
+                "content_plan",
+                sources["content_plan"].replace(
+                    "let retained_bytes = shared_source_slots_retained_bytes",
+                    "let retained_bytes = 0_usize",
+                    1,
+                ),
+                "provider, source slots, and complete consumed binding graph must be charged exactly once",
+            ),
+            (
+                "content_plan",
+                sources["content_plan"].replace(
+                    "            shared_bytes.shared_source_slots_retained_bytes,",
+                    "            0,",
+                    1,
+                ),
+                "provider, source slots, and complete consumed binding graph must be charged exactly once",
+            ),
+            (
+                "content_plan",
+                sources["content_plan"].replace(
+                    ".checked_add(shared_bytes.shared_binding_graph_initialization_bytes)",
+                    ".checked_add(0)",
+                    1,
+                ),
+                "provider, source slots, and complete consumed binding graph must be charged exactly once",
+            ),
+            (
+                "content_plan",
+                sources["content_plan"].replace(
+                    "coordinate_construction_scratch_bytes\n        .checked_add(shared_bytes.shared_binding_graph_initialization_bytes)",
+                    "coordinate_construction_scratch_bytes\n        .checked_add(current_state.retained_manifest_bytes())\n        .and_then(|bytes| bytes.checked_add(shared_bytes.shared_binding_graph_initialization_bytes))",
+                    1,
+                ),
+                "provider, source slots, and complete consumed binding graph must be charged exactly once",
+            ),
+            (
+                "engine",
+                sources["engine"].replace(
+                    "        let antenna = ms.antenna()?;",
+                    "        let measures = crate::open_measures_runtime()?;\n        let antenna = ms.antenna()?;",
+                    1,
+                ),
+                "geometry must retain only the injected bounded provider in exact fixed slices",
+            ),
+            (
+                "engine",
+                sources["engine"].replace(
+                    "antenna_mount_alt_az: Box<[bool]>",
+                    "antenna_mount_alt_az: Vec<bool>",
+                    1,
+                ),
+                "geometry must retain only the injected bounded provider in exact fixed slices",
+            ),
+        ]
+        for name, mutation, message in mutations:
+            with self.subTest(source=name, message=message):
+                self.assertNotEqual(mutation, sources[name])
+                with self.assertRaisesRegex(checker.ArchitectureError, message):
+                    validate({name: mutation})
+
+    def test_t17_source_boundary_rejects_measures_runtime_discovery(self) -> None:
+        boundary = next(
+            (
+                value
+                for value in self.policy["source_boundaries"]
+                if value["id"] == "t17-selected-observation-provider-injection"
+            ),
+            None,
+        )
+        self.assertIsNotNone(
+            boundary, "T17 must own a selected-observation provider source boundary"
+        )
+        assert boundary is not None
+        for source in (
+            "let provider = crate::open_measures_runtime()?;\n",
+            "let provider = casa_measures_data::MeasuresRuntime::open_discovered(policy)?;\n",
+        ):
+            with (
+                self.subTest(source=source),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root = Path(directory)
+                fixture = root / boundary["roots"][0] / "access.rs"
+                fixture.parent.mkdir(parents=True)
+                fixture.write_text(source, encoding="utf-8")
+                with self.assertRaisesRegex(
+                    checker.ArchitectureError,
+                    "must receive an injected Measures provider and cannot discover MeasuresRuntime",
+                ):
+                    checker.validate_source_boundaries(
+                        {"source_boundaries": [boundary]}, root
+                    )
+
+    def test_t17_transfer_requires_generation_resource_and_fixture_evidence(
+        self,
+    ) -> None:
+        for field, locator in (
+            (
+                "source_evidence",
+                "crates/casa-imaging-model/src/selected_observation_sample.rs::SelectedObservationGenerationEncoder",
+            ),
+            (
+                "source_evidence",
+                "crates/casa-imaging-model/src/observation.rs::additional_retained_heap_bytes",
+            ),
+            (
+                "source_evidence",
+                "crates/casa-ms/src/selected_observation/bound_observation.rs::binding_graph_initialization_bytes",
+            ),
+            (
+                "source_evidence",
+                "crates/casa-ms/src/selected_observation/bound_observation.rs::source_slots_retained_bytes",
+            ),
+            (
+                "source_evidence",
+                "crates/casa-ms/src/selected_observation/content_plan.rs::shared_binding_graph_initialization_bytes",
+            ),
+            (
+                "source_evidence",
+                "crates/casa-ms/src/selected_observation/content_plan.rs::shared_source_slots_retained_bytes",
+            ),
+            (
+                "source_evidence",
+                "crates/casa-ms/src/selected_observation/measures.rs::SelectedObservationMeasures",
+            ),
+            (
+                "source_evidence",
+                "crates/casa-ms/src/derived/engine.rs::new_selected_observation",
+            ),
+            (
+                "source_evidence",
+                "crates/casa-ms/src/selected_observation/measures.rs::provider_state",
+            ),
+            (
+                "source_evidence",
+                "crates/casa-measures-data/src/lib.rs::prepare_bounded_state",
+            ),
+            (
+                "source_evidence",
+                "crates/casa-measures-data/src/lib.rs::scientific_state_identity",
+            ),
+            (
+                "source_evidence",
+                "crates/casa-types/src/measures/provider.rs::MeasuresProviderState",
+            ),
+            (
+                "source_evidence",
+                "resources/imaging-architecture/dependency-policy.json::t17-selected-observation-provider-injection",
+            ),
+            (
+                "baseline_manifests",
+                "repo://crates/casa-imaging-model/src/selected_observation_sample.rs",
+            ),
+            (
+                "baseline_manifests",
+                "repo://resources/imaging-architecture/baselines/selected-observation-generation-v3.txt",
+            ),
+        ):
+            with self.subTest(field=field, locator=locator):
+                matrix = checker.load_object(MATRIX_PATH, "migration matrix")
+                row = next(
+                    row
+                    for row in matrix["rows"]
+                    if row["id"] == "capability.ms-selection"
+                )
+                row[field].remove(locator)
+                with self.assertRaisesRegex(
+                    checker.ArchitectureError,
+                    r"lacks (?:the accepted T17 traversal/resource/completion|pinned T17 generation source and fixture) evidence",
+                ):
+                    checker.validate_t17_ms_selection_transfer(matrix["rows"])
 
     def test_live_baseline_rejects_a_missing_repository_manifest(self) -> None:
         matrix = checker.load_object(MATRIX_PATH, "migration matrix")

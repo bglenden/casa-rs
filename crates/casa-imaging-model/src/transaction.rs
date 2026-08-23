@@ -2,13 +2,13 @@
 
 //! MeasurementSet access and atomic-side-effect contracts for imaging.
 
-use std::fmt;
+use std::{fmt, sync::Arc};
 
 use crate::compiled_problem::CanonicalEncoder;
 use crate::{
     ColumnGeneration, ConsistencyToken, LogicalIdentity, MeasurementSetIdentity,
     MetadataGeneration, ModelColumnState, MsColumnKind, ObservationSelection, ObservationSnapshot,
-    ObservationSnapshotId,
+    ObservationSnapshotId, SelectedColumns,
 };
 
 const OBSERVATION_TRANSACTION_IDENTITY_DOMAIN: &[u8] = b"casa-rs-observation-transaction";
@@ -104,10 +104,8 @@ impl ObservationTransactionRequirements {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MeasurementSetReadAccess {
     measurement_set: MeasurementSetIdentity,
-    selection: ObservationSelection,
-    column_generations: Vec<ColumnGeneration>,
-    metadata: Vec<MetadataGeneration>,
-    consistency_token: ConsistencyToken,
+    selection: Arc<ObservationSelection>,
+    generations: Arc<crate::SourceGenerations>,
 }
 
 impl MeasurementSetReadAccess {
@@ -119,26 +117,32 @@ impl MeasurementSetReadAccess {
 
     /// Return the exact selected rows, channels, and correlations.
     #[must_use]
-    pub const fn selection(&self) -> &ObservationSelection {
+    pub fn selection(&self) -> &ObservationSelection {
         &self.selection
+    }
+
+    /// Return exact visibility, flag, weight, and generated-column semantics.
+    #[must_use]
+    pub fn selected_columns(&self) -> &SelectedColumns {
+        self.generations.columns()
     }
 
     /// Return every MAIN column read and its exact generation, in canonical order.
     #[must_use]
     pub fn column_generations(&self) -> &[ColumnGeneration] {
-        &self.column_generations
+        self.generations.columns().generations()
     }
 
     /// Return every metadata-table generation read, in canonical order.
     #[must_use]
     pub fn metadata(&self) -> &[MetadataGeneration] {
-        &self.metadata
+        self.generations.metadata_generations()
     }
 
     /// Return the storage owner's atomic consistency token.
     #[must_use]
-    pub const fn consistency_token(&self) -> ConsistencyToken {
-        self.consistency_token
+    pub fn consistency_token(&self) -> ConsistencyToken {
+        self.generations.consistency_token()
     }
 }
 
@@ -160,7 +164,7 @@ impl ObservationReadSet {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModelColumnWriteAccess {
     measurement_set: MeasurementSetIdentity,
-    selection: ObservationSelection,
+    selection: Arc<ObservationSelection>,
     expected_consistency_token: ConsistencyToken,
     precondition: ModelColumnPrecondition,
     disposition: ModelColumnWriteDisposition,
@@ -175,7 +179,7 @@ impl ModelColumnWriteAccess {
 
     /// Return the exact selected cells replaced by this write.
     #[must_use]
-    pub const fn selection(&self) -> &ObservationSelection {
+    pub fn selection(&self) -> &ObservationSelection {
         &self.selection
     }
 
@@ -258,7 +262,7 @@ impl ObservationTransactionContract {
 /// The read set is derived rather than caller-supplied, so execution cannot
 /// omit a generation that participated in snapshot identity.
 #[must_use]
-pub(crate) fn compile_observation_transaction(
+pub fn compile_observation_transaction(
     snapshot: &ObservationSnapshot,
     requirements: ObservationTransactionRequirements,
 ) -> ObservationTransactionContract {
@@ -268,10 +272,8 @@ pub(crate) fn compile_observation_transaction(
             .iter()
             .map(|source| MeasurementSetReadAccess {
                 measurement_set: source.identity(),
-                selection: source.selection().clone(),
-                column_generations: source.generations().columns().generations().to_vec(),
-                metadata: source.generations().metadata_generations().to_vec(),
-                consistency_token: source.generations().consistency_token(),
+                selection: source.selection_arc(),
+                generations: source.generations_arc(),
             })
             .collect(),
     };
@@ -295,7 +297,7 @@ pub(crate) fn compile_observation_transaction(
                 };
                 ModelColumnWriteAccess {
                     measurement_set: source.identity(),
-                    selection: source.selection().clone(),
+                    selection: source.selection_arc(),
                     expected_consistency_token: source.generations().consistency_token(),
                     precondition,
                     disposition,

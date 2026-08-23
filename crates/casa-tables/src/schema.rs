@@ -265,6 +265,21 @@ impl ColumnSchema {
         self.max_length
     }
 
+    pub(crate) fn retained_heap_bytes(&self) -> Option<usize> {
+        let shape_bytes = match &self.column_type {
+            ColumnType::Array(ArrayShapeContract::Fixed { shape }) => {
+                shape.capacity().checked_mul(size_of::<usize>())?
+            }
+            ColumnType::Scalar
+            | ColumnType::Record
+            | ColumnType::Array(ArrayShapeContract::Variable { .. }) => 0,
+        };
+        self.name
+            .capacity()
+            .checked_add(self.comment.capacity())?
+            .checked_add(shape_bytes)
+    }
+
     fn validate_options(&self) -> Result<(), SchemaError> {
         if self.options.direct
             && !matches!(
@@ -356,6 +371,25 @@ impl TableSchema {
     /// Cf. C++ `TableDesc::isColumn(name)`.
     pub fn contains_column(&self, name: &str) -> bool {
         self.column_lookup.contains_key(name)
+    }
+
+    pub(crate) fn retained_heap_bytes(&self) -> Option<usize> {
+        let mut bytes = self
+            .columns
+            .capacity()
+            .checked_mul(size_of::<ColumnSchema>())?
+            .checked_add(
+                self.column_lookup
+                    .capacity()
+                    .checked_mul(size_of::<(String, usize)>())?,
+            )?;
+        for column in &self.columns {
+            bytes = bytes.checked_add(column.retained_heap_bytes()?)?;
+        }
+        for name in self.column_lookup.keys() {
+            bytes = bytes.checked_add(name.capacity())?;
+        }
+        Some(bytes)
     }
 
     /// Add a column to the schema.

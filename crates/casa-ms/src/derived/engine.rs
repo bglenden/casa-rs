@@ -10,12 +10,13 @@
 
 use casa_tables::Table;
 use casa_tables::table_measures::{MeasRefDesc, TableMeasDesc};
-use casa_types::measures::MeasuresProvider;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::epoch::{EpochRef, MEpoch};
 use casa_types::measures::frame::MeasFrame;
 use casa_types::measures::position::MPosition;
-use casa_types::{ArrayValue, ScalarValue};
+use casa_types::measures::{MeasuresProvider, MeasuresProviderState};
+use casa_types::{ArrayD, ArrayValue, ScalarValue, Value};
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
@@ -43,16 +44,17 @@ use crate::subtables::SubTable;
 /// Cf. C++ `MSCalEngine`.
 pub struct MsCalEngine {
     /// Antenna positions in ITRF.
-    antenna_positions: Vec<MPosition>,
+    antenna_positions: Box<[MPosition]>,
     /// Whether each antenna uses an alt-az mount.
-    antenna_mount_alt_az: Vec<bool>,
+    antenna_mount_alt_az: Box<[bool]>,
     /// Field phase directions (constant term, J2000).
-    field_directions: Vec<MDirection>,
+    field_directions: Box<[MDirection]>,
     /// Observatory position (antenna 0 if no OBSERVATION subtable).
     observatory_position: MPosition,
     /// Epoch reference used by MAIN.TIME.
     time_reference: EpochRef,
     measures: Option<Arc<dyn MeasuresProvider>>,
+    selected_observation_measures_state: Option<MeasuresProviderState>,
     azel_cache: RwLock<HashMap<GeometryCacheKey, (f64, f64)>>,
     hadec_cache: RwLock<HashMap<GeometryCacheKey, (f64, f64)>>,
     parallactic_angle_cache: RwLock<HashMap<GeometryCacheKey, f64>>,
@@ -122,6 +124,24 @@ fn store_geometry_value<T: Copy>(
 }
 
 impl MsCalEngine {
+    /// Model the fixed-slice heap payload retained by the selected-observation engine.
+    pub(crate) fn selected_observation_retained_heap_bytes(ms: &MeasurementSet) -> MsResult<usize> {
+        let antenna_count = ms.antenna()?.row_count();
+        let field_count = ms.field()?.row_count();
+        antenna_count
+            .checked_mul(size_of::<MPosition>() + size_of::<bool>())
+            .and_then(|bytes| {
+                field_count
+                    .checked_mul(size_of::<MDirection>())
+                    .and_then(|fields| bytes.checked_add(fields))
+            })
+            .ok_or_else(|| {
+                MsError::InvalidInput(
+                    "selected-observation geometry metadata byte count overflow".to_string(),
+                )
+            })
+    }
+
     /// Create a new engine by extracting metadata from the MS subtables.
     ///
     /// Reads ANTENNA positions, FIELD phase directions, and resolves the
@@ -156,12 +176,80 @@ impl MsCalEngine {
         let time_reference = detect_time_reference(ms);
 
         Ok(Self {
-            antenna_positions,
-            antenna_mount_alt_az,
-            field_directions,
+            antenna_positions: antenna_positions.into_boxed_slice(),
+            antenna_mount_alt_az: antenna_mount_alt_az.into_boxed_slice(),
+            field_directions: field_directions.into_boxed_slice(),
             observatory_position,
             time_reference,
             measures: Some(measures),
+            selected_observation_measures_state: None,
+            azel_cache: RwLock::new(HashMap::new()),
+            hadec_cache: RwLock::new(HashMap::new()),
+            parallactic_angle_cache: RwLock::new(HashMap::new()),
+            mosaic_uvw_cache: RwLock::new(HashMap::new()),
+        })
+    }
+
+    /// Create the retained selected-observation engine without populating
+    /// table-wide scalar or array caches in the locked MeasurementSet.
+    pub(crate) fn new_selected_observation(
+        ms: &MeasurementSet,
+        measures: Arc<dyn MeasuresProvider>,
+        measures_state: MeasuresProviderState,
+    ) -> MsResult<Self> {
+        let antenna = ms.antenna()?;
+        let mut antenna_positions = Vec::with_capacity(antenna.row_count());
+        let mut antenna_mount_alt_az = Vec::with_capacity(antenna.row_count());
+        for row in 0..antenna.row_count() {
+            let position = selected_array_value(antenna.table(), row, "POSITION")?;
+            let ArrayValue::Float64(position) = position else {
+                return Err(MsError::ColumnTypeMismatch {
+                    column: "POSITION".to_string(),
+                    table: "ANTENNA".to_string(),
+                    expected: "Float64 array shaped [3]".to_string(),
+                    found: format!("{:?}", position.primitive_type()),
+                });
+            };
+            if position.shape() != [3] {
+                return Err(MsError::ColumnTypeMismatch {
+                    column: "POSITION".to_string(),
+                    table: "ANTENNA".to_string(),
+                    expected: "Float64 array shaped [3]".to_string(),
+                    found: format!("Float64 array shaped {:?}", position.shape()),
+                });
+            }
+            antenna_positions.push(MPosition::new_itrf(position[0], position[1], position[2]));
+            drop(position);
+            let mount = selected_string_value(antenna.table(), row, "MOUNT")?;
+            antenna_mount_alt_az.push(
+                mount
+                    .as_bytes()
+                    .get(.."alt-az".len())
+                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"alt-az")),
+            );
+        }
+
+        let observatory_position =
+            resolve_observatory_position_selected(ms, &antenna_positions, measures.as_ref());
+        let field = ms.field()?;
+        let mut field_directions = Vec::with_capacity(field.row_count());
+        for row in 0..field.row_count() {
+            field_directions.push(resolve_field_phase_direction_selected(
+                ms,
+                row,
+                &observatory_position,
+                Arc::clone(&measures),
+            )?);
+        }
+
+        Ok(Self {
+            antenna_positions: antenna_positions.into_boxed_slice(),
+            antenna_mount_alt_az: antenna_mount_alt_az.into_boxed_slice(),
+            field_directions: field_directions.into_boxed_slice(),
+            observatory_position,
+            time_reference: detect_time_reference(ms),
+            measures: Some(measures),
+            selected_observation_measures_state: Some(measures_state),
             azel_cache: RwLock::new(HashMap::new()),
             hadec_cache: RwLock::new(HashMap::new()),
             parallactic_angle_cache: RwLock::new(HashMap::new()),
@@ -176,18 +264,40 @@ impl MsCalEngine {
         observatory_position: MPosition,
         measures: Arc<dyn MeasuresProvider>,
     ) -> Self {
+        let antenna_mount_alt_az = vec![true; antenna_positions.len()].into_boxed_slice();
         Self {
-            antenna_mount_alt_az: vec![true; antenna_positions.len()],
-            antenna_positions,
-            field_directions,
+            antenna_mount_alt_az,
+            antenna_positions: antenna_positions.into_boxed_slice(),
+            field_directions: field_directions.into_boxed_slice(),
             observatory_position,
             time_reference: EpochRef::UTC,
             measures: Some(measures),
+            selected_observation_measures_state: None,
             azel_cache: RwLock::new(HashMap::new()),
             hadec_cache: RwLock::new(HashMap::new()),
             parallactic_angle_cache: RwLock::new(HashMap::new()),
             mosaic_uvw_cache: RwLock::new(HashMap::new()),
         }
+    }
+
+    pub(crate) fn verify_selected_observation_measures(&self) -> MsResult<()> {
+        let expected = self.selected_observation_measures_state.ok_or_else(|| {
+            MsError::InvalidInput(
+                "geometry engine has no bounded Measures provider state".to_string(),
+            )
+        })?;
+        let measures = self.measures.as_ref().ok_or_else(|| {
+            MsError::InvalidInput("geometry engine has no Measures provider".to_string())
+        })?;
+        let actual = measures
+            .prepare_bounded_state()
+            .map_err(MsError::MeasuresRuntime)?;
+        if actual != Some(expected) {
+            return Err(MsError::MeasuresRuntime(format!(
+                "bounded provider state changed from {expected:?} to {actual:?}"
+            )));
+        }
+        Ok(())
     }
 
     /// Number of antennas.
@@ -258,6 +368,22 @@ impl MsCalEngine {
         let frame =
             self.make_frame_with_position(time_mjd_sec, self.observatory_position.clone())?;
         Ok(frame.with_direction(direction))
+    }
+
+    pub(crate) fn direction_angles_j2000(
+        &self,
+        time_mjd_sec: f64,
+        angles_rad: [f64; 2],
+        source_ref: DirectionRef,
+    ) -> MsResult<[f64; 2]> {
+        if source_ref == DirectionRef::J2000 {
+            return Ok(angles_rad);
+        }
+        let raw = MDirection::from_angles(angles_rad[0], angles_rad[1], source_ref);
+        let frame = self.spectral_frame_observatory_direction(time_mjd_sec, raw.clone())?;
+        let converted = raw.convert_to(DirectionRef::J2000, &frame)?;
+        let (longitude_rad, latitude_rad) = converted.as_angles();
+        Ok([longitude_rad, latitude_rad])
     }
 
     /// Get the field direction for the given field_id.
@@ -599,6 +725,47 @@ impl MsCalEngine {
         let phrot = uvw_phase_rotation_vector(target_direction, source_dir);
         let phase_shift_m = dot3(phrot, imaging_uvw_m);
         Ok((imaging_uvw_m, phase_shift_m))
+    }
+
+    /// Reproject raw MS UVW coordinates to an explicit fixed J2000 direction.
+    ///
+    /// This is the scalar-angle form of [`Self::reproject_raw_uvw_to_direction`]
+    /// for callers that do not otherwise need to depend on the Measures value
+    /// types.
+    pub(crate) fn reproject_raw_uvw_to_j2000(
+        &self,
+        raw_uvw_m: [f64; 3],
+        source_field_id: usize,
+        target_direction_rad: [f64; 2],
+    ) -> MsResult<([f64; 3], f64)> {
+        let target = MDirection::from_angles(
+            target_direction_rad[0],
+            target_direction_rad[1],
+            DirectionRef::J2000,
+        );
+        self.reproject_raw_uvw_to_direction(raw_uvw_m, source_field_id, &target)
+    }
+
+    /// Reproject raw MS UVW for CASA GridFT density evaluation at a fixed J2000 centre.
+    ///
+    /// GridFT enters its UVW rotation through CASA's `negateUV` convention.
+    /// This operation therefore remains distinct from the operator-phase
+    /// transform returned by [`Self::reproject_raw_uvw_to_j2000`].
+    pub(crate) fn reproject_raw_uvw_for_density_to_j2000(
+        &self,
+        raw_uvw_m: [f64; 3],
+        source_field_id: usize,
+        target_direction_rad: [f64; 2],
+    ) -> MsResult<[f64; 3]> {
+        let source = self.field_dir(source_field_id)?;
+        let target = MDirection::from_angles(
+            target_direction_rad[0],
+            target_direction_rad[1],
+            DirectionRef::J2000,
+        );
+        let casa_input = [-raw_uvw_m[0], -raw_uvw_m[1], raw_uvw_m[2]];
+        let casa_output = row_vec3_mul_mat3(casa_input, uvw_rotation_matrix(source, &target));
+        Ok([-casa_output[0], -casa_output[1], casa_output[2]])
     }
 
     /// Reproject raw MS UVW coordinates to an explicit fixed J2000 direction
@@ -979,17 +1146,122 @@ pub fn resolve_field_phase_direction_j2000(
     )
 }
 
+enum BorrowedMeasureReference<'a> {
+    Fixed(&'a str),
+    VariableInt {
+        ref_column: &'a str,
+        tab_ref_types: &'a ArrayD<String>,
+        tab_ref_codes: BorrowedReferenceCodes<'a>,
+    },
+    VariableString {
+        ref_column: &'a str,
+    },
+}
+
+#[derive(Clone, Copy)]
+enum BorrowedReferenceCodes<'a> {
+    Int32(&'a ArrayD<i32>),
+    UInt32(&'a ArrayD<u32>),
+    Int64(&'a ArrayD<i64>),
+}
+
+impl BorrowedReferenceCodes<'_> {
+    fn position(self, code: i32) -> Option<usize> {
+        match self {
+            Self::Int32(values) => values.iter().position(|candidate| *candidate == code),
+            Self::UInt32(values) => values
+                .iter()
+                .position(|candidate| *candidate as i32 == code),
+            Self::Int64(values) => values
+                .iter()
+                .position(|candidate| *candidate as i32 == code),
+        }
+    }
+}
+
+fn borrowed_measure_reference<'a>(
+    table: &'a Table,
+    column: &str,
+) -> Option<BorrowedMeasureReference<'a>> {
+    let Value::Record(measinfo) = table.column_keywords(column)?.get("MEASINFO")? else {
+        return None;
+    };
+    let Value::Scalar(ScalarValue::String(measure_type)) = measinfo.get("type")? else {
+        return None;
+    };
+    if ![
+        "epoch",
+        "direction",
+        "position",
+        "frequency",
+        "doppler",
+        "radialvelocity",
+    ]
+    .iter()
+    .any(|candidate| measure_type.eq_ignore_ascii_case(candidate))
+    {
+        return None;
+    }
+
+    if let Some(Value::Scalar(ScalarValue::String(ref_column))) = measinfo.get("VarRefCol") {
+        let tab_ref_types = match measinfo.get("TabRefTypes") {
+            Some(Value::Array(ArrayValue::String(values))) => Some(values),
+            _ => None,
+        };
+        let tab_ref_codes = match measinfo.get("TabRefCodes") {
+            Some(Value::Array(ArrayValue::Int32(values))) => {
+                Some(BorrowedReferenceCodes::Int32(values))
+            }
+            Some(Value::Array(ArrayValue::UInt32(values))) => {
+                Some(BorrowedReferenceCodes::UInt32(values))
+            }
+            Some(Value::Array(ArrayValue::Int64(values))) => {
+                Some(BorrowedReferenceCodes::Int64(values))
+            }
+            _ => None,
+        };
+        return match (tab_ref_types, tab_ref_codes) {
+            (Some(tab_ref_types), Some(tab_ref_codes)) => {
+                Some(BorrowedMeasureReference::VariableInt {
+                    ref_column,
+                    tab_ref_types,
+                    tab_ref_codes,
+                })
+            }
+            _ => Some(BorrowedMeasureReference::VariableString { ref_column }),
+        };
+    }
+    match measinfo.get("Ref") {
+        Some(Value::Scalar(ScalarValue::String(refer))) => {
+            Some(BorrowedMeasureReference::Fixed(refer))
+        }
+        _ => None,
+    }
+}
+
+pub(crate) fn selected_direction_reference_column<'a>(
+    table: &'a Table,
+    column: &str,
+) -> Option<&'a str> {
+    match borrowed_measure_reference(table, column) {
+        Some(BorrowedMeasureReference::VariableInt { ref_column, .. })
+        | Some(BorrowedMeasureReference::VariableString { ref_column }) => Some(ref_column),
+        Some(BorrowedMeasureReference::Fixed(_)) | None => None,
+    }
+}
+
 fn detect_time_reference(ms: &MeasurementSet) -> EpochRef {
     detect_epoch_reference(ms.main_table(), "TIME", EpochRef::UTC)
 }
 
 fn detect_epoch_reference(table: &Table, column: &str, default: EpochRef) -> EpochRef {
-    let Some(desc) = TableMeasDesc::reconstruct(table, column) else {
+    let Some(reference) = borrowed_measure_reference(table, column) else {
         return default;
     };
-    match desc.ref_desc() {
-        MeasRefDesc::Fixed { refer } => refer.parse::<EpochRef>().unwrap_or(default),
-        MeasRefDesc::VariableInt { .. } | MeasRefDesc::VariableString { .. } => default,
+    match reference {
+        BorrowedMeasureReference::Fixed(refer) => refer.parse::<EpochRef>().unwrap_or(default),
+        BorrowedMeasureReference::VariableInt { .. }
+        | BorrowedMeasureReference::VariableString { .. } => default,
     }
 }
 
@@ -1014,6 +1286,182 @@ fn phase_dir_constant(dir: &ArrayValue) -> MsResult<(f64, f64)> {
             found: format!("{:?}", other.primitive_type()),
         }),
     }
+}
+
+fn selected_array_value(table: &Table, row: usize, column: &str) -> MsResult<ArrayValue> {
+    table
+        .column_accessor(column)?
+        .array_cells_owned_uncached(&[row])?
+        .pop()
+        .flatten()
+        .ok_or_else(|| {
+            MsError::InvalidInput(format!(
+                "required selected metadata {column} row {row} is undefined"
+            ))
+        })
+}
+
+fn selected_scalar_value(table: &Table, row: usize, column: &str) -> MsResult<ScalarValue> {
+    table
+        .column_accessor(column)?
+        .scalar_cells_owned_for_rows(&[row])?
+        .pop()
+        .flatten()
+        .ok_or_else(|| {
+            MsError::InvalidInput(format!(
+                "required selected metadata {column} row {row} is undefined"
+            ))
+        })
+}
+
+fn selected_string_value(table: &Table, row: usize, column: &str) -> MsResult<String> {
+    match selected_scalar_value(table, row, column)? {
+        ScalarValue::String(value) => Ok(value),
+        other => Err(MsError::ColumnTypeMismatch {
+            column: column.to_string(),
+            table: "metadata".to_string(),
+            expected: "String scalar".to_string(),
+            found: format!("{:?}", other.primitive_type()),
+        }),
+    }
+}
+
+fn selected_f64_value(table: &Table, row: usize, column: &str) -> MsResult<f64> {
+    match selected_scalar_value(table, row, column)? {
+        ScalarValue::Float64(value) => Ok(value),
+        other => Err(MsError::ColumnTypeMismatch {
+            column: column.to_string(),
+            table: "metadata".to_string(),
+            expected: "Float64 scalar".to_string(),
+            found: format!("{:?}", other.primitive_type()),
+        }),
+    }
+}
+
+fn resolve_observatory_position_selected(
+    ms: &MeasurementSet,
+    antenna_positions: &[MPosition],
+    measures: &dyn MeasuresProvider,
+) -> MPosition {
+    ms.observation()
+        .ok()
+        .and_then(|observation| {
+            (0..observation.row_count()).find_map(|row| {
+                selected_string_value(observation.table(), row, "TELESCOPE_NAME").ok()
+            })
+        })
+        .and_then(|name| {
+            known_observatory_position(&name).or_else(|| {
+                MPosition::from_observatory_name(&name, measures)
+                    .ok()
+                    .flatten()
+            })
+        })
+        .or_else(|| antenna_positions.first().cloned())
+        .unwrap_or_else(|| MPosition::new_itrf(0.0, 0.0, 0.0))
+}
+
+fn resolve_field_phase_direction_selected(
+    ms: &MeasurementSet,
+    field_id: usize,
+    observatory_position: &MPosition,
+    measures: Arc<dyn MeasuresProvider>,
+) -> MsResult<MDirection> {
+    let field = ms.field()?;
+    let raw = selected_array_value(field.table(), field_id, "PHASE_DIR")?;
+    let (longitude_rad, latitude_rad) = phase_dir_constant(&raw)?;
+    drop(raw);
+    let source_ref =
+        resolve_direction_reference_selected(field.table(), "FIELD", "PHASE_DIR", field_id)?;
+    let direction = MDirection::from_angles(longitude_rad, latitude_rad, source_ref);
+    if source_ref == DirectionRef::J2000 {
+        return Ok(direction);
+    }
+    let epoch_ref = detect_epoch_reference(field.table(), "TIME", EpochRef::UTC);
+    let epoch = MEpoch::from_mjd(
+        selected_f64_value(field.table(), field_id, "TIME")? / 86_400.0,
+        epoch_ref,
+    );
+    let frame = MeasFrame::new()
+        .with_epoch(epoch)
+        .with_position(observatory_position.clone())
+        .with_measures(measures);
+    Ok(direction.convert_to(DirectionRef::J2000, &frame)?)
+}
+
+pub(crate) fn resolve_direction_reference_selected(
+    table: &Table,
+    table_name: &str,
+    column: &str,
+    row: usize,
+) -> MsResult<DirectionRef> {
+    let Some(description) = borrowed_measure_reference(table, column) else {
+        return Ok(DirectionRef::J2000);
+    };
+    let reference = match description {
+        BorrowedMeasureReference::Fixed(refer) => Cow::Borrowed(refer),
+        BorrowedMeasureReference::VariableInt {
+            ref_column,
+            tab_ref_types,
+            tab_ref_codes,
+        } => {
+            let code = match selected_scalar_value(table, row, ref_column)? {
+                ScalarValue::Int32(value) => value,
+                ScalarValue::Int64(value) => {
+                    i32::try_from(value).map_err(|_| MsError::ColumnTypeMismatch {
+                        column: ref_column.to_string(),
+                        table: table_name.to_string(),
+                        expected: "an integer direction reference in the Int32 domain".to_string(),
+                        found: value.to_string(),
+                    })?
+                }
+                ScalarValue::UInt32(value) => {
+                    i32::try_from(value).map_err(|_| MsError::ColumnTypeMismatch {
+                        column: ref_column.to_string(),
+                        table: table_name.to_string(),
+                        expected: "an integer direction reference in the Int32 domain".to_string(),
+                        found: value.to_string(),
+                    })?
+                }
+                other => {
+                    return Err(MsError::ColumnTypeMismatch {
+                        column: ref_column.to_string(),
+                        table: table_name.to_string(),
+                        expected: "Int scalar".to_string(),
+                        found: format!("{other:?}"),
+                    });
+                }
+            };
+            let Some(index) = tab_ref_codes.position(code) else {
+                return Err(MsError::InvalidMeasureCode {
+                    table: table_name.to_string(),
+                    column: ref_column.to_string(),
+                    code,
+                });
+            };
+            tab_ref_types
+                .iter()
+                .nth(index)
+                .map(|reference| Cow::Borrowed(reference.as_str()))
+                .ok_or_else(|| MsError::ColumnTypeMismatch {
+                    column: column.to_string(),
+                    table: table_name.to_string(),
+                    expected: "TabRefTypes index in bounds".to_string(),
+                    found: format!("missing entry for TabRefCodes[{index}]"),
+                })?
+        }
+        BorrowedMeasureReference::VariableString { ref_column } => {
+            Cow::Owned(selected_string_value(table, row, ref_column)?)
+        }
+    };
+    reference
+        .parse::<DirectionRef>()
+        .map_err(|_| MsError::ColumnTypeMismatch {
+            column: column.to_string(),
+            table: table_name.to_string(),
+            expected: "a supported direction reference".to_string(),
+            found: reference.into_owned(),
+        })
 }
 
 fn resolve_observatory_position(
@@ -1060,7 +1508,7 @@ fn resolve_field_phase_direction_j2000_with_observatory(
     let field = ms.field()?;
     let raw = field.phase_dir(field_id)?;
     let (lon, lat) = phase_dir_constant(raw)?;
-    let source_ref = resolve_direction_reference(field.table(), "PHASE_DIR", field_id)?;
+    let source_ref = resolve_direction_reference(field.table(), "FIELD", "PHASE_DIR", field_id)?;
     let dir = MDirection::from_angles(lon, lat, source_ref);
     if source_ref == DirectionRef::J2000 {
         return Ok(dir);
@@ -1074,22 +1522,32 @@ fn resolve_field_phase_direction_j2000_with_observatory(
     Ok(dir.convert_to(DirectionRef::J2000, &frame)?)
 }
 
-fn resolve_direction_reference(table: &Table, column: &str, row: usize) -> MsResult<DirectionRef> {
+pub(crate) fn resolve_direction_reference(
+    table: &Table,
+    table_name: &str,
+    column: &str,
+    row: usize,
+) -> MsResult<DirectionRef> {
     let Some(desc) = TableMeasDesc::reconstruct(table, column) else {
         return Ok(DirectionRef::J2000);
     };
-    let refer = resolve_reference_string(table, &desc, row)?;
+    let refer = resolve_reference_string(table, table_name, &desc, row)?;
     refer
         .parse::<DirectionRef>()
         .map_err(|_| MsError::ColumnTypeMismatch {
             column: column.to_string(),
-            table: "FIELD".to_string(),
+            table: table_name.to_string(),
             expected: "a supported direction reference".to_string(),
             found: refer,
         })
 }
 
-fn resolve_reference_string(table: &Table, desc: &TableMeasDesc, row: usize) -> MsResult<String> {
+fn resolve_reference_string(
+    table: &Table,
+    table_name: &str,
+    desc: &TableMeasDesc,
+    row: usize,
+) -> MsResult<String> {
     match desc.ref_desc() {
         MeasRefDesc::Fixed { refer } => Ok(refer.clone()),
         MeasRefDesc::VariableInt {
@@ -1099,12 +1557,26 @@ fn resolve_reference_string(table: &Table, desc: &TableMeasDesc, row: usize) -> 
         } => {
             let code = match table.cell_accessor(row, ref_column)?.scalar()? {
                 &ScalarValue::Int32(value) => value,
-                &ScalarValue::Int64(value) => value as i32,
-                &ScalarValue::UInt32(value) => value as i32,
+                &ScalarValue::Int64(value) => {
+                    i32::try_from(value).map_err(|_| MsError::ColumnTypeMismatch {
+                        column: ref_column.clone(),
+                        table: table_name.to_string(),
+                        expected: "an integer direction reference in the Int32 domain".to_string(),
+                        found: value.to_string(),
+                    })?
+                }
+                &ScalarValue::UInt32(value) => {
+                    i32::try_from(value).map_err(|_| MsError::ColumnTypeMismatch {
+                        column: ref_column.clone(),
+                        table: table_name.to_string(),
+                        expected: "an integer direction reference in the Int32 domain".to_string(),
+                        found: value.to_string(),
+                    })?
+                }
                 other => {
                     return Err(MsError::ColumnTypeMismatch {
                         column: ref_column.clone(),
-                        table: "FIELD".to_string(),
+                        table: table_name.to_string(),
                         expected: "Int scalar".to_string(),
                         found: format!("{other:?}"),
                     });
@@ -1115,7 +1587,7 @@ fn resolve_reference_string(table: &Table, desc: &TableMeasDesc, row: usize) -> 
                     return tab_ref_types.get(index).cloned().ok_or_else(|| {
                         MsError::ColumnTypeMismatch {
                             column: desc.column_name().to_string(),
-                            table: "FIELD".to_string(),
+                            table: table_name.to_string(),
                             expected: "TabRefTypes index in bounds".to_string(),
                             found: format!("missing entry for TabRefCodes[{index}]"),
                         }
@@ -1123,7 +1595,7 @@ fn resolve_reference_string(table: &Table, desc: &TableMeasDesc, row: usize) -> 
                 }
             }
             Err(MsError::InvalidMeasureCode {
-                table: "FIELD".to_string(),
+                table: table_name.to_string(),
                 column: ref_column.clone(),
                 code,
             })
@@ -1133,7 +1605,7 @@ fn resolve_reference_string(table: &Table, desc: &TableMeasDesc, row: usize) -> 
                 ScalarValue::String(value) => Ok(value.clone()),
                 other => Err(MsError::ColumnTypeMismatch {
                     column: ref_column.clone(),
-                    table: "FIELD".to_string(),
+                    table: table_name.to_string(),
                     expected: "String scalar".to_string(),
                     found: format!("{other:?}"),
                 }),

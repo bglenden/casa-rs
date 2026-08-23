@@ -2,19 +2,232 @@
 
 use casa_imaging_model::{
     AntennaBaseline, AntennaSelection, ColumnGeneration, CompileObservationError, ConsistencyToken,
-    CorrelationProduct, CorrelationSelection, CorrelationType, FlagPolicy, IdSelection,
-    IntentSelection, LogicalIdentity, MeasurementSetIdentity, MetadataGeneration,
-    MetadataTableKind, ModelColumnState, ModelStateIdentity, MsColumnKind,
-    ObservationConsistencyError, ObservationSelection, ObservationSnapshot,
+    CorrelationProduct, CorrelationSelection, CorrelationType, DataDescriptionSelection,
+    FlagPolicy, IdSelection, IntentSelection, LogicalIdentity, MeasurementSetIdentity,
+    MetadataGeneration, MetadataTableKind, ModelColumnState, ModelStateIdentity, MsColumnKind,
+    ObservationConsistencyError, ObservationSelection, ObservationSnapshot, ObservationSnapshotId,
     ObservationSnapshotInput, ObservationSourceInput, ObservationSourceProvenance,
     ObservationSourceState, ObservationState, ReferenceDataKind, ResolvedIntent, RowSelection,
-    SelectedColumns, SelectedRows, SelectionBound, SourceGenerations, SpectralWindowSelection,
-    TimeRange, TimeSelection, UvDistanceRange, UvDistanceUnit, UvSelection, VisibilityColumn,
-    WeightColumn, compile_observation,
+    SelectedColumns, SelectedMainRow, SelectedRowManifestValidationError, SelectedRowSequenceError,
+    SelectedRowSequenceId, SelectedRows, SelectionBound, SourceGenerations,
+    SpectralWindowSelection, TimeRange, TimeSelection, UvDistanceRange, UvDistanceUnit,
+    UvSelection, VisibilityColumn, WeightColumn, compile_observation,
 };
 
 fn identity(byte: u8) -> LogicalIdentity {
     LogicalIdentity::from_sha256([byte; 32])
+}
+
+fn selected_rows(row_variant: u8) -> SelectedRows {
+    let mut rows = (0_u64..10).collect::<Vec<_>>();
+    rows.push(10 + u64::from(row_variant) % 90);
+    SelectedRows::from_ordered_main_rows(
+        100,
+        rows.into_iter().map(|row| SelectedMainRow::new(row, 1)),
+    )
+    .expect("canonical selected-row fixture")
+}
+
+fn main_rows<const N: usize>(rows: [u64; N]) -> [SelectedMainRow; N] {
+    rows.map(|row| SelectedMainRow::new(row, 0))
+}
+
+struct InexactRowCount<I> {
+    rows: I,
+    declared_len: usize,
+}
+
+impl<I: Iterator<Item = SelectedMainRow>> Iterator for InexactRowCount<I> {
+    type Item = SelectedMainRow;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.rows.next()
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.declared_len, Some(self.declared_len))
+    }
+}
+
+impl<I: Iterator<Item = SelectedMainRow>> ExactSizeIterator for InexactRowCount<I> {
+    fn len(&self) -> usize {
+        self.declared_len
+    }
+}
+
+#[test]
+fn selected_row_sequence_manifest_is_storage_owner_reproducible() {
+    let planned = SelectedRows::from_ordered_main_rows(12, main_rows([0, 3, 7, 11]))
+        .expect("compiler-selected physical MAIN rows");
+    let reopened = SelectedRows::from_ordered_main_rows(12, main_rows([0, 3, 7, 11]))
+        .expect("storage owner re-resolved the same physical MAIN rows");
+    let changed = SelectedRows::from_ordered_main_rows(12, main_rows([0, 3, 8, 11]))
+        .expect("different valid physical MAIN rows");
+    let empty = SelectedRows::from_ordered_main_rows(12, main_rows([]))
+        .expect("one source may contribute no selected rows");
+    let empty_larger_source = SelectedRows::from_ordered_main_rows(20, main_rows([]))
+        .expect("empty row identity excludes the separately retained source count");
+
+    assert_eq!(planned, reopened);
+    assert_ne!(planned, changed);
+    assert_eq!(planned.source_row_count(), 12);
+    assert_eq!(planned.selected_row_count(), 4);
+    assert_eq!(planned.ordered_main_rows(), &main_rows([0, 3, 7, 11]));
+    assert_eq!(empty.selected_row_count(), 0);
+    assert_eq!(empty.sequence_id(), empty_larger_source.sequence_id());
+    assert_ne!(empty, empty_larger_source);
+    assert_eq!(SelectedRowSequenceId::SCHEMA_VERSION, 2);
+    assert_eq!(
+        planned.sequence_id().as_bytes(),
+        [
+            130, 199, 211, 154, 223, 41, 223, 172, 141, 120, 225, 121, 188, 85, 28, 237, 187, 229,
+            98, 77, 157, 11, 182, 75, 139, 206, 31, 38, 9, 148, 240, 42,
+        ]
+    );
+    assert_eq!(
+        SelectedRows::from_ordered_main_rows(12, main_rows([0, 3, 3, 11])),
+        Err(SelectedRowSequenceError::DuplicatePhysicalRow { row: 3 })
+    );
+    assert_eq!(
+        SelectedRows::from_ordered_main_rows(12, main_rows([0, 7, 3, 11])),
+        Err(SelectedRowSequenceError::DescendingPhysicalRow {
+            previous_row: 7,
+            row: 3,
+        })
+    );
+    assert_eq!(
+        SelectedRows::from_ordered_main_rows(12, main_rows([7, 3, 12])),
+        Err(SelectedRowSequenceError::DescendingPhysicalRow {
+            previous_row: 7,
+            row: 3,
+        }),
+        "a later out-of-range row does not replace the first encountered failure"
+    );
+    assert_eq!(
+        SelectedRows::from_ordered_main_rows(12, main_rows([3, 2, 3])),
+        Err(SelectedRowSequenceError::DescendingPhysicalRow {
+            previous_row: 3,
+            row: 2,
+        }),
+        "a non-adjacent repeat necessarily violates ascending order first"
+    );
+    assert_eq!(
+        SelectedRows::from_ordered_main_rows(12, main_rows([0, 3, 7, 12])),
+        Err(SelectedRowSequenceError::PhysicalRowOutOfRange {
+            row: 12,
+            source_row_count: 12,
+        })
+    );
+}
+
+#[test]
+fn selected_main_row_manifest_binds_data_description_to_physical_row() {
+    let planned = SelectedRows::from_ordered_main_rows(
+        12,
+        [
+            SelectedMainRow::new(0, 2),
+            SelectedMainRow::new(3, 5),
+            SelectedMainRow::new(7, 5),
+        ],
+    )
+    .expect("compiler-selected MAIN row coordinates");
+    let reopened = SelectedRows::from_ordered_main_rows(
+        12,
+        [
+            SelectedMainRow::new(0, 2),
+            SelectedMainRow::new(3, 5),
+            SelectedMainRow::new(7, 5),
+        ],
+    )
+    .expect("storage owner reproduced the same MAIN row coordinates");
+    let substituted = SelectedRows::from_ordered_main_rows(
+        12,
+        [
+            SelectedMainRow::new(0, 2),
+            SelectedMainRow::new(3, 2),
+            SelectedMainRow::new(7, 5),
+        ],
+    )
+    .expect("same physical rows with a different DATA_DESC_ID association");
+
+    assert_eq!(planned, reopened);
+    assert_ne!(planned.sequence_id(), substituted.sequence_id());
+    assert_eq!(SelectedRowSequenceId::SCHEMA_VERSION, 2);
+}
+
+#[test]
+fn selected_main_row_manifest_validates_a_fallible_bounded_replay() {
+    let planned = SelectedRows::from_ordered_main_rows(
+        12,
+        [
+            SelectedMainRow::new(0, 2),
+            SelectedMainRow::new(3, 5),
+            SelectedMainRow::new(7, 5),
+        ],
+    )
+    .expect("compiler-selected MAIN row coordinates");
+
+    planned
+        .validate_ordered_main_rows(
+            [
+                SelectedMainRow::new(0, 2),
+                SelectedMainRow::new(3, 5),
+                SelectedMainRow::new(7, 5),
+            ]
+            .into_iter()
+            .map(Ok::<_, std::io::Error>),
+        )
+        .expect("the retained source reproduced the exact compact manifest");
+
+    let mismatch = planned
+        .validate_ordered_main_rows(
+            [
+                SelectedMainRow::new(0, 2),
+                SelectedMainRow::new(3, 2),
+                SelectedMainRow::new(7, 5),
+            ]
+            .into_iter()
+            .map(Ok::<_, std::io::Error>),
+        )
+        .expect_err("same-count DDID substitution must not validate");
+    assert!(matches!(
+        mismatch,
+        SelectedRowManifestValidationError::ManifestMismatch {
+            expected_row_count: 3,
+            observed_row_count: 3,
+            ..
+        }
+    ));
+
+    let source_failure = planned
+        .validate_ordered_main_rows([
+            Ok(SelectedMainRow::new(0, 2)),
+            Err(std::io::Error::other("retained MAIN read failed")),
+        ])
+        .expect_err("a storage failure must not become missing science");
+    match source_failure {
+        SelectedRowManifestValidationError::Source(source) => {
+            assert_eq!(source.kind(), std::io::ErrorKind::Other);
+            assert_eq!(source.to_string(), "retained MAIN read failed");
+        }
+        other => panic!("expected the original storage failure, got {other}"),
+    }
+}
+
+#[test]
+fn selected_row_sequence_rejects_inexact_iterator_length() {
+    let rows = InexactRowCount {
+        rows: main_rows([0, 3, 7]).into_iter(),
+        declared_len: 4,
+    };
+
+    assert_eq!(
+        SelectedRows::from_ordered_main_rows(12, rows),
+        Err(SelectedRowSequenceError::DeclaredRowCountMismatch {
+            declared_row_count: 4,
+            observed_row_count: 3,
+        })
+    );
 }
 
 fn columns(seed: u8, reverse: bool) -> SelectedColumns {
@@ -88,9 +301,14 @@ fn selection(row_digest: u8, reverse: bool) -> ObservationSelection {
         ResolvedIntent::new(8, "OBSERVE_TARGET#ON_SOURCE".to_string()),
         ResolvedIntent::new(3, "CALIBRATE_PHASE#ON_SOURCE".to_string()),
     ];
+    let mut data_descriptions = vec![
+        DataDescriptionSelection::new(6, 9, 5),
+        DataDescriptionSelection::new(4, 2, 5),
+        DataDescriptionSelection::new(1, 2, 1),
+    ];
     let mut spectral_windows = vec![
-        SpectralWindowSelection::new(9, vec![6], vec![7, 5, 3]),
-        SpectralWindowSelection::new(2, vec![4, 1], vec![8, 4, 0]),
+        SpectralWindowSelection::new(9, vec![7, 5, 3]),
+        SpectralWindowSelection::new(2, vec![8, 4, 0]),
     ];
     let mut correlations = vec![
         CorrelationSelection::new(
@@ -115,12 +333,13 @@ fn selection(row_digest: u8, reverse: bool) -> ObservationSelection {
         arrays.reverse();
         baselines.reverse();
         intents.reverse();
+        data_descriptions.reverse();
         spectral_windows.reverse();
         correlations.reverse();
     }
 
     ObservationSelection::new(
-        SelectedRows::new(100, 11, identity(row_digest)),
+        selected_rows(row_digest),
         RowSelection::new(
             IdSelection::Only(fields),
             TimeSelection::Ranges(vec![TimeRange::new(
@@ -138,6 +357,7 @@ fn selection(row_digest: u8, reverse: bool) -> ObservationSelection {
             IntentSelection::Only(intents),
             IdSelection::Only(arrays),
         ),
+        data_descriptions,
         spectral_windows,
         correlations,
     )
@@ -243,6 +463,16 @@ fn all_defined_measurement_set_correlation_coordinates_are_lossless() {
     let exact_selection = ObservationSelection::new(
         base.rows().clone(),
         base.rows_filter().clone(),
+        base.data_descriptions()
+            .iter()
+            .map(|entry| {
+                DataDescriptionSelection::new(
+                    entry.data_description_id(),
+                    entry.spectral_window_id(),
+                    7,
+                )
+            })
+            .collect(),
         base.spectral_windows().to_vec(),
         vec![CorrelationSelection::new(
             7,
@@ -279,6 +509,249 @@ fn all_defined_measurement_set_correlation_coordinates_are_lossless() {
         .map(|product| product.correlation_type())
         .collect::<Vec<_>>();
     assert_eq!(compiled_types, correlation_types);
+}
+
+#[test]
+fn data_description_catalog_binds_spw_and_polarization_pairing() {
+    let compile = |mut data_descriptions: Vec<DataDescriptionSelection>| {
+        let base = selection(31, false);
+        let selected = ObservationSelection::new(
+            base.rows().clone(),
+            base.rows_filter().clone(),
+            data_descriptions.clone(),
+            vec![
+                SpectralWindowSelection::new(2, vec![0, 4, 8]),
+                SpectralWindowSelection::new(9, vec![3, 5, 7]),
+            ],
+            vec![
+                CorrelationSelection::new(
+                    1,
+                    vec![
+                        CorrelationProduct::new(0, CorrelationType::CircularRr),
+                        CorrelationProduct::new(1, CorrelationType::CircularLl),
+                    ],
+                ),
+                CorrelationSelection::new(
+                    5,
+                    vec![
+                        CorrelationProduct::new(0, CorrelationType::LinearXx),
+                        CorrelationProduct::new(1, CorrelationType::LinearYy),
+                    ],
+                ),
+            ],
+        );
+        data_descriptions.sort_unstable_by_key(|entry| entry.data_description_id());
+        let snapshot = compile_observation(ObservationSnapshotInput::new(
+            vec![ObservationSourceInput::new(
+                MeasurementSetIdentity::new(identity(11)),
+                ObservationSourceProvenance::new(
+                    "/archive/data-description.ms".to_string(),
+                    identity(51),
+                ),
+                selected,
+                SourceGenerations::new(
+                    ConsistencyToken::new(identity(61)),
+                    columns(60, false),
+                    metadata(84, false),
+                    ModelColumnState::Absent,
+                ),
+            )],
+            Vec::new(),
+            ModelStateIdentity::Empty,
+        ))
+        .expect("compile exact DATA_DESCRIPTION catalog");
+        (snapshot, data_descriptions)
+    };
+
+    let canonical = vec![
+        DataDescriptionSelection::new(1, 2, 1),
+        DataDescriptionSelection::new(4, 2, 5),
+        DataDescriptionSelection::new(6, 9, 5),
+    ];
+    let mut reversed = canonical.clone();
+    reversed.reverse();
+    let swapped = vec![
+        DataDescriptionSelection::new(1, 2, 5),
+        DataDescriptionSelection::new(4, 2, 5),
+        DataDescriptionSelection::new(6, 9, 1),
+    ];
+
+    let (expected, expected_catalog) = compile(canonical);
+    let (reordered, _) = compile(reversed);
+    let (different_pairing, _) = compile(swapped);
+
+    assert_eq!(
+        expected.sources()[0].selection().data_descriptions(),
+        expected_catalog
+    );
+    assert_eq!(expected.snapshot_id(), reordered.snapshot_id());
+    assert_ne!(expected.snapshot_id(), different_pairing.snapshot_id());
+    assert_eq!(ObservationSnapshotId::SCHEMA_VERSION, 4);
+    assert_eq!(
+        expected.snapshot_id().as_bytes(),
+        [
+            254, 192, 119, 69, 16, 184, 111, 194, 219, 159, 152, 108, 97, 127, 136, 119, 201, 109,
+            10, 97, 239, 111, 199, 28, 218, 236, 219, 202, 131, 81, 136, 223,
+        ]
+    );
+}
+
+#[test]
+fn data_description_catalog_rejects_duplicate_ddid() {
+    let base = selection(31, false);
+    let mut data_descriptions = base.data_descriptions().to_vec();
+    data_descriptions.push(DataDescriptionSelection::new(1, 2, 1));
+    let invalid = ObservationSelection::new(
+        base.rows().clone(),
+        base.rows_filter().clone(),
+        data_descriptions,
+        base.spectral_windows().to_vec(),
+        base.correlations().to_vec(),
+    );
+
+    assert_eq!(
+        compile_observation(ObservationSnapshotInput::new(
+            vec![ObservationSourceInput::new(
+                MeasurementSetIdentity::new(identity(11)),
+                ObservationSourceProvenance::new(
+                    "/archive/duplicate-ddid.ms".to_string(),
+                    identity(51),
+                ),
+                invalid,
+                SourceGenerations::new(
+                    ConsistencyToken::new(identity(61)),
+                    columns(60, false),
+                    metadata(84, false),
+                    ModelColumnState::Absent,
+                ),
+            )],
+            Vec::new(),
+            ModelStateIdentity::Empty,
+        )),
+        Err(CompileObservationError::DuplicateDataDescription {
+            data_description_id: 1,
+        })
+    );
+}
+
+#[test]
+fn selected_main_row_manifest_must_reference_the_compiled_catalog() {
+    let base = selection(31, false);
+    let invalid = ObservationSelection::new(
+        SelectedRows::from_ordered_main_rows(100, [SelectedMainRow::new(0, 99)])
+            .expect("well-formed but catalog-inconsistent MAIN row manifest"),
+        base.rows_filter().clone(),
+        base.data_descriptions().to_vec(),
+        base.spectral_windows().to_vec(),
+        base.correlations().to_vec(),
+    );
+
+    assert!(matches!(
+        compile_observation(ObservationSnapshotInput::new(
+            vec![ObservationSourceInput::new(
+                MeasurementSetIdentity::new(identity(11)),
+                ObservationSourceProvenance::new(
+                    "/archive/inconsistent-row-ddid.ms".to_string(),
+                    identity(51),
+                ),
+                invalid,
+                SourceGenerations::new(
+                    ConsistencyToken::new(identity(61)),
+                    columns(60, false),
+                    metadata(84, false),
+                    ModelColumnState::Absent,
+                ),
+            )],
+            Vec::new(),
+            ModelStateIdentity::Empty,
+        )),
+        Err(CompileObservationError::SelectedRowDataDescriptionMissing {
+            data_description_id: 99,
+        })
+    ));
+}
+
+#[test]
+fn data_description_catalog_rejects_missing_and_unresolved_joins() {
+    let base = selection(31, false);
+    let compile = |data_descriptions| {
+        compile_observation(ObservationSnapshotInput::new(
+            vec![ObservationSourceInput::new(
+                MeasurementSetIdentity::new(identity(11)),
+                ObservationSourceProvenance::new(
+                    "/archive/inexact-data-description.ms".to_string(),
+                    identity(51),
+                ),
+                ObservationSelection::new(
+                    base.rows().clone(),
+                    base.rows_filter().clone(),
+                    data_descriptions,
+                    base.spectral_windows().to_vec(),
+                    base.correlations().to_vec(),
+                ),
+                SourceGenerations::new(
+                    ConsistencyToken::new(identity(61)),
+                    columns(60, false),
+                    metadata(84, false),
+                    ModelColumnState::Absent,
+                ),
+            )],
+            Vec::new(),
+            ModelStateIdentity::Empty,
+        ))
+    };
+
+    assert_eq!(
+        compile(Vec::new()),
+        Err(CompileObservationError::NoDataDescriptionSelection)
+    );
+    assert_eq!(
+        compile(vec![DataDescriptionSelection::new(
+            i32::MAX as u32 + 1,
+            2,
+            1,
+        )]),
+        Err(
+            CompileObservationError::DataDescriptionIdOutsideMainDomain {
+                data_description_id: i32::MAX as u32 + 1,
+            }
+        )
+    );
+    assert_eq!(
+        compile(vec![DataDescriptionSelection::new(1, 99, 1)]),
+        Err(
+            CompileObservationError::UnknownDataDescriptionSpectralWindow {
+                data_description_id: 1,
+                spectral_window_id: 99,
+            }
+        )
+    );
+    assert_eq!(
+        compile(vec![DataDescriptionSelection::new(1, 2, 99)]),
+        Err(
+            CompileObservationError::UnknownDataDescriptionPolarization {
+                data_description_id: 1,
+                polarization_id: 99,
+            }
+        )
+    );
+    assert_eq!(
+        compile(vec![
+            DataDescriptionSelection::new(1, 2, 1),
+            DataDescriptionSelection::new(4, 2, 5),
+        ]),
+        Err(CompileObservationError::OrphanSpectralWindowSelection {
+            spectral_window_id: 9,
+        })
+    );
+    assert_eq!(
+        compile(vec![
+            DataDescriptionSelection::new(1, 2, 1),
+            DataDescriptionSelection::new(4, 2, 1),
+            DataDescriptionSelection::new(6, 9, 1),
+        ]),
+        Err(CompileObservationError::OrphanCorrelationSelection { polarization_id: 5 })
+    );
 }
 
 #[test]
@@ -360,7 +833,7 @@ fn content_identity_is_canonical_but_provenance_retains_origin_and_request_order
     );
     assert_eq!(first.sources()[0].input_ordinal(), 0);
     assert_eq!(reordered.sources()[0].input_ordinal(), 1);
-    assert_eq!(casa_imaging_model::ObservationSnapshotId::SCHEMA_VERSION, 2);
+    assert_eq!(casa_imaging_model::ObservationSnapshotId::SCHEMA_VERSION, 4);
 }
 
 #[test]
@@ -371,7 +844,10 @@ fn snapshot_exposes_exact_selection_and_generation_semantics_without_bulk_sample
 
     assert_eq!(selection.rows().source_row_count(), 100);
     assert_eq!(selection.rows().selected_row_count(), 11);
-    assert_eq!(selection.rows().canonical_sequence_identity(), identity(31));
+    assert_eq!(
+        selection.rows().sequence_id(),
+        selected_rows(31).sequence_id()
+    );
     assert_eq!(selection.rows_filter().fields().ids(), Some(&[2, 7][..]));
     assert_eq!(selection.rows_filter().scans().ids(), Some(&[4, 12][..]));
     assert_eq!(
@@ -405,11 +881,15 @@ fn snapshot_exposes_exact_selection_and_generation_semantics_without_bulk_sample
             ResolvedIntent::new(8, "OBSERVE_TARGET#ON_SOURCE".to_string()),
         ])
     );
-    assert_eq!(selection.spectral_windows()[0].spectral_window_id(), 2);
     assert_eq!(
-        selection.spectral_windows()[0].data_description_ids(),
-        &[1, 4]
+        selection.data_descriptions(),
+        &[
+            DataDescriptionSelection::new(1, 2, 1),
+            DataDescriptionSelection::new(4, 2, 5),
+            DataDescriptionSelection::new(6, 9, 5),
+        ]
     );
+    assert_eq!(selection.spectral_windows()[0].spectral_window_id(), 2);
     assert_eq!(
         selection.spectral_windows()[0].channel_indices(),
         &[0, 4, 8]
@@ -490,8 +970,10 @@ fn compilation_fails_closed_on_incomplete_or_ambiguous_manifests() {
         MeasurementSetIdentity::new(identity(11)),
         ObservationSourceProvenance::new("/archive/a.ms".to_string(), identity(51)),
         ObservationSelection::new(
-            SelectedRows::new(100, 0, identity(31)),
+            SelectedRows::from_ordered_main_rows(100, main_rows([]))
+                .expect("empty source row selection"),
             selection(31, false).rows_filter().clone(),
+            selection(31, false).data_descriptions().to_vec(),
             selection(31, false).spectral_windows().to_vec(),
             selection(31, false).correlations().to_vec(),
         ),
@@ -538,7 +1020,7 @@ fn consistency_validation_attributes_disallowed_input_mutation() {
     let mut changed_sources = current_sources.clone();
     changed_sources[0] = ObservationSourceState::new(
         changed_sources[0].identity(),
-        SelectedRows::new(100, 11, identity(249)),
+        selected_rows(249),
         changed_sources[0].generations().clone(),
     );
     assert!(matches!(

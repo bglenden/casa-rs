@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::mem::size_of;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
@@ -223,6 +224,54 @@ pub(crate) struct TableImpl {
 }
 
 impl TableImpl {
+    pub(crate) fn retained_lazy_metadata_heap_bytes(&self) -> Option<usize> {
+        if self.loaded_rows.get().is_some()
+            || self
+                .loaded_scalar_columns
+                .values()
+                .any(|values| values.get().is_some())
+            || self
+                .loaded_array_columns
+                .values()
+                .any(|values| values.get().is_some())
+            || self
+                .buffered_array_cells
+                .values()
+                .any(|values| values.get().is_some())
+            || !self.pending_scalar_cells.by_column.is_empty()
+            || !self.pending_array_cells.by_column.is_empty()
+        {
+            return None;
+        }
+
+        let lazy_rows = self.lazy_rows.as_ref()?;
+        let mut bytes = path_heap_bytes(&lazy_rows.path)
+            .checked_add(string_keyed_map_heap_bytes(&self.loaded_scalar_columns)?)?
+            .checked_add(string_keyed_map_heap_bytes(&self.loaded_array_columns)?)?
+            .checked_add(string_keyed_map_heap_bytes(&self.buffered_array_cells)?)?
+            .checked_add(string_keyed_map_heap_bytes(
+                &self.pending_scalar_cells.by_column,
+            )?)?
+            .checked_add(string_keyed_map_heap_bytes(
+                &self.pending_array_cells.by_column,
+            )?)?
+            .checked_add(self.keywords.retained_heap_bytes()?)?
+            .checked_add(
+                self.column_keywords
+                    .capacity()
+                    .checked_mul(size_of::<(String, RecordValue)>())?,
+            )?;
+        for (column, keywords) in &self.column_keywords {
+            bytes = bytes
+                .checked_add(column.capacity())?
+                .checked_add(keywords.retained_heap_bytes()?)?;
+        }
+        if let Some(schema) = &self.schema {
+            bytes = bytes.checked_add(schema.retained_heap_bytes()?)?;
+        }
+        Some(bytes)
+    }
+
     pub(crate) fn new() -> Self {
         let loaded_rows = OnceLock::new();
         loaded_rows
@@ -1607,6 +1656,27 @@ impl TableImpl {
             .get(column)
             .is_some_and(|cells| !cells.is_empty())
     }
+}
+
+pub(crate) fn path_heap_bytes(path: &std::path::Path) -> usize {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        path.as_os_str().as_bytes().len()
+    }
+    #[cfg(not(unix))]
+    {
+        path.as_os_str().to_string_lossy().len()
+    }
+}
+
+fn string_keyed_map_heap_bytes<V>(map: &HashMap<String, V>) -> Option<usize> {
+    map.capacity()
+        .checked_mul(size_of::<(String, V)>())?
+        .checked_add(
+            map.keys()
+                .try_fold(0_usize, |bytes, key| bytes.checked_add(key.capacity()))?,
+        )
 }
 
 fn required_scalar_column_data_len(values: &RequiredScalarColumnData) -> usize {

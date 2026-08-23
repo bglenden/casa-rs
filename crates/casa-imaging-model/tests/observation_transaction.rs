@@ -189,12 +189,31 @@ fn selected_model_column_writes_have_a_pinned_schema_two_identity() {
     );
     assert_eq!(
         writable.transaction_id().to_string(),
-        "8c9e8d636c8e1599f69548161498880ae31cfc1831ccbb8e2c2e471e1f570c87"
+        "85223b7bb80d4613734481e74bebecdf77cb2dce864eaa18e9884043849bdec4"
     );
     assert_eq!(writable.write_set().model_columns().len(), 1);
     let write = &writable.write_set().model_columns()[0];
     assert_eq!(write.measurement_set(), snapshot.sources()[0].identity());
     assert_eq!(write.selection(), snapshot.sources()[0].selection());
+    let snapshot_rows = snapshot.sources()[0]
+        .selection()
+        .rows()
+        .ordered_main_rows()
+        .as_ptr();
+    assert_eq!(
+        writable.read_set().sources()[0]
+            .selection()
+            .rows()
+            .ordered_main_rows()
+            .as_ptr(),
+        snapshot_rows,
+        "the transaction read contract must share the compiler-owned row manifest"
+    );
+    assert_eq!(
+        write.selection().rows().ordered_main_rows().as_ptr(),
+        snapshot_rows,
+        "MODEL_DATA write access must not deep-clone the selected row vector"
+    );
     assert_eq!(write.column(), MsColumnKind::ModelData);
     assert_eq!(write.precondition(), ModelColumnPrecondition::Absent);
     assert_eq!(

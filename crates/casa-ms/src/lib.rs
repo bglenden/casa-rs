@@ -59,6 +59,9 @@ mod plot_visibility;
 pub mod presentation;
 mod probes;
 pub mod schema;
+mod selected_observation;
+mod selected_observation_buffer;
+mod selected_pointing;
 pub mod selection;
 pub mod simulation;
 pub mod simulation_task;
@@ -87,6 +90,7 @@ pub use listobs::{
     ListObsUvPoint as MeasurementSetUvPoint, ListObsUvTrack as MeasurementSetUvTrack,
 };
 pub(crate) use listobs::{ListObsOptions, ListObsSummary, ListObsUvCoverage};
+pub(crate) use ms::MainRowSelectionFact;
 pub use ms::MeasurementSet;
 pub use msexplore::task_contract::{
     MSEXPLORE_TASK_PROTOCOL_NAME, MSEXPLORE_TASK_PROTOCOL_VERSION, MsExploreFlagEditRequest,
@@ -129,6 +133,19 @@ pub use probes::{
 };
 pub use schema::SubtableId;
 pub use schema::main_table::{OptionalMainColumn, VisibilityDataColumn};
+pub use selected_observation::{
+    BoundObservationSourceError, BoundSelectedObservation, BoundSelectedObservationError,
+    ObservationSourceBinding, SelectedObservationCompletion, SelectedObservationContentBudget,
+    SelectedObservationMeasures, SelectedObservationMeasuresError, SelectedObservationRow,
+    SelectedObservationRowSelection, SelectedObservationTraversalError,
+};
+pub(crate) use selected_observation_buffer::{
+    SelectedObservationBuffer, SelectedObservationBufferRequest, SelectedStoredSample,
+    SelectedStoredVisibility, SelectedVisibilityColumn, SelectedWeightColumn,
+};
+pub(crate) use selected_pointing::{
+    PointingDirectionBracket, PointingDirectionColumn, PointingDirectionQuery, PointingReadPlan,
+};
 pub use selection::syntax::{
     ChannelSelection, ChannelSelectionSegment, SpwSelector, parse_numeric_id_selector,
     parse_spw_selector,

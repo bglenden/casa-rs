@@ -434,8 +434,8 @@ fn schema_seven_problem_and_weighting_generation_identities_are_pinned() {
                 .to_string(),
         ),
         (
-            "d111460fdd81acea6824900729bc46f8ea593f55379bfff01dadd5935d4e19be".to_string(),
-            "550f22492d158e34f075329e2577fa795391f37d25e6185e417785fe2f6bbb8c".to_string(),
+            "5da737ff9e65bf2f3a20fdfa485bec1ed9dfd4bdb49cc361a94461915da6f847".to_string(),
+            "362e03ee3a7cea3c1826b0193421838ce7e0744b2e0391e0b457648297c7259d".to_string(),
         )
     );
 }

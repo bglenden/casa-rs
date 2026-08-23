@@ -2,6 +2,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
+use std::mem::size_of;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -1857,6 +1858,85 @@ impl std::fmt::Debug for Table {
 // ── Constructors and table kind ──────────────────────────────────────
 
 impl Table {
+    /// Return the checked logical heap bytes retained by a freshly opened,
+    /// lazy table metadata capability.
+    ///
+    /// The projection covers schema and lookup storage, table and column
+    /// keywords, data-manager descriptors, paths, virtual-column names, table
+    /// info, and retained lock state. It returns `None` if row/cell caches,
+    /// pending mutations, virtual bindings, or opaque external providers are
+    /// present, so bounded readers cannot silently admit an unmodeled owner.
+    /// Collection allocator headers and hash-table control bytes remain outside
+    /// this logical payload projection.
+    #[doc(hidden)]
+    pub fn retained_read_metadata_bytes(&self) -> Option<usize> {
+        if !self.virtual_bindings.is_empty()
+            || self.external_sync.is_some()
+            || self.measures.is_some()
+        {
+            return None;
+        }
+        let mut bytes = self
+            .inner
+            .retained_lazy_metadata_heap_bytes()?
+            .checked_add(
+                self.virtual_columns
+                    .capacity()
+                    .checked_mul(size_of::<String>())?,
+            )?
+            .checked_add(
+                self.virtual_bindings
+                    .capacity()
+                    .checked_mul(size_of::<VirtualColumnBinding>())?,
+            )?
+            .checked_add(self.table_info.table_type.capacity())?
+            .checked_add(self.table_info.sub_type.capacity())?
+            .checked_add(
+                self.table_info
+                    .readme
+                    .capacity()
+                    .checked_mul(size_of::<String>())?,
+            )?
+            .checked_add(
+                self.dm_info
+                    .capacity()
+                    .checked_mul(size_of::<crate::storage::DataManagerInfo>())?,
+            )?;
+        if let Some(path) = &self.source_path {
+            bytes = bytes.checked_add(crate::table_impl::path_heap_bytes(path))?;
+        }
+        for column in &self.virtual_columns {
+            bytes = bytes.checked_add(column.capacity())?;
+        }
+        for line in &self.table_info.readme {
+            bytes = bytes.checked_add(line.capacity())?;
+        }
+        for manager in &self.dm_info {
+            bytes = bytes.checked_add(manager.dm_type.capacity())?.checked_add(
+                manager
+                    .columns
+                    .capacity()
+                    .checked_mul(size_of::<String>())?,
+            )?;
+            for column in &manager.columns {
+                bytes = bytes.checked_add(column.capacity())?;
+            }
+        }
+        #[cfg(unix)]
+        if let Some(lock) = &self.lock_state {
+            bytes = bytes
+                .checked_add(crate::table_impl::path_heap_bytes(&lock.path))?
+                .checked_add(lock.lock_file.retained_heap_bytes())?
+                .checked_add(
+                    lock.sync_data
+                        .data_man_change_counters
+                        .capacity()
+                        .checked_mul(size_of::<u32>())?,
+                )?;
+        }
+        Some(bytes)
+    }
+
     /// Creates a new, empty table with no rows, no schema, and no keywords.
     pub fn new() -> Self {
         Self {
