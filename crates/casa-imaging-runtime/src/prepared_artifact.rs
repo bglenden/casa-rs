@@ -7,7 +7,8 @@ use std::{
     error::Error,
     fmt,
     fs::{self, File, OpenOptions},
-    io::{self, BufReader, BufWriter, Read, Seek, Write},
+    io::{self, BufWriter, Read, Seek, Write},
+    marker::PhantomData,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard, OnceLock, Weak},
 };
@@ -30,6 +31,7 @@ const CONTENT_IDENTITY_DOMAIN: &[u8] = b"casa-rs/private-prepared-artifact/conte
 const CACHE_IDENTITY_DOMAIN: &[u8] = b"casa-rs/private-prepared-artifact/cache\0";
 const CACHE_ROOT_IDENTITY_DOMAIN: &[u8] = b"casa-rs/private-prepared-artifact/root\0";
 const WORK_NODE_IDENTITY_DOMAIN: &[u8] = b"casa-rs/private-prepared-artifact/work-node\0";
+const REJECTION_EVIDENCE_DOMAIN: &[u8] = b"casa-rs/private-prepared-artifact/rejection\0";
 const IDENTITY_VERSION: u32 = 2;
 const CACHE_SCHEMA: &str = "casa-rs-private-prepared-artifact";
 const CACHE_SCHEMA_VERSION: u32 = 2;
@@ -689,15 +691,22 @@ impl PreparedArtifactDescriptor {
     }
 
     /// Return the exact operation adapter identity that the plan must select.
+    ///
+    /// The selected registry entry identity includes every owner field, so a
+    /// caller cannot change provider metadata without changing the plan-bound
+    /// implementation key resolved by the execution registry.
     #[must_use]
     pub fn work_implementation_id(
         &self,
         operation: PreparedArtifactOperation,
     ) -> WorkImplementationId {
         WorkImplementationId::new(format!(
-            "{}@prepared-artifact-{}",
+            "prepared-artifact-{}-registry-{}-provider-{}-version-{}-implementation-{}",
+            operation.name(),
+            self.owner.implementation_registry,
+            self.owner.provider,
+            self.owner.provider_version,
             self.owner.implementation.as_str(),
-            operation.name()
         ))
     }
 
@@ -746,11 +755,57 @@ pub enum PreparedArtifactRejection {
     NonFinite,
 }
 
+impl PreparedArtifactRejection {
+    /// Return the durable typed evidence identity for this rejection.
+    ///
+    /// Rejection evidence is stored in the existing receipt
+    /// `observed_identity` field. It is deliberately domain-separated from
+    /// both artifact content identities and owner-derived artifact identities.
+    #[must_use]
+    pub fn evidence_identity(self, planned: ArtifactIdentity) -> ArtifactIdentity {
+        let mut hasher = Sha256::new();
+        hasher.update(REJECTION_EVIDENCE_DOMAIN);
+        hasher.update(IDENTITY_VERSION.to_le_bytes());
+        hasher.update(planned.as_bytes());
+        hasher.update([self.tag()]);
+        ArtifactIdentity::from_owner_digest(hasher.finalize().into())
+    }
+
+    /// Recover a typed rejection from durable receipt evidence.
+    #[must_use]
+    pub fn from_evidence_identity(
+        planned: ArtifactIdentity,
+        evidence: ArtifactIdentity,
+    ) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|rejection| rejection.evidence_identity(planned) == evidence)
+    }
+
+    const ALL: [Self; 5] = [
+        Self::Missing,
+        Self::Incomplete,
+        Self::Incompatible,
+        Self::Corrupt,
+        Self::NonFinite,
+    ];
+
+    const fn tag(self) -> u8 {
+        match self {
+            Self::Missing => 0,
+            Self::Incomplete => 1,
+            Self::Incompatible => 2,
+            Self::Corrupt => 3,
+            Self::NonFinite => 4,
+        }
+    }
+}
+
 /// Plan-executed result of exact warm-cache inspection and reuse.
 #[derive(Debug)]
-pub enum PreparedArtifactReuseOutcome {
+pub enum PreparedArtifactReuseOutcome<'lease> {
     /// A complete exact hit passed integrity validation.
-    Reused(PreparedArtifact),
+    Reused(PreparedArtifact<'lease>),
     /// The candidate failed closed and was not exposed for use.
     Rejected(PreparedArtifactRejection),
 }
@@ -843,15 +898,20 @@ impl<'a> PreparedArtifactSegmentInput<'a> {
 }
 
 /// Validated immutable handle to one private prepared artifact.
-pub struct PreparedArtifact {
+///
+/// The lifetime is borrowed from the node's [`WorkExecutionContext`]. This
+/// prevents a caller from retaining the payload file after the node returns
+/// and its `FileDescriptors` work claim is released.
+pub struct PreparedArtifact<'lease> {
     identity: ArtifactIdentity,
     integrity_identity: ArtifactIdentity,
     cache_identity: CacheIdentity,
     payload: File,
     segments: BTreeMap<String, (u64, u64)>,
+    _lease: PhantomData<&'lease ()>,
 }
 
-impl fmt::Debug for PreparedArtifact {
+impl fmt::Debug for PreparedArtifact<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("PreparedArtifact")
@@ -862,7 +922,7 @@ impl fmt::Debug for PreparedArtifact {
     }
 }
 
-impl PreparedArtifact {
+impl PreparedArtifact<'_> {
     /// Return the exact canonical artifact identity.
     #[must_use]
     pub const fn identity(&self) -> ArtifactIdentity {
@@ -1017,12 +1077,14 @@ impl PreparedArtifactStore {
     }
 
     /// Generate, validate, and atomically publish exact cold bytes.
-    pub fn generate(
+    ///
+    /// The returned handle is scoped to the borrowed execution context.
+    pub fn generate<'lease>(
         &self,
-        context: WorkExecutionContext<'_>,
+        context: &'lease WorkExecutionContext<'_>,
         descriptor: &PreparedArtifactDescriptor,
         segments: &mut [PreparedArtifactSegmentInput<'_>],
-    ) -> Result<(PreparedArtifact, WorkMeasurements), PreparedArtifactError> {
+    ) -> Result<(PreparedArtifact<'lease>, WorkMeasurements), PreparedArtifactError> {
         self.publish(
             context,
             descriptor,
@@ -1035,12 +1097,12 @@ impl PreparedArtifactStore {
     /// Load, validate, and atomically publish bytes from a separately validated source.
     ///
     /// This API conveys no CASA-cache provenance and never opens a CASA path.
-    pub fn load(
+    pub fn load<'lease>(
         &self,
-        context: WorkExecutionContext<'_>,
+        context: &'lease WorkExecutionContext<'_>,
         descriptor: &PreparedArtifactDescriptor,
         segments: &mut [PreparedArtifactSegmentInput<'_>],
-    ) -> Result<(PreparedArtifact, WorkMeasurements), PreparedArtifactError> {
+    ) -> Result<(PreparedArtifact<'lease>, WorkMeasurements), PreparedArtifactError> {
         self.publish(
             context,
             descriptor,
@@ -1051,14 +1113,18 @@ impl PreparedArtifactStore {
     }
 
     /// Revalidate and reuse the exact warm artifact selected by planning.
-    pub fn reuse(
+    ///
+    /// A successful handle is scoped to the borrowed execution context; a
+    /// rejection returns only durable evidence and no open payload handle.
+    pub fn reuse<'lease>(
         &self,
-        context: WorkExecutionContext<'_>,
+        context: &'lease WorkExecutionContext<'_>,
         descriptor: &PreparedArtifactDescriptor,
-    ) -> Result<(PreparedArtifactReuseOutcome, WorkMeasurements), PreparedArtifactError> {
+    ) -> Result<(PreparedArtifactReuseOutcome<'lease>, WorkMeasurements), PreparedArtifactError>
+    {
         let reservation = self.reservation(descriptor, PreparedArtifactOperation::Reuse)?;
         validate_plan_binding(
-            context,
+            *context,
             descriptor,
             PreparedArtifactOperation::Reuse,
             reservation,
@@ -1066,15 +1132,17 @@ impl PreparedArtifactStore {
         let _lock = self.lock()?;
         let cache_bytes = self.validate_raw_budget(descriptor.identity)?;
         let path = self.entry_path(descriptor.identity);
+        let mut evidence = ValidationEvidence::metadata_probe();
         let validated = match path.symlink_metadata() {
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 let measurements = rejected_measurements(
-                    context,
+                    *context,
                     descriptor,
                     reservation,
                     PreparedArtifactRejection::Missing,
                     &path,
                     cache_bytes,
+                    evidence,
                 );
                 return Ok((
                     PreparedArtifactReuseOutcome::Rejected(PreparedArtifactRejection::Missing),
@@ -1082,19 +1150,24 @@ impl PreparedArtifactStore {
                 ));
             }
             Err(error) => return Err(error.into()),
-            Ok(_) => match self.validate_entry(descriptor.identity, Some(descriptor)) {
+            Ok(_) => match self.validate_entry_with_evidence(
+                descriptor.identity,
+                Some(descriptor),
+                &mut evidence,
+            ) {
                 Ok(validated) => validated,
                 Err(error) => {
                     let Some(rejection) = rejection_for(&error) else {
                         return Err(error);
                     };
                     let measurements = rejected_measurements(
-                        context,
+                        *context,
                         descriptor,
                         reservation,
                         rejection,
                         &path,
                         cache_bytes,
+                        evidence,
                     );
                     return Ok((
                         PreparedArtifactReuseOutcome::Rejected(rejection),
@@ -1104,7 +1177,7 @@ impl PreparedArtifactStore {
             },
         };
         let measurements = measurements(
-            context,
+            *context,
             descriptor,
             ArtifactDisposition::Reused,
             &validated,
@@ -1113,25 +1186,25 @@ impl PreparedArtifactStore {
             cache_bytes,
         );
         Ok((
-            PreparedArtifactReuseOutcome::Reused(validated.into_handle(descriptor)),
+            PreparedArtifactReuseOutcome::Reused(validated.into_handle(descriptor, context)),
             measurements,
         ))
     }
 
-    fn publish(
+    fn publish<'lease>(
         &self,
-        context: WorkExecutionContext<'_>,
+        context: &'lease WorkExecutionContext<'_>,
         descriptor: &PreparedArtifactDescriptor,
         operation: PreparedArtifactOperation,
         disposition: ArtifactDisposition,
         segments: &mut [PreparedArtifactSegmentInput<'_>],
-    ) -> Result<(PreparedArtifact, WorkMeasurements), PreparedArtifactError> {
+    ) -> Result<(PreparedArtifact<'lease>, WorkMeasurements), PreparedArtifactError> {
         let reservation = self.reservation(descriptor, operation)?;
-        validate_plan_binding(context, descriptor, operation, reservation)?;
+        validate_plan_binding(*context, descriptor, operation, reservation)?;
         let (validated, final_disposition, cache_bytes) =
             self.publish_bytes(descriptor, disposition, segments, reservation)?;
         let measurements = measurements(
-            context,
+            *context,
             descriptor,
             final_disposition,
             &validated,
@@ -1139,7 +1212,7 @@ impl PreparedArtifactStore {
             operation,
             cache_bytes,
         );
-        Ok((validated.into_handle(descriptor), measurements))
+        Ok((validated.into_handle(descriptor, context), measurements))
     }
 
     fn publish_bytes(
@@ -1394,6 +1467,16 @@ impl PreparedArtifactStore {
         identity: ArtifactIdentity,
         expected: Option<&PreparedArtifactDescriptor>,
     ) -> Result<ValidatedArtifact, PreparedArtifactError> {
+        let mut evidence = ValidationEvidence::default();
+        self.validate_entry_with_evidence(identity, expected, &mut evidence)
+    }
+
+    fn validate_entry_with_evidence(
+        &self,
+        identity: ArtifactIdentity,
+        expected: Option<&PreparedArtifactDescriptor>,
+        evidence: &mut ValidationEvidence,
+    ) -> Result<ValidatedArtifact, PreparedArtifactError> {
         let directory = self.entry_path(identity);
         let directory_type = directory
             .symlink_metadata()
@@ -1407,9 +1490,8 @@ impl PreparedArtifactStore {
         if manifest_path.symlink_metadata()?.len() > MANIFEST_RESERVATION_BYTES {
             return Err(PreparedArtifactError::InvalidManifest);
         }
-        let manifest: ArtifactManifest = serde_json::from_reader(BufReader::new(
-            File::open(&manifest_path).map_err(map_incomplete)?,
-        ))?;
+        let manifest_bytes = read_file_counted(&manifest_path, evidence)?;
+        let manifest: ArtifactManifest = serde_json::from_slice(&manifest_bytes)?;
         if manifest.schema != CACHE_SCHEMA || manifest.schema_version != CACHE_SCHEMA_VERSION {
             return Err(PreparedArtifactError::UnknownSchema {
                 schema: manifest.schema,
@@ -1434,8 +1516,9 @@ impl PreparedArtifactStore {
         let disk_bytes = directory_size(&directory)?;
         let payload = File::open(&payload_path).map_err(map_incomplete)?;
         let buffer_len = streaming_buffer_len(self.budget, &descriptor)?;
+        evidence.resident_buffer_bytes = buffer_len as u64;
         let (payload_sha256, payload_bytes) =
-            validate_payload(&payload, &manifest.segments, buffer_len)?;
+            validate_payload(&payload, &manifest.segments, buffer_len, evidence)?;
         if payload_bytes != manifest.payload_bytes || payload_sha256 != expected_payload_digest {
             return Err(PreparedArtifactError::CorruptArtifact);
         }
@@ -1561,7 +1644,11 @@ struct ValidatedArtifact {
 }
 
 impl ValidatedArtifact {
-    fn into_handle(self, descriptor: &PreparedArtifactDescriptor) -> PreparedArtifact {
+    fn into_handle<'lease>(
+        self,
+        descriptor: &PreparedArtifactDescriptor,
+        _lease: &'lease WorkExecutionContext<'_>,
+    ) -> PreparedArtifact<'lease> {
         PreparedArtifact {
             identity: descriptor.identity,
             integrity_identity: derive_content_identity(descriptor, self.payload_sha256),
@@ -1573,6 +1660,7 @@ impl ValidatedArtifact {
                 .into_iter()
                 .map(|segment| (segment.descriptor.name, (segment.offset, segment.bytes)))
                 .collect(),
+            _lease: PhantomData,
         }
     }
 }
@@ -2163,32 +2251,34 @@ fn rejected_measurements(
     rejection: PreparedArtifactRejection,
     path: &Path,
     cache_bytes: u64,
+    evidence: ValidationEvidence,
 ) -> WorkMeasurements {
     let resources = resource_measurements(
         context,
         PreparedArtifactOperation::Reuse,
         cache_bytes,
         0,
-        if matches!(
-            rejection,
-            PreparedArtifactRejection::Corrupt | PreparedArtifactRejection::NonFinite
-        ) {
-            reservation.resident_buffer_bytes
-        } else {
-            0
-        },
+        evidence
+            .resident_buffer_bytes
+            .min(reservation.resident_buffer_bytes),
     );
     let io = context
         .stage_prediction()
         .io()
         .iter()
-        .map(|prediction| IoMeasurement::new(prediction.kind(), 0, 1))
+        .map(|prediction| {
+            IoMeasurement::new(
+                prediction.kind(),
+                evidence.bytes_read,
+                evidence.operations.max(1),
+            )
+        })
         .collect();
     let artifacts = vec![ArtifactMeasurement::new(
         descriptor.identity,
-        None,
+        Some(rejection.evidence_identity(descriptor.identity)),
         ArtifactDisposition::RejectedStale,
-        0,
+        evidence.bytes_read,
         Some(RedactedPath::from_path(path)),
     )];
     WorkMeasurements::new(resources, io, artifacts)
@@ -2337,6 +2427,7 @@ fn validate_payload(
     payload: &File,
     segments: &[ManifestSegment],
     buffer_len: usize,
+    evidence: &mut ValidationEvidence,
 ) -> Result<([u8; 32], u64), PreparedArtifactError> {
     let mut payload = payload;
     let mut payload_hasher = Sha256::new();
@@ -2353,9 +2444,7 @@ fn validate_payload(
             let mut limit = usize::try_from(remaining.min(buffer.len() as u64))
                 .map_err(|_| PreparedArtifactError::ArtifactTooLarge)?;
             limit -= limit % scalar_bytes;
-            payload
-                .read_exact(&mut buffer[..limit])
-                .map_err(map_incomplete)?;
+            read_exact_counted(&mut payload, &mut buffer[..limit], evidence)?;
             validate_finite(
                 &buffer[..limit],
                 segment.descriptor.precision,
@@ -2375,10 +2464,70 @@ fn validate_payload(
             .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
     }
     let mut extra = [0_u8; 1];
-    if payload.read(&mut extra)? != 0 {
+    if read_counted(&mut payload, &mut extra, evidence)? != 0 {
         return Err(PreparedArtifactError::OversizedArtifact);
     }
     Ok((payload_hasher.finalize().into(), total))
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ValidationEvidence {
+    bytes_read: u64,
+    operations: u64,
+    resident_buffer_bytes: u64,
+}
+
+impl ValidationEvidence {
+    fn metadata_probe() -> Self {
+        Self {
+            operations: 1,
+            ..Self::default()
+        }
+    }
+}
+
+fn read_file_counted(
+    path: &Path,
+    evidence: &mut ValidationEvidence,
+) -> Result<Vec<u8>, PreparedArtifactError> {
+    let mut file = File::open(path).map_err(map_incomplete)?;
+    let mut contents = Vec::new();
+    let mut buffer = [0_u8; 4096];
+    loop {
+        let bytes = read_counted(&mut file, &mut buffer, evidence)?;
+        if bytes == 0 {
+            break;
+        }
+        contents.extend_from_slice(&buffer[..bytes]);
+    }
+    Ok(contents)
+}
+
+fn read_exact_counted<R: Read + ?Sized>(
+    input: &mut R,
+    output: &mut [u8],
+    evidence: &mut ValidationEvidence,
+) -> Result<(), PreparedArtifactError> {
+    let mut offset = 0;
+    while offset < output.len() {
+        let bytes = read_counted(input, &mut output[offset..], evidence)?;
+        if bytes == 0 {
+            return Err(PreparedArtifactError::IncompleteArtifact);
+        }
+        offset += bytes;
+    }
+    Ok(())
+}
+
+fn read_counted<R: Read + ?Sized>(
+    input: &mut R,
+    output: &mut [u8],
+    evidence: &mut ValidationEvidence,
+) -> Result<usize, PreparedArtifactError> {
+    let bytes = input.read(output).map_err(map_incomplete)?;
+    evidence.operations = evidence.operations.saturating_add(1);
+    evidence.bytes_read = evidence.bytes_read.saturating_add(bytes as u64);
+    Ok(bytes)
 }
 
 fn validate_finite(

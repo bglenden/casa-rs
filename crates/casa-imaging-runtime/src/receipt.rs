@@ -1314,7 +1314,7 @@ impl ExecutionReceipt {
             .map(parse_digest)
     }
 
-    /// Return the actual observed content identity for one artifact.
+    /// Return the actual observed content or rejection-evidence identity.
     #[must_use]
     pub fn artifact_observed_identity(&self, artifact: ArtifactIdentity) -> Option<[u8; 32]> {
         self.artifact(artifact)?

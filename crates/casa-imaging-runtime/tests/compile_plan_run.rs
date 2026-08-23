@@ -42,7 +42,7 @@ use casa_imaging_runtime::{
     CapacityViewId, ClaimLifetime, CompiledProblemEvidence, CountDemand, CpuClassCapacity,
     DemandAlternative, DemandEnvelope, ExecutionDag, ExecutionDagSpecification, ExecutionError,
     ExecutionEvidenceError, ExecutionKnobs, ExecutionOutcome, ExecutionPlanId, ExecutionProvenance,
-    ExecutionReceiptBinding, ExecutionReceiptStore, ExecutionRouteDisposition,
+    ExecutionReceipt, ExecutionReceiptBinding, ExecutionReceiptStore, ExecutionRouteDisposition,
     ExecutionRouteEvidence, ExecutionRouteRequirement, ExecutionRouteRequirementKind,
     ExecutionStatus, ExternalPressure, FenceId, FenceKind, HostInventory, ImplementationRegistry,
     ImplementationRegistryId, InitializationPolicy, IoBufferDemand, IoBufferKind, IoMeasurement,
@@ -6043,8 +6043,17 @@ impl WorkImplementation for PreparedOperationAdapter {
             PreparedArtifactOperation::Generate => {
                 let (artifact, measurements) = self
                     .store
-                    .generate(context, &self.descriptor, &mut inputs)
+                    .generate(&context, &self.descriptor, &mut inputs)
                     .map_err(prepared_io_error)?;
+                let mut copied = Vec::new();
+                artifact
+                    .copy_segment_to("imaging", &mut copied)
+                    .map_err(prepared_io_error)?;
+                if copied != prepared_payloads().0 {
+                    return Err(io::Error::other(
+                        "generated handle copied the wrong segment",
+                    ));
+                }
                 (
                     PreparedObserved::Materialized {
                         identity: artifact.identity(),
@@ -6056,8 +6065,15 @@ impl WorkImplementation for PreparedOperationAdapter {
             PreparedArtifactOperation::Load => {
                 let (artifact, measurements) = self
                     .store
-                    .load(context, &self.descriptor, &mut inputs)
+                    .load(&context, &self.descriptor, &mut inputs)
                     .map_err(prepared_io_error)?;
+                let mut copied = Vec::new();
+                artifact
+                    .copy_segment_to("imaging", &mut copied)
+                    .map_err(prepared_io_error)?;
+                if copied != prepared_payloads().0 {
+                    return Err(io::Error::other("loaded handle copied the wrong segment"));
+                }
                 (
                     PreparedObserved::Materialized {
                         identity: artifact.identity(),
@@ -6069,10 +6085,17 @@ impl WorkImplementation for PreparedOperationAdapter {
             PreparedArtifactOperation::Reuse => {
                 let (outcome, measurements) = self
                     .store
-                    .reuse(context, &self.descriptor)
+                    .reuse(&context, &self.descriptor)
                     .map_err(prepared_io_error)?;
                 let observed = match outcome {
                     PreparedArtifactReuseOutcome::Reused(artifact) => {
+                        let mut copied = Vec::new();
+                        artifact
+                            .copy_segment_to("imaging", &mut copied)
+                            .map_err(prepared_io_error)?;
+                        if copied != prepared_payloads().0 {
+                            return Err(io::Error::other("reused handle copied the wrong segment"));
+                        }
                         PreparedObserved::Materialized {
                             identity: artifact.identity(),
                             integrity: artifact.integrity_identity(),
@@ -6188,9 +6211,17 @@ fn prepared_descriptor(
     store: &PreparedArtifactStore,
     problem: &casa_imaging_model::CompiledProblem,
 ) -> PreparedArtifactDescriptor {
+    prepared_descriptor_with_owner(store, problem, prepared_owner())
+}
+
+fn prepared_descriptor_with_owner(
+    store: &PreparedArtifactStore,
+    problem: &casa_imaging_model::CompiledProblem,
+    owner: PreparedArtifactOwner,
+) -> PreparedArtifactDescriptor {
     PreparedArtifactDescriptor::convolution_function(
         store,
-        prepared_owner(),
+        owner,
         problem,
         PreparedArtifactPlaneDescriptor::new(
             [3, 3],
@@ -6574,6 +6605,41 @@ fn prepared_io_error(error: casa_imaging_runtime::PreparedArtifactError) -> io::
     io::Error::other(error.to_string())
 }
 
+fn assert_rejection_evidence(
+    receipt: &ExecutionReceipt,
+    descriptor: &PreparedArtifactDescriptor,
+    operation: PreparedArtifactOperation,
+    rejection: PreparedArtifactRejection,
+) {
+    assert_eq!(
+        receipt.artifact_disposition(descriptor.identity()),
+        Some(ArtifactDisposition::RejectedStale)
+    );
+    let observed = ArtifactIdentity::from_sha256(
+        receipt
+            .artifact_observed_identity(descriptor.identity())
+            .expect("durable rejection evidence"),
+    );
+    assert_eq!(observed, rejection.evidence_identity(descriptor.identity()));
+    assert_eq!(
+        PreparedArtifactRejection::from_evidence_identity(descriptor.identity(), observed),
+        Some(rejection)
+    );
+    assert!(
+        receipt
+            .artifact_actual_bytes(descriptor.identity())
+            .is_some()
+    );
+    assert!(
+        receipt
+            .stage_actual_io(
+                &descriptor.work_node_id(operation),
+                IoBufferKind::MappedPageCache,
+            )
+            .is_some_and(|(_, operations)| operations > 0)
+    );
+}
+
 fn prepared_adapter_observed(
     registry: &PreparedSuiteRegistry,
     id: &WorkImplementationId,
@@ -6916,6 +6982,76 @@ fn public_prepared_generate_load_and_reuse_are_plan_and_receipt_bound() {
         0,
         "the rejected operation cannot publish"
     );
+
+    let owner_mismatch_directory = tempfile::tempdir().expect("owner mismatch cache");
+    let owner_mismatch_store =
+        PreparedArtifactStore::open(owner_mismatch_directory.path(), prepared_budget())
+            .expect("owner mismatch store");
+    let planned_owner_descriptor = prepared_descriptor(&owner_mismatch_store, &problem);
+    let mismatched_owner = PreparedArtifactOwner::new(
+        registry(4),
+        "untrusted-provider",
+        "9.9.9",
+        WorkImplementationId::new("untrusted-awproject-cpu"),
+    )
+    .expect("mismatched owner");
+    let bound_owner_descriptor =
+        prepared_descriptor_with_owner(&owner_mismatch_store, &problem, mismatched_owner);
+    assert_ne!(
+        planned_owner_descriptor.work_implementation_id(PreparedArtifactOperation::Generate),
+        bound_owner_descriptor.work_implementation_id(PreparedArtifactOperation::Generate),
+        "selected implementation identity commits the owner registry/provider/version"
+    );
+    let owner_mismatch_plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| {
+            Ok::<_, ()>(prepared_physical_work(
+                &planned_owner_descriptor,
+                &owner_mismatch_store,
+                PreparedArtifactOperation::Generate,
+            ))
+        },
+    )
+    .expect("owner mismatch plan");
+    let owner_mismatch_adapter = PreparedOperationAdapter {
+        id: planned_owner_descriptor.work_implementation_id(PreparedArtifactOperation::Generate),
+        operation: PreparedArtifactOperation::Generate,
+        store: owner_mismatch_store,
+        descriptor: bound_owner_descriptor,
+        observed: Mutex::new(None),
+    };
+    let (owner_mismatch_registry, _) = prepared_registry(owner_mismatch_adapter);
+    let owner_mismatch_attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([105; 32]);
+    let owner_mismatch_error = run_prepared(
+        &problem,
+        &owner_mismatch_plan,
+        &owner_mismatch_registry,
+        receipts.bind(execution_provenance(
+            owner_mismatch_attempt,
+            BuildIdentity::from_sha256([106; 32]),
+        )),
+    )
+    .expect_err("registry-selected owner must bind during plan execution");
+    assert!(matches!(
+        owner_mismatch_error,
+        RunError::Execution { source, .. }
+            if source.to_string() == PreparedArtifactError::UnplannedOperation.to_string()
+    ));
+    let owner_mismatch_receipt = receipts
+        .open(owner_mismatch_attempt)
+        .expect("owner mismatch receipt");
+    assert_eq!(owner_mismatch_receipt.status(), ReceiptStatus::Failed);
+    assert_eq!(
+        owner_mismatch_receipt.failure_kind(),
+        Some(ReceiptFailureKind::Adapter)
+    );
+    assert_eq!(
+        fs::read_dir(owner_mismatch_directory.path().join("objects-v1"))
+            .expect("owner mismatch inventory")
+            .count(),
+        0
+    );
 }
 
 #[test]
@@ -6974,7 +7110,32 @@ fn public_prepared_reuse_receipts_fail_closed_rejections() {
     );
     assert_eq!(
         missing_receipt.artifact_observed_identity(missing_descriptor.identity()),
-        None
+        Some(
+            PreparedArtifactRejection::Missing
+                .evidence_identity(missing_descriptor.identity())
+                .as_bytes(),
+        )
+    );
+    assert_eq!(
+        PreparedArtifactRejection::from_evidence_identity(
+            missing_descriptor.identity(),
+            ArtifactIdentity::from_sha256(
+                missing_receipt
+                    .artifact_observed_identity(missing_descriptor.identity())
+                    .expect("missing rejection evidence"),
+            ),
+        ),
+        Some(PreparedArtifactRejection::Missing)
+    );
+    assert_eq!(
+        missing_receipt.artifact_actual_bytes(missing_descriptor.identity()),
+        Some(0)
+    );
+    assert_rejection_evidence(
+        &missing_receipt,
+        &missing_descriptor,
+        PreparedArtifactOperation::Reuse,
+        PreparedArtifactRejection::Missing,
     );
 
     let corrupt_directory = tempfile::tempdir().expect("corrupt cache");
@@ -7071,6 +7232,40 @@ fn public_prepared_reuse_receipts_fail_closed_rejections() {
             .artifact_path_identity(corrupt_descriptor.identity())
             .is_some()
     );
+    let corrupt_evidence = ArtifactIdentity::from_sha256(
+        corrupt_receipt
+            .artifact_observed_identity(corrupt_descriptor.identity())
+            .expect("corrupt rejection evidence"),
+    );
+    assert_eq!(
+        PreparedArtifactRejection::from_evidence_identity(
+            corrupt_descriptor.identity(),
+            corrupt_evidence,
+        ),
+        Some(PreparedArtifactRejection::Corrupt)
+    );
+    assert!(
+        corrupt_receipt
+            .artifact_actual_bytes(corrupt_descriptor.identity())
+            .expect("corrupt inspected bytes")
+            > 0
+    );
+    assert!(
+        corrupt_receipt
+            .stage_actual_io(
+                &corrupt_descriptor.work_node_id(PreparedArtifactOperation::Reuse),
+                IoBufferKind::MappedPageCache,
+            )
+            .expect("corrupt I/O evidence")
+            .0
+            > 0
+    );
+    assert_rejection_evidence(
+        &corrupt_receipt,
+        &corrupt_descriptor,
+        PreparedArtifactOperation::Reuse,
+        PreparedArtifactRejection::Corrupt,
+    );
 
     let incomplete_directory = tempfile::tempdir().expect("incomplete cache");
     let incomplete_store =
@@ -7109,14 +7304,16 @@ fn public_prepared_reuse_receipts_fail_closed_rejections() {
         ),
         PreparedObserved::Rejected(PreparedArtifactRejection::Incomplete)
     );
-    assert_eq!(
-        receipts
-            .open(casa_imaging_runtime::ExecutionAttemptId::from_sha256(
-                [105; 32]
-            ))
-            .expect("incomplete receipt")
-            .artifact_disposition(incomplete_descriptor.identity()),
-        Some(ArtifactDisposition::RejectedStale)
+    let incomplete_receipt = receipts
+        .open(casa_imaging_runtime::ExecutionAttemptId::from_sha256(
+            [105; 32],
+        ))
+        .expect("incomplete receipt");
+    assert_rejection_evidence(
+        &incomplete_receipt,
+        &incomplete_descriptor,
+        PreparedArtifactOperation::Reuse,
+        PreparedArtifactRejection::Incomplete,
     );
 
     let incompatible_directory = tempfile::tempdir().expect("incompatible cache");
@@ -7166,14 +7363,16 @@ fn public_prepared_reuse_receipts_fail_closed_rejections() {
         ),
         PreparedObserved::Rejected(PreparedArtifactRejection::Incompatible)
     );
-    assert_eq!(
-        receipts
-            .open(casa_imaging_runtime::ExecutionAttemptId::from_sha256(
-                [109; 32]
-            ))
-            .expect("incompatible receipt")
-            .artifact_disposition(incompatible_descriptor.identity()),
-        Some(ArtifactDisposition::RejectedStale)
+    let incompatible_receipt = receipts
+        .open(casa_imaging_runtime::ExecutionAttemptId::from_sha256(
+            [109; 32],
+        ))
+        .expect("incompatible receipt");
+    assert_rejection_evidence(
+        &incompatible_receipt,
+        &incompatible_descriptor,
+        PreparedArtifactOperation::Reuse,
+        PreparedArtifactRejection::Incompatible,
     );
 
     let nonfinite_directory = tempfile::tempdir().expect("nonfinite cache");
@@ -7234,14 +7433,16 @@ fn public_prepared_reuse_receipts_fail_closed_rejections() {
         ),
         PreparedObserved::Rejected(PreparedArtifactRejection::NonFinite)
     );
-    assert_eq!(
-        receipts
-            .open(casa_imaging_runtime::ExecutionAttemptId::from_sha256(
-                [113; 32]
-            ))
-            .expect("nonfinite receipt")
-            .artifact_disposition(nonfinite_descriptor.identity()),
-        Some(ArtifactDisposition::RejectedStale)
+    let nonfinite_receipt = receipts
+        .open(casa_imaging_runtime::ExecutionAttemptId::from_sha256(
+            [113; 32],
+        ))
+        .expect("nonfinite receipt");
+    assert_rejection_evidence(
+        &nonfinite_receipt,
+        &nonfinite_descriptor,
+        PreparedArtifactOperation::Reuse,
+        PreparedArtifactRejection::NonFinite,
     );
 }
 

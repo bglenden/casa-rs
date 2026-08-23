@@ -49,13 +49,19 @@ implementation artifacts: exact compatibility
 identity, bounded generation or load, integrity validation, private atomic
 caching, and deterministic eviction. The selected implementation owner derives
 artifact and cache identities from exact `CompiledProblem` commitments, named
-segment semantics, the canonical private root, and the full cache policy. Cold
-generation, cold load, and warm reuse have distinct plan node, implementation,
-and artifact-role bindings; their canonical measurements reach the immutable
-execution receipt, including `RejectedStale` evidence for a missing, incomplete,
-incompatible, corrupt, or nonfinite warm candidate. Opening the store performs
-no hidden lookup, integrity work, or eviction. That private casa-rs cache is not
-Product Graph authority or a CASA-visible persisted format. Existing CASA
+segment semantics, the canonical private root, and the full cache policy. The
+plan-selected operation implementation identity also commits the owner
+registry, provider, provider version, and implementation, so a caller-authored
+owner cannot silently substitute a registry entry. Cold generation, cold load,
+and warm reuse have distinct plan node, implementation, and artifact-role
+bindings; their canonical measurements reach the immutable execution receipt,
+including `RejectedStale` evidence for a missing, incomplete, incompatible,
+corrupt, or nonfinite warm candidate. Rejection evidence uses the existing
+typed observed-identity field and records bytes/operations actually inspected.
+Successful prepared-artifact handles borrow the node execution context and
+cannot retain file descriptors after its Work claim ends. Opening the store
+performs no hidden lookup, integrity work, or eviction. That private casa-rs
+cache is not Product Graph authority or a CASA-visible persisted format. Existing CASA
 CFS/WTCFS directories remain read-only interoperability inputs supplied through
 the validated legacy adapter; the runtime neither mutates them nor creates
 sidecars.

@@ -510,6 +510,10 @@ impl IoMeasurement {
 }
 
 /// Actual result for one plan-listed artifact, containing no raw local path.
+///
+/// For [`ArtifactDisposition::RejectedStale`], `observed` is typed rejection
+/// evidence rather than a materialized-content identity and `bytes` is the
+/// number of bytes inspected while rejecting the candidate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ArtifactMeasurement {
     planned: ArtifactIdentity,
@@ -544,7 +548,7 @@ impl ArtifactMeasurement {
         self.planned
     }
 
-    /// Return the observed content identity, when materialized.
+    /// Return the observed content or typed rejection-evidence identity.
     #[must_use]
     pub const fn observed_identity(self) -> Option<ArtifactIdentity> {
         self.observed
