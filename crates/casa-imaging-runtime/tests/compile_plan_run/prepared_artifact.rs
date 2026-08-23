@@ -384,12 +384,14 @@ fn prepared_physical_work(
     let reservation = store
         .reservation(descriptor, operation)
         .expect("prepared reservation");
-    let store_allocation = AllocationId::new(format!(
-        "prepared-store-buffer-{}",
+    let resident_allocation = AllocationId::new(format!(
+        "prepared-resident-buffer-{}",
         operation_name(operation)
     ));
-    let store_slot =
-        PhysicalSlotId::new(format!("prepared-store-slot-{}", operation_name(operation)));
+    let resident_slot = PhysicalSlotId::new(format!(
+        "prepared-resident-slot-{}",
+        operation_name(operation)
+    ));
     let compatibility = SlotCompatibility {
         memory_domain: CapacityDomainId::new("host-memory"),
         views: BTreeSet::from([CapacityViewId::new("host-memory")]),
@@ -399,69 +401,18 @@ fn prepared_physical_work(
         initialization: InitializationPolicy::OverwriteBeforeRead,
         access: AllocationAccess::ReadWrite,
     };
-    let writeback_bytes = if operation == PreparedArtifactOperation::Reuse {
-        1
-    } else {
-        reservation.streaming_buffer_bytes()
-    };
-    let mut io_allocations = vec![
-        (
-            IoBufferKind::StorageManager,
-            reservation.resident_buffer_bytes(),
-            store_allocation.clone(),
-            store_slot.clone(),
-        ),
-        (
-            IoBufferKind::Writeback,
-            writeback_bytes,
-            AllocationId::new(format!(
-                "prepared-writeback-buffer-{}",
-                operation_name(operation)
-            )),
-            PhysicalSlotId::new(format!(
-                "prepared-writeback-slot-{}",
-                operation_name(operation)
-            )),
-        ),
-    ];
-    if operation != PreparedArtifactOperation::Reuse {
-        io_allocations.push((
-            IoBufferKind::SourceReadAhead,
-            reservation.streaming_buffer_bytes(),
-            AllocationId::new(format!(
-                "prepared-source-buffer-{}",
-                operation_name(operation)
-            )),
-            PhysicalSlotId::new(format!(
-                "prepared-source-slot-{}",
-                operation_name(operation)
-            )),
-        ));
-    }
     let demand_id = format!("private-prepared-cache-{}", descriptor.cache_identity());
     let mut alternative = base.execution_dag().resource_alternative().clone();
     alternative.id = AlternativeId::new(format!("prepared-{}", operation_name(operation)));
-    alternative
-        .demand
-        .memory
-        .extend(
-            io_allocations
-                .iter()
-                .map(|(_, bytes, allocation, _)| MemoryDemand {
-                    allocation_id: allocation.as_str().to_string(),
-                    hard_bytes: *bytes,
-                    preferred_bytes: *bytes,
-                    views: vec![CapacityViewId::new("host-memory")],
-                }),
-        );
+    alternative.demand.memory.push(MemoryDemand {
+        allocation_id: resident_allocation.as_str().to_string(),
+        hard_bytes: reservation.resident_buffer_bytes(),
+        preferred_bytes: reservation.resident_buffer_bytes(),
+        views: vec![CapacityViewId::new("host-memory")],
+    });
     alternative.demand.locks = CountDemand::new(2, 2);
     alternative.demand.file_descriptors = CountDemand::new(2, 2);
-    if operation != PreparedArtifactOperation::Reuse {
-        alternative.demand.io_buffers.source_read_ahead_bytes =
-            reservation.streaming_buffer_bytes();
-    }
     alternative.demand.io_buffers.storage_manager_bytes = reservation.resident_buffer_bytes();
-    alternative.demand.io_buffers.writeback_bytes = writeback_bytes;
     alternative
         .demand
         .storage
@@ -503,15 +454,11 @@ fn prepared_physical_work(
             lifetime: ClaimLifetime::Work,
         },
     ];
-    claims.extend(
-        io_allocations
-            .iter()
-            .map(|(kind, bytes, _, _)| ResourceClaim {
-                resource: LeaseResource::IoBuffer(*kind),
-                amount: *bytes,
-                lifetime: ClaimLifetime::Work,
-            }),
-    );
+    claims.push(ResourceClaim {
+        resource: LeaseResource::IoBuffer(IoBufferKind::StorageManager),
+        amount: reservation.resident_buffer_bytes(),
+        lifetime: ClaimLifetime::Work,
+    });
     if reservation.temporary_staging_bytes() > 0 {
         claims.push(ResourceClaim {
             resource: LeaseResource::Storage {
@@ -530,13 +477,10 @@ fn prepared_physical_work(
         implementation: descriptor.work_implementation_id(operation),
         dependencies: BTreeSet::from([WorkDependency::Work(WorkNodeId::new("execute"))]),
         claims,
-        allocations: io_allocations
-            .iter()
-            .map(|(_, _, allocation, _)| AllocationUse {
-                allocation: allocation.clone(),
-                lifetime: ClaimLifetime::Work,
-            })
-            .collect(),
+        allocations: vec![AllocationUse {
+            allocation: resident_allocation.clone(),
+            lifetime: ClaimLifetime::Work,
+        }],
         fences: BTreeSet::new(),
         quiescence_after: BTreeSet::new(),
     };
@@ -560,7 +504,7 @@ fn prepared_physical_work(
             },
         ],
         allocations: vec![AllocationUse {
-            allocation: store_allocation.clone(),
+            allocation: resident_allocation.clone(),
             lifetime: ClaimLifetime::Work,
         }],
         fences: BTreeSet::new(),
@@ -579,37 +523,25 @@ fn prepared_physical_work(
         .dependencies
         .insert(WorkDependency::Work(release_id.clone()));
     nodes.extend([prepared_node.clone(), release_node]);
-    let prepared_logical_allocations = io_allocations
-        .iter()
-        .map(|(kind, bytes, allocation, slot)| LogicalAllocation {
-            id: allocation.clone(),
-            bytes: *bytes,
-            purpose: AllocationPurpose::IoBuffer(*kind),
-            compatibility: compatibility.clone(),
-            physical_slot: slot.clone(),
-            lifetime: AllocationLifetime {
-                acquire_at: prepared_node.id.clone(),
-                release_after: BTreeSet::from([WorkDependency::Work(
-                    if *kind == IoBufferKind::StorageManager {
-                        release_id.clone()
-                    } else {
-                        prepared_node.id.clone()
-                    },
-                )]),
-            },
-        })
-        .collect::<Vec<_>>();
-    let prepared_slots = io_allocations
-        .iter()
-        .map(|(_, bytes, allocation, slot)| PhysicalSlot {
-            id: slot.clone(),
-            lease_resource: LeaseResource::Memory {
-                allocation_id: allocation.as_str().to_string(),
-            },
-            capacity_bytes: *bytes,
-            compatibility: compatibility.clone(),
-        })
-        .collect::<Vec<_>>();
+    let prepared_logical_allocation = LogicalAllocation {
+        id: resident_allocation.clone(),
+        bytes: reservation.resident_buffer_bytes(),
+        purpose: AllocationPurpose::IoBuffer(IoBufferKind::StorageManager),
+        compatibility: compatibility.clone(),
+        physical_slot: resident_slot.clone(),
+        lifetime: AllocationLifetime {
+            acquire_at: prepared_node.id.clone(),
+            release_after: BTreeSet::from([WorkDependency::Work(release_id.clone())]),
+        },
+    };
+    let prepared_slot = PhysicalSlot {
+        id: resident_slot,
+        lease_resource: LeaseResource::Memory {
+            allocation_id: resident_allocation.as_str().to_string(),
+        },
+        capacity_bytes: reservation.resident_buffer_bytes(),
+        compatibility,
+    };
     let dag = ExecutionDag::new(ExecutionDagSpecification {
         required_resource_capabilities: base
             .execution_dag()
@@ -622,14 +554,14 @@ fn prepared_physical_work(
             .logical_allocations()
             .values()
             .cloned()
-            .chain(prepared_logical_allocations)
+            .chain([prepared_logical_allocation])
             .collect(),
         physical_slots: base
             .execution_dag()
             .physical_slots()
             .values()
             .cloned()
-            .chain(prepared_slots)
+            .chain([prepared_slot])
             .collect(),
         initial_knobs: base.execution_dag().initial_knobs().clone(),
         adaptations: base
@@ -640,22 +572,12 @@ fn prepared_physical_work(
             .collect(),
     })
     .expect("prepared execution DAG");
-    let mut prepared_io = vec![
-        IoPrediction::new(
+    let prepared_stage =
+        StagePrediction::new(prepared_node.id.clone(), 1_000).with_io(vec![IoPrediction::new(
             IoBufferKind::StorageManager,
             reservation.persistent_cache_bytes(),
             10_000,
-        ),
-        IoPrediction::new(IoBufferKind::Writeback, reservation.entry_bytes(), 10_000),
-    ];
-    if operation != PreparedArtifactOperation::Reuse {
-        prepared_io.extend([IoPrediction::new(
-            IoBufferKind::SourceReadAhead,
-            PREPARED_PAYLOAD_BYTES,
-            1_000,
         )]);
-    }
-    let prepared_stage = StagePrediction::new(prepared_node.id.clone(), 1_000).with_io(prepared_io);
     let release_stage = StagePrediction::new(release_id, 100).with_io(vec![IoPrediction::new(
         IoBufferKind::StorageManager,
         reservation.resident_buffer_bytes(),
@@ -855,6 +777,77 @@ fn prepared_adapter_observed(
 }
 
 #[test]
+fn prepared_streaming_residency_is_admitted_once_without_overlapping_slots() {
+    let problem = compile(request(1)).expect("single-charge prepared problem");
+    let cache_directory = tempfile::tempdir().expect("single-charge prepared cache");
+    let budget =
+        PreparedArtifactBudget::new(32_768, 800, 65_536).expect("single-charge constrained budget");
+    let store = PreparedArtifactStore::open(cache_directory.path(), budget)
+        .expect("single-charge prepared store");
+    let descriptor = prepared_descriptor(&store, &problem);
+    let reservation = store
+        .reservation(&descriptor, PreparedArtifactOperation::Generate)
+        .expect("single-charge prepared reservation");
+    let work = prepared_physical_work(&descriptor, &store, PreparedArtifactOperation::Generate);
+
+    let prepared_demands = work
+        .execution_dag()
+        .resource_alternative()
+        .demand
+        .memory
+        .iter()
+        .filter(|demand| demand.allocation_id.starts_with("prepared-"))
+        .collect::<Vec<_>>();
+    assert_eq!(prepared_demands.len(), 1);
+    assert_eq!(
+        prepared_demands[0].hard_bytes,
+        reservation.resident_buffer_bytes()
+    );
+
+    let prepared_slots = work
+        .execution_dag()
+        .physical_slots()
+        .values()
+        .filter(|slot| slot.id.as_str().starts_with("prepared-"))
+        .collect::<Vec<_>>();
+    assert_eq!(prepared_slots.len(), 1);
+    assert_eq!(
+        prepared_slots[0].capacity_bytes,
+        reservation.resident_buffer_bytes()
+    );
+
+    let node = &work.execution_dag().nodes()
+        [&descriptor.work_node_id(PreparedArtifactOperation::Generate)];
+    assert_eq!(node.allocations.len(), 1);
+    assert_eq!(
+        node.allocations[0].allocation,
+        AllocationId::new("prepared-resident-buffer-generate")
+    );
+
+    let balanced_host_limit = 1_048_576 * 3 / 4;
+    let admitted_host_bytes = work
+        .execution_dag()
+        .resource_alternative()
+        .demand
+        .memory
+        .iter()
+        .map(|demand| demand.hard_bytes)
+        .sum::<u64>();
+    assert!(admitted_host_bytes <= balanced_host_limit);
+    assert!(
+        admitted_host_bytes + 2 * reservation.streaming_buffer_bytes() > balanced_host_limit,
+        "the former duplicate source/writeback slots would make this feasible plan look infeasible"
+    );
+
+    plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| Ok::<_, ()>(work),
+    )
+    .expect("a feasible single-buffer prepared plan must be admitted");
+}
+
+#[test]
 fn public_prepared_generate_load_and_reuse_are_plan_and_receipt_bound() {
     let problem = compile(request(1)).expect("prepared compiled problem");
     let receipts_directory = tempfile::tempdir().expect("prepared receipts");
@@ -990,6 +983,14 @@ fn public_prepared_generate_load_and_reuse_are_plan_and_receipt_bound() {
             &ClaimLifetime::Work,
         )
         .expect("observed private-store residency");
+    assert_eq!(
+        generate_receipt.planned_resource_amount(
+            &generated_node,
+            &LeaseResource::IoBuffer(IoBufferKind::StorageManager),
+            &ClaimLifetime::Work,
+        ),
+        Some(generated_reservation.resident_buffer_bytes())
+    );
     assert!(
         observed_resident >= generated_reservation.streaming_buffer_bytes(),
         "observed residency covers the actually allocated streaming buffer"
@@ -1001,23 +1002,23 @@ fn public_prepared_generate_load_and_reuse_are_plan_and_receipt_bound() {
     let generate_io = generate_receipt
         .stage_actual_io(&generated_node, IoBufferKind::StorageManager)
         .expect("measured generation I/O");
-    assert!(generate_io.0 > PREPARED_PAYLOAD_BYTES);
+    assert!(generate_io.0 > PREPARED_PAYLOAD_BYTES * 2);
     assert!(generate_io.1 > 3);
     assert_eq!(
         generate_receipt.stage_actual_io(&generated_node, IoBufferKind::MappedPageCache),
         None,
         "private-cache reads and controls must not claim mapped-page-cache authority"
     );
-    let generate_source_io = generate_receipt
-        .stage_actual_io(&generated_node, IoBufferKind::SourceReadAhead)
-        .expect("measured caller-source I/O");
-    assert_eq!(generate_source_io.0, PREPARED_PAYLOAD_BYTES);
-    assert!(generate_source_io.1 > 2);
-    let generate_store_write_io = generate_receipt
-        .stage_actual_io(&generated_node, IoBufferKind::Writeback)
-        .expect("measured private-store write I/O");
-    assert!(generate_store_write_io.0 > PREPARED_PAYLOAD_BYTES);
-    assert!(generate_store_write_io.1 > 3);
+    assert_eq!(
+        generate_receipt.stage_actual_io(&generated_node, IoBufferKind::SourceReadAhead),
+        None,
+        "the shared streaming Vec is not a second physical source buffer"
+    );
+    assert_eq!(
+        generate_receipt.stage_actual_io(&generated_node, IoBufferKind::Writeback),
+        None,
+        "the shared streaming Vec is not a second physical writeback buffer"
+    );
     assert_eq!(
         generate_receipt.stage_actual_io(&generated_node, IoBufferKind::Publication),
         None,
@@ -1128,19 +1129,7 @@ fn public_prepared_generate_load_and_reuse_are_plan_and_receipt_bound() {
             &reuse_descriptor.work_node_id(PreparedArtifactOperation::Reuse),
             IoBufferKind::Writeback,
         ),
-        Some((0, 0))
-    );
-    let reuse_node = reuse_descriptor.work_node_id(PreparedArtifactOperation::Reuse);
-    let reuse_writeback = LeaseResource::IoBuffer(IoBufferKind::Writeback);
-    assert_eq!(
-        reuse_receipt.planned_resource_amount(&reuse_node, &reuse_writeback, &ClaimLifetime::Work,),
-        Some(1),
-        "reuse reserves for possible private lock-file creation"
-    );
-    assert_eq!(
-        reuse_receipt.actual_resource_peak(&reuse_node, &reuse_writeback, &ClaimLifetime::Work,),
-        Some(0),
-        "an existing private lock file performs no writeback work"
+        None
     );
 
     let loaded_directory = tempfile::tempdir().expect("loaded cache");
@@ -1205,24 +1194,18 @@ fn public_prepared_generate_load_and_reuse_are_plan_and_receipt_bound() {
     assert!(load_io.0 > PREPARED_PAYLOAD_BYTES);
     assert!(load_io.1 > 3);
     assert_eq!(
-        load_receipt
-            .stage_actual_io(
-                &loaded_descriptor.work_node_id(PreparedArtifactOperation::Load),
-                IoBufferKind::SourceReadAhead,
-            )
-            .expect("measured load source I/O")
-            .0,
-        PREPARED_PAYLOAD_BYTES
+        load_receipt.stage_actual_io(
+            &loaded_descriptor.work_node_id(PreparedArtifactOperation::Load),
+            IoBufferKind::SourceReadAhead,
+        ),
+        None
     );
-    assert!(
-        load_receipt
-            .stage_actual_io(
-                &loaded_descriptor.work_node_id(PreparedArtifactOperation::Load),
-                IoBufferKind::Writeback,
-            )
-            .expect("measured load store-write I/O")
-            .0
-            > PREPARED_PAYLOAD_BYTES
+    assert_eq!(
+        load_receipt.stage_actual_io(
+            &loaded_descriptor.work_node_id(PreparedArtifactOperation::Load),
+            IoBufferKind::Writeback,
+        ),
+        None
     );
     assert_ne!(
         generated_descriptor.work_node_id(PreparedArtifactOperation::Generate),
@@ -2222,11 +2205,7 @@ fn failed_prepared_receipt_retains_materialization_eviction_and_io_evidence() {
     let io = plan.prediction().stages()[&node_id]
         .io()
         .iter()
-        .map(|prediction| match prediction.kind() {
-            IoBufferKind::StorageManager => IoMeasurement::new(prediction.kind(), 321, 7),
-            IoBufferKind::Writeback => IoMeasurement::new(prediction.kind(), 17, 2),
-            kind => IoMeasurement::new(kind, 0, 0),
-        })
+        .map(|prediction| IoMeasurement::new(prediction.kind(), 338, 9))
         .collect();
     let ledger = descriptor.eviction_artifact(operation);
     let observed_evictions = ArtifactIdentity::from_sha256([211; 32]);
@@ -2298,11 +2277,7 @@ fn failed_prepared_receipt_retains_materialization_eviction_and_io_evidence() {
     assert_eq!(receipt.failure_node(), Some(node_id.clone()));
     assert_eq!(
         receipt.stage_actual_io(&node_id, IoBufferKind::StorageManager),
-        Some((321, 7))
-    );
-    assert_eq!(
-        receipt.stage_actual_io(&node_id, IoBufferKind::Writeback),
-        Some((17, 2))
+        Some((338, 9))
     );
     assert_eq!(receipt.artifact_actual_bytes(ledger.identity()), Some(128));
     assert_eq!(
@@ -2430,6 +2405,107 @@ fn malformed_rejection_evidence_is_rejected_without_partial_receipt_mutation() {
         receipt.actual_resource_peak(&node_id, &LeaseResource::Workers, &ClaimLifetime::Work,),
         None,
         "invalid evidence must not be checkpointed partially"
+    );
+}
+
+#[test]
+fn prepared_resource_overrun_fails_closed_without_censoring_the_peak() {
+    let problem = compile(request(1)).expect("prepared overrun problem");
+    let cache_directory = tempfile::tempdir().expect("prepared overrun cache");
+    let store = PreparedArtifactStore::open(cache_directory.path(), prepared_budget())
+        .expect("prepared overrun store");
+    let descriptor = prepared_descriptor(&store, &problem);
+    let operation = PreparedArtifactOperation::Generate;
+    let reservation = store
+        .reservation(&descriptor, operation)
+        .expect("prepared overrun reservation");
+    let plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| Ok::<_, ()>(prepared_physical_work(&descriptor, &store, operation)),
+    )
+    .expect("prepared overrun plan");
+    let node_id = descriptor.work_node_id(operation);
+    let resources = plan.execution_dag().nodes()[&node_id]
+        .claims
+        .iter()
+        .map(|claim| {
+            let peak = if matches!(
+                claim.resource,
+                LeaseResource::IoBuffer(IoBufferKind::StorageManager)
+            ) {
+                reservation.resident_buffer_bytes().saturating_add(1)
+            } else {
+                0
+            };
+            ResourceMeasurement::new(claim.resource.clone(), claim.lifetime.clone(), peak)
+        })
+        .collect();
+    let evidence = WorkMeasurements::new(resources, Vec::new(), Vec::new());
+    let prepared_id = descriptor.work_implementation_id(operation);
+    let registry = PreparedSuiteRegistry {
+        id: registry(3),
+        implementations: BTreeMap::from([
+            (
+                implementation(6),
+                PreparedSuiteImplementation::Base(Box::new(prepared_base_executor(
+                    &descriptor,
+                    operation,
+                ))),
+            ),
+            (
+                prepared_id.clone(),
+                PreparedSuiteImplementation::Failure(Box::new(PreparedFailureAdapter {
+                    id: prepared_id,
+                    evidence,
+                    succeed: true,
+                })),
+            ),
+        ]),
+    };
+    let receipts_directory = tempfile::tempdir().expect("prepared overrun receipts");
+    let receipts = ExecutionReceiptStore::new(
+        receipts_directory.path(),
+        ReceiptRetention::new(4, 1_000_000).expect("prepared overrun retention"),
+    )
+    .expect("prepared overrun receipt store");
+    let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([155; 32]);
+
+    let error = run_prepared(
+        &problem,
+        &plan,
+        &registry,
+        receipts.bind(execution_provenance(
+            attempt,
+            BuildIdentity::from_sha256([156; 32]),
+        )),
+    )
+    .expect_err("an observed prepared residency overrun must fail closed");
+    assert!(matches!(
+        error,
+        RunError::Evidence(ExecutionEvidenceError::ResourcePeakExceeded {
+            resource: LeaseResource::IoBuffer(IoBufferKind::StorageManager),
+            planned,
+            actual,
+            ..
+        }) if planned == reservation.resident_buffer_bytes()
+            && actual == reservation.resident_buffer_bytes() + 1
+    ));
+
+    let receipt = receipts.open(attempt).expect("prepared overrun receipt");
+    assert_eq!(receipt.status(), ReceiptStatus::Failed);
+    assert_eq!(
+        receipt.failure_kind(),
+        Some(ReceiptFailureKind::EvidenceContract)
+    );
+    assert_eq!(
+        receipt.actual_resource_peak(
+            &node_id,
+            &LeaseResource::IoBuffer(IoBufferKind::StorageManager),
+            &ClaimLifetime::Work,
+        ),
+        None,
+        "invalid overrun evidence must not be checkpointed as if it were valid"
     );
 }
 

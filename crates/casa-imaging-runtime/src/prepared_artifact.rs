@@ -1362,7 +1362,7 @@ impl PreparedArtifactReservation {
         self.temporary_staging_bytes
     }
 
-    /// Return the exact payload/source streaming-buffer claim.
+    /// Return the streaming-buffer component of the resident-buffer claim.
     #[must_use]
     pub const fn streaming_buffer_bytes(self) -> u64 {
         self.streaming_buffer_bytes
@@ -1608,7 +1608,6 @@ impl PreparedArtifactStore {
                 let measurements = failed_measurements(
                     *context,
                     descriptor,
-                    reservation,
                     PreparedArtifactOperation::Reuse,
                     &evidence,
                 );
@@ -1623,7 +1622,6 @@ impl PreparedArtifactStore {
                 let measurements = failed_measurements(
                     *context,
                     descriptor,
-                    reservation,
                     PreparedArtifactOperation::Reuse,
                     &evidence,
                 );
@@ -1639,7 +1637,6 @@ impl PreparedArtifactStore {
                 let measurements = rejected_measurements(
                     *context,
                     descriptor,
-                    reservation,
                     rejection,
                     &path,
                     cache_bytes,
@@ -1660,7 +1657,6 @@ impl PreparedArtifactStore {
                     ArtifactDisposition::Reused,
                     &validated,
                     MeasurementInput {
-                        reservation,
                         operation: PreparedArtifactOperation::Reuse,
                         cache_bytes,
                         evidence,
@@ -1728,8 +1724,7 @@ impl PreparedArtifactStore {
         let mut lock = match self.lock(&mut evidence) {
             Ok(lock) => lock,
             Err(error) => {
-                let measurements =
-                    failed_measurements(*context, descriptor, reservation, operation, &evidence);
+                let measurements = failed_measurements(*context, descriptor, operation, &evidence);
                 return Err(error.with_measurements(measurements));
             }
         };
@@ -1749,8 +1744,7 @@ impl PreparedArtifactStore {
         let (validated, final_disposition, cache_bytes) = match (published, unlock) {
             (Ok(published), Ok(())) => published,
             (Err(error), _) => {
-                let measurements =
-                    failed_measurements(*context, descriptor, reservation, operation, &evidence);
+                let measurements = failed_measurements(*context, descriptor, operation, &evidence);
                 return Err(error.with_measurements(measurements));
             }
             (Ok(_), Err(error)) => {
@@ -1758,8 +1752,7 @@ impl PreparedArtifactStore {
                     Ok(()) => error,
                     Err(rollback) => rollback,
                 };
-                let measurements =
-                    failed_measurements(*context, descriptor, reservation, operation, &evidence);
+                let measurements = failed_measurements(*context, descriptor, operation, &evidence);
                 return Err(error.with_measurements(measurements));
             }
         };
@@ -1769,7 +1762,6 @@ impl PreparedArtifactStore {
             final_disposition,
             &validated,
             MeasurementInput {
-                reservation,
                 operation,
                 cache_bytes,
                 evidence,
@@ -1845,7 +1837,7 @@ impl PreparedArtifactStore {
                     payload_bytes: offset,
                     segments: manifest_segments,
                 };
-                evidence.observe_resident(MANIFEST_RESIDENT_BYTES);
+                evidence.observe_manifest();
                 let manifest_path = staging_path.join(MANIFEST_FILE);
                 evidence.store_write_operation();
                 let mut manifest_output = OpenOptions::new()
@@ -2104,9 +2096,12 @@ impl PreparedArtifactStore {
     ) -> Result<u64, PreparedArtifactError> {
         let mut total = 0_u64;
         let mut count = 0_usize;
-        for path in
-            directory_paths_counted(&self.cache, evidence, root_inventory_limit(self.budget)?)?
-        {
+        for path in directory_paths_counted(
+            &self.cache,
+            evidence,
+            root_inventory_limit(self.budget)?,
+            PathInventoryKind::Root,
+        )? {
             let path = path.into_path_buf();
             let name = path
                 .file_name()
@@ -2162,9 +2157,13 @@ impl PreparedArtifactStore {
         evidence: &mut ValidationEvidence,
     ) -> Result<Vec<CacheInventoryEntry>, PreparedArtifactError> {
         let mut entries = Vec::with_capacity(self.budget.entries);
-        for path in
-            directory_paths_counted(&self.cache, evidence, root_inventory_limit(self.budget)?)?
-        {
+        evidence.observe_cache_inventory(&entries);
+        for path in directory_paths_counted(
+            &self.cache,
+            evidence,
+            root_inventory_limit(self.budget)?,
+            PathInventoryKind::Root,
+        )? {
             let path = path.into_path_buf();
             let name = path
                 .file_name()
@@ -2202,9 +2201,12 @@ impl PreparedArtifactStore {
         evidence: &mut ValidationEvidence,
     ) -> Result<(), PreparedArtifactError> {
         let mut removed = false;
-        for path in
-            directory_paths_counted(&self.cache, evidence, root_inventory_limit(self.budget)?)?
-        {
+        for path in directory_paths_counted(
+            &self.cache,
+            evidence,
+            root_inventory_limit(self.budget)?,
+            PathInventoryKind::Root,
+        )? {
             let path = path.into_path_buf();
             if path
                 .file_name()
@@ -2317,11 +2319,8 @@ impl PreparedArtifactStore {
         let payload = File::open(&payload_path).map_err(map_incomplete)?;
         evidence.observe_file_descriptors(2);
         let buffer_len = streaming_buffer_len(self.budget, &descriptor)?;
-        evidence.observe_resident(
-            MANIFEST_RESIDENT_BYTES
-                .checked_add(buffer_len as u64)
-                .ok_or(PreparedArtifactError::ArtifactTooLarge)?,
-        );
+        evidence.observe_manifest();
+        evidence.observe_streaming_buffer(buffer_len as u64);
         let (payload_sha256, payload_bytes) = validate_payload(
             &payload,
             &descriptor.segments,
@@ -3065,25 +3064,6 @@ fn validate_plan_declaration(
     )?;
     require_claim(
         node,
-        |resource| matches!(resource, LeaseResource::IoBuffer(IoBufferKind::Writeback)),
-        writeback_buffer_bytes(reservation, operation),
-        "private-store writeback buffer",
-    )?;
-    if operation != PreparedArtifactOperation::Reuse {
-        require_claim(
-            node,
-            |resource| {
-                matches!(
-                    resource,
-                    LeaseResource::IoBuffer(IoBufferKind::SourceReadAhead)
-                )
-            },
-            reservation.streaming_buffer_bytes,
-            "source-read-ahead buffer",
-        )?;
-    }
-    require_claim(
-        node,
         |resource| matches!(resource, LeaseResource::Locks),
         1,
         "private-cache lock",
@@ -3124,10 +3104,13 @@ fn validate_plan_declaration(
             "temporary staging storage",
         )?;
     }
-    let mut required_io = vec![IoBufferKind::StorageManager, IoBufferKind::Writeback];
-    if operation != PreparedArtifactOperation::Reuse {
-        required_io.push(IoBufferKind::SourceReadAhead);
-    }
+    // Generation and load use one Vec as both the caller-source read buffer
+    // and the private-store write buffer. The complete resident envelope,
+    // including that Vec, therefore has one StorageManager claim and one
+    // MemoryDemand-backed slot. Source and store traffic remain separately
+    // counted inside ValidationEvidence before being emitted as the complete
+    // private-store I/O measurement.
+    let required_io = [IoBufferKind::StorageManager];
     let predicted = stage
         .io()
         .iter()
@@ -3138,12 +3121,7 @@ fn validate_plan_declaration(
         || required_io.iter().any(|kind| !predicted.contains(kind))
         || stage.io().iter().any(|prediction| {
             let minimum_bytes = match prediction.kind() {
-                IoBufferKind::SourceReadAhead => payload_bytes,
-                IoBufferKind::StorageManager => reservation.entry_bytes,
-                IoBufferKind::Writeback if operation != PreparedArtifactOperation::Reuse => {
-                    reservation.entry_bytes
-                }
-                IoBufferKind::Writeback => 0,
+                IoBufferKind::StorageManager => reservation.entry_bytes.max(payload_bytes),
                 _ => u64::MAX,
             };
             prediction.bytes() < minimum_bytes || prediction.operations() == 0
@@ -3175,19 +3153,7 @@ fn require_claim(
     }
 }
 
-const fn writeback_buffer_bytes(
-    reservation: PreparedArtifactReservation,
-    operation: PreparedArtifactOperation,
-) -> u64 {
-    if matches!(operation, PreparedArtifactOperation::Reuse) {
-        1
-    } else {
-        reservation.streaming_buffer_bytes
-    }
-}
-
 struct MeasurementInput {
-    reservation: PreparedArtifactReservation,
     operation: PreparedArtifactOperation,
     cache_bytes: u64,
     evidence: ValidationEvidence,
@@ -3205,7 +3171,6 @@ fn measurements(
         input.operation,
         input.cache_bytes,
         validated.disk_bytes,
-        input.reservation,
         &input.evidence,
     );
     let io = context
@@ -3249,7 +3214,6 @@ fn measurements(
 fn rejected_measurements(
     context: WorkExecutionContext<'_>,
     descriptor: &PreparedArtifactDescriptor,
-    reservation: PreparedArtifactReservation,
     rejection: PreparedArtifactRejection,
     path: &Path,
     cache_bytes: u64,
@@ -3260,7 +3224,6 @@ fn rejected_measurements(
         PreparedArtifactOperation::Reuse,
         cache_bytes,
         0,
-        reservation,
         &evidence,
     );
     let io = context
@@ -3296,7 +3259,6 @@ fn rejected_measurements(
 fn failed_measurements(
     context: WorkExecutionContext<'_>,
     descriptor: &PreparedArtifactDescriptor,
-    reservation: PreparedArtifactReservation,
     operation: PreparedArtifactOperation,
     evidence: &ValidationEvidence,
 ) -> WorkMeasurements {
@@ -3304,8 +3266,7 @@ fn failed_measurements(
         context,
         operation,
         evidence.cache_bytes_peak,
-        evidence.cache_write.bytes.min(reservation.entry_bytes),
-        reservation,
+        evidence.cache_write.bytes,
         evidence,
     );
     let io = context
@@ -3347,49 +3308,49 @@ fn resource_measurements(
     operation: PreparedArtifactOperation,
     cache_bytes: u64,
     entry_bytes: u64,
-    reservation: PreparedArtifactReservation,
     evidence: &ValidationEvidence,
 ) -> Vec<ResourceMeasurement> {
     context
         .resources()
         .iter()
         .map(|capability| {
-            let peak = match capability.resource() {
-                LeaseResource::Workers => 1,
-                LeaseResource::Locks => evidence.locks_peak,
-                LeaseResource::FileDescriptors => evidence.file_descriptors_peak,
-                LeaseResource::IoBuffer(IoBufferKind::StorageManager) => evidence
-                    .resident_buffer_bytes
-                    .min(reservation.resident_buffer_bytes),
-                LeaseResource::IoBuffer(IoBufferKind::SourceReadAhead)
-                    if operation != PreparedArtifactOperation::Reuse =>
-                {
-                    evidence
-                        .source_read_buffer_bytes
-                        .min(reservation.streaming_buffer_bytes)
-                }
-                LeaseResource::IoBuffer(IoBufferKind::Writeback)
-                    if evidence.cache_write.operations > 0 =>
-                {
-                    writeback_buffer_bytes(reservation, operation)
-                }
-                LeaseResource::Storage {
-                    use_kind: StorageUseKind::PersistentCache,
-                    ..
-                } => cache_bytes,
-                LeaseResource::Storage {
-                    use_kind: StorageUseKind::Temporary,
-                    ..
-                } if operation != PreparedArtifactOperation::Reuse => entry_bytes,
-                _ => 0,
-            };
             ResourceMeasurement::new(
                 capability.resource().clone(),
                 capability.lifetime().clone(),
-                peak,
+                observed_resource_peak(
+                    capability.resource(),
+                    operation,
+                    cache_bytes,
+                    entry_bytes,
+                    evidence,
+                ),
             )
         })
         .collect()
+}
+
+fn observed_resource_peak(
+    resource: &LeaseResource,
+    operation: PreparedArtifactOperation,
+    cache_bytes: u64,
+    entry_bytes: u64,
+    evidence: &ValidationEvidence,
+) -> u64 {
+    match resource {
+        LeaseResource::Workers => 1,
+        LeaseResource::Locks => evidence.locks_peak,
+        LeaseResource::FileDescriptors => evidence.file_descriptors_peak,
+        LeaseResource::IoBuffer(IoBufferKind::StorageManager) => evidence.resident_buffer_bytes,
+        LeaseResource::Storage {
+            use_kind: StorageUseKind::PersistentCache,
+            ..
+        } => cache_bytes,
+        LeaseResource::Storage {
+            use_kind: StorageUseKind::Temporary,
+            ..
+        } if operation != PreparedArtifactOperation::Reuse => entry_bytes,
+        _ => 0,
+    }
 }
 
 fn rejection_for(error: &PreparedArtifactError) -> Option<PreparedArtifactRejection> {
@@ -3569,9 +3530,13 @@ struct ValidationEvidence {
     cache_read: IoCounter,
     cache_control: IoCounter,
     cache_write: IoCounter,
-    resident_baseline_bytes: u64,
     resident_buffer_bytes: u64,
-    source_read_buffer_bytes: u64,
+    eviction_inventory_bytes: u64,
+    cache_inventory_bytes: u64,
+    root_path_inventory_bytes: u64,
+    entry_path_inventory_bytes: u64,
+    manifest_bytes: u64,
+    streaming_buffer_bytes: u64,
     cache_bytes_peak: u64,
     locks_peak: u64,
     file_descriptors_peak: u64,
@@ -3582,18 +3547,14 @@ struct ValidationEvidence {
 impl ValidationEvidence {
     fn new(budget: PreparedArtifactBudget) -> Self {
         let evictions = Vec::with_capacity(budget.entries);
-        let resident_buffer_bytes = u64::try_from(evictions.capacity().saturating_mul(size_of::<(
-            ArtifactIdentity,
-            u64,
-        )>(
-        )))
-        .unwrap_or(u64::MAX);
-        Self {
-            resident_baseline_bytes: resident_buffer_bytes,
-            resident_buffer_bytes,
+        let eviction_inventory_bytes = observed_vec_resident_bytes(&evictions);
+        let mut evidence = Self {
+            eviction_inventory_bytes,
             evictions,
             ..Self::default()
-        }
+        };
+        evidence.refresh_resident_peak();
+        evidence
     }
 
     fn source_validation(&mut self) {
@@ -3616,15 +3577,49 @@ impl ValidationEvidence {
         self.record(IoClass::StoreRead, 0);
     }
 
-    fn observe_resident(&mut self, bytes: u64) {
-        self.resident_buffer_bytes = self
-            .resident_buffer_bytes
-            .max(self.resident_baseline_bytes.saturating_add(bytes));
+    fn observe_manifest(&mut self) {
+        self.manifest_bytes = self.manifest_bytes.max(MANIFEST_RESIDENT_BYTES);
+        self.refresh_resident_peak();
     }
 
     fn observe_source_read_buffer(&mut self, bytes: u64) {
-        self.source_read_buffer_bytes = self.source_read_buffer_bytes.max(bytes);
-        self.observe_resident(bytes);
+        self.observe_streaming_buffer(bytes);
+    }
+
+    fn observe_streaming_buffer(&mut self, bytes: u64) {
+        self.streaming_buffer_bytes = self.streaming_buffer_bytes.max(bytes);
+        self.refresh_resident_peak();
+    }
+
+    fn observe_cache_inventory<T>(&mut self, entries: &Vec<T>) {
+        self.cache_inventory_bytes = self
+            .cache_inventory_bytes
+            .max(observed_vec_resident_bytes(entries));
+        self.refresh_resident_peak();
+    }
+
+    fn observe_path_inventory(&mut self, kind: PathInventoryKind, paths: &Vec<Box<Path>>) {
+        let bytes = observed_path_inventory_bytes(paths);
+        let peak = match kind {
+            PathInventoryKind::Root => &mut self.root_path_inventory_bytes,
+            PathInventoryKind::Entry => &mut self.entry_path_inventory_bytes,
+        };
+        *peak = (*peak).max(bytes);
+        self.refresh_resident_peak();
+    }
+
+    fn refresh_resident_peak(&mut self) {
+        let observed = [
+            self.eviction_inventory_bytes,
+            self.cache_inventory_bytes,
+            self.root_path_inventory_bytes,
+            self.entry_path_inventory_bytes,
+            self.manifest_bytes,
+            self.streaming_buffer_bytes,
+        ]
+        .into_iter()
+        .fold(0_u64, u64::saturating_add);
+        self.resident_buffer_bytes = self.resident_buffer_bytes.max(observed);
     }
 
     fn observe_cache_bytes(&mut self, bytes: u64) {
@@ -3655,10 +3650,16 @@ impl ValidationEvidence {
             IoBufferKind::SourceReadAhead => self.source_read,
             IoBufferKind::Writeback => self.cache_write,
             IoBufferKind::StorageManager => IoCounter {
-                bytes: self.cache_read.bytes,
+                bytes: self
+                    .source_read
+                    .bytes
+                    .saturating_add(self.cache_read.bytes)
+                    .saturating_add(self.cache_write.bytes),
                 operations: self
-                    .cache_read
+                    .source_read
                     .operations
+                    .saturating_add(self.cache_read.operations)
+                    .saturating_add(self.cache_write.operations)
                     .saturating_add(self.cache_control.operations),
             },
             _ => IoCounter::default(),
@@ -3676,6 +3677,10 @@ impl ValidationEvidence {
 
     fn record_eviction(&mut self, entry: CacheInventoryEntry) {
         self.evictions.push((entry.identity, entry.bytes));
+        self.eviction_inventory_bytes = self
+            .eviction_inventory_bytes
+            .max(observed_vec_resident_bytes(&self.evictions));
+        self.refresh_resident_peak();
     }
 }
 
@@ -3770,7 +3775,7 @@ fn read_manifest_counted(
     evidence.store_read_operation();
     let file = File::open(path).map_err(map_incomplete)?;
     evidence.observe_file_descriptors(2);
-    evidence.observe_resident(MANIFEST_RESIDENT_BYTES);
+    evidence.observe_manifest();
     let bounded = BoundedFileReader {
         file,
         evidence,
@@ -3897,28 +3902,33 @@ fn validate_entry_inventory(
     directory: &Path,
     evidence: &mut ValidationEvidence,
 ) -> Result<(), PreparedArtifactError> {
-    let mut names = BTreeSet::new();
-    for path in
-        directory_paths_counted(directory, evidence, MAX_ENTRY_FILES).map_err(
-            |error| match error {
-                PreparedArtifactError::Io(error) => map_incomplete(error),
-                other => other,
-            },
-        )?
-    {
-        let path = path.into_path_buf();
+    let paths = directory_paths_counted(
+        directory,
+        evidence,
+        MAX_ENTRY_FILES,
+        PathInventoryKind::Entry,
+    )
+    .map_err(|error| match error {
+        PreparedArtifactError::Io(error) => map_incomplete(error),
+        other => other,
+    })?;
+    if paths.len() != MAX_ENTRY_FILES {
+        return Err(PreparedArtifactError::IncompleteArtifact);
+    }
+    let mut manifest = false;
+    let mut payload = false;
+    for path in &paths {
         evidence.store_read_operation();
         if !path.symlink_metadata()?.file_type().is_file() {
-            return Err(PreparedArtifactError::UnknownCacheEntry(path));
+            return Err(PreparedArtifactError::UnknownCacheEntry(path.to_path_buf()));
         }
-        names.insert(
-            path.file_name()
-                .ok_or_else(|| PreparedArtifactError::UnknownCacheEntry(path.clone()))?
-                .to_owned(),
-        );
+        let name = path
+            .file_name()
+            .ok_or_else(|| PreparedArtifactError::UnknownCacheEntry(path.to_path_buf()))?;
+        manifest |= name == MANIFEST_FILE;
+        payload |= name == PAYLOAD_FILE;
     }
-    let expected = BTreeSet::from([MANIFEST_FILE.into(), PAYLOAD_FILE.into()]);
-    if names != expected {
+    if !manifest || !payload {
         return Err(PreparedArtifactError::IncompleteArtifact);
     }
     evidence.store_validation();
@@ -4093,11 +4103,35 @@ fn checked_product(values: &[u64]) -> Option<u64> {
         .try_fold(1_u64, |product, value| product.checked_mul(*value))
 }
 
+#[derive(Clone, Copy)]
+enum PathInventoryKind {
+    Root,
+    Entry,
+}
+
+fn observed_vec_resident_bytes<T>(values: &Vec<T>) -> u64 {
+    let bytes = values
+        .capacity()
+        .saturating_mul(size_of::<T>())
+        .saturating_add(size_of::<Vec<T>>());
+    u64::try_from(bytes).unwrap_or(u64::MAX)
+}
+
+fn observed_path_inventory_bytes(paths: &Vec<Box<Path>>) -> u64 {
+    paths
+        .iter()
+        .fold(observed_vec_resident_bytes(paths), |total, path| {
+            total.saturating_add(
+                u64::try_from(path.as_os_str().as_encoded_bytes().len()).unwrap_or(u64::MAX),
+            )
+        })
+}
+
 fn directory_size_counted(
     path: &Path,
     evidence: &mut ValidationEvidence,
 ) -> Result<u64, PreparedArtifactError> {
-    directory_paths_counted(path, evidence, MAX_ENTRY_FILES)?
+    directory_paths_counted(path, evidence, MAX_ENTRY_FILES, PathInventoryKind::Entry)?
         .into_iter()
         .try_fold(0_u64, |total, entry| {
             let entry = entry.into_path_buf();
@@ -4116,11 +4150,13 @@ fn directory_paths_counted(
     path: &Path,
     evidence: &mut ValidationEvidence,
     limit: usize,
+    kind: PathInventoryKind,
 ) -> Result<Vec<Box<Path>>, PreparedArtifactError> {
     evidence.store_read_operation();
     let entries = fs::read_dir(path)?;
     evidence.observe_file_descriptors(2);
     let mut paths = Vec::with_capacity(limit);
+    evidence.observe_path_inventory(kind, &paths);
     for entry in entries {
         evidence.store_read_operation();
         if paths.len() == limit {
@@ -4137,6 +4173,7 @@ fn directory_paths_counted(
             return Err(PreparedArtifactError::UnknownCacheEntry(path));
         }
         paths.push(path.into_boxed_path());
+        evidence.observe_path_inventory(kind, &paths);
     }
     Ok(paths)
 }
@@ -4355,6 +4392,81 @@ mod tests {
         assert_eq!(
             evidence.measurement(IoBufferKind::Publication).operations(),
             0
+        );
+    }
+
+    #[test]
+    fn residency_evidence_counts_every_bounded_inventory_and_never_caps_actuals() {
+        let directory = tempfile::tempdir().expect("resident inventory");
+        fs::write(directory.path().join(MANIFEST_FILE), [0_u8; 1])
+            .expect("resident manifest entry");
+        fs::write(directory.path().join(PAYLOAD_FILE), [0_u8; 1]).expect("resident payload entry");
+        let budget = PreparedArtifactBudget::new(200, 3, 64).expect("resident budget");
+        let mut evidence = ValidationEvidence::new(budget);
+        let cache_entries = Vec::<CacheInventoryEntry>::with_capacity(budget.entries());
+        evidence.observe_cache_inventory(&cache_entries);
+        directory_paths_counted(
+            directory.path(),
+            &mut evidence,
+            root_inventory_limit(budget).expect("root inventory limit"),
+            PathInventoryKind::Root,
+        )
+        .expect("root path inventory");
+        directory_paths_counted(
+            directory.path(),
+            &mut evidence,
+            MAX_ENTRY_FILES,
+            PathInventoryKind::Entry,
+        )
+        .expect("entry path inventory");
+        evidence.observe_manifest();
+        evidence.observe_streaming_buffer(budget.streaming_buffer_bytes() + 1);
+
+        assert!(evidence.eviction_inventory_bytes > 0);
+        assert!(evidence.cache_inventory_bytes > 0);
+        assert!(evidence.root_path_inventory_bytes > 0);
+        assert!(evidence.entry_path_inventory_bytes > 0);
+        assert_eq!(evidence.manifest_bytes, MANIFEST_RESIDENT_BYTES);
+        assert_eq!(
+            evidence.streaming_buffer_bytes,
+            budget.streaming_buffer_bytes() + 1
+        );
+        let expected_resident: u64 = [
+            evidence.eviction_inventory_bytes,
+            evidence.cache_inventory_bytes,
+            evidence.root_path_inventory_bytes,
+            evidence.entry_path_inventory_bytes,
+            evidence.manifest_bytes,
+            evidence.streaming_buffer_bytes,
+        ]
+        .into_iter()
+        .sum();
+        assert_eq!(evidence.resident_buffer_bytes, expected_resident);
+        assert_eq!(
+            observed_resource_peak(
+                &LeaseResource::IoBuffer(IoBufferKind::StorageManager),
+                PreparedArtifactOperation::Generate,
+                0,
+                0,
+                &evidence,
+            ),
+            expected_resident,
+            "resident evidence must retain an observed overrun instead of clamping it"
+        );
+        let failed_temporary_bytes = 201;
+        assert_eq!(
+            observed_resource_peak(
+                &LeaseResource::Storage {
+                    demand_id: "private-cache".to_string(),
+                    use_kind: StorageUseKind::Temporary,
+                },
+                PreparedArtifactOperation::Generate,
+                0,
+                failed_temporary_bytes,
+                &evidence,
+            ),
+            failed_temporary_bytes,
+            "failed staging evidence must retain bytes above a stale reservation"
         );
     }
 

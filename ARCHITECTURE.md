@@ -59,9 +59,10 @@ artifact-role bindings; their canonical measurements reach the immutable
 execution receipt, including `RejectedStale` evidence for a missing,
 incomplete, incompatible, corrupt, or nonfinite warm candidate. Rejection
 evidence uses the existing typed observed-identity field and records the actual
-cache operations and bytes inspected. Successful prepared-artifact handles
-borrow the node execution context and cannot retain file descriptors after its
-Work claim ends. Store I/O evidence covers the private-store operation through
+cache operations and bytes inspected. Successful `PreparedArtifact` handles
+are identity-only values with no payload access or file descriptors; the cache
+node closes every descriptor before returning its measurements. Store I/O
+evidence covers the private-store operation through
 final validation; later consumer copies are separately owned. Opening the store
 canonicalizes and checks the private root before creating anything, and performs
 no hidden lookup, integrity work, or eviction. That private casa-rs cache is not
