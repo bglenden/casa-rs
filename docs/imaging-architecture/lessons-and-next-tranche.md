@@ -96,6 +96,26 @@ Each active ticket has one clean worktree and one linked pull request. A mixed
 experiment is preserved under an explicitly non-acceptance branch and is mined
 ticket by ticket. Completed work is not left unmerged merely to batch a wave.
 
+### Elapsed-time execution policy amendment
+
+The programme maintains a ready queue derived from the migration matrix and
+landed interfaces. Dependency-free implementation, focused verification, and
+independent Spec/Standards review lanes run concurrently in isolated worktrees;
+work is not serialized merely because tickets share a wave. The current
+critical path, active lanes, blockers, next gate, and last meaningful update
+are reported at each meaningful programme update so that unchanged work is
+visible rather than mistaken for integrated progress.
+
+Intermediate merges are permitted only for independently complete slices with
+their focused gates, clean checks, recorded issue evidence, and independent
+review complete. The full-wave merge gate remains mandatory even when all
+available ready-queue work has been merged incrementally. A blocker that
+remains unchanged through the bounded retry contract is an escalation point:
+reproduce it once with new evidence, then use the strongest available worker
+model at maximum reasoning before declaring the lane blocked. This policy
+optimizes elapsed time without weakening acceptance contracts, scientific or
+persistent-interoperability requirements, or final verification gates.
+
 ## Corrected next tranche
 
 | Order | Ticket | Sole outcome in this tranche | Explicit exclusion |
