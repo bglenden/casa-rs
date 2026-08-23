@@ -41,12 +41,14 @@ pub use publication_layout::{
     PublicationStagingError,
 };
 pub use prepared_artifact::{
-    PreparedArtifact, PreparedArtifactBudget, PreparedArtifactCellKey, PreparedArtifactDescriptor,
-    PreparedArtifactError, PreparedArtifactKind, PreparedArtifactOperation, PreparedArtifactOrder,
-    PreparedArtifactOwner, PreparedArtifactPlaneDescriptor, PreparedArtifactPrecision,
-    PreparedArtifactRejection, PreparedArtifactReservation, PreparedArtifactReuseOutcome,
-    PreparedArtifactSegmentDescriptor, PreparedArtifactSegmentInput, PreparedArtifactStore,
-    PreparedArtifactUvAffine,
+    PreparedArtifact, PreparedArtifactAwInterpretation, PreparedArtifactBudget,
+    PreparedArtifactCellKey, PreparedArtifactDescriptor, PreparedArtifactError,
+    PreparedArtifactKernelAlgorithm, PreparedArtifactKernelKey, PreparedArtifactKind,
+    PreparedArtifactOperation, PreparedArtifactOrder, PreparedArtifactOwner,
+    PreparedArtifactPlaneDescriptor, PreparedArtifactPrecision, PreparedArtifactRejection,
+    PreparedArtifactReservation, PreparedArtifactReuseOutcome, PreparedArtifactScientificKey,
+    PreparedArtifactSegmentDescriptor, PreparedArtifactSegmentInput,
+    PreparedArtifactSpectralMapKey, PreparedArtifactStore, PreparedArtifactUvAffine,
 };
 pub use receipt::{
     BuildIdentity, CompiledProblemEvidence, ExecutionAttemptId, ExecutionProvenance,

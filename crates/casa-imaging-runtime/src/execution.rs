@@ -2803,7 +2803,9 @@ pub(crate) fn io_buffer_kind_supports_work_kind(
     work_kind: WorkKind,
 ) -> bool {
     match io_kind {
-        crate::IoBufferKind::SourceReadAhead => work_kind == WorkKind::Prefetch,
+        crate::IoBufferKind::SourceReadAhead => {
+            matches!(work_kind, WorkKind::Prefetch | WorkKind::Cache)
+        }
         crate::IoBufferKind::Decode | crate::IoBufferKind::Preparation => {
             work_kind == WorkKind::Preparation
         }
@@ -2822,7 +2824,9 @@ pub(crate) fn io_buffer_kind_supports_work_kind(
             work_kind == WorkKind::Io
         }
         crate::IoBufferKind::Writeback => work_kind == WorkKind::Writeback,
-        crate::IoBufferKind::Publication => work_kind == WorkKind::Publication,
+        crate::IoBufferKind::Publication => {
+            matches!(work_kind, WorkKind::Publication | WorkKind::Cache)
+        }
         crate::IoBufferKind::MappedPageCache => {
             matches!(work_kind, WorkKind::Cache | WorkKind::Release)
         }

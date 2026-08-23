@@ -2181,7 +2181,7 @@ fn every_io_buffer_kind_has_exact_supported_and_unsupported_work_semantics() {
     let mappings = [
         (
             crate::IoBufferKind::SourceReadAhead,
-            &[WorkKind::Prefetch][..],
+            &[WorkKind::Prefetch, WorkKind::Cache][..],
         ),
         (crate::IoBufferKind::Decode, &[WorkKind::Preparation][..]),
         (
@@ -2214,7 +2214,7 @@ fn every_io_buffer_kind_has_exact_supported_and_unsupported_work_semantics() {
         (crate::IoBufferKind::Writeback, &[WorkKind::Writeback][..]),
         (
             crate::IoBufferKind::Publication,
-            &[WorkKind::Publication][..],
+            &[WorkKind::Publication, WorkKind::Cache][..],
         ),
         (
             crate::IoBufferKind::MappedPageCache,

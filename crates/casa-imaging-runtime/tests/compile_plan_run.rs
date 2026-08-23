@@ -51,10 +51,12 @@ use casa_imaging_runtime::{
     ObservationTransactionWork, PhysicalLayoutId, PhysicalSlot, PhysicalSlotId,
     PhysicalWorkBinding, PhysicalWorkBindingError, PlanError, PlanPrediction, PlannedArtifact,
     PlannerCostModelProfileId, PlanningBindings, PredictionConfidence, PredictionUncertainty,
-    PreparedArtifactBudget, PreparedArtifactCellKey, PreparedArtifactDescriptor, PreparedArtifactError,
+    PreparedArtifactBudget, PreparedArtifactCellKey, PreparedArtifactDescriptor,
+    PreparedArtifactError, PreparedArtifactKernelAlgorithm, PreparedArtifactKernelKey,
     PreparedArtifactOperation, PreparedArtifactOrder, PreparedArtifactOwner,
     PreparedArtifactPlaneDescriptor, PreparedArtifactPrecision, PreparedArtifactRejection,
-    PreparedArtifactReuseOutcome, PreparedArtifactSegmentInput, PreparedArtifactStore,
+    PreparedArtifactReuseOutcome, PreparedArtifactScientificKey, PreparedArtifactSegmentDescriptor,
+    PreparedArtifactSegmentInput, PreparedArtifactSpectralMapKey, PreparedArtifactStore,
     PreparedArtifactUvAffine,
     PublicationLayoutLedger, PublicationMappedStaging, PublicationParticipant,
     PublicationPhysicalLayout, PublicationResourceBounds, PublicationStaging, QueueDemand,
@@ -2636,7 +2638,7 @@ fn runtime_inventory(available_locks: u64) -> HostInventory {
             memory_domains: vec![MemoryCapacityDomain {
                 id: domain.clone(),
                 kind: MemoryCapacityKind::Host,
-                capacity_bytes: 1_024,
+                capacity_bytes: 1_048_576,
             }],
             memory_views: vec![MemoryView {
                 id: view,
@@ -2664,18 +2666,18 @@ fn runtime_inventory(available_locks: u64) -> HostInventory {
             ],
             logical_cpu_threads: 4,
             performance_cpu_cores: CpuClassCapacity::Known(4),
-            cache_capacity_bytes: 1_024,
+            cache_capacity_bytes: 1_048_576,
             lock_capacity: 4,
             file_descriptor_capacity: 16,
         },
         pressure: ExternalPressure {
-            memory_available_bytes: BTreeMap::from([(domain, 1_024)]),
+            memory_available_bytes: BTreeMap::from([(domain, 1_048_576)]),
             available_cpu_threads: 4,
             storage_available_bytes: BTreeMap::from([(storage, 1_048_576)]),
             rate_available_per_second: BTreeMap::from([(rate, 16), (transaction_rate, 16)]),
             queue_available_slots: BTreeMap::from([(queue, 4), (transaction_queue, 4)]),
             accelerator_available_slots: BTreeMap::new(),
-            cache_available_bytes: 1_024,
+            cache_available_bytes: 1_048_576,
             available_locks,
             available_file_descriptors: 16,
         },
@@ -4700,21 +4702,35 @@ fn transaction_failures_leave_the_old_generation_visible() {
         )]),
     };
     let mut completion = RunToCompletion;
+    let admission_receipts_directory = tempfile::tempdir().expect("admission receipt directory");
+    let admission_receipts = ExecutionReceiptStore::new(
+        admission_receipts_directory.path(),
+        ReceiptRetention::new(8, 1_048_576).expect("admission receipt retention"),
+    )
+    .expect("admission receipt store");
+    let pressure_guard = run_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     authority()
         .update_external_pressure(runtime_inventory(0).pressure)
         .expect("install zero-lock external pressure");
 
-    let result = run(
+    let result = runtime_run(
         &problem,
         &execution_plan,
         &current,
         &admission_registry,
         authority(),
         &mut completion,
+        admission_receipts.bind(execution_provenance(
+            casa_imaging_runtime::ExecutionAttemptId::from_sha256([243; 32]),
+            BuildIdentity::from_sha256([244; 32]),
+        )),
     );
     authority()
         .update_external_pressure(runtime_inventory(4).pressure)
         .expect("restore external pressure");
+    drop(pressure_guard);
     let error = result.expect_err("resource admission must fail before transaction work");
 
     assert!(matches!(
@@ -6256,8 +6272,23 @@ fn prepared_descriptor_with_owner_and_cell(
 }
 
 fn prepared_cell(frequency_hz: f64) -> PreparedArtifactCellKey {
-    PreparedArtifactCellKey::new(frequency_hz, 3, 1, 2, 0.125, true, "flatnoise")
-        .expect("prepared cell")
+    PreparedArtifactCellKey::new(
+        frequency_hz,
+        3.0,
+        1,
+        1,
+        0.125,
+        frequency_hz * 1.1,
+        1,
+        "vla",
+        "l-band",
+        25.0,
+        1.0,
+        casa_imaging_runtime::PreparedArtifactAwInterpretation::Wavelength,
+        true,
+        "flatnoise",
+    )
+    .expect("prepared cell")
 }
 
 fn prepared_payloads() -> (Vec<u8>, Vec<u8>) {
@@ -6300,8 +6331,14 @@ fn prepared_physical_work(
     let reservation = store
         .reservation(descriptor, operation)
         .expect("prepared reservation");
-    let allocation = AllocationId::new(format!("prepared-buffer-{}", operation_name(operation)));
-    let slot = PhysicalSlotId::new(format!("prepared-slot-{}", operation_name(operation)));
+    let mapped_allocation = AllocationId::new(format!(
+        "prepared-mapped-buffer-{}",
+        operation_name(operation)
+    ));
+    let mapped_slot = PhysicalSlotId::new(format!(
+        "prepared-mapped-slot-{}",
+        operation_name(operation)
+    ));
     let compatibility = SlotCompatibility {
         memory_domain: CapacityDomainId::new("host-memory"),
         views: BTreeSet::from([CapacityViewId::new("host-memory")]),
@@ -6311,21 +6348,67 @@ fn prepared_physical_work(
         initialization: InitializationPolicy::OverwriteBeforeRead,
         access: AllocationAccess::ReadWrite,
     };
+    let mut io_allocations = vec![(
+        IoBufferKind::MappedPageCache,
+        reservation.resident_buffer_bytes(),
+        mapped_allocation.clone(),
+        mapped_slot.clone(),
+    )];
+    if operation != PreparedArtifactOperation::Reuse {
+        io_allocations.extend([
+            (
+                IoBufferKind::SourceReadAhead,
+                reservation.streaming_buffer_bytes(),
+                AllocationId::new(format!(
+                    "prepared-source-buffer-{}",
+                    operation_name(operation)
+                )),
+                PhysicalSlotId::new(format!(
+                    "prepared-source-slot-{}",
+                    operation_name(operation)
+                )),
+            ),
+            (
+                IoBufferKind::Publication,
+                reservation.streaming_buffer_bytes(),
+                AllocationId::new(format!(
+                    "prepared-publication-buffer-{}",
+                    operation_name(operation)
+                )),
+                PhysicalSlotId::new(format!(
+                    "prepared-publication-slot-{}",
+                    operation_name(operation)
+                )),
+            ),
+        ]);
+    }
     let demand_id = format!("private-prepared-cache-{}", descriptor.cache_identity());
     let mut alternative = base.execution_dag().resource_alternative().clone();
     alternative.id = AlternativeId::new(format!("prepared-{}", operation_name(operation)));
-    alternative.demand.memory.push(MemoryDemand {
-        allocation_id: allocation.as_str().to_string(),
-        hard_bytes: reservation.resident_buffer_bytes(),
-        preferred_bytes: reservation.resident_buffer_bytes(),
-        views: vec![CapacityViewId::new("host-memory")],
-    });
+    alternative
+        .demand
+        .memory
+        .extend(
+            io_allocations
+                .iter()
+                .map(|(_, bytes, allocation, _)| MemoryDemand {
+                    allocation_id: allocation.as_str().to_string(),
+                    hard_bytes: *bytes,
+                    preferred_bytes: *bytes,
+                    views: vec![CapacityViewId::new("host-memory")],
+                }),
+        );
     alternative.demand.caches = CacheDemand {
         hard_resident_bytes: reservation.resident_buffer_bytes(),
         preferred_resident_bytes: reservation.resident_buffer_bytes(),
     };
     alternative.demand.locks = CountDemand::new(2, 2);
     alternative.demand.file_descriptors = CountDemand::new(2, 2);
+    if operation != PreparedArtifactOperation::Reuse {
+        alternative.demand.io_buffers.source_read_ahead_bytes =
+            reservation.streaming_buffer_bytes();
+        alternative.demand.io_buffers.publication_bytes = reservation.streaming_buffer_bytes();
+    }
     alternative.demand.io_buffers.mapped_page_cache_bytes = reservation.resident_buffer_bytes();
     alternative
         .demand
@@ -6355,11 +6438,6 @@ fn prepared_physical_work(
             lifetime: ClaimLifetime::Work,
         },
         ResourceClaim {
-            resource: LeaseResource::IoBuffer(IoBufferKind::MappedPageCache),
-            amount: reservation.resident_buffer_bytes(),
-            lifetime: ClaimLifetime::Work,
-        },
-        ResourceClaim {
             resource: LeaseResource::Locks,
             amount: 1,
             lifetime: ClaimLifetime::Work,
@@ -6378,6 +6456,15 @@ fn prepared_physical_work(
             lifetime: ClaimLifetime::Work,
         },
     ];
+    claims.extend(
+        io_allocations
+            .iter()
+            .map(|(kind, bytes, _, _)| ResourceClaim {
+                resource: LeaseResource::IoBuffer(*kind),
+                amount: *bytes,
+                lifetime: ClaimLifetime::Work,
+            }),
+    );
     if reservation.temporary_staging_bytes() > 0 {
         claims.push(ResourceClaim {
             resource: LeaseResource::Storage {
@@ -6388,17 +6475,21 @@ fn prepared_physical_work(
             lifetime: ClaimLifetime::Work,
         });
     }
+    let prepared_id = descriptor.work_node_id(operation);
     let prepared_node = WorkNode {
-        id: descriptor.work_node_id(operation),
+        id: prepared_id.clone(),
         kind: WorkKind::Cache,
         domain: WorkDomain::Cpu,
         implementation: descriptor.work_implementation_id(operation),
         dependencies: BTreeSet::from([WorkDependency::Work(WorkNodeId::new("execute"))]),
         claims,
-        allocations: vec![AllocationUse {
-            allocation: allocation.clone(),
-            lifetime: ClaimLifetime::Work,
-        }],
+        allocations: io_allocations
+            .iter()
+            .map(|(_, _, allocation, _)| AllocationUse {
+                allocation: allocation.clone(),
+                lifetime: ClaimLifetime::Work,
+            })
+            .collect(),
         fences: BTreeSet::new(),
         quiescence_after: BTreeSet::new(),
     };
@@ -6426,7 +6517,7 @@ fn prepared_physical_work(
             },
         ],
         allocations: vec![AllocationUse {
-            allocation: allocation.clone(),
+            allocation: mapped_allocation.clone(),
             lifetime: ClaimLifetime::Work,
         }],
         fences: BTreeSet::new(),
@@ -6445,6 +6536,37 @@ fn prepared_physical_work(
         .dependencies
         .insert(WorkDependency::Work(release_id.clone()));
     nodes.extend([prepared_node.clone(), release_node]);
+    let prepared_logical_allocations = io_allocations
+        .iter()
+        .map(|(kind, bytes, allocation, slot)| LogicalAllocation {
+            id: allocation.clone(),
+            bytes: *bytes,
+            purpose: AllocationPurpose::IoBuffer(*kind),
+            compatibility: compatibility.clone(),
+            physical_slot: slot.clone(),
+            lifetime: AllocationLifetime {
+                acquire_at: prepared_node.id.clone(),
+                release_after: BTreeSet::from([WorkDependency::Work(
+                    if *kind == IoBufferKind::MappedPageCache {
+                        release_id.clone()
+                    } else {
+                        prepared_node.id.clone()
+                    },
+                )]),
+            },
+        })
+        .collect::<Vec<_>>();
+    let prepared_slots = io_allocations
+        .iter()
+        .map(|(_, bytes, allocation, slot)| PhysicalSlot {
+            id: slot.clone(),
+            lease_resource: LeaseResource::Memory {
+                allocation_id: allocation.as_str().to_string(),
+            },
+            capacity_bytes: *bytes,
+            compatibility: compatibility.clone(),
+        })
+        .collect::<Vec<_>>();
     let dag = ExecutionDag::new(ExecutionDagSpecification {
         required_resource_capabilities: base
             .execution_dag()
@@ -6457,31 +6579,14 @@ fn prepared_physical_work(
             .logical_allocations()
             .values()
             .cloned()
-            .chain([LogicalAllocation {
-                id: allocation.clone(),
-                bytes: reservation.resident_buffer_bytes(),
-                purpose: AllocationPurpose::IoBuffer(IoBufferKind::MappedPageCache),
-                compatibility: compatibility.clone(),
-                physical_slot: slot.clone(),
-                lifetime: AllocationLifetime {
-                    acquire_at: prepared_node.id.clone(),
-                    release_after: BTreeSet::from([WorkDependency::Work(release_id.clone())]),
-                },
-            }])
+            .chain(prepared_logical_allocations)
             .collect(),
         physical_slots: base
             .execution_dag()
             .physical_slots()
             .values()
             .cloned()
-            .chain([PhysicalSlot {
-                id: slot,
-                lease_resource: LeaseResource::Memory {
-                    allocation_id: allocation.as_str().to_string(),
-                },
-                capacity_bytes: reservation.resident_buffer_bytes(),
-                compatibility,
-            }])
+            .chain(prepared_slots)
             .collect(),
         initial_knobs: ExecutionKnobs {
             cache_retention_bytes: reservation.resident_buffer_bytes(),
@@ -6495,12 +6600,18 @@ fn prepared_physical_work(
             .collect(),
     })
     .expect("prepared execution DAG");
-    let prepared_stage =
-        StagePrediction::new(prepared_node.id.clone(), 1_000).with_io(vec![IoPrediction::new(
-            IoBufferKind::MappedPageCache,
-            PREPARED_PAYLOAD_BYTES,
-            3,
-        )]);
+    let mut prepared_io = vec![IoPrediction::new(
+        IoBufferKind::MappedPageCache,
+        reservation.entry_bytes().saturating_mul(2),
+        10_000,
+    )];
+    if operation != PreparedArtifactOperation::Reuse {
+        prepared_io.extend([
+            IoPrediction::new(IoBufferKind::SourceReadAhead, PREPARED_PAYLOAD_BYTES, 1_000),
+            IoPrediction::new(IoBufferKind::Publication, reservation.entry_bytes(), 10_000),
+        ]);
+    }
+    let prepared_stage = StagePrediction::new(prepared_node.id.clone(), 1_000).with_io(prepared_io);
     let release_stage = StagePrediction::new(release_id, 100).with_io(vec![IoPrediction::new(
         IoBufferKind::MappedPageCache,
         reservation.resident_buffer_bytes(),
@@ -6526,7 +6637,10 @@ fn prepared_physical_work(
         base.artifacts()
             .iter()
             .cloned()
-            .chain([descriptor.planned_artifact(operation)])
+            .chain([
+                descriptor.planned_artifact(operation),
+                descriptor.eviction_artifact(operation),
+            ])
             .collect(),
         base.observation_transaction().clone(),
     )
@@ -6818,6 +6932,16 @@ fn public_prepared_generate_load_and_reuse_are_plan_and_receipt_bound() {
         .expect("measured generation I/O");
     assert!(generate_io.0 > PREPARED_PAYLOAD_BYTES);
     assert!(generate_io.1 > 3);
+    let generate_source_io = generate_receipt
+        .stage_actual_io(&generated_node, IoBufferKind::SourceReadAhead)
+        .expect("measured caller-source I/O");
+    assert_eq!(generate_source_io.0, PREPARED_PAYLOAD_BYTES);
+    assert!(generate_source_io.1 > 2);
+    let generate_store_write_io = generate_receipt
+        .stage_actual_io(&generated_node, IoBufferKind::Publication)
+        .expect("measured private-store write I/O");
+    assert!(generate_store_write_io.0 > PREPARED_PAYLOAD_BYTES);
+    assert!(generate_store_write_io.1 > 3);
 
     let narrower_store = PreparedArtifactStore::open(
         generated_directory.path(),
@@ -6903,6 +7027,20 @@ fn public_prepared_generate_load_and_reuse_are_plan_and_receipt_bound() {
         .expect("measured reuse I/O");
     assert!(reuse_io.0 > PREPARED_PAYLOAD_BYTES);
     assert!(reuse_io.1 > 3);
+    assert_eq!(
+        reuse_receipt.stage_actual_io(
+            &reuse_descriptor.work_node_id(PreparedArtifactOperation::Reuse),
+            IoBufferKind::SourceReadAhead,
+        ),
+        None
+    );
+    assert_eq!(
+        reuse_receipt.stage_actual_io(
+            &reuse_descriptor.work_node_id(PreparedArtifactOperation::Reuse),
+            IoBufferKind::Publication,
+        ),
+        None
+    );
 
     let loaded_directory = tempfile::tempdir().expect("loaded cache");
     let loaded_store = PreparedArtifactStore::open(loaded_directory.path(), prepared_budget())
@@ -6965,6 +7103,26 @@ fn public_prepared_generate_load_and_reuse_are_plan_and_receipt_bound() {
         .expect("measured load I/O");
     assert!(load_io.0 > PREPARED_PAYLOAD_BYTES);
     assert!(load_io.1 > 3);
+    assert_eq!(
+        load_receipt
+            .stage_actual_io(
+                &loaded_descriptor.work_node_id(PreparedArtifactOperation::Load),
+                IoBufferKind::SourceReadAhead,
+            )
+            .expect("measured load source I/O")
+            .0,
+        PREPARED_PAYLOAD_BYTES
+    );
+    assert!(
+        load_receipt
+            .stage_actual_io(
+                &loaded_descriptor.work_node_id(PreparedArtifactOperation::Load),
+                IoBufferKind::Publication,
+            )
+            .expect("measured load store-write I/O")
+            .0
+            > PREPARED_PAYLOAD_BYTES
+    );
     assert_ne!(
         generated_descriptor.work_node_id(PreparedArtifactOperation::Generate),
         loaded_descriptor.work_node_id(PreparedArtifactOperation::Load)
@@ -7057,8 +7215,23 @@ fn public_prepared_generate_load_and_reuse_are_plan_and_receipt_bound() {
         &owner_mismatch_store,
         &problem,
         prepared_owner(),
-        PreparedArtifactCellKey::new(1.000001e9, 4, 2, 3, 0.25, false, "flatnoise")
-            .expect("second prepared cell"),
+        PreparedArtifactCellKey::new(
+            1.000001e9,
+            4.0,
+            2,
+            2,
+            0.25,
+            1.100001e9,
+            3,
+            "vla",
+            "l-band",
+            25.0,
+            1.0,
+            casa_imaging_runtime::PreparedArtifactAwInterpretation::Wavelength,
+            false,
+            "flatnoise",
+        )
+        .expect("second prepared cell"),
     );
     assert_ne!(
         cell_one_descriptor.identity(),
@@ -7142,6 +7315,309 @@ fn public_prepared_generate_load_and_reuse_are_plan_and_receipt_bound() {
             .count(),
         0
     );
+}
+
+#[test]
+fn public_prepared_scientific_keys_are_exact_typed_and_bounded() {
+    let problem = compile(request(1)).expect("prepared scientific-key problem");
+    let directory = tempfile::tempdir().expect("prepared scientific-key cache");
+    let store = PreparedArtifactStore::open(directory.path(), prepared_budget())
+        .expect("prepared scientific-key store");
+    let owner = prepared_owner();
+    let cell = |w_coordinate,
+                mueller_element,
+                polarization,
+                conjugate_frequency_hz,
+                conjugate_polarization,
+                telescope: &str,
+                band: &str,
+                diameter_m,
+                w_increment,
+                interpretation,
+                rotationally_symmetric| {
+        PreparedArtifactCellKey::new(
+            1.0e9,
+            w_coordinate,
+            mueller_element,
+            polarization,
+            0.125,
+            conjugate_frequency_hz,
+            conjugate_polarization,
+            telescope,
+            band,
+            diameter_m,
+            w_increment,
+            interpretation,
+            rotationally_symmetric,
+            "flatnoise",
+        )
+        .expect("exact AW cell")
+    };
+    let aw_cells = [
+        cell(
+            3.0,
+            1,
+            1,
+            1.1e9,
+            1,
+            "vla",
+            "l-band",
+            25.0,
+            1.0,
+            casa_imaging_runtime::PreparedArtifactAwInterpretation::Wavelength,
+            true,
+        ),
+        cell(
+            f64::from_bits(3.0_f64.to_bits() + 1),
+            1,
+            1,
+            1.1e9,
+            1,
+            "vla",
+            "l-band",
+            25.0,
+            1.0,
+            casa_imaging_runtime::PreparedArtifactAwInterpretation::Wavelength,
+            true,
+        ),
+        cell(
+            3.0,
+            2,
+            1,
+            1.1e9,
+            1,
+            "vla",
+            "l-band",
+            25.0,
+            1.0,
+            casa_imaging_runtime::PreparedArtifactAwInterpretation::Wavelength,
+            true,
+        ),
+        cell(
+            3.0,
+            1,
+            2,
+            1.1e9,
+            1,
+            "vla",
+            "l-band",
+            25.0,
+            1.0,
+            casa_imaging_runtime::PreparedArtifactAwInterpretation::Wavelength,
+            true,
+        ),
+        cell(
+            3.0,
+            1,
+            1,
+            f64::from_bits(1.1e9_f64.to_bits() + 1),
+            1,
+            "vla",
+            "l-band",
+            25.0,
+            1.0,
+            casa_imaging_runtime::PreparedArtifactAwInterpretation::Wavelength,
+            true,
+        ),
+        cell(
+            3.0,
+            1,
+            1,
+            1.1e9,
+            2,
+            "vla",
+            "l-band",
+            25.0,
+            1.0,
+            casa_imaging_runtime::PreparedArtifactAwInterpretation::Wavelength,
+            true,
+        ),
+        cell(
+            3.0,
+            1,
+            1,
+            1.1e9,
+            1,
+            "vla-b",
+            "l-band",
+            25.0,
+            1.0,
+            casa_imaging_runtime::PreparedArtifactAwInterpretation::Wavelength,
+            true,
+        ),
+        cell(
+            3.0,
+            1,
+            1,
+            1.1e9,
+            1,
+            "vla",
+            "s-band",
+            25.0,
+            1.0,
+            casa_imaging_runtime::PreparedArtifactAwInterpretation::Wavelength,
+            true,
+        ),
+        cell(
+            3.0,
+            1,
+            1,
+            1.1e9,
+            1,
+            "vla",
+            "l-band",
+            27.0,
+            1.0,
+            casa_imaging_runtime::PreparedArtifactAwInterpretation::Wavelength,
+            true,
+        ),
+        cell(
+            3.0,
+            1,
+            1,
+            1.1e9,
+            1,
+            "vla",
+            "l-band",
+            25.0,
+            2.0,
+            casa_imaging_runtime::PreparedArtifactAwInterpretation::Wavelength,
+            true,
+        ),
+        cell(
+            3.0,
+            1,
+            1,
+            1.1e9,
+            1,
+            "vla",
+            "l-band",
+            25.0,
+            1.0,
+            casa_imaging_runtime::PreparedArtifactAwInterpretation::BaselineMeters,
+            true,
+        ),
+        cell(
+            3.0,
+            1,
+            1,
+            1.1e9,
+            1,
+            "vla",
+            "l-band",
+            25.0,
+            1.0,
+            casa_imaging_runtime::PreparedArtifactAwInterpretation::Wavelength,
+            false,
+        ),
+    ];
+    let aw_identities = aw_cells
+        .into_iter()
+        .map(|cell| {
+            prepared_descriptor_with_owner_and_cell(&store, &problem, owner.clone(), cell)
+                .identity()
+        })
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        aw_identities.len(),
+        12,
+        "bit-exact AW and paired-kernel semantics must not collide"
+    );
+
+    let segment = PreparedArtifactSegmentDescriptor::new(
+        "routing",
+        vec![4],
+        vec![0],
+        vec![1],
+        None,
+        PreparedArtifactPrecision::U8,
+        PreparedArtifactOrder::Axis0ContiguousLittleEndian,
+    )
+    .expect("generic prepared segment");
+    let spectral = |owner_artifact_key| {
+        PreparedArtifactDescriptor::new(
+            &store,
+            owner.clone(),
+            casa_imaging_runtime::PreparedArtifactKind::SpectralMap,
+            &problem,
+            PreparedArtifactScientificKey::SpectralMap(
+                PreparedArtifactSpectralMapKey::new(owner_artifact_key, 1.0e9, 3, 1.0e6, "lsrk")
+                    .expect("spectral-map key"),
+            ),
+            vec![segment.clone()],
+        )
+        .expect("spectral-map descriptor")
+    };
+    assert_ne!(
+        spectral("owner-map-a").identity(),
+        spectral("owner-map-b").identity(),
+        "same-kind/same-layout spectral maps require owner-derived identity separation"
+    );
+
+    let kernel = |owner_artifact_key| {
+        PreparedArtifactDescriptor::new(
+            &store,
+            owner.clone(),
+            casa_imaging_runtime::PreparedArtifactKind::Kernel,
+            &problem,
+            PreparedArtifactScientificKey::Kernel(
+                PreparedArtifactKernelKey::new(
+                    owner_artifact_key,
+                    PreparedArtifactKernelAlgorithm::Gridding,
+                    vec![4],
+                    vec![4],
+                    vec![0],
+                    vec![1],
+                    PreparedArtifactPrecision::U8,
+                )
+                .expect("kernel key"),
+            ),
+            vec![segment.clone()],
+        )
+        .expect("kernel descriptor")
+    };
+    assert_ne!(
+        kernel("owner-kernel-a").identity(),
+        kernel("owner-kernel-b").identity(),
+        "same-kind/same-layout kernels require owner-derived identity separation"
+    );
+
+    let too_many_segments = (0..65)
+        .map(|index| {
+            PreparedArtifactSegmentDescriptor::new(
+                format!("segment-{index}"),
+                vec![1],
+                vec![0],
+                vec![1],
+                None,
+                PreparedArtifactPrecision::U8,
+                PreparedArtifactOrder::Axis0ContiguousLittleEndian,
+            )
+            .expect("bounded manifest segment")
+        })
+        .collect();
+    assert!(matches!(
+        PreparedArtifactDescriptor::new(
+            &store,
+            owner,
+            casa_imaging_runtime::PreparedArtifactKind::Kernel,
+            &problem,
+            PreparedArtifactScientificKey::Kernel(
+                PreparedArtifactKernelKey::new(
+                    "owner-too-many-segments",
+                    PreparedArtifactKernelAlgorithm::Gridding,
+                    vec![1],
+                    vec![1],
+                    vec![0],
+                    vec![1],
+                    PreparedArtifactPrecision::U8,
+                )
+                .expect("bounded kernel key"),
+            ),
+            too_many_segments,
+        ),
+        Err(PreparedArtifactError::InvalidDescriptor)
+    ));
 }
 
 #[test]
@@ -7487,6 +7963,63 @@ fn public_prepared_reuse_receipts_fail_closed_rejections() {
         PreparedArtifactRejection::Incompatible,
     );
 
+    let oversized_manifest_directory = tempfile::tempdir().expect("oversized manifest cache");
+    let oversized_manifest_store =
+        PreparedArtifactStore::open(oversized_manifest_directory.path(), prepared_budget())
+            .expect("oversized manifest seed store");
+    let oversized_manifest_descriptor = prepared_descriptor(&oversized_manifest_store, &problem);
+    assert!(matches!(
+        execute_prepared_operation(
+            &problem,
+            &receipts,
+            oversized_manifest_store,
+            oversized_manifest_descriptor.clone(),
+            PreparedArtifactOperation::Generate,
+            PreparedRunExpectation {
+                attempt_byte: 115,
+                build_byte: 116,
+                expect_rejection: false,
+            },
+        ),
+        PreparedObserved::Materialized { .. }
+    ));
+    let oversized_manifest_path = oversized_manifest_directory
+        .path()
+        .join("objects-v1")
+        .join(oversized_manifest_descriptor.identity().to_string())
+        .join("manifest.json");
+    fs::write(&oversized_manifest_path, vec![b'{'; 16 * 1024 + 1])
+        .expect("write oversized manifest");
+    let oversized_manifest_store =
+        PreparedArtifactStore::open(oversized_manifest_directory.path(), prepared_budget())
+            .expect("oversized manifest reuse store");
+    assert_eq!(
+        execute_prepared_operation(
+            &problem,
+            &receipts,
+            oversized_manifest_store,
+            oversized_manifest_descriptor.clone(),
+            PreparedArtifactOperation::Reuse,
+            PreparedRunExpectation {
+                attempt_byte: 117,
+                build_byte: 118,
+                expect_rejection: true,
+            },
+        ),
+        PreparedObserved::Rejected(PreparedArtifactRejection::Incompatible)
+    );
+    let oversized_manifest_receipt = receipts
+        .open(casa_imaging_runtime::ExecutionAttemptId::from_sha256(
+            [117; 32],
+        ))
+        .expect("oversized manifest receipt");
+    assert_rejection_evidence(
+        &oversized_manifest_receipt,
+        &oversized_manifest_descriptor,
+        PreparedArtifactOperation::Reuse,
+        PreparedArtifactRejection::Incompatible,
+    );
+
     let nonfinite_directory = tempfile::tempdir().expect("nonfinite cache");
     let nonfinite_store =
         PreparedArtifactStore::open(nonfinite_directory.path(), prepared_budget())
@@ -7567,23 +8100,34 @@ fn public_prepared_reuse_receipts_fail_closed_rejections() {
 #[test]
 fn public_prepared_cache_evicts_deterministically_and_rejects_casa_boundaries() {
     let casa_root = tempfile::tempdir().expect("CASA-looking root contents");
-    fs::create_dir(casa_root.path().join("CFS_0.im")).expect("CASA-looking cache directory");
+    fs::create_dir(casa_root.path().join("foo.im")).expect("generic CASA image directory");
     assert!(matches!(
         PreparedArtifactStore::open(casa_root.path(), prepared_budget()),
         Err(PreparedArtifactError::CasaVisiblePath(_))
     ));
+    assert!(!casa_root.path().join("objects-v1").exists());
     let private_parent = tempfile::tempdir().expect("private cache parent");
-    let casa_named_root = private_parent.path().join("WTCFS_0.im");
+    let casa_named_root = private_parent.path().join("foo.im");
     assert!(matches!(
         PreparedArtifactStore::open(&casa_named_root, prepared_budget()),
         Err(PreparedArtifactError::CasaVisiblePath(_))
     ));
     assert!(!casa_named_root.exists());
 
+    let ancestor_parent = tempfile::tempdir().expect("CASA ancestor parent");
+    let casa_ancestor = ancestor_parent.path().join("ancestor.im");
+    fs::create_dir(&casa_ancestor).expect("existing CASA image ancestor");
+    let nested_private_root = casa_ancestor.join("private-cache");
+    assert!(matches!(
+        PreparedArtifactStore::open(&nested_private_root, prepared_budget()),
+        Err(PreparedArtifactError::CasaVisiblePath(_))
+    ));
+    assert!(!nested_private_root.exists());
+
     #[cfg(unix)]
     {
         let symlink_parent = tempfile::tempdir().expect("symlink cache parent");
-        let casa_target = symlink_parent.path().join("CFS_target.im");
+        let casa_target = symlink_parent.path().join("foo.im");
         fs::create_dir(&casa_target).expect("CASA symlink target");
         let symlink_root = symlink_parent.path().join("private-cache");
         std::os::unix::fs::symlink(&casa_target, &symlink_root).expect("CASA cache symlink");
@@ -7596,6 +8140,22 @@ fn public_prepared_cache_evicts_deterministically_and_rejects_casa_boundaries() 
         assert!(
             fs::read_dir(&casa_target)
                 .expect("CASA target inventory")
+                .next()
+                .is_none()
+        );
+
+        let ordinary_target = symlink_parent.path().join("ordinary-target");
+        fs::create_dir(&ordinary_target).expect("ordinary symlink target");
+        let casa_named_symlink = symlink_parent.path().join("linked.im");
+        std::os::unix::fs::symlink(&ordinary_target, &casa_named_symlink)
+            .expect("generic CASA-named symlink");
+        assert!(matches!(
+            PreparedArtifactStore::open(&casa_named_symlink, prepared_budget()),
+            Err(PreparedArtifactError::CasaVisiblePath(_))
+        ));
+        assert!(
+            fs::read_dir(&ordinary_target)
+                .expect("ordinary target inventory")
                 .next()
                 .is_none()
         );
@@ -7615,11 +8175,22 @@ fn public_prepared_cache_evicts_deterministically_and_rejects_casa_boundaries() 
         compile(request_with_geometry(1, geometry(253.0))).expect("third eviction problem"),
     ];
     let mut identities = Vec::new();
+    let mut eviction_ledgers = Vec::new();
+    let mut attempt_ids = Vec::new();
     for (index, problem) in problems.iter().enumerate() {
         let store = PreparedArtifactStore::open(cache_directory.path(), budget)
             .expect("eviction operation store");
         let descriptor = prepared_descriptor(&store, problem);
         identities.push(descriptor.identity());
+        eviction_ledgers.push(
+            descriptor
+                .eviction_artifact(PreparedArtifactOperation::Generate)
+                .identity(),
+        );
+        let attempt_byte = 121 + u8::try_from(index * 2).expect("small attempt index");
+        attempt_ids.push(casa_imaging_runtime::ExecutionAttemptId::from_sha256(
+            [attempt_byte; 32],
+        ));
         assert!(matches!(
             execute_prepared_operation(
                 problem,
@@ -7628,7 +8199,7 @@ fn public_prepared_cache_evicts_deterministically_and_rejects_casa_boundaries() 
                 descriptor,
                 PreparedArtifactOperation::Generate,
                 PreparedRunExpectation {
-                    attempt_byte: 121 + u8::try_from(index * 2).expect("small attempt index"),
+                    attempt_byte,
                     build_byte: 122 + u8::try_from(index * 2).expect("small build index"),
                     expect_rejection: false,
                 },
@@ -7649,4 +8220,74 @@ fn public_prepared_cache_evicts_deterministically_and_rejects_casa_boundaries() 
         })
         .collect::<BTreeSet<_>>();
     assert_eq!(actual, expected);
+
+    let eviction_receipt = receipts.open(attempt_ids[2]).expect("eviction receipt");
+    let eviction_ledger = eviction_ledgers[2];
+    assert_eq!(
+        eviction_receipt.artifact_role(eviction_ledger),
+        Some(ArtifactRole::Input)
+    );
+    assert_eq!(
+        eviction_receipt.artifact_disposition(eviction_ledger),
+        Some(ArtifactDisposition::Loaded)
+    );
+    let evicted_bytes = eviction_receipt
+        .artifact_actual_bytes(eviction_ledger)
+        .expect("evicted-byte evidence");
+    assert!(evicted_bytes > PREPARED_PAYLOAD_BYTES);
+    let observed_evictions = eviction_receipt
+        .artifact_observed_identity(eviction_ledger)
+        .expect("deterministic eviction identity")
+        .to_owned();
+
+    fs::remove_dir_all(cache_directory.path().join("objects-v1"))
+        .expect("reset temporary eviction cache");
+    let mut replay_ledger = None;
+    let mut replay_attempt = None;
+    for (index, problem) in problems.iter().enumerate() {
+        let store = PreparedArtifactStore::open(cache_directory.path(), budget)
+            .expect("replayed eviction operation store");
+        let descriptor = prepared_descriptor(&store, problem);
+        if index == 2 {
+            replay_ledger = Some(
+                descriptor
+                    .eviction_artifact(PreparedArtifactOperation::Generate)
+                    .identity(),
+            );
+        }
+        let attempt_byte = 131 + u8::try_from(index * 2).expect("small replay index");
+        replay_attempt = (index == 2)
+            .then_some(casa_imaging_runtime::ExecutionAttemptId::from_sha256(
+                [attempt_byte; 32],
+            ))
+            .or(replay_attempt);
+        assert!(matches!(
+            execute_prepared_operation(
+                problem,
+                &receipts,
+                store,
+                descriptor,
+                PreparedArtifactOperation::Generate,
+                PreparedRunExpectation {
+                    attempt_byte,
+                    build_byte: 132 + u8::try_from(index * 2).expect("small replay build index"),
+                    expect_rejection: false,
+                },
+            ),
+            PreparedObserved::Materialized { .. }
+        ));
+    }
+    let replay_ledger = replay_ledger.expect("replayed eviction ledger");
+    assert_eq!(replay_ledger, eviction_ledger);
+    let replay_receipt = receipts
+        .open(replay_attempt.expect("replayed eviction attempt"))
+        .expect("replayed eviction receipt");
+    assert_eq!(
+        replay_receipt.artifact_actual_bytes(replay_ledger),
+        Some(evicted_bytes)
+    );
+    assert_eq!(
+        replay_receipt.artifact_observed_identity(replay_ledger),
+        Some(observed_evictions)
+    );
 }
