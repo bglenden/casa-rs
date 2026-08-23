@@ -7,8 +7,8 @@ use std::{
     error::Error,
     fmt,
     fs::{self, File, OpenOptions},
-    io::{self, BufReader, Read, Seek, Write},
-    marker::PhantomData,
+    io::{self, BufReader, Read, Write},
+    mem::size_of,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard, OnceLock, Weak},
 };
@@ -54,7 +54,14 @@ const MANIFEST_RESERVATION_BYTES: u64 = 16 * 1024;
 const MANIFEST_RESIDENT_BYTES: u64 = 64 * 1024;
 const MAX_MANIFEST_SEGMENTS: usize = 64;
 const MAX_ENTRY_FILES: usize = 2;
-const COPY_BUFFER_CEILING: usize = 64 * 1024;
+const STREAMING_BUFFER_CEILING: usize = 64 * 1024;
+const MAX_CACHE_COMPONENT_BYTES: usize = 255;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CacheInventoryEntry {
+    identity: ArtifactIdentity,
+    bytes: u64,
+}
 
 /// Implementation family of a private prepared artifact.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1275,9 +1282,9 @@ impl PreparedArtifactRejection {
 
 /// Plan-executed result of exact warm-cache inspection and reuse.
 #[derive(Debug)]
-pub enum PreparedArtifactReuseOutcome<'lease> {
+pub enum PreparedArtifactReuseOutcome {
     /// A complete exact hit passed integrity validation.
-    Reused(PreparedArtifact<'lease>),
+    Reused(PreparedArtifact),
     /// The candidate failed closed and was not exposed for use.
     Rejected(PreparedArtifactRejection),
 }
@@ -1382,32 +1389,30 @@ impl<'a> PreparedArtifactSegmentInput<'a> {
     }
 }
 
-/// Validated immutable handle to one private prepared artifact.
+/// Validated immutable identity of one private prepared artifact.
 ///
-/// The lifetime is borrowed from the node's [`WorkExecutionContext`]. This
-/// prevents a caller from retaining the payload file after the node returns
-/// and its `FileDescriptors` work claim is released.
-pub struct PreparedArtifact<'lease> {
+/// This value deliberately exposes no payload reader. T50 validates and
+/// persists prepared bytes, but a later consumer must be a separate
+/// plan-listed operation with its own execution context and receipt evidence.
+/// Keeping the payload inaccessible prevents consumer I/O from escaping the
+/// cache node's lease and finalized measurements.
+pub struct PreparedArtifact {
     identity: ArtifactIdentity,
     integrity_identity: ArtifactIdentity,
     cache_identity: CacheIdentity,
-    payload: File,
-    segments: BTreeMap<String, (u64, u64)>,
-    _lease: PhantomData<&'lease ()>,
 }
 
-impl fmt::Debug for PreparedArtifact<'_> {
+impl fmt::Debug for PreparedArtifact {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("PreparedArtifact")
             .field("identity", &self.identity)
             .field("cache_identity", &self.cache_identity)
-            .field("segments", &self.segments)
             .finish_non_exhaustive()
     }
 }
 
-impl PreparedArtifact<'_> {
+impl PreparedArtifact {
     /// Return the exact canonical artifact identity.
     #[must_use]
     pub const fn identity(&self) -> ArtifactIdentity {
@@ -1425,33 +1430,6 @@ impl PreparedArtifact<'_> {
     pub const fn cache_identity(&self) -> CacheIdentity {
         self.cache_identity
     }
-
-    /// Return private segment names in canonical order.
-    pub fn segment_names(&self) -> impl Iterator<Item = &str> {
-        self.segments.keys().map(String::as_str)
-    }
-
-    /// Copy one immutable named segment to a caller-owned sink.
-    ///
-    /// This consumes the handle's still-live work lease and is intentionally
-    /// outside the store operation's returned I/O measurement.
-    pub fn copy_segment_to(
-        &self,
-        name: &str,
-        output: &mut dyn Write,
-    ) -> Result<u64, PreparedArtifactError> {
-        let &(offset, bytes) = self
-            .segments
-            .get(name)
-            .ok_or_else(|| PreparedArtifactError::UnknownSegment(name.to_string()))?;
-        let mut payload = self.payload.try_clone()?;
-        payload.seek(io::SeekFrom::Start(offset))?;
-        let copied = io::copy(&mut payload.take(bytes), output)?;
-        if copied != bytes {
-            return Err(PreparedArtifactError::IncompleteArtifact);
-        }
-        Ok(copied)
-    }
 }
 
 /// Cross-process locked private cache for immutable prepared artifacts.
@@ -1463,6 +1441,8 @@ pub struct PreparedArtifactStore {
     budget: PreparedArtifactBudget,
     scope: CacheScope,
     state: Arc<RootState>,
+    #[cfg(test)]
+    fail_after_evictions: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -1504,6 +1484,8 @@ impl PreparedArtifactStore {
             budget,
             scope,
             state,
+            #[cfg(test)]
+            fail_after_evictions: None,
         })
     }
 
@@ -1540,8 +1522,10 @@ impl PreparedArtifactStore {
         }
         let streaming_buffer_bytes = u64::try_from(streaming_buffer_len(self.budget, descriptor)?)
             .map_err(|_| PreparedArtifactError::ArtifactTooLarge)?;
+        let inventory_resident_bytes = inventory_resident_reservation(&self.cache, self.budget)?;
         let resident_buffer_bytes = streaming_buffer_bytes
             .checked_add(MANIFEST_RESIDENT_BYTES)
+            .and_then(|bytes| bytes.checked_add(inventory_resident_bytes))
             .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
         Ok(PreparedArtifactReservation {
             persistent_cache_bytes: self.budget.cache_bytes,
@@ -1558,15 +1542,14 @@ impl PreparedArtifactStore {
 
     /// Generate, validate, and atomically publish exact cold bytes.
     ///
-    /// The returned handle is scoped to the borrowed execution context. The
-    /// returned measurements cover this store operation through final
-    /// validation; later calls on the handle are separate consumer work.
-    pub fn generate<'lease>(
+    /// The returned identity exposes no payload access. The measurements cover
+    /// the complete private-store operation through final validation.
+    pub fn generate(
         &self,
-        context: &'lease WorkExecutionContext<'_>,
+        context: &WorkExecutionContext<'_>,
         descriptor: &PreparedArtifactDescriptor,
         segments: &mut [PreparedArtifactSegmentInput<'_>],
-    ) -> Result<(PreparedArtifact<'lease>, WorkMeasurements), PreparedArtifactError> {
+    ) -> Result<(PreparedArtifact, WorkMeasurements), PreparedArtifactError> {
         self.publish(
             context,
             descriptor,
@@ -1579,14 +1562,14 @@ impl PreparedArtifactStore {
     /// Load, validate, and atomically publish bytes from a separately validated source.
     ///
     /// This API conveys no CASA-cache provenance and never opens a CASA path.
-    /// The returned handle and measurements have the same scoped-lifetime and
-    /// store-operation boundary as [`Self::generate`].
-    pub fn load<'lease>(
+    /// The returned identity and measurements have the same operation boundary
+    /// as [`Self::generate`].
+    pub fn load(
         &self,
-        context: &'lease WorkExecutionContext<'_>,
+        context: &WorkExecutionContext<'_>,
         descriptor: &PreparedArtifactDescriptor,
         segments: &mut [PreparedArtifactSegmentInput<'_>],
-    ) -> Result<(PreparedArtifact<'lease>, WorkMeasurements), PreparedArtifactError> {
+    ) -> Result<(PreparedArtifact, WorkMeasurements), PreparedArtifactError> {
         self.publish(
             context,
             descriptor,
@@ -1598,16 +1581,15 @@ impl PreparedArtifactStore {
 
     /// Revalidate and reuse the exact warm artifact selected by planning.
     ///
-    /// A successful handle is scoped to the borrowed execution context; a
-    /// rejection returns only durable evidence and no open payload handle. The
+    /// A successful result exposes identity only; a rejection returns durable
+    /// evidence and no payload access. The
     /// measurements include the lock, cache scan, metadata, manifest, payload,
     /// and integrity operations performed before the disposition is known.
-    pub fn reuse<'lease>(
+    pub fn reuse(
         &self,
-        context: &'lease WorkExecutionContext<'_>,
+        context: &WorkExecutionContext<'_>,
         descriptor: &PreparedArtifactDescriptor,
-    ) -> Result<(PreparedArtifactReuseOutcome<'lease>, WorkMeasurements), PreparedArtifactError>
-    {
+    ) -> Result<(PreparedArtifactReuseOutcome, WorkMeasurements), PreparedArtifactError> {
         let reservation = self.reservation(descriptor, PreparedArtifactOperation::Reuse)?;
         validate_plan_binding(
             *context,
@@ -1615,90 +1597,154 @@ impl PreparedArtifactStore {
             PreparedArtifactOperation::Reuse,
             reservation,
         )?;
-        let mut evidence = ValidationEvidence::default();
-        let _lock = self.lock(&mut evidence)?;
-        let cache_bytes = self.validate_raw_budget(descriptor.identity, &mut evidence)?;
-        let path = self.entry_path(descriptor.identity);
-        evidence.store_read_operation();
-        let validated = match path.symlink_metadata() {
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+        let mut evidence = ValidationEvidence::new(reservation, self.budget);
+        let lock = match self.lock(&mut evidence) {
+            Ok(lock) => lock,
+            Err(error) => {
+                let measurements = failed_measurements(
+                    *context,
+                    descriptor,
+                    reservation,
+                    PreparedArtifactOperation::Reuse,
+                    &evidence,
+                );
+                return Err(error.with_measurements(measurements));
+            }
+        };
+        let evaluation = self.reuse_locked(descriptor, &mut evidence);
+        let unlock = lock.release(&mut evidence);
+        let evaluation = match (evaluation, unlock) {
+            (Ok(evaluation), Ok(())) => evaluation,
+            (Err(error), _) | (Ok(_), Err(error)) => {
+                let measurements = failed_measurements(
+                    *context,
+                    descriptor,
+                    reservation,
+                    PreparedArtifactOperation::Reuse,
+                    &evidence,
+                );
+                return Err(error.with_measurements(measurements));
+            }
+        };
+        match evaluation {
+            ReuseEvaluation::Rejected {
+                rejection,
+                path,
+                cache_bytes,
+            } => {
                 let measurements = rejected_measurements(
                     *context,
                     descriptor,
                     reservation,
-                    PreparedArtifactRejection::Missing,
+                    rejection,
                     &path,
                     cache_bytes,
                     evidence,
                 );
-                return Ok((
-                    PreparedArtifactReuseOutcome::Rejected(PreparedArtifactRejection::Missing),
+                Ok((
+                    PreparedArtifactReuseOutcome::Rejected(rejection),
                     measurements,
-                ));
+                ))
             }
-            Err(error) => return Err(error.into()),
+            ReuseEvaluation::Reused {
+                validated,
+                cache_bytes,
+            } => {
+                let measurements = measurements(
+                    *context,
+                    descriptor,
+                    ArtifactDisposition::Reused,
+                    &validated,
+                    MeasurementInput {
+                        reservation,
+                        operation: PreparedArtifactOperation::Reuse,
+                        cache_bytes,
+                        evidence,
+                    },
+                );
+                Ok((
+                    PreparedArtifactReuseOutcome::Reused(validated.into_handle(descriptor)),
+                    measurements,
+                ))
+            }
+        }
+    }
+
+    fn reuse_locked(
+        &self,
+        descriptor: &PreparedArtifactDescriptor,
+        evidence: &mut ValidationEvidence,
+    ) -> Result<ReuseEvaluation, PreparedArtifactError> {
+        let cache_bytes = self.validate_raw_budget(descriptor.identity, evidence)?;
+        let path = self.entry_path(descriptor.identity);
+        evidence.store_read_operation();
+        match path.symlink_metadata() {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                Ok(ReuseEvaluation::Rejected {
+                    rejection: PreparedArtifactRejection::Missing,
+                    path,
+                    cache_bytes,
+                })
+            }
+            Err(error) => Err(error.into()),
             Ok(_) => match self.validate_entry_with_evidence(
                 descriptor.identity,
                 Some(descriptor),
-                &mut evidence,
+                evidence,
             ) {
-                Ok(validated) => validated,
+                Ok(validated) => Ok(ReuseEvaluation::Reused {
+                    validated,
+                    cache_bytes,
+                }),
                 Err(error) => {
                     let Some(rejection) = rejection_for(&error) else {
                         return Err(error);
                     };
-                    let measurements = rejected_measurements(
-                        *context,
-                        descriptor,
-                        reservation,
+                    Ok(ReuseEvaluation::Rejected {
                         rejection,
-                        &path,
+                        path,
                         cache_bytes,
-                        evidence,
-                    );
-                    return Ok((
-                        PreparedArtifactReuseOutcome::Rejected(rejection),
-                        measurements,
-                    ));
+                    })
                 }
             },
-        };
-        let measurements = measurements(
-            *context,
-            descriptor,
-            ArtifactDisposition::Reused,
-            &validated,
-            MeasurementInput {
-                reservation,
-                operation: PreparedArtifactOperation::Reuse,
-                cache_bytes,
-                evidence,
-            },
-        );
-        Ok((
-            PreparedArtifactReuseOutcome::Reused(validated.into_handle(descriptor, context)),
-            measurements,
-        ))
+        }
     }
 
-    fn publish<'lease>(
+    fn publish(
         &self,
-        context: &'lease WorkExecutionContext<'_>,
+        context: &WorkExecutionContext<'_>,
         descriptor: &PreparedArtifactDescriptor,
         operation: PreparedArtifactOperation,
         disposition: ArtifactDisposition,
         segments: &mut [PreparedArtifactSegmentInput<'_>],
-    ) -> Result<(PreparedArtifact<'lease>, WorkMeasurements), PreparedArtifactError> {
+    ) -> Result<(PreparedArtifact, WorkMeasurements), PreparedArtifactError> {
         let reservation = self.reservation(descriptor, operation)?;
         validate_plan_binding(*context, descriptor, operation, reservation)?;
-        let mut evidence = ValidationEvidence::default();
-        let (validated, final_disposition, cache_bytes) = self.publish_bytes(
+        let mut evidence = ValidationEvidence::new(reservation, self.budget);
+        let lock = match self.lock(&mut evidence) {
+            Ok(lock) => lock,
+            Err(error) => {
+                let measurements =
+                    failed_measurements(*context, descriptor, reservation, operation, &evidence);
+                return Err(error.with_measurements(measurements));
+            }
+        };
+        let published = self.publish_bytes_locked(
             descriptor,
             disposition,
             segments,
             reservation,
             &mut evidence,
-        )?;
+        );
+        let unlock = lock.release(&mut evidence);
+        let (validated, final_disposition, cache_bytes) = match (published, unlock) {
+            (Ok(published), Ok(())) => published,
+            (Err(error), _) | (Ok(_), Err(error)) => {
+                let measurements =
+                    failed_measurements(*context, descriptor, reservation, operation, &evidence);
+                return Err(error.with_measurements(measurements));
+            }
+        };
         let measurements = measurements(
             *context,
             descriptor,
@@ -1711,10 +1757,10 @@ impl PreparedArtifactStore {
                 evidence,
             },
         );
-        Ok((validated.into_handle(descriptor, context), measurements))
+        Ok((validated.into_handle(descriptor), measurements))
     }
 
-    fn publish_bytes(
+    fn publish_bytes_locked(
         &self,
         descriptor: &PreparedArtifactDescriptor,
         disposition: ArtifactDisposition,
@@ -1723,138 +1769,141 @@ impl PreparedArtifactStore {
         evidence: &mut ValidationEvidence,
     ) -> Result<(ValidatedArtifact, ArtifactDisposition, u64), PreparedArtifactError> {
         validate_segment_inputs(descriptor, segments)?;
-        let _lock = self.lock(evidence)?;
         self.remove_orphan_staging(evidence)?;
         evidence.store_write_operation();
         let staging = Builder::new()
             .prefix(STAGING_PREFIX)
             .tempdir_in(&self.cache)?;
-        let payload_path = staging.path().join(PAYLOAD_FILE);
-        evidence.store_write_operation();
-        let payload_file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&payload_path)?;
-        let mut payload = payload_file;
-        let buffer_len = usize::try_from(reservation.streaming_buffer_bytes)
-            .map_err(|_| PreparedArtifactError::ArtifactTooLarge)?;
-        let mut buffer = vec![0_u8; buffer_len];
-        evidence.observe_resident(buffer_len as u64);
-        let mut payload_hasher = Sha256::new();
-        let mut offset = 0_u64;
-        let mut manifest_segments = Vec::with_capacity(descriptor.segments.len());
-        for (segment, input) in descriptor.segments.iter().zip(segments.iter_mut()) {
-            let bytes = segment.byte_len()?;
-            let digest = stream_segment(
-                input.source,
-                &mut payload,
-                &mut payload_hasher,
-                &mut buffer,
-                segment,
-                evidence,
-            )?;
-            manifest_segments.push(ManifestSegment {
-                descriptor: segment.clone(),
-                offset,
-                bytes,
-                sha256: encode_hex(&digest),
-            });
-            offset = offset
-                .checked_add(bytes)
-                .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
-        }
-        drop(buffer);
-        evidence.store_write_operation();
-        payload.sync_all()?;
-        drop(payload);
-        let payload_sha256: [u8; 32] = payload_hasher.finalize().into();
-        {
-            let manifest = ArtifactManifest {
-                schema: CACHE_SCHEMA.to_string(),
-                schema_version: CACHE_SCHEMA_VERSION,
-                identity: descriptor.identity.to_string(),
-                cache_identity: descriptor.cache_identity.to_string(),
-                descriptor: ManifestDescriptor::from_descriptor(descriptor),
-                payload_sha256: encode_hex(&payload_sha256),
-                payload_bytes: offset,
-                segments: manifest_segments,
-            };
-            evidence.observe_resident(MANIFEST_RESIDENT_BYTES);
-            let manifest_path = staging.path().join(MANIFEST_FILE);
+        let staging_path = staging.keep();
+        let result = (|| -> Result<_, PreparedArtifactError> {
+            let payload_path = staging_path.join(PAYLOAD_FILE);
             evidence.store_write_operation();
-            let mut manifest_output = OpenOptions::new()
+            let payload_file = OpenOptions::new()
                 .create_new(true)
                 .write(true)
-                .open(&manifest_path)?;
-            {
-                let mut bounded_manifest = BoundedFileWriter::new(
-                    &mut manifest_output,
-                    MANIFEST_RESERVATION_BYTES,
+                .open(&payload_path)?;
+            evidence.observe_file_descriptors(2);
+            let mut payload = payload_file;
+            let buffer_len = usize::try_from(reservation.streaming_buffer_bytes)
+                .map_err(|_| PreparedArtifactError::ArtifactTooLarge)?;
+            let mut buffer = vec![0_u8; buffer_len];
+            evidence.observe_resident(buffer_len as u64);
+            let mut payload_hasher = Sha256::new();
+            let mut offset = 0_u64;
+            let mut manifest_segments = Vec::with_capacity(descriptor.segments.len());
+            for (segment, input) in descriptor.segments.iter().zip(segments.iter_mut()) {
+                let bytes = segment.byte_len()?;
+                let digest = stream_segment(
+                    input.source,
+                    &mut payload,
+                    &mut payload_hasher,
+                    &mut buffer,
+                    segment,
                     evidence,
-                );
-                let serialization = serde_json::to_writer(&mut bounded_manifest, &manifest);
-                if bounded_manifest.exceeded() {
-                    return Err(PreparedArtifactError::ManifestReservationExceeded {
-                        actual: MANIFEST_RESERVATION_BYTES.saturating_add(1),
-                        reserved: MANIFEST_RESERVATION_BYTES,
-                    });
-                }
-                serialization?;
-                if let Err(error) = bounded_manifest.write_all(b"\n") {
+                )?;
+                manifest_segments.push(ManifestSegment {
+                    descriptor: segment.clone(),
+                    offset,
+                    bytes,
+                    sha256: encode_hex(&digest),
+                });
+                offset = offset
+                    .checked_add(bytes)
+                    .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
+            }
+            drop(buffer);
+            evidence.store_write_operation();
+            payload.sync_all()?;
+            drop(payload);
+            let payload_sha256: [u8; 32] = payload_hasher.finalize().into();
+            {
+                let manifest = ArtifactManifest {
+                    schema: CACHE_SCHEMA.to_string(),
+                    schema_version: CACHE_SCHEMA_VERSION,
+                    identity: descriptor.identity.to_string(),
+                    cache_identity: descriptor.cache_identity.to_string(),
+                    descriptor: ManifestDescriptor::from_descriptor(descriptor),
+                    payload_sha256: encode_hex(&payload_sha256),
+                    payload_bytes: offset,
+                    segments: manifest_segments,
+                };
+                evidence.observe_resident(MANIFEST_RESIDENT_BYTES);
+                let manifest_path = staging_path.join(MANIFEST_FILE);
+                evidence.store_write_operation();
+                let mut manifest_output = OpenOptions::new()
+                    .create_new(true)
+                    .write(true)
+                    .open(&manifest_path)?;
+                evidence.observe_file_descriptors(2);
+                {
+                    let mut bounded_manifest = BoundedFileWriter::new(
+                        &mut manifest_output,
+                        MANIFEST_RESERVATION_BYTES,
+                        evidence,
+                    );
+                    let serialization = serde_json::to_writer(&mut bounded_manifest, &manifest);
                     if bounded_manifest.exceeded() {
                         return Err(PreparedArtifactError::ManifestReservationExceeded {
                             actual: MANIFEST_RESERVATION_BYTES.saturating_add(1),
                             reserved: MANIFEST_RESERVATION_BYTES,
                         });
                     }
-                    return Err(error.into());
+                    serialization?;
+                    if let Err(error) = bounded_manifest.write_all(b"\n") {
+                        if bounded_manifest.exceeded() {
+                            return Err(PreparedArtifactError::ManifestReservationExceeded {
+                                actual: MANIFEST_RESERVATION_BYTES.saturating_add(1),
+                                reserved: MANIFEST_RESERVATION_BYTES,
+                            });
+                        }
+                        return Err(error.into());
+                    }
                 }
-            }
-            evidence.store_write_operation();
-            manifest_output.sync_all()?;
-        }
-        sync_directory_counted(staging.path(), evidence)?;
-
-        let incoming_bytes = directory_size_counted(staging.path(), evidence)?;
-        if incoming_bytes > reservation.entry_bytes {
-            return Err(PreparedArtifactError::ManifestReservationExceeded {
-                actual: incoming_bytes,
-                reserved: reservation.entry_bytes,
-            });
-        }
-        let target = self.entry_path(descriptor.identity);
-        evidence.store_read_operation();
-        let final_disposition = match target.symlink_metadata() {
-            Ok(_) => {
-                let existing = self.validate_entry_with_evidence(
-                    descriptor.identity,
-                    Some(descriptor),
-                    evidence,
-                )?;
-                if existing.payload_sha256 != payload_sha256 {
-                    return Err(PreparedArtifactError::PublicationConflict);
-                }
-                disposition
-            }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                let evicted = self.evict_for(descriptor.identity, incoming_bytes, evidence)?;
-                evidence.record_evictions(evicted);
-                let staging_path = staging.keep();
                 evidence.store_write_operation();
-                if let Err(error) = fs::rename(&staging_path, &target) {
-                    evidence.store_write_operation();
-                    let _ = fs::remove_dir_all(staging_path);
-                    return Err(error.into());
-                }
-                sync_directory_counted(&self.cache, evidence)?;
-                disposition
+                manifest_output.sync_all()?;
             }
-            Err(error) => return Err(error.into()),
-        };
-        let validated =
-            self.validate_entry_with_evidence(descriptor.identity, Some(descriptor), evidence)?;
-        let cache_bytes = self.validate_budget_without_eviction(evidence)?;
-        Ok((validated, final_disposition, cache_bytes))
+            sync_directory_counted(&staging_path, evidence)?;
+
+            let incoming_bytes = directory_size_counted(&staging_path, evidence)?;
+            if incoming_bytes > reservation.entry_bytes {
+                return Err(PreparedArtifactError::ManifestReservationExceeded {
+                    actual: incoming_bytes,
+                    reserved: reservation.entry_bytes,
+                });
+            }
+            let target = self.entry_path(descriptor.identity);
+            evidence.store_read_operation();
+            let final_disposition = match target.symlink_metadata() {
+                Ok(_) => {
+                    let existing = self.validate_entry_with_evidence(
+                        descriptor.identity,
+                        Some(descriptor),
+                        evidence,
+                    )?;
+                    if existing.payload_sha256 != payload_sha256 {
+                        return Err(PreparedArtifactError::PublicationConflict);
+                    }
+                    disposition
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    self.evict_for(descriptor.identity, incoming_bytes, evidence)?;
+                    evidence.store_write_operation();
+                    fs::rename(&staging_path, &target)?;
+                    sync_directory_counted(&self.cache, evidence)?;
+                    disposition
+                }
+                Err(error) => return Err(error.into()),
+            };
+            let validated =
+                self.validate_entry_with_evidence(descriptor.identity, Some(descriptor), evidence)?;
+            let cache_bytes = self.validate_budget_without_eviction(evidence)?;
+            Ok((validated, final_disposition, cache_bytes))
+        })();
+        let cleanup = remove_staging_counted(&staging_path, evidence);
+        match (result, cleanup) {
+            (Ok(result), Ok(())) => Ok(result),
+            (Err(error), _) | (Ok(_), Err(error)) => Err(error),
+        }
     }
 
     fn evict_for(
@@ -1862,30 +1911,47 @@ impl PreparedArtifactStore {
         incoming: ArtifactIdentity,
         incoming_bytes: u64,
         evidence: &mut ValidationEvidence,
-    ) -> Result<Vec<(ArtifactIdentity, u64)>, PreparedArtifactError> {
+    ) -> Result<(), PreparedArtifactError> {
         let mut entries = self.entries(evidence)?;
-        entries.remove(&incoming);
+        entries.retain(|entry| entry.identity != incoming);
         let mut total = incoming_bytes;
-        for bytes in entries.values() {
+        let mut existing_bytes = 0_u64;
+        for entry in &entries {
+            existing_bytes = existing_bytes
+                .checked_add(entry.bytes)
+                .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
             total = total
-                .checked_add(*bytes)
+                .checked_add(entry.bytes)
                 .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
         }
-        let mut evicted = Vec::new();
-        while total > self.budget.cache_bytes || entries.len() + 1 > self.budget.entries {
-            let Some((&identity, &bytes)) = entries.iter().next() else {
+        evidence.observe_cache_bytes(existing_bytes);
+        let mut evicted = 0_usize;
+        while total > self.budget.cache_bytes
+            || entries.len().saturating_sub(evicted).saturating_add(1) > self.budget.entries
+        {
+            let Some(entry) = entries.get(evicted).copied() else {
                 return Err(PreparedArtifactError::CacheBudgetExceeded {
                     required: total,
                     budget: self.budget.cache_bytes,
                 });
             };
+            let entry_path = self.entry_path(entry.identity);
+            let eviction_path = self
+                .cache
+                .join(format!("{STAGING_PREFIX}evicted-{}", entry.identity));
             evidence.store_write_operation();
-            fs::remove_dir_all(self.entry_path(identity))?;
-            entries.remove(&identity);
-            total = total.saturating_sub(bytes);
-            evicted.push((identity, bytes));
+            fs::rename(entry_path, &eviction_path)?;
+            evidence.record_eviction(entry);
+            total = total.saturating_sub(entry.bytes);
+            evicted = evicted.saturating_add(1);
+            #[cfg(test)]
+            if self.fail_after_evictions == Some(evicted) {
+                return Err(io::Error::other("injected post-eviction failure").into());
+            }
+            evidence.store_write_operation();
+            fs::remove_dir_all(eviction_path)?;
         }
-        Ok(evicted)
+        Ok(())
     }
 
     fn validate_budget_without_eviction(
@@ -1893,11 +1959,12 @@ impl PreparedArtifactStore {
         evidence: &mut ValidationEvidence,
     ) -> Result<u64, PreparedArtifactError> {
         let entries = self.entries(evidence)?;
-        let total = entries.values().try_fold(0_u64, |total, bytes| {
+        let total = entries.iter().try_fold(0_u64, |total, entry| {
             total
-                .checked_add(*bytes)
+                .checked_add(entry.bytes)
                 .ok_or(PreparedArtifactError::ArtifactTooLarge)
         })?;
+        evidence.observe_cache_bytes(total);
         if total > self.budget.cache_bytes {
             return Err(PreparedArtifactError::CacheBudgetExceeded {
                 required: total,
@@ -1921,8 +1988,9 @@ impl PreparedArtifactStore {
         let mut total = 0_u64;
         let mut count = 0_usize;
         for path in
-            directory_paths_counted(&self.cache, evidence, root_inventory_limit(self.budget))?
+            directory_paths_counted(&self.cache, evidence, root_inventory_limit(self.budget)?)?
         {
+            let path = path.into_path_buf();
             let name = path
                 .file_name()
                 .ok_or_else(|| PreparedArtifactError::UnknownCacheEntry(path.clone()))?
@@ -1968,17 +2036,19 @@ impl PreparedArtifactStore {
                 budget: self.budget.entries,
             });
         }
+        evidence.observe_cache_bytes(total);
         Ok(total)
     }
 
     fn entries(
         &self,
         evidence: &mut ValidationEvidence,
-    ) -> Result<BTreeMap<ArtifactIdentity, u64>, PreparedArtifactError> {
-        let mut entries = BTreeMap::new();
+    ) -> Result<Vec<CacheInventoryEntry>, PreparedArtifactError> {
+        let mut entries = Vec::with_capacity(self.budget.entries);
         for path in
-            directory_paths_counted(&self.cache, evidence, root_inventory_limit(self.budget))?
+            directory_paths_counted(&self.cache, evidence, root_inventory_limit(self.budget)?)?
         {
+            let path = path.into_path_buf();
             let name = path
                 .file_name()
                 .ok_or_else(|| PreparedArtifactError::UnknownCacheEntry(path.clone()))?;
@@ -1994,15 +2064,19 @@ impl PreparedArtifactStore {
                 .filter(|digest| name == encode_hex(digest))
                 .ok_or_else(|| PreparedArtifactError::UnknownCacheEntry(path.clone()))?;
             let identity = ArtifactIdentity::from_owner_digest(digest);
-            if entries.len() == self.budget.entries {
+            if entries.len() == entries.capacity() {
                 return Err(PreparedArtifactError::CacheEntryBudgetExceeded {
                     required: entries.len().saturating_add(1),
                     budget: self.budget.entries,
                 });
             }
             validate_entry_inventory(&path, evidence)?;
-            entries.insert(identity, directory_size_counted(&path, evidence)?);
+            entries.push(CacheInventoryEntry {
+                identity,
+                bytes: directory_size_counted(&path, evidence)?,
+            });
         }
+        entries.sort_unstable_by_key(|entry| entry.identity);
         Ok(entries)
     }
 
@@ -2012,8 +2086,9 @@ impl PreparedArtifactStore {
     ) -> Result<(), PreparedArtifactError> {
         let mut removed = false;
         for path in
-            directory_paths_counted(&self.cache, evidence, root_inventory_limit(self.budget))?
+            directory_paths_counted(&self.cache, evidence, root_inventory_limit(self.budget)?)?
         {
+            let path = path.into_path_buf();
             if path
                 .file_name()
                 .ok_or_else(|| PreparedArtifactError::UnknownCacheEntry(path.clone()))?
@@ -2113,6 +2188,7 @@ impl PreparedArtifactStore {
         let disk_bytes = directory_size_counted(&directory, evidence)?;
         evidence.store_read_operation();
         let payload = File::open(&payload_path).map_err(map_incomplete)?;
+        evidence.observe_file_descriptors(2);
         let buffer_len = streaming_buffer_len(self.budget, &descriptor)?;
         evidence.observe_resident(
             MANIFEST_RESIDENT_BYTES
@@ -2130,17 +2206,9 @@ impl PreparedArtifactStore {
             return Err(PreparedArtifactError::CorruptArtifact);
         }
         evidence.store_validation();
-        let segments = descriptor
-            .segments
-            .into_iter()
-            .zip(segment_integrity)
-            .map(|(descriptor, integrity)| (descriptor.name, (integrity.offset, integrity.bytes)))
-            .collect();
         Ok(ValidatedArtifact {
-            payload,
             payload_sha256,
             payload_bytes,
-            segments,
             disk_bytes,
             path: directory,
         })
@@ -2159,18 +2227,34 @@ impl PreparedArtifactStore {
             .mutation
             .lock()
             .map_err(|_| PreparedArtifactError::PoisonedStore)?;
+        evidence.observe_locks(1);
         evidence.store_control_operation();
-        let file = OpenOptions::new()
-            .create(true)
-            .truncate(false)
+        let file = match OpenOptions::new()
+            .create_new(true)
             .read(true)
             .write(true)
-            .open(&self.lock_path)?;
+            .open(&self.lock_path)
+        {
+            Ok(file) => {
+                evidence.store_write_operation();
+                file
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                evidence.store_control_operation();
+                OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(&self.lock_path)?
+            }
+            Err(error) => return Err(error.into()),
+        };
+        evidence.observe_file_descriptors(1);
         evidence.store_control_operation();
         FileExt::lock_exclusive(&file)?;
         Ok(StoreLock {
             _in_process: in_process,
             file,
+            locked: true,
         })
     }
 }
@@ -2178,11 +2262,22 @@ impl PreparedArtifactStore {
 struct StoreLock<'a> {
     _in_process: MutexGuard<'a, ()>,
     file: File,
+    locked: bool,
+}
+
+impl StoreLock<'_> {
+    fn release(mut self, evidence: &mut ValidationEvidence) -> Result<(), PreparedArtifactError> {
+        evidence.store_control_operation();
+        self.locked = false;
+        FileExt::unlock(&self.file).map_err(Into::into)
+    }
 }
 
 impl Drop for StoreLock<'_> {
     fn drop(&mut self) {
-        let _ = FileExt::unlock(&self.file);
+        if self.locked {
+            let _ = FileExt::unlock(&self.file);
+        }
     }
 }
 
@@ -2263,27 +2358,30 @@ struct ManifestSegmentIntegrity {
 }
 
 struct ValidatedArtifact {
-    payload: File,
     payload_sha256: [u8; 32],
     payload_bytes: u64,
-    segments: BTreeMap<String, (u64, u64)>,
     disk_bytes: u64,
     path: PathBuf,
 }
 
+enum ReuseEvaluation {
+    Reused {
+        validated: ValidatedArtifact,
+        cache_bytes: u64,
+    },
+    Rejected {
+        rejection: PreparedArtifactRejection,
+        path: PathBuf,
+        cache_bytes: u64,
+    },
+}
+
 impl ValidatedArtifact {
-    fn into_handle<'lease>(
-        self,
-        descriptor: &PreparedArtifactDescriptor,
-        _lease: &'lease WorkExecutionContext<'_>,
-    ) -> PreparedArtifact<'lease> {
+    fn into_handle(self, descriptor: &PreparedArtifactDescriptor) -> PreparedArtifact {
         PreparedArtifact {
             identity: descriptor.identity,
             integrity_identity: derive_content_identity(descriptor, self.payload_sha256),
             cache_identity: descriptor.cache_identity(),
-            payload: self.payload,
-            segments: self.segments,
-            _lease: PhantomData,
         }
     }
 }
@@ -2291,6 +2389,13 @@ impl ValidatedArtifact {
 /// Typed fail-closed prepared-artifact error.
 #[derive(Debug)]
 pub enum PreparedArtifactError {
+    /// A plan-bound store operation failed after producing receipt evidence.
+    Execution {
+        /// Underlying typed store failure.
+        source: Box<PreparedArtifactError>,
+        /// Completed resource, I/O, and mutation evidence.
+        measurements: WorkMeasurements,
+    },
     /// Private-cache or payload I/O failed.
     Io(io::Error),
     /// The private manifest could not be encoded or decoded.
@@ -2353,8 +2458,6 @@ pub enum PreparedArtifactError {
     ProductAuthorityViolation,
     /// Named byte streams did not exactly match the canonical descriptor order.
     SegmentMismatch,
-    /// A requested immutable segment does not exist.
-    UnknownSegment(String),
     /// A stream or published entry ended before its exact size.
     IncompleteArtifact,
     /// A stream or published entry exceeded its exact size.
@@ -2396,6 +2499,7 @@ pub enum PreparedArtifactError {
 impl fmt::Display for PreparedArtifactError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Execution { source, .. } => write!(formatter, "{source}"),
             Self::Io(error) => write!(formatter, "prepared-artifact I/O failed: {error}"),
             Self::Json(error) => write!(formatter, "prepared-artifact manifest failed: {error}"),
             Self::InvalidBudget => formatter.write_str("prepared-artifact budget must be positive"),
@@ -2450,9 +2554,6 @@ impl fmt::Display for PreparedArtifactError {
                 .write_str("prepared-artifact cache work cannot own Product Graph publication"),
             Self::SegmentMismatch => formatter
                 .write_str("prepared-artifact streams do not match the canonical named segments"),
-            Self::UnknownSegment(segment) => {
-                write!(formatter, "unknown prepared-artifact segment {segment:?}")
-            }
             Self::IncompleteArtifact => formatter.write_str("prepared artifact is incomplete"),
             Self::OversizedArtifact => {
                 formatter.write_str("prepared artifact exceeds its exact planned size")
@@ -2498,9 +2599,28 @@ impl fmt::Display for PreparedArtifactError {
 impl Error for PreparedArtifactError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            Self::Execution { source, .. } => Some(source.as_ref()),
             Self::Io(error) => Some(error),
             Self::Json(error) => Some(error),
             _ => None,
+        }
+    }
+}
+
+impl PreparedArtifactError {
+    /// Return completed plan-bound measurements retained by a failed operation.
+    #[must_use]
+    pub const fn work_measurements(&self) -> Option<&WorkMeasurements> {
+        match self {
+            Self::Execution { measurements, .. } => Some(measurements),
+            _ => None,
+        }
+    }
+
+    fn with_measurements(self, measurements: WorkMeasurements) -> Self {
+        Self::Execution {
+            source: Box::new(self),
+            measurements,
         }
     }
 }
@@ -2798,33 +2918,33 @@ fn validate_plan_declaration(
     )?;
     require_claim(
         node,
-        |resource| matches!(resource, LeaseResource::ResidentCache),
-        reservation.resident_buffer_bytes,
-        "resident cache",
-    )?;
-    require_claim(
-        node,
         |resource| {
             matches!(
                 resource,
-                LeaseResource::IoBuffer(IoBufferKind::MappedPageCache)
+                LeaseResource::IoBuffer(IoBufferKind::StorageManager)
             )
         },
         reservation.resident_buffer_bytes,
-        "mapped-page-cache buffer",
+        "private-store buffer",
+    )?;
+    require_claim(
+        node,
+        |resource| matches!(resource, LeaseResource::IoBuffer(IoBufferKind::Writeback)),
+        writeback_buffer_bytes(reservation, operation),
+        "private-store writeback buffer",
     )?;
     if operation != PreparedArtifactOperation::Reuse {
-        for (kind, label) in [
-            (IoBufferKind::SourceReadAhead, "source-read-ahead buffer"),
-            (IoBufferKind::Publication, "publication buffer"),
-        ] {
-            require_claim(
-                node,
-                |resource| matches!(resource, LeaseResource::IoBuffer(candidate) if *candidate == kind),
-                reservation.streaming_buffer_bytes,
-                label,
-            )?;
-        }
+        require_claim(
+            node,
+            |resource| {
+                matches!(
+                    resource,
+                    LeaseResource::IoBuffer(IoBufferKind::SourceReadAhead)
+                )
+            },
+            reservation.streaming_buffer_bytes,
+            "source-read-ahead buffer",
+        )?;
     }
     require_claim(
         node,
@@ -2868,9 +2988,9 @@ fn validate_plan_declaration(
             "temporary staging storage",
         )?;
     }
-    let mut required_io = vec![IoBufferKind::MappedPageCache];
+    let mut required_io = vec![IoBufferKind::StorageManager, IoBufferKind::Writeback];
     if operation != PreparedArtifactOperation::Reuse {
-        required_io.extend([IoBufferKind::SourceReadAhead, IoBufferKind::Publication]);
+        required_io.push(IoBufferKind::SourceReadAhead);
     }
     let predicted = stage
         .io()
@@ -2883,9 +3003,11 @@ fn validate_plan_declaration(
         || stage.io().iter().any(|prediction| {
             let minimum_bytes = match prediction.kind() {
                 IoBufferKind::SourceReadAhead => payload_bytes,
-                IoBufferKind::MappedPageCache | IoBufferKind::Publication => {
+                IoBufferKind::StorageManager => reservation.entry_bytes,
+                IoBufferKind::Writeback if operation != PreparedArtifactOperation::Reuse => {
                     reservation.entry_bytes
                 }
+                IoBufferKind::Writeback => 0,
                 _ => u64::MAX,
             };
             prediction.bytes() < minimum_bytes || prediction.operations() == 0
@@ -2917,6 +3039,17 @@ fn require_claim(
     }
 }
 
+const fn writeback_buffer_bytes(
+    reservation: PreparedArtifactReservation,
+    operation: PreparedArtifactOperation,
+) -> u64 {
+    if matches!(operation, PreparedArtifactOperation::Reuse) {
+        1
+    } else {
+        reservation.streaming_buffer_bytes
+    }
+}
+
 struct MeasurementInput {
     reservation: PreparedArtifactReservation,
     operation: PreparedArtifactOperation,
@@ -2937,10 +3070,7 @@ fn measurements(
         input.cache_bytes,
         validated.disk_bytes,
         input.reservation,
-        input
-            .evidence
-            .resident_buffer_bytes
-            .min(input.reservation.resident_buffer_bytes),
+        &input.evidence,
     );
     let io = context
         .stage_prediction()
@@ -2995,9 +3125,7 @@ fn rejected_measurements(
         cache_bytes,
         0,
         reservation,
-        evidence
-            .resident_buffer_bytes
-            .min(reservation.resident_buffer_bytes),
+        &evidence,
     );
     let io = context
         .stage_prediction()
@@ -3029,27 +3157,70 @@ fn rejected_measurements(
     WorkMeasurements::new(resources, io, artifacts)
 }
 
+fn failed_measurements(
+    context: WorkExecutionContext<'_>,
+    descriptor: &PreparedArtifactDescriptor,
+    reservation: PreparedArtifactReservation,
+    operation: PreparedArtifactOperation,
+    evidence: &ValidationEvidence,
+) -> WorkMeasurements {
+    let resources = resource_measurements(
+        context,
+        operation,
+        evidence.cache_bytes_peak,
+        evidence.cache_write.bytes.min(reservation.entry_bytes),
+        reservation,
+        evidence,
+    );
+    let io = context
+        .stage_prediction()
+        .io()
+        .iter()
+        .map(|prediction| evidence.measurement(prediction.kind()))
+        .collect();
+    let ledger = descriptor.eviction_artifact(operation);
+    let evicted_bytes = evidence.evictions.iter().map(|(_, bytes)| *bytes).sum();
+    let artifacts = vec![ArtifactMeasurement::new(
+        ledger.identity(),
+        Some(derive_eviction_observed_identity(
+            ledger.identity(),
+            &evidence.evictions,
+        )),
+        ArtifactDisposition::Loaded,
+        evicted_bytes,
+        None,
+    )];
+    WorkMeasurements::new(resources, io, artifacts)
+}
+
 fn resource_measurements(
     context: WorkExecutionContext<'_>,
     operation: PreparedArtifactOperation,
     cache_bytes: u64,
     entry_bytes: u64,
     reservation: PreparedArtifactReservation,
-    resident_buffer_bytes: u64,
+    evidence: &ValidationEvidence,
 ) -> Vec<ResourceMeasurement> {
     context
         .resources()
         .iter()
         .map(|capability| {
             let peak = match capability.resource() {
-                LeaseResource::Workers | LeaseResource::Locks => 1,
-                LeaseResource::FileDescriptors => 2,
-                LeaseResource::ResidentCache
-                | LeaseResource::IoBuffer(IoBufferKind::MappedPageCache) => resident_buffer_bytes,
-                LeaseResource::IoBuffer(
-                    IoBufferKind::SourceReadAhead | IoBufferKind::Publication,
-                ) if operation != PreparedArtifactOperation::Reuse => {
+                LeaseResource::Workers => 1,
+                LeaseResource::Locks => evidence.locks_peak,
+                LeaseResource::FileDescriptors => evidence.file_descriptors_peak,
+                LeaseResource::IoBuffer(IoBufferKind::StorageManager) => evidence
+                    .resident_buffer_bytes
+                    .min(reservation.resident_buffer_bytes),
+                LeaseResource::IoBuffer(IoBufferKind::SourceReadAhead)
+                    if operation != PreparedArtifactOperation::Reuse =>
+                {
                     reservation.streaming_buffer_bytes
+                }
+                LeaseResource::IoBuffer(IoBufferKind::Writeback)
+                    if evidence.cache_write.operations > 0 =>
+                {
+                    writeback_buffer_bytes(reservation, operation)
                 }
                 LeaseResource::Storage {
                     use_kind: StorageUseKind::PersistentCache,
@@ -3131,7 +3302,7 @@ fn streaming_buffer_len(
     let ceiling = usize::try_from(
         budget
             .streaming_buffer_bytes
-            .min(COPY_BUFFER_CEILING as u64),
+            .min(STREAMING_BUFFER_CEILING as u64),
     )
     .map_err(|_| PreparedArtifactError::ArtifactTooLarge)?;
     let length = ceiling - ceiling % scalar;
@@ -3237,6 +3408,7 @@ struct IoCounter {
 enum IoClass {
     SourceRead,
     StoreRead,
+    StoreControl,
     StoreWrite,
 }
 
@@ -3244,12 +3416,28 @@ enum IoClass {
 struct ValidationEvidence {
     source_read: IoCounter,
     cache_read: IoCounter,
+    cache_control: IoCounter,
     cache_write: IoCounter,
     resident_buffer_bytes: u64,
+    cache_bytes_peak: u64,
+    locks_peak: u64,
+    file_descriptors_peak: u64,
     evictions: Vec<(ArtifactIdentity, u64)>,
 }
 
 impl ValidationEvidence {
+    fn new(reservation: PreparedArtifactReservation, budget: PreparedArtifactBudget) -> Self {
+        // The inventory vectors reserve their complete configuration-bounded
+        // capacity before filesystem mutation. Report the same conservative
+        // execution bound that planning admitted; actual container allocation
+        // can therefore never disappear behind allocator implementation detail.
+        Self {
+            resident_buffer_bytes: reservation.resident_buffer_bytes,
+            evictions: Vec::with_capacity(budget.entries),
+            ..Self::default()
+        }
+    }
+
     fn source_validation(&mut self) {
         self.record(IoClass::SourceRead, 0);
     }
@@ -3259,7 +3447,7 @@ impl ValidationEvidence {
     }
 
     fn store_control_operation(&mut self) {
-        self.record(IoClass::StoreRead, 0);
+        self.record(IoClass::StoreControl, 0);
     }
 
     fn store_write_operation(&mut self) {
@@ -3274,10 +3462,23 @@ impl ValidationEvidence {
         self.resident_buffer_bytes = self.resident_buffer_bytes.max(bytes);
     }
 
+    fn observe_cache_bytes(&mut self, bytes: u64) {
+        self.cache_bytes_peak = self.cache_bytes_peak.max(bytes);
+    }
+
+    fn observe_locks(&mut self, locks: u64) {
+        self.locks_peak = self.locks_peak.max(locks);
+    }
+
+    fn observe_file_descriptors(&mut self, file_descriptors: u64) {
+        self.file_descriptors_peak = self.file_descriptors_peak.max(file_descriptors);
+    }
+
     fn record(&mut self, class: IoClass, bytes: u64) {
         let counter = match class {
             IoClass::SourceRead => &mut self.source_read,
             IoClass::StoreRead => &mut self.cache_read,
+            IoClass::StoreControl => &mut self.cache_control,
             IoClass::StoreWrite => &mut self.cache_write,
         };
         counter.bytes = counter.bytes.saturating_add(bytes);
@@ -3287,8 +3488,14 @@ impl ValidationEvidence {
     fn counter(&self, kind: IoBufferKind) -> IoCounter {
         match kind {
             IoBufferKind::SourceReadAhead => self.source_read,
-            IoBufferKind::Publication | IoBufferKind::Writeback => self.cache_write,
-            IoBufferKind::MappedPageCache | IoBufferKind::StorageManager => self.cache_read,
+            IoBufferKind::Writeback => self.cache_write,
+            IoBufferKind::StorageManager => IoCounter {
+                bytes: self.cache_read.bytes,
+                operations: self
+                    .cache_read
+                    .operations
+                    .saturating_add(self.cache_control.operations),
+            },
             _ => IoCounter::default(),
         }
     }
@@ -3302,8 +3509,8 @@ impl ValidationEvidence {
         self.cache_read.bytes
     }
 
-    fn record_evictions(&mut self, evictions: Vec<(ArtifactIdentity, u64)>) {
-        self.evictions = evictions;
+    fn record_eviction(&mut self, entry: CacheInventoryEntry) {
+        self.evictions.push((entry.identity, entry.bytes));
     }
 }
 
@@ -3397,6 +3604,7 @@ fn read_manifest_counted(
 ) -> Result<ArtifactManifest, PreparedArtifactError> {
     evidence.store_read_operation();
     let file = File::open(path).map_err(map_incomplete)?;
+    evidence.observe_file_descriptors(2);
     evidence.observe_resident(MANIFEST_RESIDENT_BYTES);
     let bounded = BoundedFileReader {
         file,
@@ -3533,6 +3741,7 @@ fn validate_entry_inventory(
             },
         )?
     {
+        let path = path.into_path_buf();
         evidence.store_read_operation();
         if !path.symlink_metadata()?.file_type().is_file() {
             return Err(PreparedArtifactError::UnknownCacheEntry(path));
@@ -3714,6 +3923,7 @@ fn directory_size_counted(
     directory_paths_counted(path, evidence, MAX_ENTRY_FILES)?
         .into_iter()
         .try_fold(0_u64, |total, entry| {
+            let entry = entry.into_path_buf();
             evidence.store_read_operation();
             let metadata = entry.symlink_metadata()?;
             if !metadata.file_type().is_file() {
@@ -3729,37 +3939,123 @@ fn directory_paths_counted(
     path: &Path,
     evidence: &mut ValidationEvidence,
     limit: usize,
-) -> Result<Vec<PathBuf>, PreparedArtifactError> {
+) -> Result<Vec<Box<Path>>, PreparedArtifactError> {
     evidence.store_read_operation();
     let entries = fs::read_dir(path)?;
-    let mut paths = Vec::with_capacity(limit.min(16));
+    evidence.observe_file_descriptors(2);
+    let mut paths = Vec::with_capacity(limit);
     for entry in entries {
         evidence.store_read_operation();
-        let path = entry?.path();
         if paths.len() == limit {
             return Err(PreparedArtifactError::CacheEntryBudgetExceeded {
                 required: limit.saturating_add(1),
                 budget: limit,
             });
         }
-        paths.push(path);
+        let path = entry?.path();
+        let component = path
+            .file_name()
+            .ok_or_else(|| PreparedArtifactError::UnknownCacheEntry(path.clone()))?;
+        if component.as_encoded_bytes().len() > MAX_CACHE_COMPONENT_BYTES {
+            return Err(PreparedArtifactError::UnknownCacheEntry(path));
+        }
+        paths.push(path.into_boxed_path());
     }
     Ok(paths)
 }
 
-fn root_inventory_limit(budget: PreparedArtifactBudget) -> usize {
-    budget.entries.saturating_mul(2).saturating_add(1)
+fn root_inventory_limit(budget: PreparedArtifactBudget) -> Result<usize, PreparedArtifactError> {
+    budget
+        .entries
+        .checked_mul(2)
+        .and_then(|entries| entries.checked_add(1))
+        .ok_or(PreparedArtifactError::ArtifactTooLarge)
+}
+
+fn inventory_resident_reservation(
+    cache: &Path,
+    budget: PreparedArtifactBudget,
+) -> Result<u64, PreparedArtifactError> {
+    let cache_path_bytes = cache.as_os_str().as_encoded_bytes().len();
+    let root_paths = path_inventory_resident_reservation(
+        cache_path_bytes,
+        root_inventory_limit(budget)?,
+        MAX_CACHE_COMPONENT_BYTES,
+    )?;
+    let entry_directory_bytes = cache_path_bytes
+        .checked_add(1 + MAX_CACHE_COMPONENT_BYTES)
+        .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
+    let entry_paths = path_inventory_resident_reservation(
+        entry_directory_bytes,
+        MAX_ENTRY_FILES,
+        MAX_CACHE_COMPONENT_BYTES,
+    )?;
+    let cache_entries = fixed_vec_resident_reservation::<CacheInventoryEntry>(budget.entries)?;
+    let evictions = fixed_vec_resident_reservation::<(ArtifactIdentity, u64)>(budget.entries)?;
+    root_paths
+        .checked_add(entry_paths)
+        .and_then(|bytes| bytes.checked_add(cache_entries))
+        .and_then(|bytes| bytes.checked_add(evictions))
+        .ok_or(PreparedArtifactError::ArtifactTooLarge)
+}
+
+fn path_inventory_resident_reservation(
+    directory_bytes: usize,
+    entries: usize,
+    component_bytes: usize,
+) -> Result<u64, PreparedArtifactError> {
+    let path_bytes = directory_bytes
+        .checked_add(1)
+        .and_then(|bytes| bytes.checked_add(component_bytes))
+        .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
+    let entry_bytes = size_of::<Box<Path>>()
+        .checked_add(path_bytes)
+        .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
+    let allocation = entries
+        .checked_mul(entry_bytes)
+        .and_then(|bytes| bytes.checked_add(size_of::<Vec<Box<Path>>>()))
+        .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
+    u64::try_from(allocation).map_err(|_| PreparedArtifactError::ArtifactTooLarge)
+}
+
+fn fixed_vec_resident_reservation<T>(entries: usize) -> Result<u64, PreparedArtifactError> {
+    let allocation = entries
+        .checked_mul(size_of::<T>())
+        .and_then(|bytes| bytes.checked_add(size_of::<Vec<T>>()))
+        .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
+    u64::try_from(allocation).map_err(|_| PreparedArtifactError::ArtifactTooLarge)
 }
 
 fn sync_directory_counted(
     path: &Path,
     evidence: &mut ValidationEvidence,
 ) -> Result<(), PreparedArtifactError> {
-    evidence.store_write_operation();
+    evidence.store_control_operation();
     let directory = File::open(path)?;
+    evidence.observe_file_descriptors(2);
     evidence.store_write_operation();
     directory.sync_all()?;
     Ok(())
+}
+
+fn remove_staging_counted(
+    path: &Path,
+    evidence: &mut ValidationEvidence,
+) -> Result<(), PreparedArtifactError> {
+    evidence.store_control_operation();
+    match path.symlink_metadata() {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+        Ok(metadata) if metadata.file_type().is_dir() => {
+            evidence.store_write_operation();
+            fs::remove_dir_all(path)?;
+            let parent = path
+                .parent()
+                .ok_or_else(|| PreparedArtifactError::UnknownCacheEntry(path.to_path_buf()))?;
+            sync_directory_counted(parent, evidence)
+        }
+        Ok(_) => Err(PreparedArtifactError::UnknownCacheEntry(path.to_path_buf())),
+    }
 }
 
 fn map_incomplete(error: io::Error) -> PreparedArtifactError {
@@ -3865,17 +4161,92 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reuse_reports_private_store_lock_control_with_mapped_io() {
+    fn private_store_control_is_storage_manager_work_not_publication() {
         let mut evidence = ValidationEvidence::default();
         evidence.store_control_operation();
         evidence.store_control_operation();
 
-        let mapped = evidence.measurement(IoBufferKind::MappedPageCache);
-        assert_eq!(mapped.bytes(), 0);
-        assert_eq!(mapped.operations(), 2);
+        let storage = evidence.measurement(IoBufferKind::StorageManager);
+        assert_eq!(storage.bytes(), 0);
+        assert_eq!(storage.operations(), 2);
+        assert_eq!(evidence.cache_read.operations, 0);
+        assert_eq!(evidence.cache_control.operations, 2);
+        assert_eq!(
+            evidence.measurement(IoBufferKind::Writeback).operations(),
+            0
+        );
         assert_eq!(
             evidence.measurement(IoBufferKind::Publication).operations(),
             0
+        );
+    }
+
+    #[test]
+    fn private_store_lock_creation_is_counted_once_as_writeback() {
+        let directory = tempfile::tempdir().expect("private lock cache");
+        let budget = PreparedArtifactBudget::new(200, 3, 1).expect("bounded cache");
+        let store = PreparedArtifactStore::open(directory.path(), budget).expect("store");
+        assert!(!store.lock_path.exists());
+
+        let mut created = ValidationEvidence::default();
+        store
+            .lock(&mut created)
+            .expect("new private lock")
+            .release(&mut created)
+            .expect("release new private lock");
+        assert_eq!(created.cache_write.operations, 1);
+        assert_eq!(created.cache_control.operations, 3);
+        assert_eq!(created.locks_peak, 1);
+        assert_eq!(created.file_descriptors_peak, 1);
+
+        let mut reopened = ValidationEvidence::default();
+        store
+            .lock(&mut reopened)
+            .expect("existing private lock")
+            .release(&mut reopened)
+            .expect("release existing private lock");
+        assert_eq!(reopened.cache_write.operations, 0);
+        assert_eq!(reopened.cache_control.operations, 4);
+        assert_eq!(reopened.locks_peak, 1);
+        assert_eq!(reopened.file_descriptors_peak, 1);
+    }
+
+    #[test]
+    fn partial_eviction_failure_retains_every_completed_mutation() {
+        let directory = tempfile::tempdir().expect("eviction failure cache");
+        let budget = PreparedArtifactBudget::new(200, 3, 1).expect("bounded cache");
+        let mut store = PreparedArtifactStore::open(directory.path(), budget).expect("store");
+        let identities = [
+            ArtifactIdentity::from_owner_digest([1; 32]),
+            ArtifactIdentity::from_owner_digest([2; 32]),
+        ];
+        for identity in identities {
+            let entry = store.entry_path(identity);
+            fs::create_dir(&entry).expect("entry directory");
+            fs::write(entry.join(MANIFEST_FILE), [0_u8; 64]).expect("manifest bytes");
+            fs::write(entry.join(PAYLOAD_FILE), [0_u8; 64]).expect("payload bytes");
+        }
+        store.fail_after_evictions = Some(1);
+        let mut evidence = ValidationEvidence::default();
+
+        let error = store
+            .evict_for(
+                ArtifactIdentity::from_owner_digest([3; 32]),
+                100,
+                &mut evidence,
+            )
+            .expect_err("the injected second eviction step fails");
+
+        assert!(error.to_string().contains("injected post-eviction failure"));
+        assert_eq!(evidence.evictions, vec![(identities[0], 128)]);
+        assert!(!store.entry_path(identities[0]).exists());
+        assert!(store.entry_path(identities[1]).exists());
+        assert!(
+            store
+                .cache
+                .join(format!("{STAGING_PREFIX}evicted-{}", identities[0]))
+                .exists(),
+            "the recoverable staging entry proves the eviction rename completed"
         );
     }
 }

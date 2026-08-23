@@ -2207,14 +2207,17 @@ fn every_io_buffer_kind_has_exact_supported_and_unsupported_work_semantics() {
         ),
         (
             crate::IoBufferKind::StorageManager,
-            &[WorkKind::Io, WorkKind::Release][..],
+            &[WorkKind::Cache, WorkKind::Io, WorkKind::Release][..],
         ),
         (crate::IoBufferKind::TiledColumnWriter, &[WorkKind::Io][..]),
         (crate::IoBufferKind::ScalarColumnWriter, &[WorkKind::Io][..]),
-        (crate::IoBufferKind::Writeback, &[WorkKind::Writeback][..]),
+        (
+            crate::IoBufferKind::Writeback,
+            &[WorkKind::Cache, WorkKind::Writeback][..],
+        ),
         (
             crate::IoBufferKind::Publication,
-            &[WorkKind::Publication, WorkKind::Cache][..],
+            &[WorkKind::Publication][..],
         ),
         (
             crate::IoBufferKind::MappedPageCache,

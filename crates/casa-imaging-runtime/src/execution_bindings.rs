@@ -473,10 +473,9 @@ impl ResourceMeasurement {
 
 /// Observed bytes and operations for one planned I/O category.
 ///
-/// A measurement describes the operation boundary that produced the
-/// adapter's evidence. It is not a promise that later consumer work, such as
-/// copying a returned prepared-artifact segment into another buffer, is
-/// included.
+/// A measurement covers only the scheduled node that produced the adapter's
+/// evidence. Later consumer I/O must execute as a separate plan-listed node
+/// with its own measurements.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct IoMeasurement {
     kind: IoBufferKind,
@@ -2293,6 +2292,20 @@ pub trait WorkImplementation {
     /// staging before its publication fence succeeds.
     fn execute(&self, context: WorkExecutionContext<'_>) -> Result<WorkMeasurements, Self::Error>;
 
+    /// Return completed synchronous evidence retained by an execution error.
+    ///
+    /// The default reports none. Implementations that mutate durable state or
+    /// complete I/O before failing must retain those measurements in their
+    /// error and expose them here. The runtime validates the evidence against
+    /// the sealed node before writing it into the failed execution receipt;
+    /// artifacts not reached before failure may be omitted.
+    fn failure_measurements<'error>(
+        &'error self,
+        _error: &'error Self::Error,
+    ) -> Option<&'error WorkMeasurements> {
+        None
+    }
+
     /// Block until one exact fence previously launched by [`Self::execute`]
     /// settles. An error means the fence settled unsuccessfully, so the
     /// scheduler may drain and release resources after recording failure. For
@@ -2470,6 +2483,23 @@ fn validate_work_measurements(
     work: &WorkExecutionContext,
     measurements: &WorkMeasurements,
 ) -> Result<(), ExecutionEvidenceError> {
+    validate_measurements(plan, work, measurements, true)
+}
+
+fn validate_failed_work_measurements(
+    plan: &ExecutionPlan,
+    work: &WorkExecutionContext,
+    measurements: &WorkMeasurements,
+) -> Result<(), ExecutionEvidenceError> {
+    validate_measurements(plan, work, measurements, false)
+}
+
+fn validate_measurements(
+    plan: &ExecutionPlan,
+    work: &WorkExecutionContext,
+    measurements: &WorkMeasurements,
+    require_all_artifacts: bool,
+) -> Result<(), ExecutionEvidenceError> {
     let node = &work.node().id;
     let claims = work
         .node()
@@ -2607,9 +2637,10 @@ fn validate_work_measurements(
             });
         }
     }
-    if let Some(artifact) = planned_artifacts
-        .keys()
-        .find(|artifact| !measured_artifacts.contains_key(artifact))
+    if require_all_artifacts
+        && let Some(artifact) = planned_artifacts
+            .keys()
+            .find(|artifact| !measured_artifacts.contains_key(artifact))
     {
         return Err(ExecutionEvidenceError::MissingArtifact {
             node: node.clone(),
@@ -3058,14 +3089,39 @@ where
                         }
                     }
                     Err(source) => {
-                        let _ = receipt.work_failed(&node_id);
-                        if work.node().kind == WorkKind::Release {
-                            if pending.is_none() {
-                                pending = Some(PendingRunError::Execution {
-                                    node: node_id.clone(),
-                                    source,
-                                });
+                        let diagnostic = source.to_string();
+                        match implementation
+                            .failure_measurements(&source)
+                            .map(|measurements| {
+                                (
+                                    measurements,
+                                    validate_failed_work_measurements(plan, &context, measurements),
+                                )
+                            }) {
+                            Some((measurements, Ok(()))) => {
+                                if let Err(error) =
+                                    receipt.work_failed_with_measurements(&node_id, measurements)
+                                {
+                                    defer_receipt_error(&mut scheduler, &mut pending, error);
+                                }
                             }
+                            Some((_, Err(error))) => {
+                                if pending.is_none() {
+                                    pending = Some(PendingRunError::Evidence(error));
+                                }
+                                let _ = receipt.work_failed(&node_id);
+                            }
+                            None => {
+                                let _ = receipt.work_failed(&node_id);
+                            }
+                        }
+                        if pending.is_none() {
+                            pending = Some(PendingRunError::Execution {
+                                node: node_id.clone(),
+                                source,
+                            });
+                        }
+                        if work.node().kind == WorkKind::Release {
                             controller_stopped = true;
                             if scheduler.fail_release_work(&node_id).is_err() {
                                 return Err(terminal_drain_error(
@@ -3077,11 +3133,6 @@ where
                             scheduler.cancel_after_error();
                             continue;
                         }
-                        let diagnostic = source.to_string();
-                        pending = Some(PendingRunError::Execution {
-                            node: node_id.clone(),
-                            source,
-                        });
                         controller_stopped = true;
                         match scheduler.finish_work(
                             node_id,

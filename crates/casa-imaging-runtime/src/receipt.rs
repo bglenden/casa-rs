@@ -3876,6 +3876,16 @@ impl<'store> ReceiptRecorder<'store> {
         self.checkpoint()
     }
 
+    pub(crate) fn work_failed_with_measurements(
+        &mut self,
+        node: &WorkNodeId,
+        measurements: &WorkMeasurements,
+    ) -> Result<(), ReceiptError> {
+        self.record_measurements(node, measurements)?;
+        self.finish_node(node, ReceiptStatus::Failed)?;
+        self.checkpoint()
+    }
+
     pub(crate) fn fences_launched(&mut self, node: &WorkNodeId) -> Result<(), ReceiptError> {
         let node_id = stable_text(node.as_str());
         let expected = self

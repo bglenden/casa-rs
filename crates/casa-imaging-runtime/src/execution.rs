@@ -2719,8 +2719,17 @@ fn validate_kind(node: &WorkNode) -> Result<(), ExecutionError> {
         WorkKind::Preparation => Ok(()),
         WorkKind::Cache => require_claim(
             node,
-            |resource| matches!(resource, LeaseResource::ResidentCache),
-            "cache reservation",
+            |resource| {
+                matches!(
+                    resource,
+                    LeaseResource::ResidentCache
+                        | LeaseResource::Storage {
+                            use_kind: crate::StorageUseKind::PersistentCache,
+                            ..
+                        }
+                )
+            },
+            "resident or persistent cache reservation",
         ),
         WorkKind::FftPlanning => require_claim(
             node,
@@ -2818,15 +2827,18 @@ pub(crate) fn io_buffer_kind_supports_work_kind(
         crate::IoBufferKind::SpillWrite => work_kind == WorkKind::Spill,
         crate::IoBufferKind::Serialization => work_kind == WorkKind::Serialization,
         crate::IoBufferKind::StorageManager => {
-            matches!(work_kind, WorkKind::Io | WorkKind::Release)
+            matches!(
+                work_kind,
+                WorkKind::Io | WorkKind::Cache | WorkKind::Release
+            )
         }
         crate::IoBufferKind::TiledColumnWriter | crate::IoBufferKind::ScalarColumnWriter => {
             work_kind == WorkKind::Io
         }
-        crate::IoBufferKind::Writeback => work_kind == WorkKind::Writeback,
-        crate::IoBufferKind::Publication => {
-            matches!(work_kind, WorkKind::Publication | WorkKind::Cache)
+        crate::IoBufferKind::Writeback => {
+            matches!(work_kind, WorkKind::Writeback | WorkKind::Cache)
         }
+        crate::IoBufferKind::Publication => work_kind == WorkKind::Publication,
         crate::IoBufferKind::MappedPageCache => {
             matches!(work_kind, WorkKind::Cache | WorkKind::Release)
         }
