@@ -1359,6 +1359,10 @@ def rust_source_inventory(
     casa_root = re.compile(r"^(?:casa_[A-Za-z0-9_]+|casars(?:_[A-Za-z0-9_]+)?)$")
     for index, token in enumerate(tokens):
         root = rust_identifier_text(token)
+        has_separator_before = index > 0 and tokens[index - 1].text == "::"
+        leading_absolute_root = has_separator_before and (
+            index < 2 or tokens[index - 2].text != "::"
+        )
         if (
             index in ignored
             or root is None
@@ -1366,7 +1370,7 @@ def rust_source_inventory(
                 casa_root.fullmatch(root) is None
                 and root not in {"crate", "self", "super"}
             )
-            or (index > 0 and tokens[index - 1].text == "::")
+            or (has_separator_before and not leading_absolute_root)
             or index + 2 >= len(tokens)
             or tokens[index + 1].text != "::"
             or not rust_identifier(tokens[index + 2])
@@ -1381,6 +1385,8 @@ def rust_source_inventory(
         ):
             segments.append(tokens[cursor + 1].text)
             cursor += 2
+        if leading_absolute_root:
+            segments[0] = f"::{segments[0]}"
         inventory = (
             relative_paths if root in {"crate", "self", "super"} else qualified_paths
         )

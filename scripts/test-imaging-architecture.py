@@ -896,6 +896,25 @@ fn private_probe() {
         self.assertEqual(privacy, [])
         self.assertEqual(globs, [])
 
+    def test_t15_rust_lexer_inventories_absolute_roots_without_nested_duplicates(
+        self,
+    ) -> None:
+        source = """
+fn probe() {
+    let _ = ::casa_imaging_runtime::ReceiptStatus::Running;
+    let _ = casa_imaging_runtime::ReceiptStatus::Running;
+}
+"""
+        inventory = checker.rust_source_inventory(source, "synthetic.rs")
+        self.assertEqual(
+            inventory[1],
+            [
+                ("::casa_imaging_runtime::ReceiptStatus::Running", 3),
+                ("casa_imaging_runtime::ReceiptStatus::Running", 4),
+            ],
+        )
+        self.assertEqual(inventory[2], [])
+
     def test_t15_walking_skeleton_rejects_every_glob_import_origin(self) -> None:
         boundary = next(
             value
@@ -974,6 +993,14 @@ fn private_probe() {
                 "walking_skeleton.rs",
                 "fn walking_skeleton() {\n"
                 "    let _ = casa_imaging_runtime::FutureWeightingResult;\n"
+                "}\n",
+                "T15 walking skeleton",
+            ),
+            (
+                "t15-private-walking-skeleton",
+                "walking_skeleton.rs",
+                "fn walking_skeleton() {\n"
+                "    let _ = ::casa_imaging_runtime::ReceiptStatus::Running;\n"
                 "}\n",
                 "T15 walking skeleton",
             ),
