@@ -160,6 +160,34 @@
       "accepted_violation_digest": null
     },
     {
+      "id": "t15-private-walking-skeleton",
+      "roots": [
+        "crates/casa-imaging-runtime/tests/compile_plan_run"
+      ],
+      "extensions": [
+        ".rs"
+      ],
+      "forbidden_patterns": [
+        {
+          "regex": "(?m)^\\s*pub(?:\\([^\\n)]*\\))?\\s+(?:struct|enum|trait|type|fn|mod|use)\\b",
+          "message": "T15 walking skeleton must remain private test code"
+        },
+        {
+          "regex": "(?m)^\\s*(?:use|extern\\s+crate)\\s+(?!(?:casa_imaging_model|casa_imaging_runtime)\\b)(?:casa_[A-Za-z0-9_]+|casars(?:_[A-Za-z0-9_]+)?)\\b|\\b(?!(?:casa_imaging_model|casa_imaging_runtime)::)(?:casa_[A-Za-z0-9_]+|casars(?:_[A-Za-z0-9_]+)?)::",
+          "message": "T15 walking skeleton imports a frontend, backend, router, or legacy owner"
+        },
+        {
+          "regex": "\\b(?:SelectedObservationCompletion|WeightingGeneration|WeightingReplayCompletion|CompleteDataCompletion|NormalStateGeneration|ModelDelta|SolverEvidence|ProductGeneration|ProductGenerationSeal|ProductGenerationAuthority)\\b",
+          "message": "T15 walking skeleton anticipates future completion or generation ownership"
+        },
+        {
+          "regex": "\\b(?:ExecutionScheduler|NativeEnginePort|LegacyWholeRunEnginePort|authority_plan|authority_run)\\b",
+          "message": "T15 walking skeleton creates alternate execution authority"
+        }
+      ],
+      "accepted_violation_digest": null
+    },
+    {
       "id": "rust-imaging-frontends",
       "roots": [
         "crates/casa-provider-contracts/src",

@@ -454,6 +454,45 @@ class ArchitecturePolicyTests(unittest.TestCase):
             ):
                 checker.validate_source_boundaries(policy, root)
 
+    def test_t15_walking_skeleton_boundary_rejects_authority_leaks(self) -> None:
+        boundary = next(
+            (
+                value
+                for value in self.policy["source_boundaries"]
+                if value["id"] == "t15-private-walking-skeleton"
+            ),
+            None,
+        )
+        self.assertIsNotNone(boundary, "T15 must own a test-only source boundary")
+        assert boundary is not None
+        for source, message in [
+            (
+                "pub struct SyntheticCompletionAuthority;\n",
+                r"T15 walking skeleton must remain private test code",
+            ),
+            (
+                "use casa_imaging_router::ImagingRouter;\n",
+                r"T15 walking skeleton imports a frontend, backend, router, or legacy owner",
+            ),
+            (
+                "struct SelectedObservationCompletion;\n",
+                r"T15 walking skeleton anticipates future completion or generation ownership",
+            ),
+            (
+                "struct ExecutionScheduler;\n",
+                r"T15 walking skeleton creates alternate execution authority",
+            ),
+        ]:
+            with self.subTest(source=source), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                fixture = root / boundary["roots"][0] / "walking_skeleton.rs"
+                fixture.parent.mkdir(parents=True)
+                fixture.write_text(source, encoding="utf-8")
+                with self.assertRaisesRegex(checker.ArchitectureError, message):
+                    checker.validate_source_boundaries(
+                        {"source_boundaries": [boundary]}, root
+                    )
+
     def test_transitional_frontend_boundary_rejects_forbidden_symbol_replacement(
         self,
     ) -> None:

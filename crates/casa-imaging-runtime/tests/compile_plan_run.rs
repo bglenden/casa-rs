@@ -79,6 +79,9 @@ fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
 
 mod common;
 
+#[path = "compile_plan_run/walking_skeleton.rs"]
+mod walking_skeleton;
+
 use common::{identity, problem_inputs};
 
 fn only_receipt_path(root: &Path) -> PathBuf {
@@ -423,6 +426,7 @@ fn recording_executor(
         fence_waits: AtomicUsize::new(0),
         observed_knobs: Mutex::new(Vec::new()),
         measurements: BTreeMap::new(),
+        resource_peak_overrides: BTreeMap::new(),
         panic_on_execute: false,
         publication_launched: None,
         visible_generation: None,
@@ -435,6 +439,7 @@ fn recording_executor(
         publication_buffer_held: None,
         receipt_root_to_disrupt: None,
         publication_pause: None,
+        publication_probe: None,
     }
 }
 
@@ -468,6 +473,7 @@ struct RecordingExecutor {
     fence_waits: AtomicUsize,
     observed_knobs: Mutex<Vec<ExecutionKnobs>>,
     measurements: BTreeMap<WorkNodeId, (Vec<IoMeasurement>, Vec<ArtifactMeasurement>)>,
+    resource_peak_overrides: BTreeMap<WorkNodeId, u64>,
     panic_on_execute: bool,
     publication_launched: Option<Arc<AtomicBool>>,
     visible_generation: Option<Arc<AtomicUsize>>,
@@ -480,6 +486,15 @@ struct RecordingExecutor {
     publication_buffer_held: Option<Arc<AtomicBool>>,
     receipt_root_to_disrupt: Option<PathBuf>,
     publication_pause: Option<Arc<PublicationPause>>,
+    publication_probe: Option<PublicationProbe>,
+}
+
+#[derive(Debug)]
+struct PublicationProbe {
+    receipts: Arc<ExecutionReceiptStore>,
+    attempt: casa_imaging_runtime::ExecutionAttemptId,
+    prepared_observed: Arc<AtomicBool>,
+    publication_calls: Arc<AtomicUsize>,
 }
 
 impl WorkImplementation for RecordingExecutor {
@@ -538,7 +553,10 @@ impl WorkImplementation for RecordingExecutor {
                 ResourceMeasurement::new(
                     claim.resource.clone(),
                     claim.lifetime.clone(),
-                    claim.amount,
+                    self.resource_peak_overrides
+                        .get(&context.node().id)
+                        .copied()
+                        .unwrap_or(claim.amount),
                 )
             })
             .collect();
@@ -614,6 +632,25 @@ impl WorkImplementation for RecordingExecutor {
                 "publication requires the transaction-bound Publication node",
             ));
         }
+        if let Some(probe) = &self.publication_probe {
+            probe.publication_calls.fetch_add(1, Ordering::SeqCst);
+            let receipt = probe
+                .receipts
+                .open(probe.attempt)
+                .map_err(io::Error::other)?;
+            let prepared = receipt.status() == ReceiptStatus::PublicationPrepared
+                && receipt.artifact_identities().into_iter().all(|artifact| {
+                    receipt.artifact_role(artifact) != Some(ArtifactRole::Output)
+                        || receipt.artifact_disposition(artifact)
+                            == Some(ArtifactDisposition::Staged)
+                });
+            probe.prepared_observed.store(prepared, Ordering::SeqCst);
+            if !prepared {
+                return Err(io::Error::other(
+                    "publication became callable before durable receipt preparation",
+                ));
+            }
+        }
         if let Some(message) = self.publication_failure {
             return Err(io::Error::other(message));
         }
@@ -667,6 +704,7 @@ fn publication_recording_executor(
         fence_waits: AtomicUsize::new(0),
         observed_knobs: Mutex::new(Vec::new()),
         measurements: BTreeMap::new(),
+        resource_peak_overrides: BTreeMap::new(),
         panic_on_execute: false,
         publication_launched: Some(launched),
         visible_generation: Some(visible_generation),
@@ -679,6 +717,7 @@ fn publication_recording_executor(
         publication_buffer_held: None,
         receipt_root_to_disrupt: None,
         publication_pause: None,
+        publication_probe: None,
     }
 }
 
@@ -698,6 +737,7 @@ fn failing_transaction_executor(
         fence_waits: AtomicUsize::new(0),
         observed_knobs: Mutex::new(Vec::new()),
         measurements: BTreeMap::new(),
+        resource_peak_overrides: BTreeMap::new(),
         panic_on_execute: false,
         publication_launched: None,
         visible_generation: Some(visible_generation),
@@ -710,6 +750,7 @@ fn failing_transaction_executor(
         publication_buffer_held: None,
         receipt_root_to_disrupt: None,
         publication_pause: None,
+        publication_probe: None,
     }
 }
 
