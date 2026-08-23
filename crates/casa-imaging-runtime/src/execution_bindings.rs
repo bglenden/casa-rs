@@ -472,6 +472,11 @@ impl ResourceMeasurement {
 }
 
 /// Observed bytes and operations for one planned I/O category.
+///
+/// A measurement describes the operation boundary that produced the
+/// adapter's evidence. It is not a promise that later consumer work, such as
+/// copying a returned prepared-artifact segment into another buffer, is
+/// included.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct IoMeasurement {
     kind: IoBufferKind,
@@ -513,7 +518,11 @@ impl IoMeasurement {
 ///
 /// For [`ArtifactDisposition::RejectedStale`], `observed` is typed rejection
 /// evidence rather than a materialized-content identity and `bytes` is the
-/// number of bytes inspected while rejecting the candidate.
+/// number of bytes inspected while rejecting the candidate. For a successful
+/// prepared-artifact operation, the associated I/O measurement covers the
+/// private-store lock, scans, metadata, payload/manifest reads and writes,
+/// synchronization, validation, and eviction work; consumer copies from the
+/// returned handle remain the consumer's separately measured work.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ArtifactMeasurement {
     planned: ArtifactIdentity,
@@ -846,6 +855,15 @@ pub enum ExecutionEvidenceError {
         /// Observed disposition.
         disposition: ArtifactDisposition,
     },
+    /// A cache node rejected its selected prepared artifact instead of
+    /// returning a materialized artifact or using an explicitly planned
+    /// alternate node.
+    RejectedArtifact {
+        /// Exact node.
+        node: WorkNodeId,
+        /// Plan-listed artifact that was rejected.
+        artifact: ArtifactIdentity,
+    },
 }
 
 impl ExecutionEvidenceError {
@@ -861,7 +879,8 @@ impl ExecutionEvidenceError {
             | Self::DuplicateArtifact { node, .. }
             | Self::UnplannedArtifact { node, .. }
             | Self::MissingArtifact { node, .. }
-            | Self::ArtifactDispositionMismatch { node, .. } => node,
+            | Self::ArtifactDispositionMismatch { node, .. }
+            | Self::RejectedArtifact { node, .. } => node,
         }
     }
 }
@@ -939,6 +958,11 @@ impl fmt::Display for ExecutionEvidenceError {
             } => write!(
                 formatter,
                 "node {} reported {disposition:?} for {role:?} artifact {artifact}",
+                node.as_str()
+            ),
+            Self::RejectedArtifact { node, artifact } => write!(
+                formatter,
+                "cache node {} rejected selected prepared artifact {artifact}",
                 node.as_str()
             ),
         }
@@ -1971,6 +1995,7 @@ impl<'a> CompiledWorkContext<'a> {
 #[derive(Clone, Copy, Debug)]
 pub struct WorkExecutionContext<'a> {
     compiled: CompiledWorkContext<'a>,
+    implementation_registry: ImplementationRegistryId,
     scheduled: &'a crate::execution::WorkExecutionContext,
     planned_artifacts: &'a [PlannedArtifact],
     stage_prediction: &'a StagePrediction,
@@ -1986,6 +2011,13 @@ impl<'a> WorkExecutionContext<'a> {
     #[must_use]
     pub const fn compiled(self) -> CompiledWorkContext<'a> {
         self.compiled
+    }
+
+    /// Return the exact implementation-registry snapshot selected by the plan
+    /// and revalidated against the running registry.
+    #[must_use]
+    pub const fn implementation_registry_id(self) -> ImplementationRegistryId {
+        self.implementation_registry
     }
 
     /// Return the exact planned node declaration.
@@ -2567,6 +2599,13 @@ fn validate_work_measurements(
                 disposition,
             });
         }
+        if work.node().kind == WorkKind::Cache && disposition == ArtifactDisposition::RejectedStale
+        {
+            return Err(ExecutionEvidenceError::RejectedArtifact {
+                node: node.clone(),
+                artifact,
+            });
+        }
     }
     if let Some(artifact) = planned_artifacts
         .keys()
@@ -2593,6 +2632,7 @@ fn work_execution_context<'a>(
                   publication,
                   publication_resources| WorkExecutionContext {
         compiled,
+        implementation_registry: plan.implementation_registry,
         scheduled: work,
         planned_artifacts: &plan.artifacts,
         stage_prediction: &plan.prediction.stages[&work.node().id],
@@ -2985,11 +3025,22 @@ where
                                 }
                             }
                             Err(error) => {
+                                let rejected_artifact = matches!(
+                                    &error,
+                                    ExecutionEvidenceError::RejectedArtifact { .. }
+                                );
                                 if pending.is_none() {
                                     pending = Some(PendingRunError::Evidence(error));
                                 }
                                 controller_stopped = true;
                                 let _ = receipt.fences_launched(&node_id);
+                                if rejected_artifact {
+                                    // Retain the typed rejection evidence in the
+                                    // durable receipt before failing the cache
+                                    // node closed. A rejected warm artifact is
+                                    // not a successful cache result.
+                                    let _ = receipt.work_completed(&node_id, &measurements);
+                                }
                                 let _ = receipt.work_failed(&node_id);
                                 launched.insert(node_id.clone(), work);
                                 if scheduler

@@ -48,20 +48,24 @@ reprojection algorithms. Runtime also owns content-addressed prepared
 implementation artifacts: exact compatibility
 identity, bounded generation or load, integrity validation, private atomic
 caching, and deterministic eviction. The selected implementation owner derives
-artifact and cache identities from exact `CompiledProblem` commitments, named
-segment semantics, the canonical private root, and the full cache policy. The
-plan-selected operation implementation identity also commits the owner
-registry, provider, provider version, and implementation, so a caller-authored
-owner cannot silently substitute a registry entry. Cold generation, cold load,
-and warm reuse have distinct plan node, implementation, and artifact-role
-bindings; their canonical measurements reach the immutable execution receipt,
-including `RejectedStale` evidence for a missing, incomplete, incompatible,
-corrupt, or nonfinite warm candidate. Rejection evidence uses the existing
-typed observed-identity field and records bytes/operations actually inspected.
-Successful prepared-artifact handles borrow the node execution context and
-cannot retain file descriptors after its Work claim ends. Opening the store
-performs no hidden lookup, integrity work, or eviction. That private casa-rs
-cache is not Product Graph authority or a CASA-visible persisted format. Existing CASA
+artifact and cache identities from exact `CompiledProblem` commitments, an
+owner-derived per-cell scientific key, named segment semantics, the canonical
+private root, and the full cache policy. The plan-selected operation
+implementation identity is domain-separated and length-prefixed; its owner
+registry is checked against the actual plan and running implementation registry,
+so caller-authored metadata cannot substitute a registry entry. Cold generation,
+cold load, and warm reuse have distinct plan node, implementation, and
+artifact-role bindings; their canonical measurements reach the immutable
+execution receipt, including `RejectedStale` evidence for a missing,
+incomplete, incompatible, corrupt, or nonfinite warm candidate. Rejection
+evidence uses the existing typed observed-identity field and records the actual
+cache operations and bytes inspected. Successful prepared-artifact handles
+borrow the node execution context and cannot retain file descriptors after its
+Work claim ends. Store I/O evidence covers the private-store operation through
+final validation; later consumer copies are separately owned. Opening the store
+canonicalizes and checks the private root before creating anything, and performs
+no hidden lookup, integrity work, or eviction. That private casa-rs cache is not
+Product Graph authority or a CASA-visible persisted format. Existing CASA
 CFS/WTCFS directories remain read-only interoperability inputs supplied through
 the validated legacy adapter; the runtime neither mutates them nor creates
 sidecars.

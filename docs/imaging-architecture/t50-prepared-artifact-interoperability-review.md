@@ -65,4 +65,3 @@ Stop for a separate review before any implementation:
 - lets prepared-artifact cache state choose Product Graph topology, product
   generation, or scientific publication; or
 - bypasses the canonical ADR-0010 `ExecutionPlan` or `ExecutionReceipt`.
-
