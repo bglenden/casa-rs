@@ -21,15 +21,16 @@ use casa_imaging_model::{
     ImagingRequestVersion, InstrumentResponse, MeasurementEquationContract, MetadataTableKind,
     MissingPointingPolicy, ModelColumnWrite, ModelInnerProduct, ModelStateIdentity, MsColumnKind,
     NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
-    ObservationTransactionId, ObservationTransactionRequirements, PhaseCentreLaw,
-    PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
-    PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
-    ProblemSpecification, ProductKind, ProductNormalization, ProductRequirements, Projection,
-    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
-    ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract,
-    SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSampling, SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct,
-    WeightDensityScope, WeightingContract, WeightingScheme, compile,
+    ObservationSourceState, ObservationTransactionId, ObservationTransactionRequirements,
+    PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic,
+    PointingExtrapolation, PointingInterpolation, PointingTimeSampling, PolarizationContract,
+    PolarizationCoordinate, ProblemSpecification, ProductKind, ProductNormalization,
+    ProductRequirements, Projection, ReconstructionAlgorithm, ReconstructionBasis,
+    ReconstructionContract, ReconstructionControls, ReductionPolicy, ReferenceDataKind,
+    RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection, SpectralContract,
+    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSampling, SpectralWcs,
+    StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct, WeightDensityScope,
+    WeightingContract, WeightingScheme, compile,
 };
 use casa_imaging_runtime::{
     AdaptationId, AdaptationTransition, AllocationAccess, AllocationId, AllocationLayout,
@@ -58,6 +59,10 @@ use casa_imaging_runtime::{
     StorageDomain, StorageDomainId, StorageMode, WorkDependency, WorkDomain, WorkExecutionContext,
     WorkImplementation, WorkImplementationId, WorkKind, WorkMeasurements, WorkNode, WorkNodeId,
     plan as runtime_plan, run as runtime_run,
+};
+use casa_ms::{
+    BoundSelectedObservation, ObservationSourceBinding, SelectedObservationCompletion,
+    SelectedObservationContentBudget, SelectedObservationMeasures,
 };
 
 fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
@@ -273,11 +278,15 @@ fn geometry(reference_pixel: f64) -> GeometryInput {
 }
 
 fn request(observation: u8) -> ImagingRequest {
-    request_with_geometry_and_references(observation, geometry(255.0), Vec::new())
+    request_with_geometry_and_references(observation, geometry(255.0), default_references())
 }
 
 fn request_with_geometry(observation: u8, geometry: GeometryInput) -> ImagingRequest {
-    request_with_geometry_and_references(observation, geometry, Vec::new())
+    request_with_geometry_and_references(observation, geometry, default_references())
+}
+
+fn default_references() -> Vec<(ReferenceDataKind, casa_imaging_model::LogicalIdentity)> {
+    vec![(ReferenceDataKind::Measures, identity(90))]
 }
 
 fn request_with_geometry_and_references(
@@ -317,7 +326,7 @@ fn request_with_products(
     request_with_geometry_references_weighting_products_and_model(
         observation,
         geometry,
-        Vec::new(),
+        default_references(),
         WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
         products,
         ModelColumnWrite::Disabled,
@@ -342,7 +351,7 @@ fn request_with_products_and_model(
     request_with_geometry_references_weighting_products_and_model(
         observation,
         geometry,
-        Vec::new(),
+        default_references(),
         WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
         products,
         model_column_write,
@@ -442,6 +451,8 @@ fn recording_executor(
         publication_probe: None,
         observation_completions: None,
         observation_completion_failure: None,
+        bind_foreign_observation_completion: false,
+        selected_observation_completion: Mutex::new(None),
     }
 }
 
@@ -499,6 +510,8 @@ struct RecordingExecutor {
     publication_probe: Option<PublicationProbe>,
     observation_completions: Option<Arc<Mutex<Vec<RecordedObservationCompletion>>>>,
     observation_completion_failure: Option<&'static str>,
+    bind_foreign_observation_completion: bool,
+    selected_observation_completion: Mutex<Option<SelectedObservationCompletion>>,
 }
 
 #[derive(Debug)]
@@ -511,7 +524,6 @@ struct PublicationProbe {
 
 impl WorkImplementation for RecordingExecutor {
     type Error = io::Error;
-    type ObservationReadCompletion = ();
 
     fn implementation_id(&self) -> &WorkImplementationId {
         &self.id
@@ -529,6 +541,55 @@ impl WorkImplementation for RecordingExecutor {
         }
         if self.failure_node == Some(context.node().id.as_str()) {
             return Err(io::Error::other("stateful transaction execute failure"));
+        }
+        if context.node().kind == WorkKind::ObservationRead {
+            let bound_problem = context
+                .selected_observation()
+                .expect("ObservationRead owns exact selected-observation authority");
+            let foreign_problem = self
+                .bind_foreign_observation_completion
+                .then(|| compile(request(2)).map_err(io::Error::other))
+                .transpose()?;
+            let problem = foreign_problem.as_ref().unwrap_or(bound_problem);
+            let bindings = problem
+                .inputs()
+                .observation_snapshot()
+                .sources()
+                .iter()
+                .map(|source| {
+                    ObservationSourceBinding::new(
+                        ObservationSourceState::new(
+                            source.identity(),
+                            source.selection().rows().clone(),
+                            source.generations().clone(),
+                        ),
+                        SelectedObservationContentBudget::new(4 * 1024 * 1024, 1, 4),
+                    )
+                })
+                .collect();
+            let measures_identity = problem
+                .inputs()
+                .reference_data()
+                .iter()
+                .find_map(|(kind, identity)| {
+                    (*kind == ReferenceDataKind::Measures).then_some(*identity)
+                })
+                .ok_or_else(|| io::Error::other("ObservationRead has no Measures identity"))?;
+            let measures = SelectedObservationMeasures::new(
+                casa_test_support::deterministic_measures_provider_for_identity(
+                    measures_identity.as_bytes(),
+                ),
+            )
+            .map_err(io::Error::other)?;
+            let mut observation = BoundSelectedObservation::open(problem, measures, bindings)
+                .map_err(io::Error::other)?;
+            let completion = observation
+                .traverse(problem, |_| Ok::<_, io::Error>(()))
+                .map_err(io::Error::other)?;
+            *self
+                .selected_observation_completion
+                .lock()
+                .expect("selected-observation completion lock") = Some(completion);
         }
         if let Some((expected, accessed)) = &self.initial_consistency_expected {
             if context.node().kind == WorkKind::DataCensus {
@@ -642,7 +703,7 @@ impl WorkImplementation for RecordingExecutor {
     fn complete_observation_read(
         &self,
         completion: ObservationReadCompletionContext,
-    ) -> Result<AttemptBoundObservationCompletion<()>, Self::Error> {
+    ) -> Result<AttemptBoundObservationCompletion, Self::Error> {
         if let Some(completions) = &self.observation_completions {
             completions
                 .lock()
@@ -657,7 +718,13 @@ impl WorkImplementation for RecordingExecutor {
         if let Some(message) = self.observation_completion_failure {
             return Err(io::Error::other(message));
         }
-        Ok(completion.bind(()))
+        let owner_completion = self
+            .selected_observation_completion
+            .lock()
+            .expect("selected-observation completion lock")
+            .take()
+            .ok_or_else(|| io::Error::other("ObservationRead produced no scientific completion"))?;
+        completion.bind(owner_completion).map_err(io::Error::other)
     }
 
     fn publish(&self, context: WorkExecutionContext<'_>) -> Result<(), Self::Error> {
@@ -3175,8 +3242,8 @@ fn plan_seals_physical_work_and_every_required_binding() {
     assert_eq!(
         execution_plan.plan_id().as_bytes(),
         [
-            188, 248, 135, 221, 143, 91, 227, 244, 180, 184, 94, 29, 96, 96, 105, 119, 11, 183,
-            107, 29, 253, 77, 121, 84, 77, 19, 183, 133, 81, 201, 208, 139,
+            183, 133, 64, 52, 66, 156, 255, 161, 73, 6, 75, 19, 135, 46, 171, 142, 56, 30, 186, 94,
+            225, 2, 41, 117, 208, 65, 172, 220, 148, 117, 36, 148,
         ]
     );
 }
@@ -3391,7 +3458,7 @@ fn run_rejects_every_stale_problem_input_before_calling_the_executor() {
     let registry = test_registry(3, 6, None);
     let stale_inputs = [
         (
-            problem_inputs(9, Vec::new(), ModelStateIdentity::Empty),
+            problem_inputs(9, default_references(), ModelStateIdentity::Empty),
             BindingKind::ObservationSnapshot,
         ),
         (
@@ -3403,7 +3470,11 @@ fn run_rejects_every_stale_problem_input_before_calling_the_executor() {
             BindingKind::ReferenceDataSnapshots,
         ),
         (
-            problem_inputs(1, Vec::new(), ModelStateIdentity::Seed(identity(9))),
+            problem_inputs(
+                1,
+                default_references(),
+                ModelStateIdentity::Seed(identity(9)),
+            ),
             BindingKind::ModelState,
         ),
     ];
@@ -4211,6 +4282,51 @@ fn synchronous_observation_completion_is_exactly_once_attempt_node_and_lease_bou
     assert_eq!(completion.owner_node, WorkNodeId::new("transaction-read"));
     assert!(completion.settled_fences.is_empty());
     assert!(completion.lease_epoch > 0);
+}
+
+#[test]
+fn completion_from_a_different_compiled_observation_cannot_unlock_dependents() {
+    let problem = compile(request(1)).expect("logical compilation");
+    let execution_plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| Ok::<_, ()>(physical_work_with_synchronous_observation_read(6)),
+    )
+    .expect("synchronous ObservationRead is valid physical work");
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &ResourcePolicy::Balanced,
+        cost_model(4),
+    );
+    let mut executor = recording_executor(6, None, None);
+    executor.bind_foreign_observation_completion = true;
+    let registry = TestRegistry {
+        id: registry(3),
+        executors: BTreeMap::from([(implementation(6), executor)]),
+    };
+    let mut controller = RunToCompletion;
+
+    let error = run(
+        &problem,
+        &execution_plan,
+        &current,
+        &registry,
+        authority(),
+        &mut controller,
+    )
+    .expect_err("a foreign owner completion must not satisfy this ObservationRead node");
+
+    assert!(matches!(
+        error,
+        RunError::Execution { node, .. } if node == WorkNodeId::new("transaction-read")
+    ));
+    assert_eq!(
+        registry.executors[&implementation(6)]
+            .calls
+            .load(Ordering::SeqCst),
+        2,
+        "no dependent numerical or publication work may launch"
+    );
 }
 
 #[test]

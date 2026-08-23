@@ -55,13 +55,13 @@ ACCEPTED_LOGICAL_GRAPH_SHA256 = (
     "7101b6d90196b1ea3d3c750080d703bb5e305e91c8ac19553e1dda7ed58c4e33"
 )
 ACCEPTED_SOURCE_BOUNDARIES_SHA256 = (
-    "642eb28083bbeabe2542f82c62c2b68acb43e2190aa0df4b7a8e187e61a9377f"
+    "791239fa74e95bd052b56cd6391115c416bf6ce27ef934d549a8798b751b156b"
 )
 ACCEPTED_FROZEN_TRANSITIONAL_EDGES_SHA256 = (
     "0077e28528d2160616d34e17fb7124586f346557917e0bfac99b0dff6739a1d1"
 )
 ACCEPTED_PACKAGE_POLICY_SHA256 = (
-    "15804c2ee0e7d474181d0eddaa7cbce2d65b01bde789108abb4395f477e1b6a4"
+    "545c7f03465aea088fe4628ac935c66bdcc7de0636cf75db5ac90793d3ca9823"
 )
 ACCEPTED_WHOLE_RUN_ROUTER_SHA256 = (
     "c855dae5d5b4239e21fa0fe43d1d2f4bbb4114d245374db674fb81713af11a2d"
@@ -127,12 +127,12 @@ ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256 = (
     "ca2a1c2567b8c93b495fd279dc77fff8f330137b7811fa136b95fd3fc2a88507"
 )
 ACCEPTED_MATRIX_ROWS_SHA256 = (
-    "8674f55f55672486f2cebdc8a6eaadc8723221acd8d4f38feafdbc5fc94ebf70"
+    "e1bd3dc90a1565145b2fce29adae9aea41266ed853b3b81750ef66033269e4fa"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "bad319d615a275f7faac6f265344adb7820171a5ce45cbdddff21b9dbd913276"
+    "1a2bb3b91e1e6f00a3bb4eea9881b9b2927e4303dda463667c1ba0a6efed57a9"
 )
-ACCEPTED_MATRIX_CONTRACT_REVISION = 12
+ACCEPTED_MATRIX_CONTRACT_REVISION = 14
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "scientific-products-v1",
@@ -2505,21 +2505,35 @@ def validate_migration_matrix(
 
 
 def validate_t17_ms_selection_transfer(rows: list[dict[str, Any]]) -> None:
-    row = next((item for item in rows if item.get("id") == "capability.ms-selection"), None)
+    row = next(
+        (item for item in rows if item.get("id") == "capability.ms-selection"), None
+    )
     if row is None or row.get("status") != "Native":
         raise ArchitectureError(
             "T17 must leave capability.ms-selection Native with no migration obligation"
         )
     required_evidence = {
         "crates/casa-imaging-model/src/selected_observation_sample.rs::SelectedObservationGenerationEncoder",
+        "crates/casa-imaging-model/src/observation.rs::additional_retained_heap_bytes",
         "crates/casa-ms/src/selected_observation/access.rs::BoundObservationSource",
+        "crates/casa-ms/src/selected_observation/bound_observation.rs::binding_graph_initialization_bytes",
+        "crates/casa-ms/src/selected_observation/bound_observation.rs::source_slots_retained_bytes",
+        "crates/casa-ms/src/selected_observation/content_plan.rs::shared_binding_graph_initialization_bytes",
+        "crates/casa-ms/src/selected_observation/content_plan.rs::shared_source_slots_retained_bytes",
+        "crates/casa-ms/src/selected_observation/measures.rs::SelectedObservationMeasures",
+        "crates/casa-ms/src/selected_observation/measures.rs::provider_state",
         "crates/casa-ms/src/selected_observation/row_access.rs::visit_selected_observation_rows",
+        "crates/casa-ms/src/derived/engine.rs::new_selected_observation",
+        "crates/casa-measures-data/src/lib.rs::prepare_bounded_state",
+        "crates/casa-measures-data/src/lib.rs::scientific_state_identity",
+        "crates/casa-types/src/measures/provider.rs::MeasuresProviderState",
+        "resources/imaging-architecture/dependency-policy.json::t17-selected-observation-provider-injection",
         "crates/casa-imaging-runtime/src/execution_bindings.rs::ObservationReadCompletionContext",
         "crates/casars-imager/src/lib.rs::select_main_rows",
     }
     if not required_evidence.issubset(set(row.get("source_evidence", []))):
         raise ArchitectureError(
-            "capability.ms-selection lacks the accepted T17 traversal/completion evidence"
+            "capability.ms-selection lacks the accepted T17 traversal/resource/completion evidence"
         )
     required_baselines = {
         "repo://crates/casa-imaging-model/src/selected_observation_sample.rs",
@@ -2532,21 +2546,45 @@ def validate_t17_ms_selection_transfer(rows: list[dict[str, Any]]) -> None:
 
     imager_path = REPO_ROOT / "crates/casars-imager/src/lib.rs"
     access_path = REPO_ROOT / "crates/casa-ms/src/selected_observation/access.rs"
-    row_access_path = REPO_ROOT / "crates/casa-ms/src/selected_observation/row_access.rs"
+    bound_path = (
+        REPO_ROOT / "crates/casa-ms/src/selected_observation/bound_observation.rs"
+    )
+    content_plan_path = (
+        REPO_ROOT / "crates/casa-ms/src/selected_observation/content_plan.rs"
+    )
+    measures_path = REPO_ROOT / "crates/casa-ms/src/selected_observation/measures.rs"
+    row_access_path = (
+        REPO_ROOT / "crates/casa-ms/src/selected_observation/row_access.rs"
+    )
+    engine_path = REPO_ROOT / "crates/casa-ms/src/derived/engine.rs"
+    provider_path = REPO_ROOT / "crates/casa-types/src/measures/provider.rs"
+    measures_runtime_path = REPO_ROOT / "crates/casa-measures-data/src/lib.rs"
+    observation_path = REPO_ROOT / "crates/casa-imaging-model/src/observation.rs"
     model_path = REPO_ROOT / "crates/casa-imaging-model/src/selected_observation.rs"
-    compiled_problem_path = REPO_ROOT / "crates/casa-imaging-model/src/compiled_problem.rs"
+    compiled_problem_path = (
+        REPO_ROOT / "crates/casa-imaging-model/src/compiled_problem.rs"
+    )
     model_lib_path = REPO_ROOT / "crates/casa-imaging-model/src/lib.rs"
     runtime_path = REPO_ROOT / "crates/casa-imaging-runtime/src/execution_bindings.rs"
     try:
         imager = imager_path.read_text(encoding="utf-8")
         access = access_path.read_text(encoding="utf-8")
+        bound = bound_path.read_text(encoding="utf-8")
+        content_plan = content_plan_path.read_text(encoding="utf-8")
+        measures = measures_path.read_text(encoding="utf-8")
         row_access = row_access_path.read_text(encoding="utf-8")
+        engine = engine_path.read_text(encoding="utf-8")
+        provider = provider_path.read_text(encoding="utf-8")
+        measures_runtime = measures_runtime_path.read_text(encoding="utf-8")
+        observation = observation_path.read_text(encoding="utf-8")
         model = model_path.read_text(encoding="utf-8")
         compiled_problem = compiled_problem_path.read_text(encoding="utf-8")
         model_lib = model_lib_path.read_text(encoding="utf-8")
         runtime = runtime_path.read_text(encoding="utf-8")
     except OSError as error:
-        raise ArchitectureError(f"cannot inspect T17 transfer sources: {error}") from error
+        raise ArchitectureError(
+            f"cannot inspect T17 transfer sources: {error}"
+        ) from error
 
     forbidden_imager_patterns = {
         r"\bMsSelection\b": "casars-imager retains the legacy selection request",
@@ -2600,16 +2638,370 @@ def validate_t17_ms_selection_transfer(rows: list[dict[str, Any]]) -> None:
         raise ArchitectureError(
             "casa-imaging-model re-exports incremental evidence state"
         )
+    validate_t17_selected_observation_resource_sources(
+        measures,
+        measures_path,
+        bound,
+        bound_path,
+        access,
+        access_path,
+        content_plan,
+        content_plan_path,
+        engine,
+        engine_path,
+        provider,
+        provider_path,
+        measures_runtime,
+        measures_runtime_path,
+        observation,
+        observation_path,
+    )
     validate_t17_runtime_completion_source(runtime, runtime_path)
 
 
+def validate_t17_selected_observation_resource_sources(
+    measures: str,
+    measures_path: Path,
+    bound: str,
+    bound_path: Path,
+    access: str,
+    access_path: Path,
+    content_plan: str,
+    content_plan_path: Path,
+    engine: str,
+    engine_path: Path,
+    provider: str,
+    provider_path: Path,
+    measures_runtime: str,
+    measures_runtime_path: Path,
+    observation: str,
+    observation_path: Path,
+) -> None:
+    measures_fields = rust_struct_fields(
+        measures, "SelectedObservationMeasures", measures_path
+    )
+    if measures_fields != {
+        "provider": "Arc<dynMeasuresProvider>",
+        "provider_state": "MeasuresProviderState",
+        "retained_bytes": "usize",
+    }:
+        raise ArchitectureError(
+            "T17 selected-observation Measures capability must retain one provider-owned immutable state"
+        )
+    compact_measures = re.sub(r"\s+", "", measures)
+    constructor = re.sub(r"\s+", "", rust_function_body(measures, "new", measures_path))
+    validate_problem = re.sub(
+        r"\s+", "", rust_function_body(measures, "validate_problem", measures_path)
+    )
+    verify_state = re.sub(
+        r"\s+", "", rust_function_body(measures, "verify_state", measures_path)
+    )
+    if (
+        "pubfnnew(provider:Arc<dynMeasuresProvider>,)" not in compact_measures
+        or "identity:LogicalIdentity,provider:Arc<dynMeasuresProvider>"
+        in compact_measures
+        or "provider.prepare_bounded_state()" not in constructor
+        or ".ok_or(SelectedObservationMeasuresError::UnaccountedProvider)?"
+        not in constructor
+        or "LogicalIdentity::from_sha256(self.provider_state.identity_sha256())"
+        not in compact_measures
+        or "ReferenceDataKind::Measures" not in validate_problem
+        or "letactual=self.identity();" not in validate_problem
+        or "ifactual!=expected" not in validate_problem
+        or "self.verify_state()" not in validate_problem
+        or "self.provider.prepare_bounded_state()" not in verify_state
+        or "actual!=Some(self.provider_state)" not in verify_state
+        or any(
+            forbidden in compact_measures
+            for forbidden in (
+                "open_measures_runtime(",
+                "open_discovered(",
+                "MeasuresRuntime",
+            )
+        )
+    ):
+        raise ArchitectureError(
+            "T17 selected-observation Measures capability must acquire and recheck provider-owned identity and residency"
+        )
+    arc_allocation = re.sub(
+        r"\s+", "", rust_function_body(measures, "arc_allocation_bytes", measures_path)
+    )
+    if (
+        "arc_allocation_bytes(provider.as_ref())" not in constructor
+        or ".checked_add(provider_state.retained_heap_bytes())" not in constructor
+        or "Layout::array::<AtomicUsize>(2)" not in arc_allocation
+        or ".extend(Layout::for_value(provider))" not in arc_allocation
+        or ".pad_to_align().size()" not in arc_allocation
+    ):
+        raise ArchitectureError(
+            "T17 selected-observation provider allocation must remain alignment-aware and exactly charged"
+        )
+
+    provider_preparation = re.sub(
+        r"\s+",
+        "",
+        rust_function_body(provider, "prepare_bounded_state", provider_path),
+    )
+    if provider_preparation != "Ok(None)":
+        raise ArchitectureError(
+            "T17 MeasuresProvider bounded state must default to opaque and require explicit provider preparation"
+        )
+
+    retained_catalogs = (
+        "eop",
+        "observatories",
+        "sources",
+        "spectral_lines",
+        "tai_utc",
+        "igrf",
+    )
+    runtime_preparation = re.sub(
+        r"\s+",
+        "",
+        rust_function_body(
+            measures_runtime, "build_bounded_state", measures_runtime_path
+        ),
+    )
+    runtime_state_acquisition = re.sub(
+        r"\s+",
+        "",
+        rust_function_body(
+            measures_runtime, "prepare_bounded_state", measures_runtime_path
+        ),
+    )
+    runtime_identity = re.sub(
+        r"\s+",
+        "",
+        rust_function_body(
+            measures_runtime, "scientific_state_identity", measures_runtime_path
+        ),
+    )
+    compact_runtime = re.sub(r"\s+", "", measures_runtime)
+    runtime_declaration = re.search(
+        r"pub\s+struct\s+MeasuresRuntime\s*\{(?P<body>.*?)^\}",
+        measures_runtime,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    runtime_cache_fields = (
+        set(
+            re.findall(
+                r"(?m)^\s*([a-z][A-Za-z0-9_]*)\s*:\s*OnceLock<",
+                runtime_declaration.group("body"),
+            )
+        )
+        if runtime_declaration is not None
+        else set()
+    )
+    if runtime_cache_fields != {*retained_catalogs, "bounded_state"} or any(
+        f"{catalog}:OnceLock<Result<" not in compact_runtime
+        or f"let{catalog}=self.{catalog}()?;" not in runtime_preparation
+        or f"{catalog}.retained_heap_bytes()" not in runtime_preparation
+        for catalog in retained_catalogs
+    ):
+        raise ArchitectureError(
+            "T17 MeasuresRuntime must eagerly stabilize and account every retained catalog"
+        )
+    identity_fragments = {
+        "state.boolean(provenance.is_some());",
+        "state.sequence_len(eop.entries.len())?;",
+        "state.sequence_len(observatories.entries().len())?;",
+        "state.sequence_len(sources.entries().len())?;",
+        "state.sequence_len(spectral_lines.entries().len())?;",
+        "state.sequence_len(tai_utc.entries.len())?;",
+        "state.sequence_len(igrf.years.len())?;",
+        "state.sequence_len(igrf.coeffs_by_year.len())?;",
+        "state.sequence_len(igrf.secular_variation.len())?;",
+        "state.sequence_len(igrf.nmax)?;",
+    }
+    if (
+        "self.bounded_state.get_or_init(" not in runtime_state_acquisition
+        or "self.build_bounded_state()" not in runtime_state_acquisition
+        or "scientific_state_identity(self.provenance.as_ref(),eop,observatories,sources,spectral_lines,tai_utc,igrf,)?"
+        not in runtime_preparation
+        or any(fragment not in runtime_identity for fragment in identity_fragments)
+        or "MeasuresProviderState::new(identity_sha256,retained_heap_bytes,)"
+        not in runtime_preparation
+        or "implMeasuresProviderforMeasuresRuntime{" not in compact_runtime
+        or "MeasuresRuntime::prepare_bounded_state(self).map(Some)"
+        not in compact_runtime
+    ):
+        raise ArchitectureError(
+            "T17 MeasuresRuntime must own one canonical scientific state identity and bounded provider contract"
+        )
+
+    source_state_projection = re.sub(
+        r"\s+",
+        "",
+        rust_function_body(
+            observation, "additional_retained_heap_bytes", observation_path
+        ),
+    )
+    selected_rows_projection = re.sub(
+        r"\s+",
+        "",
+        rust_function_body(
+            observation, "additional_retained_manifest_bytes", observation_path
+        ),
+    )
+    generation_projection = re.sub(
+        r"\s+",
+        "",
+        rust_function_body(observation, "retained_owned_heap_bytes", observation_path),
+    )
+    compact_observation = re.sub(r"\s+", "", observation)
+    if (
+        "self.selected_rows.additional_retained_manifest_bytes(already_accounted_rows)?.checked_add(self.generations.retained_owned_heap_bytes()?)"
+        not in source_state_projection
+        or "Arc::ptr_eq(&self.ordered_main_rows,&rows.ordered_main_rows)"
+        not in selected_rows_projection
+        or "Arc::ptr_eq(&self.used_data_description_ids,&rows.used_data_description_ids,)"
+        not in selected_rows_projection
+        or selected_rows_projection.count("2*size_of::<usize>()") != 2
+        or ".capacity().checked_mul(size_of::<ColumnGeneration>())?"
+        not in generation_projection
+        or ".capacity().checked_mul(size_of::<MetadataGeneration>())?"
+        not in generation_projection
+        or "self.additional_retained_manifest_bytes(std::iter::empty::<&Self>())"
+        not in compact_observation
+    ):
+        raise ArchitectureError(
+            "T17 current source state must project every unique nested allocation without recharging inline state"
+        )
+
+    bound_fields = rust_struct_fields(bound, "BoundSelectedObservation", bound_path)
+    bound_open = re.sub(r"\s+", "", rust_function_body(bound, "open", bound_path))
+    compact_access = re.sub(r"\s+", "", access)
+    access_open = re.sub(
+        r"\s+", "", rust_function_body(access, "open_with_measures", access_path)
+    )
+    plan_admission = re.sub(
+        r"\s+",
+        "",
+        rust_function_body(content_plan, "selected_content_plan", content_plan_path),
+    )
+    retained_metadata = re.sub(
+        r"\s+",
+        "",
+        rust_function_body(content_plan, "retained_metadata_bytes", content_plan_path),
+    )
+    shared_byte_fields = rust_struct_fields(
+        content_plan, "SelectedObservationSharedBytes", content_plan_path
+    )
+    if (
+        bound_fields.get("measures") != "SelectedObservationMeasures"
+        or bound_fields.get("sources") != "Vec<BoundObservationSource>"
+        or shared_byte_fields
+        != {
+            "shared_measures_retained_bytes": "usize",
+            "shared_source_slots_retained_bytes": "usize",
+            "shared_binding_graph_initialization_bytes": "usize",
+        }
+        or "measures.validate_problem(problem)?;" not in bound_open
+        or "letmutsources=Vec::with_capacity(expected.len());" not in bound_open
+        or "letbinding_slot_bytes=bindings.capacity().checked_mul(size_of::<ObservationSourceBinding>())"
+        not in bound_open
+        or "letbinding_graph_initialization_bytes=bindings.iter().enumerate().try_fold(binding_slot_bytes,"
+        not in bound_open
+        or ".additional_retained_heap_bytes(already_accounted_rows)" not in bound_open
+        or "bindings[..binding_index].iter().map(|prior|prior.current_state.selected_rows())"
+        not in bound_open
+        or ".capacity().checked_mul(BoundObservationSource::retained_source_slot_bytes())"
+        not in bound_open
+        or bound_open.count("source_index==0") != 1
+        or "letshared_bytes=ifsource_index==0{SelectedObservationSharedBytes::new(measures.retained_bytes(),source_slots_retained_bytes,binding_graph_initialization_bytes,)}else{SelectedObservationSharedBytes::NONE};"
+        not in bound_open
+        or bound_open.count("measures.retained_bytes()") != 1
+        or "&measures,shared_bytes,binding.content_budget," not in bound_open
+        or "measures.verify_state()?;" not in bound_open
+        or "constfnretained_source_slot_bytes()->usize{size_of::<Self>()}"
+        not in compact_access
+        or "measures.validate_problem(problem)?;" not in access_open
+        or "selected_content_plan(&measurement_set,problem,source,shared_bytes,content_budget,)?"
+        not in access_open
+        or "MsCalEngine::new_selected_observation(&measurement_set,measures.provider(),measures.provider_state(),)?"
+        not in access_open
+        or "retained_metadata_bytes(measurement_set,problem,source,shared_bytes.shared_measures_retained_bytes,shared_bytes.shared_source_slots_retained_bytes,)?"
+        not in plan_admission
+        or retained_metadata.count("shared_source_slots_retained_bytes") != 1
+        or retained_metadata.count("shared_measures_retained_bytes") != 1
+        or "letretained_bytes=shared_source_slots_retained_bytes.checked_add(shared_measures_retained_bytes)"
+        not in retained_metadata
+        or "coordinate_construction_scratch_bytes.checked_add(shared_bytes.shared_binding_graph_initialization_bytes)"
+        not in plan_admission
+        or plan_admission.count(
+            "shared_bytes.shared_binding_graph_initialization_bytes"
+        )
+        != 1
+        or "validation_scratch_bytes" in plan_admission
+        or "current_state" in plan_admission
+    ):
+        raise ArchitectureError(
+            "T17 selected-observation provider, source slots, and complete consumed binding graph must be charged exactly once"
+        )
+
+    engine_fields = rust_struct_fields(engine, "MsCalEngine", engine_path)
+    engine_constructor = re.sub(
+        r"\s+",
+        "",
+        rust_function_body(engine, "new_selected_observation", engine_path),
+    )
+    engine_projection = re.sub(
+        r"\s+",
+        "",
+        rust_function_body(
+            engine, "selected_observation_retained_heap_bytes", engine_path
+        ),
+    )
+    engine_verify = re.sub(
+        r"\s+",
+        "",
+        rust_function_body(engine, "verify_selected_observation_measures", engine_path),
+    )
+    if (
+        engine_fields.get("antenna_positions") != "Box<[MPosition]>"
+        or engine_fields.get("antenna_mount_alt_az") != "Box<[bool]>"
+        or engine_fields.get("field_directions") != "Box<[MDirection]>"
+        or engine_fields.get("measures") != "Option<Arc<dynMeasuresProvider>>"
+        or engine_fields.get("selected_observation_measures_state")
+        != "Option<MeasuresProviderState>"
+        or any(
+            forbidden in engine_constructor
+            for forbidden in (
+                "open_measures_runtime(",
+                "open_discovered(",
+                "MeasuresRuntime",
+            )
+        )
+        or engine_constructor.count(".into_boxed_slice()") != 3
+        or "measures:Some(measures)" not in engine_constructor
+        or "selected_observation_measures_state:Some(measures_state)"
+        not in engine_constructor
+        or "size_of::<MPosition>()+size_of::<bool>()" not in engine_projection
+        or "size_of::<MDirection>()" not in engine_projection
+        or ".prepare_bounded_state()" not in engine_verify
+        or "actual!=Some(expected)" not in engine_verify
+    ):
+        raise ArchitectureError(
+            "T17 selected-observation geometry must retain only the injected bounded provider in exact fixed slices"
+        )
+
+
 def validate_t17_runtime_completion_source(source: str, path: Path) -> None:
-    context_fields = rust_struct_fields(source, "ObservationReadCompletionContext", path)
-    if context_fields != {
+    runtime_authority_fields = {
         "attempt_id": "ExecutionAttemptId",
         "owner_node": "WorkNodeId",
         "settled_fences": "BTreeSet<FenceKind>",
         "lease_epoch": "u64",
+    }
+    context_fields = rust_struct_fields(
+        source, "ObservationReadCompletionContext", path
+    )
+    if context_fields != {
+        **runtime_authority_fields,
+        "problem_id": "CompiledProblemId",
+        "observation_snapshot_id": "ObservationSnapshotId",
+        "observation_provenance_id": "ObservationProvenanceId",
+        "commitment_id": "SelectedObservationCommitmentId",
     }:
         raise ArchitectureError(
             "ObservationReadCompletionContext differs from the accepted fresh runtime authority"
@@ -2618,17 +3010,39 @@ def validate_t17_runtime_completion_source(source: str, path: Path) -> None:
         source, "AttemptBoundObservationCompletion", path
     )
     if completion_fields != {
-        **context_fields,
-        "owner_completion": "T",
+        **runtime_authority_fields,
+        "owner_completion": "casa_ms::SelectedObservationCompletion",
     }:
         raise ArchitectureError(
-            "attempt-bound observation completion must structurally retain owner completion"
+            "attempt-bound observation completion must retain casa-ms's concrete owner completion"
+        )
+    compact_source = re.sub(r"\s+", "", source)
+    if (
+        "pubfnbind(self,owner_completion:casa_ms::SelectedObservationCompletion,)->Result<AttemptBoundObservationCompletion,ObservationCompletionBindingError>"
+        not in compact_source
+        or "structAttemptBoundObservationCompletion<" in compact_source
+        or "typeObservationReadCompletion;" in compact_source
+    ):
+        raise ArchitectureError(
+            "runtime observation completion must be concrete and cannot accept caller-chosen proof types"
+        )
+    required_owner_identity_checks = {
+        "owner_completion.problem_id()!=self.problem_id",
+        "owner_completion.observation_snapshot_id()!=self.observation_snapshot_id",
+        "owner_completion.observation_provenance_id()!=self.observation_provenance_id",
+        "owner_completion.commitment_id()!=self.commitment_id",
+    }
+    if not all(check in compact_source for check in required_owner_identity_checks):
+        raise ArchitectureError(
+            "runtime observation completion must match the exact problem, snapshot, provenance, and commitment"
         )
     completion_declaration = re.search(
         r"#\[derive\(([^)]*)\)\]\s*pub\s+struct\s+AttemptBoundObservationCompletion",
         source,
     )
-    if completion_declaration is None or "Clone" in completion_declaration.group(1).split(","):
+    if completion_declaration is None or "Clone" in completion_declaration.group(
+        1
+    ).split(","):
         raise ArchitectureError(
             "attempt-bound observation completion must remain owner-only and non-Clone"
         )

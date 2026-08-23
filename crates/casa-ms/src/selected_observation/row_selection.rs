@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use std::mem::{size_of, size_of_val};
+use std::mem::size_of;
 
 use crate::{MainRowSelectionFact, SelectedStoredSample};
 use casa_imaging_model::{
-    AntennaSelection, DataDescriptionSelection, IdSelection, IntentSelection, RowSelection,
-    SelectionBound, TimeSelection, UvDistanceUnit, UvSelection,
+    AntennaSelection, DataDescriptionSelection, IdSelection, IntentSelection, ObservationSource,
+    RowSelection, SelectionBound, TimeSelection, UvDistanceUnit, UvSelection,
 };
 use thiserror::Error;
 
@@ -66,59 +66,85 @@ pub(crate) enum RowSelectionEvaluationError {
 }
 
 pub(crate) struct CompiledRowPredicate {
-    selection: RowSelection,
-    data_descriptions: Vec<DataDescriptionSelection>,
-    wavelengths_by_ddid: Vec<(u32, f64)>,
+    catalog: PredicateCatalog,
+    wavelengths_by_ddid: Box<[(u32, f64)]>,
+}
+
+enum PredicateCatalog {
+    SharedSource(ObservationSource),
+    OwnedProjection {
+        selection: RowSelection,
+        data_descriptions: Box<[DataDescriptionSelection]>,
+    },
+}
+
+impl PredicateCatalog {
+    fn selection(&self) -> &RowSelection {
+        match self {
+            Self::SharedSource(source) => source.selection().rows_filter(),
+            Self::OwnedProjection { selection, .. } => selection,
+        }
+    }
+
+    fn data_descriptions(&self) -> &[DataDescriptionSelection] {
+        match self {
+            Self::SharedSource(source) => source.selection().data_descriptions(),
+            Self::OwnedProjection {
+                data_descriptions, ..
+            } => data_descriptions,
+        }
+    }
 }
 
 impl CompiledRowPredicate {
-    pub(crate) fn retained_bytes(
-        selection: &RowSelection,
-        data_descriptions: &[DataDescriptionSelection],
-    ) -> Option<usize> {
-        let mut bytes = size_of::<Self>()
-            .checked_add(id_selection_bytes(selection.fields()))?
-            .checked_add(match selection.times() {
-                TimeSelection::All => 0,
-                TimeSelection::Ranges(ranges) => size_of_val(ranges.as_slice()),
-            })?
-            .checked_add(match selection.uv_distances() {
-                UvSelection::All => 0,
-                UvSelection::Ranges(ranges) => size_of_val(ranges.as_slice()),
-            })?
-            .checked_add(match selection.antennas() {
-                AntennaSelection::All => 0,
-                AntennaSelection::Only(baselines) => size_of_val(baselines.as_slice()),
-            })?
-            .checked_add(id_selection_bytes(selection.scans()))?
-            .checked_add(id_selection_bytes(selection.observations()))?
-            .checked_add(match selection.intents() {
-                IntentSelection::All => 0,
-                IntentSelection::Only(intents) => intents
-                    .iter()
-                    .try_fold(size_of_val(intents.as_slice()), |bytes, intent| {
-                        bytes.checked_add(intent.observation_mode().len())
-                    })?,
-            })?
-            .checked_add(id_selection_bytes(selection.arrays()))?
-            .checked_add(size_of_val(data_descriptions))?;
-        if needs_reference_wavelengths(selection) {
-            bytes = bytes.checked_add(
-                data_descriptions
-                    .len()
-                    .checked_mul(size_of::<(u32, f64)>())?,
-            )?;
-        }
-        Some(bytes)
+    pub(crate) fn shared_retained_heap_bytes(source: &ObservationSource) -> Option<usize> {
+        let wavelength_bytes = if needs_reference_wavelengths(source.selection().rows_filter()) {
+            source
+                .selection()
+                .data_descriptions()
+                .len()
+                .checked_mul(size_of::<(u32, f64)>())?
+        } else {
+            0
+        };
+        source
+            .provenance()
+            .locator()
+            .len()
+            .checked_add(wavelength_bytes)
+    }
+
+    pub(crate) fn new_shared(
+        source: &ObservationSource,
+        reference_wavelength: impl FnMut(u32) -> Option<f64>,
+    ) -> Result<Self, RowSelectionEvaluationError> {
+        Self::from_catalog(
+            PredicateCatalog::SharedSource(source.clone()),
+            reference_wavelength,
+        )
     }
 
     pub(crate) fn new(
         selection: &RowSelection,
         data_descriptions: &[DataDescriptionSelection],
+        reference_wavelength: impl FnMut(u32) -> Option<f64>,
+    ) -> Result<Self, RowSelectionEvaluationError> {
+        Self::from_catalog(
+            PredicateCatalog::OwnedProjection {
+                selection: selection.clone(),
+                data_descriptions: data_descriptions.into(),
+            },
+            reference_wavelength,
+        )
+    }
+
+    fn from_catalog(
+        catalog: PredicateCatalog,
         mut reference_wavelength: impl FnMut(u32) -> Option<f64>,
     ) -> Result<Self, RowSelectionEvaluationError> {
         let mut wavelengths_by_ddid = Vec::new();
-        if needs_reference_wavelengths(selection) {
+        if needs_reference_wavelengths(catalog.selection()) {
+            let data_descriptions = catalog.data_descriptions();
             wavelengths_by_ddid.reserve(data_descriptions.len());
             for description in data_descriptions {
                 let data_description_id = description.data_description_id();
@@ -133,58 +159,65 @@ impl CompiledRowPredicate {
             }
         }
         Ok(Self {
-            selection: selection.clone(),
-            data_descriptions: data_descriptions.to_vec(),
-            wavelengths_by_ddid,
+            catalog,
+            wavelengths_by_ddid: wavelengths_by_ddid.into_boxed_slice(),
         })
     }
 
+    #[cfg(test)]
+    pub(crate) fn shared_row_manifest_ptr(
+        &self,
+    ) -> Option<*const casa_imaging_model::SelectedMainRow> {
+        match &self.catalog {
+            PredicateCatalog::SharedSource(source) => {
+                Some(source.selection().rows().ordered_main_rows().as_ptr())
+            }
+            PredicateCatalog::OwnedProjection { .. } => None,
+        }
+    }
+
     pub(crate) fn matches(&self, row: StoredMainRow) -> bool {
+        let selection = self.catalog.selection();
+        let data_descriptions = self.catalog.data_descriptions();
         let Ok(data_description_id) = u32::try_from(row.data_description_id) else {
             return false;
         };
-        self.data_descriptions
+        data_descriptions
             .iter()
             .any(|description| description.data_description_id() == data_description_id)
-            && id_matches(self.selection.fields(), row.field_id)
-            && time_matches(self.selection.times(), row.time_mjd_seconds)
+            && id_matches(selection.fields(), row.field_id)
+            && time_matches(selection.times(), row.time_mjd_seconds)
             && uv_matches(
-                self.selection.uv_distances(),
+                selection.uv_distances(),
                 row.uvw_m,
                 data_description_id,
                 &self.wavelengths_by_ddid,
             )
-            && antenna_matches(self.selection.antennas(), row.antenna1, row.antenna2)
-            && id_matches(self.selection.scans(), row.scan_number)
-            && id_matches(self.selection.observations(), row.observation_id)
-            && intent_matches(self.selection.intents(), row.state_id)
-            && id_matches(self.selection.arrays(), row.array_id)
+            && antenna_matches(selection.antennas(), row.antenna1, row.antenna2)
+            && id_matches(selection.scans(), row.scan_number)
+            && id_matches(selection.observations(), row.observation_id)
+            && intent_matches(selection.intents(), row.state_id)
+            && id_matches(selection.arrays(), row.array_id)
     }
 
     pub(crate) fn requires_every_source_row(&self, data_description_count: usize) -> bool {
-        matches!(self.selection.fields(), IdSelection::All)
-            && matches!(self.selection.times(), TimeSelection::All)
-            && matches!(self.selection.uv_distances(), UvSelection::All)
-            && matches!(self.selection.antennas(), AntennaSelection::All)
-            && matches!(self.selection.scans(), IdSelection::All)
-            && matches!(self.selection.observations(), IdSelection::All)
-            && matches!(self.selection.intents(), IntentSelection::All)
-            && matches!(self.selection.arrays(), IdSelection::All)
-            && self.data_descriptions.len() == data_description_count
-            && self
-                .data_descriptions
+        let selection = self.catalog.selection();
+        let data_descriptions = self.catalog.data_descriptions();
+        matches!(selection.fields(), IdSelection::All)
+            && matches!(selection.times(), TimeSelection::All)
+            && matches!(selection.uv_distances(), UvSelection::All)
+            && matches!(selection.antennas(), AntennaSelection::All)
+            && matches!(selection.scans(), IdSelection::All)
+            && matches!(selection.observations(), IdSelection::All)
+            && matches!(selection.intents(), IntentSelection::All)
+            && matches!(selection.arrays(), IdSelection::All)
+            && data_descriptions.len() == data_description_count
+            && data_descriptions
                 .iter()
                 .enumerate()
                 .all(|(index, description)| {
                     usize::try_from(description.data_description_id()).ok() == Some(index)
                 })
-    }
-}
-
-fn id_selection_bytes(selection: &IdSelection) -> usize {
-    match selection {
-        IdSelection::All => 0,
-        IdSelection::Only(ids) => size_of_val(ids.as_slice()),
     }
 }
 

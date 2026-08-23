@@ -1,61 +1,58 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use crate::MsReadPlan;
 use casa_imaging_model::{
-    CompiledProblem, CompiledProblemId, MeasurementSetIdentity, ObservationProvenanceId,
-    ObservationSnapshotId, SelectedObservationCommitmentId, SelectedObservationGenerationId,
+    CompiledGeometryId, CompiledProblem, CompiledProblemId, MeasurementSetIdentity,
+    ObservationProvenanceId, ObservationSnapshotId, ObservationSourceState,
+    SelectedObservationCommitmentId, SelectedObservationGenerationId,
     SelectedObservationInspectionError, SelectedObservationPassError, SelectedObservationSample,
 };
 use std::{
     error::Error,
     fmt,
+    mem::size_of,
     sync::atomic::{AtomicU64, Ordering},
 };
 use thiserror::Error;
 
 use super::{
     BoundObservationSamples, BoundObservationSource, BoundObservationSourceError,
-    SelectedObservationContentBudget,
+    SelectedObservationContentBudget, SelectedObservationMeasures,
+    SelectedObservationMeasuresError, content_plan::SelectedObservationSharedBytes,
 };
 
-/// One typed physical row plan for a compiled MeasurementSet source.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ObservationSourceReadPlan {
-    measurement_set: MeasurementSetIdentity,
-    row_plan: MsReadPlan,
+/// One current storage-owner state probe and bounded-content budget.
+///
+/// The content budget is the sole physical blocking authority. The current
+/// source state is checked exactly against the compiler snapshot before the
+/// retained MeasurementSet can be bound.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObservationSourceBinding {
+    current_state: ObservationSourceState,
     content_budget: SelectedObservationContentBudget,
 }
 
-impl ObservationSourceReadPlan {
-    /// Bind a physical row plan to one canonical logical MeasurementSet identity.
+impl ObservationSourceBinding {
+    /// Bind one freshly probed source state to an explicit content budget.
     #[must_use]
     pub const fn new(
-        measurement_set: MeasurementSetIdentity,
-        row_plan: MsReadPlan,
+        current_state: ObservationSourceState,
         content_budget: SelectedObservationContentBudget,
     ) -> Self {
         Self {
-            measurement_set,
-            row_plan,
+            current_state,
             content_budget,
         }
     }
 
     /// Return the canonical logical MeasurementSet identity.
     #[must_use]
-    pub const fn measurement_set(self) -> MeasurementSetIdentity {
-        self.measurement_set
-    }
-
-    /// Return the exact physical row plan.
-    #[must_use]
-    pub const fn row_plan(self) -> MsReadPlan {
-        self.row_plan
+    pub const fn measurement_set(&self) -> MeasurementSetIdentity {
+        self.current_state.identity()
     }
 
     /// Return the explicit selected-content memory budget.
     #[must_use]
-    pub const fn content_budget(self) -> SelectedObservationContentBudget {
+    pub const fn content_budget(&self) -> SelectedObservationContentBudget {
         self.content_budget
     }
 }
@@ -72,65 +69,111 @@ impl ObservationSourceReadPlan {
 /// let _ = std::mem::size_of::<SelectedObservationBufferRequest>();
 /// ```
 pub struct BoundSelectedObservation {
-    problem_id: CompiledProblemId,
+    identity: BoundSelectedObservationIdentity,
+    measures: SelectedObservationMeasures,
     sources: Vec<BoundObservationSource>,
     access_binding: u64,
     next_traversal: u64,
 }
 
 impl BoundSelectedObservation {
-    /// Open every compiled source under its typed physical plan.
+    /// Open every compiled source under its fresh state probe and content budget.
     ///
     /// Caller plan order is irrelevant. Sources are retained and replayed only in the compiler's
     /// canonical read-set order.
     #[cfg(unix)]
     pub fn open(
         problem: &CompiledProblem,
-        mut plans: Vec<ObservationSourceReadPlan>,
+        measures: SelectedObservationMeasures,
+        mut bindings: Vec<ObservationSourceBinding>,
     ) -> Result<Self, BoundSelectedObservationError> {
+        measures.validate_problem(problem)?;
         let expected = problem.inputs().observation_snapshot().sources();
-        if plans.len() != expected.len() {
-            return Err(BoundSelectedObservationError::PlanSetMismatch);
+        if bindings.len() != expected.len() {
+            return Err(BoundSelectedObservationError::BindingSetMismatch);
         }
+        let binding_slot_bytes = bindings
+            .capacity()
+            .checked_mul(size_of::<ObservationSourceBinding>())
+            .ok_or(BoundSelectedObservationError::BindingGraphByteOverflow)?;
+        let binding_graph_initialization_bytes = bindings.iter().enumerate().try_fold(
+            binding_slot_bytes,
+            |bytes, (binding_index, binding)| {
+                let already_accounted_rows = expected
+                    .iter()
+                    .map(|source| source.selection().rows())
+                    .chain(
+                        bindings[..binding_index]
+                            .iter()
+                            .map(|prior| prior.current_state.selected_rows()),
+                    );
+                binding
+                    .current_state
+                    .additional_retained_heap_bytes(already_accounted_rows)
+                    .and_then(|additional| bytes.checked_add(additional))
+                    .ok_or(BoundSelectedObservationError::BindingGraphByteOverflow)
+            },
+        )?;
         let mut sources = Vec::with_capacity(expected.len());
-        for source in expected {
+        let source_slots_retained_bytes = sources
+            .capacity()
+            .checked_mul(BoundObservationSource::retained_source_slot_bytes())
+            .ok_or(BoundSelectedObservationError::SourceSlotByteOverflow)?;
+        for (source_index, source) in expected.iter().enumerate() {
             let identity = source.identity();
-            let Some(position) = plans
+            let Some(position) = bindings
                 .iter()
-                .position(|candidate| candidate.measurement_set == identity)
+                .position(|candidate| candidate.measurement_set() == identity)
             else {
-                return Err(BoundSelectedObservationError::MissingSourcePlan {
+                return Err(BoundSelectedObservationError::MissingSourceBinding {
                     measurement_set: identity,
                 });
             };
-            if plans[position + 1..]
+            if bindings[position + 1..]
                 .iter()
-                .any(|candidate| candidate.measurement_set == identity)
+                .any(|candidate| candidate.measurement_set() == identity)
             {
-                return Err(BoundSelectedObservationError::DuplicateSourcePlan {
+                return Err(BoundSelectedObservationError::DuplicateSourceBinding {
                     measurement_set: identity,
                 });
             }
-            let plan = plans.remove(position);
+            let binding = bindings.remove(position);
+            let shared_bytes = if source_index == 0 {
+                SelectedObservationSharedBytes::new(
+                    measures.retained_bytes(),
+                    source_slots_retained_bytes,
+                    binding_graph_initialization_bytes,
+                )
+            } else {
+                SelectedObservationSharedBytes::NONE
+            };
             sources.push(
-                BoundObservationSource::open(source, plan.row_plan, plan.content_budget).map_err(
-                    |error| BoundSelectedObservationError::Source {
-                        measurement_set: identity,
-                        error: Box::new(error),
-                    },
-                )?,
+                BoundObservationSource::open_with_measures(
+                    problem,
+                    source,
+                    &binding.current_state,
+                    &measures,
+                    shared_bytes,
+                    binding.content_budget,
+                )
+                .map_err(|error| BoundSelectedObservationError::Source {
+                    measurement_set: identity,
+                    error: Box::new(error),
+                })?,
             );
         }
-        if !plans.is_empty() {
-            return Err(BoundSelectedObservationError::PlanSetMismatch);
+        if !bindings.is_empty() {
+            return Err(BoundSelectedObservationError::BindingSetMismatch);
         }
+        measures.verify_state()?;
         let access_binding = NEXT_ACCESS_BINDING
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
                 value.checked_add(1)
             })
             .map_err(|_| BoundSelectedObservationError::AccessIdentityExhausted)?;
         Ok(Self {
-            problem_id: problem.problem_id(),
+            identity: BoundSelectedObservationIdentity::from_problem(problem),
+            measures,
             sources,
             access_binding,
             next_traversal: 1,
@@ -140,7 +183,22 @@ impl BoundSelectedObservation {
     /// Return the compiled problem identity bound by this retained source set.
     #[must_use]
     pub const fn problem_id(&self) -> CompiledProblemId {
-        self.problem_id
+        self.identity.problem_id
+    }
+
+    #[cfg(test)]
+    pub(crate) fn source_content_plan(
+        &self,
+        source_index: usize,
+    ) -> Option<super::SelectedObservationContentPlan> {
+        self.sources
+            .get(source_index)
+            .map(BoundObservationSource::content_plan)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn source_slot_allocation_bytes(&self) -> usize {
+        self.sources.capacity() * BoundObservationSource::retained_source_slot_bytes()
     }
 
     /// Stream every source in canonical compiler order.
@@ -148,9 +206,10 @@ impl BoundSelectedObservation {
         &'a self,
         problem: &'a CompiledProblem,
     ) -> Result<BoundSelectedObservationSamples<'a>, BoundSelectedObservationError> {
-        if problem.problem_id() != self.problem_id {
+        if !self.identity.matches(problem) {
             return Err(BoundSelectedObservationError::ProblemMismatch);
         }
+        self.measures.verify_state()?;
         Ok(BoundSelectedObservationSamples {
             observation: self,
             problem,
@@ -239,6 +298,31 @@ pub(crate) struct BoundSelectedObservationSamples<'a> {
 }
 
 static NEXT_ACCESS_BINDING: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct BoundSelectedObservationIdentity {
+    problem_id: CompiledProblemId,
+    observation_snapshot_id: ObservationSnapshotId,
+    observation_provenance_id: ObservationProvenanceId,
+    geometry_id: CompiledGeometryId,
+    commitment_id: SelectedObservationCommitmentId,
+}
+
+impl BoundSelectedObservationIdentity {
+    fn from_problem(problem: &CompiledProblem) -> Self {
+        Self {
+            problem_id: problem.problem_id(),
+            observation_snapshot_id: problem.inputs().observation_snapshot().snapshot_id(),
+            observation_provenance_id: problem.inputs().observation_snapshot().provenance_id(),
+            geometry_id: problem.geometry().geometry_id(),
+            commitment_id: problem.selected_observation().commitment_id(),
+        }
+    }
+
+    fn matches(self, problem: &CompiledProblem) -> bool {
+        self == Self::from_problem(problem)
+    }
+}
 
 /// Opaque owner-minted proof of one complete retained-access traversal.
 ///
@@ -386,22 +470,25 @@ impl Iterator for BoundSelectedObservationSamples<'_> {
 /// Failure to bind or replay a complete compiled selected observation.
 #[derive(Debug, Error)]
 pub enum BoundSelectedObservationError {
-    /// The supplied plan count or membership differs from the compiled source set.
-    #[error("physical source-plan set does not match the compiled selected observation")]
-    PlanSetMismatch,
-    /// One compiled source has no physical plan.
-    #[error("compiled source {measurement_set} has no physical row plan")]
-    MissingSourcePlan {
-        /// Source missing a plan.
+    /// The injected Measures provider is missing, stale, or unaccounted.
+    #[error(transparent)]
+    Measures(#[from] SelectedObservationMeasuresError),
+    /// The supplied binding count or membership differs from the compiled source set.
+    #[error("source binding set does not match the compiled selected observation")]
+    BindingSetMismatch,
+    /// One compiled source has no current state and budget binding.
+    #[error("compiled source {measurement_set} has no retained-access binding")]
+    MissingSourceBinding {
+        /// Source missing a binding.
         measurement_set: MeasurementSetIdentity,
     },
-    /// One compiled source was assigned more than one physical plan.
-    #[error("compiled source {measurement_set} has duplicate physical row plans")]
-    DuplicateSourcePlan {
-        /// Source with duplicate plans.
+    /// One compiled source was assigned more than one binding.
+    #[error("compiled source {measurement_set} has duplicate retained-access bindings")]
+    DuplicateSourceBinding {
+        /// Source with duplicate bindings.
         measurement_set: MeasurementSetIdentity,
     },
-    /// One retained source could not be bound under its plan.
+    /// One retained source could not be bound under its state and budget.
     #[error("bind compiled source {measurement_set}: {error}")]
     Source {
         /// Source whose binding failed.
@@ -416,4 +503,10 @@ pub enum BoundSelectedObservationError {
     /// The process-local retained-access identity domain was exhausted.
     #[error("selected-observation retained-access identity exhausted")]
     AccessIdentityExhausted,
+    /// The retained source-slot allocation exceeded the host byte domain.
+    #[error("selected-observation source-slot byte projection overflowed")]
+    SourceSlotByteOverflow,
+    /// The consumed source-binding graph exceeded the host byte domain.
+    #[error("selected-observation binding-graph byte projection overflowed")]
+    BindingGraphByteOverflow,
 }

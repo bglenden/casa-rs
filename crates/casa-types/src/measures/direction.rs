@@ -265,30 +265,35 @@ impl FromStr for DirectionRef {
     type Err = MeasureError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_uppercase().as_str() {
-            "J2000" => Ok(Self::J2000),
-            "JMEAN" => Ok(Self::JMEAN),
-            "JTRUE" => Ok(Self::JTRUE),
-            "APP" => Ok(Self::APP),
-            "JNAT" => Ok(Self::JNAT),
-            "B1950" => Ok(Self::B1950),
-            "GALACTIC" | "GAL" => Ok(Self::GALACTIC),
-            "SUPERGAL" => Ok(Self::SUPERGAL),
-            "ICRS" => Ok(Self::ICRS),
-            "ECLIPTIC" | "ECL" => Ok(Self::ECLIPTIC),
-            "MECLIPTIC" => Ok(Self::MECLIPTIC),
-            "TECLIPTIC" => Ok(Self::TECLIPTIC),
-            "HADEC" => Ok(Self::HADEC),
-            "AZEL" => Ok(Self::AZEL),
-            "AZELSW" => Ok(Self::AZELSW),
-            "AZELGEO" => Ok(Self::AZELGEO),
-            "AZELSWGEO" => Ok(Self::AZELSWGEO),
-            "ITRF" => Ok(Self::ITRF),
-            "TOPO" => Ok(Self::TOPO),
-            _ => Err(MeasureError::UnknownRefType {
+        let references = [
+            ("J2000", Self::J2000),
+            ("JMEAN", Self::JMEAN),
+            ("JTRUE", Self::JTRUE),
+            ("APP", Self::APP),
+            ("JNAT", Self::JNAT),
+            ("B1950", Self::B1950),
+            ("GALACTIC", Self::GALACTIC),
+            ("GAL", Self::GALACTIC),
+            ("SUPERGAL", Self::SUPERGAL),
+            ("ICRS", Self::ICRS),
+            ("ECLIPTIC", Self::ECLIPTIC),
+            ("ECL", Self::ECLIPTIC),
+            ("MECLIPTIC", Self::MECLIPTIC),
+            ("TECLIPTIC", Self::TECLIPTIC),
+            ("HADEC", Self::HADEC),
+            ("AZEL", Self::AZEL),
+            ("AZELSW", Self::AZELSW),
+            ("AZELGEO", Self::AZELGEO),
+            ("AZELSWGEO", Self::AZELSWGEO),
+            ("ITRF", Self::ITRF),
+            ("TOPO", Self::TOPO),
+        ];
+        references
+            .into_iter()
+            .find_map(|(name, reference)| s.eq_ignore_ascii_case(name).then_some(reference))
+            .ok_or_else(|| MeasureError::UnknownRefType {
                 input: s.to_owned(),
-            }),
-        }
+            })
     }
 }
 

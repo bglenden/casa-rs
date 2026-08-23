@@ -292,7 +292,11 @@ fn private_synthetic_request_crosses_the_complete_compile_plan_run_seam() {
 fn stale_synthetic_binding_stops_before_the_plan_can_launch() {
     let skeleton = walking_skeleton();
     let stale = RunBindings::new(
-        problem_inputs(16, Vec::new(), ModelStateIdentity::Empty),
+        problem_inputs(
+            16,
+            skeleton.problem.inputs().reference_data().to_vec(),
+            ModelStateIdentity::Empty,
+        ),
         &ResourcePolicy::Balanced,
         cost_model(4),
     );

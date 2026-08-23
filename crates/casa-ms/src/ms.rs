@@ -9,6 +9,7 @@
 //! Cf. C++ `MeasurementSet` class.
 
 use std::collections::{HashMap, HashSet};
+use std::mem::size_of;
 use std::path::{Path, PathBuf};
 
 use casa_tables::{
@@ -681,6 +682,39 @@ impl MeasurementSet {
         self.path.as_deref()
     }
 
+    /// Logical bytes retained by this freshly opened, lazy, read-locked
+    /// MeasurementSet capability.
+    pub(crate) fn retained_read_metadata_bytes(&self) -> Option<usize> {
+        let mut bytes = size_of::<Self>()
+            .checked_add(self.main.retained_read_metadata_bytes()?)?
+            .checked_add(
+                self.subtables
+                    .capacity()
+                    .checked_mul(size_of::<(SubtableId, Table)>())?,
+            )?
+            .checked_add(
+                self.subtable_paths
+                    .capacity()
+                    .checked_mul(size_of::<(SubtableId, PathBuf)>())?,
+            )?;
+        for table in self.subtables.values() {
+            bytes = bytes.checked_add(table.retained_read_metadata_bytes()?)?;
+        }
+        for path in self.subtable_paths.values() {
+            bytes = bytes.checked_add(path_heap_bytes(path))?;
+        }
+        if let Some(path) = &self.path {
+            bytes = bytes.checked_add(path_heap_bytes(path))?;
+        }
+        Some(bytes)
+    }
+
+    /// Logical heap bytes retained beyond the inline `MeasurementSet` value.
+    pub(crate) fn retained_read_metadata_heap_bytes(&self) -> Option<usize> {
+        self.retained_read_metadata_bytes()?
+            .checked_sub(size_of::<Self>())
+    }
+
     // ---- Typed subtable accessors ----
 
     /// Typed read-only accessor for the ANTENNA subtable.
@@ -1123,6 +1157,18 @@ impl MeasurementSet {
                 self.main.keywords_mut().remove(id.name());
             }
         }
+    }
+}
+
+fn path_heap_bytes(path: &Path) -> usize {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        path.as_os_str().as_bytes().len()
+    }
+    #[cfg(not(unix))]
+    {
+        path.as_os_str().to_string_lossy().len()
     }
 }
 

@@ -75,20 +75,20 @@ pub(crate) enum SelectedStoredVisibility {
     Complex32([f32; 2]),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 enum SelectedStoredVisibilities {
     Float32(Vec<f32>),
     Complex32(Vec<casa_types::Complex32>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 enum SelectedStoredWeights {
     PerRow(Vec<f32>),
     PerChannel(Vec<f32>),
 }
 
 /// Caller-owned bounded storage block for exact selected-observation values.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(crate) struct SelectedObservationBuffer {
     row_indices: Vec<usize>,
     channel_range: VisibilityChannelReadRange,
@@ -112,6 +112,88 @@ pub(crate) struct SelectedObservationBuffer {
     state_ids: Vec<i32>,
     observation_ids: Vec<i32>,
     array_ids: Vec<i32>,
+}
+
+/// Heap residency of one selected-observation buffer and its fill operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SelectedObservationBufferResidency {
+    /// Bytes retained after a successful fill.
+    pub(crate) resident_bytes: usize,
+    /// Peak bytes while the request and all fill temporaries are simultaneously live.
+    pub(crate) fill_peak_bytes: usize,
+}
+
+/// Project the allocations performed by [`MeasurementSet::fill_selected_observation_buffer`].
+pub(crate) fn selected_observation_buffer_residency(
+    rows: usize,
+    packed_samples: usize,
+    weight_values: usize,
+    visibility_bytes: usize,
+) -> Option<SelectedObservationBufferResidency> {
+    let row_indices = rows.checked_mul(size_of::<usize>())?;
+    let visibility = packed_samples.checked_mul(visibility_bytes)?;
+    let flags = packed_samples.checked_mul(size_of::<bool>())?;
+    let weights = weight_values.checked_mul(size_of::<f32>())?;
+    let scalar_payload =
+        rows.checked_mul(10 * size_of::<i32>() + 4 * size_of::<f64>() + size_of::<bool>())?;
+    let uvw = rows.checked_mul(size_of::<[f64; 3]>())?;
+    let resident_bytes = row_indices
+        .checked_add(visibility)?
+        .checked_add(flags)?
+        .checked_add(weights)?
+        .checked_add(scalar_payload)?
+        .checked_add(uvw)?;
+
+    // The typed scalar batch owns fifteen named vectors until they move into
+    // the destination buffer. Hashbrown keeps at most 7/8 load, so derive the
+    // allocated bucket count from the actual column count rather than hiding a
+    // fixture-specific allowance.
+    const SCALAR_COLUMNS: [&str; 15] = [
+        "DATA_DESC_ID",
+        "FIELD_ID",
+        "ANTENNA1",
+        "ANTENNA2",
+        "FEED1",
+        "FEED2",
+        "TIME",
+        "TIME_CENTROID",
+        "INTERVAL",
+        "EXPOSURE",
+        "SCAN_NUMBER",
+        "STATE_ID",
+        "OBSERVATION_ID",
+        "ARRAY_ID",
+        "FLAG_ROW",
+    ];
+    let minimum_buckets = SCALAR_COLUMNS
+        .len()
+        .checked_mul(8)?
+        .checked_add(6)?
+        .checked_div(7)?;
+    let scalar_buckets = minimum_buckets.checked_next_power_of_two()?;
+    let scalar_bucket_bytes = scalar_buckets.checked_mul(
+        size_of::<String>()
+            .checked_add(size_of::<RequiredScalarColumnValues>())?
+            .checked_add(1)?,
+    )?;
+    // casa-tables converts its internal typed map into the public typed map.
+    // The consumed source map keeps its bucket allocation until conversion
+    // ends, so both bucket arrays coexist even though String and Vec payloads
+    // move between them.
+    let scalar_map_bytes = scalar_bucket_bytes
+        .checked_mul(2)?
+        .checked_add(SCALAR_COLUMNS.iter().map(|name| name.len()).sum::<usize>())?;
+    // UVW conversion owns the typed flat input and the final [f64; 3] vector
+    // together; the final vector is already part of resident_bytes.
+    let uvw_conversion_input = rows.checked_mul(3 * size_of::<f64>())?;
+    let fill_peak_bytes = resident_bytes
+        .checked_add(row_indices)?
+        .checked_add(scalar_map_bytes)?
+        .checked_add(uvw_conversion_input)?;
+    Some(SelectedObservationBufferResidency {
+        resident_bytes,
+        fill_peak_bytes,
+    })
 }
 
 impl Default for SelectedObservationBuffer {

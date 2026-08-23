@@ -135,8 +135,9 @@ pub use schema::SubtableId;
 pub use schema::main_table::{OptionalMainColumn, VisibilityDataColumn};
 pub use selected_observation::{
     BoundObservationSourceError, BoundSelectedObservation, BoundSelectedObservationError,
-    ObservationSourceReadPlan, SelectedObservationCompletion, SelectedObservationContentBudget,
-    SelectedObservationRow, SelectedObservationRowSelection, SelectedObservationTraversalError,
+    ObservationSourceBinding, SelectedObservationCompletion, SelectedObservationContentBudget,
+    SelectedObservationMeasures, SelectedObservationMeasuresError, SelectedObservationRow,
+    SelectedObservationRowSelection, SelectedObservationTraversalError,
 };
 pub(crate) use selected_observation_buffer::{
     SelectedObservationBuffer, SelectedObservationBufferRequest, SelectedStoredSample,

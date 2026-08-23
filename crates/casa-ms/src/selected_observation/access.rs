@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use std::collections::VecDeque;
+use std::{collections::VecDeque, mem::size_of};
 
 use crate::derived::engine::MsCalEngine;
+use crate::subtables::SubTable;
 use crate::{
-    MeasurementSet, MsError, MsReadPlan, PointingDirectionBracket,
+    MeasurementSet, MsError, PointingDirectionBracket,
     PointingDirectionColumn as StoredPointingDirectionColumn, PointingDirectionQuery,
     PointingReadPlan, SelectedObservationBuffer, SelectedObservationBufferRequest,
     SelectedStoredSample, SelectedStoredVisibility, SelectedVisibilityColumn, SelectedWeightColumn,
@@ -13,9 +14,9 @@ use crate::{
 use casa_imaging_model::{
     CompiledProblem, CorrelationProduct, CorrelationType, DataDescriptionSelection, DelayCentreLaw,
     DirectionFrame, Epoch, FrequencyFrame, MeasurementSetReadAccess, MissingPointingPolicy,
-    ObservationSelection, ObservationSource, PhaseCentreLaw, PointingCentreLaw,
-    PointingDirectionColumn, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
-    SelectedMainRow, SelectedObservationSample, SelectedPointingDirections,
+    ObservationSelection, ObservationSource, ObservationSourceState, PhaseCentreLaw,
+    PointingCentreLaw, PointingDirectionColumn, PointingExtrapolation, PointingInterpolation,
+    PointingTimeSampling, SelectedMainRow, SelectedObservationSample, SelectedPointingDirections,
     SelectedPredictionTarget, SelectedSampleAddress, SelectedSampleCoordinates,
     SelectedSampleMetadata, SelectedVisibilitySample, SkyDirection, TimeScale, VisibilityColumn,
     WeightColumn,
@@ -24,8 +25,9 @@ use thiserror::Error;
 
 use super::{
     SelectedObservationContentBudget, SelectedObservationContentPlan,
-    SelectedObservationContentPlanError,
-    content_plan::selected_content_plan,
+    SelectedObservationContentPlanError, SelectedObservationMeasures,
+    SelectedObservationMeasuresError,
+    content_plan::{SelectedObservationSharedBytes, selected_content_plan},
     row_selection::{CompiledRowPredicate, RowSelectionEvaluationError, StoredMainRow},
 };
 
@@ -41,22 +43,38 @@ pub(crate) struct BoundObservationSource {
     measurement_set: MeasurementSet,
     geometry_engine: MsCalEngine,
     row_predicate: CompiledRowPredicate,
+    coordinates: Box<[SelectedCoordinates]>,
     content_plan: SelectedObservationContentPlan,
     source_row_count_matches: bool,
 }
 
 impl BoundObservationSource {
+    pub(crate) const fn retained_source_slot_bytes() -> usize {
+        size_of::<Self>()
+    }
+
     /// Open the source locator under retained read locks without traversing MAIN rows.
     #[cfg(unix)]
-    pub(crate) fn open(
+    pub(crate) fn open_with_measures(
+        problem: &CompiledProblem,
         source: &ObservationSource,
-        row_plan: MsReadPlan,
+        current_state: &ObservationSourceState,
+        measures: &SelectedObservationMeasures,
+        shared_bytes: SelectedObservationSharedBytes,
         content_budget: SelectedObservationContentBudget,
     ) -> Result<Self, BoundObservationSourceError> {
+        measures.validate_problem(problem)?;
         let measurement_set = MeasurementSet::open_retained_read(source.provenance().locator())?;
-        validate_row_plan(&measurement_set, row_plan)?;
-        let content_plan = selected_content_plan(&measurement_set, source, content_budget)?;
-        let row_predicate = selected_row_predicate(&measurement_set, source.selection())?;
+        validate_current_state(source, current_state)?;
+        let content_plan = selected_content_plan(
+            &measurement_set,
+            problem,
+            source,
+            shared_bytes,
+            content_budget,
+        )?;
+        let row_predicate = selected_row_predicate(&measurement_set, source)?;
+        let coordinates = selected_coordinates(&measurement_set, source.selection())?;
         let data_description_count = measurement_set.data_description()?.row_count();
         if row_predicate.requires_every_source_row(data_description_count)
             && source.selection().rows().selected_row_count()
@@ -65,7 +83,12 @@ impl BoundObservationSource {
         {
             return Err(BoundObservationSourceError::IncompleteUnconditionalRowManifest);
         }
-        let geometry_engine = MsCalEngine::new(&measurement_set)?;
+        let geometry_engine = MsCalEngine::new_selected_observation(
+            &measurement_set,
+            measures.provider(),
+            measures.provider_state(),
+        )?;
+        geometry_engine.verify_selected_observation_measures()?;
         Ok(Self {
             source_identity: source.identity(),
             source_row_count_matches: usize::try_from(source.selection().rows().source_row_count())
@@ -74,8 +97,34 @@ impl BoundObservationSource {
             measurement_set,
             geometry_engine,
             row_predicate,
+            coordinates,
             content_plan,
         })
+    }
+
+    #[cfg(all(test, unix))]
+    pub(crate) fn open(
+        problem: &CompiledProblem,
+        source: &ObservationSource,
+        current_state: &ObservationSourceState,
+        content_budget: SelectedObservationContentBudget,
+    ) -> Result<Self, BoundObservationSourceError> {
+        let measures = super::measures::test_selected_observation_measures(problem)?;
+        let current_state_heap_bytes = current_state
+            .additional_retained_heap_bytes([source.selection().rows()])
+            .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
+        Self::open_with_measures(
+            problem,
+            source,
+            current_state,
+            &measures,
+            SelectedObservationSharedBytes::new(
+                measures.retained_bytes(),
+                Self::retained_source_slot_bytes(),
+                current_state_heap_bytes,
+            ),
+            content_budget,
+        )
     }
 
     #[cfg(test)]
@@ -83,14 +132,28 @@ impl BoundObservationSource {
         self.content_plan
     }
 
+    #[cfg(test)]
+    pub(crate) fn retained_storage_metadata_bytes(&self) -> Option<usize> {
+        self.measurement_set.retained_read_metadata_bytes()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn predicate_row_manifest_ptr(
+        &self,
+    ) -> Option<*const casa_imaging_model::SelectedMainRow> {
+        self.row_predicate.shared_row_manifest_ptr()
+    }
+
     /// Stream the exact selected samples for this source under the retained read locks.
     ///
     /// Samples are emitted in canonical physical-row, channel, and correlation order. Physical
-    /// row blocking is taken from [`Self::row_plan`] and is absent from scientific identity.
+    /// row blocking comes only from the admitted content plan and is absent from scientific identity.
     pub(crate) fn selected_samples<'a>(
         &'a self,
         problem: &'a CompiledProblem,
     ) -> Result<BoundObservationSamples<'a>, BoundObservationSourceError> {
+        self.geometry_engine
+            .verify_selected_observation_measures()?;
         let expected = problem
             .selected_observation()
             .read_set()
@@ -98,7 +161,6 @@ impl BoundObservationSource {
             .iter()
             .find(|candidate| candidate.measurement_set() == self.source_identity)
             .ok_or(BoundObservationSourceError::ProblemSourceMismatch)?;
-        let coordinates = selected_coordinates(&self.measurement_set, expected.selection())?;
         let rows = expected
             .selection()
             .rows()
@@ -110,10 +172,9 @@ impl BoundObservationSource {
             logical_source: expected,
             problem,
             rows,
-            coordinates,
             pending_row: None,
             active_block: None,
-            ready_blocks: VecDeque::new(),
+            ready_blocks: VecDeque::with_capacity(self.content_plan.maximum_live_blocks()),
             next_buffer_slot: 0,
             source_exhausted: false,
             terminal_manifest_checked: false,
@@ -133,7 +194,6 @@ pub(crate) struct BoundObservationSamples<'a> {
     logical_source: &'a MeasurementSetReadAccess,
     problem: &'a CompiledProblem,
     rows: std::iter::Copied<std::slice::Iter<'a, SelectedMainRow>>,
-    coordinates: Vec<SelectedCoordinates>,
     pending_row: Option<SelectedMainRow>,
     active_block: Option<BufferedObservationBlock>,
     ready_blocks: VecDeque<BufferedObservationBlock>,
@@ -158,7 +218,7 @@ impl Iterator for BoundObservationSamples<'_> {
         loop {
             if let Some(block) = &self.active_block {
                 let coordinate_index = block.coordinate_index;
-                let coordinates = &self.coordinates[coordinate_index];
+                let coordinates = &self.source.coordinates[coordinate_index];
                 if self.row_offset < block.buffer.row_count() {
                     let channel_index = coordinates.channels[self.channel_ordinal].channel_index;
                     let product = coordinates.products[self.correlation_ordinal];
@@ -203,6 +263,14 @@ impl Iterator for BoundObservationSamples<'_> {
             if let Some(error) = self.pending_error.take() {
                 self.finished = true;
                 return Some(Err(error));
+            }
+            if let Err(error) = self
+                .source
+                .geometry_engine
+                .verify_selected_observation_measures()
+            {
+                self.finished = true;
+                return Some(Err(error.into()));
             }
             self.finished = true;
             return None;
@@ -251,7 +319,10 @@ impl BoundObservationSamples<'_> {
             && self.active_block.is_some() as usize + self.ready_blocks.len() < maximum_live_blocks
         {
             debug_assert!(self.next_buffer_slot < maximum_live_blocks);
-            let mut block = BufferedObservationBlock::new(self.next_buffer_slot);
+            let mut block = BufferedObservationBlock::new(
+                self.next_buffer_slot,
+                self.source.content_plan.rows_per_block(),
+            );
             self.next_buffer_slot += 1;
             match self.fill_next_block(&mut block) {
                 Ok(true) => {
@@ -393,6 +464,7 @@ impl BoundObservationSamples<'_> {
             },
         };
         let coordinate_index = self
+            .source
             .coordinates
             .iter()
             .position(|coordinates| {
@@ -403,17 +475,18 @@ impl BoundObservationSamples<'_> {
                     data_description_id: first.data_description_id(),
                 },
             )?;
-        let mut physical_rows = vec![
+        let maximum_rows = self.source.content_plan.rows_per_block();
+        let mut physical_rows = Vec::with_capacity(maximum_rows);
+        physical_rows.push(
             usize::try_from(first.physical_row())
                 .map_err(|_| BoundObservationSourceError::PhysicalRowIndexOverflow)?,
-        ];
-        let maximum_rows = self.source.content_plan.rows_per_block();
+        );
         while physical_rows.len() < maximum_rows {
             let Some(row) = self.rows.next() else {
                 break;
             };
             if row.data_description_id()
-                != self.coordinates[coordinate_index]
+                != self.source.coordinates[coordinate_index]
                     .data_description
                     .data_description_id()
             {
@@ -425,7 +498,7 @@ impl BoundObservationSamples<'_> {
                     .map_err(|_| BoundObservationSourceError::PhysicalRowIndexOverflow)?,
             );
         }
-        let coordinates = &self.coordinates[coordinate_index];
+        let coordinates = &self.source.coordinates[coordinate_index];
         self.source
             .measurement_set
             .fill_selected_observation_buffer(
@@ -473,7 +546,6 @@ impl BoundObservationSamples<'_> {
             self.source.content_plan.maximum_pointing_polynomial_terms(),
         )?;
         block.row_geometry.clear();
-        block.row_geometry.reserve(block.buffer.row_count());
         for row in 0..block.buffer.row_count() {
             let stored = block
                 .buffer
@@ -493,7 +565,7 @@ impl BoundObservationSamples<'_> {
     }
 }
 
-struct BufferedObservationBlock {
+pub(super) struct BufferedObservationBlock {
     slot: usize,
     coordinate_index: usize,
     buffer: SelectedObservationBuffer,
@@ -501,12 +573,12 @@ struct BufferedObservationBlock {
 }
 
 impl BufferedObservationBlock {
-    fn new(slot: usize) -> Self {
+    fn new(slot: usize, rows_per_block: usize) -> Self {
         Self {
             slot,
             coordinate_index: 0,
             buffer: SelectedObservationBuffer::default(),
-            row_geometry: Vec::new(),
+            row_geometry: Vec::with_capacity(rows_per_block),
         }
     }
 }
@@ -514,7 +586,10 @@ impl BufferedObservationBlock {
 /// Failure to bind a retained MeasurementSet to one compiled observation source.
 #[derive(Debug, Error)]
 pub enum BoundObservationSourceError {
-    /// The MeasurementSet could not be opened or read under the requested physical plan.
+    /// The injected Measures provider is missing, stale, or unaccounted.
+    #[error(transparent)]
+    Measures(#[from] SelectedObservationMeasuresError),
+    /// The MeasurementSet could not be opened or read under the admitted content budget.
     #[error(transparent)]
     Storage(#[from] MsError),
     /// Stored DATA_DESCRIPTION metadata contradicted the compiler-owned coordinate catalog.
@@ -539,6 +614,15 @@ pub enum BoundObservationSourceError {
     /// The retained source is not one exact member of the supplied compiled problem.
     #[error("retained observation source does not match the compiled selected observation")]
     ProblemSourceMismatch,
+    /// The fresh source-state probe names a different logical MeasurementSet.
+    #[error("current source-state probe names a different MeasurementSet")]
+    CurrentSourceIdentityMismatch,
+    /// Re-evaluated selected rows differ from the compiled row/DDID manifest.
+    #[error("current selected rows differ from the compiled source manifest")]
+    StaleSelectedRows,
+    /// A selected column, metadata, model-column, or consistency generation changed.
+    #[error("current source generations differ from the compiled source snapshot")]
+    StaleSourceGenerations,
     /// This first native slice does not yet implement the compiled centre laws.
     #[error(
         "compiled centre laws require a selected-observation geometry evaluator not yet migrated"
@@ -625,11 +709,10 @@ pub enum BoundObservationSourceError {
     InvalidPointingInterpolation,
 }
 
-#[derive(Clone)]
 pub(super) struct SelectedCoordinates {
     data_description: DataDescriptionSelection,
-    channels: Vec<SelectedChannel>,
-    products: Vec<CorrelationProduct>,
+    channels: Box<[SelectedChannel]>,
+    products: Box<[CorrelationProduct]>,
     channel_start: usize,
     channel_count: usize,
 }
@@ -647,7 +730,7 @@ pub(super) struct SelectedChannel {
 fn selected_coordinates(
     measurement_set: &MeasurementSet,
     selection: &ObservationSelection,
-) -> Result<Vec<SelectedCoordinates>, BoundObservationSourceError> {
+) -> Result<Box<[SelectedCoordinates]>, BoundObservationSourceError> {
     let spectral_windows = measurement_set.spectral_window()?;
     let polarizations = measurement_set.polarization()?;
     let mut coordinates = Vec::with_capacity(selection.data_descriptions().len());
@@ -664,9 +747,37 @@ fn selected_coordinates(
                 spectral_window_id: data_description.spectral_window_id(),
             }
         })?;
-        let centres = spectral_windows.chan_freq(spw_row)?;
-        let widths = spectral_windows.chan_width(spw_row)?;
-        let frame = frequency_frame(spectral_windows.meas_freq_ref(spw_row)?)?;
+        let Some(casa_types::ArrayValue::Float64(centres)) = spectral_windows
+            .table()
+            .column_accessor("CHAN_FREQ")
+            .map_err(MsError::from)?
+            .array_cells_owned_uncached(&[spw_row])
+            .map_err(MsError::from)?
+            .pop()
+            .flatten()
+        else {
+            return Err(BoundObservationSourceError::SpectralCoordinateMismatch {
+                spectral_window_id: data_description.spectral_window_id(),
+            });
+        };
+        let Some(casa_types::ArrayValue::Float64(widths)) = spectral_windows
+            .table()
+            .column_accessor("CHAN_WIDTH")
+            .map_err(MsError::from)?
+            .array_cells_owned_uncached(&[spw_row])
+            .map_err(MsError::from)?
+            .pop()
+            .flatten()
+        else {
+            return Err(BoundObservationSourceError::SpectralCoordinateMismatch {
+                spectral_window_id: data_description.spectral_window_id(),
+            });
+        };
+        let frame = frequency_frame(selected_i32_scalar(
+            spectral_windows.table(),
+            "MEAS_FREQ_REF",
+            spw_row,
+        )?)?;
         let mut channels = Vec::with_capacity(spectral_window.channel_indices().len());
         for &channel_index in spectral_window.channel_indices() {
             let channel = usize::try_from(channel_index).map_err(|_| {
@@ -714,6 +825,8 @@ fn selected_coordinates(
             .ok_or(BoundObservationSourceError::SpectralCoordinateMismatch {
                 spectral_window_id: data_description.spectral_window_id(),
             })?;
+        drop(centres);
+        drop(widths);
         let polarization = selection
             .correlations()
             .iter()
@@ -725,7 +838,19 @@ fn selected_coordinates(
                     polarization_id: data_description.polarization_id(),
                 }
             })?;
-        let stored_products = polarizations.corr_type(polarization_row)?;
+        let Some(casa_types::ArrayValue::Int32(stored_products)) = polarizations
+            .table()
+            .column_accessor("CORR_TYPE")
+            .map_err(MsError::from)?
+            .array_cells_owned_uncached(&[polarization_row])
+            .map_err(MsError::from)?
+            .pop()
+            .flatten()
+        else {
+            return Err(BoundObservationSourceError::CorrelationCoordinateMismatch {
+                polarization_id: data_description.polarization_id(),
+            });
+        };
         for product in polarization.products() {
             let product_index = usize::try_from(product.correlation_index()).map_err(|_| {
                 BoundObservationSourceError::CorrelationCoordinateMismatch {
@@ -744,17 +869,17 @@ fn selected_coordinates(
         }
         coordinates.push(SelectedCoordinates {
             data_description,
-            channels,
-            products: polarization.products().to_vec(),
+            channels: channels.into_boxed_slice(),
+            products: polarization.products().into(),
             channel_start,
             channel_count: channel_end - channel_start,
         });
     }
-    Ok(coordinates)
+    Ok(coordinates.into_boxed_slice())
 }
 
 #[derive(Clone, Copy)]
-struct EvaluatedRowGeometry {
+pub(super) struct EvaluatedRowGeometry {
     density_uvw_m: [f64; 3],
     transformed_uvw_m: [f64; 3],
     phase_shift_m: f64,
@@ -871,28 +996,26 @@ fn evaluate_observation_pointings(
         &queries,
         PointingReadPlan::new(scan_rows_per_block, maximum_polynomial_terms)?,
     )?;
-    brackets
-        .chunks_exact(2)
-        .enumerate()
-        .zip(phase_directions)
-        .map(|((row, antenna_brackets), fallback)| {
-            Ok(SelectedPointingDirections {
-                antenna1: resolve_pointing_direction(
-                    antenna_brackets[0],
-                    queries[2 * row],
-                    *law,
-                    fallback,
-                )?,
-                antenna2: resolve_pointing_direction(
-                    antenna_brackets[1],
-                    queries[2 * row + 1],
-                    *law,
-                    fallback,
-                )?,
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()
-        .map(Some)
+    let mut pointings = Vec::with_capacity(buffer.row_count());
+    for ((row, antenna_brackets), fallback) in
+        brackets.chunks_exact(2).enumerate().zip(phase_directions)
+    {
+        pointings.push(SelectedPointingDirections {
+            antenna1: resolve_pointing_direction(
+                antenna_brackets[0],
+                queries[2 * row],
+                *law,
+                fallback,
+            )?,
+            antenna2: resolve_pointing_direction(
+                antenna_brackets[1],
+                queries[2 * row + 1],
+                *law,
+                fallback,
+            )?,
+        });
+    }
+    Ok(Some(pointings))
 }
 
 fn evaluate_phase_direction(
@@ -1102,42 +1225,34 @@ const fn correlation_type(code: i32) -> Option<CorrelationType> {
     })
 }
 
-fn validate_row_plan(
-    measurement_set: &MeasurementSet,
-    row_plan: MsReadPlan,
+fn validate_current_state(
+    expected: &ObservationSource,
+    current: &ObservationSourceState,
 ) -> Result<(), BoundObservationSourceError> {
-    let retained_row_count = measurement_set.row_count();
-    if row_plan.row_count != retained_row_count {
-        return Err(MsError::InvalidInput(format!(
-            "selected-observation row plan covers {} rows but retained MAIN has {retained_row_count} rows",
-            row_plan.row_count,
-        ))
-        .into());
+    if current.identity() != expected.identity() {
+        return Err(BoundObservationSourceError::CurrentSourceIdentityMismatch);
     }
-    if retained_row_count > 0 && (row_plan.rows_per_block == 0 || row_plan.bytes_per_block == 0) {
-        return Err(MsError::InvalidInput(
-            "nonempty selected-observation row plan has an empty physical block".to_string(),
-        )
-        .into());
+    if current.selected_rows() != expected.selection().rows() {
+        return Err(BoundObservationSourceError::StaleSelectedRows);
+    }
+    if current.generations() != expected.generations() {
+        return Err(BoundObservationSourceError::StaleSourceGenerations);
     }
     Ok(())
 }
 
 fn selected_row_predicate(
     measurement_set: &MeasurementSet,
-    selection: &ObservationSelection,
+    source: &ObservationSource,
 ) -> Result<CompiledRowPredicate, BoundObservationSourceError> {
+    let selection = source.selection();
     let wavelengths = validate_data_descriptions(measurement_set, selection)?;
-    CompiledRowPredicate::new(
-        selection.rows_filter(),
-        selection.data_descriptions(),
-        |data_description_id| {
-            wavelengths
-                .iter()
-                .find(|(candidate, _)| *candidate == data_description_id)
-                .map(|(_, wavelength_m)| *wavelength_m)
-        },
-    )
+    CompiledRowPredicate::new_shared(source, |data_description_id| {
+        wavelengths
+            .iter()
+            .find(|(candidate, _)| *candidate == data_description_id)
+            .map(|(_, wavelength_m)| *wavelength_m)
+    })
     .map_err(|error| match error {
         RowSelectionEvaluationError::MissingReferenceWavelength {
             data_description_id,
@@ -1161,8 +1276,10 @@ fn validate_data_descriptions(
                 data_description_id,
             }
         })?;
-        let spectral_window_id = data_descriptions.spectral_window_id(row)?;
-        let polarization_id = data_descriptions.polarization_id(row)?;
+        let spectral_window_id =
+            selected_i32_scalar(data_descriptions.table(), "SPECTRAL_WINDOW_ID", row)?;
+        let polarization_id =
+            selected_i32_scalar(data_descriptions.table(), "POLARIZATION_ID", row)?;
         if u32::try_from(spectral_window_id).ok() != Some(expected.spectral_window_id())
             || u32::try_from(polarization_id).ok() != Some(expected.polarization_id())
         {
@@ -1172,16 +1289,62 @@ fn validate_data_descriptions(
                 },
             );
         }
-        let reference_frequency_hz =
-            spectral_windows.ref_frequency(usize::try_from(spectral_window_id).map_err(
-                |_| BoundObservationSourceError::DataDescriptionCoordinateMismatch {
-                    data_description_id,
-                },
-            )?)?;
+        let spectral_window_row = usize::try_from(spectral_window_id).map_err(|_| {
+            BoundObservationSourceError::DataDescriptionCoordinateMismatch {
+                data_description_id,
+            }
+        })?;
+        let reference_frequency_hz = selected_f64_scalar(
+            spectral_windows.table(),
+            "REF_FREQUENCY",
+            spectral_window_row,
+        )?;
         wavelengths.push((
             data_description_id,
             SPEED_OF_LIGHT_M_PER_S / reference_frequency_hz,
         ));
     }
     Ok(wavelengths)
+}
+
+fn selected_i32_scalar(
+    table: &casa_tables::Table,
+    column: &str,
+    row: usize,
+) -> Result<i32, BoundObservationSourceError> {
+    match table
+        .column_accessor(column)
+        .map_err(MsError::from)?
+        .scalar_cells_owned_for_rows(&[row])
+        .map_err(MsError::from)?
+        .pop()
+        .flatten()
+    {
+        Some(casa_types::ScalarValue::Int32(value)) => Ok(value),
+        value => Err(MsError::InvalidInput(format!(
+            "required selected metadata {column} row {row} is not Int32: {value:?}"
+        ))
+        .into()),
+    }
+}
+
+fn selected_f64_scalar(
+    table: &casa_tables::Table,
+    column: &str,
+    row: usize,
+) -> Result<f64, BoundObservationSourceError> {
+    match table
+        .column_accessor(column)
+        .map_err(MsError::from)?
+        .scalar_cells_owned_for_rows(&[row])
+        .map_err(MsError::from)?
+        .pop()
+        .flatten()
+    {
+        Some(casa_types::ScalarValue::Float64(value)) => Ok(value),
+        value => Err(MsError::InvalidInput(format!(
+            "required selected metadata {column} row {row} is not Float64: {value:?}"
+        ))
+        .into()),
+    }
 }

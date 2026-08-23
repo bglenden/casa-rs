@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Observatory catalog data loaded from casacore `geodetic/Observatories`.
 
-use std::collections::HashMap;
+use std::mem::size_of;
 
 /// A single observatory row from casacore `geodetic/Observatories`.
 #[derive(Debug, Clone, PartialEq)]
@@ -36,20 +36,12 @@ pub struct ObservatoryEntry {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ObservatoryCatalog {
     entries: Vec<ObservatoryEntry>,
-    by_name: HashMap<String, usize>,
 }
 
 impl ObservatoryCatalog {
     /// Build a catalog from explicitly provided entries.
     pub fn from_entries(entries: Vec<ObservatoryEntry>) -> Self {
-        let by_name = entries
-            .iter()
-            .enumerate()
-            .fold(HashMap::new(), |mut map, (index, entry)| {
-                map.entry(normalize_name(&entry.name)).or_insert(index);
-                map
-            });
-        Self { entries, by_name }
+        Self { entries }
     }
 
     /// Iterate over the catalog entries in source order.
@@ -64,12 +56,25 @@ impl ObservatoryCatalog {
 
     /// Look up an observatory by case-insensitive name.
     pub fn get(&self, name: &str) -> Option<&ObservatoryEntry> {
-        self.by_name
-            .get(&normalize_name(name))
-            .and_then(|index| self.entries.get(*index))
+        let name = name.trim();
+        self.entries
+            .iter()
+            .find(|entry| entry.name.trim().eq_ignore_ascii_case(name))
     }
-}
 
-fn normalize_name(name: &str) -> String {
-    name.trim().to_ascii_uppercase()
+    pub(crate) fn retained_heap_bytes(&self) -> Option<usize> {
+        let mut bytes = self
+            .entries
+            .capacity()
+            .checked_mul(size_of::<ObservatoryEntry>())?;
+        for entry in &self.entries {
+            bytes = bytes
+                .checked_add(entry.name.capacity())?
+                .checked_add(entry.observatory_type.capacity())?
+                .checked_add(entry.source.capacity())?
+                .checked_add(entry.comment.capacity())?
+                .checked_add(entry.antenna_responses.capacity())?;
+        }
+        Some(bytes)
+    }
 }

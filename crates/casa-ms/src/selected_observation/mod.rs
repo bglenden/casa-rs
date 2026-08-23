@@ -9,6 +9,7 @@
 mod access;
 mod bound_observation;
 mod content_plan;
+mod measures;
 mod row_access;
 mod row_selection;
 #[cfg(test)]
@@ -17,11 +18,12 @@ mod tests;
 pub use access::BoundObservationSourceError;
 pub(crate) use access::{BoundObservationSamples, BoundObservationSource};
 pub use bound_observation::{
-    BoundSelectedObservation, BoundSelectedObservationError, ObservationSourceReadPlan,
+    BoundSelectedObservation, BoundSelectedObservationError, ObservationSourceBinding,
     SelectedObservationCompletion, SelectedObservationTraversalError,
 };
 pub use content_plan::SelectedObservationContentBudget;
 pub(crate) use content_plan::{
     SelectedObservationContentPlan, SelectedObservationContentPlanError,
 };
+pub use measures::{SelectedObservationMeasures, SelectedObservationMeasuresError};
 pub use row_access::{SelectedObservationRow, SelectedObservationRowSelection};

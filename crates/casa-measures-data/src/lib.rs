@@ -2,20 +2,25 @@
 //! CASA-table-backed measures runtime data for astronomical conversions.
 //!
 //! [`MeasuresRuntime`] validates and lazily reads one explicit CASA measures
-//! tree. Discovery and packaged-snapshot installation are separate, fallible
-//! operations; scientific calls never mutate a user's data directory.
+//! tree, or eagerly materializes every retained catalog before entering a
+//! bounded operation. Discovery and packaged-snapshot installation are
+//! separate, fallible operations; scientific calls never mutate a user's data
+//! directory.
 
 use std::fmt;
+use std::mem::size_of;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use casa_tables::{Table, TableOptions};
 use casa_types::measures::{
-    EopValues as ProviderEopValues, MeasuresProvider, NamedSourceDirection, ObservatoryPosition,
+    EopValues as ProviderEopValues, MeasuresProvider, MeasuresProviderState, NamedSourceDirection,
+    ObservatoryPosition,
 };
 use casa_types::{ArrayValue, ScalarValue};
 use flate2::read::GzDecoder;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tar::Archive;
 
 mod interp;
@@ -30,6 +35,10 @@ pub mod update;
 pub use observatory::{ObservatoryCatalog, ObservatoryEntry};
 pub use source::{SourceCatalog, SourceEntry};
 pub use spectral_line::{SpectralLineCatalog, SpectralLineEntry};
+
+fn path_heap_bytes(path: &PathBuf) -> usize {
+    path.capacity()
+}
 
 const DEFAULT_MEASURES_ENV: &str = "CASA_RS_MEASURESPATH";
 const DEFAULT_MEASURES_RELATIVE: &str = ".casa/data";
@@ -104,6 +113,8 @@ pub enum MeasuresDataError {
     Stale { age_days: f64, maximum_days: f64 },
     /// The requested data is unavailable from the runtime tree.
     MissingData(String),
+    /// A checked retained-residency projection overflowed the host byte domain.
+    ResidencyOverflow,
 }
 
 impl fmt::Display for MeasuresDataError {
@@ -122,6 +133,9 @@ impl fmt::Display for MeasuresDataError {
                 "measures runtime is {age_days:.0} days old (maximum {maximum_days:.0})"
             ),
             Self::MissingData(msg) => write!(f, "measures data missing: {msg}"),
+            Self::ResidencyOverflow => {
+                f.write_str("measures retained-residency projection overflowed")
+            }
         }
     }
 }
@@ -212,6 +226,26 @@ pub struct SnapshotProvenance {
     pub measures_site: String,
     /// Relative paths intentionally included in the packaged snapshot.
     pub included_paths: Vec<String>,
+}
+
+impl SnapshotProvenance {
+    fn retained_heap_bytes(&self) -> Option<usize> {
+        let mut bytes = self
+            .generated_at_utc
+            .capacity()
+            .checked_add(self.casarundata_version.capacity())?
+            .checked_add(self.measures_version.capacity())?
+            .checked_add(self.measures_site.capacity())?
+            .checked_add(
+                self.included_paths
+                    .capacity()
+                    .checked_mul(size_of::<String>())?,
+            )?;
+        for path in &self.included_paths {
+            bytes = bytes.checked_add(path.capacity())?;
+        }
+        Some(bytes)
+    }
 }
 
 /// A single day's Earth Orientation Parameter entry.
@@ -379,6 +413,10 @@ impl EopTable {
             .unwrap_or(self.mjd_start);
         current_mjd - last
     }
+
+    fn retained_heap_bytes(&self) -> Option<usize> {
+        self.entries.capacity().checked_mul(size_of::<EopEntry>())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -395,6 +433,12 @@ struct TaiUtcTable {
 }
 
 impl TaiUtcTable {
+    fn retained_heap_bytes(&self) -> Option<usize> {
+        self.entries
+            .capacity()
+            .checked_mul(size_of::<TaiUtcEntry>())
+    }
+
     fn tai_minus_utc_seconds(&self, utc_mjd: f64) -> Result<f64, MeasuresDataError> {
         let entry = self
             .entries
@@ -431,6 +475,27 @@ struct IgrfTable {
 }
 
 impl IgrfTable {
+    fn retained_heap_bytes(&self) -> Option<usize> {
+        let mut bytes = self
+            .years
+            .capacity()
+            .checked_mul(size_of::<f64>())?
+            .checked_add(
+                self.coeffs_by_year
+                    .capacity()
+                    .checked_mul(size_of::<Vec<f64>>())?,
+            )?
+            .checked_add(
+                self.secular_variation
+                    .capacity()
+                    .checked_mul(size_of::<f64>())?,
+            )?;
+        for coefficients in &self.coeffs_by_year {
+            bytes = bytes.checked_add(coefficients.capacity().checked_mul(size_of::<f64>())?)?;
+        }
+        Some(bytes)
+    }
+
     fn coefficients_for_decimal_year(
         &self,
         decimal_year: f64,
@@ -501,6 +566,7 @@ pub struct MeasuresRuntime {
     spectral_lines: OnceLock<Result<SpectralLineCatalog, String>>,
     tai_utc: OnceLock<Result<TaiUtcTable, String>>,
     igrf: OnceLock<Result<IgrfTable, String>>,
+    bounded_state: OnceLock<Result<MeasuresProviderState, String>>,
 }
 
 impl MeasuresRuntime {
@@ -557,6 +623,7 @@ impl MeasuresRuntime {
             spectral_lines: OnceLock::new(),
             tai_utc: OnceLock::new(),
             igrf: OnceLock::new(),
+            bounded_state: OnceLock::new(),
         })
     }
 
@@ -609,6 +676,66 @@ impl MeasuresRuntime {
         self.provenance.as_ref()
     }
 
+    /// Eagerly materialize every provider catalog and return its authoritative
+    /// scientific-content identity plus exact retained heap residency.
+    ///
+    /// After this succeeds, all provider methods read immutable initialized
+    /// `OnceLock` values, so later scientific calls cannot grow retained cache
+    /// state behind a bounded operation's admission decision.
+    pub fn prepare_bounded_state(&self) -> Result<MeasuresProviderState, MeasuresDataError> {
+        match self.bounded_state.get_or_init(|| {
+            self.build_bounded_state()
+                .map_err(|error| error.to_string())
+        }) {
+            Ok(state) => Ok(*state),
+            Err(error) => Err(MeasuresDataError::TableRead(error.clone())),
+        }
+    }
+
+    fn build_bounded_state(&self) -> Result<MeasuresProviderState, MeasuresDataError> {
+        let eop = self.eop()?;
+        let observatories = self.observatories()?;
+        let sources = self.sources()?;
+        let spectral_lines = self.spectral_lines()?;
+        let tai_utc = self.tai_utc()?;
+        let igrf = self.igrf()?;
+
+        let mut bytes = path_heap_bytes(&self.root);
+        if let Some(provenance) = &self.provenance {
+            bytes = bytes
+                .checked_add(
+                    provenance
+                        .retained_heap_bytes()
+                        .ok_or(MeasuresDataError::ResidencyOverflow)?,
+                )
+                .ok_or(MeasuresDataError::ResidencyOverflow)?;
+        }
+        let retained_heap_bytes = bytes
+            .checked_add(
+                eop.retained_heap_bytes()
+                    .ok_or(MeasuresDataError::ResidencyOverflow)?,
+            )
+            .and_then(|bytes| bytes.checked_add(observatories.retained_heap_bytes()?))
+            .and_then(|bytes| bytes.checked_add(sources.retained_heap_bytes()?))
+            .and_then(|bytes| bytes.checked_add(spectral_lines.retained_heap_bytes()?))
+            .and_then(|bytes| bytes.checked_add(tai_utc.retained_heap_bytes()?))
+            .and_then(|bytes| bytes.checked_add(igrf.retained_heap_bytes()?))
+            .ok_or(MeasuresDataError::ResidencyOverflow)?;
+        let identity_sha256 = scientific_state_identity(
+            self.provenance.as_ref(),
+            eop,
+            observatories,
+            sources,
+            spectral_lines,
+            tai_utc,
+            igrf,
+        )?;
+        Ok(MeasuresProviderState::new(
+            identity_sha256,
+            retained_heap_bytes,
+        ))
+    }
+
     pub fn eop(&self) -> Result<&EopTable, MeasuresDataError> {
         cached(&self.eop, || load_eop_from(&self.root))
     }
@@ -628,19 +755,167 @@ impl MeasuresRuntime {
     }
 
     pub fn tai_minus_utc_seconds(&self, utc_mjd: f64) -> Result<f64, MeasuresDataError> {
-        cached(&self.tai_utc, || load_tai_utc_from(&self.root))?.tai_minus_utc_seconds(utc_mjd)
+        self.tai_utc()?.tai_minus_utc_seconds(utc_mjd)
     }
 
     pub fn utc_from_tai_mjd(&self, tai_mjd: f64) -> Result<f64, MeasuresDataError> {
-        cached(&self.tai_utc, || load_tai_utc_from(&self.root))?.utc_mjd_from_tai_mjd(tai_mjd)
+        self.tai_utc()?.utc_mjd_from_tai_mjd(tai_mjd)
     }
 
     pub fn igrf_coefficients(
         &self,
         decimal_year: f64,
     ) -> Result<(Vec<f64>, usize), MeasuresDataError> {
-        cached(&self.igrf, || load_igrf_from(&self.root))?
-            .coefficients_for_decimal_year(decimal_year)
+        self.igrf()?.coefficients_for_decimal_year(decimal_year)
+    }
+
+    fn tai_utc(&self) -> Result<&TaiUtcTable, MeasuresDataError> {
+        cached(&self.tai_utc, || load_tai_utc_from(&self.root))
+    }
+
+    fn igrf(&self) -> Result<&IgrfTable, MeasuresDataError> {
+        cached(&self.igrf, || load_igrf_from(&self.root))
+    }
+}
+
+fn scientific_state_identity(
+    provenance: Option<&SnapshotProvenance>,
+    eop: &EopTable,
+    observatories: &ObservatoryCatalog,
+    sources: &SourceCatalog,
+    spectral_lines: &SpectralLineCatalog,
+    tai_utc: &TaiUtcTable,
+    igrf: &IgrfTable,
+) -> Result<[u8; 32], MeasuresDataError> {
+    let mut state = ScientificStateHasher::new();
+    state.raw(b"casa-rs-measures-provider-state-v1\0");
+
+    state.boolean(provenance.is_some());
+    if let Some(provenance) = provenance {
+        state.text(&provenance.generated_at_utc)?;
+        state.text(&provenance.casarundata_version)?;
+        state.text(&provenance.measures_version)?;
+        state.text(&provenance.measures_site)?;
+        state.sequence_len(provenance.included_paths.len())?;
+        for path in &provenance.included_paths {
+            state.text(path)?;
+        }
+    }
+
+    state.sequence_len(eop.entries.len())?;
+    for entry in &eop.entries {
+        state.float(entry.mjd);
+        state.float(entry.x_arcsec);
+        state.float(entry.y_arcsec);
+        state.float(entry.dut1_seconds);
+        state.float(entry.lod_seconds);
+        state.float(entry.dx_mas);
+        state.float(entry.dy_mas);
+        state.boolean(entry.is_predicted);
+    }
+
+    state.sequence_len(observatories.entries().len())?;
+    for entry in observatories.entries() {
+        state.float(entry.mjd);
+        state.text(&entry.name)?;
+        state.text(&entry.observatory_type)?;
+        state.float(entry.longitude_deg);
+        state.float(entry.latitude_deg);
+        state.float(entry.height_m);
+        state.float(entry.x_m);
+        state.float(entry.y_m);
+        state.float(entry.z_m);
+        state.text(&entry.source)?;
+        state.text(&entry.comment)?;
+        state.text(&entry.antenna_responses)?;
+    }
+
+    state.sequence_len(sources.entries().len())?;
+    for entry in sources.entries() {
+        state.float(entry.mjd);
+        state.text(&entry.name)?;
+        state.text(&entry.direction_type)?;
+        state.float(entry.longitude_deg);
+        state.float(entry.latitude_deg);
+        state.text(&entry.source)?;
+        state.text(&entry.comment)?;
+    }
+
+    state.sequence_len(spectral_lines.entries().len())?;
+    for entry in spectral_lines.entries() {
+        state.float(entry.mjd);
+        state.text(&entry.name)?;
+        state.text(&entry.frequency_type)?;
+        state.float(entry.frequency_ghz);
+        state.text(&entry.source)?;
+        state.text(&entry.comment)?;
+    }
+
+    state.sequence_len(tai_utc.entries.len())?;
+    for entry in &tai_utc.entries {
+        state.float(entry.mjd);
+        state.float(entry.d_utc);
+        state.float(entry.offset);
+        state.float(entry.multiplier);
+    }
+
+    state.sequence_len(igrf.years.len())?;
+    for year in &igrf.years {
+        state.float(*year);
+    }
+    state.sequence_len(igrf.coeffs_by_year.len())?;
+    for coefficients in &igrf.coeffs_by_year {
+        state.sequence_len(coefficients.len())?;
+        for coefficient in coefficients {
+            state.float(*coefficient);
+        }
+    }
+    state.sequence_len(igrf.secular_variation.len())?;
+    for coefficient in &igrf.secular_variation {
+        state.float(*coefficient);
+    }
+    state.sequence_len(igrf.nmax)?;
+
+    Ok(state.finish())
+}
+
+struct ScientificStateHasher {
+    inner: Sha256,
+}
+
+impl ScientificStateHasher {
+    fn new() -> Self {
+        Self {
+            inner: Sha256::new(),
+        }
+    }
+
+    fn raw(&mut self, value: &[u8]) {
+        self.inner.update(value);
+    }
+
+    fn sequence_len(&mut self, value: usize) -> Result<(), MeasuresDataError> {
+        let value = u64::try_from(value).map_err(|_| MeasuresDataError::ResidencyOverflow)?;
+        self.inner.update(value.to_be_bytes());
+        Ok(())
+    }
+
+    fn text(&mut self, value: &str) -> Result<(), MeasuresDataError> {
+        self.sequence_len(value.len())?;
+        self.inner.update(value.as_bytes());
+        Ok(())
+    }
+
+    fn float(&mut self, value: f64) {
+        self.inner.update(value.to_bits().to_be_bytes());
+    }
+
+    fn boolean(&mut self, value: bool) {
+        self.inner.update([u8::from(value)]);
+    }
+
+    fn finish(self) -> [u8; 32] {
+        self.inner.finalize().into()
     }
 }
 
@@ -655,6 +930,12 @@ fn cached<T>(
 }
 
 impl MeasuresProvider for MeasuresRuntime {
+    fn prepare_bounded_state(&self) -> Result<Option<MeasuresProviderState>, String> {
+        MeasuresRuntime::prepare_bounded_state(self)
+            .map(Some)
+            .map_err(|error| error.to_string())
+    }
+
     fn eop_values(&self, utc_mjd: f64) -> Result<Option<ProviderEopValues>, String> {
         self.eop()
             .map(|table| {
@@ -689,18 +970,21 @@ impl MeasuresProvider for MeasuresRuntime {
         self.observatories()
             .map(|catalog| {
                 catalog.get(name).and_then(|entry| {
-                    match entry.observatory_type.to_ascii_uppercase().as_str() {
-                        "ITRF" => Some(ObservatoryPosition::Itrf {
+                    let observatory_type = entry.observatory_type.trim();
+                    if observatory_type.eq_ignore_ascii_case("ITRF") {
+                        Some(ObservatoryPosition::Itrf {
                             x_m: entry.x_m,
                             y_m: entry.y_m,
                             z_m: entry.z_m,
-                        }),
-                        "WGS84" => Some(ObservatoryPosition::Wgs84 {
+                        })
+                    } else if observatory_type.eq_ignore_ascii_case("WGS84") {
+                        Some(ObservatoryPosition::Wgs84 {
                             longitude_rad: entry.longitude_deg.to_radians(),
                             latitude_rad: entry.latitude_deg.to_radians(),
                             height_m: entry.height_m,
-                        }),
-                        _ => None,
+                        })
+                    } else {
+                        None
                     }
                 })
             })
@@ -1100,6 +1384,7 @@ mod tests {
         let catalog = runtime.observatories().expect("observatories");
         assert!(catalog.entries().len() > 40);
         assert!(catalog.get("ALMA").is_some());
+        assert!(catalog.get(" alma ").is_some());
         let catalog = runtime.sources().expect("sources");
         assert!(catalog.entries().len() > 100);
         let source_0002 = catalog.get("0002-478").expect("catalog source");
@@ -1109,6 +1394,7 @@ mod tests {
         let catalog = runtime.spectral_lines().expect("lines");
         assert!(catalog.entries().len() >= 18);
         let hi = catalog.get("HI").expect("HI line");
+        assert!(catalog.get(" hi ").is_some());
         assert_eq!(hi.frequency_type, "REST");
         assert!((hi.frequency_hz() - 1.420_405_752e9).abs() < 5.0e3);
         let tai_minus_utc = runtime.tai_minus_utc_seconds(51_544.5).expect("TAI-UTC");
@@ -1120,6 +1406,42 @@ mod tests {
         let (coeffs, nmax) = runtime.igrf_coefficients(2012.5).expect("IGRF");
         assert_eq!(nmax, 13);
         assert_eq!(coeffs.len(), 195);
+    }
+
+    #[test]
+    fn bounded_preparation_eagerly_stabilizes_every_retained_catalog() {
+        let (_temp, runtime) = installed_runtime();
+
+        let state = runtime
+            .prepare_bounded_state()
+            .expect("prepare bounded runtime");
+        assert!(state.retained_heap_bytes() > 0);
+        assert_ne!(state.identity_sha256(), [0; 32]);
+        assert!(runtime.eop.get().is_some());
+        assert!(runtime.observatories.get().is_some());
+        assert!(runtime.sources.get().is_some());
+        assert!(runtime.spectral_lines.get().is_some());
+        assert!(runtime.tai_utc.get().is_some());
+        assert!(runtime.igrf.get().is_some());
+
+        runtime.eop_values(51_544.5).expect("EOP lookup");
+        runtime
+            .tai_minus_utc_seconds(51_544.5)
+            .expect("TAI-UTC lookup");
+        runtime
+            .utc_from_tai_mjd(51_544.5 + 32.0 / 86_400.0)
+            .expect("UTC lookup");
+        runtime.igrf_coefficients(2012.5).expect("IGRF lookup");
+        runtime.observatory("ALMA").expect("observatory lookup");
+        runtime.source("0002-478").expect("source lookup");
+        runtime.spectral_line_hz("HI").expect("line lookup");
+
+        assert_eq!(
+            runtime
+                .prepare_bounded_state()
+                .expect("recheck bounded runtime"),
+            state
+        );
     }
 
     #[test]

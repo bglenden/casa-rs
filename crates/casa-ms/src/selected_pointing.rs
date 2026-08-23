@@ -2,13 +2,12 @@
 
 //! Bounded POINTING candidate reads for native selected-observation evaluation.
 
-use std::collections::BTreeMap;
-
+use casa_imaging_model::{SelectedPointingDirections, SkyDirection};
 use casa_types::{ArrayValue, ScalarValue};
 
 use crate::{
     MeasurementSet, MsError, MsResult,
-    derived::engine::{MsCalEngine, resolve_direction_reference},
+    derived::engine::{MsCalEngine, resolve_direction_reference_selected},
 };
 
 /// POINTING direction column read from storage.
@@ -159,6 +158,62 @@ struct CandidateIndices {
     after: Option<CandidateMetadata>,
 }
 
+/// Peak heap bytes allocated while evaluating one block of POINTING queries.
+pub(crate) fn selected_pointing_preparation_peak_bytes(
+    selected_rows: usize,
+    scan_rows: usize,
+    maximum_polynomial_terms: usize,
+    direction_column: PointingDirectionColumn,
+) -> Option<usize> {
+    let query_count = selected_rows.checked_mul(2)?;
+    let candidate_count = query_count.checked_mul(3)?;
+    let caller_vectors = query_count
+        .checked_mul(size_of::<PointingDirectionQuery>())?
+        .checked_add(selected_rows.checked_mul(size_of::<SkyDirection>())?)?;
+    let matches = query_count.checked_mul(size_of::<CandidateIndices>())?;
+    // Five selected scalar-column vectors coexist with the scan-row request.
+    // The accessor returns owned Option<ScalarValue> cells, so charge that
+    // concrete representation instead of assuming primitive-only vectors.
+    let scan = scan_rows.checked_mul(size_of::<usize>() + 5 * size_of::<Option<ScalarValue>>())?;
+    let scan_accessor_name = ["ANTENNA_ID", "TIME", "INTERVAL", "TIME_ORIGIN", "NUM_POLY"]
+        .into_iter()
+        .map(str::len)
+        .max()?;
+
+    let candidate_rows = candidate_count.checked_mul(size_of::<usize>())?;
+    let direction_cells = candidate_count.checked_mul(size_of::<Option<ArrayValue>>())?;
+    let direction_coefficients = candidate_count
+        .checked_mul(2)?
+        .checked_mul(maximum_polynomial_terms)?
+        .checked_mul(size_of::<f64>())?;
+    // Dynamic ndarray dimensions retain shape and stride words in addition to
+    // the coefficient vector. Two axes require four machine words per cell.
+    let direction_dimensions = candidate_count.checked_mul(4 * size_of::<usize>())?;
+    let brackets = query_count.checked_mul(size_of::<PointingDirectionBracket>())?;
+    let candidate_base = caller_vectors
+        .checked_add(matches)?
+        .checked_add(candidate_rows)?
+        .checked_add(direction_cells)?
+        .checked_add(direction_coefficients)?
+        .checked_add(direction_dimensions)?;
+    // A TableColumn owns its cloned name only while returning the owned cell
+    // vector. It is gone before bracket construction, so compare those two
+    // phases instead of charging both simultaneously.
+    let candidate_peak = candidate_base
+        .checked_add(direction_column.name().len())?
+        .max(candidate_base.checked_add(brackets)?);
+    // The fifth scan accessor can coexist with all five returned vectors just
+    // before its temporary TableColumn drops.
+    let scan_peak = caller_vectors
+        .checked_add(matches)?
+        .checked_add(scan)?
+        .checked_add(scan_accessor_name)?;
+    let resolution_peak = caller_vectors
+        .checked_add(brackets)?
+        .checked_add(selected_rows.checked_mul(size_of::<SelectedPointingDirections>())?)?;
+    Some(candidate_peak.max(scan_peak).max(resolution_peak))
+}
+
 impl MeasurementSet {
     /// Scan POINTING scalar metadata in bounded blocks and evaluate only exact candidates.
     ///
@@ -188,11 +243,6 @@ impl MeasurementSet {
             Err(error) => return Err(error),
         };
         let table = pointing.table();
-        let antenna_column = table.column_accessor("ANTENNA_ID")?;
-        let time_column = table.column_accessor("TIME")?;
-        let interval_column = table.column_accessor("INTERVAL")?;
-        let time_origin_column = table.column_accessor("TIME_ORIGIN")?;
-        let polynomial_column = table.column_accessor("NUM_POLY")?;
         let mut matches = (0..queries.len())
             .map(|_| CandidateIndices::default())
             .collect::<Vec<_>>();
@@ -200,11 +250,21 @@ impl MeasurementSet {
         for block_start in (0..pointing.row_count()).step_by(plan.scan_rows_per_block) {
             let block_end = (block_start + plan.scan_rows_per_block).min(pointing.row_count());
             let rows = (block_start..block_end).collect::<Vec<_>>();
-            let antennas = antenna_column.scalar_cells_owned_for_rows(&rows)?;
-            let times = time_column.scalar_cells_owned_for_rows(&rows)?;
-            let intervals = interval_column.scalar_cells_owned_for_rows(&rows)?;
-            let time_origins = time_origin_column.scalar_cells_owned_for_rows(&rows)?;
-            let polynomial_orders = polynomial_column.scalar_cells_owned_for_rows(&rows)?;
+            let antennas = table
+                .column_accessor("ANTENNA_ID")?
+                .scalar_cells_owned_for_rows(&rows)?;
+            let times = table
+                .column_accessor("TIME")?
+                .scalar_cells_owned_for_rows(&rows)?;
+            let intervals = table
+                .column_accessor("INTERVAL")?
+                .scalar_cells_owned_for_rows(&rows)?;
+            let time_origins = table
+                .column_accessor("TIME_ORIGIN")?
+                .scalar_cells_owned_for_rows(&rows)?;
+            let polynomial_orders = table
+                .column_accessor("NUM_POLY")?
+                .scalar_cells_owned_for_rows(&rows)?;
             for (slot, row_index) in rows.into_iter().enumerate() {
                 let antenna_id = required_i32(&antennas, slot, "ANTENNA_ID", row_index)?;
                 let time_mjd_seconds = required_f64(&times, slot, "TIME", row_index)?;
@@ -253,62 +313,52 @@ impl MeasurementSet {
             }
         }
 
-        let metadata_by_row = matches
-            .iter()
-            .flat_map(|matched| [matched.covering, matched.before, matched.after])
-            .flatten()
-            .map(|metadata| (metadata.row_index, metadata))
-            .collect::<BTreeMap<_, _>>();
-        let row_indices = metadata_by_row.keys().copied().collect::<Vec<_>>();
+        let mut row_indices = Vec::with_capacity(matches.len().saturating_mul(3));
+        row_indices.extend(
+            matches
+                .iter()
+                .flat_map(|matched| [matched.covering, matched.before, matched.after])
+                .flatten()
+                .map(|metadata| metadata.row_index),
+        );
+        row_indices.sort_unstable();
+        row_indices.dedup();
         let direction_cells = table
             .column_accessor(column.name())?
-            .array_cells_owned(&row_indices)?;
-        let directions_by_row = row_indices
-            .iter()
-            .copied()
-            .zip(direction_cells)
-            .map(|(row_index, cell)| {
-                cell.map(|cell| (row_index, cell)).ok_or_else(|| {
-                    MsError::InvalidInput(format!(
-                        "POINTING.{} row {row_index} is undefined",
-                        column.name()
-                    ))
-                })
-            })
-            .collect::<MsResult<BTreeMap<_, _>>>()?;
-
-        matches
-            .into_iter()
-            .zip(queries.iter().copied())
-            .map(|(matched, query)| {
-                Ok(PointingDirectionBracket {
-                    covering: evaluate_candidate(
-                        table,
-                        engine,
-                        column,
-                        matched.covering,
-                        query,
-                        &directions_by_row,
-                    )?,
-                    before: evaluate_candidate(
-                        table,
-                        engine,
-                        column,
-                        matched.before,
-                        query,
-                        &directions_by_row,
-                    )?,
-                    after: evaluate_candidate(
-                        table,
-                        engine,
-                        column,
-                        matched.after,
-                        query,
-                        &directions_by_row,
-                    )?,
-                })
-            })
-            .collect()
+            .array_cells_owned_uncached(&row_indices)?;
+        let mut brackets = Vec::with_capacity(queries.len());
+        for (matched, query) in matches.into_iter().zip(queries.iter().copied()) {
+            brackets.push(PointingDirectionBracket {
+                covering: evaluate_candidate(
+                    table,
+                    engine,
+                    column,
+                    matched.covering,
+                    query,
+                    &row_indices,
+                    &direction_cells,
+                )?,
+                before: evaluate_candidate(
+                    table,
+                    engine,
+                    column,
+                    matched.before,
+                    query,
+                    &row_indices,
+                    &direction_cells,
+                )?,
+                after: evaluate_candidate(
+                    table,
+                    engine,
+                    column,
+                    matched.after,
+                    query,
+                    &row_indices,
+                    &direction_cells,
+                )?,
+            });
+        }
+        Ok(brackets)
     }
 }
 
@@ -318,14 +368,22 @@ fn evaluate_candidate(
     column: PointingDirectionColumn,
     metadata: Option<CandidateMetadata>,
     query: PointingDirectionQuery,
-    directions_by_row: &BTreeMap<usize, ArrayValue>,
+    direction_rows: &[usize],
+    direction_cells: &[Option<ArrayValue>],
 ) -> MsResult<Option<PointingDirectionCandidate>> {
     let Some(metadata) = metadata else {
         return Ok(None);
     };
-    let direction = directions_by_row
-        .get(&metadata.row_index)
+    let direction_index = direction_rows
+        .binary_search(&metadata.row_index)
         .expect("candidate direction was selected by row");
+    let direction = direction_cells[direction_index].as_ref().ok_or_else(|| {
+        MsError::InvalidInput(format!(
+            "POINTING.{} row {} is undefined",
+            column.name(),
+            metadata.row_index
+        ))
+    })?;
     let ArrayValue::Float64(coefficients) = direction else {
         return Err(MsError::ColumnTypeMismatch {
             column: column.name().to_string(),
@@ -357,7 +415,7 @@ fn evaluate_candidate(
         )));
     }
     let source_ref =
-        resolve_direction_reference(table, "POINTING", column.name(), metadata.row_index)?;
+        resolve_direction_reference_selected(table, "POINTING", column.name(), metadata.row_index)?;
     Ok(Some(PointingDirectionCandidate {
         row_index: metadata.row_index,
         row_time_mjd_seconds: metadata.time_mjd_seconds,
@@ -446,5 +504,30 @@ fn retain_earlier(current: &mut Option<CandidateMetadata>, candidate: CandidateM
             .is_lt()
     }) {
         *current = Some(candidate);
+    }
+}
+
+#[cfg(test)]
+mod preparation_peak_tests {
+    use super::*;
+
+    #[test]
+    fn pointing_scan_peak_includes_the_live_column_accessor_name() {
+        let selected_rows = 1;
+        let scan_rows = 4_096;
+        let caller_vectors = 2 * size_of::<PointingDirectionQuery>() + size_of::<SkyDirection>();
+        let matches = 2 * size_of::<CandidateIndices>();
+        let scan = scan_rows * (size_of::<usize>() + 5 * size_of::<Option<ScalarValue>>());
+        let expected = caller_vectors + matches + scan + "TIME_ORIGIN".len();
+
+        assert_eq!(
+            selected_pointing_preparation_peak_bytes(
+                selected_rows,
+                scan_rows,
+                1,
+                PointingDirectionColumn::Direction,
+            ),
+            Some(expected)
+        );
     }
 }

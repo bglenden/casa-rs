@@ -2,7 +2,7 @@
 
 //! Immutable observation manifests and exact resolved selection semantics.
 
-use std::{cmp::Ordering, collections::BTreeSet, fmt};
+use std::{cmp::Ordering, collections::BTreeSet, fmt, sync::Arc};
 
 use thiserror::Error;
 
@@ -661,9 +661,9 @@ where
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SelectedRows {
     source_row_count: u64,
-    ordered_main_rows: Vec<SelectedMainRow>,
+    ordered_main_rows: Arc<[SelectedMainRow]>,
     sequence_id: SelectedRowSequenceId,
-    used_data_description_ids: Vec<u32>,
+    used_data_description_ids: Arc<[u32]>,
 }
 
 impl SelectedRows {
@@ -700,9 +700,9 @@ impl SelectedRows {
         }
         Ok(Self {
             source_row_count,
-            ordered_main_rows,
+            ordered_main_rows: ordered_main_rows.into(),
             sequence_id,
-            used_data_description_ids,
+            used_data_description_ids: used_data_description_ids.into(),
         })
     }
 
@@ -757,6 +757,48 @@ impl SelectedRows {
     #[must_use]
     pub fn ordered_main_rows(&self) -> &[SelectedMainRow] {
         &self.ordered_main_rows
+    }
+
+    /// Return heap bytes owned by the shared canonical row/DDID manifest.
+    ///
+    /// Cloning [`SelectedRows`] shares these immutable allocations. A retained
+    /// storage owner can therefore charge this value once instead of assuming
+    /// every transaction and commitment clone owns another full row vector.
+    #[must_use]
+    pub fn retained_manifest_bytes(&self) -> Option<usize> {
+        self.additional_retained_manifest_bytes(std::iter::empty::<&Self>())
+    }
+
+    fn additional_retained_manifest_bytes<'a>(
+        &self,
+        already_accounted: impl IntoIterator<Item = &'a Self>,
+    ) -> Option<usize> {
+        let mut ordered_main_rows_accounted = false;
+        let mut used_data_description_ids_accounted = false;
+        for rows in already_accounted {
+            ordered_main_rows_accounted |=
+                Arc::ptr_eq(&self.ordered_main_rows, &rows.ordered_main_rows);
+            used_data_description_ids_accounted |= Arc::ptr_eq(
+                &self.used_data_description_ids,
+                &rows.used_data_description_ids,
+            );
+        }
+        let mut bytes = 0_usize;
+        if !ordered_main_rows_accounted {
+            bytes = bytes.checked_add(2 * size_of::<usize>())?.checked_add(
+                self.ordered_main_rows
+                    .len()
+                    .checked_mul(size_of::<SelectedMainRow>())?,
+            )?;
+        }
+        if !used_data_description_ids_accounted {
+            bytes = bytes.checked_add(2 * size_of::<usize>())?.checked_add(
+                self.used_data_description_ids
+                    .len()
+                    .checked_mul(size_of::<u32>())?,
+            )?;
+        }
+        Some(bytes)
     }
 
     /// Return the canonical identity of selected row/DDID coordinates in MAIN order.
@@ -1097,6 +1139,84 @@ impl ObservationSelection {
     #[must_use]
     pub fn correlations(&self) -> &[CorrelationSelection] {
         &self.correlations
+    }
+
+    /// Return bytes owned by this shared immutable selection manifest.
+    ///
+    /// The projection includes the Arc allocation, exact row/DDID manifest,
+    /// resolved predicate vectors and strings, and selected coordinate catalogs.
+    #[must_use]
+    pub fn retained_manifest_bytes(&self) -> Option<usize> {
+        let mut bytes = size_of::<Self>().checked_add(2 * size_of::<usize>())?;
+        bytes = bytes.checked_add(self.rows.retained_manifest_bytes()?)?;
+        let id_selection_bytes = |selection: &IdSelection| match selection {
+            IdSelection::All => Some(0),
+            IdSelection::Only(ids) => ids.capacity().checked_mul(size_of::<u32>()),
+        };
+        bytes = bytes
+            .checked_add(id_selection_bytes(&self.rows_filter.fields)?)?
+            .checked_add(id_selection_bytes(&self.rows_filter.scans)?)?
+            .checked_add(id_selection_bytes(&self.rows_filter.observations)?)?
+            .checked_add(id_selection_bytes(&self.rows_filter.arrays)?)?;
+        if let TimeSelection::Ranges(ranges) = &self.rows_filter.times {
+            bytes = bytes.checked_add(ranges.capacity().checked_mul(size_of::<TimeRange>())?)?;
+        }
+        if let UvSelection::Ranges(ranges) = &self.rows_filter.uv_distances {
+            bytes = bytes.checked_add(
+                ranges
+                    .capacity()
+                    .checked_mul(size_of::<UvDistanceRange>())?,
+            )?;
+        }
+        if let AntennaSelection::Only(baselines) = &self.rows_filter.antennas {
+            bytes = bytes.checked_add(
+                baselines
+                    .capacity()
+                    .checked_mul(size_of::<AntennaBaseline>())?,
+            )?;
+        }
+        if let IntentSelection::Only(intents) = &self.rows_filter.intents {
+            bytes = bytes.checked_add(
+                intents
+                    .capacity()
+                    .checked_mul(size_of::<ResolvedIntent>())?,
+            )?;
+            for intent in intents {
+                bytes = bytes.checked_add(intent.observation_mode.capacity())?;
+            }
+        }
+        bytes = bytes.checked_add(
+            self.data_descriptions
+                .capacity()
+                .checked_mul(size_of::<DataDescriptionSelection>())?,
+        )?;
+        bytes = bytes.checked_add(
+            self.spectral_windows
+                .capacity()
+                .checked_mul(size_of::<SpectralWindowSelection>())?,
+        )?;
+        for selection in &self.spectral_windows {
+            bytes = bytes.checked_add(
+                selection
+                    .channel_indices
+                    .capacity()
+                    .checked_mul(size_of::<u32>())?,
+            )?;
+        }
+        bytes = bytes.checked_add(
+            self.correlations
+                .capacity()
+                .checked_mul(size_of::<CorrelationSelection>())?,
+        )?;
+        for selection in &self.correlations {
+            bytes = bytes.checked_add(
+                selection
+                    .products
+                    .capacity()
+                    .checked_mul(size_of::<CorrelationProduct>())?,
+            )?;
+        }
+        Some(bytes)
     }
 
     fn canonicalize(&mut self) -> Result<(), CompileObservationError> {
@@ -1589,6 +1709,26 @@ impl SourceGenerations {
         self.model_column
     }
 
+    /// Return bytes owned by this shared immutable generation manifest.
+    #[must_use]
+    pub fn retained_manifest_bytes(&self) -> Option<usize> {
+        size_of::<Self>()
+            .checked_add(2 * size_of::<usize>())?
+            .checked_add(self.retained_owned_heap_bytes()?)
+    }
+
+    fn retained_owned_heap_bytes(&self) -> Option<usize> {
+        self.columns
+            .generations
+            .capacity()
+            .checked_mul(size_of::<ColumnGeneration>())?
+            .checked_add(
+                self.metadata
+                    .capacity()
+                    .checked_mul(size_of::<MetadataGeneration>())?,
+            )
+    }
+
     fn canonicalize(&mut self) -> Result<(), CompileObservationError> {
         require_identity(self.consistency_token.0, "source consistency token")?;
         self.columns.canonicalize()?;
@@ -1659,6 +1799,12 @@ impl ObservationSourceProvenance {
         self.selection_request
     }
 
+    /// Return heap bytes retained by the source locator string.
+    #[must_use]
+    pub fn retained_locator_bytes(&self) -> usize {
+        self.locator.capacity()
+    }
+
     fn validate(&self) -> Result<(), CompileObservationError> {
         if self.locator.trim().is_empty() {
             return Err(CompileObservationError::EmptySourceLocator);
@@ -1700,8 +1846,8 @@ pub struct ObservationSource {
     identity: MeasurementSetIdentity,
     provenance: ObservationSourceProvenance,
     input_ordinal: usize,
-    selection: ObservationSelection,
-    generations: SourceGenerations,
+    selection: Arc<ObservationSelection>,
+    generations: Arc<SourceGenerations>,
 }
 
 impl ObservationSource {
@@ -1725,14 +1871,22 @@ impl ObservationSource {
 
     /// Return exact resolved selection semantics.
     #[must_use]
-    pub const fn selection(&self) -> &ObservationSelection {
+    pub fn selection(&self) -> &ObservationSelection {
         &self.selection
     }
 
     /// Return all bound source generations.
     #[must_use]
-    pub const fn generations(&self) -> &SourceGenerations {
+    pub fn generations(&self) -> &SourceGenerations {
         &self.generations
+    }
+
+    pub(crate) fn selection_arc(&self) -> Arc<ObservationSelection> {
+        Arc::clone(&self.selection)
+    }
+
+    pub(crate) fn generations_arc(&self) -> Arc<SourceGenerations> {
+        Arc::clone(&self.generations)
     }
 }
 
@@ -1900,6 +2054,22 @@ impl ObservationSourceState {
     #[must_use]
     pub const fn generations(&self) -> &SourceGenerations {
         &self.generations
+    }
+
+    /// Return heap bytes additionally retained by this current-state graph.
+    ///
+    /// Inline state belongs to its outer owner allocation. Generation vectors
+    /// are owned uniquely by this value, while selected-row manifests can be
+    /// shared with compiled sources or earlier state probes and are omitted
+    /// when their allocation is already accounted by one of those roots.
+    #[must_use]
+    pub fn additional_retained_heap_bytes<'a>(
+        &self,
+        already_accounted_rows: impl IntoIterator<Item = &'a SelectedRows>,
+    ) -> Option<usize> {
+        self.selected_rows
+            .additional_retained_manifest_bytes(already_accounted_rows)?
+            .checked_add(self.generations.retained_owned_heap_bytes()?)
     }
 }
 
@@ -2226,8 +2396,8 @@ pub fn compile_observation(
             identity: source.identity,
             provenance,
             input_ordinal,
-            selection,
-            generations,
+            selection: Arc::new(selection),
+            generations: Arc::new(generations),
         });
     }
     if !has_selected_rows {

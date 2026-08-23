@@ -14,12 +14,12 @@ pub use execution_bindings::{
     AttemptBoundObservationCompletion, BindingKind, CacheIdentity, CompiledWorkContext,
     ExecutionEvidenceError, ExecutionPlan, ExecutionPlanId, ExecutionStatus,
     ImplementationRegistry, ImplementationRegistryId, IoMeasurement, IoPrediction,
-    ObservationReadCompletionContext, PhysicalWorkBinding, PhysicalWorkBindingError,
-    PhysicalWorkId, PlanError, PlanPrediction, PlannedArtifact, PlannerCostModelProfileId,
-    PlanningBindings, PredictionConfidence, PredictionUncertainty, PublicationResources,
-    RedactedPath, ResourceMeasurement, ResourcePolicyId, RunBindings, RunController, RunDirective,
-    RunError, RunToCompletion, StagePrediction, WorkExecutionContext, WorkImplementation,
-    WorkMeasurements, plan, run,
+    ObservationCompletionBindingError, ObservationReadCompletionContext, PhysicalWorkBinding,
+    PhysicalWorkBindingError, PhysicalWorkId, PlanError, PlanPrediction, PlannedArtifact,
+    PlannerCostModelProfileId, PlanningBindings, PredictionConfidence, PredictionUncertainty,
+    PublicationResources, RedactedPath, ResourceMeasurement, ResourcePolicyId, RunBindings,
+    RunController, RunDirective, RunError, RunToCompletion, StagePrediction, WorkExecutionContext,
+    WorkImplementation, WorkMeasurements, plan, run,
 };
 
 pub use execution::{

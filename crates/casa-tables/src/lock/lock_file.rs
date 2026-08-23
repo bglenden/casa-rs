@@ -69,6 +69,18 @@ pub(crate) struct LockFile {
 }
 
 impl LockFile {
+    pub(crate) fn retained_heap_bytes(&self) -> usize {
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            self.path.as_os_str().as_bytes().len()
+        }
+        #[cfg(not(unix))]
+        {
+            self.path.as_os_str().to_string_lossy().len()
+        }
+    }
+
     /// Create or open a `table.lock` file at the given path.
     ///
     /// If `create` is true, the file is created (or truncated) with mode 0666

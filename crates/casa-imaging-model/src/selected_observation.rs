@@ -136,6 +136,26 @@ impl SelectedObservationCommitment {
     pub const fn read_set(&self) -> &ObservationReadSet {
         &self.read_set
     }
+
+    /// Return a conservative bound for the validation and digest state live
+    /// during one canonical traversal.
+    ///
+    /// This includes the fixed SHA/coverage state and the active row's
+    /// broadcast-weight vector. It is independent of selected MAIN row and
+    /// DATA_DESCRIPTION cardinality.
+    #[must_use]
+    pub fn inspection_scratch_bytes(&self) -> Option<usize> {
+        let maximum_correlations = self
+            .read_set
+            .sources()
+            .iter()
+            .flat_map(|source| source.selection().correlations())
+            .map(|selection| selection.products().len())
+            .max()
+            .unwrap_or(0);
+        size_of::<SelectedObservationInspection<'static>>()
+            .checked_add(maximum_correlations.checked_mul(size_of::<Option<f32>>())?)
+    }
 }
 
 /// Failure to inspect reports as one exact compiled selected observation.
