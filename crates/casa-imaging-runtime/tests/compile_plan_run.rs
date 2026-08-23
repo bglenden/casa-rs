@@ -56,7 +56,7 @@ use casa_imaging_runtime::{
     RunController, RunDirective, RunError, RunToCompletion, RuntimeOverheadDemand, ScalingMetadata,
     SlotCompatibility, StagePrediction, StorageDomain, StorageDomainId, StorageMode,
     WorkDependency, WorkDomain, WorkExecutionContext, WorkImplementation, WorkImplementationId,
-    WorkKind, WorkMeasurements, WorkNode, WorkNodeId, plan as authority_plan, run as authority_run,
+    WorkKind, WorkMeasurements, WorkNode, WorkNodeId, plan as runtime_plan, run as runtime_run,
 };
 
 fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
@@ -78,6 +78,8 @@ fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
 }
 
 mod common;
+
+mod walking_skeleton;
 
 use common::{identity, problem_inputs};
 
@@ -423,6 +425,7 @@ fn recording_executor(
         fence_waits: AtomicUsize::new(0),
         observed_knobs: Mutex::new(Vec::new()),
         measurements: BTreeMap::new(),
+        resource_peak_overrides: BTreeMap::new(),
         panic_on_execute: false,
         publication_launched: None,
         visible_generation: None,
@@ -435,6 +438,7 @@ fn recording_executor(
         publication_buffer_held: None,
         receipt_root_to_disrupt: None,
         publication_pause: None,
+        publication_probe: None,
     }
 }
 
@@ -468,6 +472,7 @@ struct RecordingExecutor {
     fence_waits: AtomicUsize,
     observed_knobs: Mutex<Vec<ExecutionKnobs>>,
     measurements: BTreeMap<WorkNodeId, (Vec<IoMeasurement>, Vec<ArtifactMeasurement>)>,
+    resource_peak_overrides: BTreeMap<WorkNodeId, u64>,
     panic_on_execute: bool,
     publication_launched: Option<Arc<AtomicBool>>,
     visible_generation: Option<Arc<AtomicUsize>>,
@@ -480,6 +485,15 @@ struct RecordingExecutor {
     publication_buffer_held: Option<Arc<AtomicBool>>,
     receipt_root_to_disrupt: Option<PathBuf>,
     publication_pause: Option<Arc<PublicationPause>>,
+    publication_probe: Option<PublicationProbe>,
+}
+
+#[derive(Debug)]
+struct PublicationProbe {
+    receipts: Arc<ExecutionReceiptStore>,
+    attempt: casa_imaging_runtime::ExecutionAttemptId,
+    prepared_observed: Arc<AtomicBool>,
+    publication_calls: Arc<AtomicUsize>,
 }
 
 impl WorkImplementation for RecordingExecutor {
@@ -538,7 +552,10 @@ impl WorkImplementation for RecordingExecutor {
                 ResourceMeasurement::new(
                     claim.resource.clone(),
                     claim.lifetime.clone(),
-                    claim.amount,
+                    self.resource_peak_overrides
+                        .get(&context.node().id)
+                        .copied()
+                        .unwrap_or(claim.amount),
                 )
             })
             .collect();
@@ -614,6 +631,25 @@ impl WorkImplementation for RecordingExecutor {
                 "publication requires the transaction-bound Publication node",
             ));
         }
+        if let Some(probe) = &self.publication_probe {
+            probe.publication_calls.fetch_add(1, Ordering::SeqCst);
+            let receipt = probe
+                .receipts
+                .open(probe.attempt)
+                .map_err(io::Error::other)?;
+            let prepared = receipt.status() == ReceiptStatus::PublicationPrepared
+                && receipt.artifact_identities().into_iter().all(|artifact| {
+                    receipt.artifact_role(artifact) != Some(ArtifactRole::Output)
+                        || receipt.artifact_disposition(artifact)
+                            == Some(ArtifactDisposition::Staged)
+                });
+            probe.prepared_observed.store(prepared, Ordering::SeqCst);
+            if !prepared {
+                return Err(io::Error::other(
+                    "publication became callable before durable receipt preparation",
+                ));
+            }
+        }
         if let Some(message) = self.publication_failure {
             return Err(io::Error::other(message));
         }
@@ -658,28 +694,10 @@ fn publication_recording_executor(
     launched: Arc<AtomicBool>,
     visible_generation: Arc<AtomicUsize>,
 ) -> RecordingExecutor {
-    RecordingExecutor {
-        id: implementation(byte),
-        failure: None,
-        fence_failure: None,
-        fail_only_fence: None,
-        calls: AtomicUsize::new(0),
-        fence_waits: AtomicUsize::new(0),
-        observed_knobs: Mutex::new(Vec::new()),
-        measurements: BTreeMap::new(),
-        panic_on_execute: false,
-        publication_launched: Some(launched),
-        visible_generation: Some(visible_generation),
-        failure_node: None,
-        fence_failure_event: None,
-        publication_failure: None,
-        generic_source_access: None,
-        initial_consistency_expected: None,
-        visibility_during_fence_settlement: None,
-        publication_buffer_held: None,
-        receipt_root_to_disrupt: None,
-        publication_pause: None,
-    }
+    let mut executor = recording_executor(byte, None, None);
+    executor.publication_launched = Some(launched);
+    executor.visible_generation = Some(visible_generation);
+    executor
 }
 
 fn failing_transaction_executor(
@@ -689,28 +707,12 @@ fn failing_transaction_executor(
     fence_failure_event: Option<(&'static str, FenceKind)>,
     publication_failure: Option<&'static str>,
 ) -> RecordingExecutor {
-    RecordingExecutor {
-        id: implementation(byte),
-        failure: None,
-        fence_failure: None,
-        fail_only_fence: None,
-        calls: AtomicUsize::new(0),
-        fence_waits: AtomicUsize::new(0),
-        observed_knobs: Mutex::new(Vec::new()),
-        measurements: BTreeMap::new(),
-        panic_on_execute: false,
-        publication_launched: None,
-        visible_generation: Some(visible_generation),
-        failure_node,
-        fence_failure_event,
-        publication_failure,
-        generic_source_access: None,
-        initial_consistency_expected: None,
-        visibility_during_fence_settlement: None,
-        publication_buffer_held: None,
-        receipt_root_to_disrupt: None,
-        publication_pause: None,
-    }
+    let mut executor = recording_executor(byte, None, None);
+    executor.visible_generation = Some(visible_generation);
+    executor.failure_node = failure_node;
+    executor.fence_failure_event = fence_failure_event;
+    executor.publication_failure = publication_failure;
+    executor
 }
 
 fn physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
@@ -2441,7 +2443,7 @@ fn plan<E>(
     let _guard = run_lock()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    authority_plan(problem, bindings, authority(), |problem, bindings| {
+    runtime_plan(problem, bindings, authority(), |problem, bindings| {
         planner(problem, bindings).map(|candidate| vec![candidate])
     })
 }
@@ -2526,7 +2528,7 @@ fn run_receipted<C: RunController>(
     let _guard = run_lock()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    authority_run(
+    runtime_run(
         problem, plan, current, registry, authority, controller, receipt,
     )
 }
@@ -3898,7 +3900,7 @@ fn prepared_publication_holds_the_shared_root_reservation_through_publish() {
         scope.spawn(move || {
             let mut controller = RunToCompletion;
             first_tx
-                .send(authority_run(
+                .send(runtime_run(
                     problem,
                     execution_plan,
                     current,
@@ -3931,7 +3933,7 @@ fn prepared_publication_holds_the_shared_root_reservation_through_publish() {
         scope.spawn(move || {
             let mut controller = RunToCompletion;
             second_tx
-                .send(authority_run(
+                .send(runtime_run(
                     problem,
                     execution_plan,
                     current,
