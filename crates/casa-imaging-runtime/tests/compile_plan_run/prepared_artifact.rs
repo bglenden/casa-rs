@@ -24,6 +24,7 @@ struct PreparedOperationAdapter {
 struct PreparedFailureAdapter {
     id: WorkImplementationId,
     evidence: WorkMeasurements,
+    succeed: bool,
 }
 
 impl WorkImplementation for PreparedFailureAdapter {
@@ -34,9 +35,13 @@ impl WorkImplementation for PreparedFailureAdapter {
     }
 
     fn execute(&self, _context: WorkExecutionContext<'_>) -> Result<WorkMeasurements, Self::Error> {
-        Err(io::Error::other(
-            "injected prepared-artifact mutation failure",
-        ))
+        if self.succeed {
+            Ok(self.evidence.clone())
+        } else {
+            Err(io::Error::other(
+                "injected prepared-artifact mutation failure",
+            ))
+        }
     }
 
     fn failure_measurements<'error>(
@@ -826,6 +831,12 @@ fn assert_rejection_evidence(
             )
             .is_some_and(|(_, operations)| operations > 0)
     );
+    assert!(
+        receipt
+            .stage_actual_elapsed_nanos(&descriptor.work_node_id(operation))
+            .is_some(),
+        "failing a rejected cache node must preserve its measured elapsed time"
+    );
 }
 
 fn prepared_adapter_observed(
@@ -972,13 +983,20 @@ fn public_prepared_generate_load_and_reuse_are_plan_and_receipt_bound() {
         generate_receipt.actual_resource_peak(&generated_node, &temporary, &ClaimLifetime::Work,),
         Some(actual_cache_bytes)
     );
-    assert_eq!(
-        generate_receipt.actual_resource_peak(
+    let observed_resident = generate_receipt
+        .actual_resource_peak(
             &generated_node,
             &LeaseResource::IoBuffer(IoBufferKind::StorageManager),
             &ClaimLifetime::Work,
-        ),
-        Some(generated_reservation.resident_buffer_bytes())
+        )
+        .expect("observed private-store residency");
+    assert!(
+        observed_resident >= generated_reservation.streaming_buffer_bytes(),
+        "observed residency covers the actually allocated streaming buffer"
+    );
+    assert!(
+        observed_resident < generated_reservation.resident_buffer_bytes(),
+        "the conservative reservation is distinct from measured peak residency"
     );
     let generate_io = generate_receipt
         .stage_actual_io(&generated_node, IoBufferKind::StorageManager)
@@ -2181,7 +2199,7 @@ fn public_prepared_reuse_receipts_fail_closed_rejections() {
 }
 
 #[test]
-fn failed_prepared_receipt_retains_completed_eviction_and_io_evidence() {
+fn failed_prepared_receipt_retains_materialization_eviction_and_io_evidence() {
     let problem = compile(request(1)).expect("prepared failure problem");
     let cache_directory = tempfile::tempdir().expect("prepared failure cache");
     let store = PreparedArtifactStore::open(cache_directory.path(), prepared_budget())
@@ -2212,16 +2230,26 @@ fn failed_prepared_receipt_retains_completed_eviction_and_io_evidence() {
         .collect();
     let ledger = descriptor.eviction_artifact(operation);
     let observed_evictions = ArtifactIdentity::from_sha256([211; 32]);
+    let observed_materialized = ArtifactIdentity::from_sha256([210; 32]);
     let evidence = WorkMeasurements::new(
         resources,
         io,
-        vec![ArtifactMeasurement::new(
-            ledger.identity(),
-            Some(observed_evictions),
-            ArtifactDisposition::Loaded,
-            128,
-            None,
-        )],
+        vec![
+            ArtifactMeasurement::new(
+                descriptor.identity(),
+                Some(observed_materialized),
+                ArtifactDisposition::Built,
+                PREPARED_PAYLOAD_BYTES,
+                Some(RedactedPath::from_path(cache_directory.path())),
+            ),
+            ArtifactMeasurement::new(
+                ledger.identity(),
+                Some(observed_evictions),
+                ArtifactDisposition::Loaded,
+                128,
+                None,
+            ),
+        ],
     );
     let prepared_id = descriptor.work_implementation_id(operation);
     let registry = PreparedSuiteRegistry {
@@ -2239,6 +2267,7 @@ fn failed_prepared_receipt_retains_completed_eviction_and_io_evidence() {
                 PreparedSuiteImplementation::Failure(Box::new(PreparedFailureAdapter {
                     id: prepared_id,
                     evidence,
+                    succeed: false,
                 })),
             ),
         ]),
@@ -2280,7 +2309,128 @@ fn failed_prepared_receipt_retains_completed_eviction_and_io_evidence() {
         receipt.artifact_observed_identity(ledger.identity()),
         Some(observed_evictions.as_bytes())
     );
+    assert_eq!(
+        receipt.artifact_actual_bytes(descriptor.identity()),
+        Some(PREPARED_PAYLOAD_BYTES)
+    );
+    assert_eq!(
+        receipt.artifact_observed_identity(descriptor.identity()),
+        Some(observed_materialized.as_bytes())
+    );
+    assert!(
+        receipt
+            .artifact_path_identity(descriptor.identity())
+            .is_some()
+    );
+}
+
+#[test]
+fn malformed_rejection_evidence_is_rejected_without_partial_receipt_mutation() {
+    let problem = compile(request(1)).expect("malformed rejection problem");
+    let cache_directory = tempfile::tempdir().expect("malformed rejection cache");
+    let store = PreparedArtifactStore::open(cache_directory.path(), prepared_budget())
+        .expect("malformed rejection store");
+    let descriptor = prepared_descriptor(&store, &problem);
+    let operation = PreparedArtifactOperation::Reuse;
+    let plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| Ok::<_, ()>(prepared_physical_work(&descriptor, &store, operation)),
+    )
+    .expect("malformed rejection plan");
+    let node_id = descriptor.work_node_id(operation);
+    let resources = plan.execution_dag().nodes()[&node_id]
+        .claims
+        .iter()
+        .map(|claim| ResourceMeasurement::new(claim.resource.clone(), claim.lifetime.clone(), 0))
+        .collect();
+    let io = plan.prediction().stages()[&node_id]
+        .io()
+        .iter()
+        .map(|prediction| IoMeasurement::new(prediction.kind(), 0, 1))
+        .collect();
+    let ledger = descriptor.eviction_artifact(operation);
+    let evidence = WorkMeasurements::new(
+        resources,
+        io,
+        vec![
+            ArtifactMeasurement::new(
+                descriptor.identity(),
+                Some(PreparedArtifactRejection::Missing.evidence_identity(descriptor.identity())),
+                ArtifactDisposition::RejectedStale,
+                0,
+                None,
+            ),
+            ArtifactMeasurement::new(
+                ledger.identity(),
+                Some(ArtifactIdentity::from_sha256([212; 32])),
+                ArtifactDisposition::Staged,
+                0,
+                None,
+            ),
+        ],
+    );
+    let prepared_id = descriptor.work_implementation_id(operation);
+    let registry = PreparedSuiteRegistry {
+        id: registry(3),
+        implementations: BTreeMap::from([
+            (
+                implementation(6),
+                PreparedSuiteImplementation::Base(Box::new(prepared_base_executor(
+                    &descriptor,
+                    operation,
+                ))),
+            ),
+            (
+                prepared_id.clone(),
+                PreparedSuiteImplementation::Failure(Box::new(PreparedFailureAdapter {
+                    id: prepared_id,
+                    evidence,
+                    succeed: true,
+                })),
+            ),
+        ]),
+    };
+    let receipts_directory = tempfile::tempdir().expect("malformed rejection receipts");
+    let receipts = ExecutionReceiptStore::new(
+        receipts_directory.path(),
+        ReceiptRetention::new(4, 1_000_000).expect("malformed rejection retention"),
+    )
+    .expect("malformed rejection receipt store");
+    let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([153; 32]);
+
+    let error = run_prepared(
+        &problem,
+        &plan,
+        &registry,
+        receipts.bind(execution_provenance(
+            attempt,
+            BuildIdentity::from_sha256([154; 32]),
+        )),
+    )
+    .expect_err("malformed rejection evidence must fail closed");
+    assert!(matches!(
+        error,
+        RunError::Evidence(ExecutionEvidenceError::ArtifactDispositionMismatch {
+            artifact,
+            ..
+        }) if artifact == ledger.identity()
+    ));
+
+    let receipt = receipts.open(attempt).expect("malformed rejection receipt");
+    assert_eq!(receipt.status(), ReceiptStatus::Failed);
+    assert_eq!(
+        receipt.failure_kind(),
+        Some(ReceiptFailureKind::EvidenceContract)
+    );
+    assert!(receipt.stage_actual_elapsed_nanos(&node_id).is_some());
     assert_eq!(receipt.artifact_actual_bytes(descriptor.identity()), None);
+    assert_eq!(receipt.artifact_actual_bytes(ledger.identity()), None);
+    assert_eq!(
+        receipt.actual_resource_peak(&node_id, &LeaseResource::Workers, &ClaimLifetime::Work,),
+        None,
+        "invalid evidence must not be checkpointed partially"
+    );
 }
 
 #[test]
@@ -2309,6 +2459,22 @@ fn public_prepared_cache_evicts_deterministically_and_rejects_casa_boundaries() 
         Err(PreparedArtifactError::CasaVisiblePath(_))
     ));
     assert!(!nested_private_root.exists());
+
+    for casa_entry in ["CFS_0_0_CF_0_0_0.im", "WTCFS_0_0_CF_0_0_0.im", "generic.im"] {
+        let casa_cache_parent = tempfile::tempdir().expect("CASA cache parent");
+        let casa_cache = casa_cache_parent.path().join("CASA-cache");
+        fs::create_dir(&casa_cache).expect("ordinary-named CASA cache root");
+        fs::create_dir(casa_cache.join(casa_entry)).expect("existing CASA image");
+        let nested_private_root = casa_cache.join("private");
+        assert!(matches!(
+            PreparedArtifactStore::open(&nested_private_root, prepared_budget()),
+            Err(PreparedArtifactError::CasaVisiblePath(_))
+        ));
+        assert!(
+            !nested_private_root.exists(),
+            "CASA ancestry containing {casa_entry} must be rejected before creating the private root"
+        );
+    }
 
     #[cfg(unix)]
     {

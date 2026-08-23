@@ -4065,7 +4065,9 @@ impl<'store> ReceiptRecorder<'store> {
             .find(|item| item.node_id == node_id)
             .ok_or(ReceiptError::UnlistedPlanEvidence { kind: "work node" })?;
         item.status = status;
-        item.actual_elapsed_nanos = elapsed;
+        if elapsed.is_some() {
+            item.actual_elapsed_nanos = elapsed;
+        }
         Ok(())
     }
 

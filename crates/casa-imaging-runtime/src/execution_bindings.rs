@@ -2595,6 +2595,7 @@ fn validate_measurements(
         .map(|artifact| (artifact.identity(), artifact))
         .collect::<BTreeMap<_, _>>();
     let mut measured_artifacts = BTreeMap::new();
+    let mut rejected_artifact = None;
     for measurement in measurements.artifacts() {
         let artifact = measurement.planned_identity();
         if measured_artifacts.insert(artifact, *measurement).is_some() {
@@ -2631,10 +2632,7 @@ fn validate_measurements(
         }
         if work.node().kind == WorkKind::Cache && disposition == ArtifactDisposition::RejectedStale
         {
-            return Err(ExecutionEvidenceError::RejectedArtifact {
-                node: node.clone(),
-                artifact,
-            });
+            rejected_artifact.get_or_insert(artifact);
         }
     }
     if require_all_artifacts
@@ -2647,7 +2645,14 @@ fn validate_measurements(
             artifact: *artifact,
         });
     }
-    Ok(())
+    if let Some(artifact) = rejected_artifact {
+        Err(ExecutionEvidenceError::RejectedArtifact {
+            node: node.clone(),
+            artifact,
+        })
+    } else {
+        Ok(())
+    }
 }
 
 fn work_execution_context<'a>(
@@ -3064,15 +3069,26 @@ where
                                     pending = Some(PendingRunError::Evidence(error));
                                 }
                                 controller_stopped = true;
-                                let _ = receipt.fences_launched(&node_id);
+                                let mut receipt_error = receipt.fences_launched(&node_id).err();
                                 if rejected_artifact {
                                     // Retain the typed rejection evidence in the
                                     // durable receipt before failing the cache
                                     // node closed. A rejected warm artifact is
                                     // not a successful cache result.
-                                    let _ = receipt.work_completed(&node_id, &measurements);
+                                    if let Err(error) = receipt
+                                        .work_failed_with_measurements(&node_id, &measurements)
+                                        && receipt_error.is_none()
+                                    {
+                                        receipt_error = Some(error);
+                                    }
+                                } else if let Err(error) = receipt.work_failed(&node_id)
+                                    && receipt_error.is_none()
+                                {
+                                    receipt_error = Some(error);
                                 }
-                                let _ = receipt.work_failed(&node_id);
+                                if let Some(error) = receipt_error {
+                                    defer_receipt_error(&mut scheduler, &mut pending, error);
+                                }
                                 launched.insert(node_id.clone(), work);
                                 if scheduler
                                     .finish_work(node_id, WorkResult::Succeeded)

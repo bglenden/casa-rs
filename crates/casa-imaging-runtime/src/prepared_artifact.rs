@@ -1443,6 +1443,8 @@ pub struct PreparedArtifactStore {
     state: Arc<RootState>,
     #[cfg(test)]
     fail_after_evictions: Option<usize>,
+    #[cfg(test)]
+    fail_after_publication_rename: bool,
 }
 
 #[derive(Debug)]
@@ -1486,6 +1488,8 @@ impl PreparedArtifactStore {
             state,
             #[cfg(test)]
             fail_after_evictions: None,
+            #[cfg(test)]
+            fail_after_publication_rename: false,
         })
     }
 
@@ -1597,8 +1601,8 @@ impl PreparedArtifactStore {
             PreparedArtifactOperation::Reuse,
             reservation,
         )?;
-        let mut evidence = ValidationEvidence::new(reservation, self.budget);
-        let lock = match self.lock(&mut evidence) {
+        let mut evidence = ValidationEvidence::new(self.budget);
+        let mut lock = match self.lock(&mut evidence) {
             Ok(lock) => lock,
             Err(error) => {
                 let measurements = failed_measurements(
@@ -1720,8 +1724,8 @@ impl PreparedArtifactStore {
     ) -> Result<(PreparedArtifact, WorkMeasurements), PreparedArtifactError> {
         let reservation = self.reservation(descriptor, operation)?;
         validate_plan_binding(*context, descriptor, operation, reservation)?;
-        let mut evidence = ValidationEvidence::new(reservation, self.budget);
-        let lock = match self.lock(&mut evidence) {
+        let mut evidence = ValidationEvidence::new(self.budget);
+        let mut lock = match self.lock(&mut evidence) {
             Ok(lock) => lock,
             Err(error) => {
                 let measurements =
@@ -1729,17 +1733,31 @@ impl PreparedArtifactStore {
                 return Err(error.with_measurements(measurements));
             }
         };
-        let published = self.publish_bytes_locked(
+        let mut published = self.publish_bytes_locked(
             descriptor,
             disposition,
             segments,
             reservation,
             &mut evidence,
         );
+        if published.is_err()
+            && let Err(rollback) = self.rollback_materialized(&mut evidence)
+        {
+            published = Err(rollback);
+        }
         let unlock = lock.release(&mut evidence);
         let (validated, final_disposition, cache_bytes) = match (published, unlock) {
             (Ok(published), Ok(())) => published,
-            (Err(error), _) | (Ok(_), Err(error)) => {
+            (Err(error), _) => {
+                let measurements =
+                    failed_measurements(*context, descriptor, reservation, operation, &evidence);
+                return Err(error.with_measurements(measurements));
+            }
+            (Ok(_), Err(error)) => {
+                let error = match self.rollback_materialized(&mut evidence) {
+                    Ok(()) => error,
+                    Err(rollback) => rollback,
+                };
                 let measurements =
                     failed_measurements(*context, descriptor, reservation, operation, &evidence);
                 return Err(error.with_measurements(measurements));
@@ -1787,7 +1805,7 @@ impl PreparedArtifactStore {
             let buffer_len = usize::try_from(reservation.streaming_buffer_bytes)
                 .map_err(|_| PreparedArtifactError::ArtifactTooLarge)?;
             let mut buffer = vec![0_u8; buffer_len];
-            evidence.observe_resident(buffer_len as u64);
+            evidence.observe_source_read_buffer(buffer_len as u64);
             let mut payload_hasher = Sha256::new();
             let mut offset = 0_u64;
             let mut manifest_segments = Vec::with_capacity(descriptor.segments.len());
@@ -1871,9 +1889,18 @@ impl PreparedArtifactStore {
                     reserved: reservation.entry_bytes,
                 });
             }
+            let mut staged = self.validate_entry_at_path(
+                staging_path.clone(),
+                descriptor.identity,
+                Some(descriptor),
+                evidence,
+            )?;
+            if staged.payload_sha256 != payload_sha256 {
+                return Err(PreparedArtifactError::CorruptArtifact);
+            }
             let target = self.entry_path(descriptor.identity);
             evidence.store_read_operation();
-            let final_disposition = match target.symlink_metadata() {
+            match target.symlink_metadata() {
                 Ok(_) => {
                     let existing = self.validate_entry_with_evidence(
                         descriptor.identity,
@@ -1883,27 +1910,82 @@ impl PreparedArtifactStore {
                     if existing.payload_sha256 != payload_sha256 {
                         return Err(PreparedArtifactError::PublicationConflict);
                     }
-                    disposition
+                    let cache_bytes = self.validate_budget_without_eviction(evidence)?;
+                    Ok((existing, disposition, cache_bytes))
                 }
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {
                     self.evict_for(descriptor.identity, incoming_bytes, evidence)?;
-                    evidence.store_write_operation();
-                    fs::rename(&staging_path, &target)?;
+                    let cache_bytes = self.validate_budget_with_incoming(
+                        descriptor.identity,
+                        incoming_bytes,
+                        evidence,
+                    )?;
                     sync_directory_counted(&self.cache, evidence)?;
-                    disposition
+                    self.rename_staging_for_publication(
+                        &staging_path,
+                        &target,
+                        MaterializedArtifactEvidence {
+                            payload_sha256: staged.payload_sha256,
+                            payload_bytes: staged.payload_bytes,
+                            path: target.clone(),
+                            disposition,
+                        },
+                        evidence,
+                    )?;
+                    staged.path = target;
+                    Ok((staged, disposition, cache_bytes))
                 }
-                Err(error) => return Err(error.into()),
-            };
-            let validated =
-                self.validate_entry_with_evidence(descriptor.identity, Some(descriptor), evidence)?;
-            let cache_bytes = self.validate_budget_without_eviction(evidence)?;
-            Ok((validated, final_disposition, cache_bytes))
+                Err(error) => Err(error.into()),
+            }
         })();
         let cleanup = remove_staging_counted(&staging_path, evidence);
         match (result, cleanup) {
             (Ok(result), Ok(())) => Ok(result),
             (Err(error), _) | (Ok(_), Err(error)) => Err(error),
         }
+    }
+
+    fn rename_staging_for_publication(
+        &self,
+        staging_path: &Path,
+        target: &Path,
+        materialized: MaterializedArtifactEvidence,
+        evidence: &mut ValidationEvidence,
+    ) -> Result<(), PreparedArtifactError> {
+        evidence.store_write_operation();
+        fs::rename(staging_path, target)?;
+        evidence.materialized = Some(materialized);
+        let completed = self.complete_publication_rename(evidence);
+        if let Err(error) = completed {
+            remove_staging_counted(target, evidence)?;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    fn complete_publication_rename(
+        &self,
+        evidence: &mut ValidationEvidence,
+    ) -> Result<(), PreparedArtifactError> {
+        #[cfg(test)]
+        if self.fail_after_publication_rename {
+            return Err(io::Error::other("injected post-publication-rename failure").into());
+        }
+        sync_directory_counted(&self.cache, evidence)
+    }
+
+    fn rollback_materialized(
+        &self,
+        evidence: &mut ValidationEvidence,
+    ) -> Result<(), PreparedArtifactError> {
+        let Some(path) = evidence
+            .materialized
+            .as_ref()
+            .map(|materialized| materialized.path.clone())
+        else {
+            return Ok(());
+        };
+        remove_staging_counted(&path, evidence)
     }
 
     fn evict_for(
@@ -1974,6 +2056,41 @@ impl PreparedArtifactStore {
         if entries.len() > self.budget.entries {
             return Err(PreparedArtifactError::CacheEntryBudgetExceeded {
                 required: entries.len(),
+                budget: self.budget.entries,
+            });
+        }
+        Ok(total)
+    }
+
+    fn validate_budget_with_incoming(
+        &self,
+        incoming: ArtifactIdentity,
+        incoming_bytes: u64,
+        evidence: &mut ValidationEvidence,
+    ) -> Result<u64, PreparedArtifactError> {
+        let entries = self.entries(evidence)?;
+        if entries.iter().any(|entry| entry.identity == incoming) {
+            return Err(PreparedArtifactError::PublicationConflict);
+        }
+        let total = entries.iter().try_fold(incoming_bytes, |total, entry| {
+            total
+                .checked_add(entry.bytes)
+                .ok_or(PreparedArtifactError::ArtifactTooLarge)
+        })?;
+        let count = entries
+            .len()
+            .checked_add(1)
+            .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
+        evidence.observe_cache_bytes(total);
+        if total > self.budget.cache_bytes {
+            return Err(PreparedArtifactError::CacheBudgetExceeded {
+                required: total,
+                budget: self.budget.cache_bytes,
+            });
+        }
+        if count > self.budget.entries {
+            return Err(PreparedArtifactError::CacheEntryBudgetExceeded {
+                required: count,
                 budget: self.budget.entries,
             });
         }
@@ -2118,6 +2235,16 @@ impl PreparedArtifactStore {
         evidence: &mut ValidationEvidence,
     ) -> Result<ValidatedArtifact, PreparedArtifactError> {
         let directory = self.entry_path(identity);
+        self.validate_entry_at_path(directory, identity, expected, evidence)
+    }
+
+    fn validate_entry_at_path(
+        &self,
+        directory: PathBuf,
+        identity: ArtifactIdentity,
+        expected: Option<&PreparedArtifactDescriptor>,
+        evidence: &mut ValidationEvidence,
+    ) -> Result<ValidatedArtifact, PreparedArtifactError> {
         evidence.store_read_operation();
         let directory_type = directory
             .symlink_metadata()
@@ -2266,10 +2393,11 @@ struct StoreLock<'a> {
 }
 
 impl StoreLock<'_> {
-    fn release(mut self, evidence: &mut ValidationEvidence) -> Result<(), PreparedArtifactError> {
+    fn release(&mut self, evidence: &mut ValidationEvidence) -> Result<(), PreparedArtifactError> {
         evidence.store_control_operation();
+        FileExt::unlock(&self.file)?;
         self.locked = false;
-        FileExt::unlock(&self.file).map_err(Into::into)
+        Ok(())
     }
 }
 
@@ -2362,6 +2490,14 @@ struct ValidatedArtifact {
     payload_bytes: u64,
     disk_bytes: u64,
     path: PathBuf,
+}
+
+#[derive(Clone, Debug)]
+struct MaterializedArtifactEvidence {
+    payload_sha256: [u8; 32],
+    payload_bytes: u64,
+    path: PathBuf,
+    disposition: ArtifactDisposition,
 }
 
 enum ReuseEvaluation {
@@ -3180,7 +3316,20 @@ fn failed_measurements(
         .collect();
     let ledger = descriptor.eviction_artifact(operation);
     let evicted_bytes = evidence.evictions.iter().map(|(_, bytes)| *bytes).sum();
-    let artifacts = vec![ArtifactMeasurement::new(
+    let mut artifacts = Vec::with_capacity(2);
+    if let Some(materialized) = &evidence.materialized {
+        artifacts.push(ArtifactMeasurement::new(
+            descriptor.identity,
+            Some(derive_content_identity(
+                descriptor,
+                materialized.payload_sha256,
+            )),
+            materialized.disposition,
+            materialized.payload_bytes,
+            Some(RedactedPath::from_path(&materialized.path)),
+        ));
+    }
+    artifacts.push(ArtifactMeasurement::new(
         ledger.identity(),
         Some(derive_eviction_observed_identity(
             ledger.identity(),
@@ -3189,7 +3338,7 @@ fn failed_measurements(
         ArtifactDisposition::Loaded,
         evicted_bytes,
         None,
-    )];
+    ));
     WorkMeasurements::new(resources, io, artifacts)
 }
 
@@ -3215,7 +3364,9 @@ fn resource_measurements(
                 LeaseResource::IoBuffer(IoBufferKind::SourceReadAhead)
                     if operation != PreparedArtifactOperation::Reuse =>
                 {
-                    reservation.streaming_buffer_bytes
+                    evidence
+                        .source_read_buffer_bytes
+                        .min(reservation.streaming_buffer_bytes)
                 }
                 LeaseResource::IoBuffer(IoBufferKind::Writeback)
                     if evidence.cache_write.operations > 0 =>
@@ -3418,22 +3569,29 @@ struct ValidationEvidence {
     cache_read: IoCounter,
     cache_control: IoCounter,
     cache_write: IoCounter,
+    resident_baseline_bytes: u64,
     resident_buffer_bytes: u64,
+    source_read_buffer_bytes: u64,
     cache_bytes_peak: u64,
     locks_peak: u64,
     file_descriptors_peak: u64,
     evictions: Vec<(ArtifactIdentity, u64)>,
+    materialized: Option<MaterializedArtifactEvidence>,
 }
 
 impl ValidationEvidence {
-    fn new(reservation: PreparedArtifactReservation, budget: PreparedArtifactBudget) -> Self {
-        // The inventory vectors reserve their complete configuration-bounded
-        // capacity before filesystem mutation. Report the same conservative
-        // execution bound that planning admitted; actual container allocation
-        // can therefore never disappear behind allocator implementation detail.
+    fn new(budget: PreparedArtifactBudget) -> Self {
+        let evictions = Vec::with_capacity(budget.entries);
+        let resident_buffer_bytes = u64::try_from(evictions.capacity().saturating_mul(size_of::<(
+            ArtifactIdentity,
+            u64,
+        )>(
+        )))
+        .unwrap_or(u64::MAX);
         Self {
-            resident_buffer_bytes: reservation.resident_buffer_bytes,
-            evictions: Vec::with_capacity(budget.entries),
+            resident_baseline_bytes: resident_buffer_bytes,
+            resident_buffer_bytes,
+            evictions,
             ..Self::default()
         }
     }
@@ -3459,7 +3617,14 @@ impl ValidationEvidence {
     }
 
     fn observe_resident(&mut self, bytes: u64) {
-        self.resident_buffer_bytes = self.resident_buffer_bytes.max(bytes);
+        self.resident_buffer_bytes = self
+            .resident_buffer_bytes
+            .max(self.resident_baseline_bytes.saturating_add(bytes));
+    }
+
+    fn observe_source_read_buffer(&mut self, bytes: u64) {
+        self.source_read_buffer_bytes = self.source_read_buffer_bytes.max(bytes);
+        self.observe_resident(bytes);
     }
 
     fn observe_cache_bytes(&mut self, bytes: u64) {
@@ -3761,27 +3926,22 @@ fn validate_entry_inventory(
 }
 
 fn prepare_private_root(path: &Path) -> Result<PathBuf, PreparedArtifactError> {
-    reject_casa_visible_root(path)?;
+    let path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    reject_casa_visible_root(&path)?;
     let mut missing = Vec::new();
-    let mut cursor = path;
+    let mut cursor = path.as_path();
     loop {
         match cursor.symlink_metadata() {
-            Ok(metadata) => {
-                let canonical = fs::canonicalize(cursor)?;
-                reject_casa_visible_root(&canonical)?;
-                if metadata.file_type().is_symlink() {
-                    return Err(PreparedArtifactError::UnknownCacheEntry(
-                        cursor.to_path_buf(),
-                    ));
-                }
-                if !metadata.file_type().is_dir() {
-                    return Err(PreparedArtifactError::UnknownCacheEntry(
-                        cursor.to_path_buf(),
-                    ));
-                }
-                let root = create_private_missing(canonical, &missing)?;
+            Ok(_) => {
+                let existing = validate_existing_private_ancestors(cursor)?;
+                let root = create_private_missing(existing, &missing)?;
                 let canonical = fs::canonicalize(&root)?;
                 reject_casa_visible_root(&canonical)?;
+                reject_casa_cache_contents(&canonical)?;
                 if !canonical.is_dir() {
                     return Err(PreparedArtifactError::UnknownCacheEntry(canonical));
                 }
@@ -3790,7 +3950,7 @@ fn prepare_private_root(path: &Path) -> Result<PathBuf, PreparedArtifactError> {
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 let component = cursor
                     .file_name()
-                    .ok_or_else(|| PreparedArtifactError::UnknownCacheEntry(path.to_path_buf()))?;
+                    .ok_or_else(|| PreparedArtifactError::UnknownCacheEntry(path.clone()))?;
                 missing.push(component.to_owned());
                 cursor = cursor
                     .parent()
@@ -3800,6 +3960,23 @@ fn prepare_private_root(path: &Path) -> Result<PathBuf, PreparedArtifactError> {
             Err(error) => return Err(error.into()),
         }
     }
+}
+
+fn validate_existing_private_ancestors(path: &Path) -> Result<PathBuf, PreparedArtifactError> {
+    let mut nearest = None;
+    for (index, ancestor) in path.ancestors().enumerate() {
+        let metadata = ancestor.symlink_metadata()?;
+        let canonical = fs::canonicalize(ancestor)?;
+        reject_casa_visible_root(&canonical)?;
+        if (index == 0 && metadata.file_type().is_symlink()) || !canonical.is_dir() {
+            return Err(PreparedArtifactError::UnknownCacheEntry(
+                ancestor.to_path_buf(),
+            ));
+        }
+        reject_casa_cache_contents(&canonical)?;
+        nearest.get_or_insert(canonical);
+    }
+    nearest.ok_or_else(|| PreparedArtifactError::UnknownCacheEntry(path.to_path_buf()))
 }
 
 fn create_private_missing(
@@ -4248,5 +4425,55 @@ mod tests {
                 .exists(),
             "the recoverable staging entry proves the eviction rename completed"
         );
+    }
+
+    #[test]
+    fn post_rename_failure_removes_visibility_and_retains_mutation_evidence() {
+        let directory = tempfile::tempdir().expect("publication failure cache");
+        let budget = PreparedArtifactBudget::new(200, 3, 1).expect("bounded cache");
+        let mut store = PreparedArtifactStore::open(directory.path(), budget).expect("store");
+        store.fail_after_publication_rename = true;
+        let staging = store.cache.join(format!("{STAGING_PREFIX}publication"));
+        let target = store.entry_path(ArtifactIdentity::from_owner_digest([3; 32]));
+        fs::create_dir(&staging).expect("publication staging directory");
+        fs::write(staging.join(MANIFEST_FILE), [0_u8; 64]).expect("manifest bytes");
+        fs::write(staging.join(PAYLOAD_FILE), [0_u8; 64]).expect("payload bytes");
+        let mut evidence = ValidationEvidence::default();
+        let evicted = CacheInventoryEntry {
+            identity: ArtifactIdentity::from_owner_digest([2; 32]),
+            bytes: 128,
+        };
+        evidence.record_eviction(evicted);
+
+        let error = store
+            .rename_staging_for_publication(
+                &staging,
+                &target,
+                MaterializedArtifactEvidence {
+                    payload_sha256: [4; 32],
+                    payload_bytes: 64,
+                    path: target.clone(),
+                    disposition: ArtifactDisposition::Built,
+                },
+                &mut evidence,
+            )
+            .expect_err("the injected post-rename step fails");
+
+        assert!(
+            error
+                .to_string()
+                .contains("injected post-publication-rename failure")
+        );
+        assert!(
+            !target.exists(),
+            "a failed publication must not leave the final artifact visible"
+        );
+        let materialized = evidence
+            .materialized
+            .expect("completed materialization evidence");
+        assert_eq!(materialized.payload_bytes, 64);
+        assert_eq!(materialized.path, target);
+        assert_eq!(materialized.disposition, ArtifactDisposition::Built);
+        assert_eq!(evidence.evictions, vec![(evicted.identity, evicted.bytes)]);
     }
 }
