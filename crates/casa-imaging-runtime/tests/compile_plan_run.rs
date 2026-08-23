@@ -1185,10 +1185,16 @@ fn transaction_binding(
             lifetime: ClaimLifetime::Work,
         },
     ];
-    let product_allocations = vec![AllocationUse {
+    let mut product_allocations = vec![AllocationUse {
         allocation: product_writer_allocation.clone(),
         lifetime: ClaimLifetime::Work,
     }];
+    if acquire_publication_early {
+        product_allocations.push(AllocationUse {
+            allocation: publication_allocation.clone(),
+            lifetime: ClaimLifetime::Work,
+        });
+    }
 
     specification.nodes.extend([
         WorkNode {
