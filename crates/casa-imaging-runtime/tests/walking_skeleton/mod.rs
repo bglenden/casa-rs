@@ -18,7 +18,9 @@ use casa_imaging_runtime::{
     ReceiptStatus, ResourcePolicy, RunBindings, RunError, RunToCompletion, WorkNodeId,
 };
 
-use super::{
+mod support;
+
+use self::support::{
     CancelAfterLaunch, PublicationProbe, TestRegistry, authority, cost_model, execution_provenance,
     failing_transaction_executor, geometry, implementation, physical_work_for_problem, plan,
     problem_inputs, publication_recording_executor, recording_executor, registry,

@@ -55,7 +55,7 @@ ACCEPTED_LOGICAL_GRAPH_SHA256 = (
     "7101b6d90196b1ea3d3c750080d703bb5e305e91c8ac19553e1dda7ed58c4e33"
 )
 ACCEPTED_SOURCE_BOUNDARIES_SHA256 = (
-    "4ba3bbdea40c6b32fef85b556bd98764ca40d4bc8650a561ea2273c18851003b"
+    "b3dfc8c071c48313af89f6babca678236ae9a5a16625828c5696f3f40752f1bd"
 )
 ACCEPTED_FROZEN_TRANSITIONAL_EDGES_SHA256 = (
     "0077e28528d2160616d34e17fb7124586f346557917e0bfac99b0dff6739a1d1"
@@ -565,9 +565,17 @@ def validate_source_boundary_policy(value: Any) -> None:
         if set(boundary) not in {
             frozenset(required_keys),
             frozenset(required_keys | {"rust_allowlist"}),
+            frozenset(required_keys | {"allow_restricted_visibility"}),
+            frozenset(required_keys | {"rust_allowlist", "allow_restricted_visibility"}),
         }:
             raise ArchitectureError(
                 f"{context} must contain the source-boundary keys and optional rust_allowlist only"
+            )
+        if "allow_restricted_visibility" in boundary and not isinstance(
+            boundary["allow_restricted_visibility"], bool
+        ):
+            raise ArchitectureError(
+                f"{context}.allow_restricted_visibility must be a boolean"
             )
         identifier = require_string(boundary.get("id"), f"{context}.id")
         if identifier in identifiers:
@@ -645,8 +653,8 @@ def validate_rust_allowlist_policy(value: Any, context: str) -> None:
             f"{context}.allowed_imports must contain exact non-glob paths"
         )
     items = value.get("allowed_items")
-    if not isinstance(items, dict) or not items:
-        raise ArchitectureError(f"{context}.allowed_items must be a non-empty object")
+    if not isinstance(items, dict):
+        raise ArchitectureError(f"{context}.allowed_items must be an object")
     item_pattern = re.compile(
         r"^(?:struct|enum|union|trait|type|fn|const|static|mod|macro|macro_rules):(?:r#)?[A-Za-z_][A-Za-z0-9_]*$"
     )
@@ -1215,7 +1223,11 @@ def rust_composition_violation(
 
 
 def rust_source_inventory(
-    source: str, path: str, *, tokens: list[RustToken] | None = None
+    source: str,
+    path: str,
+    *,
+    tokens: list[RustToken] | None = None,
+    allow_restricted_visibility: bool = False,
 ) -> tuple[
     list[tuple[str, int]],
     list[tuple[str, int]],
@@ -1227,7 +1239,21 @@ def rust_source_inventory(
         tokens = rust_tokens(source, path)
     imports: list[tuple[str, int]] = []
     items: list[tuple[str, int]] = []
-    public_lines = [token.line for token in tokens if token.text == "pub"]
+    public_lines = []
+    for index, token in enumerate(tokens):
+        if token.text != "pub":
+            continue
+        if allow_restricted_visibility and index + 1 < len(tokens) and tokens[index + 1].text == "(":
+            cursor = index + 2
+            while cursor < len(tokens) and tokens[cursor].text != ")":
+                cursor += 1
+            restricted = cursor < len(tokens) and any(
+                tokens[offset].text in {"crate", "super", "self", "in"}
+                for offset in range(index + 2, cursor)
+            )
+            if restricted and cursor + 1 < len(tokens) and tokens[cursor + 1].text == "use":
+                continue
+        public_lines.append(token.line)
     macro_export_lines = [
         tokens[index].line
         for start, end in rust_attribute_spans(tokens, path)
@@ -1364,7 +1390,10 @@ def rust_allowlist_violations(
             }
         ]
     imports, qualified_paths, items, privacy_lines, glob_lines = rust_source_inventory(
-        source, relative, tokens=tokens
+        source,
+        relative,
+        tokens=tokens,
+        allow_restricted_visibility=boundary.get("allow_restricted_visibility", False),
     )
     if privacy_lines:
         return [
