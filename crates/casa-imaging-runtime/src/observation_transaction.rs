@@ -15,7 +15,7 @@ use std::{
 
 use casa_imaging_model::{
     CompiledProblem, CompiledProblemId, MeasurementSetIdentity, ObservationTransactionId,
-    ProductKind,
+    ProductGraphId,
 };
 
 use crate::{
@@ -29,7 +29,7 @@ pub struct ObservationTransactionWork {
     initial_consistency_check: WorkNodeId,
     observation_reads: BTreeSet<WorkDependency>,
     final_reconciliation: WorkNodeId,
-    required_product_staging: BTreeMap<ProductKind, BTreeSet<WorkDependency>>,
+    product_staging: BTreeSet<WorkDependency>,
     model_column_staging: Option<WorkNodeId>,
     commit: WorkNodeId,
 }
@@ -43,7 +43,6 @@ impl ObservationTransactionWork {
     pub const fn new(
         initial_consistency_check: WorkNodeId,
         final_reconciliation: WorkNodeId,
-        required_product_staging: BTreeMap<ProductKind, BTreeSet<WorkDependency>>,
         model_column_staging: Option<WorkNodeId>,
         commit: WorkNodeId,
     ) -> Self {
@@ -51,7 +50,7 @@ impl ObservationTransactionWork {
             initial_consistency_check,
             observation_reads: BTreeSet::new(),
             final_reconciliation,
-            required_product_staging,
+            product_staging: BTreeSet::new(),
             model_column_staging,
             commit,
         }
@@ -80,10 +79,8 @@ impl ObservationTransactionWork {
 
     /// Return exact completion events for every privately staged required product.
     #[must_use]
-    pub const fn required_product_staging(
-        &self,
-    ) -> &BTreeMap<ProductKind, BTreeSet<WorkDependency>> {
-        &self.required_product_staging
+    pub const fn product_staging(&self) -> &BTreeSet<WorkDependency> {
+        &self.product_staging
     }
 
     /// Return the private model-column staging node, when requested.
@@ -108,6 +105,7 @@ impl ObservationTransactionWork {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BoundObservationTransaction {
     problem_id: CompiledProblemId,
+    product_graph_id: ProductGraphId,
     transaction_id: ObservationTransactionId,
     physical_work_id: PhysicalWorkId,
     work: ObservationTransactionWork,
@@ -118,6 +116,12 @@ impl BoundObservationTransaction {
     #[must_use]
     pub const fn problem_id(&self) -> CompiledProblemId {
         self.problem_id
+    }
+
+    /// Return the exact compiler-owned product topology validated for publication.
+    #[must_use]
+    pub const fn product_graph_id(&self) -> ProductGraphId {
+        self.product_graph_id
     }
 
     /// Return the logical read/write contract this physical work implements.
@@ -166,6 +170,8 @@ pub(crate) fn bind_observation_transaction(
     problem: &CompiledProblem,
     dag: &ExecutionDag,
     mut work: ObservationTransactionWork,
+    publication_layouts: &crate::PublicationLayoutLedger,
+    artifacts: &[crate::PlannedArtifact],
 ) -> Result<BoundObservationTransaction, ObservationTransactionPlanError> {
     let contract = problem.observation_transaction();
     let measurement_sets = contract
@@ -174,7 +180,89 @@ pub(crate) fn bind_observation_transaction(
         .iter()
         .map(|source| source.measurement_set())
         .collect::<BTreeSet<_>>();
-    validate_product_staging(problem.products().products(), &work)?;
+    let product_graph = problem.product_graph();
+    let expected_products = product_graph
+        .publication()
+        .members()
+        .iter()
+        .map(|node_id| crate::PublicationParticipant::Product {
+            graph_id: product_graph.graph_id(),
+            node_id: *node_id,
+        })
+        .collect::<BTreeSet<_>>();
+    let declared_products = publication_layouts
+        .entries()
+        .iter()
+        .filter_map(|entry| match entry.participant() {
+            product @ crate::PublicationParticipant::Product { .. } => Some(product),
+            crate::PublicationParticipant::ModelData(_) => None,
+        })
+        .collect::<BTreeSet<_>>();
+    if declared_products != expected_products {
+        return invalid(format!(
+            "publication product nodes {declared_products:?} do not match graph members {expected_products:?}"
+        ));
+    }
+    let expected_model_data = contract
+        .write_set()
+        .model_columns()
+        .iter()
+        .map(|write| write.measurement_set())
+        .collect::<BTreeSet<_>>();
+    let declared_model_data = publication_layouts
+        .entries()
+        .iter()
+        .filter_map(|entry| match entry.participant() {
+            crate::PublicationParticipant::ModelData(measurement_set) => Some(measurement_set),
+            crate::PublicationParticipant::Product { .. } => None,
+        })
+        .collect::<BTreeSet<_>>();
+    if declared_model_data != expected_model_data {
+        return invalid(format!(
+            "publication MODEL_DATA sources {declared_model_data:?} do not match transaction writes {expected_model_data:?}"
+        ));
+    }
+    let output_artifacts = artifacts
+        .iter()
+        .filter(|artifact| artifact.role() == crate::ArtifactRole::Output)
+        .map(|artifact| artifact.identity())
+        .collect::<BTreeSet<_>>();
+    let layout_artifacts = publication_layouts
+        .entries()
+        .iter()
+        .map(|entry| entry.artifact())
+        .collect::<BTreeSet<_>>();
+    if layout_artifacts != output_artifacts {
+        return invalid("publication layout artifacts do not exactly match planned outputs");
+    }
+    for layout in publication_layouts.entries() {
+        let planned = artifacts
+            .iter()
+            .find(|artifact| artifact.identity() == layout.artifact())
+            .expect("layout and output artifact sets were matched");
+        if planned.node() != &work.commit {
+            return invalid(format!(
+                "publication artifact {} belongs to {}, expected sole commit {}",
+                layout.artifact(),
+                planned.node().as_str(),
+                work.commit.as_str()
+            ));
+        }
+    }
+    work.product_staging = publication_layouts
+        .entries()
+        .iter()
+        .filter(|entry| {
+            matches!(
+                entry.participant(),
+                crate::PublicationParticipant::Product { .. }
+            )
+        })
+        .map(|entry| entry.staging().terminal().clone())
+        .collect();
+    if work.product_staging.is_empty() {
+        return invalid("product publication layout is empty");
+    }
     work.observation_reads = validate_transaction_nodes(
         contract.read_set().sources().len(),
         contract.write_set().model_columns().len(),
@@ -184,37 +272,11 @@ pub(crate) fn bind_observation_transaction(
     validate_measurement_set_lock_identities(&measurement_sets, dag.nodes(), &work)?;
     Ok(BoundObservationTransaction {
         problem_id: problem.problem_id(),
+        product_graph_id: product_graph.graph_id(),
         transaction_id: contract.transaction_id(),
         physical_work_id: dag.physical_work_id(),
         work,
     })
-}
-
-fn validate_product_staging(
-    required_products: &[ProductKind],
-    work: &ObservationTransactionWork,
-) -> Result<(), ObservationTransactionPlanError> {
-    let required = required_products.iter().copied().collect::<BTreeSet<_>>();
-    let declared = work
-        .required_product_staging
-        .keys()
-        .copied()
-        .collect::<BTreeSet<_>>();
-    if declared != required {
-        return invalid(format!(
-            "required product staging keys {declared:?} do not match compiled product requirements {required:?}"
-        ));
-    }
-    if let Some(product) = work
-        .required_product_staging
-        .iter()
-        .find_map(|(product, events)| events.is_empty().then_some(product))
-    {
-        return invalid(format!(
-            "required product {product:?} has no private staging completion event"
-        ));
-    }
-    Ok(())
 }
 
 fn validate_transaction_nodes(
@@ -269,24 +331,22 @@ fn validate_transaction_nodes(
     let reconciliation_completions = completion_events(reconciliation);
 
     let mut staged_nodes = Vec::new();
-    for (product_kind, completions) in &work.required_product_staging {
-        for producer in
-            require_exact_completion_events(nodes, completions, "required product staging")?
-        {
-            if producer.kind == WorkKind::Publication {
-                return invalid(format!(
-                    "required product {product_kind:?} publishes before the atomic commit gate through {}",
-                    producer.id.as_str()
-                ));
-            }
-            require_claim(
-                producer,
-                is_staged_output,
-                "staged-output storage",
-                "required product staging",
-            )?;
-            staged_nodes.push(producer);
+    for producer in
+        require_exact_completion_events(nodes, &work.product_staging, "product staging")?
+    {
+        if producer.kind == WorkKind::Publication {
+            return invalid(format!(
+                "product staging publishes before the atomic commit gate through {}",
+                producer.id.as_str()
+            ));
         }
+        require_claim(
+            producer,
+            is_staged_output,
+            "staged-output storage",
+            "product staging",
+        )?;
+        staged_nodes.push(producer);
     }
 
     match (model_column_sources, &work.model_column_staging) {
@@ -357,14 +417,12 @@ fn validate_transaction_nodes(
             "initial consistency",
         )?;
     }
-    for completions in work.required_product_staging.values() {
-        for product in completions {
-            let producer = event_node(product);
-            for completion in &reconciliation_completions {
-                require_precedes(nodes, completion, producer, "final reconciliation")?;
-            }
-            require_precedes(nodes, product, &work.commit, "required product staging")?;
+    for product in &work.product_staging {
+        let producer = event_node(product);
+        for completion in &reconciliation_completions {
+            require_precedes(nodes, completion, producer, "final reconciliation")?;
         }
+        require_precedes(nodes, product, &work.commit, "product staging")?;
     }
     if let Some(model) = &work.model_column_staging {
         for completion in &reconciliation_completions {
@@ -985,13 +1043,9 @@ mod tests {
             adaptations: Vec::new(),
         })
         .expect("canonical transaction test DAG");
-        let work = ObservationTransactionWork::new(
-            initial,
-            reconciliation,
-            BTreeMap::from([(ProductKind::Psf, BTreeSet::from([product_completion]))]),
-            Some(model),
-            commit,
-        );
+        let mut work =
+            ObservationTransactionWork::new(initial, reconciliation, Some(model), commit);
+        work.product_staging = BTreeSet::from([product_completion]);
         (dag.nodes().clone(), work)
     }
 
@@ -1339,13 +1393,13 @@ mod tests {
         validate_transaction_nodes(1, 1, &nodes, &writable).expect("writable transaction");
         assert!(validate_transaction_nodes(1, 0, &nodes, &writable).is_err());
 
-        let read_only = ObservationTransactionWork::new(
+        let mut read_only = ObservationTransactionWork::new(
             writable.initial_consistency_check.clone(),
             writable.final_reconciliation.clone(),
-            writable.required_product_staging.clone(),
             None,
             writable.commit.clone(),
         );
+        read_only.product_staging = writable.product_staging.clone();
         validate_transaction_nodes(1, 0, &nodes, &read_only).expect("read-only transaction");
         assert!(validate_transaction_nodes(1, 1, &nodes, &read_only).is_err());
     }

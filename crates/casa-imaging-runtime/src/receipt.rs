@@ -15,17 +15,19 @@ use casa_imaging_model::{
     AntennaSelection, CompiledGeometry, CompiledProblem, CorrelationType, DelayCentreLaw,
     DirectionFrame, DopplerConvention, FiniteValuePolicy, FlagPolicy, FrequencyFrame, IdSelection,
     ImageAxis, ImageDomainRole, InstrumentResponse, IntentSelection, LogicalIdentity,
-    MetadataTableKind, MissingPointingPolicy, ModelInnerProduct, ModelStateIdentity, MsColumnKind,
-    NormalEquationForm, NormalStateNormalization, NumericPrecision, NumericalStage,
-    PairedMeasurementTransform, PairedTransformKind, PhaseCentreLaw, PointingCentreLaw,
-    PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
-    PointingInterpolation, PointingTimeSampling, PolarizationCoordinate, ProblemInputIdentities,
-    ProductBoundaryOperation, ProductKind, ProductNormalization, Projection,
-    ReconstructionAlgorithm, ReconstructionBasis, ReductionPolicy, ReferenceDataKind,
+    MeasurementSetIdentity, MetadataTableKind, MissingPointingPolicy, ModelInnerProduct,
+    ModelStateIdentity, MsColumnKind, NormalEquationForm, NormalStateNormalization,
+    NumericPrecision, NumericalStage, PairedMeasurementTransform, PairedTransformKind,
+    PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic,
+    PointingExtrapolation, PointingInterpolation, PointingTimeSampling, PolarizationCoordinate,
+    ProblemInputIdentities, ProductAxisKind, ProductBeamRule, ProductBlankingPolicy,
+    ProductBoundaryOperation, ProductGraphId, ProductKind, ProductNormalization, ProductRole,
+    ProductSchema, ProductSupportComparison, ProductTerm, ProductUnit, ProductValidityRule,
+    Projection, ReconstructionAlgorithm, ReconstructionBasis, ReductionPolicy, ReferenceDataKind,
     RequiredCapability, RestFrequency, RestoringBeamPolicy, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSampling, SpectralWcs, TimeScale, TimeSelection, UvDistanceUnit, UvSelection, UvwAxes,
-    UvwUnit, VisibilityColumn, VisibilityInnerProduct, VisibilityPhaseConvention, WeightColumn,
-    WeightDensityScope, WeightingScheme,
+    SpectralSampling, SpectralWcs, TaylorSupportReference, TimeScale, TimeSelection,
+    UvDistanceUnit, UvSelection, UvwAxes, UvwUnit, VisibilityColumn, VisibilityInnerProduct,
+    VisibilityPhaseConvention, WeightColumn, WeightDensityScope, WeightingScheme,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -35,14 +37,15 @@ use crate::{
     AdaptationId, AdaptationTransition, AllocationId, AllocationPurpose, ArtifactDisposition,
     ArtifactIdentity, ArtifactMeasurement, ArtifactRole, CacheIdentity, CapabilityId,
     ClaimLifetime, DemandAlternative, ExecutionKnobs, ExecutionPlan, FenceId, FenceKind,
-    InitializationPolicy, IoBufferKind, LeaseResource, PhysicalSlotId, QuiescencePoint,
-    ResourcePolicy, StorageMode, WorkDependency, WorkDomain, WorkImplementationId, WorkKind,
-    WorkMeasurements, WorkNodeId,
+    InitializationPolicy, IoBufferKind, LeaseResource, PhysicalLayoutId, PhysicalSlotId,
+    PublicationParticipant, PublicationResourceBounds, QuiescencePoint, ResourcePolicy,
+    StorageMode, WorkDependency, WorkDomain, WorkImplementationId, WorkKind, WorkMeasurements,
+    WorkNodeId,
 };
 
 const RECEIPT_SCHEMA: &str = "casa-rs-imaging-execution-receipt";
-const RECEIPT_SCHEMA_VERSION: u32 = 4;
-const COMPILED_PROBLEM_EVIDENCE_VERSION: u32 = 2;
+const RECEIPT_SCHEMA_VERSION: u32 = 7;
+const COMPILED_PROBLEM_EVIDENCE_VERSION: u32 = 3;
 const RECEIPT_SUFFIX: &str = ".receipt.json";
 const RECEIPT_STAGING_PREFIX: &str = ".casa-rs-receipt-staging-";
 const RECEIPT_STAGING_SUFFIX: &str = ".tmp";
@@ -493,6 +496,112 @@ pub struct ExecutionReceipt {
     body: ReceiptBody,
 }
 
+/// Audit-only semantic identity of one coordinated publication member.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReceiptPublicationParticipant {
+    /// One compiler-owned product graph node, represented by its graph-local ordinal.
+    Product {
+        /// SHA-256 identity of the compiler-owned topology containing the node.
+        graph_identity: [u8; 32],
+        /// Zero-based identity within the compiler-owned Product Graph.
+        node_ordinal: usize,
+    },
+    /// The optional `MODEL_DATA` member for one MeasurementSet.
+    ModelData(MeasurementSetIdentity),
+}
+
+/// Closed audit projection of the compiler-owned Product Graph.
+///
+/// Publication validation consumes this typed projection directly. The open
+/// Compiled Problem field map remains descriptive audit evidence and is never
+/// reconstructed into publication authority.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct ProductGraphProjection {
+    identity: String,
+    schema_version: u32,
+    node_ordinals: Vec<usize>,
+    publication_member_ordinals: Vec<usize>,
+}
+
+impl ProductGraphProjection {
+    const AUDIT_NODE_PREFIX: &'static str = "products.graph.nodes.";
+    const AUDIT_PUBLICATION_MEMBER_PREFIX: &'static str = "products.graph.publication.members.";
+
+    fn new(problem: &CompiledProblem) -> Self {
+        let graph = problem.product_graph();
+        Self {
+            identity: hex(&graph.graph_id().as_bytes()),
+            schema_version: graph.schema_version(),
+            node_ordinals: graph
+                .nodes()
+                .iter()
+                .map(|node| node.node_id().ordinal())
+                .collect(),
+            publication_member_ordinals: graph
+                .publication()
+                .members()
+                .iter()
+                .map(|member| member.ordinal())
+                .collect(),
+        }
+    }
+
+    fn validate(&self) -> Result<(), ReceiptError> {
+        require_integrity(
+            is_digest(&self.identity)
+                && self.schema_version == ProductGraphId::SCHEMA_VERSION
+                && self
+                    .node_ordinals
+                    .iter()
+                    .copied()
+                    .eq(0..self.node_ordinals.len())
+                && self
+                    .publication_member_ordinals
+                    .windows(2)
+                    .all(|pair| pair[0] < pair[1])
+                && self
+                    .publication_member_ordinals
+                    .iter()
+                    .all(|member| self.node_ordinals.binary_search(member).is_ok()),
+        )
+    }
+
+    fn validate_audit_fields(
+        &self,
+        evidence: &CompiledProblemEvidence,
+    ) -> Result<(), ReceiptError> {
+        let node_ordinal_fields = evidence
+            .fields
+            .keys()
+            .filter(|path| {
+                path.strip_prefix(Self::AUDIT_NODE_PREFIX)
+                    .and_then(|suffix| suffix.strip_suffix(".ordinal"))
+                    .is_some()
+            })
+            .count();
+        require_integrity(node_ordinal_fields == self.node_ordinals.len())?;
+        for ordinal in &self.node_ordinals {
+            let path = format!("{}{ordinal}.ordinal", Self::AUDIT_NODE_PREFIX);
+            require_integrity(evidence.field(&path) == Some(ordinal.to_string().as_str()))?;
+        }
+
+        let publication_member_fields = evidence
+            .fields
+            .keys()
+            .filter(|path| {
+                path.strip_prefix(Self::AUDIT_PUBLICATION_MEMBER_PREFIX)
+                    .is_some()
+            })
+            .count();
+        require_integrity(publication_member_fields == self.publication_member_ordinals.len())?;
+        for (index, ordinal) in self.publication_member_ordinals.iter().enumerate() {
+            let path = format!("{}{index}", Self::AUDIT_PUBLICATION_MEMBER_PREFIX);
+            require_integrity(evidence.field(&path) == Some(ordinal.to_string().as_str()))?;
+        }
+        Ok(())
+    }
+}
+
 /// Stable, versioned field projection of one effective Compiled Problem.
 ///
 /// This is audit evidence only. It deliberately cannot be converted back into
@@ -670,6 +779,30 @@ impl ExecutionReceipt {
         parse_digest(&self.body.problem.geometry_identity)
     }
 
+    /// Return the compiler-derived product-topology identity.
+    #[must_use]
+    pub fn product_graph_identity(&self) -> [u8; 32] {
+        parse_digest(&self.body.problem.product_graph.identity)
+    }
+
+    /// Return the compiler-owned Product Graph schema version.
+    #[must_use]
+    pub const fn product_graph_schema_version(&self) -> u32 {
+        self.body.problem.product_graph.schema_version
+    }
+
+    /// Return every graph-local product node ordinal in canonical order.
+    #[must_use]
+    pub fn product_graph_node_ordinals(&self) -> &[usize] {
+        &self.body.problem.product_graph.node_ordinals
+    }
+
+    /// Return the exact atomic-publication member ordinals in canonical order.
+    #[must_use]
+    pub fn product_graph_publication_member_ordinals(&self) -> &[usize] {
+        &self.body.problem.product_graph.publication_member_ordinals
+    }
+
     /// Return the observation-snapshot identity.
     #[must_use]
     pub fn observation_identity(&self) -> [u8; 32] {
@@ -831,6 +964,128 @@ impl ExecutionReceipt {
                 ArtifactIdentity::from_sha256(parse_digest(&artifact.artifact_identity))
             })
             .collect()
+    }
+
+    /// Return the number of exact coordinated publication layouts.
+    #[must_use]
+    pub fn publication_layout_count(&self) -> usize {
+        self.body.plan.publication_layouts.len()
+    }
+
+    /// Return the audit-only semantic member bound to one output artifact.
+    #[must_use]
+    pub fn publication_participant(
+        &self,
+        artifact: ArtifactIdentity,
+    ) -> Option<ReceiptPublicationParticipant> {
+        Some(self.publication_layout(artifact)?.participant.to_runtime())
+    }
+
+    /// Return the exact adapter-selected physical layout identity.
+    #[must_use]
+    pub fn publication_layout_identity(
+        &self,
+        artifact: ArtifactIdentity,
+    ) -> Option<PhysicalLayoutId> {
+        Some(PhysicalLayoutId::from_sha256(parse_digest(
+            &self.publication_layout(artifact)?.layout_identity,
+        )))
+    }
+
+    /// Return the exact private-staging producer.
+    #[must_use]
+    pub fn publication_producer(&self, artifact: ArtifactIdentity) -> Option<WorkNodeId> {
+        Some(WorkNodeId::new(
+            self.publication_layout(artifact)?.producer.clone(),
+        ))
+    }
+
+    /// Return the producer completion event required before publication.
+    #[must_use]
+    pub fn publication_terminal(&self, artifact: ArtifactIdentity) -> Option<WorkDependency> {
+        Some(parse_dependency(
+            &self.publication_layout(artifact)?.terminal,
+        ))
+    }
+
+    /// Return the selected private writer-buffer category.
+    #[must_use]
+    pub fn publication_writer_buffer_kind(
+        &self,
+        artifact: ArtifactIdentity,
+    ) -> Option<IoBufferKind> {
+        Some(parse_io_buffer(
+            &self.publication_layout(artifact)?.writer_buffer_kind,
+        ))
+    }
+
+    /// Return the producer-owned writer allocation.
+    #[must_use]
+    pub fn publication_writer_allocation(
+        &self,
+        artifact: ArtifactIdentity,
+    ) -> Option<AllocationId> {
+        Some(AllocationId::new(
+            self.publication_layout(artifact)?.writer_allocation.clone(),
+        ))
+    }
+
+    /// Return exact staged, final, writer, and mapped resource bounds.
+    #[must_use]
+    pub fn publication_resource_bounds(
+        &self,
+        artifact: ArtifactIdentity,
+    ) -> Option<PublicationResourceBounds> {
+        let bounds = &self.publication_layout(artifact)?.resource_bounds;
+        PublicationResourceBounds::new(
+            bounds.staged_storage_bytes,
+            bounds.final_storage_bytes,
+            bounds.writer_buffer_bytes,
+            bounds.mapped_page_cache_bytes,
+        )
+        .ok()
+    }
+
+    /// Return the mapped/page-cache producer, when the layout retains mapped exposure.
+    #[must_use]
+    pub fn publication_mapped_producer(&self, artifact: ArtifactIdentity) -> Option<WorkNodeId> {
+        Some(WorkNodeId::new(
+            self.publication_layout(artifact)?
+                .mapped_page_cache
+                .as_ref()?
+                .producer
+                .clone(),
+        ))
+    }
+
+    /// Return the mapped/page-cache release event, when present.
+    #[must_use]
+    pub fn publication_mapped_terminal(
+        &self,
+        artifact: ArtifactIdentity,
+    ) -> Option<WorkDependency> {
+        Some(parse_dependency(
+            &self
+                .publication_layout(artifact)?
+                .mapped_page_cache
+                .as_ref()?
+                .terminal,
+        ))
+    }
+
+    /// Return the mapped/page-cache allocation, when present.
+    #[must_use]
+    pub fn publication_mapped_allocation(
+        &self,
+        artifact: ArtifactIdentity,
+    ) -> Option<AllocationId> {
+        Some(AllocationId::new(
+            self.publication_layout(artifact)?
+                .mapped_page_cache
+                .as_ref()?
+                .allocation
+                .clone(),
+        ))
     }
 
     /// Return every plan-listed cache namespace identity.
@@ -1078,6 +1333,18 @@ impl ExecutionReceipt {
         self.body
             .plan
             .artifacts
+            .iter()
+            .find(|item| item.artifact_identity == artifact)
+    }
+
+    fn publication_layout(
+        &self,
+        artifact: ArtifactIdentity,
+    ) -> Option<&PublicationLayoutProjection> {
+        let artifact = hex(&artifact.as_bytes());
+        self.body
+            .plan
+            .publication_layouts
             .iter()
             .find(|item| item.artifact_identity == artifact)
     }
@@ -1669,6 +1936,7 @@ impl ReceiptFailure {
 struct ProblemProjection {
     problem_identity: String,
     geometry_identity: String,
+    product_graph: ProductGraphProjection,
     observation_identity: String,
     reference_identities: Vec<ReferenceIdentityProjection>,
     model_identity: ModelIdentityProjection,
@@ -1682,6 +1950,7 @@ impl ProblemProjection {
         Self {
             problem_identity: hex(&problem.problem_id().as_bytes()),
             geometry_identity: hex(&problem.geometry().geometry_id().as_bytes()),
+            product_graph: ProductGraphProjection::new(problem),
             observation_identity: hex(&inputs.observation().identity().as_bytes()),
             reference_identities: inputs
                 .reference_data()
@@ -1730,6 +1999,7 @@ impl ModelIdentityProjection {
 struct PlanProjection {
     plan_identity: String,
     dag_identity: String,
+    product_graph_identity: String,
     implementation_registry_identity: String,
     resource_policy_identity: String,
     resource_policy: ResourcePolicyProjection,
@@ -1743,6 +2013,7 @@ struct PlanProjection {
     allocation_generations: Vec<AllocationProjection>,
     physical_slots: Vec<PhysicalSlotProjection>,
     artifacts: Vec<ArtifactProjection>,
+    publication_layouts: Vec<PublicationLayoutProjection>,
     initial_execution_knobs: ExecutionKnobsProjection,
     adaptations: Vec<AdaptationProjection>,
 }
@@ -1770,6 +2041,7 @@ impl PlanProjection {
         Self {
             plan_identity: hex(&plan.plan_id().as_bytes()),
             dag_identity: hex(&plan.physical_work_id().as_bytes()),
+            product_graph_identity: hex(&plan.product_graph_id().as_bytes()),
             implementation_registry_identity: hex(&plan.implementation_registry_id().as_bytes()),
             resource_policy_identity: hex(&plan.resource_policy_id().as_bytes()),
             resource_policy: ResourcePolicyProjection::new(plan.resource_policy()),
@@ -1803,12 +2075,122 @@ impl PlanProjection {
                 .iter()
                 .map(ArtifactProjection::new)
                 .collect(),
+            publication_layouts: plan
+                .publication_layouts()
+                .entries()
+                .iter()
+                .map(PublicationLayoutProjection::new)
+                .collect(),
             initial_execution_knobs: ExecutionKnobsProjection::new(dag.initial_knobs()),
             adaptations: dag
                 .adaptations()
                 .values()
                 .map(AdaptationProjection::new)
                 .collect(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum PublicationParticipantProjection {
+    Product {
+        graph_identity: String,
+        node_ordinal: usize,
+    },
+    ModelData {
+        measurement_set_identity: String,
+    },
+}
+
+impl PublicationParticipantProjection {
+    fn new(participant: PublicationParticipant) -> Self {
+        match participant {
+            PublicationParticipant::Product { graph_id, node_id } => Self::Product {
+                graph_identity: hex(&graph_id.as_bytes()),
+                node_ordinal: node_id.ordinal(),
+            },
+            PublicationParticipant::ModelData(measurement_set) => Self::ModelData {
+                measurement_set_identity: measurement_set.to_string(),
+            },
+        }
+    }
+
+    fn to_runtime(&self) -> ReceiptPublicationParticipant {
+        match self {
+            Self::Product {
+                graph_identity,
+                node_ordinal,
+            } => ReceiptPublicationParticipant::Product {
+                graph_identity: parse_digest(graph_identity),
+                node_ordinal: *node_ordinal,
+            },
+            Self::ModelData {
+                measurement_set_identity,
+            } => ReceiptPublicationParticipant::ModelData(MeasurementSetIdentity::new(
+                LogicalIdentity::from_sha256(parse_digest(measurement_set_identity)),
+            )),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct PublicationLayoutProjection {
+    participant: PublicationParticipantProjection,
+    artifact_identity: String,
+    layout_identity: String,
+    producer: String,
+    terminal: String,
+    writer_buffer_kind: String,
+    writer_allocation: String,
+    mapped_page_cache: Option<PublicationMappedStagingProjection>,
+    resource_bounds: PublicationResourceBoundsProjection,
+}
+
+impl PublicationLayoutProjection {
+    fn new(layout: &crate::PublicationPhysicalLayout) -> Self {
+        Self {
+            participant: PublicationParticipantProjection::new(layout.participant()),
+            artifact_identity: hex(&layout.artifact().as_bytes()),
+            layout_identity: hex(&layout.layout_id().as_bytes()),
+            producer: stable_text(layout.staging().producer().as_str()),
+            terminal: dependency(layout.staging().terminal()),
+            writer_buffer_kind: io_buffer(layout.staging().writer_buffer_kind()).to_string(),
+            writer_allocation: stable_text(layout.staging().writer_allocation().as_str()),
+            mapped_page_cache: layout.staging().mapped_page_cache().map(|mapped| {
+                PublicationMappedStagingProjection {
+                    producer: stable_text(mapped.producer().as_str()),
+                    terminal: dependency(mapped.terminal()),
+                    allocation: stable_text(mapped.allocation().as_str()),
+                }
+            }),
+            resource_bounds: PublicationResourceBoundsProjection::new(layout.resource_bounds()),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct PublicationMappedStagingProjection {
+    producer: String,
+    terminal: String,
+    allocation: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct PublicationResourceBoundsProjection {
+    staged_storage_bytes: u64,
+    final_storage_bytes: u64,
+    writer_buffer_bytes: u64,
+    mapped_page_cache_bytes: u64,
+}
+
+impl PublicationResourceBoundsProjection {
+    fn new(bounds: PublicationResourceBounds) -> Self {
+        Self {
+            staged_storage_bytes: bounds.staged_storage_bytes(),
+            final_storage_bytes: bounds.final_storage_bytes(),
+            writer_buffer_bytes: bounds.writer_buffer_bytes(),
+            mapped_page_cache_bytes: bounds.mapped_page_cache_bytes(),
         }
     }
 }
@@ -3400,10 +3782,12 @@ fn validate_body(body: &ReceiptBody) -> Result<(), ReceiptError> {
         &body.build_identity,
         &body.problem.problem_identity,
         &body.problem.geometry_identity,
+        &body.problem.product_graph.identity,
         &body.problem.observation_identity,
         &body.problem.numerics_identity,
         &body.plan.plan_identity,
         &body.plan.dag_identity,
+        &body.plan.product_graph_identity,
         &body.plan.implementation_registry_identity,
         &body.plan.resource_policy_identity,
         &body.plan.cost_model_identity,
@@ -3431,6 +3815,7 @@ fn validate_body(body: &ReceiptBody) -> Result<(), ReceiptError> {
         }
     }
     validate_problem_evidence(&body.problem)?;
+    require_integrity(body.problem.product_graph.identity == body.plan.product_graph_identity)?;
     validate_route_projection(&body.route)?;
 
     require_integrity(body.revision > 0)?;
@@ -3472,7 +3857,7 @@ fn validate_body(body: &ReceiptBody) -> Result<(), ReceiptError> {
         )?;
     }
 
-    validate_plan_projection(&body.plan, body.revision)?;
+    validate_plan_projection(&body.problem.product_graph, &body.plan, body.revision)?;
     let expected_publications = body
         .plan
         .artifacts
@@ -3616,12 +4001,20 @@ fn validate_route_projection(route: &RouteProjection) -> Result<(), ReceiptError
 
 fn validate_problem_evidence(problem: &ProblemProjection) -> Result<(), ReceiptError> {
     let evidence = &problem.effective;
+    problem.product_graph.validate()?;
+    problem.product_graph.validate_audit_fields(evidence)?;
     require_integrity(evidence.schema_version == COMPILED_PROBLEM_EVIDENCE_VERSION)?;
     require_integrity(
         evidence.field("problem.identity") == Some(problem.problem_identity.as_str())
             && evidence.field("problem.numerics_identity")
                 == Some(problem.numerics_identity.as_str())
             && evidence.field("geometry.identity") == Some(problem.geometry_identity.as_str())
+            && evidence.field("products.graph.identity")
+                == Some(problem.product_graph.identity.as_str())
+            && evidence
+                .field("products.graph.schema_version")
+                .and_then(|value| value.parse::<u32>().ok())
+                == Some(problem.product_graph.schema_version)
             && evidence.field("observation.snapshot.identity")
                 == Some(problem.observation_identity.as_str()),
     )?;
@@ -3647,7 +4040,13 @@ fn validate_problem_evidence(problem: &ProblemProjection) -> Result<(), ReceiptE
     Ok(())
 }
 
-fn validate_plan_projection(plan: &PlanProjection, revision: u64) -> Result<(), ReceiptError> {
+fn validate_plan_projection(
+    product_graph: &ProductGraphProjection,
+    plan: &PlanProjection,
+    revision: u64,
+) -> Result<(), ReceiptError> {
+    require_integrity(is_digest(&plan.product_graph_identity))?;
+    let publication_members = &product_graph.publication_member_ordinals;
     let node_ids = plan
         .nodes
         .iter()
@@ -3822,6 +4221,82 @@ fn validate_plan_projection(plan: &PlanProjection, revision: u64) -> Result<(), 
                     || artifact.role == "output")
                 && (artifact.path_identity.is_none() || artifact.actual_bytes.is_some()),
         )?;
+    }
+    let output_artifacts = plan
+        .artifacts
+        .iter()
+        .filter(|artifact| artifact.role == "output")
+        .map(|artifact| artifact.artifact_identity.as_str())
+        .collect::<BTreeSet<_>>();
+    let layout_artifacts = plan
+        .publication_layouts
+        .iter()
+        .map(|layout| layout.artifact_identity.as_str())
+        .collect::<BTreeSet<_>>();
+    require_integrity(
+        layout_artifacts.len() == plan.publication_layouts.len()
+            && layout_artifacts == output_artifacts,
+    )?;
+    let participants = plan
+        .publication_layouts
+        .iter()
+        .map(|layout| match &layout.participant {
+            PublicationParticipantProjection::Product {
+                graph_identity,
+                node_ordinal,
+            } => {
+                format!("product:{graph_identity}:{node_ordinal}")
+            }
+            PublicationParticipantProjection::ModelData {
+                measurement_set_identity,
+            } => format!("model_data:{measurement_set_identity}"),
+        })
+        .collect::<BTreeSet<_>>();
+    require_integrity(participants.len() == plan.publication_layouts.len())?;
+    let product_participants = plan
+        .publication_layouts
+        .iter()
+        .filter_map(|layout| match &layout.participant {
+            PublicationParticipantProjection::Product { node_ordinal, .. } => Some(*node_ordinal),
+            PublicationParticipantProjection::ModelData { .. } => None,
+        })
+        .collect::<Vec<_>>();
+    require_integrity(product_participants.as_slice() == publication_members)?;
+    for layout in &plan.publication_layouts {
+        let bounds = &layout.resource_bounds;
+        let participant_is_valid = match &layout.participant {
+            PublicationParticipantProjection::Product {
+                graph_identity,
+                node_ordinal,
+            } => {
+                is_digest(graph_identity)
+                    && graph_identity == &plan.product_graph_identity
+                    && publication_members.binary_search(node_ordinal).is_ok()
+            }
+            PublicationParticipantProjection::ModelData {
+                measurement_set_identity,
+            } => is_digest(measurement_set_identity),
+        };
+        require_integrity(
+            participant_is_valid
+                && is_digest(&layout.artifact_identity)
+                && is_digest(&layout.layout_identity)
+                && node_ids.contains(layout.producer.as_str())
+                && valid_events.contains(&layout.terminal)
+                && allocation_ids.contains(layout.writer_allocation.as_str())
+                && io_buffer_is_valid(&layout.writer_buffer_kind)
+                && bounds.staged_storage_bytes > 0
+                && bounds.final_storage_bytes > 0
+                && bounds.writer_buffer_bytes > 0
+                && (bounds.mapped_page_cache_bytes > 0) == layout.mapped_page_cache.is_some(),
+        )?;
+        if let Some(mapped) = &layout.mapped_page_cache {
+            require_integrity(
+                node_ids.contains(mapped.producer.as_str())
+                    && valid_events.contains(&mapped.terminal)
+                    && allocation_ids.contains(mapped.allocation.as_str()),
+            )?;
+        }
     }
 
     let adaptation_ids = plan
@@ -4606,6 +5081,233 @@ fn project_products(fields: &mut BTreeMap<String, String>, problem: &CompiledPro
             | ProductBoundaryOperation::ConvertUnits => {}
         }
     }
+    project_product_graph(fields, problem);
+}
+
+fn project_product_graph(fields: &mut BTreeMap<String, String>, problem: &CompiledProblem) {
+    let graph = problem.product_graph();
+    evidence_field(
+        fields,
+        "products.graph.identity",
+        hex(&graph.graph_id().as_bytes()),
+    );
+    evidence_field(
+        fields,
+        "products.graph.schema_version",
+        graph.schema_version(),
+    );
+    for node in graph.nodes() {
+        let prefix = format!("products.graph.nodes.{}", node.node_id().ordinal());
+        evidence_field(
+            fields,
+            format!("{prefix}.ordinal"),
+            node.node_id().ordinal(),
+        );
+        evidence_field(fields, format!("{prefix}.role"), product_role(node.role()));
+        match node.name() {
+            Some(name) => {
+                evidence_field(fields, format!("{prefix}.name.kind"), "suffix");
+                evidence_field(fields, format!("{prefix}.name.value"), stable_text(name));
+            }
+            None => evidence_field(fields, format!("{prefix}.name.kind"), "none"),
+        }
+        evidence_field(
+            fields,
+            format!("{prefix}.axes.kind"),
+            product_axis_kind(node.axes().kind()),
+        );
+        evidence_field(
+            fields,
+            format!("{prefix}.axes.geometry_identity"),
+            hex(&node.axes().geometry_id().as_bytes()),
+        );
+        match node.axes().domain() {
+            ImageDomainRole::Main => {
+                evidence_field(fields, format!("{prefix}.axes.domain.kind"), "main");
+            }
+            ImageDomainRole::Outlier(name) => {
+                evidence_field(fields, format!("{prefix}.axes.domain.kind"), "outlier");
+                evidence_field(
+                    fields,
+                    format!("{prefix}.axes.domain.name"),
+                    stable_text(name),
+                );
+            }
+        }
+        for (index, axis) in node.axes().order().positions().iter().enumerate() {
+            evidence_field(
+                fields,
+                format!("{prefix}.axes.order.{index}"),
+                image_axis(*axis),
+            );
+        }
+        for (index, extent) in node.axes().shape().iter().enumerate() {
+            evidence_field(fields, format!("{prefix}.axes.shape.{index}"), extent);
+        }
+        for (index, coordinate) in node.axes().polarization().iter().enumerate() {
+            evidence_field(
+                fields,
+                format!("{prefix}.axes.polarization.{index}"),
+                polarization_coordinate(*coordinate),
+            );
+        }
+        evidence_field(fields, format!("{prefix}.unit"), product_unit(node.unit()));
+        match node.normalization() {
+            Some(normalization) => {
+                evidence_field(
+                    fields,
+                    format!("{prefix}.normalization.kind"),
+                    "normalization",
+                );
+                evidence_field(
+                    fields,
+                    format!("{prefix}.normalization.value"),
+                    product_normalization(normalization),
+                );
+            }
+            None => evidence_field(fields, format!("{prefix}.normalization.kind"), "none"),
+        }
+        project_product_beam(fields, &prefix, node.beam());
+        project_product_validity(fields, &prefix, node.validity());
+        evidence_field(
+            fields,
+            format!("{prefix}.schema"),
+            product_schema(node.schema()),
+        );
+        for (index, dependency) in node.dependencies().iter().enumerate() {
+            evidence_field(
+                fields,
+                format!("{prefix}.dependencies.{index}"),
+                dependency.ordinal(),
+            );
+        }
+    }
+    let publication = graph.publication();
+    evidence_field(
+        fields,
+        "products.graph.publication.protocol.requires_durable_prepare",
+        publication.protocol().requires_durable_prepare(),
+    );
+    evidence_field(
+        fields,
+        "products.graph.publication.protocol.has_one_visibility_operation",
+        publication.protocol().has_one_visibility_operation(),
+    );
+    evidence_field(
+        fields,
+        "products.graph.publication.protocol.has_infallible_terminal_promotion",
+        publication.protocol().has_infallible_terminal_promotion(),
+    );
+    for (index, member) in publication.members().iter().enumerate() {
+        evidence_field(
+            fields,
+            format!("products.graph.publication.members.{index}"),
+            member.ordinal(),
+        );
+    }
+}
+
+fn project_product_beam(
+    fields: &mut BTreeMap<String, String>,
+    prefix: &str,
+    beam: ProductBeamRule,
+) {
+    let prefix = format!("{prefix}.beam");
+    match beam {
+        ProductBeamRule::None => evidence_field(fields, format!("{prefix}.kind"), "none"),
+        ProductBeamRule::Fitted => evidence_field(fields, format!("{prefix}.kind"), "fitted"),
+        ProductBeamRule::Restoring(policy) => {
+            evidence_field(fields, format!("{prefix}.kind"), "restoring");
+            evidence_field(fields, format!("{prefix}.policy"), restoring_beam(policy));
+        }
+        ProductBeamRule::Inherit(node) => {
+            evidence_field(fields, format!("{prefix}.kind"), "inherit");
+            evidence_field(fields, format!("{prefix}.node_ordinal"), node.ordinal());
+        }
+        ProductBeamRule::Metadata(policy) => {
+            evidence_field(fields, format!("{prefix}.kind"), "metadata");
+            evidence_field(fields, format!("{prefix}.policy"), restoring_beam(policy));
+        }
+    }
+}
+
+fn project_product_validity(
+    fields: &mut BTreeMap<String, String>,
+    prefix: &str,
+    validity: ProductValidityRule,
+) {
+    let prefix = format!("{prefix}.validity");
+    match validity {
+        ProductValidityRule::All => evidence_field(fields, format!("{prefix}.kind"), "all"),
+        ProductValidityRule::FinalNormalState => {
+            evidence_field(fields, format!("{prefix}.kind"), "final_normal_state");
+        }
+        ProductValidityRule::PrimaryBeam(policy) => {
+            evidence_field(fields, format!("{prefix}.kind"), "primary_beam");
+            project_primary_beam_validity(fields, &prefix, policy);
+        }
+        ProductValidityRule::Taylor(policy) => {
+            evidence_field(fields, format!("{prefix}.kind"), "taylor");
+            project_taylor_validity(fields, &prefix, policy);
+        }
+        ProductValidityRule::TaylorAndPrimaryBeam {
+            taylor,
+            primary_beam,
+        } => {
+            evidence_field(fields, format!("{prefix}.kind"), "taylor_and_primary_beam");
+            project_taylor_validity(fields, &format!("{prefix}.taylor"), taylor);
+            project_primary_beam_validity(fields, &format!("{prefix}.primary_beam"), primary_beam);
+        }
+    }
+}
+
+fn project_primary_beam_validity(
+    fields: &mut BTreeMap<String, String>,
+    prefix: &str,
+    policy: casa_imaging_model::PrimaryBeamValidityPolicy,
+) {
+    evidence_field(
+        fields,
+        format!("{prefix}.cutoff"),
+        stable_float32(policy.cutoff()),
+    );
+    evidence_field(
+        fields,
+        format!("{prefix}.comparison"),
+        product_support_comparison(policy.comparison()),
+    );
+    evidence_field(
+        fields,
+        format!("{prefix}.blanking"),
+        product_blanking(policy.blanking()),
+    );
+}
+
+fn project_taylor_validity(
+    fields: &mut BTreeMap<String, String>,
+    prefix: &str,
+    policy: casa_imaging_model::TaylorValidityPolicy,
+) {
+    evidence_field(
+        fields,
+        format!("{prefix}.reference"),
+        taylor_support_reference(policy.reference()),
+    );
+    evidence_field(
+        fields,
+        format!("{prefix}.peak_fraction"),
+        stable_float32(policy.peak_fraction()),
+    );
+    evidence_field(
+        fields,
+        format!("{prefix}.comparison"),
+        product_support_comparison(policy.comparison()),
+    );
+    evidence_field(
+        fields,
+        format!("{prefix}.blanking"),
+        product_blanking(policy.blanking()),
+    );
 }
 
 fn project_numerics(fields: &mut BTreeMap<String, String>, problem: &CompiledProblem) {
@@ -5340,6 +6042,11 @@ fn stable_float(value: f64) -> String {
     format!("f64:{bits:016x}")
 }
 
+fn stable_float32(value: f32) -> String {
+    let bits = if value == 0.0 { 0 } else { value.to_bits() };
+    format!("f32:{bits:08x}")
+}
+
 fn spectral_sampling(value: SpectralSampling) -> &'static str {
     match value {
         SpectralSampling::Identity => "identity",
@@ -5470,6 +6177,85 @@ fn product_kind(value: ProductKind) -> &'static str {
         ProductKind::SpectralIndexError => "spectral_index_error",
         ProductKind::PbCorrectedSpectralIndex => "pb_corrected_spectral_index",
         ProductKind::Beam => "beam",
+    }
+}
+
+fn product_role(value: ProductRole) -> String {
+    match value {
+        ProductRole::Psf(term) => format!("psf:{}", product_term(term)),
+        ProductRole::Residual(term) => format!("residual:{}", product_term(term)),
+        ProductRole::Model(term) => format!("model:{}", product_term(term)),
+        ProductRole::RestoredImage(term) => {
+            format!("restored_image:{}", product_term(term))
+        }
+        ProductRole::SumWeights(term) => format!("sum_weights:{}", product_term(term)),
+        ProductRole::CleanMask => "clean_mask".to_string(),
+        ProductRole::Weight(term) => format!("weight:{}", product_term(term)),
+        ProductRole::PrimaryBeam(term) => format!("primary_beam:{}", product_term(term)),
+        ProductRole::PrimaryBeamSpectralIndex => "primary_beam_spectral_index".to_string(),
+        ProductRole::Sensitivity => "sensitivity".to_string(),
+        ProductRole::PbCorrectedImage(term) => {
+            format!("pb_corrected_image:{}", product_term(term))
+        }
+        ProductRole::TaylorCoefficientSet => "taylor_coefficient_set".to_string(),
+        ProductRole::SpectralIndex => "spectral_index".to_string(),
+        ProductRole::SpectralIndexError => "spectral_index_error".to_string(),
+        ProductRole::PbCorrectedSpectralIndex => "pb_corrected_spectral_index".to_string(),
+        ProductRole::BeamMetadata => "beam_metadata".to_string(),
+    }
+}
+
+fn product_term(value: ProductTerm) -> String {
+    match value {
+        ProductTerm::Single => "single".to_string(),
+        ProductTerm::Taylor(term) => format!("taylor_{term}"),
+    }
+}
+
+fn product_axis_kind(value: ProductAxisKind) -> &'static str {
+    match value {
+        ProductAxisKind::SkyImage => "sky_image",
+        ProductAxisKind::PlaneState => "plane_state",
+        ProductAxisKind::Metadata => "metadata",
+    }
+}
+
+fn product_unit(value: ProductUnit) -> &'static str {
+    match value {
+        ProductUnit::NotApplicable => "not_applicable",
+        ProductUnit::JyPerBeam => "jy_per_beam",
+        ProductUnit::JyPerPixel => "jy_per_pixel",
+        ProductUnit::Dimensionless => "dimensionless",
+        ProductUnit::VisibilityWeight => "visibility_weight",
+    }
+}
+
+fn product_schema(value: ProductSchema) -> &'static str {
+    match value {
+        ProductSchema::ImageF32V1 => "image_f32_v1",
+        ProductSchema::LogicalCollectionV1 => "logical_collection_v1",
+        ProductSchema::EmbeddedImageMetadataV1 => "embedded_image_metadata_v1",
+        ProductSchema::InternalImageF32V1 => "internal_image_f32_v1",
+    }
+}
+
+fn product_support_comparison(value: ProductSupportComparison) -> &'static str {
+    match value {
+        ProductSupportComparison::StrictlyGreater => "strictly_greater",
+    }
+}
+
+fn product_blanking(value: ProductBlankingPolicy) -> &'static str {
+    match value {
+        ProductBlankingPolicy::ZeroAndFalseMask => "zero_and_false_mask",
+    }
+}
+
+fn taylor_support_reference(value: TaylorSupportReference) -> &'static str {
+    match value {
+        TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum => {
+            "principal_residual_taylor_0_positive_maximum"
+        }
     }
 }
 
@@ -5911,6 +6697,22 @@ fn dependency(dependency: &WorkDependency) -> String {
     }
 }
 
+fn parse_dependency(value: &str) -> WorkDependency {
+    if let Some(node) = value.strip_prefix("work:") {
+        return WorkDependency::Work(WorkNodeId::new(node.to_string()));
+    }
+    let value = value
+        .strip_prefix("fence:")
+        .expect("validated publication terminal");
+    let (node, kind) = value
+        .rsplit_once(':')
+        .expect("validated publication fence terminal");
+    WorkDependency::Fence(FenceId::new(
+        WorkNodeId::new(node.to_string()),
+        parse_fence_kind(kind),
+    ))
+}
+
 fn claim_lifetime(lifetime: &ClaimLifetime) -> String {
     match lifetime {
         ClaimLifetime::Work => "work".to_string(),
@@ -6028,6 +6830,26 @@ fn io_buffer(kind: crate::IoBufferKind) -> &'static str {
         crate::IoBufferKind::Writeback => "writeback",
         crate::IoBufferKind::Publication => "publication",
         crate::IoBufferKind::MappedPageCache => "mapped_page_cache",
+    }
+}
+
+fn parse_io_buffer(value: &str) -> IoBufferKind {
+    match value {
+        "source_read_ahead" => IoBufferKind::SourceReadAhead,
+        "decode" => IoBufferKind::Decode,
+        "preparation" => IoBufferKind::Preparation,
+        "host_to_device_transfer" => IoBufferKind::HostToDeviceTransfer,
+        "device_to_host_transfer" => IoBufferKind::DeviceToHostTransfer,
+        "spill_read" => IoBufferKind::SpillRead,
+        "spill_write" => IoBufferKind::SpillWrite,
+        "serialization" => IoBufferKind::Serialization,
+        "storage_manager" => IoBufferKind::StorageManager,
+        "tiled_column_writer" => IoBufferKind::TiledColumnWriter,
+        "scalar_column_writer" => IoBufferKind::ScalarColumnWriter,
+        "writeback" => IoBufferKind::Writeback,
+        "publication" => IoBufferKind::Publication,
+        "mapped_page_cache" => IoBufferKind::MappedPageCache,
+        _ => unreachable!("validated receipt I/O buffer projection"),
     }
 }
 

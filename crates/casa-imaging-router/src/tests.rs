@@ -34,6 +34,24 @@ use super::{
     MigrationRowKind, NativeEnginePort, RequestDisposition, RouteRecord, parse_matrix,
 };
 
+fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
+    casa_imaging_model::ProductValidityPolicies::new(
+        casa_imaging_model::PrimaryBeamValidityPolicy::new(
+            0.2,
+            casa_imaging_model::ProductSupportComparison::StrictlyGreater,
+            casa_imaging_model::ProductBlankingPolicy::ZeroAndFalseMask,
+        )
+        .expect("valid PB policy"),
+        casa_imaging_model::TaylorValidityPolicy::new(
+            casa_imaging_model::TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
+            0.1,
+            casa_imaging_model::ProductSupportComparison::StrictlyGreater,
+            casa_imaging_model::ProductBlankingPolicy::ZeroAndFalseMask,
+        )
+        .expect("valid Taylor policy"),
+    )
+}
+
 const STANDARD_DIRTY_ROWS: [&str; 7] = [
     "capability.compiled-problem",
     "capability.continuum-mfs",
@@ -44,7 +62,7 @@ const STANDARD_DIRTY_ROWS: [&str; 7] = [
     "product.psf",
 ];
 
-const MTMFS_ROWS: [&str; 9] = [
+const MTMFS_ROWS: [&str; 10] = [
     "capability.compiled-problem",
     "capability.major-minor-cycles",
     "capability.ms-selection",
@@ -52,6 +70,7 @@ const MTMFS_ROWS: [&str; 9] = [
     "capability.observation-transaction",
     "capability.standard-gridder",
     "capability.stokes-i",
+    "product.psf",
     "product.taylor-terms",
     "solver.mtmfs",
 ];
@@ -114,7 +133,7 @@ fn selected_engine_receives_the_exact_route_record() {
 
     assert_eq!(outcome.output(), outcome.route());
     assert_eq!(outcome.output().matrix_schema_version(), 1);
-    assert_eq!(outcome.output().matrix_contract_revision(), 9);
+    assert_eq!(outcome.output().matrix_contract_revision(), 10);
     assert_eq!(outcome.output().disposition(), RequestDisposition::Native);
     assert_eq!(
         outcome
@@ -315,7 +334,7 @@ fn matrix_contract_revision_is_a_positive_u32() {
     .unwrap();
 
     let revision: u32 = routed.route().matrix_contract_revision();
-    assert_eq!(revision, 9);
+    assert_eq!(revision, 10);
 
     for invalid in [serde_json::json!(0), serde_json::json!("5")] {
         let mut matrix = serde_json::from_str::<serde_json::Value>(MIGRATION_MATRIX_JSON).unwrap();
@@ -507,6 +526,7 @@ fn standard_dirty_request_with(model_column_write: ModelColumnWrite) -> ImagingR
             vec![ProductKind::Psf],
             ProductNormalization::UnitResponse,
             RestoringBeamPolicy::None,
+            product_validity(),
         ),
         model_column_write,
     )
@@ -521,9 +541,10 @@ fn mtmfs_request() -> ImagingRequest {
             PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
         ),
         ProductRequirements::new(
-            vec![ProductKind::TaylorTerms],
+            vec![ProductKind::Psf, ProductKind::TaylorTerms],
             ProductNormalization::UnitResponse,
             RestoringBeamPolicy::None,
+            product_validity(),
         ),
         ModelColumnWrite::Disabled,
     )

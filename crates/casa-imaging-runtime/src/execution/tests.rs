@@ -20,6 +20,7 @@ use casa_imaging_model::{
     StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct, WeightDensityScope,
     WeightingContract, WeightingScheme, compile,
 };
+use sha2::{Digest, Sha256};
 
 #[path = "../../tests/common/mod.rs"]
 mod common;
@@ -31,13 +32,31 @@ use crate::{
     Accelerator, AcceleratorDemand, AcceleratorId, AcceleratorKind, AlternativeId, CacheDemand,
     CapabilityPredicate, CapacityDomainId, CapacityViewId, CountDemand, CpuClassCapacity,
     DemandAlternative, DemandEnvelope, ExternalPressure, HostInventory, ImplementationRegistryId,
-    IoBufferDemand, MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand, MemoryView,
-    MemoryViewKind, ObservationTransactionWork, PhysicalWorkBinding, PlannerCostModelProfileId,
-    PlanningBindings, QueueDemand, QueueResource, QueueResourceId, QuiescencePoint, RateDemand,
-    RateResource, RateResourceId, RateUnit, ResourceAuthority, ResourceHeadroom, ResourcePolicy,
-    ResourceTopology, RuntimeOverheadDemand, ScalingMetadata, StorageDemand, StorageDomain,
-    StorageDomainId, plan as authority_plan,
+    IoBufferDemand, IoBufferKind, MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand,
+    MemoryView, MemoryViewKind, ObservationTransactionWork, PhysicalWorkBinding,
+    PlannerCostModelProfileId, PlanningBindings, QueueDemand, QueueResource, QueueResourceId,
+    QuiescencePoint, RateDemand, RateResource, RateResourceId, RateUnit, ResourceAuthority,
+    ResourceHeadroom, ResourcePolicy, ResourceTopology, RuntimeOverheadDemand, ScalingMetadata,
+    StorageDemand, StorageDomain, StorageDomainId, plan as authority_plan,
 };
+
+fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
+    casa_imaging_model::ProductValidityPolicies::new(
+        casa_imaging_model::PrimaryBeamValidityPolicy::new(
+            0.2,
+            casa_imaging_model::ProductSupportComparison::StrictlyGreater,
+            casa_imaging_model::ProductBlankingPolicy::ZeroAndFalseMask,
+        )
+        .expect("valid PB policy"),
+        casa_imaging_model::TaylorValidityPolicy::new(
+            casa_imaging_model::TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
+            0.1,
+            casa_imaging_model::ProductSupportComparison::StrictlyGreater,
+            casa_imaging_model::ProductBlankingPolicy::ZeroAndFalseMask,
+        )
+        .expect("valid Taylor policy"),
+    )
+}
 
 fn plan<E>(
     problem: &casa_imaging_model::CompiledProblem,
@@ -140,6 +159,7 @@ fn compiled_problem() -> casa_imaging_model::CompiledProblem {
             vec![ProductKind::Psf, ProductKind::Residual, ProductKind::Model],
             ProductNormalization::UnitResponse,
             RestoringBeamPolicy::None,
+            product_validity(),
         ),
         ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
         NumericsContract::new(
@@ -459,6 +479,8 @@ fn physical_work_binding(dag: ExecutionDag) -> PhysicalWorkBinding {
     let stage = WorkNodeId::new("transaction-stage-products");
     let commit = WorkNodeId::new("transaction-commit");
     let implementation = WorkImplementationId::new("cpu-reference");
+    let writer_allocation = AllocationId::new("transaction-product-writer");
+    let writer_slot = PhysicalSlotId::new("transaction-product-writer-slot");
     let publication_allocation = AllocationId::new("transaction-publication-buffer");
     let publication_slot = PhysicalSlotId::new("transaction-publication-slot");
     let publication_lifetime =
@@ -588,11 +610,19 @@ fn physical_work_binding(dag: ExecutionDag) -> PhysicalWorkBinding {
                         demand_id: "transaction-output".to_string(),
                         use_kind: crate::StorageUseKind::StagedOutput,
                     },
-                    amount: 1,
+                    amount: 3,
+                    lifetime: ClaimLifetime::Work,
+                },
+                ResourceClaim {
+                    resource: crate::LeaseResource::IoBuffer(IoBufferKind::Serialization),
+                    amount: 3,
                     lifetime: ClaimLifetime::Work,
                 },
             ],
-            allocations: Vec::new(),
+            allocations: vec![AllocationUse {
+                allocation: writer_allocation.clone(),
+                lifetime: ClaimLifetime::Work,
+            }],
             fences: BTreeSet::new(),
             quiescence_after: BTreeSet::new(),
         },
@@ -627,7 +657,15 @@ fn physical_work_binding(dag: ExecutionDag) -> PhysicalWorkBinding {
                         demand_id: "transaction-output".to_string(),
                         use_kind: crate::StorageUseKind::StagedOutput,
                     },
-                    amount: 1,
+                    amount: 3,
+                    lifetime: publication_lifetime.clone(),
+                },
+                ResourceClaim {
+                    resource: crate::LeaseResource::Storage {
+                        demand_id: "transaction-output".to_string(),
+                        use_kind: crate::StorageUseKind::FinalOutput,
+                    },
+                    amount: 3,
                     lifetime: publication_lifetime.clone(),
                 },
                 ResourceClaim {
@@ -651,12 +689,18 @@ fn physical_work_binding(dag: ExecutionDag) -> PhysicalWorkBinding {
         preferred_bytes: 1,
         views: vec![CapacityViewId::new("host-memory")],
     });
+    alternative.demand.memory.push(MemoryDemand {
+        allocation_id: "transaction-product-writer-slot".to_string(),
+        hard_bytes: 3,
+        preferred_bytes: 3,
+        views: vec![CapacityViewId::new("host-memory")],
+    });
     alternative.demand.storage.push(StorageDemand {
         demand_id: "transaction-output".to_string(),
         domain: StorageDomainId::new("transaction-output"),
         temporary_bytes: 0,
-        staged_output_bytes: 1,
-        final_output_bytes: 0,
+        staged_output_bytes: 3,
+        final_output_bytes: 3,
         persistent_cache_bytes: 0,
         read_rate: CountDemand::zero(),
         write_rate: CountDemand::zero(),
@@ -675,6 +719,7 @@ fn physical_work_binding(dag: ExecutionDag) -> PhysicalWorkBinding {
     });
     alternative.demand.locks = CountDemand::new(1, 1);
     alternative.demand.io_buffers.publication_bytes = 1;
+    alternative.demand.io_buffers.serialization_bytes = 3;
     let mut logical_allocations = dag
         .logical_allocations()
         .values()
@@ -694,6 +739,17 @@ fn physical_work_binding(dag: ExecutionDag) -> PhysicalWorkBinding {
             ]),
         },
     });
+    logical_allocations.push(LogicalAllocation {
+        id: writer_allocation.clone(),
+        bytes: 3,
+        purpose: AllocationPurpose::IoBuffer(IoBufferKind::Serialization),
+        compatibility: compatibility.clone(),
+        physical_slot: writer_slot.clone(),
+        lifetime: AllocationLifetime {
+            acquire_at: stage.clone(),
+            release_after: BTreeSet::from([WorkDependency::Work(stage.clone())]),
+        },
+    });
     let mut physical_slots = dag.physical_slots().values().cloned().collect::<Vec<_>>();
     physical_slots.push(PhysicalSlot {
         id: publication_slot,
@@ -701,6 +757,14 @@ fn physical_work_binding(dag: ExecutionDag) -> PhysicalWorkBinding {
             allocation_id: "transaction-publication-slot".to_string(),
         },
         capacity_bytes: 1,
+        compatibility: compatibility.clone(),
+    });
+    physical_slots.push(PhysicalSlot {
+        id: writer_slot,
+        lease_resource: crate::LeaseResource::Memory {
+            allocation_id: "transaction-product-writer-slot".to_string(),
+        },
+        capacity_bytes: 3,
         compatibility,
     });
     let dag = ExecutionDag::new(ExecutionDagSpecification {
@@ -745,27 +809,188 @@ fn physical_work_binding(dag: ExecutionDag) -> PhysicalWorkBinding {
         stages,
     )
     .expect("complete test prediction");
+    let problem = compiled_problem();
+    let product_graph_id = problem.product_graph().graph_id();
+    let bounds =
+        crate::PublicationResourceBounds::new(1, 1, 1, 0).expect("unit publication bounds");
+    let layouts = crate::PublicationLayoutLedger::new(
+        problem
+            .product_graph()
+            .publication()
+            .members()
+            .iter()
+            .enumerate()
+            .map(|(index, product_node)| {
+                crate::PublicationPhysicalLayout::new(
+                    crate::PublicationParticipant::Product {
+                        graph_id: product_graph_id,
+                        node_id: *product_node,
+                    },
+                    crate::ArtifactIdentity::from_sha256(
+                        [u8::try_from(index + 1).expect("small fixture"); 32],
+                    ),
+                    crate::PhysicalLayoutId::from_sha256(
+                        [u8::try_from(index + 11).expect("small fixture"); 32],
+                    ),
+                    crate::PublicationStaging::new(
+                        stage.clone(),
+                        WorkDependency::Work(stage.clone()),
+                        IoBufferKind::Serialization,
+                        writer_allocation.clone(),
+                    )
+                    .expect("product staging"),
+                    bounds,
+                )
+            })
+            .collect(),
+    )
+    .expect("product publication layouts");
+    let artifacts = layouts
+        .entries()
+        .iter()
+        .map(|layout| {
+            crate::PlannedArtifact::new(
+                layout.artifact(),
+                commit.clone(),
+                crate::ArtifactRole::Output,
+                None,
+            )
+        })
+        .collect();
     PhysicalWorkBinding::new(
         dag,
         prediction,
-        Vec::new(),
-        ObservationTransactionWork::new(
-            initial,
-            reconciliation,
-            [ProductKind::Psf, ProductKind::Residual, ProductKind::Model]
-                .into_iter()
-                .map(|product| {
-                    (
-                        product,
-                        BTreeSet::from([WorkDependency::Work(stage.clone())]),
-                    )
-                })
-                .collect(),
-            None,
-            commit,
-        ),
+        artifacts,
+        ObservationTransactionWork::new(initial, reconciliation, None, commit),
+        layouts,
     )
     .expect("bound physical work")
+}
+
+#[test]
+fn publication_layout_ledger_names_every_atomic_member_and_staging_event() {
+    let problem = compiled_problem();
+    let product_graph_id = problem.product_graph().graph_id();
+    let producer = WorkNodeId::new("stage-products");
+    let terminal = WorkDependency::Work(producer.clone());
+    let allocation = AllocationId::new("product-writer");
+    let bounds =
+        crate::PublicationResourceBounds::new(128, 96, 32, 0).expect("nonzero publication bounds");
+    let mut layouts = problem
+        .product_graph()
+        .publication()
+        .members()
+        .iter()
+        .enumerate()
+        .map(|(index, product_node)| {
+            crate::PublicationPhysicalLayout::new(
+                crate::PublicationParticipant::Product {
+                    graph_id: product_graph_id,
+                    node_id: *product_node,
+                },
+                crate::ArtifactIdentity::from_sha256([u8::try_from(index + 1).unwrap(); 32]),
+                crate::PhysicalLayoutId::from_sha256([u8::try_from(index + 11).unwrap(); 32]),
+                crate::PublicationStaging::new(
+                    producer.clone(),
+                    terminal.clone(),
+                    IoBufferKind::Serialization,
+                    allocation.clone(),
+                )
+                .expect("producer-owned staging"),
+                bounds,
+            )
+        })
+        .collect::<Vec<_>>();
+    let measurement_set = casa_imaging_model::MeasurementSetIdentity::new(identity(1));
+    layouts.push(crate::PublicationPhysicalLayout::new(
+        crate::PublicationParticipant::ModelData(measurement_set),
+        crate::ArtifactIdentity::from_sha256([99; 32]),
+        crate::PhysicalLayoutId::from_sha256([100; 32]),
+        crate::PublicationStaging::new(
+            WorkNodeId::new("stage-model-column"),
+            WorkDependency::Fence(FenceId::new(
+                WorkNodeId::new("stage-model-column"),
+                FenceKind::Writeback,
+            )),
+            IoBufferKind::Writeback,
+            AllocationId::new("model-writer"),
+        )
+        .expect("MODEL_DATA staging"),
+        bounds,
+    ));
+
+    let ledger = crate::PublicationLayoutLedger::new(layouts).expect("complete atomic ledger");
+    assert_eq!(
+        ledger
+            .entries()
+            .iter()
+            .filter(|entry| matches!(
+                entry.participant(),
+                crate::PublicationParticipant::Product { .. }
+            ))
+            .count(),
+        problem.product_graph().publication().members().len()
+    );
+    assert_eq!(ledger.staged_storage_bytes(), 128 * 4);
+    assert_eq!(ledger.final_storage_bytes(), 96 * 4);
+    assert_eq!(ledger.writer_buffer_bytes(), 32 * 4);
+    assert_eq!(
+        ledger
+            .entries()
+            .iter()
+            .find(|entry| {
+                entry.participant() == crate::PublicationParticipant::ModelData(measurement_set)
+            })
+            .expect("MODEL_DATA participant")
+            .staging()
+            .terminal(),
+        &WorkDependency::Fence(FenceId::new(
+            WorkNodeId::new("stage-model-column"),
+            FenceKind::Writeback,
+        ))
+    );
+}
+
+#[test]
+fn publication_layout_ledger_sums_asynchronous_exposure_across_producers() {
+    let problem = compiled_problem();
+    let graph_id = problem.product_graph().graph_id();
+    let members = problem.product_graph().publication().members();
+    let layout = |index: usize, writer_bytes, mapped_bytes| {
+        let writer = WorkNodeId::new(format!("writer-{index}"));
+        let mapped = WorkNodeId::new(format!("mapped-{index}"));
+        let release = WorkNodeId::new(format!("release-{index}"));
+        crate::PublicationPhysicalLayout::new(
+            crate::PublicationParticipant::Product {
+                graph_id,
+                node_id: members[index],
+            },
+            crate::ArtifactIdentity::from_sha256([u8::try_from(index + 1).unwrap(); 32]),
+            crate::PhysicalLayoutId::from_sha256([u8::try_from(index + 11).unwrap(); 32]),
+            crate::PublicationStaging::new(
+                writer.clone(),
+                WorkDependency::Work(writer),
+                IoBufferKind::Serialization,
+                AllocationId::new(format!("writer-allocation-{index}")),
+            )
+            .expect("writer staging")
+            .with_mapped_page_cache(
+                crate::PublicationMappedStaging::new(
+                    mapped,
+                    WorkDependency::Work(release),
+                    AllocationId::new(format!("mapped-allocation-{index}")),
+                )
+                .expect("mapped exposure retained through a distinct release"),
+            ),
+            crate::PublicationResourceBounds::new(1, 1, writer_bytes, mapped_bytes)
+                .expect("publication bounds"),
+        )
+    };
+    let ledger = crate::PublicationLayoutLedger::new(vec![layout(0, 20, 30), layout(1, 40, 50)])
+        .expect("two-producer publication ledger");
+
+    assert_eq!(ledger.writer_buffer_bytes(), 60);
+    assert_eq!(ledger.mapped_page_cache_bytes(), 80);
 }
 
 fn inactive_release_predecessor_plan(fenced_predecessor: bool) -> (ExecutionDag, WorkNodeId) {
@@ -3513,6 +3738,27 @@ fn receipt_store_checkpoints_atomically_rejects_corruption_and_enforces_retentio
         Err(crate::ReceiptError::IntegrityMismatch)
     ));
 
+    let mut foreign_node: serde_json::Value =
+        serde_json::from_slice(&original).expect("receipt JSON");
+    foreign_node["receipt"]["plan"]["publication_layouts"][0]["participant"]["node_ordinal"] =
+        serde_json::Value::from(999_u64);
+    let payload = serde_json::to_vec(&foreign_node["receipt"]).expect("receipt payload");
+    foreign_node["payload_sha256"] = serde_json::Value::from(
+        Sha256::digest(payload)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>(),
+    );
+    fs::write(
+        &path,
+        serde_json::to_vec_pretty(&foreign_node).expect("foreign-node JSON"),
+    )
+    .expect("write foreign-node receipt");
+    assert!(matches!(
+        store.open(first.attempt_id()),
+        Err(crate::ReceiptError::IntegrityMismatch)
+    ));
+
     let mut unsupported: serde_json::Value =
         serde_json::from_slice(&original).expect("receipt JSON");
     unsupported["schema"]["version"] = serde_json::Value::from(999_u64);
@@ -3582,6 +3828,72 @@ fn receipt_store_checkpoints_atomically_rejects_corruption_and_enforces_retentio
         byte_store.begin(provenance(71, 72), &problem, &plan),
         Err(crate::ReceiptError::RetentionExceeded)
     ));
+}
+
+#[test]
+fn reopened_receipt_carries_exact_publication_layout_evidence() {
+    let problem = compiled_problem();
+    let dag = ExecutionDag::new(plan_spec(vec![cpu_node("work", BTreeSet::new())]))
+        .expect("valid physical work");
+    let plan = bound_plan(dag);
+    let expected = &plan.publication_layouts().entries()[0];
+    let directory = tempfile::tempdir().expect("receipt directory");
+    let store = crate::ExecutionReceiptStore::new(
+        directory.path(),
+        crate::ReceiptRetention::new(1, 1_048_576).expect("retention"),
+    )
+    .expect("receipt store");
+    let provenance = execution_provenance(
+        crate::ExecutionAttemptId::from_sha256([91; 32]),
+        crate::BuildIdentity::from_sha256([92; 32]),
+    );
+    let recorder = store
+        .begin(provenance.clone(), &problem, &plan)
+        .expect("begin receipt");
+    let reopened = store.open(provenance.attempt_id()).expect("reopen receipt");
+
+    assert_eq!(reopened.publication_layout_count(), 3);
+    assert_eq!(
+        reopened.publication_participant(expected.artifact()),
+        Some(match expected.participant() {
+            crate::PublicationParticipant::Product { graph_id, node_id } => {
+                crate::ReceiptPublicationParticipant::Product {
+                    graph_identity: graph_id.as_bytes(),
+                    node_ordinal: node_id.ordinal(),
+                }
+            }
+            crate::PublicationParticipant::ModelData(measurement_set) => {
+                crate::ReceiptPublicationParticipant::ModelData(measurement_set)
+            }
+        })
+    );
+    assert_eq!(
+        reopened.publication_layout_identity(expected.artifact()),
+        Some(expected.layout_id())
+    );
+    assert_eq!(
+        reopened.publication_producer(expected.artifact()).as_ref(),
+        Some(expected.staging().producer())
+    );
+    assert_eq!(
+        reopened.publication_terminal(expected.artifact()).as_ref(),
+        Some(expected.staging().terminal())
+    );
+    assert_eq!(
+        reopened.publication_writer_buffer_kind(expected.artifact()),
+        Some(expected.staging().writer_buffer_kind())
+    );
+    assert_eq!(
+        reopened
+            .publication_writer_allocation(expected.artifact())
+            .as_ref(),
+        Some(expected.staging().writer_allocation())
+    );
+    assert_eq!(
+        reopened.publication_resource_bounds(expected.artifact()),
+        Some(expected.resource_bounds())
+    );
+    drop(recorder);
 }
 
 #[test]

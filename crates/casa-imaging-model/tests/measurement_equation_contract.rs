@@ -35,6 +35,24 @@ mod common;
 
 use common::{identity, problem_inputs};
 
+fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
+    casa_imaging_model::ProductValidityPolicies::new(
+        casa_imaging_model::PrimaryBeamValidityPolicy::new(
+            0.2,
+            casa_imaging_model::ProductSupportComparison::StrictlyGreater,
+            casa_imaging_model::ProductBlankingPolicy::ZeroAndFalseMask,
+        )
+        .expect("valid PB policy"),
+        casa_imaging_model::TaylorValidityPolicy::new(
+            casa_imaging_model::TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
+            0.1,
+            casa_imaging_model::ProductSupportComparison::StrictlyGreater,
+            casa_imaging_model::ProductBlankingPolicy::ZeroAndFalseMask,
+        )
+        .expect("valid Taylor policy"),
+    )
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 struct Complex {
     re: f64,
@@ -229,6 +247,7 @@ fn compile_contract(sampling: SpectralSampling) -> casa_imaging_model::CompiledP
         ],
         ProductNormalization::FlatNoise,
         RestoringBeamPolicy::PerPlane,
+        product_validity(),
     );
     let numerics = NumericsContract::new(
         vec![NumericPrecision::F64],
@@ -400,10 +419,10 @@ fn paired_compositions_obey_linearity_and_weighted_adjointness() {
 }
 
 #[test]
-fn schema_six_problem_and_weighting_generation_identities_are_pinned() {
+fn schema_seven_problem_and_weighting_generation_identities_are_pinned() {
     let problem = compile_contract(SpectralSampling::Linear);
 
-    assert_eq!(CompiledProblemId::SCHEMA_VERSION, 6);
+    assert_eq!(CompiledProblemId::SCHEMA_VERSION, 7);
     assert_eq!(WeightingGenerationId::SCHEMA_VERSION, 1);
     assert_eq!(
         (
@@ -415,7 +434,7 @@ fn schema_six_problem_and_weighting_generation_identities_are_pinned() {
                 .to_string(),
         ),
         (
-            "3a440101add9d74a137601766036cb400933da204ba0c9e7a6749b18b017d411".to_string(),
+            "d111460fdd81acea6824900729bc46f8ea593f55379bfff01dadd5935d4e19be".to_string(),
             "550f22492d158e34f075329e2577fa795391f37d25e6185e417785fe2f6bbb8c".to_string(),
         )
     );

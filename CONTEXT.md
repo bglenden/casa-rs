@@ -33,8 +33,8 @@ _Avoid_: MeasurementSet clone, input path
 **Observation Transaction**:
 The snapshot-bound, compiler-derived read/write contract for one imaging run.
 It names exact per-MS selections and generations, optional `MODEL_DATA` write
-preconditions, typed physical observation-read nodes, exact per-required-product
-private staging completions, and the sole atomic publication gate. The sole
+preconditions, typed physical observation-read nodes, graph-owned publication
+members with exact private staging completions, and the sole atomic publication gate. The sole
 `plan` entrypoint derives all read completion events and binds this declaration
 to the exact Compiled Problem and physical-work identity. The terminal gate
 follows every other completion, revalidates while holding every source lock,
@@ -97,9 +97,9 @@ approximation and returns a model update plus convergence evidence.
 _Avoid_: CLEAN loop, inner callback
 
 **Product Contract**:
-The required product graph, authoritative source generations, axes, units,
-normalization, beam/restoration policy, validity, dependencies, schema, and
-atomic publication rules for an imaging problem.
+The compiler-owned product topology, axes, units, exact normalization,
+beam/restoration and validity policies, dependencies, backend-independent
+schema, exact publication members, and atomic store protocol for an imaging problem.
 _Avoid_: Output files, sidecars
 
 **Migration Obligation**:

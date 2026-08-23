@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "contract_revision": 9,
+  "contract_revision": 10,
   "programme_issue": 486,
   "owner_issue": 487,
   "status_values": ["Native", "LegacyWholeRun", "TemporarilyUnavailable"],
@@ -62,9 +62,9 @@
     "observation-transaction-v1": {
       "baseline_identity": "schema-pinned CompiledProblem, ObservationTransactionContract, and ExecutionPlan 32-byte identities plus one validated canonical ExecutionDag",
       "comparator": {"kind": "exact-observation-transaction", "normalized_rms_ceiling": null, "denominator": null, "preprocessing": "canonicalize MeasurementSet identities and ProductRequirements without weakening ordering, resource, or visibility dependencies"},
-      "thresholds": ["MeasurementSet read and write sets exact, including absent MODEL_DATA full-row zero initialization versus present-column selected-cell replacement", "typed observation-read completion set derived mechanically from every physical ObservationRead node and generic I/O receives no MeasurementSet source authority", "write preconditions exact", "required product staging keys equal the exact ProductRequirements and every product names at least one completion event", "CompiledProblem, ObservationTransactionContract, and ExecutionPlan schema identities pinned", "canonical ExecutionDag valid"],
+      "thresholds": ["MeasurementSet read and write sets exact, including absent MODEL_DATA full-row zero initialization versus present-column selected-cell replacement", "typed observation-read completion set derived mechanically from every physical ObservationRead node and generic I/O receives no MeasurementSet source authority", "write preconditions exact", "Product Graph publication members and optional MODEL_DATA map exactly to artifact, physical layout, producer, allocation, resource bounds, and terminal event", "CompiledProblem, ObservationTransactionContract, ExecutionPlan, and Execution Receipt schema identities pinned", "canonical ExecutionDag valid"],
       "laws": ["initial consistency check precedes every observation read", "every observation read precedes final reconciliation", "final reconciliation precedes complete private product and optional model-column staging", "one named atomic commit is the sole publication node and follows every other node terminal completion", "controller polling ends when atomic publication launches", "publication fences establish readiness only; every commit fence and all fallible scheduler settlement succeed before the one final atomic visibility operation", "no failure, cancellation, or adaptation outcome exists after visibility", "mutation, cancellation, numerical failure, resource failure, output failure, writeback failure, commit-fence failure, and final publication failure leave the previous generation solely visible"],
-      "resource_gates": ["one identity-bearing lock claim per MeasurementSet on the initial check, every observation read, and atomic commit", "atomic-commit locks, permits, lease, and publication allocation remain held through final publication", "private staged storage charged", "model-column writeback buffer charged when requested", "publication buffer charged", "all I/O, writeback, release, and publication fences declared"],
+      "resource_gates": ["one identity-bearing lock claim per MeasurementSet on the initial check, every observation read, and atomic commit", "atomic-commit locks, permits, lease, and publication allocation remain held through final publication", "publication-layout staged and final storage, writer buffers, allocations, and optional mapped exposure are planned and receipted", "model-column writeback buffer charged when requested", "publication buffer charged", "all I/O, writeback, release, and publication fences declared"],
       "evidence_tiers": ["tier-0 static schema, source, and canonical-DAG contract", "tier-1 synthetic mutation, cancellation, and failure-cut tests", "applicable CASA and casacore MeasurementSet interoperability"]
     },
     "resource-authority-foundation-v1": {
@@ -78,8 +78,8 @@
   },
   "baseline_manifest_digests": {
     "repo://crates/casa-calibration/src/continuum_subtract.rs": "742a5f3b8dc9fd46417d42e257a6a5a844c71a68928b757b3fc4f6fb1dfde229",
-    "repo://crates/casa-imaging-model/src/lib.rs": "5667062aa8f79892a56cac7af8d04b1e6e543ff40ea9a0323e7b63eee1a34a55",
-    "repo://crates/casa-imaging-runtime/src/lib.rs": "ef5bb4c2f7fb1118394c52ca12327885c25bef41bb2d4e0ea98a50f990e6aeae",
+    "repo://crates/casa-imaging-model/src/lib.rs": "686435d4ec2d253128b88ecec3e94a581488656b11730b6e8f7a3fa74daf78c0",
+    "repo://crates/casa-imaging-runtime/src/lib.rs": "c5aa1d3b63cc2f715f7d2ca34fc57d4814ef9c38a6922ec1d9793427d0cbd97e",
     "repo://crates/casa-imaging/src/fft_backend.rs": "12594aabd44f66300b9a13e7ac92617f2eb3a6f0abca8263fd89cb5549cacb4a",
     "repo://docs/tutorial-parity/capability-matrix.md": "d809e0469c1661d7bba0c6ee0b208bf072d4e5a5bf2b2e4b01f6bddd227e8d4d",
     "repo://docs/tutorial-parity/outlierfile-inventory.md": "6b05d24e96a4708f5c754a05a1715278c613011a534a42a642fd04314448b005",

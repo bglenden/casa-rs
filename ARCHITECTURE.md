@@ -136,7 +136,7 @@ Additional constraints:
   readable dependency policy and migration matrix under
   `resources/imaging-architecture/` are enforced by `just arch-check`.
 
-The native interface has one `ImagingRequest` contract (version 2) and exactly
+The native interface has one `ImagingRequest` contract (version 3) and exactly
 one `compile` / `plan` / `run` sequence. `compile` validates and canonicalizes
 logical science, including immutable coordinate and image-domain geometry.
 Compiled Geometry identity is derived only by `compile`; callers supply geometry
@@ -234,6 +234,15 @@ deletion condition, source evidence, and any active obligation. Stores opened
 on the same canonical receipt root share one process-wide mutation lock and
 must agree on one registered retention policy, so pruning and persistence
 enforce one aggregate retention ceiling.
+Receipt schema 7 stores the Product Graph identity, schema, complete node
+ordinals, and exact atomic-publication member ordinals as a closed typed
+projection; publication validation never reconstructs authority from the open
+Compiled Problem audit field map. This T13 receipt projection and the version-3
+request/identity ratchets are CASA-RS control and evidence schemas only. They do
+not change casacore MeasurementSet or image-table columns, keywords, data
+managers, bytes, or on-disk identities. T13's focused gates therefore do not
+claim the programme's final Rust/C++ persistent-interoperability evidence,
+which remains required after the production storage adapters are integrated.
 Before the sole external publication operation, the runtime durably records a
 non-prunable `PublicationPrepared` receipt with exact Staged outputs and
 pre-syncs its terminal candidate. Prepared and terminal bytes are charged

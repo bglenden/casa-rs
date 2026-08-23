@@ -10,14 +10,16 @@ use casa_imaging_model::{
     ObservationSnapshotInput, ObservationTransactionRequirements, PhaseCentreLaw,
     PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
     PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
-    ProblemInputIdentities, ProblemSpecification, ProductKind, ProductNormalization,
-    ProductRequirements, Projection, ReconstructionAlgorithm, ReconstructionBasis,
-    ReconstructionContract, ReconstructionControls, ReductionPolicy, ReferenceDataKind,
-    RequiredCapability, RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection,
-    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSampling, SpectralWcs, StageErrorBudget, TimeScale, UvTaper, UvwCoordinateLaw,
-    VisibilityInnerProduct, WeightDensityScope, WeightingContract, WeightingScheme, compile,
-    compile_observation,
+    PrimaryBeamValidityPolicy, ProblemInputIdentities, ProblemSpecification, ProductAxisKind,
+    ProductBeamRule, ProductBlankingPolicy, ProductKind, ProductNormalization, ProductRequirements,
+    ProductRole, ProductSchema, ProductSupportComparison, ProductTerm, ProductUnit,
+    ProductValidityPolicies, ProductValidityRule, Projection, ReconstructionAlgorithm,
+    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
+    ReferenceDataKind, RequiredCapability, RestFrequency, RestoringBeamPolicy, ScientificContract,
+    SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
+    SpectralSampling, SpectralWcs, StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy,
+    TimeScale, UvTaper, UvwCoordinateLaw, VisibilityInnerProduct, WeightDensityScope,
+    WeightingContract, WeightingScheme, compile, compile_observation,
 };
 
 mod common;
@@ -91,7 +93,30 @@ fn products_with_beam(reverse: bool, restoring_beam: RestoringBeamPolicy) -> Pro
     if reverse {
         products.reverse();
     }
-    ProductRequirements::new(products, ProductNormalization::FlatNoise, restoring_beam)
+    ProductRequirements::new(
+        products,
+        ProductNormalization::FlatNoise,
+        restoring_beam,
+        product_validity(),
+    )
+}
+
+fn product_validity() -> ProductValidityPolicies {
+    ProductValidityPolicies::new(
+        PrimaryBeamValidityPolicy::new(
+            0.2,
+            ProductSupportComparison::StrictlyGreater,
+            ProductBlankingPolicy::ZeroAndFalseMask,
+        )
+        .expect("valid primary-beam support"),
+        TaylorValidityPolicy::new(
+            TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
+            0.1,
+            ProductSupportComparison::StrictlyGreater,
+            ProductBlankingPolicy::ZeroAndFalseMask,
+        )
+        .expect("valid Taylor support"),
+    )
 }
 
 fn science() -> ScientificContract {
@@ -200,6 +225,41 @@ fn inputs_with_instrument() -> ProblemInputIdentities {
     )
 }
 
+fn compile_product_set(
+    requested: Vec<ProductKind>,
+    instrument_response: InstrumentResponse,
+) -> Result<casa_imaging_model::CompiledProblem, CompileProblemError> {
+    let restoring_beam = if requested.contains(&ProductKind::RestoredImage) {
+        RestoringBeamPolicy::PerPlane
+    } else {
+        RestoringBeamPolicy::None
+    };
+    let inputs = if instrument_response == InstrumentResponse::Scalar {
+        inputs(false)
+    } else {
+        inputs_with_instrument()
+    };
+    compile_request(
+        ProblemSpecification::new(
+            ScientificContract::new(
+                SpectralContract::new(SpectralSampling::Identity, SpectralCoupling::Independent),
+                MeasurementEquationContract::new(instrument_response, inner_products()),
+            ),
+            reconstruction(),
+            weighting(),
+            ProductRequirements::new(
+                requested,
+                ProductNormalization::UnitResponse,
+                restoring_beam,
+                product_validity(),
+            ),
+            read_only_transaction(),
+            numerics(false),
+        ),
+        inputs,
+    )
+}
+
 #[test]
 fn equivalent_science_has_one_canonical_compiled_identity() {
     let first = compile_request(specification(false), inputs(false)).expect("compile first");
@@ -215,6 +275,251 @@ fn equivalent_science_has_one_canonical_compiled_identity() {
     assert_eq!(first.weighting(), reordered.weighting());
     assert_eq!(first.products(), reordered.products());
     assert_eq!(first.numerics(), reordered.numerics());
+}
+
+#[test]
+fn compiler_owns_the_exact_product_graph_and_atomic_publication_contract() {
+    let compiled = compile_request(specification(false), inputs(false)).expect("compile problem");
+    let graph = compiled.product_graph();
+    let reordered = compile_request(specification(true), inputs(true)).expect("compile reordered");
+
+    assert_eq!(graph.graph_id(), reordered.product_graph().graph_id());
+    assert_eq!(graph.schema_version(), 2);
+    assert_eq!(
+        graph
+            .nodes()
+            .iter()
+            .filter_map(|node| node.name())
+            .collect::<Vec<_>>(),
+        vec![
+            ".psf.tt0",
+            ".psf.tt1",
+            ".psf.tt2",
+            ".residual.tt0",
+            ".residual.tt1",
+            ".model.tt0",
+            ".model.tt1",
+            ".image.tt0",
+            ".image.tt1",
+            ".sumwt.tt0",
+            ".sumwt.tt1",
+            ".sumwt.tt2",
+            ".sensitivity",
+            ".alpha",
+        ]
+    );
+
+    let restored = graph
+        .nodes()
+        .iter()
+        .find(|node| node.role() == ProductRole::RestoredImage(ProductTerm::Taylor(0)))
+        .expect("restored Taylor-zero node");
+    assert_eq!(restored.axes().kind(), ProductAxisKind::SkyImage);
+    assert_eq!(restored.axes().shape(), [512, 512, 1, 1]);
+    assert_eq!(restored.unit(), ProductUnit::JyPerBeam);
+    assert_eq!(
+        restored.beam(),
+        ProductBeamRule::Restoring(RestoringBeamPolicy::PerPlane)
+    );
+    assert_eq!(restored.validity(), ProductValidityRule::FinalNormalState);
+    assert_eq!(restored.schema(), ProductSchema::ImageF32V1);
+
+    let spectral_index = graph
+        .nodes()
+        .iter()
+        .find(|node| node.role() == ProductRole::SpectralIndex)
+        .expect("spectral-index node");
+    assert_eq!(spectral_index.unit(), ProductUnit::Dimensionless);
+    assert_eq!(
+        spectral_index.validity(),
+        ProductValidityRule::Taylor(product_validity().taylor())
+    );
+    let mut alpha_sources = [0, 1]
+        .into_iter()
+        .flat_map(|term| {
+            [
+                graph
+                    .node(ProductRole::Residual(ProductTerm::Taylor(term)))
+                    .expect("principal-residual Taylor node")
+                    .node_id(),
+                graph
+                    .node(ProductRole::RestoredImage(ProductTerm::Taylor(term)))
+                    .expect("restored-image Taylor node")
+                    .node_id(),
+            ]
+        })
+        .collect::<Vec<_>>();
+    alpha_sources.sort_unstable();
+    assert_eq!(spectral_index.dependencies(), alpha_sources);
+    assert!(spectral_index.dependencies().iter().all(|dependency| {
+        !matches!(
+            graph.nodes()[dependency.ordinal()].role(),
+            ProductRole::Model(_)
+        )
+    }));
+
+    assert_eq!(
+        graph.publication().members(),
+        graph
+            .nodes()
+            .iter()
+            .filter(|node| node.schema() == ProductSchema::ImageF32V1)
+            .map(|node| node.node_id())
+            .collect::<Vec<_>>()
+    );
+    assert!(graph.publication().protocol().requires_durable_prepare());
+    assert!(
+        graph
+            .publication()
+            .protocol()
+            .has_one_visibility_operation()
+    );
+    assert!(
+        graph
+            .publication()
+            .protocol()
+            .has_infallible_terminal_promotion()
+    );
+}
+
+#[test]
+fn product_graph_identity_is_content_derived_and_stable_across_unrelated_problem_inputs() {
+    let first = compile_request(specification(false), inputs(false)).expect("compile first");
+    let different_numerics = compile_request(
+        ProblemSpecification::new(
+            science(),
+            reconstruction(),
+            weighting(),
+            products(false),
+            read_only_transaction(),
+            NumericsContract::new(
+                vec![NumericPrecision::F32, NumericPrecision::F64],
+                ReductionPolicy::DeterministicPairwise,
+                FiniteValuePolicy::FlagInputRejectGenerated,
+                NumericalStage::ALL
+                    .into_iter()
+                    .map(|stage| (stage, StageErrorBudget::new(1.0e-7, 1.0e-3)))
+                    .collect(),
+            ),
+        ),
+        inputs(false),
+    )
+    .expect("compile with different numerics");
+    let different_products = compile_request(
+        ProblemSpecification::new(
+            science(),
+            reconstruction(),
+            weighting(),
+            ProductRequirements::new(
+                products(false)
+                    .products()
+                    .iter()
+                    .copied()
+                    .chain([ProductKind::Mask])
+                    .collect(),
+                ProductNormalization::FlatNoise,
+                RestoringBeamPolicy::PerPlane,
+                product_validity(),
+            ),
+            read_only_transaction(),
+            numerics(false),
+        ),
+        inputs(false),
+    )
+    .expect("compile with different product topology");
+
+    assert_ne!(first.problem_id(), different_numerics.problem_id());
+    assert_eq!(
+        first.product_graph().graph_id(),
+        different_numerics.product_graph().graph_id()
+    );
+    assert_ne!(
+        first.product_graph().graph_id(),
+        different_products.product_graph().graph_id()
+    );
+    assert_eq!(
+        first.product_graph().graph_id().as_bytes(),
+        [
+            215, 69, 55, 25, 33, 207, 246, 75, 127, 97, 39, 252, 48, 167, 26, 163, 137, 238, 241,
+            38, 74, 130, 171, 57, 145, 182, 214, 31, 234, 72, 93, 113,
+        ]
+    );
+}
+
+#[test]
+fn spectral_index_error_and_pb_correction_name_every_scientific_input() {
+    let products = ProductRequirements::new(
+        products(false)
+            .products()
+            .iter()
+            .copied()
+            .chain([
+                ProductKind::PrimaryBeam,
+                ProductKind::SpectralIndexError,
+                ProductKind::PbCorrectedSpectralIndex,
+            ])
+            .collect(),
+        ProductNormalization::FlatNoise,
+        RestoringBeamPolicy::PerPlane,
+        product_validity(),
+    );
+    let compiled = compile_request(
+        ProblemSpecification::new(
+            ScientificContract::new(
+                SpectralContract::new(SpectralSampling::Identity, SpectralCoupling::Independent),
+                MeasurementEquationContract::new(InstrumentResponse::PrimaryBeam, inner_products()),
+            ),
+            reconstruction(),
+            weighting(),
+            products,
+            read_only_transaction(),
+            numerics(false),
+        ),
+        inputs_with_instrument(),
+    )
+    .expect("compile PB-corrected Taylor products");
+    let graph = compiled.product_graph();
+    let alpha = graph
+        .node(ProductRole::SpectralIndex)
+        .expect("spectral-index product");
+    let mut alpha_sources = alpha.dependencies().to_vec();
+    let alpha_error = graph
+        .node(ProductRole::SpectralIndexError)
+        .expect("spectral-index-error product");
+    alpha_sources.push(alpha.node_id());
+    alpha_sources.sort_unstable();
+    assert_eq!(alpha_error.dependencies(), alpha_sources);
+
+    let pb_alpha = graph
+        .node(ProductRole::PrimaryBeamSpectralIndex)
+        .expect("internal primary-beam spectral index");
+    assert_eq!(pb_alpha.name(), None);
+    assert_eq!(pb_alpha.schema(), ProductSchema::InternalImageF32V1);
+    assert_eq!(
+        pb_alpha.dependencies(),
+        [graph
+            .node(ProductRole::PrimaryBeam(ProductTerm::Taylor(0)))
+            .expect("primary-beam Taylor-zero product")
+            .node_id()]
+    );
+    assert!(!graph.publication().members().contains(&pb_alpha.node_id()));
+    assert!(
+        graph
+            .nodes()
+            .iter()
+            .all(|node| node.name() != Some(".pb.alpha"))
+    );
+
+    let corrected_alpha = graph
+        .node(ProductRole::PbCorrectedSpectralIndex)
+        .expect("PB-corrected spectral index");
+    assert!(corrected_alpha.dependencies().contains(&pb_alpha.node_id()));
+    assert!(
+        graph
+            .publication()
+            .members()
+            .contains(&corrected_alpha.node_id())
+    );
 }
 
 #[test]
@@ -356,6 +661,7 @@ fn channel_local_basis_must_match_compiled_geometry_channels() {
                 ],
                 ProductNormalization::UnitResponse,
                 RestoringBeamPolicy::None,
+                product_validity(),
             ),
             read_only_transaction(),
             numerics(false),
@@ -424,6 +730,7 @@ fn flat_normalization_without_sensitivity_fails_at_compile_time() {
             ],
             ProductNormalization::FlatNoise,
             RestoringBeamPolicy::PerPlane,
+            product_validity(),
         ),
         read_only_transaction(),
         numerics(false),
@@ -491,36 +798,126 @@ fn incomplete_or_non_finite_numerics_fail_at_compile_time() {
 }
 
 #[test]
-fn derived_products_require_their_scientific_sources() {
-    let specification = ProblemSpecification::new(
-        science(),
-        ReconstructionContract::new(
-            ReconstructionBasis::Constant,
-            ReconstructionAlgorithm::Hogbom,
-            ReconstructionControls::new(100, 0.1, 0.0),
-            PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+fn every_derived_product_requires_a_closed_scientific_source_set() {
+    let cases = [
+        (
+            "restored image without residual",
+            vec![ProductKind::Model, ProductKind::RestoredImage],
+            InstrumentResponse::Scalar,
         ),
-        weighting(),
-        ProductRequirements::new(
+        (
+            "restored image without model",
+            vec![ProductKind::Residual, ProductKind::RestoredImage],
+            InstrumentResponse::Scalar,
+        ),
+        (
+            "PB-corrected image without restored image",
+            vec![ProductKind::PrimaryBeam, ProductKind::PbCorrectedImage],
+            InstrumentResponse::PrimaryBeam,
+        ),
+        (
+            "Taylor collection without a Taylor image",
+            vec![ProductKind::TaylorTerms],
+            InstrumentResponse::Scalar,
+        ),
+        (
+            "spectral index without Taylor collection",
             vec![
-                ProductKind::Psf,
                 ProductKind::Residual,
                 ProductKind::Model,
                 ProductKind::RestoredImage,
-                ProductKind::SumWeights,
-                ProductKind::TaylorTerms,
+                ProductKind::SpectralIndex,
             ],
-            ProductNormalization::UnitResponse,
-            RestoringBeamPolicy::PerPlane,
+            InstrumentResponse::Scalar,
         ),
-        read_only_transaction(),
-        numerics(false),
-    );
+        (
+            "spectral index without residual",
+            vec![
+                ProductKind::Model,
+                ProductKind::RestoredImage,
+                ProductKind::TaylorTerms,
+                ProductKind::SpectralIndex,
+            ],
+            InstrumentResponse::Scalar,
+        ),
+        (
+            "spectral index without restored image",
+            vec![
+                ProductKind::Residual,
+                ProductKind::Model,
+                ProductKind::TaylorTerms,
+                ProductKind::SpectralIndex,
+            ],
+            InstrumentResponse::Scalar,
+        ),
+        (
+            "spectral-index error without spectral index",
+            vec![
+                ProductKind::Residual,
+                ProductKind::Model,
+                ProductKind::RestoredImage,
+                ProductKind::TaylorTerms,
+                ProductKind::SpectralIndexError,
+            ],
+            InstrumentResponse::Scalar,
+        ),
+        (
+            "PB-corrected spectral index without spectral index",
+            vec![
+                ProductKind::PrimaryBeam,
+                ProductKind::PbCorrectedSpectralIndex,
+            ],
+            InstrumentResponse::PrimaryBeam,
+        ),
+        (
+            "PB-corrected spectral index without primary beam",
+            vec![
+                ProductKind::Residual,
+                ProductKind::Model,
+                ProductKind::RestoredImage,
+                ProductKind::TaylorTerms,
+                ProductKind::SpectralIndex,
+                ProductKind::PbCorrectedSpectralIndex,
+            ],
+            InstrumentResponse::PrimaryBeam,
+        ),
+        (
+            "beam metadata without a beam-bearing image",
+            vec![ProductKind::Model, ProductKind::Beam],
+            InstrumentResponse::Scalar,
+        ),
+    ];
 
-    assert!(matches!(
-        compile_request(specification, inputs(false)),
-        Err(CompileProblemError::InvalidProductCombination { .. })
-    ));
+    for (case, requested, response) in cases {
+        assert!(
+            matches!(
+                compile_product_set(requested, response),
+                Err(CompileProblemError::InvalidProductCombination { .. })
+            ),
+            "{case} must fail before Product Graph construction"
+        );
+    }
+}
+
+#[test]
+fn taylor_collection_accepts_an_explicit_taylor_image_source() {
+    let compiled = compile_product_set(
+        vec![ProductKind::Psf, ProductKind::TaylorTerms],
+        InstrumentResponse::Scalar,
+    )
+    .expect("Taylor PSF terms form a nonempty coefficient collection");
+    let graph = compiled.product_graph();
+    let collection = graph
+        .node(ProductRole::TaylorCoefficientSet)
+        .expect("Taylor collection");
+
+    assert!(!collection.dependencies().is_empty());
+    assert!(collection.dependencies().iter().all(|dependency| {
+        matches!(
+            graph.nodes()[dependency.ordinal()].role(),
+            ProductRole::Psf(ProductTerm::Taylor(_))
+        )
+    }));
 }
 
 #[test]
@@ -565,7 +962,7 @@ fn canonical_identity_normalizes_signed_zero_but_changes_with_science() {
         positive_zero.weighting().generation_id()
     );
     assert_ne!(positive_zero.problem_id(), changed.problem_id());
-    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 6);
+    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 7);
 }
 
 #[test]
@@ -627,6 +1024,7 @@ fn multiscale_order_and_duplicate_scales_do_not_change_scientific_identity() {
                 ],
                 ProductNormalization::UnitResponse,
                 RestoringBeamPolicy::PerPlane,
+                product_validity(),
             ),
             read_only_transaction(),
             numerics(false),
@@ -761,6 +1159,7 @@ fn dirty_reconstruction_rejects_scientifically_unused_controls() {
                 ],
                 ProductNormalization::UnitResponse,
                 RestoringBeamPolicy::None,
+                product_validity(),
             ),
             read_only_transaction(),
             numerics(false),
@@ -884,12 +1283,12 @@ fn invalid_polarization_is_a_reconstruction_contract_error() {
 }
 
 #[test]
-fn compiled_problem_identity_has_a_pinned_schema_six_digest() {
+fn compiled_problem_identity_has_a_pinned_schema_seven_digest() {
     let compiled = compile_request(specification(false), inputs(false)).expect("compile problem");
 
-    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 6);
+    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 7);
     assert_eq!(
         compiled.problem_id().to_string(),
-        "a089ac5abff5a2ff111366750293481528cc136258b55c63875ccf1169bc7865"
+        "8b39a9cd1ff8bf092acef1c9eacab9d2f9f553560c2bd8b93dfd3e0de580e407"
     );
 }
