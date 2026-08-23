@@ -1903,6 +1903,18 @@ impl<'a> CompiledWorkContext<'a> {
         self.problem.problem_id()
     }
 
+    /// Return the exact observation snapshot bound into the compiled problem.
+    #[must_use]
+    pub const fn observation_snapshot_id(self) -> ObservationSnapshotId {
+        self.problem.inputs().observation()
+    }
+
+    /// Return the exact numerical-contract identity.
+    #[must_use]
+    pub const fn numerics_id(self) -> NumericsContractId {
+        self.problem.numerics_id()
+    }
+
     /// Return compiled output geometry.
     #[must_use]
     pub const fn geometry(self) -> &'a CompiledGeometry {

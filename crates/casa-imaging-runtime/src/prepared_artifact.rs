@@ -12,6 +12,7 @@ use std::{
     sync::{Arc, Mutex, MutexGuard, OnceLock, Weak},
 };
 
+use casa_imaging_model::CompiledProblem;
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -27,9 +28,12 @@ use crate::{
 const ARTIFACT_IDENTITY_DOMAIN: &[u8] = b"casa-rs/private-prepared-artifact/identity\0";
 const CONTENT_IDENTITY_DOMAIN: &[u8] = b"casa-rs/private-prepared-artifact/content\0";
 const CACHE_IDENTITY_DOMAIN: &[u8] = b"casa-rs/private-prepared-artifact/cache\0";
-const IDENTITY_VERSION: u32 = 1;
+const CACHE_ROOT_IDENTITY_DOMAIN: &[u8] = b"casa-rs/private-prepared-artifact/root\0";
+const WORK_NODE_IDENTITY_DOMAIN: &[u8] = b"casa-rs/private-prepared-artifact/work-node\0";
+const IDENTITY_VERSION: u32 = 2;
 const CACHE_SCHEMA: &str = "casa-rs-private-prepared-artifact";
-const CACHE_SCHEMA_VERSION: u32 = 1;
+const CACHE_SCHEMA_VERSION: u32 = 2;
+const EVICTION_POLICY: &str = "lexicographic-existing-artifact-identity-v1";
 const CACHE_DIRECTORY: &str = "objects-v1";
 const LOCK_FILE: &str = ".casa-rs-prepared-artifact.lock";
 const MANIFEST_FILE: &str = "manifest.json";
@@ -402,7 +406,6 @@ pub struct PreparedArtifactOwner {
     provider: String,
     provider_version: String,
     implementation: WorkImplementationId,
-    cache_identity: CacheIdentity,
 }
 
 impl PreparedArtifactOwner {
@@ -421,21 +424,12 @@ impl PreparedArtifactOwner {
         {
             return Err(PreparedArtifactError::InvalidOwner);
         }
-        let mut owner = Self {
+        Ok(Self {
             implementation_registry,
             provider,
             provider_version,
             implementation,
-            cache_identity: CacheIdentity::from_owner_digest([0; 32]),
-        };
-        owner.cache_identity = derive_cache_identity(&owner)?;
-        Ok(owner)
-    }
-
-    /// Return the canonical cache namespace identity derived by this owner.
-    #[must_use]
-    pub const fn cache_identity(&self) -> CacheIdentity {
-        self.cache_identity
+        })
     }
 
     /// Return the immutable implementation-registry identity.
@@ -463,28 +457,110 @@ impl PreparedArtifactOwner {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ScientificCommitments {
+    compiled_problem: String,
+    observation_snapshot: String,
+    compiled_geometry: String,
+    numerics_contract: String,
+}
+
+impl ScientificCommitments {
+    fn from_problem(problem: &CompiledProblem) -> Self {
+        Self {
+            compiled_problem: encode_hex(&problem.problem_id().as_bytes()),
+            observation_snapshot: encode_hex(&problem.inputs().observation().as_bytes()),
+            compiled_geometry: encode_hex(&problem.geometry().geometry_id().as_bytes()),
+            numerics_contract: encode_hex(&problem.numerics_id().as_bytes()),
+        }
+    }
+
+    fn validate(&self) -> Result<(), PreparedArtifactError> {
+        for identity in [
+            &self.compiled_problem,
+            &self.observation_snapshot,
+            &self.compiled_geometry,
+            &self.numerics_contract,
+        ] {
+            if decode_digest(identity).is_none_or(|digest| digest == [0; 32]) {
+                return Err(PreparedArtifactError::InvalidDescriptor);
+            }
+        }
+        Ok(())
+    }
+
+    fn matches_context(&self, context: WorkExecutionContext<'_>) -> bool {
+        self.compiled_problem == encode_hex(&context.compiled().problem_id().as_bytes())
+            && self.observation_snapshot
+                == encode_hex(&context.compiled().observation_snapshot_id().as_bytes())
+            && self.compiled_geometry
+                == encode_hex(&context.compiled().geometry().geometry_id().as_bytes())
+            && self.numerics_contract == encode_hex(&context.compiled().numerics_id().as_bytes())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CacheScope {
+    root_identity: String,
+    cache_bytes: u64,
+    entries: u64,
+    streaming_buffer_bytes: u64,
+    eviction_policy: String,
+}
+
+impl CacheScope {
+    fn new(root: &Path, budget: PreparedArtifactBudget) -> Result<Self, PreparedArtifactError> {
+        Ok(Self {
+            root_identity: encode_hex(&derive_cache_root_identity(root)),
+            cache_bytes: budget.cache_bytes,
+            entries: u64::try_from(budget.entries)
+                .map_err(|_| PreparedArtifactError::InvalidBudget)?,
+            streaming_buffer_bytes: budget.streaming_buffer_bytes,
+            eviction_policy: EVICTION_POLICY.to_string(),
+        })
+    }
+
+    fn validate(&self) -> Result<(), PreparedArtifactError> {
+        if decode_digest(&self.root_identity).is_none()
+            || self.cache_bytes == 0
+            || self.entries == 0
+            || self.streaming_buffer_bytes == 0
+            || self.eviction_policy != EVICTION_POLICY
+        {
+            return Err(PreparedArtifactError::InvalidDescriptor);
+        }
+        Ok(())
+    }
+}
+
 /// Owner-derived immutable compatibility descriptor.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PreparedArtifactDescriptor {
     identity: ArtifactIdentity,
+    cache_identity: CacheIdentity,
     owner: PreparedArtifactOwner,
     kind: PreparedArtifactKind,
-    scientific_inputs: Vec<ArtifactIdentity>,
+    scientific: ScientificCommitments,
+    cache_scope: CacheScope,
     segments: Vec<PreparedArtifactSegmentDescriptor>,
 }
 
 impl PreparedArtifactDescriptor {
     /// Describe an asymmetric named imaging/weight CF pair.
     pub fn convolution_function(
+        store: &PreparedArtifactStore,
         owner: PreparedArtifactOwner,
-        scientific_inputs: impl IntoIterator<Item = ArtifactIdentity>,
+        problem: &CompiledProblem,
         imaging: PreparedArtifactPlaneDescriptor,
         weight: PreparedArtifactPlaneDescriptor,
     ) -> Result<Self, PreparedArtifactError> {
         Self::new(
+            store,
             owner,
             PreparedArtifactKind::ConvolutionFunction,
-            scientific_inputs,
+            problem,
             vec![
                 imaging.into_segment("imaging"),
                 weight.into_segment("weight"),
@@ -494,22 +570,28 @@ impl PreparedArtifactDescriptor {
 
     /// Describe a spectral map or other kernel through private named segments.
     pub fn new(
+        store: &PreparedArtifactStore,
         owner: PreparedArtifactOwner,
         kind: PreparedArtifactKind,
-        scientific_inputs: impl IntoIterator<Item = ArtifactIdentity>,
+        problem: &CompiledProblem,
+        segments: Vec<PreparedArtifactSegmentDescriptor>,
+    ) -> Result<Self, PreparedArtifactError> {
+        let scientific = ScientificCommitments::from_problem(problem);
+        Self::from_commitments(owner, kind, scientific, store.scope.clone(), segments)
+    }
+
+    fn from_commitments(
+        owner: PreparedArtifactOwner,
+        kind: PreparedArtifactKind,
+        scientific: ScientificCommitments,
+        cache_scope: CacheScope,
         mut segments: Vec<PreparedArtifactSegmentDescriptor>,
     ) -> Result<Self, PreparedArtifactError> {
-        let mut scientific_inputs = scientific_inputs.into_iter().collect::<Vec<_>>();
-        scientific_inputs.sort_unstable();
-        if scientific_inputs.is_empty()
-            || scientific_inputs
-                .iter()
-                .any(|identity| identity.as_bytes() == [0; 32])
-            || scientific_inputs.windows(2).any(|pair| pair[0] == pair[1])
-            || segments.is_empty()
-        {
+        if segments.is_empty() {
             return Err(PreparedArtifactError::InvalidDescriptor);
         }
+        scientific.validate()?;
+        cache_scope.validate()?;
         for segment in &segments {
             segment.validate()?;
         }
@@ -520,11 +602,14 @@ impl PreparedArtifactDescriptor {
         if kind == PreparedArtifactKind::ConvolutionFunction {
             validate_cf_segments(&segments)?;
         }
+        let cache_identity = derive_cache_identity(&owner, &cache_scope)?;
         let mut descriptor = Self {
             identity: ArtifactIdentity::from_owner_digest([0; 32]),
+            cache_identity,
             owner,
             kind,
-            scientific_inputs,
+            scientific,
+            cache_scope,
             segments,
         };
         descriptor.identity = derive_artifact_identity(&descriptor)?;
@@ -541,19 +626,13 @@ impl PreparedArtifactDescriptor {
     /// Return the owner-derived canonical cache identity.
     #[must_use]
     pub const fn cache_identity(&self) -> CacheIdentity {
-        self.owner.cache_identity
+        self.cache_identity
     }
 
     /// Return the implementation-preparation family.
     #[must_use]
     pub const fn kind(&self) -> PreparedArtifactKind {
         self.kind
-    }
-
-    /// Return every canonical scientific input commitment.
-    #[must_use]
-    pub fn scientific_inputs(&self) -> &[ArtifactIdentity] {
-        &self.scientific_inputs
     }
 
     /// Return every private named segment in canonical name order.
@@ -585,18 +664,41 @@ impl PreparedArtifactDescriptor {
 
     /// Bind this descriptor to one canonical plan node and artifact role.
     #[must_use]
-    pub fn planned_artifact(
-        &self,
-        node: WorkNodeId,
-        operation: PreparedArtifactOperation,
-    ) -> PlannedArtifact {
+    pub fn planned_artifact(&self, operation: PreparedArtifactOperation) -> PlannedArtifact {
         let role = match operation {
-            PreparedArtifactOperation::Generate | PreparedArtifactOperation::Load => {
-                ArtifactRole::Prepared
-            }
+            PreparedArtifactOperation::Generate => ArtifactRole::Prepared,
+            PreparedArtifactOperation::Load => ArtifactRole::Input,
             PreparedArtifactOperation::Reuse => ArtifactRole::Cache,
         };
-        PlannedArtifact::new(self.identity, node, role, Some(self.owner.cache_identity))
+        PlannedArtifact::new(
+            self.identity,
+            self.work_node_id(operation),
+            role,
+            Some(self.cache_identity),
+        )
+    }
+
+    /// Return the owner-derived exact node identity for one cache operation.
+    #[must_use]
+    pub fn work_node_id(&self, operation: PreparedArtifactOperation) -> WorkNodeId {
+        WorkNodeId::new(format!(
+            "prepared-artifact-{}-{}",
+            operation.name(),
+            encode_hex(&derive_work_node_identity(self, operation))
+        ))
+    }
+
+    /// Return the exact operation adapter identity that the plan must select.
+    #[must_use]
+    pub fn work_implementation_id(
+        &self,
+        operation: PreparedArtifactOperation,
+    ) -> WorkImplementationId {
+        WorkImplementationId::new(format!(
+            "{}@prepared-artifact-{}",
+            self.owner.implementation.as_str(),
+            operation.name()
+        ))
     }
 
     fn payload_bytes(&self) -> Result<u64, PreparedArtifactError> {
@@ -619,13 +721,38 @@ pub enum PreparedArtifactOperation {
     Reuse,
 }
 
-/// Validated presence observed during physical planning.
+impl PreparedArtifactOperation {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Generate => "cold-generation",
+            Self::Load => "cold-load",
+            Self::Reuse => "warm-reuse",
+        }
+    }
+}
+
+/// Fail-closed reason that a plan-listed warm candidate was not reusable.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PreparedArtifactAvailability {
-    /// No published entry exists for this exact descriptor.
-    Cold,
-    /// A complete exact entry passed integrity validation.
-    Warm,
+pub enum PreparedArtifactRejection {
+    /// No entry exists for the exact owner-derived identity.
+    Missing,
+    /// The entry was incomplete or had unknown inventory.
+    Incomplete,
+    /// The schema, manifest, identity, or layout was incompatible.
+    Incompatible,
+    /// Payload bytes or their integrity digests were corrupt.
+    Corrupt,
+    /// A floating-point payload contained NaN or infinity.
+    NonFinite,
+}
+
+/// Plan-executed result of exact warm-cache inspection and reuse.
+#[derive(Debug)]
+pub enum PreparedArtifactReuseOutcome {
+    /// A complete exact hit passed integrity validation.
+    Reused(PreparedArtifact),
+    /// The candidate failed closed and was not exposed for use.
+    Rejected(PreparedArtifactRejection),
 }
 
 /// Hard private-cache and streaming-buffer bounds.
@@ -676,9 +803,9 @@ impl PreparedArtifactBudget {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PreparedArtifactReservation {
     persistent_cache_bytes: u64,
+    entry_bytes: u64,
     temporary_staging_bytes: u64,
     resident_buffer_bytes: u64,
-    cache_entries: u64,
 }
 
 impl PreparedArtifactReservation {
@@ -698,12 +825,6 @@ impl PreparedArtifactReservation {
     #[must_use]
     pub const fn resident_buffer_bytes(self) -> u64 {
         self.resident_buffer_bytes
-    }
-
-    /// Return the cache entry-count claim.
-    #[must_use]
-    pub const fn cache_entries(self) -> u64 {
-        self.cache_entries
     }
 }
 
@@ -792,6 +913,7 @@ pub struct PreparedArtifactStore {
     cache: PathBuf,
     lock_path: PathBuf,
     budget: PreparedArtifactBudget,
+    scope: CacheScope,
     state: Arc<RootState>,
 }
 
@@ -815,21 +937,28 @@ impl PreparedArtifactStore {
         reject_casa_cache_contents(&root)?;
         let cache = root.join(CACHE_DIRECTORY);
         fs::create_dir_all(&cache)?;
+        if !cache.symlink_metadata()?.file_type().is_dir() {
+            return Err(PreparedArtifactError::UnknownCacheEntry(cache));
+        }
         let lock_path = root.join(LOCK_FILE);
+        match lock_path.symlink_metadata() {
+            Ok(metadata) if !metadata.file_type().is_file() => {
+                return Err(PreparedArtifactError::UnknownCacheEntry(lock_path));
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+            Ok(_) => {}
+        }
         let state = root_state(&root)?;
-        let store = Self {
+        let scope = CacheScope::new(&root, budget)?;
+        Ok(Self {
             root,
             cache,
             lock_path,
             budget,
+            scope,
             state,
-        };
-        {
-            let _lock = store.lock()?;
-            store.remove_orphan_staging()?;
-            store.enforce_budget()?;
-        }
-        Ok(store)
+        })
     }
 
     /// Return the explicit private root, which is never a CASA cache path.
@@ -838,19 +967,10 @@ impl PreparedArtifactStore {
         &self.root
     }
 
-    /// Validate an exact hit or report a cold miss during planning.
-    pub fn availability(
-        &self,
-        descriptor: &PreparedArtifactDescriptor,
-    ) -> Result<PreparedArtifactAvailability, PreparedArtifactError> {
-        let _lock = self.lock()?;
-        let path = self.entry_path(descriptor.identity);
-        if path.exists() {
-            self.validate_entry(descriptor.identity, Some(descriptor))?;
-            Ok(PreparedArtifactAvailability::Warm)
-        } else {
-            Ok(PreparedArtifactAvailability::Cold)
-        }
+    /// Return the complete policy committed into owner-derived cache identities.
+    #[must_use]
+    pub const fn budget(&self) -> PreparedArtifactBudget {
+        self.budget
     }
 
     /// Derive exact resource/storage bounds for one explicit cache operation.
@@ -859,13 +979,16 @@ impl PreparedArtifactStore {
         descriptor: &PreparedArtifactDescriptor,
         operation: PreparedArtifactOperation,
     ) -> Result<PreparedArtifactReservation, PreparedArtifactError> {
+        if descriptor.cache_scope != self.scope {
+            return Err(PreparedArtifactError::CachePolicyMismatch);
+        }
         let payload_bytes = descriptor.payload_bytes()?;
-        let persistent_cache_bytes = payload_bytes
+        let entry_bytes = payload_bytes
             .checked_add(MANIFEST_RESERVATION_BYTES)
             .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
-        if persistent_cache_bytes > self.budget.cache_bytes {
+        if entry_bytes > self.budget.cache_bytes {
             return Err(PreparedArtifactError::CacheBudgetExceeded {
-                required: persistent_cache_bytes,
+                required: entry_bytes,
                 budget: self.budget.cache_bytes,
             });
         }
@@ -882,14 +1005,14 @@ impl PreparedArtifactStore {
             });
         }
         Ok(PreparedArtifactReservation {
-            persistent_cache_bytes,
+            persistent_cache_bytes: self.budget.cache_bytes,
+            entry_bytes,
             temporary_staging_bytes: if operation == PreparedArtifactOperation::Reuse {
                 0
             } else {
-                persistent_cache_bytes
+                entry_bytes
             },
             resident_buffer_bytes: payload_bytes.min(self.budget.streaming_buffer_bytes),
-            cache_entries: 1,
         })
     }
 
@@ -932,7 +1055,7 @@ impl PreparedArtifactStore {
         &self,
         context: WorkExecutionContext<'_>,
         descriptor: &PreparedArtifactDescriptor,
-    ) -> Result<(PreparedArtifact, WorkMeasurements), PreparedArtifactError> {
+    ) -> Result<(PreparedArtifactReuseOutcome, WorkMeasurements), PreparedArtifactError> {
         let reservation = self.reservation(descriptor, PreparedArtifactOperation::Reuse)?;
         validate_plan_binding(
             context,
@@ -941,7 +1064,45 @@ impl PreparedArtifactStore {
             reservation,
         )?;
         let _lock = self.lock()?;
-        let validated = self.validate_entry(descriptor.identity, Some(descriptor))?;
+        let cache_bytes = self.validate_raw_budget(descriptor.identity)?;
+        let path = self.entry_path(descriptor.identity);
+        let validated = match path.symlink_metadata() {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                let measurements = rejected_measurements(
+                    context,
+                    descriptor,
+                    reservation,
+                    PreparedArtifactRejection::Missing,
+                    &path,
+                    cache_bytes,
+                );
+                return Ok((
+                    PreparedArtifactReuseOutcome::Rejected(PreparedArtifactRejection::Missing),
+                    measurements,
+                ));
+            }
+            Err(error) => return Err(error.into()),
+            Ok(_) => match self.validate_entry(descriptor.identity, Some(descriptor)) {
+                Ok(validated) => validated,
+                Err(error) => {
+                    let Some(rejection) = rejection_for(&error) else {
+                        return Err(error);
+                    };
+                    let measurements = rejected_measurements(
+                        context,
+                        descriptor,
+                        reservation,
+                        rejection,
+                        &path,
+                        cache_bytes,
+                    );
+                    return Ok((
+                        PreparedArtifactReuseOutcome::Rejected(rejection),
+                        measurements,
+                    ));
+                }
+            },
+        };
         let measurements = measurements(
             context,
             descriptor,
@@ -949,8 +1110,12 @@ impl PreparedArtifactStore {
             &validated,
             reservation,
             PreparedArtifactOperation::Reuse,
+            cache_bytes,
         );
-        Ok((validated.into_handle(descriptor), measurements))
+        Ok((
+            PreparedArtifactReuseOutcome::Reused(validated.into_handle(descriptor)),
+            measurements,
+        ))
     }
 
     fn publish(
@@ -963,7 +1128,7 @@ impl PreparedArtifactStore {
     ) -> Result<(PreparedArtifact, WorkMeasurements), PreparedArtifactError> {
         let reservation = self.reservation(descriptor, operation)?;
         validate_plan_binding(context, descriptor, operation, reservation)?;
-        let (validated, final_disposition) =
+        let (validated, final_disposition, cache_bytes) =
             self.publish_bytes(descriptor, disposition, segments, reservation)?;
         let measurements = measurements(
             context,
@@ -972,6 +1137,7 @@ impl PreparedArtifactStore {
             &validated,
             reservation,
             operation,
+            cache_bytes,
         );
         Ok((validated.into_handle(descriptor), measurements))
     }
@@ -982,9 +1148,10 @@ impl PreparedArtifactStore {
         disposition: ArtifactDisposition,
         segments: &mut [PreparedArtifactSegmentInput<'_>],
         reservation: PreparedArtifactReservation,
-    ) -> Result<(ValidatedArtifact, ArtifactDisposition), PreparedArtifactError> {
+    ) -> Result<(ValidatedArtifact, ArtifactDisposition, u64), PreparedArtifactError> {
         validate_segment_inputs(descriptor, segments)?;
         let _lock = self.lock()?;
+        self.remove_orphan_staging()?;
         let staging = Builder::new()
             .prefix(STAGING_PREFIX)
             .tempdir_in(&self.cache)?;
@@ -1026,7 +1193,7 @@ impl PreparedArtifactStore {
             schema: CACHE_SCHEMA.to_string(),
             schema_version: CACHE_SCHEMA_VERSION,
             identity: descriptor.identity.to_string(),
-            cache_identity: descriptor.owner.cache_identity.to_string(),
+            cache_identity: descriptor.cache_identity.to_string(),
             descriptor: ManifestDescriptor::from_descriptor(descriptor),
             payload_sha256: encode_hex(&payload_sha256),
             payload_bytes: offset,
@@ -1046,31 +1213,36 @@ impl PreparedArtifactStore {
         sync_directory(staging.path())?;
 
         let incoming_bytes = directory_size(staging.path())?;
-        if incoming_bytes > reservation.persistent_cache_bytes {
+        if incoming_bytes > reservation.entry_bytes {
             return Err(PreparedArtifactError::ManifestReservationExceeded {
                 actual: incoming_bytes,
-                reserved: reservation.persistent_cache_bytes,
+                reserved: reservation.entry_bytes,
             });
         }
         let target = self.entry_path(descriptor.identity);
-        let final_disposition = if target.exists() {
-            let existing = self.validate_entry(descriptor.identity, Some(descriptor))?;
-            if existing.payload_sha256 != payload_sha256 {
-                return Err(PreparedArtifactError::PublicationConflict);
+        let final_disposition = match target.symlink_metadata() {
+            Ok(_) => {
+                let existing = self.validate_entry(descriptor.identity, Some(descriptor))?;
+                if existing.payload_sha256 != payload_sha256 {
+                    return Err(PreparedArtifactError::PublicationConflict);
+                }
+                disposition
             }
-            ArtifactDisposition::Reused
-        } else {
-            self.evict_for(descriptor.identity, incoming_bytes)?;
-            let staging_path = staging.keep();
-            if let Err(error) = fs::rename(&staging_path, &target) {
-                let _ = fs::remove_dir_all(staging_path);
-                return Err(error.into());
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                self.evict_for(descriptor.identity, incoming_bytes)?;
+                let staging_path = staging.keep();
+                if let Err(error) = fs::rename(&staging_path, &target) {
+                    let _ = fs::remove_dir_all(staging_path);
+                    return Err(error.into());
+                }
+                sync_directory(&self.cache)?;
+                disposition
             }
-            sync_directory(&self.cache)?;
-            disposition
+            Err(error) => return Err(error.into()),
         };
         let validated = self.validate_entry(descriptor.identity, Some(descriptor))?;
-        Ok((validated, final_disposition))
+        let cache_bytes = self.validate_budget_without_eviction()?;
+        Ok((validated, final_disposition, cache_bytes))
     }
 
     fn evict_for(
@@ -1102,68 +1274,112 @@ impl PreparedArtifactStore {
         Ok(evicted)
     }
 
-    fn enforce_budget(&self) -> Result<Vec<ArtifactIdentity>, PreparedArtifactError> {
-        let mut entries = self.entries()?;
-        let mut total = entries.values().try_fold(0_u64, |total, bytes| {
+    fn validate_budget_without_eviction(&self) -> Result<u64, PreparedArtifactError> {
+        let entries = self.entries()?;
+        let total = entries.values().try_fold(0_u64, |total, bytes| {
             total
                 .checked_add(*bytes)
                 .ok_or(PreparedArtifactError::ArtifactTooLarge)
         })?;
-        let mut evicted = Vec::new();
-        while total > self.budget.cache_bytes || entries.len() > self.budget.entries {
-            let (&identity, &bytes) =
-                entries
-                    .iter()
-                    .next()
-                    .ok_or(PreparedArtifactError::CacheBudgetExceeded {
-                        required: total,
-                        budget: self.budget.cache_bytes,
-                    })?;
-            fs::remove_dir_all(self.entry_path(identity))?;
-            entries.remove(&identity);
-            total = total.saturating_sub(bytes);
-            evicted.push(identity);
+        if total > self.budget.cache_bytes {
+            return Err(PreparedArtifactError::CacheBudgetExceeded {
+                required: total,
+                budget: self.budget.cache_bytes,
+            });
         }
-        if !evicted.is_empty() {
-            sync_directory(&self.cache)?;
+        if entries.len() > self.budget.entries {
+            return Err(PreparedArtifactError::CacheEntryBudgetExceeded {
+                required: entries.len(),
+                budget: self.budget.entries,
+            });
         }
-        Ok(evicted)
+        Ok(total)
+    }
+
+    fn validate_raw_budget(&self, planned: ArtifactIdentity) -> Result<u64, PreparedArtifactError> {
+        let mut total = 0_u64;
+        let mut count = 0_usize;
+        for path in directory_paths(&self.cache)? {
+            let name = path
+                .file_name()
+                .ok_or_else(|| PreparedArtifactError::UnknownCacheEntry(path.clone()))?
+                .to_string_lossy();
+            let metadata = path.symlink_metadata()?;
+            if name.starts_with(STAGING_PREFIX) {
+                if !metadata.file_type().is_dir() {
+                    return Err(PreparedArtifactError::UnknownCacheEntry(path));
+                }
+                continue;
+            }
+            let digest = decode_digest(&name)
+                .filter(|digest| name == encode_hex(digest))
+                .ok_or_else(|| PreparedArtifactError::UnknownCacheEntry(path.clone()))?;
+            let identity = ArtifactIdentity::from_owner_digest(digest);
+            let bytes = if metadata.file_type().is_dir() {
+                raw_directory_size(&path)?
+            } else if identity == planned {
+                metadata.len()
+            } else {
+                return Err(PreparedArtifactError::UnknownCacheEntry(path));
+            };
+            total = total
+                .checked_add(bytes)
+                .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
+            count = count
+                .checked_add(1)
+                .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
+        }
+        if total > self.budget.cache_bytes {
+            return Err(PreparedArtifactError::CacheBudgetExceeded {
+                required: total,
+                budget: self.budget.cache_bytes,
+            });
+        }
+        if count > self.budget.entries {
+            return Err(PreparedArtifactError::CacheEntryBudgetExceeded {
+                required: count,
+                budget: self.budget.entries,
+            });
+        }
+        Ok(total)
     }
 
     fn entries(&self) -> Result<BTreeMap<ArtifactIdentity, u64>, PreparedArtifactError> {
         let mut entries = BTreeMap::new();
-        for entry in fs::read_dir(&self.cache)? {
-            let entry = entry?;
-            let name = entry.file_name();
+        for path in directory_paths(&self.cache)? {
+            let name = path
+                .file_name()
+                .ok_or_else(|| PreparedArtifactError::UnknownCacheEntry(path.clone()))?;
             let name = name.to_string_lossy();
+            if !path.symlink_metadata()?.file_type().is_dir() {
+                return Err(PreparedArtifactError::UnknownCacheEntry(path));
+            }
             if name.starts_with(STAGING_PREFIX) {
                 continue;
             }
-            if !entry.file_type()?.is_dir() {
-                return Err(PreparedArtifactError::UnknownCacheEntry(entry.path()));
-            }
-            let identity = decode_digest(&name)
-                .map(ArtifactIdentity::from_owner_digest)
-                .ok_or_else(|| PreparedArtifactError::UnknownCacheEntry(entry.path()))?;
-            let validated = self.validate_entry(identity, None)?;
-            entries.insert(identity, validated.disk_bytes);
+            let digest = decode_digest(&name)
+                .filter(|digest| name == encode_hex(digest))
+                .ok_or_else(|| PreparedArtifactError::UnknownCacheEntry(path.clone()))?;
+            let identity = ArtifactIdentity::from_owner_digest(digest);
+            entries.insert(identity, raw_directory_size(&path)?);
         }
         Ok(entries)
     }
 
     fn remove_orphan_staging(&self) -> Result<(), PreparedArtifactError> {
         let mut removed = false;
-        for entry in fs::read_dir(&self.cache)? {
-            let entry = entry?;
-            if entry
+        for path in directory_paths(&self.cache)? {
+            if path
                 .file_name()
+                .ok_or_else(|| PreparedArtifactError::UnknownCacheEntry(path.clone()))?
                 .to_string_lossy()
                 .starts_with(STAGING_PREFIX)
             {
-                if !entry.file_type()?.is_dir() {
-                    return Err(PreparedArtifactError::UnknownCacheEntry(entry.path()));
+                if !path.symlink_metadata()?.file_type().is_dir() {
+                    return Err(PreparedArtifactError::UnknownCacheEntry(path));
                 }
-                fs::remove_dir_all(entry.path())?;
+                raw_directory_size(&path)?;
+                fs::remove_dir_all(path)?;
                 removed = true;
             }
         }
@@ -1179,9 +1395,16 @@ impl PreparedArtifactStore {
         expected: Option<&PreparedArtifactDescriptor>,
     ) -> Result<ValidatedArtifact, PreparedArtifactError> {
         let directory = self.entry_path(identity);
+        let directory_type = directory
+            .symlink_metadata()
+            .map_err(map_incomplete)?
+            .file_type();
+        if !directory_type.is_dir() {
+            return Err(PreparedArtifactError::UnknownCacheEntry(directory));
+        }
         validate_entry_inventory(&directory)?;
         let manifest_path = directory.join(MANIFEST_FILE);
-        if manifest_path.metadata()?.len() > MANIFEST_RESERVATION_BYTES {
+        if manifest_path.symlink_metadata()?.len() > MANIFEST_RESERVATION_BYTES {
             return Err(PreparedArtifactError::InvalidManifest);
         }
         let manifest: ArtifactManifest = serde_json::from_reader(BufReader::new(
@@ -1197,6 +1420,7 @@ impl PreparedArtifactStore {
         if descriptor.identity != identity
             || manifest.identity != identity.to_string()
             || manifest.cache_identity != descriptor.cache_identity().to_string()
+            || descriptor.cache_scope.root_identity != self.scope.root_identity
         {
             return Err(PreparedArtifactError::IdentityMismatch);
         }
@@ -1207,6 +1431,7 @@ impl PreparedArtifactStore {
         let expected_payload_digest = decode_digest(&manifest.payload_sha256)
             .ok_or(PreparedArtifactError::InvalidManifest)?;
         let payload_path = directory.join(PAYLOAD_FILE);
+        let disk_bytes = directory_size(&directory)?;
         let payload = File::open(&payload_path).map_err(map_incomplete)?;
         let buffer_len = streaming_buffer_len(self.budget, &descriptor)?;
         let (payload_sha256, payload_bytes) =
@@ -1218,7 +1443,7 @@ impl PreparedArtifactStore {
             manifest,
             payload,
             payload_sha256,
-            disk_bytes: directory_size(&directory)?,
+            disk_bytes,
             path: directory,
         })
     }
@@ -1279,7 +1504,8 @@ struct ManifestDescriptor {
     provider_version: String,
     implementation: String,
     kind: PreparedArtifactKind,
-    scientific_inputs: Vec<String>,
+    scientific: ScientificCommitments,
+    cache_scope: CacheScope,
     segments: Vec<PreparedArtifactSegmentDescriptor>,
 }
 
@@ -1291,11 +1517,8 @@ impl ManifestDescriptor {
             provider_version: descriptor.owner.provider_version.clone(),
             implementation: descriptor.owner.implementation.as_str().to_string(),
             kind: descriptor.kind,
-            scientific_inputs: descriptor
-                .scientific_inputs
-                .iter()
-                .map(ToString::to_string)
-                .collect(),
+            scientific: descriptor.scientific.clone(),
+            cache_scope: descriptor.cache_scope.clone(),
             segments: descriptor.segments.clone(),
         }
     }
@@ -1310,16 +1533,13 @@ impl ManifestDescriptor {
             self.provider_version,
             WorkImplementationId::new(self.implementation),
         )?;
-        let inputs = self
-            .scientific_inputs
-            .iter()
-            .map(|value| {
-                decode_digest(value)
-                    .map(ArtifactIdentity::from_sha256)
-                    .ok_or(PreparedArtifactError::InvalidManifest)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        PreparedArtifactDescriptor::new(owner, self.kind, inputs, self.segments)
+        PreparedArtifactDescriptor::from_commitments(
+            owner,
+            self.kind,
+            self.scientific,
+            self.cache_scope,
+            self.segments,
+        )
     }
 }
 
@@ -1383,6 +1603,13 @@ pub enum PreparedArtifactError {
         /// Configured hard ceiling.
         budget: u64,
     },
+    /// Published entries exceed the policy committed into the cache identity.
+    CacheEntryBudgetExceeded {
+        /// Observed complete entry count.
+        required: usize,
+        /// Configured hard entry-count ceiling.
+        budget: usize,
+    },
     /// The exact streaming buffer cannot hold one scalar.
     StreamingBufferTooSmall {
         /// Required bytes.
@@ -1399,6 +1626,10 @@ pub enum PreparedArtifactError {
     },
     /// The node or canonical planned artifact did not bind this operation.
     UnplannedOperation,
+    /// The descriptor did not come from the compiled problem executing the node.
+    ScientificBindingMismatch,
+    /// The descriptor and store have different root or hard policy commitments.
+    CachePolicyMismatch,
     /// The cache node omitted an exact resource, storage, lock, or I/O reservation.
     MissingReservation(&'static str),
     /// The node attempted to combine prepared-cache work with product publication.
@@ -1464,6 +1695,10 @@ impl fmt::Display for PreparedArtifactError {
                 formatter,
                 "prepared artifact requires {required} cache bytes but budget is {budget}"
             ),
+            Self::CacheEntryBudgetExceeded { required, budget } => write!(
+                formatter,
+                "prepared artifact cache contains {required} entries but budget is {budget}"
+            ),
             Self::StreamingBufferTooSmall { required, budget } => write!(
                 formatter,
                 "prepared artifact requires a {required}-byte scalar buffer but budget is {budget}"
@@ -1474,6 +1709,12 @@ impl fmt::Display for PreparedArtifactError {
             ),
             Self::UnplannedOperation => formatter.write_str(
                 "prepared-artifact operation is not bound by the canonical execution plan",
+            ),
+            Self::ScientificBindingMismatch => formatter.write_str(
+                "prepared-artifact scientific commitments do not match the compiled problem",
+            ),
+            Self::CachePolicyMismatch => formatter.write_str(
+                "prepared-artifact descriptor does not match the store root and cache policy",
             ),
             Self::MissingReservation(kind) => {
                 write!(
@@ -1622,6 +1863,7 @@ fn nearly_equal(left: f64, right: f64) -> bool {
 
 fn derive_cache_identity(
     owner: &PreparedArtifactOwner,
+    scope: &CacheScope,
 ) -> Result<CacheIdentity, PreparedArtifactError> {
     let mut hasher = Sha256::new();
     hasher.update(CACHE_IDENTITY_DOMAIN);
@@ -1631,6 +1873,13 @@ fn derive_cache_identity(
     hash_bytes(&mut hasher, owner.provider.as_bytes())?;
     hash_bytes(&mut hasher, owner.provider_version.as_bytes())?;
     hash_bytes(&mut hasher, owner.implementation.as_str().as_bytes())?;
+    hasher.update(
+        decode_digest(&scope.root_identity).ok_or(PreparedArtifactError::InvalidDescriptor)?,
+    );
+    hasher.update(scope.cache_bytes.to_le_bytes());
+    hasher.update(scope.entries.to_le_bytes());
+    hasher.update(scope.streaming_buffer_bytes.to_le_bytes());
+    hash_bytes(&mut hasher, scope.eviction_policy.as_bytes())?;
     Ok(CacheIdentity::from_owner_digest(hasher.finalize().into()))
 }
 
@@ -1640,11 +1889,15 @@ fn derive_artifact_identity(
     let mut hasher = Sha256::new();
     hasher.update(ARTIFACT_IDENTITY_DOMAIN);
     hasher.update(IDENTITY_VERSION.to_le_bytes());
-    hasher.update(descriptor.owner.cache_identity.as_bytes());
+    hasher.update(descriptor.cache_identity.as_bytes());
     hasher.update([kind_tag(descriptor.kind)]);
-    hash_len(&mut hasher, descriptor.scientific_inputs.len())?;
-    for identity in &descriptor.scientific_inputs {
-        hasher.update(identity.as_bytes());
+    for identity in [
+        &descriptor.scientific.compiled_problem,
+        &descriptor.scientific.observation_snapshot,
+        &descriptor.scientific.compiled_geometry,
+        &descriptor.scientific.numerics_contract,
+    ] {
+        hasher.update(decode_digest(identity).ok_or(PreparedArtifactError::InvalidDescriptor)?);
     }
     hash_len(&mut hasher, descriptor.segments.len())?;
     for segment in &descriptor.segments {
@@ -1679,6 +1932,27 @@ fn derive_artifact_identity(
     ))
 }
 
+fn derive_cache_root_identity(root: &Path) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(CACHE_ROOT_IDENTITY_DOMAIN);
+    hasher.update(IDENTITY_VERSION.to_le_bytes());
+    hasher.update(root.as_os_str().as_encoded_bytes());
+    hasher.finalize().into()
+}
+
+fn derive_work_node_identity(
+    descriptor: &PreparedArtifactDescriptor,
+    operation: PreparedArtifactOperation,
+) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(WORK_NODE_IDENTITY_DOMAIN);
+    hasher.update(IDENTITY_VERSION.to_le_bytes());
+    hasher.update(descriptor.identity.as_bytes());
+    hasher.update(descriptor.cache_identity.as_bytes());
+    hasher.update([operation_tag(operation)]);
+    hasher.finalize().into()
+}
+
 fn derive_content_identity(
     descriptor: &PreparedArtifactDescriptor,
     payload_sha256: [u8; 32],
@@ -1697,6 +1971,9 @@ fn validate_plan_binding(
     operation: PreparedArtifactOperation,
     reservation: PreparedArtifactReservation,
 ) -> Result<(), PreparedArtifactError> {
+    if !descriptor.scientific.matches_context(context) {
+        return Err(PreparedArtifactError::ScientificBindingMismatch);
+    }
     let planned = context.planned_artifacts().cloned().collect::<Vec<_>>();
     validate_plan_declaration(
         context.node(),
@@ -1719,6 +1996,11 @@ fn validate_plan_declaration(
     if node.kind != WorkKind::Cache {
         return Err(PreparedArtifactError::UnplannedOperation);
     }
+    if node.id != descriptor.work_node_id(operation)
+        || node.implementation != descriptor.work_implementation_id(operation)
+    {
+        return Err(PreparedArtifactError::UnplannedOperation);
+    }
     if planned
         .iter()
         .any(|artifact| artifact.role() == ArtifactRole::Output)
@@ -1728,16 +2010,12 @@ fn validate_plan_declaration(
     if planned.len() != 1 {
         return Err(PreparedArtifactError::UnplannedOperation);
     }
-    let expected_role = match operation {
-        PreparedArtifactOperation::Generate | PreparedArtifactOperation::Load => {
-            ArtifactRole::Prepared
-        }
-        PreparedArtifactOperation::Reuse => ArtifactRole::Cache,
-    };
+    let expected = descriptor.planned_artifact(operation);
     let artifact = &planned[0];
     if artifact.identity() != descriptor.identity
         || artifact.cache_identity() != Some(descriptor.cache_identity())
-        || artifact.role() != expected_role
+        || artifact.role() != expected.role()
+        || artifact.node() != expected.node()
     {
         return Err(PreparedArtifactError::UnplannedOperation);
     }
@@ -1844,36 +2122,15 @@ fn measurements(
     validated: &ValidatedArtifact,
     reservation: PreparedArtifactReservation,
     operation: PreparedArtifactOperation,
+    cache_bytes: u64,
 ) -> WorkMeasurements {
-    let resources = context
-        .resources()
-        .iter()
-        .map(|capability| {
-            let peak = match capability.resource() {
-                LeaseResource::Workers | LeaseResource::Locks => 1,
-                LeaseResource::FileDescriptors => 2,
-                LeaseResource::ResidentCache
-                | LeaseResource::IoBuffer(IoBufferKind::MappedPageCache) => {
-                    reservation.resident_buffer_bytes
-                }
-                LeaseResource::Storage {
-                    use_kind: StorageUseKind::PersistentCache,
-                    ..
-                } => validated.disk_bytes,
-                LeaseResource::Storage {
-                    use_kind: StorageUseKind::Temporary,
-                    ..
-                } if operation != PreparedArtifactOperation::Reuse => validated.disk_bytes,
-                _ => 0,
-            }
-            .min(capability.amount());
-            ResourceMeasurement::new(
-                capability.resource().clone(),
-                capability.lifetime().clone(),
-                peak,
-            )
-        })
-        .collect();
+    let resources = resource_measurements(
+        context,
+        operation,
+        cache_bytes,
+        validated.disk_bytes,
+        reservation.resident_buffer_bytes,
+    );
     let io = context
         .stage_prediction()
         .io()
@@ -1897,6 +2154,107 @@ fn measurements(
         Some(RedactedPath::from_path(&validated.path)),
     )];
     WorkMeasurements::new(resources, io, artifacts)
+}
+
+fn rejected_measurements(
+    context: WorkExecutionContext<'_>,
+    descriptor: &PreparedArtifactDescriptor,
+    reservation: PreparedArtifactReservation,
+    rejection: PreparedArtifactRejection,
+    path: &Path,
+    cache_bytes: u64,
+) -> WorkMeasurements {
+    let resources = resource_measurements(
+        context,
+        PreparedArtifactOperation::Reuse,
+        cache_bytes,
+        0,
+        if matches!(
+            rejection,
+            PreparedArtifactRejection::Corrupt | PreparedArtifactRejection::NonFinite
+        ) {
+            reservation.resident_buffer_bytes
+        } else {
+            0
+        },
+    );
+    let io = context
+        .stage_prediction()
+        .io()
+        .iter()
+        .map(|prediction| IoMeasurement::new(prediction.kind(), 0, 1))
+        .collect();
+    let artifacts = vec![ArtifactMeasurement::new(
+        descriptor.identity,
+        None,
+        ArtifactDisposition::RejectedStale,
+        0,
+        Some(RedactedPath::from_path(path)),
+    )];
+    WorkMeasurements::new(resources, io, artifacts)
+}
+
+fn resource_measurements(
+    context: WorkExecutionContext<'_>,
+    operation: PreparedArtifactOperation,
+    cache_bytes: u64,
+    entry_bytes: u64,
+    resident_buffer_bytes: u64,
+) -> Vec<ResourceMeasurement> {
+    context
+        .resources()
+        .iter()
+        .map(|capability| {
+            let peak = match capability.resource() {
+                LeaseResource::Workers | LeaseResource::Locks => 1,
+                LeaseResource::FileDescriptors => 2,
+                LeaseResource::ResidentCache
+                | LeaseResource::IoBuffer(IoBufferKind::MappedPageCache) => resident_buffer_bytes,
+                LeaseResource::Storage {
+                    use_kind: StorageUseKind::PersistentCache,
+                    ..
+                } => cache_bytes,
+                LeaseResource::Storage {
+                    use_kind: StorageUseKind::Temporary,
+                    ..
+                } if operation != PreparedArtifactOperation::Reuse => entry_bytes,
+                _ => 0,
+            };
+            ResourceMeasurement::new(
+                capability.resource().clone(),
+                capability.lifetime().clone(),
+                peak,
+            )
+        })
+        .collect()
+}
+
+fn rejection_for(error: &PreparedArtifactError) -> Option<PreparedArtifactRejection> {
+    match error {
+        PreparedArtifactError::IncompleteArtifact | PreparedArtifactError::UnknownCacheEntry(_) => {
+            Some(PreparedArtifactRejection::Incomplete)
+        }
+        PreparedArtifactError::InvalidOwner
+        | PreparedArtifactError::InvalidDescriptor
+        | PreparedArtifactError::InvalidLayout
+        | PreparedArtifactError::InvalidUvAffine
+        | PreparedArtifactError::ArtifactTooLarge
+        | PreparedArtifactError::UnknownSchema { .. }
+        | PreparedArtifactError::InvalidManifest
+        | PreparedArtifactError::IdentityMismatch
+        | PreparedArtifactError::StaleArtifact
+        | PreparedArtifactError::SegmentLayoutMismatch => {
+            Some(PreparedArtifactRejection::Incompatible)
+        }
+        PreparedArtifactError::Json(error) if !error.is_io() => {
+            Some(PreparedArtifactRejection::Incompatible)
+        }
+        PreparedArtifactError::CorruptArtifact | PreparedArtifactError::OversizedArtifact => {
+            Some(PreparedArtifactRejection::Corrupt)
+        }
+        PreparedArtifactError::NonFiniteValue { .. } => Some(PreparedArtifactRejection::NonFinite),
+        _ => None,
+    }
 }
 
 fn validate_segment_inputs(
@@ -2085,12 +2443,18 @@ fn validate_manifest_segments(
 
 fn validate_entry_inventory(directory: &Path) -> Result<(), PreparedArtifactError> {
     let mut names = BTreeSet::new();
-    for entry in fs::read_dir(directory).map_err(map_incomplete)? {
-        let entry = entry?;
-        if !entry.file_type()?.is_file() {
-            return Err(PreparedArtifactError::UnknownCacheEntry(entry.path()));
+    for path in directory_paths(directory).map_err(|error| match error {
+        PreparedArtifactError::Io(error) => map_incomplete(error),
+        other => other,
+    })? {
+        if !path.symlink_metadata()?.file_type().is_file() {
+            return Err(PreparedArtifactError::UnknownCacheEntry(path));
         }
-        names.insert(entry.file_name());
+        names.insert(
+            path.file_name()
+                .ok_or_else(|| PreparedArtifactError::UnknownCacheEntry(path.clone()))?
+                .to_owned(),
+        );
     }
     let expected = BTreeSet::from([MANIFEST_FILE.into(), PAYLOAD_FILE.into()]);
     if names != expected {
@@ -2111,11 +2475,12 @@ fn reject_casa_visible_root(path: &Path) -> Result<(), PreparedArtifactError> {
 }
 
 fn reject_casa_cache_contents(root: &Path) -> Result<(), PreparedArtifactError> {
-    for entry in fs::read_dir(root)? {
-        let entry = entry?;
-        let name = entry.file_name();
+    for path in directory_paths(root)? {
+        let name = path
+            .file_name()
+            .ok_or_else(|| PreparedArtifactError::UnknownCacheEntry(path.clone()))?;
         if casa_visible_name(&name.to_string_lossy()) {
-            return Err(PreparedArtifactError::CasaVisiblePath(entry.path()));
+            return Err(PreparedArtifactError::CasaVisiblePath(path));
         }
     }
     Ok(())
@@ -2149,12 +2514,42 @@ fn checked_product(values: &[u64]) -> Option<u64> {
 }
 
 fn directory_size(path: &Path) -> Result<u64, PreparedArtifactError> {
-    fs::read_dir(path)?.try_fold(0_u64, |total, entry| {
-        let entry = entry?;
-        total
-            .checked_add(entry.metadata()?.len())
-            .ok_or(PreparedArtifactError::ArtifactTooLarge)
-    })
+    directory_paths(path)?
+        .into_iter()
+        .try_fold(0_u64, |total, entry| {
+            let metadata = entry.symlink_metadata()?;
+            if !metadata.file_type().is_file() {
+                return Err(PreparedArtifactError::UnknownCacheEntry(entry));
+            }
+            total
+                .checked_add(metadata.len())
+                .ok_or(PreparedArtifactError::ArtifactTooLarge)
+        })
+}
+
+fn raw_directory_size(path: &Path) -> Result<u64, PreparedArtifactError> {
+    let mut pending = vec![path.to_path_buf()];
+    let mut total = 0_u64;
+    while let Some(directory) = pending.pop() {
+        for entry in directory_paths(&directory)? {
+            reject_casa_visible_root(&entry)?;
+            let metadata = entry.symlink_metadata()?;
+            if metadata.file_type().is_dir() {
+                pending.push(entry);
+            } else {
+                total = total
+                    .checked_add(metadata.len())
+                    .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
+            }
+        }
+    }
+    Ok(total)
+}
+
+fn directory_paths(path: &Path) -> Result<Vec<PathBuf>, PreparedArtifactError> {
+    fs::read_dir(path)?
+        .map(|entry| entry.map(|entry| entry.path()).map_err(Into::into))
+        .collect()
 }
 
 fn sync_directory(path: &Path) -> Result<(), PreparedArtifactError> {
@@ -2198,6 +2593,14 @@ const fn kind_tag(kind: PreparedArtifactKind) -> u8 {
     }
 }
 
+const fn operation_tag(operation: PreparedArtifactOperation) -> u8 {
+    match operation {
+        PreparedArtifactOperation::Generate => 1,
+        PreparedArtifactOperation::Load => 2,
+        PreparedArtifactOperation::Reuse => 3,
+    }
+}
+
 const fn precision_tag(precision: PreparedArtifactPrecision) -> u8 {
     match precision {
         PreparedArtifactPrecision::F32 => 1,
@@ -2235,512 +2638,4 @@ fn decode_digest(value: &str) -> Option<[u8; 32]> {
         *byte = u8::from_str_radix(&value[index * 2..index * 2 + 2], 16).ok()?;
     }
     Some(digest)
-}
-
-#[cfg(test)]
-mod tests {
-    use std::{collections::BTreeSet, io::Cursor};
-
-    use super::*;
-    use crate::{
-        ClaimLifetime, IoPrediction, ResourceClaim, StagePrediction, WorkDomain, WorkNode,
-    };
-
-    fn owner(version: &str) -> PreparedArtifactOwner {
-        PreparedArtifactOwner::new(
-            ImplementationRegistryId::from_sha256([3; 32]),
-            "native-awproject",
-            version,
-            WorkImplementationId::new("native-awproject-cpu"),
-        )
-        .expect("valid prepared-artifact owner")
-    }
-
-    fn uv(shape: u64) -> PreparedArtifactUvAffine {
-        PreparedArtifactUvAffine::new(
-            [0.0, 0.0],
-            [shape as f64 / 2.0, shape as f64 / 2.0],
-            [8.0 / shape as f64, 8.0 / shape as f64],
-            [[1.0, 0.0], [0.0, 1.0]],
-        )
-        .expect("valid affine")
-    }
-
-    fn cf_descriptor(input: u8) -> PreparedArtifactDescriptor {
-        PreparedArtifactDescriptor::convolution_function(
-            owner("3.1.0"),
-            [ArtifactIdentity::from_sha256([input; 32])],
-            PreparedArtifactPlaneDescriptor::new(
-                [8, 8],
-                [1, 1],
-                2,
-                uv(8),
-                PreparedArtifactPrecision::ComplexF32,
-                PreparedArtifactOrder::Axis0ContiguousLittleEndian,
-            )
-            .expect("imaging plane"),
-            PreparedArtifactPlaneDescriptor::new(
-                [16, 16],
-                [3, 3],
-                2,
-                uv(16),
-                PreparedArtifactPrecision::ComplexF32,
-                PreparedArtifactOrder::LastAxisContiguousLittleEndian,
-            )
-            .expect("weight plane"),
-        )
-        .expect("valid asymmetric CF descriptor")
-    }
-
-    fn complex_f32_bytes(shape: [u64; 2], value: f32) -> Vec<u8> {
-        let elements = usize::try_from(shape[0] * shape[1]).expect("small test shape");
-        (0..elements)
-            .flat_map(|_| {
-                [value.to_le_bytes(), (-value).to_le_bytes()]
-                    .into_iter()
-                    .flatten()
-            })
-            .collect()
-    }
-
-    fn payloads() -> (Vec<u8>, Vec<u8>) {
-        (
-            complex_f32_bytes([8, 8], 1.25),
-            complex_f32_bytes([16, 16], -2.5),
-        )
-    }
-
-    fn artifact_store(root: &Path, entries: usize) -> PreparedArtifactStore {
-        PreparedArtifactStore::open(
-            root,
-            PreparedArtifactBudget::new(1 << 20, entries, 37).expect("bounded budget"),
-        )
-        .expect("private prepared-artifact store")
-    }
-
-    fn publish(
-        store: &PreparedArtifactStore,
-        descriptor: &PreparedArtifactDescriptor,
-    ) -> Result<PreparedArtifact, PreparedArtifactError> {
-        let (mut imaging, mut weight) = payloads();
-        let mut imaging = Cursor::new(&mut imaging);
-        let mut weight = Cursor::new(&mut weight);
-        let mut inputs = [
-            PreparedArtifactSegmentInput::new("imaging", &mut imaging),
-            PreparedArtifactSegmentInput::new("weight", &mut weight),
-        ];
-        let reservation = store.reservation(descriptor, PreparedArtifactOperation::Generate)?;
-        let (validated, _) = store.publish_bytes(
-            descriptor,
-            ArtifactDisposition::Built,
-            &mut inputs,
-            reservation,
-        )?;
-        Ok(validated.into_handle(descriptor))
-    }
-
-    fn cache_node(
-        descriptor: &PreparedArtifactDescriptor,
-        operation: PreparedArtifactOperation,
-        reservation: PreparedArtifactReservation,
-    ) -> (WorkNode, PlannedArtifact, StagePrediction) {
-        let id = WorkNodeId::new(match operation {
-            PreparedArtifactOperation::Generate => "prepared-artifact-cold-generation",
-            PreparedArtifactOperation::Load => "prepared-artifact-cold-load",
-            PreparedArtifactOperation::Reuse => "prepared-artifact-warm-reuse",
-        });
-        let mut claims = vec![
-            ResourceClaim {
-                resource: LeaseResource::Workers,
-                amount: 1,
-                lifetime: ClaimLifetime::Work,
-            },
-            ResourceClaim {
-                resource: LeaseResource::ResidentCache,
-                amount: reservation.resident_buffer_bytes(),
-                lifetime: ClaimLifetime::Work,
-            },
-            ResourceClaim {
-                resource: LeaseResource::IoBuffer(IoBufferKind::MappedPageCache),
-                amount: reservation.resident_buffer_bytes(),
-                lifetime: ClaimLifetime::Work,
-            },
-            ResourceClaim {
-                resource: LeaseResource::Locks,
-                amount: 1,
-                lifetime: ClaimLifetime::Work,
-            },
-            ResourceClaim {
-                resource: LeaseResource::FileDescriptors,
-                amount: 2,
-                lifetime: ClaimLifetime::Work,
-            },
-            ResourceClaim {
-                resource: LeaseResource::Storage {
-                    demand_id: "private-prepared-cache".to_string(),
-                    use_kind: StorageUseKind::PersistentCache,
-                },
-                amount: reservation.persistent_cache_bytes(),
-                lifetime: ClaimLifetime::Work,
-            },
-        ];
-        if reservation.temporary_staging_bytes() > 0 {
-            claims.push(ResourceClaim {
-                resource: LeaseResource::Storage {
-                    demand_id: "private-prepared-cache".to_string(),
-                    use_kind: StorageUseKind::Temporary,
-                },
-                amount: reservation.temporary_staging_bytes(),
-                lifetime: ClaimLifetime::Work,
-            });
-        }
-        let node = WorkNode {
-            id: id.clone(),
-            kind: WorkKind::Cache,
-            domain: WorkDomain::Cpu,
-            implementation: WorkImplementationId::new("native-awproject-cpu"),
-            dependencies: BTreeSet::new(),
-            claims,
-            allocations: Vec::new(),
-            fences: BTreeSet::new(),
-            quiescence_after: BTreeSet::new(),
-        };
-        let artifact = descriptor.planned_artifact(id.clone(), operation);
-        let stage = StagePrediction::new(id, 1_000).with_io(vec![IoPrediction::new(
-            IoBufferKind::MappedPageCache,
-            descriptor.payload_bytes().expect("payload bytes"),
-            3,
-        )]);
-        (node, artifact, stage)
-    }
-
-    #[test]
-    fn owner_derived_identity_commits_inputs_versions_and_asymmetric_named_planes() {
-        let baseline = cf_descriptor(7);
-        assert_eq!(baseline.segments()[0].name(), "imaging");
-        assert_eq!(baseline.segments()[0].shape(), [8, 8]);
-        assert_eq!(baseline.segments()[1].name(), "weight");
-        assert_eq!(baseline.segments()[1].shape(), [16, 16]);
-        assert_ne!(
-            baseline.identity().as_bytes(),
-            baseline.cache_identity().as_bytes()
-        );
-
-        let input_variant = cf_descriptor(8);
-        assert_ne!(baseline.identity(), input_variant.identity());
-        assert_eq!(baseline.cache_identity(), input_variant.cache_identity());
-
-        let version_variant = PreparedArtifactDescriptor::convolution_function(
-            owner("3.2.0"),
-            [ArtifactIdentity::from_sha256([7; 32])],
-            PreparedArtifactPlaneDescriptor::new(
-                [8, 8],
-                [1, 1],
-                2,
-                uv(8),
-                PreparedArtifactPrecision::ComplexF32,
-                PreparedArtifactOrder::Axis0ContiguousLittleEndian,
-            )
-            .unwrap(),
-            PreparedArtifactPlaneDescriptor::new(
-                [16, 16],
-                [3, 3],
-                2,
-                uv(16),
-                PreparedArtifactPrecision::ComplexF32,
-                PreparedArtifactOrder::LastAxisContiguousLittleEndian,
-            )
-            .unwrap(),
-        )
-        .unwrap();
-        assert_ne!(baseline.cache_identity(), version_variant.cache_identity());
-        assert_ne!(baseline.identity(), version_variant.identity());
-    }
-
-    #[test]
-    fn canonical_cache_nodes_bind_operation_resources_storage_and_artifact_measurement_inputs() {
-        let directory = tempfile::tempdir().unwrap();
-        let store = artifact_store(directory.path(), 4);
-        let descriptor = cf_descriptor(7);
-        for operation in [
-            PreparedArtifactOperation::Generate,
-            PreparedArtifactOperation::Load,
-            PreparedArtifactOperation::Reuse,
-        ] {
-            let reservation = store.reservation(&descriptor, operation).unwrap();
-            let (node, artifact, stage) = cache_node(&descriptor, operation, reservation);
-            validate_plan_declaration(
-                &node,
-                &[artifact],
-                &stage,
-                &descriptor,
-                operation,
-                reservation,
-            )
-            .expect("canonical prepared-artifact node binding");
-        }
-
-        let reservation = store
-            .reservation(&descriptor, PreparedArtifactOperation::Generate)
-            .unwrap();
-        let (mut node, artifact, stage) = cache_node(
-            &descriptor,
-            PreparedArtifactOperation::Generate,
-            reservation,
-        );
-        node.claims.retain(|claim| {
-            !matches!(
-                claim.resource,
-                LeaseResource::Storage {
-                    use_kind: StorageUseKind::Temporary,
-                    ..
-                }
-            )
-        });
-        assert!(matches!(
-            validate_plan_declaration(
-                &node,
-                &[artifact],
-                &stage,
-                &descriptor,
-                PreparedArtifactOperation::Generate,
-                reservation,
-            ),
-            Err(PreparedArtifactError::MissingReservation(
-                "temporary staging storage"
-            ))
-        ));
-
-        let (node, artifact, stage) = cache_node(
-            &descriptor,
-            PreparedArtifactOperation::Generate,
-            reservation,
-        );
-        let output = PlannedArtifact::new(
-            ArtifactIdentity::from_sha256([99; 32]),
-            node.id.clone(),
-            ArtifactRole::Output,
-            None,
-        );
-        assert!(matches!(
-            validate_plan_declaration(
-                &node,
-                &[artifact, output],
-                &stage,
-                &descriptor,
-                PreparedArtifactOperation::Generate,
-                reservation,
-            ),
-            Err(PreparedArtifactError::ProductAuthorityViolation)
-        ));
-    }
-
-    #[test]
-    fn private_publication_is_atomic_named_and_reusable_without_casa_provenance() {
-        let directory = tempfile::tempdir().unwrap();
-        let store = artifact_store(directory.path(), 4);
-        let descriptor = cf_descriptor(7);
-        assert_eq!(
-            store.availability(&descriptor).unwrap(),
-            PreparedArtifactAvailability::Cold
-        );
-        let artifact = publish(&store, &descriptor).unwrap();
-        assert_eq!(artifact.identity(), descriptor.identity());
-        assert_ne!(artifact.integrity_identity(), descriptor.identity());
-        assert_eq!(
-            artifact.segment_names().collect::<Vec<_>>(),
-            ["imaging", "weight"]
-        );
-        let mut copied = Vec::new();
-        artifact.copy_segment_to("weight", &mut copied).unwrap();
-        assert_eq!(copied, payloads().1);
-        assert_eq!(
-            store.availability(&descriptor).unwrap(),
-            PreparedArtifactAvailability::Warm
-        );
-
-        let entry = directory
-            .path()
-            .join(CACHE_DIRECTORY)
-            .join(descriptor.identity().to_string());
-        assert!(entry.join(MANIFEST_FILE).is_file());
-        assert!(entry.join(PAYLOAD_FILE).is_file());
-        let names = fs::read_dir(&entry)
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name())
-            .collect::<BTreeSet<_>>();
-        assert_eq!(
-            names,
-            BTreeSet::from([MANIFEST_FILE.into(), PAYLOAD_FILE.into()])
-        );
-        assert!(
-            names
-                .iter()
-                .all(|name| !name.to_string_lossy().contains("CFS_")
-                    && !name.to_string_lossy().contains("WTCFS_"))
-        );
-    }
-
-    #[test]
-    fn corrupt_incomplete_unknown_nonfinite_and_stale_entries_fail_closed() {
-        let directory = tempfile::tempdir().unwrap();
-        let store = artifact_store(directory.path(), 4);
-        let descriptor = cf_descriptor(7);
-        publish(&store, &descriptor).unwrap();
-        let payload = directory
-            .path()
-            .join(CACHE_DIRECTORY)
-            .join(descriptor.identity().to_string())
-            .join(PAYLOAD_FILE);
-        let mut bytes = fs::read(&payload).unwrap();
-        bytes[0] ^= 1;
-        fs::write(&payload, bytes).unwrap();
-        assert!(matches!(
-            store.availability(&descriptor),
-            Err(PreparedArtifactError::CorruptArtifact)
-        ));
-
-        let directory = tempfile::tempdir().unwrap();
-        let store = artifact_store(directory.path(), 4);
-        let descriptor = cf_descriptor(7);
-        publish(&store, &descriptor).unwrap();
-        let manifest = directory
-            .path()
-            .join(CACHE_DIRECTORY)
-            .join(descriptor.identity().to_string())
-            .join(MANIFEST_FILE);
-        let mut value: serde_json::Value =
-            serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
-        value["schema_version"] = 999.into();
-        fs::write(&manifest, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
-        assert!(matches!(
-            store.availability(&descriptor),
-            Err(PreparedArtifactError::UnknownSchema { version: 999, .. })
-        ));
-
-        let directory = tempfile::tempdir().unwrap();
-        let store = artifact_store(directory.path(), 4);
-        let descriptor = cf_descriptor(7);
-        publish(&store, &descriptor).unwrap();
-        let payload = directory
-            .path()
-            .join(CACHE_DIRECTORY)
-            .join(descriptor.identity().to_string())
-            .join(PAYLOAD_FILE);
-        fs::remove_file(payload).unwrap();
-        assert!(matches!(
-            store.availability(&descriptor),
-            Err(PreparedArtifactError::IncompleteArtifact)
-        ));
-
-        let directory = tempfile::tempdir().unwrap();
-        let store = artifact_store(directory.path(), 4);
-        let descriptor = cf_descriptor(7);
-        publish(&store, &descriptor).unwrap();
-        let mut stale_descriptor = descriptor.clone();
-        stale_descriptor.scientific_inputs[0] = ArtifactIdentity::from_sha256([11; 32]);
-        assert!(matches!(
-            store.availability(&stale_descriptor),
-            Err(PreparedArtifactError::StaleArtifact)
-        ));
-
-        let directory = tempfile::tempdir().unwrap();
-        let store = artifact_store(directory.path(), 4);
-        let descriptor = cf_descriptor(7);
-        let (mut imaging, mut weight) = payloads();
-        imaging[..4].copy_from_slice(&f32::NAN.to_le_bytes());
-        let mut imaging = Cursor::new(&mut imaging);
-        let mut weight = Cursor::new(&mut weight);
-        let mut inputs = [
-            PreparedArtifactSegmentInput::new("imaging", &mut imaging),
-            PreparedArtifactSegmentInput::new("weight", &mut weight),
-        ];
-        let reservation = store
-            .reservation(&descriptor, PreparedArtifactOperation::Generate)
-            .unwrap();
-        assert!(matches!(
-            store.publish_bytes(
-                &descriptor,
-                ArtifactDisposition::Built,
-                &mut inputs,
-                reservation,
-            ),
-            Err(PreparedArtifactError::NonFiniteValue { .. })
-        ));
-        assert_eq!(
-            fs::read_dir(directory.path().join(CACHE_DIRECTORY))
-                .unwrap()
-                .count(),
-            0
-        );
-    }
-
-    #[test]
-    fn cache_budget_drives_locked_deterministic_eviction_and_casa_roots_are_rejected() {
-        let directory = tempfile::tempdir().unwrap();
-        let store = artifact_store(directory.path(), 2);
-        let first = cf_descriptor(7);
-        let second = cf_descriptor(8);
-        let third = cf_descriptor(9);
-        publish(&store, &first).unwrap();
-        publish(&store, &second).unwrap();
-        publish(&store, &third).unwrap();
-        let evicted = first.identity().min(second.identity());
-        let retained = first.identity().max(second.identity());
-        let evicted_descriptor = if evicted == first.identity() {
-            &first
-        } else {
-            &second
-        };
-        let retained_descriptor = if retained == first.identity() {
-            &first
-        } else {
-            &second
-        };
-        assert_eq!(
-            store.availability(evicted_descriptor).unwrap(),
-            PreparedArtifactAvailability::Cold
-        );
-        assert_eq!(
-            store.availability(retained_descriptor).unwrap(),
-            PreparedArtifactAvailability::Warm
-        );
-        assert_eq!(
-            store.availability(&third).unwrap(),
-            PreparedArtifactAvailability::Warm
-        );
-
-        let narrowed = artifact_store(directory.path(), 1);
-        let (trimmed_descriptor, survivor_descriptor) = if retained < third.identity() {
-            (retained_descriptor, &third)
-        } else {
-            (&third, retained_descriptor)
-        };
-        assert_eq!(
-            narrowed.availability(trimmed_descriptor).unwrap(),
-            PreparedArtifactAvailability::Cold
-        );
-        assert_eq!(
-            narrowed.availability(survivor_descriptor).unwrap(),
-            PreparedArtifactAvailability::Warm
-        );
-
-        let casa_root = tempfile::tempdir().unwrap();
-        fs::create_dir(casa_root.path().join("CFS_0.im")).unwrap();
-        assert!(matches!(
-            PreparedArtifactStore::open(
-                casa_root.path(),
-                PreparedArtifactBudget::new(1 << 20, 2, 64).unwrap(),
-            ),
-            Err(PreparedArtifactError::CasaVisiblePath(_))
-        ));
-        let private_parent = tempfile::tempdir().unwrap();
-        assert!(matches!(
-            PreparedArtifactStore::open(
-                private_parent.path().join("WTCFS_0.im"),
-                PreparedArtifactBudget::new(1 << 20, 2, 64).unwrap(),
-            ),
-            Err(PreparedArtifactError::CasaVisiblePath(_))
-        ));
-    }
 }

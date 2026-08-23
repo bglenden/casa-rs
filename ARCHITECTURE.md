@@ -47,10 +47,18 @@ inputs at the execution and receipt boundary; runtime does not own or invoke
 reprojection algorithms. Runtime also owns content-addressed prepared
 implementation artifacts: exact compatibility
 identity, bounded generation or load, integrity validation, private atomic
-caching, and deterministic eviction. That private casa-rs cache is not Product
-Graph authority or a CASA-visible persisted format. Existing CASA CFS/WTCFS
-directories remain read-only interoperability inputs supplied through the
-validated legacy adapter; the runtime neither mutates them nor creates sidecars.
+caching, and deterministic eviction. The selected implementation owner derives
+artifact and cache identities from exact `CompiledProblem` commitments, named
+segment semantics, the canonical private root, and the full cache policy. Cold
+generation, cold load, and warm reuse have distinct plan node, implementation,
+and artifact-role bindings; their canonical measurements reach the immutable
+execution receipt, including `RejectedStale` evidence for a missing, incomplete,
+incompatible, corrupt, or nonfinite warm candidate. Opening the store performs
+no hidden lookup, integrity work, or eviction. That private casa-rs cache is not
+Product Graph authority or a CASA-visible persisted format. Existing CASA
+CFS/WTCFS directories remain read-only interoperability inputs supplied through
+the validated legacy adapter; the runtime neither mutates them nor creates
+sidecars.
 `casa-imaging-router` is the application-layer owner of the one pre-plan
 migration decision. It compiles the logical request, derives every applicable
 matrix row, records the authoritative row evidence, and invokes exactly one
