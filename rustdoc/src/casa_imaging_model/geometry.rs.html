@@ -1634,7 +1634,7 @@
 <a href=#1634 id=1634 data-nosnippet>1634</a>    }
 <a href=#1635 id=1635 data-nosnippet>1635</a>}
 <a href=#1636 id=1636 data-nosnippet>1636</a>
-<a href=#1637 id=1637 data-nosnippet>1637</a><span class="kw">fn </span>encode_sky_direction(encoder: <span class="kw-2">&amp;mut </span>CanonicalEncoder, direction: SkyDirection) {
+<a href=#1637 id=1637 data-nosnippet>1637</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>encode_sky_direction(encoder: <span class="kw-2">&amp;mut </span>CanonicalEncoder, direction: SkyDirection) {
 <a href=#1638 id=1638 data-nosnippet>1638</a>    encoder.u8(direction_frame_tag(direction.frame));
 <a href=#1639 id=1639 data-nosnippet>1639</a>    encoder.f64(direction.longitude_rad);
 <a href=#1640 id=1640 data-nosnippet>1640</a>    encoder.f64(direction.latitude_rad);
@@ -1791,7 +1791,7 @@
 <a href=#1791 id=1791 data-nosnippet>1791</a>    }
 <a href=#1792 id=1792 data-nosnippet>1792</a>}
 <a href=#1793 id=1793 data-nosnippet>1793</a>
-<a href=#1794 id=1794 data-nosnippet>1794</a><span class="kw">fn </span>frequency_frame_tag(frame: FrequencyFrame) -&gt; u8 {
+<a href=#1794 id=1794 data-nosnippet>1794</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>frequency_frame_tag(frame: FrequencyFrame) -&gt; u8 {
 <a href=#1795 id=1795 data-nosnippet>1795</a>    <span class="kw">match </span>frame {
 <a href=#1796 id=1796 data-nosnippet>1796</a>        FrequencyFrame::Topocentric =&gt; <span class="number">0</span>,
 <a href=#1797 id=1797 data-nosnippet>1797</a>        FrequencyFrame::Barycentric =&gt; <span class="number">1</span>,
@@ -1799,28 +1799,37 @@
 <a href=#1799 id=1799 data-nosnippet>1799</a>    }
 <a href=#1800 id=1800 data-nosnippet>1800</a>}
 <a href=#1801 id=1801 data-nosnippet>1801</a>
-<a href=#1802 id=1802 data-nosnippet>1802</a><span class="kw">fn </span>canonical_longitude(longitude: f64) -&gt; f64 {
-<a href=#1803 id=1803 data-nosnippet>1803</a>    canonical_zero(longitude.rem_euclid(TAU))
-<a href=#1804 id=1804 data-nosnippet>1804</a>}
-<a href=#1805 id=1805 data-nosnippet>1805</a>
-<a href=#1806 id=1806 data-nosnippet>1806</a><span class="kw">fn </span>canonical_degrees(degrees: f64) -&gt; f64 {
-<a href=#1807 id=1807 data-nosnippet>1807</a>    canonical_zero(degrees.rem_euclid(<span class="number">360.0</span>))
-<a href=#1808 id=1808 data-nosnippet>1808</a>}
-<a href=#1809 id=1809 data-nosnippet>1809</a>
-<a href=#1810 id=1810 data-nosnippet>1810</a><span class="kw">fn </span>canonical_zero(value: f64) -&gt; f64 {
-<a href=#1811 id=1811 data-nosnippet>1811</a>    <span class="kw">if </span>value == <span class="number">0.0 </span>{ <span class="number">0.0 </span>} <span class="kw">else </span>{ value }
-<a href=#1812 id=1812 data-nosnippet>1812</a>}
-<a href=#1813 id=1813 data-nosnippet>1813</a>
-<a href=#1814 id=1814 data-nosnippet>1814</a><span class="kw">fn </span>canonicalize_f64_slice(values: <span class="kw-2">&amp;mut </span>[f64]) {
-<a href=#1815 id=1815 data-nosnippet>1815</a>    <span class="kw">for </span>value <span class="kw">in </span>values {
-<a href=#1816 id=1816 data-nosnippet>1816</a>        <span class="kw-2">*</span>value = canonical_zero(<span class="kw-2">*</span>value);
-<a href=#1817 id=1817 data-nosnippet>1817</a>    }
-<a href=#1818 id=1818 data-nosnippet>1818</a>}
-<a href=#1819 id=1819 data-nosnippet>1819</a>
-<a href=#1820 id=1820 data-nosnippet>1820</a><span class="kw">fn </span>write_hex(formatter: <span class="kw-2">&amp;mut </span>fmt::Formatter&lt;<span class="lifetime">'_</span>&gt;, bytes: <span class="kw-2">&amp;</span>[u8]) -&gt; fmt::Result {
-<a href=#1821 id=1821 data-nosnippet>1821</a>    <span class="kw">for </span>byte <span class="kw">in </span>bytes {
-<a href=#1822 id=1822 data-nosnippet>1822</a>        <span class="macro">write!</span>(formatter, <span class="string">"{byte:02x}"</span>)<span class="question-mark">?</span>;
-<a href=#1823 id=1823 data-nosnippet>1823</a>    }
-<a href=#1824 id=1824 data-nosnippet>1824</a>    <span class="prelude-val">Ok</span>(())
-<a href=#1825 id=1825 data-nosnippet>1825</a>}
+<a href=#1802 id=1802 data-nosnippet>1802</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const fn </span>time_scale_tag(scale: TimeScale) -&gt; u8 {
+<a href=#1803 id=1803 data-nosnippet>1803</a>    <span class="kw">match </span>scale {
+<a href=#1804 id=1804 data-nosnippet>1804</a>        TimeScale::Utc =&gt; <span class="number">0</span>,
+<a href=#1805 id=1805 data-nosnippet>1805</a>        TimeScale::Tai =&gt; <span class="number">1</span>,
+<a href=#1806 id=1806 data-nosnippet>1806</a>        TimeScale::Tt =&gt; <span class="number">2</span>,
+<a href=#1807 id=1807 data-nosnippet>1807</a>        TimeScale::Tdb =&gt; <span class="number">3</span>,
+<a href=#1808 id=1808 data-nosnippet>1808</a>    }
+<a href=#1809 id=1809 data-nosnippet>1809</a>}
+<a href=#1810 id=1810 data-nosnippet>1810</a>
+<a href=#1811 id=1811 data-nosnippet>1811</a><span class="kw">fn </span>canonical_longitude(longitude: f64) -&gt; f64 {
+<a href=#1812 id=1812 data-nosnippet>1812</a>    canonical_zero(longitude.rem_euclid(TAU))
+<a href=#1813 id=1813 data-nosnippet>1813</a>}
+<a href=#1814 id=1814 data-nosnippet>1814</a>
+<a href=#1815 id=1815 data-nosnippet>1815</a><span class="kw">fn </span>canonical_degrees(degrees: f64) -&gt; f64 {
+<a href=#1816 id=1816 data-nosnippet>1816</a>    canonical_zero(degrees.rem_euclid(<span class="number">360.0</span>))
+<a href=#1817 id=1817 data-nosnippet>1817</a>}
+<a href=#1818 id=1818 data-nosnippet>1818</a>
+<a href=#1819 id=1819 data-nosnippet>1819</a><span class="kw">fn </span>canonical_zero(value: f64) -&gt; f64 {
+<a href=#1820 id=1820 data-nosnippet>1820</a>    <span class="kw">if </span>value == <span class="number">0.0 </span>{ <span class="number">0.0 </span>} <span class="kw">else </span>{ value }
+<a href=#1821 id=1821 data-nosnippet>1821</a>}
+<a href=#1822 id=1822 data-nosnippet>1822</a>
+<a href=#1823 id=1823 data-nosnippet>1823</a><span class="kw">fn </span>canonicalize_f64_slice(values: <span class="kw-2">&amp;mut </span>[f64]) {
+<a href=#1824 id=1824 data-nosnippet>1824</a>    <span class="kw">for </span>value <span class="kw">in </span>values {
+<a href=#1825 id=1825 data-nosnippet>1825</a>        <span class="kw-2">*</span>value = canonical_zero(<span class="kw-2">*</span>value);
+<a href=#1826 id=1826 data-nosnippet>1826</a>    }
+<a href=#1827 id=1827 data-nosnippet>1827</a>}
+<a href=#1828 id=1828 data-nosnippet>1828</a>
+<a href=#1829 id=1829 data-nosnippet>1829</a><span class="kw">fn </span>write_hex(formatter: <span class="kw-2">&amp;mut </span>fmt::Formatter&lt;<span class="lifetime">'_</span>&gt;, bytes: <span class="kw-2">&amp;</span>[u8]) -&gt; fmt::Result {
+<a href=#1830 id=1830 data-nosnippet>1830</a>    <span class="kw">for </span>byte <span class="kw">in </span>bytes {
+<a href=#1831 id=1831 data-nosnippet>1831</a>        <span class="macro">write!</span>(formatter, <span class="string">"{byte:02x}"</span>)<span class="question-mark">?</span>;
+<a href=#1832 id=1832 data-nosnippet>1832</a>    }
+<a href=#1833 id=1833 data-nosnippet>1833</a>    <span class="prelude-val">Ok</span>(())
+<a href=#1834 id=1834 data-nosnippet>1834</a>}
 </code></pre></div></section></main></body></html>

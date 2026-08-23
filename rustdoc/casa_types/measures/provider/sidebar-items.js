@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["ObservatoryPosition"],"struct":["EopValues","NamedSourceDirection"],"trait":["MeasuresProvider"]};
+window.SIDEBAR_ITEMS = {"enum":["ObservatoryPosition"],"struct":["EopValues","MeasuresProviderState","NamedSourceDirection"],"trait":["MeasuresProvider"]};

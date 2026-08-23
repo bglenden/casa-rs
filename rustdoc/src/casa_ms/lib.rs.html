@@ -59,156 +59,173 @@
 <a href=#59 id=59 data-nosnippet>59</a><span class="kw">pub mod </span>presentation;
 <a href=#60 id=60 data-nosnippet>60</a><span class="kw">mod </span>probes;
 <a href=#61 id=61 data-nosnippet>61</a><span class="kw">pub mod </span>schema;
-<a href=#62 id=62 data-nosnippet>62</a><span class="kw">pub mod </span>selection;
-<a href=#63 id=63 data-nosnippet>63</a><span class="kw">pub mod </span>simulation;
-<a href=#64 id=64 data-nosnippet>64</a><span class="kw">pub mod </span>simulation_task;
-<a href=#65 id=65 data-nosnippet>65</a><span class="kw">pub mod </span>spectral_selection;
-<a href=#66 id=66 data-nosnippet>66</a><span class="kw">pub mod </span>subtables;
-<a href=#67 id=67 data-nosnippet>67</a><span class="kw">pub mod </span>task_contract;
-<a href=#68 id=68 data-nosnippet>68</a><span class="kw">pub mod </span>transform;
-<a href=#69 id=69 data-nosnippet>69</a><span class="kw">pub mod </span>validate;
-<a href=#70 id=70 data-nosnippet>70</a><span class="kw">pub mod </span>visibility_buffer;
-<a href=#71 id=71 data-nosnippet>71</a><span class="kw">pub mod </span>write_session;
-<a href=#72 id=72 data-nosnippet>72</a>
-<a href=#73 id=73 data-nosnippet>73</a><span class="attr">#[cfg(test)]
-<a href=#74 id=74 data-nosnippet>74</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>test_helpers;
+<a href=#62 id=62 data-nosnippet>62</a><span class="kw">mod </span>selected_observation;
+<a href=#63 id=63 data-nosnippet>63</a><span class="kw">mod </span>selected_observation_buffer;
+<a href=#64 id=64 data-nosnippet>64</a><span class="kw">mod </span>selected_pointing;
+<a href=#65 id=65 data-nosnippet>65</a><span class="kw">pub mod </span>selection;
+<a href=#66 id=66 data-nosnippet>66</a><span class="kw">pub mod </span>simulation;
+<a href=#67 id=67 data-nosnippet>67</a><span class="kw">pub mod </span>simulation_task;
+<a href=#68 id=68 data-nosnippet>68</a><span class="kw">pub mod </span>spectral_selection;
+<a href=#69 id=69 data-nosnippet>69</a><span class="kw">pub mod </span>subtables;
+<a href=#70 id=70 data-nosnippet>70</a><span class="kw">pub mod </span>task_contract;
+<a href=#71 id=71 data-nosnippet>71</a><span class="kw">pub mod </span>transform;
+<a href=#72 id=72 data-nosnippet>72</a><span class="kw">pub mod </span>validate;
+<a href=#73 id=73 data-nosnippet>73</a><span class="kw">pub mod </span>visibility_buffer;
+<a href=#74 id=74 data-nosnippet>74</a><span class="kw">pub mod </span>write_session;
 <a href=#75 id=75 data-nosnippet>75</a>
-<a href=#76 id=76 data-nosnippet>76</a><span class="kw">pub use </span>builder::{MeasurementSetBuilder, MsSchemas};
-<a href=#77 id=77 data-nosnippet>77</a><span class="kw">pub use </span>error::{MsError, MsResult};
-<a href=#78 id=78 data-nosnippet>78</a><span class="kw">pub use </span>flagging::{
-<a href=#79 id=79 data-nosnippet>79</a>    FlagDataAction, FlagDataColumn, FlagDataMode, FlagDataReport, FlagDataRequest, FlagMerge,
-<a href=#80 id=80 data-nosnippet>80</a>    FlagVersionEntry, FlaggingError, QuackMode, delete_flag_version, flagdata, flagdata_path,
-<a href=#81 id=81 data-nosnippet>81</a>    list_flag_versions, rename_flag_version, restore_flag_version, save_flag_version,
-<a href=#82 id=82 data-nosnippet>82</a>};
-<a href=#83 id=83 data-nosnippet>83</a><span class="kw">pub use </span>listobs::{
-<a href=#84 id=84 data-nosnippet>84</a>    ListObsOptions <span class="kw">as </span>MeasurementSetSummaryOptions,
-<a href=#85 id=85 data-nosnippet>85</a>    ListObsOutputFormat <span class="kw">as </span>MeasurementSetSummaryOutputFormat,
-<a href=#86 id=86 data-nosnippet>86</a>    ListObsSummary <span class="kw">as </span>MeasurementSetSummary, ListObsUvCoverage <span class="kw">as </span>MeasurementSetUvCoverage,
-<a href=#87 id=87 data-nosnippet>87</a>    ListObsUvPoint <span class="kw">as </span>MeasurementSetUvPoint, ListObsUvTrack <span class="kw">as </span>MeasurementSetUvTrack,
-<a href=#88 id=88 data-nosnippet>88</a>};
-<a href=#89 id=89 data-nosnippet>89</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span>listobs::{ListObsOptions, ListObsSummary, ListObsUvCoverage};
-<a href=#90 id=90 data-nosnippet>90</a><span class="kw">pub use </span>ms::MeasurementSet;
-<a href=#91 id=91 data-nosnippet>91</a><span class="kw">pub use </span>msexplore::task_contract::{
-<a href=#92 id=92 data-nosnippet>92</a>    MSEXPLORE_TASK_PROTOCOL_NAME, MSEXPLORE_TASK_PROTOCOL_VERSION, MsExploreFlagEditRequest,
-<a href=#93 id=93 data-nosnippet>93</a>    MsExplorePlotArtifact, MsExplorePlotExportRequest, MsExploreRunTaskRequest,
-<a href=#94 id=94 data-nosnippet>94</a>    MsExploreRunTaskResult, MsExploreTaskRequest, MsExploreTaskResult,
-<a href=#95 id=95 data-nosnippet>95</a>    msexplore_protocol_descriptor, msexplore_task_schema_bundle,
-<a href=#96 id=96 data-nosnippet>96</a>};
-<a href=#97 id=97 data-nosnippet>97</a><span class="kw">pub use </span>msexplore::{
-<a href=#98 id=98 data-nosnippet>98</a>    DEFAULT_MAX_PLOT_POINTS, MsAverageSpec, MsAxis, MsColorAxis, MsDataColumn, MsExploreSpec,
-<a href=#99 id=99 data-nosnippet>99</a>    MsExportFormat, MsFlagAction, MsFlagEditPreview, MsFlagEditSpec, MsFlagRegion, MsFlagRowEdit,
-<a href=#100 id=100 data-nosnippet>100</a>    MsFlagSampleEdit, MsIterationAxis, MsIterationSpec, MsLayoutSpec, MsLegendPosition,
-<a href=#101 id=101 data-nosnippet>101</a>    MsPageExportRange, MsPageHeaderItem, MsPlotPayload, MsPlotPreset, MsPlotSpec, MsPlotStyleSpec,
-<a href=#102 id=102 data-nosnippet>102</a>    MsScatterGridPayload, MsScatterPageItemPayload, MsScatterPagePayload, MsScatterPanelPayload,
-<a href=#103 id=103 data-nosnippet>103</a>    MsScatterPlotPayload, MsScatterPointRef, MsScatterSeries, MsTransformSpec,
-<a href=#104 id=104 data-nosnippet>104</a>    apply_msexplore_flag_edit, apply_msexplore_flag_edit_for_request, build_msexplore_payload,
-<a href=#105 id=105 data-nosnippet>105</a>    build_msexplore_payload_from_spec, build_msexplore_plot_payload,
-<a href=#106 id=106 data-nosnippet>106</a>    build_msexplore_plot_payload_from_path, export_msexplore_plot, preview_msexplore_flag_edit,
-<a href=#107 id=107 data-nosnippet>107</a>    preview_msexplore_flag_edit_for_request, render_msexplore_plot_image,
-<a href=#108 id=108 data-nosnippet>108</a>};
-<a href=#109 id=109 data-nosnippet>109</a><span class="kw">pub use </span>plot::{
-<a href=#110 id=110 data-nosnippet>110</a>    ListObsPlotExportFormat <span class="kw">as </span>MeasurementSetPlotExportFormat,
-<a href=#111 id=111 data-nosnippet>111</a>    ListObsPlotKind <span class="kw">as </span>MeasurementSetPlotKind, ListObsPlotPayload <span class="kw">as </span>MeasurementSetPlotPayload,
-<a href=#112 id=112 data-nosnippet>112</a>    ListObsPlotRenderStyle <span class="kw">as </span>MeasurementSetPlotRenderStyle,
-<a href=#113 id=113 data-nosnippet>113</a>    ListObsPlotSpec <span class="kw">as </span>MeasurementSetPlotSpec, ListObsPlotTheme <span class="kw">as </span>MeasurementSetPlotTheme,
-<a href=#114 id=114 data-nosnippet>114</a>    build_listobs_plot_payload_from_summary <span class="kw">as </span>build_measurement_set_plot_payload_from_summary,
-<a href=#115 id=115 data-nosnippet>115</a>    build_listobs_uv_plot_payload <span class="kw">as </span>build_measurement_set_uv_plot_payload,
-<a href=#116 id=116 data-nosnippet>116</a>    build_listobs_visibility_plot_payload <span class="kw">as </span>build_measurement_set_visibility_plot_payload,
-<a href=#117 id=117 data-nosnippet>117</a>    export_listobs_plot <span class="kw">as </span>export_measurement_set_plot,
-<a href=#118 id=118 data-nosnippet>118</a>    render_listobs_plot_image <span class="kw">as </span>render_measurement_set_plot_image,
-<a href=#119 id=119 data-nosnippet>119</a>    render_listobs_plot_image_with_style <span class="kw">as </span>render_measurement_set_plot_image_with_style,
-<a href=#120 id=120 data-nosnippet>120</a>};
-<a href=#121 id=121 data-nosnippet>121</a><span class="kw">pub use </span>plot_data::{
-<a href=#122 id=122 data-nosnippet>122</a>    MS_PLOT_DATA_SCHEMA_VERSION, MsPlotData, MsPlotDataAxis, MsPlotDataPanel,
-<a href=#123 id=123 data-nosnippet>123</a>    MsPlotDataPointProvenance, MsPlotDataSeries, build_msexplore_plot_data_from_path,
+<a href=#76 id=76 data-nosnippet>76</a><span class="attr">#[cfg(test)]
+<a href=#77 id=77 data-nosnippet>77</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>test_helpers;
+<a href=#78 id=78 data-nosnippet>78</a>
+<a href=#79 id=79 data-nosnippet>79</a><span class="kw">pub use </span>builder::{MeasurementSetBuilder, MsSchemas};
+<a href=#80 id=80 data-nosnippet>80</a><span class="kw">pub use </span>error::{MsError, MsResult};
+<a href=#81 id=81 data-nosnippet>81</a><span class="kw">pub use </span>flagging::{
+<a href=#82 id=82 data-nosnippet>82</a>    FlagDataAction, FlagDataColumn, FlagDataMode, FlagDataReport, FlagDataRequest, FlagMerge,
+<a href=#83 id=83 data-nosnippet>83</a>    FlagVersionEntry, FlaggingError, QuackMode, delete_flag_version, flagdata, flagdata_path,
+<a href=#84 id=84 data-nosnippet>84</a>    list_flag_versions, rename_flag_version, restore_flag_version, save_flag_version,
+<a href=#85 id=85 data-nosnippet>85</a>};
+<a href=#86 id=86 data-nosnippet>86</a><span class="kw">pub use </span>listobs::{
+<a href=#87 id=87 data-nosnippet>87</a>    ListObsOptions <span class="kw">as </span>MeasurementSetSummaryOptions,
+<a href=#88 id=88 data-nosnippet>88</a>    ListObsOutputFormat <span class="kw">as </span>MeasurementSetSummaryOutputFormat,
+<a href=#89 id=89 data-nosnippet>89</a>    ListObsSummary <span class="kw">as </span>MeasurementSetSummary, ListObsUvCoverage <span class="kw">as </span>MeasurementSetUvCoverage,
+<a href=#90 id=90 data-nosnippet>90</a>    ListObsUvPoint <span class="kw">as </span>MeasurementSetUvPoint, ListObsUvTrack <span class="kw">as </span>MeasurementSetUvTrack,
+<a href=#91 id=91 data-nosnippet>91</a>};
+<a href=#92 id=92 data-nosnippet>92</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span>listobs::{ListObsOptions, ListObsSummary, ListObsUvCoverage};
+<a href=#93 id=93 data-nosnippet>93</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span>ms::MainRowSelectionFact;
+<a href=#94 id=94 data-nosnippet>94</a><span class="kw">pub use </span>ms::MeasurementSet;
+<a href=#95 id=95 data-nosnippet>95</a><span class="kw">pub use </span>msexplore::task_contract::{
+<a href=#96 id=96 data-nosnippet>96</a>    MSEXPLORE_TASK_PROTOCOL_NAME, MSEXPLORE_TASK_PROTOCOL_VERSION, MsExploreFlagEditRequest,
+<a href=#97 id=97 data-nosnippet>97</a>    MsExplorePlotArtifact, MsExplorePlotExportRequest, MsExploreRunTaskRequest,
+<a href=#98 id=98 data-nosnippet>98</a>    MsExploreRunTaskResult, MsExploreTaskRequest, MsExploreTaskResult,
+<a href=#99 id=99 data-nosnippet>99</a>    msexplore_protocol_descriptor, msexplore_task_schema_bundle,
+<a href=#100 id=100 data-nosnippet>100</a>};
+<a href=#101 id=101 data-nosnippet>101</a><span class="kw">pub use </span>msexplore::{
+<a href=#102 id=102 data-nosnippet>102</a>    DEFAULT_MAX_PLOT_POINTS, MsAverageSpec, MsAxis, MsColorAxis, MsDataColumn, MsExploreSpec,
+<a href=#103 id=103 data-nosnippet>103</a>    MsExportFormat, MsFlagAction, MsFlagEditPreview, MsFlagEditSpec, MsFlagRegion, MsFlagRowEdit,
+<a href=#104 id=104 data-nosnippet>104</a>    MsFlagSampleEdit, MsIterationAxis, MsIterationSpec, MsLayoutSpec, MsLegendPosition,
+<a href=#105 id=105 data-nosnippet>105</a>    MsPageExportRange, MsPageHeaderItem, MsPlotPayload, MsPlotPreset, MsPlotSpec, MsPlotStyleSpec,
+<a href=#106 id=106 data-nosnippet>106</a>    MsScatterGridPayload, MsScatterPageItemPayload, MsScatterPagePayload, MsScatterPanelPayload,
+<a href=#107 id=107 data-nosnippet>107</a>    MsScatterPlotPayload, MsScatterPointRef, MsScatterSeries, MsTransformSpec,
+<a href=#108 id=108 data-nosnippet>108</a>    apply_msexplore_flag_edit, apply_msexplore_flag_edit_for_request, build_msexplore_payload,
+<a href=#109 id=109 data-nosnippet>109</a>    build_msexplore_payload_from_spec, build_msexplore_plot_payload,
+<a href=#110 id=110 data-nosnippet>110</a>    build_msexplore_plot_payload_from_path, export_msexplore_plot, preview_msexplore_flag_edit,
+<a href=#111 id=111 data-nosnippet>111</a>    preview_msexplore_flag_edit_for_request, render_msexplore_plot_image,
+<a href=#112 id=112 data-nosnippet>112</a>};
+<a href=#113 id=113 data-nosnippet>113</a><span class="kw">pub use </span>plot::{
+<a href=#114 id=114 data-nosnippet>114</a>    ListObsPlotExportFormat <span class="kw">as </span>MeasurementSetPlotExportFormat,
+<a href=#115 id=115 data-nosnippet>115</a>    ListObsPlotKind <span class="kw">as </span>MeasurementSetPlotKind, ListObsPlotPayload <span class="kw">as </span>MeasurementSetPlotPayload,
+<a href=#116 id=116 data-nosnippet>116</a>    ListObsPlotRenderStyle <span class="kw">as </span>MeasurementSetPlotRenderStyle,
+<a href=#117 id=117 data-nosnippet>117</a>    ListObsPlotSpec <span class="kw">as </span>MeasurementSetPlotSpec, ListObsPlotTheme <span class="kw">as </span>MeasurementSetPlotTheme,
+<a href=#118 id=118 data-nosnippet>118</a>    build_listobs_plot_payload_from_summary <span class="kw">as </span>build_measurement_set_plot_payload_from_summary,
+<a href=#119 id=119 data-nosnippet>119</a>    build_listobs_uv_plot_payload <span class="kw">as </span>build_measurement_set_uv_plot_payload,
+<a href=#120 id=120 data-nosnippet>120</a>    build_listobs_visibility_plot_payload <span class="kw">as </span>build_measurement_set_visibility_plot_payload,
+<a href=#121 id=121 data-nosnippet>121</a>    export_listobs_plot <span class="kw">as </span>export_measurement_set_plot,
+<a href=#122 id=122 data-nosnippet>122</a>    render_listobs_plot_image <span class="kw">as </span>render_measurement_set_plot_image,
+<a href=#123 id=123 data-nosnippet>123</a>    render_listobs_plot_image_with_style <span class="kw">as </span>render_measurement_set_plot_image_with_style,
 <a href=#124 id=124 data-nosnippet>124</a>};
-<a href=#125 id=125 data-nosnippet>125</a><span class="kw">pub use </span>probes::{
-<a href=#126 id=126 data-nosnippet>126</a>    MeasurementSetContext, MeasurementSetNamedContext, MeasurementSetObservationContext,
-<a href=#127 id=127 data-nosnippet>127</a>    MeasurementSetSpectralWindowContext, MeasurementSetSubtableContext, MeasurementSetTimeRange,
-<a href=#128 id=128 data-nosnippet>128</a>    MeasurementSetUvRange,
-<a href=#129 id=129 data-nosnippet>129</a>};
-<a href=#130 id=130 data-nosnippet>130</a><span class="kw">pub use </span>schema::SubtableId;
-<a href=#131 id=131 data-nosnippet>131</a><span class="kw">pub use </span>schema::main_table::{OptionalMainColumn, VisibilityDataColumn};
-<a href=#132 id=132 data-nosnippet>132</a><span class="kw">pub use </span>selection::syntax::{
-<a href=#133 id=133 data-nosnippet>133</a>    ChannelSelection, ChannelSelectionSegment, SpwSelector, parse_numeric_id_selector,
-<a href=#134 id=134 data-nosnippet>134</a>    parse_spw_selector,
-<a href=#135 id=135 data-nosnippet>135</a>};
-<a href=#136 id=136 data-nosnippet>136</a><span class="kw">pub use </span>selection::{
-<a href=#137 id=137 data-nosnippet>137</a>    MsReadPlan, MsSelection, MsSelectionError, MsSelectionIoBudget, MsSelectionRowBlock,
-<a href=#138 id=138 data-nosnippet>138</a>    MsSelectorEditContext, ResolvedMsSelection, ResolvedMsSelectionRow, validate_ms_selector_edit,
-<a href=#139 id=139 data-nosnippet>139</a>};
-<a href=#140 id=140 data-nosnippet>140</a><span class="kw">pub use </span>simulation::{
-<a href=#141 id=141 data-nosnippet>141</a>    SyntheticAnalyticComponent, SyntheticAnalyticComponentModel, SyntheticAnalyticSpectrum,
-<a href=#142 id=142 data-nosnippet>142</a>    SyntheticAntenna, SyntheticBandpassCorruption, SyntheticBandpassMode,
-<a href=#143 id=143 data-nosnippet>143</a>    SyntheticCorruptionConfig, SyntheticField, SyntheticGainCorruption, SyntheticGainMode,
-<a href=#144 id=144 data-nosnippet>144</a>    SyntheticNoiseCorruption, SyntheticNoiseMode, SyntheticObservationMode,
-<a href=#145 id=145 data-nosnippet>145</a>    SyntheticObservationReport, SyntheticObservationRequest, SyntheticPointingCorruption,
-<a href=#146 id=146 data-nosnippet>146</a>    SyntheticPolarizationBasis, SyntheticPolarizationLeakageCorruption,
-<a href=#147 id=147 data-nosnippet>147</a>    SyntheticPolarizationLeakageMode, SyntheticPolarizationSetup, SyntheticSkyModel,
-<a href=#148 id=148 data-nosnippet>148</a>    SyntheticSpectralSetup, SyntheticWorkerPolicy, generate_synthetic_observation_ms,
-<a href=#149 id=149 data-nosnippet>149</a>    tutorial_vla_a_antennas,
-<a href=#150 id=150 data-nosnippet>150</a>};
-<a href=#151 id=151 data-nosnippet>151</a><span class="kw">pub use </span>simulation_task::{
-<a href=#152 id=152 data-nosnippet>152</a>    SIMOBSERVE_TASK_PROTOCOL_NAME, SIMOBSERVE_TASK_PROTOCOL_VERSION, SimobserveFamilyManifest,
-<a href=#153 id=153 data-nosnippet>153</a>    SimobserveFamilyTaskRequest, SimobserveFamilyTaskResult, SimobserveRunTaskRequest,
-<a href=#154 id=154 data-nosnippet>154</a>    SimobserveRunTaskResult, SimobserveTaskRequest, SimobserveTaskResult,
-<a href=#155 id=155 data-nosnippet>155</a>    simobserve_protocol_descriptor, simobserve_task_schema_bundle,
+<a href=#125 id=125 data-nosnippet>125</a><span class="kw">pub use </span>plot_data::{
+<a href=#126 id=126 data-nosnippet>126</a>    MS_PLOT_DATA_SCHEMA_VERSION, MsPlotData, MsPlotDataAxis, MsPlotDataPanel,
+<a href=#127 id=127 data-nosnippet>127</a>    MsPlotDataPointProvenance, MsPlotDataSeries, build_msexplore_plot_data_from_path,
+<a href=#128 id=128 data-nosnippet>128</a>};
+<a href=#129 id=129 data-nosnippet>129</a><span class="kw">pub use </span>probes::{
+<a href=#130 id=130 data-nosnippet>130</a>    MeasurementSetContext, MeasurementSetNamedContext, MeasurementSetObservationContext,
+<a href=#131 id=131 data-nosnippet>131</a>    MeasurementSetSpectralWindowContext, MeasurementSetSubtableContext, MeasurementSetTimeRange,
+<a href=#132 id=132 data-nosnippet>132</a>    MeasurementSetUvRange,
+<a href=#133 id=133 data-nosnippet>133</a>};
+<a href=#134 id=134 data-nosnippet>134</a><span class="kw">pub use </span>schema::SubtableId;
+<a href=#135 id=135 data-nosnippet>135</a><span class="kw">pub use </span>schema::main_table::{OptionalMainColumn, VisibilityDataColumn};
+<a href=#136 id=136 data-nosnippet>136</a><span class="kw">pub use </span>selected_observation::{
+<a href=#137 id=137 data-nosnippet>137</a>    BoundObservationSourceError, BoundSelectedObservation, BoundSelectedObservationError,
+<a href=#138 id=138 data-nosnippet>138</a>    ObservationSourceBinding, SelectedObservationCompletion, SelectedObservationContentBudget,
+<a href=#139 id=139 data-nosnippet>139</a>    SelectedObservationMeasures, SelectedObservationMeasuresError, SelectedObservationRow,
+<a href=#140 id=140 data-nosnippet>140</a>    SelectedObservationRowSelection, SelectedObservationTraversalError,
+<a href=#141 id=141 data-nosnippet>141</a>};
+<a href=#142 id=142 data-nosnippet>142</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span>selected_observation_buffer::{
+<a href=#143 id=143 data-nosnippet>143</a>    SelectedObservationBuffer, SelectedObservationBufferRequest, SelectedStoredSample,
+<a href=#144 id=144 data-nosnippet>144</a>    SelectedStoredVisibility, SelectedVisibilityColumn, SelectedWeightColumn,
+<a href=#145 id=145 data-nosnippet>145</a>};
+<a href=#146 id=146 data-nosnippet>146</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span>selected_pointing::{
+<a href=#147 id=147 data-nosnippet>147</a>    PointingDirectionBracket, PointingDirectionColumn, PointingDirectionQuery, PointingReadPlan,
+<a href=#148 id=148 data-nosnippet>148</a>};
+<a href=#149 id=149 data-nosnippet>149</a><span class="kw">pub use </span>selection::syntax::{
+<a href=#150 id=150 data-nosnippet>150</a>    ChannelSelection, ChannelSelectionSegment, SpwSelector, parse_numeric_id_selector,
+<a href=#151 id=151 data-nosnippet>151</a>    parse_spw_selector,
+<a href=#152 id=152 data-nosnippet>152</a>};
+<a href=#153 id=153 data-nosnippet>153</a><span class="kw">pub use </span>selection::{
+<a href=#154 id=154 data-nosnippet>154</a>    MsReadPlan, MsSelection, MsSelectionError, MsSelectionIoBudget, MsSelectionRowBlock,
+<a href=#155 id=155 data-nosnippet>155</a>    MsSelectorEditContext, ResolvedMsSelection, ResolvedMsSelectionRow, validate_ms_selector_edit,
 <a href=#156 id=156 data-nosnippet>156</a>};
-<a href=#157 id=157 data-nosnippet>157</a><span class="kw">pub use </span>spectral_selection::{
-<a href=#158 id=158 data-nosnippet>158</a>    CubeAxisConfig, CubeAxisValue, CubeChannelContribution, CubeInterpolation, CubeSpecMode,
-<a href=#159 id=159 data-nosnippet>159</a>    CubeSpectralSetup, ResolvedChannelSelection, convert_frequency_to_frame,
-<a href=#160 id=160 data-nosnippet>160</a>    convert_frequency_to_frame_with_frame, parse_rest_frequency_hz,
-<a href=#161 id=161 data-nosnippet>161</a>    resolve_channel_selector_selection, resolve_contiguous_channel_selection,
-<a href=#162 id=162 data-nosnippet>162</a>    velocity_ms_from_frequency_hz,
-<a href=#163 id=163 data-nosnippet>163</a>};
-<a href=#164 id=164 data-nosnippet>164</a><span class="kw">pub use </span>subtables::{
-<a href=#165 id=165 data-nosnippet>165</a>    MsAntenna, MsAntennaMut, MsDataDescription, MsDataDescriptionMut, MsDoppler, MsDopplerMut,
-<a href=#166 id=166 data-nosnippet>166</a>    MsFeed, MsFeedMut, MsField, MsFieldMut, MsFlagCmd, MsFlagCmdMut, MsFreqOffset, MsFreqOffsetMut,
-<a href=#167 id=167 data-nosnippet>167</a>    MsHistory, MsHistoryMut, MsObservation, MsObservationMut, MsPointing, MsPointingMut,
-<a href=#168 id=168 data-nosnippet>168</a>    MsPolarization, MsPolarizationMut, MsProcessor, MsProcessorMut, MsSource, MsSourceMut,
-<a href=#169 id=169 data-nosnippet>169</a>    MsSpectralWindow, MsSpectralWindowMut, MsState, MsStateMut, MsSysCal, MsSysCalMut, MsWeather,
-<a href=#170 id=170 data-nosnippet>170</a>    MsWeatherMut, SubTable,
-<a href=#171 id=171 data-nosnippet>171</a>};
-<a href=#172 id=172 data-nosnippet>172</a><span class="kw">pub use </span>task_contract::{
-<a href=#173 id=173 data-nosnippet>173</a>    FlagDataTaskRequest, FlagManagerMutationResult, FlagManagerTaskRequest, FlagManagerTaskResult,
-<a href=#174 id=174 data-nosnippet>174</a>    MsTransformTaskRequest, flagdata_task_schema_bundle, flagmanager_task_schema_bundle,
-<a href=#175 id=175 data-nosnippet>175</a>    mstransform_task_schema_bundle,
-<a href=#176 id=176 data-nosnippet>176</a>};
-<a href=#177 id=177 data-nosnippet>177</a><span class="kw">pub use </span>transform::{
-<a href=#178 id=178 data-nosnippet>178</a>    MsTransformError, MsTransformReport, MsTransformRequest, TransformDataColumn, mstransform,
-<a href=#179 id=179 data-nosnippet>179</a>};
-<a href=#180 id=180 data-nosnippet>180</a><span class="kw">pub use </span>visibility_buffer::{
-<a href=#181 id=181 data-nosnippet>181</a>    SourcePartition, SourcePartitionId, VisibilityBuffer, VisibilityBufferAllocationReport,
-<a href=#182 id=182 data-nosnippet>182</a>    VisibilityBufferColumnReport, VisibilityBufferFillReport, VisibilityBufferRequest,
-<a href=#183 id=183 data-nosnippet>183</a>    VisibilityBufferTimings, VisibilityChannelReadGranularity, VisibilityChannelReadRange,
-<a href=#184 id=184 data-nosnippet>184</a>    VisibilityComplexSamples, VisibilityFloatSamples, VisibilityReadBlockPlan, VisibilityShape,
-<a href=#185 id=185 data-nosnippet>185</a>};
-<a href=#186 id=186 data-nosnippet>186</a><span class="kw">pub use </span>write_session::{
-<a href=#187 id=187 data-nosnippet>187</a>    MeasurementSetArrayColumnPlan, MeasurementSetArrayShapePlan, MeasurementSetColumnStorage,
-<a href=#188 id=188 data-nosnippet>188</a>    MeasurementSetColumnWriteMode, MeasurementSetColumnWriteTelemetry, MeasurementSetCreateTarget,
-<a href=#189 id=189 data-nosnippet>189</a>    MeasurementSetMutationBatch, MeasurementSetMutationColumnBatch,
-<a href=#190 id=190 data-nosnippet>190</a>    MeasurementSetMutationColumnValues, MeasurementSetScalarColumnPlan,
-<a href=#191 id=191 data-nosnippet>191</a>    MeasurementSetWriteColumnPlan, MeasurementSetWriteError, MeasurementSetWriteOperation,
-<a href=#192 id=192 data-nosnippet>192</a>    MeasurementSetWritePlan, MeasurementSetWriteResources, MeasurementSetWriteSession,
-<a href=#193 id=193 data-nosnippet>193</a>    MeasurementSetWriteTelemetry, maximum_visibility_cell_elements,
-<a href=#194 id=194 data-nosnippet>194</a>    standard_main_scalar_column_plans,
-<a href=#195 id=195 data-nosnippet>195</a>};
-<a href=#196 id=196 data-nosnippet>196</a>
-<a href=#197 id=197 data-nosnippet>197</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>open_measures_runtime()
-<a href=#198 id=198 data-nosnippet>198</a>-&gt; MsResult&lt;std::sync::Arc&lt;<span class="kw">dyn </span>casa_types::measures::MeasuresProvider&gt;&gt; {
-<a href=#199 id=199 data-nosnippet>199</a>    <span class="attr">#[cfg(test)]
-<a href=#200 id=200 data-nosnippet>200</a>    </span>{
-<a href=#201 id=201 data-nosnippet>201</a>        <span class="prelude-val">Ok</span>(casa_test_support::deterministic_measures_provider())
-<a href=#202 id=202 data-nosnippet>202</a>    }
-<a href=#203 id=203 data-nosnippet>203</a>    <span class="attr">#[cfg(not(test))]
-<a href=#204 id=204 data-nosnippet>204</a>    </span>{
-<a href=#205 id=205 data-nosnippet>205</a>        casa_measures_data::MeasuresRuntime::open_discovered(Default::default())
-<a href=#206 id=206 data-nosnippet>206</a>            .map(|runtime| {
-<a href=#207 id=207 data-nosnippet>207</a>                <span class="kw">let </span>runtime: std::sync::Arc&lt;<span class="kw">dyn </span>casa_types::measures::MeasuresProvider&gt; =
-<a href=#208 id=208 data-nosnippet>208</a>                    std::sync::Arc::new(runtime);
-<a href=#209 id=209 data-nosnippet>209</a>                runtime
-<a href=#210 id=210 data-nosnippet>210</a>            })
-<a href=#211 id=211 data-nosnippet>211</a>            .map_err(|error| MsError::MeasuresRuntime(error.to_string()))
-<a href=#212 id=212 data-nosnippet>212</a>    }
-<a href=#213 id=213 data-nosnippet>213</a>}
+<a href=#157 id=157 data-nosnippet>157</a><span class="kw">pub use </span>simulation::{
+<a href=#158 id=158 data-nosnippet>158</a>    SyntheticAnalyticComponent, SyntheticAnalyticComponentModel, SyntheticAnalyticSpectrum,
+<a href=#159 id=159 data-nosnippet>159</a>    SyntheticAntenna, SyntheticBandpassCorruption, SyntheticBandpassMode,
+<a href=#160 id=160 data-nosnippet>160</a>    SyntheticCorruptionConfig, SyntheticField, SyntheticGainCorruption, SyntheticGainMode,
+<a href=#161 id=161 data-nosnippet>161</a>    SyntheticNoiseCorruption, SyntheticNoiseMode, SyntheticObservationMode,
+<a href=#162 id=162 data-nosnippet>162</a>    SyntheticObservationReport, SyntheticObservationRequest, SyntheticPointingCorruption,
+<a href=#163 id=163 data-nosnippet>163</a>    SyntheticPolarizationBasis, SyntheticPolarizationLeakageCorruption,
+<a href=#164 id=164 data-nosnippet>164</a>    SyntheticPolarizationLeakageMode, SyntheticPolarizationSetup, SyntheticSkyModel,
+<a href=#165 id=165 data-nosnippet>165</a>    SyntheticSpectralSetup, SyntheticWorkerPolicy, generate_synthetic_observation_ms,
+<a href=#166 id=166 data-nosnippet>166</a>    tutorial_vla_a_antennas,
+<a href=#167 id=167 data-nosnippet>167</a>};
+<a href=#168 id=168 data-nosnippet>168</a><span class="kw">pub use </span>simulation_task::{
+<a href=#169 id=169 data-nosnippet>169</a>    SIMOBSERVE_TASK_PROTOCOL_NAME, SIMOBSERVE_TASK_PROTOCOL_VERSION, SimobserveFamilyManifest,
+<a href=#170 id=170 data-nosnippet>170</a>    SimobserveFamilyTaskRequest, SimobserveFamilyTaskResult, SimobserveRunTaskRequest,
+<a href=#171 id=171 data-nosnippet>171</a>    SimobserveRunTaskResult, SimobserveTaskRequest, SimobserveTaskResult,
+<a href=#172 id=172 data-nosnippet>172</a>    simobserve_protocol_descriptor, simobserve_task_schema_bundle,
+<a href=#173 id=173 data-nosnippet>173</a>};
+<a href=#174 id=174 data-nosnippet>174</a><span class="kw">pub use </span>spectral_selection::{
+<a href=#175 id=175 data-nosnippet>175</a>    CubeAxisConfig, CubeAxisValue, CubeChannelContribution, CubeInterpolation, CubeSpecMode,
+<a href=#176 id=176 data-nosnippet>176</a>    CubeSpectralSetup, ResolvedChannelSelection, convert_frequency_to_frame,
+<a href=#177 id=177 data-nosnippet>177</a>    convert_frequency_to_frame_with_frame, parse_rest_frequency_hz,
+<a href=#178 id=178 data-nosnippet>178</a>    resolve_channel_selector_selection, resolve_contiguous_channel_selection,
+<a href=#179 id=179 data-nosnippet>179</a>    velocity_ms_from_frequency_hz,
+<a href=#180 id=180 data-nosnippet>180</a>};
+<a href=#181 id=181 data-nosnippet>181</a><span class="kw">pub use </span>subtables::{
+<a href=#182 id=182 data-nosnippet>182</a>    MsAntenna, MsAntennaMut, MsDataDescription, MsDataDescriptionMut, MsDoppler, MsDopplerMut,
+<a href=#183 id=183 data-nosnippet>183</a>    MsFeed, MsFeedMut, MsField, MsFieldMut, MsFlagCmd, MsFlagCmdMut, MsFreqOffset, MsFreqOffsetMut,
+<a href=#184 id=184 data-nosnippet>184</a>    MsHistory, MsHistoryMut, MsObservation, MsObservationMut, MsPointing, MsPointingMut,
+<a href=#185 id=185 data-nosnippet>185</a>    MsPolarization, MsPolarizationMut, MsProcessor, MsProcessorMut, MsSource, MsSourceMut,
+<a href=#186 id=186 data-nosnippet>186</a>    MsSpectralWindow, MsSpectralWindowMut, MsState, MsStateMut, MsSysCal, MsSysCalMut, MsWeather,
+<a href=#187 id=187 data-nosnippet>187</a>    MsWeatherMut, SubTable,
+<a href=#188 id=188 data-nosnippet>188</a>};
+<a href=#189 id=189 data-nosnippet>189</a><span class="kw">pub use </span>task_contract::{
+<a href=#190 id=190 data-nosnippet>190</a>    FlagDataTaskRequest, FlagManagerMutationResult, FlagManagerTaskRequest, FlagManagerTaskResult,
+<a href=#191 id=191 data-nosnippet>191</a>    MsTransformTaskRequest, flagdata_task_schema_bundle, flagmanager_task_schema_bundle,
+<a href=#192 id=192 data-nosnippet>192</a>    mstransform_task_schema_bundle,
+<a href=#193 id=193 data-nosnippet>193</a>};
+<a href=#194 id=194 data-nosnippet>194</a><span class="kw">pub use </span>transform::{
+<a href=#195 id=195 data-nosnippet>195</a>    MsTransformError, MsTransformReport, MsTransformRequest, TransformDataColumn, mstransform,
+<a href=#196 id=196 data-nosnippet>196</a>};
+<a href=#197 id=197 data-nosnippet>197</a><span class="kw">pub use </span>visibility_buffer::{
+<a href=#198 id=198 data-nosnippet>198</a>    SourcePartition, SourcePartitionId, VisibilityBuffer, VisibilityBufferAllocationReport,
+<a href=#199 id=199 data-nosnippet>199</a>    VisibilityBufferColumnReport, VisibilityBufferFillReport, VisibilityBufferRequest,
+<a href=#200 id=200 data-nosnippet>200</a>    VisibilityBufferTimings, VisibilityChannelReadGranularity, VisibilityChannelReadRange,
+<a href=#201 id=201 data-nosnippet>201</a>    VisibilityComplexSamples, VisibilityFloatSamples, VisibilityReadBlockPlan, VisibilityShape,
+<a href=#202 id=202 data-nosnippet>202</a>};
+<a href=#203 id=203 data-nosnippet>203</a><span class="kw">pub use </span>write_session::{
+<a href=#204 id=204 data-nosnippet>204</a>    MeasurementSetArrayColumnPlan, MeasurementSetArrayShapePlan, MeasurementSetColumnStorage,
+<a href=#205 id=205 data-nosnippet>205</a>    MeasurementSetColumnWriteMode, MeasurementSetColumnWriteTelemetry, MeasurementSetCreateTarget,
+<a href=#206 id=206 data-nosnippet>206</a>    MeasurementSetMutationBatch, MeasurementSetMutationColumnBatch,
+<a href=#207 id=207 data-nosnippet>207</a>    MeasurementSetMutationColumnValues, MeasurementSetScalarColumnPlan,
+<a href=#208 id=208 data-nosnippet>208</a>    MeasurementSetWriteColumnPlan, MeasurementSetWriteError, MeasurementSetWriteOperation,
+<a href=#209 id=209 data-nosnippet>209</a>    MeasurementSetWritePlan, MeasurementSetWriteResources, MeasurementSetWriteSession,
+<a href=#210 id=210 data-nosnippet>210</a>    MeasurementSetWriteTelemetry, maximum_visibility_cell_elements,
+<a href=#211 id=211 data-nosnippet>211</a>    standard_main_scalar_column_plans,
+<a href=#212 id=212 data-nosnippet>212</a>};
+<a href=#213 id=213 data-nosnippet>213</a>
+<a href=#214 id=214 data-nosnippet>214</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>open_measures_runtime()
+<a href=#215 id=215 data-nosnippet>215</a>-&gt; MsResult&lt;std::sync::Arc&lt;<span class="kw">dyn </span>casa_types::measures::MeasuresProvider&gt;&gt; {
+<a href=#216 id=216 data-nosnippet>216</a>    <span class="attr">#[cfg(test)]
+<a href=#217 id=217 data-nosnippet>217</a>    </span>{
+<a href=#218 id=218 data-nosnippet>218</a>        <span class="prelude-val">Ok</span>(casa_test_support::deterministic_measures_provider())
+<a href=#219 id=219 data-nosnippet>219</a>    }
+<a href=#220 id=220 data-nosnippet>220</a>    <span class="attr">#[cfg(not(test))]
+<a href=#221 id=221 data-nosnippet>221</a>    </span>{
+<a href=#222 id=222 data-nosnippet>222</a>        casa_measures_data::MeasuresRuntime::open_discovered(Default::default())
+<a href=#223 id=223 data-nosnippet>223</a>            .map(|runtime| {
+<a href=#224 id=224 data-nosnippet>224</a>                <span class="kw">let </span>runtime: std::sync::Arc&lt;<span class="kw">dyn </span>casa_types::measures::MeasuresProvider&gt; =
+<a href=#225 id=225 data-nosnippet>225</a>                    std::sync::Arc::new(runtime);
+<a href=#226 id=226 data-nosnippet>226</a>                runtime
+<a href=#227 id=227 data-nosnippet>227</a>            })
+<a href=#228 id=228 data-nosnippet>228</a>            .map_err(|error| MsError::MeasuresRuntime(error.to_string()))
+<a href=#229 id=229 data-nosnippet>229</a>    }
+<a href=#230 id=230 data-nosnippet>230</a>}
 </code></pre></div></section></main></body></html>

@@ -641,7 +641,7 @@
 <a href=#641 id=641 data-nosnippet>641</a>    <span class="prelude-val">Ok</span>(dedup_strings(matches))
 <a href=#642 id=642 data-nosnippet>642</a>}
 <a href=#643 id=643 data-nosnippet>643</a>
-<a href=#644 id=644 data-nosnippet>644</a><span class="kw">fn </span>parse_state_selector(ms: <span class="kw-2">&amp;</span>MeasurementSet, value: <span class="kw-2">&amp;</span>str) -&gt; MsResult&lt;Vec&lt;i32&gt;&gt; {
+<a href=#644 id=644 data-nosnippet>644</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>parse_state_selector(ms: <span class="kw-2">&amp;</span>MeasurementSet, value: <span class="kw-2">&amp;</span>str) -&gt; MsResult&lt;Vec&lt;i32&gt;&gt; {
 <a href=#645 id=645 data-nosnippet>645</a>    <span class="kw">let </span>state = ms.state()<span class="question-mark">?</span>;
 <a href=#646 id=646 data-nosnippet>646</a>    <span class="kw">let </span><span class="kw-2">mut </span>ids = Vec::new();
 <a href=#647 id=647 data-nosnippet>647</a>    <span class="kw">for </span>raw_part <span class="kw">in </span>value.split(<span class="string">','</span>) {
@@ -720,7 +720,7 @@
 <a href=#720 id=720 data-nosnippet>720</a>    <span class="prelude-val">Ok</span>(<span class="macro">format!</span>(<span class="string">"({})"</span>, clauses.join(<span class="string">" OR "</span>)))
 <a href=#721 id=721 data-nosnippet>721</a>}
 <a href=#722 id=722 data-nosnippet>722</a>
-<a href=#723 id=723 data-nosnippet>723</a><span class="kw">fn </span>parse_uvrange_selector(value: <span class="kw-2">&amp;</span>str) -&gt; MsResult&lt;Vec&lt;UvSelectionRange&gt;&gt; {
+<a href=#723 id=723 data-nosnippet>723</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>parse_uvrange_selector(value: <span class="kw-2">&amp;</span>str) -&gt; MsResult&lt;Vec&lt;UvSelectionRange&gt;&gt; {
 <a href=#724 id=724 data-nosnippet>724</a>    value
 <a href=#725 id=725 data-nosnippet>725</a>        .split(<span class="string">','</span>)
 <a href=#726 id=726 data-nosnippet>726</a>        .map(str::trim)

@@ -326,660 +326,668 @@
 <a href=#326 id=326 data-nosnippet>326</a>    <span class="kw">type </span><span class="prelude-val">Err </span>= MeasureError;
 <a href=#327 id=327 data-nosnippet>327</a>
 <a href=#328 id=328 data-nosnippet>328</a>    <span class="kw">fn </span>from_str(s: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, <span class="self">Self</span>::Err&gt; {
-<a href=#329 id=329 data-nosnippet>329</a>        <span class="kw">match </span>s.to_uppercase().as_str() {
-<a href=#330 id=330 data-nosnippet>330</a>            <span class="string">"LAST" </span>=&gt; <span class="prelude-val">Ok</span>(<span class="self">Self</span>::LAST),
-<a href=#331 id=331 data-nosnippet>331</a>            <span class="string">"LMST" </span>=&gt; <span class="prelude-val">Ok</span>(<span class="self">Self</span>::LMST),
-<a href=#332 id=332 data-nosnippet>332</a>            <span class="string">"GMST1" </span>| <span class="string">"GMST" </span>=&gt; <span class="prelude-val">Ok</span>(<span class="self">Self</span>::GMST1),
-<a href=#333 id=333 data-nosnippet>333</a>            <span class="string">"GAST" </span>=&gt; <span class="prelude-val">Ok</span>(<span class="self">Self</span>::GAST),
-<a href=#334 id=334 data-nosnippet>334</a>            <span class="string">"UT1" </span>| <span class="string">"UT" </span>=&gt; <span class="prelude-val">Ok</span>(<span class="self">Self</span>::UT1),
-<a href=#335 id=335 data-nosnippet>335</a>            <span class="string">"UT2" </span>=&gt; <span class="prelude-val">Ok</span>(<span class="self">Self</span>::UT2),
-<a href=#336 id=336 data-nosnippet>336</a>            <span class="string">"UTC" </span>=&gt; <span class="prelude-val">Ok</span>(<span class="self">Self</span>::UTC),
-<a href=#337 id=337 data-nosnippet>337</a>            <span class="string">"TAI" </span>| <span class="string">"IAT" </span>=&gt; <span class="prelude-val">Ok</span>(<span class="self">Self</span>::TAI),
-<a href=#338 id=338 data-nosnippet>338</a>            <span class="string">"TT" </span>| <span class="string">"TDT" </span>| <span class="string">"ET" </span>=&gt; <span class="prelude-val">Ok</span>(<span class="self">Self</span>::TT),
-<a href=#339 id=339 data-nosnippet>339</a>            <span class="string">"TCG" </span>=&gt; <span class="prelude-val">Ok</span>(<span class="self">Self</span>::TCG),
-<a href=#340 id=340 data-nosnippet>340</a>            <span class="string">"TDB" </span>=&gt; <span class="prelude-val">Ok</span>(<span class="self">Self</span>::TDB),
-<a href=#341 id=341 data-nosnippet>341</a>            <span class="string">"TCB" </span>=&gt; <span class="prelude-val">Ok</span>(<span class="self">Self</span>::TCB),
-<a href=#342 id=342 data-nosnippet>342</a>            <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(MeasureError::UnknownRefType {
-<a href=#343 id=343 data-nosnippet>343</a>                input: s.to_owned(),
-<a href=#344 id=344 data-nosnippet>344</a>            }),
-<a href=#345 id=345 data-nosnippet>345</a>        }
-<a href=#346 id=346 data-nosnippet>346</a>    }
-<a href=#347 id=347 data-nosnippet>347</a>}
-<a href=#348 id=348 data-nosnippet>348</a>
-<a href=#349 id=349 data-nosnippet>349</a><span class="kw">impl </span>fmt::Display <span class="kw">for </span>EpochRef {
-<a href=#350 id=350 data-nosnippet>350</a>    <span class="kw">fn </span>fmt(<span class="kw-2">&amp;</span><span class="self">self</span>, f: <span class="kw-2">&amp;mut </span>fmt::Formatter&lt;<span class="lifetime">'_</span>&gt;) -&gt; fmt::Result {
-<a href=#351 id=351 data-nosnippet>351</a>        f.write_str(<span class="self">self</span>.as_str())
-<a href=#352 id=352 data-nosnippet>352</a>    }
-<a href=#353 id=353 data-nosnippet>353</a>}
-<a href=#354 id=354 data-nosnippet>354</a>
-<a href=#355 id=355 data-nosnippet>355</a><span class="comment">// ---------------------------------------------------------------------------
-<a href=#356 id=356 data-nosnippet>356</a>// MEpoch
-<a href=#357 id=357 data-nosnippet>357</a>// ---------------------------------------------------------------------------
-<a href=#358 id=358 data-nosnippet>358</a>
-<a href=#359 id=359 data-nosnippet>359</a></span><span class="doccomment">/// An epoch measure: a time instant in a specified reference frame.
-<a href=#360 id=360 data-nosnippet>360</a>///
-<a href=#361 id=361 data-nosnippet>361</a>/// `MEpoch` pairs a high-precision MJD value ([`MjdHighPrec`]) with a
-<a href=#362 id=362 data-nosnippet>362</a>/// time-scale reference ([`EpochRef`]). It is the Rust equivalent of C++
-<a href=#363 id=363 data-nosnippet>363</a>/// `casa::MEpoch`.
-<a href=#364 id=364 data-nosnippet>364</a>///
-<a href=#365 id=365 data-nosnippet>365</a>/// # Conversions
-<a href=#366 id=366 data-nosnippet>366</a>///
-<a href=#367 id=367 data-nosnippet>367</a>/// Use [`convert_to`](MEpoch::convert_to) to transform between reference
-<a href=#368 id=368 data-nosnippet>368</a>/// frames. Most conversions are handled by the IAU SOFA algorithms via
-<a href=#369 id=369 data-nosnippet>369</a>/// [`sofars`]. Some conversions require auxiliary data in a [`MeasFrame`]:
-<a href=#370 id=370 data-nosnippet>370</a>///
-<a href=#371 id=371 data-nosnippet>371</a>/// - UT1 ↔ UTC requires `dut1_seconds` (the UT1−UTC offset).
-<a href=#372 id=372 data-nosnippet>372</a>/// - GMST1 ↔ LMST requires a position (for the observatory longitude).
-<a href=#373 id=373 data-nosnippet>373</a>///
-<a href=#374 id=374 data-nosnippet>374</a>/// # Examples
-<a href=#375 id=375 data-nosnippet>375</a>///
-<a href=#376 id=376 data-nosnippet>376</a>/// ```no_run
-<a href=#377 id=377 data-nosnippet>377</a>/// use std::sync::Arc;
-<a href=#378 id=378 data-nosnippet>378</a>/// use casa_types::measures::{MEpoch, EpochRef, MeasFrame, MeasuresProvider};
-<a href=#379 id=379 data-nosnippet>379</a>///
-<a href=#380 id=380 data-nosnippet>380</a>/// # fn application_measures_provider() -&gt; Arc&lt;dyn MeasuresProvider&gt; {
-<a href=#381 id=381 data-nosnippet>381</a>/// #     todo!("open and inject the application's measures runtime")
-<a href=#382 id=382 data-nosnippet>382</a>/// # }
+<a href=#329 id=329 data-nosnippet>329</a>        <span class="kw">let </span>references = [
+<a href=#330 id=330 data-nosnippet>330</a>            (<span class="string">"LAST"</span>, <span class="self">Self</span>::LAST),
+<a href=#331 id=331 data-nosnippet>331</a>            (<span class="string">"LMST"</span>, <span class="self">Self</span>::LMST),
+<a href=#332 id=332 data-nosnippet>332</a>            (<span class="string">"GMST1"</span>, <span class="self">Self</span>::GMST1),
+<a href=#333 id=333 data-nosnippet>333</a>            (<span class="string">"GMST"</span>, <span class="self">Self</span>::GMST1),
+<a href=#334 id=334 data-nosnippet>334</a>            (<span class="string">"GAST"</span>, <span class="self">Self</span>::GAST),
+<a href=#335 id=335 data-nosnippet>335</a>            (<span class="string">"UT1"</span>, <span class="self">Self</span>::UT1),
+<a href=#336 id=336 data-nosnippet>336</a>            (<span class="string">"UT"</span>, <span class="self">Self</span>::UT1),
+<a href=#337 id=337 data-nosnippet>337</a>            (<span class="string">"UT2"</span>, <span class="self">Self</span>::UT2),
+<a href=#338 id=338 data-nosnippet>338</a>            (<span class="string">"UTC"</span>, <span class="self">Self</span>::UTC),
+<a href=#339 id=339 data-nosnippet>339</a>            (<span class="string">"TAI"</span>, <span class="self">Self</span>::TAI),
+<a href=#340 id=340 data-nosnippet>340</a>            (<span class="string">"IAT"</span>, <span class="self">Self</span>::TAI),
+<a href=#341 id=341 data-nosnippet>341</a>            (<span class="string">"TT"</span>, <span class="self">Self</span>::TT),
+<a href=#342 id=342 data-nosnippet>342</a>            (<span class="string">"TDT"</span>, <span class="self">Self</span>::TT),
+<a href=#343 id=343 data-nosnippet>343</a>            (<span class="string">"ET"</span>, <span class="self">Self</span>::TT),
+<a href=#344 id=344 data-nosnippet>344</a>            (<span class="string">"TCG"</span>, <span class="self">Self</span>::TCG),
+<a href=#345 id=345 data-nosnippet>345</a>            (<span class="string">"TDB"</span>, <span class="self">Self</span>::TDB),
+<a href=#346 id=346 data-nosnippet>346</a>            (<span class="string">"TCB"</span>, <span class="self">Self</span>::TCB),
+<a href=#347 id=347 data-nosnippet>347</a>        ];
+<a href=#348 id=348 data-nosnippet>348</a>        references
+<a href=#349 id=349 data-nosnippet>349</a>            .into_iter()
+<a href=#350 id=350 data-nosnippet>350</a>            .find_map(|(name, reference)| s.eq_ignore_ascii_case(name).then_some(reference))
+<a href=#351 id=351 data-nosnippet>351</a>            .ok_or_else(|| MeasureError::UnknownRefType {
+<a href=#352 id=352 data-nosnippet>352</a>                input: s.to_owned(),
+<a href=#353 id=353 data-nosnippet>353</a>            })
+<a href=#354 id=354 data-nosnippet>354</a>    }
+<a href=#355 id=355 data-nosnippet>355</a>}
+<a href=#356 id=356 data-nosnippet>356</a>
+<a href=#357 id=357 data-nosnippet>357</a><span class="kw">impl </span>fmt::Display <span class="kw">for </span>EpochRef {
+<a href=#358 id=358 data-nosnippet>358</a>    <span class="kw">fn </span>fmt(<span class="kw-2">&amp;</span><span class="self">self</span>, f: <span class="kw-2">&amp;mut </span>fmt::Formatter&lt;<span class="lifetime">'_</span>&gt;) -&gt; fmt::Result {
+<a href=#359 id=359 data-nosnippet>359</a>        f.write_str(<span class="self">self</span>.as_str())
+<a href=#360 id=360 data-nosnippet>360</a>    }
+<a href=#361 id=361 data-nosnippet>361</a>}
+<a href=#362 id=362 data-nosnippet>362</a>
+<a href=#363 id=363 data-nosnippet>363</a><span class="comment">// ---------------------------------------------------------------------------
+<a href=#364 id=364 data-nosnippet>364</a>// MEpoch
+<a href=#365 id=365 data-nosnippet>365</a>// ---------------------------------------------------------------------------
+<a href=#366 id=366 data-nosnippet>366</a>
+<a href=#367 id=367 data-nosnippet>367</a></span><span class="doccomment">/// An epoch measure: a time instant in a specified reference frame.
+<a href=#368 id=368 data-nosnippet>368</a>///
+<a href=#369 id=369 data-nosnippet>369</a>/// `MEpoch` pairs a high-precision MJD value ([`MjdHighPrec`]) with a
+<a href=#370 id=370 data-nosnippet>370</a>/// time-scale reference ([`EpochRef`]). It is the Rust equivalent of C++
+<a href=#371 id=371 data-nosnippet>371</a>/// `casa::MEpoch`.
+<a href=#372 id=372 data-nosnippet>372</a>///
+<a href=#373 id=373 data-nosnippet>373</a>/// # Conversions
+<a href=#374 id=374 data-nosnippet>374</a>///
+<a href=#375 id=375 data-nosnippet>375</a>/// Use [`convert_to`](MEpoch::convert_to) to transform between reference
+<a href=#376 id=376 data-nosnippet>376</a>/// frames. Most conversions are handled by the IAU SOFA algorithms via
+<a href=#377 id=377 data-nosnippet>377</a>/// [`sofars`]. Some conversions require auxiliary data in a [`MeasFrame`]:
+<a href=#378 id=378 data-nosnippet>378</a>///
+<a href=#379 id=379 data-nosnippet>379</a>/// - UT1 ↔ UTC requires `dut1_seconds` (the UT1−UTC offset).
+<a href=#380 id=380 data-nosnippet>380</a>/// - GMST1 ↔ LMST requires a position (for the observatory longitude).
+<a href=#381 id=381 data-nosnippet>381</a>///
+<a href=#382 id=382 data-nosnippet>382</a>/// # Examples
 <a href=#383 id=383 data-nosnippet>383</a>///
-<a href=#384 id=384 data-nosnippet>384</a>/// let utc = MEpoch::from_mjd(51544.5, EpochRef::UTC);
-<a href=#385 id=385 data-nosnippet>385</a>/// let frame = MeasFrame::new().with_measures(application_measures_provider());
-<a href=#386 id=386 data-nosnippet>386</a>/// let tai = utc.convert_to(EpochRef::TAI, &amp;frame).unwrap();
-<a href=#387 id=387 data-nosnippet>387</a>/// // TAI = UTC + 32s at J2000
-<a href=#388 id=388 data-nosnippet>388</a>/// let diff_s = (tai.value().as_mjd() - utc.value().as_mjd()) * 86400.0;
-<a href=#389 id=389 data-nosnippet>389</a>/// assert!((diff_s - 32.0).abs() &lt; 0.01);
-<a href=#390 id=390 data-nosnippet>390</a>/// ```
-<a href=#391 id=391 data-nosnippet>391</a></span><span class="attr">#[derive(Debug, Clone)]
-<a href=#392 id=392 data-nosnippet>392</a></span><span class="kw">pub struct </span>MEpoch {
-<a href=#393 id=393 data-nosnippet>393</a>    value: MjdHighPrec,
-<a href=#394 id=394 data-nosnippet>394</a>    refer: EpochRef,
-<a href=#395 id=395 data-nosnippet>395</a>}
-<a href=#396 id=396 data-nosnippet>396</a>
-<a href=#397 id=397 data-nosnippet>397</a><span class="kw">impl </span>MEpoch {
-<a href=#398 id=398 data-nosnippet>398</a>    <span class="doccomment">/// Creates a new `MEpoch` from a high-precision value and reference type.
-<a href=#399 id=399 data-nosnippet>399</a>    </span><span class="kw">pub fn </span>new(value: MjdHighPrec, refer: EpochRef) -&gt; <span class="self">Self </span>{
-<a href=#400 id=400 data-nosnippet>400</a>        <span class="self">Self </span>{ value, refer }
-<a href=#401 id=401 data-nosnippet>401</a>    }
-<a href=#402 id=402 data-nosnippet>402</a>
-<a href=#403 id=403 data-nosnippet>403</a>    <span class="doccomment">/// Creates a new `MEpoch` from a single MJD value and reference type.
-<a href=#404 id=404 data-nosnippet>404</a>    </span><span class="kw">pub fn </span>from_mjd(mjd: f64, refer: EpochRef) -&gt; <span class="self">Self </span>{
-<a href=#405 id=405 data-nosnippet>405</a>        <span class="self">Self </span>{
-<a href=#406 id=406 data-nosnippet>406</a>            value: MjdHighPrec::from_mjd(mjd),
-<a href=#407 id=407 data-nosnippet>407</a>            refer,
-<a href=#408 id=408 data-nosnippet>408</a>        }
+<a href=#384 id=384 data-nosnippet>384</a>/// ```no_run
+<a href=#385 id=385 data-nosnippet>385</a>/// use std::sync::Arc;
+<a href=#386 id=386 data-nosnippet>386</a>/// use casa_types::measures::{MEpoch, EpochRef, MeasFrame, MeasuresProvider};
+<a href=#387 id=387 data-nosnippet>387</a>///
+<a href=#388 id=388 data-nosnippet>388</a>/// # fn application_measures_provider() -&gt; Arc&lt;dyn MeasuresProvider&gt; {
+<a href=#389 id=389 data-nosnippet>389</a>/// #     todo!("open and inject the application's measures runtime")
+<a href=#390 id=390 data-nosnippet>390</a>/// # }
+<a href=#391 id=391 data-nosnippet>391</a>///
+<a href=#392 id=392 data-nosnippet>392</a>/// let utc = MEpoch::from_mjd(51544.5, EpochRef::UTC);
+<a href=#393 id=393 data-nosnippet>393</a>/// let frame = MeasFrame::new().with_measures(application_measures_provider());
+<a href=#394 id=394 data-nosnippet>394</a>/// let tai = utc.convert_to(EpochRef::TAI, &amp;frame).unwrap();
+<a href=#395 id=395 data-nosnippet>395</a>/// // TAI = UTC + 32s at J2000
+<a href=#396 id=396 data-nosnippet>396</a>/// let diff_s = (tai.value().as_mjd() - utc.value().as_mjd()) * 86400.0;
+<a href=#397 id=397 data-nosnippet>397</a>/// assert!((diff_s - 32.0).abs() &lt; 0.01);
+<a href=#398 id=398 data-nosnippet>398</a>/// ```
+<a href=#399 id=399 data-nosnippet>399</a></span><span class="attr">#[derive(Debug, Clone)]
+<a href=#400 id=400 data-nosnippet>400</a></span><span class="kw">pub struct </span>MEpoch {
+<a href=#401 id=401 data-nosnippet>401</a>    value: MjdHighPrec,
+<a href=#402 id=402 data-nosnippet>402</a>    refer: EpochRef,
+<a href=#403 id=403 data-nosnippet>403</a>}
+<a href=#404 id=404 data-nosnippet>404</a>
+<a href=#405 id=405 data-nosnippet>405</a><span class="kw">impl </span>MEpoch {
+<a href=#406 id=406 data-nosnippet>406</a>    <span class="doccomment">/// Creates a new `MEpoch` from a high-precision value and reference type.
+<a href=#407 id=407 data-nosnippet>407</a>    </span><span class="kw">pub fn </span>new(value: MjdHighPrec, refer: EpochRef) -&gt; <span class="self">Self </span>{
+<a href=#408 id=408 data-nosnippet>408</a>        <span class="self">Self </span>{ value, refer }
 <a href=#409 id=409 data-nosnippet>409</a>    }
 <a href=#410 id=410 data-nosnippet>410</a>
-<a href=#411 id=411 data-nosnippet>411</a>    <span class="doccomment">/// Creates a new `MEpoch` from a [`Quantity`] (expected in time units) and
-<a href=#412 id=412 data-nosnippet>412</a>    /// reference type.
-<a href=#413 id=413 data-nosnippet>413</a>    ///
-<a href=#414 id=414 data-nosnippet>414</a>    /// The quantity is converted to days (MJD) before storing.
-<a href=#415 id=415 data-nosnippet>415</a>    </span><span class="kw">pub fn </span>from_quantity(q: <span class="kw-2">&amp;</span>Quantity, refer: EpochRef) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, MeasureError&gt; {
-<a href=#416 id=416 data-nosnippet>416</a>        <span class="kw">let </span>day_unit = Unit::new(<span class="string">"d"</span>).expect(<span class="string">"'d' is a valid unit"</span>);
-<a href=#417 id=417 data-nosnippet>417</a>        <span class="kw">let </span>mjd = q
-<a href=#418 id=418 data-nosnippet>418</a>            .get_value_in(<span class="kw-2">&amp;</span>day_unit)
-<a href=#419 id=419 data-nosnippet>419</a>            .map_err(|<span class="kw">_</span>| MeasureError::NonConformantUnit {
-<a href=#420 id=420 data-nosnippet>420</a>                expected: <span class="string">"time"</span>,
-<a href=#421 id=421 data-nosnippet>421</a>                got: q.unit().name().to_owned(),
-<a href=#422 id=422 data-nosnippet>422</a>            })<span class="question-mark">?</span>;
-<a href=#423 id=423 data-nosnippet>423</a>        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
-<a href=#424 id=424 data-nosnippet>424</a>            value: MjdHighPrec::from_mjd(mjd),
-<a href=#425 id=425 data-nosnippet>425</a>            refer,
-<a href=#426 id=426 data-nosnippet>426</a>        })
-<a href=#427 id=427 data-nosnippet>427</a>    }
-<a href=#428 id=428 data-nosnippet>428</a>
-<a href=#429 id=429 data-nosnippet>429</a>    <span class="doccomment">/// Returns the high-precision value.
-<a href=#430 id=430 data-nosnippet>430</a>    </span><span class="kw">pub fn </span>value(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; MjdHighPrec {
-<a href=#431 id=431 data-nosnippet>431</a>        <span class="self">self</span>.value
-<a href=#432 id=432 data-nosnippet>432</a>    }
-<a href=#433 id=433 data-nosnippet>433</a>
-<a href=#434 id=434 data-nosnippet>434</a>    <span class="doccomment">/// Returns the reference type.
-<a href=#435 id=435 data-nosnippet>435</a>    </span><span class="kw">pub fn </span>refer(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; EpochRef {
-<a href=#436 id=436 data-nosnippet>436</a>        <span class="self">self</span>.refer
-<a href=#437 id=437 data-nosnippet>437</a>    }
-<a href=#438 id=438 data-nosnippet>438</a>
-<a href=#439 id=439 data-nosnippet>439</a>    <span class="doccomment">/// Returns the epoch value as a [`Quantity`] in days.
-<a href=#440 id=440 data-nosnippet>440</a>    </span><span class="kw">pub fn </span>as_quantity(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Quantity {
-<a href=#441 id=441 data-nosnippet>441</a>        Quantity::new(<span class="self">self</span>.value.as_mjd(), <span class="string">"d"</span>).expect(<span class="string">"'d' is a valid unit"</span>)
-<a href=#442 id=442 data-nosnippet>442</a>    }
-<a href=#443 id=443 data-nosnippet>443</a>
-<a href=#444 id=444 data-nosnippet>444</a>    <span class="doccomment">/// Converts this epoch to a different reference frame.
-<a href=#445 id=445 data-nosnippet>445</a>    ///
-<a href=#446 id=446 data-nosnippet>446</a>    /// Uses BFS on the routing graph to find the shortest conversion path,
-<a href=#447 id=447 data-nosnippet>447</a>    /// then applies each hop sequentially through sofars functions.
-<a href=#448 id=448 data-nosnippet>448</a>    ///
-<a href=#449 id=449 data-nosnippet>449</a>    /// Some conversions require data in the [`MeasFrame`]:
-<a href=#450 id=450 data-nosnippet>450</a>    /// - UT1 ↔ UTC: requires `dut1_seconds`
-<a href=#451 id=451 data-nosnippet>451</a>    /// - GMST1 ↔ LMST: requires `position` (for longitude)
-<a href=#452 id=452 data-nosnippet>452</a>    /// - UT1 → GMST1: requires the frame to derive TT
-<a href=#453 id=453 data-nosnippet>453</a>    </span><span class="kw">pub fn </span>convert_to(<span class="kw-2">&amp;</span><span class="self">self</span>, target: EpochRef, frame: <span class="kw-2">&amp;</span>MeasFrame) -&gt; <span class="prelude-ty">Result</span>&lt;MEpoch, MeasureError&gt; {
-<a href=#454 id=454 data-nosnippet>454</a>        <span class="kw">if </span><span class="self">self</span>.refer == target {
-<a href=#455 id=455 data-nosnippet>455</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="self">self</span>.clone());
-<a href=#456 id=456 data-nosnippet>456</a>        }
-<a href=#457 id=457 data-nosnippet>457</a>        <span class="kw">let </span>path = find_path(<span class="self">self</span>.refer, target)<span class="question-mark">?</span>;
-<a href=#458 id=458 data-nosnippet>458</a>        <span class="kw">let </span><span class="kw-2">mut </span>current = <span class="self">self</span>.value;
-<a href=#459 id=459 data-nosnippet>459</a>        <span class="kw">let </span><span class="kw-2">mut </span>current_ref = <span class="self">self</span>.refer;
-<a href=#460 id=460 data-nosnippet>460</a>
-<a href=#461 id=461 data-nosnippet>461</a>        <span class="kw">for </span>next_ref <span class="kw">in </span>path {
-<a href=#462 id=462 data-nosnippet>462</a>            current = apply_hop(current, current_ref, next_ref, frame)<span class="question-mark">?</span>;
-<a href=#463 id=463 data-nosnippet>463</a>            current_ref = next_ref;
+<a href=#411 id=411 data-nosnippet>411</a>    <span class="doccomment">/// Creates a new `MEpoch` from a single MJD value and reference type.
+<a href=#412 id=412 data-nosnippet>412</a>    </span><span class="kw">pub fn </span>from_mjd(mjd: f64, refer: EpochRef) -&gt; <span class="self">Self </span>{
+<a href=#413 id=413 data-nosnippet>413</a>        <span class="self">Self </span>{
+<a href=#414 id=414 data-nosnippet>414</a>            value: MjdHighPrec::from_mjd(mjd),
+<a href=#415 id=415 data-nosnippet>415</a>            refer,
+<a href=#416 id=416 data-nosnippet>416</a>        }
+<a href=#417 id=417 data-nosnippet>417</a>    }
+<a href=#418 id=418 data-nosnippet>418</a>
+<a href=#419 id=419 data-nosnippet>419</a>    <span class="doccomment">/// Creates a new `MEpoch` from a [`Quantity`] (expected in time units) and
+<a href=#420 id=420 data-nosnippet>420</a>    /// reference type.
+<a href=#421 id=421 data-nosnippet>421</a>    ///
+<a href=#422 id=422 data-nosnippet>422</a>    /// The quantity is converted to days (MJD) before storing.
+<a href=#423 id=423 data-nosnippet>423</a>    </span><span class="kw">pub fn </span>from_quantity(q: <span class="kw-2">&amp;</span>Quantity, refer: EpochRef) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, MeasureError&gt; {
+<a href=#424 id=424 data-nosnippet>424</a>        <span class="kw">let </span>day_unit = Unit::new(<span class="string">"d"</span>).expect(<span class="string">"'d' is a valid unit"</span>);
+<a href=#425 id=425 data-nosnippet>425</a>        <span class="kw">let </span>mjd = q
+<a href=#426 id=426 data-nosnippet>426</a>            .get_value_in(<span class="kw-2">&amp;</span>day_unit)
+<a href=#427 id=427 data-nosnippet>427</a>            .map_err(|<span class="kw">_</span>| MeasureError::NonConformantUnit {
+<a href=#428 id=428 data-nosnippet>428</a>                expected: <span class="string">"time"</span>,
+<a href=#429 id=429 data-nosnippet>429</a>                got: q.unit().name().to_owned(),
+<a href=#430 id=430 data-nosnippet>430</a>            })<span class="question-mark">?</span>;
+<a href=#431 id=431 data-nosnippet>431</a>        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
+<a href=#432 id=432 data-nosnippet>432</a>            value: MjdHighPrec::from_mjd(mjd),
+<a href=#433 id=433 data-nosnippet>433</a>            refer,
+<a href=#434 id=434 data-nosnippet>434</a>        })
+<a href=#435 id=435 data-nosnippet>435</a>    }
+<a href=#436 id=436 data-nosnippet>436</a>
+<a href=#437 id=437 data-nosnippet>437</a>    <span class="doccomment">/// Returns the high-precision value.
+<a href=#438 id=438 data-nosnippet>438</a>    </span><span class="kw">pub fn </span>value(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; MjdHighPrec {
+<a href=#439 id=439 data-nosnippet>439</a>        <span class="self">self</span>.value
+<a href=#440 id=440 data-nosnippet>440</a>    }
+<a href=#441 id=441 data-nosnippet>441</a>
+<a href=#442 id=442 data-nosnippet>442</a>    <span class="doccomment">/// Returns the reference type.
+<a href=#443 id=443 data-nosnippet>443</a>    </span><span class="kw">pub fn </span>refer(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; EpochRef {
+<a href=#444 id=444 data-nosnippet>444</a>        <span class="self">self</span>.refer
+<a href=#445 id=445 data-nosnippet>445</a>    }
+<a href=#446 id=446 data-nosnippet>446</a>
+<a href=#447 id=447 data-nosnippet>447</a>    <span class="doccomment">/// Returns the epoch value as a [`Quantity`] in days.
+<a href=#448 id=448 data-nosnippet>448</a>    </span><span class="kw">pub fn </span>as_quantity(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Quantity {
+<a href=#449 id=449 data-nosnippet>449</a>        Quantity::new(<span class="self">self</span>.value.as_mjd(), <span class="string">"d"</span>).expect(<span class="string">"'d' is a valid unit"</span>)
+<a href=#450 id=450 data-nosnippet>450</a>    }
+<a href=#451 id=451 data-nosnippet>451</a>
+<a href=#452 id=452 data-nosnippet>452</a>    <span class="doccomment">/// Converts this epoch to a different reference frame.
+<a href=#453 id=453 data-nosnippet>453</a>    ///
+<a href=#454 id=454 data-nosnippet>454</a>    /// Uses BFS on the routing graph to find the shortest conversion path,
+<a href=#455 id=455 data-nosnippet>455</a>    /// then applies each hop sequentially through sofars functions.
+<a href=#456 id=456 data-nosnippet>456</a>    ///
+<a href=#457 id=457 data-nosnippet>457</a>    /// Some conversions require data in the [`MeasFrame`]:
+<a href=#458 id=458 data-nosnippet>458</a>    /// - UT1 ↔ UTC: requires `dut1_seconds`
+<a href=#459 id=459 data-nosnippet>459</a>    /// - GMST1 ↔ LMST: requires `position` (for longitude)
+<a href=#460 id=460 data-nosnippet>460</a>    /// - UT1 → GMST1: requires the frame to derive TT
+<a href=#461 id=461 data-nosnippet>461</a>    </span><span class="kw">pub fn </span>convert_to(<span class="kw-2">&amp;</span><span class="self">self</span>, target: EpochRef, frame: <span class="kw-2">&amp;</span>MeasFrame) -&gt; <span class="prelude-ty">Result</span>&lt;MEpoch, MeasureError&gt; {
+<a href=#462 id=462 data-nosnippet>462</a>        <span class="kw">if </span><span class="self">self</span>.refer == target {
+<a href=#463 id=463 data-nosnippet>463</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="self">self</span>.clone());
 <a href=#464 id=464 data-nosnippet>464</a>        }
-<a href=#465 id=465 data-nosnippet>465</a>
-<a href=#466 id=466 data-nosnippet>466</a>        <span class="prelude-val">Ok</span>(MEpoch {
-<a href=#467 id=467 data-nosnippet>467</a>            value: current,
-<a href=#468 id=468 data-nosnippet>468</a>            refer: target,
-<a href=#469 id=469 data-nosnippet>469</a>        })
-<a href=#470 id=470 data-nosnippet>470</a>    }
-<a href=#471 id=471 data-nosnippet>471</a>}
-<a href=#472 id=472 data-nosnippet>472</a>
-<a href=#473 id=473 data-nosnippet>473</a><span class="kw">impl </span>fmt::Display <span class="kw">for </span>MEpoch {
-<a href=#474 id=474 data-nosnippet>474</a>    <span class="kw">fn </span>fmt(<span class="kw-2">&amp;</span><span class="self">self</span>, f: <span class="kw-2">&amp;mut </span>fmt::Formatter&lt;<span class="lifetime">'_</span>&gt;) -&gt; fmt::Result {
-<a href=#475 id=475 data-nosnippet>475</a>        <span class="macro">write!</span>(f, <span class="string">"Epoch: {} {}"</span>, <span class="self">self</span>.value, <span class="self">self</span>.refer)
-<a href=#476 id=476 data-nosnippet>476</a>    }
-<a href=#477 id=477 data-nosnippet>477</a>}
-<a href=#478 id=478 data-nosnippet>478</a>
-<a href=#479 id=479 data-nosnippet>479</a><span class="comment">// ---------------------------------------------------------------------------
-<a href=#480 id=480 data-nosnippet>480</a>// Conversion engine
-<a href=#481 id=481 data-nosnippet>481</a>// ---------------------------------------------------------------------------
-<a href=#482 id=482 data-nosnippet>482</a>
-<a href=#483 id=483 data-nosnippet>483</a></span><span class="doccomment">/// The edges in our conversion routing graph.
-<a href=#484 id=484 data-nosnippet>484</a>/// Each entry is (from, to). The graph is bidirectional — each hop function
-<a href=#485 id=485 data-nosnippet>485</a>/// handles both directions.
-<a href=#486 id=486 data-nosnippet>486</a></span><span class="kw">const </span>ROUTING_EDGES: <span class="kw-2">&amp;</span>[(EpochRef, EpochRef)] = <span class="kw-2">&amp;</span>[
-<a href=#487 id=487 data-nosnippet>487</a>    (EpochRef::UTC, EpochRef::TAI),
-<a href=#488 id=488 data-nosnippet>488</a>    (EpochRef::TAI, EpochRef::TT),
-<a href=#489 id=489 data-nosnippet>489</a>    (EpochRef::TT, EpochRef::TDB),
-<a href=#490 id=490 data-nosnippet>490</a>    (EpochRef::TT, EpochRef::TCG),
-<a href=#491 id=491 data-nosnippet>491</a>    (EpochRef::TDB, EpochRef::TCB),
-<a href=#492 id=492 data-nosnippet>492</a>    (EpochRef::UT1, EpochRef::UTC),
-<a href=#493 id=493 data-nosnippet>493</a>    (EpochRef::UT1, EpochRef::GMST1),
-<a href=#494 id=494 data-nosnippet>494</a>    (EpochRef::GMST1, EpochRef::LMST),
-<a href=#495 id=495 data-nosnippet>495</a>    (EpochRef::UT1, EpochRef::GAST),
-<a href=#496 id=496 data-nosnippet>496</a>    (EpochRef::GAST, EpochRef::LAST),
-<a href=#497 id=497 data-nosnippet>497</a>];
-<a href=#498 id=498 data-nosnippet>498</a>
-<a href=#499 id=499 data-nosnippet>499</a><span class="doccomment">/// Deferred edges that are not yet implemented.
-<a href=#500 id=500 data-nosnippet>500</a></span><span class="kw">const </span>DEFERRED_EDGES: <span class="kw-2">&amp;</span>[(EpochRef, EpochRef)] = <span class="kw-2">&amp;</span>[(EpochRef::UT1, EpochRef::UT2)];
-<a href=#501 id=501 data-nosnippet>501</a>
-<a href=#502 id=502 data-nosnippet>502</a><span class="doccomment">/// Pre-computed BFS paths for all reachable (source, target) pairs.
-<a href=#503 id=503 data-nosnippet>503</a>///
-<a href=#504 id=504 data-nosnippet>504</a>/// The routing graph is static, so paths never change. Computing them once
-<a href=#505 id=505 data-nosnippet>505</a>/// at startup avoids per-call BFS overhead.
-<a href=#506 id=506 data-nosnippet>506</a></span><span class="kw">type </span>EpochPathMap = HashMap&lt;(EpochRef, EpochRef), <span class="prelude-ty">Result</span>&lt;Vec&lt;EpochRef&gt;, PathError&gt;&gt;;
-<a href=#507 id=507 data-nosnippet>507</a>
-<a href=#508 id=508 data-nosnippet>508</a><span class="kw">static </span>PATH_CACHE: LazyLock&lt;EpochPathMap&gt; = LazyLock::new(|| {
-<a href=#509 id=509 data-nosnippet>509</a>    <span class="kw">let </span>all_refs = [
-<a href=#510 id=510 data-nosnippet>510</a>        EpochRef::LAST,
-<a href=#511 id=511 data-nosnippet>511</a>        EpochRef::LMST,
-<a href=#512 id=512 data-nosnippet>512</a>        EpochRef::GMST1,
-<a href=#513 id=513 data-nosnippet>513</a>        EpochRef::GAST,
-<a href=#514 id=514 data-nosnippet>514</a>        EpochRef::UT1,
-<a href=#515 id=515 data-nosnippet>515</a>        EpochRef::UT2,
-<a href=#516 id=516 data-nosnippet>516</a>        EpochRef::UTC,
-<a href=#517 id=517 data-nosnippet>517</a>        EpochRef::TAI,
-<a href=#518 id=518 data-nosnippet>518</a>        EpochRef::TT,
-<a href=#519 id=519 data-nosnippet>519</a>        EpochRef::TCG,
-<a href=#520 id=520 data-nosnippet>520</a>        EpochRef::TDB,
-<a href=#521 id=521 data-nosnippet>521</a>        EpochRef::TCB,
-<a href=#522 id=522 data-nosnippet>522</a>    ];
-<a href=#523 id=523 data-nosnippet>523</a>    <span class="kw">let </span><span class="kw-2">mut </span>cache = HashMap::new();
-<a href=#524 id=524 data-nosnippet>524</a>    <span class="kw">for </span><span class="kw-2">&amp;</span>src <span class="kw">in </span><span class="kw-2">&amp;</span>all_refs {
-<a href=#525 id=525 data-nosnippet>525</a>        <span class="kw">for </span><span class="kw-2">&amp;</span>tgt <span class="kw">in </span><span class="kw-2">&amp;</span>all_refs {
-<a href=#526 id=526 data-nosnippet>526</a>            <span class="kw">if </span>src != tgt {
-<a href=#527 id=527 data-nosnippet>527</a>                cache.insert((src, tgt), bfs_find_path(src, tgt));
-<a href=#528 id=528 data-nosnippet>528</a>            }
-<a href=#529 id=529 data-nosnippet>529</a>        }
-<a href=#530 id=530 data-nosnippet>530</a>    }
-<a href=#531 id=531 data-nosnippet>531</a>    cache
-<a href=#532 id=532 data-nosnippet>532</a>});
-<a href=#533 id=533 data-nosnippet>533</a>
-<a href=#534 id=534 data-nosnippet>534</a><span class="doccomment">/// Error from BFS path finding (before conversion to `MeasureError`).
-<a href=#535 id=535 data-nosnippet>535</a></span><span class="attr">#[derive(Clone, Debug)]
-<a href=#536 id=536 data-nosnippet>536</a></span><span class="kw">enum </span>PathError {
-<a href=#537 id=537 data-nosnippet>537</a>    Deferred(String),
-<a href=#538 id=538 data-nosnippet>538</a>    NoRoute(String),
-<a href=#539 id=539 data-nosnippet>539</a>}
-<a href=#540 id=540 data-nosnippet>540</a>
-<a href=#541 id=541 data-nosnippet>541</a><span class="doccomment">/// Finds the shortest path from `source` to `target` in the routing graph.
-<a href=#542 id=542 data-nosnippet>542</a>///
-<a href=#543 id=543 data-nosnippet>543</a>/// Returns the sequence of intermediate + final reference types to visit
-<a href=#544 id=544 data-nosnippet>544</a>/// (excluding the source). Results are cached in `PATH_CACHE`.
-<a href=#545 id=545 data-nosnippet>545</a></span><span class="kw">fn </span>find_path(source: EpochRef, target: EpochRef) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;EpochRef&gt;, MeasureError&gt; {
-<a href=#546 id=546 data-nosnippet>546</a>    PATH_CACHE
-<a href=#547 id=547 data-nosnippet>547</a>        .get(<span class="kw-2">&amp;</span>(source, target))
-<a href=#548 id=548 data-nosnippet>548</a>        .expect(<span class="string">"all pairs pre-computed"</span>)
-<a href=#549 id=549 data-nosnippet>549</a>        .clone()
-<a href=#550 id=550 data-nosnippet>550</a>        .map_err(|e| <span class="kw">match </span>e {
-<a href=#551 id=551 data-nosnippet>551</a>            PathError::Deferred(route) =&gt; MeasureError::NotYetImplemented { route },
-<a href=#552 id=552 data-nosnippet>552</a>            PathError::NoRoute(route) =&gt; MeasureError::NotYetImplemented { route },
-<a href=#553 id=553 data-nosnippet>553</a>        })
-<a href=#554 id=554 data-nosnippet>554</a>}
-<a href=#555 id=555 data-nosnippet>555</a>
-<a href=#556 id=556 data-nosnippet>556</a><span class="doccomment">/// BFS implementation used to populate the path cache.
-<a href=#557 id=557 data-nosnippet>557</a></span><span class="kw">fn </span>bfs_find_path(source: EpochRef, target: EpochRef) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;EpochRef&gt;, PathError&gt; {
-<a href=#558 id=558 data-nosnippet>558</a>    <span class="kw">let </span><span class="kw-2">mut </span>visited = [<span class="bool-val">false</span>; <span class="number">12</span>];
-<a href=#559 id=559 data-nosnippet>559</a>    <span class="kw">let </span><span class="kw-2">mut </span>parent: [<span class="prelude-ty">Option</span>&lt;EpochRef&gt;; <span class="number">12</span>] = [<span class="prelude-val">None</span>; <span class="number">12</span>];
-<a href=#560 id=560 data-nosnippet>560</a>    <span class="kw">let </span><span class="kw-2">mut </span>queue = VecDeque::new();
-<a href=#561 id=561 data-nosnippet>561</a>
-<a href=#562 id=562 data-nosnippet>562</a>    <span class="kw">let </span>src_idx = epoch_ref_index(source);
-<a href=#563 id=563 data-nosnippet>563</a>    visited[src_idx] = <span class="bool-val">true</span>;
-<a href=#564 id=564 data-nosnippet>564</a>    queue.push_back(source);
-<a href=#565 id=565 data-nosnippet>565</a>
-<a href=#566 id=566 data-nosnippet>566</a>    <span class="kw">let </span><span class="kw-2">mut </span>found = <span class="bool-val">false</span>;
-<a href=#567 id=567 data-nosnippet>567</a>
-<a href=#568 id=568 data-nosnippet>568</a>    <span class="kw">while let </span><span class="prelude-val">Some</span>(current) = queue.pop_front() {
-<a href=#569 id=569 data-nosnippet>569</a>        <span class="kw">if </span>current == target {
-<a href=#570 id=570 data-nosnippet>570</a>            found = <span class="bool-val">true</span>;
-<a href=#571 id=571 data-nosnippet>571</a>            <span class="kw">break</span>;
-<a href=#572 id=572 data-nosnippet>572</a>        }
+<a href=#465 id=465 data-nosnippet>465</a>        <span class="kw">let </span>path = find_path(<span class="self">self</span>.refer, target)<span class="question-mark">?</span>;
+<a href=#466 id=466 data-nosnippet>466</a>        <span class="kw">let </span><span class="kw-2">mut </span>current = <span class="self">self</span>.value;
+<a href=#467 id=467 data-nosnippet>467</a>        <span class="kw">let </span><span class="kw-2">mut </span>current_ref = <span class="self">self</span>.refer;
+<a href=#468 id=468 data-nosnippet>468</a>
+<a href=#469 id=469 data-nosnippet>469</a>        <span class="kw">for </span>next_ref <span class="kw">in </span>path {
+<a href=#470 id=470 data-nosnippet>470</a>            current = apply_hop(current, current_ref, next_ref, frame)<span class="question-mark">?</span>;
+<a href=#471 id=471 data-nosnippet>471</a>            current_ref = next_ref;
+<a href=#472 id=472 data-nosnippet>472</a>        }
+<a href=#473 id=473 data-nosnippet>473</a>
+<a href=#474 id=474 data-nosnippet>474</a>        <span class="prelude-val">Ok</span>(MEpoch {
+<a href=#475 id=475 data-nosnippet>475</a>            value: current,
+<a href=#476 id=476 data-nosnippet>476</a>            refer: target,
+<a href=#477 id=477 data-nosnippet>477</a>        })
+<a href=#478 id=478 data-nosnippet>478</a>    }
+<a href=#479 id=479 data-nosnippet>479</a>}
+<a href=#480 id=480 data-nosnippet>480</a>
+<a href=#481 id=481 data-nosnippet>481</a><span class="kw">impl </span>fmt::Display <span class="kw">for </span>MEpoch {
+<a href=#482 id=482 data-nosnippet>482</a>    <span class="kw">fn </span>fmt(<span class="kw-2">&amp;</span><span class="self">self</span>, f: <span class="kw-2">&amp;mut </span>fmt::Formatter&lt;<span class="lifetime">'_</span>&gt;) -&gt; fmt::Result {
+<a href=#483 id=483 data-nosnippet>483</a>        <span class="macro">write!</span>(f, <span class="string">"Epoch: {} {}"</span>, <span class="self">self</span>.value, <span class="self">self</span>.refer)
+<a href=#484 id=484 data-nosnippet>484</a>    }
+<a href=#485 id=485 data-nosnippet>485</a>}
+<a href=#486 id=486 data-nosnippet>486</a>
+<a href=#487 id=487 data-nosnippet>487</a><span class="comment">// ---------------------------------------------------------------------------
+<a href=#488 id=488 data-nosnippet>488</a>// Conversion engine
+<a href=#489 id=489 data-nosnippet>489</a>// ---------------------------------------------------------------------------
+<a href=#490 id=490 data-nosnippet>490</a>
+<a href=#491 id=491 data-nosnippet>491</a></span><span class="doccomment">/// The edges in our conversion routing graph.
+<a href=#492 id=492 data-nosnippet>492</a>/// Each entry is (from, to). The graph is bidirectional — each hop function
+<a href=#493 id=493 data-nosnippet>493</a>/// handles both directions.
+<a href=#494 id=494 data-nosnippet>494</a></span><span class="kw">const </span>ROUTING_EDGES: <span class="kw-2">&amp;</span>[(EpochRef, EpochRef)] = <span class="kw-2">&amp;</span>[
+<a href=#495 id=495 data-nosnippet>495</a>    (EpochRef::UTC, EpochRef::TAI),
+<a href=#496 id=496 data-nosnippet>496</a>    (EpochRef::TAI, EpochRef::TT),
+<a href=#497 id=497 data-nosnippet>497</a>    (EpochRef::TT, EpochRef::TDB),
+<a href=#498 id=498 data-nosnippet>498</a>    (EpochRef::TT, EpochRef::TCG),
+<a href=#499 id=499 data-nosnippet>499</a>    (EpochRef::TDB, EpochRef::TCB),
+<a href=#500 id=500 data-nosnippet>500</a>    (EpochRef::UT1, EpochRef::UTC),
+<a href=#501 id=501 data-nosnippet>501</a>    (EpochRef::UT1, EpochRef::GMST1),
+<a href=#502 id=502 data-nosnippet>502</a>    (EpochRef::GMST1, EpochRef::LMST),
+<a href=#503 id=503 data-nosnippet>503</a>    (EpochRef::UT1, EpochRef::GAST),
+<a href=#504 id=504 data-nosnippet>504</a>    (EpochRef::GAST, EpochRef::LAST),
+<a href=#505 id=505 data-nosnippet>505</a>];
+<a href=#506 id=506 data-nosnippet>506</a>
+<a href=#507 id=507 data-nosnippet>507</a><span class="doccomment">/// Deferred edges that are not yet implemented.
+<a href=#508 id=508 data-nosnippet>508</a></span><span class="kw">const </span>DEFERRED_EDGES: <span class="kw-2">&amp;</span>[(EpochRef, EpochRef)] = <span class="kw-2">&amp;</span>[(EpochRef::UT1, EpochRef::UT2)];
+<a href=#509 id=509 data-nosnippet>509</a>
+<a href=#510 id=510 data-nosnippet>510</a><span class="doccomment">/// Pre-computed BFS paths for all reachable (source, target) pairs.
+<a href=#511 id=511 data-nosnippet>511</a>///
+<a href=#512 id=512 data-nosnippet>512</a>/// The routing graph is static, so paths never change. Computing them once
+<a href=#513 id=513 data-nosnippet>513</a>/// at startup avoids per-call BFS overhead.
+<a href=#514 id=514 data-nosnippet>514</a></span><span class="kw">type </span>EpochPathMap = HashMap&lt;(EpochRef, EpochRef), <span class="prelude-ty">Result</span>&lt;Vec&lt;EpochRef&gt;, PathError&gt;&gt;;
+<a href=#515 id=515 data-nosnippet>515</a>
+<a href=#516 id=516 data-nosnippet>516</a><span class="kw">static </span>PATH_CACHE: LazyLock&lt;EpochPathMap&gt; = LazyLock::new(|| {
+<a href=#517 id=517 data-nosnippet>517</a>    <span class="kw">let </span>all_refs = [
+<a href=#518 id=518 data-nosnippet>518</a>        EpochRef::LAST,
+<a href=#519 id=519 data-nosnippet>519</a>        EpochRef::LMST,
+<a href=#520 id=520 data-nosnippet>520</a>        EpochRef::GMST1,
+<a href=#521 id=521 data-nosnippet>521</a>        EpochRef::GAST,
+<a href=#522 id=522 data-nosnippet>522</a>        EpochRef::UT1,
+<a href=#523 id=523 data-nosnippet>523</a>        EpochRef::UT2,
+<a href=#524 id=524 data-nosnippet>524</a>        EpochRef::UTC,
+<a href=#525 id=525 data-nosnippet>525</a>        EpochRef::TAI,
+<a href=#526 id=526 data-nosnippet>526</a>        EpochRef::TT,
+<a href=#527 id=527 data-nosnippet>527</a>        EpochRef::TCG,
+<a href=#528 id=528 data-nosnippet>528</a>        EpochRef::TDB,
+<a href=#529 id=529 data-nosnippet>529</a>        EpochRef::TCB,
+<a href=#530 id=530 data-nosnippet>530</a>    ];
+<a href=#531 id=531 data-nosnippet>531</a>    <span class="kw">let </span><span class="kw-2">mut </span>cache = HashMap::new();
+<a href=#532 id=532 data-nosnippet>532</a>    <span class="kw">for </span><span class="kw-2">&amp;</span>src <span class="kw">in </span><span class="kw-2">&amp;</span>all_refs {
+<a href=#533 id=533 data-nosnippet>533</a>        <span class="kw">for </span><span class="kw-2">&amp;</span>tgt <span class="kw">in </span><span class="kw-2">&amp;</span>all_refs {
+<a href=#534 id=534 data-nosnippet>534</a>            <span class="kw">if </span>src != tgt {
+<a href=#535 id=535 data-nosnippet>535</a>                cache.insert((src, tgt), bfs_find_path(src, tgt));
+<a href=#536 id=536 data-nosnippet>536</a>            }
+<a href=#537 id=537 data-nosnippet>537</a>        }
+<a href=#538 id=538 data-nosnippet>538</a>    }
+<a href=#539 id=539 data-nosnippet>539</a>    cache
+<a href=#540 id=540 data-nosnippet>540</a>});
+<a href=#541 id=541 data-nosnippet>541</a>
+<a href=#542 id=542 data-nosnippet>542</a><span class="doccomment">/// Error from BFS path finding (before conversion to `MeasureError`).
+<a href=#543 id=543 data-nosnippet>543</a></span><span class="attr">#[derive(Clone, Debug)]
+<a href=#544 id=544 data-nosnippet>544</a></span><span class="kw">enum </span>PathError {
+<a href=#545 id=545 data-nosnippet>545</a>    Deferred(String),
+<a href=#546 id=546 data-nosnippet>546</a>    NoRoute(String),
+<a href=#547 id=547 data-nosnippet>547</a>}
+<a href=#548 id=548 data-nosnippet>548</a>
+<a href=#549 id=549 data-nosnippet>549</a><span class="doccomment">/// Finds the shortest path from `source` to `target` in the routing graph.
+<a href=#550 id=550 data-nosnippet>550</a>///
+<a href=#551 id=551 data-nosnippet>551</a>/// Returns the sequence of intermediate + final reference types to visit
+<a href=#552 id=552 data-nosnippet>552</a>/// (excluding the source). Results are cached in `PATH_CACHE`.
+<a href=#553 id=553 data-nosnippet>553</a></span><span class="kw">fn </span>find_path(source: EpochRef, target: EpochRef) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;EpochRef&gt;, MeasureError&gt; {
+<a href=#554 id=554 data-nosnippet>554</a>    PATH_CACHE
+<a href=#555 id=555 data-nosnippet>555</a>        .get(<span class="kw-2">&amp;</span>(source, target))
+<a href=#556 id=556 data-nosnippet>556</a>        .expect(<span class="string">"all pairs pre-computed"</span>)
+<a href=#557 id=557 data-nosnippet>557</a>        .clone()
+<a href=#558 id=558 data-nosnippet>558</a>        .map_err(|e| <span class="kw">match </span>e {
+<a href=#559 id=559 data-nosnippet>559</a>            PathError::Deferred(route) =&gt; MeasureError::NotYetImplemented { route },
+<a href=#560 id=560 data-nosnippet>560</a>            PathError::NoRoute(route) =&gt; MeasureError::NotYetImplemented { route },
+<a href=#561 id=561 data-nosnippet>561</a>        })
+<a href=#562 id=562 data-nosnippet>562</a>}
+<a href=#563 id=563 data-nosnippet>563</a>
+<a href=#564 id=564 data-nosnippet>564</a><span class="doccomment">/// BFS implementation used to populate the path cache.
+<a href=#565 id=565 data-nosnippet>565</a></span><span class="kw">fn </span>bfs_find_path(source: EpochRef, target: EpochRef) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;EpochRef&gt;, PathError&gt; {
+<a href=#566 id=566 data-nosnippet>566</a>    <span class="kw">let </span><span class="kw-2">mut </span>visited = [<span class="bool-val">false</span>; <span class="number">12</span>];
+<a href=#567 id=567 data-nosnippet>567</a>    <span class="kw">let </span><span class="kw-2">mut </span>parent: [<span class="prelude-ty">Option</span>&lt;EpochRef&gt;; <span class="number">12</span>] = [<span class="prelude-val">None</span>; <span class="number">12</span>];
+<a href=#568 id=568 data-nosnippet>568</a>    <span class="kw">let </span><span class="kw-2">mut </span>queue = VecDeque::new();
+<a href=#569 id=569 data-nosnippet>569</a>
+<a href=#570 id=570 data-nosnippet>570</a>    <span class="kw">let </span>src_idx = epoch_ref_index(source);
+<a href=#571 id=571 data-nosnippet>571</a>    visited[src_idx] = <span class="bool-val">true</span>;
+<a href=#572 id=572 data-nosnippet>572</a>    queue.push_back(source);
 <a href=#573 id=573 data-nosnippet>573</a>
-<a href=#574 id=574 data-nosnippet>574</a>        <span class="kw">for </span><span class="kw-2">&amp;</span>(a, b) <span class="kw">in </span>ROUTING_EDGES {
-<a href=#575 id=575 data-nosnippet>575</a>            <span class="kw">let </span>neighbor = <span class="kw">if </span>a == current {
-<a href=#576 id=576 data-nosnippet>576</a>                b
-<a href=#577 id=577 data-nosnippet>577</a>            } <span class="kw">else if </span>b == current {
-<a href=#578 id=578 data-nosnippet>578</a>                a
-<a href=#579 id=579 data-nosnippet>579</a>            } <span class="kw">else </span>{
-<a href=#580 id=580 data-nosnippet>580</a>                <span class="kw">continue</span>;
-<a href=#581 id=581 data-nosnippet>581</a>            };
-<a href=#582 id=582 data-nosnippet>582</a>            <span class="kw">let </span>idx = epoch_ref_index(neighbor);
-<a href=#583 id=583 data-nosnippet>583</a>            <span class="kw">if </span>!visited[idx] {
-<a href=#584 id=584 data-nosnippet>584</a>                visited[idx] = <span class="bool-val">true</span>;
-<a href=#585 id=585 data-nosnippet>585</a>                parent[idx] = <span class="prelude-val">Some</span>(current);
-<a href=#586 id=586 data-nosnippet>586</a>                queue.push_back(neighbor);
-<a href=#587 id=587 data-nosnippet>587</a>            }
-<a href=#588 id=588 data-nosnippet>588</a>        }
-<a href=#589 id=589 data-nosnippet>589</a>    }
-<a href=#590 id=590 data-nosnippet>590</a>
-<a href=#591 id=591 data-nosnippet>591</a>    <span class="kw">if </span>found {
-<a href=#592 id=592 data-nosnippet>592</a>        <span class="kw">let </span><span class="kw-2">mut </span>path = Vec::new();
-<a href=#593 id=593 data-nosnippet>593</a>        <span class="kw">let </span><span class="kw-2">mut </span>cur = target;
-<a href=#594 id=594 data-nosnippet>594</a>        <span class="kw">while </span>cur != source {
-<a href=#595 id=595 data-nosnippet>595</a>            path.push(cur);
-<a href=#596 id=596 data-nosnippet>596</a>            cur = parent[epoch_ref_index(cur)].expect(<span class="string">"BFS parent must be set"</span>);
-<a href=#597 id=597 data-nosnippet>597</a>        }
-<a href=#598 id=598 data-nosnippet>598</a>        path.reverse();
-<a href=#599 id=599 data-nosnippet>599</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(path);
-<a href=#600 id=600 data-nosnippet>600</a>    }
-<a href=#601 id=601 data-nosnippet>601</a>
-<a href=#602 id=602 data-nosnippet>602</a>    <span class="comment">// Check if a deferred edge would connect.
-<a href=#603 id=603 data-nosnippet>603</a>    </span><span class="kw">for </span><span class="kw-2">&amp;</span>(a, b) <span class="kw">in </span>DEFERRED_EDGES {
-<a href=#604 id=604 data-nosnippet>604</a>        <span class="kw">if </span>(a == source &amp;&amp; b == target)
-<a href=#605 id=605 data-nosnippet>605</a>            || (b == source &amp;&amp; a == target)
-<a href=#606 id=606 data-nosnippet>606</a>            || (visited[epoch_ref_index(a)] &amp;&amp; b == target)
-<a href=#607 id=607 data-nosnippet>607</a>            || (visited[epoch_ref_index(b)] &amp;&amp; a == target)
-<a href=#608 id=608 data-nosnippet>608</a>            || (a == source &amp;&amp; visited[epoch_ref_index(b)])
-<a href=#609 id=609 data-nosnippet>609</a>            || (b == source &amp;&amp; visited[epoch_ref_index(a)])
-<a href=#610 id=610 data-nosnippet>610</a>        {
-<a href=#611 id=611 data-nosnippet>611</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(PathError::Deferred(<span class="macro">format!</span>(<span class="string">"{source} → {target}"</span>)));
-<a href=#612 id=612 data-nosnippet>612</a>        }
-<a href=#613 id=613 data-nosnippet>613</a>    }
-<a href=#614 id=614 data-nosnippet>614</a>
-<a href=#615 id=615 data-nosnippet>615</a>    <span class="prelude-val">Err</span>(PathError::NoRoute(<span class="macro">format!</span>(
-<a href=#616 id=616 data-nosnippet>616</a>        <span class="string">"{source} → {target} (no route found)"
-<a href=#617 id=617 data-nosnippet>617</a>    </span>)))
-<a href=#618 id=618 data-nosnippet>618</a>}
-<a href=#619 id=619 data-nosnippet>619</a>
-<a href=#620 id=620 data-nosnippet>620</a><span class="doccomment">/// Maps an `EpochRef` variant to a unique index 0..11 for the BFS arrays.
-<a href=#621 id=621 data-nosnippet>621</a></span><span class="kw">fn </span>epoch_ref_index(r: EpochRef) -&gt; usize {
-<a href=#622 id=622 data-nosnippet>622</a>    <span class="kw">match </span>r {
-<a href=#623 id=623 data-nosnippet>623</a>        EpochRef::LAST =&gt; <span class="number">0</span>,
-<a href=#624 id=624 data-nosnippet>624</a>        EpochRef::LMST =&gt; <span class="number">1</span>,
-<a href=#625 id=625 data-nosnippet>625</a>        EpochRef::GMST1 =&gt; <span class="number">2</span>,
-<a href=#626 id=626 data-nosnippet>626</a>        EpochRef::GAST =&gt; <span class="number">3</span>,
-<a href=#627 id=627 data-nosnippet>627</a>        EpochRef::UT1 =&gt; <span class="number">4</span>,
-<a href=#628 id=628 data-nosnippet>628</a>        EpochRef::UT2 =&gt; <span class="number">5</span>,
-<a href=#629 id=629 data-nosnippet>629</a>        EpochRef::UTC =&gt; <span class="number">6</span>,
-<a href=#630 id=630 data-nosnippet>630</a>        EpochRef::TAI =&gt; <span class="number">7</span>,
-<a href=#631 id=631 data-nosnippet>631</a>        EpochRef::TT =&gt; <span class="number">8</span>,
-<a href=#632 id=632 data-nosnippet>632</a>        EpochRef::TCG =&gt; <span class="number">9</span>,
-<a href=#633 id=633 data-nosnippet>633</a>        EpochRef::TDB =&gt; <span class="number">10</span>,
-<a href=#634 id=634 data-nosnippet>634</a>        EpochRef::TCB =&gt; <span class="number">11</span>,
-<a href=#635 id=635 data-nosnippet>635</a>    }
-<a href=#636 id=636 data-nosnippet>636</a>}
-<a href=#637 id=637 data-nosnippet>637</a>
-<a href=#638 id=638 data-nosnippet>638</a><span class="doccomment">/// Applies a single conversion hop from `from_ref` to `to_ref`.
-<a href=#639 id=639 data-nosnippet>639</a></span><span class="kw">fn </span>apply_hop(
-<a href=#640 id=640 data-nosnippet>640</a>    value: MjdHighPrec,
-<a href=#641 id=641 data-nosnippet>641</a>    from_ref: EpochRef,
-<a href=#642 id=642 data-nosnippet>642</a>    to_ref: EpochRef,
-<a href=#643 id=643 data-nosnippet>643</a>    frame: <span class="kw-2">&amp;</span>MeasFrame,
-<a href=#644 id=644 data-nosnippet>644</a>) -&gt; <span class="prelude-ty">Result</span>&lt;MjdHighPrec, MeasureError&gt; {
-<a href=#645 id=645 data-nosnippet>645</a>    <span class="kw">use </span>EpochRef::<span class="kw-2">*</span>;
-<a href=#646 id=646 data-nosnippet>646</a>    <span class="kw">let </span>(jd1, jd2) = value.as_jd_pair();
-<a href=#647 id=647 data-nosnippet>647</a>
-<a href=#648 id=648 data-nosnippet>648</a>    <span class="kw">match </span>(from_ref, to_ref) {
-<a href=#649 id=649 data-nosnippet>649</a>        <span class="comment">// UTC → TAI
-<a href=#650 id=650 data-nosnippet>650</a>        </span>(UTC, TAI) =&gt; {
-<a href=#651 id=651 data-nosnippet>651</a>            <span class="kw">let </span>provider = frame.measures().ok_or(MeasureError::MissingFrameData {
-<a href=#652 id=652 data-nosnippet>652</a>                what: <span class="string">"TAI-UTC measures provider"</span>,
-<a href=#653 id=653 data-nosnippet>653</a>            })<span class="question-mark">?</span>;
-<a href=#654 id=654 data-nosnippet>654</a>            <span class="kw">let </span>tai_minus_utc =
-<a href=#655 id=655 data-nosnippet>655</a>                provider
-<a href=#656 id=656 data-nosnippet>656</a>                    .tai_minus_utc_seconds(value.as_mjd())
-<a href=#657 id=657 data-nosnippet>657</a>                    .map_err(|reason| MeasureError::ModelError {
-<a href=#658 id=658 data-nosnippet>658</a>                        model: <span class="string">"TAI_UTC"</span>,
-<a href=#659 id=659 data-nosnippet>659</a>                        reason,
-<a href=#660 id=660 data-nosnippet>660</a>                    })<span class="question-mark">?</span>;
-<a href=#661 id=661 data-nosnippet>661</a>            <span class="prelude-val">Ok</span>(value + tai_minus_utc / SECONDS_PER_DAY)
-<a href=#662 id=662 data-nosnippet>662</a>        }
-<a href=#663 id=663 data-nosnippet>663</a>        <span class="comment">// TAI → UTC
-<a href=#664 id=664 data-nosnippet>664</a>        </span>(TAI, UTC) =&gt; {
-<a href=#665 id=665 data-nosnippet>665</a>            <span class="kw">let </span>provider = frame.measures().ok_or(MeasureError::MissingFrameData {
-<a href=#666 id=666 data-nosnippet>666</a>                what: <span class="string">"TAI-UTC measures provider"</span>,
-<a href=#667 id=667 data-nosnippet>667</a>            })<span class="question-mark">?</span>;
-<a href=#668 id=668 data-nosnippet>668</a>            <span class="kw">let </span>utc_mjd = provider
-<a href=#669 id=669 data-nosnippet>669</a>                .utc_from_tai_mjd(value.as_mjd())
-<a href=#670 id=670 data-nosnippet>670</a>                .map_err(|reason| MeasureError::ModelError {
-<a href=#671 id=671 data-nosnippet>671</a>                    model: <span class="string">"TAI_UTC"</span>,
-<a href=#672 id=672 data-nosnippet>672</a>                    reason,
-<a href=#673 id=673 data-nosnippet>673</a>                })<span class="question-mark">?</span>;
-<a href=#674 id=674 data-nosnippet>674</a>            <span class="prelude-val">Ok</span>(MjdHighPrec::from_mjd(utc_mjd))
-<a href=#675 id=675 data-nosnippet>675</a>        }
-<a href=#676 id=676 data-nosnippet>676</a>        <span class="comment">// TAI → TT
-<a href=#677 id=677 data-nosnippet>677</a>        </span>(TAI, TT) =&gt; {
-<a href=#678 id=678 data-nosnippet>678</a>            <span class="kw">let </span>(r1, r2) =
-<a href=#679 id=679 data-nosnippet>679</a>                sofars::ts::taitt(jd1, jd2).map_err(|code| MeasureError::SofarsError { code })<span class="question-mark">?</span>;
-<a href=#680 id=680 data-nosnippet>680</a>            <span class="prelude-val">Ok</span>(MjdHighPrec::from_jd_pair(r1, r2))
-<a href=#681 id=681 data-nosnippet>681</a>        }
-<a href=#682 id=682 data-nosnippet>682</a>        <span class="comment">// TT → TAI
-<a href=#683 id=683 data-nosnippet>683</a>        </span>(TT, TAI) =&gt; {
-<a href=#684 id=684 data-nosnippet>684</a>            <span class="kw">let </span>(r1, r2) =
-<a href=#685 id=685 data-nosnippet>685</a>                sofars::ts::tttai(jd1, jd2).map_err(|code| MeasureError::SofarsError { code })<span class="question-mark">?</span>;
-<a href=#686 id=686 data-nosnippet>686</a>            <span class="prelude-val">Ok</span>(MjdHighPrec::from_jd_pair(r1, r2))
-<a href=#687 id=687 data-nosnippet>687</a>        }
-<a href=#688 id=688 data-nosnippet>688</a>        <span class="comment">// TT → TDB
-<a href=#689 id=689 data-nosnippet>689</a>        </span>(TT, TDB) =&gt; {
-<a href=#690 id=690 data-nosnippet>690</a>            <span class="kw">let </span>dtr = compute_dtdb(value, frame);
-<a href=#691 id=691 data-nosnippet>691</a>            <span class="kw">let </span>(r1, r2) = sofars::ts::tttdb(jd1, jd2, dtr)
-<a href=#692 id=692 data-nosnippet>692</a>                .map_err(|code| MeasureError::SofarsError { code })<span class="question-mark">?</span>;
-<a href=#693 id=693 data-nosnippet>693</a>            <span class="prelude-val">Ok</span>(MjdHighPrec::from_jd_pair(r1, r2))
-<a href=#694 id=694 data-nosnippet>694</a>        }
-<a href=#695 id=695 data-nosnippet>695</a>        <span class="comment">// TDB → TT
-<a href=#696 id=696 data-nosnippet>696</a>        </span>(TDB, TT) =&gt; {
-<a href=#697 id=697 data-nosnippet>697</a>            <span class="comment">// For the inverse, we need dtr as well. Use approximate TDB≈TT for dtdb.
-<a href=#698 id=698 data-nosnippet>698</a>            </span><span class="kw">let </span>dtr = compute_dtdb(value, frame);
-<a href=#699 id=699 data-nosnippet>699</a>            <span class="kw">let </span>(r1, r2) = sofars::ts::tdbtt(jd1, jd2, dtr)
+<a href=#574 id=574 data-nosnippet>574</a>    <span class="kw">let </span><span class="kw-2">mut </span>found = <span class="bool-val">false</span>;
+<a href=#575 id=575 data-nosnippet>575</a>
+<a href=#576 id=576 data-nosnippet>576</a>    <span class="kw">while let </span><span class="prelude-val">Some</span>(current) = queue.pop_front() {
+<a href=#577 id=577 data-nosnippet>577</a>        <span class="kw">if </span>current == target {
+<a href=#578 id=578 data-nosnippet>578</a>            found = <span class="bool-val">true</span>;
+<a href=#579 id=579 data-nosnippet>579</a>            <span class="kw">break</span>;
+<a href=#580 id=580 data-nosnippet>580</a>        }
+<a href=#581 id=581 data-nosnippet>581</a>
+<a href=#582 id=582 data-nosnippet>582</a>        <span class="kw">for </span><span class="kw-2">&amp;</span>(a, b) <span class="kw">in </span>ROUTING_EDGES {
+<a href=#583 id=583 data-nosnippet>583</a>            <span class="kw">let </span>neighbor = <span class="kw">if </span>a == current {
+<a href=#584 id=584 data-nosnippet>584</a>                b
+<a href=#585 id=585 data-nosnippet>585</a>            } <span class="kw">else if </span>b == current {
+<a href=#586 id=586 data-nosnippet>586</a>                a
+<a href=#587 id=587 data-nosnippet>587</a>            } <span class="kw">else </span>{
+<a href=#588 id=588 data-nosnippet>588</a>                <span class="kw">continue</span>;
+<a href=#589 id=589 data-nosnippet>589</a>            };
+<a href=#590 id=590 data-nosnippet>590</a>            <span class="kw">let </span>idx = epoch_ref_index(neighbor);
+<a href=#591 id=591 data-nosnippet>591</a>            <span class="kw">if </span>!visited[idx] {
+<a href=#592 id=592 data-nosnippet>592</a>                visited[idx] = <span class="bool-val">true</span>;
+<a href=#593 id=593 data-nosnippet>593</a>                parent[idx] = <span class="prelude-val">Some</span>(current);
+<a href=#594 id=594 data-nosnippet>594</a>                queue.push_back(neighbor);
+<a href=#595 id=595 data-nosnippet>595</a>            }
+<a href=#596 id=596 data-nosnippet>596</a>        }
+<a href=#597 id=597 data-nosnippet>597</a>    }
+<a href=#598 id=598 data-nosnippet>598</a>
+<a href=#599 id=599 data-nosnippet>599</a>    <span class="kw">if </span>found {
+<a href=#600 id=600 data-nosnippet>600</a>        <span class="kw">let </span><span class="kw-2">mut </span>path = Vec::new();
+<a href=#601 id=601 data-nosnippet>601</a>        <span class="kw">let </span><span class="kw-2">mut </span>cur = target;
+<a href=#602 id=602 data-nosnippet>602</a>        <span class="kw">while </span>cur != source {
+<a href=#603 id=603 data-nosnippet>603</a>            path.push(cur);
+<a href=#604 id=604 data-nosnippet>604</a>            cur = parent[epoch_ref_index(cur)].expect(<span class="string">"BFS parent must be set"</span>);
+<a href=#605 id=605 data-nosnippet>605</a>        }
+<a href=#606 id=606 data-nosnippet>606</a>        path.reverse();
+<a href=#607 id=607 data-nosnippet>607</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(path);
+<a href=#608 id=608 data-nosnippet>608</a>    }
+<a href=#609 id=609 data-nosnippet>609</a>
+<a href=#610 id=610 data-nosnippet>610</a>    <span class="comment">// Check if a deferred edge would connect.
+<a href=#611 id=611 data-nosnippet>611</a>    </span><span class="kw">for </span><span class="kw-2">&amp;</span>(a, b) <span class="kw">in </span>DEFERRED_EDGES {
+<a href=#612 id=612 data-nosnippet>612</a>        <span class="kw">if </span>(a == source &amp;&amp; b == target)
+<a href=#613 id=613 data-nosnippet>613</a>            || (b == source &amp;&amp; a == target)
+<a href=#614 id=614 data-nosnippet>614</a>            || (visited[epoch_ref_index(a)] &amp;&amp; b == target)
+<a href=#615 id=615 data-nosnippet>615</a>            || (visited[epoch_ref_index(b)] &amp;&amp; a == target)
+<a href=#616 id=616 data-nosnippet>616</a>            || (a == source &amp;&amp; visited[epoch_ref_index(b)])
+<a href=#617 id=617 data-nosnippet>617</a>            || (b == source &amp;&amp; visited[epoch_ref_index(a)])
+<a href=#618 id=618 data-nosnippet>618</a>        {
+<a href=#619 id=619 data-nosnippet>619</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(PathError::Deferred(<span class="macro">format!</span>(<span class="string">"{source} → {target}"</span>)));
+<a href=#620 id=620 data-nosnippet>620</a>        }
+<a href=#621 id=621 data-nosnippet>621</a>    }
+<a href=#622 id=622 data-nosnippet>622</a>
+<a href=#623 id=623 data-nosnippet>623</a>    <span class="prelude-val">Err</span>(PathError::NoRoute(<span class="macro">format!</span>(
+<a href=#624 id=624 data-nosnippet>624</a>        <span class="string">"{source} → {target} (no route found)"
+<a href=#625 id=625 data-nosnippet>625</a>    </span>)))
+<a href=#626 id=626 data-nosnippet>626</a>}
+<a href=#627 id=627 data-nosnippet>627</a>
+<a href=#628 id=628 data-nosnippet>628</a><span class="doccomment">/// Maps an `EpochRef` variant to a unique index 0..11 for the BFS arrays.
+<a href=#629 id=629 data-nosnippet>629</a></span><span class="kw">fn </span>epoch_ref_index(r: EpochRef) -&gt; usize {
+<a href=#630 id=630 data-nosnippet>630</a>    <span class="kw">match </span>r {
+<a href=#631 id=631 data-nosnippet>631</a>        EpochRef::LAST =&gt; <span class="number">0</span>,
+<a href=#632 id=632 data-nosnippet>632</a>        EpochRef::LMST =&gt; <span class="number">1</span>,
+<a href=#633 id=633 data-nosnippet>633</a>        EpochRef::GMST1 =&gt; <span class="number">2</span>,
+<a href=#634 id=634 data-nosnippet>634</a>        EpochRef::GAST =&gt; <span class="number">3</span>,
+<a href=#635 id=635 data-nosnippet>635</a>        EpochRef::UT1 =&gt; <span class="number">4</span>,
+<a href=#636 id=636 data-nosnippet>636</a>        EpochRef::UT2 =&gt; <span class="number">5</span>,
+<a href=#637 id=637 data-nosnippet>637</a>        EpochRef::UTC =&gt; <span class="number">6</span>,
+<a href=#638 id=638 data-nosnippet>638</a>        EpochRef::TAI =&gt; <span class="number">7</span>,
+<a href=#639 id=639 data-nosnippet>639</a>        EpochRef::TT =&gt; <span class="number">8</span>,
+<a href=#640 id=640 data-nosnippet>640</a>        EpochRef::TCG =&gt; <span class="number">9</span>,
+<a href=#641 id=641 data-nosnippet>641</a>        EpochRef::TDB =&gt; <span class="number">10</span>,
+<a href=#642 id=642 data-nosnippet>642</a>        EpochRef::TCB =&gt; <span class="number">11</span>,
+<a href=#643 id=643 data-nosnippet>643</a>    }
+<a href=#644 id=644 data-nosnippet>644</a>}
+<a href=#645 id=645 data-nosnippet>645</a>
+<a href=#646 id=646 data-nosnippet>646</a><span class="doccomment">/// Applies a single conversion hop from `from_ref` to `to_ref`.
+<a href=#647 id=647 data-nosnippet>647</a></span><span class="kw">fn </span>apply_hop(
+<a href=#648 id=648 data-nosnippet>648</a>    value: MjdHighPrec,
+<a href=#649 id=649 data-nosnippet>649</a>    from_ref: EpochRef,
+<a href=#650 id=650 data-nosnippet>650</a>    to_ref: EpochRef,
+<a href=#651 id=651 data-nosnippet>651</a>    frame: <span class="kw-2">&amp;</span>MeasFrame,
+<a href=#652 id=652 data-nosnippet>652</a>) -&gt; <span class="prelude-ty">Result</span>&lt;MjdHighPrec, MeasureError&gt; {
+<a href=#653 id=653 data-nosnippet>653</a>    <span class="kw">use </span>EpochRef::<span class="kw-2">*</span>;
+<a href=#654 id=654 data-nosnippet>654</a>    <span class="kw">let </span>(jd1, jd2) = value.as_jd_pair();
+<a href=#655 id=655 data-nosnippet>655</a>
+<a href=#656 id=656 data-nosnippet>656</a>    <span class="kw">match </span>(from_ref, to_ref) {
+<a href=#657 id=657 data-nosnippet>657</a>        <span class="comment">// UTC → TAI
+<a href=#658 id=658 data-nosnippet>658</a>        </span>(UTC, TAI) =&gt; {
+<a href=#659 id=659 data-nosnippet>659</a>            <span class="kw">let </span>provider = frame.measures().ok_or(MeasureError::MissingFrameData {
+<a href=#660 id=660 data-nosnippet>660</a>                what: <span class="string">"TAI-UTC measures provider"</span>,
+<a href=#661 id=661 data-nosnippet>661</a>            })<span class="question-mark">?</span>;
+<a href=#662 id=662 data-nosnippet>662</a>            <span class="kw">let </span>tai_minus_utc =
+<a href=#663 id=663 data-nosnippet>663</a>                provider
+<a href=#664 id=664 data-nosnippet>664</a>                    .tai_minus_utc_seconds(value.as_mjd())
+<a href=#665 id=665 data-nosnippet>665</a>                    .map_err(|reason| MeasureError::ModelError {
+<a href=#666 id=666 data-nosnippet>666</a>                        model: <span class="string">"TAI_UTC"</span>,
+<a href=#667 id=667 data-nosnippet>667</a>                        reason,
+<a href=#668 id=668 data-nosnippet>668</a>                    })<span class="question-mark">?</span>;
+<a href=#669 id=669 data-nosnippet>669</a>            <span class="prelude-val">Ok</span>(value + tai_minus_utc / SECONDS_PER_DAY)
+<a href=#670 id=670 data-nosnippet>670</a>        }
+<a href=#671 id=671 data-nosnippet>671</a>        <span class="comment">// TAI → UTC
+<a href=#672 id=672 data-nosnippet>672</a>        </span>(TAI, UTC) =&gt; {
+<a href=#673 id=673 data-nosnippet>673</a>            <span class="kw">let </span>provider = frame.measures().ok_or(MeasureError::MissingFrameData {
+<a href=#674 id=674 data-nosnippet>674</a>                what: <span class="string">"TAI-UTC measures provider"</span>,
+<a href=#675 id=675 data-nosnippet>675</a>            })<span class="question-mark">?</span>;
+<a href=#676 id=676 data-nosnippet>676</a>            <span class="kw">let </span>utc_mjd = provider
+<a href=#677 id=677 data-nosnippet>677</a>                .utc_from_tai_mjd(value.as_mjd())
+<a href=#678 id=678 data-nosnippet>678</a>                .map_err(|reason| MeasureError::ModelError {
+<a href=#679 id=679 data-nosnippet>679</a>                    model: <span class="string">"TAI_UTC"</span>,
+<a href=#680 id=680 data-nosnippet>680</a>                    reason,
+<a href=#681 id=681 data-nosnippet>681</a>                })<span class="question-mark">?</span>;
+<a href=#682 id=682 data-nosnippet>682</a>            <span class="prelude-val">Ok</span>(MjdHighPrec::from_mjd(utc_mjd))
+<a href=#683 id=683 data-nosnippet>683</a>        }
+<a href=#684 id=684 data-nosnippet>684</a>        <span class="comment">// TAI → TT
+<a href=#685 id=685 data-nosnippet>685</a>        </span>(TAI, TT) =&gt; {
+<a href=#686 id=686 data-nosnippet>686</a>            <span class="kw">let </span>(r1, r2) =
+<a href=#687 id=687 data-nosnippet>687</a>                sofars::ts::taitt(jd1, jd2).map_err(|code| MeasureError::SofarsError { code })<span class="question-mark">?</span>;
+<a href=#688 id=688 data-nosnippet>688</a>            <span class="prelude-val">Ok</span>(MjdHighPrec::from_jd_pair(r1, r2))
+<a href=#689 id=689 data-nosnippet>689</a>        }
+<a href=#690 id=690 data-nosnippet>690</a>        <span class="comment">// TT → TAI
+<a href=#691 id=691 data-nosnippet>691</a>        </span>(TT, TAI) =&gt; {
+<a href=#692 id=692 data-nosnippet>692</a>            <span class="kw">let </span>(r1, r2) =
+<a href=#693 id=693 data-nosnippet>693</a>                sofars::ts::tttai(jd1, jd2).map_err(|code| MeasureError::SofarsError { code })<span class="question-mark">?</span>;
+<a href=#694 id=694 data-nosnippet>694</a>            <span class="prelude-val">Ok</span>(MjdHighPrec::from_jd_pair(r1, r2))
+<a href=#695 id=695 data-nosnippet>695</a>        }
+<a href=#696 id=696 data-nosnippet>696</a>        <span class="comment">// TT → TDB
+<a href=#697 id=697 data-nosnippet>697</a>        </span>(TT, TDB) =&gt; {
+<a href=#698 id=698 data-nosnippet>698</a>            <span class="kw">let </span>dtr = compute_dtdb(value, frame);
+<a href=#699 id=699 data-nosnippet>699</a>            <span class="kw">let </span>(r1, r2) = sofars::ts::tttdb(jd1, jd2, dtr)
 <a href=#700 id=700 data-nosnippet>700</a>                .map_err(|code| MeasureError::SofarsError { code })<span class="question-mark">?</span>;
 <a href=#701 id=701 data-nosnippet>701</a>            <span class="prelude-val">Ok</span>(MjdHighPrec::from_jd_pair(r1, r2))
 <a href=#702 id=702 data-nosnippet>702</a>        }
-<a href=#703 id=703 data-nosnippet>703</a>        <span class="comment">// TT → TCG
-<a href=#704 id=704 data-nosnippet>704</a>        </span>(TT, TCG) =&gt; {
-<a href=#705 id=705 data-nosnippet>705</a>            <span class="kw">let </span>(r1, r2) =
-<a href=#706 id=706 data-nosnippet>706</a>                sofars::ts::tttcg(jd1, jd2).map_err(|code| MeasureError::SofarsError { code })<span class="question-mark">?</span>;
-<a href=#707 id=707 data-nosnippet>707</a>            <span class="prelude-val">Ok</span>(MjdHighPrec::from_jd_pair(r1, r2))
-<a href=#708 id=708 data-nosnippet>708</a>        }
-<a href=#709 id=709 data-nosnippet>709</a>        <span class="comment">// TCG → TT
-<a href=#710 id=710 data-nosnippet>710</a>        </span>(TCG, TT) =&gt; {
-<a href=#711 id=711 data-nosnippet>711</a>            <span class="kw">let </span>(r1, r2) =
-<a href=#712 id=712 data-nosnippet>712</a>                sofars::ts::tcgtt(jd1, jd2).map_err(|code| MeasureError::SofarsError { code })<span class="question-mark">?</span>;
-<a href=#713 id=713 data-nosnippet>713</a>            <span class="prelude-val">Ok</span>(MjdHighPrec::from_jd_pair(r1, r2))
-<a href=#714 id=714 data-nosnippet>714</a>        }
-<a href=#715 id=715 data-nosnippet>715</a>        <span class="comment">// TDB → TCB
-<a href=#716 id=716 data-nosnippet>716</a>        </span>(TDB, TCB) =&gt; {
-<a href=#717 id=717 data-nosnippet>717</a>            <span class="kw">let </span>(r1, r2) =
-<a href=#718 id=718 data-nosnippet>718</a>                sofars::ts::tdbtcb(jd1, jd2).map_err(|code| MeasureError::SofarsError { code })<span class="question-mark">?</span>;
-<a href=#719 id=719 data-nosnippet>719</a>            <span class="prelude-val">Ok</span>(MjdHighPrec::from_jd_pair(r1, r2))
-<a href=#720 id=720 data-nosnippet>720</a>        }
-<a href=#721 id=721 data-nosnippet>721</a>        <span class="comment">// TCB → TDB
-<a href=#722 id=722 data-nosnippet>722</a>        </span>(TCB, TDB) =&gt; {
-<a href=#723 id=723 data-nosnippet>723</a>            <span class="kw">let </span>(r1, r2) =
-<a href=#724 id=724 data-nosnippet>724</a>                sofars::ts::tcbtdb(jd1, jd2).map_err(|code| MeasureError::SofarsError { code })<span class="question-mark">?</span>;
-<a href=#725 id=725 data-nosnippet>725</a>            <span class="prelude-val">Ok</span>(MjdHighPrec::from_jd_pair(r1, r2))
-<a href=#726 id=726 data-nosnippet>726</a>        }
-<a href=#727 id=727 data-nosnippet>727</a>        <span class="comment">// UT1 → UTC: subtract dUT1
-<a href=#728 id=728 data-nosnippet>728</a>        </span>(UT1, UTC) =&gt; {
-<a href=#729 id=729 data-nosnippet>729</a>            <span class="kw">let </span>dut1 =
-<a href=#730 id=730 data-nosnippet>730</a>                frame
-<a href=#731 id=731 data-nosnippet>731</a>                    .dut1_for_mjd(value.as_mjd())<span class="question-mark">?
-<a href=#732 id=732 data-nosnippet>732</a>                    </span>.ok_or(MeasureError::MissingFrameData {
-<a href=#733 id=733 data-nosnippet>733</a>                        what: <span class="string">"dUT1 (UT1-UTC offset in seconds; set with_dut1() or with_eop())"</span>,
-<a href=#734 id=734 data-nosnippet>734</a>                    })<span class="question-mark">?</span>;
-<a href=#735 id=735 data-nosnippet>735</a>            <span class="comment">// UT1 = UTC + dUT1, so UTC = UT1 - dUT1
-<a href=#736 id=736 data-nosnippet>736</a>            </span><span class="prelude-val">Ok</span>(value - dut1 / SECONDS_PER_DAY)
-<a href=#737 id=737 data-nosnippet>737</a>        }
-<a href=#738 id=738 data-nosnippet>738</a>        <span class="comment">// UTC → UT1: add dUT1
-<a href=#739 id=739 data-nosnippet>739</a>        </span>(UTC, UT1) =&gt; {
-<a href=#740 id=740 data-nosnippet>740</a>            <span class="kw">let </span>dut1 =
-<a href=#741 id=741 data-nosnippet>741</a>                frame
-<a href=#742 id=742 data-nosnippet>742</a>                    .dut1_for_mjd(value.as_mjd())<span class="question-mark">?
-<a href=#743 id=743 data-nosnippet>743</a>                    </span>.ok_or(MeasureError::MissingFrameData {
-<a href=#744 id=744 data-nosnippet>744</a>                        what: <span class="string">"dUT1 (UT1-UTC offset in seconds; set with_dut1() or with_eop())"</span>,
-<a href=#745 id=745 data-nosnippet>745</a>                    })<span class="question-mark">?</span>;
-<a href=#746 id=746 data-nosnippet>746</a>            <span class="comment">// UT1 = UTC + dUT1
-<a href=#747 id=747 data-nosnippet>747</a>            </span><span class="prelude-val">Ok</span>(value + dut1 / SECONDS_PER_DAY)
-<a href=#748 id=748 data-nosnippet>748</a>        }
-<a href=#749 id=749 data-nosnippet>749</a>        <span class="comment">// UT1 → GMST1: use SOFA's IAU-2006 epoch arithmetic.
-<a href=#750 id=750 data-nosnippet>750</a>        </span>(UT1, GMST1) =&gt; {
-<a href=#751 id=751 data-nosnippet>751</a>            <span class="comment">// gmst06 needs both UT1 and TT as 2-part JDs.
-<a href=#752 id=752 data-nosnippet>752</a>            // Derive TT from UT1 via UT1→UTC→TAI→TT.
-<a href=#753 id=753 data-nosnippet>753</a>            </span><span class="kw">let </span>utc = apply_hop(value, UT1, UTC, frame)<span class="question-mark">?</span>;
-<a href=#754 id=754 data-nosnippet>754</a>            <span class="kw">let </span>tai = apply_hop(utc, UTC, TAI, frame)<span class="question-mark">?</span>;
-<a href=#755 id=755 data-nosnippet>755</a>            <span class="kw">let </span>tt = apply_hop(tai, TAI, TT, frame)<span class="question-mark">?</span>;
-<a href=#756 id=756 data-nosnippet>756</a>
-<a href=#757 id=757 data-nosnippet>757</a>            <span class="kw">let </span>(ut_a, ut_b) = value.as_jd_pair();
-<a href=#758 id=758 data-nosnippet>758</a>            <span class="kw">let </span>(tt_a, tt_b) = tt.as_jd_pair();
-<a href=#759 id=759 data-nosnippet>759</a>
-<a href=#760 id=760 data-nosnippet>760</a>            <span class="kw">let </span>gmst_rad = sofars::erst::gmst06(ut_a, ut_b, tt_a, tt_b);
-<a href=#761 id=761 data-nosnippet>761</a>            <span class="comment">// GMST is in radians; convert to fraction of day (turns)
-<a href=#762 id=762 data-nosnippet>762</a>            </span><span class="kw">let </span>gmst_turns = gmst_rad / (<span class="number">2.0 </span>* std::f64::consts::PI);
-<a href=#763 id=763 data-nosnippet>763</a>            <span class="comment">// The MJD for GMST is the integer UT1 day + GMST fraction
-<a href=#764 id=764 data-nosnippet>764</a>            </span><span class="prelude-val">Ok</span>(MjdHighPrec::new(value.day(), gmst_turns))
-<a href=#765 id=765 data-nosnippet>765</a>        }
-<a href=#766 id=766 data-nosnippet>766</a>        <span class="comment">// GMST1 → UT1: iterative Newton-Raphson inverse
-<a href=#767 id=767 data-nosnippet>767</a>        // GMST is a monotonically increasing function of UT1 fraction within a day.
-<a href=#768 id=768 data-nosnippet>768</a>        // The sidereal/solar ratio is approximately 1.00273781191.
-<a href=#769 id=769 data-nosnippet>769</a>        </span>(GMST1, UT1) =&gt; {
-<a href=#770 id=770 data-nosnippet>770</a>            <span class="comment">// The UT1 integer day is the same as the GMST day.
-<a href=#771 id=771 data-nosnippet>771</a>            // We need to find the UT1 fraction that produces the given GMST fraction.
-<a href=#772 id=772 data-nosnippet>772</a>            </span><span class="kw">let </span>gmst_frac = value.frac();
-<a href=#773 id=773 data-nosnippet>773</a>
-<a href=#774 id=774 data-nosnippet>774</a>            <span class="comment">// Initial guess: UT1_frac ≈ GMST_frac / sidereal_ratio
-<a href=#775 id=775 data-nosnippet>775</a>            </span><span class="kw">const </span>SIDEREAL_RATIO: f64 = <span class="number">1.002_737_811_91</span>;
-<a href=#776 id=776 data-nosnippet>776</a>            <span class="kw">let </span><span class="kw-2">mut </span>ut1_frac = gmst_frac / SIDEREAL_RATIO;
-<a href=#777 id=777 data-nosnippet>777</a>
-<a href=#778 id=778 data-nosnippet>778</a>            <span class="comment">// Newton-Raphson iteration
-<a href=#779 id=779 data-nosnippet>779</a>            </span><span class="kw">for _ in </span><span class="number">0</span>..<span class="number">15 </span>{
-<a href=#780 id=780 data-nosnippet>780</a>                <span class="kw">let </span>trial_ut1 = MjdHighPrec::new(value.day(), ut1_frac);
-<a href=#781 id=781 data-nosnippet>781</a>                <span class="comment">// Compute GMST for this trial UT1
-<a href=#782 id=782 data-nosnippet>782</a>                </span><span class="kw">let </span>trial_gmst = apply_hop(trial_ut1, UT1, GMST1, frame)<span class="question-mark">?</span>;
-<a href=#783 id=783 data-nosnippet>783</a>                <span class="kw">let </span>trial_gmst_frac = trial_gmst.frac();
-<a href=#784 id=784 data-nosnippet>784</a>
-<a href=#785 id=785 data-nosnippet>785</a>                <span class="comment">// Residual (handle wrapping)
-<a href=#786 id=786 data-nosnippet>786</a>                </span><span class="kw">let </span><span class="kw-2">mut </span>residual = gmst_frac - trial_gmst_frac;
-<a href=#787 id=787 data-nosnippet>787</a>                <span class="kw">if </span>residual &gt; <span class="number">0.5 </span>{
-<a href=#788 id=788 data-nosnippet>788</a>                    residual -= <span class="number">1.0</span>;
-<a href=#789 id=789 data-nosnippet>789</a>                }
-<a href=#790 id=790 data-nosnippet>790</a>                <span class="kw">if </span>residual &lt; -<span class="number">0.5 </span>{
-<a href=#791 id=791 data-nosnippet>791</a>                    residual += <span class="number">1.0</span>;
-<a href=#792 id=792 data-nosnippet>792</a>                }
-<a href=#793 id=793 data-nosnippet>793</a>
-<a href=#794 id=794 data-nosnippet>794</a>                <span class="kw">if </span>residual.abs() &lt; <span class="number">1e-15 </span>{
-<a href=#795 id=795 data-nosnippet>795</a>                    <span class="kw">break</span>;
-<a href=#796 id=796 data-nosnippet>796</a>                }
-<a href=#797 id=797 data-nosnippet>797</a>
-<a href=#798 id=798 data-nosnippet>798</a>                <span class="comment">// Correct: dUT1 ≈ dGMST / sidereal_ratio
-<a href=#799 id=799 data-nosnippet>799</a>                </span>ut1_frac += residual / SIDEREAL_RATIO;
-<a href=#800 id=800 data-nosnippet>800</a>            }
+<a href=#703 id=703 data-nosnippet>703</a>        <span class="comment">// TDB → TT
+<a href=#704 id=704 data-nosnippet>704</a>        </span>(TDB, TT) =&gt; {
+<a href=#705 id=705 data-nosnippet>705</a>            <span class="comment">// For the inverse, we need dtr as well. Use approximate TDB≈TT for dtdb.
+<a href=#706 id=706 data-nosnippet>706</a>            </span><span class="kw">let </span>dtr = compute_dtdb(value, frame);
+<a href=#707 id=707 data-nosnippet>707</a>            <span class="kw">let </span>(r1, r2) = sofars::ts::tdbtt(jd1, jd2, dtr)
+<a href=#708 id=708 data-nosnippet>708</a>                .map_err(|code| MeasureError::SofarsError { code })<span class="question-mark">?</span>;
+<a href=#709 id=709 data-nosnippet>709</a>            <span class="prelude-val">Ok</span>(MjdHighPrec::from_jd_pair(r1, r2))
+<a href=#710 id=710 data-nosnippet>710</a>        }
+<a href=#711 id=711 data-nosnippet>711</a>        <span class="comment">// TT → TCG
+<a href=#712 id=712 data-nosnippet>712</a>        </span>(TT, TCG) =&gt; {
+<a href=#713 id=713 data-nosnippet>713</a>            <span class="kw">let </span>(r1, r2) =
+<a href=#714 id=714 data-nosnippet>714</a>                sofars::ts::tttcg(jd1, jd2).map_err(|code| MeasureError::SofarsError { code })<span class="question-mark">?</span>;
+<a href=#715 id=715 data-nosnippet>715</a>            <span class="prelude-val">Ok</span>(MjdHighPrec::from_jd_pair(r1, r2))
+<a href=#716 id=716 data-nosnippet>716</a>        }
+<a href=#717 id=717 data-nosnippet>717</a>        <span class="comment">// TCG → TT
+<a href=#718 id=718 data-nosnippet>718</a>        </span>(TCG, TT) =&gt; {
+<a href=#719 id=719 data-nosnippet>719</a>            <span class="kw">let </span>(r1, r2) =
+<a href=#720 id=720 data-nosnippet>720</a>                sofars::ts::tcgtt(jd1, jd2).map_err(|code| MeasureError::SofarsError { code })<span class="question-mark">?</span>;
+<a href=#721 id=721 data-nosnippet>721</a>            <span class="prelude-val">Ok</span>(MjdHighPrec::from_jd_pair(r1, r2))
+<a href=#722 id=722 data-nosnippet>722</a>        }
+<a href=#723 id=723 data-nosnippet>723</a>        <span class="comment">// TDB → TCB
+<a href=#724 id=724 data-nosnippet>724</a>        </span>(TDB, TCB) =&gt; {
+<a href=#725 id=725 data-nosnippet>725</a>            <span class="kw">let </span>(r1, r2) =
+<a href=#726 id=726 data-nosnippet>726</a>                sofars::ts::tdbtcb(jd1, jd2).map_err(|code| MeasureError::SofarsError { code })<span class="question-mark">?</span>;
+<a href=#727 id=727 data-nosnippet>727</a>            <span class="prelude-val">Ok</span>(MjdHighPrec::from_jd_pair(r1, r2))
+<a href=#728 id=728 data-nosnippet>728</a>        }
+<a href=#729 id=729 data-nosnippet>729</a>        <span class="comment">// TCB → TDB
+<a href=#730 id=730 data-nosnippet>730</a>        </span>(TCB, TDB) =&gt; {
+<a href=#731 id=731 data-nosnippet>731</a>            <span class="kw">let </span>(r1, r2) =
+<a href=#732 id=732 data-nosnippet>732</a>                sofars::ts::tcbtdb(jd1, jd2).map_err(|code| MeasureError::SofarsError { code })<span class="question-mark">?</span>;
+<a href=#733 id=733 data-nosnippet>733</a>            <span class="prelude-val">Ok</span>(MjdHighPrec::from_jd_pair(r1, r2))
+<a href=#734 id=734 data-nosnippet>734</a>        }
+<a href=#735 id=735 data-nosnippet>735</a>        <span class="comment">// UT1 → UTC: subtract dUT1
+<a href=#736 id=736 data-nosnippet>736</a>        </span>(UT1, UTC) =&gt; {
+<a href=#737 id=737 data-nosnippet>737</a>            <span class="kw">let </span>dut1 =
+<a href=#738 id=738 data-nosnippet>738</a>                frame
+<a href=#739 id=739 data-nosnippet>739</a>                    .dut1_for_mjd(value.as_mjd())<span class="question-mark">?
+<a href=#740 id=740 data-nosnippet>740</a>                    </span>.ok_or(MeasureError::MissingFrameData {
+<a href=#741 id=741 data-nosnippet>741</a>                        what: <span class="string">"dUT1 (UT1-UTC offset in seconds; set with_dut1() or with_eop())"</span>,
+<a href=#742 id=742 data-nosnippet>742</a>                    })<span class="question-mark">?</span>;
+<a href=#743 id=743 data-nosnippet>743</a>            <span class="comment">// UT1 = UTC + dUT1, so UTC = UT1 - dUT1
+<a href=#744 id=744 data-nosnippet>744</a>            </span><span class="prelude-val">Ok</span>(value - dut1 / SECONDS_PER_DAY)
+<a href=#745 id=745 data-nosnippet>745</a>        }
+<a href=#746 id=746 data-nosnippet>746</a>        <span class="comment">// UTC → UT1: add dUT1
+<a href=#747 id=747 data-nosnippet>747</a>        </span>(UTC, UT1) =&gt; {
+<a href=#748 id=748 data-nosnippet>748</a>            <span class="kw">let </span>dut1 =
+<a href=#749 id=749 data-nosnippet>749</a>                frame
+<a href=#750 id=750 data-nosnippet>750</a>                    .dut1_for_mjd(value.as_mjd())<span class="question-mark">?
+<a href=#751 id=751 data-nosnippet>751</a>                    </span>.ok_or(MeasureError::MissingFrameData {
+<a href=#752 id=752 data-nosnippet>752</a>                        what: <span class="string">"dUT1 (UT1-UTC offset in seconds; set with_dut1() or with_eop())"</span>,
+<a href=#753 id=753 data-nosnippet>753</a>                    })<span class="question-mark">?</span>;
+<a href=#754 id=754 data-nosnippet>754</a>            <span class="comment">// UT1 = UTC + dUT1
+<a href=#755 id=755 data-nosnippet>755</a>            </span><span class="prelude-val">Ok</span>(value + dut1 / SECONDS_PER_DAY)
+<a href=#756 id=756 data-nosnippet>756</a>        }
+<a href=#757 id=757 data-nosnippet>757</a>        <span class="comment">// UT1 → GMST1: use SOFA's IAU-2006 epoch arithmetic.
+<a href=#758 id=758 data-nosnippet>758</a>        </span>(UT1, GMST1) =&gt; {
+<a href=#759 id=759 data-nosnippet>759</a>            <span class="comment">// gmst06 needs both UT1 and TT as 2-part JDs.
+<a href=#760 id=760 data-nosnippet>760</a>            // Derive TT from UT1 via UT1→UTC→TAI→TT.
+<a href=#761 id=761 data-nosnippet>761</a>            </span><span class="kw">let </span>utc = apply_hop(value, UT1, UTC, frame)<span class="question-mark">?</span>;
+<a href=#762 id=762 data-nosnippet>762</a>            <span class="kw">let </span>tai = apply_hop(utc, UTC, TAI, frame)<span class="question-mark">?</span>;
+<a href=#763 id=763 data-nosnippet>763</a>            <span class="kw">let </span>tt = apply_hop(tai, TAI, TT, frame)<span class="question-mark">?</span>;
+<a href=#764 id=764 data-nosnippet>764</a>
+<a href=#765 id=765 data-nosnippet>765</a>            <span class="kw">let </span>(ut_a, ut_b) = value.as_jd_pair();
+<a href=#766 id=766 data-nosnippet>766</a>            <span class="kw">let </span>(tt_a, tt_b) = tt.as_jd_pair();
+<a href=#767 id=767 data-nosnippet>767</a>
+<a href=#768 id=768 data-nosnippet>768</a>            <span class="kw">let </span>gmst_rad = sofars::erst::gmst06(ut_a, ut_b, tt_a, tt_b);
+<a href=#769 id=769 data-nosnippet>769</a>            <span class="comment">// GMST is in radians; convert to fraction of day (turns)
+<a href=#770 id=770 data-nosnippet>770</a>            </span><span class="kw">let </span>gmst_turns = gmst_rad / (<span class="number">2.0 </span>* std::f64::consts::PI);
+<a href=#771 id=771 data-nosnippet>771</a>            <span class="comment">// The MJD for GMST is the integer UT1 day + GMST fraction
+<a href=#772 id=772 data-nosnippet>772</a>            </span><span class="prelude-val">Ok</span>(MjdHighPrec::new(value.day(), gmst_turns))
+<a href=#773 id=773 data-nosnippet>773</a>        }
+<a href=#774 id=774 data-nosnippet>774</a>        <span class="comment">// GMST1 → UT1: iterative Newton-Raphson inverse
+<a href=#775 id=775 data-nosnippet>775</a>        // GMST is a monotonically increasing function of UT1 fraction within a day.
+<a href=#776 id=776 data-nosnippet>776</a>        // The sidereal/solar ratio is approximately 1.00273781191.
+<a href=#777 id=777 data-nosnippet>777</a>        </span>(GMST1, UT1) =&gt; {
+<a href=#778 id=778 data-nosnippet>778</a>            <span class="comment">// The UT1 integer day is the same as the GMST day.
+<a href=#779 id=779 data-nosnippet>779</a>            // We need to find the UT1 fraction that produces the given GMST fraction.
+<a href=#780 id=780 data-nosnippet>780</a>            </span><span class="kw">let </span>gmst_frac = value.frac();
+<a href=#781 id=781 data-nosnippet>781</a>
+<a href=#782 id=782 data-nosnippet>782</a>            <span class="comment">// Initial guess: UT1_frac ≈ GMST_frac / sidereal_ratio
+<a href=#783 id=783 data-nosnippet>783</a>            </span><span class="kw">const </span>SIDEREAL_RATIO: f64 = <span class="number">1.002_737_811_91</span>;
+<a href=#784 id=784 data-nosnippet>784</a>            <span class="kw">let </span><span class="kw-2">mut </span>ut1_frac = gmst_frac / SIDEREAL_RATIO;
+<a href=#785 id=785 data-nosnippet>785</a>
+<a href=#786 id=786 data-nosnippet>786</a>            <span class="comment">// Newton-Raphson iteration
+<a href=#787 id=787 data-nosnippet>787</a>            </span><span class="kw">for _ in </span><span class="number">0</span>..<span class="number">15 </span>{
+<a href=#788 id=788 data-nosnippet>788</a>                <span class="kw">let </span>trial_ut1 = MjdHighPrec::new(value.day(), ut1_frac);
+<a href=#789 id=789 data-nosnippet>789</a>                <span class="comment">// Compute GMST for this trial UT1
+<a href=#790 id=790 data-nosnippet>790</a>                </span><span class="kw">let </span>trial_gmst = apply_hop(trial_ut1, UT1, GMST1, frame)<span class="question-mark">?</span>;
+<a href=#791 id=791 data-nosnippet>791</a>                <span class="kw">let </span>trial_gmst_frac = trial_gmst.frac();
+<a href=#792 id=792 data-nosnippet>792</a>
+<a href=#793 id=793 data-nosnippet>793</a>                <span class="comment">// Residual (handle wrapping)
+<a href=#794 id=794 data-nosnippet>794</a>                </span><span class="kw">let </span><span class="kw-2">mut </span>residual = gmst_frac - trial_gmst_frac;
+<a href=#795 id=795 data-nosnippet>795</a>                <span class="kw">if </span>residual &gt; <span class="number">0.5 </span>{
+<a href=#796 id=796 data-nosnippet>796</a>                    residual -= <span class="number">1.0</span>;
+<a href=#797 id=797 data-nosnippet>797</a>                }
+<a href=#798 id=798 data-nosnippet>798</a>                <span class="kw">if </span>residual &lt; -<span class="number">0.5 </span>{
+<a href=#799 id=799 data-nosnippet>799</a>                    residual += <span class="number">1.0</span>;
+<a href=#800 id=800 data-nosnippet>800</a>                }
 <a href=#801 id=801 data-nosnippet>801</a>
-<a href=#802 id=802 data-nosnippet>802</a>            <span class="prelude-val">Ok</span>(MjdHighPrec::new(value.day(), ut1_frac))
-<a href=#803 id=803 data-nosnippet>803</a>        }
-<a href=#804 id=804 data-nosnippet>804</a>        <span class="comment">// GMST1 → LMST: add longitude
-<a href=#805 id=805 data-nosnippet>805</a>        </span>(GMST1, LMST) =&gt; {
-<a href=#806 id=806 data-nosnippet>806</a>            <span class="kw">let </span>pos = frame.position().ok_or(MeasureError::MissingFrameData {
-<a href=#807 id=807 data-nosnippet>807</a>                what: <span class="string">"position (for observatory longitude)"</span>,
-<a href=#808 id=808 data-nosnippet>808</a>            })<span class="question-mark">?</span>;
-<a href=#809 id=809 data-nosnippet>809</a>            <span class="kw">let </span>lon_rad = pos.longitude_rad();
-<a href=#810 id=810 data-nosnippet>810</a>            <span class="kw">let </span>lon_turns = lon_rad / (<span class="number">2.0 </span>* std::f64::consts::PI);
-<a href=#811 id=811 data-nosnippet>811</a>            <span class="prelude-val">Ok</span>(MjdHighPrec::new(value.day(), value.frac() + lon_turns))
-<a href=#812 id=812 data-nosnippet>812</a>        }
-<a href=#813 id=813 data-nosnippet>813</a>        <span class="comment">// LMST → GMST1: subtract longitude
-<a href=#814 id=814 data-nosnippet>814</a>        </span>(LMST, GMST1) =&gt; {
-<a href=#815 id=815 data-nosnippet>815</a>            <span class="kw">let </span>pos = frame.position().ok_or(MeasureError::MissingFrameData {
-<a href=#816 id=816 data-nosnippet>816</a>                what: <span class="string">"position (for observatory longitude)"</span>,
-<a href=#817 id=817 data-nosnippet>817</a>            })<span class="question-mark">?</span>;
-<a href=#818 id=818 data-nosnippet>818</a>            <span class="kw">let </span>lon_rad = pos.longitude_rad();
-<a href=#819 id=819 data-nosnippet>819</a>            <span class="kw">let </span>lon_turns = lon_rad / (<span class="number">2.0 </span>* std::f64::consts::PI);
-<a href=#820 id=820 data-nosnippet>820</a>            <span class="prelude-val">Ok</span>(MjdHighPrec::new(value.day(), value.frac() - lon_turns))
-<a href=#821 id=821 data-nosnippet>821</a>        }
-<a href=#822 id=822 data-nosnippet>822</a>        <span class="comment">// UT1 → GAST: Greenwich Apparent Sidereal Time
-<a href=#823 id=823 data-nosnippet>823</a>        </span>(UT1, GAST) =&gt; {
-<a href=#824 id=824 data-nosnippet>824</a>            <span class="kw">let </span>(ut_a, ut_b) = value.as_jd_pair();
-<a href=#825 id=825 data-nosnippet>825</a>            <span class="kw">let </span>tt_jd = <span class="kw">match </span>frame.iau_model() {
-<a href=#826 id=826 data-nosnippet>826</a>                IauModel::Iau1976_1980 =&gt; (ut_a, ut_b),
-<a href=#827 id=827 data-nosnippet>827</a>                IauModel::Iau2006_2000A =&gt; {
-<a href=#828 id=828 data-nosnippet>828</a>                    <span class="kw">let </span>utc = apply_hop(value, UT1, UTC, frame)<span class="question-mark">?</span>;
-<a href=#829 id=829 data-nosnippet>829</a>                    <span class="kw">let </span>tai = apply_hop(utc, UTC, TAI, frame)<span class="question-mark">?</span>;
-<a href=#830 id=830 data-nosnippet>830</a>                    apply_hop(tai, TAI, TT, frame)<span class="question-mark">?</span>.as_jd_pair()
-<a href=#831 id=831 data-nosnippet>831</a>                }
-<a href=#832 id=832 data-nosnippet>832</a>            };
-<a href=#833 id=833 data-nosnippet>833</a>            <span class="kw">let </span>gast_rad = casacore_gast_rad((ut_a, ut_b), tt_jd, frame.iau_model());
-<a href=#834 id=834 data-nosnippet>834</a>            <span class="kw">let </span>gast_turns = gast_rad / (<span class="number">2.0 </span>* std::f64::consts::PI);
-<a href=#835 id=835 data-nosnippet>835</a>            <span class="prelude-val">Ok</span>(MjdHighPrec::new(value.day(), gast_turns))
-<a href=#836 id=836 data-nosnippet>836</a>        }
-<a href=#837 id=837 data-nosnippet>837</a>        <span class="comment">// GAST → UT1: iterative Newton-Raphson inverse (same approach as GMST1→UT1)
-<a href=#838 id=838 data-nosnippet>838</a>        </span>(GAST, UT1) =&gt; {
-<a href=#839 id=839 data-nosnippet>839</a>            <span class="kw">let </span>gast_frac = value.frac();
-<a href=#840 id=840 data-nosnippet>840</a>            <span class="kw">const </span>SIDEREAL_RATIO: f64 = <span class="number">1.002_737_811_91</span>;
-<a href=#841 id=841 data-nosnippet>841</a>            <span class="kw">let </span><span class="kw-2">mut </span>ut1_frac = gast_frac / SIDEREAL_RATIO;
-<a href=#842 id=842 data-nosnippet>842</a>
-<a href=#843 id=843 data-nosnippet>843</a>            <span class="kw">for _ in </span><span class="number">0</span>..<span class="number">15 </span>{
-<a href=#844 id=844 data-nosnippet>844</a>                <span class="kw">let </span>trial_ut1 = MjdHighPrec::new(value.day(), ut1_frac);
-<a href=#845 id=845 data-nosnippet>845</a>                <span class="kw">let </span>trial_gast = apply_hop(trial_ut1, UT1, GAST, frame)<span class="question-mark">?</span>;
-<a href=#846 id=846 data-nosnippet>846</a>                <span class="kw">let </span>trial_gast_frac = trial_gast.frac();
-<a href=#847 id=847 data-nosnippet>847</a>
-<a href=#848 id=848 data-nosnippet>848</a>                <span class="kw">let </span><span class="kw-2">mut </span>residual = gast_frac - trial_gast_frac;
-<a href=#849 id=849 data-nosnippet>849</a>                <span class="kw">if </span>residual &gt; <span class="number">0.5 </span>{
-<a href=#850 id=850 data-nosnippet>850</a>                    residual -= <span class="number">1.0</span>;
-<a href=#851 id=851 data-nosnippet>851</a>                }
-<a href=#852 id=852 data-nosnippet>852</a>                <span class="kw">if </span>residual &lt; -<span class="number">0.5 </span>{
-<a href=#853 id=853 data-nosnippet>853</a>                    residual += <span class="number">1.0</span>;
-<a href=#854 id=854 data-nosnippet>854</a>                }
+<a href=#802 id=802 data-nosnippet>802</a>                <span class="kw">if </span>residual.abs() &lt; <span class="number">1e-15 </span>{
+<a href=#803 id=803 data-nosnippet>803</a>                    <span class="kw">break</span>;
+<a href=#804 id=804 data-nosnippet>804</a>                }
+<a href=#805 id=805 data-nosnippet>805</a>
+<a href=#806 id=806 data-nosnippet>806</a>                <span class="comment">// Correct: dUT1 ≈ dGMST / sidereal_ratio
+<a href=#807 id=807 data-nosnippet>807</a>                </span>ut1_frac += residual / SIDEREAL_RATIO;
+<a href=#808 id=808 data-nosnippet>808</a>            }
+<a href=#809 id=809 data-nosnippet>809</a>
+<a href=#810 id=810 data-nosnippet>810</a>            <span class="prelude-val">Ok</span>(MjdHighPrec::new(value.day(), ut1_frac))
+<a href=#811 id=811 data-nosnippet>811</a>        }
+<a href=#812 id=812 data-nosnippet>812</a>        <span class="comment">// GMST1 → LMST: add longitude
+<a href=#813 id=813 data-nosnippet>813</a>        </span>(GMST1, LMST) =&gt; {
+<a href=#814 id=814 data-nosnippet>814</a>            <span class="kw">let </span>pos = frame.position().ok_or(MeasureError::MissingFrameData {
+<a href=#815 id=815 data-nosnippet>815</a>                what: <span class="string">"position (for observatory longitude)"</span>,
+<a href=#816 id=816 data-nosnippet>816</a>            })<span class="question-mark">?</span>;
+<a href=#817 id=817 data-nosnippet>817</a>            <span class="kw">let </span>lon_rad = pos.longitude_rad();
+<a href=#818 id=818 data-nosnippet>818</a>            <span class="kw">let </span>lon_turns = lon_rad / (<span class="number">2.0 </span>* std::f64::consts::PI);
+<a href=#819 id=819 data-nosnippet>819</a>            <span class="prelude-val">Ok</span>(MjdHighPrec::new(value.day(), value.frac() + lon_turns))
+<a href=#820 id=820 data-nosnippet>820</a>        }
+<a href=#821 id=821 data-nosnippet>821</a>        <span class="comment">// LMST → GMST1: subtract longitude
+<a href=#822 id=822 data-nosnippet>822</a>        </span>(LMST, GMST1) =&gt; {
+<a href=#823 id=823 data-nosnippet>823</a>            <span class="kw">let </span>pos = frame.position().ok_or(MeasureError::MissingFrameData {
+<a href=#824 id=824 data-nosnippet>824</a>                what: <span class="string">"position (for observatory longitude)"</span>,
+<a href=#825 id=825 data-nosnippet>825</a>            })<span class="question-mark">?</span>;
+<a href=#826 id=826 data-nosnippet>826</a>            <span class="kw">let </span>lon_rad = pos.longitude_rad();
+<a href=#827 id=827 data-nosnippet>827</a>            <span class="kw">let </span>lon_turns = lon_rad / (<span class="number">2.0 </span>* std::f64::consts::PI);
+<a href=#828 id=828 data-nosnippet>828</a>            <span class="prelude-val">Ok</span>(MjdHighPrec::new(value.day(), value.frac() - lon_turns))
+<a href=#829 id=829 data-nosnippet>829</a>        }
+<a href=#830 id=830 data-nosnippet>830</a>        <span class="comment">// UT1 → GAST: Greenwich Apparent Sidereal Time
+<a href=#831 id=831 data-nosnippet>831</a>        </span>(UT1, GAST) =&gt; {
+<a href=#832 id=832 data-nosnippet>832</a>            <span class="kw">let </span>(ut_a, ut_b) = value.as_jd_pair();
+<a href=#833 id=833 data-nosnippet>833</a>            <span class="kw">let </span>tt_jd = <span class="kw">match </span>frame.iau_model() {
+<a href=#834 id=834 data-nosnippet>834</a>                IauModel::Iau1976_1980 =&gt; (ut_a, ut_b),
+<a href=#835 id=835 data-nosnippet>835</a>                IauModel::Iau2006_2000A =&gt; {
+<a href=#836 id=836 data-nosnippet>836</a>                    <span class="kw">let </span>utc = apply_hop(value, UT1, UTC, frame)<span class="question-mark">?</span>;
+<a href=#837 id=837 data-nosnippet>837</a>                    <span class="kw">let </span>tai = apply_hop(utc, UTC, TAI, frame)<span class="question-mark">?</span>;
+<a href=#838 id=838 data-nosnippet>838</a>                    apply_hop(tai, TAI, TT, frame)<span class="question-mark">?</span>.as_jd_pair()
+<a href=#839 id=839 data-nosnippet>839</a>                }
+<a href=#840 id=840 data-nosnippet>840</a>            };
+<a href=#841 id=841 data-nosnippet>841</a>            <span class="kw">let </span>gast_rad = casacore_gast_rad((ut_a, ut_b), tt_jd, frame.iau_model());
+<a href=#842 id=842 data-nosnippet>842</a>            <span class="kw">let </span>gast_turns = gast_rad / (<span class="number">2.0 </span>* std::f64::consts::PI);
+<a href=#843 id=843 data-nosnippet>843</a>            <span class="prelude-val">Ok</span>(MjdHighPrec::new(value.day(), gast_turns))
+<a href=#844 id=844 data-nosnippet>844</a>        }
+<a href=#845 id=845 data-nosnippet>845</a>        <span class="comment">// GAST → UT1: iterative Newton-Raphson inverse (same approach as GMST1→UT1)
+<a href=#846 id=846 data-nosnippet>846</a>        </span>(GAST, UT1) =&gt; {
+<a href=#847 id=847 data-nosnippet>847</a>            <span class="kw">let </span>gast_frac = value.frac();
+<a href=#848 id=848 data-nosnippet>848</a>            <span class="kw">const </span>SIDEREAL_RATIO: f64 = <span class="number">1.002_737_811_91</span>;
+<a href=#849 id=849 data-nosnippet>849</a>            <span class="kw">let </span><span class="kw-2">mut </span>ut1_frac = gast_frac / SIDEREAL_RATIO;
+<a href=#850 id=850 data-nosnippet>850</a>
+<a href=#851 id=851 data-nosnippet>851</a>            <span class="kw">for _ in </span><span class="number">0</span>..<span class="number">15 </span>{
+<a href=#852 id=852 data-nosnippet>852</a>                <span class="kw">let </span>trial_ut1 = MjdHighPrec::new(value.day(), ut1_frac);
+<a href=#853 id=853 data-nosnippet>853</a>                <span class="kw">let </span>trial_gast = apply_hop(trial_ut1, UT1, GAST, frame)<span class="question-mark">?</span>;
+<a href=#854 id=854 data-nosnippet>854</a>                <span class="kw">let </span>trial_gast_frac = trial_gast.frac();
 <a href=#855 id=855 data-nosnippet>855</a>
-<a href=#856 id=856 data-nosnippet>856</a>                <span class="kw">if </span>residual.abs() &lt; <span class="number">1e-15 </span>{
-<a href=#857 id=857 data-nosnippet>857</a>                    <span class="kw">break</span>;
-<a href=#858 id=858 data-nosnippet>858</a>                }
-<a href=#859 id=859 data-nosnippet>859</a>                ut1_frac += residual / SIDEREAL_RATIO;
-<a href=#860 id=860 data-nosnippet>860</a>            }
-<a href=#861 id=861 data-nosnippet>861</a>
-<a href=#862 id=862 data-nosnippet>862</a>            <span class="prelude-val">Ok</span>(MjdHighPrec::new(value.day(), ut1_frac))
-<a href=#863 id=863 data-nosnippet>863</a>        }
-<a href=#864 id=864 data-nosnippet>864</a>        <span class="comment">// GAST → LAST: add longitude (same as GMST1→LMST)
-<a href=#865 id=865 data-nosnippet>865</a>        </span>(GAST, LAST) =&gt; {
-<a href=#866 id=866 data-nosnippet>866</a>            <span class="kw">let </span>pos = frame.position().ok_or(MeasureError::MissingFrameData {
-<a href=#867 id=867 data-nosnippet>867</a>                what: <span class="string">"position (for observatory longitude)"</span>,
-<a href=#868 id=868 data-nosnippet>868</a>            })<span class="question-mark">?</span>;
-<a href=#869 id=869 data-nosnippet>869</a>            <span class="kw">let </span>lon_rad = pos.longitude_rad();
-<a href=#870 id=870 data-nosnippet>870</a>            <span class="kw">let </span>lon_turns = lon_rad / (<span class="number">2.0 </span>* std::f64::consts::PI);
-<a href=#871 id=871 data-nosnippet>871</a>            <span class="prelude-val">Ok</span>(MjdHighPrec::new(value.day(), value.frac() + lon_turns))
-<a href=#872 id=872 data-nosnippet>872</a>        }
-<a href=#873 id=873 data-nosnippet>873</a>        <span class="comment">// LAST → GAST: subtract longitude
-<a href=#874 id=874 data-nosnippet>874</a>        </span>(LAST, GAST) =&gt; {
-<a href=#875 id=875 data-nosnippet>875</a>            <span class="kw">let </span>pos = frame.position().ok_or(MeasureError::MissingFrameData {
-<a href=#876 id=876 data-nosnippet>876</a>                what: <span class="string">"position (for observatory longitude)"</span>,
-<a href=#877 id=877 data-nosnippet>877</a>            })<span class="question-mark">?</span>;
-<a href=#878 id=878 data-nosnippet>878</a>            <span class="kw">let </span>lon_rad = pos.longitude_rad();
-<a href=#879 id=879 data-nosnippet>879</a>            <span class="kw">let </span>lon_turns = lon_rad / (<span class="number">2.0 </span>* std::f64::consts::PI);
-<a href=#880 id=880 data-nosnippet>880</a>            <span class="prelude-val">Ok</span>(MjdHighPrec::new(value.day(), value.frac() - lon_turns))
-<a href=#881 id=881 data-nosnippet>881</a>        }
-<a href=#882 id=882 data-nosnippet>882</a>        <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(MeasureError::NotYetImplemented {
-<a href=#883 id=883 data-nosnippet>883</a>            route: <span class="macro">format!</span>(<span class="string">"{from_ref} → {to_ref}"</span>),
-<a href=#884 id=884 data-nosnippet>884</a>        }),
-<a href=#885 id=885 data-nosnippet>885</a>    }
-<a href=#886 id=886 data-nosnippet>886</a>}
-<a href=#887 id=887 data-nosnippet>887</a>
-<a href=#888 id=888 data-nosnippet>888</a><span class="doccomment">/// Computes the TDB−TT approximation in seconds.
-<a href=#889 id=889 data-nosnippet>889</a>///
-<a href=#890 id=890 data-nosnippet>890</a>/// Uses the same 2-term Fairhead &amp; Bretagnon approximation as C++ casacore's
-<a href=#891 id=891 data-nosnippet>891</a>/// `MeasTable::dTDT()`, which is accurate to ~30 µs. This is vastly faster
-<a href=#892 id=892 data-nosnippet>892</a>/// than SOFA's full 791-term `dtdb` series while matching casacore's precision.
-<a href=#893 id=893 data-nosnippet>893</a></span><span class="kw">fn </span>compute_dtdb(value: MjdHighPrec, _frame: <span class="kw-2">&amp;</span>MeasFrame) -&gt; f64 {
-<a href=#894 id=894 data-nosnippet>894</a>    <span class="kw">const </span>MJD2000: f64 = <span class="number">51544.5</span>;
-<a href=#895 id=895 data-nosnippet>895</a>    <span class="kw">let </span>g = (<span class="number">357.53 </span>+ <span class="number">0.985_600_3 </span>* (value.as_mjd() - MJD2000)).to_radians();
-<a href=#896 id=896 data-nosnippet>896</a>    <span class="number">0.001_658 </span>* g.sin() + <span class="number">0.000_014 </span>* (<span class="number">2.0 </span>* g).sin()
-<a href=#897 id=897 data-nosnippet>897</a>}
-<a href=#898 id=898 data-nosnippet>898</a>
-<a href=#899 id=899 data-nosnippet>899</a><span class="attr">#[cfg(test)]
-<a href=#900 id=900 data-nosnippet>900</a></span><span class="kw">mod </span>tests {
-<a href=#901 id=901 data-nosnippet>901</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#902 id=902 data-nosnippet>902</a>
-<a href=#903 id=903 data-nosnippet>903</a>    <span class="attr">#[test]
-<a href=#904 id=904 data-nosnippet>904</a>    </span><span class="kw">fn </span>mjd_high_prec_normalization() {
-<a href=#905 id=905 data-nosnippet>905</a>        <span class="kw">let </span>m = MjdHighPrec::new(<span class="number">51544.0</span>, <span class="number">1.5</span>);
-<a href=#906 id=906 data-nosnippet>906</a>        <span class="macro">assert_eq!</span>(m.day(), <span class="number">51545.0</span>);
-<a href=#907 id=907 data-nosnippet>907</a>        <span class="macro">assert!</span>((m.frac() - <span class="number">0.5</span>).abs() &lt; <span class="number">1e-15</span>);
-<a href=#908 id=908 data-nosnippet>908</a>    }
-<a href=#909 id=909 data-nosnippet>909</a>
-<a href=#910 id=910 data-nosnippet>910</a>    <span class="attr">#[test]
-<a href=#911 id=911 data-nosnippet>911</a>    </span><span class="kw">fn </span>mjd_high_prec_from_mjd_roundtrip() {
-<a href=#912 id=912 data-nosnippet>912</a>        <span class="kw">let </span>mjd = <span class="number">51544.5</span>;
-<a href=#913 id=913 data-nosnippet>913</a>        <span class="kw">let </span>m = MjdHighPrec::from_mjd(mjd);
-<a href=#914 id=914 data-nosnippet>914</a>        <span class="macro">assert!</span>((m.as_mjd() - mjd).abs() &lt; <span class="number">1e-15</span>);
-<a href=#915 id=915 data-nosnippet>915</a>        <span class="macro">assert_eq!</span>(m.day(), <span class="number">51544.0</span>);
-<a href=#916 id=916 data-nosnippet>916</a>        <span class="macro">assert!</span>((m.frac() - <span class="number">0.5</span>).abs() &lt; <span class="number">1e-15</span>);
-<a href=#917 id=917 data-nosnippet>917</a>    }
-<a href=#918 id=918 data-nosnippet>918</a>
-<a href=#919 id=919 data-nosnippet>919</a>    <span class="attr">#[test]
-<a href=#920 id=920 data-nosnippet>920</a>    </span><span class="kw">fn </span>mjd_high_prec_jd_pair_roundtrip() {
-<a href=#921 id=921 data-nosnippet>921</a>        <span class="kw">let </span>m = MjdHighPrec::new(<span class="number">51544.0</span>, <span class="number">0.5</span>);
-<a href=#922 id=922 data-nosnippet>922</a>        <span class="kw">let </span>(jd1, jd2) = m.as_jd_pair();
-<a href=#923 id=923 data-nosnippet>923</a>        <span class="macro">assert_eq!</span>(jd1, MJD_OFFSET);
-<a href=#924 id=924 data-nosnippet>924</a>        <span class="macro">assert!</span>((jd2 - <span class="number">51544.5</span>).abs() &lt; <span class="number">1e-15</span>);
-<a href=#925 id=925 data-nosnippet>925</a>        <span class="kw">let </span>m2 = MjdHighPrec::from_jd_pair(jd1, jd2);
-<a href=#926 id=926 data-nosnippet>926</a>        <span class="macro">assert!</span>((m2.as_mjd() - m.as_mjd()).abs() &lt; <span class="number">1e-15</span>);
-<a href=#927 id=927 data-nosnippet>927</a>    }
-<a href=#928 id=928 data-nosnippet>928</a>
-<a href=#929 id=929 data-nosnippet>929</a>    <span class="attr">#[test]
-<a href=#930 id=930 data-nosnippet>930</a>    </span><span class="kw">fn </span>mjd_high_prec_arithmetic() {
-<a href=#931 id=931 data-nosnippet>931</a>        <span class="kw">let </span>m = MjdHighPrec::from_mjd(<span class="number">51544.5</span>);
-<a href=#932 id=932 data-nosnippet>932</a>        <span class="kw">let </span>m2 = m + <span class="number">1.0</span>;
-<a href=#933 id=933 data-nosnippet>933</a>        <span class="macro">assert!</span>((m2.as_mjd() - <span class="number">51545.5</span>).abs() &lt; <span class="number">1e-15</span>);
-<a href=#934 id=934 data-nosnippet>934</a>        <span class="kw">let </span>m3 = m2 - <span class="number">1.0</span>;
-<a href=#935 id=935 data-nosnippet>935</a>        <span class="macro">assert!</span>((m3.as_mjd() - <span class="number">51544.5</span>).abs() &lt; <span class="number">1e-15</span>);
-<a href=#936 id=936 data-nosnippet>936</a>        <span class="kw">let </span>diff = m2 - m;
-<a href=#937 id=937 data-nosnippet>937</a>        <span class="macro">assert!</span>((diff - <span class="number">1.0</span>).abs() &lt; <span class="number">1e-15</span>);
-<a href=#938 id=938 data-nosnippet>938</a>    }
-<a href=#939 id=939 data-nosnippet>939</a>
-<a href=#940 id=940 data-nosnippet>940</a>    <span class="attr">#[test]
-<a href=#941 id=941 data-nosnippet>941</a>    </span><span class="kw">fn </span>epoch_ref_parse_all() {
-<a href=#942 id=942 data-nosnippet>942</a>        <span class="kw">for </span>r <span class="kw">in </span>EpochRef::ALL {
-<a href=#943 id=943 data-nosnippet>943</a>            <span class="kw">let </span>parsed: EpochRef = r.as_str().parse().unwrap();
-<a href=#944 id=944 data-nosnippet>944</a>            <span class="macro">assert_eq!</span>(parsed, r);
-<a href=#945 id=945 data-nosnippet>945</a>        }
+<a href=#856 id=856 data-nosnippet>856</a>                <span class="kw">let </span><span class="kw-2">mut </span>residual = gast_frac - trial_gast_frac;
+<a href=#857 id=857 data-nosnippet>857</a>                <span class="kw">if </span>residual &gt; <span class="number">0.5 </span>{
+<a href=#858 id=858 data-nosnippet>858</a>                    residual -= <span class="number">1.0</span>;
+<a href=#859 id=859 data-nosnippet>859</a>                }
+<a href=#860 id=860 data-nosnippet>860</a>                <span class="kw">if </span>residual &lt; -<span class="number">0.5 </span>{
+<a href=#861 id=861 data-nosnippet>861</a>                    residual += <span class="number">1.0</span>;
+<a href=#862 id=862 data-nosnippet>862</a>                }
+<a href=#863 id=863 data-nosnippet>863</a>
+<a href=#864 id=864 data-nosnippet>864</a>                <span class="kw">if </span>residual.abs() &lt; <span class="number">1e-15 </span>{
+<a href=#865 id=865 data-nosnippet>865</a>                    <span class="kw">break</span>;
+<a href=#866 id=866 data-nosnippet>866</a>                }
+<a href=#867 id=867 data-nosnippet>867</a>                ut1_frac += residual / SIDEREAL_RATIO;
+<a href=#868 id=868 data-nosnippet>868</a>            }
+<a href=#869 id=869 data-nosnippet>869</a>
+<a href=#870 id=870 data-nosnippet>870</a>            <span class="prelude-val">Ok</span>(MjdHighPrec::new(value.day(), ut1_frac))
+<a href=#871 id=871 data-nosnippet>871</a>        }
+<a href=#872 id=872 data-nosnippet>872</a>        <span class="comment">// GAST → LAST: add longitude (same as GMST1→LMST)
+<a href=#873 id=873 data-nosnippet>873</a>        </span>(GAST, LAST) =&gt; {
+<a href=#874 id=874 data-nosnippet>874</a>            <span class="kw">let </span>pos = frame.position().ok_or(MeasureError::MissingFrameData {
+<a href=#875 id=875 data-nosnippet>875</a>                what: <span class="string">"position (for observatory longitude)"</span>,
+<a href=#876 id=876 data-nosnippet>876</a>            })<span class="question-mark">?</span>;
+<a href=#877 id=877 data-nosnippet>877</a>            <span class="kw">let </span>lon_rad = pos.longitude_rad();
+<a href=#878 id=878 data-nosnippet>878</a>            <span class="kw">let </span>lon_turns = lon_rad / (<span class="number">2.0 </span>* std::f64::consts::PI);
+<a href=#879 id=879 data-nosnippet>879</a>            <span class="prelude-val">Ok</span>(MjdHighPrec::new(value.day(), value.frac() + lon_turns))
+<a href=#880 id=880 data-nosnippet>880</a>        }
+<a href=#881 id=881 data-nosnippet>881</a>        <span class="comment">// LAST → GAST: subtract longitude
+<a href=#882 id=882 data-nosnippet>882</a>        </span>(LAST, GAST) =&gt; {
+<a href=#883 id=883 data-nosnippet>883</a>            <span class="kw">let </span>pos = frame.position().ok_or(MeasureError::MissingFrameData {
+<a href=#884 id=884 data-nosnippet>884</a>                what: <span class="string">"position (for observatory longitude)"</span>,
+<a href=#885 id=885 data-nosnippet>885</a>            })<span class="question-mark">?</span>;
+<a href=#886 id=886 data-nosnippet>886</a>            <span class="kw">let </span>lon_rad = pos.longitude_rad();
+<a href=#887 id=887 data-nosnippet>887</a>            <span class="kw">let </span>lon_turns = lon_rad / (<span class="number">2.0 </span>* std::f64::consts::PI);
+<a href=#888 id=888 data-nosnippet>888</a>            <span class="prelude-val">Ok</span>(MjdHighPrec::new(value.day(), value.frac() - lon_turns))
+<a href=#889 id=889 data-nosnippet>889</a>        }
+<a href=#890 id=890 data-nosnippet>890</a>        <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(MeasureError::NotYetImplemented {
+<a href=#891 id=891 data-nosnippet>891</a>            route: <span class="macro">format!</span>(<span class="string">"{from_ref} → {to_ref}"</span>),
+<a href=#892 id=892 data-nosnippet>892</a>        }),
+<a href=#893 id=893 data-nosnippet>893</a>    }
+<a href=#894 id=894 data-nosnippet>894</a>}
+<a href=#895 id=895 data-nosnippet>895</a>
+<a href=#896 id=896 data-nosnippet>896</a><span class="doccomment">/// Computes the TDB−TT approximation in seconds.
+<a href=#897 id=897 data-nosnippet>897</a>///
+<a href=#898 id=898 data-nosnippet>898</a>/// Uses the same 2-term Fairhead &amp; Bretagnon approximation as C++ casacore's
+<a href=#899 id=899 data-nosnippet>899</a>/// `MeasTable::dTDT()`, which is accurate to ~30 µs. This is vastly faster
+<a href=#900 id=900 data-nosnippet>900</a>/// than SOFA's full 791-term `dtdb` series while matching casacore's precision.
+<a href=#901 id=901 data-nosnippet>901</a></span><span class="kw">fn </span>compute_dtdb(value: MjdHighPrec, _frame: <span class="kw-2">&amp;</span>MeasFrame) -&gt; f64 {
+<a href=#902 id=902 data-nosnippet>902</a>    <span class="kw">const </span>MJD2000: f64 = <span class="number">51544.5</span>;
+<a href=#903 id=903 data-nosnippet>903</a>    <span class="kw">let </span>g = (<span class="number">357.53 </span>+ <span class="number">0.985_600_3 </span>* (value.as_mjd() - MJD2000)).to_radians();
+<a href=#904 id=904 data-nosnippet>904</a>    <span class="number">0.001_658 </span>* g.sin() + <span class="number">0.000_014 </span>* (<span class="number">2.0 </span>* g).sin()
+<a href=#905 id=905 data-nosnippet>905</a>}
+<a href=#906 id=906 data-nosnippet>906</a>
+<a href=#907 id=907 data-nosnippet>907</a><span class="attr">#[cfg(test)]
+<a href=#908 id=908 data-nosnippet>908</a></span><span class="kw">mod </span>tests {
+<a href=#909 id=909 data-nosnippet>909</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#910 id=910 data-nosnippet>910</a>
+<a href=#911 id=911 data-nosnippet>911</a>    <span class="attr">#[test]
+<a href=#912 id=912 data-nosnippet>912</a>    </span><span class="kw">fn </span>mjd_high_prec_normalization() {
+<a href=#913 id=913 data-nosnippet>913</a>        <span class="kw">let </span>m = MjdHighPrec::new(<span class="number">51544.0</span>, <span class="number">1.5</span>);
+<a href=#914 id=914 data-nosnippet>914</a>        <span class="macro">assert_eq!</span>(m.day(), <span class="number">51545.0</span>);
+<a href=#915 id=915 data-nosnippet>915</a>        <span class="macro">assert!</span>((m.frac() - <span class="number">0.5</span>).abs() &lt; <span class="number">1e-15</span>);
+<a href=#916 id=916 data-nosnippet>916</a>    }
+<a href=#917 id=917 data-nosnippet>917</a>
+<a href=#918 id=918 data-nosnippet>918</a>    <span class="attr">#[test]
+<a href=#919 id=919 data-nosnippet>919</a>    </span><span class="kw">fn </span>mjd_high_prec_from_mjd_roundtrip() {
+<a href=#920 id=920 data-nosnippet>920</a>        <span class="kw">let </span>mjd = <span class="number">51544.5</span>;
+<a href=#921 id=921 data-nosnippet>921</a>        <span class="kw">let </span>m = MjdHighPrec::from_mjd(mjd);
+<a href=#922 id=922 data-nosnippet>922</a>        <span class="macro">assert!</span>((m.as_mjd() - mjd).abs() &lt; <span class="number">1e-15</span>);
+<a href=#923 id=923 data-nosnippet>923</a>        <span class="macro">assert_eq!</span>(m.day(), <span class="number">51544.0</span>);
+<a href=#924 id=924 data-nosnippet>924</a>        <span class="macro">assert!</span>((m.frac() - <span class="number">0.5</span>).abs() &lt; <span class="number">1e-15</span>);
+<a href=#925 id=925 data-nosnippet>925</a>    }
+<a href=#926 id=926 data-nosnippet>926</a>
+<a href=#927 id=927 data-nosnippet>927</a>    <span class="attr">#[test]
+<a href=#928 id=928 data-nosnippet>928</a>    </span><span class="kw">fn </span>mjd_high_prec_jd_pair_roundtrip() {
+<a href=#929 id=929 data-nosnippet>929</a>        <span class="kw">let </span>m = MjdHighPrec::new(<span class="number">51544.0</span>, <span class="number">0.5</span>);
+<a href=#930 id=930 data-nosnippet>930</a>        <span class="kw">let </span>(jd1, jd2) = m.as_jd_pair();
+<a href=#931 id=931 data-nosnippet>931</a>        <span class="macro">assert_eq!</span>(jd1, MJD_OFFSET);
+<a href=#932 id=932 data-nosnippet>932</a>        <span class="macro">assert!</span>((jd2 - <span class="number">51544.5</span>).abs() &lt; <span class="number">1e-15</span>);
+<a href=#933 id=933 data-nosnippet>933</a>        <span class="kw">let </span>m2 = MjdHighPrec::from_jd_pair(jd1, jd2);
+<a href=#934 id=934 data-nosnippet>934</a>        <span class="macro">assert!</span>((m2.as_mjd() - m.as_mjd()).abs() &lt; <span class="number">1e-15</span>);
+<a href=#935 id=935 data-nosnippet>935</a>    }
+<a href=#936 id=936 data-nosnippet>936</a>
+<a href=#937 id=937 data-nosnippet>937</a>    <span class="attr">#[test]
+<a href=#938 id=938 data-nosnippet>938</a>    </span><span class="kw">fn </span>mjd_high_prec_arithmetic() {
+<a href=#939 id=939 data-nosnippet>939</a>        <span class="kw">let </span>m = MjdHighPrec::from_mjd(<span class="number">51544.5</span>);
+<a href=#940 id=940 data-nosnippet>940</a>        <span class="kw">let </span>m2 = m + <span class="number">1.0</span>;
+<a href=#941 id=941 data-nosnippet>941</a>        <span class="macro">assert!</span>((m2.as_mjd() - <span class="number">51545.5</span>).abs() &lt; <span class="number">1e-15</span>);
+<a href=#942 id=942 data-nosnippet>942</a>        <span class="kw">let </span>m3 = m2 - <span class="number">1.0</span>;
+<a href=#943 id=943 data-nosnippet>943</a>        <span class="macro">assert!</span>((m3.as_mjd() - <span class="number">51544.5</span>).abs() &lt; <span class="number">1e-15</span>);
+<a href=#944 id=944 data-nosnippet>944</a>        <span class="kw">let </span>diff = m2 - m;
+<a href=#945 id=945 data-nosnippet>945</a>        <span class="macro">assert!</span>((diff - <span class="number">1.0</span>).abs() &lt; <span class="number">1e-15</span>);
 <a href=#946 id=946 data-nosnippet>946</a>    }
 <a href=#947 id=947 data-nosnippet>947</a>
 <a href=#948 id=948 data-nosnippet>948</a>    <span class="attr">#[test]
-<a href=#949 id=949 data-nosnippet>949</a>    </span><span class="kw">fn </span>epoch_ref_parse_synonyms() {
-<a href=#950 id=950 data-nosnippet>950</a>        <span class="macro">assert_eq!</span>(<span class="string">"IAT"</span>.parse::&lt;EpochRef&gt;().unwrap(), EpochRef::TAI);
-<a href=#951 id=951 data-nosnippet>951</a>        <span class="macro">assert_eq!</span>(<span class="string">"TDT"</span>.parse::&lt;EpochRef&gt;().unwrap(), EpochRef::TT);
-<a href=#952 id=952 data-nosnippet>952</a>        <span class="macro">assert_eq!</span>(<span class="string">"ET"</span>.parse::&lt;EpochRef&gt;().unwrap(), EpochRef::TT);
-<a href=#953 id=953 data-nosnippet>953</a>        <span class="macro">assert_eq!</span>(<span class="string">"UT"</span>.parse::&lt;EpochRef&gt;().unwrap(), EpochRef::UT1);
-<a href=#954 id=954 data-nosnippet>954</a>        <span class="macro">assert_eq!</span>(<span class="string">"GMST"</span>.parse::&lt;EpochRef&gt;().unwrap(), EpochRef::GMST1);
-<a href=#955 id=955 data-nosnippet>955</a>    }
-<a href=#956 id=956 data-nosnippet>956</a>
-<a href=#957 id=957 data-nosnippet>957</a>    <span class="attr">#[test]
-<a href=#958 id=958 data-nosnippet>958</a>    </span><span class="kw">fn </span>epoch_ref_unknown() {
-<a href=#959 id=959 data-nosnippet>959</a>        <span class="macro">assert!</span>(<span class="string">"XYZZY"</span>.parse::&lt;EpochRef&gt;().is_err());
-<a href=#960 id=960 data-nosnippet>960</a>    }
-<a href=#961 id=961 data-nosnippet>961</a>
-<a href=#962 id=962 data-nosnippet>962</a>    <span class="attr">#[test]
-<a href=#963 id=963 data-nosnippet>963</a>    </span><span class="kw">fn </span>casacore_code_roundtrip() {
-<a href=#964 id=964 data-nosnippet>964</a>        <span class="kw">for </span>r <span class="kw">in </span>EpochRef::ALL {
-<a href=#965 id=965 data-nosnippet>965</a>            <span class="kw">let </span>code = r.casacore_code();
-<a href=#966 id=966 data-nosnippet>966</a>            <span class="macro">assert_eq!</span>(EpochRef::from_casacore_code(code), <span class="prelude-val">Some</span>(r));
-<a href=#967 id=967 data-nosnippet>967</a>        }
+<a href=#949 id=949 data-nosnippet>949</a>    </span><span class="kw">fn </span>epoch_ref_parse_all() {
+<a href=#950 id=950 data-nosnippet>950</a>        <span class="kw">for </span>r <span class="kw">in </span>EpochRef::ALL {
+<a href=#951 id=951 data-nosnippet>951</a>            <span class="kw">let </span>parsed: EpochRef = r.as_str().parse().unwrap();
+<a href=#952 id=952 data-nosnippet>952</a>            <span class="macro">assert_eq!</span>(parsed, r);
+<a href=#953 id=953 data-nosnippet>953</a>        }
+<a href=#954 id=954 data-nosnippet>954</a>    }
+<a href=#955 id=955 data-nosnippet>955</a>
+<a href=#956 id=956 data-nosnippet>956</a>    <span class="attr">#[test]
+<a href=#957 id=957 data-nosnippet>957</a>    </span><span class="kw">fn </span>epoch_ref_parse_synonyms() {
+<a href=#958 id=958 data-nosnippet>958</a>        <span class="macro">assert_eq!</span>(<span class="string">"IAT"</span>.parse::&lt;EpochRef&gt;().unwrap(), EpochRef::TAI);
+<a href=#959 id=959 data-nosnippet>959</a>        <span class="macro">assert_eq!</span>(<span class="string">"TDT"</span>.parse::&lt;EpochRef&gt;().unwrap(), EpochRef::TT);
+<a href=#960 id=960 data-nosnippet>960</a>        <span class="macro">assert_eq!</span>(<span class="string">"ET"</span>.parse::&lt;EpochRef&gt;().unwrap(), EpochRef::TT);
+<a href=#961 id=961 data-nosnippet>961</a>        <span class="macro">assert_eq!</span>(<span class="string">"UT"</span>.parse::&lt;EpochRef&gt;().unwrap(), EpochRef::UT1);
+<a href=#962 id=962 data-nosnippet>962</a>        <span class="macro">assert_eq!</span>(<span class="string">"GMST"</span>.parse::&lt;EpochRef&gt;().unwrap(), EpochRef::GMST1);
+<a href=#963 id=963 data-nosnippet>963</a>    }
+<a href=#964 id=964 data-nosnippet>964</a>
+<a href=#965 id=965 data-nosnippet>965</a>    <span class="attr">#[test]
+<a href=#966 id=966 data-nosnippet>966</a>    </span><span class="kw">fn </span>epoch_ref_unknown() {
+<a href=#967 id=967 data-nosnippet>967</a>        <span class="macro">assert!</span>(<span class="string">"XYZZY"</span>.parse::&lt;EpochRef&gt;().is_err());
 <a href=#968 id=968 data-nosnippet>968</a>    }
 <a href=#969 id=969 data-nosnippet>969</a>
 <a href=#970 id=970 data-nosnippet>970</a>    <span class="attr">#[test]
-<a href=#971 id=971 data-nosnippet>971</a>    </span><span class="kw">fn </span>casacore_code_known_values() {
-<a href=#972 id=972 data-nosnippet>972</a>        <span class="macro">assert_eq!</span>(EpochRef::UTC.casacore_code(), <span class="number">6</span>);
-<a href=#973 id=973 data-nosnippet>973</a>        <span class="macro">assert_eq!</span>(EpochRef::TAI.casacore_code(), <span class="number">7</span>);
-<a href=#974 id=974 data-nosnippet>974</a>        <span class="macro">assert_eq!</span>(EpochRef::TT.casacore_code(), <span class="number">8</span>); <span class="comment">// C++ TDT=8
-<a href=#975 id=975 data-nosnippet>975</a>        </span><span class="macro">assert_eq!</span>(EpochRef::LAST.casacore_code(), <span class="number">0</span>);
-<a href=#976 id=976 data-nosnippet>976</a>        <span class="macro">assert_eq!</span>(EpochRef::TCB.casacore_code(), <span class="number">11</span>);
-<a href=#977 id=977 data-nosnippet>977</a>    }
-<a href=#978 id=978 data-nosnippet>978</a>
-<a href=#979 id=979 data-nosnippet>979</a>    <span class="attr">#[test]
-<a href=#980 id=980 data-nosnippet>980</a>    </span><span class="kw">fn </span>casacore_code_invalid() {
-<a href=#981 id=981 data-nosnippet>981</a>        <span class="macro">assert_eq!</span>(EpochRef::from_casacore_code(-<span class="number">1</span>), <span class="prelude-val">None</span>);
-<a href=#982 id=982 data-nosnippet>982</a>        <span class="macro">assert_eq!</span>(EpochRef::from_casacore_code(<span class="number">12</span>), <span class="prelude-val">None</span>);
-<a href=#983 id=983 data-nosnippet>983</a>    }
-<a href=#984 id=984 data-nosnippet>984</a>}
+<a href=#971 id=971 data-nosnippet>971</a>    </span><span class="kw">fn </span>casacore_code_roundtrip() {
+<a href=#972 id=972 data-nosnippet>972</a>        <span class="kw">for </span>r <span class="kw">in </span>EpochRef::ALL {
+<a href=#973 id=973 data-nosnippet>973</a>            <span class="kw">let </span>code = r.casacore_code();
+<a href=#974 id=974 data-nosnippet>974</a>            <span class="macro">assert_eq!</span>(EpochRef::from_casacore_code(code), <span class="prelude-val">Some</span>(r));
+<a href=#975 id=975 data-nosnippet>975</a>        }
+<a href=#976 id=976 data-nosnippet>976</a>    }
+<a href=#977 id=977 data-nosnippet>977</a>
+<a href=#978 id=978 data-nosnippet>978</a>    <span class="attr">#[test]
+<a href=#979 id=979 data-nosnippet>979</a>    </span><span class="kw">fn </span>casacore_code_known_values() {
+<a href=#980 id=980 data-nosnippet>980</a>        <span class="macro">assert_eq!</span>(EpochRef::UTC.casacore_code(), <span class="number">6</span>);
+<a href=#981 id=981 data-nosnippet>981</a>        <span class="macro">assert_eq!</span>(EpochRef::TAI.casacore_code(), <span class="number">7</span>);
+<a href=#982 id=982 data-nosnippet>982</a>        <span class="macro">assert_eq!</span>(EpochRef::TT.casacore_code(), <span class="number">8</span>); <span class="comment">// C++ TDT=8
+<a href=#983 id=983 data-nosnippet>983</a>        </span><span class="macro">assert_eq!</span>(EpochRef::LAST.casacore_code(), <span class="number">0</span>);
+<a href=#984 id=984 data-nosnippet>984</a>        <span class="macro">assert_eq!</span>(EpochRef::TCB.casacore_code(), <span class="number">11</span>);
+<a href=#985 id=985 data-nosnippet>985</a>    }
+<a href=#986 id=986 data-nosnippet>986</a>
+<a href=#987 id=987 data-nosnippet>987</a>    <span class="attr">#[test]
+<a href=#988 id=988 data-nosnippet>988</a>    </span><span class="kw">fn </span>casacore_code_invalid() {
+<a href=#989 id=989 data-nosnippet>989</a>        <span class="macro">assert_eq!</span>(EpochRef::from_casacore_code(-<span class="number">1</span>), <span class="prelude-val">None</span>);
+<a href=#990 id=990 data-nosnippet>990</a>        <span class="macro">assert_eq!</span>(EpochRef::from_casacore_code(<span class="number">12</span>), <span class="prelude-val">None</span>);
+<a href=#991 id=991 data-nosnippet>991</a>    }
+<a href=#992 id=992 data-nosnippet>992</a>}
 </code></pre></div></section></main></body></html>
