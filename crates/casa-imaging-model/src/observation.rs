@@ -507,7 +507,7 @@ impl RowSelection {
                         return Err(CompileObservationError::InvalidIntent);
                     }
                 }
-                intents.sort_unstable_by(|left, right| left.state_id.cmp(&right.state_id));
+                intents.sort_unstable_by_key(|intent| intent.state_id);
                 if intents.is_empty() {
                     return Err(CompileObservationError::InvalidIntent);
                 }
