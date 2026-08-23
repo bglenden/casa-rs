@@ -55,7 +55,7 @@ ACCEPTED_LOGICAL_GRAPH_SHA256 = (
     "7101b6d90196b1ea3d3c750080d703bb5e305e91c8ac19553e1dda7ed58c4e33"
 )
 ACCEPTED_SOURCE_BOUNDARIES_SHA256 = (
-    "b3dfc8c071c48313af89f6babca678236ae9a5a16625828c5696f3f40752f1bd"
+    "642eb28083bbeabe2542f82c62c2b68acb43e2190aa0df4b7a8e187e61a9377f"
 )
 ACCEPTED_FROZEN_TRANSITIONAL_EDGES_SHA256 = (
     "0077e28528d2160616d34e17fb7124586f346557917e0bfac99b0dff6739a1d1"
@@ -565,17 +565,9 @@ def validate_source_boundary_policy(value: Any) -> None:
         if set(boundary) not in {
             frozenset(required_keys),
             frozenset(required_keys | {"rust_allowlist"}),
-            frozenset(required_keys | {"allow_restricted_visibility"}),
-            frozenset(required_keys | {"rust_allowlist", "allow_restricted_visibility"}),
         }:
             raise ArchitectureError(
                 f"{context} must contain the source-boundary keys and optional rust_allowlist only"
-            )
-        if "allow_restricted_visibility" in boundary and not isinstance(
-            boundary["allow_restricted_visibility"], bool
-        ):
-            raise ArchitectureError(
-                f"{context}.allow_restricted_visibility must be a boolean"
             )
         identifier = require_string(boundary.get("id"), f"{context}.id")
         if identifier in identifiers:
@@ -633,11 +625,14 @@ def validate_rust_allowlist_policy(value: Any, context: str) -> None:
         "allowed_imports",
         "allowed_items",
         "allowed_qualified_paths",
+        "allowed_relative_paths",
+        "allowed_restricted_visibilities",
         "composition_message",
         "privacy_message",
         "glob_message",
         "import_message",
         "path_message",
+        "relative_path_message",
         "item_message",
         "inventory_message",
     }
@@ -685,12 +680,51 @@ def validate_rust_allowlist_policy(value: Any, context: str) -> None:
             raise ArchitectureError(
                 f"{context}.allowed_qualified_paths[{qualified_path!r}] must be a positive integer"
             )
+    relative_paths = value.get("allowed_relative_paths")
+    if not isinstance(relative_paths, dict):
+        raise ArchitectureError(f"{context}.allowed_relative_paths must be an object")
+    relative_path_pattern = re.compile(
+        r"^(?:crate|self|super)(?:::(?:(?:crate|self|super)|(?:r#)?[A-Za-z_][A-Za-z0-9_]*))+$"
+    )
+    for relative_path, count in relative_paths.items():
+        if (
+            not isinstance(relative_path, str)
+            or relative_path_pattern.fullmatch(relative_path) is None
+        ):
+            raise ArchitectureError(
+                f"{context}.allowed_relative_paths contains invalid path {relative_path!r}"
+            )
+        if not isinstance(count, int) or isinstance(count, bool) or count < 1:
+            raise ArchitectureError(
+                f"{context}.allowed_relative_paths[{relative_path!r}] must be a positive integer"
+            )
+    restricted_visibilities = value.get("allowed_restricted_visibilities")
+    if not isinstance(restricted_visibilities, dict):
+        raise ArchitectureError(
+            f"{context}.allowed_restricted_visibilities must be an object"
+        )
+    restricted_visibility_pattern = re.compile(
+        r"^pub \( (?:crate|self|super|in (?:crate|self|super)(?:::(?:(?:crate|self|super)|(?:r#)?[A-Za-z_][A-Za-z0-9_]*))*) \) use$"
+    )
+    for visibility, count in restricted_visibilities.items():
+        if (
+            not isinstance(visibility, str)
+            or restricted_visibility_pattern.fullmatch(visibility) is None
+        ):
+            raise ArchitectureError(
+                f"{context}.allowed_restricted_visibilities contains invalid visibility {visibility!r}"
+            )
+        if not isinstance(count, int) or isinstance(count, bool) or count < 1:
+            raise ArchitectureError(
+                f"{context}.allowed_restricted_visibilities[{visibility!r}] must be a positive integer"
+            )
     for name in [
         "composition_message",
         "privacy_message",
         "glob_message",
         "import_message",
         "path_message",
+        "relative_path_message",
         "item_message",
         "inventory_message",
     ]:
@@ -1170,9 +1204,7 @@ def rust_identifier_text(token: RustToken) -> str | None:
     )
 
 
-def rust_attribute_spans(
-    tokens: list[RustToken], path: str
-) -> list[tuple[int, int]]:
+def rust_attribute_spans(tokens: list[RustToken], path: str) -> list[tuple[int, int]]:
     spans: list[tuple[int, int]] = []
     index = 0
     while index < len(tokens):
@@ -1227,8 +1259,9 @@ def rust_source_inventory(
     path: str,
     *,
     tokens: list[RustToken] | None = None,
-    allow_restricted_visibility: bool = False,
 ) -> tuple[
+    list[tuple[str, int]],
+    list[tuple[str, int]],
     list[tuple[str, int]],
     list[tuple[str, int]],
     list[tuple[str, int]],
@@ -1239,19 +1272,31 @@ def rust_source_inventory(
         tokens = rust_tokens(source, path)
     imports: list[tuple[str, int]] = []
     items: list[tuple[str, int]] = []
+    restricted_visibilities: list[tuple[str, int]] = []
     public_lines = []
     for index, token in enumerate(tokens):
         if token.text != "pub":
             continue
-        if allow_restricted_visibility and index + 1 < len(tokens) and tokens[index + 1].text == "(":
-            cursor = index + 2
-            while cursor < len(tokens) and tokens[cursor].text != ")":
+        if index + 1 < len(tokens) and tokens[index + 1].text == "(":
+            cursor = index + 1
+            depth = 0
+            while cursor < len(tokens):
+                if tokens[cursor].text == "(":
+                    depth += 1
+                elif tokens[cursor].text == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
                 cursor += 1
-            restricted = cursor < len(tokens) and any(
-                tokens[offset].text in {"crate", "super", "self", "in"}
-                for offset in range(index + 2, cursor)
-            )
-            if restricted and cursor + 1 < len(tokens) and tokens[cursor + 1].text == "use":
+            if cursor >= len(tokens):
+                raise ArchitectureError(
+                    f"cannot parse Rust visibility boundary {path}:{token.line}"
+                )
+            if cursor + 1 < len(tokens):
+                visibility = " ".join(
+                    value.text for value in tokens[index : cursor + 2]
+                )
+                restricted_visibilities.append((visibility, token.line))
                 continue
         public_lines.append(token.line)
     macro_export_lines = [
@@ -1310,12 +1355,18 @@ def rust_source_inventory(
         index = cursor + 1
 
     qualified_paths: list[tuple[str, int]] = []
+    relative_paths: list[tuple[str, int]] = []
     casa_root = re.compile(r"^(?:casa_[A-Za-z0-9_]+|casars(?:_[A-Za-z0-9_]+)?)$")
     for index, token in enumerate(tokens):
-        root = token.text[2:] if token.text.startswith("r#") else token.text
+        root = rust_identifier_text(token)
         if (
             index in ignored
-            or casa_root.fullmatch(root) is None
+            or root is None
+            or (
+                casa_root.fullmatch(root) is None
+                and root not in {"crate", "self", "super"}
+            )
+            or (index > 0 and tokens[index - 1].text == "::")
             or index + 2 >= len(tokens)
             or tokens[index + 1].text != "::"
             or not rust_identifier(tokens[index + 2])
@@ -1330,7 +1381,10 @@ def rust_source_inventory(
         ):
             segments.append(tokens[cursor + 1].text)
             cursor += 2
-        qualified_paths.append(("::".join(segments), token.line))
+        inventory = (
+            relative_paths if root in {"crate", "self", "super"} else qualified_paths
+        )
+        inventory.append(("::".join(segments), token.line))
 
     item_keywords = {
         "struct",
@@ -1365,7 +1419,9 @@ def rust_source_inventory(
     return (
         imports,
         qualified_paths,
+        relative_paths,
         items,
+        restricted_visibilities,
         public_lines + macro_export_lines,
         glob_lines,
     )
@@ -1389,11 +1445,18 @@ def rust_allowlist_violations(
                 "message": policy["composition_message"],
             }
         ]
-    imports, qualified_paths, items, privacy_lines, glob_lines = rust_source_inventory(
+    (
+        imports,
+        qualified_paths,
+        relative_paths,
+        items,
+        restricted_visibilities,
+        privacy_lines,
+        glob_lines,
+    ) = rust_source_inventory(
         source,
         relative,
         tokens=tokens,
-        allow_restricted_visibility=boundary.get("allow_restricted_visibility", False),
     )
     if privacy_lines:
         return [
@@ -1406,6 +1469,24 @@ def rust_allowlist_violations(
                 "message": policy["privacy_message"],
             }
         ]
+    allowed_restricted_visibilities = Counter(policy["allowed_restricted_visibilities"])
+    observed_restricted_visibilities: Counter[str] = Counter()
+    for visibility, line in restricted_visibilities:
+        observed_restricted_visibilities[visibility] += 1
+        if (
+            observed_restricted_visibilities[visibility]
+            > allowed_restricted_visibilities[visibility]
+        ):
+            return [
+                {
+                    "path": relative,
+                    "pattern": "rust-privacy",
+                    "match": visibility,
+                    "context": visibility,
+                    "line": line,
+                    "message": policy["privacy_message"],
+                }
+            ]
     if glob_lines:
         return [
             {
@@ -1454,6 +1535,25 @@ def rust_allowlist_violations(
                 }
             ]
 
+    allowed_relative_paths = Counter(policy["allowed_relative_paths"])
+    observed_relative_paths: Counter[str] = Counter()
+    for relative_path, line in relative_paths:
+        observed_relative_paths[relative_path] += 1
+        if (
+            observed_relative_paths[relative_path]
+            > allowed_relative_paths[relative_path]
+        ):
+            return [
+                {
+                    "path": relative,
+                    "pattern": "rust-relative-path",
+                    "match": relative_path,
+                    "context": relative_path,
+                    "line": line,
+                    "message": policy["relative_path_message"],
+                }
+            ]
+
     observed_items: Counter[str] = Counter()
     for item, line in items:
         observed_items[item] += 1
@@ -1471,7 +1571,9 @@ def rust_allowlist_violations(
     if (
         observed_imports != allowed_imports
         or observed_qualified_paths != allowed_qualified_paths
+        or observed_relative_paths != allowed_relative_paths
         or observed_items != allowed_items
+        or observed_restricted_visibilities != allowed_restricted_visibilities
     ):
         return [
             {

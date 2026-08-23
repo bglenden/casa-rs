@@ -201,11 +201,14 @@
           "casa_imaging_runtime::ReceiptPublicationParticipant::ModelData": 1,
           "casa_imaging_runtime::ReceiptPublicationParticipant::Product": 1
         },
+        "allowed_relative_paths": {},
+        "allowed_restricted_visibilities": {},
         "composition_message": "T15 walking skeleton must not include or redirect Rust source",
         "privacy_message": "T15 walking skeleton must remain private test code",
         "glob_message": "T15 walking skeleton must not use glob imports",
         "import_message": "T15 walking skeleton imports outside its exact allowlist",
         "path_message": "T15 walking skeleton references a qualified CASA path outside its exact allowlist",
+        "relative_path_message": "T15 walking skeleton references a relative path outside its exact allowlist",
         "item_message": "T15 walking skeleton declares an item outside its exact allowlist",
         "inventory_message": "T15 walking skeleton no longer matches its accepted import and item inventory"
       },
@@ -219,7 +222,6 @@
       "extensions": [
         ".rs"
       ],
-      "allow_restricted_visibility": true,
       "forbidden_patterns": [],
       "rust_allowlist": {
         "allowed_imports": [
@@ -227,11 +229,16 @@
         ],
         "allowed_items": {},
         "allowed_qualified_paths": {},
+        "allowed_relative_paths": {},
+        "allowed_restricted_visibilities": {
+          "pub ( super ) use": 1
+        },
         "composition_message": "T15 parent compile_plan_run support must not include or redirect Rust source",
         "privacy_message": "T15 parent compile_plan_run support must remain private test code",
         "glob_message": "T15 parent compile_plan_run support must not use glob imports",
         "import_message": "T15 parent compile_plan_run support imports outside its exact allowlist",
         "path_message": "T15 parent compile_plan_run support references a qualified CASA path outside its exact allowlist",
+        "relative_path_message": "T15 parent compile_plan_run support references a relative path outside its exact allowlist",
         "item_message": "T15 parent compile_plan_run support declares an item outside its exact allowlist",
         "inventory_message": "T15 parent compile_plan_run support no longer matches its accepted import and item inventory"
       },

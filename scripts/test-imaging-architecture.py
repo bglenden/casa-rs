@@ -556,6 +556,128 @@ class ArchitecturePolicyTests(unittest.TestCase):
                         {"source_boundaries": [boundary]}, root
                     )
 
+    def test_t15_boundaries_reject_direct_relative_path_bypasses(self) -> None:
+        probes = [
+            (
+                "t15-private-walking-skeleton",
+                "super::authority",
+                "fn authority() {}\nmod walking_skeleton {\n"
+                "    fn probe() { let _ = super::authority; }\n}\n",
+            ),
+            (
+                "t15-private-walking-skeleton",
+                "crate::authority",
+                "fn authority() {}\nmod walking_skeleton {\n"
+                "    fn probe() { let _ = crate::authority; }\n}\n",
+            ),
+            (
+                "t15-private-walking-skeleton",
+                "self::support::authority",
+                "mod walking_skeleton {\n"
+                "    mod support { pub(super) fn authority() {} }\n"
+                "    fn probe() { let _ = self::support::authority; }\n}\n",
+            ),
+            (
+                "t15-private-parent-support",
+                "super::super::authority",
+                "fn authority() {}\nmod walking_skeleton {\n"
+                "    mod support {\n"
+                "        const _: () = { let _ = super::super::authority; };\n"
+                "    }\n}\n",
+            ),
+            (
+                "t15-private-parent-support",
+                "crate::authority",
+                "fn authority() {}\nmod walking_skeleton {\n"
+                "    mod support {\n"
+                "        const _: () = { let _ = crate::authority; };\n"
+                "    }\n}\n",
+            ),
+        ]
+        for identifier, relative_path, rustc_probe in probes:
+            boundary = next(
+                value
+                for value in self.policy["source_boundaries"]
+                if value["id"] == identifier
+            )
+            with (
+                self.subTest(boundary=identifier, path=relative_path),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                self.assert_rustc_accepts(rustc_probe)
+                root = Path(directory)
+                fixture = root / boundary["roots"][0]
+                fixture.parent.mkdir(parents=True)
+                canonical = (REPO_ROOT / boundary["roots"][0]).read_text(
+                    encoding="utf-8"
+                )
+                if identifier == "t15-private-walking-skeleton":
+                    source = canonical.replace(
+                        "fn walking_skeleton() -> WalkingSkeleton {\n",
+                        "fn walking_skeleton() -> WalkingSkeleton {\n"
+                        f"    let _ = {relative_path};\n",
+                        1,
+                    )
+                else:
+                    source = (
+                        canonical
+                        + "\nconst _: () = { let _ = "
+                        + relative_path
+                        + "; };\n"
+                    )
+                fixture.write_text(source, encoding="utf-8")
+                with self.assertRaisesRegex(
+                    checker.ArchitectureError,
+                    r"references a relative path outside its exact allowlist",
+                ):
+                    checker.validate_source_boundaries(
+                        {"source_boundaries": [boundary]}, root
+                    )
+
+    def test_t15_parent_support_allows_only_exact_pub_super_use_visibility(
+        self,
+    ) -> None:
+        boundary = next(
+            value
+            for value in self.policy["source_boundaries"]
+            if value["id"] == "t15-private-parent-support"
+        )
+        canonical = (REPO_ROOT / boundary["roots"][0]).read_text(encoding="utf-8")
+        for visibility in [
+            "pub(crate)",
+            "pub(self)",
+            "pub(in crate)",
+            "pub(in super)",
+            "pub(in super::super)",
+        ]:
+            rustc_probe = (
+                "pub(crate) fn authority() {}\n"
+                "mod walking_skeleton {\n"
+                "    mod support {\n"
+                f"        {visibility} use super::super::authority;\n"
+                "    }\n"
+                "}\n"
+            )
+            with (
+                self.subTest(visibility=visibility),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                self.assert_rustc_accepts(rustc_probe)
+                root = Path(directory)
+                fixture = root / boundary["roots"][0]
+                fixture.parent.mkdir(parents=True)
+                fixture.write_text(
+                    canonical.replace("pub(super) use", f"{visibility} use", 1),
+                    encoding="utf-8",
+                )
+                with self.assertRaisesRegex(
+                    checker.ArchitectureError,
+                    r"T15 parent compile_plan_run support must remain private test code",
+                ):
+                    checker.validate_source_boundaries(
+                        {"source_boundaries": [boundary]}, root
+                    )
+
     def test_t15_walking_skeleton_rejects_every_public_rust_item_form(self) -> None:
         boundary = next(
             value
@@ -757,12 +879,20 @@ fn private_probe() {
 // pub fn comment_only() {}
 /* outer #[macro_export] /* nested pub struct CommentOnly; */ */
 """
-        imports, paths, items, privacy, globs = checker.rust_source_inventory(
-            source, "synthetic.rs"
-        )
+        (
+            imports,
+            paths,
+            relative_paths,
+            items,
+            restricted_visibilities,
+            privacy,
+            globs,
+        ) = checker.rust_source_inventory(source, "synthetic.rs")
         self.assertEqual(imports, [])
         self.assertEqual(paths, [])
+        self.assertEqual(relative_paths, [])
         self.assertEqual(items, [("fn:private_probe", 2)])
+        self.assertEqual(restricted_visibilities, [])
         self.assertEqual(privacy, [])
         self.assertEqual(globs, [])
 
