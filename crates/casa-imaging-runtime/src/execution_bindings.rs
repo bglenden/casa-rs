@@ -14,6 +14,7 @@ use casa_imaging_model::{
     ProductRequirements, ReconstructionContract, ReferenceDataKind, RequiredCapability,
     ScientificContract, SelectedObservationCommitmentId, WeightingOperatorContract,
 };
+use casa_imaging_reconstruction::ExecutableModelProblem;
 use sha2::{Digest, Sha256};
 
 use crate::{
@@ -2601,7 +2602,7 @@ fn publication_execution_context<'a>(
 /// Persist the bound plan before execution, drive its complete DAG to
 /// settlement, and atomically publish typed terminal evidence before returning.
 pub fn run<R, C>(
-    problem: &CompiledProblem,
+    problem: &ExecutableModelProblem,
     plan: &ExecutionPlan,
     current: &RunBindings,
     registry: &R,
@@ -2614,6 +2615,7 @@ where
     C: RunController,
 {
     let mut receipt = receipt.begin(problem, plan).map_err(RunError::Receipt)?;
+    let problem = problem.compiled_problem();
     let result = run_inner(
         problem,
         plan,

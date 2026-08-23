@@ -5,6 +5,7 @@
 mod compiled_problem;
 mod geometry;
 mod measurement_equation;
+mod model_state;
 mod observation;
 mod product_graph;
 mod selected_observation;
@@ -23,6 +24,7 @@ pub use compiled_problem::{
     RequiredCapability, RestoringBeamPolicy, ScientificContract, SpectralContract,
     SpectralCoupling, SpectralSampling, StageErrorBudget, TaylorSupportReference,
     TaylorValidityPolicy, UvTaper, WeightDensityScope, WeightingContract, WeightingScheme, compile,
+    validate_compiled_problem_identity,
 };
 
 pub use geometry::{
@@ -42,6 +44,17 @@ pub use measurement_equation::{
     PairedMeasurementTransform, PairedTransformKind, ProductBoundaryOperation,
     ProductNormalizationBoundary, VisibilityInnerProduct, VisibilitySampleSpace,
     WeightingGenerationId, WeightingOperatorContract, WeightingSource,
+};
+
+pub use model_state::{
+    ModelBasisConversionRegistry, ModelBounds, ModelCell, ModelContractError, ModelDeltaTerm,
+    ModelDirectionConversionRegistry, ModelExecutionAttemptId, ModelInputCommitment,
+    ModelInputCommitmentIdentity, ModelInvalidContributorPolicy, ModelLifecycleContract,
+    ModelLifecycleContractId, ModelLifecycleRequirements, ModelPolarizationConversionRegistry,
+    ModelReprojectedSeedProjection, ModelReprojectionPolicy, ModelSample, ModelSourceShape,
+    ModelStateEncoding, ModelSupport, ModelSupportSemantics, ModelUncoveredTargetPolicy,
+    ModelValue, model_reprojected_seed_mapping_identity, model_support_identity,
+    validate_model_lifecycle_contract_identity, validate_model_reprojection_contract_identity,
 };
 
 pub use observation::{

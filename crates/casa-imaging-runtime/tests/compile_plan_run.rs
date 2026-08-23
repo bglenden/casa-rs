@@ -32,6 +32,7 @@ use casa_imaging_model::{
     StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct, WeightDensityScope,
     WeightingContract, WeightingScheme, compile,
 };
+use casa_imaging_reconstruction::ExecutableModelProblem;
 use casa_imaging_runtime::{
     AdaptationId, AdaptationTransition, AllocationAccess, AllocationId, AllocationLayout,
     AllocationLifetime, AllocationPurpose, AllocationUse, AlternativeId, ArtifactDisposition,
@@ -87,7 +88,7 @@ mod common;
 
 mod walking_skeleton;
 
-use common::{identity, problem_inputs};
+use common::{identity, model_lifecycle, problem_inputs};
 
 fn only_receipt_path(root: &Path) -> PathBuf {
     let mut entries = fs::read_dir(root)
@@ -215,6 +216,81 @@ fn with_forged_product_graph_identity(mut document: String) -> String {
     with_current_payload_checksum(document)
 }
 
+fn with_forged_reprojection_identity(mut document: String) -> String {
+    let reprojection_marker = "\"reprojection\": {";
+    let reprojection_start = document
+        .find(reprojection_marker)
+        .expect("typed model reprojection projection");
+    let identity_marker = "\"identity\": \"";
+    let start = document[reprojection_start..]
+        .find(identity_marker)
+        .map(|offset| reprojection_start + offset + identity_marker.len())
+        .expect("typed model reprojection identity");
+    let original = document[start..start + 64].to_owned();
+    assert_ne!(original, "e".repeat(64));
+    document = document.replace(&original, &"e".repeat(64));
+    with_current_payload_checksum(document)
+}
+
+fn with_forged_model_lifecycle_identity(mut document: String, replacement: &str) -> String {
+    let lifecycle_marker = "\"model_lifecycle\": {";
+    let lifecycle_start = document
+        .find(lifecycle_marker)
+        .expect("typed model lifecycle projection");
+    let identity_marker = "\"identity\": \"";
+    let start = document[lifecycle_start..]
+        .find(identity_marker)
+        .map(|offset| lifecycle_start + offset + identity_marker.len())
+        .expect("typed model lifecycle identity");
+    let original = document[start..start + 64].to_owned();
+    assert_eq!(replacement.len(), 64);
+    assert_ne!(original, replacement);
+    document = document.replace(&original, replacement);
+    with_current_payload_checksum(document)
+}
+
+fn with_forged_model_input_source_identity(mut document: String, replacement: &str) -> String {
+    let value: serde_json::Value = serde_json::from_str(&document).expect("receipt JSON");
+    let original = value["receipt"]["problem"]["model_lifecycle"]["input"]["source_identity"]
+        .as_str()
+        .expect("typed model input source identity")
+        .to_owned();
+    assert_eq!(replacement.len(), 64);
+    assert_ne!(original, replacement);
+    document = document.replace(&original, replacement);
+    with_current_payload_checksum(document)
+}
+
+fn with_forged_problem_model_and_audit_identity(mut document: String, replacement: &str) -> String {
+    assert_eq!(replacement.len(), 64);
+    let model_marker = "\"model_identity\": {";
+    let model_start = document.find(model_marker).expect("typed model identity");
+    let identity_marker = "\"identity\": \"";
+    let typed_start = document[model_start..]
+        .find(identity_marker)
+        .map(|offset| model_start + offset + identity_marker.len())
+        .expect("typed model digest");
+    assert_ne!(&document[typed_start..typed_start + 64], replacement);
+    document.replace_range(typed_start..typed_start + 64, replacement);
+
+    let audit_marker = "\"observation.model.identity\": \"";
+    let audit_start =
+        document.find(audit_marker).expect("audit model identity") + audit_marker.len();
+    assert_ne!(&document[audit_start..audit_start + 64], replacement);
+    document.replace_range(audit_start..audit_start + 64, replacement);
+    with_current_payload_checksum(document)
+}
+
+fn with_forged_parent_problem_identity(mut document: String, replacement: &str) -> String {
+    assert_eq!(replacement.len(), 64);
+    for marker in ["\"problem_identity\": \"", "\"problem.identity\": \""] {
+        let start = document.find(marker).expect("problem identity projection") + marker.len();
+        assert_ne!(&document[start..start + 64], replacement);
+        document.replace_range(start..start + 64, replacement);
+    }
+    with_current_payload_checksum(document)
+}
+
 fn with_forged_audit_field(mut document: String, field: &str, value: &str) -> String {
     let marker = format!("\"{field}\": \"");
     let start = document.find(&marker).expect("Product Graph audit field") + marker.len();
@@ -333,6 +409,23 @@ fn request_with_products(
     )
 }
 
+fn request_with_products_and_initial_model(
+    observation: u8,
+    geometry: GeometryInput,
+    products: Vec<ProductKind>,
+    model: ModelStateIdentity,
+) -> ImagingRequest {
+    request_with_geometry_references_weighting_products_model_write_and_input(
+        observation,
+        geometry,
+        default_references(),
+        WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
+        products,
+        ModelColumnWrite::Disabled,
+        model,
+    )
+}
+
 fn request_with_model_write(observation: u8) -> ImagingRequest {
     request_with_products_and_model(
         observation,
@@ -365,6 +458,26 @@ fn request_with_geometry_references_weighting_products_and_model(
     weighting: WeightingContract,
     products: Vec<ProductKind>,
     model_column_write: ModelColumnWrite,
+) -> ImagingRequest {
+    request_with_geometry_references_weighting_products_model_write_and_input(
+        observation,
+        geometry,
+        references,
+        weighting,
+        products,
+        model_column_write,
+        ModelStateIdentity::Empty,
+    )
+}
+
+fn request_with_geometry_references_weighting_products_model_write_and_input(
+    observation: u8,
+    geometry: GeometryInput,
+    references: Vec<(ReferenceDataKind, casa_imaging_model::LogicalIdentity)>,
+    weighting: WeightingContract,
+    products: Vec<ProductKind>,
+    model_column_write: ModelColumnWrite,
+    model: ModelStateIdentity,
 ) -> ImagingRequest {
     let numerics = NumericsContract::new(
         vec![NumericPrecision::F64],
@@ -405,7 +518,8 @@ fn request_with_geometry_references_weighting_products_and_model(
     ImagingRequest::new(
         specification,
         geometry,
-        problem_inputs(observation, references, ModelStateIdentity::Empty),
+        problem_inputs(observation, references, model),
+        model_lifecycle(model),
     )
 }
 
@@ -2663,8 +2777,16 @@ fn run_receipted<C: RunController>(
     let _guard = run_lock()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let executable =
+        ExecutableModelProblem::from_compiled(problem.clone()).expect("direct executable problem");
     runtime_run(
-        problem, plan, current, registry, authority, controller, receipt,
+        &executable,
+        plan,
+        current,
+        registry,
+        authority,
+        controller,
+        receipt,
     )
 }
 
@@ -3242,8 +3364,8 @@ fn plan_seals_physical_work_and_every_required_binding() {
     assert_eq!(
         execution_plan.plan_id().as_bytes(),
         [
-            183, 133, 64, 52, 66, 156, 255, 161, 73, 6, 75, 19, 135, 46, 171, 142, 56, 30, 186, 94,
-            225, 2, 41, 117, 208, 65, 172, 220, 148, 117, 36, 148,
+            247, 196, 220, 222, 254, 25, 213, 243, 10, 98, 169, 162, 212, 100, 95, 202, 222, 107,
+            5, 16, 38, 32, 214, 157, 157, 230, 118, 175, 73, 151, 8, 207,
         ]
     );
 }
@@ -3973,7 +4095,7 @@ fn receipt_finalize_failure_after_publish_returns_success_and_reopens_prepared_e
     assert_eq!(outcome, ExecutionOutcome::Succeeded);
     assert!(publication_launched.load(Ordering::SeqCst));
     assert_eq!(visible_generation.load(Ordering::SeqCst), 1);
-    assert_eq!(receipt.schema_version(), 7);
+    assert_eq!(receipt.schema_version(), 11);
     assert_eq!(receipt.status(), ReceiptStatus::PublicationPrepared);
     for layout in execution_plan.publication_layouts().entries() {
         assert_eq!(
@@ -4027,11 +4149,13 @@ fn prepared_publication_holds_the_shared_root_reservation_through_publish() {
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([95; 32]),
         BuildIdentity::from_sha256([96; 32]),
     );
+    let executable =
+        ExecutableModelProblem::from_compiled(problem.clone()).expect("direct executable problem");
 
     std::thread::scope(|scope| {
         let (first_tx, first_rx) = std::sync::mpsc::channel();
         let first_provenance = first.clone();
-        let problem = &problem;
+        let problem = &executable;
         let execution_plan = &execution_plan;
         let current = &current;
         let registry = &registry;
@@ -4746,7 +4870,7 @@ fn run_persists_a_reopenable_receipt_with_exact_identities_and_every_plan_node()
         .expect("reopen durable receipt");
 
     assert_eq!(outcome, ExecutionOutcome::Succeeded);
-    assert_eq!(receipt.schema_version(), 7);
+    assert_eq!(receipt.schema_version(), 11);
     assert_eq!(receipt.route_matrix_schema_version(), 1);
     assert_eq!(receipt.route_matrix_contract_revision(), 1);
     assert_eq!(receipt.route_disposition(), "native");
@@ -4824,11 +4948,12 @@ fn run_persists_a_reopenable_receipt_with_exact_identities_and_every_plan_node()
 }
 
 #[test]
-fn receipt_rejects_checksum_valid_product_graph_projection_and_audit_forgery() {
-    let problem = compile(request_with_products(
+fn receipt_rejects_checksum_valid_typed_projection_and_audit_forgery() {
+    let problem = compile(request_with_products_and_initial_model(
         1,
         geometry(255.0),
         vec![ProductKind::Psf, ProductKind::Residual],
+        ModelStateIdentity::Seed(identity(89)),
     ))
     .expect("two-product logical compilation");
     let execution_plan = plan(
@@ -4894,6 +5019,38 @@ fn receipt_rejects_checksum_valid_product_graph_projection_and_audit_forgery() {
             with_forged_product_graph_identity(original.clone()),
         ),
         (
+            "coordinated reprojection identity and audit forgery",
+            with_forged_reprojection_identity(original.clone()),
+        ),
+        (
+            "coordinated model lifecycle identity and audit forgery",
+            with_forged_model_lifecycle_identity(original.clone(), &"d".repeat(64)),
+        ),
+        (
+            "coordinated model input and audit forgery",
+            with_forged_model_input_source_identity(original.clone(), &"c".repeat(64)),
+        ),
+        (
+            "zero model lifecycle identity sentinel",
+            with_forged_model_lifecycle_identity(original.clone(), &"0".repeat(64)),
+        ),
+        (
+            "zero model input identity sentinel",
+            with_forged_model_input_source_identity(original.clone(), &"0".repeat(64)),
+        ),
+        (
+            "coordinated zero problem-model and audit identity",
+            with_forged_problem_model_and_audit_identity(original.clone(), &"0".repeat(64)),
+        ),
+        (
+            "coordinated parent problem and audit identity forgery",
+            with_forged_parent_problem_identity(original.clone(), &"b".repeat(64)),
+        ),
+        (
+            "coordinated zero parent problem and audit identity",
+            with_forged_parent_problem_identity(original.clone(), &"0".repeat(64)),
+        ),
+        (
             "missing publication member",
             with_usize_array(original.clone(), "publication_member_ordinals", &[0]),
         ),
@@ -4921,6 +5078,14 @@ fn receipt_rejects_checksum_valid_product_graph_projection_and_audit_forgery() {
                 "1",
             ),
         ),
+        (
+            "audit reprojection contract contradicts the typed projection",
+            with_forged_audit_field(
+                original.clone(),
+                "model_lifecycle.reprojection.direction_registry",
+                "forged",
+            ),
+        ),
     ];
     for (case, document) in cases {
         fs::write(&path, document).expect("rewrite checksum-valid receipt");
@@ -4929,7 +5094,7 @@ fn receipt_rejects_checksum_valid_product_graph_projection_and_audit_forgery() {
                 receipts.open(provenance.attempt_id()),
                 Err(casa_imaging_runtime::ReceiptError::IntegrityMismatch)
             ),
-            "{case} must fail the typed Product Graph projection"
+            "{case} must fail canonical typed projection validation"
         );
     }
 }
@@ -5042,8 +5207,23 @@ fn receipt_reopens_the_complete_versioned_effective_problem_projection() {
         .expect("antenna generation")
         .to_string();
 
-    assert_eq!(projected.schema_version(), 3);
+    assert_eq!(projected.schema_version(), 7);
     assert_eq!(projected, &CompiledProblemEvidence::project(&problem));
+    assert_eq!(
+        reopened.model_lifecycle_identity(),
+        problem.model_lifecycle().contract_id().as_bytes()
+    );
+    let lifecycle_identity = problem.model_lifecycle().contract_id().to_string();
+    let target_shape_identity = problem.model_lifecycle().target().identity().to_string();
+    assert_eq!(
+        projected.field("model_lifecycle.identity"),
+        Some(lifecycle_identity.as_str())
+    );
+    assert_eq!(
+        projected.field("model_lifecycle.target_shape_identity"),
+        Some(target_shape_identity.as_str())
+    );
+    assert_eq!(projected.field("model_lifecycle.input.kind"), Some("empty"));
     assert_eq!(
         projected.field("science.spectral.sampling"),
         Some("identity")

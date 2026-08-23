@@ -12,6 +12,10 @@ use crate::measurement_equation::{
     VisibilityInnerProduct, WeightingOperatorContract, compile_normal_equation,
     compile_product_boundary,
 };
+use crate::model_state::{
+    ModelContractError, ModelLifecycleContract, ModelLifecycleRequirements,
+    compile_model_lifecycle_contract,
+};
 use crate::observation::{FlagPolicy, ObservationSnapshot, ObservationSnapshotId, WeightColumn};
 use crate::product_graph::{ProductGraph, compile_product_graph};
 use crate::selected_observation::{
@@ -27,7 +31,9 @@ use crate::transaction::{
 };
 
 const COMPILED_PROBLEM_IDENTITY_DOMAIN: &[u8] = b"casa-rs-compiled-problem";
-const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 7;
+const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 9;
+const COMPILED_PROBLEM_BASIS_DOMAIN: &[u8] = b"casa-rs-compiled-problem-basis";
+const COMPILED_PROBLEM_BASIS_VERSION: u32 = 1;
 const NUMERICS_CONTRACT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-numerics-contract";
 const NUMERICS_CONTRACT_IDENTITY_VERSION: u32 = 1;
 
@@ -1109,6 +1115,7 @@ pub struct ImagingRequest {
     specification: ProblemSpecification,
     geometry: GeometryInput,
     inputs: ProblemInputIdentities,
+    model_lifecycle: ModelLifecycleRequirements,
 }
 
 impl ImagingRequest {
@@ -1118,12 +1125,14 @@ impl ImagingRequest {
         specification: ProblemSpecification,
         geometry: GeometryInput,
         inputs: ProblemInputIdentities,
+        model_lifecycle: ModelLifecycleRequirements,
     ) -> Self {
         Self {
             version: ImagingRequestVersion::CURRENT,
             specification,
             geometry,
             inputs,
+            model_lifecycle,
         }
     }
 
@@ -1271,7 +1280,9 @@ impl fmt::Display for CompiledProblemId {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CompiledProblem {
     problem_id: CompiledProblemId,
+    problem_identity_basis: LogicalIdentity,
     numerics_id: NumericsContractId,
+    model_lifecycle: ModelLifecycleContract,
     inputs: ProblemInputIdentities,
     geometry: CompiledGeometry,
     science: ScientificContract,
@@ -1292,10 +1303,25 @@ impl CompiledProblem {
         self.problem_id
     }
 
+    /// Return the compiler-owned identity beneath the explicit model/lifecycle layer.
+    ///
+    /// Receipt readers combine this basis with the typed initial model and
+    /// lifecycle commitment to revalidate the parent Compiled Problem identity.
+    #[must_use]
+    pub const fn problem_identity_basis(&self) -> LogicalIdentity {
+        self.problem_identity_basis
+    }
+
     /// Return the exact numerical-contract identity.
     #[must_use]
     pub const fn numerics_id(&self) -> NumericsContractId {
         self.numerics_id
+    }
+
+    /// Return the compiler-owned model-lifecycle commitment.
+    #[must_use]
+    pub const fn model_lifecycle(&self) -> &ModelLifecycleContract {
+        &self.model_lifecycle
     }
 
     /// Return immutable input identities.
@@ -1395,6 +1421,9 @@ pub enum CompileProblemError {
     /// Coordinate or image-domain geometry is invalid or incomplete.
     #[error(transparent)]
     Geometry(#[from] CompileGeometryError),
+    /// The requested model lifecycle is incomplete or conflicts with the problem.
+    #[error(transparent)]
+    ModelLifecycle(#[from] ModelContractError),
     /// Reconstruction and capability requirements contradict each other.
     #[error("invalid capability combination: {reason}")]
     InvalidCapabilityCombination {
@@ -1456,6 +1485,7 @@ pub fn compile(request: ImagingRequest) -> Result<CompiledProblem, CompileProble
         specification,
         geometry,
         inputs,
+        model_lifecycle,
     } = request;
     let geometry = compile_geometry(geometry, &inputs)?;
     let science = specification.science;
@@ -1493,7 +1523,18 @@ pub fn compile(request: ImagingRequest) -> Result<CompiledProblem, CompileProble
         normal_equation.weighting(),
         &products,
     );
-    let problem_id = canonical_problem_id(ProblemIdentityInput {
+    let numerics_id = canonical_numerics_id(&numerics);
+    let product_graph = compile_product_graph(&geometry, &reconstruction, &products);
+    let model_lifecycle = compile_model_lifecycle_contract(
+        &geometry,
+        normal_equation.measurement_operator().domain(),
+        &inputs,
+        &numerics,
+        numerics_id,
+        product_graph.graph_id(),
+        model_lifecycle,
+    )?;
+    let problem_identity_basis = canonical_problem_identity_basis(ProblemIdentityInput {
         inputs: &inputs,
         geometry: &geometry,
         science: &science,
@@ -1503,11 +1544,16 @@ pub fn compile(request: ImagingRequest) -> Result<CompiledProblem, CompileProble
         observation_transaction: &observation_transaction,
         numerics: &numerics,
     });
-    let numerics_id = canonical_numerics_id(&numerics);
-    let product_graph = compile_product_graph(&geometry, &reconstruction, &products);
+    let problem_id = canonical_problem_id(
+        problem_identity_basis,
+        inputs.model(),
+        LogicalIdentity::from_sha256(model_lifecycle.contract_id().as_bytes()),
+    );
     Ok(CompiledProblem {
         problem_id,
+        problem_identity_basis,
         numerics_id,
+        model_lifecycle,
         inputs,
         geometry,
         science,
@@ -1885,7 +1931,7 @@ struct ProblemIdentityInput<'a> {
     numerics: &'a NumericsContract,
 }
 
-fn canonical_problem_id(input: ProblemIdentityInput<'_>) -> CompiledProblemId {
+fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalIdentity {
     let ProblemIdentityInput {
         inputs,
         geometry,
@@ -1897,8 +1943,8 @@ fn canonical_problem_id(input: ProblemIdentityInput<'_>) -> CompiledProblemId {
         numerics,
     } = input;
     let mut encoder = CanonicalEncoder::new();
-    encoder.bytes(COMPILED_PROBLEM_IDENTITY_DOMAIN);
-    encoder.u32(COMPILED_PROBLEM_IDENTITY_VERSION);
+    encoder.bytes(COMPILED_PROBLEM_BASIS_DOMAIN);
+    encoder.u32(COMPILED_PROBLEM_BASIS_VERSION);
     encoder.identity(inputs.observation().identity());
     encoder.digest(observation_transaction.transaction_id().as_bytes());
     encoder.digest(geometry.geometry_id().as_bytes());
@@ -1906,17 +1952,6 @@ fn canonical_problem_id(input: ProblemIdentityInput<'_>) -> CompiledProblemId {
     for (kind, identity) in inputs.reference_data() {
         encoder.u8(reference_data_tag(*kind));
         encoder.identity(*identity);
-    }
-    match inputs.model() {
-        ModelStateIdentity::Empty => encoder.u8(0),
-        ModelStateIdentity::Seed(identity) => {
-            encoder.u8(1);
-            encoder.identity(identity);
-        }
-        ModelStateIdentity::Generation(identity) => {
-            encoder.u8(2);
-            encoder.identity(identity);
-        }
     }
     match science.spectral.sampling {
         SpectralSampling::Identity => encoder.u8(0),
@@ -1960,17 +1995,7 @@ fn canonical_problem_id(input: ProblemIdentityInput<'_>) -> CompiledProblemId {
         match transform {
             PairedMeasurementTransform::SpectralBasis { basis } => {
                 encoder.u8(0);
-                match basis {
-                    ReconstructionBasis::Constant => encoder.u8(0),
-                    ReconstructionBasis::Taylor { terms } => {
-                        encoder.u8(1);
-                        encoder.usize(*terms);
-                    }
-                    ReconstructionBasis::ChannelLocal { channels } => {
-                        encoder.u8(2);
-                        encoder.usize(*channels);
-                    }
-                }
+                encode_reconstruction_basis(&mut encoder, *basis);
             }
             PairedMeasurementTransform::PolarizationMapping => encoder.u8(1),
             PairedMeasurementTransform::DirectionDependentResponse { response } => {
@@ -2023,17 +2048,7 @@ fn canonical_problem_id(input: ProblemIdentityInput<'_>) -> CompiledProblemId {
     encoder.u8(match normal_equation.output().normalization() {
         NormalStateNormalization::Unnormalized => 0,
     });
-    match reconstruction.basis {
-        ReconstructionBasis::Constant => encoder.u8(0),
-        ReconstructionBasis::Taylor { terms } => {
-            encoder.u8(1);
-            encoder.usize(terms);
-        }
-        ReconstructionBasis::ChannelLocal { channels } => {
-            encoder.u8(2);
-            encoder.usize(channels);
-        }
-    }
+    encode_reconstruction_basis(&mut encoder, reconstruction.basis);
     match &reconstruction.algorithm {
         ReconstructionAlgorithm::Dirty => encoder.u8(0),
         ReconstructionAlgorithm::Hogbom => encoder.u8(1),
@@ -2139,7 +2154,56 @@ fn canonical_problem_id(input: ProblemIdentityInput<'_>) -> CompiledProblemId {
         }
     }
     encode_numerics(&mut encoder, numerics);
+    LogicalIdentity::from_sha256(encoder.finish())
+}
+
+fn canonical_problem_id(
+    basis: LogicalIdentity,
+    model: ModelStateIdentity,
+    model_lifecycle: LogicalIdentity,
+) -> CompiledProblemId {
+    let mut encoder = CanonicalEncoder::new();
+    encoder.bytes(COMPILED_PROBLEM_IDENTITY_DOMAIN);
+    encoder.u32(COMPILED_PROBLEM_IDENTITY_VERSION);
+    encoder.identity(basis);
+    match model {
+        ModelStateIdentity::Empty => encoder.u8(0),
+        ModelStateIdentity::Seed(identity) => {
+            encoder.u8(1);
+            encoder.identity(identity);
+        }
+        ModelStateIdentity::Generation(identity) => {
+            encoder.u8(2);
+            encoder.identity(identity);
+        }
+    }
+    encoder.identity(model_lifecycle);
     CompiledProblemId(LogicalIdentity::from_sha256(encoder.finish()))
+}
+
+/// Revalidate the parent Compiled Problem identity from its canonical layers.
+///
+/// This digest-only seam is intended for durable receipt validation. It does
+/// not construct a [`CompiledProblem`] or confer execution authority.
+#[must_use]
+pub fn validate_compiled_problem_identity(
+    claimed: [u8; 32],
+    basis: LogicalIdentity,
+    model: ModelStateIdentity,
+    model_lifecycle: LogicalIdentity,
+) -> bool {
+    if claimed == [0; 32]
+        || basis.as_bytes() == [0; 32]
+        || model_lifecycle.as_bytes() == [0; 32]
+        || matches!(
+            model,
+            ModelStateIdentity::Seed(identity) | ModelStateIdentity::Generation(identity)
+                if identity.as_bytes() == [0; 32]
+        )
+    {
+        return false;
+    }
+    canonical_problem_id(basis, model, model_lifecycle).as_bytes() == claimed
 }
 
 fn canonical_numerics_id(numerics: &NumericsContract) -> NumericsContractId {
@@ -2259,7 +2323,24 @@ fn product_tag(product: ProductKind) -> u8 {
     }
 }
 
-fn polarization_tag(coordinate: PolarizationCoordinate) -> u8 {
+pub(crate) fn encode_reconstruction_basis(
+    encoder: &mut CanonicalEncoder,
+    basis: ReconstructionBasis,
+) {
+    match basis {
+        ReconstructionBasis::Constant => encoder.u8(0),
+        ReconstructionBasis::Taylor { terms } => {
+            encoder.u8(1);
+            encoder.usize(terms);
+        }
+        ReconstructionBasis::ChannelLocal { channels } => {
+            encoder.u8(2);
+            encoder.usize(channels);
+        }
+    }
+}
+
+pub(crate) const fn polarization_tag(coordinate: PolarizationCoordinate) -> u8 {
     match coordinate {
         PolarizationCoordinate::StokesI => 0,
         PolarizationCoordinate::StokesQ => 1,

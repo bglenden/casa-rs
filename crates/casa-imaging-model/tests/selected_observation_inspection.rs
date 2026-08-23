@@ -385,7 +385,8 @@ fn compiled_problem_with_columns_and_weight_shape(
         (ReferenceDataKind::Measures, identity(3)),
         (ReferenceDataKind::Ephemeris, identity(4)),
     ];
-    let model = ModelStateIdentity::Seed(identity(5));
+    let model_source = identity(5);
+    let model = ModelStateIdentity::Seed(model_source);
     let sources = vec![
         source(
             1,
@@ -412,6 +413,17 @@ fn compiled_problem_with_columns_and_weight_shape(
         specification(),
         geometry(),
         ProblemInputIdentities::new(snapshot),
+        casa_imaging_model::ModelLifecycleRequirements::new(
+            casa_imaging_model::ModelBounds::new(
+                10_000_000, 10_000_000, 10_000_000, 10_000_000, 1.0e30, 1.0e30,
+            )
+            .expect("valid model lifecycle fixture bounds"),
+            NumericPrecision::F32,
+            casa_imaging_model::ModelInputCommitment::AlignedSeed {
+                source: model_source,
+                support: identity(0xa5),
+            },
+        ),
     ))
     .expect("compile inspection problem")
 }

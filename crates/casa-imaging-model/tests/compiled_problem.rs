@@ -23,8 +23,11 @@ use casa_imaging_model::{
 };
 
 mod common;
+#[path = "fixtures/model_lifecycle.rs"]
+mod model_lifecycle_fixture;
 
 use common::{identity, observation_source, problem_inputs};
+use model_lifecycle_fixture::model_lifecycle;
 
 fn compile_request(
     specification: ProblemSpecification,
@@ -38,7 +41,13 @@ fn compile_with_geometry(
     geometry: GeometryInput,
     inputs: ProblemInputIdentities,
 ) -> Result<casa_imaging_model::CompiledProblem, CompileProblemError> {
-    compile(ImagingRequest::new(specification, geometry, inputs))
+    let lifecycle = model_lifecycle(inputs.model());
+    compile(ImagingRequest::new(
+        specification,
+        geometry,
+        inputs,
+        lifecycle,
+    ))
 }
 
 fn numerics(reverse: bool) -> NumericsContract {
@@ -962,7 +971,7 @@ fn canonical_identity_normalizes_signed_zero_but_changes_with_science() {
         positive_zero.weighting().generation_id()
     );
     assert_ne!(positive_zero.problem_id(), changed.problem_id());
-    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 7);
+    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 9);
 }
 
 #[test]
@@ -1283,12 +1292,39 @@ fn invalid_polarization_is_a_reconstruction_contract_error() {
 }
 
 #[test]
-fn compiled_problem_identity_has_a_pinned_schema_seven_digest() {
+fn compiled_problem_identity_has_a_pinned_schema_nine_digest() {
     let compiled = compile_request(specification(false), inputs(false)).expect("compile problem");
 
-    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 7);
+    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 9);
     assert_eq!(
         compiled.problem_id().to_string(),
-        "e74dc6f6015de2708948aa6331fa09d1c87d286e670f321d483c835e38b56b0c"
+        "95a917e5e035b7dd9e1deddc259f119695bcac92f12589a0daf014bef1e56fd1"
     );
+    let lifecycle = casa_imaging_model::LogicalIdentity::from_sha256(
+        compiled.model_lifecycle().contract_id().as_bytes(),
+    );
+    assert!(casa_imaging_model::validate_compiled_problem_identity(
+        compiled.problem_id().as_bytes(),
+        compiled.problem_identity_basis(),
+        compiled.inputs().model(),
+        lifecycle,
+    ));
+    assert!(!casa_imaging_model::validate_compiled_problem_identity(
+        compiled.problem_id().as_bytes(),
+        compiled.problem_identity_basis(),
+        ModelStateIdentity::Seed(identity(200)),
+        lifecycle,
+    ));
+    assert!(!casa_imaging_model::validate_compiled_problem_identity(
+        compiled.problem_id().as_bytes(),
+        casa_imaging_model::LogicalIdentity::from_sha256([0; 32]),
+        compiled.inputs().model(),
+        lifecycle,
+    ));
+    assert!(!casa_imaging_model::validate_compiled_problem_identity(
+        [0; 32],
+        compiled.problem_identity_basis(),
+        compiled.inputs().model(),
+        lifecycle,
+    ));
 }

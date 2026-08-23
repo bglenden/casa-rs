@@ -1,0 +1,17 @@
+[package]
+name = "casa-imaging-reconstruction"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Native authoritative reconstruction and model-state algorithms"
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+casa-imaging-model = { path = "../casa-imaging-model" }
+sha2 = "0.10"
+thiserror.workspace = true

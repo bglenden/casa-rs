@@ -55,19 +55,19 @@ ACCEPTED_LOGICAL_GRAPH_SHA256 = (
     "7101b6d90196b1ea3d3c750080d703bb5e305e91c8ac19553e1dda7ed58c4e33"
 )
 ACCEPTED_SOURCE_BOUNDARIES_SHA256 = (
-    "791239fa74e95bd052b56cd6391115c416bf6ce27ef934d549a8798b751b156b"
+    "94b6a1a2051eea97bc1160a26d96def653fc7f25c31f58fbbee06e6ed4c5d081"
 )
 ACCEPTED_FROZEN_TRANSITIONAL_EDGES_SHA256 = (
     "0077e28528d2160616d34e17fb7124586f346557917e0bfac99b0dff6739a1d1"
 )
 ACCEPTED_PACKAGE_POLICY_SHA256 = (
-    "545c7f03465aea088fe4628ac935c66bdcc7de0636cf75db5ac90793d3ca9823"
+    "276011a251be811a240f9ed7e00bc5b0f0fcb2012be470147db9e29f99d5e1f1"
 )
 ACCEPTED_WHOLE_RUN_ROUTER_SHA256 = (
     "c855dae5d5b4239e21fa0fe43d1d2f4bbb4114d245374db674fb81713af11a2d"
 )
 ACCEPTED_MATRIX_INVENTORY_SHA256 = (
-    "b74ba7bf6511fc833484e35b63bd1bf6c143a5ae81f7080d69c02bea3ad4ba68"
+    "95f98d0bf3fc1a676bef079d32ae5391a5bac4ff594f211d9f9420949a2e40a6"
 )
 ACCEPTED_PRODUCT_KIND_INVENTORY_SHA256 = (
     "f4e04101f0d6e89d9bc12584cd580f5f8924f80e71b867ee252422f648fdced5"
@@ -124,15 +124,15 @@ ACCEPTED_ISSUE_OUTCOMES_SHA256 = (
     "6aa3525971d60dbb09fefa17a201c173c36db3f211aa87bec3a22df957533703"
 )
 ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256 = (
-    "ca2a1c2567b8c93b495fd279dc77fff8f330137b7811fa136b95fd3fc2a88507"
+    "b62233e109a3b57d9006e94183659cac979d3efc8e221bfb39db64c6aabfbf15"
 )
 ACCEPTED_MATRIX_ROWS_SHA256 = (
-    "e1bd3dc90a1565145b2fce29adae9aea41266ed853b3b81750ef66033269e4fa"
+    "42710f8e539073bf21ae635fda18891957ff5eac278ba10ac8b51a3733e7365b"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "1a2bb3b91e1e6f00a3bb4eea9881b9b2927e4303dda463667c1ba0a6efed57a9"
+    "3ac1eb0fd8d1b2e16622bd1497c1f5dfca085ba7106ddec3c026bc37daadee1a"
 )
-ACCEPTED_MATRIX_CONTRACT_REVISION = 14
+ACCEPTED_MATRIX_CONTRACT_REVISION = 15
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "scientific-products-v1",
@@ -206,6 +206,18 @@ ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
         "compiled-problem-foundation-v1",
         "resource_gates",
     ): "64c0411b3e62a900072e12f74facbe311a718504883e650a5cc205c9d5b4bd25",
+    (
+        "model-lifecycle-foundation-v1",
+        "thresholds",
+    ): "cba7c38e1701f7405003bce8522d2f7acb469c9eec2a2ec21456cd06a3a91aaf",
+    (
+        "model-lifecycle-foundation-v1",
+        "laws",
+    ): "320cc7ea3d4f195ff7e43e1c15922ce4c5029a666d5cdbb06cf93bdde3558b58",
+    (
+        "model-lifecycle-foundation-v1",
+        "resource_gates",
+    ): "b77d11665914730df97d1aee20b7db613ae2cd285f96a4987cdc79ab1759accc",
     (
         "observation-transaction-v1",
         "thresholds",
@@ -2103,6 +2115,32 @@ def rust_struct_fields(source: str, identifier: str, path: Path) -> dict[str, st
     }
 
 
+def rust_impl_method_body(
+    source: str, owner: str, method: str, path: Path
+) -> str:
+    declaration = re.search(
+        rf"(?m)^\s*impl\s+{re.escape(owner)}\s*\{{",
+        source,
+    )
+    if declaration is None:
+        raise ArchitectureError(
+            f"cannot find Rust impl {owner} in {display_path(path)}"
+        )
+    depth = 1
+    end = declaration.end()
+    while end < len(source) and depth:
+        if source[end] == "{":
+            depth += 1
+        elif source[end] == "}":
+            depth -= 1
+        end += 1
+    if depth:
+        raise ArchitectureError(
+            f"Rust impl {owner} in {display_path(path)} has no closing brace"
+        )
+    return rust_function_body(source[declaration.end() : end - 1], method, path)
+
+
 def validate_rust_enum_inventory(
     matrix: dict[str, Any],
     field: str,
@@ -2502,6 +2540,291 @@ def validate_migration_matrix(
         raise ArchitectureError(
             "migration matrix row ledger differs from the accepted scope"
         )
+    if enforce_accepted_scope:
+        validate_t28_model_lifecycle_transfer(rows)
+
+
+def validate_t28_model_lifecycle_transfer(rows: list[dict[str, Any]]) -> None:
+    row = next((item for item in rows if item.get("id") == "capability.model-lifecycle"), None)
+    if row is None or row.get("status") != "Native":
+        raise ArchitectureError("T28 must leave capability.model-lifecycle Native")
+    required_evidence = {
+        "crates/casa-imaging-model/src/model_state.rs::pub struct ModelReprojectedSeedProjection",
+        "crates/casa-imaging-model/src/model_state.rs::pub struct ModelLifecycleContract",
+        "crates/casa-imaging-model/src/model_state.rs::validate_model_lifecycle_contract_identity",
+        "crates/casa-imaging-model/src/model_state.rs::validate_model_reprojection_contract_identity",
+        "crates/casa-imaging-model/src/compiled_problem.rs::validate_compiled_problem_identity",
+        "crates/casa-imaging-reconstruction/src/lib.rs::pub struct ExecutableModelProblem",
+        "crates/casa-imaging-reconstruction/src/lib.rs::pub struct ModelLifecycle",
+        "crates/casa-imaging-reconstruction/src/lib.rs::prepare_reprojected_seed",
+        "crates/casa-imaging-reconstruction/src/lib.rs::validate_reprojected_seed_proof_identity",
+        "crates/casa-imaging-runtime/src/receipt.rs::struct ModelLifecycleProjection",
+    }
+    if not required_evidence.issubset(set(row.get("source_evidence", []))):
+        raise ArchitectureError("T28 lacks the accepted lifecycle/receipt source evidence")
+
+    model_path = REPO_ROOT / "crates/casa-imaging-model/src/model_state.rs"
+    reconstruction_path = REPO_ROOT / "crates/casa-imaging-reconstruction/src/lib.rs"
+    receipt_path = REPO_ROOT / "crates/casa-imaging-runtime/src/receipt.rs"
+    try:
+        model = model_path.read_text(encoding="utf-8")
+        reconstruction = reconstruction_path.read_text(encoding="utf-8")
+        receipt = receipt_path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise ArchitectureError(f"cannot inspect T28 lifecycle sources: {error}") from error
+
+    validate_t28_model_lifecycle_sources(
+        model,
+        reconstruction,
+        receipt,
+        model_path=model_path,
+        reconstruction_path=reconstruction_path,
+        receipt_path=receipt_path,
+    )
+
+
+def validate_t28_model_lifecycle_sources(
+    model: str,
+    reconstruction: str,
+    receipt: str,
+    *,
+    model_path: Path,
+    reconstruction_path: Path,
+    receipt_path: Path,
+) -> None:
+    lifecycle_fields = rust_struct_fields(model, "ModelLifecycleContract", model_path)
+    if lifecycle_fields.get("reprojection_contract") != "LogicalIdentity":
+        raise ArchitectureError("T28 lifecycle must retain the typed reprojection contract identity")
+    if lifecycle_fields.get("reprojection_policy") != "ModelReprojectionPolicy":
+        raise ArchitectureError("T28 lifecycle must retain the compiler-owned reprojection policy")
+    policy_requirements = (
+        "pub struct ModelReprojectionPolicy",
+        "pub const fn canonical()",
+        "pub const fn direction_registry",
+        "pub const fn basis_registry",
+        "pub const fn polarization_registry",
+        "pub const fn invalid_contributor",
+        "pub const fn uncovered_target",
+    )
+    if not all(requirement in model for requirement in policy_requirements):
+        raise ArchitectureError("T28 model policy must expose one typed canonical owner")
+    compiler = re.sub(
+        r"\s+", "", rust_function_body(model, "compile_model_lifecycle_contract", model_path)
+    )
+    if (
+        "letreprojection_policy=ModelReprojectionPolicy::canonical();"
+        not in compiler
+        or "letreprojection=compile_model_reprojection_contract(product_graph,numerics_id,arithmetic_precision,reprojection_policy,);"
+        not in compiler
+        or "reprojection_contract:LogicalIdentity::from_sha256(reprojection.as_bytes()),"
+        not in compiler
+        or "reprojection_policy," not in compiler
+    ):
+        raise ArchitectureError("T28 compiler does not retain the closed reprojection contract")
+    validator = re.sub(
+        r"\s+",
+        "",
+        rust_function_body(
+            model, "validate_model_reprojection_contract_identity", model_path
+        ),
+    )
+    if (
+        "claimed==model_reprojection_contract_identity(product_graph,numerics,conversion_precision,policy,)"
+        not in validator
+        or "Err(ModelContractError::ReprojectionContractMismatch)" not in validator
+    ):
+        raise ArchitectureError(
+            "T28 model owner does not recompute and validate the reprojection identity"
+        )
+
+    commitment_fields = rust_struct_fields(
+        model, "ModelReprojectedSeedProjection", model_path
+    )
+    if commitment_fields != {
+        "source": "LogicalIdentity",
+        "source_shape": "Box<ModelSourceShape>",
+        "preparation_contract": "LogicalIdentity",
+        "reprojection": "LogicalIdentity",
+        "support": "LogicalIdentity",
+        "samples": "LogicalIdentity",
+        "stencil": "LogicalIdentity",
+        "proof": "LogicalIdentity",
+    }:
+        raise ArchitectureError("T28 reprojected digest projection is not complete")
+    if re.search(r"\bpub\s+fn\s+from_prepared_samples\b", model):
+        raise ArchitectureError("T28 model exposes a raw reprojected evidence constructor")
+    lifecycle_validator = re.sub(
+        r"\s+",
+        "",
+        rust_function_body(
+            model, "validate_model_lifecycle_contract_identity", model_path
+        ),
+    )
+    if not all(
+        binding in lifecycle_validator
+        for binding in (
+            "validate_input_commitment_identity(",
+            "letexpected=model_lifecycle_contract_identity(",
+            "ifclaimed==expected",
+        )
+    ):
+        raise ArchitectureError(
+            "T28 model owner does not canonically revalidate lifecycle input evidence"
+        )
+
+    reconstruction_fields = rust_struct_fields(reconstruction, "ModelLifecycle", reconstruction_path)
+    if reconstruction_fields.get("contract") != "ModelLifecycleContract":
+        raise ArchitectureError("T28 reconstruction owner does not retain ModelLifecycleContract")
+    preparation = re.sub(
+        r"\s+", "", rust_function_body(reconstruction, "prepare_reprojected_seed", reconstruction_path)
+    )
+    stencil = re.sub(
+        r"\s+", "", rust_function_body(reconstruction, "derive_reprojection_stencil", reconstruction_path)
+    )
+    preparation_policy_bindings = (
+        "letreprojection_policy=target_contract.reprojection_policy();",
+        "derive_reprojection_stencil(&source_shape,target_shape,target,precision,reprojection_policy,",
+        "matchreprojection_policy.invalid_contributor()",
+        "matchreprojection_policy.uncovered_target()",
+    )
+    stencil_policy_bindings = (
+        "matchreprojection_policy.direction_registry()",
+        "matchreprojection_policy.basis_registry()",
+        "matchreprojection_policy.polarization_registry()",
+    )
+    if (
+        not all(binding in preparation for binding in preparation_policy_bindings)
+        or not all(binding in stencil for binding in stencil_policy_bindings)
+        or "ModelReprojectionPolicy::canonical()" in reconstruction
+    ):
+        raise ArchitectureError(
+            "T28 reconstruction execution does not consume the exact lifecycle reprojection policy"
+        )
+
+    executable_fields = rust_struct_fields(
+        reconstruction, "ExecutableModelProblem", reconstruction_path
+    )
+    if executable_fields != {
+        "problem": "CompiledProblem",
+        "prepared": "Option<PreparedReprojectedSeed>",
+    }:
+        raise ArchitectureError("T28 executable problem brand is not reconstruction-owned")
+    direct_brand = re.sub(
+        r"\s+",
+        "",
+        rust_impl_method_body(
+            reconstruction, "ExecutableModelProblem", "from_compiled", reconstruction_path
+        ),
+    )
+    prepared_brand = re.sub(
+        r"\s+", "", rust_function_body(reconstruction, "bind_compiled_problem", reconstruction_path)
+    )
+    compact_reconstruction = re.sub(r"\s+", "", reconstruction)
+    if (
+        "ModelInputCommitment::ReprojectedSeed(_)" not in direct_brand
+        or "Err(ModelLifecycleError::OwnerPreparationRequired)" not in direct_brand
+        or "pubfnbind_compiled_problem(self,problem:CompiledProblem,)->Result<ExecutableModelProblem,ModelLifecycleError>"
+        not in compact_reconstruction
+        or "prepared:Some(self)" not in prepared_brand
+    ):
+        raise ArchitectureError("T28 executable brand bypasses reconstruction preparation")
+    proof = re.sub(
+        r"\s+", "", rust_function_body(reconstruction, "reprojected_seed_proof_identity", reconstruction_path)
+    )
+    if "encoder.identity(samples.as_bytes());" not in proof or "encoder.identity(stencil.as_bytes());" not in proof:
+        raise ArchitectureError("T28 reprojected proof omits samples or ordered stencils")
+
+    lifecycle_projection = rust_struct_fields(receipt, "ModelLifecycleProjection", receipt_path)
+    if lifecycle_projection.get("reprojection") != "ModelReprojectionProjection":
+        raise ArchitectureError("T28 receipt does not project the reprojection contract")
+    reprojection_fields = rust_struct_fields(receipt, "ModelReprojectionProjection", receipt_path)
+    expected_fields = {
+        "identity",
+        "product_graph_identity",
+        "numerics_identity",
+        "conversion_precision",
+        "direction_registry",
+        "basis_registry",
+        "polarization_registry",
+        "invalid_contributor_policy",
+        "uncovered_target_policy",
+    }
+    if set(reprojection_fields) != expected_fields:
+        raise ArchitectureError(
+            "T28 receipt reprojection projection fields differ from the closed contract"
+        )
+    if "ModelReprojectionProjection::new(problem)" not in receipt:
+        raise ArchitectureError("T28 receipt does not populate the reprojection projection")
+    if "let policy = contract.reprojection_policy();" not in receipt:
+        raise ArchitectureError("T28 receipt does not consume the compiler-owned reprojection policy")
+    if "let policy = ModelReprojectionPolicy::canonical();" not in receipt:
+        raise ArchitectureError("T28 receipt validation does not use the canonical reprojection policy")
+    receipt_validation = re.sub(
+        r"\s+",
+        "",
+        rust_impl_method_body(
+            receipt, "ModelReprojectionProjection", "validate", receipt_path
+        ),
+    )
+    required_identity_validation = (
+        "self.product_graph_identity==product_graph_identity",
+        "self.numerics_identity==numerics_identity",
+        "self.conversion_precision==numeric_precision(conversion_precision)",
+        "validate_model_reprojection_contract_identity(LogicalIdentity::from_sha256(parse_digest(&self.identity)),LogicalIdentity::from_sha256(parse_digest(product_graph_identity)),LogicalIdentity::from_sha256(parse_digest(numerics_identity)),conversion_precision,policy,)",
+    )
+    if not all(binding in receipt_validation for binding in required_identity_validation):
+        raise ArchitectureError(
+            "T28 receipt validation does not recompute the cross-bound reprojection identity"
+        )
+    lifecycle_receipt_validation = re.sub(
+        r"\s+",
+        "",
+        rust_impl_method_body(receipt, "ModelLifecycleProjection", "validate", receipt_path),
+    )
+    if not all(
+        binding in lifecycle_receipt_validation
+        for binding in (
+            "is_nonzero_digest(&self.identity)",
+            "validate_model_lifecycle_contract_identity(",
+            "&self.input.identity(),",
+        )
+    ):
+        raise ArchitectureError(
+            "T28 receipt does not canonically revalidate lifecycle input evidence"
+        )
+    if not all(
+        field in receipt
+        for field in (
+            "sample_identity: String",
+            "stencil_identity: String",
+            "proof_identity: String",
+            "validate_reprojected_seed_proof_identity(",
+            "validate_compiled_problem_identity(",
+        )
+    ):
+        raise ArchitectureError("T28 receipt omits canonical model proof closure")
+    for tag in (
+        "same_tangent_plane_affine_bilinear_v1",
+        "exact_spectral_v1",
+        "real_parallel_hands_v1",
+        "invalidate_target",
+    ):
+        if tag in receipt:
+            raise ArchitectureError("T28 receipt duplicates a model-owned reprojection policy tag")
+    projection = rust_function_body(receipt, "project_model_lifecycle", receipt_path)
+    required_audit_fields = (
+        "model_lifecycle.reprojection.identity",
+        "model_lifecycle.reprojection.product_graph_identity",
+        "model_lifecycle.reprojection.numerics_identity",
+        "model_lifecycle.reprojection.conversion_precision",
+        "model_lifecycle.reprojection.direction_registry",
+        "model_lifecycle.reprojection.basis_registry",
+        "model_lifecycle.reprojection.polarization_registry",
+        "model_lifecycle.reprojection.invalid_contributor_policy",
+        "model_lifecycle.reprojection.uncovered_target_policy",
+    )
+    if not all(field in projection for field in required_audit_fields):
+        raise ArchitectureError("T28 receipt projection omits reprojection audit evidence")
 
 
 def validate_t17_ms_selection_transfer(rows: list[dict[str, Any]]) -> None:

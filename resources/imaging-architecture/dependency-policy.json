@@ -50,6 +50,7 @@
     "casa-provider-contracts": "application",
     "casa-ms": "observation",
     "casa-imaging-model": "science",
+    "casa-imaging-reconstruction": "reconstruction",
     "casa-imaging-router": "application",
     "casa-imaging-runtime": "execution",
     "casa-imaging": "legacy",
@@ -65,6 +66,7 @@
     "casa-images": "support",
     "casa-imaging": "legacy",
     "casa-imaging-model": "native",
+    "casa-imaging-reconstruction": "native",
     "casa-imaging-router": "native",
     "casa-imaging-runtime": "native",
     "casa-lattices": "support",
@@ -90,11 +92,15 @@
   },
   "native_package_workspace_dependencies": {
     "casa-imaging-model": [],
+    "casa-imaging-reconstruction": [
+      "casa-imaging-model"
+    ],
     "casa-imaging-router": [
       "casa-imaging-model"
     ],
     "casa-imaging-runtime": [
       "casa-imaging-model",
+      "casa-imaging-reconstruction",
       "casa-ms"
     ]
   },
@@ -128,9 +134,10 @@
   ],
   "source_boundaries": [
     {
-      "id": "native-science-rust",
+      "id": "native-science-reconstruction-rust",
       "roots": [
-        "crates/casa-imaging-model/src"
+        "crates/casa-imaging-model/src",
+        "crates/casa-imaging-reconstruction/src"
       ],
       "extensions": [
         ".rs"
@@ -138,7 +145,7 @@
       "forbidden_patterns": [
         {
           "regex": "(?m)^\\s*(?:pub\\s+)?(?:use|extern\\s+crate)\\s+(?:casa_imaging_runtime|casa_imaging|casars_imager|ash|cuda|cudarc|metal|objc2_metal|opencl|vulkano|wgpu)\\b|\\b(?:casa_imaging_runtime|casa_imaging|casars_imager|ash|cuda|cudarc|metal|objc2_metal|opencl|vulkano|wgpu)::",
-          "message": "native science Rust source imports an execution, backend, legacy, or device API"
+          "message": "native science or reconstruction Rust source imports an execution, backend, legacy, or device API"
         }
       ],
       "accepted_violation_digest": null

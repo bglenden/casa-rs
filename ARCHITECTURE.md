@@ -17,7 +17,7 @@ coordinates, measures, and related workflows.
 | core codecs (`casa-values`, `casa-aipsio`) | Internal generic value model and AipsIO-style framing used by higher layers | Rust ecosystem crates only |
 | foundation crates (`casa-types`, `casa-measures-data`, `casa-measures-tools`) | Public scalar/quanta/measures algorithms and contracts plus explicit runtime-data validation, loading, installation, and maintenance | core codecs; `casa-measures-data` also uses canonical `casa-tables` accessors |
 | persistent storage (`casa-tables`) | CASA table persistence, codecs, data managers/storage backends, schema/mutation APIs, and TaQL engine | core codecs, foundation crates |
-| native imaging contracts (`casa-imaging-model`, `casa-imaging-runtime`) | Immutable logical imaging problems plus process-level resource topology, policies, demand envelopes, arbitration, and leases | `casa-imaging-model` has no workspace dependencies; `casa-imaging-runtime` may depend on the model but never on current legacy imaging crates |
+| native imaging contracts (`casa-imaging-model`, `casa-imaging-reconstruction`, `casa-imaging-runtime`) | Dependency-free logical schemas and commitments; authoritative model-state ingest, reprojection, delta, and completion algorithms; process-level resource topology, policies, demand envelopes, arbitration, and leases | `casa-imaging-model` has no workspace dependencies; `casa-imaging-reconstruction` depends only on the model; `casa-imaging-runtime` depends on the model and the reconstruction-owned executable-problem brand; none may depend on current legacy imaging crates |
 | imaging migration router (`casa-imaging-router`) | Sole pre-plan whole-run dispatch owner, deriving authoritative capability rows and recording one `Native`, `LegacyWholeRun`, or `TemporarilyUnavailable` disposition | `casa-imaging-model` only; its sealed engine ports cannot invoke or mix stages and the crate has no legacy dependency |
 | domain libraries (`casa-ms`, `casa-lattices`, `casa-coordinates`, `casa-images`, `casa-imaging`, `casa-calibration`, `casa-vla`) | Higher-level astronomy data models and algorithms built on table/image persistence | foundation crates, `casa-tables`, selected peer domain crates where documented |
 | boundary contracts (`casa-provider-contracts`, `casars-imagebrowser-protocol`, `casars-tablebrowser-protocol`) | The generic provider envelope, canonical parameter and application catalogs, task/session surface definitions, and protocol surfaces between providers, apps, and Python/runtime layers | domain libraries and foundation crates; must not become a second source of truth |
@@ -36,9 +36,15 @@ Native imaging follows its stricter accepted direction:
 
 `science -> observation / reconstruction -> products -> execution -> backends -> application -> frontends`
 
-`casa-imaging-model` owns the dependency-free science/reconstruction/product
-contract introduced by ADR-0009. `casa-imaging-runtime` owns execution-resource
-contracts introduced by ADR-0010 and may depend inward on the model.
+`casa-imaging-model` owns the dependency-free science, reconstruction, and
+product schemas and commitments introduced by ADR-0009.
+`casa-imaging-reconstruction` owns model-state algorithms and opaque
+reconstruction completions and depends only inward on the model.
+`casa-imaging-runtime` owns execution-resource contracts introduced by ADR-0010
+and depends inward on the model plus reconstruction's opaque executable-problem
+brand. That reconstruction edge is limited to admitting owner-prepared model
+inputs at the execution and receipt boundary; runtime does not own or invoke
+reprojection algorithms.
 `casa-imaging-router` is the application-layer owner of the one pre-plan
 migration decision. It compiles the logical request, derives every applicable
 matrix row, records the authoritative row evidence, and invokes exactly one
@@ -51,8 +57,8 @@ that violate the accepted logical direction are separately frozen as
 transitional exceptions; the architecture gate permits no additions to either
 ledger.
 
-The remaining programme introduces reconstruction and product owners only in
-the ticket that can migrate all callers and enforce their exact dependencies.
+The remaining programme introduces the product owner only in the ticket that
+can migrate all callers and enforce its exact dependencies.
 The target tranche split and corrected T13-T23 order are recorded in
 [`docs/imaging-architecture/lessons-and-next-tranche.md`](docs/imaging-architecture/lessons-and-next-tranche.md).
 Until those crates land, this package table remains descriptive: no branch may
@@ -226,6 +232,45 @@ generation. The legacy
 `casars-imager` `MsSelection`/`resolve_selection` preparation route is removed:
 its frontend projection delegates to the same bounded `casa-ms` predicate as
 native Selected Observation access.
+
+`casa-imaging-model` carries the dependency-free model-state schemas and the
+compiler-owned lifecycle commitment introduced by T28/#514.
+`casa-imaging-reconstruction::ModelLifecycle` is the solver-independent owner
+of model generations, ingest, reprojection, deltas, and affine final-model
+completion. The Compiled Problem commitment binds the sole target shape,
+observation and initial-model identities, typed WCS/basis/polarization source
+provenance, an opaque owner-derived reprojection commitment, exact bounds,
+Product Graph, Numerics Contract, selected conversion precision, canonical
+finite-`f64` state encoding, and explicit validity semantics. Reconstruction
+alone prepares the target-ordered samples; the model contract derives and
+validates the preparation, mapping, support, and proof identities atomically.
+Another Product or Numerics Contract is rejected.
+Execution receipts preserve the lifecycle and compiler-owned reprojection
+identities, bind the Product Graph and Numerics identities and conversion
+precision, and carry the five closed direction/basis/polarization/support-policy
+tags. Receipt validation canonically recomputes the lifecycle and input proof
+from its typed target, bounds, precision, support, and input projections, rejects
+zero sentinels, and cross-checks duplicate audit fields; those fields never
+grant execution authority. Aligned ingest is a fallible one-pass stream
+whose terminal source errors remain source errors. Reconstruction-derived
+target-ordered reprojection accepts only the closed direction, spectral-basis,
+and real parallel-hand polarization conversions owned by reconstruction: a
+source reader supplies typed geometry and samples but cannot supply mappings or
+fallbacks. The owner derives stencils, projected support, and exact evidence
+with only the target generation plus the current bounded stencil resident.
+Invalid support never aliases numeric zero; any invalid non-zero contributor
+invalidates its target, and uncovered targets remain invalid. Sparse deltas
+must be non-empty, non-zero, canonical, base-bound, within valid support and
+explicit bounds, and are applied in place only by the private authority seal
+that minted them. Resume preserves the exact generation named by the compiled
+input, after
+which new deltas bind the current attempt and epoch. The sole final affine
+operation consumes its private finalization authority and returns the next
+generation plus a distinct opaque reconstruction completion, never a Product
+Generation seal. Major Cycle, Minor Cycle, and Product Generation owners may
+consume this surface but cannot construct raw generations. No
+MeasurementSet/image persistence, runner, or model-column writer changes in
+T28.
 
 The Compiled Problem also owns one compiler-derived Observation Transaction.
 Its canonical read set contains every consumed per-MS selection, selected MAIN
