@@ -56,17 +56,17 @@ use casa_imaging_runtime::{
     PreparedArtifactPlaneDescriptor, PreparedArtifactPrecision, PreparedArtifactRejection,
     PreparedArtifactReuseOutcome, PreparedArtifactScientificKey, PreparedArtifactSegmentDescriptor,
     PreparedArtifactSegmentInput, PreparedArtifactSpectralMapKey, PreparedArtifactStore,
-    PreparedArtifactUvAffine,
-    PublicationLayoutLedger, PublicationMappedStaging, PublicationParticipant,
-    PublicationPhysicalLayout, PublicationResourceBounds, PublicationStaging, QueueDemand,
-    QueueResource, QueueResourceId, QuiescencePoint, RateDemand, RateResource, RateResourceId,
-    RateUnit, ReceiptFailureKind, ReceiptRetention, ReceiptStatus, RedactedPath, ResourceAuthority,
-    ResourceClaim, ResourceError, ResourceHeadroom, ResourceMeasurement, ResourceOverride,
-    ResourcePolicy, ResourceTopology, RunBindings, RunController, RunDirective, RunError,
-    RunToCompletion, RuntimeOverheadDemand, ScalingMetadata, SlotCompatibility, StagePrediction,
-    StorageDomain, StorageDomainId, StorageMode, StorageUseKind, WorkDependency, WorkDomain,
-    WorkExecutionContext, WorkImplementation, WorkImplementationId, WorkKind, WorkMeasurements,
-    WorkNode, WorkNodeId, plan as runtime_plan, run as runtime_run,
+    PreparedArtifactUvAffine, PublicationLayoutLedger, PublicationMappedStaging,
+    PublicationParticipant, PublicationPhysicalLayout, PublicationResourceBounds,
+    PublicationStaging, QueueDemand, QueueResource, QueueResourceId, QuiescencePoint, RateDemand,
+    RateResource, RateResourceId, RateUnit, ReceiptFailureKind, ReceiptRetention, ReceiptStatus,
+    RedactedPath, ResourceAuthority, ResourceClaim, ResourceError, ResourceHeadroom,
+    ResourceMeasurement, ResourceOverride, ResourcePolicy, ResourceTopology, RunBindings,
+    RunController, RunDirective, RunError, RunToCompletion, RuntimeOverheadDemand, ScalingMetadata,
+    SlotCompatibility, StagePrediction, StorageDomain, StorageDomainId, StorageMode,
+    StorageUseKind, WorkDependency, WorkDomain, WorkExecutionContext, WorkImplementation,
+    WorkImplementationId, WorkKind, WorkMeasurements, WorkNode, WorkNodeId, plan as runtime_plan,
+    run as runtime_run,
 };
 use casa_ms::{
     BoundSelectedObservation, ObservationSourceBinding, SelectedObservationCompletion,
@@ -801,6 +801,7 @@ impl WorkImplementation for RecordingExecutor {
                         1,
                         None,
                     )
+                    .expect("publication evidence is externally constructible")
                 })
                 .collect();
         }
@@ -4726,8 +4727,10 @@ fn transaction_failures_leave_the_old_generation_visible() {
         .update_external_pressure(runtime_inventory(0).pressure)
         .expect("install zero-lock external pressure");
 
+    let executable =
+        ExecutableModelProblem::from_compiled(problem.clone()).expect("direct executable problem");
     let result = runtime_run(
-        &problem,
+        &executable,
         &execution_plan,
         &current,
         &admission_registry,

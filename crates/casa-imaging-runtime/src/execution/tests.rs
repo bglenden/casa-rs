@@ -531,8 +531,15 @@ fn physical_work_binding_with_artifacts(
         })
         .collect::<BTreeSet<_>>();
     let read_completion = WorkDependency::Fence(FenceId::new(read.clone(), FenceKind::Io));
+    let prepared_nodes = artifacts
+        .iter()
+        .map(|artifact| artifact.node().clone())
+        .collect::<BTreeSet<_>>();
     let mut nodes = dag.nodes().values().cloned().collect::<Vec<_>>();
-    for node in nodes.iter_mut().filter(|node| node.dependencies.is_empty()) {
+    for node in nodes
+        .iter_mut()
+        .filter(|node| node.dependencies.is_empty() && !prepared_nodes.contains(&node.id))
+    {
         node.dependencies.insert(read_completion.clone());
     }
     let measurement_set = casa_imaging_model::MeasurementSetIdentity::new(identity(1));
@@ -857,18 +864,15 @@ fn physical_work_binding_with_artifacts(
             .collect(),
     )
     .expect("product publication layouts");
-    let artifacts = layouts
-        .entries()
-        .iter()
-        .map(|layout| {
-            crate::PlannedArtifact::new(
-                layout.artifact(),
-                commit.clone(),
-                crate::ArtifactRole::Output,
-                None,
-            )
-        })
-        .collect();
+    let mut artifacts = artifacts;
+    artifacts.extend(layouts.entries().iter().map(|layout| {
+        crate::PlannedArtifact::new(
+            layout.artifact(),
+            commit.clone(),
+            crate::ArtifactRole::Output,
+            None,
+        )
+    }));
     PhysicalWorkBinding::new(
         dag,
         prediction,
@@ -1014,7 +1018,7 @@ struct MalformedRejectionImplementation {
 }
 
 impl crate::WorkImplementation for MalformedRejectionImplementation {
-    type Error = std::convert::Infallible;
+    type Error = std::io::Error;
 
     fn implementation_id(&self) -> &WorkImplementationId {
         &self.id
@@ -1063,9 +1067,9 @@ impl crate::WorkImplementation for MalformedRejectionImplementation {
 
     fn failure_measurements<'error>(
         &'error self,
-        error: &'error Self::Error,
+        _error: &'error Self::Error,
     ) -> Option<&'error crate::WorkMeasurements> {
-        match *error {}
+        None
     }
 
     fn wait_for_fence(
@@ -1074,6 +1078,15 @@ impl crate::WorkImplementation for MalformedRejectionImplementation {
         _fence: FenceKind,
     ) -> Result<(), Self::Error> {
         Ok(())
+    }
+
+    fn complete_observation_read(
+        &self,
+        _completion: crate::ObservationReadCompletionContext,
+    ) -> Result<crate::AttemptBoundObservationCompletion, Self::Error> {
+        Err(std::io::Error::other(
+            "malformed-evidence test must fail before observation traversal",
+        ))
     }
 
     fn publish(&self, _context: crate::WorkExecutionContext<'_>) -> Result<(), Self::Error> {
@@ -1179,8 +1192,11 @@ fn malformed_store_owned_rejection_is_rejected_without_partial_receipt_mutation(
             execution_provenance(attempt, crate::BuildIdentity::from_sha256([build_byte; 32]));
         let authority = io_authority();
         let mut controller = crate::RunToCompletion;
+        let executable =
+            casa_imaging_reconstruction::ExecutableModelProblem::from_compiled(problem.clone())
+                .expect("direct executable problem");
         let error = crate::run(
-            &problem,
+            &executable,
             &plan,
             &current,
             &registry,

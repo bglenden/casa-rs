@@ -168,6 +168,15 @@ impl WorkImplementation for PreparedFailureAdapter {
         Ok(())
     }
 
+    fn complete_observation_read(
+        &self,
+        _completion: ObservationReadCompletionContext,
+    ) -> Result<AttemptBoundObservationCompletion, Self::Error> {
+        Err(io::Error::other(
+            "prepared-failure adapter cannot own observation traversal",
+        ))
+    }
+
     fn publish(&self, _context: WorkExecutionContext<'_>) -> Result<(), Self::Error> {
         Ok(())
     }
@@ -263,6 +272,15 @@ impl WorkImplementation for PreparedOperationAdapter {
         Ok(())
     }
 
+    fn complete_observation_read(
+        &self,
+        _completion: ObservationReadCompletionContext,
+    ) -> Result<AttemptBoundObservationCompletion, Self::Error> {
+        Err(io::Error::other(
+            "prepared-artifact adapter cannot own observation traversal",
+        ))
+    }
+
     fn publish(&self, _context: WorkExecutionContext<'_>) -> Result<(), Self::Error> {
         Ok(())
     }
@@ -313,6 +331,17 @@ impl WorkImplementation for PreparedSuiteImplementation {
             Self::Base(adapter) => adapter.wait_for_fence(context, fence),
             Self::Prepared(adapter) => adapter.wait_for_fence(context, fence),
             Self::Failure(adapter) => adapter.wait_for_fence(context, fence),
+        }
+    }
+
+    fn complete_observation_read(
+        &self,
+        completion: ObservationReadCompletionContext,
+    ) -> Result<AttemptBoundObservationCompletion, Self::Error> {
+        match self {
+            Self::Base(adapter) => adapter.complete_observation_read(completion),
+            Self::Prepared(adapter) => adapter.complete_observation_read(completion),
+            Self::Failure(adapter) => adapter.complete_observation_read(completion),
         }
     }
 
@@ -733,6 +762,7 @@ fn prepared_physical_work(
             ])
             .collect(),
         base.observation_transaction().clone(),
+        base.publication_layouts().clone(),
     )
     .expect("prepared physical work")
 }
@@ -774,8 +804,10 @@ fn run_prepared(
     let _guard = run_lock()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    authority_run(
-        problem,
+    let executable =
+        ExecutableModelProblem::from_compiled(problem.clone()).expect("direct executable problem");
+    runtime_run(
+        &executable,
         plan,
         &current,
         registry,

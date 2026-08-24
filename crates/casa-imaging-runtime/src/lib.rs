@@ -5,16 +5,15 @@
 mod execution;
 mod execution_bindings;
 mod observation_transaction;
-mod publication_layout;
 mod prepared_artifact;
+mod publication_layout;
 mod receipt;
 mod resource_authority;
 
 pub use execution_bindings::{
     ArtifactDisposition, ArtifactIdentity, ArtifactMeasurement, ArtifactMeasurementError,
-    ArtifactRole,
-    AttemptBoundObservationCompletion, BindingKind, CacheIdentity, CompiledWorkContext,
-    ExecutionEvidenceError, ExecutionPlan, ExecutionPlanId, ExecutionStatus,
+    ArtifactRole, AttemptBoundObservationCompletion, BindingKind, CacheIdentity,
+    CompiledWorkContext, ExecutionEvidenceError, ExecutionPlan, ExecutionPlanId, ExecutionStatus,
     ImplementationRegistry, ImplementationRegistryId, IoMeasurement, IoPrediction,
     ObservationCompletionBindingError, ObservationReadCompletionContext, PhysicalWorkBinding,
     PhysicalWorkBindingError, PhysicalWorkId, PlanError, PlanPrediction, PlannedArtifact,
@@ -35,12 +34,6 @@ pub use execution::{
 pub use observation_transaction::{
     BoundObservationTransaction, ObservationTransactionPlanError, ObservationTransactionWork,
 };
-pub use publication_layout::{
-    PhysicalLayoutId, PublicationBoundKind, PublicationLayoutError, PublicationLayoutLedger,
-    PublicationMappedStaging, PublicationParticipant, PublicationPhysicalLayout,
-    PublicationResourceBounds, PublicationResourceBoundsError, PublicationStaging,
-    PublicationStagingError,
-};
 pub use prepared_artifact::{
     PreparedArtifact, PreparedArtifactAwInterpretation, PreparedArtifactBudget,
     PreparedArtifactCellKey, PreparedArtifactDescriptor, PreparedArtifactError,
@@ -50,6 +43,12 @@ pub use prepared_artifact::{
     PreparedArtifactReservation, PreparedArtifactReuseOutcome, PreparedArtifactScientificKey,
     PreparedArtifactSegmentDescriptor, PreparedArtifactSegmentInput,
     PreparedArtifactSpectralMapKey, PreparedArtifactStore, PreparedArtifactUvAffine,
+};
+pub use publication_layout::{
+    PhysicalLayoutId, PublicationBoundKind, PublicationLayoutError, PublicationLayoutLedger,
+    PublicationMappedStaging, PublicationParticipant, PublicationPhysicalLayout,
+    PublicationResourceBounds, PublicationResourceBoundsError, PublicationStaging,
+    PublicationStagingError,
 };
 pub use receipt::{
     BuildIdentity, CompiledProblemEvidence, ExecutionAttemptId, ExecutionProvenance,
