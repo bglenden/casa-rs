@@ -106,6 +106,18 @@ digest_identity!(
     "Stable content identity of one cache namespace and compatibility contract."
 );
 
+impl ArtifactIdentity {
+    pub(crate) const fn from_owner_digest(digest: [u8; 32]) -> Self {
+        Self(digest)
+    }
+}
+
+impl CacheIdentity {
+    pub(crate) const fn from_owner_digest(digest: [u8; 32]) -> Self {
+        Self(digest)
+    }
+}
+
 /// Fixed-point confidence in a conservative planner prediction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PredictionConfidence(u32);
@@ -489,6 +501,10 @@ impl ResourceMeasurement {
 }
 
 /// Observed bytes and operations for one planned I/O category.
+///
+/// A measurement covers only the scheduled node that produced the adapter's
+/// evidence. Later consumer I/O must execute as a separate plan-listed node
+/// with its own measurements.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct IoMeasurement {
     kind: IoBufferKind,
@@ -527,6 +543,17 @@ impl IoMeasurement {
 }
 
 /// Actual result for one plan-listed artifact, containing no raw local path.
+///
+/// For [`ArtifactDisposition::RejectedStale`], `observed` must contain typed
+/// rejection evidence bound to the planned identity rather than a
+/// materialized-content identity, and `bytes` is the number of bytes inspected
+/// while rejecting the candidate. Missing, arbitrary, or differently bound
+/// rejection identities fail the execution-evidence contract before receipt
+/// checkpointing. For a successful prepared-artifact operation, the associated
+/// I/O measurement covers the private-store lock, scans, metadata,
+/// payload/manifest reads and writes, synchronization, validation, and eviction
+/// work; consumer copies from the returned handle remain the consumer's
+/// separately measured work.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ArtifactMeasurement {
     planned: ArtifactIdentity,
@@ -536,10 +563,52 @@ pub struct ArtifactMeasurement {
     path: Option<RedactedPath>,
 }
 
+/// Rejection of an externally constructed artifact measurement.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ArtifactMeasurementError {
+    /// The disposition can only be emitted by its owning runtime module.
+    StoreOwnedDisposition(ArtifactDisposition),
+}
+
+impl fmt::Display for ArtifactMeasurementError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::StoreOwnedDisposition(disposition) => write!(
+                formatter,
+                "artifact disposition {disposition:?} requires store-owned evidence"
+            ),
+        }
+    }
+}
+
+impl Error for ArtifactMeasurementError {}
+
 impl ArtifactMeasurement {
     /// Report one plan-listed artifact's observed identity and final disposition.
-    #[must_use]
+    ///
+    /// [`ArtifactDisposition::RejectedStale`] is deliberately store-owned: a
+    /// generic execution adapter cannot mint it even if it reproduces the
+    /// deterministic identity stored in an execution receipt.
     pub const fn new(
+        planned: ArtifactIdentity,
+        observed: Option<ArtifactIdentity>,
+        disposition: ArtifactDisposition,
+        bytes: u64,
+        path: Option<RedactedPath>,
+    ) -> Result<Self, ArtifactMeasurementError> {
+        if matches!(disposition, ArtifactDisposition::RejectedStale) {
+            return Err(ArtifactMeasurementError::StoreOwnedDisposition(disposition));
+        }
+        Ok(Self {
+            planned,
+            observed,
+            disposition,
+            bytes,
+            path,
+        })
+    }
+
+    pub(crate) const fn new_store_owned(
         planned: ArtifactIdentity,
         observed: Option<ArtifactIdentity>,
         disposition: ArtifactDisposition,
@@ -561,7 +630,7 @@ impl ArtifactMeasurement {
         self.planned
     }
 
-    /// Return the observed content identity, when materialized.
+    /// Return the observed content or typed rejection-evidence identity.
     #[must_use]
     pub const fn observed_identity(self) -> Option<ArtifactIdentity> {
         self.observed
@@ -859,6 +928,15 @@ pub enum ExecutionEvidenceError {
         /// Observed disposition.
         disposition: ArtifactDisposition,
     },
+    /// A cache node rejected its selected prepared artifact instead of
+    /// returning a materialized artifact or using an explicitly planned
+    /// alternate node.
+    RejectedArtifact {
+        /// Exact node.
+        node: WorkNodeId,
+        /// Plan-listed artifact that was rejected.
+        artifact: ArtifactIdentity,
+    },
 }
 
 impl ExecutionEvidenceError {
@@ -874,7 +952,8 @@ impl ExecutionEvidenceError {
             | Self::DuplicateArtifact { node, .. }
             | Self::UnplannedArtifact { node, .. }
             | Self::MissingArtifact { node, .. }
-            | Self::ArtifactDispositionMismatch { node, .. } => node,
+            | Self::ArtifactDispositionMismatch { node, .. }
+            | Self::RejectedArtifact { node, .. } => node,
         }
     }
 }
@@ -952,6 +1031,11 @@ impl fmt::Display for ExecutionEvidenceError {
             } => write!(
                 formatter,
                 "node {} reported {disposition:?} for {role:?} artifact {artifact}",
+                node.as_str()
+            ),
+            Self::RejectedArtifact { node, artifact } => write!(
+                formatter,
+                "cache node {} rejected selected prepared artifact {artifact}",
                 node.as_str()
             ),
         }
@@ -2094,6 +2178,18 @@ impl<'a> CompiledWorkContext<'a> {
         self.problem.problem_id()
     }
 
+    /// Return the exact observation snapshot bound into the compiled problem.
+    #[must_use]
+    pub const fn observation_snapshot_id(self) -> ObservationSnapshotId {
+        self.problem.inputs().observation()
+    }
+
+    /// Return the exact numerical-contract identity.
+    #[must_use]
+    pub const fn numerics_id(self) -> NumericsContractId {
+        self.problem.numerics_id()
+    }
+
     /// Return compiled output geometry.
     #[must_use]
     pub const fn geometry(self) -> &'a CompiledGeometry {
@@ -2146,7 +2242,11 @@ impl<'a> CompiledWorkContext<'a> {
 #[derive(Clone, Copy, Debug)]
 pub struct WorkExecutionContext<'a> {
     compiled: CompiledWorkContext<'a>,
+    implementation_registry: ImplementationRegistryId,
     scheduled: &'a crate::execution::WorkExecutionContext,
+    planned_artifacts: &'a [PlannedArtifact],
+    stage_prediction: &'a StagePrediction,
+    resource_alternative: &'a crate::DemandAlternative,
     observation_consistency: Option<&'a ObservationTransactionContract>,
     observation_reads: Option<&'a ObservationReadSet>,
     model_writes: Option<&'a ObservationWriteSet>,
@@ -2159,6 +2259,13 @@ impl<'a> WorkExecutionContext<'a> {
     #[must_use]
     pub const fn compiled(self) -> CompiledWorkContext<'a> {
         self.compiled
+    }
+
+    /// Return the exact implementation-registry snapshot selected by the plan
+    /// and revalidated against the running registry.
+    #[must_use]
+    pub const fn implementation_registry_id(self) -> ImplementationRegistryId {
+        self.implementation_registry
     }
 
     /// Return the exact planned node declaration.
@@ -2189,6 +2296,32 @@ impl<'a> WorkExecutionContext<'a> {
     #[must_use]
     pub fn allocations(self) -> &'a [crate::WorkAllocationCapability] {
         self.scheduled.allocations()
+    }
+
+    /// Return the canonical plan-listed artifacts owned by this exact node.
+    pub fn planned_artifacts(self) -> impl Iterator<Item = &'a PlannedArtifact> + 'a {
+        let node = &self.scheduled.node().id;
+        self.planned_artifacts
+            .iter()
+            .filter(move |artifact| artifact.node() == node)
+    }
+
+    pub(crate) fn plan_artifact(self, identity: ArtifactIdentity) -> Option<&'a PlannedArtifact> {
+        self.planned_artifacts
+            .iter()
+            .find(|artifact| artifact.identity() == identity)
+    }
+
+    /// Return the canonical prediction for this exact node.
+    #[must_use]
+    pub const fn stage_prediction(self) -> &'a StagePrediction {
+        self.stage_prediction
+    }
+
+    /// Return the exact admitted resource alternative that owns this node's lease.
+    #[must_use]
+    pub const fn resource_alternative(self) -> &'a crate::DemandAlternative {
+        self.resource_alternative
     }
 
     /// Return the expected observation state only for the initial consistency check.
@@ -2420,6 +2553,19 @@ pub trait WorkImplementation {
     /// staging before its publication fence succeeds.
     fn execute(&self, context: WorkExecutionContext<'_>) -> Result<WorkMeasurements, Self::Error>;
 
+    /// Return completed synchronous evidence retained by an execution error.
+    ///
+    /// Every implementation must choose explicitly whether its error retains
+    /// evidence. An implementation that cannot mutate durable state or
+    /// complete I/O before failure returns `None`; all others retain those
+    /// measurements in the error and expose them here. The runtime validates
+    /// the evidence against the sealed node before writing it into the failed
+    /// execution receipt; artifacts not reached before failure may be omitted.
+    fn failure_measurements<'error>(
+        &'error self,
+        error: &'error Self::Error,
+    ) -> Option<&'error WorkMeasurements>;
+
     /// Block until one exact fence previously launched by [`Self::execute`]
     /// settles. An error means the fence settled unsuccessfully, so the
     /// scheduler may drain and release resources after recording failure. For
@@ -2467,6 +2613,19 @@ pub trait ImplementationRegistry {
 
     /// Resolve one implementation without substituting another candidate.
     fn resolve(&self, id: &WorkImplementationId) -> Option<&Self::Implementation>;
+
+    /// Resolve the canonical provider/catalog registration for preparation
+    /// owned by one implementation in this exact registry snapshot.
+    ///
+    /// Registries that do not own prepared artifacts leave this absent. A
+    /// prepared descriptor can only mint its closed owner through this lookup;
+    /// caller-authored provider strings are not accepted by the descriptor.
+    fn prepared_artifact_registration(
+        &self,
+        _implementation: &WorkImplementationId,
+    ) -> Option<&crate::prepared_artifact::PreparedArtifactRegistration> {
+        None
+    }
 }
 
 /// Immutable scheduler state exposed to a run controller without exposing the
@@ -2597,6 +2756,23 @@ fn validate_work_measurements(
     work: &WorkExecutionContext,
     measurements: &WorkMeasurements,
 ) -> Result<(), ExecutionEvidenceError> {
+    validate_measurements(plan, work, measurements, true)
+}
+
+fn validate_failed_work_measurements(
+    plan: &ExecutionPlan,
+    work: &WorkExecutionContext,
+    measurements: &WorkMeasurements,
+) -> Result<(), ExecutionEvidenceError> {
+    validate_measurements(plan, work, measurements, false)
+}
+
+fn validate_measurements(
+    plan: &ExecutionPlan,
+    work: &WorkExecutionContext,
+    measurements: &WorkMeasurements,
+    require_all_artifacts: bool,
+) -> Result<(), ExecutionEvidenceError> {
     let node = &work.node().id;
     let claims = work
         .node()
@@ -2625,19 +2801,11 @@ fn validate_work_measurements(
                 lifetime: key.1,
             });
         }
-        let Some(planned) = claims.get(&key) else {
+        if !claims.contains_key(&key) {
             return Err(ExecutionEvidenceError::UnplannedResource {
                 node: node.clone(),
                 resource: key.0,
                 lifetime: key.1,
-            });
-        };
-        if measurement.peak() > *planned {
-            return Err(ExecutionEvidenceError::ResourcePeakExceeded {
-                node: node.clone(),
-                resource: key.0,
-                planned: *planned,
-                actual: measurement.peak(),
             });
         }
     }
@@ -2691,7 +2859,44 @@ fn validate_work_measurements(
         .filter(|artifact| artifact.node() == node)
         .map(|artifact| (artifact.identity(), artifact))
         .collect::<BTreeMap<_, _>>();
+    let artifact_error = match validate_artifact_measurements(
+        node,
+        work.node().kind,
+        &planned_artifacts,
+        measurements,
+        require_all_artifacts,
+    ) {
+        Ok(()) => None,
+        Err(error @ ExecutionEvidenceError::RejectedArtifact { .. }) => Some(error),
+        Err(error) => return Err(error),
+    };
+
+    if let Some(error) = measured_claims.iter().find_map(|(key, actual)| {
+        let planned = claims
+            .get(key)
+            .expect("measured resource was proven plan-listed");
+        (*actual > *planned).then(|| ExecutionEvidenceError::ResourcePeakExceeded {
+            node: node.clone(),
+            resource: key.0.clone(),
+            planned: *planned,
+            actual: *actual,
+        })
+    }) {
+        return Err(error);
+    }
+
+    artifact_error.map_or(Ok(()), Err)
+}
+
+fn validate_artifact_measurements(
+    node: &WorkNodeId,
+    work_kind: WorkKind,
+    planned_artifacts: &BTreeMap<ArtifactIdentity, &PlannedArtifact>,
+    measurements: &WorkMeasurements,
+    require_all_artifacts: bool,
+) -> Result<(), ExecutionEvidenceError> {
     let mut measured_artifacts = BTreeMap::new();
+    let mut rejected_artifact = None;
     for measurement in measurements.artifacts() {
         let artifact = measurement.planned_identity();
         if measured_artifacts.insert(artifact, *measurement).is_some() {
@@ -2726,78 +2931,112 @@ fn validate_work_measurements(
                 disposition,
             });
         }
+        if disposition == ArtifactDisposition::RejectedStale
+            && measurement.observed_identity().is_none_or(|observed| {
+                crate::prepared_artifact::PreparedArtifactRejection::from_evidence_identity(
+                    artifact, observed,
+                )
+                .is_none()
+            })
+        {
+            return Err(ExecutionEvidenceError::ArtifactDispositionMismatch {
+                node: node.clone(),
+                artifact,
+                role: planned.role(),
+                disposition,
+            });
+        }
+        if work_kind == WorkKind::Cache && disposition == ArtifactDisposition::RejectedStale {
+            rejected_artifact.get_or_insert(artifact);
+        }
     }
-    if let Some(artifact) = planned_artifacts
-        .keys()
-        .find(|artifact| !measured_artifacts.contains_key(artifact))
+    if require_all_artifacts
+        && let Some(artifact) = planned_artifacts
+            .keys()
+            .find(|artifact| !measured_artifacts.contains_key(artifact))
     {
         return Err(ExecutionEvidenceError::MissingArtifact {
             node: node.clone(),
             artifact: *artifact,
         });
     }
-    Ok(())
+    if let Some(artifact) = rejected_artifact {
+        Err(ExecutionEvidenceError::RejectedArtifact {
+            node: node.clone(),
+            artifact,
+        })
+    } else {
+        Ok(())
+    }
 }
 
 fn work_execution_context<'a>(
     problem: &'a CompiledProblem,
-    transaction: &BoundObservationTransaction,
+    plan: &'a ExecutionPlan,
     work: &'a crate::execution::WorkExecutionContext,
 ) -> WorkExecutionContext<'a> {
     let compiled = CompiledWorkContext { problem };
-    let transaction_work = transaction.work();
+    let transaction_work = plan.observation_transaction.work();
+    let common = |observation_consistency,
+                  observation_reads,
+                  model_writes,
+                  publication,
+                  publication_resources| WorkExecutionContext {
+        compiled,
+        implementation_registry: plan.implementation_registry,
+        scheduled: work,
+        planned_artifacts: &plan.artifacts,
+        stage_prediction: &plan.prediction.stages[&work.node().id],
+        resource_alternative: plan.execution_dag.resource_alternative(),
+        observation_consistency,
+        observation_reads,
+        model_writes,
+        publication,
+        publication_resources,
+    };
     if work.node().kind == WorkKind::ObservationRead {
-        WorkExecutionContext {
-            compiled,
-            scheduled: work,
-            observation_consistency: None,
-            observation_reads: Some(problem.observation_transaction().read_set()),
-            model_writes: None,
-            publication: None,
-            publication_resources: None,
-        }
+        common(
+            None,
+            Some(problem.observation_transaction().read_set()),
+            None,
+            None,
+            None,
+        )
     } else if transaction_work.model_column_staging() == Some(&work.node().id) {
-        WorkExecutionContext {
-            compiled,
-            scheduled: work,
-            observation_consistency: None,
-            observation_reads: None,
-            model_writes: Some(problem.observation_transaction().write_set()),
-            publication: None,
-            publication_resources: None,
-        }
+        common(
+            None,
+            None,
+            Some(problem.observation_transaction().write_set()),
+            None,
+            None,
+        )
     } else if transaction_work.commit() == &work.node().id {
-        WorkExecutionContext {
-            compiled,
-            scheduled: work,
-            observation_consistency: None,
-            observation_reads: None,
-            model_writes: None,
-            publication: Some(problem.observation_transaction()),
-            publication_resources: None,
-        }
+        common(
+            None,
+            None,
+            None,
+            Some(problem.observation_transaction()),
+            None,
+        )
     } else {
-        WorkExecutionContext {
-            compiled,
-            scheduled: work,
-            observation_consistency: (transaction_work.initial_consistency_check()
-                == &work.node().id)
+        common(
+            (transaction_work.initial_consistency_check() == &work.node().id)
                 .then_some(problem.observation_transaction()),
-            observation_reads: None,
-            model_writes: None,
-            publication: None,
-            publication_resources: None,
-        }
+            None,
+            None,
+            None,
+            None,
+        )
     }
 }
 
 fn publication_execution_context<'a>(
     problem: &'a CompiledProblem,
-    transaction: &BoundObservationTransaction,
+    plan: &'a ExecutionPlan,
     work: &'a crate::execution::WorkExecutionContext,
     reservation: &'a PublicationReservation,
 ) -> WorkExecutionContext<'a> {
-    let mut context = work_execution_context(problem, transaction, work);
+    let mut context = work_execution_context(problem, plan, work);
     context.publication_resources = Some(PublicationResources { reservation });
     context
 }
@@ -3060,7 +3299,7 @@ where
                     }
                     continue;
                 }
-                let context = work_execution_context(problem, &plan.observation_transaction, &work);
+                let context = work_execution_context(problem, plan, &work);
                 match implementation.execute(context) {
                     Ok(measurements) => {
                         if work.node().kind == WorkKind::Publication {
@@ -3141,12 +3380,36 @@ where
                                 }
                             }
                             Err(error) => {
+                                let record_failed_measurements = matches!(
+                                    &error,
+                                    ExecutionEvidenceError::RejectedArtifact { .. }
+                                        | ExecutionEvidenceError::ResourcePeakExceeded { .. }
+                                );
                                 if pending.is_none() {
                                     pending = Some(PendingRunError::Evidence(error));
                                 }
                                 controller_stopped = true;
-                                let _ = receipt.fences_launched(&node_id);
-                                let _ = receipt.work_failed(&node_id);
+                                let mut receipt_error = receipt.fences_launched(&node_id).err();
+                                if record_failed_measurements {
+                                    // Retain structurally valid completed
+                                    // evidence in the durable failure receipt.
+                                    // Rejected warm artifacts and uncensored
+                                    // resource overruns remain failures rather
+                                    // than successful cache results.
+                                    if let Err(error) = receipt
+                                        .work_failed_with_measurements(&node_id, &measurements)
+                                        && receipt_error.is_none()
+                                    {
+                                        receipt_error = Some(error);
+                                    }
+                                } else if let Err(error) = receipt.work_failed(&node_id)
+                                    && receipt_error.is_none()
+                                {
+                                    receipt_error = Some(error);
+                                }
+                                if let Some(error) = receipt_error {
+                                    defer_receipt_error(&mut scheduler, &mut pending, error);
+                                }
                                 launched.insert(node_id.clone(), work);
                                 if scheduler
                                     .finish_work(node_id, WorkResult::Succeeded)
@@ -3163,14 +3426,50 @@ where
                         }
                     }
                     Err(source) => {
-                        let _ = receipt.work_failed(&node_id);
-                        if work.node().kind == WorkKind::Release {
-                            if pending.is_none() {
-                                pending = Some(PendingRunError::Execution {
-                                    node: node_id.clone(),
-                                    source,
-                                });
+                        let diagnostic = source.to_string();
+                        match implementation
+                            .failure_measurements(&source)
+                            .map(|measurements| {
+                                (
+                                    measurements,
+                                    validate_failed_work_measurements(plan, &context, measurements),
+                                )
+                            }) {
+                            Some((measurements, Ok(()))) => {
+                                if let Err(error) =
+                                    receipt.work_failed_with_measurements(&node_id, measurements)
+                                {
+                                    defer_receipt_error(&mut scheduler, &mut pending, error);
+                                }
                             }
+                            Some((measurements, Err(error))) => {
+                                let record_failed_measurements = matches!(
+                                    &error,
+                                    ExecutionEvidenceError::ResourcePeakExceeded { .. }
+                                );
+                                if pending.is_none() {
+                                    pending = Some(PendingRunError::Evidence(error));
+                                }
+                                let receipt_result = if record_failed_measurements {
+                                    receipt.work_failed_with_measurements(&node_id, measurements)
+                                } else {
+                                    receipt.work_failed(&node_id)
+                                };
+                                if let Err(error) = receipt_result {
+                                    defer_receipt_error(&mut scheduler, &mut pending, error);
+                                }
+                            }
+                            None => {
+                                let _ = receipt.work_failed(&node_id);
+                            }
+                        }
+                        if pending.is_none() {
+                            pending = Some(PendingRunError::Execution {
+                                node: node_id.clone(),
+                                source,
+                            });
+                        }
+                        if work.node().kind == WorkKind::Release {
                             controller_stopped = true;
                             if scheduler.fail_release_work(&node_id).is_err() {
                                 return Err(terminal_drain_error(
@@ -3182,11 +3481,6 @@ where
                             scheduler.cancel_after_error();
                             continue;
                         }
-                        let diagnostic = source.to_string();
-                        pending = Some(PendingRunError::Execution {
-                            node: node_id.clone(),
-                            source,
-                        });
                         controller_stopped = true;
                         match scheduler.finish_work(
                             node_id,
@@ -3241,8 +3535,7 @@ where
                 };
                 let implementation = implementations[&work.node().implementation];
                 let fence_work = work.for_fence(fence.kind());
-                let context =
-                    work_execution_context(problem, &plan.observation_transaction, &fence_work);
+                let context = work_execution_context(problem, plan, &fence_work);
                 if let Err(source) = implementation.wait_for_fence(context, fence.kind()) {
                     if pending.is_none() {
                         pending = Some(PendingRunError::Execution {
@@ -3364,12 +3657,7 @@ where
                     ))
                 })?;
                 let implementation = implementations[&work.node().implementation];
-                let context = publication_execution_context(
-                    problem,
-                    &plan.observation_transaction,
-                    work,
-                    &resources,
-                );
+                let context = publication_execution_context(problem, plan, work, &resources);
                 let prepared = receipt.prepare_publication().map_err(RunError::Receipt)?;
                 match implementation.publish(context) {
                     Ok(()) => {
@@ -3809,4 +4097,77 @@ fn write_hex(formatter: &mut fmt::Formatter<'_>, bytes: &[u8]) -> fmt::Result {
         write!(formatter, "{byte:02x}")?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod artifact_measurement_tests {
+    use super::*;
+
+    #[test]
+    fn store_owned_rejection_requires_typed_identity_bound_to_planned_artifact() {
+        let node = WorkNodeId::new("cache");
+        let identity = ArtifactIdentity::from_sha256([1; 32]);
+        let other_identity = ArtifactIdentity::from_sha256([2; 32]);
+        let planned = PlannedArtifact::new(identity, node.clone(), ArtifactRole::Cache, None);
+        let planned_artifacts = BTreeMap::from([(identity, &planned)]);
+        let invalid = [
+            None,
+            Some(ArtifactIdentity::from_sha256([3; 32])),
+            Some(
+                crate::prepared_artifact::PreparedArtifactRejection::Missing
+                    .evidence_identity(other_identity),
+            ),
+        ];
+
+        for observed in invalid {
+            let measurements = WorkMeasurements::new(
+                Vec::new(),
+                Vec::new(),
+                vec![ArtifactMeasurement::new_store_owned(
+                    identity,
+                    observed,
+                    ArtifactDisposition::RejectedStale,
+                    0,
+                    None,
+                )],
+            );
+            assert!(matches!(
+                validate_artifact_measurements(
+                    &node,
+                    WorkKind::Cache,
+                    &planned_artifacts,
+                    &measurements,
+                    true,
+                ),
+                Err(ExecutionEvidenceError::ArtifactDispositionMismatch { artifact, .. })
+                    if artifact == identity
+            ));
+        }
+
+        let valid = WorkMeasurements::new(
+            Vec::new(),
+            Vec::new(),
+            vec![ArtifactMeasurement::new_store_owned(
+                identity,
+                Some(
+                    crate::prepared_artifact::PreparedArtifactRejection::Missing
+                        .evidence_identity(identity),
+                ),
+                ArtifactDisposition::RejectedStale,
+                0,
+                None,
+            )],
+        );
+        assert!(matches!(
+            validate_artifact_measurements(
+                &node,
+                WorkKind::Cache,
+                &planned_artifacts,
+                &valid,
+                true,
+            ),
+            Err(ExecutionEvidenceError::RejectedArtifact { artifact, .. })
+                if artifact == identity
+        ));
+    }
 }

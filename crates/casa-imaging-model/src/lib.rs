@@ -7,6 +7,7 @@ mod geometry;
 mod measurement_equation;
 mod model_state;
 mod observation;
+mod prepared_artifact;
 mod product_graph;
 mod selected_observation;
 mod selected_observation_sample;
@@ -69,6 +70,13 @@ pub use observation::{
     SelectedRowSequenceError, SelectedRowSequenceId, SelectedRows, SelectionBound,
     SourceGenerations, SpectralWindowSelection, TimeRange, TimeSelection, UvDistanceRange,
     UvDistanceUnit, UvSelection, VisibilityColumn, WeightColumn, compile_observation,
+};
+
+pub use prepared_artifact::{
+    PreparedArtifactAwInterpretation, PreparedArtifactCellSemantics,
+    PreparedArtifactKernelAlgorithm, PreparedArtifactKernelSemantics,
+    PreparedArtifactScientificIdentity, PreparedArtifactScientificIdentityError,
+    PreparedArtifactScientificKind, PreparedArtifactSpectralMapSemantics,
 };
 
 pub use selected_observation::{

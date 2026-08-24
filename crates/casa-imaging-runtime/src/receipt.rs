@@ -1236,6 +1236,9 @@ impl ExecutionReceipt {
     }
 
     /// Return the adapter-reported peak for one admitted resource/lifetime pair.
+    ///
+    /// A failed node retains the uncensored observed peak, including a value
+    /// above the admitted amount that caused an evidence-contract failure.
     #[must_use]
     pub fn actual_resource_peak(
         &self,
@@ -1323,7 +1326,7 @@ impl ExecutionReceipt {
             .map(parse_digest)
     }
 
-    /// Return the actual observed content identity for one artifact.
+    /// Return the actual observed content or rejection-evidence identity.
     #[must_use]
     pub fn artifact_observed_identity(&self, artifact: ArtifactIdentity) -> Option<[u8; 32]> {
         self.artifact(artifact)?
@@ -3951,6 +3954,16 @@ impl<'store> ReceiptRecorder<'store> {
         self.checkpoint()
     }
 
+    pub(crate) fn work_failed_with_measurements(
+        &mut self,
+        node: &WorkNodeId,
+        measurements: &WorkMeasurements,
+    ) -> Result<(), ReceiptError> {
+        self.record_measurements(node, measurements)?;
+        self.finish_node(node, ReceiptStatus::Failed)?;
+        self.checkpoint()
+    }
+
     pub(crate) fn fences_launched(&mut self, node: &WorkNodeId) -> Result<(), ReceiptError> {
         let node_id = stable_text(node.as_str());
         let expected = self
@@ -4130,7 +4143,9 @@ impl<'store> ReceiptRecorder<'store> {
             .find(|item| item.node_id == node_id)
             .ok_or(ReceiptError::UnlistedPlanEvidence { kind: "work node" })?;
         item.status = status;
-        item.actual_elapsed_nanos = elapsed;
+        if elapsed.is_some() {
+            item.actual_elapsed_nanos = elapsed;
+        }
         Ok(())
     }
 
@@ -4800,7 +4815,9 @@ fn validate_plan_projection(
                 && node.claims.iter().all(|claim| {
                     is_redacted_text(&claim.resource)
                         && claim_lifetime_is_valid(&claim.lifetime)
-                        && claim.actual_peak.is_none_or(|peak| peak <= claim.amount)
+                        && claim.actual_peak.is_none_or(|peak| {
+                            peak <= claim.amount || node.status == ReceiptStatus::Failed
+                        })
                 })
                 && node.io.iter().all(|io| {
                     io_buffer_is_valid(&io.kind)
