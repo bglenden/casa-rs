@@ -2,6 +2,7 @@
 #![warn(missing_docs)]
 //! Plan-bound imaging execution, process resource arbitration, and leases.
 
+mod cost_model;
 mod execution;
 mod execution_bindings;
 mod observation_transaction;
@@ -22,6 +23,10 @@ pub use execution_bindings::{
     WorkImplementation, WorkMeasurements, plan, run,
 };
 
+pub use cost_model::{
+    PlannerCostModelProfileRecord, ProfileEvidenceEntry, ProfilePromotionError, ProfileReview,
+    open_cost_model_profile, promote_cost_model_profile,
+};
 pub use execution::{
     AdaptationId, AdaptationTransition, AllocationAccess, AllocationId, AllocationLayout,
     AllocationLifetime, AllocationPurpose, AllocationUse, ClaimLifetime, ExecutionDag,
@@ -48,14 +53,16 @@ pub use receipt::{
     ReceiptStatus,
 };
 pub use resource_authority::{
-    Accelerator, AcceleratorDemand, AcceleratorId, AcceleratorKind, AlternativeId, CacheDemand,
-    CapabilityId, CapabilityPredicate, CapacityDomainId, CapacityViewId, CountDemand,
-    CpuClassCapacity, DemandAlternative, DemandAlternatives, DemandEnvelope, ExternalPressure,
-    HostInventory, IoBufferDemand, IoBufferKind, LeaseRelease, LeaseResource, MemoryCapacityDomain,
-    MemoryCapacityKind, MemoryDemand, MemoryView, MemoryViewKind, PressureUpdate, QueueDemand,
-    QueueResource, QueueResourceId, QuiescencePoint, RateDemand, RateResource, RateResourceId,
-    RateUnit, ResourceAuthority, ResourceError, ResourceFence, ResourceGrant, ResourceHeadroom,
-    ResourceLease, ResourceOverride, ResourcePermit, ResourcePolicy, ResourceTopology,
-    RuntimeOverheadDemand, RuntimeOverheadKind, ScalingMetadata, StorageDemand, StorageDomain,
-    StorageDomainId, StorageUseKind, TransferDemand, TransferLink, TransferLinkId,
+    Accelerator, AcceleratorDemand, AcceleratorId, AcceleratorKind,
+    AdmissionInfeasibilityCertificate, AlternativeId, AlternativeRejection,
+    AlternativeRejectionReason, CacheDemand, CapabilityId, CapabilityPredicate, CapacityDomainId,
+    CapacityViewId, CountDemand, CpuClassCapacity, DemandAlternative, DemandAlternatives,
+    DemandEnvelope, ExternalPressure, HostInventory, IoBufferDemand, IoBufferKind, LeaseRelease,
+    LeaseResource, MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand, MemoryView,
+    MemoryViewKind, PressureUpdate, QueueDemand, QueueResource, QueueResourceId, QuiescencePoint,
+    RateDemand, RateResource, RateResourceId, RateUnit, ResourceAuthority, ResourceError,
+    ResourceFence, ResourceGrant, ResourceHeadroom, ResourceLease, ResourceOverride,
+    ResourcePermit, ResourcePolicy, ResourceTopology, RuntimeOverheadDemand, RuntimeOverheadKind,
+    ScalingMetadata, StorageDemand, StorageDomain, StorageDomainId, StorageUseKind, TransferDemand,
+    TransferLink, TransferLinkId,
 };

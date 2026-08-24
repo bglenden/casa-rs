@@ -1086,6 +1086,11 @@ pub enum ResourceError {
     ProductionAlreadyInitialized,
     /// No declared alternative satisfied the required capabilities.
     NoCapableAlternative,
+    /// No declared alternative fits current policy, pressure, and reservations.
+    ///
+    /// The retained certificate is machine-readable evidence of exactly why
+    /// every offered alternative was refused.
+    NoFeasibleAlternative(AdmissionInfeasibilityCertificate),
     /// A mandatory demand did not fit the current hard ceiling.
     Infeasible {
         /// Resource category that failed admission.
@@ -1124,23 +1129,131 @@ pub enum ResourceError {
 
 impl ResourceError {
     /// Returns the mandatory amount for an infeasibility error.
-    pub const fn required(&self) -> Option<u64> {
+    pub fn required(&self) -> Option<u64> {
         match self {
             Self::Infeasible { required, .. } => Some(*required),
             Self::LeaseLimitExceeded { requested, .. } => Some(*requested),
             Self::PressureWouldInvalidateLeases { reserved, .. } => Some(*reserved),
+            Self::NoFeasibleAlternative(certificate) => {
+                certificate.first_infeasible().map(|(required, _)| required)
+            }
             _ => None,
         }
     }
 
     /// Returns the available amount for an infeasibility error.
-    pub const fn available(&self) -> Option<u64> {
+    pub fn available(&self) -> Option<u64> {
         match self {
             Self::Infeasible { available, .. }
             | Self::LeaseLimitExceeded { available, .. }
             | Self::PressureWouldInvalidateLeases { available, .. } => Some(*available),
+            Self::NoFeasibleAlternative(certificate) => certificate
+                .first_infeasible()
+                .map(|(_, available)| available),
             _ => None,
         }
+    }
+}
+
+/// Why one demand alternative was refused during atomic admission.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AlternativeRejectionReason {
+    /// The alternative does not support every required capability.
+    NoCapableAlternative,
+    /// One mandatory demand exceeded its available hard ceiling.
+    Infeasible {
+        /// Resource category that failed admission.
+        resource: String,
+        /// Mandatory requested amount.
+        required: u64,
+        /// Amount available after policy, pressure, and active leases.
+        available: u64,
+    },
+}
+
+/// Machine-readable refusal evidence for one named demand alternative.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AlternativeRejection {
+    alternative: AlternativeId,
+    reason: AlternativeRejectionReason,
+}
+
+impl AlternativeRejection {
+    fn new(alternative: AlternativeId, reason: AlternativeRejectionReason) -> Self {
+        Self {
+            alternative,
+            reason,
+        }
+    }
+
+    /// Return the refused alternative identity.
+    #[must_use]
+    pub const fn alternative(&self) -> &AlternativeId {
+        &self.alternative
+    }
+
+    /// Return the exact refusal reason.
+    #[must_use]
+    pub const fn reason(&self) -> &AlternativeRejectionReason {
+        &self.reason
+    }
+}
+
+/// Complete machine-readable proof that no offered demand alternative fits
+/// current policy, pressure, and active reservations.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AdmissionInfeasibilityCertificate {
+    rejections: Vec<AlternativeRejection>,
+}
+
+impl AdmissionInfeasibilityCertificate {
+    fn new(rejections: Vec<AlternativeRejection>) -> Self {
+        Self { rejections }
+    }
+
+    /// Return one refusal per offered alternative in caller order.
+    #[must_use]
+    pub fn rejections(&self) -> &[AlternativeRejection] {
+        &self.rejections
+    }
+
+    /// Return the first hard-capacity shortfall recorded by this certificate.
+    pub(crate) fn first_infeasible(&self) -> Option<(u64, u64)> {
+        self.rejections
+            .iter()
+            .find_map(|rejection| match &rejection.reason {
+                AlternativeRejectionReason::Infeasible {
+                    required,
+                    available,
+                    ..
+                } => Some((*required, *available)),
+                AlternativeRejectionReason::NoCapableAlternative => None,
+            })
+    }
+}
+
+impl fmt::Display for AdmissionInfeasibilityCertificate {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (index, rejection) in self.rejections.iter().enumerate() {
+            if index > 0 {
+                formatter.write_str("; ")?;
+            }
+            let alternative = rejection.alternative.as_str();
+            match &rejection.reason {
+                AlternativeRejectionReason::NoCapableAlternative => {
+                    write!(formatter, "{alternative} lacks a required capability")?
+                }
+                AlternativeRejectionReason::Infeasible {
+                    resource,
+                    required,
+                    available,
+                } => write!(
+                    formatter,
+                    "{alternative} requires {required} {resource}, but only {available} is available"
+                )?,
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1155,6 +1268,9 @@ impl fmt::Display for ResourceError {
             }
             Self::NoCapableAlternative => {
                 formatter.write_str("no demand alternative satisfies the required capabilities")
+            }
+            Self::NoFeasibleAlternative(certificate) => {
+                write!(formatter, "no demand alternative fits: {certificate}")
             }
             Self::Infeasible {
                 resource,
@@ -1338,17 +1454,19 @@ impl ResourceAuthority {
         let policy_capacity =
             apply_concurrent_policies(&self.inner.topology, &state, &policy, &pressured);
         let policy_available = available_after_active_leases(&state, policy_capacity)?;
-        let mut first_infeasible = None;
-        let mut capable = false;
+        let mut rejections = Vec::new();
         let mut selected = None;
         for alternative in alternatives.alternatives {
             if !alternative
                 .capabilities
                 .accepts(&alternatives.required_capabilities)
             {
+                rejections.push(AlternativeRejection::new(
+                    alternative.id.clone(),
+                    AlternativeRejectionReason::NoCapableAlternative,
+                ));
                 continue;
             }
-            capable = true;
             validate_alternative(&self.inner.topology, &alternative)?;
             let totals = alternative.demand.resource_totals(&self.inner.topology)?;
             let limits = alternative.demand.lease_limits();
@@ -1363,8 +1481,20 @@ impl ResourceAuthority {
                 hard: reserved.clone(),
                 preferred: reserved.clone(),
             };
-            if let Err(error) = admit_totals(&reservation_totals, &policy_available) {
-                first_infeasible.get_or_insert(error);
+            if let Err(ResourceError::Infeasible {
+                resource,
+                required,
+                available,
+            }) = admit_totals(&reservation_totals, &policy_available)
+            {
+                rejections.push(AlternativeRejection::new(
+                    alternative.id.clone(),
+                    AlternativeRejectionReason::Infeasible {
+                        resource,
+                        required,
+                        available,
+                    },
+                ));
                 continue;
             }
             let granted = admit_totals(&totals, &policy_available)?;
@@ -1372,12 +1502,9 @@ impl ResourceAuthority {
             break;
         }
         let Some((alternative, granted, reserved, limits)) = selected else {
-            if !capable {
-                return Err(ResourceError::NoCapableAlternative);
-            }
-            return Err(first_infeasible.unwrap_or_else(|| {
-                ResourceError::Invalid("capable alternatives could not be admitted".to_string())
-            }));
+            return Err(ResourceError::NoFeasibleAlternative(
+                AdmissionInfeasibilityCertificate::new(rejections),
+            ));
         };
         let lease_id = state.next_lease_id;
         state.next_lease_id = state

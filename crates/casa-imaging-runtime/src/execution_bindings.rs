@@ -18,11 +18,12 @@ use casa_imaging_reconstruction::ExecutableModelProblem;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    AdaptationId, AdaptationTransition, AllocationId, ClaimLifetime, DemandAlternatives,
-    ExecutionAttemptId, ExecutionError, ExecutionKnobs, ExecutionOutcome, ExecutionReceiptBinding,
-    FenceKind, IoBufferKind, LeaseResource, PhysicalSlotId, PublicationLayoutLedger, ReceiptError,
-    ReceiptFailureKind, ReceiptStatus, ResourceAuthority, ResourceError, ResourceOverride,
-    ResourcePolicy, WorkImplementationId, WorkKind, WorkNodeId,
+    AdaptationId, AdaptationTransition, AdmissionInfeasibilityCertificate, AllocationId,
+    ClaimLifetime, DemandAlternatives, ExecutionAttemptId, ExecutionError, ExecutionKnobs,
+    ExecutionOutcome, ExecutionReceiptBinding, FenceKind, IoBufferKind, LeaseResource,
+    PhysicalSlotId, PublicationLayoutLedger, ReceiptError, ReceiptFailureKind, ReceiptStatus,
+    ResourceAuthority, ResourceError, ResourceOverride, ResourcePolicy, WorkImplementationId,
+    WorkKind, WorkNodeId,
     execution::{
         ExecutionDag, ExecutionScheduler, PublicationReservation, SchedulerAction,
         SchedulerTerminal, WorkResult, io_buffer_kind_supports_work_kind, validate_topology,
@@ -302,6 +303,19 @@ impl PlanPrediction {
     #[must_use]
     pub fn uncertainty(&self) -> &[PredictionUncertainty] {
         &self.uncertainty
+    }
+
+    /// Conservative total predicted time including every uncertainty term.
+    ///
+    /// Lexicographic planning compares candidates by this bound so predicted
+    /// wall time can never understate committed uncertainty.
+    #[must_use]
+    pub fn conservative_nanos(&self) -> u64 {
+        self.uncertainty
+            .iter()
+            .fold(self.elapsed_nanos, |total, term| {
+                total.saturating_add(term.predicted_nanos)
+            })
     }
 
     /// Return one prediction for every plan node.
@@ -1646,6 +1660,18 @@ pub enum PlanError<E> {
     Resource(ResourceError),
 }
 
+impl<E> PlanError<E> {
+    /// Machine-readable proof that no physical candidate fit current policy,
+    /// pressure, and reservations.
+    #[must_use]
+    pub fn infeasibility_certificate(&self) -> Option<&AdmissionInfeasibilityCertificate> {
+        match self {
+            Self::Resource(ResourceError::NoFeasibleAlternative(certificate)) => Some(certificate),
+            _ => None,
+        }
+    }
+}
+
 impl<E: fmt::Display> fmt::Display for PlanError<E> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -1674,6 +1700,15 @@ impl<E: Error + 'static> Error for PlanError<E> {
 }
 
 /// Ask the Resource Authority to select one feasible planner-emitted physical candidate and seal it.
+///
+/// Selection follows ADR-0010's lexicographic order. Every candidate must
+/// preserve identical science, capability, and numerics requirements; hard
+/// feasibility with reserved headroom is proven only by Resource Authority
+/// admission under the bound host-use policy; and among admitted candidates
+/// the plan commits to the minimum conservative predicted wall time including
+/// uncertainty. When no candidate fits, the returned
+/// [`PlanError::infeasibility_certificate`] reports exactly why each
+/// alternative was refused.
 pub fn plan<E>(
     problem: &CompiledProblem,
     bindings: PlanningBindings,
@@ -1696,12 +1731,17 @@ pub fn plan<E>(
         validate_topology(&candidate.execution_dag, authority.topology())
             .map_err(PlanError::InvalidCandidate)?;
     }
+    // Hard feasibility is decidable only by admission, so candidates are offered
+    // in ascending conservative-predicted-time order and the authority commits
+    // to the first feasible one: the minimum-time feasible candidate.
+    let mut ordered_candidates = candidates;
+    ordered_candidates.sort_by_key(|candidate| candidate.prediction().conservative_nanos());
     let lease = authority
         .acquire(
             bindings.resource_policy.clone(),
             DemandAlternatives {
                 required_capabilities,
-                alternatives: candidates
+                alternatives: ordered_candidates
                     .iter()
                     .map(|candidate| candidate.execution_dag.resource_alternative().clone())
                     .collect(),
@@ -1715,7 +1755,7 @@ pub fn plan<E>(
             "provisional planning lease retained an unexpected fence".to_string(),
         )));
     }
-    let physical_work = candidates
+    let physical_work = ordered_candidates
         .into_iter()
         .find(|candidate| candidate.execution_dag.resource_alternative().id == selected)
         .ok_or_else(|| {
@@ -2633,7 +2673,9 @@ where
         Ok(ExecutionOutcome::Cancelled) => ReceiptStatus::Cancelled,
         Err(RunError::BindingMismatch { .. }) => ReceiptStatus::Mutation,
         Err(RunError::Scheduler(ExecutionError::Resource(
-            crate::ResourceError::Infeasible { .. } | crate::ResourceError::NoCapableAlternative,
+            crate::ResourceError::Infeasible { .. }
+            | crate::ResourceError::NoCapableAlternative
+            | crate::ResourceError::NoFeasibleAlternative(_),
         ))) => ReceiptStatus::Infeasible,
         Err(_) => ReceiptStatus::Failed,
     };
@@ -2674,7 +2716,8 @@ fn receipt_failure<E>(result: &Result<ExecutionOutcome, RunError<E>>) -> Option<
         }
         RunError::Scheduler(ExecutionError::Resource(
             error @ (crate::ResourceError::Infeasible { .. }
-            | crate::ResourceError::NoCapableAlternative),
+            | crate::ResourceError::NoCapableAlternative
+            | crate::ResourceError::NoFeasibleAlternative(_)),
         )) => ReceiptFailure::infeasible(error),
         RunError::Scheduler(_) | RunError::Receipt(_) => {
             ReceiptFailure::new(ReceiptFailureKind::Scheduler, None, None)

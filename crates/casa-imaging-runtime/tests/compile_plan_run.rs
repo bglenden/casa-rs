@@ -35,12 +35,13 @@ use casa_imaging_model::{
 use casa_imaging_reconstruction::ExecutableModelProblem;
 use casa_imaging_runtime::{
     AdaptationId, AdaptationTransition, AllocationAccess, AllocationId, AllocationLayout,
-    AllocationLifetime, AllocationPurpose, AllocationUse, AlternativeId, ArtifactDisposition,
-    ArtifactIdentity, ArtifactMeasurement, ArtifactRole, AttemptBoundObservationCompletion,
-    BindingKind, BuildIdentity, CacheDemand, CacheIdentity, CapabilityPredicate, CapacityDomainId,
-    CapacityViewId, ClaimLifetime, CompiledProblemEvidence, CountDemand, CpuClassCapacity,
-    DemandAlternative, DemandEnvelope, ExecutionDag, ExecutionDagSpecification, ExecutionError,
-    ExecutionEvidenceError, ExecutionKnobs, ExecutionOutcome, ExecutionPlanId, ExecutionProvenance,
+    AllocationLifetime, AllocationPurpose, AllocationUse, AlternativeId,
+    AlternativeRejectionReason, ArtifactDisposition, ArtifactIdentity, ArtifactMeasurement,
+    ArtifactRole, AttemptBoundObservationCompletion, BindingKind, BuildIdentity, CacheDemand,
+    CacheIdentity, CapabilityPredicate, CapacityDomainId, CapacityViewId, ClaimLifetime,
+    CompiledProblemEvidence, CountDemand, CpuClassCapacity, DemandAlternative, DemandEnvelope,
+    ExecutionDag, ExecutionDagSpecification, ExecutionError, ExecutionEvidenceError,
+    ExecutionKnobs, ExecutionOutcome, ExecutionPlanId, ExecutionProvenance,
     ExecutionReceiptBinding, ExecutionReceiptStore, ExecutionRouteDisposition,
     ExecutionRouteEvidence, ExecutionRouteRequirement, ExecutionRouteRequirementKind,
     ExecutionStatus, ExternalPressure, FenceId, FenceKind, HostInventory, ImplementationRegistry,
@@ -86,6 +87,8 @@ fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
 
 mod common;
 
+mod cost_model_profile;
+mod imaging_plan_selection;
 mod walking_skeleton;
 
 use common::{identity, model_lifecycle, problem_inputs};
@@ -4713,11 +4716,13 @@ fn transaction_failures_leave_the_old_generation_visible() {
 
     assert!(matches!(
         error,
-        RunError::Scheduler(ExecutionError::Resource(ResourceError::Infeasible {
-            ref resource,
-            required: 1,
-            available: 0,
-        })) if resource == "locks"
+        RunError::Scheduler(ExecutionError::Resource(
+            ResourceError::NoFeasibleAlternative(certificate),
+        )) if matches!(certificate.rejections(), [rejection]
+            if rejection.alternative() == &AlternativeId::new("test-cpu")
+                && matches!(rejection.reason(),
+                    AlternativeRejectionReason::Infeasible { resource, required: 1, available: 0 }
+                    if resource == "locks"))
     ));
     assert_eq!(visible_generation.load(Ordering::SeqCst), 0);
     assert_eq!(

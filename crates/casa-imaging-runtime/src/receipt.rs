@@ -1917,6 +1917,28 @@ impl ReceiptFailure {
             crate::ResourceError::NoCapableAlternative => {
                 InfeasibilityProjection::NoCapableAlternative
             }
+            crate::ResourceError::NoFeasibleAlternative(certificate) => {
+                // Scheduled admission always offers exactly the plan's sole
+                // alternative, so its refusal projects losslessly.
+                let rejection = certificate
+                    .rejections()
+                    .first()
+                    .expect("admission certificates are never empty");
+                match rejection.reason() {
+                    crate::AlternativeRejectionReason::NoCapableAlternative => {
+                        InfeasibilityProjection::NoCapableAlternative
+                    }
+                    crate::AlternativeRejectionReason::Infeasible {
+                        resource,
+                        required,
+                        available,
+                    } => InfeasibilityProjection::Infeasible {
+                        resource: bounded_evidence_text(resource),
+                        required: *required,
+                        available: *available,
+                    },
+                }
+            }
             crate::ResourceError::Infeasible {
                 resource,
                 required,
