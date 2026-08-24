@@ -2038,6 +2038,7 @@ impl<'a> CompiledWorkContext<'a> {
 /// authority.
 #[derive(Clone, Copy, Debug)]
 pub struct WorkExecutionContext<'a> {
+    attempt_id: ExecutionAttemptId,
     compiled: CompiledWorkContext<'a>,
     implementation_registry: ImplementationRegistryId,
     scheduled: &'a crate::execution::WorkExecutionContext,
@@ -2053,6 +2054,12 @@ pub struct WorkExecutionContext<'a> {
 }
 
 impl<'a> WorkExecutionContext<'a> {
+    /// Return the execution attempt that dispatched this exact node call.
+    #[must_use]
+    pub const fn attempt_id(self) -> ExecutionAttemptId {
+        self.attempt_id
+    }
+
     /// Return compiled science common to every work node.
     #[must_use]
     pub const fn compiled(self) -> CompiledWorkContext<'a> {
@@ -2787,6 +2794,7 @@ fn validate_artifact_measurements(
 }
 
 fn work_execution_context<'a>(
+    attempt_id: ExecutionAttemptId,
     problem: &'a CompiledProblem,
     plan: &'a ExecutionPlan,
     work: &'a crate::execution::WorkExecutionContext,
@@ -2799,6 +2807,7 @@ fn work_execution_context<'a>(
                   model_writes,
                   publication,
                   publication_resources| WorkExecutionContext {
+        attempt_id,
         compiled,
         implementation_registry: plan.implementation_registry,
         scheduled: work,
@@ -2849,13 +2858,15 @@ fn work_execution_context<'a>(
 }
 
 fn publication_execution_context<'a>(
+    attempt_id: ExecutionAttemptId,
     problem: &'a CompiledProblem,
     plan: &'a ExecutionPlan,
     work: &'a crate::execution::WorkExecutionContext,
     reservation: &'a PublicationReservation,
     completed_observation_reads: &'a BTreeMap<WorkNodeId, AttemptBoundObservationCompletion>,
 ) -> WorkExecutionContext<'a> {
-    let mut context = work_execution_context(problem, plan, work, completed_observation_reads);
+    let mut context =
+        work_execution_context(attempt_id, problem, plan, work, completed_observation_reads);
     context.publication_resources = Some(PublicationResources { reservation });
     context
 }
@@ -3115,8 +3126,13 @@ where
                     }
                     continue;
                 }
-                let context =
-                    work_execution_context(problem, plan, &work, &completed_observation_reads);
+                let context = work_execution_context(
+                    receipt.attempt_id(),
+                    problem,
+                    plan,
+                    &work,
+                    &completed_observation_reads,
+                );
                 match implementation.execute(context) {
                     Ok(measurements) => {
                         if work.node().kind == WorkKind::Publication {
@@ -3353,6 +3369,7 @@ where
                 let implementation = implementations[&work.node().implementation];
                 let fence_work = work.for_fence(fence.kind());
                 let context = work_execution_context(
+                    receipt.attempt_id(),
                     problem,
                     plan,
                     &fence_work,
@@ -3480,6 +3497,7 @@ where
                 })?;
                 let implementation = implementations[&work.node().implementation];
                 let context = publication_execution_context(
+                    receipt.attempt_id(),
                     problem,
                     plan,
                     work,

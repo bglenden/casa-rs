@@ -74,6 +74,7 @@ pub use weighting::{
     FrozenWeightingGeneration, PendingWeightingGeneration, PendingWeightingReplay,
     ReplayCallbackError, WeightedObservationBlock, WeightedObservationSample,
     WeightedSpectralValue, WeightingEvidenceError, WeightingGenerationCompletionError,
-    WeightingGenerationError, WeightingReplayCompletion, WeightingReplayError,
+    WeightingGenerationError, WeightingPlanFragment, WeightingPlanFragmentError,
+    WeightingReplayCompletion, WeightingReplayCompletionError, WeightingReplayError,
     complete_weighting_generation, traverse_weighting_generation,
 };

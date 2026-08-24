@@ -187,6 +187,19 @@ impl BoundSelectedObservation {
         self.identity.problem_id
     }
 
+    /// Return whether this retained owner is poised for the traversal immediately after `prior`.
+    ///
+    /// This proves access-binding continuity without exposing the process-local binding identity.
+    #[must_use]
+    pub fn can_resume_after(&self, prior: &SelectedObservationCompletion) -> bool {
+        self.access_binding == prior.access_binding
+            && self.identity.problem_id == prior.problem_id
+            && self.identity.observation_snapshot_id == prior.observation_snapshot_id
+            && self.identity.observation_provenance_id == prior.observation_provenance_id
+            && self.identity.commitment_id == prior.commitment_id
+            && prior.traversal.checked_add(1) == Some(self.next_traversal)
+    }
+
     #[cfg(test)]
     pub(crate) fn source_content_plan(
         &self,
@@ -241,10 +254,21 @@ impl BoundSelectedObservation {
         let samples = self
             .selected_samples(problem)
             .map_err(SelectedObservationTraversalError::Binding)?;
+        let sources = &self.sources;
         let (generation_id, sample_count) = consume_projected_validated_stream(
             problem,
             samples,
-            |sample| SelectedObservationTraversalSample::from_owner(problem, sample),
+            |sample| {
+                let source = sources
+                    .iter()
+                    .find(|source| source.source_identity() == sample.address.measurement_set)
+                    .ok_or(BoundObservationSourceError::ProblemSourceMismatch)?;
+                SelectedObservationTraversalSample::from_owner(
+                    problem,
+                    sample,
+                    source.geometry_engine(),
+                )
+            },
             &mut consume,
         )?;
         self.next_traversal = next_traversal;

@@ -21,6 +21,7 @@ const COVERAGE_DOMAIN: &[u8] = b"casa-rs-weighting-replay-coverage";
 const COVERAGE_VERSION: u32 = 1;
 const CONSERVATIVE_TREE_ENTRY_BYTES: usize = 64;
 const F32_EXPONENT_BINS: usize = 254;
+const F64_EXPONENT_BINS: usize = 2_046;
 
 macro_rules! weighting_identity {
     ($name:ident, $version:ident, $summary:literal) => {
@@ -85,7 +86,6 @@ weighting_identity!(
 pub struct WeightingExecutionLimits {
     max_block_samples: usize,
     density_partitions: usize,
-    weighted_queue_blocks: usize,
 }
 
 impl WeightingExecutionLimits {
@@ -93,15 +93,13 @@ impl WeightingExecutionLimits {
     pub fn new(
         max_block_samples: usize,
         density_partitions: usize,
-        weighted_queue_blocks: usize,
     ) -> Result<Self, WeightingError> {
-        if max_block_samples == 0 || density_partitions == 0 || weighted_queue_blocks == 0 {
+        if max_block_samples == 0 || density_partitions == 0 {
             return Err(WeightingError::ZeroExecutionLimit);
         }
         Ok(Self {
             max_block_samples,
             density_partitions,
-            weighted_queue_blocks,
         })
     }
 
@@ -116,12 +114,6 @@ impl WeightingExecutionLimits {
     pub const fn density_partitions(self) -> usize {
         self.density_partitions
     }
-
-    /// Maximum concurrently retained weighted output blocks.
-    #[must_use]
-    pub const fn weighted_queue_blocks(self) -> usize {
-        self.weighted_queue_blocks
-    }
 }
 
 /// Complete byte projection for weighting-owned resident state.
@@ -134,7 +126,6 @@ pub struct WeightingResidency {
     reduction_scratch_bytes: usize,
     replay_read_bytes: usize,
     weighted_block_bytes: usize,
-    queue_bytes: usize,
     simultaneous_selected_weighted_bytes: usize,
     peak_bytes: usize,
 }
@@ -182,12 +173,6 @@ impl WeightingResidency {
         self.weighted_block_bytes
     }
 
-    /// Maximum concurrently retained weighted-output queue.
-    #[must_use]
-    pub const fn queue_bytes(self) -> usize {
-        self.queue_bytes
-    }
-
     /// Replay input and output blocks simultaneously retained at handoff.
     #[must_use]
     pub const fn simultaneous_selected_weighted_bytes(self) -> usize {
@@ -202,7 +187,7 @@ impl WeightingResidency {
 }
 
 /// Planned weighting work, bound to one compiled problem and commitment.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct WeightingPlan {
     problem: CompiledProblemId,
     commitment: WeightingCommitmentId,
@@ -222,6 +207,12 @@ impl WeightingPlan {
     #[must_use]
     pub const fn planned_residency(&self) -> WeightingResidency {
         self.planned
+    }
+
+    /// Return the compiler-owned logical weighting commitment.
+    #[must_use]
+    pub const fn commitment_id(&self) -> WeightingCommitmentId {
+        self.commitment
     }
 }
 
@@ -251,9 +242,24 @@ pub fn plan_weighting(
     let deterministic_partial_bytes = cells
         .checked_mul(exact_cell_bytes)
         .and_then(|bytes| bytes.checked_mul(limits.density_partitions))
+        .and_then(|bytes| {
+            limits
+                .density_partitions
+                .checked_mul(size_of::<DensityPartial>())
+                .and_then(|containers| bytes.checked_add(containers))
+        })
         .ok_or(WeightingError::ResidencyOverflow)?;
-    let reduction_scratch_bytes = cells
+    let density_reduction_bytes = cells
         .checked_mul(exact_cell_bytes)
+        .ok_or(WeightingError::ResidencyOverflow)?;
+    let sum_weight_reduction_bytes = F64_EXPONENT_BINS
+        .checked_add(1)
+        .and_then(|entries| entries.checked_mul(CONSERVATIVE_TREE_ENTRY_BYTES))
+        .and_then(|bytes| bytes.checked_mul(grid.planes))
+        .ok_or(WeightingError::ResidencyOverflow)?;
+    let reduction_scratch_bytes = density_reduction_bytes
+        .checked_add(sum_weight_reduction_bytes)
+        .and_then(|bytes| bytes.checked_add(size_of::<BTreeMap<usize, ExactF32Sum>>()))
         .ok_or(WeightingError::ResidencyOverflow)?;
     let replay_sample_bytes = size_of::<SelectedObservationSample>()
         .checked_add(size_of::<SelectedSpectralContributions>())
@@ -266,9 +272,6 @@ pub fn plan_weighting(
         .max_block_samples
         .checked_mul(size_of::<WeightingSampleValue>())
         .ok_or(WeightingError::ResidencyOverflow)?;
-    let queue_bytes = weighted_block_bytes
-        .checked_mul(limits.weighted_queue_blocks)
-        .ok_or(WeightingError::ResidencyOverflow)?;
     let simultaneous_selected_weighted_bytes = replay_read_bytes
         .checked_add(weighted_block_bytes)
         .ok_or(WeightingError::ResidencyOverflow)?;
@@ -278,7 +281,6 @@ pub fn plan_weighting(
         .and_then(|bytes| bytes.checked_add(deterministic_partial_bytes))
         .and_then(|bytes| bytes.checked_add(reduction_scratch_bytes))
         .and_then(|bytes| bytes.checked_add(simultaneous_selected_weighted_bytes))
-        .and_then(|bytes| bytes.checked_add(queue_bytes))
         .ok_or(WeightingError::ResidencyOverflow)?;
     Ok(WeightingPlan {
         problem: problem.problem_id(),
@@ -293,7 +295,6 @@ pub fn plan_weighting(
             reduction_scratch_bytes,
             replay_read_bytes,
             weighted_block_bytes,
-            queue_bytes,
             simultaneous_selected_weighted_bytes,
             peak_bytes,
         },
@@ -372,7 +373,6 @@ impl WeightingAlgorithmState {
         Ok(WeightingReplayPhase {
             generation: self,
             max_block_samples: plan.limits.max_block_samples,
-            weighted_queue_blocks: plan.limits.weighted_queue_blocks,
             block: Vec::with_capacity(plan.limits.max_block_samples),
             block_sequence: 0,
             coverage: CoverageEncoder::new(self.generation_id),
@@ -686,6 +686,9 @@ impl WeightingSumWeightPhase {
             return Err(WeightingError::SelectedGenerationMismatch);
         }
         let sample_count = self.density_sample_count;
+        let exact_sum_weight_bytes =
+            exact_f64_state_resident_bytes(&self.sum_weights, self.sum_weights.capacity())
+                .ok_or(WeightingError::ResidencyOverflow)?;
         let sum_weights = self
             .sum_weights
             .iter()
@@ -706,6 +709,7 @@ impl WeightingSumWeightPhase {
             .checked_mul(size_of::<f64>())
             .ok_or(WeightingError::ResidencyOverflow)?;
         let reduction_scratch_bytes = exact_state_resident_bytes(&self.density_state)
+            .and_then(|bytes| bytes.checked_add(exact_sum_weight_bytes))
             .ok_or(WeightingError::ResidencyOverflow)?;
         let robust_factor_bytes = self
             .robust_f2
@@ -741,7 +745,6 @@ impl WeightingSumWeightPhase {
                 reduction_scratch_bytes,
                 replay_read_bytes: 0,
                 weighted_block_bytes: 0,
-                queue_bytes: 0,
                 simultaneous_selected_weighted_bytes: 0,
                 peak_bytes,
             },
@@ -822,13 +825,18 @@ impl WeightingReplayChunk {
     pub const fn samples(&self) -> &[WeightingSampleValue] {
         &self.samples
     }
+
+    /// Transfer the bounded sample buffer to the runtime authorization layer.
+    #[must_use]
+    pub fn into_samples(self) -> Box<[WeightingSampleValue]> {
+        self.samples
+    }
 }
 
 /// Mutable reconstruction state for one bounded replay callback pass.
 pub struct WeightingReplayPhase<'a> {
     generation: &'a WeightingAlgorithmState,
     max_block_samples: usize,
-    weighted_queue_blocks: usize,
     block: Vec<WeightingSampleValue>,
     block_sequence: u64,
     coverage: CoverageEncoder,
@@ -911,9 +919,6 @@ impl WeightingReplayPhase<'_> {
             .max_block_samples
             .checked_mul(replay_sample_bytes)
             .ok_or(WeightingError::ResidencyOverflow)?;
-        let queue_bytes = weighted_block_bytes
-            .checked_mul(self.weighted_queue_blocks)
-            .ok_or(WeightingError::ResidencyOverflow)?;
         let simultaneous_selected_weighted_bytes = replay_read_bytes
             .checked_add(weighted_block_bytes)
             .ok_or(WeightingError::ResidencyOverflow)?;
@@ -926,7 +931,6 @@ impl WeightingReplayPhase<'_> {
                 bytes.checked_add(self.generation.generation_residency.sum_weight_bytes)
             })
             .and_then(|bytes| bytes.checked_add(simultaneous_selected_weighted_bytes))
-            .and_then(|bytes| bytes.checked_add(queue_bytes))
             .ok_or(WeightingError::ResidencyOverflow)?;
         Ok((
             final_block,
@@ -945,7 +949,6 @@ impl WeightingReplayPhase<'_> {
                     reduction_scratch_bytes: 0,
                     replay_read_bytes,
                     weighted_block_bytes,
-                    queue_bytes,
                     simultaneous_selected_weighted_bytes,
                     peak_bytes,
                 },
@@ -959,8 +962,10 @@ impl WeightingReplayPhase<'_> {
             .block_sequence
             .checked_add(1)
             .ok_or(WeightingError::BlockCountOverflow)?;
-        let samples =
-            std::mem::replace(&mut self.block, Vec::with_capacity(self.max_block_samples));
+        // The runtime consumes each returned block synchronously. Leave this phase
+        // allocation-free until that borrow ends so the outgoing block and its
+        // replacement can never retain two full-capacity buffers at once.
+        let samples = std::mem::take(&mut self.block);
         Ok(WeightingReplayChunk {
             sequence,
             samples: samples.into_boxed_slice(),
@@ -1343,10 +1348,19 @@ impl DensityPartial {
 }
 
 fn exact_state_resident_bytes(state: &BTreeMap<usize, ExactF32Sum>) -> Option<usize> {
-    state.values().try_fold(0_usize, |total, sum| {
-        let entries = sum.bins.len().checked_add(1)?;
-        total.checked_add(entries.checked_mul(CONSERVATIVE_TREE_ENTRY_BYTES)?)
-    })
+    state
+        .values()
+        .try_fold(size_of::<BTreeMap<usize, ExactF32Sum>>(), |total, sum| {
+            let entries = sum.bins.len().checked_add(1)?;
+            total.checked_add(entries.checked_mul(CONSERVATIVE_TREE_ENTRY_BYTES)?)
+        })
+}
+
+fn exact_f64_state_resident_bytes(state: &[ExactF64Sum], capacity: usize) -> Option<usize> {
+    state.iter().try_fold(
+        capacity.checked_mul(size_of::<ExactF64Sum>())?,
+        |total, sum| total.checked_add(sum.bins.len().checked_mul(CONSERVATIVE_TREE_ENTRY_BYTES)?),
+    )
 }
 
 #[derive(Debug, Default)]

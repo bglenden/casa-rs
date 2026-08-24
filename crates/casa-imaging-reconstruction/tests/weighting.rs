@@ -390,7 +390,7 @@ fn compiler_commitment_freezes_only_after_two_exhaustive_owner_passes() {
     let samples = exact_samples(&problem);
     let plan = plan_weighting(
         &problem,
-        WeightingExecutionLimits::new(2, 3, 2).expect("limits"),
+        WeightingExecutionLimits::new(2, 3).expect("limits"),
     )
     .expect("plan");
     let generation =
@@ -411,7 +411,7 @@ fn compiler_commitment_freezes_only_after_two_exhaustive_owner_passes() {
 
 #[test]
 fn casa_global_natural_uniform_and_briggs_formulas_are_preserved() {
-    let limits = WeightingExecutionLimits::new(4, 3, 1).expect("limits");
+    let limits = WeightingExecutionLimits::new(4, 3).expect("limits");
     let natural = problem(
         WeightingScheme::Natural,
         WeightDensityScope::NotApplicable,
@@ -482,12 +482,12 @@ fn partition_block_worker_and_repeated_replay_choices_are_invariant() {
     let samples = exact_samples(&problem);
     let serial_plan = plan_weighting(
         &problem,
-        WeightingExecutionLimits::new(1, 1, 1).expect("serial limits"),
+        WeightingExecutionLimits::new(1, 1).expect("serial limits"),
     )
     .expect("serial plan");
     let partitioned_plan = plan_weighting(
         &problem,
-        WeightingExecutionLimits::new(3, 4, 2).expect("partitioned limits"),
+        WeightingExecutionLimits::new(3, 4).expect("partitioned limits"),
     )
     .expect("partitioned plan");
     let serial =
@@ -533,7 +533,7 @@ fn multi_source_multi_spw_per_channel_generation_never_uses_chunk_local_density(
     let samples = exact_samples(&problem);
     let plan = plan_weighting(
         &problem,
-        WeightingExecutionLimits::new(2, 2, 1).expect("limits"),
+        WeightingExecutionLimits::new(2, 2).expect("limits"),
     )
     .expect("plan");
     let generation =
@@ -567,7 +567,7 @@ fn linear_contribution_coefficients_drive_per_output_density_and_replay() {
     .expect("two output contributions");
     let plan = plan_weighting(
         &problem,
-        WeightingExecutionLimits::new(1, 1, 1).expect("limits"),
+        WeightingExecutionLimits::new(1, 1).expect("limits"),
     )
     .expect("plan");
     let mut density = begin_weighting_generation(&problem, &plan).expect("density");
@@ -611,7 +611,7 @@ fn per_channel_density_preserves_cube_rounding_instead_of_mfs_truncation() {
     }
     let plan = plan_weighting(
         &problem,
-        WeightingExecutionLimits::new(4, 2, 1).expect("limits"),
+        WeightingExecutionLimits::new(4, 2).expect("limits"),
     )
     .expect("plan");
     let generation = freeze_weighting_generation(&problem, &plan, &samples).expect("generation");
@@ -623,7 +623,7 @@ fn per_channel_density_preserves_cube_rounding_instead_of_mfs_truncation() {
 
 #[test]
 fn briggs_bandwidth_taper_preserves_the_casa_uv_distance_factor() {
-    let limits = WeightingExecutionLimits::new(4, 2, 1).expect("limits");
+    let limits = WeightingExecutionLimits::new(4, 2).expect("limits");
     let standard = problem(
         WeightingScheme::Briggs { robust: 0.0 },
         WeightDensityScope::PerOutputChannel,
@@ -684,7 +684,7 @@ fn taper_is_applied_after_natural_weighting() {
     );
     let untapered_samples = exact_samples(&untapered);
     let tapered_samples = exact_samples(&tapered);
-    let limits = WeightingExecutionLimits::new(4, 1, 1).expect("limits");
+    let limits = WeightingExecutionLimits::new(4, 1).expect("limits");
     let untapered_plan = plan_weighting(&untapered, limits).expect("untapered plan");
     let tapered_plan = plan_weighting(&tapered, limits).expect("tapered plan");
     let untapered_generation =
@@ -727,7 +727,7 @@ fn weighted_metric_satisfies_psd_and_weighted_adjoint_laws() {
     let samples = exact_samples(&problem);
     let plan = plan_weighting(
         &problem,
-        WeightingExecutionLimits::new(4, 2, 1).expect("limits"),
+        WeightingExecutionLimits::new(4, 2).expect("limits"),
     )
     .expect("plan");
     let generation = freeze_weighting_generation(&problem, &plan, &samples).expect("generation");
@@ -759,7 +759,7 @@ fn planned_and_receipted_residency_cover_every_weighting_buffer_class() {
     let samples = exact_samples(&problem);
     let plan = plan_weighting(
         &problem,
-        WeightingExecutionLimits::new(2, 3, 2).expect("limits"),
+        WeightingExecutionLimits::new(2, 3).expect("limits"),
     )
     .expect("plan");
     let generation = freeze_weighting_generation(&problem, &plan, &samples).expect("generation");
@@ -775,7 +775,6 @@ fn planned_and_receipted_residency_cover_every_weighting_buffer_class() {
     assert!(generated.sum_weight_bytes() <= planned.sum_weight_bytes());
     assert!(replayed.replay_read_bytes() <= planned.replay_read_bytes());
     assert!(replayed.weighted_block_bytes() <= planned.weighted_block_bytes());
-    assert!(replayed.queue_bytes() <= planned.queue_bytes());
     assert!(
         replayed.simultaneous_selected_weighted_bytes()
             <= planned.simultaneous_selected_weighted_bytes()
@@ -794,7 +793,7 @@ fn incomplete_callback_phase_cannot_finalize_weighting_state() {
     let samples = exact_samples(&problem);
     let plan = plan_weighting(
         &problem,
-        WeightingExecutionLimits::new(2, 2, 1).expect("limits"),
+        WeightingExecutionLimits::new(2, 2).expect("limits"),
     )
     .expect("plan");
     let mut density = begin_weighting_generation(&problem, &plan).expect("density phase");

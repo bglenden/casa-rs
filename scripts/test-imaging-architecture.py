@@ -2225,6 +2225,83 @@ class MigrationMatrixTests(unittest.TestCase):
                 receipt_path=receipt_path,
             )
 
+        missing_allocation = runtime_weighting.replace(
+            "AllocationSpec::new(", "MissingSpec::new(", 1
+        )
+        self.assertNotEqual(missing_allocation, runtime_weighting)
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"production fragment must own five allocations",
+        ):
+            checker.validate_t18_global_weighting_sources(
+                model,
+                sample_model,
+                traversal_sample,
+                bound_observation,
+                weighting,
+                missing_allocation,
+                receipt,
+                model_path=model_path,
+                sample_model_path=sample_model_path,
+                traversal_sample_path=traversal_sample_path,
+                bound_observation_path=bound_observation_path,
+                weighting_path=weighting_path,
+                runtime_weighting_path=runtime_weighting_path,
+                receipt_path=receipt_path,
+            )
+
+        implicit_release = runtime_weighting.replace(
+            "        drop(frozen);", "        let _retained = frozen;", 1
+        )
+        self.assertNotEqual(implicit_release, runtime_weighting)
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"production fragment must own five allocations",
+        ):
+            checker.validate_t18_global_weighting_sources(
+                model,
+                sample_model,
+                traversal_sample,
+                bound_observation,
+                weighting,
+                implicit_release,
+                receipt,
+                model_path=model_path,
+                sample_model_path=sample_model_path,
+                traversal_sample_path=traversal_sample_path,
+                bound_observation_path=bound_observation_path,
+                weighting_path=weighting_path,
+                runtime_weighting_path=runtime_weighting_path,
+                receipt_path=receipt_path,
+            )
+
+        raw_frame_mapping = traversal_sample.replace(
+            "    let source_frequency_hz = convert_frequency_to_frame(",
+            "    let source_frequency_hz = bypass_frequency_conversion(",
+            1,
+        )
+        self.assertNotEqual(raw_frame_mapping, traversal_sample)
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"bypasses owner-derived spectral mapping",
+        ):
+            checker.validate_t18_global_weighting_sources(
+                model,
+                sample_model,
+                raw_frame_mapping,
+                bound_observation,
+                weighting,
+                runtime_weighting,
+                receipt,
+                model_path=model_path,
+                sample_model_path=sample_model_path,
+                traversal_sample_path=traversal_sample_path,
+                bound_observation_path=bound_observation_path,
+                weighting_path=weighting_path,
+                runtime_weighting_path=runtime_weighting_path,
+                receipt_path=receipt_path,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -13,15 +13,15 @@ use crate::{
 use casa_imaging_model::{
     AntennaSelection, AxisOrder, CentreLaws, ColumnGeneration, ConsistencyToken,
     CorrelationProduct, CorrelationSelection, CorrelationType, DataDescriptionSelection,
-    DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame, FacetLayout,
-    FiniteValuePolicy, FlagPolicy, FrequencyFrame, GeometryInput, IdSelection, ImageAxis,
-    ImageDomainRole, ImageDomainSpec, ImageShape, ImagingRequest, InstrumentResponse,
-    IntentSelection, LogicalIdentity, MeasurementEquationContract, MeasurementSetIdentity,
-    MetadataGeneration, MetadataTableKind, MissingPointingPolicy, ModelBounds, ModelColumnState,
-    ModelColumnWrite, ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements,
-    ModelStateIdentity, MsColumnKind, NumericPrecision, NumericalStage, NumericsContract,
-    ObservationPointingLaw, ObservationSelection, ObservationSnapshotInput, ObservationSource,
-    ObservationSourceInput, ObservationSourceProvenance, ObservationSourceState,
+    DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame, Epoch,
+    FacetLayout, FiniteValuePolicy, FlagPolicy, FrequencyFrame, GeometryInput, IdSelection,
+    ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, ImagingRequest, InstrumentResponse,
+    IntentSelection, ItrfPosition, LogicalIdentity, MeasurementEquationContract,
+    MeasurementSetIdentity, MetadataGeneration, MetadataTableKind, MissingPointingPolicy,
+    ModelBounds, ModelColumnState, ModelColumnWrite, ModelInnerProduct, ModelInputCommitment,
+    ModelLifecycleRequirements, ModelStateIdentity, MsColumnKind, NumericPrecision, NumericalStage,
+    NumericsContract, ObservationPointingLaw, ObservationSelection, ObservationSnapshotInput,
+    ObservationSource, ObservationSourceInput, ObservationSourceProvenance, ObservationSourceState,
     ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn,
     PointingDirectionSemantic, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
     PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy,
@@ -35,12 +35,15 @@ use casa_imaging_model::{
     SelectedVisibilitySample, SelectionBound, SkyDirection, SourceGenerations, SpectralContract,
     SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSampling, SpectralWcs,
     SpectralWindowSelection, StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy,
-    TimeRange, TimeSelection, UvSelection, UvwCoordinateLaw, VisibilityColumn,
+    TimeRange, TimeScale, TimeSelection, UvSelection, UvwCoordinateLaw, VisibilityColumn,
     VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract, WeightingScheme,
     compile, compile_observation,
 };
 use casa_tables::ColumnSchema;
-use casa_types::measures::{EopValues, MeasuresProvider, MeasuresProviderState};
+use casa_types::measures::{
+    EopValues, MeasuresProvider, MeasuresProviderState,
+    frequency::{FrequencyRef, MFrequency},
+};
 use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::ArrayD;
 use std::convert::Infallible;
@@ -510,6 +513,111 @@ fn real_ms_cube_linear_traversal_reports_owner_derived_output_contributions() {
     assert_eq!(values[1], values[0]);
     assert_eq!(values[2], (2, Vec::new()));
     assert_eq!(values[3], values[2]);
+}
+
+#[test]
+fn real_ms_cube_traversal_maps_contributions_into_the_transformed_output_frame() {
+    let directory = tempfile::tempdir().expect("temporary transformed-frame fixture");
+    let path = directory.path().join("transformed-contributions.ms");
+    generate_fixture(&path);
+    let problem = compiled_problem_with_transformed_sampling(
+        &path,
+        2,
+        SpectralSampling::Linear,
+        SpectralWcs::Tabular {
+            channel_centres_hz: vec![1.3998e9, 1.39995e9],
+            channel_boundaries_hz: vec![1.399725e9, 1.399875e9, 1.400025e9],
+        },
+    );
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let expected_measures = test_measures(&problem);
+    let expected_shared_bytes = selected_observation_shared_bytes(
+        &expected_measures,
+        BoundObservationSource::retained_source_slot_bytes(),
+        single_binding_graph_initialization_bytes(source),
+    );
+    let expected_budget =
+        content_budget_for_rows_with_shared_bytes(&problem, source, expected_shared_bytes, 1, 1);
+    let expected_source = BoundObservationSource::open_with_measures(
+        &problem,
+        source,
+        &source_state(source),
+        &expected_measures,
+        expected_shared_bytes,
+        expected_budget,
+    )
+    .expect("open independent frame-conversion oracle");
+    let mut observation = BoundSelectedObservation::open(
+        &problem,
+        test_measures(&problem),
+        vec![ObservationSourceBinding::new(
+            source_state(source),
+            content_budget_for_rows(&problem, source, 1, 1),
+        )],
+    )
+    .expect("bind transformed-frame traversal");
+    let output_centres_hz = [1.3998e9, 1.39995e9];
+    let mut values = Vec::new();
+
+    let completion = observation
+        .traverse(&problem, |reported| {
+            assert_eq!(
+                reported.selected().address.frequency_frame,
+                FrequencyFrame::Topocentric
+            );
+            let sample = reported.selected();
+            let frame = expected_source
+                .geometry_engine()
+                .spectral_frame_observatory(
+                    sample.coordinates.time.mjd_days() * 86_400.0,
+                    usize::try_from(sample.metadata.field_id).expect("non-negative FIELD_ID"),
+                )
+                .expect("independent row frame");
+            let transformed_hz =
+                MFrequency::new(sample.address.frequency_centre_hz, FrequencyRef::TOPO)
+                    .convert_to(FrequencyRef::GEO, &frame)
+                    .expect("TOPO to GEO")
+                    .convert_to(FrequencyRef::BARY, &frame)
+                    .expect("GEO to BARY")
+                    .convert_to(FrequencyRef::LSRK, &frame)
+                    .expect("BARY to LSRK")
+                    .hz();
+            let expected =
+                if (output_centres_hz[0]..=output_centres_hz[1]).contains(&transformed_hz) {
+                    let upper = ((transformed_hz - output_centres_hz[0])
+                        / (output_centres_hz[1] - output_centres_hz[0]))
+                        as f32;
+                    vec![(0, 1.0 - upper), (1, upper)]
+                } else {
+                    Vec::new()
+                };
+            let actual = reported
+                .spectral_contributions()
+                .iter()
+                .map(|contribution| (contribution.output_channel(), contribution.factor()))
+                .collect::<Vec<_>>();
+            assert_eq!(actual, expected);
+            values.push((sample.address.channel_index, transformed_hz, expected));
+            Ok::<_, Infallible>(())
+        })
+        .expect("owner converts each selected frequency before output mapping");
+
+    assert_eq!(
+        problem.geometry().spectral().output_frame(),
+        FrequencyFrame::Lsrk
+    );
+    assert_eq!(completion.sample_count(), 8);
+    assert_eq!(values.len(), 8);
+    assert_eq!(values[0].0, 0);
+    assert_eq!(values[0].2.len(), 2);
+    assert!(
+        values[0].1 <= output_centres_hz[1] && 1.4e9 > output_centres_hz[1],
+        "TOPO to LSRK must move channel zero across the upper contribution boundary"
+    );
+    assert_eq!(values[1].2, values[0].2);
+    assert_eq!(values[2].0, 2);
+    assert!(values[2].2.is_empty());
+    assert_eq!(values[3].2, values[2].2);
 }
 
 #[test]
@@ -1919,6 +2027,8 @@ fn retained_selected_observation_owns_canonical_multi_source_order() {
             .map(|source| source.measurement_set())
             .collect::<Vec<_>>()
     );
+    assert!(one_row.can_resume_after(&one_row_completion));
+    assert!(!two_rows.can_resume_after(&one_row_completion));
     let repeated = one_row
         .traverse(&problem, |_| Ok::<_, Infallible>(()))
         .expect("mint a fresh completion for a repeated retained traversal");
@@ -1929,6 +2039,8 @@ fn retained_selected_observation_owns_canonical_multi_source_order() {
     );
     assert!(one_row_completion.precedes(&repeated));
     assert!(!one_row_completion.same_access_binding(&two_row_completion));
+    assert!(!one_row.can_resume_after(&one_row_completion));
+    assert!(one_row.can_resume_after(&repeated));
 }
 
 #[test]
@@ -2844,6 +2956,37 @@ fn compiled_problem_with_sampling(
         model_lifecycle(),
     ))
     .expect("compile spectral-contribution problem")
+}
+
+fn compiled_problem_with_transformed_sampling(
+    path: &std::path::Path,
+    row_count: usize,
+    sampling: SpectralSampling,
+    wcs: SpectralWcs,
+) -> casa_imaging_model::CompiledProblem {
+    let snapshot = compile_observation(ObservationSnapshotInput::new(
+        vec![source_input(path, 1, row_count)],
+        vec![(ReferenceDataKind::Measures, identity(90))],
+        ModelStateIdentity::Empty,
+    ))
+    .expect("compile transformed spectral-contribution observation");
+    let geometry = geometry_with_spectral_wcs(wcs);
+    let transformed = geometry
+        .spectral()
+        .clone()
+        .with_output_frame(FrequencyFrame::Lsrk)
+        .with_anchor(SpectralFrameAnchor::Conversion {
+            epoch: Epoch::new(59_000.25, TimeScale::Utc),
+            direction: SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
+            observatory_position: ItrfPosition::new(-1_601_188.0, -5_041_977.0, 3_554_875.0),
+        });
+    compile(ImagingRequest::new(
+        specification_with_sampling(sampling),
+        geometry.with_spectral(transformed),
+        ProblemInputIdentities::new(snapshot),
+        model_lifecycle(),
+    ))
+    .expect("compile transformed spectral-contribution problem")
 }
 
 fn compiled_problem_with_centres(

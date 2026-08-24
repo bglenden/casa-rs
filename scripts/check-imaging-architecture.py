@@ -127,10 +127,10 @@ ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256 = (
     "4589711ae6224b94916d05e214df510fab5ba01a16e21a0b913b4b851c1d0e89"
 )
 ACCEPTED_MATRIX_ROWS_SHA256 = (
-    "96c80b7e5a493ea167b8d42f3121862599f6af6c8bedb4b5664f215aaa3ee4ec"
+    "aa664908ee39627fd9b43a58dddaa47c41d807085ee7977adb969febd3eaa76e"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "f645f34716f5ffdb0305d031c6fb74a4d2b4976740def7838b4e091024da804a"
+    "f2a7f402478fb41a73c8452b6b17f10f3e04bc638ebfe0d3c7a7169c6364f5eb"
 )
 ACCEPTED_MATRIX_CONTRACT_REVISION = 20
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
@@ -2855,21 +2855,28 @@ def validate_t18_global_weighting_transfer(rows: list[dict[str, Any]]) -> None:
         "crates/casa-ms/src/selected_observation/bound_observation.rs::pub fn traverse",
         "crates/casa-imaging-reconstruction/src/weighting.rs::pub fn plan_weighting",
         "crates/casa-imaging-reconstruction/src/weighting.rs::pub fn begin_weighting_generation",
-        "crates/casa-imaging-reconstruction/src/weighting.rs::pub struct WeightingDensityPhase",
-        "crates/casa-imaging-reconstruction/src/weighting.rs::pub struct WeightingSumWeightPhase",
+        "crates/casa-imaging-runtime/src/weighting.rs::pub struct WeightingPlanFragment",
         "crates/casa-imaging-runtime/src/weighting.rs::pub fn traverse_weighting_generation",
         "crates/casa-imaging-runtime/src/weighting.rs::pub fn complete_weighting_generation",
+        "crates/casa-imaging-runtime/src/weighting.rs::pub fn release_generation",
         "crates/casa-imaging-runtime/src/weighting.rs::pub struct WeightedObservationBlock",
         "crates/casa-imaging-runtime/src/weighting.rs::pub struct FrozenWeightingGeneration",
         "crates/casa-imaging-runtime/src/weighting.rs::pub struct WeightingReplayCompletion",
+        "crates/casa-imaging-runtime/src/execution_bindings.rs::pub struct WorkExecutionContext",
+        "crates/casa-imaging-runtime/src/receipt.rs::pub fn allocation_generation_identities",
+        "crates/casa-imaging-runtime/src/receipt.rs::pub fn allocation_uses",
         "crates/casa-imaging-runtime/src/receipt.rs::fn project_weighting",
     }
     required_baselines = {
         "repo://crates/casa-imaging-model/src/measurement_equation.rs",
         "repo://crates/casa-imaging-model/src/selected_observation_sample.rs",
+        "repo://crates/casa-ms/src/selected_observation/access.rs",
         "repo://crates/casa-ms/src/selected_observation/spectral_contributions.rs",
         "repo://crates/casa-ms/src/selected_observation/bound_observation.rs",
+        "repo://crates/casa-imaging-reconstruction/src/lib.rs",
         "repo://crates/casa-imaging-reconstruction/src/weighting.rs",
+        "repo://crates/casa-imaging-runtime/src/lib.rs",
+        "repo://crates/casa-imaging-runtime/src/execution_bindings.rs",
         "repo://crates/casa-imaging-runtime/src/weighting.rs",
         "repo://crates/casa-imaging-runtime/src/receipt.rs",
     }
@@ -2998,8 +3005,8 @@ def validate_t18_global_weighting_sources(
         traversal_sample, "derive_spectral_contributions", traversal_sample_path
     )
     required_derivation = (
-        "source_frame()",
-        "output_frame()",
+        "geometry_engine",
+        "interpolation_contributions(",
         "SpectralSampling::Identity",
         "SpectralSampling::Nearest",
         "SpectralSampling::Linear",
@@ -3007,6 +3014,10 @@ def validate_t18_global_weighting_sources(
     )
     if not all(token in derivation for token in required_derivation) or (
         "source_frequency_output_contributions(" not in traversal_sample
+        or "convert_frequency_to_frame(" not in traversal_sample
+        or "sample.coordinates.time.mjd_days()" not in traversal_sample
+        or "sample.metadata.field_id" not in traversal_sample
+        or "UnsupportedSpectralContributionFrame" in derivation
     ):
         raise ArchitectureError(
             "T18 traversal envelope bypasses owner-derived spectral mapping"
@@ -3015,7 +3026,8 @@ def validate_t18_global_weighting_sources(
         bound_observation, "BoundSelectedObservation", "traverse", bound_observation_path
     )
     if (
-        "SelectedObservationTraversalSample::from_owner(problem, sample)" not in traversal
+        "SelectedObservationTraversalSample::from_owner(" not in traversal
+        or "source.geometry_engine()" not in traversal
         or "consume_projected_validated_stream(" not in traversal
     ):
         raise ArchitectureError(
@@ -3035,6 +3047,7 @@ def validate_t18_global_weighting_sources(
         or pending_fields.get("density_completion") != "SelectedObservationCompletion"
         or pending_fields.get("sum_weight_completion")
         != "SelectedObservationCompletion"
+        or pending_fields.get("binding") != "WeightingGenerationBinding"
     ):
         raise ArchitectureError(
             "T18 weighting generation does not retain reconstruction and opaque T17 evidence"
@@ -3042,7 +3055,12 @@ def validate_t18_global_weighting_sources(
     generation = rust_function_body(
         runtime_weighting, "traverse_weighting_generation", runtime_weighting_path
     )
-    if generation.count(".traverse(") != 2:
+    if (
+        generation.count(".traverse(") != 2
+        or generation.find(".authorize_generation(")
+        > generation.find("begin_weighting_generation(")
+        or generation.find(".authorize_generation(") < 0
+    ):
         raise ArchitectureError(
             "T18 weighting generation must require distinct exhaustive density and sum-weight passes"
         )
@@ -3066,7 +3084,9 @@ def validate_t18_global_weighting_sources(
     if (
         replay.count(".traverse(") != 1
         or ".finish(" not in replay
-        or "predecessor:&AttemptBoundObservationCompletion" not in compact_runtime
+        or ".authorize_replay(" not in replay
+        or "context:WorkExecutionContext<'_>" not in compact_runtime
+        or "fragment:&WeightingPlanFragment<'_>" not in compact_runtime
     ):
         raise ArchitectureError(
             "T18 replay must require predecessor authority, its own exhaustive traversal, and exact coverage"
@@ -3078,9 +3098,20 @@ def validate_t18_global_weighting_sources(
     replay_completion = rust_struct_fields(
         runtime_weighting, "WeightingReplayCompletion", runtime_weighting_path
     )
-    if replay_completion.get("owner_completion") != "AttemptBoundObservationCompletion":
+    replay_binding = rust_function_body(
+        runtime_weighting, "bind", runtime_weighting_path
+    )
+    if (
+        replay_completion.get("selected_generation")
+        != "SelectedObservationGenerationId"
+        or replay_completion.get("sample_count") != "u64"
+        or replay_completion.get("binding") != "WeightingGenerationBinding"
+        or "context.bind(self.owner_completion)" not in re.sub(r"\s+", "", replay_binding)
+        or "(WeightingReplayCompletion,AttemptBoundObservationCompletion)"
+        not in compact_runtime
+    ):
         raise ArchitectureError(
-            "T18 replay completion does not retain attempt-bound opaque T17 evidence"
+            "T18 replay completion does not bind opaque T17 evidence while returning the scheduler predecessor"
         )
     if re.search(
         r"\bpub\s+(?:const\s+)?fn\s+(?:from_sha256|from_identity|new_generation)\b",
@@ -3106,12 +3137,62 @@ def validate_t18_global_weighting_sources(
         "reduction_scratch_bytes",
         "replay_read_bytes",
         "weighted_block_bytes",
-        "queue_bytes",
         "simultaneous_selected_weighted_bytes",
         "peak_bytes",
     }
-    if not required_residency.issubset(residency_fields):
+    if not required_residency.issubset(residency_fields) or any(
+        "queue" in field for field in residency_fields
+    ):
         raise ArchitectureError("T18 residency omits a weighting-owned buffer class")
+
+    fragment_fields = rust_struct_fields(
+        runtime_weighting, "WeightingPlanFragment", runtime_weighting_path
+    )
+    compose = rust_function_body(runtime_weighting, "compose", runtime_weighting_path)
+    allocation_specs = rust_function_body(
+        runtime_weighting, "allocation_specs", runtime_weighting_path
+    )
+    generation_authority = rust_function_body(
+        runtime_weighting, "authorize_generation", runtime_weighting_path
+    )
+    replay_authority = rust_function_body(
+        runtime_weighting, "authorize_replay", runtime_weighting_path
+    )
+    release = rust_function_body(
+        runtime_weighting, "release_generation", runtime_weighting_path
+    )
+    if (
+        fragment_fields.get("plan") != "&'aWeightingPlan"
+        or fragment_fields.get("source_read") != "WorkNodeId"
+        or compose.count("kind: WorkKind::ObservationRead") != 2
+        or "kind: WorkKind::Release" not in compose
+        or allocation_specs.count("AllocationSpec::new(") != 5
+        or "predecessor_observation_completion(&self.source_read)"
+        not in generation_authority
+        or "predecessor_observation_completion(&self.ids.generation_node)"
+        not in replay_authority
+        or "validate_work_authority(" not in generation_authority
+        or "validate_work_authority(" not in replay_authority
+        or "frozen:FrozenWeightingGeneration" not in compact_runtime
+        or "drop(frozen)" not in release
+    ):
+        raise ArchitectureError(
+            "T18 production fragment must own five allocations and scheduler-authorized generation, replay, and release nodes"
+        )
+
+    plan_projection = rust_impl_method_body(receipt, "PlanProjection", "new", receipt_path)
+    node_projection = rust_impl_method_body(receipt, "NodeProjection", "new", receipt_path)
+    if (
+        "allocation_generations" not in plan_projection
+        or "AllocationProjection::new" not in plan_projection
+        or "allocation_uses" not in node_projection
+        or "AllocationUseProjection" not in node_projection
+        or "generation_identity" not in node_projection
+        or "claim_lifetime" not in node_projection
+    ):
+        raise ArchitectureError(
+            "T18 receipts must project weighting allocation generations and exact node uses"
+        )
     projection = rust_function_body(receipt, "project_weighting", receipt_path)
     if (
         "weighting.commitment.identity" not in projection

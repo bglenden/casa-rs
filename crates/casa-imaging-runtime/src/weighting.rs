@@ -2,7 +2,7 @@
 
 //! Runtime composition of reconstruction phases with opaque T17 traversal evidence.
 
-use std::{error::Error, fmt};
+use std::{collections::BTreeSet, error::Error, fmt, mem::align_of};
 
 use casa_imaging_model::{
     CompiledProblem, SelectedObservationGenerationId, SelectedObservationSample,
@@ -11,22 +11,979 @@ use casa_imaging_model::{
 use casa_imaging_reconstruction::{
     WeightingAlgorithmState, WeightingError, WeightingGenerationId, WeightingPlan,
     WeightingReplayChunk as ReconstructionWeightedBlock, WeightingReplayCoverageId,
-    WeightingReplayId, WeightingReplaySummary, WeightingResidency, begin_weighting_generation,
+    WeightingReplayId, WeightingReplaySummary, WeightingResidency,
+    WeightingSampleValue as ReconstructionWeightedSample,
+    WeightingSpectralValue as ReconstructionWeightedSpectralValue, begin_weighting_generation,
 };
 use casa_ms::{
-    BoundSelectedObservation, SelectedObservationCompletion, SelectedObservationTraversalError,
+    BoundSelectedObservation, SelectedObservationCompletion, SelectedObservationContentBudget,
+    SelectedObservationTraversalError,
 };
 
 use crate::{
-    AttemptBoundObservationCompletion, ExecutionAttemptId, ObservationCompletionBindingError,
-    ObservationReadCompletionContext, WorkNodeId,
+    AllocationAccess, AllocationId, AllocationLayout, AllocationLifetime, AllocationPurpose,
+    AllocationUse, AlternativeId, AttemptBoundObservationCompletion, CapacityDomainId,
+    CapacityViewId, ClaimLifetime, ExecutionAttemptId, ExecutionDag, ExecutionDagSpecification,
+    ExecutionError, FenceId, FenceKind, InitializationPolicy, IoBufferKind, LeaseResource,
+    LogicalAllocation, MemoryDemand, ObservationCompletionBindingError,
+    ObservationReadCompletionContext, PhysicalSlot, PhysicalSlotId, PhysicalWorkBinding,
+    PhysicalWorkBindingError, PlanPrediction, ResourceClaim, SlotCompatibility, StagePrediction,
+    StorageMode, WorkDependency, WorkDomain, WorkExecutionContext, WorkImplementationId, WorkKind,
+    WorkNode, WorkNodeId,
 };
+
+/// Production composition of one frozen global weighting generation and replay.
+///
+/// The fragment inserts the complete generation, replay, and release lifecycle
+/// into an already validated observation transaction. It is the only supported
+/// route for attaching reconstruction weighting residency to physical work.
+pub struct WeightingPlanFragment<'a> {
+    plan: &'a WeightingPlan,
+    source_read: WorkNodeId,
+    selected_content_budget: SelectedObservationContentBudget,
+    generation_implementation: WorkImplementationId,
+    replay_implementation: WorkImplementationId,
+    release_implementation: WorkImplementationId,
+    ids: WeightingPlanIds,
+}
+
+impl<'a> WeightingPlanFragment<'a> {
+    /// Bind one reconstruction plan to its direct T17 predecessor and selected implementations.
+    #[must_use]
+    pub fn new(
+        plan: &'a WeightingPlan,
+        source_read: WorkNodeId,
+        selected_content_budget: SelectedObservationContentBudget,
+        generation_implementation: WorkImplementationId,
+        replay_implementation: WorkImplementationId,
+        release_implementation: WorkImplementationId,
+    ) -> Self {
+        Self {
+            plan,
+            source_read,
+            selected_content_budget,
+            generation_implementation,
+            replay_implementation,
+            release_implementation,
+            ids: WeightingPlanIds::new(plan),
+        }
+    }
+
+    /// Return the global density and sum-weight generation node.
+    #[must_use]
+    pub const fn generation_node(&self) -> &WorkNodeId {
+        &self.ids.generation_node
+    }
+
+    /// Return the bounded weighted replay node.
+    #[must_use]
+    pub const fn replay_node(&self) -> &WorkNodeId {
+        &self.ids.replay_node
+    }
+
+    /// Return the explicit frozen-state release node.
+    #[must_use]
+    pub const fn release_node(&self) -> &WorkNodeId {
+        &self.ids.release_node
+    }
+
+    /// Return the logical allocation retaining the frozen generation.
+    #[must_use]
+    pub const fn frozen_allocation(&self) -> &AllocationId {
+        &self.ids.frozen_allocation
+    }
+
+    /// Compose the complete weighting lifecycle into existing physical work.
+    pub fn compose(
+        &self,
+        base: &PhysicalWorkBinding,
+    ) -> Result<PhysicalWorkBinding, WeightingPlanFragmentError> {
+        let source = base
+            .execution_dag()
+            .nodes()
+            .get(&self.source_read)
+            .ok_or_else(|| WeightingPlanFragmentError::MissingNode(self.source_read.clone()))?;
+        if source.kind != WorkKind::ObservationRead {
+            return Err(WeightingPlanFragmentError::InvalidSourceKind(
+                self.source_read.clone(),
+            ));
+        }
+        let reconciliation_id = base.observation_transaction().final_reconciliation();
+        let commit_id = base.observation_transaction().commit();
+        let reconciliation = base
+            .execution_dag()
+            .nodes()
+            .get(reconciliation_id)
+            .ok_or_else(|| WeightingPlanFragmentError::MissingNode(reconciliation_id.clone()))?;
+        if !base.execution_dag().nodes().contains_key(commit_id) {
+            return Err(WeightingPlanFragmentError::MissingNode(commit_id.clone()));
+        }
+
+        let source_contract =
+            SourceTraversalContract::from_source(base, source, self.selected_content_budget)?;
+        let io_lifetime = ClaimLifetime::through_fence(FenceKind::Io);
+        let read_claims = source_contract.claims.clone();
+        let read_allocations = source_contract.allocations.clone();
+        let generation = WorkNode {
+            id: self.ids.generation_node.clone(),
+            kind: WorkKind::ObservationRead,
+            domain: WorkDomain::Io,
+            implementation: self.generation_implementation.clone(),
+            dependencies: terminal_events(source),
+            claims: read_claims.clone(),
+            allocations: read_allocations
+                .iter()
+                .cloned()
+                .chain([
+                    allocation_use(&self.ids.frozen_allocation, io_lifetime.clone()),
+                    allocation_use(&self.ids.partial_allocation, io_lifetime.clone()),
+                    allocation_use(&self.ids.reduction_allocation, io_lifetime.clone()),
+                ])
+                .collect(),
+            fences: BTreeSet::from([FenceKind::Io]),
+            quiescence_after: BTreeSet::new(),
+        };
+        let replay = WorkNode {
+            id: self.ids.replay_node.clone(),
+            kind: WorkKind::ObservationRead,
+            domain: WorkDomain::Io,
+            implementation: self.replay_implementation.clone(),
+            dependencies: BTreeSet::from([WorkDependency::Fence(FenceId::new(
+                self.ids.generation_node.clone(),
+                FenceKind::Io,
+            ))]),
+            claims: read_claims,
+            allocations: read_allocations
+                .into_iter()
+                .chain([
+                    allocation_use(&self.ids.frozen_allocation, io_lifetime.clone()),
+                    allocation_use(&self.ids.replay_read_allocation, io_lifetime.clone()),
+                    allocation_use(&self.ids.weighted_block_allocation, io_lifetime),
+                ])
+                .collect(),
+            fences: BTreeSet::from([FenceKind::Io]),
+            quiescence_after: BTreeSet::new(),
+        };
+        let release = WorkNode {
+            id: self.ids.release_node.clone(),
+            kind: WorkKind::Release,
+            domain: WorkDomain::Cpu,
+            implementation: self.release_implementation.clone(),
+            dependencies: terminal_events(reconciliation),
+            claims: vec![ResourceClaim {
+                resource: LeaseResource::Workers,
+                amount: 1,
+                lifetime: ClaimLifetime::Work,
+            }],
+            allocations: vec![allocation_use(
+                &self.ids.frozen_allocation,
+                ClaimLifetime::Work,
+            )],
+            fences: BTreeSet::new(),
+            quiescence_after: BTreeSet::new(),
+        };
+
+        let mut nodes = base
+            .execution_dag()
+            .nodes()
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        nodes
+            .iter_mut()
+            .find(|node| &node.id == reconciliation_id)
+            .ok_or_else(|| WeightingPlanFragmentError::MissingNode(reconciliation_id.clone()))?
+            .dependencies
+            .insert(WorkDependency::Fence(FenceId::new(
+                self.ids.replay_node.clone(),
+                FenceKind::Io,
+            )));
+        nodes
+            .iter_mut()
+            .find(|node| &node.id == commit_id)
+            .ok_or_else(|| WeightingPlanFragmentError::MissingNode(commit_id.clone()))?
+            .dependencies
+            .insert(WorkDependency::Work(self.ids.release_node.clone()));
+        nodes.extend([generation.clone(), replay.clone(), release.clone()]);
+
+        let allocation_specs = self.allocation_specs()?;
+        let mut alternative = base.execution_dag().resource_alternative().clone();
+        alternative.id = AlternativeId::new(format!(
+            "{}-weighting-{}",
+            alternative.id.as_str(),
+            self.plan.commitment_id()
+        ));
+        alternative
+            .demand
+            .memory
+            .extend(allocation_specs.iter().map(AllocationSpec::memory_demand));
+        let dag = ExecutionDag::new(ExecutionDagSpecification {
+            required_resource_capabilities: base
+                .execution_dag()
+                .required_resource_capabilities()
+                .clone(),
+            resource_alternative: alternative,
+            nodes,
+            logical_allocations: base
+                .execution_dag()
+                .logical_allocations()
+                .values()
+                .cloned()
+                .map(|mut allocation| {
+                    if source_contract.allocation_ids.contains(&allocation.id) {
+                        allocation
+                            .lifetime
+                            .release_after
+                            .insert(WorkDependency::Fence(FenceId::new(
+                                self.ids.replay_node.clone(),
+                                FenceKind::Io,
+                            )));
+                    }
+                    allocation
+                })
+                .chain(
+                    allocation_specs
+                        .iter()
+                        .map(AllocationSpec::logical_allocation),
+                )
+                .collect(),
+            physical_slots: base
+                .execution_dag()
+                .physical_slots()
+                .values()
+                .cloned()
+                .chain(allocation_specs.iter().map(AllocationSpec::physical_slot))
+                .collect(),
+            initial_knobs: base.execution_dag().initial_knobs().clone(),
+            adaptations: base
+                .execution_dag()
+                .adaptations()
+                .values()
+                .cloned()
+                .collect(),
+        })?;
+
+        let source_prediction = base
+            .prediction()
+            .stages()
+            .get(&self.source_read)
+            .ok_or_else(|| WeightingPlanFragmentError::MissingNode(self.source_read.clone()))?;
+        let generation_prediction = scaled_prediction(source_prediction, generation.id, 2)?;
+        let replay_prediction = scaled_prediction(source_prediction, replay.id, 1)?;
+        let release_prediction = StagePrediction::new(release.id, 0);
+        let extra_elapsed = generation_prediction
+            .elapsed_nanos()
+            .checked_add(replay_prediction.elapsed_nanos())
+            .ok_or(WeightingPlanFragmentError::PredictionOverflow)?;
+        let prediction = PlanPrediction::new(
+            base.prediction()
+                .elapsed_nanos()
+                .checked_add(extra_elapsed)
+                .ok_or(WeightingPlanFragmentError::PredictionOverflow)?,
+            base.prediction().confidence(),
+            base.prediction().uncertainty().to_vec(),
+            base.prediction()
+                .stages()
+                .values()
+                .cloned()
+                .chain([generation_prediction, replay_prediction, release_prediction])
+                .collect(),
+        )?;
+        Ok(PhysicalWorkBinding::new(
+            dag,
+            prediction,
+            base.artifacts().to_vec(),
+            base.observation_transaction().clone(),
+            base.publication_layouts().clone(),
+        )?)
+    }
+
+    fn allocation_specs(&self) -> Result<[AllocationSpec; 5], WeightingPlanFragmentError> {
+        let residency = self.plan.planned_residency();
+        let frozen_bytes = checked_sum([
+            residency.density_grid_bytes(),
+            residency.robust_factor_bytes(),
+            residency.sum_weight_bytes(),
+        ])?;
+        let generation_fence = BTreeSet::from([WorkDependency::Fence(FenceId::new(
+            self.ids.generation_node.clone(),
+            FenceKind::Io,
+        ))]);
+        let replay_fence = BTreeSet::from([WorkDependency::Fence(FenceId::new(
+            self.ids.replay_node.clone(),
+            FenceKind::Io,
+        ))]);
+        Ok([
+            AllocationSpec::new(
+                self.ids.frozen_allocation.clone(),
+                self.ids.frozen_slot.clone(),
+                frozen_bytes,
+                "weighting-frozen-generation",
+                self.ids.generation_node.clone(),
+                BTreeSet::from([WorkDependency::Work(self.ids.release_node.clone())]),
+            )?,
+            AllocationSpec::new(
+                self.ids.partial_allocation.clone(),
+                self.ids.partial_slot.clone(),
+                residency.deterministic_partial_bytes(),
+                "weighting-density-partials",
+                self.ids.generation_node.clone(),
+                generation_fence.clone(),
+            )?,
+            AllocationSpec::new(
+                self.ids.reduction_allocation.clone(),
+                self.ids.reduction_slot.clone(),
+                residency.reduction_scratch_bytes(),
+                "weighting-exact-reduction",
+                self.ids.generation_node.clone(),
+                generation_fence,
+            )?,
+            AllocationSpec::new(
+                self.ids.replay_read_allocation.clone(),
+                self.ids.replay_read_slot.clone(),
+                residency.replay_read_bytes(),
+                "weighting-replay-read",
+                self.ids.replay_node.clone(),
+                replay_fence.clone(),
+            )?,
+            AllocationSpec::new(
+                self.ids.weighted_block_allocation.clone(),
+                self.ids.weighted_block_slot.clone(),
+                residency.weighted_block_bytes(),
+                "weighting-weighted-block",
+                self.ids.replay_node.clone(),
+                replay_fence,
+            )?,
+        ])
+    }
+
+    /// Validate one weighting traversal's complete lease and return its casa-ms budget.
+    pub fn selected_content_budget(
+        &self,
+        context: WorkExecutionContext<'_>,
+        problem: &CompiledProblem,
+    ) -> Result<SelectedObservationContentBudget, WeightingEvidenceError> {
+        let specs = self
+            .allocation_specs()
+            .map_err(|_| WeightingEvidenceError)?;
+        let (expected_node, expected) = if context.node().id == self.ids.generation_node {
+            (&self.ids.generation_node, [&specs[0], &specs[1], &specs[2]])
+        } else if context.node().id == self.ids.replay_node {
+            (&self.ids.replay_node, [&specs[0], &specs[3], &specs[4]])
+        } else {
+            return Err(WeightingEvidenceError);
+        };
+        validate_work_authority(
+            context,
+            expected_node,
+            &expected,
+            WeightingWorkContract::SelectedTraversal {
+                problem,
+                budget: self.selected_content_budget,
+            },
+        )?;
+        Ok(self.selected_content_budget)
+    }
+
+    fn authorize_generation(
+        &self,
+        context: WorkExecutionContext<'_>,
+        problem: &CompiledProblem,
+    ) -> Result<WeightingGenerationBinding, WeightingEvidenceError> {
+        let specs = self
+            .allocation_specs()
+            .map_err(|_| WeightingEvidenceError)?;
+        let expected = [&specs[0], &specs[1], &specs[2]];
+        validate_work_authority(
+            context,
+            &self.ids.generation_node,
+            &expected,
+            WeightingWorkContract::SelectedTraversal {
+                problem,
+                budget: self.selected_content_budget,
+            },
+        )?;
+        let predecessor = context
+            .predecessor_observation_completion(&self.source_read)
+            .ok_or(WeightingEvidenceError)?;
+        let owner = predecessor.owner_completion();
+        if predecessor.attempt_id() != context.attempt_id()
+            || predecessor.owner_node() != &self.source_read
+            || predecessor.lease_epoch() != context.lease_epoch()
+            || owner.problem_id() != problem.problem_id()
+            || owner.commitment_id() != problem.selected_observation().commitment_id()
+        {
+            return Err(WeightingEvidenceError);
+        }
+        Ok(WeightingGenerationBinding {
+            attempt_id: context.attempt_id(),
+            owner_node: self.ids.generation_node.clone(),
+            lease_epoch: context.lease_epoch(),
+            source_generation: owner.generation_id(),
+            source_sample_count: owner.sample_count(),
+        })
+    }
+
+    fn authorize_replay(
+        &self,
+        context: WorkExecutionContext<'_>,
+        frozen: &FrozenWeightingGeneration,
+        problem: &CompiledProblem,
+    ) -> Result<WeightingGenerationBinding, WeightingEvidenceError> {
+        let specs = self
+            .allocation_specs()
+            .map_err(|_| WeightingEvidenceError)?;
+        let expected = [&specs[0], &specs[3], &specs[4]];
+        validate_work_authority(
+            context,
+            &self.ids.replay_node,
+            &expected,
+            WeightingWorkContract::SelectedTraversal {
+                problem,
+                budget: self.selected_content_budget,
+            },
+        )?;
+        let predecessor = context
+            .predecessor_observation_completion(&self.ids.generation_node)
+            .ok_or(WeightingEvidenceError)?;
+        if predecessor.attempt_id() != frozen.binding.attempt_id
+            || predecessor.attempt_id() != context.attempt_id()
+            || predecessor.owner_node() != &frozen.binding.owner_node
+            || predecessor.lease_epoch() != frozen.binding.lease_epoch
+            || predecessor.lease_epoch() != context.lease_epoch()
+            || validate_generation_completions(
+                &frozen.density_completion,
+                predecessor.owner_completion(),
+            )
+            .is_err()
+        {
+            return Err(WeightingEvidenceError);
+        }
+        Ok(WeightingGenerationBinding {
+            attempt_id: context.attempt_id(),
+            owner_node: self.ids.replay_node.clone(),
+            lease_epoch: context.lease_epoch(),
+            source_generation: predecessor.owner_completion().generation_id(),
+            source_sample_count: predecessor.owner_completion().sample_count(),
+        })
+    }
+
+    /// Consume a frozen generation only from its planned post-reconciliation release node.
+    pub fn release_generation(
+        &self,
+        context: WorkExecutionContext<'_>,
+        frozen: FrozenWeightingGeneration,
+    ) -> Result<(), WeightingEvidenceError> {
+        let specs = self
+            .allocation_specs()
+            .map_err(|_| WeightingEvidenceError)?;
+        validate_work_authority(
+            context,
+            &self.ids.release_node,
+            &[&specs[0]],
+            WeightingWorkContract::Release,
+        )?;
+        if context.attempt_id() != frozen.binding.attempt_id
+            || context.lease_epoch() != frozen.binding.lease_epoch
+            || frozen.binding.owner_node != self.ids.generation_node
+            || frozen.state.commitment_id() != self.plan.commitment_id()
+        {
+            return Err(WeightingEvidenceError);
+        }
+        drop(frozen);
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug)]
+struct WeightingPlanIds {
+    generation_node: WorkNodeId,
+    replay_node: WorkNodeId,
+    release_node: WorkNodeId,
+    frozen_allocation: AllocationId,
+    partial_allocation: AllocationId,
+    reduction_allocation: AllocationId,
+    replay_read_allocation: AllocationId,
+    weighted_block_allocation: AllocationId,
+    frozen_slot: PhysicalSlotId,
+    partial_slot: PhysicalSlotId,
+    reduction_slot: PhysicalSlotId,
+    replay_read_slot: PhysicalSlotId,
+    weighted_block_slot: PhysicalSlotId,
+}
+
+impl WeightingPlanIds {
+    fn new(plan: &WeightingPlan) -> Self {
+        let suffix = plan.commitment_id().to_string();
+        Self {
+            generation_node: WorkNodeId::new(format!("weighting-generation-{suffix}")),
+            replay_node: WorkNodeId::new(format!("weighting-replay-{suffix}")),
+            release_node: WorkNodeId::new(format!("weighting-release-{suffix}")),
+            frozen_allocation: AllocationId::new(format!("weighting-frozen-{suffix}")),
+            partial_allocation: AllocationId::new(format!("weighting-partials-{suffix}")),
+            reduction_allocation: AllocationId::new(format!("weighting-reduction-{suffix}")),
+            replay_read_allocation: AllocationId::new(format!("weighting-replay-read-{suffix}")),
+            weighted_block_allocation: AllocationId::new(format!(
+                "weighting-weighted-block-{suffix}"
+            )),
+            frozen_slot: PhysicalSlotId::new(format!("weighting-frozen-slot-{suffix}")),
+            partial_slot: PhysicalSlotId::new(format!("weighting-partials-slot-{suffix}")),
+            reduction_slot: PhysicalSlotId::new(format!("weighting-reduction-slot-{suffix}")),
+            replay_read_slot: PhysicalSlotId::new(format!("weighting-replay-read-slot-{suffix}")),
+            weighted_block_slot: PhysicalSlotId::new(format!(
+                "weighting-weighted-block-slot-{suffix}"
+            )),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct SourceTraversalContract {
+    claims: Vec<ResourceClaim>,
+    allocations: Vec<AllocationUse>,
+    allocation_ids: BTreeSet<AllocationId>,
+}
+
+impl SourceTraversalContract {
+    fn from_source(
+        base: &PhysicalWorkBinding,
+        source: &WorkNode,
+        budget: SelectedObservationContentBudget,
+    ) -> Result<Self, WeightingPlanFragmentError> {
+        if budget.available_bytes() == 0
+            || budget.maximum_live_blocks() == 0
+            || budget.maximum_pointing_polynomial_terms() == 0
+        {
+            return Err(WeightingPlanFragmentError::InvalidSourceAuthority {
+                node: source.id.clone(),
+                reason: "selected-content budget is empty",
+            });
+        }
+        if !source
+            .claims
+            .iter()
+            .any(|claim| matches!(claim.resource, LeaseResource::Workers) && claim.amount > 0)
+        {
+            return Err(WeightingPlanFragmentError::InvalidSourceAuthority {
+                node: source.id.clone(),
+                reason: "selected traversal has no worker claim",
+            });
+        }
+        let queue_slots = source.claims.iter().try_fold(0_u64, |total, claim| {
+            if matches!(
+                claim.resource,
+                LeaseResource::Queue { .. }
+                    | LeaseResource::StorageQueue { .. }
+                    | LeaseResource::TransferQueue { .. }
+            ) {
+                total.checked_add(claim.amount)
+            } else {
+                Some(total)
+            }
+        });
+        if queue_slots.is_none_or(|slots| {
+            slots < u64::try_from(budget.maximum_live_blocks()).unwrap_or(u64::MAX)
+        }) {
+            return Err(WeightingPlanFragmentError::InvalidSourceAuthority {
+                node: source.id.clone(),
+                reason: "selected traversal queue cannot cover every live content block",
+            });
+        }
+        let expected_bytes = u64::try_from(budget.available_bytes())
+            .map_err(|_| WeightingPlanFragmentError::ResidencyOverflow)?;
+        let claimed_bytes = source.claims.iter().try_fold(0_u64, |total, claim| {
+            if claim.resource == LeaseResource::IoBuffer(IoBufferKind::SourceReadAhead) {
+                total.checked_add(claim.amount)
+            } else {
+                Some(total)
+            }
+        });
+        let allocated_bytes = source.allocations.iter().try_fold(0_u64, |total, usage| {
+            let allocation = &base.execution_dag().logical_allocations()[&usage.allocation];
+            if allocation.purpose == AllocationPurpose::IoBuffer(IoBufferKind::SourceReadAhead) {
+                total.checked_add(allocation.bytes)
+            } else {
+                Some(total)
+            }
+        });
+        if claimed_bytes != Some(expected_bytes) || allocated_bytes != Some(expected_bytes) {
+            return Err(WeightingPlanFragmentError::InvalidSourceAuthority {
+                node: source.id.clone(),
+                reason: "selected-content budget does not match its read-buffer claim and allocation",
+            });
+        }
+
+        let io_lifetime = ClaimLifetime::through_fence(FenceKind::Io);
+        let claims = source
+            .claims
+            .iter()
+            .cloned()
+            .map(|mut claim| {
+                claim.lifetime = if matches!(
+                    claim.resource,
+                    LeaseResource::Workers
+                        | LeaseResource::RuntimeOverhead(crate::RuntimeOverheadKind::ThreadStack)
+                ) {
+                    ClaimLifetime::Work
+                } else {
+                    io_lifetime.clone()
+                };
+                claim
+            })
+            .collect();
+        let allocations = source
+            .allocations
+            .iter()
+            .map(|usage| allocation_use(&usage.allocation, io_lifetime.clone()))
+            .collect::<Vec<_>>();
+        let allocation_ids = allocations
+            .iter()
+            .map(|usage| usage.allocation.clone())
+            .collect();
+        Ok(Self {
+            claims,
+            allocations,
+            allocation_ids,
+        })
+    }
+}
+
+struct AllocationSpec {
+    allocation: AllocationId,
+    slot: PhysicalSlotId,
+    bytes: u64,
+    compatibility: SlotCompatibility,
+    acquire_at: WorkNodeId,
+    release_after: BTreeSet<WorkDependency>,
+}
+
+impl AllocationSpec {
+    fn new(
+        allocation: AllocationId,
+        slot: PhysicalSlotId,
+        bytes: usize,
+        layout: &str,
+        acquire_at: WorkNodeId,
+        release_after: BTreeSet<WorkDependency>,
+    ) -> Result<Self, WeightingPlanFragmentError> {
+        Ok(Self {
+            allocation,
+            slot,
+            bytes: u64::try_from(bytes)
+                .map_err(|_| WeightingPlanFragmentError::ResidencyOverflow)?,
+            compatibility: SlotCompatibility {
+                memory_domain: CapacityDomainId::new("host-memory"),
+                views: BTreeSet::from([CapacityViewId::new("host-memory")]),
+                alignment_bytes: align_of::<usize>() as u64,
+                storage_mode: StorageMode::Host,
+                layout: AllocationLayout::new(layout),
+                initialization: InitializationPolicy::OverwriteBeforeRead,
+                access: AllocationAccess::ReadWrite,
+            },
+            acquire_at,
+            release_after,
+        })
+    }
+
+    fn memory_demand(&self) -> MemoryDemand {
+        MemoryDemand {
+            allocation_id: self.allocation.as_str().to_string(),
+            hard_bytes: self.bytes,
+            preferred_bytes: self.bytes,
+            views: vec![CapacityViewId::new("host-memory")],
+        }
+    }
+
+    fn logical_allocation(&self) -> LogicalAllocation {
+        LogicalAllocation {
+            id: self.allocation.clone(),
+            bytes: self.bytes,
+            purpose: AllocationPurpose::Data,
+            compatibility: self.compatibility.clone(),
+            physical_slot: self.slot.clone(),
+            lifetime: AllocationLifetime {
+                acquire_at: self.acquire_at.clone(),
+                release_after: self.release_after.clone(),
+            },
+        }
+    }
+
+    fn physical_slot(&self) -> PhysicalSlot {
+        PhysicalSlot {
+            id: self.slot.clone(),
+            lease_resource: LeaseResource::Memory {
+                allocation_id: self.allocation.as_str().to_string(),
+            },
+            capacity_bytes: self.bytes,
+            compatibility: self.compatibility.clone(),
+        }
+    }
+
+    fn matches_capability(
+        &self,
+        capability: &crate::WorkAllocationCapability,
+        lifetime: &ClaimLifetime,
+    ) -> bool {
+        capability.allocation() == &self.allocation
+            && capability.physical_slot() == &self.slot
+            && capability.capacity_bytes() == self.bytes
+            && capability.lifetime() == lifetime
+    }
+}
+
+enum WeightingWorkContract<'a> {
+    SelectedTraversal {
+        problem: &'a CompiledProblem,
+        budget: SelectedObservationContentBudget,
+    },
+    Release,
+}
+
+fn validate_work_authority(
+    context: WorkExecutionContext<'_>,
+    expected_node: &WorkNodeId,
+    expected_allocations: &[&AllocationSpec],
+    contract: WeightingWorkContract<'_>,
+) -> Result<(), WeightingEvidenceError> {
+    let (expected_kind, expected_domain, problem, lifetime, selected_content_budget) =
+        match contract {
+            WeightingWorkContract::SelectedTraversal { problem, budget } => (
+                WorkKind::ObservationRead,
+                WorkDomain::Io,
+                Some(problem),
+                ClaimLifetime::through_fence(FenceKind::Io),
+                Some(budget),
+            ),
+            WeightingWorkContract::Release => (
+                WorkKind::Release,
+                WorkDomain::Cpu,
+                None,
+                ClaimLifetime::Work,
+                None,
+            ),
+        };
+    if &context.node().id != expected_node
+        || context.node().kind != expected_kind
+        || context.node().domain != expected_domain
+        || context.resources().len() != context.node().claims.len()
+        || context.allocations().len() != context.node().allocations.len()
+        || problem.is_some_and(|problem| {
+            context.compiled().problem_id() != problem.problem_id()
+                || context
+                    .selected_observation()
+                    .is_none_or(|selected| selected.problem_id() != problem.problem_id())
+        })
+        || context.node().claims.iter().any(|claim| {
+            !context.resources().iter().any(|capability| {
+                capability.resource() == &claim.resource
+                    && capability.amount() == claim.amount
+                    && capability.lifetime() == &claim.lifetime
+            })
+        })
+        || context.node().allocations.iter().any(|usage| {
+            !context.allocations().iter().any(|capability| {
+                capability.allocation() == &usage.allocation
+                    && capability.lifetime() == &usage.lifetime
+            })
+        })
+        || expected_allocations.iter().any(|spec| {
+            !context
+                .allocations()
+                .iter()
+                .any(|capability| spec.matches_capability(capability, &lifetime))
+        })
+    {
+        return Err(WeightingEvidenceError);
+    }
+    if let Some(budget) = selected_content_budget {
+        let required_bytes =
+            u64::try_from(budget.available_bytes()).map_err(|_| WeightingEvidenceError)?;
+        let required_blocks =
+            u64::try_from(budget.maximum_live_blocks()).map_err(|_| WeightingEvidenceError)?;
+        let expected_ids = expected_allocations
+            .iter()
+            .map(|spec| &spec.allocation)
+            .collect::<BTreeSet<_>>();
+        let source_capacity = context
+            .allocations()
+            .iter()
+            .filter(|capability| !expected_ids.contains(capability.allocation()))
+            .try_fold(0_u64, |total, capability| {
+                total.checked_add(capability.capacity_bytes())
+            })
+            .ok_or(WeightingEvidenceError)?;
+        let read_buffer_bytes = context
+            .resources()
+            .iter()
+            .filter(|capability| {
+                capability.resource() == &LeaseResource::IoBuffer(IoBufferKind::SourceReadAhead)
+            })
+            .try_fold(0_u64, |total, capability| {
+                total.checked_add(capability.amount())
+            })
+            .ok_or(WeightingEvidenceError)?;
+        let queue_slots = context
+            .resources()
+            .iter()
+            .filter(|capability| {
+                matches!(
+                    capability.resource(),
+                    LeaseResource::Queue { .. }
+                        | LeaseResource::StorageQueue { .. }
+                        | LeaseResource::TransferQueue { .. }
+                )
+            })
+            .try_fold(0_u64, |total, capability| {
+                total.checked_add(capability.amount())
+            })
+            .ok_or(WeightingEvidenceError)?;
+        if read_buffer_bytes != required_bytes
+            || source_capacity < required_bytes
+            || queue_slots < required_blocks
+            || !context.resources().iter().any(|capability| {
+                capability.resource() == &LeaseResource::Workers && capability.amount() > 0
+            })
+        {
+            return Err(WeightingEvidenceError);
+        }
+    }
+    Ok(())
+}
+
+fn allocation_use(allocation: &AllocationId, lifetime: ClaimLifetime) -> AllocationUse {
+    AllocationUse {
+        allocation: allocation.clone(),
+        lifetime,
+    }
+}
+
+fn terminal_events(node: &WorkNode) -> BTreeSet<WorkDependency> {
+    if node.fences.is_empty() {
+        BTreeSet::from([WorkDependency::Work(node.id.clone())])
+    } else {
+        node.fences
+            .iter()
+            .map(|kind| WorkDependency::Fence(FenceId::new(node.id.clone(), *kind)))
+            .collect()
+    }
+}
+
+fn checked_sum(
+    values: impl IntoIterator<Item = usize>,
+) -> Result<usize, WeightingPlanFragmentError> {
+    values.into_iter().try_fold(0_usize, |total, value| {
+        total
+            .checked_add(value)
+            .ok_or(WeightingPlanFragmentError::ResidencyOverflow)
+    })
+}
+
+fn scaled_prediction(
+    source: &StagePrediction,
+    node: WorkNodeId,
+    passes: u64,
+) -> Result<StagePrediction, WeightingPlanFragmentError> {
+    let io = source
+        .io()
+        .iter()
+        .map(|prediction| {
+            let bytes = prediction
+                .bytes()
+                .checked_mul(passes)
+                .ok_or(WeightingPlanFragmentError::PredictionOverflow)?;
+            let operations = prediction
+                .operations()
+                .checked_mul(passes)
+                .ok_or(WeightingPlanFragmentError::PredictionOverflow)?;
+            Ok(crate::IoPrediction::new(
+                prediction.kind(),
+                bytes,
+                operations,
+            ))
+        })
+        .collect::<Result<Vec<_>, WeightingPlanFragmentError>>()?;
+    Ok(StagePrediction::new(
+        node,
+        source
+            .elapsed_nanos()
+            .checked_mul(passes)
+            .ok_or(WeightingPlanFragmentError::PredictionOverflow)?,
+    )
+    .with_io(io))
+}
+
+/// Failure to compose a complete production weighting lifecycle.
+#[derive(Debug)]
+pub enum WeightingPlanFragmentError {
+    /// A required transaction node is absent from the base physical work.
+    MissingNode(WorkNodeId),
+    /// The named predecessor is not a typed selected-observation read.
+    InvalidSourceKind(WorkNodeId),
+    /// The selected-observation source omits required bounded traversal authority.
+    InvalidSourceAuthority {
+        /// Source node with the incomplete resource contract.
+        node: WorkNodeId,
+        /// Stable contract defect.
+        reason: &'static str,
+    },
+    /// A weighting byte projection exceeded the host integer domain.
+    ResidencyOverflow,
+    /// A plan prediction could not represent all selected traversal passes.
+    PredictionOverflow,
+    /// The composed execution DAG is invalid.
+    Execution(ExecutionError),
+    /// The complete physical binding is inconsistent.
+    Binding(PhysicalWorkBindingError),
+}
+
+impl fmt::Display for WeightingPlanFragmentError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingNode(node) => write!(
+                formatter,
+                "weighting plan fragment requires missing node {}",
+                node.as_str()
+            ),
+            Self::InvalidSourceKind(node) => write!(
+                formatter,
+                "weighting predecessor {} is not an ObservationRead node",
+                node.as_str()
+            ),
+            Self::InvalidSourceAuthority { node, reason } => write!(
+                formatter,
+                "weighting predecessor {} has incomplete source authority: {reason}",
+                node.as_str()
+            ),
+            Self::ResidencyOverflow => {
+                formatter.write_str("weighting fragment residency overflowed")
+            }
+            Self::PredictionOverflow => {
+                formatter.write_str("weighting fragment prediction overflowed")
+            }
+            Self::Execution(error) => error.fmt(formatter),
+            Self::Binding(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl Error for WeightingPlanFragmentError {}
+
+impl From<ExecutionError> for WeightingPlanFragmentError {
+    fn from(error: ExecutionError) -> Self {
+        Self::Execution(error)
+    }
+}
+
+impl From<PhysicalWorkBindingError> for WeightingPlanFragmentError {
+    fn from(error: PhysicalWorkBindingError) -> Self {
+        Self::Binding(error)
+    }
+}
 
 /// One runtime-authorized output contribution carrying the frozen W generation.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WeightedSpectralValue {
-    contribution: SelectedSpectralContribution,
-    imaging_weight: f64,
+    value: ReconstructionWeightedSpectralValue,
     generation: WeightingGenerationId,
 }
 
@@ -34,13 +991,13 @@ impl WeightedSpectralValue {
     /// Return the storage-owner-reported output contribution.
     #[must_use]
     pub const fn contribution(self) -> SelectedSpectralContribution {
-        self.contribution
+        self.value.contribution()
     }
 
     /// Return the final non-negative diagonal metric value.
     #[must_use]
     pub const fn imaging_weight(self) -> f64 {
-        self.imaging_weight
+        self.value.imaging_weight()
     }
 
     /// Return the sole frozen generation that supplied W.
@@ -51,23 +1008,27 @@ impl WeightedSpectralValue {
 }
 
 /// One runtime-authorized weighted sample carrying output-specific W values.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct WeightedObservationSample {
-    sample: SelectedObservationSample,
-    spectral_values: [Option<WeightedSpectralValue>; 2],
+#[derive(Debug, Clone, Copy)]
+pub struct WeightedObservationSample<'a> {
+    sample: &'a ReconstructionWeightedSample,
     generation: WeightingGenerationId,
 }
 
-impl WeightedObservationSample {
+impl WeightedObservationSample<'_> {
     /// Return the selected sample validated by T17 traversal.
     #[must_use]
     pub const fn selected(&self) -> &SelectedObservationSample {
-        &self.sample
+        self.sample.selected()
     }
 
     /// Iterate over output contributions and their final W values.
     pub fn spectral_values(&self) -> impl Iterator<Item = WeightedSpectralValue> + '_ {
-        self.spectral_values.iter().flatten().copied()
+        self.sample
+            .spectral_values()
+            .map(|value| WeightedSpectralValue {
+                value,
+                generation: self.generation,
+            })
     }
 
     /// Return the sole frozen generation that supplied W.
@@ -82,32 +1043,13 @@ impl WeightedObservationSample {
 pub struct WeightedObservationBlock {
     generation: WeightingGenerationId,
     sequence: u64,
-    samples: Box<[WeightedObservationSample]>,
+    samples: Box<[ReconstructionWeightedSample]>,
 }
 
 impl WeightedObservationBlock {
     fn authorize(generation: WeightingGenerationId, block: ReconstructionWeightedBlock) -> Self {
         let sequence = block.sequence();
-        let samples = block
-            .samples()
-            .iter()
-            .map(|sample| {
-                let mut spectral_values = [None, None];
-                for (slot, value) in sample.spectral_values().enumerate() {
-                    spectral_values[slot] = Some(WeightedSpectralValue {
-                        contribution: value.contribution(),
-                        imaging_weight: value.imaging_weight(),
-                        generation,
-                    });
-                }
-                WeightedObservationSample {
-                    sample: *sample.selected(),
-                    spectral_values,
-                    generation,
-                }
-            })
-            .collect::<Vec<_>>()
-            .into_boxed_slice();
+        let samples = block.into_samples();
         Self {
             generation,
             sequence,
@@ -127,10 +1069,12 @@ impl WeightedObservationBlock {
         self.sequence
     }
 
-    /// Borrow weighted samples for synchronous bounded consumption.
-    #[must_use]
-    pub const fn samples(&self) -> &[WeightedObservationSample] {
-        &self.samples
+    /// Iterate over weighted samples for synchronous bounded consumption.
+    pub fn samples(&self) -> impl Iterator<Item = WeightedObservationSample<'_>> {
+        self.samples.iter().map(|sample| WeightedObservationSample {
+            sample,
+            generation: self.generation,
+        })
     }
 }
 
@@ -155,6 +1099,8 @@ struct WeightingGenerationBinding {
     attempt_id: ExecutionAttemptId,
     owner_node: WorkNodeId,
     lease_epoch: u64,
+    source_generation: SelectedObservationGenerationId,
+    source_sample_count: u64,
 }
 
 impl FrozenWeightingGeneration {
@@ -191,29 +1137,27 @@ impl FrozenWeightingGeneration {
     /// Replay the same W through a third exhaustive T17 traversal.
     pub fn replay<E>(
         &self,
-        predecessor: &AttemptBoundObservationCompletion,
+        context: WorkExecutionContext<'_>,
+        fragment: &WeightingPlanFragment<'_>,
         selected: &mut BoundSelectedObservation,
         problem: &CompiledProblem,
-        plan: &WeightingPlan,
         mut emit: impl FnMut(&WeightedObservationBlock) -> Result<(), E>,
     ) -> Result<PendingWeightingReplay, WeightingReplayError<E>>
     where
         E: Error + 'static,
     {
-        if predecessor.attempt_id() != self.binding.attempt_id
-            || predecessor.owner_node() != &self.binding.owner_node
-            || predecessor.lease_epoch() != self.binding.lease_epoch
-            || validate_generation_completions(
-                &self.density_completion,
-                predecessor.owner_completion(),
-            )
-            .is_err()
-        {
+        let replay_binding = fragment
+            .authorize_replay(context, self, problem)
+            .map_err(WeightingReplayError::Evidence)?;
+        let predecessor = context
+            .predecessor_observation_completion(fragment.generation_node())
+            .ok_or(WeightingReplayError::Evidence(WeightingEvidenceError))?;
+        if !selected.can_resume_after(predecessor.owner_completion()) {
             return Err(WeightingReplayError::Evidence(WeightingEvidenceError));
         }
         let mut phase = self
             .state
-            .begin_replay(problem, plan)
+            .begin_replay(problem, fragment.plan)
             .map_err(WeightingReplayError::Owner)?;
         let owner_completion = selected
             .traverse(problem, |reported| {
@@ -246,6 +1190,7 @@ impl FrozenWeightingGeneration {
         Ok(PendingWeightingReplay {
             state,
             owner_completion,
+            binding: replay_binding,
         })
     }
 }
@@ -266,16 +1211,28 @@ pub struct PendingWeightingGeneration {
     state: WeightingAlgorithmState,
     density_completion: SelectedObservationCompletion,
     sum_weight_completion: SelectedObservationCompletion,
+    binding: WeightingGenerationBinding,
 }
 
 /// Drive both exhaustive owner traversals into an unbranded weighting generation.
 pub fn traverse_weighting_generation(
+    context: WorkExecutionContext<'_>,
+    fragment: &WeightingPlanFragment<'_>,
     selected: &mut BoundSelectedObservation,
     problem: &CompiledProblem,
-    plan: &WeightingPlan,
 ) -> Result<PendingWeightingGeneration, WeightingGenerationError> {
-    let mut density =
-        begin_weighting_generation(problem, plan).map_err(WeightingGenerationError::Owner)?;
+    let binding = fragment
+        .authorize_generation(context, problem)
+        .map_err(WeightingGenerationError::Evidence)?;
+    let source_completion = context
+        .predecessor_observation_completion(&fragment.source_read)
+        .ok_or(WeightingGenerationError::Evidence(WeightingEvidenceError))?
+        .owner_completion();
+    if !selected.can_resume_after(source_completion) {
+        return Err(WeightingGenerationError::Evidence(WeightingEvidenceError));
+    }
+    let mut density = begin_weighting_generation(problem, fragment.plan)
+        .map_err(WeightingGenerationError::Owner)?;
     let density_completion = selected
         .traverse(problem, |reported| {
             density.consume(
@@ -306,10 +1263,17 @@ pub fn traverse_weighting_generation(
     if state.sample_count() != density_completion.sample_count() {
         return Err(WeightingGenerationError::Evidence(WeightingEvidenceError));
     }
+    if !source_completion.precedes(&density_completion)
+        || density_completion.generation_id() != binding.source_generation
+        || density_completion.sample_count() != binding.source_sample_count
+    {
+        return Err(WeightingGenerationError::Evidence(WeightingEvidenceError));
+    }
     Ok(PendingWeightingGeneration {
         state,
         density_completion,
         sum_weight_completion,
+        binding,
     })
 }
 
@@ -340,11 +1304,15 @@ pub fn complete_weighting_generation(
             WeightingEvidenceError,
         ));
     }
-    let binding = WeightingGenerationBinding {
-        attempt_id: context.attempt_id(),
-        owner_node: context.owner_node().clone(),
-        lease_epoch: context.lease_epoch(),
-    };
+    if context.attempt_id() != pending.binding.attempt_id
+        || context.owner_node() != &pending.binding.owner_node
+        || context.lease_epoch() != pending.binding.lease_epoch
+    {
+        return Err(WeightingGenerationCompletionError::Evidence(
+            WeightingEvidenceError,
+        ));
+    }
+    let binding = pending.binding;
     let predecessor = context
         .bind(pending.sum_weight_completion)
         .map_err(WeightingGenerationCompletionError::Binding)?;
@@ -379,9 +1347,12 @@ fn validate_replay_completion(
     replay: &SelectedObservationCompletion,
     state: &WeightingAlgorithmState,
 ) -> Result<(), WeightingEvidenceError> {
-    if !density.precedes(prior)
+    if validate_generation_completions(density, prior).is_err()
         || !prior.precedes(replay)
-        || replay.generation_id() != density.generation_id()
+        || replay.problem_id() != prior.problem_id()
+        || replay.commitment_id() != prior.commitment_id()
+        || replay.generation_id() != prior.generation_id()
+        || replay.sample_count() != prior.sample_count()
         || replay.sample_count() != state.sample_count()
     {
         return Err(WeightingEvidenceError);
@@ -394,6 +1365,7 @@ fn validate_replay_completion(
 pub struct PendingWeightingReplay {
     state: WeightingReplaySummary,
     owner_completion: SelectedObservationCompletion,
+    binding: WeightingGenerationBinding,
 }
 
 impl PendingWeightingReplay {
@@ -401,12 +1373,32 @@ impl PendingWeightingReplay {
     pub fn bind(
         self,
         context: ObservationReadCompletionContext,
-    ) -> Result<WeightingReplayCompletion, ObservationCompletionBindingError> {
-        let owner_completion = context.bind(self.owner_completion)?;
-        Ok(WeightingReplayCompletion {
-            state: self.state,
+    ) -> Result<
+        (WeightingReplayCompletion, AttemptBoundObservationCompletion),
+        WeightingReplayCompletionError,
+    > {
+        if context.attempt_id() != self.binding.attempt_id
+            || context.owner_node() != &self.binding.owner_node
+            || context.lease_epoch() != self.binding.lease_epoch
+        {
+            return Err(WeightingReplayCompletionError::Evidence(
+                WeightingEvidenceError,
+            ));
+        }
+        let selected_generation = self.owner_completion.generation_id();
+        let sample_count = self.owner_completion.sample_count();
+        let owner_completion = context
+            .bind(self.owner_completion)
+            .map_err(WeightingReplayCompletionError::Binding)?;
+        Ok((
+            WeightingReplayCompletion {
+                state: self.state,
+                selected_generation,
+                sample_count,
+                binding: self.binding,
+            },
             owner_completion,
-        })
+        ))
     }
 }
 
@@ -414,7 +1406,9 @@ impl PendingWeightingReplay {
 #[derive(Debug)]
 pub struct WeightingReplayCompletion {
     state: WeightingReplaySummary,
-    owner_completion: AttemptBoundObservationCompletion,
+    selected_generation: SelectedObservationGenerationId,
+    sample_count: u64,
+    binding: WeightingGenerationBinding,
 }
 
 impl WeightingReplayCompletion {
@@ -433,7 +1427,7 @@ impl WeightingReplayCompletion {
     /// Return the independently traversed T17 content generation.
     #[must_use]
     pub const fn selected_generation(&self) -> SelectedObservationGenerationId {
-        self.owner_completion.owner_completion().generation_id()
+        self.selected_generation
     }
 
     /// Return exact emitted weighted-sample coverage.
@@ -445,7 +1439,7 @@ impl WeightingReplayCompletion {
     /// Return the exhaustive emitted sample count.
     #[must_use]
     pub const fn sample_count(&self) -> u64 {
-        self.owner_completion.owner_completion().sample_count()
+        self.sample_count
     }
 
     /// Return emitted block count.
@@ -464,6 +1458,24 @@ impl WeightingReplayCompletion {
     #[must_use]
     pub const fn residency(&self) -> WeightingResidency {
         self.state.residency()
+    }
+
+    /// Return the execution attempt that authorized this replay before traversal.
+    #[must_use]
+    pub const fn attempt_id(&self) -> ExecutionAttemptId {
+        self.binding.attempt_id
+    }
+
+    /// Return the planned replay node whose settled I/O fence minted this completion.
+    #[must_use]
+    pub const fn owner_node(&self) -> &WorkNodeId {
+        &self.binding.owner_node
+    }
+
+    /// Return the Resource Authority lease epoch held through replay completion.
+    #[must_use]
+    pub const fn lease_epoch(&self) -> u64 {
+        self.binding.lease_epoch
     }
 }
 
@@ -516,6 +1528,26 @@ impl fmt::Display for WeightingGenerationCompletionError {
 }
 
 impl Error for WeightingGenerationCompletionError {}
+
+/// Scheduler binding of an owner-traversed weighting replay failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WeightingReplayCompletionError {
+    /// The settled node did not match the attempt authorized before traversal.
+    Evidence(WeightingEvidenceError),
+    /// The scheduler completion context belongs to another compiled observation.
+    Binding(ObservationCompletionBindingError),
+}
+
+impl fmt::Display for WeightingReplayCompletionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Evidence(error) => error.fmt(formatter),
+            Self::Binding(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl Error for WeightingReplayCompletionError {}
 
 /// Weighted replay traversal, reconstruction, or consumer failure.
 #[derive(Debug)]

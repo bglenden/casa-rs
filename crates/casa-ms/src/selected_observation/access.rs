@@ -49,6 +49,14 @@ pub(crate) struct BoundObservationSource {
 }
 
 impl BoundObservationSource {
+    pub(super) const fn source_identity(&self) -> casa_imaging_model::MeasurementSetIdentity {
+        self.source_identity
+    }
+
+    pub(super) const fn geometry_engine(&self) -> &MsCalEngine {
+        &self.geometry_engine
+    }
+
     pub(crate) const fn retained_source_slot_bytes() -> usize {
         size_of::<Self>()
     }
@@ -639,16 +647,6 @@ pub enum BoundObservationSourceError {
     UnsupportedFrequencyFrame {
         /// Standard casacore `MFrequency` reference code.
         code: i32,
-    },
-    /// T18 does not broaden the T36 spectral-frame conversion boundary.
-    #[error(
-        "selected spectral contributions require one frequency frame, found {source_frame:?} to {output_frame:?}"
-    )]
-    UnsupportedSpectralContributionFrame {
-        /// Selected MeasurementSet source frame.
-        source_frame: FrequencyFrame,
-        /// Compiled output spectral frame.
-        output_frame: FrequencyFrame,
     },
     /// Compiled sampling and selected coordinates could not form a bounded contribution set.
     #[error("selected sample has no valid bounded spectral contribution mapping")]

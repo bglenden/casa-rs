@@ -2813,7 +2813,10 @@ pub(crate) fn io_buffer_kind_supports_work_kind(
 ) -> bool {
     match io_kind {
         crate::IoBufferKind::SourceReadAhead => {
-            matches!(work_kind, WorkKind::Prefetch | WorkKind::Cache)
+            matches!(
+                work_kind,
+                WorkKind::Prefetch | WorkKind::Cache | WorkKind::ObservationRead
+            )
         }
         crate::IoBufferKind::Decode | crate::IoBufferKind::Preparation => {
             work_kind == WorkKind::Preparation
