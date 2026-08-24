@@ -682,6 +682,19 @@ enum WeightingExecutionPhase {
 }
 
 impl WeightingExecutionState {
+    /// Begin the T19 owner from the exact frozen generation and replay lease.
+    pub fn begin_complete_data(
+        &self,
+        context: WorkExecutionContext<'_>,
+        fragment: &crate::CompleteDataPlanFragment<'_>,
+        problem: &CompiledProblem,
+    ) -> Result<crate::SerialMfsOperatorState, crate::CompleteDataPlanError> {
+        let WeightingExecutionPhase::Frozen(frozen) = &self.phase else {
+            return Err(crate::CompleteDataPlanError::MissingFrozenWeighting);
+        };
+        fragment.begin(context, problem, &frozen.state)
+    }
+
     /// Construct an empty lifecycle before the generation node is dispatched.
     #[must_use]
     pub const fn new() -> Self {
@@ -1592,19 +1605,12 @@ impl WeightedObservationSample<'_> {
 #[derive(Debug)]
 pub struct WeightedObservationBlock {
     generation: WeightingGenerationId,
-    sequence: u64,
-    samples: Vec<ReconstructionWeightedSample>,
+    block: ReconstructionWeightedBlock,
 }
 
 impl WeightedObservationBlock {
     fn authorize(generation: WeightingGenerationId, block: ReconstructionWeightedBlock) -> Self {
-        let sequence = block.sequence();
-        let samples = block.into_samples();
-        Self {
-            generation,
-            sequence,
-            samples,
-        }
+        Self { generation, block }
     }
 
     /// Return the frozen W generation authorizing every sample.
@@ -1616,15 +1622,22 @@ impl WeightedObservationBlock {
     /// Return the zero-based replay block sequence.
     #[must_use]
     pub const fn sequence(&self) -> u64 {
-        self.sequence
+        self.block.sequence()
     }
 
     /// Iterate over weighted samples for synchronous bounded consumption.
     pub fn samples(&self) -> impl Iterator<Item = WeightedObservationSample<'_>> {
-        self.samples.iter().map(|sample| WeightedObservationSample {
-            sample,
-            generation: self.generation,
-        })
+        self.block
+            .samples()
+            .iter()
+            .map(|sample| WeightedObservationSample {
+                sample,
+                generation: self.generation,
+            })
+    }
+
+    pub(crate) const fn reconstruction_block(&self) -> &ReconstructionWeightedBlock {
+        &self.block
     }
 }
 

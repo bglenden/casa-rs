@@ -906,6 +906,7 @@ fn recording_executor(
         complete_data_plan: None,
         complete_data_state: Mutex::new(None),
         complete_data_result: Mutex::new(None),
+        complete_data_prediction_count: AtomicUsize::new(0),
         weighting_source_sample_count: AtomicUsize::new(0),
         weighted_sample_count: AtomicUsize::new(0),
         weighting_reconciled: AtomicBool::new(false),
@@ -986,6 +987,7 @@ struct RecordingExecutor {
     complete_data_plan: Option<SerialMfsPlan>,
     complete_data_state: Mutex<Option<SerialMfsOperatorState>>,
     complete_data_result: Mutex<Option<CompleteDataOperatorResult>>,
+    complete_data_prediction_count: AtomicUsize,
     weighting_source_sample_count: AtomicUsize,
     weighted_sample_count: AtomicUsize,
     weighting_reconciled: AtomicBool,
@@ -1127,10 +1129,14 @@ impl WorkImplementation for RecordingExecutor {
                 && context.node().id == *fragment.replay_node()
             {
                 if let Some(plan) = &self.complete_data_plan {
-                    let operator =
-                        CompleteDataPlanFragment::new(plan, fragment.replay_node().clone())
-                            .begin(context, problem)
-                            .map_err(io::Error::other)?;
+                    let complete =
+                        CompleteDataPlanFragment::new(plan, fragment.replay_node().clone());
+                    let operator = self
+                        .weighting_state
+                        .lock()
+                        .expect("weighting execution state lock")
+                        .begin_complete_data(context, &complete, problem)
+                        .map_err(io::Error::other)?;
                     *self
                         .complete_data_state
                         .lock()
@@ -1158,6 +1164,13 @@ impl WorkImplementation for RecordingExecutor {
                             .expect("complete-data state lock")
                             .as_mut()
                         {
+                            let mut model = vec![num_complex::Complex64::new(0.0, 0.0); 8 * 8];
+                            model[3 * 8 + 3] = num_complex::Complex64::new(1.0, 0.0);
+                            let prediction = operator
+                                .predict_weighted_block(&model, block)
+                                .map_err(io::Error::other)?;
+                            self.complete_data_prediction_count
+                                .fetch_add(prediction.len(), Ordering::SeqCst);
                             operator
                                 .consume_weighted_block(block)
                                 .map_err(io::Error::other)?;
@@ -6580,7 +6593,8 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
     let physical = fragment
         .compose(&base)
         .expect("production weighting physical work");
-    let operator_plan = SerialMfsPlan::new(&problem).expect("serial MFS plan");
+    let operator_plan = SerialMfsPlan::new(&problem, weighting_plan.limits().max_block_samples())
+        .expect("serial MFS plan");
     let physical = CompleteDataPlanFragment::new(&operator_plan, replay.clone())
         .compose(&physical)
         .expect("T19 resources compose onto T18 replay");
@@ -6670,9 +6684,9 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
     let receipt = receipts
         .open(provenance.attempt_id())
         .expect("weighting execution receipt");
-    assert_eq!(weighting_allocations.len(), 8);
+    assert_eq!(weighting_allocations.len(), 10);
     assert!(weighting_allocations.is_subset(&receipt.allocation_generation_identities()));
-    assert_eq!(weighting_slots.len(), 8);
+    assert_eq!(weighting_slots.len(), 10);
     assert!(weighting_slots.is_subset(&receipt.physical_slot_identities()));
     for (node, uses) in expected_uses {
         assert_eq!(receipt.allocation_uses(&node), Some(uses));
@@ -6762,6 +6776,29 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
     );
     assert_eq!(complete_data.primitives().shape(), [8, 8]);
     assert!(complete_data.primitives().sum_weight() > 0.0);
+    assert!(
+        executor
+            .complete_data_prediction_count
+            .load(Ordering::SeqCst)
+            > 0
+    );
+    assert_eq!(
+        complete_data.completion().attempt_id(),
+        provenance.attempt_id()
+    );
+    assert_eq!(complete_data.completion().replay_node(), &replay);
+    assert_eq!(
+        complete_data.completion().owner().problem_id(),
+        problem.problem_id()
+    );
+    assert_eq!(
+        complete_data.completion().owner().geometry_id(),
+        problem.geometry().geometry_id()
+    );
+    assert_eq!(
+        complete_data.completion().owner().numerics_id(),
+        problem.numerics_id()
+    );
     assert!(executor.weighting_reconciled.load(Ordering::SeqCst));
     assert!(executor.weighting_released.load(Ordering::SeqCst));
     assert!(!executor.weighting_cleanup_released.load(Ordering::SeqCst));

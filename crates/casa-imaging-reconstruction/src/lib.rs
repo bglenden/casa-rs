@@ -33,8 +33,7 @@ mod weighting;
 
 pub use serial_mfs::{
     CompleteDataCompletion, CompleteDataResult, CompleteDataState, ContinuumPrimitiveCatalog,
-    SerialMfsError, SerialMfsOperator, SerialMfsPlan, SerialMfsPrimitives, SerialMfsResidency,
-    SerialMfsSample,
+    SerialMfsError, SerialMfsPlan, SerialMfsPrimitives, SerialMfsResidency,
 };
 
 pub use weighting::{

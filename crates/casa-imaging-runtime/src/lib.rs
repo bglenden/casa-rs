@@ -27,12 +27,10 @@ pub use execution_bindings::{
     WorkMeasurements, plan, run,
 };
 
-pub use casa_imaging_reconstruction::{
-    CompleteDataCompletion as CompleteDataOperatorCompletion, ContinuumPrimitiveCatalog,
-};
+pub use casa_imaging_reconstruction::ContinuumPrimitiveCatalog;
 pub use complete_data_operator::{
-    CompleteDataOperatorError, CompleteDataOperatorResult, CompleteDataPlanError,
-    CompleteDataPlanFragment, SerialMfsOperatorState,
+    CompleteDataOperatorCompletion, CompleteDataOperatorError, CompleteDataOperatorResult,
+    CompleteDataPlanError, CompleteDataPlanFragment, SerialMfsOperatorState,
 };
 pub use cost_model::{
     PlannerCostModelProfileBootstrap, PlannerCostModelProfileRecord, ProfileEvidenceEntry,

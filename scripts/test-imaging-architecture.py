@@ -2093,11 +2093,11 @@ class MigrationMatrixTests(unittest.TestCase):
             )
 
         rebindable = runtime_weighting.replace(
-            "    generation: WeightingGenerationId,\n    sequence: u64,",
-            "    pub generation: LogicalIdentity,\n    sequence: u64,",
+            "pub struct WeightedObservationBlock {\n    generation: WeightingGenerationId,\n    block: ReconstructionWeightedBlock,\n}",
+            "pub struct WeightedObservationBlock {\n    pub generation: LogicalIdentity,\n    block: ReconstructionWeightedBlock,\n}",
             1,
         )
-        self.assertNotEqual(rebindable, weighting)
+        self.assertNotEqual(rebindable, runtime_weighting)
         with self.assertRaisesRegex(
             checker.ArchitectureError,
             r"one opaque W generation",

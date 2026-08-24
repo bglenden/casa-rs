@@ -659,6 +659,7 @@ dependencies = [
  "casa-ms",
  "casa-test-support",
  "fs2",
+ "num-complex",
  "objc2-metal",
  "serde",
  "serde_json",

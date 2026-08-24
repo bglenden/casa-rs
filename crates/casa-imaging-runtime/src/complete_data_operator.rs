@@ -4,17 +4,18 @@
 
 use std::{collections::BTreeSet, error::Error, fmt, mem::align_of};
 
-use casa_imaging_model::{CompiledProblem, CorrelationType, SelectedVisibilitySample};
+use casa_imaging_model::CompiledProblem;
 use casa_imaging_reconstruction::{
-    CompleteDataResult, CompleteDataState, SerialMfsError, SerialMfsPlan, SerialMfsSample,
+    CompleteDataCompletion, CompleteDataState, SerialMfsError, SerialMfsPlan, SerialMfsPrimitives,
+    WeightingAlgorithmState,
 };
 
 use crate::{
     AllocationAccess, AllocationId, AllocationLayout, AllocationLifetime, AllocationPurpose,
-    AllocationUse, AlternativeId, CapacityDomainId, CapacityViewId, ClaimLifetime, ExecutionDag,
-    ExecutionDagSpecification, ExecutionError, FenceId, FenceKind, InitializationPolicy,
-    LeaseResource, LogicalAllocation, MemoryDemand, PhysicalSlot, PhysicalSlotId,
-    PhysicalWorkBinding, PhysicalWorkBindingError, SlotCompatibility, StorageMode,
+    AllocationUse, AlternativeId, CapacityDomainId, CapacityViewId, ClaimLifetime,
+    ExecutionAttemptId, ExecutionDag, ExecutionDagSpecification, ExecutionError, FenceId,
+    FenceKind, InitializationPolicy, LeaseResource, LogicalAllocation, MemoryDemand, PhysicalSlot,
+    PhysicalSlotId, PhysicalWorkBinding, PhysicalWorkBindingError, SlotCompatibility, StorageMode,
     WeightedObservationBlock, WeightingReplayCompletion, WorkDependency, WorkExecutionContext,
     WorkNodeId,
 };
@@ -37,11 +38,15 @@ impl<'a> CompleteDataPlanFragment<'a> {
         &self,
         context: WorkExecutionContext<'_>,
         problem: &CompiledProblem,
+        weighting: &WeightingAlgorithmState,
     ) -> Result<SerialMfsOperatorState, CompleteDataPlanError> {
         if context.node().id != self.replay_node {
             return Err(CompleteDataPlanError::WrongExecutionNode);
         }
-        if &SerialMfsPlan::new(problem)? != self.plan {
+        if context.compiled().problem_id() != problem.problem_id() {
+            return Err(CompleteDataPlanError::PlanMismatch);
+        }
+        if &SerialMfsPlan::new(problem, weighting.max_replay_block_samples())? != self.plan {
             return Err(CompleteDataPlanError::PlanMismatch);
         }
         let shape = self.plan.grid_shape();
@@ -52,8 +57,16 @@ impl<'a> CompleteDataPlanFragment<'a> {
                 residency.grid_bytes(),
             ),
             (
+                format!("serial-mfs-convolution-cache-{}x{}", shape[0], shape[1]),
+                residency.convolution_cache_bytes(),
+            ),
+            (
                 format!("serial-mfs-fft-scratch-{}x{}", shape[0], shape[1]),
                 residency.fft_scratch_bytes(),
+            ),
+            (
+                format!("serial-mfs-forward-workspace-{}x{}", shape[0], shape[1]),
+                residency.forward_workspace_bytes(),
             ),
             (
                 format!("serial-mfs-primitives-{}x{}", shape[0], shape[1]),
@@ -76,7 +89,7 @@ impl<'a> CompleteDataPlanFragment<'a> {
                 return Err(CompleteDataPlanError::MissingAllocationCapability);
             }
         }
-        SerialMfsOperatorState::new(problem).map_err(CompleteDataPlanError::Operator)
+        SerialMfsOperatorState::new(problem, weighting).map_err(CompleteDataPlanError::Operator)
     }
 
     /// Add shared grids, FFT scratch, and primitive outputs to physical work.
@@ -106,14 +119,16 @@ impl<'a> CompleteDataPlanFragment<'a> {
         replay.allocations.extend([
             specs[0].usage(replay_fence.clone()),
             specs[1].usage(replay_fence.clone()),
-            specs[2].usage(replay_fence),
+            specs[2].usage(replay_fence.clone()),
+            specs[3].usage(replay_fence.clone()),
+            specs[4].usage(replay_fence),
         ]);
         nodes
             .iter_mut()
             .find(|node| &node.id == reconciliation)
             .ok_or(CompleteDataPlanError::MissingReconciliationNode)?
             .allocations
-            .push(specs[2].usage(ClaimLifetime::Work));
+            .push(specs[4].usage(ClaimLifetime::Work));
 
         let mut alternative = base.execution_dag().resource_alternative().clone();
         alternative.id =
@@ -164,7 +179,7 @@ impl<'a> CompleteDataPlanFragment<'a> {
     fn allocation_specs(
         &self,
         reconciliation: &WorkNodeId,
-    ) -> Result<[CompleteDataAllocation; 3], CompleteDataPlanError> {
+    ) -> Result<[CompleteDataAllocation; 5], CompleteDataPlanError> {
         let suffix = self.plan.grid_shape();
         let residency = self.plan.residency();
         let replay_done = BTreeSet::from([WorkDependency::Fence(FenceId::new(
@@ -182,9 +197,25 @@ impl<'a> CompleteDataPlanFragment<'a> {
                 replay_done.clone(),
             )?,
             CompleteDataAllocation::new(
+                format!("serial-mfs-convolution-cache-{}x{}", suffix[0], suffix[1]),
+                residency.convolution_cache_bytes(),
+                "serial-mfs-convolution-taps-and-corrections",
+                InitializationPolicy::OverwriteBeforeRead,
+                self.replay_node.clone(),
+                replay_done.clone(),
+            )?,
+            CompleteDataAllocation::new(
                 format!("serial-mfs-fft-scratch-{}x{}", suffix[0], suffix[1]),
                 residency.fft_scratch_bytes(),
                 "serial-mfs-rustfft-scratch",
+                InitializationPolicy::OverwriteBeforeRead,
+                self.replay_node.clone(),
+                replay_done.clone(),
+            )?,
+            CompleteDataAllocation::new(
+                format!("serial-mfs-forward-workspace-{}x{}", suffix[0], suffix[1]),
+                residency.forward_workspace_bytes(),
+                "serial-mfs-forward-grid-and-bounded-predictions",
                 InitializationPolicy::OverwriteBeforeRead,
                 self.replay_node.clone(),
                 replay_done,
@@ -294,6 +325,8 @@ pub enum CompleteDataPlanError {
     WrongExecutionNode,
     /// The runtime problem no longer matches the planned operator.
     PlanMismatch,
+    /// T18 has not produced the frozen generation that owns this operator.
+    MissingFrozenWeighting,
     /// A required shared grid, FFT, or output allocation capability is absent.
     MissingAllocationCapability,
     /// A resident-byte projection exceeded the plan identity domain.
@@ -323,6 +356,9 @@ impl fmt::Display for CompleteDataPlanError {
             }
             Self::PlanMismatch => {
                 formatter.write_str("T19 execution problem does not match its physical plan")
+            }
+            Self::MissingFrozenWeighting => {
+                formatter.write_str("T19 requires a frozen T18 weighting generation")
             }
             Self::MissingAllocationCapability => {
                 formatter.write_str("T19 execution lacks an exact planned allocation capability")
@@ -385,7 +421,72 @@ impl From<SerialMfsError> for CompleteDataPlanError {
 ///
 /// let _ = CompleteDataCompletion {};
 /// ```
-pub type CompleteDataOperatorResult = CompleteDataResult;
+#[derive(Debug)]
+pub struct CompleteDataOperatorCompletion {
+    owner: CompleteDataCompletion,
+    attempt: ExecutionAttemptId,
+    replay_node: WorkNodeId,
+    lease_epoch: u64,
+}
+
+impl CompleteDataOperatorCompletion {
+    /// Return the reconstruction owner's exact scientific completion.
+    #[must_use]
+    pub const fn owner(&self) -> &CompleteDataCompletion {
+        &self.owner
+    }
+
+    /// Return the execution attempt that authorized this complete replay.
+    #[must_use]
+    pub const fn attempt_id(&self) -> ExecutionAttemptId {
+        self.attempt
+    }
+
+    /// Return the exact replay node whose settled fence completed T19.
+    #[must_use]
+    pub const fn replay_node(&self) -> &WorkNodeId {
+        &self.replay_node
+    }
+
+    /// Return the Resource Authority lease epoch held through completion.
+    #[must_use]
+    pub const fn lease_epoch(&self) -> u64 {
+        self.lease_epoch
+    }
+
+    /// Return the exhaustive selected-sample count.
+    #[must_use]
+    pub const fn sample_count(&self) -> u64 {
+        self.owner.sample_count()
+    }
+
+    /// Return the exhaustive replay block count.
+    #[must_use]
+    pub const fn block_count(&self) -> u64 {
+        self.owner.block_count()
+    }
+}
+
+/// Runtime attempt binding paired with reconstruction-owned primitives.
+#[derive(Debug)]
+pub struct CompleteDataOperatorResult {
+    primitives: SerialMfsPrimitives,
+    completion: CompleteDataOperatorCompletion,
+}
+
+impl CompleteDataOperatorResult {
+    /// Return reconstruction-owned unnormalized primitives.
+    #[must_use]
+    pub const fn primitives(&self) -> &SerialMfsPrimitives {
+        &self.primitives
+    }
+
+    /// Return scientific completion bound to the exact runtime attempt and lease.
+    #[must_use]
+    pub const fn completion(&self) -> &CompleteDataOperatorCompletion {
+        &self.completion
+    }
+}
 
 /// Streaming owner for one serial CPU constant-basis MFS execution.
 ///
@@ -410,9 +511,12 @@ pub struct SerialMfsOperatorState {
 
 impl SerialMfsOperatorState {
     /// Start an operator only for the T19 single-field Stokes-I nterms=1 surface.
-    fn new(problem: &CompiledProblem) -> Result<Self, CompleteDataOperatorError> {
+    fn new(
+        problem: &CompiledProblem,
+        weighting: &WeightingAlgorithmState,
+    ) -> Result<Self, CompleteDataOperatorError> {
         Ok(Self {
-            state: CompleteDataState::new(problem)?,
+            state: weighting.begin_complete_data(problem)?,
         })
     }
 
@@ -421,41 +525,25 @@ impl SerialMfsOperatorState {
         &mut self,
         block: &WeightedObservationBlock,
     ) -> Result<(), CompleteDataOperatorError> {
-        let mut block_samples = 0_u64;
-        let mut samples = Vec::new();
-        for weighted in block.samples() {
-            block_samples = block_samples
-                .checked_add(1)
-                .ok_or(CompleteDataOperatorError::CoverageOverflow)?;
-            let selected = weighted.selected();
-            if !stokes_i_parallel_hand(selected.address.correlation_type) {
-                continue;
-            }
-            let visibility = match selected.visibility {
-                SelectedVisibilitySample::Float32(value) => [f64::from(value), 0.0],
-                SelectedVisibilitySample::Complex32([real, imaginary]) => {
-                    [f64::from(real), f64::from(imaginary)]
-                }
-            };
-            for spectral in weighted.spectral_values() {
-                let contribution = spectral.contribution();
-                samples.push(SerialMfsSample::new(
-                    selected.coordinates.transformed_uvw_m,
-                    selected.address.frequency_centre_hz,
-                    selected.coordinates.phase_shift_m,
-                    visibility,
-                    spectral.imaging_weight(),
-                    f64::from(contribution.factor()),
-                )?);
-            }
+        if block.weighting_generation() != self.state.weighting_generation() {
+            return Err(CompleteDataOperatorError::WeightingGeneration);
         }
-        self.state.consume_block(
-            block.weighting_generation(),
-            block.sequence(),
-            block_samples,
-            samples,
-        )?;
+        self.state.consume_block(block.reconstruction_block())?;
         Ok(())
+    }
+
+    /// Predict one bounded T18 block through the same plan-authorized A operator.
+    pub fn predict_weighted_block(
+        &self,
+        model: &[num_complex::Complex64],
+        block: &WeightedObservationBlock,
+    ) -> Result<Box<[num_complex::Complex64]>, CompleteDataOperatorError> {
+        if block.weighting_generation() != self.state.weighting_generation() {
+            return Err(CompleteDataOperatorError::WeightingGeneration);
+        }
+        Ok(self
+            .state
+            .predict_block(model, block.reconstruction_block())?)
     }
 
     /// Consume terminal T18 proof and mint the complete-data operator completion.
@@ -463,37 +551,28 @@ impl SerialMfsOperatorState {
         self,
         replay: &WeightingReplayCompletion,
     ) -> Result<CompleteDataOperatorResult, CompleteDataOperatorError> {
-        Ok(self.state.complete(
+        let owner = self.state.complete(
             replay.reconstruction_summary(),
             replay.selected_generation(),
-        )?)
+        )?;
+        let (primitives, owner) = owner.into_parts();
+        Ok(CompleteDataOperatorResult {
+            primitives,
+            completion: CompleteDataOperatorCompletion {
+                owner,
+                attempt: replay.attempt_id(),
+                replay_node: replay.owner_node().clone(),
+                lease_epoch: replay.lease_epoch(),
+            },
+        })
     }
-}
-
-fn stokes_i_parallel_hand(correlation: CorrelationType) -> bool {
-    matches!(
-        correlation,
-        CorrelationType::StokesI
-            | CorrelationType::LinearXx
-            | CorrelationType::LinearYy
-            | CorrelationType::CircularRr
-            | CorrelationType::CircularLl
-    )
 }
 
 /// Exact reason T19 rejected an operator problem, block, or terminal proof.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompleteDataOperatorError {
-    /// The Compiled Problem is outside single-field scalar Stokes-I nterms=1.
-    UnsupportedProblem,
-    /// Replay blocks were missing, repeated, or reordered.
-    BlockSequence,
     /// Blocks or terminal proof disagree on the frozen W generation.
     WeightingGeneration,
-    /// Sample or block counts exceeded the supported identity domain.
-    CoverageOverflow,
-    /// Terminal replay proof does not cover every block accepted by the operator.
-    IncompleteCoverage,
     /// Reconstruction rejected a numerical plan or weighted contribution.
     Owner(SerialMfsError),
 }
@@ -501,13 +580,7 @@ pub enum CompleteDataOperatorError {
 impl fmt::Display for CompleteDataOperatorError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
-            Self::UnsupportedProblem => {
-                "serial MFS requires one scalar-response Stokes-I constant-basis domain"
-            }
-            Self::BlockSequence => "weighted replay blocks are not exhaustive and ordered",
             Self::WeightingGeneration => "weighted replay generations do not match",
-            Self::CoverageOverflow => "weighted replay coverage overflowed",
-            Self::IncompleteCoverage => "terminal replay proof does not match consumed coverage",
             Self::Owner(error) => return error.fmt(formatter),
         })
     }
