@@ -130,9 +130,9 @@ ACCEPTED_MATRIX_ROWS_SHA256 = (
     "d67425376a6ad1dcf3fb2389d174996d2e97c477db8188944520d279e39343dc"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "201111c20dedfeb81c1dd5388d3d3cf225d36a601114c6ffc2c738411ab41489"
+    "db75d0b9d38d650adc4d81459db542d482d78df46ef299ba635d9615792ca4e1"
 )
-ACCEPTED_MATRIX_CONTRACT_REVISION = 24
+ACCEPTED_MATRIX_CONTRACT_REVISION = 25
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "scientific-products-v1",
@@ -3292,6 +3292,31 @@ def validate_t18_global_weighting_sources(
         "SelectedObservationSourceResources",
         runtime_weighting_path,
     )
+    residency_certificate_fields = rust_struct_fields(
+        bound_observation,
+        "SelectedObservationResidencyCertificate",
+        bound_observation_path,
+    )
+    residency_certificate_mint = re.sub(
+        r"\s+",
+        "",
+        rust_impl_method_body(
+            bound_observation,
+            "SelectedObservationResidencyCertificate",
+            "mint",
+            bound_observation_path,
+        ),
+    )
+    bound_observation_open = re.sub(
+        r"\s+",
+        "",
+        rust_impl_method_body(
+            bound_observation,
+            "BoundSelectedObservation",
+            "open",
+            bound_observation_path,
+        ),
+    )
     compose = rust_function_body(runtime_weighting, "compose", runtime_weighting_path)
     compact_compose = re.sub(r"\s+", "", compose)
     allocation_specs = rust_function_body(
@@ -3306,6 +3331,27 @@ def validate_t18_global_weighting_sources(
     release = rust_impl_method_body(
         runtime_weighting, "WeightingExecutionState", "release", runtime_weighting_path
     )
+    source_authority = re.sub(
+        r"\s+",
+        "",
+        rust_function_body(
+            runtime_weighting, "authorize_source_observation", runtime_weighting_path
+        ),
+    )
+    source_traversal = re.sub(
+        r"\s+",
+        "",
+        rust_impl_method_body(
+            runtime_weighting,
+            "WeightingExecutionState",
+            "traverse_and_retain_source",
+            runtime_weighting_path,
+        ),
+    )
+    source_preflight_position = source_traversal.find(
+        "fragment.authorize_source_observation("
+    )
+    first_sample_position = source_traversal.find("selected.traverse(problem,consume)")
     source_contract = rust_impl_method_body(
         runtime_weighting,
         "SourceTraversalContract",
@@ -3335,10 +3381,31 @@ def validate_t18_global_weighting_sources(
         or fragment_fields.get("source_read") != "WorkNodeId"
         or fragment_fields.get("source_resources")
         != "SelectedObservationSourceResources"
-        or source_resource_fields.get("budget")
-        != "SelectedObservationContentBudget"
+        or source_resource_fields.get("residency")
+        != "SelectedObservationResidencyCertificate"
         or source_resource_fields.get("allocations") != "BTreeSet<AllocationId>"
         or source_resource_fields.get("queue") != "LeaseResource"
+        or residency_certificate_fields.get("identity")
+        != "BoundSelectedObservationIdentity"
+        or residency_certificate_fields.get("sources")
+        != "Vec<SelectedObservationSourceResidency>"
+        or residency_certificate_fields.get("aggregate_resident_bytes") != "usize"
+        or residency_certificate_fields.get("peak_live_blocks") != "usize"
+        or "checked_add(content_budget.available_bytes())"
+        not in residency_certificate_mint
+        or "peak_live_blocks.max(content_budget.maximum_live_blocks())"
+        not in residency_certificate_mint
+        or "BoundSelectedObservationIdentity::from_problem(problem)"
+        not in residency_certificate_mint
+        or "letresidency=SelectedObservationResidencyCertificate::mint(problem,&bindings)?"
+        not in bound_observation_open
+        or "pubfnmint(" in re.sub(r"\s+", "", bound_observation)
+        or "actual!=&self.source_resources.residency" not in source_authority
+        or "!actual.matches_problem(problem)" not in source_authority
+        or source_preflight_position < 0
+        or first_sample_position < 0
+        or source_preflight_position > first_sample_position
+        or "selected.residency_certificate()" not in source_traversal
         or compose.count("kind: WorkKind::ObservationRead") != 2
         or "kind: WorkKind::Release" not in compose
         or allocation_specs.count("AllocationSpec::new(") != 5
@@ -3364,6 +3431,11 @@ def validate_t18_global_weighting_sources(
         not in compact_compose
         or "self.source_read.clone()" not in allocation_specs
         or "&claim.resource == queue" not in source_contract
+        or "claim.amount == required_blocks" not in source_contract
+        or "residency.aggregate_resident_bytes()" not in source_contract
+        or "residency.peak_live_blocks()" not in source_contract
+        or "claimed_bytes != Some(expected_bytes)" not in source_contract
+        or "allocated_bytes != Some(expected_bytes)" not in source_contract
         or "selected_content_allocations.is_empty()" not in source_contract
         or "&retained_allocations != selected_content_allocations"
         not in source_contract

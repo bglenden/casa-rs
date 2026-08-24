@@ -20,7 +20,8 @@ pub use access::BoundObservationSourceError;
 pub(crate) use access::{BoundObservationSamples, BoundObservationSource};
 pub use bound_observation::{
     BoundSelectedObservation, BoundSelectedObservationError, ObservationSourceBinding,
-    SelectedObservationCompletion, SelectedObservationTraversalError,
+    SelectedObservationCompletion, SelectedObservationResidencyCertificate,
+    SelectedObservationTraversalError,
 };
 pub use content_plan::SelectedObservationContentBudget;
 pub(crate) use content_plan::{

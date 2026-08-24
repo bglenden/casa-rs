@@ -133,7 +133,7 @@ fn selected_engine_receives_the_exact_route_record() {
 
     assert_eq!(outcome.output(), outcome.route());
     assert_eq!(outcome.output().matrix_schema_version(), 1);
-    assert_eq!(outcome.output().matrix_contract_revision(), 24);
+    assert_eq!(outcome.output().matrix_contract_revision(), 25);
     assert_eq!(outcome.output().disposition(), RequestDisposition::Native);
     assert_eq!(
         outcome

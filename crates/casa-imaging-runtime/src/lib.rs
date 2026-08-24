@@ -75,5 +75,5 @@ pub use weighting::{
     WeightedObservationSample, WeightedSpectralValue, WeightingEvidenceError,
     WeightingExecutionState, WeightingGenerationCompletionError, WeightingGenerationError,
     WeightingPlanFragment, WeightingPlanFragmentError, WeightingReplayCompletion,
-    WeightingReplayCompletionError, WeightingReplayError,
+    WeightingReplayCompletionError, WeightingReplayError, WeightingSourceTraversalError,
 };

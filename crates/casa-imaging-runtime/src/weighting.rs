@@ -16,8 +16,9 @@ use casa_imaging_reconstruction::{
     WeightingSpectralValue as ReconstructionWeightedSpectralValue, begin_weighting_generation,
 };
 use casa_ms::{
-    BoundSelectedObservation, SelectedObservationCompletion, SelectedObservationContentBudget,
-    SelectedObservationTraversalError,
+    BoundSelectedObservation, SelectedObservationCompletion,
+    SelectedObservationResidencyCertificate, SelectedObservationTraversalError,
+    SelectedObservationTraversalSample,
 };
 
 use crate::{
@@ -38,21 +39,21 @@ use crate::{
 /// queue permit that remain live through the fragment's explicit release node.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SelectedObservationSourceResources {
-    budget: SelectedObservationContentBudget,
+    residency: SelectedObservationResidencyCertificate,
     allocations: BTreeSet<AllocationId>,
     queue: LeaseResource,
 }
 
 impl SelectedObservationSourceResources {
-    /// Bind the selected-content budget to its exact logical allocations and queue.
+    /// Bind owner-certified source residency to its exact logical allocations and queue.
     #[must_use]
-    pub const fn new(
-        budget: SelectedObservationContentBudget,
+    pub fn new(
+        residency: SelectedObservationResidencyCertificate,
         allocations: BTreeSet<AllocationId>,
         queue: LeaseResource,
     ) -> Self {
         Self {
-            budget,
+            residency,
             allocations,
             queue,
         }
@@ -155,7 +156,7 @@ impl<'a> WeightingPlanFragment<'a> {
         let source_contract = SourceTraversalContract::from_source(
             base,
             source,
-            self.source_resources.budget,
+            &self.source_resources.residency,
             &self.source_resources.allocations,
             &self.source_resources.queue,
             &self.ids.release_node,
@@ -342,7 +343,7 @@ impl<'a> WeightingPlanFragment<'a> {
         let release_prediction =
             StagePrediction::new(release.id, 0).with_io(vec![IoPrediction::new(
                 IoBufferKind::SourceReadAhead,
-                u64::try_from(self.source_resources.budget.available_bytes())
+                u64::try_from(self.source_resources.residency.aggregate_resident_bytes())
                     .map_err(|_| WeightingPlanFragmentError::PredictionOverflow)?,
                 1,
             )]);
@@ -432,12 +433,12 @@ impl<'a> WeightingPlanFragment<'a> {
         ])
     }
 
-    /// Validate one weighting traversal's complete lease and return its casa-ms budget.
-    pub fn selected_content_budget(
+    /// Validate one weighting traversal's complete lease and return its owner certificate.
+    pub fn selected_observation_residency(
         &self,
         context: WorkExecutionContext<'_>,
         problem: &CompiledProblem,
-    ) -> Result<SelectedObservationContentBudget, WeightingEvidenceError> {
+    ) -> Result<&SelectedObservationResidencyCertificate, WeightingEvidenceError> {
         let specs = self
             .allocation_specs()
             .map_err(|_| WeightingEvidenceError)?;
@@ -454,11 +455,35 @@ impl<'a> WeightingPlanFragment<'a> {
             &expected,
             WeightingWorkContract::SelectedTraversal {
                 problem,
-                budget: self.source_resources.budget,
+                residency: &self.source_resources.residency,
                 queue: &self.source_resources.queue,
             },
         )?;
-        Ok(self.source_resources.budget)
+        Ok(&self.source_resources.residency)
+    }
+
+    fn authorize_source_observation(
+        &self,
+        context: WorkExecutionContext<'_>,
+        problem: &CompiledProblem,
+        actual: &SelectedObservationResidencyCertificate,
+    ) -> Result<(), WeightingEvidenceError> {
+        if actual != &self.source_resources.residency || !actual.matches_problem(problem) {
+            return Err(WeightingEvidenceError);
+        }
+        let specs = self
+            .allocation_specs()
+            .map_err(|_| WeightingEvidenceError)?;
+        validate_work_authority(
+            context,
+            &self.source_read,
+            &[&specs[0]],
+            WeightingWorkContract::SelectedTraversal {
+                problem,
+                residency: actual,
+                queue: &self.source_resources.queue,
+            },
+        )
     }
 
     fn authorize_generation(
@@ -476,7 +501,7 @@ impl<'a> WeightingPlanFragment<'a> {
             &expected,
             WeightingWorkContract::SelectedTraversal {
                 problem,
-                budget: self.source_resources.budget,
+                residency: &self.source_resources.residency,
                 queue: &self.source_resources.queue,
             },
         )?;
@@ -517,7 +542,7 @@ impl<'a> WeightingPlanFragment<'a> {
             &expected,
             WeightingWorkContract::SelectedTraversal {
                 problem,
-                budget: self.source_resources.budget,
+                residency: &self.source_resources.residency,
                 queue: &self.source_resources.queue,
             },
         )?;
@@ -559,8 +584,9 @@ impl<'a> WeightingPlanFragment<'a> {
             &[&specs[0]],
             WeightingWorkContract::Release,
         )?;
-        let expected_bytes = u64::try_from(self.source_resources.budget.available_bytes())
-            .map_err(|_| WeightingEvidenceError)?;
+        let expected_bytes =
+            u64::try_from(self.source_resources.residency.aggregate_resident_bytes())
+                .map_err(|_| WeightingEvidenceError)?;
         let selected = context
             .allocations()
             .iter()
@@ -660,24 +686,42 @@ impl WeightingExecutionState {
         }
     }
 
-    /// Adopt the exact T17 source owner after its first exhaustive traversal.
+    /// Validate, traverse, and adopt the exact T17 source owner.
     ///
-    /// The owner remains inside this lifecycle across generation, replay, and
-    /// reconciliation. Only the scheduler-issued Release node may consume it.
-    pub fn retain_source_observation(
+    /// Owner-certificate and scheduler authority are checked before the first
+    /// sample can reach `consume`. The owner then remains inside this lifecycle
+    /// across generation, replay, and reconciliation until the scheduler-issued
+    /// Release node consumes it.
+    pub fn traverse_and_retain_source<E>(
         &mut self,
         context: WorkExecutionContext<'_>,
         fragment: &WeightingPlanFragment<'_>,
-        selected: BoundSelectedObservation,
-        completion: &SelectedObservationCompletion,
-    ) -> Result<(), WeightingEvidenceError> {
+        mut selected: BoundSelectedObservation,
+        problem: &CompiledProblem,
+        consume: impl FnMut(SelectedObservationTraversalSample) -> Result<(), E>,
+    ) -> Result<SelectedObservationCompletion, WeightingSourceTraversalError<E>>
+    where
+        E: Error + 'static,
+    {
         if !matches!(self.phase, WeightingExecutionPhase::Empty)
             || self.retained_observation.is_some()
             || context.node().id != fragment.source_read
             || context.node().kind != WorkKind::ObservationRead
-            || !selected.can_resume_after(completion)
         {
-            return Err(WeightingEvidenceError);
+            return Err(WeightingSourceTraversalError::Evidence(
+                WeightingEvidenceError,
+            ));
+        }
+        fragment
+            .authorize_source_observation(context, problem, selected.residency_certificate())
+            .map_err(WeightingSourceTraversalError::Evidence)?;
+        let completion = selected
+            .traverse(problem, consume)
+            .map_err(WeightingSourceTraversalError::Traversal)?;
+        if !selected.can_resume_after(&completion) {
+            return Err(WeightingSourceTraversalError::Evidence(
+                WeightingEvidenceError,
+            ));
         }
         self.retained_observation = Some(RetainedWeightingObservation {
             selected,
@@ -685,7 +729,7 @@ impl WeightingExecutionState {
             owner_node: context.node().id.clone(),
             lease_epoch: context.lease_epoch(),
         });
-        Ok(())
+        Ok(completion)
     }
 
     /// Drive the two owner traversals under generation-node authority.
@@ -942,14 +986,14 @@ impl SourceTraversalContract {
     fn from_source(
         base: &PhysicalWorkBinding,
         source: &WorkNode,
-        budget: SelectedObservationContentBudget,
+        residency: &SelectedObservationResidencyCertificate,
         selected_content_allocations: &BTreeSet<AllocationId>,
         queue: &LeaseResource,
         release: &WorkNodeId,
     ) -> Result<Self, WeightingPlanFragmentError> {
-        if budget.available_bytes() == 0
-            || budget.maximum_live_blocks() == 0
-            || budget.maximum_pointing_polynomial_terms() == 0
+        if residency.aggregate_resident_bytes() == 0
+            || residency.peak_live_blocks() == 0
+            || residency.maximum_pointing_polynomial_terms() == 0
         {
             return Err(WeightingPlanFragmentError::InvalidSourceAuthority {
                 node: source.id.clone(),
@@ -966,7 +1010,7 @@ impl SourceTraversalContract {
                 reason: "selected traversal has no worker claim",
             });
         }
-        let required_blocks = u64::try_from(budget.maximum_live_blocks())
+        let required_blocks = u64::try_from(residency.peak_live_blocks())
             .map_err(|_| WeightingPlanFragmentError::ResidencyOverflow)?;
         let mut queue_claims = source
             .claims
@@ -974,7 +1018,7 @@ impl SourceTraversalContract {
             .filter(|claim| &claim.resource == queue);
         let queue_claim_covers = queue_claims
             .next()
-            .is_some_and(|claim| claim.amount >= required_blocks)
+            .is_some_and(|claim| claim.amount == required_blocks)
             && queue_claims.next().is_none();
         if !is_selected_content_queue(queue)
             || !queue_claim_covers
@@ -989,7 +1033,7 @@ impl SourceTraversalContract {
                 reason: "selected traversal lacks its exact planned queue identity and capacity",
             });
         }
-        let expected_bytes = u64::try_from(budget.available_bytes())
+        let expected_bytes = u64::try_from(residency.aggregate_resident_bytes())
             .map_err(|_| WeightingPlanFragmentError::ResidencyOverflow)?;
         let claimed_bytes = source.claims.iter().try_fold(0_u64, |total, claim| {
             if claim.resource == LeaseResource::IoBuffer(IoBufferKind::SourceReadAhead) {
@@ -1174,7 +1218,7 @@ impl AllocationSpec {
 enum WeightingWorkContract<'a> {
     SelectedTraversal {
         problem: &'a CompiledProblem,
-        budget: SelectedObservationContentBudget,
+        residency: &'a SelectedObservationResidencyCertificate,
         queue: &'a LeaseResource,
     },
     Release,
@@ -1190,14 +1234,14 @@ fn validate_work_authority(
         match contract {
             WeightingWorkContract::SelectedTraversal {
                 problem,
-                budget,
+                residency,
                 queue,
             } => (
                 WorkKind::ObservationRead,
                 WorkDomain::Io,
                 Some(problem),
                 ClaimLifetime::through_fence(FenceKind::Io),
-                Some((budget, queue)),
+                Some((residency, queue)),
             ),
             WeightingWorkContract::Release => (
                 WorkKind::Release,
@@ -1240,11 +1284,16 @@ fn validate_work_authority(
     {
         return Err(WeightingEvidenceError);
     }
-    if let Some((budget, queue)) = selected_content_budget {
-        let required_bytes =
-            u64::try_from(budget.available_bytes()).map_err(|_| WeightingEvidenceError)?;
+    if let Some((residency, queue)) = selected_content_budget {
+        if !residency
+            .matches_problem(problem.expect("selected traversal always carries a compiled problem"))
+        {
+            return Err(WeightingEvidenceError);
+        }
+        let required_bytes = u64::try_from(residency.aggregate_resident_bytes())
+            .map_err(|_| WeightingEvidenceError)?;
         let required_blocks =
-            u64::try_from(budget.maximum_live_blocks()).map_err(|_| WeightingEvidenceError)?;
+            u64::try_from(residency.peak_live_blocks()).map_err(|_| WeightingEvidenceError)?;
         let expected_ids = expected_allocations
             .iter()
             .map(|spec| &spec.allocation)
@@ -1273,10 +1322,10 @@ fn validate_work_authority(
             .filter(|capability| capability.resource() == queue);
         let queue_capability_covers = queue_capabilities
             .next()
-            .is_some_and(|capability| capability.amount() >= required_blocks)
+            .is_some_and(|capability| capability.amount() == required_blocks)
             && queue_capabilities.next().is_none();
         if read_buffer_bytes != required_bytes
-            || source_capacity < required_bytes
+            || source_capacity != required_bytes
             || !queue_capability_covers
             || !queue_demand_covers(context.resource_alternative(), queue, required_blocks)
             || !context.resources().iter().any(|capability| {
@@ -1909,6 +1958,26 @@ impl WeightingReplayCompletion {
         self.binding.lease_epoch
     }
 }
+
+/// Initial selected-observation authority or traversal failed before retention.
+#[derive(Debug)]
+pub enum WeightingSourceTraversalError<E> {
+    /// The owner certificate did not match the scheduler's complete source contract.
+    Evidence(WeightingEvidenceError),
+    /// The storage owner failed while producing the first exhaustive traversal.
+    Traversal(SelectedObservationTraversalError<E>),
+}
+
+impl<E: fmt::Display> fmt::Display for WeightingSourceTraversalError<E> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Evidence(error) => error.fmt(formatter),
+            Self::Traversal(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl<E: Error + 'static> Error for WeightingSourceTraversalError<E> {}
 
 /// Two T17 generation traversals or reconstruction reduction failed.
 #[derive(Debug)]

@@ -75,6 +75,7 @@ use casa_imaging_runtime::{
 use casa_ms::{
     BoundSelectedObservation, ObservationSourceBinding, SelectedObservationCompletion,
     SelectedObservationContentBudget, SelectedObservationMeasures,
+    SelectedObservationResidencyCertificate,
 };
 
 fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
@@ -99,7 +100,7 @@ mod common;
 
 mod walking_skeleton;
 
-use common::{identity, model_lifecycle, problem_inputs};
+use common::{identity, model_lifecycle, problem_inputs, problem_inputs_with_source_count};
 
 const SELECTED_CONTENT_BYTES: usize = 128 * 1024;
 
@@ -117,11 +118,51 @@ fn selected_content_queue() -> LeaseResource {
     }
 }
 
-fn selected_content_resources() -> SelectedObservationSourceResources {
-    let budget = selected_content_budget();
+fn selected_observation_bindings(
+    problem: &casa_imaging_model::CompiledProblem,
+    mut budget: impl FnMut(usize) -> SelectedObservationContentBudget,
+) -> Vec<ObservationSourceBinding> {
+    problem
+        .inputs()
+        .observation_snapshot()
+        .sources()
+        .iter()
+        .enumerate()
+        .map(|(source_index, source)| {
+            ObservationSourceBinding::new(
+                ObservationSourceState::new(
+                    source.identity(),
+                    source.selection().rows().clone(),
+                    source.generations().clone(),
+                ),
+                budget(source_index),
+            )
+        })
+        .collect()
+}
+
+fn selected_content_residency(
+    problem: &casa_imaging_model::CompiledProblem,
+) -> SelectedObservationResidencyCertificate {
+    selected_content_residency_with(problem, |_| selected_content_budget())
+}
+
+fn selected_content_residency_with(
+    problem: &casa_imaging_model::CompiledProblem,
+    budget: impl FnMut(usize) -> SelectedObservationContentBudget,
+) -> SelectedObservationResidencyCertificate {
+    let bindings = selected_observation_bindings(problem, budget);
+    BoundSelectedObservation::certify_residency(problem, &bindings)
+        .expect("owner-certified selected-content residency")
+}
+
+fn selected_content_resources(
+    problem: &casa_imaging_model::CompiledProblem,
+) -> SelectedObservationSourceResources {
+    let residency = selected_content_residency(problem);
     let allocations = selected_content_allocations();
     let queue = selected_content_queue();
-    SelectedObservationSourceResources::new(budget, allocations, queue)
+    SelectedObservationSourceResources::new(residency, allocations, queue)
 }
 
 fn only_receipt_path(root: &Path) -> PathBuf {
@@ -545,6 +586,19 @@ fn request(observation: u8) -> ImagingRequest {
     request_with_geometry_and_references(observation, geometry(255.0), default_references())
 }
 
+fn request_with_source_count(observation: u8, source_count: usize) -> ImagingRequest {
+    request_with_geometry_references_weighting_products_model_write_input_and_source_count(
+        observation,
+        geometry(255.0),
+        default_references(),
+        WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
+        vec![ProductKind::Psf],
+        ModelColumnWrite::Disabled,
+        ModelStateIdentity::Empty,
+        source_count,
+    )
+}
+
 fn request_with_geometry(observation: u8, geometry: GeometryInput) -> ImagingRequest {
     request_with_geometry_and_references(observation, geometry, default_references())
 }
@@ -667,6 +721,29 @@ fn request_with_geometry_references_weighting_products_model_write_and_input(
     model_column_write: ModelColumnWrite,
     model: ModelStateIdentity,
 ) -> ImagingRequest {
+    request_with_geometry_references_weighting_products_model_write_input_and_source_count(
+        observation,
+        geometry,
+        references,
+        weighting,
+        products,
+        model_column_write,
+        model,
+        1,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn request_with_geometry_references_weighting_products_model_write_input_and_source_count(
+    observation: u8,
+    geometry: GeometryInput,
+    references: Vec<(ReferenceDataKind, casa_imaging_model::LogicalIdentity)>,
+    weighting: WeightingContract,
+    products: Vec<ProductKind>,
+    model_column_write: ModelColumnWrite,
+    model: ModelStateIdentity,
+    source_count: usize,
+) -> ImagingRequest {
     let numerics = NumericsContract::new(
         vec![NumericPrecision::F64],
         ReductionPolicy::Compensated,
@@ -706,7 +783,7 @@ fn request_with_geometry_references_weighting_products_model_write_and_input(
     ImagingRequest::new(
         specification,
         geometry,
-        problem_inputs(observation, references, model),
+        problem_inputs_with_source_count(observation, references, model, source_count),
         model_lifecycle(model),
     )
 }
@@ -771,8 +848,11 @@ fn recording_executor(
         selected_observation_completion: Mutex::new(None),
         reopen_weighting_before_replay: false,
         weighting_plan: None,
+        weighting_source_residency: None,
+        weighting_actual_source_residency: None,
         weighting_source_read: WorkNodeId::new("transaction-read"),
         weighting_state: Mutex::new(WeightingExecutionState::new()),
+        weighting_source_sample_count: AtomicUsize::new(0),
         weighted_sample_count: AtomicUsize::new(0),
         weighting_reconciled: AtomicBool::new(false),
         weighting_released: AtomicBool::new(false),
@@ -845,8 +925,11 @@ struct RecordingExecutor {
     selected_observation_completion: Mutex<Option<SelectedObservationCompletion>>,
     reopen_weighting_before_replay: bool,
     weighting_plan: Option<WeightingPlan>,
+    weighting_source_residency: Option<SelectedObservationResidencyCertificate>,
+    weighting_actual_source_residency: Option<SelectedObservationResidencyCertificate>,
     weighting_source_read: WorkNodeId,
     weighting_state: Mutex<WeightingExecutionState>,
+    weighting_source_sample_count: AtomicUsize,
     weighted_sample_count: AtomicUsize,
     weighting_reconciled: AtomicBool,
     weighting_released: AtomicBool,
@@ -870,7 +953,13 @@ impl RecordingExecutor {
             WeightingPlanFragment::new(
                 plan,
                 self.weighting_source_read.clone(),
-                selected_content_resources(),
+                SelectedObservationSourceResources::new(
+                    self.weighting_source_residency
+                        .clone()
+                        .expect("weighting executor source residency"),
+                    selected_content_allocations(),
+                    selected_content_queue(),
+                ),
                 self.id.clone(),
                 self.id.clone(),
                 self.id.clone(),
@@ -881,24 +970,18 @@ impl RecordingExecutor {
 
 fn open_selected_observation(
     problem: &casa_imaging_model::CompiledProblem,
-    content_budget: SelectedObservationContentBudget,
+    residency: &SelectedObservationResidencyCertificate,
 ) -> io::Result<BoundSelectedObservation> {
-    let bindings = problem
-        .inputs()
-        .observation_snapshot()
-        .sources()
-        .iter()
-        .map(|source| {
-            ObservationSourceBinding::new(
-                ObservationSourceState::new(
-                    source.identity(),
-                    source.selection().rows().clone(),
-                    source.generations().clone(),
-                ),
-                content_budget,
-            )
-        })
-        .collect();
+    let sources = problem.inputs().observation_snapshot().sources();
+    let mut budgets = Vec::with_capacity(sources.len());
+    for source in sources {
+        budgets.push(
+            residency
+                .content_budget(source.identity())
+                .ok_or_else(|| io::Error::other("residency certificate omits source"))?,
+        );
+    }
+    let bindings = selected_observation_bindings(problem, |index| budgets[index]);
     let measures_identity = problem
         .inputs()
         .reference_data()
@@ -947,20 +1030,34 @@ impl WorkImplementation for RecordingExecutor {
                 .transpose()?;
             let problem = foreign_problem.as_ref().unwrap_or(bound_problem);
             let fragment = self.weighting_fragment();
-            let content_budget = fragment
+            let mut residency = fragment
                 .as_ref()
                 .filter(|fragment| {
                     context.node().id == *fragment.generation_node()
                         || context.node().id == *fragment.replay_node()
                 })
                 .map_or_else(
-                    || Ok(selected_content_budget()),
+                    || {
+                        Ok::<_, io::Error>(
+                            self.weighting_source_residency
+                                .clone()
+                                .unwrap_or_else(|| selected_content_residency(problem)),
+                        )
+                    },
                     |fragment| {
                         fragment
-                            .selected_content_budget(context, problem)
+                            .selected_observation_residency(context, problem)
+                            .cloned()
                             .map_err(io::Error::other)
                     },
                 )?;
+            if fragment
+                .as_ref()
+                .is_some_and(|fragment| context.node().id == *fragment.source_read_node())
+                && let Some(actual) = &self.weighting_actual_source_residency
+            {
+                residency = actual.clone();
+            }
             if let Some(fragment) = fragment.as_ref()
                 && context.node().id == *fragment.generation_node()
             {
@@ -973,14 +1070,13 @@ impl WorkImplementation for RecordingExecutor {
                 && context.node().id == *fragment.replay_node()
             {
                 if self.reopen_weighting_before_replay {
-                    let mut replacement = open_selected_observation(problem, content_budget)?;
-                    let completion = replacement
-                        .traverse(problem, |_| Ok::<_, io::Error>(()))
-                        .map_err(io::Error::other)?;
+                    let replacement = open_selected_observation(problem, &residency)?;
                     self.weighting_state
                         .lock()
                         .expect("weighting execution state lock")
-                        .retain_source_observation(context, fragment, replacement, &completion)
+                        .traverse_and_retain_source(context, fragment, replacement, problem, |_| {
+                            Ok::<_, io::Error>(())
+                        })
                         .map_err(io::Error::other)?;
                 }
                 self.weighting_state
@@ -993,19 +1089,25 @@ impl WorkImplementation for RecordingExecutor {
                     })
                     .map_err(io::Error::other)?;
             } else {
-                let mut observation = open_selected_observation(problem, content_budget)?;
-                let completion = observation
-                    .traverse(problem, |_| Ok::<_, io::Error>(()))
-                    .map_err(io::Error::other)?;
-                if let Some(fragment) = fragment.as_ref()
+                let observation = open_selected_observation(problem, &residency)?;
+                let completion = if let Some(fragment) = fragment.as_ref()
                     && context.node().id == *fragment.source_read_node()
                 {
                     self.weighting_state
                         .lock()
                         .expect("weighting execution state lock")
-                        .retain_source_observation(context, fragment, observation, &completion)
-                        .map_err(io::Error::other)?;
-                }
+                        .traverse_and_retain_source(context, fragment, observation, problem, |_| {
+                            self.weighting_source_sample_count
+                                .fetch_add(1, Ordering::SeqCst);
+                            Ok::<_, io::Error>(())
+                        })
+                        .map_err(io::Error::other)?
+                } else {
+                    let mut observation = observation;
+                    observation
+                        .traverse(problem, |_| Ok::<_, io::Error>(()))
+                        .map_err(io::Error::other)?
+                };
                 *self
                     .selected_observation_completion
                     .lock()
@@ -1370,7 +1472,7 @@ fn production_weighting_fragment_owns_generation_replay_and_release_lifetimes() 
     let fragment = WeightingPlanFragment::new(
         &plan,
         WorkNodeId::new("transaction-read"),
-        selected_content_resources(),
+        selected_content_resources(&problem),
         implementation(6),
         implementation(6),
         implementation(6),
@@ -1519,7 +1621,7 @@ fn production_weighting_fragment_rejects_unplanned_source_traversal_resources() 
     let fragment = WeightingPlanFragment::new(
         &plan,
         WorkNodeId::new("transaction-read"),
-        selected_content_resources(),
+        selected_content_resources(&problem),
         implementation(6),
         implementation(6),
         implementation(6),
@@ -1608,7 +1710,9 @@ fn production_weighting_fragment_rejects_fungible_unrelated_queues() {
         &plan,
         WorkNodeId::new("transaction-read"),
         SelectedObservationSourceResources::new(
-            SelectedObservationContentBudget::new(SELECTED_CONTENT_BYTES, 2, 4),
+            selected_content_residency_with(&problem, |_| {
+                SelectedObservationContentBudget::new(SELECTED_CONTENT_BYTES, 2, 4)
+            }),
             selected_content_allocations(),
             selected_content_queue(),
         ),
@@ -1684,10 +1788,9 @@ fn physical_work_for_problem(
         .iter()
         .map(|source| source.measurement_set())
         .collect::<Vec<_>>();
-    assert_eq!(
-        measurement_sets.len(),
-        1,
-        "this focused fixture models one MeasurementSet"
+    assert!(
+        !measurement_sets.is_empty(),
+        "compiled read set is non-empty"
     );
     let mut nodes = base
         .execution_dag()
@@ -1695,17 +1798,36 @@ fn physical_work_for_problem(
         .values()
         .cloned()
         .collect::<Vec<_>>();
-    for claim in nodes.iter_mut().flat_map(|node| &mut node.claims) {
-        if let LeaseResource::MeasurementSetLock { measurement_set } = &mut claim.resource {
-            *measurement_set = measurement_sets[0];
+    for node in &mut nodes {
+        let mut claims = Vec::with_capacity(
+            node.claims
+                .len()
+                .saturating_add(measurement_sets.len().saturating_sub(1)),
+        );
+        for claim in std::mem::take(&mut node.claims) {
+            if matches!(claim.resource, LeaseResource::MeasurementSetLock { .. }) {
+                claims.extend(measurement_sets.iter().copied().map(|measurement_set| {
+                    ResourceClaim {
+                        resource: LeaseResource::MeasurementSetLock { measurement_set },
+                        amount: claim.amount,
+                        lifetime: claim.lifetime.clone(),
+                    }
+                }));
+            } else {
+                claims.push(claim);
+            }
         }
+        node.claims = claims;
     }
+    let mut alternative = base.execution_dag().resource_alternative().clone();
+    let lock_count = u64::try_from(measurement_sets.len()).expect("test lock count fits u64");
+    alternative.demand.locks = CountDemand::new(lock_count, lock_count);
     let dag = ExecutionDag::new(ExecutionDagSpecification {
         required_resource_capabilities: base
             .execution_dag()
             .required_resource_capabilities()
             .clone(),
-        resource_alternative: base.execution_dag().resource_alternative().clone(),
+        resource_alternative: alternative,
         nodes,
         logical_allocations: base
             .execution_dag()
@@ -1742,6 +1864,15 @@ fn physical_work_for_weighting_problem(
     problem: &casa_imaging_model::CompiledProblem,
     implementation_byte: u8,
 ) -> PhysicalWorkBinding {
+    let residency = selected_content_residency(problem);
+    physical_work_for_weighting_problem_with_residency(problem, implementation_byte, &residency)
+}
+
+fn physical_work_for_weighting_problem_with_residency(
+    problem: &casa_imaging_model::CompiledProblem,
+    implementation_byte: u8,
+    residency: &SelectedObservationResidencyCertificate,
+) -> PhysicalWorkBinding {
     let base = physical_work_for_problem(problem, implementation_byte);
     let mut nodes = base
         .execution_dag()
@@ -1751,7 +1882,12 @@ fn physical_work_for_weighting_problem(
         .collect::<Vec<_>>();
     let source_buffer = AllocationId::new("selected-observation-source-buffer");
     let source_slot = PhysicalSlotId::new("selected-observation-source-slot");
-    let source_bytes = u64::try_from(SELECTED_CONTENT_BYTES).expect("test source budget fits u64");
+    let source_bytes = u64::try_from(residency.aggregate_resident_bytes())
+        .expect("test source residency fits u64");
+    let source_blocks =
+        u64::try_from(residency.peak_live_blocks()).expect("test source queue depth fits u64");
+    let source_count = u64::try_from(problem.inputs().observation_snapshot().sources().len())
+        .expect("test source count fits u64");
     let source_lifetime = ClaimLifetime::through_fence(FenceKind::Io);
     let source_compatibility = SlotCompatibility {
         memory_domain: CapacityDomainId::new("host-memory"),
@@ -1766,6 +1902,11 @@ fn physical_work_for_weighting_problem(
         .iter_mut()
         .find(|node| node.id == WorkNodeId::new("transaction-read"))
         .expect("transaction source read");
+    source_read
+        .claims
+        .iter_mut()
+        .filter(|claim| claim.resource == selected_content_queue())
+        .for_each(|claim| claim.amount = source_blocks);
     source_read.claims.extend([
         ResourceClaim {
             resource: LeaseResource::Workers,
@@ -1779,7 +1920,7 @@ fn physical_work_for_weighting_problem(
         },
         ResourceClaim {
             resource: LeaseResource::FileDescriptors,
-            amount: 1,
+            amount: source_count,
             lifetime: source_lifetime.clone(),
         },
     ]);
@@ -1795,7 +1936,12 @@ fn physical_work_for_weighting_problem(
         views: vec![CapacityViewId::new("host-memory")],
     });
     alternative.demand.io_buffers.source_read_ahead_bytes = source_bytes;
-    alternative.demand.file_descriptors = CountDemand::new(1, 1);
+    alternative.demand.file_descriptors = CountDemand::new(source_count, source_count);
+    for demand in &mut alternative.demand.queues {
+        if demand.demand_id == "transaction-io-queue" {
+            demand.slots = CountDemand::new(source_blocks, source_blocks);
+        }
+    }
     let mut logical_allocations = base
         .execution_dag()
         .logical_allocations()
@@ -5356,7 +5502,7 @@ fn actual_bound_observation_traversals_drive_both_weighting_generation_passes() 
     let fragment = WeightingPlanFragment::new(
         &weighting_plan,
         WorkNodeId::new("transaction-read"),
-        selected_content_resources(),
+        selected_content_resources(&problem),
         implementation(6),
         implementation(6),
         implementation(6),
@@ -5376,6 +5522,7 @@ fn actual_bound_observation_traversals_drive_both_weighting_generation_passes() 
         cost_model(4),
     );
     let mut executor = recording_executor(6, None, None);
+    executor.weighting_source_residency = Some(selected_content_residency(&problem));
     executor.weighting_plan = Some(weighting_plan);
     let registry = TestRegistry {
         id: registry(3),
@@ -5447,7 +5594,7 @@ fn failed_weighting_release_quarantines_the_actual_selected_observation_owner() 
     let fragment = WeightingPlanFragment::new(
         &weighting_plan,
         WorkNodeId::new("transaction-read"),
-        selected_content_resources(),
+        selected_content_resources(&problem),
         implementation(6),
         implementation(6),
         implementation(6),
@@ -5468,6 +5615,7 @@ fn failed_weighting_release_quarantines_the_actual_selected_observation_owner() 
         cost_model(4),
     );
     let mut executor = recording_executor(6, None, None);
+    executor.weighting_source_residency = Some(selected_content_residency(&problem));
     executor.weighting_plan = Some(weighting_plan);
     executor.weighting_failure_node = Some(release.clone());
     let registry = TestRegistry {
@@ -5554,7 +5702,7 @@ fn failed_weighting_lifecycle_cuts_run_the_scheduler_owned_release() {
         let fragment = WeightingPlanFragment::new(
             &weighting_plan,
             WorkNodeId::new("transaction-read"),
-            selected_content_resources(),
+            selected_content_resources(&problem),
             implementation(6),
             implementation(6),
             implementation(6),
@@ -5584,6 +5732,7 @@ fn failed_weighting_lifecycle_cuts_run_the_scheduler_owned_release() {
             cost_model(4),
         );
         let mut executor = recording_executor(6, None, None);
+        executor.weighting_source_residency = Some(selected_content_residency(&problem));
         executor.weighting_plan = Some(weighting_plan);
         match cut {
             FailureCut::SourceFence => {
@@ -5680,7 +5829,7 @@ fn weighting_replay_rejects_a_fresh_binding_with_identical_selected_content() {
     let fragment = WeightingPlanFragment::new(
         &weighting_plan,
         WorkNodeId::new("transaction-read"),
-        selected_content_resources(),
+        selected_content_resources(&problem),
         implementation(6),
         implementation(6),
         implementation(6),
@@ -5701,6 +5850,7 @@ fn weighting_replay_rejects_a_fresh_binding_with_identical_selected_content() {
         cost_model(4),
     );
     let mut executor = recording_executor(6, None, None);
+    executor.weighting_source_residency = Some(selected_content_residency(&problem));
     executor.weighting_plan = Some(weighting_plan);
     executor.reopen_weighting_before_replay = true;
     let registry = TestRegistry {
@@ -5744,7 +5894,7 @@ fn weighting_generation_rejects_missing_direct_predecessor_before_state_exists()
     let fragment = WeightingPlanFragment::new(
         &weighting_plan,
         WorkNodeId::new("transaction-read"),
-        selected_content_resources(),
+        selected_content_resources(&problem),
         implementation(6),
         implementation(6),
         implementation(6),
@@ -5765,6 +5915,7 @@ fn weighting_generation_rejects_missing_direct_predecessor_before_state_exists()
         cost_model(4),
     );
     let mut executor = recording_executor(6, None, None);
+    executor.weighting_source_residency = Some(selected_content_residency(&problem));
     executor.weighting_plan = Some(weighting_plan);
     executor.weighting_source_read = WorkNodeId::new("not-a-direct-predecessor");
     let registry = TestRegistry {
@@ -5807,7 +5958,7 @@ fn weighting_generation_rejects_mismatched_allocation_capabilities_before_state_
     let fragment = WeightingPlanFragment::new(
         &planned_weighting,
         WorkNodeId::new("transaction-read"),
-        selected_content_resources(),
+        selected_content_resources(&problem),
         implementation(6),
         implementation(6),
         implementation(6),
@@ -5833,6 +5984,7 @@ fn weighting_generation_rejects_mismatched_allocation_capabilities_before_state_
     )
     .expect("differently sized weighting");
     let mut executor = recording_executor(6, None, None);
+    executor.weighting_source_residency = Some(selected_content_residency(&problem));
     executor.weighting_plan = Some(differently_sized_weighting);
     let registry = TestRegistry {
         id: registry(3),
@@ -5862,6 +6014,266 @@ fn weighting_generation_rejects_mismatched_allocation_capabilities_before_state_
     assert_eq!(executor.weighted_sample_count.load(Ordering::SeqCst), 0);
 }
 
+fn assert_source_residency_mismatch_fails_before_traversal(
+    problem: &casa_imaging_model::CompiledProblem,
+    planned: SelectedObservationResidencyCertificate,
+    actual: SelectedObservationResidencyCertificate,
+) {
+    let weighting_plan = plan_weighting(
+        problem,
+        WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
+    )
+    .expect("weighting plan");
+    let fragment = WeightingPlanFragment::new(
+        &weighting_plan,
+        WorkNodeId::new("transaction-read"),
+        SelectedObservationSourceResources::new(
+            planned.clone(),
+            selected_content_allocations(),
+            selected_content_queue(),
+        ),
+        implementation(6),
+        implementation(6),
+        implementation(6),
+    );
+    let physical = fragment
+        .compose(&physical_work_for_weighting_problem_with_residency(
+            problem, 6, &planned,
+        ))
+        .expect("planned source residency composes");
+    let execution_plan = plan(
+        problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| Ok::<_, ()>(physical),
+    )
+    .expect("plan with mismatched runtime owner");
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &ResourcePolicy::Balanced,
+        cost_model(4),
+    );
+    let mut executor = recording_executor(6, None, None);
+    executor.weighting_source_residency = Some(planned);
+    executor.weighting_actual_source_residency = Some(actual);
+    executor.weighting_plan = Some(weighting_plan);
+    let registry = TestRegistry {
+        id: registry(3),
+        executors: BTreeMap::from([(implementation(6), executor)]),
+    };
+    let mut controller = RunToCompletion;
+
+    let error = run(
+        problem,
+        &execution_plan,
+        &current,
+        &registry,
+        authority(),
+        &mut controller,
+    )
+    .expect_err("a different owner residency certificate must fail closed");
+
+    assert!(
+        matches!(error, RunError::Execution { node, .. } if node == WorkNodeId::new("transaction-read"))
+    );
+    let executor = &registry.executors[&implementation(6)];
+    assert_eq!(
+        executor
+            .weighting_source_sample_count
+            .load(Ordering::SeqCst),
+        0,
+        "owner mismatch must fail before the first selected sample"
+    );
+    assert!(
+        executor
+            .weighting_state
+            .lock()
+            .expect("weighting execution state lock")
+            .is_empty()
+    );
+}
+
+#[test]
+fn weighting_source_rejects_incomplete_and_differently_budgeted_owner_certificates() {
+    let problem = compile(request_with_source_count(230, 2)).expect("multi-source compilation");
+    let planned = selected_content_residency_with(&problem, |source_index| {
+        SelectedObservationContentBudget::new(
+            (source_index + 1) * SELECTED_CONTENT_BYTES,
+            source_index + 1,
+            4,
+        )
+    });
+    let differently_budgeted = selected_content_residency_with(&problem, |source_index| {
+        SelectedObservationContentBudget::new(
+            if source_index == 0 {
+                SELECTED_CONTENT_BYTES
+            } else {
+                3 * SELECTED_CONTENT_BYTES
+            },
+            source_index + 1,
+            4,
+        )
+    });
+    assert_source_residency_mismatch_fails_before_traversal(
+        &problem,
+        planned.clone(),
+        differently_budgeted,
+    );
+
+    let single_source_problem =
+        compile(request(231)).expect("single-source certificate compilation");
+    assert_source_residency_mismatch_fails_before_traversal(
+        &problem,
+        selected_content_residency(&single_source_problem),
+        planned,
+    );
+}
+
+#[test]
+fn multi_source_weighting_receipts_certified_aggregate_residency_through_release() {
+    let problem = compile(request_with_source_count(232, 2)).expect("multi-source compilation");
+    let residency = selected_content_residency_with(&problem, |source_index| {
+        SelectedObservationContentBudget::new(
+            (source_index + 1) * SELECTED_CONTENT_BYTES,
+            source_index + 1,
+            4,
+        )
+    });
+    let aggregate_bytes = u64::try_from(residency.aggregate_resident_bytes())
+        .expect("aggregate source residency fits u64");
+    let peak_blocks =
+        u64::try_from(residency.peak_live_blocks()).expect("source queue depth fits u64");
+    assert_eq!(aggregate_bytes, 3 * SELECTED_CONTENT_BYTES as u64);
+    assert_eq!(peak_blocks, 2);
+    let weighting_plan = plan_weighting(
+        &problem,
+        WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
+    )
+    .expect("weighting plan");
+    let fragment = WeightingPlanFragment::new(
+        &weighting_plan,
+        WorkNodeId::new("transaction-read"),
+        SelectedObservationSourceResources::new(
+            residency.clone(),
+            selected_content_allocations(),
+            selected_content_queue(),
+        ),
+        implementation(6),
+        implementation(6),
+        implementation(6),
+    );
+    let source = WorkNodeId::new("transaction-read");
+    let generation = fragment.generation_node().clone();
+    let replay = fragment.replay_node().clone();
+    let release = fragment.release_node().clone();
+    let base = physical_work_for_weighting_problem_with_residency(&problem, 6, &residency);
+    let physical = fragment
+        .compose(&base)
+        .expect("owner-certified multi-source weighting work");
+    assert_eq!(
+        physical.execution_dag().logical_allocations().len()
+            - base.execution_dag().logical_allocations().len(),
+        5,
+        "the existing selected-source allocation is reused"
+    );
+    let execution_plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| Ok::<_, ()>(physical),
+    )
+    .expect("plan owner-certified multi-source weighting");
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &ResourcePolicy::Balanced,
+        cost_model(4),
+    );
+    let mut executor = recording_executor(6, None, None);
+    executor.weighting_source_residency = Some(residency);
+    executor.weighting_plan = Some(weighting_plan);
+    let registry = TestRegistry {
+        id: registry(3),
+        executors: BTreeMap::from([(implementation(6), executor)]),
+    };
+    let mut controller = RunToCompletion;
+    let directory = tempfile::tempdir().expect("multi-source receipt directory");
+    let receipts = ExecutionReceiptStore::new(
+        directory.path(),
+        ReceiptRetention::new(2, 1_048_576).expect("multi-source receipt retention"),
+    )
+    .expect("multi-source receipt store");
+    let provenance = execution_provenance(
+        casa_imaging_runtime::ExecutionAttemptId::from_sha256([233; 32]),
+        BuildIdentity::from_sha256([234; 32]),
+    );
+
+    run_receipted(
+        &problem,
+        &execution_plan,
+        &current,
+        &registry,
+        authority(),
+        &mut controller,
+        receipts.bind(provenance.clone()),
+    )
+    .expect("owner-certified multi-source weighting completes");
+    let receipt = receipts
+        .open(provenance.attempt_id())
+        .expect("multi-source weighting receipt");
+    let io_lifetime = ClaimLifetime::through_fence(FenceKind::Io);
+    let buffer = LeaseResource::IoBuffer(IoBufferKind::SourceReadAhead);
+    let queue = selected_content_queue();
+    for node in [&source, &generation, &replay] {
+        assert_eq!(
+            receipt.planned_resource_amount(node, &buffer, &io_lifetime),
+            Some(aggregate_bytes)
+        );
+        assert_eq!(
+            receipt.actual_resource_peak(node, &buffer, &io_lifetime),
+            Some(aggregate_bytes)
+        );
+        assert_eq!(
+            receipt.planned_resource_amount(node, &queue, &io_lifetime),
+            Some(peak_blocks)
+        );
+        assert_eq!(
+            receipt.actual_resource_peak(node, &queue, &io_lifetime),
+            Some(peak_blocks)
+        );
+    }
+    assert_eq!(
+        receipt.planned_resource_amount(&release, &buffer, &ClaimLifetime::Work),
+        Some(aggregate_bytes)
+    );
+    assert_eq!(
+        receipt.actual_resource_peak(&release, &buffer, &ClaimLifetime::Work),
+        Some(aggregate_bytes)
+    );
+    let selected_allocation = selected_content_allocations()
+        .pop_first()
+        .expect("one selected-source allocation");
+    assert_eq!(
+        receipt
+            .allocation_uses(&release)
+            .and_then(|uses| uses.get(&selected_allocation).cloned()),
+        Some(ClaimLifetime::Work)
+    );
+    let executor = &registry.executors[&implementation(6)];
+    assert_eq!(
+        executor
+            .weighting_source_sample_count
+            .load(Ordering::SeqCst),
+        2,
+        "both certified sources traverse before retention"
+    );
+    assert!(executor.weighting_released.load(Ordering::SeqCst));
+    assert!(
+        executor
+            .weighting_state
+            .lock()
+            .expect("weighting execution state lock")
+            .is_empty()
+    );
+}
+
 #[test]
 fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
     let problem = compile(request(1)).expect("logical weighting compilation");
@@ -5879,7 +6291,7 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
     let fragment = WeightingPlanFragment::new(
         &weighting_plan,
         WorkNodeId::new("transaction-read"),
-        selected_content_resources(),
+        selected_content_resources(&problem),
         pathlike_implementation.clone(),
         pathlike_implementation.clone(),
         pathlike_implementation.clone(),
@@ -5948,6 +6360,7 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
     );
     let mut executor = recording_executor(6, None, None);
     executor.id = pathlike_implementation.clone();
+    executor.weighting_source_residency = Some(selected_content_residency(&problem));
     executor.weighting_plan = Some(weighting_plan);
     let registry = TestRegistry {
         id: registry(3),

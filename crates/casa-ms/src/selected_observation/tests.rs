@@ -1923,7 +1923,7 @@ fn retained_selected_observation_owns_canonical_multi_source_order() {
     let binding_graph_initialization_bytes =
         expected_binding_graph_initialization_bytes(sources, &binding_states, binding_capacity);
     let one_row_measures = test_measures(&problem);
-    let one_row_bindings = sources
+    let one_row_bindings: Vec<_> = sources
         .iter()
         .enumerate()
         .map(|(source_index, source)| {
@@ -1947,6 +1947,13 @@ fn retained_selected_observation_owns_canonical_multi_source_order() {
             )
         })
         .collect();
+    let one_row_expected_bytes = one_row_bindings
+        .iter()
+        .map(|binding| binding.content_budget().available_bytes())
+        .sum::<usize>();
+    let one_row_residency =
+        BoundSelectedObservation::certify_residency(&problem, &one_row_bindings)
+            .expect("certify every one-row source budget");
     let two_row_measures = test_measures(&problem);
     let mut two_row_bindings: Vec<_> = sources
         .iter()
@@ -1973,10 +1980,34 @@ fn retained_selected_observation_owns_canonical_multi_source_order() {
         })
         .collect();
     two_row_bindings.reverse();
+    let two_row_expected_bytes = two_row_bindings
+        .iter()
+        .map(|binding| binding.content_budget().available_bytes())
+        .sum::<usize>();
+    let two_row_residency =
+        BoundSelectedObservation::certify_residency(&problem, &two_row_bindings)
+            .expect("certify reordered two-row source budgets");
     let mut one_row = BoundSelectedObservation::open(&problem, one_row_measures, one_row_bindings)
         .expect("bind canonical multi-source observation");
     let mut two_rows = BoundSelectedObservation::open(&problem, two_row_measures, two_row_bindings)
         .expect("bind reordered source states and budgets by typed identity");
+
+    assert_eq!(one_row.residency_certificate(), &one_row_residency);
+    assert_eq!(two_rows.residency_certificate(), &two_row_residency);
+    assert_eq!(
+        one_row_residency.aggregate_resident_bytes(),
+        one_row_expected_bytes
+    );
+    assert_eq!(
+        two_row_residency.aggregate_resident_bytes(),
+        two_row_expected_bytes
+    );
+    assert_eq!(one_row_residency.peak_live_blocks(), 1);
+    assert_eq!(two_row_residency.peak_live_blocks(), 1);
+    assert_ne!(
+        one_row_residency, two_row_residency,
+        "per-source budget facts remain part of the opaque owner certificate"
+    );
 
     let shared_measures_bytes = test_measures(&problem).retained_bytes();
     for (source_index, source) in sources.iter().enumerate() {

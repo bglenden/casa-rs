@@ -136,7 +136,8 @@ pub use schema::main_table::{OptionalMainColumn, VisibilityDataColumn};
 pub use selected_observation::{
     BoundObservationSourceError, BoundSelectedObservation, BoundSelectedObservationError,
     ObservationSourceBinding, SelectedObservationCompletion, SelectedObservationContentBudget,
-    SelectedObservationMeasures, SelectedObservationMeasuresError, SelectedObservationRow,
+    SelectedObservationMeasures, SelectedObservationMeasuresError,
+    SelectedObservationResidencyCertificate, SelectedObservationRow,
     SelectedObservationRowSelection, SelectedObservationTraversalError,
     SelectedObservationTraversalSample,
 };
