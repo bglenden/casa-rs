@@ -28,7 +28,14 @@ use casa_imaging_model::{
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+mod serial_mfs;
 mod weighting;
+
+pub use serial_mfs::{
+    CompleteDataCompletion, CompleteDataResult, CompleteDataState, ContinuumPrimitiveCatalog,
+    SerialMfsError, SerialMfsOperator, SerialMfsPlan, SerialMfsPrimitives, SerialMfsResidency,
+    SerialMfsSample,
+};
 
 pub use weighting::{
     WeightingAlgorithmState, WeightingError, WeightingExecutionLimits, WeightingGenerationId,

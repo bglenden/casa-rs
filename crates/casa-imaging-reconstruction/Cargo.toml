@@ -13,5 +13,8 @@ workspace = true
 
 [dependencies]
 casa-imaging-model = { path = "../casa-imaging-model" }
+ndarray.workspace = true
+num-complex.workspace = true
+rustfft.workspace = true
 sha2 = "0.10"
 thiserror.workspace = true

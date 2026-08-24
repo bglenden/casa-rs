@@ -458,6 +458,7 @@ impl<'a> WeightingPlanFragment<'a> {
                 problem,
                 residency: &self.source_resources.residency,
                 queue: &self.source_resources.queue,
+                source_allocations: &self.source_resources.allocations,
             },
         )?;
         Ok(&self.source_resources.residency)
@@ -483,6 +484,7 @@ impl<'a> WeightingPlanFragment<'a> {
                 problem,
                 residency: actual,
                 queue: &self.source_resources.queue,
+                source_allocations: &self.source_resources.allocations,
             },
         )
     }
@@ -504,6 +506,7 @@ impl<'a> WeightingPlanFragment<'a> {
                 problem,
                 residency: &self.source_resources.residency,
                 queue: &self.source_resources.queue,
+                source_allocations: &self.source_resources.allocations,
             },
         )?;
         let predecessor = context
@@ -545,6 +548,7 @@ impl<'a> WeightingPlanFragment<'a> {
                 problem,
                 residency: &self.source_resources.residency,
                 queue: &self.source_resources.queue,
+                source_allocations: &self.source_resources.allocations,
             },
         )?;
         let predecessor = context
@@ -1221,6 +1225,7 @@ enum WeightingWorkContract<'a> {
         problem: &'a CompiledProblem,
         residency: &'a SelectedObservationResidencyCertificate,
         queue: &'a LeaseResource,
+        source_allocations: &'a BTreeSet<AllocationId>,
     },
     Release,
 }
@@ -1237,12 +1242,13 @@ fn validate_work_authority(
                 problem,
                 residency,
                 queue,
+                source_allocations,
             } => (
                 WorkKind::ObservationRead,
                 WorkDomain::Io,
                 Some(problem),
                 ClaimLifetime::through_fence(FenceKind::Io),
-                Some((residency, queue)),
+                Some((residency, queue, source_allocations)),
             ),
             WeightingWorkContract::Release => (
                 WorkKind::Release,
@@ -1285,7 +1291,7 @@ fn validate_work_authority(
     {
         return Err(WeightingEvidenceError);
     }
-    if let Some((residency, queue)) = selected_content_budget {
+    if let Some((residency, queue, source_allocations)) = selected_content_budget {
         if !residency
             .matches_problem(problem.expect("selected traversal always carries a compiled problem"))
         {
@@ -1295,14 +1301,10 @@ fn validate_work_authority(
             .map_err(|_| WeightingEvidenceError)?;
         let required_blocks =
             u64::try_from(residency.peak_live_blocks()).map_err(|_| WeightingEvidenceError)?;
-        let expected_ids = expected_allocations
-            .iter()
-            .map(|spec| &spec.allocation)
-            .collect::<BTreeSet<_>>();
         let source_capacity = context
             .allocations()
             .iter()
-            .filter(|capability| !expected_ids.contains(capability.allocation()))
+            .filter(|capability| source_allocations.contains(capability.allocation()))
             .try_fold(0_u64, |total, capability| {
                 total.checked_add(capability.capacity_bytes())
             })
@@ -1325,7 +1327,14 @@ fn validate_work_authority(
             .next()
             .is_some_and(|capability| capability.amount() == required_blocks)
             && queue_capabilities.next().is_none();
-        if read_buffer_bytes != required_bytes
+        if source_allocations.is_empty()
+            || context
+                .allocations()
+                .iter()
+                .filter(|capability| source_allocations.contains(capability.allocation()))
+                .count()
+                != source_allocations.len()
+            || read_buffer_bytes != required_bytes
             || source_capacity != required_bytes
             || !queue_capability_covers
             || !queue_demand_covers(context.resource_alternative(), queue, required_blocks)
@@ -1893,6 +1902,10 @@ pub struct WeightingReplayCompletion {
 }
 
 impl WeightingReplayCompletion {
+    pub(crate) const fn reconstruction_summary(&self) -> &WeightingReplaySummary {
+        &self.state
+    }
+
     /// Return the unique replay identity.
     #[must_use]
     pub const fn replay_id(&self) -> WeightingReplayId {

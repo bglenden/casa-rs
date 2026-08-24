@@ -36,7 +36,7 @@ use casa_imaging_model::{
     WeightDensityScope, WeightingContract, WeightingScheme, compile,
 };
 use casa_imaging_reconstruction::{
-    ExecutableModelProblem, WeightingExecutionLimits, WeightingPlan, plan_weighting,
+    ExecutableModelProblem, SerialMfsPlan, WeightingExecutionLimits, WeightingPlan, plan_weighting,
 };
 use casa_imaging_runtime::{
     AdaptationId, AdaptationTransition, AllocationAccess, AllocationId, AllocationLayout,
@@ -44,19 +44,19 @@ use casa_imaging_runtime::{
     AlternativeRejectionReason, ArtifactDisposition, ArtifactIdentity, ArtifactMeasurement,
     ArtifactRole, AttemptBoundObservationCompletion, BindingKind, BuildIdentity, CacheDemand,
     CacheIdentity, CapabilityPredicate, CapacityDomainId, CapacityViewId, ClaimLifetime,
-    CompiledProblemEvidence, CountDemand, CpuClassCapacity, DemandAlternative, DemandEnvelope,
-    ExecutionDag, ExecutionDagSpecification, ExecutionError, ExecutionEvidenceError,
-    ExecutionKnobs, ExecutionOutcome, ExecutionPlanId, ExecutionProvenance, ExecutionReceipt,
-    ExecutionReceiptBinding, ExecutionReceiptStore, ExecutionRouteDisposition,
-    ExecutionRouteEvidence, ExecutionRouteRequirement, ExecutionRouteRequirementKind,
-    ExecutionStatus, ExternalPressure, FenceId, FenceKind, HostInventory,
-    ImplementationContractCatalog, ImplementationContractMetadata, ImplementationRegistry,
-    ImplementationRegistryId, InitializationPolicy, IoBufferDemand, IoBufferKind, IoMeasurement,
-    IoPrediction, LeaseResource, LogicalAllocation, MemoryCapacityDomain, MemoryCapacityKind,
-    MemoryDemand, MemoryView, MemoryViewKind, ObservationReadCompletionContext,
-    ObservationTransactionWork, PhysicalLayoutId, PhysicalSlot, PhysicalSlotId,
-    PhysicalWorkBinding, PhysicalWorkBindingError, PlanError, PlanPrediction, PlannedArtifact,
-    PlannerCostModelProfileBootstrap, PlannerCostModelProfileId, PlanningBindings,
+    CompiledProblemEvidence, CompleteDataOperatorResult, CompleteDataPlanFragment, CountDemand,
+    CpuClassCapacity, DemandAlternative, DemandEnvelope, ExecutionDag, ExecutionDagSpecification,
+    ExecutionError, ExecutionEvidenceError, ExecutionKnobs, ExecutionOutcome, ExecutionPlanId,
+    ExecutionProvenance, ExecutionReceipt, ExecutionReceiptBinding, ExecutionReceiptStore,
+    ExecutionRouteDisposition, ExecutionRouteEvidence, ExecutionRouteRequirement,
+    ExecutionRouteRequirementKind, ExecutionStatus, ExternalPressure, FenceId, FenceKind,
+    HostInventory, ImplementationContractCatalog, ImplementationContractMetadata,
+    ImplementationRegistry, ImplementationRegistryId, InitializationPolicy, IoBufferDemand,
+    IoBufferKind, IoMeasurement, IoPrediction, LeaseResource, LogicalAllocation,
+    MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand, MemoryView, MemoryViewKind,
+    ObservationReadCompletionContext, ObservationTransactionWork, PhysicalLayoutId, PhysicalSlot,
+    PhysicalSlotId, PhysicalWorkBinding, PhysicalWorkBindingError, PlanError, PlanPrediction,
+    PlannedArtifact, PlannerCostModelProfileBootstrap, PlannerCostModelProfileId, PlanningBindings,
     PredictionConfidence, PredictionUncertainty, PreparedArtifactBudget,
     PreparedArtifactDescriptor, PreparedArtifactError, PreparedArtifactLoadSource,
     PreparedArtifactOperation, PreparedArtifactOrder, PreparedArtifactPlanFragment,
@@ -70,10 +70,10 @@ use casa_imaging_runtime::{
     ResourceClaim, ResourceError, ResourceHeadroom, ResourceMeasurement, ResourceOverride,
     ResourcePolicy, ResourceTopology, RunBindings, RunController, RunDirective, RunError,
     RunToCompletion, RuntimeOverheadDemand, ScalingMetadata, SelectedObservationSourceResources,
-    SlotCompatibility, StagePrediction, StorageDomain, StorageDomainId, StorageMode,
-    StorageUseKind, WeightingExecutionState, WeightingPlanFragment, WorkDependency, WorkDomain,
-    WorkExecutionContext, WorkImplementation, WorkImplementationId, WorkKind, WorkMeasurements,
-    WorkNode, WorkNodeId, plan as runtime_plan, run as runtime_run,
+    SerialMfsOperatorState, SlotCompatibility, StagePrediction, StorageDomain, StorageDomainId,
+    StorageMode, StorageUseKind, WeightingExecutionState, WeightingPlanFragment, WorkDependency,
+    WorkDomain, WorkExecutionContext, WorkImplementation, WorkImplementationId, WorkKind,
+    WorkMeasurements, WorkNode, WorkNodeId, plan as runtime_plan, run as runtime_run,
 };
 use casa_ms::{
     BoundSelectedObservation, ObservationSourceBinding, SelectedObservationCompletion,
@@ -567,18 +567,34 @@ fn with_retained_claim_tamper(document: &str, tamper: RetainedClaimTamper) -> St
 }
 
 fn geometry(reference_pixel: f64) -> GeometryInput {
+    geometry_with_shape([reference_pixel, 255.0], ImageShape::new(512, 512))
+}
+
+fn geometry_with_shape(reference_pixel: [f64; 2], image_shape: ImageShape) -> GeometryInput {
+    geometry_with_shape_and_increment(
+        reference_pixel,
+        image_shape,
+        [-4.848_136_811_095_36e-6, 4.848_136_811_095_36e-6],
+    )
+}
+
+fn geometry_with_shape_and_increment(
+    reference_pixel: [f64; 2],
+    image_shape: ImageShape,
+    increment_rad: [f64; 2],
+) -> GeometryInput {
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
         SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
-        [reference_pixel, 255.0],
-        [-4.848_136_811_095_36e-6, 4.848_136_811_095_36e-6],
+        reference_pixel,
+        increment_rad,
         [[1.0, 0.0], [0.0, 1.0]],
         [180.0, 0.0],
     );
     GeometryInput::new(
         vec![ImageDomainSpec::new(
             ImageDomainRole::Main,
-            ImageShape::new(512, 512),
+            image_shape,
             direction,
             FacetLayout::Single,
             AxisOrder::new([
@@ -887,6 +903,9 @@ fn recording_executor(
         weighting_actual_source_residency: None,
         weighting_source_read: WorkNodeId::new("transaction-read"),
         weighting_state: Mutex::new(WeightingExecutionState::new()),
+        complete_data_plan: None,
+        complete_data_state: Mutex::new(None),
+        complete_data_result: Mutex::new(None),
         weighting_source_sample_count: AtomicUsize::new(0),
         weighted_sample_count: AtomicUsize::new(0),
         weighting_reconciled: AtomicBool::new(false),
@@ -964,6 +983,9 @@ struct RecordingExecutor {
     weighting_actual_source_residency: Option<SelectedObservationResidencyCertificate>,
     weighting_source_read: WorkNodeId,
     weighting_state: Mutex<WeightingExecutionState>,
+    complete_data_plan: Option<SerialMfsPlan>,
+    complete_data_state: Mutex<Option<SerialMfsOperatorState>>,
+    complete_data_result: Mutex<Option<CompleteDataOperatorResult>>,
     weighting_source_sample_count: AtomicUsize,
     weighted_sample_count: AtomicUsize,
     weighting_reconciled: AtomicBool,
@@ -1104,6 +1126,16 @@ impl WorkImplementation for RecordingExecutor {
             } else if let Some(fragment) = fragment.as_ref()
                 && context.node().id == *fragment.replay_node()
             {
+                if let Some(plan) = &self.complete_data_plan {
+                    let operator =
+                        CompleteDataPlanFragment::new(plan, fragment.replay_node().clone())
+                            .begin(context, problem)
+                            .map_err(io::Error::other)?;
+                    *self
+                        .complete_data_state
+                        .lock()
+                        .expect("complete-data state lock") = Some(operator);
+                }
                 if self.reopen_weighting_before_replay {
                     let replacement = open_selected_observation(problem, &residency)?;
                     self.weighting_state
@@ -1120,6 +1152,16 @@ impl WorkImplementation for RecordingExecutor {
                     .traverse_replay(context, fragment, problem, |block| {
                         self.weighted_sample_count
                             .fetch_add(block.samples().count(), Ordering::SeqCst);
+                        if let Some(operator) = self
+                            .complete_data_state
+                            .lock()
+                            .expect("complete-data state lock")
+                            .as_mut()
+                        {
+                            operator
+                                .consume_weighted_block(block)
+                                .map_err(io::Error::other)?;
+                        }
                         Ok::<_, io::Error>(())
                     })
                     .map_err(io::Error::other)?;
@@ -1367,6 +1409,21 @@ impl WorkImplementation for RecordingExecutor {
                     let predecessor = state
                         .complete_replay(completion)
                         .map_err(io::Error::other)?;
+                    if let Some(operator) = self
+                        .complete_data_state
+                        .lock()
+                        .expect("complete-data state lock")
+                        .take()
+                    {
+                        let replay = state
+                            .replay_completion()
+                            .expect("completed replay retains terminal proof");
+                        let result = operator.complete(replay).map_err(io::Error::other)?;
+                        *self
+                            .complete_data_result
+                            .lock()
+                            .expect("complete-data result lock") = Some(result);
+                    }
                     self.weighting_owner_at_replay_fence
                         .store(state.has_retained_observation(), Ordering::SeqCst);
                     predecessor
@@ -6492,7 +6549,11 @@ fn multi_source_weighting_receipts_certified_aggregate_residency_through_release
 
 #[test]
 fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
-    let problem = compile(request(1)).expect("logical weighting compilation");
+    let problem = compile(request_with_geometry(
+        1,
+        geometry_with_shape_and_increment([3.0, 3.0], ImageShape::new(8, 8), [-1.0e-6, 1.0e-6]),
+    ))
+    .expect("logical weighting compilation");
     let weighting_plan = plan_weighting(
         &problem,
         WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
@@ -6519,6 +6580,10 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
     let physical = fragment
         .compose(&base)
         .expect("production weighting physical work");
+    let operator_plan = SerialMfsPlan::new(&problem).expect("serial MFS plan");
+    let physical = CompleteDataPlanFragment::new(&operator_plan, replay.clone())
+        .compose(&physical)
+        .expect("T19 resources compose onto T18 replay");
     let source = WorkNodeId::new("transaction-read");
     let retained_lifetime = ClaimLifetime::retained_until(release.clone());
     let retained_resources = physical.execution_dag().nodes()[&source]
@@ -6579,6 +6644,7 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
     executor.id = pathlike_implementation.clone();
     executor.weighting_source_residency = Some(selected_content_residency(&problem));
     executor.weighting_plan = Some(weighting_plan);
+    executor.complete_data_plan = Some(operator_plan);
     let registry = TestRegistry {
         id: registry(3),
         metadata: implementation_metadata(&problem),
@@ -6604,9 +6670,9 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
     let receipt = receipts
         .open(provenance.attempt_id())
         .expect("weighting execution receipt");
-    assert_eq!(weighting_allocations.len(), 5);
+    assert_eq!(weighting_allocations.len(), 8);
     assert!(weighting_allocations.is_subset(&receipt.allocation_generation_identities()));
-    assert_eq!(weighting_slots.len(), 5);
+    assert_eq!(weighting_slots.len(), 8);
     assert!(weighting_slots.is_subset(&receipt.physical_slot_identities()));
     for (node, uses) in expected_uses {
         assert_eq!(receipt.allocation_uses(&node), Some(uses));
@@ -6679,6 +6745,23 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
         .executors
         .get(&pathlike_implementation)
         .expect("weighting executor");
+    let complete_data = executor
+        .complete_data_result
+        .lock()
+        .expect("complete-data result lock");
+    let complete_data = complete_data
+        .as_ref()
+        .expect("T18 replay mints T19 complete-data result");
+    assert_eq!(
+        complete_data.completion().sample_count(),
+        executor.weighted_sample_count.load(Ordering::SeqCst) as u64
+    );
+    assert_eq!(
+        complete_data.completion().block_count(),
+        complete_data.completion().sample_count()
+    );
+    assert_eq!(complete_data.primitives().shape(), [8, 8]);
+    assert!(complete_data.primitives().sum_weight() > 0.0);
     assert!(executor.weighting_reconciled.load(Ordering::SeqCst));
     assert!(executor.weighting_released.load(Ordering::SeqCst));
     assert!(!executor.weighting_cleanup_released.load(Ordering::SeqCst));
