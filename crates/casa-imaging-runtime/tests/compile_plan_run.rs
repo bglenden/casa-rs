@@ -24,13 +24,15 @@ use casa_imaging_model::{
     ObservationSourceState, ObservationTransactionId, ObservationTransactionRequirements,
     PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic,
     PointingExtrapolation, PointingInterpolation, PointingTimeSampling, PolarizationContract,
-    PolarizationCoordinate, ProblemSpecification, ProductKind, ProductNormalization,
-    ProductRequirements, Projection, ReconstructionAlgorithm, ReconstructionBasis,
-    ReconstructionContract, ReconstructionControls, ReductionPolicy, ReferenceDataKind,
-    RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection, SpectralContract,
-    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSampling, SpectralWcs,
-    StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct, WeightDensityScope,
-    WeightingContract, WeightingScheme, compile,
+    PolarizationCoordinate, PreparedArtifactAwInterpretation, PreparedArtifactCellSemantics,
+    PreparedArtifactKernelAlgorithm, PreparedArtifactKernelSemantics,
+    PreparedArtifactScientificIdentity, PreparedArtifactSpectralMapSemantics, ProblemSpecification,
+    ProductKind, ProductNormalization, ProductRequirements, Projection, ReconstructionAlgorithm,
+    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
+    ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection,
+    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
+    SpectralSampling, SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct,
+    WeightDensityScope, WeightingContract, WeightingScheme, compile,
 };
 use casa_imaging_reconstruction::ExecutableModelProblem;
 use casa_imaging_runtime::{
@@ -41,7 +43,7 @@ use casa_imaging_runtime::{
     CapacityViewId, ClaimLifetime, CompiledProblemEvidence, CountDemand, CpuClassCapacity,
     DemandAlternative, DemandEnvelope, ExecutionDag, ExecutionDagSpecification, ExecutionError,
     ExecutionEvidenceError, ExecutionKnobs, ExecutionOutcome, ExecutionPlanId, ExecutionProvenance,
-    ExecutionReceiptBinding, ExecutionReceiptStore, ExecutionRouteDisposition,
+    ExecutionReceipt, ExecutionReceiptBinding, ExecutionReceiptStore, ExecutionRouteDisposition,
     ExecutionRouteEvidence, ExecutionRouteRequirement, ExecutionRouteRequirementKind,
     ExecutionStatus, ExternalPressure, FenceId, FenceKind, HostInventory, ImplementationRegistry,
     ImplementationRegistryId, InitializationPolicy, IoBufferDemand, IoBufferKind, IoMeasurement,
@@ -50,16 +52,22 @@ use casa_imaging_runtime::{
     ObservationTransactionWork, PhysicalLayoutId, PhysicalSlot, PhysicalSlotId,
     PhysicalWorkBinding, PhysicalWorkBindingError, PlanError, PlanPrediction, PlannedArtifact,
     PlannerCostModelProfileId, PlanningBindings, PredictionConfidence, PredictionUncertainty,
-    PublicationLayoutLedger, PublicationMappedStaging, PublicationParticipant,
-    PublicationPhysicalLayout, PublicationResourceBounds, PublicationStaging, QueueDemand,
-    QueueResource, QueueResourceId, QuiescencePoint, RateDemand, RateResource, RateResourceId,
-    RateUnit, ReceiptFailureKind, ReceiptRetention, ReceiptStatus, RedactedPath, ResourceAuthority,
-    ResourceClaim, ResourceError, ResourceHeadroom, ResourceMeasurement, ResourceOverride,
-    ResourcePolicy, ResourceTopology, RunBindings, RunController, RunDirective, RunError,
-    RunToCompletion, RuntimeOverheadDemand, ScalingMetadata, SlotCompatibility, StagePrediction,
-    StorageDomain, StorageDomainId, StorageMode, WorkDependency, WorkDomain, WorkExecutionContext,
-    WorkImplementation, WorkImplementationId, WorkKind, WorkMeasurements, WorkNode, WorkNodeId,
-    plan as runtime_plan, run as runtime_run,
+    PreparedArtifactBudget, PreparedArtifactDescriptor, PreparedArtifactError,
+    PreparedArtifactLoadSource, PreparedArtifactOperation, PreparedArtifactOrder,
+    PreparedArtifactPlanFragment, PreparedArtifactPlaneDescriptor, PreparedArtifactPrecision,
+    PreparedArtifactRegistration, PreparedArtifactRejection, PreparedArtifactReuseOutcome,
+    PreparedArtifactSegmentDescriptor, PreparedArtifactSourceSegment, PreparedArtifactStore,
+    PreparedArtifactUvAffine, PublicationLayoutLedger, PublicationMappedStaging,
+    PublicationParticipant, PublicationPhysicalLayout, PublicationResourceBounds,
+    PublicationStaging, QueueDemand, QueueResource, QueueResourceId, QuiescencePoint, RateDemand,
+    RateResource, RateResourceId, RateUnit, ReceiptFailureKind, ReceiptRetention, ReceiptStatus,
+    RedactedPath, ResourceAuthority, ResourceClaim, ResourceError, ResourceHeadroom,
+    ResourceMeasurement, ResourceOverride, ResourcePolicy, ResourceTopology, RunBindings,
+    RunController, RunDirective, RunError, RunToCompletion, RuntimeOverheadDemand, ScalingMetadata,
+    SlotCompatibility, StagePrediction, StorageDomain, StorageDomainId, StorageMode,
+    StorageUseKind, WorkDependency, WorkDomain, WorkExecutionContext, WorkImplementation,
+    WorkImplementationId, WorkKind, WorkMeasurements, WorkNode, WorkNodeId, plan as runtime_plan,
+    run as runtime_run,
 };
 use casa_ms::{
     BoundSelectedObservation, ObservationSourceBinding, SelectedObservationCompletion,
@@ -535,6 +543,17 @@ fn implementation(byte: u8) -> WorkImplementationId {
     WorkImplementationId::new(format!("test-cpu-{byte}"))
 }
 
+fn artifact_measurement(
+    planned: ArtifactIdentity,
+    observed: Option<ArtifactIdentity>,
+    disposition: ArtifactDisposition,
+    bytes: u64,
+    path: Option<RedactedPath>,
+) -> ArtifactMeasurement {
+    ArtifactMeasurement::new(planned, observed, disposition, bytes, path)
+        .expect("test adapters only report externally constructible artifact dispositions")
+}
+
 fn recording_executor(
     byte: u8,
     failure: Option<&'static str>,
@@ -783,10 +802,18 @@ impl WorkImplementation for RecordingExecutor {
                         1,
                         None,
                     )
+                    .expect("publication evidence is externally constructible")
                 })
                 .collect();
         }
         Ok(WorkMeasurements::new(resources, io, artifacts))
+    }
+
+    fn failure_measurements<'error>(
+        &'error self,
+        _error: &'error Self::Error,
+    ) -> Option<&'error WorkMeasurements> {
+        None
     }
 
     fn wait_for_fence(
@@ -2621,16 +2648,18 @@ fn runtime_inventory(available_locks: u64) -> HostInventory {
     let domain = CapacityDomainId::new("host-memory");
     let view = CapacityViewId::new("host-memory");
     let rate = RateResourceId::new("io-rate");
+    let operations_rate = RateResourceId::new("io-operations-rate");
     let queue = QueueResourceId::new("io-queue");
     let transaction_rate = RateResourceId::new("transaction-io-rate");
     let transaction_queue = QueueResourceId::new("transaction-io-queue");
     let storage = StorageDomainId::new("atomic-output");
+    let source_storage = StorageDomainId::new("prepared-source-secondary");
     HostInventory {
         topology: ResourceTopology {
             memory_domains: vec![MemoryCapacityDomain {
                 id: domain.clone(),
                 kind: MemoryCapacityKind::Host,
-                capacity_bytes: 1_024,
+                capacity_bytes: 1_048_576,
             }],
             memory_views: vec![MemoryView {
                 id: view,
@@ -2639,37 +2668,56 @@ fn runtime_inventory(available_locks: u64) -> HostInventory {
             }],
             accelerators: Vec::new(),
             transfer_links: Vec::new(),
-            storage_domains: vec![StorageDomain {
-                id: storage.clone(),
-                root: PathBuf::from("/tmp/casa-rs-imaging-runtime-tests"),
-                capacity_bytes: 1_024,
-                read_rate: rate.clone(),
-                write_rate: rate.clone(),
-                operations_rate: None,
-                queue: queue.clone(),
-            }],
+            storage_domains: vec![
+                StorageDomain {
+                    id: storage.clone(),
+                    root: PathBuf::from("/tmp/casa-rs-imaging-runtime-tests"),
+                    capacity_bytes: 1_048_576,
+                    read_rate: rate.clone(),
+                    write_rate: rate.clone(),
+                    operations_rate: Some(operations_rate.clone()),
+                    queue: queue.clone(),
+                },
+                StorageDomain {
+                    id: source_storage.clone(),
+                    root: PathBuf::from("/tmp/casa-rs-imaging-runtime-source-tests"),
+                    capacity_bytes: 1_048_576,
+                    read_rate: rate.clone(),
+                    write_rate: rate.clone(),
+                    operations_rate: Some(operations_rate.clone()),
+                    queue: queue.clone(),
+                },
+            ],
             rate_resources: vec![
                 RateResource::new(rate.clone(), RateUnit::BytesPerSecond, 16),
+                RateResource::new(operations_rate.clone(), RateUnit::OperationsPerSecond, 16),
                 RateResource::new(transaction_rate.clone(), RateUnit::BytesPerSecond, 16),
             ],
             queue_resources: vec![
-                QueueResource::new(queue.clone(), 4),
+                QueueResource::new(queue.clone(), 8),
                 QueueResource::new(transaction_queue.clone(), 4),
             ],
             logical_cpu_threads: 4,
             performance_cpu_cores: CpuClassCapacity::Known(4),
-            cache_capacity_bytes: 1_024,
+            cache_capacity_bytes: 1_048_576,
             lock_capacity: 4,
             file_descriptor_capacity: 16,
         },
         pressure: ExternalPressure {
-            memory_available_bytes: BTreeMap::from([(domain, 1_024)]),
+            memory_available_bytes: BTreeMap::from([(domain, 1_048_576)]),
             available_cpu_threads: 4,
-            storage_available_bytes: BTreeMap::from([(storage, 1_024)]),
-            rate_available_per_second: BTreeMap::from([(rate, 16), (transaction_rate, 16)]),
-            queue_available_slots: BTreeMap::from([(queue, 4), (transaction_queue, 4)]),
+            storage_available_bytes: BTreeMap::from([
+                (storage, 1_048_576),
+                (source_storage, 1_048_576),
+            ]),
+            rate_available_per_second: BTreeMap::from([
+                (rate, 16),
+                (operations_rate, 16),
+                (transaction_rate, 16),
+            ]),
+            queue_available_slots: BTreeMap::from([(queue, 8), (transaction_queue, 4)]),
             accelerator_available_slots: BTreeMap::new(),
-            cache_available_bytes: 1_024,
+            cache_available_bytes: 1_048_576,
             available_locks,
             available_file_descriptors: 16,
         },
@@ -3081,14 +3129,8 @@ fn run_rejects_artifact_dispositions_that_contradict_plan_semantics() {
         (
             vec![IoMeasurement::new(IoBufferKind::SourceReadAhead, 4_096, 2)],
             vec![
-                ArtifactMeasurement::new(
-                    input,
-                    Some(input),
-                    ArtifactDisposition::Staged,
-                    4_096,
-                    None,
-                ),
-                ArtifactMeasurement::new(cache, None, ArtifactDisposition::RejectedStale, 0, None),
+                artifact_measurement(input, Some(input), ArtifactDisposition::Staged, 4_096, None),
+                artifact_measurement(cache, Some(cache), ArtifactDisposition::Reused, 0, None),
             ],
         ),
     )]);
@@ -4694,21 +4736,37 @@ fn transaction_failures_leave_the_old_generation_visible() {
         )]),
     };
     let mut completion = RunToCompletion;
+    let admission_receipts_directory = tempfile::tempdir().expect("admission receipt directory");
+    let admission_receipts = ExecutionReceiptStore::new(
+        admission_receipts_directory.path(),
+        ReceiptRetention::new(8, 1_048_576).expect("admission receipt retention"),
+    )
+    .expect("admission receipt store");
+    let pressure_guard = run_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     authority()
         .update_external_pressure(runtime_inventory(0).pressure)
         .expect("install zero-lock external pressure");
 
-    let result = run(
-        &problem,
+    let executable =
+        ExecutableModelProblem::from_compiled(problem.clone()).expect("direct executable problem");
+    let result = runtime_run(
+        &executable,
         &execution_plan,
         &current,
         &admission_registry,
         authority(),
         &mut completion,
+        admission_receipts.bind(execution_provenance(
+            casa_imaging_runtime::ExecutionAttemptId::from_sha256([243; 32]),
+            BuildIdentity::from_sha256([244; 32]),
+        )),
     );
     authority()
         .update_external_pressure(runtime_inventory(4).pressure)
         .expect("restore external pressure");
+    drop(pressure_guard);
     let error = result.expect_err("resource admission must fail before transaction work");
 
     assert!(matches!(
@@ -5376,7 +5434,7 @@ fn receipt_reopens_the_complete_selected_plan_projection() {
         WorkNodeId::new("first-major-work"),
         (
             Vec::new(),
-            vec![ArtifactMeasurement::new(
+            vec![artifact_measurement(
                 cache_artifact,
                 Some(cache_artifact),
                 ArtifactDisposition::Built,
@@ -5586,17 +5644,17 @@ fn receipt_compares_planned_and_actual_io_artifacts_and_never_persists_paths() {
             (
                 vec![IoMeasurement::new(IoBufferKind::SourceReadAhead, 4_096, 2)],
                 vec![
-                    ArtifactMeasurement::new(
+                    artifact_measurement(
                         input,
                         Some(input),
                         ArtifactDisposition::Loaded,
                         4_096,
                         Some(input_path),
                     ),
-                    ArtifactMeasurement::new(
+                    artifact_measurement(
                         cache,
-                        Some(ArtifactIdentity::from_sha256([35; 32])),
-                        ArtifactDisposition::RejectedStale,
+                        Some(cache),
+                        ArtifactDisposition::Reused,
                         1_024,
                         None,
                     ),
@@ -5607,7 +5665,7 @@ fn receipt_compares_planned_and_actual_io_artifacts_and_never_persists_paths() {
             WorkNodeId::new("transaction-commit"),
             (
                 vec![IoMeasurement::new(IoBufferKind::Publication, 2_048, 1)],
-                vec![ArtifactMeasurement::new(
+                vec![artifact_measurement(
                     output,
                     Some(ArtifactIdentity::from_sha256([36; 32])),
                     ArtifactDisposition::Staged,
@@ -5680,7 +5738,7 @@ fn receipt_compares_planned_and_actual_io_artifacts_and_never_persists_paths() {
     );
     assert_eq!(
         receipt.artifact_disposition(cache),
-        Some(ArtifactDisposition::RejectedStale)
+        Some(ArtifactDisposition::Reused)
     );
     assert_eq!(
         receipt.artifact_cache_identity(cache),
@@ -5737,20 +5795,14 @@ fn failed_publication_fence_never_records_a_published_output() {
             (
                 vec![IoMeasurement::new(IoBufferKind::SourceReadAhead, 4_096, 2)],
                 vec![
-                    ArtifactMeasurement::new(
+                    artifact_measurement(
                         input,
                         Some(input),
                         ArtifactDisposition::Loaded,
                         4_096,
                         None,
                     ),
-                    ArtifactMeasurement::new(
-                        cache,
-                        None,
-                        ArtifactDisposition::RejectedStale,
-                        0,
-                        None,
-                    ),
+                    artifact_measurement(cache, Some(cache), ArtifactDisposition::Reused, 0, None),
                 ],
             ),
         ),
@@ -5758,7 +5810,7 @@ fn failed_publication_fence_never_records_a_published_output() {
             WorkNodeId::new("transaction-commit"),
             (
                 vec![IoMeasurement::new(IoBufferKind::Publication, 2_048, 1)],
-                vec![ArtifactMeasurement::new(
+                vec![artifact_measurement(
                     output,
                     Some(staged_output),
                     ArtifactDisposition::Staged,
@@ -5998,3 +6050,6 @@ fn receipts_preserve_typed_terminal_outcomes_and_every_node_state() {
         Some(ReceiptStatus::NotStarted)
     );
 }
+
+#[path = "compile_plan_run/prepared_artifact.rs"]
+mod prepared_artifact;

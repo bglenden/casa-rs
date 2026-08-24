@@ -354,13 +354,16 @@ fn synthetic_adapter_cannot_report_unlisted_work() {
         WorkNodeId::new("execute"),
         (
             Vec::new(),
-            vec![ArtifactMeasurement::new(
-                unlisted,
-                Some(unlisted),
-                ArtifactDisposition::Built,
-                1,
-                None,
-            )],
+            vec![
+                ArtifactMeasurement::new(
+                    unlisted,
+                    Some(unlisted),
+                    ArtifactDisposition::Built,
+                    1,
+                    None,
+                )
+                .expect("built artifact evidence is externally constructible"),
+            ],
         ),
     );
     let registry = TestRegistry {
