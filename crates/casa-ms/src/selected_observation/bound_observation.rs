@@ -18,6 +18,7 @@ use super::{
     BoundObservationSamples, BoundObservationSource, BoundObservationSourceError,
     SelectedObservationContentBudget, SelectedObservationMeasures,
     SelectedObservationMeasuresError, content_plan::SelectedObservationSharedBytes,
+    spectral_contributions::SelectedObservationTraversalSample,
 };
 
 /// One current storage-owner state probe and bounded-content budget.
@@ -29,6 +30,116 @@ use super::{
 pub struct ObservationSourceBinding {
     current_state: ObservationSourceState,
     content_budget: SelectedObservationContentBudget,
+}
+
+/// Opaque storage-owner certificate for one complete selected-observation residency contract.
+///
+/// The certificate is derived only from the compiler's canonical source set and
+/// every source binding supplied to [`BoundSelectedObservation::open`]. Callers
+/// can inspect the aggregate hard bound and peak queue depth needed by a
+/// scheduler, but cannot construct or alter the per-source facts that bind those
+/// values to the retained owner.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SelectedObservationResidencyCertificate {
+    identity: BoundSelectedObservationIdentity,
+    sources: Vec<SelectedObservationSourceResidency>,
+    aggregate_resident_bytes: usize,
+    peak_live_blocks: usize,
+    maximum_pointing_polynomial_terms: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SelectedObservationSourceResidency {
+    measurement_set: MeasurementSetIdentity,
+    content_budget: SelectedObservationContentBudget,
+}
+
+impl SelectedObservationResidencyCertificate {
+    fn mint(
+        problem: &CompiledProblem,
+        bindings: &[ObservationSourceBinding],
+    ) -> Result<Self, BoundSelectedObservationError> {
+        let expected = problem.inputs().observation_snapshot().sources();
+        if bindings.len() != expected.len() {
+            return Err(BoundSelectedObservationError::BindingSetMismatch);
+        }
+        let mut aggregate_resident_bytes = 0_usize;
+        let mut peak_live_blocks = 0_usize;
+        let mut maximum_pointing_polynomial_terms = 0_usize;
+        let mut sources = Vec::with_capacity(expected.len());
+        for source in expected {
+            let measurement_set = source.identity();
+            let mut matches = bindings
+                .iter()
+                .filter(|binding| binding.measurement_set() == measurement_set);
+            let Some(binding) = matches.next() else {
+                return Err(BoundSelectedObservationError::MissingSourceBinding {
+                    measurement_set,
+                });
+            };
+            if matches.next().is_some() {
+                return Err(BoundSelectedObservationError::DuplicateSourceBinding {
+                    measurement_set,
+                });
+            }
+            let content_budget = binding.content_budget();
+            aggregate_resident_bytes = aggregate_resident_bytes
+                .checked_add(content_budget.available_bytes())
+                .ok_or(BoundSelectedObservationError::ResidencyByteOverflow)?;
+            peak_live_blocks = peak_live_blocks.max(content_budget.maximum_live_blocks());
+            maximum_pointing_polynomial_terms = maximum_pointing_polynomial_terms
+                .max(content_budget.maximum_pointing_polynomial_terms());
+            sources.push(SelectedObservationSourceResidency {
+                measurement_set,
+                content_budget,
+            });
+        }
+        Ok(Self {
+            identity: BoundSelectedObservationIdentity::from_problem(problem),
+            sources,
+            aggregate_resident_bytes,
+            peak_live_blocks,
+            maximum_pointing_polynomial_terms,
+        })
+    }
+
+    /// Return the aggregate hard byte ceiling across every retained source owner.
+    #[must_use]
+    pub const fn aggregate_resident_bytes(&self) -> usize {
+        self.aggregate_resident_bytes
+    }
+
+    /// Return the peak simultaneously live selected-content block count.
+    ///
+    /// Sources are traversed serially in canonical order, so this is the maximum
+    /// source-local queue depth rather than the sum of mutually exclusive depths.
+    #[must_use]
+    pub const fn peak_live_blocks(&self) -> usize {
+        self.peak_live_blocks
+    }
+
+    /// Return the largest source-local POINTING polynomial term ceiling.
+    #[must_use]
+    pub const fn maximum_pointing_polynomial_terms(&self) -> usize {
+        self.maximum_pointing_polynomial_terms
+    }
+
+    /// Return the exact source-local budget certified for one logical MeasurementSet.
+    #[must_use]
+    pub fn content_budget(
+        &self,
+        measurement_set: MeasurementSetIdentity,
+    ) -> Option<SelectedObservationContentBudget> {
+        self.sources.iter().find_map(|source| {
+            (source.measurement_set == measurement_set).then_some(source.content_budget)
+        })
+    }
+
+    /// Return whether this certificate belongs to the supplied compiled problem.
+    #[must_use]
+    pub fn matches_problem(&self, problem: &CompiledProblem) -> bool {
+        self.identity.matches(problem)
+    }
 }
 
 impl ObservationSourceBinding {
@@ -70,6 +181,7 @@ impl ObservationSourceBinding {
 /// ```
 pub struct BoundSelectedObservation {
     identity: BoundSelectedObservationIdentity,
+    residency: SelectedObservationResidencyCertificate,
     measures: SelectedObservationMeasures,
     sources: Vec<BoundObservationSource>,
     access_binding: u64,
@@ -77,6 +189,18 @@ pub struct BoundSelectedObservation {
 }
 
 impl BoundSelectedObservation {
+    /// Mint the opaque aggregate residency contract for a complete source-binding set.
+    ///
+    /// The same canonical derivation is repeated and retained by [`Self::open`],
+    /// allowing a scheduler to plan before opening while execution still fails
+    /// closed if a different owner or budget set is later supplied.
+    pub fn certify_residency(
+        problem: &CompiledProblem,
+        bindings: &[ObservationSourceBinding],
+    ) -> Result<SelectedObservationResidencyCertificate, BoundSelectedObservationError> {
+        SelectedObservationResidencyCertificate::mint(problem, bindings)
+    }
+
     /// Open every compiled source under its fresh state probe and content budget.
     ///
     /// Caller plan order is irrelevant. Sources are retained and replayed only in the compiler's
@@ -88,6 +212,7 @@ impl BoundSelectedObservation {
         mut bindings: Vec<ObservationSourceBinding>,
     ) -> Result<Self, BoundSelectedObservationError> {
         measures.validate_problem(problem)?;
+        let residency = SelectedObservationResidencyCertificate::mint(problem, &bindings)?;
         let expected = problem.inputs().observation_snapshot().sources();
         if bindings.len() != expected.len() {
             return Err(BoundSelectedObservationError::BindingSetMismatch);
@@ -173,6 +298,7 @@ impl BoundSelectedObservation {
             .map_err(|_| BoundSelectedObservationError::AccessIdentityExhausted)?;
         Ok(Self {
             identity: BoundSelectedObservationIdentity::from_problem(problem),
+            residency,
             measures,
             sources,
             access_binding,
@@ -184,6 +310,25 @@ impl BoundSelectedObservation {
     #[must_use]
     pub const fn problem_id(&self) -> CompiledProblemId {
         self.identity.problem_id
+    }
+
+    /// Return the exact aggregate residency certificate retained by this owner.
+    #[must_use]
+    pub const fn residency_certificate(&self) -> &SelectedObservationResidencyCertificate {
+        &self.residency
+    }
+
+    /// Return whether this retained owner is poised for the traversal immediately after `prior`.
+    ///
+    /// This proves access-binding continuity without exposing the process-local binding identity.
+    #[must_use]
+    pub fn can_resume_after(&self, prior: &SelectedObservationCompletion) -> bool {
+        self.access_binding == prior.access_binding
+            && self.identity.problem_id == prior.problem_id
+            && self.identity.observation_snapshot_id == prior.observation_snapshot_id
+            && self.identity.observation_provenance_id == prior.observation_provenance_id
+            && self.identity.commitment_id == prior.commitment_id
+            && prior.traversal.checked_add(1) == Some(self.next_traversal)
     }
 
     #[cfg(test)]
@@ -227,7 +372,7 @@ impl BoundSelectedObservation {
     pub fn traverse<E>(
         &mut self,
         problem: &CompiledProblem,
-        mut consume: impl FnMut(SelectedObservationSample) -> Result<(), E>,
+        mut consume: impl FnMut(SelectedObservationTraversalSample) -> Result<(), E>,
     ) -> Result<SelectedObservationCompletion, SelectedObservationTraversalError<E>>
     where
         E: Error + 'static,
@@ -240,8 +385,23 @@ impl BoundSelectedObservation {
         let samples = self
             .selected_samples(problem)
             .map_err(SelectedObservationTraversalError::Binding)?;
-        let (generation_id, sample_count) =
-            consume_validated_stream(problem, samples, &mut consume)?;
+        let sources = &self.sources;
+        let (generation_id, sample_count) = consume_projected_validated_stream(
+            problem,
+            samples,
+            |sample| {
+                let source = sources
+                    .iter()
+                    .find(|source| source.source_identity() == sample.address.measurement_set)
+                    .ok_or(BoundObservationSourceError::ProblemSourceMismatch)?;
+                SelectedObservationTraversalSample::from_owner(
+                    problem,
+                    sample,
+                    source.geometry_engine(),
+                )
+            },
+            &mut consume,
+        )?;
         self.next_traversal = next_traversal;
         Ok(SelectedObservationCompletion {
             problem_id: problem.problem_id(),
@@ -256,6 +416,7 @@ impl BoundSelectedObservation {
     }
 }
 
+#[cfg(test)]
 pub(super) fn consume_validated_stream<E>(
     problem: &CompiledProblem,
     samples: impl Iterator<Item = Result<SelectedObservationSample, BoundObservationSourceError>>,
@@ -264,11 +425,24 @@ pub(super) fn consume_validated_stream<E>(
 where
     E: Error + 'static,
 {
+    consume_projected_validated_stream(problem, samples, Ok, &mut consume)
+}
+
+fn consume_projected_validated_stream<E, T>(
+    problem: &CompiledProblem,
+    samples: impl Iterator<Item = Result<SelectedObservationSample, BoundObservationSourceError>>,
+    mut project: impl FnMut(SelectedObservationSample) -> Result<T, BoundObservationSourceError>,
+    mut consume: impl FnMut(T) -> Result<(), E>,
+) -> Result<(SelectedObservationGenerationId, u64), SelectedObservationTraversalError<E>>
+where
+    E: Error + 'static,
+{
     // Iterator exhaustion performs the terminal poll before completion can be
     // minted; a terminal source error is therefore observed as an item.
     let samples = samples.map(|sample| sample.map_err(TraversalPassError::Source));
-    match problem.inspect_selected_observation(samples, |sample| {
-        consume(sample).map_err(TraversalPassError::Consumer)
+    match problem.inspect_selected_observation(samples, |sample| match project(sample) {
+        Ok(projected) => consume(projected).map_err(TraversalPassError::Consumer),
+        Err(error) => Err(TraversalPassError::Source(error)),
     }) {
         Ok(completion) => Ok(completion),
         Err(SelectedObservationPassError::Inspection(error)) => {
@@ -509,4 +683,7 @@ pub enum BoundSelectedObservationError {
     /// The consumed source-binding graph exceeded the host byte domain.
     #[error("selected-observation binding-graph byte projection overflowed")]
     BindingGraphByteOverflow,
+    /// Aggregate selected-source residency exceeded the host byte domain.
+    #[error("selected-observation aggregate residency projection overflowed")]
+    ResidencyByteOverflow,
 }

@@ -1907,16 +1907,16 @@ impl ResourceLease {
         Ok(LeaseRelease { released })
     }
 
-    /// Retains only physical-memory permits whose external release could not
-    /// be proven, while releasing every other reservation owned by this run.
-    pub(crate) fn quarantine_memory_permits(
+    /// Retains only physical memory and source-handle permits whose external
+    /// release could not be proven, while releasing every other reservation.
+    pub(crate) fn quarantine_external_permits(
         mut self,
         mut permits: Vec<ResourcePermit>,
     ) -> Result<(), ResourceError> {
         let result = (|| {
             if permits.is_empty() {
                 return Err(ResourceError::Invalid(
-                    "memory quarantine requires at least one retained permit".to_string(),
+                    "external quarantine requires at least one retained permit".to_string(),
                 ));
             }
             let mut retained_consumption = BTreeMap::<LeaseResource, u64>::new();
@@ -1927,56 +1927,73 @@ impl ResourceLease {
                     || !Arc::ptr_eq(&permit.inner, &self.inner)
                 {
                     return Err(ResourceError::Invalid(
-                        "memory quarantine received a permit from another or released lease"
+                        "external quarantine received a permit from another or released lease"
                             .to_string(),
                     ));
                 }
-                let LeaseResource::Memory { allocation_id } = &permit.resource else {
-                    return Err(ResourceError::Invalid(
-                        "only physical memory permits may be quarantined".to_string(),
-                    ));
-                };
-                let memory = self
-                    .alternative
-                    .demand
-                    .memory
-                    .iter()
-                    .find(|memory| &memory.allocation_id == allocation_id)
-                    .ok_or_else(|| {
-                        ResourceError::Invalid(format!(
-                            "quarantined allocation {allocation_id} is absent from lease demand"
-                        ))
-                    })?;
-                if permit.amount > memory.hard_bytes {
-                    return Err(ResourceError::Invalid(format!(
-                        "quarantined allocation {allocation_id} exceeds its hard memory demand"
-                    )));
-                }
-                let domains = memory
-                    .views
-                    .iter()
-                    .map(|view_id| {
-                        self.inner
-                            .topology
-                            .memory_views
+                match &permit.resource {
+                    LeaseResource::Memory { allocation_id } => {
+                        let memory = self
+                            .alternative
+                            .demand
+                            .memory
                             .iter()
-                            .find(|view| &view.id == view_id)
-                            .map(|view| view.domain.clone())
+                            .find(|memory| &memory.allocation_id == allocation_id)
                             .ok_or_else(|| {
                                 ResourceError::Invalid(format!(
-                                    "quarantined allocation {allocation_id} references unknown memory view {}",
-                                    view_id.as_str()
+                                    "quarantined allocation {allocation_id} is absent from lease demand"
                                 ))
+                            })?;
+                        if permit.amount > memory.hard_bytes {
+                            return Err(ResourceError::Invalid(format!(
+                                "quarantined allocation {allocation_id} exceeds its hard memory demand"
+                            )));
+                        }
+                        let domains = memory
+                            .views
+                            .iter()
+                            .map(|view_id| {
+                                self.inner
+                                    .topology
+                                    .memory_views
+                                    .iter()
+                                    .find(|view| &view.id == view_id)
+                                    .map(|view| view.domain.clone())
+                                    .ok_or_else(|| {
+                                        ResourceError::Invalid(format!(
+                                            "quarantined allocation {allocation_id} references unknown memory view {}",
+                                            view_id.as_str()
+                                        ))
+                                    })
                             })
-                    })
-                    .collect::<Result<BTreeSet<_>, _>>()?;
-                for domain in domains {
-                    add_map_bytes(
-                        &mut retained_reservation.memory_bytes,
-                        domain,
-                        permit.amount,
-                        "quarantined memory",
-                    )?;
+                            .collect::<Result<BTreeSet<_>, _>>()?;
+                        for domain in domains {
+                            add_map_bytes(
+                                &mut retained_reservation.memory_bytes,
+                                domain,
+                                permit.amount,
+                                "quarantined memory",
+                            )?;
+                        }
+                    }
+                    LeaseResource::MeasurementSetLock { .. } => {
+                        retained_reservation.locks = retained_reservation
+                            .locks
+                            .checked_add(permit.amount)
+                            .ok_or(ResourceError::Overflow("quarantined locks"))?;
+                    }
+                    LeaseResource::FileDescriptors => {
+                        retained_reservation.file_descriptors = retained_reservation
+                            .file_descriptors
+                            .checked_add(permit.amount)
+                            .ok_or(ResourceError::Overflow("quarantined file descriptors"))?;
+                    }
+                    _ => {
+                        return Err(ResourceError::Invalid(
+                            "only physical memory, MeasurementSet locks, and file descriptors may be quarantined"
+                                .to_string(),
+                        ));
+                    }
                 }
                 let amount = retained_consumption
                     .entry(permit.accounting_resource.clone())
@@ -1995,7 +2012,7 @@ impl ResourceLease {
             })?;
             if record.consumed != retained_consumption {
                 return Err(ResourceError::Invalid(
-                    "memory quarantine requires every other resource permit to be released"
+                    "external quarantine requires every other resource permit to be released"
                         .to_string(),
                 ));
             }

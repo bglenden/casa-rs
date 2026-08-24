@@ -41,18 +41,20 @@ use sha2::{Digest, Sha256};
 use tempfile::NamedTempFile;
 
 use crate::{
-    AdaptationId, AdaptationTransition, AllocationId, AllocationPurpose, ArtifactDisposition,
-    ArtifactIdentity, ArtifactMeasurement, ArtifactRole, CacheIdentity, CapabilityId,
-    ClaimLifetime, DemandAlternative, ExecutionKnobs, ExecutionPlan, FenceId, FenceKind,
-    InitializationPolicy, IoBufferKind, LeaseResource, PhysicalLayoutId, PhysicalSlotId,
-    PublicationParticipant, PublicationResourceBounds, QuiescencePoint, ResourceIdentity,
-    ResourcePolicy, StorageMode, WorkDependency, WorkDomain, WorkImplementationId, WorkKind,
-    WorkMeasurements, WorkNodeId,
+    AdaptationId, AdaptationTransition, AllocationAccess, AllocationId, AllocationLayout,
+    AllocationLifetime, AllocationPurpose, AllocationUse, ArtifactDisposition, ArtifactIdentity,
+    ArtifactMeasurement, ArtifactRole, CacheIdentity, CapabilityId, CapacityDomainId,
+    CapacityViewId, ClaimLifetime, DemandAlternative, ExecutionDag, ExecutionDagSpecification,
+    ExecutionKnobs, ExecutionPlan, FenceId, FenceKind, InitializationPolicy, IoBufferKind,
+    LeaseResource, LogicalAllocation, PhysicalLayoutId, PhysicalSlot, PhysicalSlotId,
+    PublicationParticipant, PublicationResourceBounds, QuiescencePoint, ResourceClaim,
+    ResourceIdentity, ResourcePolicy, SlotCompatibility, StorageMode, WorkDependency, WorkDomain,
+    WorkImplementationId, WorkKind, WorkMeasurements, WorkNode, WorkNodeId,
 };
 
 const RECEIPT_SCHEMA: &str = "casa-rs-imaging-execution-receipt";
 const RECEIPT_SCHEMA_VERSION: u32 = 14;
-const COMPILED_PROBLEM_EVIDENCE_VERSION: u32 = 7;
+const COMPILED_PROBLEM_EVIDENCE_VERSION: u32 = 9;
 const RECEIPT_SUFFIX: &str = ".receipt.json";
 const RECEIPT_STAGING_PREFIX: &str = ".casa-rs-receipt-staging-";
 const RECEIPT_STAGING_SUFFIX: &str = ".tmp";
@@ -867,7 +869,11 @@ impl ExecutionReceipt {
         parse_digest(&self.body.plan.cost_model_identity)
     }
 
-    /// Return the complete physical DAG identity.
+    /// Return the identity of the complete canonical DAG projection persisted here.
+    ///
+    /// This equals the execution DAG identity when no identifier needs path
+    /// redaction. Otherwise it binds the irreversibly redacted typed DAG that
+    /// can be reconstructed from this receipt.
     #[must_use]
     pub fn dag_identity(&self) -> [u8; 32] {
         parse_digest(&self.body.plan.dag_identity)
@@ -1549,7 +1555,7 @@ impl ExecutionReceiptStore {
         problem: &CompiledProblem,
         plan: &ExecutionPlan,
     ) -> Result<ReceiptRecorder<'store>, ReceiptError> {
-        let body = ReceiptBody::new(provenance, problem, plan);
+        let body = ReceiptBody::new(provenance, problem, plan)?;
         self.persist(&body, true)?;
         Ok(ReceiptRecorder {
             store: self,
@@ -1769,9 +1775,9 @@ impl ReceiptBody {
         provenance: ExecutionProvenance,
         problem: &CompiledProblem,
         plan: &ExecutionPlan,
-    ) -> Self {
+    ) -> Result<Self, ReceiptError> {
         let route = RouteProjection::new(provenance.route());
-        Self {
+        Ok(Self {
             attempt_identity: provenance.attempt.to_string(),
             build_identity: provenance.build.to_string(),
             route,
@@ -1781,8 +1787,8 @@ impl ReceiptBody {
             status: ReceiptStatus::Running,
             failure: None,
             problem: ProblemProjection::new(problem),
-            plan: PlanProjection::new(plan),
-        }
+            plan: PlanProjection::new(plan)?,
+        })
     }
 
     fn attempt(&self) -> ExecutionAttemptId {
@@ -2644,7 +2650,7 @@ struct PlanProjection {
 }
 
 impl PlanProjection {
-    fn new(plan: &ExecutionPlan) -> Self {
+    fn new(plan: &ExecutionPlan) -> Result<Self, ReceiptError> {
         let dag = plan.execution_dag();
         let nodes = dag
             .nodes()
@@ -2663,9 +2669,9 @@ impl PlanProjection {
                     .map(|kind| FenceProjection::new(&node.id, *kind))
             })
             .collect();
-        Self {
+        let mut projection = Self {
             plan_identity: hex(&plan.plan_id().as_bytes()),
-            dag_identity: hex(&plan.physical_work_id().as_bytes()),
+            dag_identity: String::new(),
             product_graph_identity: hex(&plan.product_graph_id().as_bytes()),
             implementation_registry_identity: hex(&plan.implementation_registry_id().as_bytes()),
             resource_policy_identity: hex(&plan.resource_policy_id().as_bytes()),
@@ -2712,7 +2718,11 @@ impl PlanProjection {
                 .values()
                 .map(AdaptationProjection::new)
                 .collect(),
-        }
+        };
+        projection.dag_identity = hex(&receipt_execution_dag(&projection)?
+            .physical_work_id()
+            .as_bytes());
+        Ok(projection)
     }
 }
 
@@ -4808,6 +4818,12 @@ fn validate_plan_projection(
         .map(|slot| slot.slot_identity.as_str())
         .collect::<BTreeSet<_>>();
     require_integrity(slot_ids.len() == plan.physical_slots.len())?;
+    let release_nodes = plan
+        .nodes
+        .iter()
+        .filter(|node| node.kind == "release")
+        .map(|node| node.node_id.as_str())
+        .collect::<BTreeSet<_>>();
 
     let mut used_allocations = BTreeSet::new();
     for node in &plan.nodes {
@@ -4826,7 +4842,7 @@ fn validate_plan_projection(
                     .all(|event| valid_events.contains(event))
                 && node.allocation_uses.iter().all(|usage| {
                     allocation_ids.contains(usage.generation_identity.as_str())
-                        && claim_lifetime_is_valid(&usage.lifetime)
+                        && allocation_claim_lifetime_is_valid(&usage.lifetime)
                 })
                 && node_allocations.len() == node.allocation_uses.len()
                 && node.fences.iter().all(|kind| fence_kind_is_valid(kind))
@@ -4837,6 +4853,10 @@ fn validate_plan_projection(
                 && node.claims.iter().all(|claim| {
                     is_redacted_text(&claim.resource)
                         && claim_lifetime_is_valid(&claim.lifetime)
+                        && claim
+                            .lifetime
+                            .strip_prefix("retained_until:")
+                            .is_none_or(|release| release_nodes.contains(release))
                         && claim.actual_peak.is_none_or(|peak| {
                             peak <= claim.amount || node.status == ReceiptStatus::Failed
                         })
@@ -5001,7 +5021,123 @@ fn validate_plan_projection(
         }
     }
     require_integrity(plan.prediction.confidence_ppm <= 1_000_000)?;
+    validate_receipt_execution_dag(plan)?;
     Ok(())
+}
+
+fn validate_receipt_execution_dag(plan: &PlanProjection) -> Result<(), ReceiptError> {
+    let dag = receipt_execution_dag(plan)?;
+    require_integrity(hex(&dag.physical_work_id().as_bytes()) == plan.dag_identity)
+}
+
+fn receipt_execution_dag(plan: &PlanProjection) -> Result<ExecutionDag, ReceiptError> {
+    let nodes = plan
+        .nodes
+        .iter()
+        .map(|node| {
+            Ok(WorkNode {
+                id: WorkNodeId::new(node.node_id.clone()),
+                kind: parse_work_kind(&node.kind).ok_or(ReceiptError::IntegrityMismatch)?,
+                domain: parse_work_domain(&node.domain).ok_or(ReceiptError::IntegrityMismatch)?,
+                implementation: WorkImplementationId::new(node.implementation.clone()),
+                dependencies: node
+                    .dependencies
+                    .iter()
+                    .map(|dependency| parse_dependency(dependency))
+                    .collect(),
+                claims: node
+                    .claims
+                    .iter()
+                    .map(|claim| {
+                        Ok(ResourceClaim {
+                            resource: parse_lease_resource(&claim.resource)?,
+                            amount: claim.amount,
+                            lifetime: parse_claim_lifetime(&claim.lifetime),
+                        })
+                    })
+                    .collect::<Result<Vec<_>, ReceiptError>>()?,
+                allocations: node
+                    .allocation_uses
+                    .iter()
+                    .map(|usage| AllocationUse {
+                        allocation: AllocationId::new(usage.generation_identity.clone()),
+                        lifetime: parse_claim_lifetime(&usage.lifetime),
+                    })
+                    .collect(),
+                fences: node
+                    .fences
+                    .iter()
+                    .map(|kind| parse_fence_kind(kind))
+                    .collect(),
+                quiescence_after: node
+                    .quiescence_after
+                    .iter()
+                    .map(|point| parse_quiescence(point))
+                    .collect(),
+            })
+        })
+        .collect::<Result<Vec<_>, ReceiptError>>()?;
+    let logical_allocations = plan
+        .allocation_generations
+        .iter()
+        .map(|allocation| {
+            Ok(LogicalAllocation {
+                id: AllocationId::new(allocation.generation_identity.clone()),
+                bytes: allocation.bytes,
+                purpose: parse_allocation_purpose(&allocation.purpose)
+                    .ok_or(ReceiptError::IntegrityMismatch)?,
+                compatibility: parse_compatibility(&allocation.compatibility)
+                    .ok_or(ReceiptError::IntegrityMismatch)?,
+                physical_slot: PhysicalSlotId::new(allocation.physical_slot.clone()),
+                lifetime: AllocationLifetime {
+                    acquire_at: WorkNodeId::new(allocation.acquire_at.clone()),
+                    release_after: allocation
+                        .release_after
+                        .iter()
+                        .map(|dependency| parse_dependency(dependency))
+                        .collect(),
+                },
+            })
+        })
+        .collect::<Result<Vec<_>, ReceiptError>>()?;
+    let physical_slots = plan
+        .physical_slots
+        .iter()
+        .map(|slot| {
+            Ok(PhysicalSlot {
+                id: PhysicalSlotId::new(slot.slot_identity.clone()),
+                lease_resource: parse_lease_resource(&slot.lease_resource)?,
+                capacity_bytes: slot.capacity_bytes,
+                compatibility: parse_compatibility(&slot.compatibility)
+                    .ok_or(ReceiptError::IntegrityMismatch)?,
+            })
+        })
+        .collect::<Result<Vec<_>, ReceiptError>>()?;
+    let adaptations = plan
+        .adaptations
+        .iter()
+        .map(|adaptation| AdaptationTransition {
+            id: AdaptationId::new(adaptation.adaptation_identity.clone()),
+            from: adaptation.from.to_runtime(),
+            to: adaptation.to.to_runtime(),
+            at: parse_quiescence(&adaptation.quiescence),
+        })
+        .collect();
+    ExecutionDag::new(ExecutionDagSpecification {
+        required_resource_capabilities: plan
+            .required_resource_capabilities
+            .iter()
+            .cloned()
+            .map(CapabilityId::new)
+            .collect(),
+        resource_alternative: plan.selected_alternative.to_runtime(),
+        nodes,
+        logical_allocations,
+        physical_slots,
+        initial_knobs: plan.initial_execution_knobs.to_runtime(),
+        adaptations,
+    })
+    .map_err(|_| ReceiptError::IntegrityMismatch)
 }
 
 fn validate_resource_policy_projection(
@@ -5227,6 +5363,187 @@ fn work_kind_is_valid(value: &str) -> bool {
     )
 }
 
+fn parse_work_kind(value: &str) -> Option<WorkKind> {
+    Some(match value {
+        "data_census" => WorkKind::DataCensus,
+        "preparation" => WorkKind::Preparation,
+        "cache" => WorkKind::Cache,
+        "convolution_function" => WorkKind::ConvolutionFunction,
+        "fft_planning" => WorkKind::FftPlanning,
+        "jit" => WorkKind::Jit,
+        "compute" => WorkKind::Compute,
+        "transfer" => WorkKind::Transfer,
+        "spill" => WorkKind::Spill,
+        "prefetch" => WorkKind::Prefetch,
+        "io" => WorkKind::Io,
+        "observation_read" => WorkKind::ObservationRead,
+        "serialization" => WorkKind::Serialization,
+        "writeback" => WorkKind::Writeback,
+        "publication" => WorkKind::Publication,
+        "release" => WorkKind::Release,
+        "synchronization" => WorkKind::Synchronization,
+        _ => return None,
+    })
+}
+
+fn parse_work_domain(value: &str) -> Option<WorkDomain> {
+    Some(match value {
+        "cpu" => WorkDomain::Cpu,
+        "io" => WorkDomain::Io,
+        "control" => WorkDomain::Control,
+        _ => WorkDomain::Metal {
+            demand_id: value.strip_prefix("metal:")?.to_string(),
+        },
+    })
+}
+
+fn parse_allocation_purpose(value: &str) -> Option<AllocationPurpose> {
+    if value == "data" {
+        return Some(AllocationPurpose::Data);
+    }
+    let kind = value.strip_prefix("io_buffer:")?;
+    io_buffer_is_valid(kind).then(|| AllocationPurpose::IoBuffer(parse_io_buffer(kind)))
+}
+
+fn parse_compatibility(value: &CompatibilityProjection) -> Option<SlotCompatibility> {
+    Some(SlotCompatibility {
+        memory_domain: CapacityDomainId::new(value.memory_domain.clone()),
+        views: value
+            .views
+            .iter()
+            .cloned()
+            .map(CapacityViewId::new)
+            .collect(),
+        alignment_bytes: value.alignment_bytes,
+        storage_mode: match value.storage_mode.as_str() {
+            "host" => StorageMode::Host,
+            "metal_shared" => StorageMode::MetalShared,
+            _ => return None,
+        },
+        layout: AllocationLayout::new(value.layout.clone()),
+        initialization: match value.initialization.as_str() {
+            "preserve" => InitializationPolicy::Preserve,
+            "zero_before_read" => InitializationPolicy::ZeroBeforeRead,
+            "overwrite_before_read" => InitializationPolicy::OverwriteBeforeRead,
+            _ => return None,
+        },
+        access: match value.access.as_str() {
+            "read_only" => AllocationAccess::ReadOnly,
+            "read_write" => AllocationAccess::ReadWrite,
+            "write_only" => AllocationAccess::WriteOnly,
+            _ => return None,
+        },
+    })
+}
+
+fn parse_lease_resource(value: &str) -> Result<LeaseResource, ReceiptError> {
+    let resource = if value == "workers" {
+        LeaseResource::Workers
+    } else if value == "resident_cache" {
+        LeaseResource::ResidentCache
+    } else if value == "locks" {
+        LeaseResource::Locks
+    } else if value == "file_descriptors" {
+        LeaseResource::FileDescriptors
+    } else if let Some(allocation_id) = value.strip_prefix("memory:") {
+        LeaseResource::Memory {
+            allocation_id: allocation_id.to_string(),
+        }
+    } else if let Some(kind) = value.strip_prefix("runtime_overhead:") {
+        LeaseResource::RuntimeOverhead(
+            parse_runtime_overhead(kind).ok_or(ReceiptError::IntegrityMismatch)?,
+        )
+    } else if let Some(kind) = value.strip_prefix("io_buffer:") {
+        if !io_buffer_is_valid(kind) {
+            return Err(ReceiptError::IntegrityMismatch);
+        }
+        LeaseResource::IoBuffer(parse_io_buffer(kind))
+    } else if let Some(demand_id) = value.strip_prefix("storage_read_rate:") {
+        LeaseResource::StorageReadRate {
+            demand_id: demand_id.to_string(),
+        }
+    } else if let Some(demand_id) = value.strip_prefix("storage_write_rate:") {
+        LeaseResource::StorageWriteRate {
+            demand_id: demand_id.to_string(),
+        }
+    } else if let Some(demand_id) = value.strip_prefix("storage_operations_rate:") {
+        LeaseResource::StorageOperationsRate {
+            demand_id: demand_id.to_string(),
+        }
+    } else if let Some(demand_id) = value.strip_prefix("storage_queue:") {
+        LeaseResource::StorageQueue {
+            demand_id: demand_id.to_string(),
+        }
+    } else if let Some(demand_id) = value.strip_prefix("transfer_rate:") {
+        LeaseResource::TransferRate {
+            demand_id: demand_id.to_string(),
+        }
+    } else if let Some(demand_id) = value.strip_prefix("transfer_queue:") {
+        LeaseResource::TransferQueue {
+            demand_id: demand_id.to_string(),
+        }
+    } else if let Some(demand_id) = value.strip_prefix("accelerator_queue:") {
+        LeaseResource::AcceleratorCommandQueue {
+            demand_id: demand_id.to_string(),
+        }
+    } else if let Some(demand_id) = value.strip_prefix("accelerator:") {
+        LeaseResource::Accelerator {
+            demand_id: demand_id.to_string(),
+        }
+    } else if let Some(demand_id) = value.strip_prefix("rate:") {
+        LeaseResource::Rate {
+            demand_id: demand_id.to_string(),
+        }
+    } else if let Some(demand_id) = value.strip_prefix("queue:") {
+        LeaseResource::Queue {
+            demand_id: demand_id.to_string(),
+        }
+    } else if let Some(value) = value.strip_prefix("storage:") {
+        let (demand_id, kind) = value
+            .rsplit_once(':')
+            .ok_or(ReceiptError::IntegrityMismatch)?;
+        LeaseResource::Storage {
+            demand_id: demand_id.to_string(),
+            use_kind: parse_storage_use(kind).ok_or(ReceiptError::IntegrityMismatch)?,
+        }
+    } else if let Some(identity) = value.strip_prefix("measurement_set_lock:") {
+        if !is_digest(identity) {
+            return Err(ReceiptError::IntegrityMismatch);
+        }
+        LeaseResource::MeasurementSetLock {
+            measurement_set: MeasurementSetIdentity::new(LogicalIdentity::from_sha256(
+                parse_digest(identity),
+            )),
+        }
+    } else {
+        return Err(ReceiptError::IntegrityMismatch);
+    };
+    Ok(resource)
+}
+
+fn parse_runtime_overhead(value: &str) -> Option<crate::RuntimeOverheadKind> {
+    Some(match value {
+        "thread_stack" => crate::RuntimeOverheadKind::ThreadStack,
+        "allocator_fragmentation" => crate::RuntimeOverheadKind::AllocatorFragmentation,
+        "external_library" => crate::RuntimeOverheadKind::ExternalLibrary,
+        "fft_workspace" => crate::RuntimeOverheadKind::FftWorkspace,
+        "driver" => crate::RuntimeOverheadKind::Driver,
+        "jit" => crate::RuntimeOverheadKind::Jit,
+        "command_buffer" => crate::RuntimeOverheadKind::CommandBuffer,
+        _ => return None,
+    })
+}
+
+fn parse_storage_use(value: &str) -> Option<crate::StorageUseKind> {
+    Some(match value {
+        "temporary" => crate::StorageUseKind::Temporary,
+        "staged_output" => crate::StorageUseKind::StagedOutput,
+        "final_output" => crate::StorageUseKind::FinalOutput,
+        "persistent_cache" => crate::StorageUseKind::PersistentCache,
+        _ => return None,
+    })
+}
+
 fn work_domain_is_valid(value: &str) -> bool {
     matches!(value, "cpu" | "io" | "control")
         || value.strip_prefix("metal:").is_some_and(is_redacted_text)
@@ -5264,6 +5581,13 @@ fn io_buffer_is_valid(value: &str) -> bool {
 }
 
 fn claim_lifetime_is_valid(value: &str) -> bool {
+    if let Some(release) = value.strip_prefix("retained_until:") {
+        return is_redacted_text(release);
+    }
+    allocation_claim_lifetime_is_valid(value)
+}
+
+fn allocation_claim_lifetime_is_valid(value: &str) -> bool {
     if value == "work" {
         return true;
     }
@@ -5669,12 +5993,22 @@ fn project_weighting(fields: &mut BTreeMap<String, String>, problem: &CompiledPr
     }
     evidence_field(
         fields,
-        "weighting.generation.identity",
-        hex(&weighting.generation_id().as_bytes()),
+        "weighting.commitment.identity",
+        hex(&weighting.commitment_id().as_bytes()),
     );
     evidence_field(
         fields,
-        "weighting.generation.snapshot_identity",
+        "weighting.commitment.selected_observation",
+        hex(&weighting.selected_observation().as_bytes()),
+    );
+    evidence_field(
+        fields,
+        "weighting.commitment.visibility_inner_product",
+        visibility_inner_product(weighting.visibility_inner_product()),
+    );
+    evidence_field(
+        fields,
+        "weighting.commitment.snapshot_identity",
         hex(&weighting.snapshot().as_bytes()),
     );
     for (index, source) in weighting.sources().iter().enumerate() {
@@ -7634,12 +7968,18 @@ fn claim_lifetime(lifetime: &ClaimLifetime) -> String {
                 .collect::<Vec<_>>()
                 .join(",")
         ),
+        ClaimLifetime::RetainedUntil(release) => {
+            format!("retained_until:{}", stable_text(release.as_str()))
+        }
     }
 }
 
 fn parse_claim_lifetime(value: &str) -> ClaimLifetime {
     if value == "work" {
         return ClaimLifetime::Work;
+    }
+    if let Some(release) = value.strip_prefix("retained_until:") {
+        return ClaimLifetime::retained_until(WorkNodeId::new(release.to_string()));
     }
     ClaimLifetime::through_fences(
         value

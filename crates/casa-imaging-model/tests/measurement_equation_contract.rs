@@ -27,7 +27,7 @@ use casa_imaging_model::{
     RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection, SpectralContract,
     SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSampling, SpectralWcs,
     StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct, VisibilityPhaseConvention,
-    WeightColumn, WeightDensityScope, WeightingContract, WeightingGenerationId, WeightingScheme,
+    WeightColumn, WeightDensityScope, WeightingCommitmentId, WeightingContract, WeightingScheme,
     compile,
 };
 
@@ -218,6 +218,13 @@ fn geometry() -> GeometryInput {
 }
 
 fn compile_contract(sampling: SpectralSampling) -> casa_imaging_model::CompiledProblem {
+    compile_contract_with_reduction(sampling, ReductionPolicy::Compensated)
+}
+
+fn compile_contract_with_reduction(
+    sampling: SpectralSampling,
+    reduction: ReductionPolicy,
+) -> casa_imaging_model::CompiledProblem {
     let inner_products = DeclaredInnerProducts::new(
         ModelInnerProduct::HermitianEuclidean,
         VisibilityInnerProduct::HermitianEuclidean,
@@ -254,7 +261,7 @@ fn compile_contract(sampling: SpectralSampling) -> casa_imaging_model::CompiledP
     );
     let numerics = NumericsContract::new(
         vec![NumericPrecision::F64],
-        ReductionPolicy::Compensated,
+        reduction,
         FiniteValuePolicy::FlagInputRejectGenerated,
         NumericalStage::ALL
             .into_iter()
@@ -281,6 +288,36 @@ fn compile_contract(sampling: SpectralSampling) -> casa_imaging_model::CompiledP
         model_lifecycle(ModelStateIdentity::Empty),
     ))
     .expect("compile typed measurement equation")
+}
+
+#[test]
+fn weighting_commitment_binds_sampling_and_numerics() {
+    let linear = compile_contract(SpectralSampling::Linear);
+    let nearest = compile_contract(SpectralSampling::Nearest);
+    let deterministic = compile_contract_with_reduction(
+        SpectralSampling::Linear,
+        ReductionPolicy::DeterministicPairwise,
+    );
+
+    assert_ne!(
+        linear.weighting().commitment_id(),
+        nearest.weighting().commitment_id()
+    );
+    assert_ne!(
+        linear.weighting().commitment_id(),
+        deterministic.weighting().commitment_id()
+    );
+    assert_eq!(
+        linear.weighting().selected_observation(),
+        linear.selected_observation().commitment_id()
+    );
+    assert_eq!(
+        linear.weighting().visibility_inner_product(),
+        linear
+            .selected_observation()
+            .sample_evaluation()
+            .visibility_inner_product()
+    );
 }
 
 #[test]
@@ -335,7 +372,7 @@ fn compiled_contract_owns_paired_operator_weighting_and_product_boundary() {
         normal.weighting().snapshot(),
         problem.inputs().observation()
     );
-    assert_ne!(normal.weighting().generation_id().as_bytes(), [0; 32]);
+    assert_ne!(normal.weighting().commitment_id().as_bytes(), [0; 32]);
     assert_eq!(normal.weighting().sources().len(), 1);
     assert_eq!(
         normal.weighting().sources()[0].flags(),
@@ -423,23 +460,23 @@ fn paired_compositions_obey_linearity_and_weighted_adjointness() {
 }
 
 #[test]
-fn schema_nine_problem_and_weighting_generation_identities_are_pinned() {
+fn schema_ten_problem_and_weighting_commitment_identities_are_pinned() {
     let problem = compile_contract(SpectralSampling::Linear);
 
-    assert_eq!(CompiledProblemId::SCHEMA_VERSION, 9);
-    assert_eq!(WeightingGenerationId::SCHEMA_VERSION, 1);
+    assert_eq!(CompiledProblemId::SCHEMA_VERSION, 10);
+    assert_eq!(WeightingCommitmentId::SCHEMA_VERSION, 3);
     assert_eq!(
         (
             problem.problem_id().to_string(),
             problem
                 .normal_equation()
                 .weighting()
-                .generation_id()
+                .commitment_id()
                 .to_string(),
         ),
         (
-            "42a2565a91b66e0a392b56117de20e33b15e2be43a4a9d1c5928554adbd7ad3f".to_string(),
-            "362e03ee3a7cea3c1826b0193421838ce7e0744b2e0391e0b457648297c7259d".to_string(),
+            "bf7da4a3bcd3fb3cee94f2c4f9037326a69d378df86803b04630960bcd95dc89".to_string(),
+            "dc44b5ca510dffb0642fa3e261803dd80e704e3598cfc0e5fe025e454703c792".to_string(),
         )
     );
 }

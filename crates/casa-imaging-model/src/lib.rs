@@ -44,7 +44,7 @@ pub use measurement_equation::{
     NormalEquationContract, NormalEquationForm, NormalStateNormalization, NormalStateSpace,
     PairedMeasurementTransform, PairedTransformKind, ProductBoundaryOperation,
     ProductNormalizationBoundary, VisibilityInnerProduct, VisibilitySampleSpace,
-    WeightingGenerationId, WeightingOperatorContract, WeightingSource,
+    WeightingCommitmentId, WeightingOperatorContract, WeightingSource,
 };
 
 pub use model_state::{
@@ -87,7 +87,8 @@ pub use selected_observation::{
 pub use selected_observation_sample::{
     SelectedObservationGenerationId, SelectedObservationSample, SelectedPointingDirections,
     SelectedPredictionTarget, SelectedSampleAddress, SelectedSampleCoordinates,
-    SelectedSampleMetadata, SelectedVisibilitySample,
+    SelectedSampleMetadata, SelectedSpectralContribution, SelectedSpectralContributions,
+    SelectedVisibilitySample,
 };
 
 pub use product_graph::{

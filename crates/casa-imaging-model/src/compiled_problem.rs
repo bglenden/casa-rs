@@ -31,7 +31,7 @@ use crate::transaction::{
 };
 
 const COMPILED_PROBLEM_IDENTITY_DOMAIN: &[u8] = b"casa-rs-compiled-problem";
-const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 9;
+const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 10;
 const COMPILED_PROBLEM_BASIS_DOMAIN: &[u8] = b"casa-rs-compiled-problem-basis";
 const COMPILED_PROBLEM_BASIS_VERSION: u32 = 1;
 const NUMERICS_CONTRACT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-numerics-contract";
@@ -535,7 +535,7 @@ pub enum WeightDensityScope {
     PerOutputChannel,
 }
 
-/// Gaussian taper in the UV plane, expressed in wavelengths and radians.
+/// Gaussian taper in the UV plane, expressed as baseline HWHM wavelengths.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct UvTaper {
     major_lambda: f64,
@@ -544,7 +544,7 @@ pub struct UvTaper {
 }
 
 impl UvTaper {
-    /// Construct a Gaussian UV taper.
+    /// Construct a Gaussian UV taper from major/minor baseline HWHM and angle.
     #[must_use]
     pub const fn new(major_lambda: f64, minor_lambda: f64, position_angle_rad: f64) -> Self {
         Self {
@@ -554,13 +554,13 @@ impl UvTaper {
         }
     }
 
-    /// Return the major-axis scale in wavelengths.
+    /// Return the major-axis baseline HWHM in wavelengths.
     #[must_use]
     pub const fn major_lambda(self) -> f64 {
         self.major_lambda
     }
 
-    /// Return the minor-axis scale in wavelengths.
+    /// Return the minor-axis baseline HWHM in wavelengths.
     #[must_use]
     pub const fn minor_lambda(self) -> f64 {
         self.minor_lambda
@@ -1495,26 +1495,26 @@ pub fn compile(request: ImagingRequest) -> Result<CompiledProblem, CompileProble
         specification.observation_transaction,
     );
     let numerics = specification.numerics.canonicalize()?;
+    let numerics_id = canonical_numerics_id(&numerics);
     validate_science(&science, &inputs)?;
     validate_reconstruction(&specification.reconstruction, &geometry)?;
     let reconstruction = specification.reconstruction.canonicalize()?;
     validate_weighting(specification.weighting)?;
     validate_products(&science, &reconstruction, &products)?;
+    let selected_observation = compile_selected_observation_commitment(
+        &observation_transaction,
+        geometry.geometry_id(),
+        science.measurement_equation().inner_products().visibility(),
+        science.spectral().sampling(),
+    );
     let normal_equation = compile_normal_equation(
         &geometry,
         &inputs,
         &science,
         &reconstruction,
         specification.weighting,
-    );
-    let selected_observation = compile_selected_observation_commitment(
-        &observation_transaction,
-        geometry.geometry_id(),
-        normal_equation
-            .measurement_operator()
-            .codomain()
-            .inner_product(),
-        science.spectral().sampling(),
+        numerics_id,
+        selected_observation.commitment_id(),
     );
     let required_capabilities = derive_capabilities(
         &geometry,
@@ -1523,7 +1523,6 @@ pub fn compile(request: ImagingRequest) -> Result<CompiledProblem, CompileProble
         normal_equation.weighting(),
         &products,
     );
-    let numerics_id = canonical_numerics_id(&numerics);
     let product_graph = compile_product_graph(&geometry, &reconstruction, &products);
     let model_lifecycle = compile_model_lifecycle_contract(
         &geometry,
@@ -2029,7 +2028,7 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
         }
     }
     let compiled_weighting = normal_equation.weighting();
-    encoder.digest(compiled_weighting.generation_id().as_bytes());
+    encoder.digest(compiled_weighting.commitment_id().as_bytes());
     encoder.identity(compiled_weighting.snapshot().identity());
     encoder.usize(compiled_weighting.sources().len());
     for source in compiled_weighting.sources() {

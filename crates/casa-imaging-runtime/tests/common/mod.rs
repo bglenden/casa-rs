@@ -55,6 +55,15 @@ pub fn problem_inputs(
     reference_data: Vec<(ReferenceDataKind, LogicalIdentity)>,
     model: ModelStateIdentity,
 ) -> ProblemInputIdentities {
+    problem_inputs_with_source_count(observation, reference_data, model, 1)
+}
+
+pub fn problem_inputs_with_source_count(
+    observation: u8,
+    reference_data: Vec<(ReferenceDataKind, LogicalIdentity)>,
+    model: ModelStateIdentity,
+    source_count: usize,
+) -> ProblemInputIdentities {
     let column_kinds = [
         MsColumnKind::Data,
         MsColumnKind::Flag,
@@ -76,7 +85,7 @@ pub fn problem_inputs(
         MsColumnKind::ObservationId,
         MsColumnKind::ArrayId,
     ];
-    let columns = column_kinds
+    let columns: Vec<_> = column_kinds
         .into_iter()
         .enumerate()
         .map(|(index, kind)| {
@@ -94,7 +103,7 @@ pub fn problem_inputs(
         MetadataTableKind::SpectralWindow,
         MetadataTableKind::State,
     ];
-    let metadata = metadata_kinds
+    let metadata: Vec<_> = metadata_kinds
         .into_iter()
         .enumerate()
         .map(|(index, kind)| {
@@ -121,26 +130,32 @@ pub fn problem_inputs(
             vec![CorrelationProduct::new(0, CorrelationType::CircularRr)],
         )],
     );
-    let snapshot = compile_observation(ObservationSnapshotInput::new(
-        vec![ObservationSourceInput::new(
-            MeasurementSetIdentity::new(scoped_identity(observation, 1)),
-            ObservationSourceProvenance::new(
-                runtime_observation_fixture().display().to_string(),
-                scoped_identity(observation, 3),
-            ),
-            selection,
-            SourceGenerations::new(
-                ConsistencyToken::new(scoped_identity(observation, 4)),
-                SelectedColumns::new(
-                    VisibilityColumn::Data,
-                    FlagPolicy::FlagOrFlagRow,
-                    WeightColumn::Weight,
-                    columns,
+    let sources = (0..source_count)
+        .map(|source_index| {
+            let source_index = u8::try_from(source_index).expect("bounded fixture source count");
+            ObservationSourceInput::new(
+                MeasurementSetIdentity::new(scoped_identity(observation, 1 + source_index)),
+                ObservationSourceProvenance::new(
+                    runtime_observation_fixture().display().to_string(),
+                    scoped_identity(observation, 3 + source_index),
                 ),
-                metadata,
-                ModelColumnState::Absent,
-            ),
-        )],
+                selection.clone(),
+                SourceGenerations::new(
+                    ConsistencyToken::new(scoped_identity(observation, 4 + source_index)),
+                    SelectedColumns::new(
+                        VisibilityColumn::Data,
+                        FlagPolicy::FlagOrFlagRow,
+                        WeightColumn::Weight,
+                        columns.clone(),
+                    ),
+                    metadata.clone(),
+                    ModelColumnState::Absent,
+                ),
+            )
+        })
+        .collect();
+    let snapshot = compile_observation(ObservationSnapshotInput::new(
+        sources,
         reference_data,
         model,
     ))

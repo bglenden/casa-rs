@@ -96,6 +96,75 @@ Each active ticket has one clean worktree and one linked pull request. A mixed
 experiment is preserved under an explicitly non-acceptance branch and is mined
 ticket by ticket. Completed work is not left unmerged merely to batch a wave.
 
+### Elapsed-time execution policy amendment
+
+The programme maintains a ready queue derived from the migration matrix and
+landed interfaces. Dependency-free implementation, focused verification, and
+independent Spec/Standards review lanes run concurrently in isolated worktrees;
+work is not serialized merely because tickets share a wave. The current
+critical path, active lanes, blockers, next gate, and last meaningful update
+are reported at each meaningful programme update so that unchanged work is
+visible rather than mistaken for integrated progress.
+
+Intermediate merges are permitted only for independently complete slices with
+their focused gates, clean checks, recorded issue evidence, and independent
+review complete. The full-wave merge gate remains mandatory even when all
+available ready-queue work has been merged incrementally. A blocker that
+remains unchanged through the bounded retry contract is an escalation point:
+reproduce it once with new evidence, then use the strongest available worker
+model at maximum reasoning before declaring the lane blocked. This policy
+optimizes elapsed time without weakening acceptance contracts, scientific or
+persistent-interoperability requirements, or final verification gates.
+
+### Programme-wide convergence and closure policy
+
+This policy applies to every remaining #486 child ticket in every wave and on
+every programme branch. Before implementation starts, the authoritative issue
+record freezes one closure checklist; the linked pull request adopts that same
+checklist when opened. The checklist contains:
+
+- the sole approved outcome, non-goals, and stop conditions;
+- the owner seam, public shape, and landed blocker interfaces;
+- the exact Acceptance Contract and migration-matrix rows;
+- the required scientific, CASA/Rust-C++ interoperability, persisted-data,
+  resource, identity/receipt, focused-test, evidence, and merge gates; and
+- the fixed Spec and Standards review questions derived from those sources.
+
+For ticket closure, a P1 is a reproducible violation of an existing item in
+that frozen checklist or another explicit repository contract that prevents
+the ticket from satisfying its approved outcome. Run one initial independent
+Spec/Standards review against one fixed SHA. Consolidate every finding from
+both axes into one ledger before beginning repair. Permit one repair pass for
+that ledger and one independent re-review of the resulting fixed SHA. Do not
+automatically begin another repair/re-review cycle.
+
+A P1 first asserted during the bounded re-review must cite the exact
+pre-existing checklist item or contract it violates and provide deterministic
+reproduction evidence: source SHA, command, fixture or data identity, expected
+result, and observed result. After the bounded cycle, a newly asserted P1 stops
+the ticket and is reported for adjudication; it is not automatically repaired
+or used to expand the ticket. An uncited or unreproducible concern remains
+recorded for adjudication but is not an automatic new P1 repair trigger. The
+generic one-focused-retry rule applies to reproducing a failure; it does not
+authorize another review/repair/re-review cycle.
+
+This process bound never lowers, defers, or waives a scientific,
+CASA/interoperability, persisted-data, resource, identity/receipt, acceptance,
+or full-wave merge gate. An unresolved P1 leaves the ticket open or blocked.
+Independently complete slices may still merge after satisfying their frozen
+checklist, focused gates, clean checks, consolidated review, independent final
+review, and explicit merge authority; the full-wave gate remains mandatory.
+The merge-authority review verifies the already reviewed scope, evidence, SHA,
+and current checks; it is not another automatic repair/re-review cycle. A new
+P1 first asserted there follows the same citation and reproduction threshold,
+stops the merge, and is reported for adjudication rather than auto-repaired.
+
+Report each ticket at start, after initial review, after repair/re-review, and
+at every meaningful blocker or state transition. Each update names the
+critical path, active lanes, blockers, next gate, exact SHA, and last meaningful
+update. A prolonged or repeated review cycle is itself a blocker to report,
+not background work to continue silently.
+
 ## Corrected next tranche
 
 | Order | Ticket | Sole outcome in this tranche | Explicit exclusion |

@@ -2040,6 +2040,544 @@ class MigrationMatrixTests(unittest.TestCase):
                         receipt_path=receipt_path,
                     )
 
+    def test_t18_transfer_rejects_merged_passes_and_rebindable_weighting(self) -> None:
+        model_path = REPO_ROOT / "crates/casa-imaging-model/src/measurement_equation.rs"
+        sample_model_path = (
+            REPO_ROOT / "crates/casa-imaging-model/src/selected_observation_sample.rs"
+        )
+        traversal_sample_path = (
+            REPO_ROOT
+            / "crates/casa-ms/src/selected_observation/spectral_contributions.rs"
+        )
+        bound_observation_path = (
+            REPO_ROOT / "crates/casa-ms/src/selected_observation/bound_observation.rs"
+        )
+        weighting_path = REPO_ROOT / "crates/casa-imaging-reconstruction/src/weighting.rs"
+        runtime_weighting_path = REPO_ROOT / "crates/casa-imaging-runtime/src/weighting.rs"
+        runtime_execution_path = REPO_ROOT / "crates/casa-imaging-runtime/src/execution.rs"
+        receipt_path = REPO_ROOT / "crates/casa-imaging-runtime/src/receipt.rs"
+        model = model_path.read_text(encoding="utf-8")
+        sample_model = sample_model_path.read_text(encoding="utf-8")
+        traversal_sample = traversal_sample_path.read_text(encoding="utf-8")
+        bound_observation = bound_observation_path.read_text(encoding="utf-8")
+        weighting = weighting_path.read_text(encoding="utf-8")
+        runtime_weighting = runtime_weighting_path.read_text(encoding="utf-8")
+        runtime_execution = runtime_execution_path.read_text(encoding="utf-8")
+        receipt = receipt_path.read_text(encoding="utf-8")
+
+        one_pass = runtime_weighting.replace(
+            "let sum_weight_completion = selected\n        .traverse(problem, |reported| {",
+            "let sum_weight_completion = selected\n        .reuse(density_completion, |reported| {",
+            1,
+        )
+        self.assertNotEqual(one_pass, runtime_weighting)
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"distinct exhaustive density and sum-weight passes",
+        ):
+            checker.validate_t18_global_weighting_sources(
+                model,
+                sample_model,
+                traversal_sample,
+                bound_observation,
+                weighting,
+                one_pass,
+                receipt,
+                model_path=model_path,
+                sample_model_path=sample_model_path,
+                traversal_sample_path=traversal_sample_path,
+                bound_observation_path=bound_observation_path,
+                weighting_path=weighting_path,
+                runtime_weighting_path=runtime_weighting_path,
+                receipt_path=receipt_path,
+            )
+
+        rebindable = runtime_weighting.replace(
+            "    generation: WeightingGenerationId,\n    sequence: u64,",
+            "    pub generation: LogicalIdentity,\n    sequence: u64,",
+            1,
+        )
+        self.assertNotEqual(rebindable, weighting)
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"one opaque W generation",
+        ):
+            checker.validate_t18_global_weighting_sources(
+                model,
+                sample_model,
+                traversal_sample,
+                bound_observation,
+                weighting,
+                rebindable,
+                receipt,
+                model_path=model_path,
+                sample_model_path=sample_model_path,
+                traversal_sample_path=traversal_sample_path,
+                bound_observation_path=bound_observation_path,
+                weighting_path=weighting_path,
+                runtime_weighting_path=runtime_weighting_path,
+                receipt_path=receipt_path,
+            )
+
+        iterator_bypass = weighting.replace(
+            "pub fn begin_weighting_generation(",
+            "pub fn freeze_from_iterators(samples: impl IntoIterator<Item = SelectedObservationSample>) -> () { let _ = samples; }\npub fn begin_weighting_generation(",
+            1,
+        )
+        self.assertNotEqual(iterator_bypass, weighting)
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"bypass around T17 callback traversal",
+        ):
+            checker.validate_t18_global_weighting_sources(
+                model,
+                sample_model,
+                traversal_sample,
+                bound_observation,
+                iterator_bypass,
+                runtime_weighting,
+                receipt,
+                model_path=model_path,
+                sample_model_path=sample_model_path,
+                traversal_sample_path=traversal_sample_path,
+                bound_observation_path=bound_observation_path,
+                weighting_path=weighting_path,
+                runtime_weighting_path=runtime_weighting_path,
+                receipt_path=receipt_path,
+            )
+
+        caller_frozen = runtime_weighting.replace(
+            "    pending: PendingWeightingGeneration,\n    context: ObservationReadCompletionContext,",
+            "    pending: WeightingAlgorithmState,\n    context: ObservationReadCompletionContext,",
+            1,
+        )
+        self.assertNotEqual(caller_frozen, runtime_weighting)
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"owner traversals and scheduler-issued completion authority",
+        ):
+            checker.validate_t18_global_weighting_sources(
+                model,
+                sample_model,
+                traversal_sample,
+                bound_observation,
+                weighting,
+                caller_frozen,
+                receipt,
+                model_path=model_path,
+                sample_model_path=sample_model_path,
+                traversal_sample_path=traversal_sample_path,
+                bound_observation_path=bound_observation_path,
+                weighting_path=weighting_path,
+                runtime_weighting_path=runtime_weighting_path,
+                receipt_path=receipt_path,
+            )
+
+        forgeable_envelope = traversal_sample.replace(
+            "    pub(super) fn from_owner(",
+            "    pub fn from_owner(",
+            1,
+        )
+        self.assertNotEqual(forgeable_envelope, traversal_sample)
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"envelope construction must remain owner-only",
+        ):
+            checker.validate_t18_global_weighting_sources(
+                model,
+                sample_model,
+                forgeable_envelope,
+                bound_observation,
+                weighting,
+                runtime_weighting,
+                receipt,
+                model_path=model_path,
+                sample_model_path=sample_model_path,
+                traversal_sample_path=traversal_sample_path,
+                bound_observation_path=bound_observation_path,
+                weighting_path=weighting_path,
+                runtime_weighting_path=runtime_weighting_path,
+                receipt_path=receipt_path,
+            )
+
+        persisted_contributions = sample_model.replace(
+            "    pub input_weight: f32,",
+            "    pub input_weight: f32,\n    pub spectral_contributions: SelectedSpectralContributions,",
+            1,
+        )
+        self.assertNotEqual(persisted_contributions, sample_model)
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"outside the persisted selected-sample schema",
+        ):
+            checker.validate_t18_global_weighting_sources(
+                model,
+                persisted_contributions,
+                traversal_sample,
+                bound_observation,
+                weighting,
+                runtime_weighting,
+                receipt,
+                model_path=model_path,
+                sample_model_path=sample_model_path,
+                traversal_sample_path=traversal_sample_path,
+                bound_observation_path=bound_observation_path,
+                weighting_path=weighting_path,
+                runtime_weighting_path=runtime_weighting_path,
+                receipt_path=receipt_path,
+            )
+
+        phantom_replay_input = weighting.replace(
+            "self.input.push(WeightingReplayInputSample {",
+            "self.block.push(WeightingSampleValue {",
+            1,
+        )
+        self.assertNotEqual(phantom_replay_input, weighting)
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"real bounded input and output blocks",
+        ):
+            checker.validate_t18_global_weighting_sources(
+                model,
+                sample_model,
+                traversal_sample,
+                bound_observation,
+                phantom_replay_input,
+                runtime_weighting,
+                receipt,
+                model_path=model_path,
+                sample_model_path=sample_model_path,
+                traversal_sample_path=traversal_sample_path,
+                bound_observation_path=bound_observation_path,
+                weighting_path=weighting_path,
+                runtime_weighting_path=runtime_weighting_path,
+                receipt_path=receipt_path,
+            )
+
+        local_source_handles = runtime_weighting.replace(
+            "claim.lifetime = ClaimLifetime::retained_until(release.clone());",
+            "claim.lifetime = io_lifetime.clone();",
+            1,
+        )
+        self.assertNotEqual(local_source_handles, runtime_weighting)
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"continuous retained-source authority",
+        ):
+            checker.validate_t18_global_weighting_sources(
+                model,
+                sample_model,
+                traversal_sample,
+                bound_observation,
+                weighting,
+                local_source_handles,
+                receipt,
+                model_path=model_path,
+                sample_model_path=sample_model_path,
+                traversal_sample_path=traversal_sample_path,
+                bound_observation_path=bound_observation_path,
+                weighting_path=weighting_path,
+                runtime_weighting_path=runtime_weighting_path,
+                receipt_path=receipt_path,
+            )
+
+        early_retained_release = runtime_execution.replace(
+            "self.complete_retained_event(&node_id)?;",
+            "self.release_all_retained_permits()?;",
+            1,
+        )
+        self.assertNotEqual(early_retained_release, runtime_execution)
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"continuous retained-source authority",
+        ):
+            checker.validate_t18_global_weighting_sources(
+                model,
+                sample_model,
+                traversal_sample,
+                bound_observation,
+                weighting,
+                runtime_weighting,
+                receipt,
+                runtime_execution=early_retained_release,
+                model_path=model_path,
+                sample_model_path=sample_model_path,
+                traversal_sample_path=traversal_sample_path,
+                bound_observation_path=bound_observation_path,
+                weighting_path=weighting_path,
+                runtime_weighting_path=runtime_weighting_path,
+                receipt_path=receipt_path,
+                runtime_execution_path=runtime_execution_path,
+            )
+
+        unreceipted_retention = receipt.replace("retained_until:", "retained:")
+        self.assertNotEqual(unreceipted_retention, receipt)
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"receipts must project weighting allocation generations",
+        ):
+            checker.validate_t18_global_weighting_sources(
+                model,
+                sample_model,
+                traversal_sample,
+                bound_observation,
+                weighting,
+                runtime_weighting,
+                unreceipted_retention,
+                model_path=model_path,
+                sample_model_path=sample_model_path,
+                traversal_sample_path=traversal_sample_path,
+                bound_observation_path=bound_observation_path,
+                weighting_path=weighting_path,
+                runtime_weighting_path=runtime_weighting_path,
+                receipt_path=receipt_path,
+            )
+
+        late_cleanup_anchor = runtime_weighting.replace(
+            '                "weighting-frozen-generation",\n'
+            "                self.source_read.clone(),",
+            '                "weighting-frozen-generation",\n'
+            "                self.ids.generation_node.clone(),",
+            1,
+        )
+        self.assertNotEqual(late_cleanup_anchor, runtime_weighting)
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"continuous retained-source authority",
+        ):
+            checker.validate_t18_global_weighting_sources(
+                model,
+                sample_model,
+                traversal_sample,
+                bound_observation,
+                weighting,
+                late_cleanup_anchor,
+                receipt,
+                model_path=model_path,
+                sample_model_path=sample_model_path,
+                traversal_sample_path=traversal_sample_path,
+                bound_observation_path=bound_observation_path,
+                weighting_path=weighting_path,
+                runtime_weighting_path=runtime_weighting_path,
+                receipt_path=receipt_path,
+            )
+
+        missing_allocation = runtime_weighting.replace(
+            "AllocationSpec::new(", "MissingSpec::new(", 1
+        )
+        self.assertNotEqual(missing_allocation, runtime_weighting)
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"production fragment must own five allocations",
+        ):
+            checker.validate_t18_global_weighting_sources(
+                model,
+                sample_model,
+                traversal_sample,
+                bound_observation,
+                weighting,
+                missing_allocation,
+                receipt,
+                model_path=model_path,
+                sample_model_path=sample_model_path,
+                traversal_sample_path=traversal_sample_path,
+                bound_observation_path=bound_observation_path,
+                weighting_path=weighting_path,
+                runtime_weighting_path=runtime_weighting_path,
+                receipt_path=receipt_path,
+            )
+
+        implicit_release = runtime_weighting.replace(
+            "        self.phase = WeightingExecutionPhase::Empty;",
+            "        let _retained = &self.phase;",
+            1,
+        )
+        self.assertNotEqual(implicit_release, runtime_weighting)
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"production fragment must own five allocations",
+        ):
+            checker.validate_t18_global_weighting_sources(
+                model,
+                sample_model,
+                traversal_sample,
+                bound_observation,
+                weighting,
+                implicit_release,
+                receipt,
+                model_path=model_path,
+                sample_model_path=sample_model_path,
+                traversal_sample_path=traversal_sample_path,
+                bound_observation_path=bound_observation_path,
+                weighting_path=weighting_path,
+                runtime_weighting_path=runtime_weighting_path,
+                receipt_path=receipt_path,
+            )
+
+        raw_frame_mapping = traversal_sample.replace(
+            "        convert_frequency_to_frame_with_frames(",
+            "        bypass_frequency_conversion(",
+            1,
+        )
+        self.assertNotEqual(raw_frame_mapping, traversal_sample)
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"bypasses owner-derived spectral mapping",
+        ):
+            checker.validate_t18_global_weighting_sources(
+                model,
+                sample_model,
+                raw_frame_mapping,
+                bound_observation,
+                weighting,
+                runtime_weighting,
+                receipt,
+                model_path=model_path,
+                sample_model_path=sample_model_path,
+                traversal_sample_path=traversal_sample_path,
+                bound_observation_path=bound_observation_path,
+                weighting_path=weighting_path,
+                runtime_weighting_path=runtime_weighting_path,
+                receipt_path=receipt_path,
+            )
+
+        source_only_frame = traversal_sample.replace(
+            "            Some(&output_frame),",
+            "            Some(&source_frame),",
+            1,
+        )
+        self.assertNotEqual(source_only_frame, traversal_sample)
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"bypasses owner-derived spectral mapping",
+        ):
+            checker.validate_t18_global_weighting_sources(
+                model,
+                sample_model,
+                source_only_frame,
+                bound_observation,
+                weighting,
+                runtime_weighting,
+                receipt,
+                model_path=model_path,
+                sample_model_path=sample_model_path,
+                traversal_sample_path=traversal_sample_path,
+                bound_observation_path=bound_observation_path,
+                weighting_path=weighting_path,
+                runtime_weighting_path=runtime_weighting_path,
+                receipt_path=receipt_path,
+            )
+
+        fungible_queue = runtime_weighting.replace(
+            ".filter(|claim| &claim.resource == queue)",
+            ".filter(|claim| is_selected_content_queue(&claim.resource))",
+            1,
+        )
+        self.assertNotEqual(fungible_queue, runtime_weighting)
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"exact queue authority",
+        ):
+            checker.validate_t18_global_weighting_sources(
+                model,
+                sample_model,
+                traversal_sample,
+                bound_observation,
+                weighting,
+                fungible_queue,
+                receipt,
+                model_path=model_path,
+                sample_model_path=sample_model_path,
+                traversal_sample_path=traversal_sample_path,
+                bound_observation_path=bound_observation_path,
+                weighting_path=weighting_path,
+                runtime_weighting_path=runtime_weighting_path,
+                receipt_path=receipt_path,
+            )
+
+        shrinking_terminal_block = weighting.replace(
+            "    samples: Vec<WeightingSampleValue>,",
+            "    samples: Box<[WeightingSampleValue]>,",
+            1,
+        )
+        self.assertNotEqual(shrinking_terminal_block, weighting)
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"one opaque W generation",
+        ):
+            checker.validate_t18_global_weighting_sources(
+                model,
+                sample_model,
+                traversal_sample,
+                bound_observation,
+                shrinking_terminal_block,
+                runtime_weighting,
+                receipt,
+                model_path=model_path,
+                sample_model_path=sample_model_path,
+                traversal_sample_path=traversal_sample_path,
+                bound_observation_path=bound_observation_path,
+                weighting_path=weighting_path,
+                runtime_weighting_path=runtime_weighting_path,
+                receipt_path=receipt_path,
+            )
+
+        public_raw_phase = runtime_weighting.replace(
+            "struct FrozenWeightingGeneration {",
+            "pub struct FrozenWeightingGeneration {",
+            1,
+        )
+        self.assertNotEqual(public_raw_phase, runtime_weighting)
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"one opaque lifecycle owner",
+        ):
+            checker.validate_t18_global_weighting_sources(
+                model,
+                sample_model,
+                traversal_sample,
+                bound_observation,
+                weighting,
+                public_raw_phase,
+                receipt,
+                model_path=model_path,
+                sample_model_path=sample_model_path,
+                traversal_sample_path=traversal_sample_path,
+                bound_observation_path=bound_observation_path,
+                weighting_path=weighting_path,
+                runtime_weighting_path=runtime_weighting_path,
+                receipt_path=receipt_path,
+            )
+
+        skipped_cleanup = runtime_execution.replace(
+            ".filter(|allocation| self.has_external_release(allocation))",
+            ".filter(|_| false)",
+            1,
+        )
+        self.assertNotEqual(skipped_cleanup, runtime_execution)
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"fail-closed scheduler release",
+        ):
+            checker.validate_t18_global_weighting_sources(
+                model,
+                sample_model,
+                traversal_sample,
+                bound_observation,
+                weighting,
+                runtime_weighting,
+                receipt,
+                runtime_execution=skipped_cleanup,
+                model_path=model_path,
+                sample_model_path=sample_model_path,
+                traversal_sample_path=traversal_sample_path,
+                bound_observation_path=bound_observation_path,
+                weighting_path=weighting_path,
+                runtime_weighting_path=runtime_weighting_path,
+                receipt_path=receipt_path,
+                runtime_execution_path=runtime_execution_path,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
