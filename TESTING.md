@@ -163,6 +163,12 @@ only documentation, planning, or workflow-policy changes. Do not rerun a gate
 solely because review started; if executable changes intervened, rerun only the
 affected gate.
 
+For programme #486, this section and the direct ticket closure policy in
+`docs/imaging-architecture/lessons-and-next-tranche.md` are the exclusive
+ticket verification requirements. They supersede conflicting generic defaults,
+pull-request-template fields, branch-protection expectations, and generic
+workflow results.
+
 For the #486 imaging programme, a downstream ticket starts only from the merged
 commit containing each blocker interface. Its focused gate exercises the deep
 owner interface plus the immediately affected compile/plan/run composition;

@@ -124,6 +124,15 @@ unrelated personal data, or non-public external datasets.
   moves it to `Done`. Draft/readiness and review state live on the pull request,
   not in another board field. A merge does not mean `Done` until the issue closes.
 
+For programme #486, the direct ticket closure policy in
+`docs/imaging-architecture/lessons-and-next-tranche.md` supersedes the generic
+state rule above. A ticket is `In Progress` only with a linked open pull request
+containing a material code or acceptance-test commit, or while an issue-named
+gate is running. Worktrees, assignments, plans, reading, delegated agents, and
+intent are not activity. Normally one implementation ticket is active; a
+second is allowed only when both depend solely on merged interfaces and touch
+no common ownership surface.
+
 ## Final Authority
 
 Implementation authority does not include final merge, branch/worktree cleanup,
@@ -139,6 +148,15 @@ gate. Record the waived evidence and the user's direction on the pull request
 and issue. The waiver does not change the accepted scientific, persistence, or
 interoperability contract and does not authorize release, branch/worktree
 cleanup, or another pull request.
+
+For programme #486, the single independent contract review defined by the
+direct ticket closure policy is the only review gate. When the issue-named
+gates are green and that review has no unresolved blocker, standing programme
+authority authorizes immediate merge and issue closure without another review
+or user approval. An exact instruction to merge or close a named pull request
+as-is overrides process after known deficits are reported; no repository rule
+may add another review or check. Cleanup, release, and branch/worktree deletion
+remain separate stop points.
 
 ## Stop And Ask Before
 
@@ -158,6 +176,11 @@ cleanup, or another pull request.
 - merging, pruning branches, deleting worktrees, or publishing a release without
   explicit user authorization and an independent final review, except for an
   exact merge covered by the informed as-is waiver above
+
+For programme #486, in-scope non-persistent Rust API changes are already
+approved, and intermediate merges are covered by the direct ticket closure
+policy. Persisted CASA-interoperable formats, cleanup, release, and
+branch/worktree deletion remain stop points.
 
 ## Project Boundaries
 
@@ -187,6 +210,10 @@ cleanup, or another pull request.
 - Release/tag-only smoke, install, coverage, interoperability, and performance
   gates are not routine pull-request requirements unless requested or required
   by the approved work. `TESTING.md` owns the exact matrix.
+- For programme #486 T01-T68, routine `just verify` and generic workflow jobs
+  are not ticket gates. Run only the issue-named and directly affected focused
+  gates. Broad verification remains mandatory at the explicit full-wave and
+  final post-T68 milestones.
 
 ## Done
 
@@ -195,3 +222,8 @@ result or recorded exclusion exists; the issue and pull request record the
 actual acceptance evidence; docs and ADRs match reality; and every
 approved-scope deferral records explicit user signoff. Merge, cleanup, and
 release remain separate independently reviewed actions.
+
+For programme #486, the direct ticket closure policy supersedes the generic
+`Done` rule above: issue-named focused gates and the single contract review are
+sufficient for ticket closure. Do not create a per-ticket `just verify`
+exclusion or another merge-authority review.

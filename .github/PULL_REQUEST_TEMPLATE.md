@@ -1,34 +1,17 @@
-## Summary
+Closes #___
 
-What changed and why?
+## Acceptance evidence
 
-## Work linkage
+- `<contract clause>` — `<command or test>` — `<result>`
+- `<contract clause>` — `<command or test>` — `<result>`
 
-Work issue: #
-Work source:
-- Issues closed by merge:
-  Closes #
+Reviewed SHA: `<sha>`
 
-## Scope and acceptance
+## Contract review
 
-- Approved outcome and included issues covered:
-- Non-goals preserved:
-- Acceptance evidence:
-- Stop conditions encountered:
-- Scope changes or deferrals and explicit user signoff:
+Reviewer: `<name>`
+Unresolved blockers: `none`
 
-## Verification
+## Stop point
 
-- `just quick`:
-- Native macOS UI gate (`just gui-test` or not applicable):
-- `just verify`:
-- PR-only targeted checks:
-- Release/tag-only checks (normally not applicable):
-
-## Independent final review
-
-- Reviewer:
-- Scope, diff, tests, and evidence reviewed:
-- Merge authorized:
-- Branch/worktree cleanup authorized:
-- Release authorized or not applicable:
+`none`, or `<required user decision>`
