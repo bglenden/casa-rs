@@ -17,26 +17,27 @@ use casa_imaging_model::{
     FiniteValuePolicy, FlagPolicy, FrequencyFrame, GeometryInput, IdSelection, ImageAxis,
     ImageDomainRole, ImageDomainSpec, ImageShape, ImagingRequest, InstrumentResponse,
     IntentSelection, LogicalIdentity, MeasurementEquationContract, MeasurementSetIdentity,
-    MetadataGeneration, MetadataTableKind, MissingPointingPolicy, ModelColumnState,
-    ModelColumnWrite, ModelInnerProduct, ModelStateIdentity, MsColumnKind, NumericPrecision,
-    NumericalStage, NumericsContract, ObservationPointingLaw, ObservationSelection,
-    ObservationSnapshotInput, ObservationSource, ObservationSourceInput,
-    ObservationSourceProvenance, ObservationSourceState, ObservationTransactionRequirements,
-    PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic,
-    PointingExtrapolation, PointingInterpolation, PointingTimeSampling, PolarizationContract,
-    PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInputIdentities,
-    ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
-    ProductRequirements, ProductSupportComparison, ProductValidityPolicies, Projection,
-    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
-    ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy, RowSelection,
-    ScientificContract, SelectedColumns, SelectedMainRow, SelectedObservationGenerationId,
-    SelectedObservationInspectionError, SelectedObservationPassError, SelectedObservationSample,
-    SelectedRows, SelectedVisibilitySample, SelectionBound, SkyDirection, SourceGenerations,
-    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSampling, SpectralWcs, SpectralWindowSelection, StageErrorBudget,
-    TaylorSupportReference, TaylorValidityPolicy, TimeRange, TimeSelection, UvSelection,
-    UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope,
-    WeightingContract, WeightingScheme, compile, compile_observation,
+    MetadataGeneration, MetadataTableKind, MissingPointingPolicy, ModelBounds, ModelColumnState,
+    ModelColumnWrite, ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements,
+    ModelStateIdentity, MsColumnKind, NumericPrecision, NumericalStage, NumericsContract,
+    ObservationPointingLaw, ObservationSelection, ObservationSnapshotInput, ObservationSource,
+    ObservationSourceInput, ObservationSourceProvenance, ObservationSourceState,
+    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn,
+    PointingDirectionSemantic, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
+    PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy,
+    ProblemInputIdentities, ProblemSpecification, ProductBlankingPolicy, ProductKind,
+    ProductNormalization, ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
+    Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
+    ReconstructionControls, ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy,
+    RowSelection, ScientificContract, SelectedColumns, SelectedMainRow,
+    SelectedObservationGenerationId, SelectedObservationInspectionError,
+    SelectedObservationPassError, SelectedObservationSample, SelectedRows,
+    SelectedVisibilitySample, SelectionBound, SkyDirection, SourceGenerations, SpectralContract,
+    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSampling, SpectralWcs,
+    SpectralWindowSelection, StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy,
+    TimeRange, TimeSelection, UvSelection, UvwCoordinateLaw, VisibilityColumn,
+    VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract, WeightingScheme,
+    compile, compile_observation,
 };
 use casa_tables::ColumnSchema;
 use casa_types::measures::{EopValues, MeasuresProvider, MeasuresProviderState};
@@ -45,6 +46,26 @@ use ndarray::ArrayD;
 use std::convert::Infallible;
 use std::mem::size_of;
 use std::sync::{Arc, Mutex};
+
+/// Canonical model-lifecycle commitment matching the compiled snapshot.
+fn model_lifecycle(model: ModelStateIdentity) -> ModelLifecycleRequirements {
+    let input = match model {
+        ModelStateIdentity::Empty => ModelInputCommitment::Empty,
+        ModelStateIdentity::Seed(source) => ModelInputCommitment::AlignedSeed {
+            source,
+            support: LogicalIdentity::from_sha256([0xa5; 32]),
+        },
+        ModelStateIdentity::Generation(generation) => ModelInputCommitment::Generation(generation),
+    };
+    ModelLifecycleRequirements::new(
+        ModelBounds::new(
+            10_000_000, 10_000_000, 10_000_000, 10_000_000, 1.0e30, 1.0e30,
+        )
+        .expect("valid model lifecycle bounds"),
+        NumericPrecision::F32,
+        input,
+    )
+}
 
 #[derive(Debug)]
 struct AccountedTestMeasures {
@@ -285,7 +306,8 @@ fn sparse_manifest_reads_only_selected_physical_rows() {
     let problem = compile(ImagingRequest::new(
         specification(),
         geometry(),
-        ProblemInputIdentities::new(snapshot),
+        ProblemInputIdentities::new(snapshot.clone()),
+        model_lifecycle(snapshot.model()),
     ))
     .expect("compile sparse selected-observation problem");
     let source = &problem.inputs().observation_snapshot().sources()[0];
@@ -330,7 +352,8 @@ fn unconditional_sparse_manifest_is_rejected_without_scanning_intervening_rows()
     let problem = compile(ImagingRequest::new(
         specification(),
         geometry(),
-        ProblemInputIdentities::new(snapshot),
+        ProblemInputIdentities::new(snapshot.clone()),
+        model_lifecycle(snapshot.model()),
     ))
     .expect("compile incomplete-manifest problem");
     let source = &problem.inputs().observation_snapshot().sources()[0];
@@ -1454,7 +1477,8 @@ fn row_manifest_validation_occurs_in_the_sole_value_traversal() {
     let problem = compile(ImagingRequest::new(
         specification(),
         geometry(),
-        ProblemInputIdentities::new(snapshot),
+        ProblemInputIdentities::new(snapshot.clone()),
+        model_lifecycle(snapshot.model()),
     ))
     .expect("compile one-pass problem");
     let source = &problem.inputs().observation_snapshot().sources()[0];
@@ -1866,7 +1890,8 @@ fn retained_observation_cannot_be_rebound_to_equivalent_cross_provenance_problem
         compile(ImagingRequest::new(
             specification(),
             geometry(),
-            ProblemInputIdentities::new(snapshot),
+            ProblemInputIdentities::new(snapshot.clone()),
+            model_lifecycle(snapshot.model()),
         ))
         .expect("compile provenance-test problem")
     };
@@ -2284,7 +2309,8 @@ fn multi_spw_selection_is_block_invariant_across_prediction_and_residual_replays
     let problem = compile(ImagingRequest::new(
         specification(),
         geometry(),
-        ProblemInputIdentities::new(snapshot),
+        ProblemInputIdentities::new(snapshot.clone()),
+        model_lifecycle(snapshot.model()),
     ))
     .expect("compile multi-SPW problem");
     let source = &problem.inputs().observation_snapshot().sources()[0];
@@ -2736,7 +2762,8 @@ fn compiled_problem_with_centres(
     compile(ImagingRequest::new(
         specification(),
         geometry_with_centres(centres),
-        ProblemInputIdentities::new(snapshot),
+        ProblemInputIdentities::new(snapshot.clone()),
+        model_lifecycle(snapshot.model()),
     ))
     .expect("compile fixed-centre problem")
 }
@@ -2758,7 +2785,8 @@ fn compiled_problem_with_sources(
     compile(ImagingRequest::new(
         specification(),
         geometry(),
-        ProblemInputIdentities::new(snapshot),
+        ProblemInputIdentities::new(snapshot.clone()),
+        model_lifecycle(snapshot.model()),
     ))
     .expect("compile selected-observation problem")
 }
