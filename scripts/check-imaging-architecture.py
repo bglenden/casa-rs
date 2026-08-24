@@ -127,12 +127,12 @@ ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256 = (
     "4589711ae6224b94916d05e214df510fab5ba01a16e21a0b913b4b851c1d0e89"
 )
 ACCEPTED_MATRIX_ROWS_SHA256 = (
-    "3c4990c47000d959362a4f64cc6acefcb501b04ffcc0efa166578f4e5f312888"
+    "d67425376a6ad1dcf3fb2389d174996d2e97c477db8188944520d279e39343dc"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "e2347ff604f47bb9c1c6afef94508a140f1b1ac446814a3a6c5ff42e3820fceb"
+    "201111c20dedfeb81c1dd5388d3d3cf225d36a601114c6ffc2c738411ab41489"
 )
-ACCEPTED_MATRIX_CONTRACT_REVISION = 23
+ACCEPTED_MATRIX_CONTRACT_REVISION = 24
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "scientific-products-v1",
@@ -2863,6 +2863,7 @@ def validate_t18_global_weighting_transfer(rows: list[dict[str, Any]]) -> None:
         "crates/casa-imaging-runtime/src/execution.rs::fn validate_retained_claims",
         "crates/casa-imaging-runtime/src/observation_transaction.rs::fn derive_observation_reads",
         "crates/casa-imaging-runtime/src/resource_authority.rs::pub(crate) fn quarantine_external_permits",
+        "crates/casa-imaging-runtime/src/weighting.rs::pub struct SelectedObservationSourceResources",
         "crates/casa-imaging-runtime/src/weighting.rs::pub struct WeightingPlanFragment",
         "crates/casa-imaging-runtime/src/weighting.rs::pub struct WeightingExecutionState",
         "crates/casa-imaging-runtime/src/weighting.rs::pub fn traverse_generation",
@@ -3286,6 +3287,11 @@ def validate_t18_global_weighting_sources(
     fragment_fields = rust_struct_fields(
         runtime_weighting, "WeightingPlanFragment", runtime_weighting_path
     )
+    source_resource_fields = rust_struct_fields(
+        runtime_weighting,
+        "SelectedObservationSourceResources",
+        runtime_weighting_path,
+    )
     compose = rust_function_body(runtime_weighting, "compose", runtime_weighting_path)
     compact_compose = re.sub(r"\s+", "", compose)
     allocation_specs = rust_function_body(
@@ -3327,7 +3333,12 @@ def validate_t18_global_weighting_sources(
     if (
         fragment_fields.get("plan") != "&'aWeightingPlan"
         or fragment_fields.get("source_read") != "WorkNodeId"
-        or fragment_fields.get("selected_content_queue") != "LeaseResource"
+        or fragment_fields.get("source_resources")
+        != "SelectedObservationSourceResources"
+        or source_resource_fields.get("budget")
+        != "SelectedObservationContentBudget"
+        or source_resource_fields.get("allocations") != "BTreeSet<AllocationId>"
+        or source_resource_fields.get("queue") != "LeaseResource"
         or compose.count("kind: WorkKind::ObservationRead") != 2
         or "kind: WorkKind::Release" not in compose
         or allocation_specs.count("AllocationSpec::new(") != 5
@@ -3344,10 +3355,18 @@ def validate_t18_global_weighting_sources(
         or "LeaseResource::FileDescriptors" not in source_contract
         or "ClaimLifetime::retained_until(release.clone())" not in source_contract
         or ".chain(source_contract.retained_claims.iter().cloned())" not in compose
+        or ".chain(source_contract.release_buffer_claims.iter().cloned())"
+        not in compose
+        or "source_contract.retained_allocations" not in compact_compose
+        or "BTreeSet::from([WorkDependency::Work(self.ids.release_node.clone())])"
+        not in compose
         or "source_node.allocations.push(allocation_use(&self.ids.frozen_allocation,io_lifetime))"
         not in compact_compose
         or "self.source_read.clone()" not in allocation_specs
         or "&claim.resource == queue" not in source_contract
+        or "selected_content_allocations.is_empty()" not in source_contract
+        or "&retained_allocations != selected_content_allocations"
+        not in source_contract
         or "queue_demand_covers(" not in source_contract
         or not all(
             demand_kind in queue_demand
@@ -3376,6 +3395,9 @@ def validate_t18_global_weighting_sources(
 
     plan_projection = rust_impl_method_body(receipt, "PlanProjection", "new", receipt_path)
     node_projection = rust_impl_method_body(receipt, "NodeProjection", "new", receipt_path)
+    dag_validation = rust_function_body(
+        receipt, "validate_receipt_execution_dag", receipt_path
+    )
     if (
         "allocation_generations" not in plan_projection
         or "AllocationProjection::new" not in plan_projection
@@ -3385,6 +3407,12 @@ def validate_t18_global_weighting_sources(
         or "claim_lifetime" not in node_projection
         or "retained_until:" not in receipt
         or "ClaimLifetime::RetainedUntil" not in receipt
+        or "receipt_execution_dag(&projection)?" not in plan_projection
+        or "physical_work_id()" not in plan_projection
+        or "receipt_execution_dag(plan)?" not in dag_validation
+        or "hex(&dag.physical_work_id().as_bytes()) == plan.dag_identity"
+        not in dag_validation
+        or "has_redacted_identity" in receipt
     ):
         raise ArchitectureError(
             "T18 receipts must project weighting allocation generations and exact node uses"

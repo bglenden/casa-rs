@@ -866,7 +866,11 @@ impl ExecutionReceipt {
         parse_digest(&self.body.plan.cost_model_identity)
     }
 
-    /// Return the complete physical DAG identity.
+    /// Return the identity of the complete canonical DAG projection persisted here.
+    ///
+    /// This equals the execution DAG identity when no identifier needs path
+    /// redaction. Otherwise it binds the irreversibly redacted typed DAG that
+    /// can be reconstructed from this receipt.
     #[must_use]
     pub fn dag_identity(&self) -> [u8; 32] {
         parse_digest(&self.body.plan.dag_identity)
@@ -1476,7 +1480,7 @@ impl ExecutionReceiptStore {
         problem: &CompiledProblem,
         plan: &ExecutionPlan,
     ) -> Result<ReceiptRecorder<'store>, ReceiptError> {
-        let body = ReceiptBody::new(provenance, problem, plan);
+        let body = ReceiptBody::new(provenance, problem, plan)?;
         self.persist(&body, true)?;
         Ok(ReceiptRecorder {
             store: self,
@@ -1696,9 +1700,9 @@ impl ReceiptBody {
         provenance: ExecutionProvenance,
         problem: &CompiledProblem,
         plan: &ExecutionPlan,
-    ) -> Self {
+    ) -> Result<Self, ReceiptError> {
         let route = RouteProjection::new(provenance.route());
-        Self {
+        Ok(Self {
             attempt_identity: provenance.attempt.to_string(),
             build_identity: provenance.build.to_string(),
             route,
@@ -1708,8 +1712,8 @@ impl ReceiptBody {
             status: ReceiptStatus::Running,
             failure: None,
             problem: ProblemProjection::new(problem),
-            plan: PlanProjection::new(plan),
-        }
+            plan: PlanProjection::new(plan)?,
+        })
     }
 
     fn attempt(&self) -> ExecutionAttemptId {
@@ -2540,7 +2544,7 @@ struct PlanProjection {
 }
 
 impl PlanProjection {
-    fn new(plan: &ExecutionPlan) -> Self {
+    fn new(plan: &ExecutionPlan) -> Result<Self, ReceiptError> {
         let dag = plan.execution_dag();
         let nodes = dag
             .nodes()
@@ -2559,9 +2563,9 @@ impl PlanProjection {
                     .map(|kind| FenceProjection::new(&node.id, *kind))
             })
             .collect();
-        Self {
+        let mut projection = Self {
             plan_identity: hex(&plan.plan_id().as_bytes()),
-            dag_identity: hex(&plan.physical_work_id().as_bytes()),
+            dag_identity: String::new(),
             product_graph_identity: hex(&plan.product_graph_id().as_bytes()),
             implementation_registry_identity: hex(&plan.implementation_registry_id().as_bytes()),
             resource_policy_identity: hex(&plan.resource_policy_id().as_bytes()),
@@ -2608,7 +2612,11 @@ impl PlanProjection {
                 .values()
                 .map(AdaptationProjection::new)
                 .collect(),
-        }
+        };
+        projection.dag_identity = hex(&receipt_execution_dag(&projection)?
+            .physical_work_id()
+            .as_bytes());
+        Ok(projection)
     }
 }
 
@@ -4905,6 +4913,11 @@ fn validate_plan_projection(
 }
 
 fn validate_receipt_execution_dag(plan: &PlanProjection) -> Result<(), ReceiptError> {
+    let dag = receipt_execution_dag(plan)?;
+    require_integrity(hex(&dag.physical_work_id().as_bytes()) == plan.dag_identity)
+}
+
+fn receipt_execution_dag(plan: &PlanProjection) -> Result<ExecutionDag, ReceiptError> {
     let nodes = plan
         .nodes
         .iter()
@@ -4997,7 +5010,7 @@ fn validate_receipt_execution_dag(plan: &PlanProjection) -> Result<(), ReceiptEr
             at: parse_quiescence(&adaptation.quiescence),
         })
         .collect();
-    let dag = ExecutionDag::new(ExecutionDagSpecification {
+    ExecutionDag::new(ExecutionDagSpecification {
         required_resource_capabilities: plan
             .required_resource_capabilities
             .iter()
@@ -5011,13 +5024,7 @@ fn validate_receipt_execution_dag(plan: &PlanProjection) -> Result<(), ReceiptEr
         initial_knobs: plan.initial_execution_knobs.to_runtime(),
         adaptations,
     })
-    .map_err(|_| ReceiptError::IntegrityMismatch)?;
-    let has_redacted_identity = serde_json::to_string(plan)
-        .map_err(|source| ReceiptError::Json { source })?
-        .contains("redacted:");
-    require_integrity(
-        has_redacted_identity || hex(&dag.physical_work_id().as_bytes()) == plan.dag_identity,
-    )
+    .map_err(|_| ReceiptError::IntegrityMismatch)
 }
 
 fn validate_resource_policy_projection(

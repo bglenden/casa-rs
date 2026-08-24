@@ -24,13 +24,40 @@ use crate::{
     AllocationAccess, AllocationId, AllocationLayout, AllocationLifetime, AllocationPurpose,
     AllocationUse, AlternativeId, AttemptBoundObservationCompletion, CapacityDomainId,
     CapacityViewId, ClaimLifetime, ExecutionAttemptId, ExecutionDag, ExecutionDagSpecification,
-    ExecutionError, FenceId, FenceKind, InitializationPolicy, IoBufferKind, LeaseResource,
-    LogicalAllocation, MemoryDemand, ObservationCompletionBindingError,
+    ExecutionError, FenceId, FenceKind, InitializationPolicy, IoBufferKind, IoPrediction,
+    LeaseResource, LogicalAllocation, MemoryDemand, ObservationCompletionBindingError,
     ObservationReadCompletionContext, PhysicalSlot, PhysicalSlotId, PhysicalWorkBinding,
     PhysicalWorkBindingError, PlanPrediction, ResourceClaim, SlotCompatibility, StagePrediction,
     StorageMode, WorkDependency, WorkDomain, WorkExecutionContext, WorkImplementationId, WorkKind,
     WorkNode, WorkNodeId,
 };
+
+/// Exact source resources retained by one selected-observation weighting lifecycle.
+///
+/// This binds the selected-content budget to the logical source allocations and
+/// queue permit that remain live through the fragment's explicit release node.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SelectedObservationSourceResources {
+    budget: SelectedObservationContentBudget,
+    allocations: BTreeSet<AllocationId>,
+    queue: LeaseResource,
+}
+
+impl SelectedObservationSourceResources {
+    /// Bind the selected-content budget to its exact logical allocations and queue.
+    #[must_use]
+    pub const fn new(
+        budget: SelectedObservationContentBudget,
+        allocations: BTreeSet<AllocationId>,
+        queue: LeaseResource,
+    ) -> Self {
+        Self {
+            budget,
+            allocations,
+            queue,
+        }
+    }
+}
 
 /// Production composition of one frozen global weighting generation and replay.
 ///
@@ -40,8 +67,7 @@ use crate::{
 pub struct WeightingPlanFragment<'a> {
     plan: &'a WeightingPlan,
     source_read: WorkNodeId,
-    selected_content_budget: SelectedObservationContentBudget,
-    selected_content_queue: LeaseResource,
+    source_resources: SelectedObservationSourceResources,
     generation_implementation: WorkImplementationId,
     replay_implementation: WorkImplementationId,
     release_implementation: WorkImplementationId,
@@ -54,8 +80,7 @@ impl<'a> WeightingPlanFragment<'a> {
     pub fn new(
         plan: &'a WeightingPlan,
         source_read: WorkNodeId,
-        selected_content_budget: SelectedObservationContentBudget,
-        selected_content_queue: LeaseResource,
+        source_resources: SelectedObservationSourceResources,
         generation_implementation: WorkImplementationId,
         replay_implementation: WorkImplementationId,
         release_implementation: WorkImplementationId,
@@ -63,8 +88,7 @@ impl<'a> WeightingPlanFragment<'a> {
         Self {
             plan,
             source_read,
-            selected_content_budget,
-            selected_content_queue,
+            source_resources,
             generation_implementation,
             replay_implementation,
             release_implementation,
@@ -131,8 +155,9 @@ impl<'a> WeightingPlanFragment<'a> {
         let source_contract = SourceTraversalContract::from_source(
             base,
             source,
-            self.selected_content_budget,
-            &self.selected_content_queue,
+            self.source_resources.budget,
+            &self.source_resources.allocations,
+            &self.source_resources.queue,
             &self.ids.release_node,
         )?;
         let io_lifetime = ClaimLifetime::through_fence(FenceKind::Io);
@@ -189,6 +214,7 @@ impl<'a> WeightingPlanFragment<'a> {
             lifetime: ClaimLifetime::Work,
         })
         .chain(source_contract.retained_claims.iter().cloned())
+        .chain(source_contract.release_buffer_claims.iter().cloned())
         .collect();
         let release = WorkNode {
             id: self.ids.release_node.clone(),
@@ -197,10 +223,17 @@ impl<'a> WeightingPlanFragment<'a> {
             implementation: self.release_implementation.clone(),
             dependencies: terminal_events(reconciliation),
             claims: release_claims,
-            allocations: vec![allocation_use(
+            allocations: std::iter::once(allocation_use(
                 &self.ids.frozen_allocation,
                 ClaimLifetime::Work,
-            )],
+            ))
+            .chain(
+                source_contract
+                    .retained_allocations
+                    .iter()
+                    .map(|allocation| allocation_use(allocation, ClaimLifetime::Work)),
+            )
+            .collect(),
             fences: BTreeSet::new(),
             quiescence_after: BTreeSet::new(),
         };
@@ -260,7 +293,13 @@ impl<'a> WeightingPlanFragment<'a> {
                 .values()
                 .cloned()
                 .map(|mut allocation| {
-                    if source_contract.allocation_ids.contains(&allocation.id) {
+                    if source_contract
+                        .retained_allocations
+                        .contains(&allocation.id)
+                    {
+                        allocation.lifetime.release_after =
+                            BTreeSet::from([WorkDependency::Work(self.ids.release_node.clone())]);
+                    } else if source_contract.allocation_ids.contains(&allocation.id) {
                         allocation
                             .lifetime
                             .release_after
@@ -300,7 +339,13 @@ impl<'a> WeightingPlanFragment<'a> {
             .ok_or_else(|| WeightingPlanFragmentError::MissingNode(self.source_read.clone()))?;
         let generation_prediction = scaled_prediction(source_prediction, generation.id, 2)?;
         let replay_prediction = scaled_prediction(source_prediction, replay.id, 1)?;
-        let release_prediction = StagePrediction::new(release.id, 0);
+        let release_prediction =
+            StagePrediction::new(release.id, 0).with_io(vec![IoPrediction::new(
+                IoBufferKind::SourceReadAhead,
+                u64::try_from(self.source_resources.budget.available_bytes())
+                    .map_err(|_| WeightingPlanFragmentError::PredictionOverflow)?,
+                1,
+            )]);
         let extra_elapsed = generation_prediction
             .elapsed_nanos()
             .checked_add(replay_prediction.elapsed_nanos())
@@ -409,11 +454,11 @@ impl<'a> WeightingPlanFragment<'a> {
             &expected,
             WeightingWorkContract::SelectedTraversal {
                 problem,
-                budget: self.selected_content_budget,
-                queue: &self.selected_content_queue,
+                budget: self.source_resources.budget,
+                queue: &self.source_resources.queue,
             },
         )?;
-        Ok(self.selected_content_budget)
+        Ok(self.source_resources.budget)
     }
 
     fn authorize_generation(
@@ -431,8 +476,8 @@ impl<'a> WeightingPlanFragment<'a> {
             &expected,
             WeightingWorkContract::SelectedTraversal {
                 problem,
-                budget: self.selected_content_budget,
-                queue: &self.selected_content_queue,
+                budget: self.source_resources.budget,
+                queue: &self.source_resources.queue,
             },
         )?;
         let predecessor = context
@@ -472,8 +517,8 @@ impl<'a> WeightingPlanFragment<'a> {
             &expected,
             WeightingWorkContract::SelectedTraversal {
                 problem,
-                budget: self.selected_content_budget,
-                queue: &self.selected_content_queue,
+                budget: self.source_resources.budget,
+                queue: &self.source_resources.queue,
             },
         )?;
         let predecessor = context
@@ -514,6 +559,40 @@ impl<'a> WeightingPlanFragment<'a> {
             &[&specs[0]],
             WeightingWorkContract::Release,
         )?;
+        let expected_bytes = u64::try_from(self.source_resources.budget.available_bytes())
+            .map_err(|_| WeightingEvidenceError)?;
+        let selected = context
+            .allocations()
+            .iter()
+            .filter(|capability| {
+                self.source_resources
+                    .allocations
+                    .contains(capability.allocation())
+            })
+            .collect::<Vec<_>>();
+        let selected_bytes = selected
+            .iter()
+            .try_fold(0_u64, |total, capability| {
+                total.checked_add(capability.capacity_bytes())
+            })
+            .ok_or(WeightingEvidenceError)?;
+        let read_buffer_bytes = context
+            .resources()
+            .iter()
+            .filter(|capability| {
+                capability.resource() == &LeaseResource::IoBuffer(IoBufferKind::SourceReadAhead)
+                    && capability.lifetime() == &ClaimLifetime::Work
+            })
+            .try_fold(0_u64, |total, capability| {
+                total.checked_add(capability.amount())
+            })
+            .ok_or(WeightingEvidenceError)?;
+        if selected.len() != self.source_resources.allocations.len()
+            || selected_bytes != expected_bytes
+            || read_buffer_bytes != expected_bytes
+        {
+            return Err(WeightingEvidenceError);
+        }
         Ok(())
     }
 }
@@ -853,8 +932,10 @@ impl WeightingPlanIds {
 struct SourceTraversalContract {
     traversal_claims: Vec<ResourceClaim>,
     retained_claims: Vec<ResourceClaim>,
+    release_buffer_claims: Vec<ResourceClaim>,
     allocations: Vec<AllocationUse>,
     allocation_ids: BTreeSet<AllocationId>,
+    retained_allocations: BTreeSet<AllocationId>,
 }
 
 impl SourceTraversalContract {
@@ -862,6 +943,7 @@ impl SourceTraversalContract {
         base: &PhysicalWorkBinding,
         source: &WorkNode,
         budget: SelectedObservationContentBudget,
+        selected_content_allocations: &BTreeSet<AllocationId>,
         queue: &LeaseResource,
         release: &WorkNodeId,
     ) -> Result<Self, WeightingPlanFragmentError> {
@@ -916,18 +998,28 @@ impl SourceTraversalContract {
                 Some(total)
             }
         });
-        let allocated_bytes = source.allocations.iter().try_fold(0_u64, |total, usage| {
-            let allocation = &base.execution_dag().logical_allocations()[&usage.allocation];
+        let retained_allocations = source
+            .allocations
+            .iter()
+            .filter(|usage| selected_content_allocations.contains(&usage.allocation))
+            .map(|usage| usage.allocation.clone())
+            .collect::<BTreeSet<_>>();
+        let allocated_bytes = retained_allocations.iter().try_fold(0_u64, |total, id| {
+            let allocation = &base.execution_dag().logical_allocations()[id];
             if allocation.purpose == AllocationPurpose::IoBuffer(IoBufferKind::SourceReadAhead) {
                 total.checked_add(allocation.bytes)
             } else {
-                Some(total)
+                None
             }
         });
-        if claimed_bytes != Some(expected_bytes) || allocated_bytes != Some(expected_bytes) {
+        if selected_content_allocations.is_empty()
+            || &retained_allocations != selected_content_allocations
+            || claimed_bytes != Some(expected_bytes)
+            || allocated_bytes != Some(expected_bytes)
+        {
             return Err(WeightingPlanFragmentError::InvalidSourceAuthority {
                 node: source.id.clone(),
-                reason: "selected-content budget does not match its read-buffer claim and allocation",
+                reason: "selected-content budget does not match its exact retained read-buffer claim and allocations",
             });
         }
 
@@ -964,6 +1056,18 @@ impl SourceTraversalContract {
                 claim
             })
             .collect();
+        let release_buffer_claims = source
+            .claims
+            .iter()
+            .filter(|claim| {
+                claim.resource == LeaseResource::IoBuffer(IoBufferKind::SourceReadAhead)
+            })
+            .cloned()
+            .map(|mut claim| {
+                claim.lifetime = ClaimLifetime::Work;
+                claim
+            })
+            .collect();
         let allocations = source
             .allocations
             .iter()
@@ -976,8 +1080,10 @@ impl SourceTraversalContract {
         Ok(Self {
             traversal_claims,
             retained_claims,
+            release_buffer_claims,
             allocations,
             allocation_ids,
+            retained_allocations,
         })
     }
 }

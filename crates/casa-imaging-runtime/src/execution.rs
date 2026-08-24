@@ -1417,23 +1417,30 @@ impl<'plan> ExecutionScheduler<'plan> {
         &mut self,
         node_id: &WorkNodeId,
     ) -> Result<(), ExecutionError> {
-        let [allocation_use] = self.dag.nodes[node_id].allocations.as_slice() else {
+        let allocation_uses = &self.dag.nodes[node_id].allocations;
+        if allocation_uses.is_empty() {
             return Err(ExecutionError::invalid_state(format!(
-                "external-release node {} does not own exactly one allocation",
-                node_id.as_str()
-            )));
-        };
-        if !self
-            .active_allocations
-            .contains_key(&allocation_use.allocation)
-        {
-            return Err(ExecutionError::invalid_state(format!(
-                "failed external-release node {} has no active allocation",
+                "external-release node {} does not own an allocation",
                 node_id.as_str()
             )));
         }
-        self.quarantined_allocations
-            .insert(allocation_use.allocation.clone());
+        for allocation_use in allocation_uses {
+            if !self
+                .active_allocations
+                .contains_key(&allocation_use.allocation)
+            {
+                return Err(ExecutionError::invalid_state(format!(
+                    "failed external-release node {} has no active allocation {}",
+                    node_id.as_str(),
+                    allocation_use.allocation.as_str()
+                )));
+            }
+        }
+        self.quarantined_allocations.extend(
+            allocation_uses
+                .iter()
+                .map(|allocation_use| allocation_use.allocation.clone()),
+        );
         Ok(())
     }
 
@@ -2982,9 +2989,9 @@ fn validate_kind(node: &WorkNode) -> Result<(), ExecutionError> {
             require_fence(node, FenceKind::Publication)
         }
         WorkKind::Release => {
-            if node.allocations.len() != 1 {
+            if node.allocations.is_empty() {
                 Err(ExecutionError::invalid_plan(format!(
-                    "release work node {} must own exactly one logical allocation",
+                    "release work node {} must own at least one logical allocation",
                     node.id.as_str()
                 )))
             } else {
@@ -3013,7 +3020,10 @@ pub(crate) fn io_buffer_kind_supports_work_kind(
         crate::IoBufferKind::SourceReadAhead => {
             matches!(
                 work_kind,
-                WorkKind::Prefetch | WorkKind::Cache | WorkKind::ObservationRead
+                WorkKind::Prefetch
+                    | WorkKind::Cache
+                    | WorkKind::ObservationRead
+                    | WorkKind::Release
             )
         }
         crate::IoBufferKind::Decode | crate::IoBufferKind::Preparation => {
@@ -3502,12 +3512,6 @@ fn validate_external_release(
             allocation.id.as_str()
         )));
     };
-    if release.0.allocations.len() != 1 {
-        return Err(ExecutionError::invalid_plan(format!(
-            "terminal release work for logical allocation {} must own exactly one allocation",
-            allocation.id.as_str()
-        )));
-    }
     let terminal_events = local_use_end_events(release.0, &release.1.lifetime)
         .into_iter()
         .collect::<BTreeSet<_>>();
