@@ -422,6 +422,7 @@ impl WorkImplementation for PreparedSuiteImplementation {
 
 struct PreparedSuiteRegistry {
     id: ImplementationRegistryId,
+    metadata: Option<ImplementationContractMetadata>,
     implementations: BTreeMap<WorkImplementationId, PreparedSuiteImplementation>,
     prepared: BTreeMap<WorkImplementationId, PreparedArtifactRegistration>,
 }
@@ -435,6 +436,16 @@ impl ImplementationRegistry for PreparedSuiteRegistry {
 
     fn resolve(&self, id: &WorkImplementationId) -> Option<&Self::Implementation> {
         self.implementations.get(id)
+    }
+
+    fn implementation_contract(
+        &self,
+        id: &WorkImplementationId,
+    ) -> Option<ImplementationContractMetadata> {
+        self.implementations
+            .contains_key(id)
+            .then(|| self.metadata.clone())
+            .flatten()
     }
 
     fn prepared_artifact_registration(
@@ -466,6 +477,7 @@ fn prepared_catalog(
     (
         PreparedSuiteRegistry {
             id: registry(3),
+            metadata: None,
             implementations: BTreeMap::new(),
             prepared: BTreeMap::from([(implementation.clone(), registration)]),
         },
@@ -711,6 +723,7 @@ fn prepared_physical_work(
     fragment.compose(&base).expect("prepared physical work")
 }
 fn prepared_registry(
+    problem: &casa_imaging_model::CompiledProblem,
     adapter: PreparedOperationAdapter,
 ) -> (PreparedSuiteRegistry, WorkImplementationId) {
     let prepared_id = adapter.id.clone();
@@ -730,6 +743,7 @@ fn prepared_registry(
     (
         PreparedSuiteRegistry {
             id: registry(3),
+            metadata: Some(super::implementation_metadata(problem)),
             implementations: BTreeMap::from([
                 (
                     implementation(6),
@@ -765,6 +779,8 @@ fn run_prepared(
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let executable =
         ExecutableModelProblem::from_compiled(problem.clone()).expect("direct executable problem");
+    let provenance = receipt.provenance().clone();
+    let canonical_receipt = plan.bind_receipt(provenance);
     runtime_run(
         &executable,
         plan,
@@ -772,7 +788,7 @@ fn run_prepared(
         registry,
         authority(),
         &mut RunToCompletion,
-        receipt,
+        canonical_receipt,
     )
 }
 
@@ -790,9 +806,10 @@ fn execute_prepared_operation(
     operation: PreparedArtifactOperation,
     expectation: PreparedRunExpectation,
 ) -> PreparedObserved {
-    let plan = plan(
+    let plan = plan_with_receipts(
         problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        receipts,
         |_, _| {
             Ok::<_, ()>(prepared_physical_work(
                 problem,
@@ -804,7 +821,7 @@ fn execute_prepared_operation(
     )
     .expect("prepared operation plan");
     let adapter = PreparedOperationAdapter::new(operation, store, descriptor);
-    let (registry, id) = prepared_registry(adapter);
+    let (registry, id) = prepared_registry(problem, adapter);
     let result = run_prepared(
         problem,
         &plan,
@@ -1001,7 +1018,7 @@ fn prepared_streaming_residency_is_admitted_once_without_overlapping_slots() {
 
     plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(work),
     )
     .expect("a feasible single-buffer prepared plan must be admitted");
@@ -1077,7 +1094,7 @@ fn distinct_prepared_cells_compose_without_resource_identity_collisions() {
     );
     plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(composed),
     )
     .expect("shared cache demand remains feasible below domain capacity");
@@ -1139,7 +1156,7 @@ fn prepared_sources_are_bounded_accounted_files_and_never_casa_tables() {
     let operation = PreparedArtifactOperation::Load;
     let plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |problem, _| {
             Ok::<_, ()>(prepared_physical_work(
                 problem,
@@ -1158,13 +1175,8 @@ fn prepared_sources_are_bounded_accounted_files_and_never_casa_tables() {
     fs::write(&casa_imaging, imaging).expect("CASA-contained source bytes");
     let mut adapter = PreparedOperationAdapter::new(operation, store, descriptor.clone());
     adapter.sources.as_mut().expect("load sources").imaging = casa_imaging;
-    let (registry, _) = prepared_registry(adapter);
-    let receipts_directory = prepared_tempdir();
-    let receipts = ExecutionReceiptStore::new(
-        receipts_directory.path(),
-        ReceiptRetention::new(4, 1_000_000).expect("CASA-source retention"),
-    )
-    .expect("CASA-source receipt store");
+    let (registry, _) = prepared_registry(&problem, adapter);
+    let receipts = plan.receipt_store();
     let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([164; 32]);
     let error = run_prepared(
         &problem,
@@ -1226,7 +1238,7 @@ fn cold_load_rejects_missing_mismatched_unlisted_and_wrong_producer_sources() {
         };
         let plan = plan(
             &problem,
-            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
             |problem, _| {
                 Ok::<_, ()>(prepared_physical_work(
                     problem,
@@ -1252,13 +1264,8 @@ fn cold_load_rejects_missing_mismatched_unlisted_and_wrong_producer_sources() {
             "wrong-producer" => sources.producer = WorkNodeId::new("prepare"),
             _ => unreachable!("complete source-binding case table"),
         }
-        let (registry, _) = prepared_registry(adapter);
-        let receipt_directory = prepared_tempdir();
-        let receipts = ExecutionReceiptStore::new(
-            receipt_directory.path(),
-            ReceiptRetention::new(4, 1_000_000).expect("source-binding retention"),
-        )
-        .expect("source-binding receipt store");
+        let (registry, _) = prepared_registry(&problem, adapter);
+        let receipts = plan.receipt_store();
         let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256(
             [170 + u8::try_from(index).expect("bounded case index"); 32],
         );
@@ -1323,7 +1330,7 @@ fn cold_load_source_identity_is_owned_and_accounted_by_its_predecessor_receipt()
         .expect("separate cold-source read claim");
     let plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(work),
     )
     .expect("source-receipt plan");
@@ -1336,13 +1343,8 @@ fn cold_load_source_identity_is_owned_and_accounted_by_its_predecessor_receipt()
         .load_source(&descriptor)
         .expect("plan-bound source")
         .identity();
-    let (registry, _) = prepared_registry(adapter);
-    let receipt_directory = prepared_tempdir();
-    let receipts = ExecutionReceiptStore::new(
-        receipt_directory.path(),
-        ReceiptRetention::new(4, 1_000_000).expect("source-receipt retention"),
-    )
-    .expect("source-receipt store");
+    let (registry, _) = prepared_registry(&problem, adapter);
+    let receipts = plan.receipt_store();
     let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([193; 32]);
     run_prepared(
         &problem,
@@ -1431,7 +1433,7 @@ fn cold_load_rejects_post_plan_symlink_escape_and_keeps_domains_exact() {
     let untouched_source_read = source_demand(&secondary_source_domain().id);
     let plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(work),
     )
     .expect("multi-domain source plan");
@@ -1445,13 +1447,8 @@ fn cold_load_rejects_post_plan_symlink_escape_and_keeps_domains_exact() {
         PreparedOperationAdapter::new(PreparedArtifactOperation::Load, store, descriptor.clone());
     adapter.sources = Some(sources);
     adapter.bound_source = Some(bound_source);
-    let (registry, _) = prepared_registry(adapter);
-    let receipt_directory = prepared_tempdir();
-    let receipts = ExecutionReceiptStore::new(
-        receipt_directory.path(),
-        ReceiptRetention::new(4, 1_000_000).expect("multi-domain source retention"),
-    )
-    .expect("multi-domain source receipt store");
+    let (registry, _) = prepared_registry(&problem, adapter);
+    let receipts = plan.receipt_store();
     let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([195; 32]);
     let error = run_prepared(
         &problem,
@@ -1494,7 +1491,7 @@ fn cold_load_cannot_run_without_its_predecessor_source_receipt() {
     let descriptor = prepared_descriptor(&store, &problem);
     let plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |problem, _| {
             Ok::<_, ()>(prepared_physical_work(
                 problem,
@@ -1514,7 +1511,7 @@ fn cold_load_cannot_run_without_its_predecessor_source_receipt() {
         .load_source(&descriptor)
         .expect("plan-bound source")
         .identity();
-    let (mut registry, _) = prepared_registry(adapter);
+    let (mut registry, _) = prepared_registry(&problem, adapter);
     let PreparedSuiteImplementation::Base(base) = registry
         .implementations
         .get_mut(&implementation(6))
@@ -1527,12 +1524,7 @@ fn cold_load_cannot_run_without_its_predecessor_source_receipt() {
         .expect("source producer measurements")
         .1
         .retain(|measurement| measurement.planned_identity() != source_identity);
-    let receipt_directory = prepared_tempdir();
-    let receipts = ExecutionReceiptStore::new(
-        receipt_directory.path(),
-        ReceiptRetention::new(4, 1_000_000).expect("missing-source-receipt retention"),
-    )
-    .expect("missing-source-receipt store");
+    let receipts = plan.receipt_store();
     let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([195; 32]);
     let error = run_prepared(
         &problem,
@@ -1598,9 +1590,10 @@ fn public_prepared_generate_reuse_and_load_are_plan_and_receipt_bound() {
             > generated_reservation.streaming_buffer_bytes() + 64 * 1024,
         "resident reservation must also charge bounded cache-inventory storage"
     );
-    let generate_plan = plan(
+    let generate_plan = plan_with_receipts(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        &receipts,
         |problem, _| {
             Ok::<_, ()>(prepared_physical_work(
                 problem,
@@ -1616,7 +1609,7 @@ fn public_prepared_generate_reuse_and_load_are_plan_and_receipt_bound() {
         generated_store,
         generated_descriptor.clone(),
     );
-    let (generate_registry, generate_id) = prepared_registry(generate_adapter);
+    let (generate_registry, generate_id) = prepared_registry(&problem, generate_adapter);
     let generate_attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([91; 32]);
     run_prepared(
         &problem,
@@ -1801,9 +1794,10 @@ fn public_prepared_generate_reuse_and_load_are_plan_and_receipt_bound() {
     .expect("reuse store");
     let reuse_descriptor = prepared_descriptor(&reuse_store, &problem);
     assert_eq!(reuse_descriptor, generated_descriptor);
-    let reuse_plan = plan(
+    let reuse_plan = plan_with_receipts(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        &receipts,
         |problem, _| {
             Ok::<_, ()>(prepared_physical_work(
                 problem,
@@ -1819,7 +1813,7 @@ fn public_prepared_generate_reuse_and_load_are_plan_and_receipt_bound() {
         reuse_store,
         reuse_descriptor.clone(),
     );
-    let (reuse_registry, reuse_id) = prepared_registry(reuse_adapter);
+    let (reuse_registry, reuse_id) = prepared_registry(&problem, reuse_adapter);
     let reuse_attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([93; 32]);
     run_prepared(
         &problem,
@@ -1888,9 +1882,10 @@ fn public_prepared_generate_reuse_and_load_are_plan_and_receipt_bound() {
         generated_descriptor.identity(),
         "relocating identical prepared content does not change ArtifactIdentity"
     );
-    let load_plan = plan(
+    let load_plan = plan_with_receipts(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        &receipts,
         |problem, _| {
             Ok::<_, ()>(prepared_physical_work(
                 problem,
@@ -1910,7 +1905,7 @@ fn public_prepared_generate_reuse_and_load_are_plan_and_receipt_bound() {
         .load_source(&loaded_descriptor)
         .expect("canonical load source identity")
         .identity();
-    let (load_registry, load_id) = prepared_registry(load_adapter);
+    let (load_registry, load_id) = prepared_registry(&problem, load_adapter);
     let load_attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([95; 32]);
     run_prepared(
         &problem,
@@ -1993,9 +1988,10 @@ fn prepared_operation_identity_cannot_authorize_a_different_operation() {
     )
     .expect("operation mismatch store");
     let mismatch_descriptor = prepared_descriptor(&mismatch_store, &problem);
-    let mismatch_plan = plan(
+    let mismatch_plan = plan_with_receipts(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        &receipts,
         |problem, _| {
             Ok::<_, ()>(prepared_physical_work(
                 problem,
@@ -2012,7 +2008,7 @@ fn prepared_operation_identity_cannot_authorize_a_different_operation() {
         mismatch_store,
         mismatch_descriptor.clone(),
     );
-    let (mismatch_registry, _) = prepared_registry(mismatch_adapter);
+    let (mismatch_registry, _) = prepared_registry(&problem, mismatch_adapter);
     let mismatch_attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([103; 32]);
     let mismatch_error = run_prepared(
         &problem,
@@ -2149,6 +2145,7 @@ fn prepared_owner_and_cell_identities_fail_closed() {
     );
     let empty_catalog = PreparedSuiteRegistry {
         id: registry(3),
+        metadata: None,
         implementations: BTreeMap::new(),
         prepared: BTreeMap::new(),
     };
@@ -2180,9 +2177,10 @@ fn prepared_owner_and_cell_identities_fail_closed() {
         ),
         Err(PreparedArtifactError::InvalidOwner)
     ));
-    let owner_mismatch_plan = plan(
+    let owner_mismatch_plan = plan_with_receipts(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        &receipts,
         |problem, _| {
             Ok::<_, ()>(prepared_physical_work(
                 problem,
@@ -2198,7 +2196,7 @@ fn prepared_owner_and_cell_identities_fail_closed() {
         owner_mismatch_store,
         spoofed_owner_descriptor,
     );
-    let (owner_mismatch_registry, _) = prepared_registry(owner_mismatch_adapter);
+    let (owner_mismatch_registry, _) = prepared_registry(&problem, owner_mismatch_adapter);
     let owner_mismatch_attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([105; 32]);
     let owner_mismatch_error = run_prepared(
         &problem,
@@ -2686,9 +2684,10 @@ fn public_prepared_reuse_receipts_fail_closed_rejections() {
     )
     .expect("missing store");
     let missing_descriptor = prepared_descriptor(&missing_store, &problem);
-    let missing_plan = plan(
+    let missing_plan = plan_with_receipts(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        &receipts,
         |problem, _| {
             Ok::<_, ()>(prepared_physical_work(
                 problem,
@@ -2704,7 +2703,7 @@ fn public_prepared_reuse_receipts_fail_closed_rejections() {
         missing_store,
         missing_descriptor.clone(),
     );
-    let (missing_registry, missing_id) = prepared_registry(missing_adapter);
+    let (missing_registry, missing_id) = prepared_registry(&problem, missing_adapter);
     let missing_attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([97; 32]);
     let missing_result = run_prepared(
         &problem,
@@ -2770,9 +2769,10 @@ fn public_prepared_reuse_receipts_fail_closed_rejections() {
     )
     .expect("corrupt seed store");
     let generate_descriptor = prepared_descriptor(&generate_store, &problem);
-    let generate_plan = plan(
+    let generate_plan = plan_with_receipts(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        &receipts,
         |problem, _| {
             Ok::<_, ()>(prepared_physical_work(
                 problem,
@@ -2788,7 +2788,7 @@ fn public_prepared_reuse_receipts_fail_closed_rejections() {
         generate_store,
         generate_descriptor.clone(),
     );
-    let (generate_registry, _) = prepared_registry(generate_adapter);
+    let (generate_registry, _) = prepared_registry(&problem, generate_adapter);
     let seed_attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([99; 32]);
     run_prepared(
         &problem,
@@ -2818,9 +2818,10 @@ fn public_prepared_reuse_receipts_fail_closed_rejections() {
     )
     .expect("corrupt reuse store");
     let corrupt_descriptor = prepared_descriptor(&corrupt_store, &problem);
-    let corrupt_plan = plan(
+    let corrupt_plan = plan_with_receipts(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        &receipts,
         |problem, _| {
             Ok::<_, ()>(prepared_physical_work(
                 problem,
@@ -2836,7 +2837,7 @@ fn public_prepared_reuse_receipts_fail_closed_rejections() {
         corrupt_store,
         corrupt_descriptor.clone(),
     );
-    let (corrupt_registry, corrupt_id) = prepared_registry(corrupt_adapter);
+    let (corrupt_registry, corrupt_id) = prepared_registry(&problem, corrupt_adapter);
     let corrupt_attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([101; 32]);
     let corrupt_result = run_prepared(
         &problem,
@@ -3194,7 +3195,7 @@ fn failed_prepared_receipt_retains_materialization_eviction_and_io_evidence() {
     let operation = PreparedArtifactOperation::Generate;
     let plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |problem, _| {
             Ok::<_, ()>(prepared_physical_work(
                 problem,
@@ -3243,6 +3244,7 @@ fn failed_prepared_receipt_retains_materialization_eviction_and_io_evidence() {
     let prepared_id = descriptor.work_implementation_id(operation);
     let registry = PreparedSuiteRegistry {
         id: registry(3),
+        metadata: Some(super::implementation_metadata(&problem)),
         implementations: BTreeMap::from([
             (
                 implementation(6),
@@ -3266,12 +3268,7 @@ fn failed_prepared_receipt_retains_materialization_eviction_and_io_evidence() {
             prepared_registration(),
         )]),
     };
-    let receipts_directory = prepared_tempdir();
-    let receipts = ExecutionReceiptStore::new(
-        receipts_directory.path(),
-        ReceiptRetention::new(4, 1_000_000).expect("prepared failure retention"),
-    )
-    .expect("prepared failure receipt store");
+    let receipts = plan.receipt_store();
     let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([151; 32]);
 
     let error = run_prepared(
@@ -3392,9 +3389,10 @@ fn orphan_staging_is_included_in_reuse_budget_and_receipt_evidence() {
     )
     .expect("oversized staging payload");
     let over_budget_descriptor = prepared_descriptor(&over_budget_store, &problem);
-    let over_budget_plan = plan(
+    let over_budget_plan = plan_with_receipts(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        &receipts,
         |problem, _| {
             Ok::<_, ()>(prepared_physical_work(
                 problem,
@@ -3407,7 +3405,7 @@ fn orphan_staging_is_included_in_reuse_budget_and_receipt_evidence() {
     .expect("over-budget orphan-staging plan");
     let over_budget_adapter =
         PreparedOperationAdapter::new(operation, over_budget_store, over_budget_descriptor.clone());
-    let (over_budget_registry, _) = prepared_registry(over_budget_adapter);
+    let (over_budget_registry, _) = prepared_registry(&problem, over_budget_adapter);
     let over_budget_attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([162; 32]);
     let error = run_prepared(
         &problem,
@@ -3589,9 +3587,10 @@ fn cold_operation_fails_before_deleting_over_budget_orphan_staging() {
         )
         .expect("over-budget cold orphan payload");
         let descriptor = prepared_descriptor(&store, &problem);
-        let plan = plan(
+        let plan = plan_with_receipts(
             &problem,
-            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+            &receipts,
             |problem, _| {
                 Ok::<_, ()>(prepared_physical_work(
                     problem,
@@ -3603,7 +3602,7 @@ fn cold_operation_fails_before_deleting_over_budget_orphan_staging() {
         )
         .expect("over-budget cold orphan plan");
         let adapter = PreparedOperationAdapter::new(operation, store, descriptor);
-        let (registry, _) = prepared_registry(adapter);
+        let (registry, _) = prepared_registry(&problem, adapter);
         let attempt_byte = 174 + u8::try_from(index).expect("small cold operation index");
         let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([attempt_byte; 32]);
 
@@ -3695,7 +3694,7 @@ fn prepared_resource_overrun_fails_closed_without_censoring_the_peak() {
         .expect("prepared overrun reservation");
     let plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |problem, _| {
             Ok::<_, ()>(prepared_physical_work(
                 problem,
@@ -3751,6 +3750,7 @@ fn prepared_resource_overrun_fails_closed_without_censoring_the_peak() {
     let prepared_id = descriptor.work_implementation_id(operation);
     let registry = PreparedSuiteRegistry {
         id: registry(3),
+        metadata: Some(super::implementation_metadata(&problem)),
         implementations: BTreeMap::from([
             (
                 implementation(6),
@@ -3774,12 +3774,7 @@ fn prepared_resource_overrun_fails_closed_without_censoring_the_peak() {
             prepared_registration(),
         )]),
     };
-    let receipts_directory = prepared_tempdir();
-    let receipts = ExecutionReceiptStore::new(
-        receipts_directory.path(),
-        ReceiptRetention::new(4, 1_000_000).expect("prepared overrun retention"),
-    )
-    .expect("prepared overrun receipt store");
+    let receipts = plan.receipt_store();
     let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([155; 32]);
 
     let error = run_prepared(

@@ -40,43 +40,72 @@ use casa_imaging_reconstruction::{
 };
 use casa_imaging_runtime::{
     AdaptationId, AdaptationTransition, AllocationAccess, AllocationId, AllocationLayout,
-    AllocationLifetime, AllocationPurpose, AllocationUse, AlternativeId, ArtifactDisposition,
-    ArtifactIdentity, ArtifactMeasurement, ArtifactRole, AttemptBoundObservationCompletion,
-    BindingKind, BuildIdentity, CacheDemand, CacheIdentity, CapabilityPredicate, CapacityDomainId,
-    CapacityViewId, ClaimLifetime, CompiledProblemEvidence, CountDemand, CpuClassCapacity,
-    DemandAlternative, DemandEnvelope, ExecutionDag, ExecutionDagSpecification, ExecutionError,
-    ExecutionEvidenceError, ExecutionKnobs, ExecutionOutcome, ExecutionPlanId, ExecutionProvenance,
-    ExecutionReceipt, ExecutionReceiptBinding, ExecutionReceiptStore, ExecutionRouteDisposition,
+    AllocationLifetime, AllocationPurpose, AllocationUse, AlternativeId,
+    AlternativeRejectionReason, ArtifactDisposition, ArtifactIdentity, ArtifactMeasurement,
+    ArtifactRole, AttemptBoundObservationCompletion, BindingKind, BuildIdentity, CacheDemand,
+    CacheIdentity, CapabilityPredicate, CapacityDomainId, CapacityViewId, ClaimLifetime,
+    CompiledProblemEvidence, CountDemand, CpuClassCapacity, DemandAlternative, DemandEnvelope,
+    ExecutionDag, ExecutionDagSpecification, ExecutionError, ExecutionEvidenceError,
+    ExecutionKnobs, ExecutionOutcome, ExecutionPlanId, ExecutionProvenance, ExecutionReceipt,
+    ExecutionReceiptBinding, ExecutionReceiptStore, ExecutionRouteDisposition,
     ExecutionRouteEvidence, ExecutionRouteRequirement, ExecutionRouteRequirementKind,
-    ExecutionStatus, ExternalPressure, FenceId, FenceKind, HostInventory, ImplementationRegistry,
+    ExecutionStatus, ExternalPressure, FenceId, FenceKind, HostInventory,
+    ImplementationContractCatalog, ImplementationContractMetadata, ImplementationRegistry,
     ImplementationRegistryId, InitializationPolicy, IoBufferDemand, IoBufferKind, IoMeasurement,
     IoPrediction, LeaseResource, LogicalAllocation, MemoryCapacityDomain, MemoryCapacityKind,
     MemoryDemand, MemoryView, MemoryViewKind, ObservationReadCompletionContext,
     ObservationTransactionWork, PhysicalLayoutId, PhysicalSlot, PhysicalSlotId,
     PhysicalWorkBinding, PhysicalWorkBindingError, PlanError, PlanPrediction, PlannedArtifact,
-    PlannerCostModelProfileId, PlanningBindings, PredictionConfidence, PredictionUncertainty,
-    PreparedArtifactBudget, PreparedArtifactDescriptor, PreparedArtifactError,
-    PreparedArtifactLoadSource, PreparedArtifactOperation, PreparedArtifactOrder,
-    PreparedArtifactPlanFragment, PreparedArtifactPlaneDescriptor, PreparedArtifactPrecision,
-    PreparedArtifactRegistration, PreparedArtifactRejection, PreparedArtifactReuseOutcome,
-    PreparedArtifactSegmentDescriptor, PreparedArtifactSourceSegment, PreparedArtifactStore,
-    PreparedArtifactUvAffine, PublicationLayoutLedger, PublicationMappedStaging,
-    PublicationParticipant, PublicationPhysicalLayout, PublicationResourceBounds,
-    PublicationStaging, QueueDemand, QueueResource, QueueResourceId, QuiescencePoint, RateDemand,
-    RateResource, RateResourceId, RateUnit, ReceiptFailureKind, ReceiptRetention, ReceiptStatus,
-    RedactedPath, ResourceAuthority, ResourceClaim, ResourceError, ResourceHeadroom,
-    ResourceMeasurement, ResourceOverride, ResourcePolicy, ResourceTopology, RunBindings,
-    RunController, RunDirective, RunError, RunToCompletion, RuntimeOverheadDemand, ScalingMetadata,
-    SelectedObservationSourceResources, SlotCompatibility, StagePrediction, StorageDomain,
-    StorageDomainId, StorageMode, StorageUseKind, WeightingExecutionState, WeightingPlanFragment,
-    WorkDependency, WorkDomain, WorkExecutionContext, WorkImplementation, WorkImplementationId,
-    WorkKind, WorkMeasurements, WorkNode, WorkNodeId, plan as runtime_plan, run as runtime_run,
+    PlannerCostModelProfileBootstrap, PlannerCostModelProfileId, PlanningBindings,
+    PredictionConfidence, PredictionUncertainty, PreparedArtifactBudget,
+    PreparedArtifactDescriptor, PreparedArtifactError, PreparedArtifactLoadSource,
+    PreparedArtifactOperation, PreparedArtifactOrder, PreparedArtifactPlanFragment,
+    PreparedArtifactPlaneDescriptor, PreparedArtifactPrecision, PreparedArtifactRegistration,
+    PreparedArtifactRejection, PreparedArtifactReuseOutcome, PreparedArtifactSegmentDescriptor,
+    PreparedArtifactSourceSegment, PreparedArtifactStore, PreparedArtifactUvAffine,
+    PublicationLayoutLedger, PublicationMappedStaging, PublicationParticipant,
+    PublicationPhysicalLayout, PublicationResourceBounds, PublicationStaging, QueueDemand,
+    QueueResource, QueueResourceId, QuiescencePoint, RateDemand, RateResource, RateResourceId,
+    RateUnit, ReceiptFailureKind, ReceiptRetention, ReceiptStatus, RedactedPath, ResourceAuthority,
+    ResourceClaim, ResourceError, ResourceHeadroom, ResourceMeasurement, ResourceOverride,
+    ResourcePolicy, ResourceTopology, RunBindings, RunController, RunDirective, RunError,
+    RunToCompletion, RuntimeOverheadDemand, ScalingMetadata, SelectedObservationSourceResources,
+    SlotCompatibility, StagePrediction, StorageDomain, StorageDomainId, StorageMode,
+    StorageUseKind, WeightingExecutionState, WeightingPlanFragment, WorkDependency, WorkDomain,
+    WorkExecutionContext, WorkImplementation, WorkImplementationId, WorkKind, WorkMeasurements,
+    WorkNode, WorkNodeId, plan as runtime_plan, run as runtime_run,
 };
 use casa_ms::{
     BoundSelectedObservation, ObservationSourceBinding, SelectedObservationCompletion,
     SelectedObservationContentBudget, SelectedObservationMeasures,
     SelectedObservationResidencyCertificate,
 };
+
+fn implementation_catalog(
+    problem: &casa_imaging_model::CompiledProblem,
+    dag: &ExecutionDag,
+) -> ImplementationContractCatalog {
+    let registry = ContractOnlyRegistry::new(
+        registry(3),
+        implementation_metadata(problem),
+        dag.nodes().values().map(|node| node.implementation.clone()),
+    );
+    ImplementationContractCatalog::from_registry(
+        &registry,
+        dag.nodes().values().map(|node| node.implementation.clone()),
+    )
+    .expect("registry publishes every physical implementation contract")
+}
+
+fn implementation_metadata(
+    problem: &casa_imaging_model::CompiledProblem,
+) -> ImplementationContractMetadata {
+    ImplementationContractMetadata::new(
+        problem.problem_id(),
+        problem.numerics_id(),
+        problem.required_capabilities().clone(),
+    )
+}
 
 fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
     casa_imaging_model::ProductValidityPolicies::new(
@@ -96,8 +125,14 @@ fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
     )
 }
 
+fn planning_profile(byte: u8) -> PlannerCostModelProfileBootstrap {
+    PlannerCostModelProfileBootstrap::new(cost_model(byte))
+}
+
 mod common;
 
+mod cost_model_profile;
+mod imaging_plan_selection;
 mod walking_skeleton;
 
 use common::{identity, model_lifecycle, problem_inputs, problem_inputs_with_source_count};
@@ -1441,6 +1476,7 @@ fn failing_transaction_executor(
 fn physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
     let problem = compile(request(1)).expect("default physical-work problem");
     physical_work_with_transaction_staging(
+        &problem,
         implementation_byte,
         product_participants(&problem),
         false,
@@ -1452,6 +1488,7 @@ fn physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
 fn physical_work_with_synchronous_observation_read(implementation_byte: u8) -> PhysicalWorkBinding {
     let problem = compile(request(1)).expect("synchronous observation-read problem");
     physical_work_with_transaction_staging(
+        &problem,
         implementation_byte,
         product_participants(&problem),
         false,
@@ -1699,6 +1736,7 @@ fn production_weighting_fragment_rejects_fungible_unrelated_queues() {
     })
     .expect("two distinct queue identities are structurally valid");
     let split_queue_base = PhysicalWorkBinding::new(
+        implementation_catalog(&problem, &split_queue_dag),
         split_queue_dag,
         base.prediction().clone(),
         base.artifacts().to_vec(),
@@ -1771,6 +1809,7 @@ fn physical_work_for_problem(
         )
         .collect();
     let base = physical_work_with_transaction_staging(
+        problem,
         implementation_byte,
         participants,
         !problem
@@ -1851,6 +1890,7 @@ fn physical_work_for_problem(
     })
     .expect("problem-bound transaction DAG");
     PhysicalWorkBinding::new(
+        implementation_catalog(problem, &dag),
         dag,
         base.prediction().clone(),
         base.artifacts().to_vec(),
@@ -2023,6 +2063,7 @@ fn physical_work_for_weighting_problem_with_residency(
     )
     .expect("problem-bound source prediction");
     PhysicalWorkBinding::new(
+        implementation_catalog(problem, &dag),
         dag,
         prediction,
         base.artifacts().to_vec(),
@@ -2033,6 +2074,7 @@ fn physical_work_for_weighting_problem_with_residency(
 }
 
 fn with_work_implementation(
+    problem: &casa_imaging_model::CompiledProblem,
     base: &PhysicalWorkBinding,
     implementation: WorkImplementationId,
 ) -> PhysicalWorkBinding {
@@ -2074,6 +2116,7 @@ fn with_work_implementation(
     })
     .expect("rebinding a validated DAG preserves its topology");
     PhysicalWorkBinding::new(
+        implementation_catalog(problem, &dag),
         dag,
         base.prediction().clone(),
         base.artifacts().to_vec(),
@@ -2084,10 +2127,18 @@ fn with_work_implementation(
 }
 
 fn physical_work_with_product_staging(
+    problem: &casa_imaging_model::CompiledProblem,
     implementation_byte: u8,
     participants: Vec<PublicationParticipant>,
 ) -> PhysicalWorkBinding {
-    physical_work_with_transaction_staging(implementation_byte, participants, false, false, true)
+    physical_work_with_transaction_staging(
+        problem,
+        implementation_byte,
+        participants,
+        false,
+        false,
+        true,
+    )
 }
 
 fn physical_work_with_model_staging(implementation_byte: u8) -> PhysicalWorkBinding {
@@ -2099,6 +2150,7 @@ fn physical_work_with_early_publication_buffer(implementation_byte: u8) -> Physi
     let problem = compile(request(1)).expect("early-publication physical-work problem");
     let graph_id = problem.product_graph().graph_id();
     physical_work_with_transaction_staging(
+        &problem,
         implementation_byte,
         problem
             .product_graph()
@@ -2115,6 +2167,7 @@ fn physical_work_with_early_publication_buffer(implementation_byte: u8) -> Physi
 }
 
 fn physical_work_with_transaction_staging(
+    problem: &casa_imaging_model::CompiledProblem,
     implementation_byte: u8,
     participants: Vec<PublicationParticipant>,
     include_model_staging: bool,
@@ -2214,6 +2267,7 @@ fn physical_work_with_transaction_staging(
         adaptations: Vec::new(),
     };
     transaction_binding(
+        problem,
         specification,
         implementation(implementation_byte),
         participants,
@@ -2224,6 +2278,7 @@ fn physical_work_with_transaction_staging(
 }
 
 fn transaction_binding(
+    problem: &casa_imaging_model::CompiledProblem,
     mut specification: ExecutionDagSpecification,
     work_implementation: WorkImplementationId,
     participants: Vec<PublicationParticipant>,
@@ -2796,6 +2851,7 @@ fn transaction_binding(
     )
     .expect("complete transaction prediction");
     PhysicalWorkBinding::new(
+        implementation_catalog(problem, &dag),
         dag,
         prediction,
         participants
@@ -2856,6 +2912,7 @@ fn transaction_binding(
 }
 
 fn evidenced_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
+    let problem = compile(request(1)).expect("evidenced physical-work problem");
     let base = physical_work(implementation_byte);
     let base_dag = base.execution_dag();
     let read = WorkNodeId::new("read");
@@ -2976,6 +3033,7 @@ fn evidenced_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
     )
     .expect("complete evidence prediction");
     PhysicalWorkBinding::new(
+        implementation_catalog(&problem, &dag),
         dag,
         prediction,
         vec![
@@ -3002,6 +3060,7 @@ fn evidenced_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
 }
 
 fn adaptive_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
+    let problem = compile(request(1)).expect("adaptive physical-work problem");
     let work_implementation = implementation(implementation_byte);
     let first_id = WorkNodeId::new("first-major-work");
     let boundary_id = WorkNodeId::new("major-boundary");
@@ -3096,6 +3155,7 @@ fn adaptive_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
         }],
     };
     transaction_binding(
+        &problem,
         specification,
         implementation(implementation_byte),
         default_product_participants(),
@@ -3105,7 +3165,10 @@ fn adaptive_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
     )
 }
 
-fn auditable_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
+fn auditable_physical_work(
+    problem: &casa_imaging_model::CompiledProblem,
+    implementation_byte: u8,
+) -> PhysicalWorkBinding {
     let base = adaptive_physical_work(implementation_byte);
     let base_dag = base.execution_dag();
     let allocation = AllocationId::new("audit-generation");
@@ -3184,6 +3247,7 @@ fn auditable_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
     })
     .expect("valid auditable physical work DAG");
     PhysicalWorkBinding::new(
+        implementation_catalog(problem, &dag),
         dag,
         base.prediction().clone(),
         [PlannedArtifact::new(
@@ -3206,6 +3270,7 @@ fn release_failure_physical_work(
     release_implementation_byte: u8,
     fail_at_fence: bool,
 ) -> PhysicalWorkBinding {
+    let problem = compile(request(1)).expect("release-failure physical-work problem");
     let (independent_id, prepare_id, release_id, allocation_name, slot_name) = if fail_at_fence {
         (
             WorkNodeId::new("z-independent-io"),
@@ -3446,6 +3511,7 @@ fn release_failure_physical_work(
         adaptations: Vec::new(),
     };
     transaction_binding(
+        &problem,
         specification,
         implementation(implementation_byte),
         default_product_participants(),
@@ -3460,6 +3526,7 @@ fn mapped_publication_candidate(
     terminal: WorkDependency,
     allocation: AllocationId,
 ) -> Result<PhysicalWorkBinding, PhysicalWorkBindingError> {
+    let problem = compile(request(1)).expect("mapped-publication physical-work problem");
     let base = release_failure_physical_work(6, 8, false);
     let mapped = PublicationMappedStaging::new(producer, terminal, allocation)
         .expect("mapped producer and release differ");
@@ -3493,8 +3560,10 @@ fn mapped_publication_candidate(
             .collect(),
     )
     .expect("one mapped layout per participant");
+    let dag = base.execution_dag().clone();
     PhysicalWorkBinding::new(
-        base.execution_dag().clone(),
+        implementation_catalog(&problem, &dag),
+        dag,
         base.prediction().clone(),
         base.artifacts().to_vec(),
         base.observation_transaction().clone(),
@@ -3503,12 +3572,14 @@ fn mapped_publication_candidate(
 }
 
 fn test_registry(
+    problem: &casa_imaging_model::CompiledProblem,
     registry_byte: u8,
     implementation_byte: u8,
     failure: Option<&'static str>,
 ) -> TestRegistry {
     TestRegistry {
         id: registry(registry_byte),
+        metadata: implementation_metadata(problem),
         executors: BTreeMap::from([(
             implementation(implementation_byte),
             recording_executor(implementation_byte, failure, None),
@@ -3518,7 +3589,44 @@ fn test_registry(
 
 struct TestRegistry {
     id: ImplementationRegistryId,
+    metadata: ImplementationContractMetadata,
     executors: BTreeMap<WorkImplementationId, RecordingExecutor>,
+}
+
+impl TestRegistry {
+    fn metadata_for(
+        problem: &casa_imaging_model::CompiledProblem,
+    ) -> ImplementationContractMetadata {
+        implementation_metadata(problem)
+    }
+}
+
+struct ContractOnlyRegistry {
+    id: ImplementationRegistryId,
+    metadata: ImplementationContractMetadata,
+    executors: BTreeMap<WorkImplementationId, RecordingExecutor>,
+}
+
+impl ContractOnlyRegistry {
+    fn new(
+        id: ImplementationRegistryId,
+        metadata: ImplementationContractMetadata,
+        implementation_ids: impl IntoIterator<Item = WorkImplementationId>,
+    ) -> Self {
+        let executors = implementation_ids
+            .into_iter()
+            .map(|implementation_id| {
+                let mut executor = recording_executor(0, None, None);
+                executor.id = implementation_id.clone();
+                (implementation_id, executor)
+            })
+            .collect();
+        Self {
+            id,
+            metadata,
+            executors,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -3626,6 +3734,36 @@ impl ImplementationRegistry for TestRegistry {
     fn resolve(&self, id: &WorkImplementationId) -> Option<&Self::Implementation> {
         self.executors.get(id)
     }
+
+    fn implementation_contract(
+        &self,
+        id: &WorkImplementationId,
+    ) -> Option<ImplementationContractMetadata> {
+        self.executors
+            .contains_key(id)
+            .then(|| self.metadata.clone())
+    }
+}
+
+impl ImplementationRegistry for ContractOnlyRegistry {
+    type Implementation = RecordingExecutor;
+
+    fn registry_id(&self) -> ImplementationRegistryId {
+        self.id
+    }
+
+    fn resolve(&self, id: &WorkImplementationId) -> Option<&Self::Implementation> {
+        self.executors.get(id)
+    }
+
+    fn implementation_contract(
+        &self,
+        id: &WorkImplementationId,
+    ) -> Option<ImplementationContractMetadata> {
+        self.executors
+            .contains_key(id)
+            .then(|| self.metadata.clone())
+    }
 }
 
 fn authority() -> &'static ResourceAuthority {
@@ -3729,12 +3867,48 @@ fn plan<E>(
         &PlanningBindings,
     ) -> Result<PhysicalWorkBinding, E>,
 ) -> Result<casa_imaging_runtime::ExecutionPlan, PlanError<E>> {
+    let directory = tempfile::tempdir().expect("empty receipt directory");
+    let root = directory.keep();
+    let receipts = ExecutionReceiptStore::new(
+        root,
+        ReceiptRetention::new(4, 1_048_576).expect("retention"),
+    )
+    .expect("empty receipt store");
+    plan_with_receipts(problem, bindings, &receipts, planner)
+}
+
+fn plan_with_receipts<E>(
+    problem: &casa_imaging_model::CompiledProblem,
+    bindings: PlanningBindings,
+    receipts: &ExecutionReceiptStore,
+    planner: impl FnOnce(
+        &casa_imaging_model::CompiledProblem,
+        &PlanningBindings,
+    ) -> Result<PhysicalWorkBinding, E>,
+) -> Result<casa_imaging_runtime::ExecutionPlan, PlanError<E>> {
     let _guard = run_lock()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    runtime_plan(problem, bindings, authority(), |problem, bindings| {
-        planner(problem, bindings).map(|candidate| vec![candidate])
-    })
+    let candidate = planner(problem, &bindings).map_err(PlanError::Planner)?;
+    let implementation_ids = candidate
+        .execution_dag()
+        .nodes()
+        .values()
+        .map(|node| node.implementation.clone());
+    let registry = ContractOnlyRegistry::new(
+        bindings.implementation_registry_id(),
+        implementation_metadata(problem),
+        implementation_ids,
+    );
+    let candidates = vec![candidate];
+    runtime_plan(
+        problem,
+        bindings,
+        authority(),
+        &registry,
+        receipts,
+        move |_, _| Ok(candidates),
+    )
 }
 
 fn execution_provenance(
@@ -3785,12 +3959,11 @@ fn run<C: RunController>(
     authority: &ResourceAuthority,
     controller: &mut C,
 ) -> Result<ExecutionOutcome, RunError<io::Error>> {
-    let directory = tempfile::tempdir().expect("receipt directory");
-    let receipts = ExecutionReceiptStore::new(
-        directory.path(),
-        ReceiptRetention::new(8, 1_048_576).expect("bounded retention"),
-    )
-    .expect("receipt store");
+    let receipts = plan.receipt_store();
+    static NEXT_RUN_ATTEMPT: AtomicUsize = AtomicUsize::new(241);
+    let attempt_seed =
+        u8::try_from(NEXT_RUN_ATTEMPT.fetch_add(1, Ordering::SeqCst) % usize::from(u8::MAX))
+            .expect("bounded synthetic attempt seed");
     run_receipted(
         problem,
         plan,
@@ -3799,7 +3972,7 @@ fn run<C: RunController>(
         authority,
         controller,
         receipts.bind(execution_provenance(
-            casa_imaging_runtime::ExecutionAttemptId::from_sha256([241; 32]),
+            casa_imaging_runtime::ExecutionAttemptId::from_sha256([attempt_seed; 32]),
             BuildIdentity::from_sha256([242; 32]),
         )),
     )
@@ -3849,6 +4022,7 @@ fn execute_plan(
 
 #[test]
 fn physical_work_binding_rejects_io_and_publication_evidence_outside_plan_semantics() {
+    let problem = compile(request(1)).expect("physical-work contract problem");
     let io_base = physical_work(6);
     let io_dag = io_base.execution_dag().clone();
     let io_prediction = PlanPrediction::new(
@@ -3876,6 +4050,7 @@ fn physical_work_binding_rejects_io_and_publication_evidence_outside_plan_semant
 
     assert!(matches!(
         PhysicalWorkBinding::new(
+            implementation_catalog(&problem, &io_dag),
             io_dag,
             io_prediction,
             Vec::new(),
@@ -3943,6 +4118,7 @@ fn physical_work_binding_rejects_io_and_publication_evidence_outside_plan_semant
     .expect("well-formed prediction ledger");
     assert!(matches!(
         PhysicalWorkBinding::new(
+            implementation_catalog(&problem, &contract_dag),
             contract_dag,
             contract_prediction,
             Vec::new(),
@@ -3967,6 +4143,7 @@ fn physical_work_binding_rejects_io_and_publication_evidence_outside_plan_semant
 
     assert!(matches!(
         PhysicalWorkBinding::new(
+            implementation_catalog(&problem, &publication_dag),
             publication_dag,
             publication_prediction,
             vec![output],
@@ -3979,6 +4156,7 @@ fn physical_work_binding_rejects_io_and_publication_evidence_outside_plan_semant
 
 #[test]
 fn physical_work_binding_rejects_typed_io_contracts_without_predictions() {
+    let problem = compile(request(1)).expect("physical-work contract problem");
     let base = evidenced_physical_work(6);
     let dag = base.execution_dag().clone();
     let prediction = PlanPrediction::new(
@@ -3995,6 +4173,7 @@ fn physical_work_binding_rejects_typed_io_contracts_without_predictions() {
 
     assert!(matches!(
         PhysicalWorkBinding::new(
+            implementation_catalog(&problem, &dag),
             dag,
             prediction,
             Vec::new(),
@@ -4007,6 +4186,7 @@ fn physical_work_binding_rejects_typed_io_contracts_without_predictions() {
 
 #[test]
 fn physical_work_binding_rejects_cpu_io_buffer_contracts_without_predictions() {
+    let problem = compile(request(1)).expect("physical-work contract problem");
     let base = evidenced_physical_work(6);
     let base_dag = base.execution_dag();
     let prepare = WorkNodeId::new("read");
@@ -4086,6 +4266,7 @@ fn physical_work_binding_rejects_cpu_io_buffer_contracts_without_predictions() {
 
     assert!(matches!(
         PhysicalWorkBinding::new(
+            implementation_catalog(&problem, &dag),
             dag,
             prediction,
             Vec::new(),
@@ -4104,7 +4285,7 @@ fn run_rejects_artifact_dispositions_that_contradict_plan_semantics() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(evidenced_physical_work(6)),
     )
     .expect("physical planning");
@@ -4128,6 +4309,7 @@ fn run_rejects_artifact_dispositions_that_contradict_plan_semantics() {
     )]);
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
 
@@ -4150,7 +4332,7 @@ fn run_can_invoke_only_the_implementation_identity_sealed_by_plan() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -4158,6 +4340,7 @@ fn run_can_invoke_only_the_implementation_identity_sealed_by_plan() {
     let different = recording_executor(7, None, None);
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([
             (implementation(6), selected),
             (implementation(7), different),
@@ -4200,7 +4383,7 @@ fn initial_consistency_check_receives_the_exact_observation_transaction() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -4217,6 +4400,7 @@ fn initial_consistency_check_receives_the_exact_observation_transaction() {
     ));
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
 
@@ -4234,7 +4418,7 @@ fn generic_io_cannot_receive_observation_sources() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -4248,6 +4432,7 @@ fn generic_io_cannot_receive_observation_sources() {
     executor.generic_source_access = Some(Arc::clone(&generic_source_access));
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
 
@@ -4264,11 +4449,11 @@ fn run_rejects_a_registry_that_cannot_resolve_the_bound_implementation() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
-    let registry = test_registry(3, 7, None);
+    let registry = test_registry(&problem, 3, 7, None);
     let current = RunBindings::new(
         problem.inputs().clone(),
         &ResourcePolicy::Balanced,
@@ -4295,11 +4480,11 @@ fn run_rejects_a_different_implementation_returned_under_the_bound_key() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
-    let mut registry = test_registry(3, 6, None);
+    let mut registry = test_registry(&problem, 3, 6, None);
     registry
         .executors
         .get_mut(&implementation(6))
@@ -4337,15 +4522,26 @@ fn versioned_request_compiles_before_physical_planning() {
 
 #[test]
 fn plan_seals_physical_work_and_every_required_binding() {
-    assert_eq!(ExecutionPlanId::SCHEMA_VERSION, 8);
+    assert_eq!(ExecutionPlanId::SCHEMA_VERSION, 10);
     let problem = compile(request(1)).expect("logical compilation");
     let expected_problem_id = problem.problem_id();
-    let bindings = PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4));
-    let execution_plan = plan(&problem, bindings.clone(), |problem, bindings| {
-        assert_eq!(problem.problem_id(), expected_problem_id);
-        assert_eq!(bindings.resource_policy(), &ResourcePolicy::Balanced);
-        Ok::<_, ()>(physical_work(6))
-    })
+    let bindings =
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4));
+    let receipts = ExecutionReceiptStore::new(
+        "/tmp/casa-rs-imaging-plan-id-regression",
+        ReceiptRetention::new(4, 1_048_576).expect("plan-id retention"),
+    )
+    .expect("plan-id receipt store");
+    let execution_plan = plan_with_receipts(
+        &problem,
+        bindings.clone(),
+        &receipts,
+        |problem, bindings| {
+            assert_eq!(problem.problem_id(), expected_problem_id);
+            assert_eq!(bindings.resource_policy(), &ResourcePolicy::Balanced);
+            Ok::<_, ()>(physical_work(6))
+        },
+    )
     .expect("physical planning");
 
     assert_eq!(execution_plan.problem_id(), problem.problem_id());
@@ -4392,16 +4588,47 @@ fn plan_seals_physical_work_and_every_required_binding() {
         execution_plan.physical_work_id()
     );
 
-    let repeated = plan(&problem, bindings, |_, _| Ok::<_, ()>(physical_work(6)))
-        .expect("repeat physical planning");
+    let repeated = plan_with_receipts(&problem, bindings, &receipts, |_, _| {
+        Ok::<_, ()>(physical_work(6))
+    })
+    .expect("repeat physical planning");
     assert_eq!(execution_plan.plan_id(), repeated.plan_id());
     assert_eq!(
         execution_plan.plan_id().as_bytes(),
         [
-            140, 225, 250, 81, 172, 175, 79, 76, 73, 60, 67, 85, 102, 151, 0, 131, 114, 195, 101,
-            65, 12, 77, 120, 39, 218, 246, 101, 4, 218, 181, 221, 171,
+            90, 161, 155, 186, 10, 78, 134, 46, 62, 1, 115, 175, 118, 198, 110, 233, 245, 140, 85,
+            30, 183, 39, 145, 242, 215, 131, 96, 32, 37, 197, 91, 101,
         ]
     );
+}
+
+#[test]
+fn receipt_store_location_does_not_change_the_logical_plan_identity() {
+    let problem = compile(request(1)).expect("logical compilation");
+    let first_directory = tempfile::tempdir().expect("first receipt directory");
+    let second_directory = tempfile::tempdir().expect("second receipt directory");
+    let retention = ReceiptRetention::new(4, 1_048_576).expect("plan-id retention");
+    let first_receipts =
+        ExecutionReceiptStore::new(first_directory.path(), retention).expect("first receipt store");
+    let second_receipts = ExecutionReceiptStore::new(second_directory.path(), retention)
+        .expect("second receipt store");
+    let first = plan_with_receipts(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        &first_receipts,
+        |_, _| Ok::<_, ()>(physical_work(6)),
+    )
+    .expect("first physical planning");
+    let second = plan_with_receipts(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        &second_receipts,
+        |_, _| Ok::<_, ()>(physical_work(6)),
+    )
+    .expect("second physical planning");
+
+    assert_eq!(first.plan_id(), second.plan_id());
+    assert_ne!(first.receipt_store(), second.receipt_store());
 }
 
 #[test]
@@ -4414,7 +4641,7 @@ fn transaction_seal_rejects_omitted_product_graph_publication_member() {
     .expect("two-product logical compilation");
     plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |problem, _| Ok::<_, io::Error>(physical_work_for_problem(problem, 6)),
     )
     .expect("canonical complete two-product transaction seal");
@@ -4422,8 +4649,8 @@ fn transaction_seal_rejects_omitted_product_graph_publication_member() {
     let omitted = product_participants(&problem).into_iter().take(1).collect();
     let result = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
-        |_, _| Ok::<_, io::Error>(physical_work_with_product_staging(6, omitted)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        |_, _| Ok::<_, io::Error>(physical_work_with_product_staging(&problem, 6, omitted)),
     );
 
     let error = result.expect_err("one omitted product must fail the exact plan seal");
@@ -4458,9 +4685,10 @@ fn transaction_seal_rejects_matching_ordinals_from_a_foreign_product_graph() {
 
     let result = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| {
             Ok::<_, io::Error>(physical_work_with_product_staging(
+                &problem,
                 6,
                 product_participants(&foreign),
             ))
@@ -4475,7 +4703,8 @@ fn transaction_seal_rejects_matching_ordinals_from_a_foreign_product_graph() {
 #[test]
 fn mapped_publication_staging_binds_its_producer_release_allocation_and_plan_identity() {
     let problem = compile(request(1)).expect("logical compilation");
-    let bindings = || PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4));
+    let bindings =
+        || PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4));
     let valid = mapped_publication_candidate(
         WorkNodeId::new("1-prepare-mapping"),
         WorkDependency::Work(WorkNodeId::new("2-release-mapping")),
@@ -4530,8 +4759,10 @@ fn mapped_publication_staging_binds_its_producer_release_allocation_and_plan_ide
 fn transaction_seal_blocks_unbound_transaction_work() {
     let problem = compile(request(1)).expect("logical compilation");
     let base = physical_work_for_problem(&problem, 6);
+    let dag = base.execution_dag().clone();
     let unbound = PhysicalWorkBinding::new(
-        base.execution_dag().clone(),
+        implementation_catalog(&problem, &dag),
+        dag,
         base.prediction().clone(),
         base.artifacts().to_vec(),
         ObservationTransactionWork::new(
@@ -4549,7 +4780,7 @@ fn transaction_seal_blocks_unbound_transaction_work() {
     .expect("physically valid but transaction-unbound candidate");
     let result = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, io::Error>(unbound),
     );
 
@@ -4564,15 +4795,15 @@ fn run_rejects_changed_registry_policy_and_cost_model_bindings() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
     let current =
         |policy, cost_model_id| RunBindings::new(problem.inputs().clone(), policy, cost_model_id);
     let reject = |bindings, registry| execute_plan(&problem, &execution_plan, &bindings, registry);
-    let wrong_registry = test_registry(9, 6, None);
-    let correct_registry = test_registry(3, 6, None);
+    let wrong_registry = test_registry(&problem, 9, 6, None);
+    let correct_registry = test_registry(&problem, 3, 6, None);
 
     assert!(matches!(
         reject(
@@ -4606,12 +4837,13 @@ fn run_rejects_changed_registry_policy_and_cost_model_bindings() {
 #[test]
 fn run_rejects_every_stale_problem_input_before_calling_the_executor() {
     let problem = compile(request(1)).expect("logical compilation");
-    let bindings = PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4));
+    let bindings =
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4));
     let execution_plan = plan(&problem, bindings.clone(), |_, _| {
         Ok::<_, ()>(physical_work(6))
     })
     .expect("physical planning");
-    let registry = test_registry(3, 6, None);
+    let registry = test_registry(&problem, 3, 6, None);
     let stale_inputs = [
         (
             problem_inputs(9, default_references(), ModelStateIdentity::Empty),
@@ -4690,7 +4922,8 @@ fn run_rejects_every_stale_problem_input_before_calling_the_executor() {
 #[test]
 fn run_executes_one_exactly_bound_plan_without_routing_or_replanning() {
     let problem = compile(request(1)).expect("logical compilation");
-    let bindings = PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4));
+    let bindings =
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4));
     let execution_plan = plan(&problem, bindings.clone(), |_, _| {
         Ok::<_, ()>(physical_work(6))
     })
@@ -4700,7 +4933,7 @@ fn run_executes_one_exactly_bound_plan_without_routing_or_replanning() {
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let registry = test_registry(3, 6, None);
+    let registry = test_registry(&problem, 3, 6, None);
 
     let output =
         execute_plan(&problem, &execution_plan, &current, &registry).expect("exact execution");
@@ -4727,7 +4960,7 @@ fn run_preserves_the_selected_executors_error_chain() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -4736,7 +4969,7 @@ fn run_preserves_the_selected_executors_error_chain() {
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let registry = test_registry(3, 6, Some("selected executor failed"));
+    let registry = test_registry(&problem, 3, 6, Some("selected executor failed"));
 
     let error =
         execute_plan(&problem, &execution_plan, &current, &registry).expect_err("executor failure");
@@ -4752,7 +4985,7 @@ fn rejected_post_launch_adaptation_drains_fences_before_returning() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -4761,7 +4994,7 @@ fn rejected_post_launch_adaptation_drains_fences_before_returning() {
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let registry = test_registry(3, 6, None);
+    let registry = test_registry(&problem, 3, 6, None);
     let mut controller = RejectAfterLaunch::default();
 
     let error = run(
@@ -4795,7 +5028,7 @@ fn run_applies_an_eligible_transition_to_later_scheduled_work() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(adaptive_physical_work(6)),
     )
     .expect("adaptive physical planning");
@@ -4804,7 +5037,7 @@ fn run_applies_an_eligible_transition_to_later_scheduled_work() {
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let registry = test_registry(3, 6, None);
+    let registry = test_registry(&problem, 3, 6, None);
     let mut controller = AdaptAtMajorBoundary::default();
 
     let outcome = run(
@@ -4839,7 +5072,7 @@ fn run_cancellation_at_the_pre_read_cut_releases_authority_capacity() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -4852,6 +5085,7 @@ fn run_cancellation_at_the_pre_read_cut_releases_authority_capacity() {
     let visible_generation = Arc::new(AtomicUsize::new(0));
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(
             implementation(6),
             publication_recording_executor(
@@ -4926,7 +5160,7 @@ fn cancellation_cannot_report_cancelled_after_atomic_publication_is_irrevocable(
         let problem = compile(request(1)).expect("logical compilation");
         let execution_plan = plan(
             &problem,
-            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
             |_, _| Ok::<_, ()>(physical_work(6)),
         )
         .expect("physical planning");
@@ -4939,6 +5173,7 @@ fn cancellation_cannot_report_cancelled_after_atomic_publication_is_irrevocable(
         let visible_generation = Arc::new(AtomicUsize::new(0));
         let registry = TestRegistry {
             id: registry(3),
+            metadata: implementation_metadata(&problem),
             executors: BTreeMap::from([(
                 implementation(6),
                 publication_recording_executor(
@@ -4987,7 +5222,7 @@ fn controller_cannot_adapt_after_atomic_publication_is_irrevocable() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -5000,6 +5235,7 @@ fn controller_cannot_adapt_after_atomic_publication_is_irrevocable() {
     let visible_generation = Arc::new(AtomicUsize::new(0));
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(
             implementation(6),
             publication_recording_executor(
@@ -5036,7 +5272,7 @@ fn publication_visibility_is_final_after_fence_and_scheduler_settlement() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -5053,6 +5289,7 @@ fn publication_visibility_is_final_after_fence_and_scheduler_settlement() {
     executor.visibility_during_fence_settlement = Some(Arc::clone(&visible_during_settlement));
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
     let mut controller = RunToCompletion;
@@ -5079,7 +5316,7 @@ fn receipt_finalize_failure_after_publish_returns_success_and_reopens_prepared_e
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -5088,12 +5325,7 @@ fn receipt_finalize_failure_after_publish_returns_success_and_reopens_prepared_e
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let directory = tempfile::tempdir().expect("receipt directory");
-    let receipts = ExecutionReceiptStore::new(
-        directory.path(),
-        ReceiptRetention::new(8, 1_048_576).expect("bounded retention"),
-    )
-    .expect("receipt store");
+    let receipts = execution_plan.receipt_store();
     let provenance = execution_provenance(
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([91; 32]),
         BuildIdentity::from_sha256([92; 32]),
@@ -5105,9 +5337,10 @@ fn receipt_finalize_failure_after_publish_returns_success_and_reopens_prepared_e
         Arc::clone(&publication_launched),
         Arc::clone(&visible_generation),
     );
-    executor.receipt_root_to_disrupt = Some(directory.path().to_owned());
+    executor.receipt_root_to_disrupt = Some(receipts.root_path().to_owned());
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
     let mut controller = RunToCompletion;
@@ -5129,7 +5362,7 @@ fn receipt_finalize_failure_after_publish_returns_success_and_reopens_prepared_e
     assert_eq!(outcome, ExecutionOutcome::Succeeded);
     assert!(publication_launched.load(Ordering::SeqCst));
     assert_eq!(visible_generation.load(Ordering::SeqCst), 1);
-    assert_eq!(receipt.schema_version(), 11);
+    assert_eq!(receipt.schema_version(), 14);
     assert_eq!(receipt.status(), ReceiptStatus::PublicationPrepared);
     for layout in execution_plan.publication_layouts().entries() {
         assert_eq!(
@@ -5152,7 +5385,7 @@ fn prepared_publication_holds_the_shared_root_reservation_through_publish() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -5161,18 +5394,14 @@ fn prepared_publication_holds_the_shared_root_reservation_through_publish() {
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let directory = tempfile::tempdir().expect("receipt directory");
     let max_bytes = 1_048_576;
-    let receipts = ExecutionReceiptStore::new(
-        directory.path(),
-        ReceiptRetention::new(8, max_bytes).expect("bounded retention"),
-    )
-    .expect("receipt store");
+    let receipts = execution_plan.receipt_store();
     let pause = Arc::new(PublicationPause::default());
     let mut executor = recording_executor(6, None, None);
     executor.publication_pause = Some(Arc::clone(&pause));
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
     let first = execution_provenance(
@@ -5210,7 +5439,7 @@ fn prepared_publication_holds_the_shared_root_reservation_through_publish() {
         });
 
         pause.wait_until_entered();
-        let retained_bytes = fs::read_dir(directory.path())
+        let retained_bytes = fs::read_dir(receipts.root_path())
             .expect("receipt root")
             .map(|entry| {
                 entry
@@ -5284,7 +5513,7 @@ fn earlier_acquired_publication_buffer_is_held_through_publish_and_then_released
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(physical_work_with_early_publication_buffer(6)),
     )
     .expect("earlier-acquired publication buffer is valid physical work");
@@ -5298,6 +5527,7 @@ fn earlier_acquired_publication_buffer_is_held_through_publish_and_then_released
     executor.publication_buffer_held = Some(Arc::clone(&held_during_publish));
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
     for attempt in 1..=2 {
@@ -5326,7 +5556,7 @@ fn observation_completion_is_attempt_node_and_fence_bound_after_successful_settl
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -5335,18 +5565,14 @@ fn observation_completion_is_attempt_node_and_fence_bound_after_successful_settl
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let directory = tempfile::tempdir().expect("receipt directory");
-    let receipts = ExecutionReceiptStore::new(
-        directory.path(),
-        ReceiptRetention::new(8, 1_048_576).expect("bounded retention"),
-    )
-    .expect("receipt store");
+    let receipts = execution_plan.receipt_store();
     let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([157; 32]);
     let completions = Arc::new(Mutex::new(Vec::new()));
     let mut executor = recording_executor(6, None, None);
     executor.observation_completions = Some(Arc::clone(&completions));
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
     let mut controller = RunToCompletion;
@@ -5379,7 +5605,7 @@ fn settled_observation_completion_is_delivered_only_to_explicit_predecessor_cons
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -5393,6 +5619,7 @@ fn settled_observation_completion_is_delivered_only_to_explicit_predecessor_cons
     executor.delivered_observation_completions = Some(Arc::clone(&delivered));
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
     let mut controller = RunToCompletion;
@@ -5428,7 +5655,7 @@ fn synchronous_observation_completion_is_exactly_once_attempt_node_and_lease_bou
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(physical_work_with_synchronous_observation_read(6)),
     )
     .expect("synchronous ObservationRead is valid physical work");
@@ -5452,18 +5679,14 @@ fn synchronous_observation_completion_is_exactly_once_attempt_node_and_lease_bou
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let directory = tempfile::tempdir().expect("receipt directory");
-    let receipts = ExecutionReceiptStore::new(
-        directory.path(),
-        ReceiptRetention::new(8, 1_048_576).expect("bounded retention"),
-    )
-    .expect("receipt store");
+    let receipts = execution_plan.receipt_store();
     let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([159; 32]);
     let completions = Arc::new(Mutex::new(Vec::new()));
     let mut executor = recording_executor(6, None, None);
     executor.observation_completions = Some(Arc::clone(&completions));
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
     let mut controller = RunToCompletion;
@@ -5512,7 +5735,7 @@ fn actual_bound_observation_traversals_drive_both_weighting_generation_passes() 
         .expect("production weighting physical work");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(physical),
     )
     .expect("production weighting execution plan");
@@ -5526,6 +5749,7 @@ fn actual_bound_observation_traversals_drive_both_weighting_generation_passes() 
     executor.weighting_plan = Some(weighting_plan);
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
     let mut controller = RunToCompletion;
@@ -5605,7 +5829,7 @@ fn failed_weighting_release_quarantines_the_actual_selected_observation_owner() 
         .expect("production weighting physical work");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(physical),
     )
     .expect("production weighting execution plan");
@@ -5620,15 +5844,11 @@ fn failed_weighting_release_quarantines_the_actual_selected_observation_owner() 
     executor.weighting_failure_node = Some(release.clone());
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
     let mut controller = RunToCompletion;
-    let directory = tempfile::tempdir().expect("failed-release receipt directory");
-    let receipts = ExecutionReceiptStore::new(
-        directory.path(),
-        ReceiptRetention::new(2, 1_048_576).expect("failed-release receipt retention"),
-    )
-    .expect("failed-release receipt store");
+    let receipts = execution_plan.receipt_store();
     let provenance = execution_provenance(
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([201; 32]),
         BuildIdentity::from_sha256([202; 32]),
@@ -5722,7 +5942,7 @@ fn failed_weighting_lifecycle_cuts_run_the_scheduler_owned_release() {
             .expect("production weighting physical work");
         let execution_plan = plan(
             &problem,
-            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
             |_, _| Ok::<_, ()>(physical),
         )
         .expect("production weighting execution plan");
@@ -5751,15 +5971,11 @@ fn failed_weighting_lifecycle_cuts_run_the_scheduler_owned_release() {
         }
         let registry = TestRegistry {
             id: registry(3),
+            metadata: implementation_metadata(&problem),
             executors: BTreeMap::from([(implementation(6), executor)]),
         };
         let mut controller = RunToCompletion;
-        let directory = tempfile::tempdir().expect("lifecycle-cut receipt directory");
-        let receipts = ExecutionReceiptStore::new(
-            directory.path(),
-            ReceiptRetention::new(2, 1_048_576).expect("lifecycle-cut receipt retention"),
-        )
-        .expect("lifecycle-cut receipt store");
+        let receipts = execution_plan.receipt_store();
         let attempt_byte = u8::try_from(210 + cut_index).expect("bounded failure-cut index");
         let provenance = execution_provenance(
             casa_imaging_runtime::ExecutionAttemptId::from_sha256([attempt_byte; 32]),
@@ -5840,7 +6056,7 @@ fn weighting_replay_rejects_a_fresh_binding_with_identical_selected_content() {
         .expect("production weighting physical work");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(physical),
     )
     .expect("production weighting execution plan");
@@ -5855,6 +6071,7 @@ fn weighting_replay_rejects_a_fresh_binding_with_identical_selected_content() {
     executor.reopen_weighting_before_replay = true;
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
     let mut controller = RunToCompletion;
@@ -5905,7 +6122,7 @@ fn weighting_generation_rejects_missing_direct_predecessor_before_state_exists()
         .expect("production weighting physical work");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(physical),
     )
     .expect("production weighting execution plan");
@@ -5920,6 +6137,7 @@ fn weighting_generation_rejects_missing_direct_predecessor_before_state_exists()
     executor.weighting_source_read = WorkNodeId::new("not-a-direct-predecessor");
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
     let mut controller = RunToCompletion;
@@ -5969,7 +6187,7 @@ fn weighting_generation_rejects_mismatched_allocation_capabilities_before_state_
         .expect("production weighting physical work");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(physical),
     )
     .expect("production weighting execution plan");
@@ -5988,6 +6206,7 @@ fn weighting_generation_rejects_mismatched_allocation_capabilities_before_state_
     executor.weighting_plan = Some(differently_sized_weighting);
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
     let mut controller = RunToCompletion;
@@ -6043,7 +6262,7 @@ fn assert_source_residency_mismatch_fails_before_traversal(
         .expect("planned source residency composes");
     let execution_plan = plan(
         problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(physical),
     )
     .expect("plan with mismatched runtime owner");
@@ -6058,6 +6277,7 @@ fn assert_source_residency_mismatch_fails_before_traversal(
     executor.weighting_plan = Some(weighting_plan);
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
     let mut controller = RunToCompletion;
@@ -6177,7 +6397,7 @@ fn multi_source_weighting_receipts_certified_aggregate_residency_through_release
     );
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(physical),
     )
     .expect("plan owner-certified multi-source weighting");
@@ -6191,15 +6411,11 @@ fn multi_source_weighting_receipts_certified_aggregate_residency_through_release
     executor.weighting_plan = Some(weighting_plan);
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
     let mut controller = RunToCompletion;
-    let directory = tempfile::tempdir().expect("multi-source receipt directory");
-    let receipts = ExecutionReceiptStore::new(
-        directory.path(),
-        ReceiptRetention::new(2, 1_048_576).expect("multi-source receipt retention"),
-    )
-    .expect("multi-source receipt store");
+    let receipts = execution_plan.receipt_store();
     let provenance = execution_provenance(
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([233; 32]),
         BuildIdentity::from_sha256([234; 32]),
@@ -6285,6 +6501,7 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
     let pathlike_implementation =
         WorkImplementationId::new("/private/t18/selected-observation-owner");
     let base = with_work_implementation(
+        &problem,
         &physical_work_for_weighting_problem(&problem, 6),
         pathlike_implementation.clone(),
     );
@@ -6349,7 +6566,7 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
         .collect::<BTreeMap<_, _>>();
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(physical),
     )
     .expect("plan with production weighting lifecycle");
@@ -6364,15 +6581,11 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
     executor.weighting_plan = Some(weighting_plan);
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(pathlike_implementation.clone(), executor)]),
     };
     let mut controller = RunToCompletion;
-    let directory = tempfile::tempdir().expect("weighting receipt directory");
-    let receipts = ExecutionReceiptStore::new(
-        directory.path(),
-        ReceiptRetention::new(8, 1_048_576).expect("weighting receipt retention"),
-    )
-    .expect("weighting receipt store");
+    let receipts = execution_plan.receipt_store();
     let provenance = execution_provenance(
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([199; 32]),
         BuildIdentity::from_sha256([200; 32]),
@@ -6478,7 +6691,7 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
         "the explicit release node must consume the complete weighting lifecycle"
     );
 
-    let path = only_receipt_path(directory.path());
+    let path = only_receipt_path(receipts.root_path());
     let original = fs::read_to_string(&path).expect("serialized weighting receipt");
     assert!(original.contains("redacted:"));
     assert!(!original.contains(pathlike_implementation.as_str()));
@@ -6507,7 +6720,7 @@ fn completion_from_a_different_compiled_observation_cannot_unlock_dependents() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(physical_work_with_synchronous_observation_read(6)),
     )
     .expect("synchronous ObservationRead is valid physical work");
@@ -6520,6 +6733,7 @@ fn completion_from_a_different_compiled_observation_cannot_unlock_dependents() {
     executor.bind_foreign_observation_completion = true;
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
     let mut controller = RunToCompletion;
@@ -6552,7 +6766,7 @@ fn failed_synchronous_observation_completion_prevents_dependent_work() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(physical_work_with_synchronous_observation_read(6)),
     )
     .expect("synchronous ObservationRead is valid physical work");
@@ -6567,6 +6781,7 @@ fn failed_synchronous_observation_completion_prevents_dependent_work() {
     executor.observation_completion_failure = Some("selected-observation completion failed");
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
     let mut controller = RunToCompletion;
@@ -6607,7 +6822,7 @@ fn failed_observation_fence_cannot_mint_attempt_bound_completion() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -6627,6 +6842,7 @@ fn failed_observation_fence_cannot_mint_attempt_bound_completion() {
     executor.observation_completions = Some(Arc::clone(&completions));
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
     let mut controller = RunToCompletion;
@@ -6683,7 +6899,7 @@ fn transaction_failures_leave_the_old_generation_visible() {
         let problem = compile(request(1)).expect("logical compilation");
         let execution_plan = plan(
             &problem,
-            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
             |_, _| Ok::<_, ()>(physical_work(6)),
         )
         .expect("physical planning");
@@ -6695,6 +6911,7 @@ fn transaction_failures_leave_the_old_generation_visible() {
         let visible_generation = Arc::new(AtomicUsize::new(0));
         let registry = TestRegistry {
             id: registry(3),
+            metadata: implementation_metadata(&problem),
             executors: BTreeMap::from([(
                 implementation(6),
                 failing_transaction_executor(
@@ -6727,7 +6944,7 @@ fn transaction_failures_leave_the_old_generation_visible() {
     let problem = compile(request_with_model_write(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(physical_work_with_model_staging(6)),
     )
     .expect("model-write physical planning");
@@ -6739,6 +6956,7 @@ fn transaction_failures_leave_the_old_generation_visible() {
     let visible_generation = Arc::new(AtomicUsize::new(0));
     let model_registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(
             implementation(6),
             failing_transaction_executor(
@@ -6770,7 +6988,7 @@ fn transaction_failures_leave_the_old_generation_visible() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -6782,18 +7000,14 @@ fn transaction_failures_leave_the_old_generation_visible() {
     let visible_generation = Arc::new(AtomicUsize::new(0));
     let admission_registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(
             implementation(6),
             failing_transaction_executor(6, Arc::clone(&visible_generation), None, None, None),
         )]),
     };
     let mut completion = RunToCompletion;
-    let admission_receipts_directory = tempfile::tempdir().expect("admission receipt directory");
-    let admission_receipts = ExecutionReceiptStore::new(
-        admission_receipts_directory.path(),
-        ReceiptRetention::new(8, 1_048_576).expect("admission receipt retention"),
-    )
-    .expect("admission receipt store");
+    let admission_receipts = execution_plan.receipt_store();
     let pressure_guard = run_lock()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -6823,11 +7037,13 @@ fn transaction_failures_leave_the_old_generation_visible() {
 
     assert!(matches!(
         error,
-        RunError::Scheduler(ExecutionError::Resource(ResourceError::Infeasible {
-            ref resource,
-            required: 1,
-            available: 0,
-        })) if resource == "locks"
+        RunError::Scheduler(ExecutionError::Resource(
+            ResourceError::NoFeasibleAlternative(certificate),
+        )) if matches!(certificate.rejections(), [rejection]
+            if rejection.alternative() == &AlternativeId::new("test-cpu")
+                && matches!(rejection.reason(),
+                    AlternativeRejectionReason::Infeasible { resource, required: 1, available: 0 }
+                    if resource == "locks"))
     ));
     assert_eq!(visible_generation.load(Ordering::SeqCst), 0);
     assert_eq!(
@@ -6837,6 +7053,43 @@ fn transaction_failures_leave_the_old_generation_visible() {
         0,
         "failed admission cannot launch mutation or publication work"
     );
+
+    // The receipt produced by the real run seam is the only source accepted
+    // for historical quantitative constraints. Replaying it at the same
+    // pressure is reported as a recorded refusal rather than a fresh
+    // synthetic admission failure.
+    let pressure_guard = run_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    authority()
+        .update_external_pressure(runtime_inventory(0).pressure)
+        .expect("reinstall zero-lock pressure for receipt replay");
+    let replay_registry = ContractOnlyRegistry::new(
+        registry(3),
+        implementation_metadata(&problem),
+        [implementation(6)],
+    );
+    let replay = runtime_plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        authority(),
+        &replay_registry,
+        &admission_receipts,
+        |_, _| Ok::<_, io::Error>(vec![physical_work(6)]),
+    );
+    authority()
+        .update_external_pressure(runtime_inventory(4).pressure)
+        .expect("restore pressure after receipt replay");
+    drop(pressure_guard);
+    assert!(matches!(
+        replay,
+        Err(PlanError::Resource(ResourceError::NoFeasibleAlternative(certificate)))
+            if matches!(certificate.rejections(), [rejection]
+                if matches!(rejection.reason(), AlternativeRejectionReason::RecordedFailure {
+                    attempt,
+                    status: ReceiptStatus::Infeasible,
+                } if *attempt == casa_imaging_runtime::ExecutionAttemptId::from_sha256([243; 32])))
+    ));
 }
 
 #[test]
@@ -6851,7 +7104,7 @@ fn release_failures_drain_independent_fences_and_quarantine_only_failed_slots() 
     for fail_at_fence in [false, true] {
         let execution_plan = plan(
             &problem,
-            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
             |_, _| Ok::<_, ()>(release_failure_physical_work(6, 8, fail_at_fence)),
         )
         .expect("external-release failure planning");
@@ -6883,6 +7136,7 @@ fn release_failures_drain_independent_fences_and_quarantine_only_failed_slots() 
         );
         let executor_registry = TestRegistry {
             id: registry(3),
+            metadata: implementation_metadata(&problem),
             executors: BTreeMap::from([
                 (implementation(6), prepare_executor),
                 (implementation(8), release_executor),
@@ -6918,7 +7172,7 @@ fn release_failures_drain_independent_fences_and_quarantine_only_failed_slots() 
 
         let readmission_plan = plan(
             &problem,
-            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
             |_, _| Ok::<_, ()>(physical_work(6)),
         )
         .expect("post-quarantine planning");
@@ -6943,7 +7197,7 @@ fn run_persists_a_reopenable_receipt_with_exact_identities_and_every_plan_node()
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -6952,13 +7206,8 @@ fn run_persists_a_reopenable_receipt_with_exact_identities_and_every_plan_node()
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let registry = test_registry(3, 6, None);
-    let directory = tempfile::tempdir().expect("receipt directory");
-    let receipts = ExecutionReceiptStore::new(
-        directory.path(),
-        ReceiptRetention::new(8, 1_048_576).expect("bounded retention"),
-    )
-    .expect("receipt store");
+    let registry = test_registry(&problem, 3, 6, None);
+    let receipts = execution_plan.receipt_store();
     let provenance = execution_provenance(
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([9; 32]),
         BuildIdentity::from_sha256([10; 32]),
@@ -6980,7 +7229,7 @@ fn run_persists_a_reopenable_receipt_with_exact_identities_and_every_plan_node()
         .expect("reopen durable receipt");
 
     assert_eq!(outcome, ExecutionOutcome::Succeeded);
-    assert_eq!(receipt.schema_version(), 11);
+    assert_eq!(receipt.schema_version(), 14);
     assert_eq!(receipt.route_matrix_schema_version(), 1);
     assert_eq!(receipt.route_matrix_contract_revision(), 1);
     assert_eq!(receipt.route_disposition(), "native");
@@ -7068,7 +7317,7 @@ fn receipt_rejects_checksum_valid_typed_projection_and_audit_forgery() {
     .expect("two-product logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |problem, _| Ok::<_, ()>(physical_work_for_problem(problem, 6)),
     )
     .expect("physical planning");
@@ -7077,13 +7326,8 @@ fn receipt_rejects_checksum_valid_typed_projection_and_audit_forgery() {
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let registry = test_registry(3, 6, None);
-    let directory = tempfile::tempdir().expect("receipt directory");
-    let receipts = ExecutionReceiptStore::new(
-        directory.path(),
-        ReceiptRetention::new(8, 1_048_576).expect("bounded retention"),
-    )
-    .expect("receipt store");
+    let registry = test_registry(&problem, 3, 6, None);
+    let receipts = execution_plan.receipt_store();
     let provenance = execution_provenance(
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([85; 32]),
         BuildIdentity::from_sha256([86; 32]),
@@ -7100,7 +7344,7 @@ fn receipt_rejects_checksum_valid_typed_projection_and_audit_forgery() {
         receipts.bind(provenance.clone()),
     )
     .expect("receipted execution");
-    let path = only_receipt_path(directory.path());
+    let path = only_receipt_path(receipts.root_path());
     let original = fs::read_to_string(&path).expect("serialized receipt");
     let checksum_marker = "\"payload_sha256\": \"";
     let checksum_start =
@@ -7251,7 +7495,7 @@ fn receipt_reopens_the_complete_versioned_effective_problem_projection() {
     .expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |problem, _| Ok::<_, ()>(physical_work_for_problem(problem, 6)),
     )
     .expect("physical planning");
@@ -7260,13 +7504,8 @@ fn receipt_reopens_the_complete_versioned_effective_problem_projection() {
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let registry = test_registry(3, 6, None);
-    let directory = tempfile::tempdir().expect("receipt directory");
-    let receipts = ExecutionReceiptStore::new(
-        directory.path(),
-        ReceiptRetention::new(8, 1_048_576).expect("bounded retention"),
-    )
-    .expect("receipt store");
+    let registry = test_registry(&problem, 3, 6, None);
+    let receipts = execution_plan.receipt_store();
     let provenance = execution_provenance(
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([83; 32]),
         BuildIdentity::from_sha256([84; 32]),
@@ -7489,8 +7728,8 @@ fn receipt_reopens_the_complete_selected_plan_projection() {
     });
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), policy.clone(), cost_model(4)),
-        |_, _| Ok::<_, ()>(auditable_physical_work(6)),
+        PlanningBindings::new(registry(3), policy.clone(), planning_profile(4)),
+        |_, _| Ok::<_, ()>(auditable_physical_work(&problem, 6)),
     )
     .expect("auditable physical planning");
     let current = RunBindings::new(problem.inputs().clone(), &policy, cost_model(4));
@@ -7511,14 +7750,10 @@ fn receipt_reopens_the_complete_selected_plan_projection() {
     )]);
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
-    let directory = tempfile::tempdir().expect("receipt directory");
-    let receipts = ExecutionReceiptStore::new(
-        directory.path(),
-        ReceiptRetention::new(8, 1_048_576).expect("bounded retention"),
-    )
-    .expect("receipt store");
+    let receipts = execution_plan.receipt_store();
     let provenance = execution_provenance(
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([61; 32]),
         BuildIdentity::from_sha256([62; 32]),
@@ -7616,7 +7851,7 @@ fn receipt_compares_plan_predictions_with_actual_stage_resource_and_fence_use() 
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -7625,13 +7860,8 @@ fn receipt_compares_plan_predictions_with_actual_stage_resource_and_fence_use() 
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let registry = test_registry(3, 6, None);
-    let directory = tempfile::tempdir().expect("receipt directory");
-    let receipts = ExecutionReceiptStore::new(
-        directory.path(),
-        ReceiptRetention::new(8, 1_048_576).expect("bounded retention"),
-    )
-    .expect("receipt store");
+    let registry = test_registry(&problem, 3, 6, None);
+    let receipts = execution_plan.receipt_store();
     let provenance = execution_provenance(
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([11; 32]),
         BuildIdentity::from_sha256([12; 32]),
@@ -7689,7 +7919,7 @@ fn receipt_compares_planned_and_actual_io_artifacts_and_never_persists_paths() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(evidenced_physical_work(6)),
     )
     .expect("physical planning");
@@ -7743,14 +7973,10 @@ fn receipt_compares_planned_and_actual_io_artifacts_and_never_persists_paths() {
     ]);
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
-    let directory = tempfile::tempdir().expect("receipt directory");
-    let receipts = ExecutionReceiptStore::new(
-        directory.path(),
-        ReceiptRetention::new(8, 1_048_576).expect("bounded retention"),
-    )
-    .expect("receipt store");
+    let receipts = execution_plan.receipt_store();
     let provenance = execution_provenance(
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([37; 32]),
         BuildIdentity::from_sha256([38; 32]),
@@ -7823,7 +8049,7 @@ fn receipt_compares_planned_and_actual_io_artifacts_and_never_persists_paths() {
         Some(output_path.as_bytes())
     );
     let persisted = std::fs::read_to_string(
-        std::fs::read_dir(directory.path())
+        std::fs::read_dir(receipts.root_path())
             .expect("receipt directory listing")
             .next()
             .expect("receipt file")
@@ -7840,7 +8066,7 @@ fn failed_publication_fence_never_records_a_published_output() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(evidenced_physical_work(6)),
     )
     .expect("physical planning");
@@ -7888,14 +8114,10 @@ fn failed_publication_fence_never_records_a_published_output() {
     ]);
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
-    let directory = tempfile::tempdir().expect("receipt directory");
-    let receipts = ExecutionReceiptStore::new(
-        directory.path(),
-        ReceiptRetention::new(1, 1_048_576).expect("retention"),
-    )
-    .expect("receipt store");
+    let receipts = execution_plan.receipt_store();
     let provenance = execution_provenance(
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([87; 32]),
         BuildIdentity::from_sha256([88; 32]),
@@ -7944,7 +8166,7 @@ fn receipts_preserve_typed_terminal_outcomes_and_every_node_state() {
     let problem = compile(request(1)).expect("logical compilation");
     let balanced_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -7953,20 +8175,12 @@ fn receipts_preserve_typed_terminal_outcomes_and_every_node_state() {
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let store = |root: &std::path::Path| {
-        ExecutionReceiptStore::new(
-            root,
-            ReceiptRetention::new(8, 1_048_576).expect("bounded retention"),
-        )
-        .expect("receipt store")
-    };
-    let failed_directory = tempfile::tempdir().expect("failed receipt directory");
-    let failed_receipts = store(failed_directory.path());
+    let failed_receipts = balanced_plan.receipt_store();
     let failed_provenance = execution_provenance(
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([41; 32]),
         BuildIdentity::from_sha256([42; 32]),
     );
-    let failed_registry = test_registry(3, 6, Some("adapter failed"));
+    let failed_registry = test_registry(&problem, 3, 6, Some("adapter failed"));
     let mut completion = RunToCompletion;
     assert!(matches!(
         run_receipted(
@@ -7998,13 +8212,12 @@ fn receipts_preserve_typed_terminal_outcomes_and_every_node_state() {
         Some(ReceiptStatus::Cancelled)
     );
 
-    let cancelled_directory = tempfile::tempdir().expect("cancelled receipt directory");
-    let cancelled_receipts = store(cancelled_directory.path());
+    let cancelled_receipts = balanced_plan.receipt_store();
     let cancelled_provenance = execution_provenance(
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([43; 32]),
         BuildIdentity::from_sha256([44; 32]),
     );
-    let successful_registry = test_registry(3, 6, None);
+    let successful_registry = test_registry(&problem, 3, 6, None);
     let mut cancellation = CancelAfterLaunch::default();
     assert_eq!(
         run_receipted(
@@ -8033,8 +8246,7 @@ fn receipts_preserve_typed_terminal_outcomes_and_every_node_state() {
         Some(ReceiptStatus::Cancelled)
     );
 
-    let mutation_directory = tempfile::tempdir().expect("mutation receipt directory");
-    let mutation_receipts = store(mutation_directory.path());
+    let mutation_receipts = balanced_plan.receipt_store();
     let mutation_provenance = execution_provenance(
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([45; 32]),
         BuildIdentity::from_sha256([46; 32]),
@@ -8070,8 +8282,7 @@ fn receipts_preserve_typed_terminal_outcomes_and_every_node_state() {
         Some(ReceiptStatus::NotStarted)
     );
 
-    let aborted_directory = tempfile::tempdir().expect("aborted receipt directory");
-    let aborted_receipts = store(aborted_directory.path());
+    let aborted_receipts = balanced_plan.receipt_store();
     let aborted_provenance = execution_provenance(
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([49; 32]),
         BuildIdentity::from_sha256([50; 32]),
@@ -8080,6 +8291,7 @@ fn receipts_preserve_typed_terminal_outcomes_and_every_node_state() {
     interrupted_executor.panic_on_execute = true;
     let interrupted_registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(implementation(6), interrupted_executor)]),
     };
     let mut completion = RunToCompletion;
@@ -8115,6 +8327,55 @@ fn receipts_preserve_typed_terminal_outcomes_and_every_node_state() {
         aborted.node_status(&WorkNodeId::new("read")),
         Some(ReceiptStatus::NotStarted)
     );
+}
+
+#[test]
+fn stale_binding_uses_the_plan_receipt_store_for_mutation_evidence() {
+    let problem = compile(request(1)).expect("logical compilation");
+    let plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        |_, _| Ok::<_, ()>(physical_work(6)),
+    )
+    .expect("physical planning");
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &ResourcePolicy::Interactive,
+        cost_model(4),
+    );
+    let canonical = plan.receipt_store();
+    let alternate_directory = tempfile::tempdir().expect("alternate receipt directory");
+    let alternate = ExecutionReceiptStore::new(
+        alternate_directory.path(),
+        ReceiptRetention::new(4, 1_048_576).expect("retention"),
+    )
+    .expect("alternate receipt store");
+    let provenance = execution_provenance(
+        casa_imaging_runtime::ExecutionAttemptId::from_sha256([47; 32]),
+        BuildIdentity::from_sha256([48; 32]),
+    );
+    let registry = test_registry(&problem, 3, 6, None);
+    let mut completion = RunToCompletion;
+    assert!(matches!(
+        run_receipted(
+            &problem,
+            &plan,
+            &current,
+            &registry,
+            authority(),
+            &mut completion,
+            alternate.bind(provenance.clone()),
+        ),
+        Err(RunError::BindingMismatch { .. })
+    ));
+    let mutation = canonical
+        .open(provenance.attempt_id())
+        .expect("mutation receipt is canonicalized to the plan store");
+    assert_eq!(mutation.status(), ReceiptStatus::Mutation);
+    assert!(matches!(
+        alternate.open(provenance.attempt_id()),
+        Err(casa_imaging_runtime::ReceiptError::Io { .. })
+    ));
 }
 
 #[path = "compile_plan_run/prepared_artifact.rs"]

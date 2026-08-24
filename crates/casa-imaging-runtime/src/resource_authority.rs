@@ -7,7 +7,10 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::{Arc, Mutex, OnceLock};
 
+use crate::{ExecutionAttemptId, ReceiptStatus};
+
 use casa_imaging_model::MeasurementSetIdentity;
+use sha2::{Digest, Sha256};
 
 static PRODUCTION_AUTHORITY: OnceLock<Result<ResourceAuthority, ResourceError>> = OnceLock::new();
 
@@ -70,6 +73,34 @@ resource_identity!(RateResourceId, "Stable identity of one rate resource.");
 resource_identity!(QueueResourceId, "Stable identity of one bounded queue.");
 resource_identity!(AlternativeId, "Stable identity of one demand alternative.");
 resource_identity!(CapabilityId, "Stable identity of one required capability.");
+/// Stable, path-free identity of one Resource Authority resource.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ResourceIdentity(String);
+
+impl ResourceIdentity {
+    /// Creates a stable resource identity, digesting path-shaped caller text so
+    /// it can be retained safely in persistent receipts.
+    pub fn new(value: impl Into<String>) -> Self {
+        let value = value.into();
+        if value.contains('/') || value.contains('\\') || value.starts_with('~') {
+            Self(format!("redacted:{}", hex_digest(&value)))
+        } else {
+            Self(value)
+        }
+    }
+
+    /// Returns the identity text.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+fn hex_digest(value: &str) -> String {
+    Sha256::digest(value.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
 
 /// Physical location represented by a memory-capacity domain.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -802,6 +833,31 @@ pub struct DemandAlternatives {
     pub alternatives: Vec<DemandAlternative>,
 }
 
+/// One integrity-checked quantitative receipt constraint supplied to Resource
+/// Authority during planning.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RecordedAdmissionConstraint {
+    pub(crate) alternative: AlternativeId,
+    pub(crate) resource: ResourceIdentity,
+    pub(crate) required: u64,
+    pub(crate) available: u64,
+    pub(crate) attempt: ExecutionAttemptId,
+    pub(crate) status: ReceiptStatus,
+}
+
+impl RecordedAdmissionConstraint {
+    fn current_available(
+        &self,
+        alternative: &AlternativeId,
+        available: &ResourceGrant,
+    ) -> Result<Option<u64>, ResourceError> {
+        if self.alternative != *alternative {
+            return Ok(None);
+        }
+        resource_available(available, &self.resource).map(Some)
+    }
+}
+
 /// Named runtime-overhead category owned by a lease.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RuntimeOverheadKind {
@@ -1086,6 +1142,11 @@ pub enum ResourceError {
     ProductionAlreadyInitialized,
     /// No declared alternative satisfied the required capabilities.
     NoCapableAlternative,
+    /// No declared alternative fits current policy, pressure, and reservations.
+    ///
+    /// The retained certificate is machine-readable evidence of exactly why
+    /// every offered alternative was refused.
+    NoFeasibleAlternative(AdmissionInfeasibilityCertificate),
     /// A mandatory demand did not fit the current hard ceiling.
     Infeasible {
         /// Resource category that failed admission.
@@ -1124,23 +1185,146 @@ pub enum ResourceError {
 
 impl ResourceError {
     /// Returns the mandatory amount for an infeasibility error.
-    pub const fn required(&self) -> Option<u64> {
+    pub fn required(&self) -> Option<u64> {
         match self {
             Self::Infeasible { required, .. } => Some(*required),
             Self::LeaseLimitExceeded { requested, .. } => Some(*requested),
             Self::PressureWouldInvalidateLeases { reserved, .. } => Some(*reserved),
+            Self::NoFeasibleAlternative(certificate) => {
+                certificate.first_infeasible().map(|(required, _)| required)
+            }
             _ => None,
         }
     }
 
     /// Returns the available amount for an infeasibility error.
-    pub const fn available(&self) -> Option<u64> {
+    pub fn available(&self) -> Option<u64> {
         match self {
             Self::Infeasible { available, .. }
             | Self::LeaseLimitExceeded { available, .. }
             | Self::PressureWouldInvalidateLeases { available, .. } => Some(*available),
+            Self::NoFeasibleAlternative(certificate) => certificate
+                .first_infeasible()
+                .map(|(_, available)| available),
             _ => None,
         }
+    }
+}
+
+/// Why one demand alternative was refused during atomic admission.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AlternativeRejectionReason {
+    /// The alternative does not support every required capability.
+    NoCapableAlternative,
+    /// One mandatory demand exceeded its available hard ceiling.
+    Infeasible {
+        /// Resource category that failed admission.
+        resource: String,
+        /// Mandatory requested amount.
+        required: u64,
+        /// Amount available after policy, pressure, and active leases.
+        available: u64,
+    },
+    /// Resource Authority applied an explicit prior terminal receipt constraint
+    /// for the same quantitative pressure region. A later admission with
+    /// recovered capacity is retried normally. This is an admission input,
+    /// not cost-model learning.
+    RecordedFailure {
+        /// Attempt whose terminal receipt recorded the failure.
+        attempt: ExecutionAttemptId,
+        /// Terminal status retained by that receipt.
+        status: ReceiptStatus,
+    },
+}
+
+/// Machine-readable refusal evidence for one named demand alternative.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AlternativeRejection {
+    alternative: AlternativeId,
+    reason: AlternativeRejectionReason,
+}
+
+impl AlternativeRejection {
+    pub(crate) fn new(alternative: AlternativeId, reason: AlternativeRejectionReason) -> Self {
+        Self {
+            alternative,
+            reason,
+        }
+    }
+
+    /// Return the refused alternative identity.
+    #[must_use]
+    pub const fn alternative(&self) -> &AlternativeId {
+        &self.alternative
+    }
+
+    /// Return the exact refusal reason.
+    #[must_use]
+    pub const fn reason(&self) -> &AlternativeRejectionReason {
+        &self.reason
+    }
+}
+
+/// Complete machine-readable proof that no offered demand alternative fits
+/// current policy, pressure, and active reservations.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AdmissionInfeasibilityCertificate {
+    rejections: Vec<AlternativeRejection>,
+}
+
+impl AdmissionInfeasibilityCertificate {
+    pub(crate) fn from_rejections(rejections: Vec<AlternativeRejection>) -> Self {
+        Self { rejections }
+    }
+
+    /// Return one refusal per offered alternative in caller order.
+    #[must_use]
+    pub fn rejections(&self) -> &[AlternativeRejection] {
+        &self.rejections
+    }
+
+    /// Return the first hard-capacity shortfall recorded by this certificate.
+    pub(crate) fn first_infeasible(&self) -> Option<(u64, u64)> {
+        self.rejections
+            .iter()
+            .find_map(|rejection| match &rejection.reason {
+                AlternativeRejectionReason::Infeasible {
+                    required,
+                    available,
+                    ..
+                } => Some((*required, *available)),
+                AlternativeRejectionReason::NoCapableAlternative
+                | AlternativeRejectionReason::RecordedFailure { .. } => None,
+            })
+    }
+}
+
+impl fmt::Display for AdmissionInfeasibilityCertificate {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (index, rejection) in self.rejections.iter().enumerate() {
+            if index > 0 {
+                formatter.write_str("; ")?;
+            }
+            let alternative = rejection.alternative.as_str();
+            match &rejection.reason {
+                AlternativeRejectionReason::NoCapableAlternative => {
+                    write!(formatter, "{alternative} lacks a required capability")?
+                }
+                AlternativeRejectionReason::Infeasible {
+                    resource,
+                    required,
+                    available,
+                } => write!(
+                    formatter,
+                    "{alternative} requires {required} {resource}, but only {available} is available"
+                )?,
+                AlternativeRejectionReason::RecordedFailure { attempt, status } => write!(
+                    formatter,
+                    "{alternative} was recorded terminally {status:?} by attempt {attempt}"
+                )?,
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1155,6 +1339,9 @@ impl fmt::Display for ResourceError {
             }
             Self::NoCapableAlternative => {
                 formatter.write_str("no demand alternative satisfies the required capabilities")
+            }
+            Self::NoFeasibleAlternative(certificate) => {
+                write!(formatter, "no demand alternative fits: {certificate}")
             }
             Self::Infeasible {
                 resource,
@@ -1315,6 +1502,19 @@ impl ResourceAuthority {
         policy: ResourcePolicy,
         alternatives: DemandAlternatives,
     ) -> Result<ResourceLease, ResourceError> {
+        self.acquire_with_recorded_constraints(policy, alternatives, &[])
+    }
+
+    /// Atomically selects, admits, and reserves one demand alternative while
+    /// applying explicit integrity-checked receipt constraints. Receipt
+    /// evidence is an admission input owned by this authority; it is never a
+    /// planner-side candidate filter or a cost-model update.
+    pub(crate) fn acquire_with_recorded_constraints(
+        &self,
+        policy: ResourcePolicy,
+        alternatives: DemandAlternatives,
+        recorded_constraints: &[RecordedAdmissionConstraint],
+    ) -> Result<ResourceLease, ResourceError> {
         validate_policy(&self.inner.topology, &policy)?;
         if alternatives.alternatives.is_empty() {
             return Err(ResourceError::Invalid(
@@ -1338,17 +1538,19 @@ impl ResourceAuthority {
         let policy_capacity =
             apply_concurrent_policies(&self.inner.topology, &state, &policy, &pressured);
         let policy_available = available_after_active_leases(&state, policy_capacity)?;
-        let mut first_infeasible = None;
-        let mut capable = false;
+        let mut rejections = Vec::new();
         let mut selected = None;
         for alternative in alternatives.alternatives {
             if !alternative
                 .capabilities
                 .accepts(&alternatives.required_capabilities)
             {
+                rejections.push(AlternativeRejection::new(
+                    alternative.id.clone(),
+                    AlternativeRejectionReason::NoCapableAlternative,
+                ));
                 continue;
             }
-            capable = true;
             validate_alternative(&self.inner.topology, &alternative)?;
             let totals = alternative.demand.resource_totals(&self.inner.topology)?;
             let limits = alternative.demand.lease_limits();
@@ -1363,8 +1565,50 @@ impl ResourceAuthority {
                 hard: reserved.clone(),
                 preferred: reserved.clone(),
             };
-            if let Err(error) = admit_totals(&reservation_totals, &policy_available) {
-                first_infeasible.get_or_insert(error);
+            let mut recorded = None;
+            for constraint in recorded_constraints {
+                let Some(current_available) =
+                    constraint.current_available(&alternative.id, &policy_available.hard)?
+                else {
+                    continue;
+                };
+                // A receipt constrains only the pressure region it observed.
+                // Any increase above that recorded availability reopens the
+                // candidate for normal current admission.
+                if current_available <= constraint.available
+                    && recorded.as_ref().is_none_or(
+                        |(current, _): &(&RecordedAdmissionConstraint, u64)| {
+                            constraint.available > current.available
+                        },
+                    )
+                {
+                    recorded = Some((constraint, current_available));
+                }
+            }
+            if let Some((constraint, _current_available)) = recorded {
+                rejections.push(AlternativeRejection::new(
+                    alternative.id.clone(),
+                    AlternativeRejectionReason::RecordedFailure {
+                        attempt: constraint.attempt,
+                        status: constraint.status,
+                    },
+                ));
+                continue;
+            }
+            if let Err(ResourceError::Infeasible {
+                resource,
+                required,
+                available,
+            }) = admit_totals(&reservation_totals, &policy_available)
+            {
+                rejections.push(AlternativeRejection::new(
+                    alternative.id.clone(),
+                    AlternativeRejectionReason::Infeasible {
+                        resource,
+                        required,
+                        available,
+                    },
+                ));
                 continue;
             }
             let granted = admit_totals(&totals, &policy_available)?;
@@ -1372,12 +1616,9 @@ impl ResourceAuthority {
             break;
         }
         let Some((alternative, granted, reserved, limits)) = selected else {
-            if !capable {
-                return Err(ResourceError::NoCapableAlternative);
-            }
-            return Err(first_infeasible.unwrap_or_else(|| {
-                ResourceError::Invalid("capable alternatives could not be admitted".to_string())
-            }));
+            return Err(ResourceError::NoFeasibleAlternative(
+                AdmissionInfeasibilityCertificate::from_rejections(rejections),
+            ));
         };
         let lease_id = state.next_lease_id;
         state.next_lease_id = state
@@ -2168,6 +2409,47 @@ fn admit_totals(
         &available.preferred.accelerator_slots,
     )?;
     Ok(GrantedTotals { hard, preferred })
+}
+
+fn resource_available(
+    available: &ResourceGrant,
+    resource: &ResourceIdentity,
+) -> Result<u64, ResourceError> {
+    let identity = resource.as_str();
+    let scalar = match identity {
+        "workers" => Some(available.workers),
+        "cache-bytes" => Some(available.cache_bytes),
+        "locks" => Some(available.locks),
+        "file-descriptors" => Some(available.file_descriptors),
+        _ => None,
+    };
+    scalar
+        .or_else(|| {
+            available.memory_bytes.iter().find_map(|(id, amount)| {
+                (identity
+                    == ResourceIdentity::new(format!("memory-domain:{}", id.as_str())).as_str())
+                .then_some(*amount)
+            })
+        })
+        .or_else(|| resource_map_available("storage-domain", &available.storage_bytes, identity))
+        .or_else(|| resource_map_available("rate-resource", &available.rates_per_second, identity))
+        .or_else(|| resource_map_available("queue-resource", &available.queue_slots, identity))
+        .or_else(|| resource_map_available("accelerator", &available.accelerator_slots, identity))
+        .ok_or_else(|| {
+            ResourceError::Invalid(format!(
+                "recorded receipt names unknown resource identity {identity}"
+            ))
+        })
+}
+
+fn resource_map_available<Id: fmt::Debug>(
+    kind: &str,
+    available: &BTreeMap<Id, u64>,
+    identity: &str,
+) -> Option<u64> {
+    available.iter().find_map(|(id, amount)| {
+        (identity == ResourceIdentity::new(format!("{kind}:{id:?}")).as_str()).then_some(*amount)
+    })
 }
 
 fn admit_resource_map<Id: Clone + Ord + fmt::Debug>(

@@ -48,12 +48,12 @@ use crate::{
     ExecutionKnobs, ExecutionPlan, FenceId, FenceKind, InitializationPolicy, IoBufferKind,
     LeaseResource, LogicalAllocation, PhysicalLayoutId, PhysicalSlot, PhysicalSlotId,
     PublicationParticipant, PublicationResourceBounds, QuiescencePoint, ResourceClaim,
-    ResourcePolicy, SlotCompatibility, StorageMode, WorkDependency, WorkDomain,
+    ResourceIdentity, ResourcePolicy, SlotCompatibility, StorageMode, WorkDependency, WorkDomain,
     WorkImplementationId, WorkKind, WorkMeasurements, WorkNode, WorkNodeId,
 };
 
 const RECEIPT_SCHEMA: &str = "casa-rs-imaging-execution-receipt";
-const RECEIPT_SCHEMA_VERSION: u32 = 11;
+const RECEIPT_SCHEMA_VERSION: u32 = 14;
 const COMPILED_PROBLEM_EVIDENCE_VERSION: u32 = 9;
 const RECEIPT_SUFFIX: &str = ".receipt.json";
 const RECEIPT_STAGING_PREFIX: &str = ".casa-rs-receipt-staging-";
@@ -464,6 +464,9 @@ pub enum ReceiptInfeasibilityCertificate {
     Infeasible {
         /// Stable resource category reported by the Resource Authority.
         resource: String,
+        /// Exact typed Resource Authority identity retained independently of
+        /// the bounded/redacted display string.
+        resource_identity: ResourceIdentity,
         /// Mandatory requested amount.
         required: u64,
         /// Available amount after policy, pressure, and active reservations.
@@ -1373,17 +1376,39 @@ impl ExecutionReceipt {
 }
 
 /// Local, bounded owner of atomic imaging Execution Receipts.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ExecutionReceiptStore {
     root: PathBuf,
     state: Arc<ReceiptRootState>,
 }
+
+impl PartialEq for ExecutionReceiptStore {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.state, &other.state)
+    }
+}
+
+impl Eq for ExecutionReceiptStore {}
 
 #[derive(Debug)]
 struct ReceiptRootState {
     retention: ReceiptRetention,
     mutation: Mutex<()>,
 }
+
+/// Process-local, unforgeable identity of one canonical receipt root.
+#[derive(Clone, Debug)]
+pub(crate) struct ReceiptEvidenceSource {
+    state: Arc<ReceiptRootState>,
+}
+
+impl PartialEq for ReceiptEvidenceSource {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.state, &other.state)
+    }
+}
+
+impl Eq for ReceiptEvidenceSource {}
 
 static RECEIPT_ROOT_STATES: OnceLock<Mutex<BTreeMap<PathBuf, Weak<ReceiptRootState>>>> =
     OnceLock::new();
@@ -1417,6 +1442,16 @@ pub struct ExecutionReceiptBinding<'store> {
 }
 
 impl<'store> ExecutionReceiptBinding<'store> {
+    /// Return the caller-owned provenance carried by this binding.
+    #[must_use]
+    pub const fn provenance(&self) -> &ExecutionProvenance {
+        &self.provenance
+    }
+
+    pub(crate) fn evidence_source(&self) -> ReceiptEvidenceSource {
+        self.store.evidence_source()
+    }
+
     pub(crate) fn begin(
         self,
         problem: &ExecutableModelProblem,
@@ -1448,6 +1483,12 @@ impl ExecutionReceiptStore {
         Ok(store)
     }
 
+    /// Return the canonical local root owned by this receipt store.
+    #[must_use]
+    pub fn root_path(&self) -> &Path {
+        &self.root
+    }
+
     /// Bind one caller-owned attempt and build identity to this local store.
     #[must_use]
     pub const fn bind(&self, provenance: ExecutionProvenance) -> ExecutionReceiptBinding<'_> {
@@ -1455,6 +1496,40 @@ impl ExecutionReceiptStore {
             store: self,
             provenance,
         }
+    }
+
+    pub(crate) fn evidence_source(&self) -> ReceiptEvidenceSource {
+        ReceiptEvidenceSource {
+            state: Arc::clone(&self.state),
+        }
+    }
+
+    /// Return every stored attempt identity in ascending order.
+    ///
+    /// Identities come from receipt filenames; reopening still validates each
+    /// document's integrity.
+    pub(crate) fn attempts(&self) -> Result<Vec<ExecutionAttemptId>, ReceiptError> {
+        let mut attempts = Vec::new();
+        for entry in fs::read_dir(&self.root).map_err(|source| ReceiptError::Io {
+            action: "list execution receipts",
+            source,
+        })? {
+            let name = entry
+                .map_err(|source| ReceiptError::Io {
+                    action: "read execution receipt entry",
+                    source,
+                })?
+                .file_name();
+            let name = name.to_string_lossy();
+            let Some(stem) = name.strip_suffix(RECEIPT_SUFFIX) else {
+                continue;
+            };
+            if stem.len() == 64 && stem.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                attempts.push(ExecutionAttemptId::from_sha256(parse_digest(stem)));
+            }
+        }
+        attempts.sort();
+        Ok(attempts)
     }
 
     /// Reopen and integrity-check one receipt by its caller-owned attempt identity.
@@ -1734,6 +1809,7 @@ impl ReceiptBody {
             subject: Some(maximum_json_escaped_evidence()),
             infeasibility: Some(InfeasibilityProjection::Infeasible {
                 resource: maximum_json_escaped_evidence(),
+                resource_identity: maximum_json_escaped_evidence(),
                 required: u64::MAX,
                 available: u64::MAX,
             }),
@@ -1835,6 +1911,7 @@ enum InfeasibilityProjection {
     NoCapableAlternative,
     Infeasible {
         resource: String,
+        resource_identity: String,
         required: u64,
         available: u64,
     },
@@ -1846,10 +1923,12 @@ impl InfeasibilityProjection {
             Self::NoCapableAlternative => ReceiptInfeasibilityCertificate::NoCapableAlternative,
             Self::Infeasible {
                 resource,
+                resource_identity,
                 required,
                 available,
             } => ReceiptInfeasibilityCertificate::Infeasible {
                 resource: resource.clone(),
+                resource_identity: ResourceIdentity::new(resource_identity.clone()),
                 required: *required,
                 available: *available,
             },
@@ -1926,12 +2005,41 @@ impl ReceiptFailure {
             crate::ResourceError::NoCapableAlternative => {
                 InfeasibilityProjection::NoCapableAlternative
             }
+            crate::ResourceError::NoFeasibleAlternative(certificate) => {
+                // Scheduled admission always offers exactly the plan's sole
+                // alternative, so its refusal projects losslessly.
+                let rejection = certificate
+                    .rejections()
+                    .first()
+                    .expect("admission certificates are never empty");
+                match rejection.reason() {
+                    crate::AlternativeRejectionReason::NoCapableAlternative => {
+                        InfeasibilityProjection::NoCapableAlternative
+                    }
+                    crate::AlternativeRejectionReason::Infeasible {
+                        resource,
+                        required,
+                        available,
+                    } => InfeasibilityProjection::Infeasible {
+                        resource: bounded_evidence_text(resource),
+                        resource_identity: ResourceIdentity::new(resource.clone())
+                            .as_str()
+                            .to_string(),
+                        required: *required,
+                        available: *available,
+                    },
+                    crate::AlternativeRejectionReason::RecordedFailure { .. } => unreachable!(
+                        "recorded planning constraints are not persisted as execution failures"
+                    ),
+                }
+            }
             crate::ResourceError::Infeasible {
                 resource,
                 required,
                 available,
             } => InfeasibilityProjection::Infeasible {
                 resource: bounded_evidence_text(resource),
+                resource_identity: ResourceIdentity::new(resource.clone()).as_str().to_string(),
                 required: *required,
                 available: *available,
             },
@@ -4472,12 +4580,14 @@ fn validate_body(body: &ReceiptBody) -> Result<(), ReceiptError> {
                 FailureKindProjection::ResourceInfeasible,
                 Some(InfeasibilityProjection::Infeasible {
                     resource,
+                    resource_identity,
                     required,
                     available,
                 }),
             ) => require_integrity(
                 is_redacted_text(resource)
                     && resource.len() <= MAX_FAILURE_SUBJECT_BYTES
+                    && is_redacted_text(resource_identity)
                     && required > available,
             )?,
             (FailureKindProjection::ResourceInfeasible, None) | (_, Some(_)) => {
@@ -4486,13 +4596,18 @@ fn validate_body(body: &ReceiptBody) -> Result<(), ReceiptError> {
             (_, None) => {}
         }
     }
-    require_integrity(
-        (body.status == ReceiptStatus::Infeasible)
-            == body
-                .failure
-                .as_ref()
-                .is_some_and(|failure| failure.infeasibility.is_some()),
-    )?;
+    let has_infeasibility = body
+        .failure
+        .as_ref()
+        .is_some_and(|failure| failure.infeasibility.is_some());
+    require_integrity(if has_infeasibility {
+        matches!(
+            body.status,
+            ReceiptStatus::Failed | ReceiptStatus::Aborted | ReceiptStatus::Infeasible
+        )
+    } else {
+        body.status != ReceiptStatus::Infeasible
+    })?;
     Ok(())
 }
 

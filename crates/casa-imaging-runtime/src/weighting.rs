@@ -365,7 +365,8 @@ impl<'a> WeightingPlanFragment<'a> {
                 .chain([generation_prediction, replay_prediction, release_prediction])
                 .collect(),
         )?;
-        Ok(PhysicalWorkBinding::new(
+        Ok(PhysicalWorkBinding::with_implementation_contract(
+            base.implementation_contract().for_execution_dag(&dag)?,
             dag,
             prediction,
             base.artifacts().to_vec(),

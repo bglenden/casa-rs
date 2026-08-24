@@ -18,11 +18,13 @@ use casa_imaging_reconstruction::ExecutableModelProblem;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    AdaptationId, AdaptationTransition, AllocationId, ClaimLifetime, DemandAlternatives,
-    ExecutionAttemptId, ExecutionError, ExecutionKnobs, ExecutionOutcome, ExecutionReceiptBinding,
-    FenceKind, IoBufferKind, LeaseResource, PhysicalSlotId, PublicationLayoutLedger, ReceiptError,
-    ReceiptFailureKind, ReceiptStatus, ResourceAuthority, ResourceError, ResourceOverride,
+    AdaptationId, AdaptationTransition, AdmissionInfeasibilityCertificate, AllocationId,
+    AlternativeId, ClaimLifetime, DemandAlternatives, ExecutionAttemptId, ExecutionError,
+    ExecutionKnobs, ExecutionOutcome, ExecutionReceiptBinding, FenceKind, IoBufferKind,
+    LeaseResource, PhysicalSlotId, PublicationLayoutLedger, ReceiptError, ReceiptFailureKind,
+    ReceiptStatus, ResourceAuthority, ResourceError, ResourceIdentity, ResourceOverride,
     ResourcePolicy, WorkImplementationId, WorkKind, WorkNodeId,
+    cost_model::PlannerCostModelProfileRecord,
     execution::{
         ExecutionDag, ExecutionScheduler, PublicationReservation, SchedulerAction,
         SchedulerTerminal, WorkResult, io_buffer_kind_supports_work_kind, validate_topology,
@@ -31,11 +33,11 @@ use crate::{
         BoundObservationTransaction, ObservationTransactionPlanError, ObservationTransactionWork,
         bind_observation_transaction,
     },
-    receipt::{ReceiptFailure, ReceiptRecorder},
+    receipt::{ExecutionReceiptStore, ReceiptFailure, ReceiptRecorder},
 };
 
 const EXECUTION_PLAN_IDENTITY_DOMAIN: &[u8] = b"casa-rs-execution-plan";
-const EXECUTION_PLAN_IDENTITY_VERSION: u32 = 8;
+const EXECUTION_PLAN_IDENTITY_VERSION: u32 = 10;
 const RESOURCE_POLICY_IDENTITY_DOMAIN: &[u8] = b"casa-rs-resource-policy";
 const RESOURCE_POLICY_IDENTITY_VERSION: u32 = 1;
 
@@ -83,6 +85,15 @@ digest_identity!(
     PlannerCostModelProfileId,
     "Stable content identity of one reviewed planner cost-model profile."
 );
+
+impl PlannerCostModelProfileId {
+    /// Mark this deployment-selected identity as the initial planner baseline.
+    #[must_use]
+    pub const fn bootstrap(self) -> crate::PlannerCostModelProfileBootstrap {
+        crate::PlannerCostModelProfileBootstrap::new(self)
+    }
+}
+
 digest_identity!(
     PhysicalWorkId,
     "Stable content identity of the physical work emitted by planning."
@@ -314,6 +325,19 @@ impl PlanPrediction {
     #[must_use]
     pub fn uncertainty(&self) -> &[PredictionUncertainty] {
         &self.uncertainty
+    }
+
+    /// Conservative total predicted time including every uncertainty term.
+    ///
+    /// Lexicographic planning compares candidates by this bound so predicted
+    /// wall time can never understate committed uncertainty.
+    #[must_use]
+    pub fn conservative_nanos(&self) -> u64 {
+        self.uncertainty
+            .iter()
+            .fold(self.elapsed_nanos, |total, term| {
+                total.saturating_add(term.predicted_nanos)
+            })
     }
 
     /// Return one prediction for every plan node.
@@ -729,6 +753,13 @@ pub enum PhysicalWorkBindingError {
         /// Stable diagnostic for the rejected physical declaration.
         reason: String,
     },
+    /// The registry did not publish a contract for one selected implementation.
+    MissingImplementationContract(WorkImplementationId),
+    /// Registry-owned implementation contracts disagreed within one physical DAG.
+    ConflictingImplementationContract {
+        /// Stable diagnostic describing the conflict.
+        reason: String,
+    },
 }
 
 impl fmt::Display for PhysicalWorkBindingError {
@@ -798,6 +829,14 @@ impl fmt::Display for PhysicalWorkBindingError {
             ),
             Self::InvalidPublicationLayout { reason } => {
                 write!(formatter, "invalid publication layout: {reason}")
+            }
+            Self::MissingImplementationContract(implementation) => write!(
+                formatter,
+                "implementation registry did not publish a contract for {}",
+                implementation.as_str()
+            ),
+            Self::ConflictingImplementationContract { reason } => {
+                write!(formatter, "conflicting implementation contracts: {reason}")
             }
         }
     }
@@ -1018,6 +1057,7 @@ impl Error for ExecutionEvidenceError {}
 /// Complete physical work emitted by the sole planning seam.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PhysicalWorkBinding {
+    implementation_contract: ImplementationContractCommitment,
     execution_dag: ExecutionDag,
     prediction: PlanPrediction,
     artifacts: Vec<PlannedArtifact>,
@@ -1025,9 +1065,403 @@ pub struct PhysicalWorkBinding {
     publication_layouts: PublicationLayoutLedger,
 }
 
-impl PhysicalWorkBinding {
-    /// Bind a complete immutable physical work DAG, prediction, artifacts, and transaction.
+/// Registry-owned science, numerics, and capability metadata for one
+/// implementation identity.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImplementationContractMetadata {
+    problem: CompiledProblemId,
+    numerics: NumericsContractId,
+    required_capabilities: BTreeSet<RequiredCapability>,
+}
+
+impl ImplementationContractMetadata {
+    /// Describe the contract published by an implementation registry.
+    #[must_use]
     pub fn new(
+        problem: CompiledProblemId,
+        numerics: NumericsContractId,
+        required_capabilities: BTreeSet<RequiredCapability>,
+    ) -> Self {
+        Self {
+            problem,
+            numerics,
+            required_capabilities,
+        }
+    }
+
+    /// Return the exact compiled problem whose science is implemented.
+    #[must_use]
+    pub const fn problem_id(&self) -> CompiledProblemId {
+        self.problem
+    }
+
+    /// Return the exact numerical contract implemented by the candidate.
+    #[must_use]
+    pub const fn numerics_id(&self) -> NumericsContractId {
+        self.numerics
+    }
+
+    /// Return the compiler-derived capability set implemented by the
+    /// candidate.
+    #[must_use]
+    pub const fn required_capabilities(&self) -> &BTreeSet<RequiredCapability> {
+        &self.required_capabilities
+    }
+}
+
+/// Opaque registry-bound implementation declarations used to bind physical
+/// work. Callers can obtain a catalog only by asking an implementation
+/// registry for its metadata; there is no public constructor for arbitrary
+/// candidate declarations.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImplementationContractCatalog {
+    registry: ImplementationRegistryId,
+    declarations: BTreeMap<WorkImplementationId, ImplementationContractDeclaration>,
+}
+
+impl ImplementationContractCatalog {
+    /// Capture the immutable contract snapshot for the implementations in a
+    /// physical DAG from one exact registry snapshot.
+    pub fn from_registry<R, I>(
+        registry: &R,
+        implementations: I,
+    ) -> Result<Self, PhysicalWorkBindingError>
+    where
+        R: ImplementationRegistry,
+        I: IntoIterator<Item = WorkImplementationId>,
+    {
+        let mut declarations = BTreeMap::new();
+        for implementation in implementations {
+            if declarations.contains_key(&implementation) {
+                continue;
+            }
+            let metadata = registry
+                .implementation_contract(&implementation)
+                .ok_or_else(|| {
+                    PhysicalWorkBindingError::MissingImplementationContract(implementation.clone())
+                })?;
+            declarations.insert(
+                implementation,
+                ImplementationContractDeclaration {
+                    problem: metadata.problem,
+                    numerics: metadata.numerics,
+                    required_capabilities: metadata.required_capabilities,
+                },
+            );
+        }
+        Ok(Self {
+            registry: registry.registry_id(),
+            declarations,
+        })
+    }
+
+    /// Return the exact registry snapshot that published this catalog.
+    #[must_use]
+    pub const fn registry_id(&self) -> ImplementationRegistryId {
+        self.registry
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ImplementationContractDeclaration {
+    problem: CompiledProblemId,
+    numerics: NumericsContractId,
+    required_capabilities: BTreeSet<RequiredCapability>,
+}
+
+/// Exact compiled science, numerics, and capability contract committed to one
+/// physical candidate after its execution DAG is sealed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ImplementationContractCommitment {
+    registry: ImplementationRegistryId,
+    problem: CompiledProblemId,
+    numerics: NumericsContractId,
+    required_capabilities: BTreeSet<RequiredCapability>,
+    declarations: BTreeMap<WorkImplementationId, ImplementationContractDeclaration>,
+    implementation_ids: BTreeMap<WorkNodeId, WorkImplementationId>,
+}
+
+impl ImplementationContractCommitment {
+    fn from_catalog(
+        catalog: &ImplementationContractCatalog,
+        execution_dag: &ExecutionDag,
+    ) -> Result<Self, PhysicalWorkBindingError> {
+        let mut contract = None;
+        for work in execution_dag.nodes().values() {
+            let declaration = catalog
+                .declarations
+                .get(&work.implementation)
+                .ok_or_else(|| {
+                    PhysicalWorkBindingError::MissingImplementationContract(
+                        work.implementation.clone(),
+                    )
+                })?;
+            if let Some((problem, numerics, capabilities)) = &contract {
+                if *problem != declaration.problem
+                    || *numerics != declaration.numerics
+                    || capabilities != &declaration.required_capabilities
+                {
+                    return Err(
+                        PhysicalWorkBindingError::ConflictingImplementationContract {
+                            reason: format!(
+                                "implementation {} disagrees with the previously selected contract",
+                                work.implementation.as_str()
+                            ),
+                        },
+                    );
+                }
+            } else {
+                contract = Some((
+                    declaration.problem,
+                    declaration.numerics,
+                    declaration.required_capabilities.clone(),
+                ));
+            }
+        }
+        let Some((problem, numerics, required_capabilities)) = contract else {
+            return Err(
+                PhysicalWorkBindingError::ConflictingImplementationContract {
+                    reason: "physical execution DAG contains no implementation nodes".to_string(),
+                },
+            );
+        };
+        Ok(Self {
+            registry: catalog.registry,
+            problem,
+            numerics,
+            required_capabilities,
+            declarations: catalog.declarations.clone(),
+            implementation_ids: implementation_ids(execution_dag),
+        })
+    }
+
+    pub(crate) fn for_execution_dag(
+        &self,
+        execution_dag: &ExecutionDag,
+    ) -> Result<Self, PhysicalWorkBindingError> {
+        let declarations = self.declarations.clone();
+        for work in execution_dag.nodes().values() {
+            let Some(declaration) = declarations.get(&work.implementation) else {
+                if work.kind == WorkKind::Cache {
+                    // The prepared cache declaration is supplied by the
+                    // authoritative registry during plan sealing.
+                    continue;
+                }
+                return Err(PhysicalWorkBindingError::MissingImplementationContract(
+                    work.implementation.clone(),
+                ));
+            };
+            if declaration.problem != self.problem
+                || declaration.numerics != self.numerics
+                || declaration.required_capabilities != self.required_capabilities
+            {
+                return Err(
+                    PhysicalWorkBindingError::ConflictingImplementationContract {
+                        reason: format!(
+                            "implementation {} disagrees with the sealed physical contract",
+                            work.implementation.as_str()
+                        ),
+                    },
+                );
+            }
+        }
+        Ok(Self {
+            registry: self.registry,
+            problem: self.problem,
+            numerics: self.numerics,
+            required_capabilities: self.required_capabilities.clone(),
+            declarations,
+            implementation_ids: implementation_ids(execution_dag),
+        })
+    }
+
+    fn bind_registry<R: ImplementationRegistry>(
+        &self,
+        registry: &R,
+        execution_dag: &ExecutionDag,
+    ) -> Result<Self, PhysicalWorkBindingError> {
+        if self.registry != registry.registry_id()
+            || self.implementation_ids != implementation_ids(execution_dag)
+        {
+            return Err(
+                PhysicalWorkBindingError::ConflictingImplementationContract {
+                    reason: "registry or final execution DAG differs from the sealed contract"
+                        .to_string(),
+                },
+            );
+        }
+        let mut declarations = self.declarations.clone();
+        for work in execution_dag.nodes().values() {
+            let implementation = registry.resolve(&work.implementation).ok_or_else(|| {
+                PhysicalWorkBindingError::MissingImplementationContract(work.implementation.clone())
+            })?;
+            if implementation.implementation_id() != &work.implementation {
+                return Err(
+                    PhysicalWorkBindingError::ConflictingImplementationContract {
+                        reason: format!(
+                            "registry resolved {} for requested implementation {}",
+                            implementation.implementation_id().as_str(),
+                            work.implementation.as_str()
+                        ),
+                    },
+                );
+            }
+            let observed = registry
+                .implementation_contract(&work.implementation)
+                .ok_or_else(|| {
+                    PhysicalWorkBindingError::MissingImplementationContract(
+                        work.implementation.clone(),
+                    )
+                })?;
+            let declaration = ImplementationContractDeclaration {
+                problem: observed.problem,
+                numerics: observed.numerics,
+                required_capabilities: observed.required_capabilities,
+            };
+            if declaration.problem != self.problem
+                || declaration.numerics != self.numerics
+                || declaration.required_capabilities != self.required_capabilities
+            {
+                return Err(
+                    PhysicalWorkBindingError::ConflictingImplementationContract {
+                        reason: format!(
+                            "registry contract for implementation {} disagrees with the sealed science contract",
+                            work.implementation.as_str()
+                        ),
+                    },
+                );
+            }
+            declarations.insert(work.implementation.clone(), declaration);
+        }
+        Ok(Self {
+            registry: self.registry,
+            problem: self.problem,
+            numerics: self.numerics,
+            required_capabilities: self.required_capabilities.clone(),
+            declarations,
+            implementation_ids: self.implementation_ids.clone(),
+        })
+    }
+
+    fn validate_registry<R: ImplementationRegistry>(
+        &self,
+        registry: &R,
+        execution_dag: &ExecutionDag,
+    ) -> Result<(), PhysicalWorkBindingError> {
+        if self.registry != registry.registry_id()
+            || self.implementation_ids != implementation_ids(execution_dag)
+        {
+            return Err(
+                PhysicalWorkBindingError::ConflictingImplementationContract {
+                    reason: "run registry or final execution DAG differs from the sealed contract"
+                        .to_string(),
+                },
+            );
+        }
+        for work in execution_dag.nodes().values() {
+            let Some(implementation) = registry.resolve(&work.implementation) else {
+                return Err(PhysicalWorkBindingError::MissingImplementationContract(
+                    work.implementation.clone(),
+                ));
+            };
+            if implementation.implementation_id() != &work.implementation {
+                return Err(
+                    PhysicalWorkBindingError::ConflictingImplementationContract {
+                        reason: format!(
+                            "run registry resolved {} for planned implementation {}",
+                            implementation.implementation_id().as_str(),
+                            work.implementation.as_str()
+                        ),
+                    },
+                );
+            }
+            let planned = self.declarations.get(&work.implementation).ok_or_else(|| {
+                PhysicalWorkBindingError::MissingImplementationContract(work.implementation.clone())
+            })?;
+            let Some(observed) = registry.implementation_contract(&work.implementation) else {
+                return Err(PhysicalWorkBindingError::MissingImplementationContract(
+                    work.implementation.clone(),
+                ));
+            };
+            if observed.problem != planned.problem
+                || observed.numerics != planned.numerics
+                || observed.required_capabilities != planned.required_capabilities
+            {
+                return Err(
+                    PhysicalWorkBindingError::ConflictingImplementationContract {
+                        reason: format!(
+                            "run registry changed the contract for implementation {}",
+                            work.implementation.as_str()
+                        ),
+                    },
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Return the exact compiled problem whose science is implemented.
+    #[must_use]
+    pub(crate) const fn problem_id(&self) -> CompiledProblemId {
+        self.problem
+    }
+
+    /// Return the registry snapshot that published this contract.
+    #[must_use]
+    pub(crate) const fn registry_id(&self) -> ImplementationRegistryId {
+        self.registry
+    }
+
+    /// Return the exact numerical contract implemented by the candidate.
+    #[must_use]
+    pub(crate) const fn numerics_id(&self) -> NumericsContractId {
+        self.numerics
+    }
+
+    /// Return the compiler-derived capability set implemented by the candidate.
+    #[must_use]
+    pub(crate) const fn required_capabilities(&self) -> &BTreeSet<RequiredCapability> {
+        &self.required_capabilities
+    }
+
+    /// Return the registry-selected implementation identity for each node.
+    #[must_use]
+    pub(crate) const fn implementation_ids(&self) -> &BTreeMap<WorkNodeId, WorkImplementationId> {
+        &self.implementation_ids
+    }
+}
+
+fn implementation_ids(execution_dag: &ExecutionDag) -> BTreeMap<WorkNodeId, WorkImplementationId> {
+    execution_dag
+        .nodes()
+        .iter()
+        .map(|(node, work)| (node.clone(), work.implementation.clone()))
+        .collect()
+}
+
+impl PhysicalWorkBinding {
+    /// Bind a complete immutable physical work DAG, prediction, artifacts,
+    /// and transaction to an explicit registry-owned implementation contract.
+    pub fn new(
+        catalog: ImplementationContractCatalog,
+        execution_dag: ExecutionDag,
+        prediction: PlanPrediction,
+        artifacts: Vec<PlannedArtifact>,
+        observation_transaction: ObservationTransactionWork,
+        publication_layouts: PublicationLayoutLedger,
+    ) -> Result<Self, PhysicalWorkBindingError> {
+        Self::with_implementation_contract(
+            ImplementationContractCommitment::from_catalog(&catalog, &execution_dag)?,
+            execution_dag,
+            prediction,
+            artifacts,
+            observation_transaction,
+            publication_layouts,
+        )
+    }
+
+    pub(crate) fn with_implementation_contract(
+        implementation_contract: ImplementationContractCommitment,
         execution_dag: ExecutionDag,
         prediction: PlanPrediction,
         mut artifacts: Vec<PlannedArtifact>,
@@ -1083,12 +1517,37 @@ impl PhysicalWorkBinding {
             &publication_layouts,
         )?;
         Ok(Self {
+            implementation_contract,
             execution_dag,
             prediction,
             artifacts,
             observation_transaction,
             publication_layouts,
         })
+    }
+
+    /// Return the exact science, numerics, and capability commitment carried
+    /// by every selected implementation in this candidate.
+    #[must_use]
+    pub(crate) const fn implementation_contract(&self) -> &ImplementationContractCommitment {
+        &self.implementation_contract
+    }
+
+    fn bind_registry<R: ImplementationRegistry>(
+        self,
+        registry: &R,
+    ) -> Result<Self, PhysicalWorkBindingError> {
+        let contract = self
+            .implementation_contract
+            .bind_registry(registry, &self.execution_dag)?;
+        Self::with_implementation_contract(
+            contract,
+            self.execution_dag,
+            self.prediction,
+            self.artifacts,
+            self.observation_transaction,
+            self.publication_layouts,
+        )
     }
 
     /// Return the stable physical-work identity.
@@ -1503,6 +1962,10 @@ impl ResourcePolicyId {
     pub const fn as_bytes(self) -> [u8; 32] {
         self.0
     }
+
+    pub(crate) const fn from_sha256(digest: [u8; 32]) -> Self {
+        Self(digest)
+    }
 }
 
 impl fmt::Debug for ResourcePolicyId {
@@ -1554,23 +2017,26 @@ pub struct PlanningBindings {
     implementation_registry: ImplementationRegistryId,
     resource_policy: ResourcePolicy,
     resource_policy_id: ResourcePolicyId,
-    planner_cost_model_profile: PlannerCostModelProfileId,
+    planner_cost_model_profile: PlannerCostModelProfileRecord,
 }
 
 impl PlanningBindings {
     /// Bind one registry snapshot, host-use policy, and reviewed cost model.
     #[must_use]
-    pub fn new(
+    pub fn new<P>(
         implementation_registry: ImplementationRegistryId,
         resource_policy: ResourcePolicy,
-        planner_cost_model_profile: PlannerCostModelProfileId,
-    ) -> Self {
+        planner_cost_model_profile: P,
+    ) -> Self
+    where
+        P: Into<PlannerCostModelProfileRecord>,
+    {
         let resource_policy_id = resource_policy_id(&resource_policy);
         Self {
             implementation_registry,
             resource_policy,
             resource_policy_id,
-            planner_cost_model_profile,
+            planner_cost_model_profile: planner_cost_model_profile.into(),
         }
     }
 
@@ -1595,7 +2061,13 @@ impl PlanningBindings {
     /// Return the exact reviewed cost-model profile identity.
     #[must_use]
     pub const fn planner_cost_model_profile_id(&self) -> PlannerCostModelProfileId {
-        self.planner_cost_model_profile
+        self.planner_cost_model_profile.profile_id()
+    }
+
+    /// Return the reviewed or deployment-selected profile bound to planning.
+    #[must_use]
+    pub const fn planner_cost_model_profile(&self) -> &PlannerCostModelProfileRecord {
+        &self.planner_cost_model_profile
     }
 }
 
@@ -1612,6 +2084,9 @@ pub struct ExecutionPlan {
     resource_policy: ResourcePolicy,
     resource_policy_id: ResourcePolicyId,
     planner_cost_model_profile: PlannerCostModelProfileId,
+    recorded_receipt_source: crate::receipt::ReceiptEvidenceSource,
+    receipt_store: ExecutionReceiptStore,
+    implementation_contract: ImplementationContractCommitment,
     execution_dag: ExecutionDag,
     prediction: PlanPrediction,
     artifacts: Vec<PlannedArtifact>,
@@ -1624,6 +2099,24 @@ impl ExecutionPlan {
     #[must_use]
     pub const fn plan_id(&self) -> ExecutionPlanId {
         self.plan_id
+    }
+
+    /// Return a handle to the canonical receipt store bound during planning.
+    ///
+    /// The returned handle shares the same bounded root and integrity source;
+    /// it is the store that must be used when binding the execution receipt.
+    #[must_use]
+    pub fn receipt_store(&self) -> ExecutionReceiptStore {
+        self.receipt_store.clone()
+    }
+
+    /// Bind execution provenance to this plan's canonical receipt store.
+    #[must_use]
+    pub fn bind_receipt(
+        &self,
+        provenance: crate::ExecutionProvenance,
+    ) -> ExecutionReceiptBinding<'_> {
+        self.receipt_store.bind(provenance)
     }
 
     /// Return the exact compiled problem identity.
@@ -1722,6 +2215,8 @@ impl ExecutionPlan {
 pub enum PlanError<E> {
     /// The physical planner could not produce candidates.
     Planner(E),
+    /// Durable receipt evidence could not be read or validated.
+    Receipt(ReceiptError),
     /// A candidate was structurally incompatible with the authority topology.
     InvalidCandidate(ExecutionError),
     /// The emitted DAG and transaction declaration do not implement the compiled problem.
@@ -1730,10 +2225,23 @@ pub enum PlanError<E> {
     Resource(ResourceError),
 }
 
+impl<E> PlanError<E> {
+    /// Machine-readable proof that no physical candidate fit current policy,
+    /// pressure, and reservations.
+    #[must_use]
+    pub fn infeasibility_certificate(&self) -> Option<&AdmissionInfeasibilityCertificate> {
+        match self {
+            Self::Resource(ResourceError::NoFeasibleAlternative(certificate)) => Some(certificate),
+            _ => None,
+        }
+    }
+}
+
 impl<E: fmt::Display> fmt::Display for PlanError<E> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Planner(error) => write!(formatter, "physical planner failed: {error}"),
+            Self::Receipt(error) => write!(formatter, "execution receipt evidence failed: {error}"),
             Self::InvalidCandidate(error) => {
                 write!(formatter, "physical candidate failed: {error}")
             }
@@ -1750,6 +2258,7 @@ impl<E: Error + 'static> Error for PlanError<E> {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Planner(error) => Some(error),
+            Self::Receipt(error) => Some(error),
             Self::InvalidCandidate(error) => Some(error),
             Self::ObservationTransaction(error) => Some(error),
             Self::Resource(error) => Some(error),
@@ -1758,40 +2267,136 @@ impl<E: Error + 'static> Error for PlanError<E> {
 }
 
 /// Ask the Resource Authority to select one feasible planner-emitted physical candidate and seal it.
-pub fn plan<E>(
+///
+/// Selection follows ADR-0010's lexicographic order. Every candidate must
+/// preserve identical science, product, numerics, and capability requirements;
+/// hard feasibility with reserved headroom is proven only by Resource Authority
+/// admission under the bound host-use policy; and among admitted candidates
+/// the plan commits to the minimum conservative predicted wall time including
+/// uncertainty. Integrity-checked quantitative receipt constraints are passed
+/// into that same authority admission, where they produce explicit recorded
+/// refusals without entering the cost model. When no candidate fits, the returned
+/// [`PlanError::infeasibility_certificate`] reports exactly why each
+/// alternative was refused.
+pub fn plan<E, R>(
     problem: &CompiledProblem,
     bindings: PlanningBindings,
     authority: &ResourceAuthority,
+    registry: &R,
+    receipts: &ExecutionReceiptStore,
     planner: impl FnOnce(&CompiledProblem, &PlanningBindings) -> Result<Vec<PhysicalWorkBinding>, E>,
-) -> Result<ExecutionPlan, PlanError<E>> {
-    let candidates = planner(problem, &bindings).map_err(PlanError::Planner)?;
+) -> Result<ExecutionPlan, PlanError<E>>
+where
+    R: ImplementationRegistry,
+{
+    let recorded_infeasibility =
+        RecordedInfeasibility::from_store(receipts).map_err(PlanError::Receipt)?;
+    let emitted_candidates = planner(problem, &bindings).map_err(PlanError::Planner)?;
+    let mut candidates = Vec::with_capacity(emitted_candidates.len());
+    for candidate in emitted_candidates {
+        candidates.push(candidate.bind_registry(registry).map_err(|error| {
+            PlanError::InvalidCandidate(ExecutionError::InvalidPlan(error.to_string()))
+        })?);
+    }
     let Some(first) = candidates.first() else {
         return Err(PlanError::InvalidCandidate(ExecutionError::InvalidPlan(
             "physical planner emitted no candidates".to_string(),
         )));
     };
     let required_capabilities = first.execution_dag.required_resource_capabilities().clone();
+    let reference_products = product_surface(first);
+    let reference_transaction = first.observation_transaction.clone();
+    let reference_layouts = first.publication_layouts.clone();
     for candidate in &candidates {
+        candidate
+            .implementation_contract()
+            .validate_registry(registry, &candidate.execution_dag)
+            .map_err(|error| {
+                PlanError::InvalidCandidate(ExecutionError::InvalidPlan(error.to_string()))
+            })?;
+        let commitment = candidate.implementation_contract();
+        if commitment.registry_id() != bindings.implementation_registry {
+            return Err(PlanError::InvalidCandidate(ExecutionError::InvalidPlan(
+                "physical candidate contract was not published by the bound implementation registry"
+                    .to_string(),
+            )));
+        }
+        if commitment.problem_id() != problem.problem_id() {
+            return Err(PlanError::InvalidCandidate(ExecutionError::InvalidPlan(
+                "physical candidate implementations are not committed to the compiled problem"
+                    .to_string(),
+            )));
+        }
+        if commitment.numerics_id() != problem.numerics_id() {
+            return Err(PlanError::InvalidCandidate(ExecutionError::InvalidPlan(
+                "physical candidate implementations are not committed to the Numerics Contract"
+                    .to_string(),
+            )));
+        }
+        if commitment.required_capabilities() != problem.required_capabilities() {
+            return Err(PlanError::InvalidCandidate(ExecutionError::InvalidPlan(
+                "physical candidate implementations do not commit to every compiler-derived capability"
+                    .to_string(),
+            )));
+        }
+        let implementation_ids = candidate
+            .execution_dag
+            .nodes()
+            .iter()
+            .map(|(node, work)| (node.clone(), work.implementation.clone()))
+            .collect::<BTreeMap<_, _>>();
+        if commitment.implementation_ids() != &implementation_ids {
+            return Err(PlanError::InvalidCandidate(ExecutionError::InvalidPlan(
+                "physical candidate implementation commitment does not match its execution DAG"
+                    .to_string(),
+            )));
+        }
         if candidate.execution_dag.required_resource_capabilities() != &required_capabilities {
             return Err(PlanError::InvalidCandidate(ExecutionError::InvalidPlan(
                 "physical candidates disagree on required resource capabilities".to_string(),
             )));
         }
+        if product_surface(candidate) != reference_products {
+            return Err(PlanError::InvalidCandidate(ExecutionError::InvalidPlan(
+                "physical candidates disagree on the product artifact surface; lexicographic planning preserves product contracts".to_string(),
+            )));
+        }
+        if candidate.observation_transaction != reference_transaction {
+            return Err(PlanError::InvalidCandidate(ExecutionError::InvalidPlan(
+                "physical candidates disagree on the observation transaction; lexicographic planning preserves science contracts".to_string(),
+            )));
+        }
+        if candidate.publication_layouts != reference_layouts {
+            return Err(PlanError::InvalidCandidate(ExecutionError::InvalidPlan(
+                "physical candidates disagree on publication layouts; lexicographic planning preserves product contracts".to_string(),
+            )));
+        }
         validate_topology(&candidate.execution_dag, authority.topology())
             .map_err(PlanError::InvalidCandidate)?;
     }
-    let lease = authority
-        .acquire(
-            bindings.resource_policy.clone(),
-            DemandAlternatives {
-                required_capabilities,
-                alternatives: candidates
-                    .iter()
-                    .map(|candidate| candidate.execution_dag.resource_alternative().clone())
-                    .collect(),
-            },
-        )
-        .map_err(PlanError::Resource)?;
+    // Hard feasibility is decidable only by admission, so candidates are offered
+    // in ascending conservative-predicted-time order and the authority commits
+    // to the first feasible one: the minimum-time feasible candidate.
+    candidates.sort_by_key(|candidate| candidate.prediction().conservative_nanos());
+    let recorded_constraints = recorded_infeasibility.admission_constraints(
+        problem.problem_id().as_bytes(),
+        bindings.resource_policy_id.as_bytes(),
+        &candidates,
+    );
+    let lease = match authority.acquire_with_recorded_constraints(
+        bindings.resource_policy.clone(),
+        DemandAlternatives {
+            required_capabilities,
+            alternatives: candidates
+                .iter()
+                .map(|candidate| candidate.execution_dag.resource_alternative().clone())
+                .collect(),
+        },
+        &recorded_constraints,
+    ) {
+        Ok(lease) => lease,
+        Err(error) => return Err(PlanError::Resource(error)),
+    };
     let selected = lease.selected_alternative().clone();
     let release = lease.release().map_err(PlanError::Resource)?;
     if !release.is_released() {
@@ -1815,6 +2420,7 @@ pub fn plan<E>(
         &physical_work.artifacts,
     )
     .map_err(PlanError::ObservationTransaction)?;
+    let planner_cost_model_profile = bindings.planner_cost_model_profile_id();
     let mut plan = ExecutionPlan {
         plan_id: ExecutionPlanId([0; 32]),
         problem_id: problem.problem_id(),
@@ -1825,7 +2431,10 @@ pub fn plan<E>(
         implementation_registry: bindings.implementation_registry,
         resource_policy: bindings.resource_policy,
         resource_policy_id: bindings.resource_policy_id,
-        planner_cost_model_profile: bindings.planner_cost_model_profile,
+        planner_cost_model_profile,
+        recorded_receipt_source: recorded_infeasibility.source.clone(),
+        receipt_store: receipts.clone(),
+        implementation_contract: physical_work.implementation_contract,
         execution_dag: physical_work.execution_dag,
         prediction: physical_work.prediction,
         artifacts: physical_work.artifacts,
@@ -1834,6 +2443,128 @@ pub fn plan<E>(
     };
     plan.plan_id = execution_plan_id(&plan);
     Ok(plan)
+}
+
+/// The science- and product-bearing surface one physical candidate commits to.
+///
+/// Legal physical alternatives may vary resource claims, slots, knobs,
+/// adaptations, implementation identities, and execution-only prepared/cache
+/// artifacts, but never this surface.
+fn product_surface(candidate: &PhysicalWorkBinding) -> BTreeMap<ArtifactIdentity, ArtifactRole> {
+    candidate
+        .artifacts
+        .iter()
+        .filter(|artifact| matches!(artifact.role(), ArtifactRole::Input | ArtifactRole::Output))
+        .map(|artifact| (artifact.identity(), artifact.role()))
+        .collect()
+}
+
+/// Recorded terminal failed or aborted executions that constrain planning.
+///
+/// Each entry is durable receipt evidence that one demand alternative of one
+/// compiled problem terminally failed or was aborted. Quantitative receipts are
+/// converted to explicit admission constraints owned by Resource Authority;
+/// they never enter the performance cost model, which changes only through
+/// reviewed profile promotion.
+#[derive(Clone, Debug)]
+pub(crate) struct RecordedInfeasibility {
+    source: crate::receipt::ReceiptEvidenceSource,
+    regions: Vec<RegionFailure>,
+}
+
+#[derive(Clone, Debug)]
+struct RegionFailure {
+    problem: [u8; 32],
+    physical_work: [u8; 32],
+    resource_policy: [u8; 32],
+    alternative: AlternativeId,
+    attempt: ExecutionAttemptId,
+    status: ReceiptStatus,
+    resource_identity: ResourceIdentity,
+    required: u64,
+    available: u64,
+}
+
+impl RecordedInfeasibility {
+    /// Derive constraints from integrity-checked resource-infeasibility
+    /// receipts in `store`.
+    ///
+    /// Other failed or aborted receipts are deliberately ignored: an
+    /// interrupted scheduler, adapter, or evidence-contract failure is not
+    /// proof that the candidate's resource region is infeasible.
+    fn from_store(store: &crate::ExecutionReceiptStore) -> Result<Self, ReceiptError> {
+        let mut regions = Vec::new();
+        for attempt in store.attempts()? {
+            let receipt = store.open(attempt)?;
+            let status = receipt.status();
+            if !matches!(
+                status,
+                ReceiptStatus::Failed | ReceiptStatus::Aborted | ReceiptStatus::Infeasible
+            ) || receipt.failure_kind() != Some(ReceiptFailureKind::ResourceInfeasible)
+            {
+                continue;
+            }
+            let Some(crate::ReceiptInfeasibilityCertificate::Infeasible {
+                resource_identity,
+                required,
+                available,
+                ..
+            }) = receipt.infeasibility_certificate()
+            else {
+                // Capability gaps and references to earlier receipts are not
+                // quantitative pressure regions and cannot constrain a later
+                // Resource Authority decision.
+                continue;
+            };
+            regions.push(RegionFailure {
+                problem: receipt.problem_identity(),
+                physical_work: receipt.dag_identity(),
+                resource_policy: receipt.resource_policy_identity(),
+                alternative: receipt.selected_alternative_projection().id,
+                attempt,
+                status,
+                resource_identity,
+                required,
+                available,
+            });
+        }
+        Ok(Self {
+            source: store.evidence_source(),
+            regions,
+        })
+    }
+
+    fn admission_constraints(
+        &self,
+        problem: [u8; 32],
+        resource_policy: [u8; 32],
+        candidates: &[PhysicalWorkBinding],
+    ) -> Vec<crate::resource_authority::RecordedAdmissionConstraint> {
+        candidates
+            .iter()
+            .flat_map(|candidate| {
+                self.regions
+                    .iter()
+                    .filter(|region| {
+                        region.problem == problem
+                            && region.physical_work == candidate.physical_work_id().as_bytes()
+                            && region.resource_policy == resource_policy
+                            && region.alternative
+                                == candidate.execution_dag.resource_alternative().id
+                    })
+                    .map(
+                        |region| crate::resource_authority::RecordedAdmissionConstraint {
+                            alternative: region.alternative.clone(),
+                            resource: region.resource_identity.clone(),
+                            required: region.required,
+                            available: region.available,
+                            attempt: region.attempt,
+                            status: region.status,
+                        },
+                    )
+            })
+            .collect()
+    }
 }
 
 /// Effective identities observed immediately before execution.
@@ -2448,6 +3179,17 @@ pub trait ImplementationRegistry {
     /// Resolve one implementation without substituting another candidate.
     fn resolve(&self, id: &WorkImplementationId) -> Option<&Self::Implementation>;
 
+    /// Return the immutable science, numerics, and capability contract
+    /// published by this exact registry snapshot for one implementation.
+    /// Returning `None` fails closed when a planner tries to bind that
+    /// implementation into physical work.
+    fn implementation_contract(
+        &self,
+        _implementation: &WorkImplementationId,
+    ) -> Option<ImplementationContractMetadata> {
+        None
+    }
+
     /// Resolve the canonical provider/catalog registration for preparation
     /// owned by one implementation in this exact registry snapshot.
     ///
@@ -2897,17 +3639,34 @@ where
     R: ImplementationRegistry,
     C: RunController,
 {
+    let compiled_problem = problem.compiled_problem();
+    let binding_result = validate_bindings(compiled_problem, plan, current);
+    let receipt_source_matches = plan.recorded_receipt_source == receipt.evidence_source();
+    // A valid run must use the store captured by planning.  A stale binding
+    // still receives durable mutation evidence, but it is rebound to that
+    // canonical store before any receipt file can be created; the caller's
+    // noncanonical store is never mutated.
+    if binding_result.is_ok() && !receipt_source_matches {
+        return Err(RunError::Receipt(ReceiptError::IntegrityMismatch));
+    }
+    let receipt = if receipt_source_matches {
+        receipt
+    } else {
+        plan.bind_receipt(receipt.provenance().clone())
+    };
     let mut receipt = receipt.begin(problem, plan).map_err(RunError::Receipt)?;
-    let problem = problem.compiled_problem();
-    let result = run_inner(
-        problem,
-        plan,
-        current,
-        registry,
-        authority,
-        controller,
-        &mut receipt,
-    );
+    let result = match binding_result {
+        Err(error) => Err(error),
+        Ok(()) => run_inner(
+            compiled_problem,
+            plan,
+            current,
+            registry,
+            authority,
+            controller,
+            &mut receipt,
+        ),
+    };
     if receipt.is_terminal() {
         return result;
     }
@@ -2916,7 +3675,9 @@ where
         Ok(ExecutionOutcome::Cancelled) => ReceiptStatus::Cancelled,
         Err(RunError::BindingMismatch { .. }) => ReceiptStatus::Mutation,
         Err(RunError::Scheduler(ExecutionError::Resource(
-            crate::ResourceError::Infeasible { .. } | crate::ResourceError::NoCapableAlternative,
+            crate::ResourceError::Infeasible { .. }
+            | crate::ResourceError::NoCapableAlternative
+            | crate::ResourceError::NoFeasibleAlternative(_),
         ))) => ReceiptStatus::Infeasible,
         Err(_) => ReceiptStatus::Failed,
     };
@@ -2957,7 +3718,8 @@ fn receipt_failure<E>(result: &Result<ExecutionOutcome, RunError<E>>) -> Option<
         }
         RunError::Scheduler(ExecutionError::Resource(
             error @ (crate::ResourceError::Infeasible { .. }
-            | crate::ResourceError::NoCapableAlternative),
+            | crate::ResourceError::NoCapableAlternative
+            | crate::ResourceError::NoFeasibleAlternative(_)),
         )) => ReceiptFailure::infeasible(error),
         RunError::Scheduler(_) | RunError::Receipt(_) => {
             ReceiptFailure::new(ReceiptFailureKind::Scheduler, None, None)
@@ -3001,6 +3763,11 @@ where
         }
         implementations.insert(identity.clone(), implementation);
     }
+    plan.implementation_contract
+        .validate_registry(registry, &plan.execution_dag)
+        .map_err(|_| RunError::BindingMismatch {
+            binding: BindingKind::ImplementationRegistry,
+        })?;
     let mut scheduler = ExecutionScheduler::start(
         &plan.execution_dag,
         &plan.resource_policy,
@@ -3666,6 +4433,7 @@ fn execution_plan_id(plan: &ExecutionPlan) -> ExecutionPlanId {
     }
     encoder.digest(plan.numerics.as_bytes());
     encoder.digest(plan.implementation_registry.as_bytes());
+    // The receipt root is process-local execution authority, not portable logical plan identity.
     encoder.digest(plan.resource_policy_id.as_bytes());
     encoder.digest(plan.planner_cost_model_profile.as_bytes());
     encoder.digest(plan.execution_dag.physical_work_id().as_bytes());

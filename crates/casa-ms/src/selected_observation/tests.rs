@@ -54,6 +54,26 @@ use std::convert::Infallible;
 use std::mem::size_of;
 use std::sync::{Arc, Mutex};
 
+/// Canonical model-lifecycle commitment matching the compiled snapshot.
+fn model_lifecycle(model: ModelStateIdentity) -> ModelLifecycleRequirements {
+    let input = match model {
+        ModelStateIdentity::Empty => ModelInputCommitment::Empty,
+        ModelStateIdentity::Seed(source) => ModelInputCommitment::AlignedSeed {
+            source,
+            support: LogicalIdentity::from_sha256([0xa5; 32]),
+        },
+        ModelStateIdentity::Generation(generation) => ModelInputCommitment::Generation(generation),
+    };
+    ModelLifecycleRequirements::new(
+        ModelBounds::new(
+            10_000_000, 10_000_000, 10_000_000, 10_000_000, 1.0e30, 1.0e30,
+        )
+        .expect("valid model lifecycle bounds"),
+        NumericPrecision::F32,
+        input,
+    )
+}
+
 #[derive(Debug)]
 struct AccountedTestMeasures {
     state: Mutex<AccountedTestMeasuresState>,
@@ -293,8 +313,8 @@ fn sparse_manifest_reads_only_selected_physical_rows() {
     let problem = compile(ImagingRequest::new(
         specification(),
         geometry(),
-        ProblemInputIdentities::new(snapshot),
-        model_lifecycle(),
+        ProblemInputIdentities::new(snapshot.clone()),
+        model_lifecycle(snapshot.model()),
     ))
     .expect("compile sparse selected-observation problem");
     let source = &problem.inputs().observation_snapshot().sources()[0];
@@ -339,8 +359,8 @@ fn unconditional_sparse_manifest_is_rejected_without_scanning_intervening_rows()
     let problem = compile(ImagingRequest::new(
         specification(),
         geometry(),
-        ProblemInputIdentities::new(snapshot),
-        model_lifecycle(),
+        ProblemInputIdentities::new(snapshot.clone()),
+        model_lifecycle(snapshot.model()),
     ))
     .expect("compile incomplete-manifest problem");
     let source = &problem.inputs().observation_snapshot().sources()[0];
@@ -1687,8 +1707,8 @@ fn row_manifest_validation_occurs_in_the_sole_value_traversal() {
     let problem = compile(ImagingRequest::new(
         specification(),
         geometry(),
-        ProblemInputIdentities::new(snapshot),
-        model_lifecycle(),
+        ProblemInputIdentities::new(snapshot.clone()),
+        model_lifecycle(snapshot.model()),
     ))
     .expect("compile one-pass problem");
     let source = &problem.inputs().observation_snapshot().sources()[0];
@@ -2135,8 +2155,8 @@ fn retained_observation_cannot_be_rebound_to_equivalent_cross_provenance_problem
         compile(ImagingRequest::new(
             specification(),
             geometry(),
-            ProblemInputIdentities::new(snapshot),
-            model_lifecycle(),
+            ProblemInputIdentities::new(snapshot.clone()),
+            model_lifecycle(snapshot.model()),
         ))
         .expect("compile provenance-test problem")
     };
@@ -2554,8 +2574,8 @@ fn multi_spw_selection_is_block_invariant_across_prediction_and_residual_replays
     let problem = compile(ImagingRequest::new(
         specification(),
         geometry(),
-        ProblemInputIdentities::new(snapshot),
-        model_lifecycle(),
+        ProblemInputIdentities::new(snapshot.clone()),
+        model_lifecycle(snapshot.model()),
     ))
     .expect("compile multi-SPW problem");
     let source = &problem.inputs().observation_snapshot().sources()[0];
@@ -3009,7 +3029,7 @@ fn compiled_problem_with_sampling(
         specification_with_sampling(sampling),
         geometry_with_spectral_wcs(wcs),
         ProblemInputIdentities::new(snapshot),
-        model_lifecycle(),
+        model_lifecycle(ModelStateIdentity::Empty),
     ))
     .expect("compile spectral-contribution problem")
 }
@@ -3040,7 +3060,7 @@ fn compiled_problem_with_transformed_sampling(
         specification_with_sampling(sampling),
         geometry.with_spectral(transformed),
         ProblemInputIdentities::new(snapshot),
-        model_lifecycle(),
+        model_lifecycle(ModelStateIdentity::Empty),
     ))
     .expect("compile transformed spectral-contribution problem")
 }
@@ -3059,8 +3079,8 @@ fn compiled_problem_with_centres(
     compile(ImagingRequest::new(
         specification(),
         geometry_with_centres(centres),
-        ProblemInputIdentities::new(snapshot),
-        model_lifecycle(),
+        ProblemInputIdentities::new(snapshot.clone()),
+        model_lifecycle(snapshot.model()),
     ))
     .expect("compile fixed-centre problem")
 }
@@ -3082,8 +3102,8 @@ fn compiled_problem_with_sources(
     compile(ImagingRequest::new(
         specification(),
         geometry(),
-        ProblemInputIdentities::new(snapshot),
-        model_lifecycle(),
+        ProblemInputIdentities::new(snapshot.clone()),
+        model_lifecycle(snapshot.model()),
     ))
     .expect("compile selected-observation problem")
 }
@@ -3369,17 +3389,6 @@ fn multi_spw_source_input(path: &std::path::Path, source: u8) -> ObservationSour
 
 fn identity(byte: u8) -> LogicalIdentity {
     LogicalIdentity::from_sha256([byte; 32])
-}
-
-fn model_lifecycle() -> ModelLifecycleRequirements {
-    ModelLifecycleRequirements::new(
-        ModelBounds::new(
-            10_000_000, 10_000_000, 10_000_000, 10_000_000, 1.0e30, 1.0e30,
-        )
-        .expect("valid model lifecycle fixture bounds"),
-        NumericPrecision::F32,
-        ModelInputCommitment::Empty,
-    )
 }
 
 fn scoped_identity(source: u8, byte: u8) -> LogicalIdentity {

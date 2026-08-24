@@ -154,6 +154,12 @@ or full-wave merge gate. An unresolved P1 leaves the ticket open or blocked.
 Independently complete slices may still merge after satisfying their frozen
 checklist, focused gates, clean checks, consolidated review, independent final
 review, and explicit merge authority; the full-wave gate remains mandatory.
+For an exact pull request, an explicit user instruction to merge or close out
+as-is after the outstanding evidence has been reported is an informed waiver
+of the independent-final-review and current-check process requirements. Record
+the waiver without representing the missing evidence as green. It does not
+change the ticket's accepted scientific or interoperability outcome and does
+not waive the later full-wave gate.
 The merge-authority review verifies the already reviewed scope, evidence, SHA,
 and current checks; it is not another automatic repair/re-review cycle. A new
 P1 first asserted there follows the same citation and reproduction threshold,

@@ -1529,3 +1529,77 @@ fn fractional_policy_scaling_preserves_large_capacities() {
     );
     assert_eq!(scale_count_ceil(u64::MAX, 3, 4), 13_835_058_055_282_163_712);
 }
+
+#[test]
+fn os_swap_or_compression_never_becomes_planned_capacity() {
+    let domain = CapacityDomainId::new("unified-memory");
+    let host = CapacityViewId::new("host-memory");
+    let make_inventory = |available_bytes: u64| {
+        let mut inventory = inventory_with_views(vec![MemoryView {
+            id: host.clone(),
+            domain: domain.clone(),
+            kind: MemoryViewKind::Host,
+        }]);
+        inventory
+            .pressure
+            .memory_available_bytes
+            .insert(domain.clone(), available_bytes);
+        inventory
+    };
+
+    // An OS-level observation claiming more available memory than the declared
+    // physical domain (for example from compressed or swapped pages) is not a
+    // new physical capacity and is rejected outright.
+    let authority = ResourceAuthority::with_inventory(make_inventory(1_000))
+        .expect("valid pressure-bound inventory");
+
+    let mut swap_backed = make_inventory(0).pressure;
+    swap_backed.memory_available_bytes = BTreeMap::from([(domain.clone(), 5_000)]);
+    assert!(matches!(
+        authority.update_external_pressure(swap_backed),
+        Err(ResourceError::Invalid(message)) if message.contains("exceeds physical capacity")
+    ));
+
+    // Admission remains bounded by declared physical capacity, never by the
+    // rejected observation.
+    let demand = |bytes: u64| {
+        single_alternative(DemandEnvelope {
+            host_memory_view: host.clone(),
+            memory: vec![MemoryDemand {
+                allocation_id: "grid".to_string(),
+                hard_bytes: bytes,
+                preferred_bytes: bytes,
+                views: vec![host.clone()],
+            }],
+            workers: CountDemand::new(1, 1),
+            overhead: RuntimeOverheadDemand::zero(),
+            storage: Vec::new(),
+            rates: Vec::new(),
+            caches: CacheDemand::zero(),
+            locks: CountDemand::zero(),
+            file_descriptors: CountDemand::zero(),
+            queues: Vec::new(),
+            transfers: Vec::new(),
+            accelerators: Vec::new(),
+            io_buffers: IoBufferDemand::zero(),
+        })
+    };
+    let error = authority
+        .acquire(ResourcePolicy::Exclusive, demand(1_001))
+        .expect_err("planned capacity stays bounded by physical domains");
+    assert_eq!(error.available(), Some(1_000));
+}
+
+#[test]
+fn path_shaped_resource_identity_is_redacted_and_still_matches_capacity() {
+    let domain = StorageDomainId::new("/private/data");
+    let available = BTreeMap::from([(domain.clone(), 42)]);
+    let identity = ResourceIdentity::new(format!("storage-domain:{domain:?}"));
+
+    assert!(identity.as_str().starts_with("redacted:"));
+    assert!(!identity.as_str().contains('/'));
+    assert_eq!(
+        resource_map_available("storage-domain", &available, identity.as_str()),
+        Some(42)
+    );
+}
