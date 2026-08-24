@@ -821,10 +821,17 @@ pub(crate) struct RecordedAdmissionConstraint {
 }
 
 impl RecordedAdmissionConstraint {
-    fn matches(&self, alternative: &AlternativeId) -> bool {
+    fn matches_infeasibility(
+        &self,
+        alternative: &AlternativeId,
+        resource: &str,
+        required: u64,
+        available: u64,
+    ) -> bool {
         self.alternative == *alternative
-            && !self.resource.as_str().is_empty()
-            && self.required > self.available
+            && self.resource.as_str() == resource
+            && self.required == required
+            && self.available == available
     }
 }
 
@@ -1196,7 +1203,8 @@ pub enum AlternativeRejectionReason {
         available: u64,
     },
     /// Resource Authority applied an explicit prior terminal receipt constraint
-    /// for the same quantitative pressure region. This is an admission input,
+    /// for the same quantitative pressure region. A later admission with
+    /// recovered capacity is retried normally. This is an admission input,
     /// not cost-model learning.
     RecordedFailure {
         /// Attempt whose terminal receipt recorded the failure.
@@ -1521,19 +1529,6 @@ impl ResourceAuthority {
                 continue;
             }
             validate_alternative(&self.inner.topology, &alternative)?;
-            if let Some(constraint) = recorded_constraints
-                .iter()
-                .find(|constraint| constraint.matches(&alternative.id))
-            {
-                rejections.push(AlternativeRejection::new(
-                    alternative.id.clone(),
-                    AlternativeRejectionReason::RecordedFailure {
-                        attempt: constraint.attempt,
-                        status: constraint.status,
-                    },
-                ));
-                continue;
-            }
             let totals = alternative.demand.resource_totals(&self.inner.topology)?;
             let limits = alternative.demand.lease_limits();
             let mut reserved = totals.hard.clone();
@@ -1553,14 +1548,31 @@ impl ResourceAuthority {
                 available,
             }) = admit_totals(&reservation_totals, &policy_available)
             {
-                rejections.push(AlternativeRejection::new(
-                    alternative.id.clone(),
-                    AlternativeRejectionReason::Infeasible {
-                        resource,
+                if let Some(constraint) = recorded_constraints.iter().find(|constraint| {
+                    constraint.matches_infeasibility(
+                        &alternative.id,
+                        &resource,
                         required,
                         available,
-                    },
-                ));
+                    )
+                }) {
+                    rejections.push(AlternativeRejection::new(
+                        alternative.id.clone(),
+                        AlternativeRejectionReason::RecordedFailure {
+                            attempt: constraint.attempt,
+                            status: constraint.status,
+                        },
+                    ));
+                } else {
+                    rejections.push(AlternativeRejection::new(
+                        alternative.id.clone(),
+                        AlternativeRejectionReason::Infeasible {
+                            resource,
+                            required,
+                            available,
+                        },
+                    ));
+                }
                 continue;
             }
             let granted = admit_totals(&totals, &policy_available)?;

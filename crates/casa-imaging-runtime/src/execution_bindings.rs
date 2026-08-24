@@ -759,6 +759,13 @@ pub enum PhysicalWorkBindingError {
         /// Stable diagnostic for the rejected physical declaration.
         reason: String,
     },
+    /// The registry did not publish a contract for one selected implementation.
+    MissingImplementationContract(WorkImplementationId),
+    /// Registry-owned implementation contracts disagreed within one physical DAG.
+    ConflictingImplementationContract {
+        /// Stable diagnostic describing the conflict.
+        reason: String,
+    },
 }
 
 impl fmt::Display for PhysicalWorkBindingError {
@@ -828,6 +835,14 @@ impl fmt::Display for PhysicalWorkBindingError {
             ),
             Self::InvalidPublicationLayout { reason } => {
                 write!(formatter, "invalid publication layout: {reason}")
+            }
+            Self::MissingImplementationContract(implementation) => write!(
+                formatter,
+                "implementation registry did not publish a contract for {}",
+                implementation.as_str()
+            ),
+            Self::ConflictingImplementationContract { reason } => {
+                write!(formatter, "conflicting implementation contracts: {reason}")
             }
         }
     }
@@ -1056,23 +1071,17 @@ pub struct PhysicalWorkBinding {
     publication_layouts: PublicationLayoutLedger,
 }
 
-/// Registry-owned declaration of the science, numerics, and capability
-/// contract implemented by one physical candidate.
-///
-/// A planner must pass this declaration explicitly when binding a candidate;
-/// [`PhysicalWorkBinding::new`] never derives it from the execution DAG. The
-/// planning seam then compares the declaration with the independently
-/// compiled problem before any timing or resource comparison.
+/// Registry-owned science, numerics, and capability metadata for one
+/// implementation identity.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ImplementationContractDeclaration {
+pub struct ImplementationContractMetadata {
     problem: CompiledProblemId,
     numerics: NumericsContractId,
     required_capabilities: BTreeSet<RequiredCapability>,
 }
 
-impl ImplementationContractDeclaration {
-    /// Declare the exact science problem, numerical contract, and required
-    /// capabilities implemented by a registry-selected candidate.
+impl ImplementationContractMetadata {
+    /// Describe the contract published by an implementation registry.
     #[must_use]
     pub fn new(
         problem: CompiledProblemId,
@@ -1106,42 +1115,183 @@ impl ImplementationContractDeclaration {
     }
 }
 
+/// Opaque registry-bound implementation declarations used to bind physical
+/// work. Callers can obtain a catalog only by asking an implementation
+/// registry for its metadata; there is no public constructor for arbitrary
+/// candidate declarations.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImplementationContractCatalog {
+    registry: ImplementationRegistryId,
+    declarations: BTreeMap<WorkImplementationId, ImplementationContractDeclaration>,
+}
+
+impl ImplementationContractCatalog {
+    /// Capture the immutable contract snapshot for the implementations in a
+    /// physical DAG from one exact registry snapshot.
+    pub fn from_registry<R, I>(
+        registry: &R,
+        implementations: I,
+    ) -> Result<Self, PhysicalWorkBindingError>
+    where
+        R: ImplementationRegistry,
+        I: IntoIterator<Item = WorkImplementationId>,
+    {
+        let mut declarations = BTreeMap::new();
+        for implementation in implementations {
+            if declarations.contains_key(&implementation) {
+                continue;
+            }
+            let metadata = registry
+                .implementation_contract(&implementation)
+                .ok_or_else(|| {
+                    PhysicalWorkBindingError::MissingImplementationContract(implementation.clone())
+                })?;
+            declarations.insert(
+                implementation,
+                ImplementationContractDeclaration {
+                    problem: metadata.problem,
+                    numerics: metadata.numerics,
+                    required_capabilities: metadata.required_capabilities,
+                },
+            );
+        }
+        Ok(Self {
+            registry: registry.registry_id(),
+            declarations,
+        })
+    }
+
+    /// Return the exact registry snapshot that published this catalog.
+    #[must_use]
+    pub const fn registry_id(&self) -> ImplementationRegistryId {
+        self.registry
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ImplementationContractDeclaration {
+    problem: CompiledProblemId,
+    numerics: NumericsContractId,
+    required_capabilities: BTreeSet<RequiredCapability>,
+}
+
 /// Exact compiled science, numerics, and capability contract committed to one
 /// physical candidate after its execution DAG is sealed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ImplementationContractCommitment {
+    registry: ImplementationRegistryId,
     problem: CompiledProblemId,
     numerics: NumericsContractId,
     required_capabilities: BTreeSet<RequiredCapability>,
+    declarations: BTreeMap<WorkImplementationId, ImplementationContractDeclaration>,
     implementation_ids: BTreeMap<WorkNodeId, WorkImplementationId>,
 }
 
 impl ImplementationContractCommitment {
-    fn from_declaration(
-        declaration: &ImplementationContractDeclaration,
+    fn from_catalog(
+        catalog: &ImplementationContractCatalog,
         execution_dag: &ExecutionDag,
-    ) -> Self {
-        Self {
-            problem: declaration.problem,
-            numerics: declaration.numerics,
-            required_capabilities: declaration.required_capabilities.clone(),
-            implementation_ids: implementation_ids(execution_dag),
+    ) -> Result<Self, PhysicalWorkBindingError> {
+        let mut contract = None;
+        for work in execution_dag.nodes().values() {
+            let declaration = catalog
+                .declarations
+                .get(&work.implementation)
+                .ok_or_else(|| {
+                    PhysicalWorkBindingError::MissingImplementationContract(
+                        work.implementation.clone(),
+                    )
+                })?;
+            if let Some((problem, numerics, capabilities)) = &contract {
+                if *problem != declaration.problem
+                    || *numerics != declaration.numerics
+                    || capabilities != &declaration.required_capabilities
+                {
+                    return Err(
+                        PhysicalWorkBindingError::ConflictingImplementationContract {
+                            reason: format!(
+                                "implementation {} disagrees with the previously selected contract",
+                                work.implementation.as_str()
+                            ),
+                        },
+                    );
+                }
+            } else {
+                contract = Some((
+                    declaration.problem,
+                    declaration.numerics,
+                    declaration.required_capabilities.clone(),
+                ));
+            }
         }
+        let Some((problem, numerics, required_capabilities)) = contract else {
+            return Err(
+                PhysicalWorkBindingError::ConflictingImplementationContract {
+                    reason: "physical execution DAG contains no implementation nodes".to_string(),
+                },
+            );
+        };
+        Ok(Self {
+            registry: catalog.registry,
+            problem,
+            numerics,
+            required_capabilities,
+            declarations: catalog.declarations.clone(),
+            implementation_ids: implementation_ids(execution_dag),
+        })
     }
 
-    pub(crate) fn for_execution_dag(&self, execution_dag: &ExecutionDag) -> Self {
-        Self {
+    pub(crate) fn for_execution_dag(
+        &self,
+        execution_dag: &ExecutionDag,
+    ) -> Result<Self, PhysicalWorkBindingError> {
+        for work in execution_dag.nodes().values() {
+            // Prepared/cache and explicit release nodes are execution-only
+            // ownership work. Their implementation identities may be minted
+            // by a prepared-artifact owner, but they cannot alter the
+            // science/numerics contract carried by the other nodes.
+            if matches!(work.kind, WorkKind::Cache | WorkKind::Release) {
+                continue;
+            }
+            let Some(declaration) = self.declarations.get(&work.implementation) else {
+                return Err(PhysicalWorkBindingError::MissingImplementationContract(
+                    work.implementation.clone(),
+                ));
+            };
+            if declaration.problem != self.problem
+                || declaration.numerics != self.numerics
+                || declaration.required_capabilities != self.required_capabilities
+            {
+                return Err(
+                    PhysicalWorkBindingError::ConflictingImplementationContract {
+                        reason: format!(
+                            "implementation {} disagrees with the sealed physical contract",
+                            work.implementation.as_str()
+                        ),
+                    },
+                );
+            }
+        }
+        Ok(Self {
+            registry: self.registry,
             problem: self.problem,
             numerics: self.numerics,
             required_capabilities: self.required_capabilities.clone(),
+            declarations: self.declarations.clone(),
             implementation_ids: implementation_ids(execution_dag),
-        }
+        })
     }
 
     /// Return the exact compiled problem whose science is implemented.
     #[must_use]
     pub(crate) const fn problem_id(&self) -> CompiledProblemId {
         self.problem
+    }
+
+    /// Return the registry snapshot that published this contract.
+    #[must_use]
+    pub(crate) const fn registry_id(&self) -> ImplementationRegistryId {
+        self.registry
     }
 
     /// Return the exact numerical contract implemented by the candidate.
@@ -1175,7 +1325,7 @@ impl PhysicalWorkBinding {
     /// Bind a complete immutable physical work DAG, prediction, artifacts,
     /// and transaction to an explicit registry-owned implementation contract.
     pub fn new(
-        declaration: ImplementationContractDeclaration,
+        catalog: ImplementationContractCatalog,
         execution_dag: ExecutionDag,
         prediction: PlanPrediction,
         artifacts: Vec<PlannedArtifact>,
@@ -1183,7 +1333,7 @@ impl PhysicalWorkBinding {
         publication_layouts: PublicationLayoutLedger,
     ) -> Result<Self, PhysicalWorkBindingError> {
         Self::with_implementation_contract(
-            ImplementationContractCommitment::from_declaration(&declaration, &execution_dag),
+            ImplementationContractCommitment::from_catalog(&catalog, &execution_dag)?,
             execution_dag,
             prediction,
             artifacts,
@@ -1987,6 +2137,12 @@ pub fn plan<E>(
     let reference_layouts = first.publication_layouts.clone();
     for candidate in &candidates {
         let commitment = candidate.implementation_contract();
+        if commitment.registry_id() != bindings.implementation_registry {
+            return Err(PlanError::InvalidCandidate(ExecutionError::InvalidPlan(
+                "physical candidate contract was not published by the bound implementation registry"
+                    .to_string(),
+            )));
+        }
         if commitment.problem_id() != problem.problem_id() {
             return Err(PlanError::InvalidCandidate(ExecutionError::InvalidPlan(
                 "physical candidate implementations are not committed to the compiled problem"
@@ -2129,7 +2285,7 @@ fn product_surface(candidate: &PhysicalWorkBinding) -> BTreeMap<ArtifactIdentity
 /// converted to explicit admission constraints owned by Resource Authority;
 /// they never enter the performance cost model, which changes only through
 /// reviewed profile promotion.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct RecordedInfeasibility {
     regions: Vec<RegionFailure>,
 }
@@ -2800,6 +2956,17 @@ pub trait ImplementationRegistry {
 
     /// Resolve one implementation without substituting another candidate.
     fn resolve(&self, id: &WorkImplementationId) -> Option<&Self::Implementation>;
+
+    /// Return the immutable science, numerics, and capability contract
+    /// published by this exact registry snapshot for one implementation.
+    /// Returning `None` fails closed when a planner tries to bind that
+    /// implementation into physical work.
+    fn implementation_contract(
+        &self,
+        _implementation: &WorkImplementationId,
+    ) -> Option<ImplementationContractMetadata> {
+        None
+    }
 
     /// Resolve the canonical provider/catalog registration for preparation
     /// owned by one implementation in this exact registry snapshot.

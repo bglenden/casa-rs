@@ -7,16 +7,15 @@ use std::io;
 
 use casa_imaging_runtime::{
     AlternativeRejectionReason, ExecutionPlan, PlannerCostModelProfileBootstrap,
-    RecordedInfeasibility,
 };
 
 mod support;
 
 use self::support::{
-    AlternativeId, ExecutionDag, ExecutionDagSpecification, ImplementationContractDeclaration,
-    PhysicalWorkBinding, PlanError, PlanPrediction, PlanningBindings, PredictionConfidence,
-    PredictionUncertainty, ResourcePolicy, StagePrediction, WorkImplementationId, authority,
-    compile, cost_model, physical_work, registry, request, run_lock, runtime_plan,
+    AlternativeId, ExecutionDag, ExecutionDagSpecification, PhysicalWorkBinding, PlanError,
+    PlanPrediction, PlanningBindings, PredictionConfidence, PredictionUncertainty, ResourcePolicy,
+    StagePrediction, WorkImplementationId, authority, compile, cost_model, implementation_catalog,
+    no_recorded_infeasibility, physical_work, registry, request, run_lock, runtime_plan,
 };
 
 fn candidate(
@@ -65,13 +64,10 @@ fn candidate(
         initial_knobs: dag.initial_knobs().clone(),
         adaptations: dag.adaptations().values().cloned().collect(),
     };
+    let dag = ExecutionDag::new(specification).expect("variant physical DAG");
     PhysicalWorkBinding::new(
-        ImplementationContractDeclaration::new(
-            problem.problem_id(),
-            problem.numerics_id(),
-            problem.required_capabilities().clone(),
-        ),
-        ExecutionDag::new(specification).expect("variant physical DAG"),
+        implementation_catalog(problem, &dag),
+        dag,
         prediction,
         base.artifacts().to_vec(),
         base.observation_transaction().clone(),
@@ -95,7 +91,7 @@ fn multi_candidate_plan(
             PlannerCostModelProfileBootstrap::new(cost_model(4)),
         ),
         authority(),
-        &RecordedInfeasibility::default(),
+        &no_recorded_infeasibility(),
         |_, _| Ok(candidates),
     )
 }
@@ -171,13 +167,10 @@ fn planning_compares_distinct_registry_implementation_alternatives() {
         initial_knobs: dag.initial_knobs().clone(),
         adaptations: dag.adaptations().values().cloned().collect(),
     };
+    let divergent_dag = ExecutionDag::new(specification).expect("variant physical DAG");
     let divergent = PhysicalWorkBinding::new(
-        ImplementationContractDeclaration::new(
-            problem.problem_id(),
-            problem.numerics_id(),
-            problem.required_capabilities().clone(),
-        ),
-        ExecutionDag::new(specification).expect("variant physical DAG"),
+        implementation_catalog(&problem, &divergent_dag),
+        divergent_dag,
         fast.prediction().clone(),
         fast.artifacts().to_vec(),
         fast.observation_transaction().clone(),
@@ -202,11 +195,7 @@ fn planning_rejects_an_explicit_science_contract_mismatch() {
     let base = physical_work(6);
     let dag = base.execution_dag().clone();
     let divergent = PhysicalWorkBinding::new(
-        ImplementationContractDeclaration::new(
-            other_problem.problem_id(),
-            problem.numerics_id(),
-            problem.required_capabilities().clone(),
-        ),
+        implementation_catalog(&other_problem, &dag),
         dag,
         base.prediction().clone(),
         base.artifacts().to_vec(),

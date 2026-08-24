@@ -32,13 +32,14 @@ use crate::{
     Accelerator, AcceleratorDemand, AcceleratorId, AcceleratorKind, AlternativeId, CacheDemand,
     CapabilityPredicate, CapacityDomainId, CapacityViewId, CountDemand, CpuClassCapacity,
     DemandAlternative, DemandEnvelope, ExternalPressure, HostInventory,
-    ImplementationContractDeclaration, ImplementationRegistryId, IoBufferDemand, IoBufferKind,
-    MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand, MemoryView, MemoryViewKind,
-    ObservationTransactionWork, PhysicalWorkBinding, PlannerCostModelProfileId,
-    PlannerCostModelProfileRecord, PlanningBindings, QueueDemand, QueueResource, QueueResourceId,
-    QuiescencePoint, RateDemand, RateResource, RateResourceId, RateUnit, RecordedInfeasibility,
-    ResourceAuthority, ResourceHeadroom, ResourcePolicy, ResourceTopology, RuntimeOverheadDemand,
-    ScalingMetadata, StorageDemand, StorageDomain, StorageDomainId, plan as authority_plan,
+    ImplementationContractCatalog, ImplementationContractMetadata, ImplementationRegistryId,
+    IoBufferDemand, IoBufferKind, MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand,
+    MemoryView, MemoryViewKind, ObservationTransactionWork, PhysicalWorkBinding,
+    PlannerCostModelProfileId, PlannerCostModelProfileRecord, PlanningBindings, QueueDemand,
+    QueueResource, QueueResourceId, QuiescencePoint, RateDemand, RateResource, RateResourceId,
+    RateUnit, RecordedInfeasibility, ResourceAuthority, ResourceHeadroom, ResourcePolicy,
+    ResourceTopology, RuntimeOverheadDemand, ScalingMetadata, StorageDemand, StorageDomain,
+    StorageDomainId, plan as authority_plan,
 };
 
 fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
@@ -85,7 +86,7 @@ fn plan<E>(
         problem,
         bindings,
         &authority,
-        &RecordedInfeasibility::default(),
+        &no_recorded_infeasibility(),
         |_, _| Ok::<_, std::convert::Infallible>(vec![candidate]),
     ) {
         Ok(plan) => Ok(plan),
@@ -271,6 +272,10 @@ fn plan_spec(nodes: Vec<WorkNode>) -> ExecutionDagSpecification {
 }
 
 fn cpu_authority() -> ResourceAuthority {
+    cpu_authority_with_workers(2)
+}
+
+fn cpu_authority_with_workers(workers: u64) -> ResourceAuthority {
     let domain = CapacityDomainId::new("host-memory");
     let view = CapacityViewId::new("host-memory");
     ResourceAuthority::with_inventory(HostInventory {
@@ -290,15 +295,15 @@ fn cpu_authority() -> ResourceAuthority {
             storage_domains: Vec::new(),
             rate_resources: Vec::new(),
             queue_resources: Vec::new(),
-            logical_cpu_threads: 2,
-            performance_cpu_cores: CpuClassCapacity::Known(2),
+            logical_cpu_threads: workers,
+            performance_cpu_cores: CpuClassCapacity::Known(workers),
             cache_capacity_bytes: 1_024,
             lock_capacity: 8,
             file_descriptor_capacity: 8,
         },
         pressure: ExternalPressure {
             memory_available_bytes: BTreeMap::from([(domain, 1_024)]),
-            available_cpu_threads: 2,
+            available_cpu_threads: workers,
             storage_available_bytes: BTreeMap::new(),
             rate_available_per_second: BTreeMap::new(),
             queue_available_slots: BTreeMap::new(),
@@ -378,6 +383,10 @@ fn unified_authority() -> ResourceAuthority {
 }
 
 fn io_authority() -> ResourceAuthority {
+    io_authority_with_workers(2)
+}
+
+fn io_authority_with_workers(workers: u64) -> ResourceAuthority {
     let domain = CapacityDomainId::new("host-memory");
     let view = CapacityViewId::new("host-memory");
     let rate = RateResourceId::new("io-rate");
@@ -416,15 +425,15 @@ fn io_authority() -> ResourceAuthority {
                 QueueResource::new(queue.clone(), 1),
                 QueueResource::new(transaction_queue.clone(), 1),
             ],
-            logical_cpu_threads: 2,
-            performance_cpu_cores: CpuClassCapacity::Known(2),
+            logical_cpu_threads: workers,
+            performance_cpu_cores: CpuClassCapacity::Known(workers),
             cache_capacity_bytes: 1_024,
             lock_capacity: 8,
             file_descriptor_capacity: 8,
         },
         pressure: ExternalPressure {
             memory_available_bytes: BTreeMap::from([(domain, 1_024)]),
-            available_cpu_threads: 2,
+            available_cpu_threads: workers,
             storage_available_bytes: BTreeMap::from([(transaction_storage, 1_024)]),
             rate_available_per_second: BTreeMap::from([(rate, 100), (transaction_rate, 100)]),
             queue_available_slots: BTreeMap::from([(queue, 1), (transaction_queue, 1)]),
@@ -438,17 +447,36 @@ fn io_authority() -> ResourceAuthority {
 }
 
 fn bound_plan(dag: ExecutionDag) -> crate::ExecutionPlan {
+    bound_plan_with_authority(dag, &io_authority())
+}
+
+fn bound_plan_with_authority(
+    dag: ExecutionDag,
+    authority: &ResourceAuthority,
+) -> crate::ExecutionPlan {
     let problem = compiled_problem();
-    plan(
+    authority_plan(
         &problem,
         PlanningBindings::new(
             ImplementationRegistryId::from_sha256([7; 32]),
             ResourcePolicy::Exclusive,
             PlannerCostModelProfileRecord::initial(PlannerCostModelProfileId::from_sha256([8; 32])),
         ),
-        |_, _| Ok::<_, std::convert::Infallible>(physical_work_binding(dag)),
+        authority,
+        &no_recorded_infeasibility(),
+        |_, _| Ok::<_, std::convert::Infallible>(vec![physical_work_binding(dag)]),
     )
     .expect("physical planning succeeds")
+}
+
+fn no_recorded_infeasibility() -> RecordedInfeasibility {
+    let directory = tempfile::tempdir().expect("empty receipt directory");
+    let store = crate::ExecutionReceiptStore::new(
+        directory.path(),
+        crate::ReceiptRetention::new(4, 1_048_576).expect("retention"),
+    )
+    .expect("empty receipt store");
+    RecordedInfeasibility::from_store(&store).expect("empty recorded constraints")
 }
 
 fn execution_provenance(
@@ -888,12 +916,9 @@ fn physical_work_binding_with_problem(
             None,
         )
     }));
+    let catalog = implementation_catalog(problem, &dag);
     PhysicalWorkBinding::new(
-        ImplementationContractDeclaration::new(
-            problem.problem_id(),
-            problem.numerics_id(),
-            problem.required_capabilities().clone(),
-        ),
+        catalog,
         dag,
         prediction,
         artifacts,
@@ -901,6 +926,25 @@ fn physical_work_binding_with_problem(
         layouts,
     )
     .expect("bound physical work")
+}
+
+fn implementation_catalog(
+    problem: &casa_imaging_model::CompiledProblem,
+    dag: &ExecutionDag,
+) -> ImplementationContractCatalog {
+    let registry = ContractOnlyRegistry {
+        id: ImplementationRegistryId::from_sha256([7; 32]),
+        metadata: ImplementationContractMetadata::new(
+            problem.problem_id(),
+            problem.numerics_id(),
+            problem.required_capabilities().clone(),
+        ),
+    };
+    ImplementationContractCatalog::from_registry(
+        &registry,
+        dag.nodes().values().map(|node| node.implementation.clone()),
+    )
+    .expect("registry publishes every physical implementation contract")
 }
 
 #[test]
@@ -1170,6 +1214,30 @@ impl crate::WorkImplementation for MalformedRejectionImplementation {
 struct MalformedRejectionRegistry {
     id: ImplementationRegistryId,
     implementation: MalformedRejectionImplementation,
+}
+
+struct ContractOnlyRegistry {
+    id: ImplementationRegistryId,
+    metadata: ImplementationContractMetadata,
+}
+
+impl crate::ImplementationRegistry for ContractOnlyRegistry {
+    type Implementation = MalformedRejectionImplementation;
+
+    fn registry_id(&self) -> ImplementationRegistryId {
+        self.id
+    }
+
+    fn resolve(&self, _id: &WorkImplementationId) -> Option<&Self::Implementation> {
+        None
+    }
+
+    fn implementation_contract(
+        &self,
+        _id: &WorkImplementationId,
+    ) -> Option<ImplementationContractMetadata> {
+        Some(self.metadata.clone())
+    }
 }
 
 impl crate::ImplementationRegistry for MalformedRejectionRegistry {
@@ -1659,7 +1727,7 @@ fn planning_seals_the_first_resource_authority_feasible_candidate() {
             PlannerCostModelProfileRecord::initial(PlannerCostModelProfileId::from_sha256([8; 32])),
         ),
         &io_authority(),
-        &RecordedInfeasibility::default(),
+        &no_recorded_infeasibility(),
         |_, _| Ok::<_, std::convert::Infallible>(candidates),
     )
     .expect("serial candidate is feasible");
@@ -1690,7 +1758,7 @@ fn planning_fails_before_sealing_when_no_candidate_is_feasible() {
             PlannerCostModelProfileRecord::initial(PlannerCostModelProfileId::from_sha256([8; 32])),
         ),
         &cpu_authority(),
-        &RecordedInfeasibility::default(),
+        &no_recorded_infeasibility(),
         |_, _| Ok::<_, std::convert::Infallible>(vec![candidate]),
     )
     .expect_err("no candidate fits the authority inventory");
@@ -1701,10 +1769,20 @@ fn planning_fails_before_sealing_when_no_candidate_is_feasible() {
 #[test]
 fn recorded_quantitative_failures_constrain_planning_through_resource_authority() {
     let problem = compiled_problem();
-    let sealed_dag = ExecutionDag::new(plan_spec(vec![cpu_node("work", BTreeSet::new())]))
-        .expect("valid physical work");
+    let mut constrained_spec = plan_spec(vec![cpu_node("work", BTreeSet::new())]);
+    constrained_spec.resource_alternative.demand.workers = CountDemand::new(3, 3);
+    constrained_spec
+        .resource_alternative
+        .scaling
+        .minimum_workers = 3;
+    constrained_spec
+        .resource_alternative
+        .scaling
+        .maximum_workers = 3;
+    constrained_spec.initial_knobs.workers = 3;
+    let sealed_dag = ExecutionDag::new(constrained_spec).expect("valid constrained physical work");
     let alternative_id = sealed_dag.resource_alternative().id.clone();
-    let sealed = bound_plan(sealed_dag.clone());
+    let sealed = bound_plan_with_authority(sealed_dag.clone(), &io_authority_with_workers(4));
 
     let directory = tempfile::tempdir().expect("receipt directory");
     let store = crate::ExecutionReceiptStore::new(
@@ -1719,9 +1797,9 @@ fn recorded_quantitative_failures_constrain_planning_through_resource_authority(
             crate::ReceiptStatus::Failed,
             Some(crate::receipt::ReceiptFailure::infeasible(
                 &crate::ResourceError::Infeasible {
-                    resource: "host-memory".to_string(),
-                    required: 4_096,
-                    available: 1_024,
+                    resource: "workers".to_string(),
+                    required: 3,
+                    available: 2,
                 },
             )),
         ),
@@ -1783,10 +1861,7 @@ fn recorded_quantitative_failures_constrain_planning_through_resource_authority(
         )
     };
     let error = authority_plan(&problem, bindings(), &authority, &recorded, |_, _| {
-        Ok::<_, std::convert::Infallible>(vec![physical_work_binding(
-            ExecutionDag::new(plan_spec(vec![cpu_node("work", BTreeSet::new())]))
-                .expect("candidate physical work"),
-        )])
+        Ok::<_, std::convert::Infallible>(vec![physical_work_binding(sealed_dag.clone())])
     })
     .expect_err("recorded quantitative failure must constrain the alternative");
     let certificate = match &error {
@@ -1808,17 +1883,13 @@ fn recorded_quantitative_failures_constrain_planning_through_resource_authority(
     // Without the recorded quantitative constraint the same candidate admits;
     // the receipt is an explicit Resource Authority input, never online
     // learning in the cost model.
+    let recovered_authority = io_authority_with_workers(4);
     let unconstrained = authority_plan(
         &problem,
         bindings(),
-        &authority,
-        &RecordedInfeasibility::default(),
-        |_, _| {
-            Ok::<_, std::convert::Infallible>(vec![physical_work_binding(
-                ExecutionDag::new(plan_spec(vec![cpu_node("work", BTreeSet::new())]))
-                    .expect("candidate physical work"),
-            )])
-        },
+        &recovered_authority,
+        &no_recorded_infeasibility(),
+        |_, _| Ok::<_, std::convert::Infallible>(vec![physical_work_binding(sealed_dag.clone())]),
     )
     .expect("the same candidate plans without recorded constraints");
     assert_eq!(

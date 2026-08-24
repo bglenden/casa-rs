@@ -47,13 +47,14 @@ use casa_imaging_runtime::{
     ExecutionReceiptBinding, ExecutionReceiptStore, ExecutionRouteDisposition,
     ExecutionRouteEvidence, ExecutionRouteRequirement, ExecutionRouteRequirementKind,
     ExecutionStatus, ExternalPressure, FenceId, FenceKind, HostInventory,
-    ImplementationContractDeclaration, ImplementationRegistry, ImplementationRegistryId,
-    InitializationPolicy, IoBufferDemand, IoBufferKind, IoMeasurement, IoPrediction, LeaseResource,
-    LogicalAllocation, MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand, MemoryView,
-    MemoryViewKind, ObservationReadCompletionContext, ObservationTransactionWork, PhysicalLayoutId,
-    PhysicalSlot, PhysicalSlotId, PhysicalWorkBinding, PhysicalWorkBindingError, PlanError,
-    PlanPrediction, PlannedArtifact, PlannerCostModelProfileBootstrap, PlannerCostModelProfileId,
-    PlanningBindings, PredictionConfidence, PredictionUncertainty, PreparedArtifactBudget,
+    ImplementationContractCatalog, ImplementationContractMetadata, ImplementationRegistry,
+    ImplementationRegistryId, InitializationPolicy, IoBufferDemand, IoBufferKind, IoMeasurement,
+    IoPrediction, LeaseResource, LogicalAllocation, MemoryCapacityDomain, MemoryCapacityKind,
+    MemoryDemand, MemoryView, MemoryViewKind, ObservationReadCompletionContext,
+    ObservationTransactionWork, PhysicalLayoutId, PhysicalSlot, PhysicalSlotId,
+    PhysicalWorkBinding, PhysicalWorkBindingError, PlanError, PlanPrediction, PlannedArtifact,
+    PlannerCostModelProfileBootstrap, PlannerCostModelProfileId, PlanningBindings,
+    PredictionConfidence, PredictionUncertainty, PreparedArtifactBudget,
     PreparedArtifactDescriptor, PreparedArtifactError, PreparedArtifactLoadSource,
     PreparedArtifactOperation, PreparedArtifactOrder, PreparedArtifactPlanFragment,
     PreparedArtifactPlaneDescriptor, PreparedArtifactPrecision, PreparedArtifactRegistration,
@@ -76,14 +77,23 @@ use casa_ms::{
     SelectedObservationContentBudget, SelectedObservationMeasures,
 };
 
-fn implementation_contract(
+fn implementation_catalog(
     problem: &casa_imaging_model::CompiledProblem,
-) -> ImplementationContractDeclaration {
-    ImplementationContractDeclaration::new(
-        problem.problem_id(),
-        problem.numerics_id(),
-        problem.required_capabilities().clone(),
+    dag: &ExecutionDag,
+) -> ImplementationContractCatalog {
+    let registry = ContractOnlyRegistry {
+        id: registry(3),
+        metadata: ImplementationContractMetadata::new(
+            problem.problem_id(),
+            problem.numerics_id(),
+            problem.required_capabilities().clone(),
+        ),
+    };
+    ImplementationContractCatalog::from_registry(
+        &registry,
+        dag.nodes().values().map(|node| node.implementation.clone()),
     )
+    .expect("registry publishes every physical implementation contract")
 }
 
 fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
@@ -1103,7 +1113,7 @@ fn physical_work_for_problem(
     })
     .expect("problem-bound transaction DAG");
     PhysicalWorkBinding::new(
-        implementation_contract(problem),
+        implementation_catalog(problem, &dag),
         dag,
         base.prediction().clone(),
         base.artifacts().to_vec(),
@@ -1838,7 +1848,7 @@ fn transaction_binding(
     )
     .expect("complete transaction prediction");
     PhysicalWorkBinding::new(
-        implementation_contract(problem),
+        implementation_catalog(problem, &dag),
         dag,
         prediction,
         participants
@@ -2020,7 +2030,7 @@ fn evidenced_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
     )
     .expect("complete evidence prediction");
     PhysicalWorkBinding::new(
-        implementation_contract(&problem),
+        implementation_catalog(&problem, &dag),
         dag,
         prediction,
         vec![
@@ -2234,7 +2244,7 @@ fn auditable_physical_work(
     })
     .expect("valid auditable physical work DAG");
     PhysicalWorkBinding::new(
-        implementation_contract(problem),
+        implementation_catalog(problem, &dag),
         dag,
         base.prediction().clone(),
         [PlannedArtifact::new(
@@ -2547,9 +2557,10 @@ fn mapped_publication_candidate(
             .collect(),
     )
     .expect("one mapped layout per participant");
+    let dag = base.execution_dag().clone();
     PhysicalWorkBinding::new(
-        implementation_contract(&problem),
-        base.execution_dag().clone(),
+        implementation_catalog(&problem, &dag),
+        dag,
         base.prediction().clone(),
         base.artifacts().to_vec(),
         base.observation_transaction().clone(),
@@ -2574,6 +2585,11 @@ fn test_registry(
 struct TestRegistry {
     id: ImplementationRegistryId,
     executors: BTreeMap<WorkImplementationId, RecordingExecutor>,
+}
+
+struct ContractOnlyRegistry {
+    id: ImplementationRegistryId,
+    metadata: ImplementationContractMetadata,
 }
 
 #[derive(Default)]
@@ -2683,6 +2699,25 @@ impl ImplementationRegistry for TestRegistry {
     }
 }
 
+impl ImplementationRegistry for ContractOnlyRegistry {
+    type Implementation = RecordingExecutor;
+
+    fn registry_id(&self) -> ImplementationRegistryId {
+        self.id
+    }
+
+    fn resolve(&self, _id: &WorkImplementationId) -> Option<&Self::Implementation> {
+        None
+    }
+
+    fn implementation_contract(
+        &self,
+        _id: &WorkImplementationId,
+    ) -> Option<ImplementationContractMetadata> {
+        Some(self.metadata.clone())
+    }
+}
+
 fn authority() -> &'static ResourceAuthority {
     static AUTHORITY: OnceLock<&'static ResourceAuthority> = OnceLock::new();
     AUTHORITY.get_or_init(|| {
@@ -2776,6 +2811,16 @@ fn run_lock() -> &'static Mutex<()> {
     &RUN_LOCK
 }
 
+fn no_recorded_infeasibility() -> RecordedInfeasibility {
+    let directory = tempfile::tempdir().expect("empty receipt directory");
+    let store = ExecutionReceiptStore::new(
+        directory.path(),
+        ReceiptRetention::new(4, 1_048_576).expect("retention"),
+    )
+    .expect("empty receipt store");
+    RecordedInfeasibility::from_store(&store).expect("empty recorded constraints")
+}
+
 fn plan<E>(
     problem: &casa_imaging_model::CompiledProblem,
     bindings: PlanningBindings,
@@ -2791,7 +2836,7 @@ fn plan<E>(
         problem,
         bindings,
         authority(),
-        &RecordedInfeasibility::default(),
+        &no_recorded_infeasibility(),
         |problem, bindings| planner(problem, bindings).map(|candidate| vec![candidate]),
     )
 }
@@ -2936,7 +2981,7 @@ fn physical_work_binding_rejects_io_and_publication_evidence_outside_plan_semant
 
     assert!(matches!(
         PhysicalWorkBinding::new(
-            implementation_contract(&problem),
+            implementation_catalog(&problem, &io_dag),
             io_dag,
             io_prediction,
             Vec::new(),
@@ -3004,7 +3049,7 @@ fn physical_work_binding_rejects_io_and_publication_evidence_outside_plan_semant
     .expect("well-formed prediction ledger");
     assert!(matches!(
         PhysicalWorkBinding::new(
-            implementation_contract(&problem),
+            implementation_catalog(&problem, &contract_dag),
             contract_dag,
             contract_prediction,
             Vec::new(),
@@ -3029,7 +3074,7 @@ fn physical_work_binding_rejects_io_and_publication_evidence_outside_plan_semant
 
     assert!(matches!(
         PhysicalWorkBinding::new(
-            implementation_contract(&problem),
+            implementation_catalog(&problem, &publication_dag),
             publication_dag,
             publication_prediction,
             vec![output],
@@ -3059,7 +3104,7 @@ fn physical_work_binding_rejects_typed_io_contracts_without_predictions() {
 
     assert!(matches!(
         PhysicalWorkBinding::new(
-            implementation_contract(&problem),
+            implementation_catalog(&problem, &dag),
             dag,
             prediction,
             Vec::new(),
@@ -3152,7 +3197,7 @@ fn physical_work_binding_rejects_cpu_io_buffer_contracts_without_predictions() {
 
     assert!(matches!(
         PhysicalWorkBinding::new(
-            implementation_contract(&problem),
+            implementation_catalog(&problem, &dag),
             dag,
             prediction,
             Vec::new(),
@@ -3600,9 +3645,10 @@ fn mapped_publication_staging_binds_its_producer_release_allocation_and_plan_ide
 fn transaction_seal_blocks_unbound_transaction_work() {
     let problem = compile(request(1)).expect("logical compilation");
     let base = physical_work_for_problem(&problem, 6);
+    let dag = base.execution_dag().clone();
     let unbound = PhysicalWorkBinding::new(
-        implementation_contract(&problem),
-        base.execution_dag().clone(),
+        implementation_catalog(&problem, &dag),
+        dag,
         base.prediction().clone(),
         base.artifacts().to_vec(),
         ObservationTransactionWork::new(
@@ -4852,6 +4898,39 @@ fn transaction_failures_leave_the_old_generation_visible() {
         0,
         "failed admission cannot launch mutation or publication work"
     );
+
+    // The receipt produced by the real run seam is the only source accepted
+    // for historical quantitative constraints. Replaying it at the same
+    // pressure is reported as a recorded refusal rather than a fresh
+    // synthetic admission failure.
+    let recorded = RecordedInfeasibility::from_store(&admission_receipts)
+        .expect("production admission receipt yields recorded constraints");
+    let pressure_guard = run_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    authority()
+        .update_external_pressure(runtime_inventory(0).pressure)
+        .expect("reinstall zero-lock pressure for receipt replay");
+    let replay = runtime_plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        authority(),
+        &recorded,
+        |_, _| Ok::<_, io::Error>(vec![physical_work(6)]),
+    );
+    authority()
+        .update_external_pressure(runtime_inventory(4).pressure)
+        .expect("restore pressure after receipt replay");
+    drop(pressure_guard);
+    assert!(matches!(
+        replay,
+        Err(PlanError::Resource(ResourceError::NoFeasibleAlternative(certificate)))
+            if matches!(certificate.rejections(), [rejection]
+                if matches!(rejection.reason(), AlternativeRejectionReason::RecordedFailure {
+                    attempt,
+                    status: ReceiptStatus::Infeasible,
+                } if *attempt == casa_imaging_runtime::ExecutionAttemptId::from_sha256([243; 32])))
+    ));
 }
 
 #[test]
