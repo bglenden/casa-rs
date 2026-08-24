@@ -15,13 +15,14 @@ pub use execution_bindings::{
     ArtifactDisposition, ArtifactIdentity, ArtifactMeasurement, ArtifactMeasurementError,
     ArtifactRole, AttemptBoundObservationCompletion, BindingKind, CacheIdentity,
     CompiledWorkContext, ExecutionEvidenceError, ExecutionPlan, ExecutionPlanId, ExecutionStatus,
-    ImplementationRegistry, ImplementationRegistryId, IoMeasurement, IoPrediction,
-    ObservationCompletionBindingError, ObservationReadCompletionContext, PhysicalWorkBinding,
-    PhysicalWorkBindingError, PhysicalWorkId, PlanError, PlanPrediction, PlannedArtifact,
-    PlannerCostModelProfileId, PlanningBindings, PredictionConfidence, PredictionUncertainty,
-    PublicationResources, RecordedInfeasibility, RedactedPath, ResourceMeasurement,
-    ResourcePolicyId, RunBindings, RunController, RunDirective, RunError, RunToCompletion,
-    StagePrediction, WorkExecutionContext, WorkImplementation, WorkMeasurements, plan, run,
+    ImplementationContractDeclaration, ImplementationRegistry, ImplementationRegistryId,
+    IoMeasurement, IoPrediction, ObservationCompletionBindingError,
+    ObservationReadCompletionContext, PhysicalWorkBinding, PhysicalWorkBindingError,
+    PhysicalWorkId, PlanError, PlanPrediction, PlannedArtifact, PlannerCostModelProfileId,
+    PlanningBindings, PredictionConfidence, PredictionUncertainty, PublicationResources,
+    RecordedInfeasibility, RedactedPath, ResourceMeasurement, ResourcePolicyId, RunBindings,
+    RunController, RunDirective, RunError, RunToCompletion, StagePrediction, WorkExecutionContext,
+    WorkImplementation, WorkMeasurements, plan, run,
 };
 
 pub use cost_model::{

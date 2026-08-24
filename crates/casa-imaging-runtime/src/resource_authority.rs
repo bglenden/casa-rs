@@ -808,6 +808,26 @@ pub struct DemandAlternatives {
     pub alternatives: Vec<DemandAlternative>,
 }
 
+/// One integrity-checked quantitative receipt constraint supplied to Resource
+/// Authority during planning.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RecordedAdmissionConstraint {
+    pub(crate) alternative: AlternativeId,
+    pub(crate) resource: ResourceIdentity,
+    pub(crate) required: u64,
+    pub(crate) available: u64,
+    pub(crate) attempt: ExecutionAttemptId,
+    pub(crate) status: ReceiptStatus,
+}
+
+impl RecordedAdmissionConstraint {
+    fn matches(&self, alternative: &AlternativeId) -> bool {
+        self.alternative == *alternative
+            && !self.resource.as_str().is_empty()
+            && self.required > self.available
+    }
+}
+
 /// Named runtime-overhead category owned by a lease.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RuntimeOverheadKind {
@@ -1175,9 +1195,9 @@ pub enum AlternativeRejectionReason {
         /// Amount available after policy, pressure, and active leases.
         available: u64,
     },
-    /// A current Resource Authority refusal matches a prior terminal receipt
-    /// for the same quantitative pressure region. This is receipt annotation,
-    /// not a pre-admission veto or cost-model learning.
+    /// Resource Authority applied an explicit prior terminal receipt constraint
+    /// for the same quantitative pressure region. This is an admission input,
+    /// not cost-model learning.
     RecordedFailure {
         /// Attempt whose terminal receipt recorded the failure.
         attempt: ExecutionAttemptId,
@@ -1451,6 +1471,19 @@ impl ResourceAuthority {
         policy: ResourcePolicy,
         alternatives: DemandAlternatives,
     ) -> Result<ResourceLease, ResourceError> {
+        self.acquire_with_recorded_constraints(policy, alternatives, &[])
+    }
+
+    /// Atomically selects, admits, and reserves one demand alternative while
+    /// applying explicit integrity-checked receipt constraints. Receipt
+    /// evidence is an admission input owned by this authority; it is never a
+    /// planner-side candidate filter or a cost-model update.
+    pub(crate) fn acquire_with_recorded_constraints(
+        &self,
+        policy: ResourcePolicy,
+        alternatives: DemandAlternatives,
+        recorded_constraints: &[RecordedAdmissionConstraint],
+    ) -> Result<ResourceLease, ResourceError> {
         validate_policy(&self.inner.topology, &policy)?;
         if alternatives.alternatives.is_empty() {
             return Err(ResourceError::Invalid(
@@ -1488,6 +1521,19 @@ impl ResourceAuthority {
                 continue;
             }
             validate_alternative(&self.inner.topology, &alternative)?;
+            if let Some(constraint) = recorded_constraints
+                .iter()
+                .find(|constraint| constraint.matches(&alternative.id))
+            {
+                rejections.push(AlternativeRejection::new(
+                    alternative.id.clone(),
+                    AlternativeRejectionReason::RecordedFailure {
+                        attempt: constraint.attempt,
+                        status: constraint.status,
+                    },
+                ));
+                continue;
+            }
             let totals = alternative.demand.resource_totals(&self.inner.topology)?;
             let limits = alternative.demand.lease_limits();
             let mut reserved = totals.hard.clone();

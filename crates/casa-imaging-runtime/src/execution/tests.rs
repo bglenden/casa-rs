@@ -31,14 +31,14 @@ use super::*;
 use crate::{
     Accelerator, AcceleratorDemand, AcceleratorId, AcceleratorKind, AlternativeId, CacheDemand,
     CapabilityPredicate, CapacityDomainId, CapacityViewId, CountDemand, CpuClassCapacity,
-    DemandAlternative, DemandEnvelope, ExternalPressure, HostInventory, ImplementationRegistryId,
-    IoBufferDemand, IoBufferKind, MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand,
-    MemoryView, MemoryViewKind, ObservationTransactionWork, PhysicalWorkBinding,
-    PlannerCostModelProfileId, PlannerCostModelProfileRecord, PlanningBindings, QueueDemand,
-    QueueResource, QueueResourceId, QuiescencePoint, RateDemand, RateResource, RateResourceId,
-    RateUnit, RecordedInfeasibility, ResourceAuthority, ResourceHeadroom, ResourcePolicy,
-    ResourceTopology, RuntimeOverheadDemand, ScalingMetadata, StorageDemand, StorageDomain,
-    StorageDomainId, plan as authority_plan,
+    DemandAlternative, DemandEnvelope, ExternalPressure, HostInventory,
+    ImplementationContractDeclaration, ImplementationRegistryId, IoBufferDemand, IoBufferKind,
+    MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand, MemoryView, MemoryViewKind,
+    ObservationTransactionWork, PhysicalWorkBinding, PlannerCostModelProfileId,
+    PlannerCostModelProfileRecord, PlanningBindings, QueueDemand, QueueResource, QueueResourceId,
+    QuiescencePoint, RateDemand, RateResource, RateResourceId, RateUnit, RecordedInfeasibility,
+    ResourceAuthority, ResourceHeadroom, ResourcePolicy, ResourceTopology, RuntimeOverheadDemand,
+    ScalingMetadata, StorageDemand, StorageDomain, StorageDomainId, plan as authority_plan,
 };
 
 fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
@@ -889,7 +889,11 @@ fn physical_work_binding_with_problem(
         )
     }));
     PhysicalWorkBinding::new(
-        problem,
+        ImplementationContractDeclaration::new(
+            problem.problem_id(),
+            problem.numerics_id(),
+            problem.required_capabilities().clone(),
+        ),
         dag,
         prediction,
         artifacts,
@@ -1695,7 +1699,7 @@ fn planning_fails_before_sealing_when_no_candidate_is_feasible() {
 }
 
 #[test]
-fn recorded_failures_do_not_blacklist_recovered_or_capability_only_regions() {
+fn recorded_quantitative_failures_constrain_planning_through_resource_authority() {
     let problem = compiled_problem();
     let sealed_dag = ExecutionDag::new(plan_spec(vec![cpu_node("work", BTreeSet::new())]))
         .expect("valid physical work");
@@ -1708,30 +1712,39 @@ fn recorded_failures_do_not_blacklist_recovered_or_capability_only_regions() {
         crate::ReceiptRetention::new(4, 1_048_576).expect("retention"),
     )
     .expect("receipt store");
-    for (attempt, build, status, resource_failure) in [
-        (91_u8, 92_u8, crate::ReceiptStatus::Failed, true),
-        (93, 94, crate::ReceiptStatus::Aborted, true),
-        (95, 96, crate::ReceiptStatus::Cancelled, false),
-        (97, 98, crate::ReceiptStatus::Failed, false),
+    for (attempt, build, status, failure) in [
+        (
+            91_u8,
+            92_u8,
+            crate::ReceiptStatus::Failed,
+            Some(crate::receipt::ReceiptFailure::infeasible(
+                &crate::ResourceError::Infeasible {
+                    resource: "host-memory".to_string(),
+                    required: 4_096,
+                    available: 1_024,
+                },
+            )),
+        ),
+        (
+            93,
+            94,
+            crate::ReceiptStatus::Aborted,
+            Some(crate::receipt::ReceiptFailure::infeasible(
+                &crate::ResourceError::NoCapableAlternative,
+            )),
+        ),
+        (95, 96, crate::ReceiptStatus::Cancelled, None),
+        (
+            97,
+            98,
+            crate::ReceiptStatus::Failed,
+            Some(crate::receipt::ReceiptFailure::new(
+                crate::ReceiptFailureKind::Interrupted,
+                None,
+                Some("synthetic terminal failure".to_string()),
+            )),
+        ),
     ] {
-        // Only resource-infeasibility evidence constrains a region. A generic
-        // interrupted failure is terminal evidence, but it is not a capacity
-        // proof and must not blacklist the candidate.
-        let failure = match status {
-            crate::ReceiptStatus::Failed | crate::ReceiptStatus::Aborted if resource_failure => {
-                Some(crate::receipt::ReceiptFailure::infeasible(
-                    &crate::ResourceError::NoCapableAlternative,
-                ))
-            }
-            crate::ReceiptStatus::Failed if !resource_failure => {
-                Some(crate::receipt::ReceiptFailure::new(
-                    crate::ReceiptFailureKind::Interrupted,
-                    None,
-                    Some("synthetic terminal failure".to_string()),
-                ))
-            }
-            _ => None,
-        };
         let mut recorder = store
             .begin(
                 execution_provenance(
@@ -1769,20 +1782,32 @@ fn recorded_failures_do_not_blacklist_recovered_or_capability_only_regions() {
             PlannerCostModelProfileRecord::initial(PlannerCostModelProfileId::from_sha256([8; 32])),
         )
     };
-    let planned = authority_plan(&problem, bindings(), &authority, &recorded, |_, _| {
+    let error = authority_plan(&problem, bindings(), &authority, &recorded, |_, _| {
         Ok::<_, std::convert::Infallible>(vec![physical_work_binding(
             ExecutionDag::new(plan_spec(vec![cpu_node("work", BTreeSet::new())]))
                 .expect("candidate physical work"),
         )])
     })
-    .expect("current Resource Authority admission remains authoritative");
+    .expect_err("recorded quantitative failure must constrain the alternative");
+    let certificate = match &error {
+        crate::PlanError::Resource(crate::ResourceError::NoFeasibleAlternative(certificate)) => {
+            certificate
+        }
+        other => panic!("expected a recorded-infeasibility refusal, got {other:?}"),
+    };
+    assert_eq!(certificate.rejections().len(), 1);
+    assert_eq!(certificate.rejections()[0].alternative(), &alternative_id);
     assert_eq!(
-        planned.execution_dag().resource_alternative().id,
-        alternative_id
+        certificate.rejections()[0].reason(),
+        &crate::AlternativeRejectionReason::RecordedFailure {
+            attempt: crate::ExecutionAttemptId::from_sha256([91; 32]),
+            status: crate::ReceiptStatus::Failed,
+        }
     );
 
-    // Without recorded terminal failures the same candidate admits: recorded
-    // evidence constrains regions; it never silently rewrites feasibility.
+    // Without the recorded quantitative constraint the same candidate admits;
+    // the receipt is an explicit Resource Authority input, never online
+    // learning in the cost model.
     let unconstrained = authority_plan(
         &problem,
         bindings(),

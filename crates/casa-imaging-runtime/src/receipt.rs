@@ -1977,7 +1977,7 @@ impl ReceiptFailure {
                         available: *available,
                     },
                     crate::AlternativeRejectionReason::RecordedFailure { .. } => unreachable!(
-                        "recorded planning annotations are not persisted as execution failures"
+                        "recorded planning constraints are not persisted as execution failures"
                     ),
                 }
             }

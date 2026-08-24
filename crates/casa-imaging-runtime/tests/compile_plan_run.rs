@@ -46,14 +46,14 @@ use casa_imaging_runtime::{
     ExecutionKnobs, ExecutionOutcome, ExecutionPlanId, ExecutionProvenance, ExecutionReceipt,
     ExecutionReceiptBinding, ExecutionReceiptStore, ExecutionRouteDisposition,
     ExecutionRouteEvidence, ExecutionRouteRequirement, ExecutionRouteRequirementKind,
-    ExecutionStatus, ExternalPressure, FenceId, FenceKind, HostInventory, ImplementationRegistry,
-    ImplementationRegistryId, InitializationPolicy, IoBufferDemand, IoBufferKind, IoMeasurement,
-    IoPrediction, LeaseResource, LogicalAllocation, MemoryCapacityDomain, MemoryCapacityKind,
-    MemoryDemand, MemoryView, MemoryViewKind, ObservationReadCompletionContext,
-    ObservationTransactionWork, PhysicalLayoutId, PhysicalSlot, PhysicalSlotId,
-    PhysicalWorkBinding, PhysicalWorkBindingError, PlanError, PlanPrediction, PlannedArtifact,
-    PlannerCostModelProfileBootstrap, PlannerCostModelProfileId, PlanningBindings,
-    PredictionConfidence, PredictionUncertainty, PreparedArtifactBudget,
+    ExecutionStatus, ExternalPressure, FenceId, FenceKind, HostInventory,
+    ImplementationContractDeclaration, ImplementationRegistry, ImplementationRegistryId,
+    InitializationPolicy, IoBufferDemand, IoBufferKind, IoMeasurement, IoPrediction, LeaseResource,
+    LogicalAllocation, MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand, MemoryView,
+    MemoryViewKind, ObservationReadCompletionContext, ObservationTransactionWork, PhysicalLayoutId,
+    PhysicalSlot, PhysicalSlotId, PhysicalWorkBinding, PhysicalWorkBindingError, PlanError,
+    PlanPrediction, PlannedArtifact, PlannerCostModelProfileBootstrap, PlannerCostModelProfileId,
+    PlanningBindings, PredictionConfidence, PredictionUncertainty, PreparedArtifactBudget,
     PreparedArtifactDescriptor, PreparedArtifactError, PreparedArtifactLoadSource,
     PreparedArtifactOperation, PreparedArtifactOrder, PreparedArtifactPlanFragment,
     PreparedArtifactPlaneDescriptor, PreparedArtifactPrecision, PreparedArtifactRegistration,
@@ -75,6 +75,16 @@ use casa_ms::{
     BoundSelectedObservation, ObservationSourceBinding, SelectedObservationCompletion,
     SelectedObservationContentBudget, SelectedObservationMeasures,
 };
+
+fn implementation_contract(
+    problem: &casa_imaging_model::CompiledProblem,
+) -> ImplementationContractDeclaration {
+    ImplementationContractDeclaration::new(
+        problem.problem_id(),
+        problem.numerics_id(),
+        problem.required_capabilities().clone(),
+    )
+}
 
 fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
     casa_imaging_model::ProductValidityPolicies::new(
@@ -1093,7 +1103,7 @@ fn physical_work_for_problem(
     })
     .expect("problem-bound transaction DAG");
     PhysicalWorkBinding::new(
-        problem,
+        implementation_contract(problem),
         dag,
         base.prediction().clone(),
         base.artifacts().to_vec(),
@@ -1828,7 +1838,7 @@ fn transaction_binding(
     )
     .expect("complete transaction prediction");
     PhysicalWorkBinding::new(
-        problem,
+        implementation_contract(problem),
         dag,
         prediction,
         participants
@@ -2010,7 +2020,7 @@ fn evidenced_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
     )
     .expect("complete evidence prediction");
     PhysicalWorkBinding::new(
-        &problem,
+        implementation_contract(&problem),
         dag,
         prediction,
         vec![
@@ -2224,7 +2234,7 @@ fn auditable_physical_work(
     })
     .expect("valid auditable physical work DAG");
     PhysicalWorkBinding::new(
-        problem,
+        implementation_contract(problem),
         dag,
         base.prediction().clone(),
         [PlannedArtifact::new(
@@ -2538,7 +2548,7 @@ fn mapped_publication_candidate(
     )
     .expect("one mapped layout per participant");
     PhysicalWorkBinding::new(
-        &problem,
+        implementation_contract(&problem),
         base.execution_dag().clone(),
         base.prediction().clone(),
         base.artifacts().to_vec(),
@@ -2926,7 +2936,7 @@ fn physical_work_binding_rejects_io_and_publication_evidence_outside_plan_semant
 
     assert!(matches!(
         PhysicalWorkBinding::new(
-            &problem,
+            implementation_contract(&problem),
             io_dag,
             io_prediction,
             Vec::new(),
@@ -2994,7 +3004,7 @@ fn physical_work_binding_rejects_io_and_publication_evidence_outside_plan_semant
     .expect("well-formed prediction ledger");
     assert!(matches!(
         PhysicalWorkBinding::new(
-            &problem,
+            implementation_contract(&problem),
             contract_dag,
             contract_prediction,
             Vec::new(),
@@ -3019,7 +3029,7 @@ fn physical_work_binding_rejects_io_and_publication_evidence_outside_plan_semant
 
     assert!(matches!(
         PhysicalWorkBinding::new(
-            &problem,
+            implementation_contract(&problem),
             publication_dag,
             publication_prediction,
             vec![output],
@@ -3049,7 +3059,7 @@ fn physical_work_binding_rejects_typed_io_contracts_without_predictions() {
 
     assert!(matches!(
         PhysicalWorkBinding::new(
-            &problem,
+            implementation_contract(&problem),
             dag,
             prediction,
             Vec::new(),
@@ -3142,7 +3152,7 @@ fn physical_work_binding_rejects_cpu_io_buffer_contracts_without_predictions() {
 
     assert!(matches!(
         PhysicalWorkBinding::new(
-            &problem,
+            implementation_contract(&problem),
             dag,
             prediction,
             Vec::new(),
@@ -3591,7 +3601,7 @@ fn transaction_seal_blocks_unbound_transaction_work() {
     let problem = compile(request(1)).expect("logical compilation");
     let base = physical_work_for_problem(&problem, 6);
     let unbound = PhysicalWorkBinding::new(
-        &problem,
+        implementation_contract(&problem),
         base.execution_dag().clone(),
         base.prediction().clone(),
         base.artifacts().to_vec(),

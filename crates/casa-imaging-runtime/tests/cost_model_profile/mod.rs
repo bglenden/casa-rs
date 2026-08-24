@@ -154,21 +154,22 @@ fn explicit_promotion_produces_a_versioned_auditable_profile() {
         open_cost_model_profile(&profiles, record.profile_id()).expect("reopen promoted profile");
     assert_eq!(reopened, record);
 
-    // Identical reviewed evidence yields one identical versioned identity,
-    // independent of where it is persisted or when the command re-runs.
+    // Identical reviewed evidence at the same promotion instant yields one
+    // identical versioned identity, independent of where it is persisted.
     let replayed = promote_cost_model_profile(
         directory.path().join("profiles-mirror"),
         &receipts,
         &attempts,
         review(),
-        1_750_000_000_000,
+        1_700_000_000_000,
     )
-    .expect("deterministic re-promotion");
+    .expect("deterministic re-promotion at the same instant");
     assert_eq!(replayed.profile_id(), record.profile_id());
 
-    // Profiles are immutable audit artifacts: a repeat command cannot overwrite.
+    // A different promotion instant is a distinct audit artifact, while a
+    // repeat command at the same instant cannot overwrite it.
     let repeated =
-        promote_cost_model_profile(&profiles, &receipts, &attempts, review(), 1_800_000_000_000);
+        promote_cost_model_profile(&profiles, &receipts, &attempts, review(), 1_700_000_000_000);
     assert!(matches!(
         repeated,
         Err(ProfilePromotionError::AlreadyPromoted { profile }) if profile == record.profile_id()

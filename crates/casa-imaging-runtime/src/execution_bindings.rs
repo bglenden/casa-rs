@@ -19,12 +19,11 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     AdaptationId, AdaptationTransition, AdmissionInfeasibilityCertificate, AllocationId,
-    AlternativeId, AlternativeRejection, AlternativeRejectionReason, ClaimLifetime,
-    DemandAlternatives, ExecutionAttemptId, ExecutionError, ExecutionKnobs, ExecutionOutcome,
-    ExecutionReceiptBinding, FenceKind, IoBufferKind, LeaseResource, PhysicalSlotId,
-    PublicationLayoutLedger, ReceiptError, ReceiptFailureKind, ReceiptStatus, ResourceAuthority,
-    ResourceError, ResourceIdentity, ResourceOverride, ResourcePolicy, WorkImplementationId,
-    WorkKind, WorkNodeId,
+    AlternativeId, ClaimLifetime, DemandAlternatives, ExecutionAttemptId, ExecutionError,
+    ExecutionKnobs, ExecutionOutcome, ExecutionReceiptBinding, FenceKind, IoBufferKind,
+    LeaseResource, PhysicalSlotId, PublicationLayoutLedger, ReceiptError, ReceiptFailureKind,
+    ReceiptStatus, ResourceAuthority, ResourceError, ResourceIdentity, ResourceOverride,
+    ResourcePolicy, WorkImplementationId, WorkKind, WorkNodeId,
     cost_model::PlannerCostModelProfileRecord,
     execution::{
         ExecutionDag, ExecutionScheduler, PublicationReservation, SchedulerAction,
@@ -1057,12 +1056,58 @@ pub struct PhysicalWorkBinding {
     publication_layouts: PublicationLayoutLedger,
 }
 
-/// Exact compiled science, numerics, and capability contract implemented by
-/// every adapter selected in one physical candidate.
+/// Registry-owned declaration of the science, numerics, and capability
+/// contract implemented by one physical candidate.
 ///
-/// The commitment can only be derived from a real [`CompiledProblem`]. This
-/// prevents a planner from making implementation identities compete on price
-/// while leaving their numerics-bearing behavior implicit.
+/// A planner must pass this declaration explicitly when binding a candidate;
+/// [`PhysicalWorkBinding::new`] never derives it from the execution DAG. The
+/// planning seam then compares the declaration with the independently
+/// compiled problem before any timing or resource comparison.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImplementationContractDeclaration {
+    problem: CompiledProblemId,
+    numerics: NumericsContractId,
+    required_capabilities: BTreeSet<RequiredCapability>,
+}
+
+impl ImplementationContractDeclaration {
+    /// Declare the exact science problem, numerical contract, and required
+    /// capabilities implemented by a registry-selected candidate.
+    #[must_use]
+    pub fn new(
+        problem: CompiledProblemId,
+        numerics: NumericsContractId,
+        required_capabilities: BTreeSet<RequiredCapability>,
+    ) -> Self {
+        Self {
+            problem,
+            numerics,
+            required_capabilities,
+        }
+    }
+
+    /// Return the exact compiled problem whose science is implemented.
+    #[must_use]
+    pub const fn problem_id(&self) -> CompiledProblemId {
+        self.problem
+    }
+
+    /// Return the exact numerical contract implemented by the candidate.
+    #[must_use]
+    pub const fn numerics_id(&self) -> NumericsContractId {
+        self.numerics
+    }
+
+    /// Return the compiler-derived capability set implemented by the
+    /// candidate.
+    #[must_use]
+    pub const fn required_capabilities(&self) -> &BTreeSet<RequiredCapability> {
+        &self.required_capabilities
+    }
+}
+
+/// Exact compiled science, numerics, and capability contract committed to one
+/// physical candidate after its execution DAG is sealed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ImplementationContractCommitment {
     problem: CompiledProblemId,
@@ -1072,11 +1117,14 @@ pub(crate) struct ImplementationContractCommitment {
 }
 
 impl ImplementationContractCommitment {
-    fn for_problem(problem: &CompiledProblem, execution_dag: &ExecutionDag) -> Self {
+    fn from_declaration(
+        declaration: &ImplementationContractDeclaration,
+        execution_dag: &ExecutionDag,
+    ) -> Self {
         Self {
-            problem: problem.problem_id(),
-            numerics: problem.numerics_id(),
-            required_capabilities: problem.required_capabilities().clone(),
+            problem: declaration.problem,
+            numerics: declaration.numerics,
+            required_capabilities: declaration.required_capabilities.clone(),
             implementation_ids: implementation_ids(execution_dag),
         }
     }
@@ -1124,9 +1172,10 @@ fn implementation_ids(execution_dag: &ExecutionDag) -> BTreeMap<WorkNodeId, Work
 }
 
 impl PhysicalWorkBinding {
-    /// Bind a complete immutable physical work DAG, prediction, artifacts, and transaction.
+    /// Bind a complete immutable physical work DAG, prediction, artifacts,
+    /// and transaction to an explicit registry-owned implementation contract.
     pub fn new(
-        problem: &CompiledProblem,
+        declaration: ImplementationContractDeclaration,
         execution_dag: ExecutionDag,
         prediction: PlanPrediction,
         artifacts: Vec<PlannedArtifact>,
@@ -1134,7 +1183,7 @@ impl PhysicalWorkBinding {
         publication_layouts: PublicationLayoutLedger,
     ) -> Result<Self, PhysicalWorkBindingError> {
         Self::with_implementation_contract(
-            ImplementationContractCommitment::for_problem(problem, &execution_dag),
+            ImplementationContractCommitment::from_declaration(&declaration, &execution_dag),
             execution_dag,
             prediction,
             artifacts,
@@ -1914,9 +1963,9 @@ impl<E: Error + 'static> Error for PlanError<E> {
 /// hard feasibility with reserved headroom is proven only by Resource Authority
 /// admission under the bound host-use policy; and among admitted candidates
 /// the plan commits to the minimum conservative predicted wall time including
-/// uncertainty. Recorded terminal failures remain reopenable evidence, but
-/// current feasibility is decided only by Resource Authority admission. When
-/// no candidate fits, the returned
+/// uncertainty. Integrity-checked quantitative receipt constraints are passed
+/// into that same authority admission, where they produce explicit recorded
+/// refusals without entering the cost model. When no candidate fits, the returned
 /// [`PlanError::infeasibility_certificate`] reports exactly why each
 /// alternative was refused.
 pub fn plan<E>(
@@ -1995,7 +2044,12 @@ pub fn plan<E>(
     // in ascending conservative-predicted-time order and the authority commits
     // to the first feasible one: the minimum-time feasible candidate.
     candidates.sort_by_key(|candidate| candidate.prediction().conservative_nanos());
-    let lease = match authority.acquire(
+    let recorded_constraints = recorded_infeasibility.admission_constraints(
+        problem.problem_id().as_bytes(),
+        bindings.resource_policy_id.as_bytes(),
+        &candidates,
+    );
+    let lease = match authority.acquire_with_recorded_constraints(
         bindings.resource_policy.clone(),
         DemandAlternatives {
             required_capabilities,
@@ -2004,19 +2058,9 @@ pub fn plan<E>(
                 .map(|candidate| candidate.execution_dag.resource_alternative().clone())
                 .collect(),
         },
+        &recorded_constraints,
     ) {
         Ok(lease) => lease,
-        Err(ResourceError::NoFeasibleAlternative(certificate)) => {
-            let certificate = recorded_infeasibility.annotate_current_rejections(
-                problem.problem_id().as_bytes(),
-                bindings.resource_policy_id.as_bytes(),
-                &candidates,
-                certificate,
-            );
-            return Err(PlanError::Resource(ResourceError::NoFeasibleAlternative(
-                certificate,
-            )));
-        }
         Err(error) => return Err(PlanError::Resource(error)),
     };
     let selected = lease.selected_alternative().clone();
@@ -2081,11 +2125,10 @@ fn product_surface(candidate: &PhysicalWorkBinding) -> BTreeMap<ArtifactIdentity
 /// Recorded terminal failed or aborted executions that constrain planning.
 ///
 /// Each entry is durable receipt evidence that one demand alternative of one
-/// compiled problem terminally failed or was aborted. Resource Authority still
-/// decides every current admission; matching receipt evidence is only appended
-/// to a current refusal certificate. This is explicit recorded evidence, not
-/// silent online learning: it never enters the performance cost model, which
-/// changes only through reviewed profile promotion.
+/// compiled problem terminally failed or was aborted. Quantitative receipts are
+/// converted to explicit admission constraints owned by Resource Authority;
+/// they never enter the performance cost model, which changes only through
+/// reviewed profile promotion.
 #[derive(Clone, Debug, Default)]
 pub struct RecordedInfeasibility {
     regions: Vec<RegionFailure>,
@@ -2150,52 +2193,36 @@ impl RecordedInfeasibility {
         Ok(Self { regions })
     }
 
-    fn annotate_current_rejections(
+    fn admission_constraints(
         &self,
         problem: [u8; 32],
         resource_policy: [u8; 32],
         candidates: &[PhysicalWorkBinding],
-        certificate: AdmissionInfeasibilityCertificate,
-    ) -> AdmissionInfeasibilityCertificate {
-        let mut rejections = Vec::new();
-        for rejection in certificate.rejections() {
-            rejections.push(rejection.clone());
-            let AlternativeRejectionReason::Infeasible {
-                resource,
-                required,
-                available,
-            } = rejection.reason()
-            else {
-                continue;
-            };
-            let Some(candidate) = candidates.iter().find(|candidate| {
-                &candidate.execution_dag.resource_alternative().id == rejection.alternative()
-            }) else {
-                continue;
-            };
-            for region in self.regions.iter().filter(|region| {
-                region.problem == problem
-                    && region.physical_work == candidate.physical_work_id().as_bytes()
-                    && region.resource_policy == resource_policy
-                    && &region.alternative == rejection.alternative()
-                    && region.resource_identity == ResourceIdentity::new(resource.clone())
-                    && region.required == *required
-                    && *available <= region.available
-            }) {
-                // Historical evidence only annotates a current authority
-                // rejection when the current point is inside the same or a
-                // stricter quantitative pressure region. It never pre-filters
-                // a candidate or vetoes recovered capacity.
-                rejections.push(AlternativeRejection::new(
-                    rejection.alternative().clone(),
-                    AlternativeRejectionReason::RecordedFailure {
-                        attempt: region.attempt,
-                        status: region.status,
-                    },
-                ));
-            }
-        }
-        AdmissionInfeasibilityCertificate::from_rejections(rejections)
+    ) -> Vec<crate::resource_authority::RecordedAdmissionConstraint> {
+        candidates
+            .iter()
+            .flat_map(|candidate| {
+                self.regions
+                    .iter()
+                    .filter(|region| {
+                        region.problem == problem
+                            && region.physical_work == candidate.physical_work_id().as_bytes()
+                            && region.resource_policy == resource_policy
+                            && region.alternative
+                                == candidate.execution_dag.resource_alternative().id
+                    })
+                    .map(
+                        |region| crate::resource_authority::RecordedAdmissionConstraint {
+                            alternative: region.alternative.clone(),
+                            resource: region.resource_identity.clone(),
+                            required: region.required,
+                            available: region.available,
+                            attempt: region.attempt,
+                            status: region.status,
+                        },
+                    )
+            })
+            .collect()
     }
 }
 

@@ -13,10 +13,10 @@ use casa_imaging_runtime::{
 mod support;
 
 use self::support::{
-    AlternativeId, ExecutionDag, ExecutionDagSpecification, PhysicalWorkBinding, PlanError,
-    PlanPrediction, PlanningBindings, PredictionConfidence, PredictionUncertainty, ResourcePolicy,
-    StagePrediction, WorkImplementationId, authority, compile, cost_model, physical_work, registry,
-    request, run_lock, runtime_plan,
+    AlternativeId, ExecutionDag, ExecutionDagSpecification, ImplementationContractDeclaration,
+    PhysicalWorkBinding, PlanError, PlanPrediction, PlanningBindings, PredictionConfidence,
+    PredictionUncertainty, ResourcePolicy, StagePrediction, WorkImplementationId, authority,
+    compile, cost_model, physical_work, registry, request, run_lock, runtime_plan,
 };
 
 fn candidate(
@@ -66,7 +66,11 @@ fn candidate(
         adaptations: dag.adaptations().values().cloned().collect(),
     };
     PhysicalWorkBinding::new(
-        problem,
+        ImplementationContractDeclaration::new(
+            problem.problem_id(),
+            problem.numerics_id(),
+            problem.required_capabilities().clone(),
+        ),
         ExecutionDag::new(specification).expect("variant physical DAG"),
         prediction,
         base.artifacts().to_vec(),
@@ -168,7 +172,11 @@ fn planning_compares_distinct_registry_implementation_alternatives() {
         adaptations: dag.adaptations().values().cloned().collect(),
     };
     let divergent = PhysicalWorkBinding::new(
-        &problem,
+        ImplementationContractDeclaration::new(
+            problem.problem_id(),
+            problem.numerics_id(),
+            problem.required_capabilities().clone(),
+        ),
         ExecutionDag::new(specification).expect("variant physical DAG"),
         fast.prediction().clone(),
         fast.artifacts().to_vec(),
@@ -184,6 +192,32 @@ fn planning_compares_distinct_registry_implementation_alternatives() {
         AlternativeId::new("alt-fast"),
         "implementation identity does not override the lexicographic resource/time order"
     );
+}
+
+#[test]
+fn planning_rejects_an_explicit_science_contract_mismatch() {
+    let problem = compile(request(1)).expect("logical compilation");
+    let other_problem = compile(request(2)).expect("distinct logical compilation");
+    assert_ne!(problem.problem_id(), other_problem.problem_id());
+    let base = physical_work(6);
+    let dag = base.execution_dag().clone();
+    let divergent = PhysicalWorkBinding::new(
+        ImplementationContractDeclaration::new(
+            other_problem.problem_id(),
+            problem.numerics_id(),
+            problem.required_capabilities().clone(),
+        ),
+        dag,
+        base.prediction().clone(),
+        base.artifacts().to_vec(),
+        base.observation_transaction().clone(),
+        base.publication_layouts().clone(),
+    )
+    .expect("candidate binding accepts an explicit registry declaration");
+
+    let error = multi_candidate_plan(&problem, vec![divergent])
+        .expect_err("the compiled numerics contract must be checked before timing");
+    assert!(matches!(error, PlanError::InvalidCandidate(_)));
 }
 
 #[test]
