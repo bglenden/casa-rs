@@ -1167,6 +1167,12 @@ migration atomically.</p>
 <li>Treat schema/identity changes as a declared cascade. Update every affected
   projection, pin, receipt validator, and matrix/checker ratchet in the owning
   change; do not leave recomputation placeholders in an acceptance branch.</li>
+<li>Mechanical governance revisions, content digests, generated baselines, and
+  checker constants that faithfully record an already-approved in-scope change
+  are implementation bookkeeping and require no separate user approval. Stop
+  only when such an update changes scope, scientific or interoperability
+  semantics, an acceptance threshold, or another externally meaningful
+  contract.</li>
 <li>Keep status dashboards as derived views of GitHub issue/linked-PR state.
   Manual fallback data is conservative and never an alternate work record.</li>
 </ul>

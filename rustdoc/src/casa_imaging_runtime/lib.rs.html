@@ -2,87 +2,94 @@
 <a href=#2 id=2 data-nosnippet>2</a></span><span class="attr">#![warn(missing_docs)]
 <a href=#3 id=3 data-nosnippet>3</a></span><span class="doccomment">//! Plan-bound imaging execution, process resource arbitration, and leases.
 <a href=#4 id=4 data-nosnippet>4</a>
-<a href=#5 id=5 data-nosnippet>5</a></span><span class="kw">mod </span>cost_model;
-<a href=#6 id=6 data-nosnippet>6</a><span class="kw">mod </span>execution;
-<a href=#7 id=7 data-nosnippet>7</a><span class="kw">mod </span>execution_bindings;
-<a href=#8 id=8 data-nosnippet>8</a><span class="kw">mod </span>observation_transaction;
-<a href=#9 id=9 data-nosnippet>9</a><span class="kw">mod </span>prepared_artifact;
-<a href=#10 id=10 data-nosnippet>10</a><span class="kw">mod </span>publication_layout;
-<a href=#11 id=11 data-nosnippet>11</a><span class="kw">mod </span>receipt;
-<a href=#12 id=12 data-nosnippet>12</a><span class="kw">mod </span>resource_authority;
-<a href=#13 id=13 data-nosnippet>13</a><span class="kw">mod </span>weighting;
-<a href=#14 id=14 data-nosnippet>14</a>
-<a href=#15 id=15 data-nosnippet>15</a><span class="kw">pub use </span>execution_bindings::{
-<a href=#16 id=16 data-nosnippet>16</a>    ArtifactDisposition, ArtifactIdentity, ArtifactMeasurement, ArtifactMeasurementError,
-<a href=#17 id=17 data-nosnippet>17</a>    ArtifactRole, AttemptBoundObservationCompletion, BindingKind, CacheIdentity,
-<a href=#18 id=18 data-nosnippet>18</a>    CompiledWorkContext, ExecutionEvidenceError, ExecutionPlan, ExecutionPlanId, ExecutionStatus,
-<a href=#19 id=19 data-nosnippet>19</a>    ImplementationContractCatalog, ImplementationContractMetadata, ImplementationRegistry,
-<a href=#20 id=20 data-nosnippet>20</a>    ImplementationRegistryId, IoMeasurement, IoPrediction, ObservationCompletionBindingError,
-<a href=#21 id=21 data-nosnippet>21</a>    ObservationReadCompletionContext, PhysicalWorkBinding, PhysicalWorkBindingError,
-<a href=#22 id=22 data-nosnippet>22</a>    PhysicalWorkId, PlanError, PlanPrediction, PlannedArtifact, PlannerCostModelProfileId,
-<a href=#23 id=23 data-nosnippet>23</a>    PlanningBindings, PredictionConfidence, PredictionUncertainty, PublicationResources,
-<a href=#24 id=24 data-nosnippet>24</a>    RedactedPath, ResourceMeasurement, ResourcePolicyId, RunBindings, RunController, RunDirective,
-<a href=#25 id=25 data-nosnippet>25</a>    RunError, RunToCompletion, StagePrediction, WorkExecutionContext, WorkImplementation,
-<a href=#26 id=26 data-nosnippet>26</a>    WorkMeasurements, plan, run,
-<a href=#27 id=27 data-nosnippet>27</a>};
-<a href=#28 id=28 data-nosnippet>28</a>
-<a href=#29 id=29 data-nosnippet>29</a><span class="kw">pub use </span>cost_model::{
-<a href=#30 id=30 data-nosnippet>30</a>    PlannerCostModelProfileBootstrap, PlannerCostModelProfileRecord, ProfileEvidenceEntry,
-<a href=#31 id=31 data-nosnippet>31</a>    ProfilePromotionError, ProfileReview, open_cost_model_profile, promote_cost_model_profile,
-<a href=#32 id=32 data-nosnippet>32</a>};
-<a href=#33 id=33 data-nosnippet>33</a><span class="kw">pub use </span>execution::{
-<a href=#34 id=34 data-nosnippet>34</a>    AdaptationId, AdaptationTransition, AllocationAccess, AllocationId, AllocationLayout,
-<a href=#35 id=35 data-nosnippet>35</a>    AllocationLifetime, AllocationPurpose, AllocationUse, ClaimLifetime, ExecutionDag,
-<a href=#36 id=36 data-nosnippet>36</a>    ExecutionDagSpecification, ExecutionError, ExecutionKnobs, ExecutionOutcome, FenceId,
-<a href=#37 id=37 data-nosnippet>37</a>    FenceKind, InitializationPolicy, LogicalAllocation, PhysicalSlot, PhysicalSlotId,
-<a href=#38 id=38 data-nosnippet>38</a>    ResourceClaim, SlotCompatibility, StorageMode, WorkAllocationCapability, WorkDependency,
-<a href=#39 id=39 data-nosnippet>39</a>    WorkDomain, WorkImplementationId, WorkKind, WorkNode, WorkNodeId, WorkResourceCapability,
-<a href=#40 id=40 data-nosnippet>40</a>};
-<a href=#41 id=41 data-nosnippet>41</a><span class="kw">pub use </span>observation_transaction::{
-<a href=#42 id=42 data-nosnippet>42</a>    BoundObservationTransaction, ObservationTransactionPlanError, ObservationTransactionWork,
-<a href=#43 id=43 data-nosnippet>43</a>};
-<a href=#44 id=44 data-nosnippet>44</a><span class="kw">pub use </span>prepared_artifact::{
-<a href=#45 id=45 data-nosnippet>45</a>    PreparedArtifact, PreparedArtifactBudget, PreparedArtifactDescriptor, PreparedArtifactError,
-<a href=#46 id=46 data-nosnippet>46</a>    PreparedArtifactGenerator, PreparedArtifactKind, PreparedArtifactLoadSource,
-<a href=#47 id=47 data-nosnippet>47</a>    PreparedArtifactOperation, PreparedArtifactOrder, PreparedArtifactPlanError,
-<a href=#48 id=48 data-nosnippet>48</a>    PreparedArtifactPlanFragment, PreparedArtifactPlaneDescriptor, PreparedArtifactPrecision,
-<a href=#49 id=49 data-nosnippet>49</a>    PreparedArtifactRegistration, PreparedArtifactRejection, PreparedArtifactReservation,
-<a href=#50 id=50 data-nosnippet>50</a>    PreparedArtifactReuseOutcome, PreparedArtifactSegmentDescriptor, PreparedArtifactSourceSegment,
-<a href=#51 id=51 data-nosnippet>51</a>    PreparedArtifactStore, PreparedArtifactUvAffine,
-<a href=#52 id=52 data-nosnippet>52</a>};
-<a href=#53 id=53 data-nosnippet>53</a><span class="kw">pub use </span>publication_layout::{
-<a href=#54 id=54 data-nosnippet>54</a>    PhysicalLayoutId, PublicationBoundKind, PublicationLayoutError, PublicationLayoutLedger,
-<a href=#55 id=55 data-nosnippet>55</a>    PublicationMappedStaging, PublicationParticipant, PublicationPhysicalLayout,
-<a href=#56 id=56 data-nosnippet>56</a>    PublicationResourceBounds, PublicationResourceBoundsError, PublicationStaging,
-<a href=#57 id=57 data-nosnippet>57</a>    PublicationStagingError,
-<a href=#58 id=58 data-nosnippet>58</a>};
-<a href=#59 id=59 data-nosnippet>59</a><span class="kw">pub use </span>receipt::{
-<a href=#60 id=60 data-nosnippet>60</a>    BuildIdentity, CompiledProblemEvidence, ExecutionAttemptId, ExecutionProvenance,
-<a href=#61 id=61 data-nosnippet>61</a>    ExecutionReceipt, ExecutionReceiptBinding, ExecutionReceiptStore, ExecutionRouteDisposition,
-<a href=#62 id=62 data-nosnippet>62</a>    ExecutionRouteEvidence, ExecutionRouteRequirement, ExecutionRouteRequirementEvidence,
-<a href=#63 id=63 data-nosnippet>63</a>    ExecutionRouteRequirementKind, ReceiptAdaptation, ReceiptError, ReceiptFailureKind,
-<a href=#64 id=64 data-nosnippet>64</a>    ReceiptInfeasibilityCertificate, ReceiptPublicationParticipant, ReceiptRetention,
-<a href=#65 id=65 data-nosnippet>65</a>    ReceiptStatus,
-<a href=#66 id=66 data-nosnippet>66</a>};
-<a href=#67 id=67 data-nosnippet>67</a><span class="kw">pub use </span>resource_authority::{
-<a href=#68 id=68 data-nosnippet>68</a>    Accelerator, AcceleratorDemand, AcceleratorId, AcceleratorKind,
-<a href=#69 id=69 data-nosnippet>69</a>    AdmissionInfeasibilityCertificate, AlternativeId, AlternativeRejection,
-<a href=#70 id=70 data-nosnippet>70</a>    AlternativeRejectionReason, CacheDemand, CapabilityId, CapabilityPredicate, CapacityDomainId,
-<a href=#71 id=71 data-nosnippet>71</a>    CapacityViewId, CountDemand, CpuClassCapacity, DemandAlternative, DemandAlternatives,
-<a href=#72 id=72 data-nosnippet>72</a>    DemandEnvelope, ExternalPressure, HostInventory, IoBufferDemand, IoBufferKind, LeaseRelease,
-<a href=#73 id=73 data-nosnippet>73</a>    LeaseResource, MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand, MemoryView,
-<a href=#74 id=74 data-nosnippet>74</a>    MemoryViewKind, PressureUpdate, QueueDemand, QueueResource, QueueResourceId, QuiescencePoint,
-<a href=#75 id=75 data-nosnippet>75</a>    RateDemand, RateResource, RateResourceId, RateUnit, ResourceAuthority, ResourceError,
-<a href=#76 id=76 data-nosnippet>76</a>    ResourceFence, ResourceGrant, ResourceHeadroom, ResourceIdentity, ResourceLease,
-<a href=#77 id=77 data-nosnippet>77</a>    ResourceOverride, ResourcePermit, ResourcePolicy, ResourceTopology, RuntimeOverheadDemand,
-<a href=#78 id=78 data-nosnippet>78</a>    RuntimeOverheadKind, ScalingMetadata, StorageDemand, StorageDomain, StorageDomainId,
-<a href=#79 id=79 data-nosnippet>79</a>    StorageUseKind, TransferDemand, TransferLink, TransferLinkId,
-<a href=#80 id=80 data-nosnippet>80</a>};
-<a href=#81 id=81 data-nosnippet>81</a><span class="kw">pub use </span>weighting::{
-<a href=#82 id=82 data-nosnippet>82</a>    ReplayCallbackError, SelectedObservationSourceResources, WeightedObservationBlock,
-<a href=#83 id=83 data-nosnippet>83</a>    WeightedObservationSample, WeightedSpectralValue, WeightingEvidenceError,
-<a href=#84 id=84 data-nosnippet>84</a>    WeightingExecutionState, WeightingGenerationCompletionError, WeightingGenerationError,
-<a href=#85 id=85 data-nosnippet>85</a>    WeightingPlanFragment, WeightingPlanFragmentError, WeightingReplayCompletion,
-<a href=#86 id=86 data-nosnippet>86</a>    WeightingReplayCompletionError, WeightingReplayError, WeightingSourceTraversalError,
+<a href=#5 id=5 data-nosnippet>5</a></span><span class="kw">mod </span>complete_data_operator;
+<a href=#6 id=6 data-nosnippet>6</a><span class="kw">mod </span>cost_model;
+<a href=#7 id=7 data-nosnippet>7</a><span class="kw">mod </span>execution;
+<a href=#8 id=8 data-nosnippet>8</a><span class="kw">mod </span>execution_bindings;
+<a href=#9 id=9 data-nosnippet>9</a><span class="kw">mod </span>observation_transaction;
+<a href=#10 id=10 data-nosnippet>10</a><span class="kw">mod </span>prepared_artifact;
+<a href=#11 id=11 data-nosnippet>11</a><span class="kw">mod </span>publication_layout;
+<a href=#12 id=12 data-nosnippet>12</a><span class="kw">mod </span>receipt;
+<a href=#13 id=13 data-nosnippet>13</a><span class="kw">mod </span>resource_authority;
+<a href=#14 id=14 data-nosnippet>14</a><span class="kw">mod </span>weighting;
+<a href=#15 id=15 data-nosnippet>15</a>
+<a href=#16 id=16 data-nosnippet>16</a><span class="kw">pub use </span>execution_bindings::{
+<a href=#17 id=17 data-nosnippet>17</a>    ArtifactDisposition, ArtifactIdentity, ArtifactMeasurement, ArtifactMeasurementError,
+<a href=#18 id=18 data-nosnippet>18</a>    ArtifactRole, AttemptBoundObservationCompletion, BindingKind, CacheIdentity,
+<a href=#19 id=19 data-nosnippet>19</a>    CompiledWorkContext, ExecutionEvidenceError, ExecutionPlan, ExecutionPlanId, ExecutionStatus,
+<a href=#20 id=20 data-nosnippet>20</a>    ImplementationContractCatalog, ImplementationContractMetadata, ImplementationRegistry,
+<a href=#21 id=21 data-nosnippet>21</a>    ImplementationRegistryId, IoMeasurement, IoPrediction, ObservationCompletionBindingError,
+<a href=#22 id=22 data-nosnippet>22</a>    ObservationReadCompletionContext, PhysicalWorkBinding, PhysicalWorkBindingError,
+<a href=#23 id=23 data-nosnippet>23</a>    PhysicalWorkId, PlanError, PlanPrediction, PlannedArtifact, PlannerCostModelProfileId,
+<a href=#24 id=24 data-nosnippet>24</a>    PlanningBindings, PredictionConfidence, PredictionUncertainty, PublicationResources,
+<a href=#25 id=25 data-nosnippet>25</a>    RedactedPath, ResourceMeasurement, ResourcePolicyId, RunBindings, RunController, RunDirective,
+<a href=#26 id=26 data-nosnippet>26</a>    RunError, RunToCompletion, StagePrediction, WorkExecutionContext, WorkImplementation,
+<a href=#27 id=27 data-nosnippet>27</a>    WorkMeasurements, plan, run,
+<a href=#28 id=28 data-nosnippet>28</a>};
+<a href=#29 id=29 data-nosnippet>29</a>
+<a href=#30 id=30 data-nosnippet>30</a><span class="kw">pub use </span>casa_imaging_reconstruction::ContinuumPrimitiveCatalog;
+<a href=#31 id=31 data-nosnippet>31</a><span class="kw">pub use </span>complete_data_operator::{
+<a href=#32 id=32 data-nosnippet>32</a>    CompleteDataOperatorCompletion, CompleteDataOperatorError, CompleteDataOperatorResult,
+<a href=#33 id=33 data-nosnippet>33</a>    CompleteDataPlanError, CompleteDataPlanFragment, CompleteDataPreparedState,
+<a href=#34 id=34 data-nosnippet>34</a>    CompleteDataResidency, SerialMfsOperatorState,
+<a href=#35 id=35 data-nosnippet>35</a>};
+<a href=#36 id=36 data-nosnippet>36</a><span class="kw">pub use </span>cost_model::{
+<a href=#37 id=37 data-nosnippet>37</a>    PlannerCostModelProfileBootstrap, PlannerCostModelProfileRecord, ProfileEvidenceEntry,
+<a href=#38 id=38 data-nosnippet>38</a>    ProfilePromotionError, ProfileReview, open_cost_model_profile, promote_cost_model_profile,
+<a href=#39 id=39 data-nosnippet>39</a>};
+<a href=#40 id=40 data-nosnippet>40</a><span class="kw">pub use </span>execution::{
+<a href=#41 id=41 data-nosnippet>41</a>    AdaptationId, AdaptationTransition, AllocationAccess, AllocationId, AllocationLayout,
+<a href=#42 id=42 data-nosnippet>42</a>    AllocationLifetime, AllocationPurpose, AllocationUse, ClaimLifetime, ExecutionDag,
+<a href=#43 id=43 data-nosnippet>43</a>    ExecutionDagSpecification, ExecutionError, ExecutionKnobs, ExecutionOutcome, FenceId,
+<a href=#44 id=44 data-nosnippet>44</a>    FenceKind, InitializationPolicy, LogicalAllocation, PhysicalSlot, PhysicalSlotId,
+<a href=#45 id=45 data-nosnippet>45</a>    ResourceClaim, SlotCompatibility, StorageMode, WorkAllocationCapability, WorkDependency,
+<a href=#46 id=46 data-nosnippet>46</a>    WorkDomain, WorkImplementationId, WorkKind, WorkNode, WorkNodeId, WorkResourceCapability,
+<a href=#47 id=47 data-nosnippet>47</a>};
+<a href=#48 id=48 data-nosnippet>48</a><span class="kw">pub use </span>observation_transaction::{
+<a href=#49 id=49 data-nosnippet>49</a>    BoundObservationTransaction, ObservationTransactionPlanError, ObservationTransactionWork,
+<a href=#50 id=50 data-nosnippet>50</a>};
+<a href=#51 id=51 data-nosnippet>51</a><span class="kw">pub use </span>prepared_artifact::{
+<a href=#52 id=52 data-nosnippet>52</a>    PreparedArtifact, PreparedArtifactBudget, PreparedArtifactDescriptor, PreparedArtifactError,
+<a href=#53 id=53 data-nosnippet>53</a>    PreparedArtifactGenerator, PreparedArtifactKind, PreparedArtifactLoadSource,
+<a href=#54 id=54 data-nosnippet>54</a>    PreparedArtifactOperation, PreparedArtifactOrder, PreparedArtifactPlanError,
+<a href=#55 id=55 data-nosnippet>55</a>    PreparedArtifactPlanFragment, PreparedArtifactPlaneDescriptor, PreparedArtifactPrecision,
+<a href=#56 id=56 data-nosnippet>56</a>    PreparedArtifactRegistration, PreparedArtifactRejection, PreparedArtifactReservation,
+<a href=#57 id=57 data-nosnippet>57</a>    PreparedArtifactReuseOutcome, PreparedArtifactSegmentDescriptor, PreparedArtifactSourceSegment,
+<a href=#58 id=58 data-nosnippet>58</a>    PreparedArtifactStore, PreparedArtifactUvAffine,
+<a href=#59 id=59 data-nosnippet>59</a>};
+<a href=#60 id=60 data-nosnippet>60</a><span class="kw">pub use </span>publication_layout::{
+<a href=#61 id=61 data-nosnippet>61</a>    PhysicalLayoutId, PublicationBoundKind, PublicationLayoutError, PublicationLayoutLedger,
+<a href=#62 id=62 data-nosnippet>62</a>    PublicationMappedStaging, PublicationParticipant, PublicationPhysicalLayout,
+<a href=#63 id=63 data-nosnippet>63</a>    PublicationResourceBounds, PublicationResourceBoundsError, PublicationStaging,
+<a href=#64 id=64 data-nosnippet>64</a>    PublicationStagingError,
+<a href=#65 id=65 data-nosnippet>65</a>};
+<a href=#66 id=66 data-nosnippet>66</a><span class="kw">pub use </span>receipt::{
+<a href=#67 id=67 data-nosnippet>67</a>    BuildIdentity, CompiledProblemEvidence, ExecutionAttemptId, ExecutionProvenance,
+<a href=#68 id=68 data-nosnippet>68</a>    ExecutionReceipt, ExecutionReceiptBinding, ExecutionReceiptStore, ExecutionRouteDisposition,
+<a href=#69 id=69 data-nosnippet>69</a>    ExecutionRouteEvidence, ExecutionRouteRequirement, ExecutionRouteRequirementEvidence,
+<a href=#70 id=70 data-nosnippet>70</a>    ExecutionRouteRequirementKind, ReceiptAdaptation, ReceiptError, ReceiptFailureKind,
+<a href=#71 id=71 data-nosnippet>71</a>    ReceiptInfeasibilityCertificate, ReceiptPublicationParticipant, ReceiptRetention,
+<a href=#72 id=72 data-nosnippet>72</a>    ReceiptStatus,
+<a href=#73 id=73 data-nosnippet>73</a>};
+<a href=#74 id=74 data-nosnippet>74</a><span class="kw">pub use </span>resource_authority::{
+<a href=#75 id=75 data-nosnippet>75</a>    Accelerator, AcceleratorDemand, AcceleratorId, AcceleratorKind,
+<a href=#76 id=76 data-nosnippet>76</a>    AdmissionInfeasibilityCertificate, AlternativeId, AlternativeRejection,
+<a href=#77 id=77 data-nosnippet>77</a>    AlternativeRejectionReason, CacheDemand, CapabilityId, CapabilityPredicate, CapacityDomainId,
+<a href=#78 id=78 data-nosnippet>78</a>    CapacityViewId, CountDemand, CpuClassCapacity, DemandAlternative, DemandAlternatives,
+<a href=#79 id=79 data-nosnippet>79</a>    DemandEnvelope, ExternalPressure, HostInventory, IoBufferDemand, IoBufferKind, LeaseRelease,
+<a href=#80 id=80 data-nosnippet>80</a>    LeaseResource, MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand, MemoryView,
+<a href=#81 id=81 data-nosnippet>81</a>    MemoryViewKind, PressureUpdate, QueueDemand, QueueResource, QueueResourceId, QuiescencePoint,
+<a href=#82 id=82 data-nosnippet>82</a>    RateDemand, RateResource, RateResourceId, RateUnit, ResourceAuthority, ResourceError,
+<a href=#83 id=83 data-nosnippet>83</a>    ResourceFence, ResourceGrant, ResourceHeadroom, ResourceIdentity, ResourceLease,
+<a href=#84 id=84 data-nosnippet>84</a>    ResourceOverride, ResourcePermit, ResourcePolicy, ResourceTopology, RuntimeOverheadDemand,
+<a href=#85 id=85 data-nosnippet>85</a>    RuntimeOverheadKind, ScalingMetadata, StorageDemand, StorageDomain, StorageDomainId,
+<a href=#86 id=86 data-nosnippet>86</a>    StorageUseKind, TransferDemand, TransferLink, TransferLinkId,
 <a href=#87 id=87 data-nosnippet>87</a>};
+<a href=#88 id=88 data-nosnippet>88</a><span class="kw">pub use </span>weighting::{
+<a href=#89 id=89 data-nosnippet>89</a>    ReplayCallbackError, SelectedObservationSourceResources, WeightedObservationBlock,
+<a href=#90 id=90 data-nosnippet>90</a>    WeightedObservationSample, WeightedSpectralValue, WeightingEvidenceError,
+<a href=#91 id=91 data-nosnippet>91</a>    WeightingExecutionState, WeightingGenerationCompletionError, WeightingGenerationError,
+<a href=#92 id=92 data-nosnippet>92</a>    WeightingPlanFragment, WeightingPlanFragmentError, WeightingReplayCompletion,
+<a href=#93 id=93 data-nosnippet>93</a>    WeightingReplayCompletionError, WeightingReplayError, WeightingSourceTraversalError,
+<a href=#94 id=94 data-nosnippet>94</a>};
 </code></pre></div></section></main></body></html>
