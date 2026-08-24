@@ -5,6 +5,7 @@ use std::{
     error::Error,
     fs, io,
     path::{Path, PathBuf},
+    process::Command,
     sync::{
         Arc, Condvar, Mutex, OnceLock,
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -324,6 +325,152 @@ fn with_forged_audit_field(mut document: String, field: &str, value: &str) -> St
     with_current_payload_checksum(document)
 }
 
+#[derive(Clone, Copy, Debug)]
+enum RetainedClaimTamper {
+    RemoveClaim,
+    ChangeAmount,
+    WrongRelease,
+    AddPostReleaseUse,
+    ChangeDagIdentity,
+}
+
+fn with_retained_claim_tamper(document: &str, tamper: RetainedClaimTamper) -> String {
+    let value: serde_json::Value = serde_json::from_str(document).expect("receipt JSON");
+    let plan = value["receipt"]["plan"]
+        .as_object()
+        .expect("typed plan projection");
+    let mut document = document.to_owned();
+    if matches!(tamper, RetainedClaimTamper::ChangeDagIdentity) {
+        let marker = "\"dag_identity\": \"";
+        let start = document.find(marker).expect("DAG identity") + marker.len();
+        document.replace_range(start..start + 64, &"f".repeat(64));
+    } else {
+        let nodes = plan["nodes"]
+            .as_array()
+            .expect("typed work-node projections");
+        let retained_nodes = nodes
+            .iter()
+            .filter(|node| {
+                node["claims"]
+                    .as_array()
+                    .expect("typed resource claims")
+                    .iter()
+                    .any(|claim| {
+                        claim["lifetime"]
+                            .as_str()
+                            .is_some_and(|value| value.starts_with("retained_until:"))
+                    })
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            retained_nodes.len() >= 4,
+            "weighting retained-claim topology"
+        );
+        let retained_marker = "\"lifetime\": \"retained_until:";
+        let lifetime_start = document
+            .find(retained_marker)
+            .expect("serialized retained claim");
+        let claim_start = document[..lifetime_start]
+            .rfind('{')
+            .expect("retained claim object");
+        let claim_end = document[lifetime_start..]
+            .find('}')
+            .map(|offset| lifetime_start + offset + 1)
+            .expect("retained claim object end");
+        match tamper {
+            RetainedClaimTamper::RemoveClaim => {
+                let mut end = claim_end;
+                while document
+                    .as_bytes()
+                    .get(end)
+                    .is_some_and(u8::is_ascii_whitespace)
+                {
+                    end += 1;
+                }
+                if document.as_bytes().get(end) == Some(&b',') {
+                    end += 1;
+                    document.replace_range(claim_start..end, "");
+                } else {
+                    let mut start = claim_start;
+                    while start > 0
+                        && document
+                            .as_bytes()
+                            .get(start - 1)
+                            .is_some_and(u8::is_ascii_whitespace)
+                    {
+                        start -= 1;
+                    }
+                    assert_eq!(document.as_bytes().get(start - 1), Some(&b','));
+                    document.replace_range(start - 1..claim_end, "");
+                }
+            }
+            RetainedClaimTamper::ChangeAmount => {
+                let marker = "\"amount\": ";
+                let start = document[claim_start..lifetime_start]
+                    .find(marker)
+                    .map(|offset| claim_start + offset + marker.len())
+                    .expect("retained claim amount");
+                let end = document[start..]
+                    .find(',')
+                    .map(|offset| start + offset)
+                    .expect("retained claim amount end");
+                let amount = document[start..end]
+                    .parse::<u64>()
+                    .expect("numeric retained claim amount");
+                document.replace_range(start..end, &(amount + 1).to_string());
+            }
+            RetainedClaimTamper::WrongRelease => {
+                let wrong_release = nodes
+                    .iter()
+                    .find(|node| node["kind"] != "release")
+                    .and_then(|node| node["node_id"].as_str())
+                    .expect("non-release node")
+                    .to_owned();
+                let start = lifetime_start + retained_marker.len();
+                let end = document[start..]
+                    .find('"')
+                    .map(|offset| start + offset)
+                    .expect("retained release end");
+                document.replace_range(start..end, &wrong_release);
+            }
+            RetainedClaimTamper::AddPostReleaseUse => {
+                let claim = document[claim_start..claim_end].to_owned();
+                let release_start = lifetime_start + retained_marker.len();
+                let release = document[release_start..]
+                    .split('"')
+                    .next()
+                    .expect("retained release");
+                let release_event = format!("work:{release}");
+                let target = nodes
+                    .iter()
+                    .find(|node| {
+                        node["dependencies"].as_array().is_some_and(|dependencies| {
+                            dependencies
+                                .iter()
+                                .any(|dependency| dependency == &release_event)
+                        }) && node["claims"]
+                            .as_array()
+                            .is_some_and(|claims| !claims.is_empty())
+                    })
+                    .and_then(|node| node["node_id"].as_str())
+                    .expect("post-release dependent node with claims");
+                let target_marker = format!("\"node_id\": \"{target}\"");
+                let target_start = document
+                    .find(&target_marker)
+                    .expect("target node projection");
+                let claims_marker = "\"claims\": [";
+                let insertion = document[target_start..]
+                    .find(claims_marker)
+                    .map(|offset| target_start + offset + claims_marker.len())
+                    .expect("target claims projection");
+                document.insert_str(insertion, &format!("\n{claim},"));
+            }
+            RetainedClaimTamper::ChangeDagIdentity => unreachable!(),
+        }
+    }
+    with_current_payload_checksum(document)
+}
+
 fn geometry(reference_pixel: f64) -> GeometryInput {
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
@@ -603,7 +750,6 @@ fn recording_executor(
         observation_completion_failure: None,
         bind_foreign_observation_completion: false,
         selected_observation_completion: Mutex::new(None),
-        retained_weighting_observation: Mutex::new(None),
         reopen_weighting_before_replay: false,
         weighting_plan: None,
         weighting_source_read: WorkNodeId::new("transaction-read"),
@@ -612,6 +758,9 @@ fn recording_executor(
         weighting_reconciled: AtomicBool::new(false),
         weighting_released: AtomicBool::new(false),
         weighting_cleanup_released: AtomicBool::new(false),
+        weighting_owner_at_replay_fence: AtomicBool::new(false),
+        weighting_owner_at_reconciliation: AtomicBool::new(false),
+        weighting_owner_at_release: AtomicBool::new(false),
     }
 }
 
@@ -675,7 +824,6 @@ struct RecordingExecutor {
     observation_completion_failure: Option<&'static str>,
     bind_foreign_observation_completion: bool,
     selected_observation_completion: Mutex<Option<SelectedObservationCompletion>>,
-    retained_weighting_observation: Mutex<Option<BoundSelectedObservation>>,
     reopen_weighting_before_replay: bool,
     weighting_plan: Option<WeightingPlan>,
     weighting_source_read: WorkNodeId,
@@ -684,6 +832,9 @@ struct RecordingExecutor {
     weighting_reconciled: AtomicBool,
     weighting_released: AtomicBool,
     weighting_cleanup_released: AtomicBool,
+    weighting_owner_at_replay_fence: AtomicBool,
+    weighting_owner_at_reconciliation: AtomicBool,
+    weighting_owner_at_release: AtomicBool,
 }
 
 #[derive(Debug)]
@@ -792,67 +943,55 @@ impl WorkImplementation for RecordingExecutor {
                             .map_err(io::Error::other)
                     },
                 )?;
-            let traverse = |observation: &mut BoundSelectedObservation| -> io::Result<()> {
-                if let Some(fragment) = fragment.as_ref() {
-                    if context.node().id == *fragment.generation_node() {
-                        self.weighting_state
-                            .lock()
-                            .expect("weighting execution state lock")
-                            .traverse_generation(context, fragment, observation, problem)
-                            .map_err(io::Error::other)?;
-                    } else if context.node().id == *fragment.replay_node() {
-                        self.weighting_state
-                            .lock()
-                            .expect("weighting execution state lock")
-                            .traverse_replay(context, fragment, observation, problem, |block| {
-                                self.weighted_sample_count
-                                    .fetch_add(block.samples().count(), Ordering::SeqCst);
-                                Ok::<_, io::Error>(())
-                            })
-                            .map_err(io::Error::other)?;
-                    } else {
-                        let completion = observation
-                            .traverse(problem, |_| Ok::<_, io::Error>(()))
-                            .map_err(io::Error::other)?;
-                        *self
-                            .selected_observation_completion
-                            .lock()
-                            .expect("selected-observation completion lock") = Some(completion);
-                    }
-                } else {
-                    let completion = observation
+            if let Some(fragment) = fragment.as_ref()
+                && context.node().id == *fragment.generation_node()
+            {
+                self.weighting_state
+                    .lock()
+                    .expect("weighting execution state lock")
+                    .traverse_generation(context, fragment, problem)
+                    .map_err(io::Error::other)?;
+            } else if let Some(fragment) = fragment.as_ref()
+                && context.node().id == *fragment.replay_node()
+            {
+                if self.reopen_weighting_before_replay {
+                    let mut replacement = open_selected_observation(problem, content_budget)?;
+                    let completion = replacement
                         .traverse(problem, |_| Ok::<_, io::Error>(()))
                         .map_err(io::Error::other)?;
-                    *self
-                        .selected_observation_completion
+                    self.weighting_state
                         .lock()
-                        .expect("selected-observation completion lock") = Some(completion);
+                        .expect("weighting execution state lock")
+                        .retain_source_observation(context, fragment, replacement, &completion)
+                        .map_err(io::Error::other)?;
                 }
-                Ok(())
-            };
-            if fragment.is_some() {
-                let mut retained = self
-                    .retained_weighting_observation
+                self.weighting_state
                     .lock()
-                    .expect("retained weighting observation lock");
-                if self.reopen_weighting_before_replay
-                    && fragment
-                        .as_ref()
-                        .is_some_and(|fragment| context.node().id == *fragment.replay_node())
-                {
-                    *retained = None;
-                }
-                if retained.is_none() {
-                    *retained = Some(open_selected_observation(problem, content_budget)?);
-                }
-                traverse(
-                    retained
-                        .as_mut()
-                        .expect("retained weighting observation was just opened"),
-                )?;
+                    .expect("weighting execution state lock")
+                    .traverse_replay(context, fragment, problem, |block| {
+                        self.weighted_sample_count
+                            .fetch_add(block.samples().count(), Ordering::SeqCst);
+                        Ok::<_, io::Error>(())
+                    })
+                    .map_err(io::Error::other)?;
             } else {
                 let mut observation = open_selected_observation(problem, content_budget)?;
-                traverse(&mut observation)?;
+                let completion = observation
+                    .traverse(problem, |_| Ok::<_, io::Error>(()))
+                    .map_err(io::Error::other)?;
+                if let Some(fragment) = fragment.as_ref()
+                    && context.node().id == *fragment.source_read_node()
+                {
+                    self.weighting_state
+                        .lock()
+                        .expect("weighting execution state lock")
+                        .retain_source_observation(context, fragment, observation, &completion)
+                        .map_err(io::Error::other)?;
+                }
+                *self
+                    .selected_observation_completion
+                    .lock()
+                    .expect("selected-observation completion lock") = Some(completion);
             }
         } else if let Some(delivered) = &self.delivered_observation_completions {
             let owner = WorkNodeId::new("transaction-read");
@@ -872,15 +1011,18 @@ impl WorkImplementation for RecordingExecutor {
         }
         if let Some(fragment) = self.weighting_fragment() {
             if context.node().id == *fragment.release_node() {
+                self.weighting_owner_at_release.store(
+                    self.weighting_state
+                        .lock()
+                        .expect("weighting execution state lock")
+                        .has_retained_observation(),
+                    Ordering::SeqCst,
+                );
                 self.weighting_state
                     .lock()
                     .expect("weighting execution state lock")
                     .release(context, &fragment)
                     .map_err(io::Error::other)?;
-                self.retained_weighting_observation
-                    .lock()
-                    .expect("retained weighting observation lock")
-                    .take();
                 self.weighting_released.store(true, Ordering::SeqCst);
                 self.weighting_cleanup_released
                     .store(context.is_cleanup(), Ordering::SeqCst);
@@ -891,6 +1033,8 @@ impl WorkImplementation for RecordingExecutor {
                     .weighting_state
                     .lock()
                     .expect("weighting execution state lock");
+                self.weighting_owner_at_reconciliation
+                    .store(state.has_retained_observation(), Ordering::SeqCst);
                 let completion = state
                     .replay_completion()
                     .ok_or_else(|| io::Error::other("reconciliation has no weighting replay"))?;
@@ -1060,17 +1204,18 @@ impl WorkImplementation for RecordingExecutor {
                     .map_err(io::Error::other);
             }
             if completion.owner_node() == fragment.replay_node() {
-                let predecessor = self
-                    .weighting_state
-                    .lock()
-                    .expect("weighting execution state lock")
-                    .complete_replay(completion)
-                    .map_err(io::Error::other)?;
-                self.retained_weighting_observation
-                    .lock()
-                    .expect("retained weighting observation lock")
-                    .take()
-                    .ok_or_else(|| io::Error::other("replay lost retained selected observation"))?;
+                let predecessor = {
+                    let mut state = self
+                        .weighting_state
+                        .lock()
+                        .expect("weighting execution state lock");
+                    let predecessor = state
+                        .complete_replay(completion)
+                        .map_err(io::Error::other)?;
+                    self.weighting_owner_at_replay_fence
+                        .store(state.has_retained_observation(), Ordering::SeqCst);
+                    predecessor
+                };
                 return Ok(predecessor);
             }
         }
@@ -5178,6 +5323,17 @@ fn actual_bound_observation_traversals_drive_both_weighting_generation_passes() 
 
     let executor = &registry.executors[&implementation(6)];
     assert_eq!(executor.weighted_sample_count.load(Ordering::SeqCst), 1);
+    assert!(
+        executor
+            .weighting_owner_at_replay_fence
+            .load(Ordering::SeqCst)
+    );
+    assert!(
+        executor
+            .weighting_owner_at_reconciliation
+            .load(Ordering::SeqCst)
+    );
+    assert!(executor.weighting_owner_at_release.load(Ordering::SeqCst));
     assert!(executor.weighting_reconciled.load(Ordering::SeqCst));
     assert!(executor.weighting_released.load(Ordering::SeqCst));
     assert!(
@@ -5187,6 +5343,88 @@ fn actual_bound_observation_traversals_drive_both_weighting_generation_passes() 
             .expect("weighting execution state lock")
             .is_empty()
     );
+}
+
+#[test]
+fn failed_weighting_release_quarantines_the_actual_selected_observation_owner() {
+    const CHILD_PROCESS: &str = "CASA_RS_T18_FAILED_RELEASE_CHILD";
+    if std::env::var_os(CHILD_PROCESS).is_none() {
+        let status =
+            Command::new(std::env::current_exe().expect("current integration-test binary"))
+                .args([
+                    "--exact",
+                    "failed_weighting_release_quarantines_the_actual_selected_observation_owner",
+                    "--nocapture",
+                ])
+                .env(CHILD_PROCESS, "1")
+                .status()
+                .expect("isolated failed-release integration test");
+        assert!(
+            status.success(),
+            "isolated failed-release integration test must pass"
+        );
+        return;
+    }
+
+    let problem = compile(request(198)).expect("logical weighting compilation");
+    let weighting_plan = plan_weighting(
+        &problem,
+        WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
+    )
+    .expect("weighting plan");
+    let fragment = WeightingPlanFragment::new(
+        &weighting_plan,
+        WorkNodeId::new("transaction-read"),
+        selected_content_budget(),
+        selected_content_queue(),
+        implementation(6),
+        implementation(6),
+        implementation(6),
+    );
+    let release = fragment.release_node().clone();
+    let physical = fragment
+        .compose(&physical_work_for_weighting_problem(&problem, 6))
+        .expect("production weighting physical work");
+    let execution_plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| Ok::<_, ()>(physical),
+    )
+    .expect("production weighting execution plan");
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &ResourcePolicy::Balanced,
+        cost_model(4),
+    );
+    let mut executor = recording_executor(6, None, None);
+    executor.weighting_plan = Some(weighting_plan);
+    executor.weighting_failure_node = Some(release.clone());
+    let registry = TestRegistry {
+        id: registry(3),
+        executors: BTreeMap::from([(implementation(6), executor)]),
+    };
+    let mut controller = RunToCompletion;
+
+    let error = run(
+        &problem,
+        &execution_plan,
+        &current,
+        &registry,
+        authority(),
+        &mut controller,
+    )
+    .expect_err("failed success and cleanup release must quarantine ownership");
+
+    assert!(matches!(error, RunError::Execution { node, .. } if node == release));
+    let executor = &registry.executors[&implementation(6)];
+    let state = executor
+        .weighting_state
+        .lock()
+        .expect("weighting execution state lock");
+    assert!(state.has_retained_observation());
+    assert!(!state.is_empty());
+    assert!(!executor.weighting_released.load(Ordering::SeqCst));
+    assert!(!executor.weighting_cleanup_released.load(Ordering::SeqCst));
 }
 
 #[test]
@@ -5290,14 +5528,6 @@ fn failed_weighting_lifecycle_cuts_run_the_scheduler_owned_release() {
                 .expect("weighting execution state lock")
                 .is_empty(),
             "{cut:?} must not retain weighting state after draining"
-        );
-        assert!(
-            executor
-                .retained_weighting_observation
-                .lock()
-                .expect("retained weighting observation lock")
-                .is_none(),
-            "{cut:?} must not retain the selected-observation owner"
         );
         assert!(executor.weighting_released.load(Ordering::SeqCst));
         assert!(executor.weighting_cleanup_released.load(Ordering::SeqCst));
@@ -5674,6 +5904,26 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
             .is_empty(),
         "the explicit release node must consume the complete weighting lifecycle"
     );
+
+    let path = only_receipt_path(directory.path());
+    let original = fs::read_to_string(&path).expect("serialized weighting receipt");
+    for tamper in [
+        RetainedClaimTamper::RemoveClaim,
+        RetainedClaimTamper::ChangeAmount,
+        RetainedClaimTamper::WrongRelease,
+        RetainedClaimTamper::AddPostReleaseUse,
+        RetainedClaimTamper::ChangeDagIdentity,
+    ] {
+        fs::write(&path, with_retained_claim_tamper(&original, tamper))
+            .expect("rewrite checksum-valid weighting receipt");
+        assert!(
+            matches!(
+                receipts.open(provenance.attempt_id()),
+                Err(casa_imaging_runtime::ReceiptError::IntegrityMismatch)
+            ),
+            "{tamper:?} must fail canonical retained-topology validation"
+        );
+    }
 }
 
 #[test]

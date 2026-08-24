@@ -130,9 +130,9 @@ ACCEPTED_MATRIX_ROWS_SHA256 = (
     "3c4990c47000d959362a4f64cc6acefcb501b04ffcc0efa166578f4e5f312888"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "81a7381492e25bff4b87da0d2cd15ba9bd4db361cc65179ec20a27678aef180f"
+    "e2347ff604f47bb9c1c6afef94508a140f1b1ac446814a3a6c5ff42e3820fceb"
 )
-ACCEPTED_MATRIX_CONTRACT_REVISION = 22
+ACCEPTED_MATRIX_CONTRACT_REVISION = 23
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "scientific-products-v1",
@@ -3133,7 +3133,11 @@ def validate_t18_global_weighting_sources(
     )
     compact_runtime = re.sub(r"\s+", "", runtime_weighting)
     if (
-        execution_state_fields != {"phase": "WeightingExecutionPhase"}
+        execution_state_fields
+        != {
+            "phase": "WeightingExecutionPhase",
+            "retained_observation": "Option<RetainedWeightingObservation>",
+        }
         or "PendingGeneration(PendingWeightingGeneration)" not in compact_runtime
         or "Frozen(FrozenWeightingGeneration)" not in compact_runtime
         or "PendingReplay{frozen:FrozenWeightingGeneration,pending:PendingWeightingReplay,}"

@@ -133,7 +133,7 @@ fn selected_engine_receives_the_exact_route_record() {
 
     assert_eq!(outcome.output(), outcome.route());
     assert_eq!(outcome.output().matrix_schema_version(), 1);
-    assert_eq!(outcome.output().matrix_contract_revision(), 22);
+    assert_eq!(outcome.output().matrix_contract_revision(), 23);
     assert_eq!(outcome.output().disposition(), RequestDisposition::Native);
     assert_eq!(
         outcome
@@ -334,7 +334,7 @@ fn matrix_contract_revision_is_a_positive_u32() {
     .unwrap();
 
     let revision: u32 = routed.route().matrix_contract_revision();
-    assert_eq!(revision, 22);
+    assert_eq!(revision, 23);
 
     for invalid in [serde_json::json!(0), serde_json::json!("5")] {
         let mut matrix = serde_json::from_str::<serde_json::Value>(MIGRATION_MATRIX_JSON).unwrap();

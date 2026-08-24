@@ -78,6 +78,12 @@ impl<'a> WeightingPlanFragment<'a> {
         &self.ids.generation_node
     }
 
+    /// Return the T17 source node whose retained owner enters this lifecycle.
+    #[must_use]
+    pub const fn source_read_node(&self) -> &WorkNodeId {
+        &self.source_read
+    }
+
     /// Return the bounded weighted replay node.
     #[must_use]
     pub const fn replay_node(&self) -> &WorkNodeId {
@@ -518,9 +524,35 @@ impl<'a> WeightingPlanFragment<'a> {
 /// fences. The scheduler's explicit Release node consumes it on both success
 /// and fail-closed drain paths, so pending traversal state cannot outlive its
 /// planned allocation permit.
-#[derive(Debug, Default)]
 pub struct WeightingExecutionState {
     phase: WeightingExecutionPhase,
+    retained_observation: Option<RetainedWeightingObservation>,
+}
+
+struct RetainedWeightingObservation {
+    selected: BoundSelectedObservation,
+    attempt_id: ExecutionAttemptId,
+    owner_node: WorkNodeId,
+    lease_epoch: u64,
+}
+
+impl fmt::Debug for WeightingExecutionState {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("WeightingExecutionState")
+            .field("phase", &self.phase)
+            .field(
+                "has_retained_observation",
+                &self.retained_observation.is_some(),
+            )
+            .finish()
+    }
+}
+
+impl Default for WeightingExecutionState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[derive(Debug, Default)]
@@ -545,7 +577,36 @@ impl WeightingExecutionState {
     pub const fn new() -> Self {
         Self {
             phase: WeightingExecutionPhase::Empty,
+            retained_observation: None,
         }
+    }
+
+    /// Adopt the exact T17 source owner after its first exhaustive traversal.
+    ///
+    /// The owner remains inside this lifecycle across generation, replay, and
+    /// reconciliation. Only the scheduler-issued Release node may consume it.
+    pub fn retain_source_observation(
+        &mut self,
+        context: WorkExecutionContext<'_>,
+        fragment: &WeightingPlanFragment<'_>,
+        selected: BoundSelectedObservation,
+        completion: &SelectedObservationCompletion,
+    ) -> Result<(), WeightingEvidenceError> {
+        if !matches!(self.phase, WeightingExecutionPhase::Empty)
+            || self.retained_observation.is_some()
+            || context.node().id != fragment.source_read
+            || context.node().kind != WorkKind::ObservationRead
+            || !selected.can_resume_after(completion)
+        {
+            return Err(WeightingEvidenceError);
+        }
+        self.retained_observation = Some(RetainedWeightingObservation {
+            selected,
+            attempt_id: context.attempt_id(),
+            owner_node: context.node().id.clone(),
+            lease_epoch: context.lease_epoch(),
+        });
+        Ok(())
     }
 
     /// Drive the two owner traversals under generation-node authority.
@@ -553,14 +614,26 @@ impl WeightingExecutionState {
         &mut self,
         context: WorkExecutionContext<'_>,
         fragment: &WeightingPlanFragment<'_>,
-        selected: &mut BoundSelectedObservation,
         problem: &CompiledProblem,
     ) -> Result<(), WeightingGenerationError> {
         if !matches!(self.phase, WeightingExecutionPhase::Empty) {
             return Err(WeightingGenerationError::Evidence(WeightingEvidenceError));
         }
+        let retained = self
+            .retained_observation
+            .as_mut()
+            .ok_or(WeightingGenerationError::Evidence(WeightingEvidenceError))?;
+        if retained.attempt_id != context.attempt_id()
+            || retained.owner_node != fragment.source_read
+            || retained.lease_epoch != context.lease_epoch()
+        {
+            return Err(WeightingGenerationError::Evidence(WeightingEvidenceError));
+        }
         self.phase = WeightingExecutionPhase::PendingGeneration(traverse_weighting_generation(
-            context, fragment, selected, problem,
+            context,
+            fragment,
+            &mut retained.selected,
+            problem,
         )?);
         Ok(())
     }
@@ -587,7 +660,6 @@ impl WeightingExecutionState {
         &mut self,
         context: WorkExecutionContext<'_>,
         fragment: &WeightingPlanFragment<'_>,
-        selected: &mut BoundSelectedObservation,
         problem: &CompiledProblem,
         emit: impl FnMut(&WeightedObservationBlock) -> Result<(), E>,
     ) -> Result<(), WeightingReplayError<E>>
@@ -599,7 +671,18 @@ impl WeightingExecutionState {
             self.phase = phase;
             return Err(WeightingReplayError::Evidence(WeightingEvidenceError));
         };
-        match frozen.replay(context, fragment, selected, problem, emit) {
+        let Some(retained) = self.retained_observation.as_mut() else {
+            self.phase = WeightingExecutionPhase::Frozen(frozen);
+            return Err(WeightingReplayError::Evidence(WeightingEvidenceError));
+        };
+        if retained.attempt_id != context.attempt_id()
+            || retained.owner_node != fragment.source_read
+            || retained.lease_epoch != context.lease_epoch()
+        {
+            self.phase = WeightingExecutionPhase::Frozen(frozen);
+            return Err(WeightingReplayError::Evidence(WeightingEvidenceError));
+        }
+        match frozen.replay(context, fragment, &mut retained.selected, problem, emit) {
             Ok(pending) => {
                 self.phase = WeightingExecutionPhase::PendingReplay { frozen, pending };
                 Ok(())
@@ -665,13 +748,20 @@ impl WeightingExecutionState {
             return Err(WeightingEvidenceError);
         }
         self.phase = WeightingExecutionPhase::Empty;
+        self.retained_observation = None;
         Ok(())
     }
 
     /// Return whether the planned release has consumed all externally retained state.
     #[must_use]
     pub const fn is_empty(&self) -> bool {
-        matches!(self.phase, WeightingExecutionPhase::Empty)
+        matches!(self.phase, WeightingExecutionPhase::Empty) && self.retained_observation.is_none()
+    }
+
+    /// Return whether the actual read-locked selected-observation owner is live.
+    #[must_use]
+    pub const fn has_retained_observation(&self) -> bool {
+        self.retained_observation.is_some()
     }
 
     fn matches_attempt(
@@ -679,6 +769,13 @@ impl WeightingExecutionState {
         context: WorkExecutionContext<'_>,
         fragment: &WeightingPlanFragment<'_>,
     ) -> bool {
+        if self.retained_observation.as_ref().is_some_and(|retained| {
+            retained.attempt_id != context.attempt_id()
+                || retained.owner_node != fragment.source_read
+                || retained.lease_epoch != context.lease_epoch()
+        }) {
+            return false;
+        }
         let valid_binding = |binding: &WeightingGenerationBinding, owner: &WorkNodeId| {
             binding.attempt_id == context.attempt_id()
                 && binding.lease_epoch == context.lease_epoch()
