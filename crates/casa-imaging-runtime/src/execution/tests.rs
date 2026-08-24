@@ -1851,6 +1851,7 @@ fn fence_context_exposes_only_capabilities_live_for_that_fence() {
         node,
         knobs: ExecutionKnobs::serial(),
         lease_epoch: 7,
+        cleanup: false,
         resources: vec![
             WorkResourceCapability {
                 resource: crate::LeaseResource::Workers,

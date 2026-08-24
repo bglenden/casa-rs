@@ -1865,7 +1865,7 @@ pub fn convert_frequency_to_frame_with_frame(
     )
 }
 
-fn convert_frequency_to_frame_with_frames(
+pub(crate) fn convert_frequency_to_frame_with_frames(
     source_freq_ref: FrequencyRef,
     target_freq_ref: FrequencyRef,
     frequency_hz: f64,

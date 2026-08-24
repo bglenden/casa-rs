@@ -810,7 +810,7 @@ impl WeightingSampleValue {
 #[derive(Debug)]
 pub struct WeightingReplayChunk {
     sequence: u64,
-    samples: Box<[WeightingSampleValue]>,
+    samples: Vec<WeightingSampleValue>,
 }
 
 impl WeightingReplayChunk {
@@ -822,13 +822,13 @@ impl WeightingReplayChunk {
 
     /// Return weighted samples in canonical selected-observation order.
     #[must_use]
-    pub const fn samples(&self) -> &[WeightingSampleValue] {
+    pub fn samples(&self) -> &[WeightingSampleValue] {
         &self.samples
     }
 
     /// Transfer the bounded sample buffer to the runtime authorization layer.
     #[must_use]
-    pub fn into_samples(self) -> Box<[WeightingSampleValue]> {
+    pub fn into_samples(self) -> Vec<WeightingSampleValue> {
         self.samples
     }
 }
@@ -880,6 +880,9 @@ impl WeightingReplayPhase<'_> {
             .sample_count
             .checked_add(1)
             .ok_or(WeightingError::SampleCountOverflow)?;
+        if self.block.capacity() == 0 {
+            self.block = Vec::with_capacity(self.max_block_samples);
+        }
         self.block.push(weighted);
         if self.block.len() == self.max_block_samples {
             self.take_block().map(Some)
@@ -962,14 +965,11 @@ impl WeightingReplayPhase<'_> {
             .block_sequence
             .checked_add(1)
             .ok_or(WeightingError::BlockCountOverflow)?;
-        // The runtime consumes each returned block synchronously. Leave this phase
-        // allocation-free until that borrow ends so the outgoing block and its
-        // replacement can never retain two full-capacity buffers at once.
+        // The runtime consumes each returned block synchronously. Transfer the
+        // original full-capacity allocation with its logical length intact;
+        // shrinking a partial terminal block could transiently allocate a copy.
         let samples = std::mem::take(&mut self.block);
-        Ok(WeightingReplayChunk {
-            sequence,
-            samples: samples.into_boxed_slice(),
-        })
+        Ok(WeightingReplayChunk { sequence, samples })
     }
 }
 

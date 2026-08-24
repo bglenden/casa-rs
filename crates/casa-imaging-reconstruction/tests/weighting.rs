@@ -521,6 +521,13 @@ fn partition_block_worker_and_repeated_replay_choices_are_invariant() {
         serial_completion.replay_id(),
         repeated_serial_completion.replay_id()
     );
+    let terminal = partitioned_blocks
+        .into_iter()
+        .last()
+        .expect("partial terminal block")
+        .into_samples();
+    assert_eq!(terminal.len(), 1);
+    assert_eq!(terminal.capacity(), 3);
 }
 
 #[test]

@@ -1,16 +1,23 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_imaging_model::{
-    CompiledProblem, FrequencyFrame, SelectedObservationSample, SelectedSpectralContribution,
-    SelectedSpectralContributions, SpectralSampling,
+    CompiledProblem, DirectionFrame, FrequencyFrame, SelectedObservationSample,
+    SelectedSpectralContribution, SelectedSpectralContributions, SpectralFrameAnchor,
+    SpectralSampling, TimeScale,
 };
 
-use casa_types::measures::frequency::FrequencyRef;
+use casa_types::measures::{
+    direction::{DirectionRef, MDirection},
+    epoch::{EpochRef, MEpoch},
+    frequency::FrequencyRef,
+    position::MPosition,
+};
 
 use crate::{
     derived::engine::MsCalEngine,
     spectral_selection::{
-        CubeInterpolation, convert_frequency_to_frame, source_frequency_output_contributions,
+        CubeInterpolation, convert_frequency_to_frame_with_frames,
+        source_frequency_output_contributions,
     },
 };
 
@@ -112,21 +119,65 @@ fn interpolation_contributions(
             Ok::<_, BoundObservationSourceError>((second - first).abs())
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let source_frequency_hz = convert_frequency_to_frame(
-        frequency_ref(sample.address.frequency_frame),
-        frequency_ref(spectral.output_frame()),
-        sample.address.frequency_centre_hz,
-        sample.coordinates.time.mjd_days() * 86_400.0,
-        usize::try_from(sample.metadata.field_id)
-            .map_err(|_| BoundObservationSourceError::SpectralContributionMismatch)?,
-        geometry_engine,
-    )?;
+    let source_ref = frequency_ref(sample.address.frequency_frame);
+    let output_ref = frequency_ref(spectral.output_frame());
+    let source_frequency_hz = if source_ref == output_ref {
+        sample.address.frequency_centre_hz
+    } else {
+        let field_id = usize::try_from(sample.metadata.field_id)
+            .map_err(|_| BoundObservationSourceError::SpectralContributionMismatch)?;
+        let source_frame = geometry_engine
+            .spectral_frame_observatory(sample.coordinates.time.mjd_days() * 86_400.0, field_id)?;
+        let SpectralFrameAnchor::Conversion {
+            epoch,
+            direction,
+            observatory_position,
+        } = spectral.anchor()
+        else {
+            return Err(BoundObservationSourceError::SpectralContributionMismatch);
+        };
+        let [x_metres, y_metres, z_metres] = observatory_position.metres();
+        let output_frame = geometry_engine.spectral_frame_explicit(
+            MEpoch::from_mjd(epoch.mjd_days(), epoch_ref(epoch.scale())),
+            MPosition::new_itrf(x_metres, y_metres, z_metres),
+            MDirection::from_angles(
+                direction.longitude_rad(),
+                direction.latitude_rad(),
+                direction_ref(direction.frame()),
+            ),
+        );
+        convert_frequency_to_frame_with_frames(
+            source_ref,
+            output_ref,
+            sample.address.frequency_centre_hz,
+            Some(&source_frame),
+            Some(&output_frame),
+        )?
+    };
     pack_contributions(source_frequency_output_contributions(
         &centres,
         &widths,
         interpolation,
         source_frequency_hz,
     ))
+}
+
+const fn direction_ref(frame: DirectionFrame) -> DirectionRef {
+    match frame {
+        DirectionFrame::Icrs => DirectionRef::ICRS,
+        DirectionFrame::J2000 => DirectionRef::J2000,
+        DirectionFrame::B1950 => DirectionRef::B1950,
+        DirectionFrame::Galactic => DirectionRef::GALACTIC,
+    }
+}
+
+const fn epoch_ref(scale: TimeScale) -> EpochRef {
+    match scale {
+        TimeScale::Utc => EpochRef::UTC,
+        TimeScale::Tai => EpochRef::TAI,
+        TimeScale::Tt => EpochRef::TT,
+        TimeScale::Tdb => EpochRef::TDB,
+    }
 }
 
 const fn frequency_ref(frame: FrequencyFrame) -> FrequencyRef {

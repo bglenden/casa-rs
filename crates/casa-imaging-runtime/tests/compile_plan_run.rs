@@ -47,13 +47,12 @@ use casa_imaging_runtime::{
     ExecutionEvidenceError, ExecutionKnobs, ExecutionOutcome, ExecutionPlanId, ExecutionProvenance,
     ExecutionReceipt, ExecutionReceiptBinding, ExecutionReceiptStore, ExecutionRouteDisposition,
     ExecutionRouteEvidence, ExecutionRouteRequirement, ExecutionRouteRequirementKind,
-    ExecutionStatus, ExternalPressure, FenceId, FenceKind, FrozenWeightingGeneration,
-    HostInventory, ImplementationRegistry, ImplementationRegistryId, InitializationPolicy,
-    IoBufferDemand, IoBufferKind, IoMeasurement, IoPrediction, LeaseResource, LogicalAllocation,
-    MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand, MemoryView, MemoryViewKind,
-    ObservationReadCompletionContext, ObservationTransactionWork, PendingWeightingGeneration,
-    PendingWeightingReplay, PhysicalLayoutId, PhysicalSlot, PhysicalSlotId, PhysicalWorkBinding,
-    PhysicalWorkBindingError, PlanError, PlanPrediction, PlannedArtifact,
+    ExecutionStatus, ExternalPressure, FenceId, FenceKind, HostInventory, ImplementationRegistry,
+    ImplementationRegistryId, InitializationPolicy, IoBufferDemand, IoBufferKind, IoMeasurement,
+    IoPrediction, LeaseResource, LogicalAllocation, MemoryCapacityDomain, MemoryCapacityKind,
+    MemoryDemand, MemoryView, MemoryViewKind, ObservationReadCompletionContext,
+    ObservationTransactionWork, PhysicalLayoutId, PhysicalSlot, PhysicalSlotId,
+    PhysicalWorkBinding, PhysicalWorkBindingError, PlanError, PlanPrediction, PlannedArtifact,
     PlannerCostModelProfileId, PlanningBindings, PredictionConfidence, PredictionUncertainty,
     PreparedArtifactBudget, PreparedArtifactDescriptor, PreparedArtifactError,
     PreparedArtifactLoadSource, PreparedArtifactOperation, PreparedArtifactOrder,
@@ -68,10 +67,9 @@ use casa_imaging_runtime::{
     ResourceMeasurement, ResourceOverride, ResourcePolicy, ResourceTopology, RunBindings,
     RunController, RunDirective, RunError, RunToCompletion, RuntimeOverheadDemand, ScalingMetadata,
     SlotCompatibility, StagePrediction, StorageDomain, StorageDomainId, StorageMode,
-    StorageUseKind, WeightingPlanFragment, WeightingReplayCompletion, WorkDependency, WorkDomain,
+    StorageUseKind, WeightingExecutionState, WeightingPlanFragment, WorkDependency, WorkDomain,
     WorkExecutionContext, WorkImplementation, WorkImplementationId, WorkKind, WorkMeasurements,
-    WorkNode, WorkNodeId, complete_weighting_generation, plan as runtime_plan, run as runtime_run,
-    traverse_weighting_generation,
+    WorkNode, WorkNodeId, plan as runtime_plan, run as runtime_run,
 };
 use casa_ms::{
     BoundSelectedObservation, ObservationSourceBinding, SelectedObservationCompletion,
@@ -106,6 +104,12 @@ const SELECTED_CONTENT_BYTES: usize = 128 * 1024;
 
 const fn selected_content_budget() -> SelectedObservationContentBudget {
     SelectedObservationContentBudget::new(SELECTED_CONTENT_BYTES, 1, 4)
+}
+
+fn selected_content_queue() -> LeaseResource {
+    LeaseResource::Queue {
+        demand_id: "transaction-io-queue".to_string(),
+    }
 }
 
 fn only_receipt_path(root: &Path) -> PathBuf {
@@ -584,6 +588,8 @@ fn recording_executor(
         visible_generation: None,
         failure_node: None,
         fence_failure_event: None,
+        weighting_failure_node: None,
+        weighting_fence_failure_event: None,
         publication_failure: None,
         generic_source_access: None,
         initial_consistency_expected: None,
@@ -601,13 +607,11 @@ fn recording_executor(
         reopen_weighting_before_replay: false,
         weighting_plan: None,
         weighting_source_read: WorkNodeId::new("transaction-read"),
-        pending_weighting_generation: Mutex::new(None),
-        frozen_weighting_generation: Mutex::new(None),
-        pending_weighting_replay: Mutex::new(None),
-        weighting_replay_completion: Mutex::new(None),
+        weighting_state: Mutex::new(WeightingExecutionState::new()),
         weighted_sample_count: AtomicUsize::new(0),
         weighting_reconciled: AtomicBool::new(false),
         weighting_released: AtomicBool::new(false),
+        weighting_cleanup_released: AtomicBool::new(false),
     }
 }
 
@@ -656,6 +660,8 @@ struct RecordingExecutor {
     visible_generation: Option<Arc<AtomicUsize>>,
     failure_node: Option<&'static str>,
     fence_failure_event: Option<(&'static str, FenceKind)>,
+    weighting_failure_node: Option<WorkNodeId>,
+    weighting_fence_failure_event: Option<(WorkNodeId, FenceKind)>,
     publication_failure: Option<&'static str>,
     generic_source_access: Option<Arc<AtomicBool>>,
     initial_consistency_expected: Option<(ObservationTransactionId, Arc<AtomicBool>)>,
@@ -673,13 +679,11 @@ struct RecordingExecutor {
     reopen_weighting_before_replay: bool,
     weighting_plan: Option<WeightingPlan>,
     weighting_source_read: WorkNodeId,
-    pending_weighting_generation: Mutex<Option<PendingWeightingGeneration>>,
-    frozen_weighting_generation: Mutex<Option<FrozenWeightingGeneration>>,
-    pending_weighting_replay: Mutex<Option<PendingWeightingReplay>>,
-    weighting_replay_completion: Mutex<Option<WeightingReplayCompletion>>,
+    weighting_state: Mutex<WeightingExecutionState>,
     weighted_sample_count: AtomicUsize,
     weighting_reconciled: AtomicBool,
     weighting_released: AtomicBool,
+    weighting_cleanup_released: AtomicBool,
 }
 
 #[derive(Debug)]
@@ -697,6 +701,7 @@ impl RecordingExecutor {
                 plan,
                 self.weighting_source_read.clone(),
                 selected_content_budget(),
+                selected_content_queue(),
                 self.id.clone(),
                 self.id.clone(),
                 self.id.clone(),
@@ -760,6 +765,9 @@ impl WorkImplementation for RecordingExecutor {
         if self.failure_node == Some(context.node().id.as_str()) {
             return Err(io::Error::other("stateful transaction execute failure"));
         }
+        if self.weighting_failure_node.as_ref() == Some(&context.node().id) {
+            return Err(io::Error::other("weighting lifecycle execute failure"));
+        }
         if context.node().kind == WorkKind::ObservationRead {
             let bound_problem = context
                 .selected_observation()
@@ -787,32 +795,21 @@ impl WorkImplementation for RecordingExecutor {
             let traverse = |observation: &mut BoundSelectedObservation| -> io::Result<()> {
                 if let Some(fragment) = fragment.as_ref() {
                     if context.node().id == *fragment.generation_node() {
-                        let pending =
-                            traverse_weighting_generation(context, fragment, observation, problem)
-                                .map_err(io::Error::other)?;
-                        *self
-                            .pending_weighting_generation
+                        self.weighting_state
                             .lock()
-                            .expect("pending weighting generation lock") = Some(pending);
+                            .expect("weighting execution state lock")
+                            .traverse_generation(context, fragment, observation, problem)
+                            .map_err(io::Error::other)?;
                     } else if context.node().id == *fragment.replay_node() {
-                        let frozen = self
-                            .frozen_weighting_generation
+                        self.weighting_state
                             .lock()
-                            .expect("frozen weighting generation lock");
-                        let frozen = frozen
-                            .as_ref()
-                            .ok_or_else(|| io::Error::other("replay has no frozen W"))?;
-                        let pending = frozen
-                            .replay(context, fragment, observation, problem, |block| {
+                            .expect("weighting execution state lock")
+                            .traverse_replay(context, fragment, observation, problem, |block| {
                                 self.weighted_sample_count
                                     .fetch_add(block.samples().count(), Ordering::SeqCst);
                                 Ok::<_, io::Error>(())
                             })
                             .map_err(io::Error::other)?;
-                        *self
-                            .pending_weighting_replay
-                            .lock()
-                            .expect("pending weighting replay lock") = Some(pending);
                     } else {
                         let completion = observation
                             .traverse(problem, |_| Ok::<_, io::Error>(()))
@@ -875,25 +872,27 @@ impl WorkImplementation for RecordingExecutor {
         }
         if let Some(fragment) = self.weighting_fragment() {
             if context.node().id == *fragment.release_node() {
-                let frozen = self
-                    .frozen_weighting_generation
+                self.weighting_state
                     .lock()
-                    .expect("frozen weighting generation lock")
-                    .take()
-                    .ok_or_else(|| io::Error::other("release has no frozen W"))?;
-                fragment
-                    .release_generation(context, frozen)
+                    .expect("weighting execution state lock")
+                    .release(context, &fragment)
                     .map_err(io::Error::other)?;
+                self.retained_weighting_observation
+                    .lock()
+                    .expect("retained weighting observation lock")
+                    .take();
                 self.weighting_released.store(true, Ordering::SeqCst);
+                self.weighting_cleanup_released
+                    .store(context.is_cleanup(), Ordering::SeqCst);
             } else if let Some(predecessor) =
                 context.predecessor_observation_completion(fragment.replay_node())
             {
-                let completion = self
-                    .weighting_replay_completion
+                let state = self
+                    .weighting_state
                     .lock()
-                    .expect("weighting replay completion lock");
-                let completion = completion
-                    .as_ref()
+                    .expect("weighting execution state lock");
+                let completion = state
+                    .replay_completion()
                     .ok_or_else(|| io::Error::other("reconciliation has no weighting replay"))?;
                 if predecessor.attempt_id() != completion.attempt_id()
                     || predecessor.owner_node() != completion.owner_node()
@@ -1016,6 +1015,13 @@ impl WorkImplementation for RecordingExecutor {
             return Err(io::Error::other("stateful transaction fence failure"));
         }
         if self
+            .weighting_fence_failure_event
+            .as_ref()
+            .is_some_and(|(node, kind)| node == &context.node().id && *kind == fence)
+        {
+            return Err(io::Error::other("weighting lifecycle fence failure"));
+        }
+        if self
             .visible_generation
             .as_ref()
             .is_some_and(|visible| visible.load(Ordering::SeqCst) == 1)
@@ -1046,32 +1052,20 @@ impl WorkImplementation for RecordingExecutor {
         }
         if let Some(fragment) = self.weighting_fragment() {
             if completion.owner_node() == fragment.generation_node() {
-                let pending = self
-                    .pending_weighting_generation
+                return self
+                    .weighting_state
                     .lock()
-                    .expect("pending weighting generation lock")
-                    .take()
-                    .ok_or_else(|| io::Error::other("ObservationRead produced no pending W"))?;
-                let (frozen, predecessor) =
-                    complete_weighting_generation(pending, completion).map_err(io::Error::other)?;
-                *self
-                    .frozen_weighting_generation
-                    .lock()
-                    .expect("frozen weighting generation lock") = Some(frozen);
-                return Ok(predecessor);
+                    .expect("weighting execution state lock")
+                    .complete_generation(completion)
+                    .map_err(io::Error::other);
             }
             if completion.owner_node() == fragment.replay_node() {
-                let pending = self
-                    .pending_weighting_replay
+                let predecessor = self
+                    .weighting_state
                     .lock()
-                    .expect("pending weighting replay lock")
-                    .take()
-                    .ok_or_else(|| io::Error::other("ObservationRead produced no replay"))?;
-                let (replay, predecessor) = pending.bind(completion).map_err(io::Error::other)?;
-                *self
-                    .weighting_replay_completion
-                    .lock()
-                    .expect("weighting replay completion lock") = Some(replay);
+                    .expect("weighting execution state lock")
+                    .complete_replay(completion)
+                    .map_err(io::Error::other)?;
                 self.retained_weighting_observation
                     .lock()
                     .expect("retained weighting observation lock")
@@ -1214,6 +1208,7 @@ fn production_weighting_fragment_owns_generation_replay_and_release_lifetimes() 
         &plan,
         WorkNodeId::new("transaction-read"),
         selected_content_budget(),
+        selected_content_queue(),
         implementation(6),
         implementation(6),
         implementation(6),
@@ -1317,6 +1312,7 @@ fn production_weighting_fragment_rejects_unplanned_source_traversal_resources() 
         &plan,
         WorkNodeId::new("transaction-read"),
         selected_content_budget(),
+        selected_content_queue(),
         implementation(6),
         implementation(6),
         implementation(6),
@@ -1325,6 +1321,95 @@ fn production_weighting_fragment_rejects_unplanned_source_traversal_resources() 
     let error = fragment
         .compose(&physical_work_with_synchronous_observation_read(6))
         .expect_err("an unplanned worker and source buffer must fail closed");
+
+    assert!(matches!(
+        error,
+        casa_imaging_runtime::WeightingPlanFragmentError::InvalidSourceAuthority { .. }
+    ));
+}
+
+#[test]
+fn production_weighting_fragment_rejects_fungible_unrelated_queues() {
+    let problem = compile(request(1)).expect("logical weighting compilation");
+    let plan = plan_weighting(
+        &problem,
+        WeightingExecutionLimits::new(2, 3).expect("weighting limits"),
+    )
+    .expect("weighting plan");
+    let base = physical_work_for_weighting_problem(&problem, 6);
+    let mut nodes = base
+        .execution_dag()
+        .nodes()
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    nodes
+        .iter_mut()
+        .find(|node| node.id == WorkNodeId::new("transaction-read"))
+        .expect("transaction source read")
+        .claims
+        .push(ResourceClaim {
+            resource: LeaseResource::Queue {
+                demand_id: "unrelated-queue".to_string(),
+            },
+            amount: 1,
+            lifetime: ClaimLifetime::through_fence(FenceKind::Io),
+        });
+    let mut alternative = base.execution_dag().resource_alternative().clone();
+    alternative.demand.queues.push(QueueDemand {
+        demand_id: "unrelated-queue".to_string(),
+        resource: QueueResourceId::new("unrelated-queue"),
+        slots: CountDemand::new(1, 1),
+    });
+    let split_queue_dag = ExecutionDag::new(ExecutionDagSpecification {
+        required_resource_capabilities: base
+            .execution_dag()
+            .required_resource_capabilities()
+            .clone(),
+        resource_alternative: alternative,
+        nodes,
+        logical_allocations: base
+            .execution_dag()
+            .logical_allocations()
+            .values()
+            .cloned()
+            .collect(),
+        physical_slots: base
+            .execution_dag()
+            .physical_slots()
+            .values()
+            .cloned()
+            .collect(),
+        initial_knobs: base.execution_dag().initial_knobs().clone(),
+        adaptations: base
+            .execution_dag()
+            .adaptations()
+            .values()
+            .cloned()
+            .collect(),
+    })
+    .expect("two distinct queue identities are structurally valid");
+    let split_queue_base = PhysicalWorkBinding::new(
+        split_queue_dag,
+        base.prediction().clone(),
+        base.artifacts().to_vec(),
+        base.observation_transaction().clone(),
+        base.publication_layouts().clone(),
+    )
+    .expect("split-queue physical work");
+    let fragment = WeightingPlanFragment::new(
+        &plan,
+        WorkNodeId::new("transaction-read"),
+        SelectedObservationContentBudget::new(SELECTED_CONTENT_BYTES, 2, 4),
+        selected_content_queue(),
+        implementation(6),
+        implementation(6),
+        implementation(6),
+    );
+
+    let error = fragment
+        .compose(&split_queue_base)
+        .expect_err("unrelated queue capacity cannot satisfy the selected-content queue");
 
     assert!(matches!(
         error,
@@ -5005,6 +5090,7 @@ fn actual_bound_observation_traversals_drive_both_weighting_generation_passes() 
         &weighting_plan,
         WorkNodeId::new("transaction-read"),
         selected_content_budget(),
+        selected_content_queue(),
         implementation(6),
         implementation(6),
         implementation(6),
@@ -5047,11 +5133,119 @@ fn actual_bound_observation_traversals_drive_both_weighting_generation_passes() 
     assert!(executor.weighting_released.load(Ordering::SeqCst));
     assert!(
         executor
-            .frozen_weighting_generation
+            .weighting_state
             .lock()
-            .expect("released weighting generation lock")
-            .is_none()
+            .expect("weighting execution state lock")
+            .is_empty()
     );
+}
+
+#[test]
+fn failed_weighting_lifecycle_cuts_run_the_scheduler_owned_release() {
+    #[derive(Clone, Copy, Debug)]
+    enum FailureCut {
+        GenerationFence,
+        ReplayWork,
+        ReplayFence,
+        Reconciliation,
+    }
+
+    for cut in [
+        FailureCut::GenerationFence,
+        FailureCut::ReplayWork,
+        FailureCut::ReplayFence,
+        FailureCut::Reconciliation,
+    ] {
+        let problem = compile(request(198)).expect("logical weighting compilation");
+        let weighting_plan = plan_weighting(
+            &problem,
+            WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
+        )
+        .expect("weighting plan");
+        let fragment = WeightingPlanFragment::new(
+            &weighting_plan,
+            WorkNodeId::new("transaction-read"),
+            selected_content_budget(),
+            selected_content_queue(),
+            implementation(6),
+            implementation(6),
+            implementation(6),
+        );
+        let generation = fragment.generation_node().clone();
+        let replay = fragment.replay_node().clone();
+        let expected_failure = match cut {
+            FailureCut::GenerationFence => generation.clone(),
+            FailureCut::ReplayWork | FailureCut::ReplayFence => replay.clone(),
+            FailureCut::Reconciliation => WorkNodeId::new("transaction-reconciliation"),
+        };
+        let physical = fragment
+            .compose(&physical_work_for_weighting_problem(&problem, 6))
+            .expect("production weighting physical work");
+        let execution_plan = plan(
+            &problem,
+            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+            |_, _| Ok::<_, ()>(physical),
+        )
+        .expect("production weighting execution plan");
+        let current = RunBindings::new(
+            problem.inputs().clone(),
+            &ResourcePolicy::Balanced,
+            cost_model(4),
+        );
+        let mut executor = recording_executor(6, None, None);
+        executor.weighting_plan = Some(weighting_plan);
+        match cut {
+            FailureCut::GenerationFence => {
+                executor.weighting_fence_failure_event = Some((generation, FenceKind::Io));
+            }
+            FailureCut::ReplayWork => executor.weighting_failure_node = Some(replay),
+            FailureCut::ReplayFence => {
+                executor.weighting_fence_failure_event = Some((replay, FenceKind::Io));
+            }
+            FailureCut::Reconciliation => {
+                executor.weighting_failure_node = Some(expected_failure.clone());
+            }
+        }
+        let registry = TestRegistry {
+            id: registry(3),
+            executors: BTreeMap::from([(implementation(6), executor)]),
+        };
+        let mut controller = RunToCompletion;
+
+        let error = run(
+            &problem,
+            &execution_plan,
+            &current,
+            &registry,
+            authority(),
+            &mut controller,
+        )
+        .expect_err("the injected lifecycle cut must fail the attempt");
+
+        assert!(
+            matches!(&error, RunError::Execution { node, .. } if node == &expected_failure),
+            "unexpected {cut:?} failure: {error:?}"
+        );
+        let executor = &registry.executors[&implementation(6)];
+        assert!(
+            executor
+                .weighting_state
+                .lock()
+                .expect("weighting execution state lock")
+                .is_empty(),
+            "{cut:?} must not retain weighting state after draining"
+        );
+        assert!(
+            executor
+                .retained_weighting_observation
+                .lock()
+                .expect("retained weighting observation lock")
+                .is_none(),
+            "{cut:?} must not retain the selected-observation owner"
+        );
+        assert!(executor.weighting_released.load(Ordering::SeqCst));
+        assert!(executor.weighting_cleanup_released.load(Ordering::SeqCst));
+    }
 }
 
 #[test]
@@ -5066,6 +5260,7 @@ fn weighting_replay_rejects_a_fresh_binding_with_identical_selected_content() {
         &weighting_plan,
         WorkNodeId::new("transaction-read"),
         selected_content_budget(),
+        selected_content_queue(),
         implementation(6),
         implementation(6),
         implementation(6),
@@ -5109,11 +5304,12 @@ fn weighting_replay_rejects_a_fresh_binding_with_identical_selected_content() {
     assert_eq!(executor.weighted_sample_count.load(Ordering::SeqCst), 0);
     assert!(
         executor
-            .weighting_replay_completion
+            .weighting_state
             .lock()
-            .expect("weighting replay completion lock")
-            .is_none()
+            .expect("weighting execution state lock")
+            .is_empty()
     );
+    assert!(executor.weighting_cleanup_released.load(Ordering::SeqCst));
     assert!(!executor.weighting_reconciled.load(Ordering::SeqCst));
 }
 
@@ -5129,6 +5325,7 @@ fn weighting_generation_rejects_missing_direct_predecessor_before_state_exists()
         &weighting_plan,
         WorkNodeId::new("transaction-read"),
         selected_content_budget(),
+        selected_content_queue(),
         implementation(6),
         implementation(6),
         implementation(6),
@@ -5171,18 +5368,12 @@ fn weighting_generation_rejects_missing_direct_predecessor_before_state_exists()
     let executor = &registry.executors[&implementation(6)];
     assert!(
         executor
-            .pending_weighting_generation
+            .weighting_state
             .lock()
-            .expect("pending weighting generation lock")
-            .is_none()
+            .expect("weighting execution state lock")
+            .is_empty()
     );
-    assert!(
-        executor
-            .frozen_weighting_generation
-            .lock()
-            .expect("frozen weighting generation lock")
-            .is_none()
-    );
+    assert!(executor.weighting_cleanup_released.load(Ordering::SeqCst));
     assert_eq!(executor.weighted_sample_count.load(Ordering::SeqCst), 0);
 }
 
@@ -5198,6 +5389,7 @@ fn weighting_generation_rejects_mismatched_allocation_capabilities_before_state_
         &planned_weighting,
         WorkNodeId::new("transaction-read"),
         selected_content_budget(),
+        selected_content_queue(),
         implementation(6),
         implementation(6),
         implementation(6),
@@ -5244,17 +5436,10 @@ fn weighting_generation_rejects_mismatched_allocation_capabilities_before_state_
     let executor = &registry.executors[&implementation(6)];
     assert!(
         executor
-            .pending_weighting_generation
+            .weighting_state
             .lock()
-            .expect("pending weighting generation lock")
-            .is_none()
-    );
-    assert!(
-        executor
-            .frozen_weighting_generation
-            .lock()
-            .expect("frozen weighting generation lock")
-            .is_none()
+            .expect("weighting execution state lock")
+            .is_empty()
     );
     assert_eq!(executor.weighted_sample_count.load(Ordering::SeqCst), 0);
 }
@@ -5272,6 +5457,7 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
         &weighting_plan,
         WorkNodeId::new("transaction-read"),
         selected_content_budget(),
+        selected_content_queue(),
         implementation(6),
         implementation(6),
         implementation(6),
@@ -5396,25 +5582,16 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
         .executors
         .get(&implementation(6))
         .expect("weighting executor");
-    let replay_completion = executor
-        .weighting_replay_completion
-        .lock()
-        .expect("weighting replay completion lock");
-    let replay_completion = replay_completion
-        .as_ref()
-        .expect("scheduler-authorized weighting replay");
-    assert_eq!(replay_completion.attempt_id(), provenance.attempt_id());
-    assert_eq!(replay_completion.owner_node(), &replay);
-    assert_eq!(replay_completion.sample_count(), 1);
     assert!(executor.weighting_reconciled.load(Ordering::SeqCst));
     assert!(executor.weighting_released.load(Ordering::SeqCst));
+    assert!(!executor.weighting_cleanup_released.load(Ordering::SeqCst));
     assert!(
         executor
-            .frozen_weighting_generation
+            .weighting_state
             .lock()
-            .expect("released weighting generation lock")
-            .is_none(),
-        "frozen W must remain owned until the explicit release node consumes it"
+            .expect("weighting execution state lock")
+            .is_empty(),
+        "the explicit release node must consume the complete weighting lifecycle"
     );
 }
 

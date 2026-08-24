@@ -2091,6 +2091,17 @@ impl<'a> WorkExecutionContext<'a> {
         self.scheduled.lease_epoch()
     }
 
+    /// Return whether the scheduler dispatched this Release node while draining.
+    ///
+    /// Only a plan-validated [`WorkKind::Release`] node can observe `true`.
+    /// Implementations use this distinction to discard externally retained
+    /// state after failed predecessor work without accepting an incomplete
+    /// success-path lifecycle.
+    #[must_use]
+    pub const fn is_cleanup(self) -> bool {
+        self.scheduled.is_cleanup()
+    }
+
     /// Return the scheduler-issued resource capabilities live for this call.
     #[must_use]
     pub fn resources(self) -> &'a [crate::WorkResourceCapability] {

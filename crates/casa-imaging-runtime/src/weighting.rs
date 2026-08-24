@@ -41,6 +41,7 @@ pub struct WeightingPlanFragment<'a> {
     plan: &'a WeightingPlan,
     source_read: WorkNodeId,
     selected_content_budget: SelectedObservationContentBudget,
+    selected_content_queue: LeaseResource,
     generation_implementation: WorkImplementationId,
     replay_implementation: WorkImplementationId,
     release_implementation: WorkImplementationId,
@@ -54,6 +55,7 @@ impl<'a> WeightingPlanFragment<'a> {
         plan: &'a WeightingPlan,
         source_read: WorkNodeId,
         selected_content_budget: SelectedObservationContentBudget,
+        selected_content_queue: LeaseResource,
         generation_implementation: WorkImplementationId,
         replay_implementation: WorkImplementationId,
         release_implementation: WorkImplementationId,
@@ -62,6 +64,7 @@ impl<'a> WeightingPlanFragment<'a> {
             plan,
             source_read,
             selected_content_budget,
+            selected_content_queue,
             generation_implementation,
             replay_implementation,
             release_implementation,
@@ -119,8 +122,12 @@ impl<'a> WeightingPlanFragment<'a> {
             return Err(WeightingPlanFragmentError::MissingNode(commit_id.clone()));
         }
 
-        let source_contract =
-            SourceTraversalContract::from_source(base, source, self.selected_content_budget)?;
+        let source_contract = SourceTraversalContract::from_source(
+            base,
+            source,
+            self.selected_content_budget,
+            &self.selected_content_queue,
+        )?;
         let io_lifetime = ClaimLifetime::through_fence(FenceKind::Io);
         let read_claims = source_contract.claims.clone();
         let read_allocations = source_contract.allocations.clone();
@@ -380,6 +387,7 @@ impl<'a> WeightingPlanFragment<'a> {
             WeightingWorkContract::SelectedTraversal {
                 problem,
                 budget: self.selected_content_budget,
+                queue: &self.selected_content_queue,
             },
         )?;
         Ok(self.selected_content_budget)
@@ -401,6 +409,7 @@ impl<'a> WeightingPlanFragment<'a> {
             WeightingWorkContract::SelectedTraversal {
                 problem,
                 budget: self.selected_content_budget,
+                queue: &self.selected_content_queue,
             },
         )?;
         let predecessor = context
@@ -441,6 +450,7 @@ impl<'a> WeightingPlanFragment<'a> {
             WeightingWorkContract::SelectedTraversal {
                 problem,
                 budget: self.selected_content_budget,
+                queue: &self.selected_content_queue,
             },
         )?;
         let predecessor = context
@@ -468,11 +478,9 @@ impl<'a> WeightingPlanFragment<'a> {
         })
     }
 
-    /// Consume a frozen generation only from its planned post-reconciliation release node.
-    pub fn release_generation(
+    fn authorize_release(
         &self,
         context: WorkExecutionContext<'_>,
-        frozen: FrozenWeightingGeneration,
     ) -> Result<(), WeightingEvidenceError> {
         let specs = self
             .allocation_specs()
@@ -483,15 +491,205 @@ impl<'a> WeightingPlanFragment<'a> {
             &[&specs[0]],
             WeightingWorkContract::Release,
         )?;
-        if context.attempt_id() != frozen.binding.attempt_id
-            || context.lease_epoch() != frozen.binding.lease_epoch
-            || frozen.binding.owner_node != self.ids.generation_node
-            || frozen.state.commitment_id() != self.plan.commitment_id()
+        Ok(())
+    }
+}
+
+/// Opaque adapter-owned state for one scheduler-planned weighting lifecycle.
+///
+/// This is the sole supported retention point across generation and replay
+/// fences. The scheduler's explicit Release node consumes it on both success
+/// and fail-closed drain paths, so pending traversal state cannot outlive its
+/// planned allocation permit.
+#[derive(Debug, Default)]
+pub struct WeightingExecutionState {
+    phase: WeightingExecutionPhase,
+}
+
+#[derive(Debug, Default)]
+enum WeightingExecutionPhase {
+    #[default]
+    Empty,
+    PendingGeneration(PendingWeightingGeneration),
+    Frozen(FrozenWeightingGeneration),
+    PendingReplay {
+        frozen: FrozenWeightingGeneration,
+        pending: PendingWeightingReplay,
+    },
+    Replayed {
+        frozen: FrozenWeightingGeneration,
+        completion: WeightingReplayCompletion,
+    },
+}
+
+impl WeightingExecutionState {
+    /// Construct an empty lifecycle before the generation node is dispatched.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            phase: WeightingExecutionPhase::Empty,
+        }
+    }
+
+    /// Drive the two owner traversals under generation-node authority.
+    pub fn traverse_generation(
+        &mut self,
+        context: WorkExecutionContext<'_>,
+        fragment: &WeightingPlanFragment<'_>,
+        selected: &mut BoundSelectedObservation,
+        problem: &CompiledProblem,
+    ) -> Result<(), WeightingGenerationError> {
+        if !matches!(self.phase, WeightingExecutionPhase::Empty) {
+            return Err(WeightingGenerationError::Evidence(WeightingEvidenceError));
+        }
+        self.phase = WeightingExecutionPhase::PendingGeneration(traverse_weighting_generation(
+            context, fragment, selected, problem,
+        )?);
+        Ok(())
+    }
+
+    /// Bind a successfully settled generation fence and retain its frozen W.
+    pub fn complete_generation(
+        &mut self,
+        context: ObservationReadCompletionContext,
+    ) -> Result<AttemptBoundObservationCompletion, WeightingGenerationCompletionError> {
+        let phase = std::mem::take(&mut self.phase);
+        let WeightingExecutionPhase::PendingGeneration(pending) = phase else {
+            self.phase = phase;
+            return Err(WeightingGenerationCompletionError::Evidence(
+                WeightingEvidenceError,
+            ));
+        };
+        let (frozen, completion) = complete_weighting_generation(pending, context)?;
+        self.phase = WeightingExecutionPhase::Frozen(frozen);
+        Ok(completion)
+    }
+
+    /// Drive the third exhaustive traversal while retaining the frozen W.
+    pub fn traverse_replay<E>(
+        &mut self,
+        context: WorkExecutionContext<'_>,
+        fragment: &WeightingPlanFragment<'_>,
+        selected: &mut BoundSelectedObservation,
+        problem: &CompiledProblem,
+        emit: impl FnMut(&WeightedObservationBlock) -> Result<(), E>,
+    ) -> Result<(), WeightingReplayError<E>>
+    where
+        E: Error + 'static,
+    {
+        let phase = std::mem::take(&mut self.phase);
+        let WeightingExecutionPhase::Frozen(frozen) = phase else {
+            self.phase = phase;
+            return Err(WeightingReplayError::Evidence(WeightingEvidenceError));
+        };
+        match frozen.replay(context, fragment, selected, problem, emit) {
+            Ok(pending) => {
+                self.phase = WeightingExecutionPhase::PendingReplay { frozen, pending };
+                Ok(())
+            }
+            Err(error) => {
+                self.phase = WeightingExecutionPhase::Frozen(frozen);
+                Err(error)
+            }
+        }
+    }
+
+    /// Bind a successfully settled replay fence and retain its terminal proof.
+    pub fn complete_replay(
+        &mut self,
+        context: ObservationReadCompletionContext,
+    ) -> Result<AttemptBoundObservationCompletion, WeightingReplayCompletionError> {
+        let phase = std::mem::take(&mut self.phase);
+        let WeightingExecutionPhase::PendingReplay { frozen, pending } = phase else {
+            self.phase = phase;
+            return Err(WeightingReplayCompletionError::Evidence(
+                WeightingEvidenceError,
+            ));
+        };
+        match pending.bind(context) {
+            Ok((completion, predecessor)) => {
+                self.phase = WeightingExecutionPhase::Replayed { frozen, completion };
+                Ok(predecessor)
+            }
+            Err(error) => {
+                self.phase = WeightingExecutionPhase::Frozen(frozen);
+                Err(error)
+            }
+        }
+    }
+
+    /// Return the terminal replay proof retained for reconciliation.
+    #[must_use]
+    pub const fn replay_completion(&self) -> Option<&WeightingReplayCompletion> {
+        match &self.phase {
+            WeightingExecutionPhase::Replayed { completion, .. } => Some(completion),
+            WeightingExecutionPhase::Empty
+            | WeightingExecutionPhase::PendingGeneration(_)
+            | WeightingExecutionPhase::Frozen(_)
+            | WeightingExecutionPhase::PendingReplay { .. } => None,
+        }
+    }
+
+    /// Drop every retained phase only from the scheduler-issued Release node.
+    ///
+    /// A success-path release requires a completed replay. A draining release
+    /// accepts any phase, including the pending values held between work and
+    /// fence completion, after validating its attempt, lease, and allocation.
+    pub fn release(
+        &mut self,
+        context: WorkExecutionContext<'_>,
+        fragment: &WeightingPlanFragment<'_>,
+    ) -> Result<(), WeightingEvidenceError> {
+        fragment.authorize_release(context)?;
+        if !self.matches_attempt(context, fragment)
+            || !context.is_cleanup()
+                && !matches!(self.phase, WeightingExecutionPhase::Replayed { .. })
         {
             return Err(WeightingEvidenceError);
         }
-        drop(frozen);
+        self.phase = WeightingExecutionPhase::Empty;
         Ok(())
+    }
+
+    /// Return whether the planned release has consumed all externally retained state.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        matches!(self.phase, WeightingExecutionPhase::Empty)
+    }
+
+    fn matches_attempt(
+        &self,
+        context: WorkExecutionContext<'_>,
+        fragment: &WeightingPlanFragment<'_>,
+    ) -> bool {
+        let valid_binding = |binding: &WeightingGenerationBinding, owner: &WorkNodeId| {
+            binding.attempt_id == context.attempt_id()
+                && binding.lease_epoch == context.lease_epoch()
+                && &binding.owner_node == owner
+        };
+        match &self.phase {
+            WeightingExecutionPhase::Empty => context.is_cleanup(),
+            WeightingExecutionPhase::PendingGeneration(pending) => {
+                valid_binding(&pending.binding, fragment.generation_node())
+                    && pending.state.commitment_id() == fragment.plan.commitment_id()
+            }
+            WeightingExecutionPhase::Frozen(frozen) => {
+                valid_binding(&frozen.binding, fragment.generation_node())
+                    && frozen.state.commitment_id() == fragment.plan.commitment_id()
+            }
+            WeightingExecutionPhase::PendingReplay { frozen, pending } => {
+                valid_binding(&frozen.binding, fragment.generation_node())
+                    && valid_binding(&pending.binding, fragment.replay_node())
+                    && frozen.state.commitment_id() == fragment.plan.commitment_id()
+                    && pending.state.weighting_generation() == frozen.state.generation_id()
+            }
+            WeightingExecutionPhase::Replayed { frozen, completion } => {
+                valid_binding(&frozen.binding, fragment.generation_node())
+                    && valid_binding(&completion.binding, fragment.replay_node())
+                    && frozen.state.commitment_id() == fragment.plan.commitment_id()
+                    && completion.state.weighting_generation() == frozen.state.generation_id()
+            }
+        }
     }
 }
 
@@ -549,6 +747,7 @@ impl SourceTraversalContract {
         base: &PhysicalWorkBinding,
         source: &WorkNode,
         budget: SelectedObservationContentBudget,
+        queue: &LeaseResource,
     ) -> Result<Self, WeightingPlanFragmentError> {
         if budget.available_bytes() == 0
             || budget.maximum_live_blocks() == 0
@@ -569,24 +768,27 @@ impl SourceTraversalContract {
                 reason: "selected traversal has no worker claim",
             });
         }
-        let queue_slots = source.claims.iter().try_fold(0_u64, |total, claim| {
-            if matches!(
-                claim.resource,
-                LeaseResource::Queue { .. }
-                    | LeaseResource::StorageQueue { .. }
-                    | LeaseResource::TransferQueue { .. }
-            ) {
-                total.checked_add(claim.amount)
-            } else {
-                Some(total)
-            }
-        });
-        if queue_slots.is_none_or(|slots| {
-            slots < u64::try_from(budget.maximum_live_blocks()).unwrap_or(u64::MAX)
-        }) {
+        let required_blocks = u64::try_from(budget.maximum_live_blocks())
+            .map_err(|_| WeightingPlanFragmentError::ResidencyOverflow)?;
+        let mut queue_claims = source
+            .claims
+            .iter()
+            .filter(|claim| &claim.resource == queue);
+        let queue_claim_covers = queue_claims
+            .next()
+            .is_some_and(|claim| claim.amount >= required_blocks)
+            && queue_claims.next().is_none();
+        if !is_selected_content_queue(queue)
+            || !queue_claim_covers
+            || !queue_demand_covers(
+                base.execution_dag().resource_alternative(),
+                queue,
+                required_blocks,
+            )
+        {
             return Err(WeightingPlanFragmentError::InvalidSourceAuthority {
                 node: source.id.clone(),
-                reason: "selected traversal queue cannot cover every live content block",
+                reason: "selected traversal lacks its exact planned queue identity and capacity",
             });
         }
         let expected_bytes = u64::try_from(budget.available_bytes())
@@ -735,6 +937,7 @@ enum WeightingWorkContract<'a> {
     SelectedTraversal {
         problem: &'a CompiledProblem,
         budget: SelectedObservationContentBudget,
+        queue: &'a LeaseResource,
     },
     Release,
 }
@@ -747,12 +950,16 @@ fn validate_work_authority(
 ) -> Result<(), WeightingEvidenceError> {
     let (expected_kind, expected_domain, problem, lifetime, selected_content_budget) =
         match contract {
-            WeightingWorkContract::SelectedTraversal { problem, budget } => (
+            WeightingWorkContract::SelectedTraversal {
+                problem,
+                budget,
+                queue,
+            } => (
                 WorkKind::ObservationRead,
                 WorkDomain::Io,
                 Some(problem),
                 ClaimLifetime::through_fence(FenceKind::Io),
-                Some(budget),
+                Some((budget, queue)),
             ),
             WeightingWorkContract::Release => (
                 WorkKind::Release,
@@ -795,7 +1002,7 @@ fn validate_work_authority(
     {
         return Err(WeightingEvidenceError);
     }
-    if let Some(budget) = selected_content_budget {
+    if let Some((budget, queue)) = selected_content_budget {
         let required_bytes =
             u64::try_from(budget.available_bytes()).map_err(|_| WeightingEvidenceError)?;
         let required_blocks =
@@ -822,24 +1029,18 @@ fn validate_work_authority(
                 total.checked_add(capability.amount())
             })
             .ok_or(WeightingEvidenceError)?;
-        let queue_slots = context
+        let mut queue_capabilities = context
             .resources()
             .iter()
-            .filter(|capability| {
-                matches!(
-                    capability.resource(),
-                    LeaseResource::Queue { .. }
-                        | LeaseResource::StorageQueue { .. }
-                        | LeaseResource::TransferQueue { .. }
-                )
-            })
-            .try_fold(0_u64, |total, capability| {
-                total.checked_add(capability.amount())
-            })
-            .ok_or(WeightingEvidenceError)?;
+            .filter(|capability| capability.resource() == queue);
+        let queue_capability_covers = queue_capabilities
+            .next()
+            .is_some_and(|capability| capability.amount() >= required_blocks)
+            && queue_capabilities.next().is_none();
         if read_buffer_bytes != required_bytes
             || source_capacity < required_bytes
-            || queue_slots < required_blocks
+            || !queue_capability_covers
+            || !queue_demand_covers(context.resource_alternative(), queue, required_blocks)
             || !context.resources().iter().any(|capability| {
                 capability.resource() == &LeaseResource::Workers && capability.amount() > 0
             })
@@ -848,6 +1049,58 @@ fn validate_work_authority(
         }
     }
     Ok(())
+}
+
+fn is_selected_content_queue(resource: &LeaseResource) -> bool {
+    matches!(
+        resource,
+        LeaseResource::Queue { .. }
+            | LeaseResource::StorageQueue { .. }
+            | LeaseResource::TransferQueue { .. }
+    )
+}
+
+fn queue_demand_covers(
+    alternative: &crate::DemandAlternative,
+    resource: &LeaseResource,
+    required_slots: u64,
+) -> bool {
+    match resource {
+        LeaseResource::Queue { demand_id } => {
+            let mut demands = alternative
+                .demand
+                .queues
+                .iter()
+                .filter(|demand| &demand.demand_id == demand_id);
+            demands
+                .next()
+                .is_some_and(|demand| demand.slots.hard() >= required_slots)
+                && demands.next().is_none()
+        }
+        LeaseResource::StorageQueue { demand_id } => {
+            let mut demands = alternative
+                .demand
+                .storage
+                .iter()
+                .filter(|demand| &demand.demand_id == demand_id);
+            demands
+                .next()
+                .is_some_and(|demand| demand.queue_slots.hard() >= required_slots)
+                && demands.next().is_none()
+        }
+        LeaseResource::TransferQueue { demand_id } => {
+            let mut demands = alternative
+                .demand
+                .transfers
+                .iter()
+                .filter(|demand| &demand.demand_id == demand_id);
+            demands
+                .next()
+                .is_some_and(|demand| demand.queue_slots.hard() >= required_slots)
+                && demands.next().is_none()
+        }
+        _ => false,
+    }
 }
 
 fn allocation_use(allocation: &AllocationId, lifetime: ClaimLifetime) -> AllocationUse {
@@ -1043,7 +1296,7 @@ impl WeightedObservationSample<'_> {
 pub struct WeightedObservationBlock {
     generation: WeightingGenerationId,
     sequence: u64,
-    samples: Box<[ReconstructionWeightedSample]>,
+    samples: Vec<ReconstructionWeightedSample>,
 }
 
 impl WeightedObservationBlock {
@@ -1079,16 +1332,8 @@ impl WeightedObservationBlock {
 }
 
 /// A frozen W whose reconstruction state is backed by two opaque T17 completions.
-///
-/// Callers cannot construct or rebind this evidence directly:
-///
-/// ```compile_fail
-/// use casa_imaging_runtime::FrozenWeightingGeneration;
-///
-/// let _forged = FrozenWeightingGeneration {};
-/// ```
 #[derive(Debug)]
-pub struct FrozenWeightingGeneration {
+struct FrozenWeightingGeneration {
     state: WeightingAlgorithmState,
     density_completion: SelectedObservationCompletion,
     binding: WeightingGenerationBinding,
@@ -1104,38 +1349,11 @@ struct WeightingGenerationBinding {
 }
 
 impl FrozenWeightingGeneration {
-    /// Return the reconstruction-owned frozen W identity.
-    #[must_use]
-    pub const fn generation_id(&self) -> WeightingGenerationId {
+    const fn generation_id(&self) -> WeightingGenerationId {
         self.state.generation_id()
     }
 
-    /// Return the exact selected-content generation proven by both T17 passes.
-    #[must_use]
-    pub const fn selected_generation(&self) -> SelectedObservationGenerationId {
-        self.density_completion.generation_id()
-    }
-
-    /// Return the exhaustive sample count proven by both T17 passes.
-    #[must_use]
-    pub const fn sample_count(&self) -> u64 {
-        self.state.sample_count()
-    }
-
-    /// Return frozen sum weights in global or output-channel order.
-    #[must_use]
-    pub const fn sum_weights(&self) -> &[f64] {
-        self.state.sum_weights()
-    }
-
-    /// Return the generation pass's actual bounded residency.
-    #[must_use]
-    pub const fn generation_residency(&self) -> WeightingResidency {
-        self.state.generation_residency()
-    }
-
-    /// Replay the same W through a third exhaustive T17 traversal.
-    pub fn replay<E>(
+    fn replay<E>(
         &self,
         context: WorkExecutionContext<'_>,
         fragment: &WeightingPlanFragment<'_>,
@@ -1196,26 +1414,15 @@ impl FrozenWeightingGeneration {
 }
 
 /// Unbranded result of two exhaustive owner traversals.
-///
-/// Only [`traverse_weighting_generation`] constructs this value, and only a
-/// scheduler-issued [`ObservationReadCompletionContext`] can turn it into a
-/// consumable frozen generation.
-///
-/// ```compile_fail
-/// use casa_imaging_runtime::PendingWeightingGeneration;
-///
-/// let _forged = PendingWeightingGeneration {};
-/// ```
 #[derive(Debug)]
-pub struct PendingWeightingGeneration {
+struct PendingWeightingGeneration {
     state: WeightingAlgorithmState,
     density_completion: SelectedObservationCompletion,
     sum_weight_completion: SelectedObservationCompletion,
     binding: WeightingGenerationBinding,
 }
 
-/// Drive both exhaustive owner traversals into an unbranded weighting generation.
-pub fn traverse_weighting_generation(
+fn traverse_weighting_generation(
     context: WorkExecutionContext<'_>,
     fragment: &WeightingPlanFragment<'_>,
     selected: &mut BoundSelectedObservation,
@@ -1277,20 +1484,7 @@ pub fn traverse_weighting_generation(
     })
 }
 
-/// Bind an owner-traversed generation to one settled scheduler work node.
-///
-/// A caller-created reconstruction state cannot bypass owner traversal or
-/// attempt binding:
-///
-/// ```compile_fail
-/// use casa_imaging_reconstruction::WeightingAlgorithmState;
-/// use casa_imaging_runtime::complete_weighting_generation;
-///
-/// fn bypass(state: WeightingAlgorithmState) {
-///     let _ = complete_weighting_generation(state);
-/// }
-/// ```
-pub fn complete_weighting_generation(
+fn complete_weighting_generation(
     pending: PendingWeightingGeneration,
     context: ObservationReadCompletionContext,
 ) -> Result<
@@ -1362,15 +1556,14 @@ fn validate_replay_completion(
 
 /// Replay algorithm result awaiting scheduler-issued attempt authority.
 #[derive(Debug)]
-pub struct PendingWeightingReplay {
+struct PendingWeightingReplay {
     state: WeightingReplaySummary,
     owner_completion: SelectedObservationCompletion,
     binding: WeightingGenerationBinding,
 }
 
 impl PendingWeightingReplay {
-    /// Bind the exhaustive replay to its owning ObservationRead work node.
-    pub fn bind(
+    fn bind(
         self,
         context: ObservationReadCompletionContext,
     ) -> Result<

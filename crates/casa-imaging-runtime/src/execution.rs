@@ -698,6 +698,7 @@ pub(crate) struct WorkExecutionContext {
     node: WorkNode,
     knobs: ExecutionKnobs,
     lease_epoch: u64,
+    cleanup: bool,
     resources: Vec<WorkResourceCapability>,
     allocations: Vec<WorkAllocationCapability>,
 }
@@ -721,6 +722,12 @@ impl WorkExecutionContext {
         self.lease_epoch
     }
 
+    /// Return whether this Release node was dispatched while draining a failed run.
+    #[must_use]
+    pub(crate) const fn is_cleanup(&self) -> bool {
+        self.cleanup
+    }
+
     /// Return only the scheduler-issued resource capabilities for this call.
     #[must_use]
     pub(crate) fn resources(&self) -> &[WorkResourceCapability] {
@@ -738,6 +745,7 @@ impl WorkExecutionContext {
             node: self.node.clone(),
             knobs: self.knobs.clone(),
             lease_epoch: self.lease_epoch,
+            cleanup: self.cleanup,
             resources: self
                 .resources
                 .iter()
@@ -1386,6 +1394,7 @@ impl<'plan> ExecutionScheduler<'plan> {
         node_id: &WorkNodeId,
     ) -> Result<Option<WorkExecutionContext>, ExecutionError> {
         let node = self.dag.nodes[node_id].clone();
+        let cleanup = self.states.get(node_id) == Some(&NodeState::CleanupPending);
         if !self.within_execution_limits(&node)? {
             return Ok(None);
         }
@@ -1474,6 +1483,7 @@ impl<'plan> ExecutionScheduler<'plan> {
             node,
             knobs: self.knobs.clone(),
             lease_epoch,
+            cleanup,
             resources,
             allocations: allocation_capabilities,
         }))
@@ -1679,14 +1689,7 @@ impl<'plan> ExecutionScheduler<'plan> {
         let active_external_allocations = self
             .active_allocations
             .keys()
-            .filter(|allocation| {
-                matches!(
-                    self.dag.logical_allocations[*allocation].purpose,
-                    AllocationPurpose::IoBuffer(
-                        crate::IoBufferKind::StorageManager | crate::IoBufferKind::MappedPageCache
-                    )
-                )
-            })
+            .filter(|allocation| self.has_external_release(allocation))
             .cloned()
             .collect::<BTreeSet<_>>();
         for (id, state) in &mut self.states {
@@ -1705,6 +1708,16 @@ impl<'plan> ExecutionScheduler<'plan> {
                 NodeState::Cancelled
             };
         }
+    }
+
+    fn has_external_release(&self, allocation: &AllocationId) -> bool {
+        self.dag.nodes.values().any(|node| {
+            node.kind == WorkKind::Release
+                && node
+                    .allocations
+                    .iter()
+                    .any(|use_| &use_.allocation == allocation)
+        })
     }
 
     pub(crate) fn quarantine(&self) -> Result<(), ExecutionError> {
@@ -3202,12 +3215,15 @@ fn validate_allocations(
         let Some(uses) = allocation_uses.get(&allocation.id) else {
             continue;
         };
-        if matches!(
-            allocation.purpose,
-            AllocationPurpose::IoBuffer(
-                crate::IoBufferKind::StorageManager | crate::IoBufferKind::MappedPageCache
+        let has_release_use = uses.iter().any(|(node, _)| node.kind == WorkKind::Release);
+        if has_release_use
+            || matches!(
+                allocation.purpose,
+                AllocationPurpose::IoBuffer(
+                    crate::IoBufferKind::StorageManager | crate::IoBufferKind::MappedPageCache
+                )
             )
-        ) {
+        {
             validate_external_release(nodes, allocation, uses)?;
         }
         if allocation.compatibility.access == AllocationAccess::ReadOnly {

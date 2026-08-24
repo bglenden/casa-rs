@@ -2054,6 +2054,7 @@ class MigrationMatrixTests(unittest.TestCase):
         )
         weighting_path = REPO_ROOT / "crates/casa-imaging-reconstruction/src/weighting.rs"
         runtime_weighting_path = REPO_ROOT / "crates/casa-imaging-runtime/src/weighting.rs"
+        runtime_execution_path = REPO_ROOT / "crates/casa-imaging-runtime/src/execution.rs"
         receipt_path = REPO_ROOT / "crates/casa-imaging-runtime/src/receipt.rs"
         model = model_path.read_text(encoding="utf-8")
         sample_model = sample_model_path.read_text(encoding="utf-8")
@@ -2061,6 +2062,7 @@ class MigrationMatrixTests(unittest.TestCase):
         bound_observation = bound_observation_path.read_text(encoding="utf-8")
         weighting = weighting_path.read_text(encoding="utf-8")
         runtime_weighting = runtime_weighting_path.read_text(encoding="utf-8")
+        runtime_execution = runtime_execution_path.read_text(encoding="utf-8")
         receipt = receipt_path.read_text(encoding="utf-8")
 
         one_pass = runtime_weighting.replace(
@@ -2251,7 +2253,9 @@ class MigrationMatrixTests(unittest.TestCase):
             )
 
         implicit_release = runtime_weighting.replace(
-            "        drop(frozen);", "        let _retained = frozen;", 1
+            "        self.phase = WeightingExecutionPhase::Empty;",
+            "        let _retained = &self.phase;",
+            1,
         )
         self.assertNotEqual(implicit_release, runtime_weighting)
         with self.assertRaisesRegex(
@@ -2276,8 +2280,8 @@ class MigrationMatrixTests(unittest.TestCase):
             )
 
         raw_frame_mapping = traversal_sample.replace(
-            "    let source_frequency_hz = convert_frequency_to_frame(",
-            "    let source_frequency_hz = bypass_frequency_conversion(",
+            "        convert_frequency_to_frame_with_frames(",
+            "        bypass_frequency_conversion(",
             1,
         )
         self.assertNotEqual(raw_frame_mapping, traversal_sample)
@@ -2300,6 +2304,143 @@ class MigrationMatrixTests(unittest.TestCase):
                 weighting_path=weighting_path,
                 runtime_weighting_path=runtime_weighting_path,
                 receipt_path=receipt_path,
+            )
+
+        source_only_frame = traversal_sample.replace(
+            "            Some(&output_frame),",
+            "            Some(&source_frame),",
+            1,
+        )
+        self.assertNotEqual(source_only_frame, traversal_sample)
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"bypasses owner-derived spectral mapping",
+        ):
+            checker.validate_t18_global_weighting_sources(
+                model,
+                sample_model,
+                source_only_frame,
+                bound_observation,
+                weighting,
+                runtime_weighting,
+                receipt,
+                model_path=model_path,
+                sample_model_path=sample_model_path,
+                traversal_sample_path=traversal_sample_path,
+                bound_observation_path=bound_observation_path,
+                weighting_path=weighting_path,
+                runtime_weighting_path=runtime_weighting_path,
+                receipt_path=receipt_path,
+            )
+
+        fungible_queue = runtime_weighting.replace(
+            ".filter(|claim| &claim.resource == queue)",
+            ".filter(|claim| is_selected_content_queue(&claim.resource))",
+            1,
+        )
+        self.assertNotEqual(fungible_queue, runtime_weighting)
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"exact queue authority",
+        ):
+            checker.validate_t18_global_weighting_sources(
+                model,
+                sample_model,
+                traversal_sample,
+                bound_observation,
+                weighting,
+                fungible_queue,
+                receipt,
+                model_path=model_path,
+                sample_model_path=sample_model_path,
+                traversal_sample_path=traversal_sample_path,
+                bound_observation_path=bound_observation_path,
+                weighting_path=weighting_path,
+                runtime_weighting_path=runtime_weighting_path,
+                receipt_path=receipt_path,
+            )
+
+        shrinking_terminal_block = weighting.replace(
+            "    samples: Vec<WeightingSampleValue>,",
+            "    samples: Box<[WeightingSampleValue]>,",
+            1,
+        )
+        self.assertNotEqual(shrinking_terminal_block, weighting)
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"one opaque W generation",
+        ):
+            checker.validate_t18_global_weighting_sources(
+                model,
+                sample_model,
+                traversal_sample,
+                bound_observation,
+                shrinking_terminal_block,
+                runtime_weighting,
+                receipt,
+                model_path=model_path,
+                sample_model_path=sample_model_path,
+                traversal_sample_path=traversal_sample_path,
+                bound_observation_path=bound_observation_path,
+                weighting_path=weighting_path,
+                runtime_weighting_path=runtime_weighting_path,
+                receipt_path=receipt_path,
+            )
+
+        public_raw_phase = runtime_weighting.replace(
+            "struct FrozenWeightingGeneration {",
+            "pub struct FrozenWeightingGeneration {",
+            1,
+        )
+        self.assertNotEqual(public_raw_phase, runtime_weighting)
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"one opaque lifecycle owner",
+        ):
+            checker.validate_t18_global_weighting_sources(
+                model,
+                sample_model,
+                traversal_sample,
+                bound_observation,
+                weighting,
+                public_raw_phase,
+                receipt,
+                model_path=model_path,
+                sample_model_path=sample_model_path,
+                traversal_sample_path=traversal_sample_path,
+                bound_observation_path=bound_observation_path,
+                weighting_path=weighting_path,
+                runtime_weighting_path=runtime_weighting_path,
+                receipt_path=receipt_path,
+            )
+
+        skipped_cleanup = runtime_execution.replace(
+            ".filter(|allocation| self.has_external_release(allocation))",
+            ".filter(|_| false)",
+            1,
+        )
+        self.assertNotEqual(skipped_cleanup, runtime_execution)
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"fail-closed scheduler release",
+        ):
+            checker.validate_t18_global_weighting_sources(
+                model,
+                sample_model,
+                traversal_sample,
+                bound_observation,
+                weighting,
+                runtime_weighting,
+                receipt,
+                runtime_execution=skipped_cleanup,
+                model_path=model_path,
+                sample_model_path=sample_model_path,
+                traversal_sample_path=traversal_sample_path,
+                bound_observation_path=bound_observation_path,
+                weighting_path=weighting_path,
+                runtime_weighting_path=runtime_weighting_path,
+                receipt_path=receipt_path,
+                runtime_execution_path=runtime_execution_path,
             )
 
 

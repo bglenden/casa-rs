@@ -42,7 +42,11 @@ use casa_imaging_model::{
 use casa_tables::ColumnSchema;
 use casa_types::measures::{
     EopValues, MeasuresProvider, MeasuresProviderState,
+    direction::{DirectionRef, MDirection},
+    epoch::{EpochRef, MEpoch},
+    frame::MeasFrame,
     frequency::{FrequencyRef, MFrequency},
+    position::MPosition,
 };
 use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::ArrayD;
@@ -525,8 +529,8 @@ fn real_ms_cube_traversal_maps_contributions_into_the_transformed_output_frame()
         2,
         SpectralSampling::Linear,
         SpectralWcs::Tabular {
-            channel_centres_hz: vec![1.3998e9, 1.39995e9],
-            channel_boundaries_hz: vec![1.399725e9, 1.399875e9, 1.400025e9],
+            channel_centres_hz: vec![1.4e9, 1.4001e9],
+            channel_boundaries_hz: vec![1.39995e9, 1.40005e9, 1.40015e9],
         },
     );
     let source = &problem.inputs().observation_snapshot().sources()[0];
@@ -547,6 +551,11 @@ fn real_ms_cube_traversal_maps_contributions_into_the_transformed_output_frame()
         expected_budget,
     )
     .expect("open independent frame-conversion oracle");
+    let expected_output_frame = MeasFrame::new()
+        .with_measures(expected_measures.provider())
+        .with_epoch(MEpoch::from_mjd(59_000.25, EpochRef::UTC))
+        .with_position(MPosition::new_itrf(-1_601_188.0, -5_041_977.0, 3_554_875.0))
+        .with_direction(MDirection::from_angles(1.0, -0.5, DirectionRef::J2000));
     let mut observation = BoundSelectedObservation::open(
         &problem,
         test_measures(&problem),
@@ -556,7 +565,7 @@ fn real_ms_cube_traversal_maps_contributions_into_the_transformed_output_frame()
         )],
     )
     .expect("bind transformed-frame traversal");
-    let output_centres_hz = [1.3998e9, 1.39995e9];
+    let output_centres_hz = [1.4e9, 1.4001e9];
     let mut values = Vec::new();
 
     let completion = observation
@@ -579,9 +588,19 @@ fn real_ms_cube_traversal_maps_contributions_into_the_transformed_output_frame()
                     .expect("TOPO to GEO")
                     .convert_to(FrequencyRef::BARY, &frame)
                     .expect("GEO to BARY")
-                    .convert_to(FrequencyRef::LSRK, &frame)
+                    .convert_to(FrequencyRef::LSRK, &expected_output_frame)
                     .expect("BARY to LSRK")
                     .hz();
+            let source_only_hz =
+                MFrequency::new(sample.address.frequency_centre_hz, FrequencyRef::TOPO)
+                    .convert_to(FrequencyRef::GEO, &frame)
+                    .expect("source-only TOPO to GEO")
+                    .convert_to(FrequencyRef::BARY, &frame)
+                    .expect("source-only GEO to BARY")
+                    .convert_to(FrequencyRef::LSRK, &frame)
+                    .expect("source-only BARY to LSRK")
+                    .hz();
+            assert!((transformed_hz - source_only_hz).abs() > 1.0);
             let expected =
                 if (output_centres_hz[0]..=output_centres_hz[1]).contains(&transformed_hz) {
                     let upper = ((transformed_hz - output_centres_hz[0])
@@ -597,7 +616,12 @@ fn real_ms_cube_traversal_maps_contributions_into_the_transformed_output_frame()
                 .map(|contribution| (contribution.output_channel(), contribution.factor()))
                 .collect::<Vec<_>>();
             assert_eq!(actual, expected);
-            values.push((sample.address.channel_index, transformed_hz, expected));
+            values.push((
+                sample.address.channel_index,
+                transformed_hz,
+                source_only_hz,
+                expected,
+            ));
             Ok::<_, Infallible>(())
         })
         .expect("owner converts each selected frequency before output mapping");
@@ -609,15 +633,16 @@ fn real_ms_cube_traversal_maps_contributions_into_the_transformed_output_frame()
     assert_eq!(completion.sample_count(), 8);
     assert_eq!(values.len(), 8);
     assert_eq!(values[0].0, 0);
-    assert_eq!(values[0].2.len(), 2);
+    assert_eq!(values[0].3, vec![(0, 0.43484688), (1, 0.5651531)]);
     assert!(
-        values[0].1 <= output_centres_hz[1] && 1.4e9 > output_centres_hz[1],
-        "TOPO to LSRK must move channel zero across the upper contribution boundary"
+        values[0].2 < output_centres_hz[0]
+            && (output_centres_hz[0]..=output_centres_hz[1]).contains(&values[0].1),
+        "the fixed output anchor must move channel zero into a different contribution interval"
     );
-    assert_eq!(values[1].2, values[0].2);
+    assert_eq!(values[1].3, values[0].3);
     assert_eq!(values[2].0, 2);
-    assert!(values[2].2.is_empty());
-    assert_eq!(values[3].2, values[2].2);
+    assert!(values[2].3.is_empty());
+    assert_eq!(values[3].3, values[2].3);
 }
 
 #[test]
