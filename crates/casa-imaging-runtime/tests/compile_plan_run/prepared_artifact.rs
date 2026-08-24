@@ -4,6 +4,20 @@ use super::*;
 
 const PREPARED_PAYLOAD_BYTES: u64 = (3 * 3 + 5 * 5) * 8;
 
+fn prepared_storage_domain() -> &'static StorageDomain {
+    authority()
+        .topology()
+        .storage_domains
+        .iter()
+        .find(|domain| domain.id == StorageDomainId::new("atomic-output"))
+        .expect("prepared storage domain")
+}
+
+fn prepared_tempdir() -> tempfile::TempDir {
+    fs::create_dir_all(&prepared_storage_domain().root).expect("prepared storage root");
+    tempfile::tempdir_in(&prepared_storage_domain().root).expect("prepared temporary directory")
+}
+
 fn directory_entry_names(path: &std::path::Path) -> BTreeSet<std::ffi::OsString> {
     fs::read_dir(path)
         .expect("directory inventory")
@@ -83,7 +97,7 @@ struct PreparedSourceFiles {
 
 impl PreparedSourceFiles {
     fn new() -> Self {
-        let directory = tempfile::tempdir().expect("prepared source directory");
+        let directory = prepared_tempdir();
         let imaging_path = directory.path().join("imaging.bin");
         let weight_path = directory.path().join("weight.bin");
         let (imaging, weight) = prepared_payloads();
@@ -110,11 +124,13 @@ impl PreparedSourceFiles {
                     "imaging",
                     self.imaging.clone(),
                     Sha256::digest(imaging).into(),
+                    prepared_storage_domain(),
                 )?,
                 PreparedArtifactSourceSegment::new(
                     "weight",
                     self.weight.clone(),
                     Sha256::digest(weight).into(),
+                    prepared_storage_domain(),
                 )?,
             ],
         )
@@ -617,7 +633,7 @@ fn prepared_storage_resource(
     use_kind: StorageUseKind,
 ) -> LeaseResource {
     LeaseResource::Storage {
-        demand_id: format!("private-prepared-cache-{}", descriptor.cache_identity()),
+        demand_id: format!("private-prepared-cache-{}", descriptor.identity()),
         use_kind,
     }
 }
@@ -835,11 +851,12 @@ fn prepared_adapter_observed(
 #[test]
 fn prepared_streaming_residency_is_admitted_once_without_overlapping_slots() {
     let problem = compile(request(1)).expect("single-charge prepared problem");
-    let cache_directory = tempfile::tempdir().expect("single-charge prepared cache");
+    let cache_directory = prepared_tempdir();
     let budget =
         PreparedArtifactBudget::new(32_768, 800, 65_536).expect("single-charge constrained budget");
-    let store = PreparedArtifactStore::open(cache_directory.path(), budget)
-        .expect("single-charge prepared store");
+    let store =
+        PreparedArtifactStore::open(cache_directory.path(), prepared_storage_domain(), budget)
+            .expect("single-charge prepared store");
     let descriptor = prepared_descriptor(&store, &problem);
     let reservation = store
         .reservation(&descriptor, PreparedArtifactOperation::Generate)
@@ -851,11 +868,32 @@ fn prepared_streaming_residency_is_admitted_once_without_overlapping_slots() {
     );
     assert_eq!(reservation.source_descriptor_bytes(), 0);
     assert_eq!(reservation.file_descriptors(), 2);
-    let work = prepared_physical_work(
-        &problem,
+    let base = physical_work_for_problem(&problem, 6);
+    let base_alternative = base.execution_dag().resource_alternative();
+    let base_locks = base_alternative.demand.locks;
+    let base_file_descriptors = base_alternative.demand.file_descriptors;
+    let base_storage_manager = base_alternative.demand.io_buffers.storage_manager_bytes;
+    let work = PreparedArtifactPlanFragment::new(
         &descriptor,
         &store,
         PreparedArtifactOperation::Generate,
+        WorkNodeId::new("execute"),
+        WorkNodeId::new("transaction-commit"),
+        implementation(6),
+    )
+    .compose(&base)
+    .expect("single-charge prepared composition");
+    let composed = work.execution_dag().resource_alternative();
+    assert_eq!(composed.demand.locks.hard(), base_locks.hard().max(2));
+    assert_eq!(
+        composed.demand.file_descriptors.hard(),
+        base_file_descriptors
+            .hard()
+            .max(reservation.file_descriptors())
+    );
+    assert_eq!(
+        composed.demand.io_buffers.storage_manager_bytes,
+        base_storage_manager.max(reservation.resident_buffer_bytes())
     );
 
     let prepared_demands = work
@@ -889,7 +927,10 @@ fn prepared_streaming_residency_is_admitted_once_without_overlapping_slots() {
     assert_eq!(node.allocations.len(), 1);
     assert_eq!(
         node.allocations[0].allocation,
-        AllocationId::new("prepared-resident-buffer-generate")
+        AllocationId::new(format!(
+            "prepared-resident-buffer-generate-{}",
+            descriptor.identity()
+        ))
     );
 
     let balanced_host_limit = 1_048_576 * 3 / 4;
@@ -916,9 +957,79 @@ fn prepared_streaming_residency_is_admitted_once_without_overlapping_slots() {
 }
 
 #[test]
+fn distinct_prepared_cells_compose_without_resource_identity_collisions() {
+    let problem = compile(request(1)).expect("multi-cell prepared problem");
+    let cache = prepared_tempdir();
+    let store =
+        PreparedArtifactStore::open(cache.path(), prepared_storage_domain(), prepared_budget())
+            .expect("multi-cell prepared store");
+    let first = prepared_descriptor_with_registration_and_cell(
+        &store,
+        &problem,
+        prepared_registration(),
+        prepared_cell(1.0e9),
+    );
+    let second = prepared_descriptor_with_registration_and_cell(
+        &store,
+        &problem,
+        prepared_registration(),
+        prepared_cell(1.1e9),
+    );
+    assert_ne!(first.identity(), second.identity());
+
+    let base = physical_work_for_problem(&problem, 6);
+    let first_work = PreparedArtifactPlanFragment::new(
+        &first,
+        &store,
+        PreparedArtifactOperation::Generate,
+        WorkNodeId::new("execute"),
+        WorkNodeId::new("transaction-commit"),
+        implementation(6),
+    )
+    .compose(&base)
+    .expect("first prepared cell");
+    let composed = PreparedArtifactPlanFragment::new(
+        &second,
+        &store,
+        PreparedArtifactOperation::Generate,
+        WorkNodeId::new("execute"),
+        WorkNodeId::new("transaction-commit"),
+        implementation(6),
+    )
+    .compose(&first_work)
+    .expect("second prepared cell");
+
+    let prepared_allocations = composed
+        .execution_dag()
+        .logical_allocations()
+        .keys()
+        .filter(|id| {
+            id.as_str()
+                .starts_with("prepared-resident-buffer-generate-")
+        })
+        .collect::<BTreeSet<_>>();
+    assert_eq!(prepared_allocations.len(), 2);
+    let prepared_demands = composed
+        .execution_dag()
+        .resource_alternative()
+        .demand
+        .storage
+        .iter()
+        .filter(|demand| demand.demand_id.starts_with("private-prepared-cache-"))
+        .map(|demand| &demand.demand_id)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(prepared_demands.len(), 2);
+}
+
+#[test]
 fn prepared_sources_are_bounded_accounted_files_and_never_casa_tables() {
     assert!(matches!(
-        PreparedArtifactSourceSegment::new("imaging", PathBuf::from("relative.bin"), [0; 32],),
+        PreparedArtifactSourceSegment::new(
+            "imaging",
+            PathBuf::from("relative.bin"),
+            [0; 32],
+            prepared_storage_domain(),
+        ),
         Err(PreparedArtifactError::InvalidSource)
     ));
     assert!(matches!(
@@ -929,14 +1040,39 @@ fn prepared_sources_are_bounded_accounted_files_and_never_casa_tables() {
                 "x".repeat(PreparedArtifactSourceSegment::MAX_PATH_BYTES + 1)
             )),
             [0; 32],
+            prepared_storage_domain(),
         ),
         Err(PreparedArtifactError::InvalidSource)
     ));
 
+    let source_root = prepared_tempdir();
+    let other_root = prepared_tempdir();
+    let source_path = source_root.path().join("imaging.bin");
+    fs::write(&source_path, []).expect("domain-mismatch source");
+    let mut wrong_source_domain = prepared_storage_domain().clone();
+    wrong_source_domain.root = other_root.path().to_path_buf();
+    assert!(matches!(
+        PreparedArtifactSourceSegment::new(
+            "imaging",
+            source_path,
+            Sha256::digest([]).into(),
+            &wrong_source_domain,
+        ),
+        Err(PreparedArtifactError::InvalidSource)
+    ));
+    assert!(matches!(
+        PreparedArtifactStore::open(source_root.path(), &wrong_source_domain, prepared_budget(),),
+        Err(PreparedArtifactError::InvalidDescriptor)
+    ));
+
     let problem = compile(request(1)).expect("CASA-source problem");
-    let cache_directory = tempfile::tempdir().expect("CASA-source private cache");
-    let store = PreparedArtifactStore::open(cache_directory.path(), prepared_budget())
-        .expect("CASA-source store");
+    let cache_directory = prepared_tempdir();
+    let store = PreparedArtifactStore::open(
+        cache_directory.path(),
+        prepared_storage_domain(),
+        prepared_budget(),
+    )
+    .expect("CASA-source store");
     let descriptor = prepared_descriptor(&store, &problem);
     let operation = PreparedArtifactOperation::Load;
     let plan = plan(
@@ -952,7 +1088,7 @@ fn prepared_sources_are_bounded_accounted_files_and_never_casa_tables() {
         },
     )
     .expect("CASA-source plan");
-    let casa_table = tempfile::tempdir().expect("CASA table source");
+    let casa_table = prepared_tempdir();
     fs::write(casa_table.path().join("table.dat"), b"CASA table marker")
         .expect("CASA table marker");
     let (imaging, _) = prepared_payloads();
@@ -961,7 +1097,7 @@ fn prepared_sources_are_bounded_accounted_files_and_never_casa_tables() {
     let mut adapter = PreparedOperationAdapter::new(operation, store, descriptor.clone());
     adapter.sources.as_mut().expect("load sources").imaging = casa_imaging;
     let (registry, _) = prepared_registry(adapter);
-    let receipts_directory = tempfile::tempdir().expect("CASA-source receipts");
+    let receipts_directory = prepared_tempdir();
     let receipts = ExecutionReceiptStore::new(
         receipts_directory.path(),
         ReceiptRetention::new(4, 1_000_000).expect("CASA-source retention"),
@@ -1016,9 +1152,10 @@ fn cold_load_rejects_missing_mismatched_unlisted_and_wrong_producer_sources() {
     ];
 
     for (index, (case, expected)) in cases.into_iter().enumerate() {
-        let cache = tempfile::tempdir().expect("source-binding cache");
-        let store = PreparedArtifactStore::open(cache.path(), prepared_budget())
-            .expect("source-binding store");
+        let cache = prepared_tempdir();
+        let store =
+            PreparedArtifactStore::open(cache.path(), prepared_storage_domain(), prepared_budget())
+                .expect("source-binding store");
         let descriptor = prepared_descriptor(&store, &problem);
         let planned_operation = if case == "unlisted" {
             PreparedArtifactOperation::Generate
@@ -1054,7 +1191,7 @@ fn cold_load_rejects_missing_mismatched_unlisted_and_wrong_producer_sources() {
             _ => unreachable!("complete source-binding case table"),
         }
         let (registry, _) = prepared_registry(adapter);
-        let receipt_directory = tempfile::tempdir().expect("source-binding receipts");
+        let receipt_directory = prepared_tempdir();
         let receipts = ExecutionReceiptStore::new(
             receipt_directory.path(),
             ReceiptRetention::new(4, 1_000_000).expect("source-binding retention"),
@@ -1099,21 +1236,33 @@ fn cold_load_rejects_missing_mismatched_unlisted_and_wrong_producer_sources() {
 #[test]
 fn cold_load_source_identity_is_owned_and_accounted_by_its_predecessor_receipt() {
     let problem = compile(request(1)).expect("source-receipt problem");
-    let cache = tempfile::tempdir().expect("source-receipt cache");
+    let cache = prepared_tempdir();
     let store =
-        PreparedArtifactStore::open(cache.path(), prepared_budget()).expect("source-receipt store");
+        PreparedArtifactStore::open(cache.path(), prepared_storage_domain(), prepared_budget())
+            .expect("source-receipt store");
     let descriptor = prepared_descriptor(&store, &problem);
+    let work = prepared_physical_work(
+        &problem,
+        &descriptor,
+        &store,
+        PreparedArtifactOperation::Load,
+    );
+    let cache_demand_id = format!("private-prepared-cache-{}", descriptor.identity());
+    let source_read_resource = work.execution_dag().nodes()
+        [&descriptor.work_node_id(PreparedArtifactOperation::Load)]
+        .claims
+        .iter()
+        .find_map(|claim| match &claim.resource {
+            LeaseResource::StorageReadRate { demand_id } if demand_id != &cache_demand_id => {
+                Some(claim.resource.clone())
+            }
+            _ => None,
+        })
+        .expect("separate cold-source read claim");
     let plan = plan(
         &problem,
         PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
-        |problem, _| {
-            Ok::<_, ()>(prepared_physical_work(
-                problem,
-                &descriptor,
-                &store,
-                PreparedArtifactOperation::Load,
-            ))
-        },
+        |_, _| Ok::<_, ()>(work),
     )
     .expect("source-receipt plan");
     let adapter =
@@ -1126,7 +1275,7 @@ fn cold_load_source_identity_is_owned_and_accounted_by_its_predecessor_receipt()
         .expect("plan-bound source")
         .identity();
     let (registry, _) = prepared_registry(adapter);
-    let receipt_directory = tempfile::tempdir().expect("source-receipt directory");
+    let receipt_directory = prepared_tempdir();
     let receipts = ExecutionReceiptStore::new(
         receipt_directory.path(),
         ReceiptRetention::new(4, 1_000_000).expect("source-receipt retention"),
@@ -1162,14 +1311,24 @@ fn cold_load_source_identity_is_owned_and_accounted_by_its_predecessor_receipt()
         receipt.artifact_actual_bytes(source_identity),
         Some(PREPARED_PAYLOAD_BYTES)
     );
+    assert_eq!(
+        receipt.actual_resource_peak(
+            &descriptor.work_node_id(PreparedArtifactOperation::Load),
+            &source_read_resource,
+            &ClaimLifetime::Work,
+        ),
+        Some(1),
+        "cold source reads are attributed to their source-domain demand"
+    );
 }
 
 #[test]
 fn cold_load_cannot_run_without_its_predecessor_source_receipt() {
     let problem = compile(request(1)).expect("missing-source-receipt problem");
-    let cache = tempfile::tempdir().expect("missing-source-receipt cache");
-    let store = PreparedArtifactStore::open(cache.path(), prepared_budget())
-        .expect("missing-source-receipt store");
+    let cache = prepared_tempdir();
+    let store =
+        PreparedArtifactStore::open(cache.path(), prepared_storage_domain(), prepared_budget())
+            .expect("missing-source-receipt store");
     let descriptor = prepared_descriptor(&store, &problem);
     let plan = plan(
         &problem,
@@ -1206,7 +1365,7 @@ fn cold_load_cannot_run_without_its_predecessor_source_receipt() {
         .expect("source producer measurements")
         .1
         .retain(|measurement| measurement.planned_identity() != source_identity);
-    let receipt_directory = tempfile::tempdir().expect("missing-source-receipt directory");
+    let receipt_directory = prepared_tempdir();
     let receipts = ExecutionReceiptStore::new(
         receipt_directory.path(),
         ReceiptRetention::new(4, 1_000_000).expect("missing-source-receipt retention"),
@@ -1246,19 +1405,22 @@ fn cold_load_cannot_run_without_its_predecessor_source_receipt() {
 }
 
 #[test]
-fn public_prepared_generate_load_and_reuse_are_plan_and_receipt_bound() {
+fn public_prepared_generate_reuse_and_load_are_plan_and_receipt_bound() {
     let problem = compile(request(1)).expect("prepared compiled problem");
-    let receipts_directory = tempfile::tempdir().expect("prepared receipts");
+    let receipts_directory = prepared_tempdir();
     let receipts = ExecutionReceiptStore::new(
         receipts_directory.path(),
         ReceiptRetention::new(16, 2_000_000).expect("prepared receipt retention"),
     )
     .expect("prepared receipt store");
 
-    let generated_directory = tempfile::tempdir().expect("generated cache");
-    let generated_store =
-        PreparedArtifactStore::open(generated_directory.path(), prepared_budget())
-            .expect("generated store");
+    let generated_directory = prepared_tempdir();
+    let generated_store = PreparedArtifactStore::open(
+        generated_directory.path(),
+        prepared_storage_domain(),
+        prepared_budget(),
+    )
+    .expect("generated store");
     let generated_descriptor = prepared_descriptor(&generated_store, &problem);
     let generated_reservation = generated_store
         .reservation(&generated_descriptor, PreparedArtifactOperation::Generate)
@@ -1445,6 +1607,7 @@ fn public_prepared_generate_load_and_reuse_are_plan_and_receipt_bound() {
 
     let narrower_store = PreparedArtifactStore::open(
         generated_directory.path(),
+        prepared_storage_domain(),
         PreparedArtifactBudget::new(32_768, 3, 64).expect("narrower cache policy"),
     )
     .expect("same-root store with narrower policy");
@@ -1468,8 +1631,12 @@ fn public_prepared_generate_load_and_reuse_are_plan_and_receipt_bound() {
     );
     drop((narrower_descriptor, narrower_store));
 
-    let reuse_store = PreparedArtifactStore::open(generated_directory.path(), prepared_budget())
-        .expect("reuse store");
+    let reuse_store = PreparedArtifactStore::open(
+        generated_directory.path(),
+        prepared_storage_domain(),
+        prepared_budget(),
+    )
+    .expect("reuse store");
     let reuse_descriptor = prepared_descriptor(&reuse_store, &problem);
     assert_eq!(reuse_descriptor, generated_descriptor);
     let reuse_plan = plan(
@@ -1541,9 +1708,13 @@ fn public_prepared_generate_load_and_reuse_are_plan_and_receipt_bound() {
         None
     );
 
-    let loaded_directory = tempfile::tempdir().expect("loaded cache");
-    let loaded_store = PreparedArtifactStore::open(loaded_directory.path(), prepared_budget())
-        .expect("loaded store");
+    let loaded_directory = prepared_tempdir();
+    let loaded_store = PreparedArtifactStore::open(
+        loaded_directory.path(),
+        prepared_storage_domain(),
+        prepared_budget(),
+    )
+    .expect("loaded store");
     let loaded_descriptor = prepared_descriptor(&loaded_store, &problem);
     assert_ne!(
         loaded_descriptor.cache_identity(),
@@ -1641,10 +1812,24 @@ fn public_prepared_generate_load_and_reuse_are_plan_and_receipt_bound() {
         generated_descriptor.work_node_id(PreparedArtifactOperation::Generate),
         loaded_descriptor.work_node_id(PreparedArtifactOperation::Load)
     );
+}
 
-    let mismatch_directory = tempfile::tempdir().expect("operation mismatch cache");
-    let mismatch_store = PreparedArtifactStore::open(mismatch_directory.path(), prepared_budget())
-        .expect("operation mismatch store");
+#[test]
+fn prepared_operation_identity_cannot_authorize_a_different_operation() {
+    let problem = compile(request(1)).expect("operation mismatch problem");
+    let receipts_directory = prepared_tempdir();
+    let receipts = ExecutionReceiptStore::new(
+        receipts_directory.path(),
+        ReceiptRetention::new(8, 1_000_000).expect("operation mismatch retention"),
+    )
+    .expect("operation mismatch receipt store");
+    let mismatch_directory = prepared_tempdir();
+    let mismatch_store = PreparedArtifactStore::open(
+        mismatch_directory.path(),
+        prepared_storage_domain(),
+        prepared_budget(),
+    )
+    .expect("operation mismatch store");
     let mismatch_descriptor = prepared_descriptor(&mismatch_store, &problem);
     let mismatch_plan = plan(
         &problem,
@@ -1705,11 +1890,24 @@ fn public_prepared_generate_load_and_reuse_are_plan_and_receipt_bound() {
         0,
         "the rejected operation cannot publish"
     );
+}
 
-    let owner_mismatch_directory = tempfile::tempdir().expect("owner mismatch cache");
-    let owner_mismatch_store =
-        PreparedArtifactStore::open(owner_mismatch_directory.path(), prepared_budget())
-            .expect("owner mismatch store");
+#[test]
+fn prepared_owner_and_cell_identities_fail_closed() {
+    let problem = compile(request(1)).expect("owner identity problem");
+    let receipts_directory = prepared_tempdir();
+    let receipts = ExecutionReceiptStore::new(
+        receipts_directory.path(),
+        ReceiptRetention::new(8, 1_000_000).expect("owner identity retention"),
+    )
+    .expect("owner identity receipt store");
+    let owner_mismatch_directory = prepared_tempdir();
+    let owner_mismatch_store = PreparedArtifactStore::open(
+        owner_mismatch_directory.path(),
+        prepared_storage_domain(),
+        prepared_budget(),
+    )
+    .expect("owner mismatch store");
     let spoofed_registration = PreparedArtifactRegistration::new(
         "untrusted-catalog",
         "untrusted-provider",
@@ -1874,12 +2072,17 @@ fn public_prepared_generate_load_and_reuse_are_plan_and_receipt_bound() {
 #[test]
 fn prepared_content_identity_is_independent_of_cache_location_and_policy_for_every_kind() {
     let problem = compile(request(1)).expect("relocatable prepared problem");
-    let first_root = tempfile::tempdir().expect("first prepared root");
-    let second_root = tempfile::tempdir().expect("second prepared root");
-    let first = PreparedArtifactStore::open(first_root.path(), prepared_budget())
-        .expect("first prepared store");
+    let first_root = prepared_tempdir();
+    let second_root = prepared_tempdir();
+    let first = PreparedArtifactStore::open(
+        first_root.path(),
+        prepared_storage_domain(),
+        prepared_budget(),
+    )
+    .expect("first prepared store");
     let second = PreparedArtifactStore::open(
         second_root.path(),
+        prepared_storage_domain(),
         PreparedArtifactBudget::new(65_536, 8, 128).expect("different cache policy"),
     )
     .expect("second prepared store");
@@ -1955,9 +2158,13 @@ fn prepared_content_identity_is_independent_of_cache_location_and_policy_for_eve
 #[test]
 fn public_prepared_scientific_keys_are_exact_typed_and_bounded() {
     let problem = compile(request(1)).expect("prepared scientific-key problem");
-    let directory = tempfile::tempdir().expect("prepared scientific-key cache");
-    let store = PreparedArtifactStore::open(directory.path(), prepared_budget())
-        .expect("prepared scientific-key store");
+    let directory = prepared_tempdir();
+    let store = PreparedArtifactStore::open(
+        directory.path(),
+        prepared_storage_domain(),
+        prepared_budget(),
+    )
+    .expect("prepared scientific-key store");
     let registration = prepared_registration();
     let (catalog, owner_implementation) = prepared_catalog(registration.clone());
     let cell = |w_coordinate,
@@ -2258,9 +2465,13 @@ fn public_prepared_scientific_keys_are_exact_typed_and_bounded() {
 #[test]
 fn convolution_function_pair_requires_shared_sampling() {
     let problem = compile(request(1)).expect("paired-sampling problem");
-    let directory = tempfile::tempdir().expect("paired-sampling cache");
-    let store = PreparedArtifactStore::open(directory.path(), prepared_budget())
-        .expect("paired-sampling store");
+    let directory = prepared_tempdir();
+    let store = PreparedArtifactStore::open(
+        directory.path(),
+        prepared_storage_domain(),
+        prepared_budget(),
+    )
+    .expect("paired-sampling store");
     let (catalog, implementation) = prepared_catalog(prepared_registration());
     let imaging = PreparedArtifactPlaneDescriptor::new(
         [3, 3],
@@ -2298,16 +2509,20 @@ fn convolution_function_pair_requires_shared_sampling() {
 #[test]
 fn public_prepared_reuse_receipts_fail_closed_rejections() {
     let problem = compile(request(1)).expect("prepared rejection problem");
-    let receipts_directory = tempfile::tempdir().expect("rejection receipts");
+    let receipts_directory = prepared_tempdir();
     let receipts = ExecutionReceiptStore::new(
         receipts_directory.path(),
         ReceiptRetention::new(16, 2_000_000).expect("rejection receipt retention"),
     )
     .expect("rejection receipt store");
 
-    let missing_directory = tempfile::tempdir().expect("missing cache");
-    let missing_store = PreparedArtifactStore::open(missing_directory.path(), prepared_budget())
-        .expect("missing store");
+    let missing_directory = prepared_tempdir();
+    let missing_store = PreparedArtifactStore::open(
+        missing_directory.path(),
+        prepared_storage_domain(),
+        prepared_budget(),
+    )
+    .expect("missing store");
     let missing_descriptor = prepared_descriptor(&missing_store, &problem);
     let missing_plan = plan(
         &problem,
@@ -2385,9 +2600,13 @@ fn public_prepared_reuse_receipts_fail_closed_rejections() {
         PreparedArtifactRejection::Missing,
     );
 
-    let corrupt_directory = tempfile::tempdir().expect("corrupt cache");
-    let generate_store = PreparedArtifactStore::open(corrupt_directory.path(), prepared_budget())
-        .expect("corrupt seed store");
+    let corrupt_directory = prepared_tempdir();
+    let generate_store = PreparedArtifactStore::open(
+        corrupt_directory.path(),
+        prepared_storage_domain(),
+        prepared_budget(),
+    )
+    .expect("corrupt seed store");
     let generate_descriptor = prepared_descriptor(&generate_store, &problem);
     let generate_plan = plan(
         &problem,
@@ -2430,8 +2649,12 @@ fn public_prepared_reuse_receipts_fail_closed_rejections() {
     bytes[0] ^= 1;
     fs::write(&payload, bytes).expect("corrupt payload");
 
-    let corrupt_store = PreparedArtifactStore::open(corrupt_directory.path(), prepared_budget())
-        .expect("corrupt reuse store");
+    let corrupt_store = PreparedArtifactStore::open(
+        corrupt_directory.path(),
+        prepared_storage_domain(),
+        prepared_budget(),
+    )
+    .expect("corrupt reuse store");
     let corrupt_descriptor = prepared_descriptor(&corrupt_store, &problem);
     let corrupt_plan = plan(
         &problem,
@@ -2517,10 +2740,13 @@ fn public_prepared_reuse_receipts_fail_closed_rejections() {
         PreparedArtifactRejection::Corrupt,
     );
 
-    let incomplete_directory = tempfile::tempdir().expect("incomplete cache");
-    let incomplete_store =
-        PreparedArtifactStore::open(incomplete_directory.path(), prepared_budget())
-            .expect("incomplete seed store");
+    let incomplete_directory = prepared_tempdir();
+    let incomplete_store = PreparedArtifactStore::open(
+        incomplete_directory.path(),
+        prepared_storage_domain(),
+        prepared_budget(),
+    )
+    .expect("incomplete seed store");
     let incomplete_descriptor = prepared_descriptor(&incomplete_store, &problem);
     assert!(matches!(
         execute_prepared_operation(
@@ -2542,9 +2768,12 @@ fn public_prepared_reuse_receipts_fail_closed_rejections() {
         .join("objects-v3")
         .join(incomplete_descriptor.identity().to_string());
     fs::remove_file(incomplete_object.join("payload.bin")).expect("remove prepared payload");
-    let incomplete_store =
-        PreparedArtifactStore::open(incomplete_directory.path(), prepared_budget())
-            .expect("incomplete reuse store");
+    let incomplete_store = PreparedArtifactStore::open(
+        incomplete_directory.path(),
+        prepared_storage_domain(),
+        prepared_budget(),
+    )
+    .expect("incomplete reuse store");
     assert_eq!(
         execute_prepared_operation(
             &problem,
@@ -2572,10 +2801,13 @@ fn public_prepared_reuse_receipts_fail_closed_rejections() {
         PreparedArtifactRejection::Incomplete,
     );
 
-    let incompatible_directory = tempfile::tempdir().expect("incompatible cache");
-    let incompatible_store =
-        PreparedArtifactStore::open(incompatible_directory.path(), prepared_budget())
-            .expect("incompatible seed store");
+    let incompatible_directory = prepared_tempdir();
+    let incompatible_store = PreparedArtifactStore::open(
+        incompatible_directory.path(),
+        prepared_storage_domain(),
+        prepared_budget(),
+    )
+    .expect("incompatible seed store");
     let incompatible_descriptor = prepared_descriptor(&incompatible_store, &problem);
     assert!(matches!(
         execute_prepared_operation(
@@ -2607,9 +2839,12 @@ fn public_prepared_reuse_receipts_fail_closed_rejections() {
         serde_json::to_vec_pretty(&manifest).expect("mismatched manifest JSON"),
     )
     .expect("write mismatched manifest");
-    let incompatible_store =
-        PreparedArtifactStore::open(incompatible_directory.path(), prepared_budget())
-            .expect("incompatible reuse store");
+    let incompatible_store = PreparedArtifactStore::open(
+        incompatible_directory.path(),
+        prepared_storage_domain(),
+        prepared_budget(),
+    )
+    .expect("incompatible reuse store");
     assert_eq!(
         execute_prepared_operation(
             &problem,
@@ -2637,10 +2872,13 @@ fn public_prepared_reuse_receipts_fail_closed_rejections() {
         PreparedArtifactRejection::Incompatible,
     );
 
-    let oversized_manifest_directory = tempfile::tempdir().expect("oversized manifest cache");
-    let oversized_manifest_store =
-        PreparedArtifactStore::open(oversized_manifest_directory.path(), prepared_budget())
-            .expect("oversized manifest seed store");
+    let oversized_manifest_directory = prepared_tempdir();
+    let oversized_manifest_store = PreparedArtifactStore::open(
+        oversized_manifest_directory.path(),
+        prepared_storage_domain(),
+        prepared_budget(),
+    )
+    .expect("oversized manifest seed store");
     let oversized_manifest_descriptor = prepared_descriptor(&oversized_manifest_store, &problem);
     assert!(matches!(
         execute_prepared_operation(
@@ -2664,9 +2902,12 @@ fn public_prepared_reuse_receipts_fail_closed_rejections() {
         .join("manifest.json");
     fs::write(&oversized_manifest_path, vec![b'{'; 16 * 1024 + 1])
         .expect("write oversized manifest");
-    let oversized_manifest_store =
-        PreparedArtifactStore::open(oversized_manifest_directory.path(), prepared_budget())
-            .expect("oversized manifest reuse store");
+    let oversized_manifest_store = PreparedArtifactStore::open(
+        oversized_manifest_directory.path(),
+        prepared_storage_domain(),
+        prepared_budget(),
+    )
+    .expect("oversized manifest reuse store");
     assert_eq!(
         execute_prepared_operation(
             &problem,
@@ -2694,10 +2935,13 @@ fn public_prepared_reuse_receipts_fail_closed_rejections() {
         PreparedArtifactRejection::Incompatible,
     );
 
-    let nonfinite_directory = tempfile::tempdir().expect("nonfinite cache");
-    let nonfinite_store =
-        PreparedArtifactStore::open(nonfinite_directory.path(), prepared_budget())
-            .expect("nonfinite seed store");
+    let nonfinite_directory = prepared_tempdir();
+    let nonfinite_store = PreparedArtifactStore::open(
+        nonfinite_directory.path(),
+        prepared_storage_domain(),
+        prepared_budget(),
+    )
+    .expect("nonfinite seed store");
     let nonfinite_descriptor = prepared_descriptor(&nonfinite_store, &problem);
     assert!(matches!(
         execute_prepared_operation(
@@ -2740,9 +2984,12 @@ fn public_prepared_reuse_receipts_fail_closed_rejections() {
         serde_json::to_vec_pretty(&manifest).expect("nonfinite manifest JSON"),
     )
     .expect("write nonfinite manifest");
-    let nonfinite_store =
-        PreparedArtifactStore::open(nonfinite_directory.path(), prepared_budget())
-            .expect("nonfinite reuse store");
+    let nonfinite_store = PreparedArtifactStore::open(
+        nonfinite_directory.path(),
+        prepared_storage_domain(),
+        prepared_budget(),
+    )
+    .expect("nonfinite reuse store");
     assert_eq!(
         execute_prepared_operation(
             &problem,
@@ -2774,9 +3021,13 @@ fn public_prepared_reuse_receipts_fail_closed_rejections() {
 #[test]
 fn failed_prepared_receipt_retains_materialization_eviction_and_io_evidence() {
     let problem = compile(request(1)).expect("prepared failure problem");
-    let cache_directory = tempfile::tempdir().expect("prepared failure cache");
-    let store = PreparedArtifactStore::open(cache_directory.path(), prepared_budget())
-        .expect("prepared failure store");
+    let cache_directory = prepared_tempdir();
+    let store = PreparedArtifactStore::open(
+        cache_directory.path(),
+        prepared_storage_domain(),
+        prepared_budget(),
+    )
+    .expect("prepared failure store");
     let descriptor = prepared_descriptor(&store, &problem);
     let operation = PreparedArtifactOperation::Generate;
     let plan = plan(
@@ -2852,7 +3103,7 @@ fn failed_prepared_receipt_retains_materialization_eviction_and_io_evidence() {
             prepared_registration(),
         )]),
     };
-    let receipts_directory = tempfile::tempdir().expect("prepared failure receipts");
+    let receipts_directory = prepared_tempdir();
     let receipts = ExecutionReceiptStore::new(
         receipts_directory.path(),
         ReceiptRetention::new(4, 1_000_000).expect("prepared failure retention"),
@@ -2903,16 +3154,20 @@ fn failed_prepared_receipt_retains_materialization_eviction_and_io_evidence() {
 #[test]
 fn orphan_staging_is_included_in_reuse_budget_and_receipt_evidence() {
     let problem = compile(request(1)).expect("orphan-staging problem");
-    let receipts_directory = tempfile::tempdir().expect("orphan-staging receipts");
+    let receipts_directory = prepared_tempdir();
     let receipts = ExecutionReceiptStore::new(
         receipts_directory.path(),
         ReceiptRetention::new(4, 1_000_000).expect("orphan-staging retention"),
     )
     .expect("orphan-staging receipt store");
 
-    let cache_directory = tempfile::tempdir().expect("bounded orphan-staging cache");
-    let store = PreparedArtifactStore::open(cache_directory.path(), prepared_budget())
-        .expect("bounded orphan-staging store");
+    let cache_directory = prepared_tempdir();
+    let store = PreparedArtifactStore::open(
+        cache_directory.path(),
+        prepared_storage_domain(),
+        prepared_budget(),
+    )
+    .expect("bounded orphan-staging store");
     let staging = cache_directory.path().join("objects-v3/.staging-orphan");
     fs::create_dir(&staging).expect("bounded orphan-staging directory");
     fs::write(staging.join("manifest.json"), [0_u8; 91]).expect("bounded orphan manifest");
@@ -2955,11 +3210,15 @@ fn orphan_staging_is_included_in_reuse_budget_and_receipt_evidence() {
         "orphan staging bytes must remain visible in rejection evidence"
     );
 
-    let over_budget_directory = tempfile::tempdir().expect("over-budget orphan-staging cache");
+    let over_budget_directory = prepared_tempdir();
     let over_budget =
         PreparedArtifactBudget::new(20_000, 4, 64).expect("over-budget orphan-staging policy");
-    let over_budget_store = PreparedArtifactStore::open(over_budget_directory.path(), over_budget)
-        .expect("over-budget orphan-staging store");
+    let over_budget_store = PreparedArtifactStore::open(
+        over_budget_directory.path(),
+        prepared_storage_domain(),
+        over_budget,
+    )
+    .expect("over-budget orphan-staging store");
     let oversized_staging = over_budget_directory
         .path()
         .join("objects-v3/.staging-oversized");
@@ -3040,7 +3299,7 @@ fn orphan_staging_is_included_in_reuse_budget_and_receipt_evidence() {
 #[test]
 fn cold_operations_account_and_deterministically_remove_orphan_staging() {
     let problem = compile(request(1)).expect("cold orphan-staging problem");
-    let receipts_directory = tempfile::tempdir().expect("cold orphan-staging receipts");
+    let receipts_directory = prepared_tempdir();
     let receipts = ExecutionReceiptStore::new(
         receipts_directory.path(),
         ReceiptRetention::new(8, 2_000_000).expect("cold orphan-staging retention"),
@@ -3054,9 +3313,13 @@ fn cold_operations_account_and_deterministically_remove_orphan_staging() {
     .into_iter()
     .enumerate()
     {
-        let cache_directory = tempfile::tempdir().expect("cold orphan-staging cache");
-        let store = PreparedArtifactStore::open(cache_directory.path(), prepared_budget())
-            .expect("cold orphan-staging store");
+        let cache_directory = prepared_tempdir();
+        let store = PreparedArtifactStore::open(
+            cache_directory.path(),
+            prepared_storage_domain(),
+            prepared_budget(),
+        )
+        .expect("cold orphan-staging store");
         let objects = cache_directory.path().join("objects-v3");
         for (suffix, manifest_bytes, payload_bytes) in
             [("zeta", 31_usize, 47_usize), ("alpha", 19, 23)]
@@ -3135,7 +3398,7 @@ fn cold_operation_fails_before_deleting_over_budget_orphan_staging() {
     let problem = compile(request(1)).expect("over-budget cold orphan problem");
     let budget =
         PreparedArtifactBudget::new(20_000, 4, 64).expect("over-budget cold orphan policy");
-    let receipts_directory = tempfile::tempdir().expect("over-budget cold orphan receipts");
+    let receipts_directory = prepared_tempdir();
     let receipts = ExecutionReceiptStore::new(
         receipts_directory.path(),
         ReceiptRetention::new(4, 1_000_000).expect("over-budget cold orphan retention"),
@@ -3149,9 +3412,10 @@ fn cold_operation_fails_before_deleting_over_budget_orphan_staging() {
     .into_iter()
     .enumerate()
     {
-        let cache_directory = tempfile::tempdir().expect("over-budget cold orphan cache");
-        let store = PreparedArtifactStore::open(cache_directory.path(), budget)
-            .expect("over-budget cold orphan store");
+        let cache_directory = prepared_tempdir();
+        let store =
+            PreparedArtifactStore::open(cache_directory.path(), prepared_storage_domain(), budget)
+                .expect("over-budget cold orphan store");
         let orphan = cache_directory
             .path()
             .join("objects-v3/.staging-over-budget");
@@ -3254,9 +3518,13 @@ fn external_adapter_cannot_mint_rejected_stale_evidence() {
 #[test]
 fn prepared_resource_overrun_fails_closed_without_censoring_the_peak() {
     let problem = compile(request(1)).expect("prepared overrun problem");
-    let cache_directory = tempfile::tempdir().expect("prepared overrun cache");
-    let store = PreparedArtifactStore::open(cache_directory.path(), prepared_budget())
-        .expect("prepared overrun store");
+    let cache_directory = prepared_tempdir();
+    let store = PreparedArtifactStore::open(
+        cache_directory.path(),
+        prepared_storage_domain(),
+        prepared_budget(),
+    )
+    .expect("prepared overrun store");
     let descriptor = prepared_descriptor(&store, &problem);
     let operation = PreparedArtifactOperation::Generate;
     let reservation = store
@@ -3342,7 +3610,7 @@ fn prepared_resource_overrun_fails_closed_without_censoring_the_peak() {
             prepared_registration(),
         )]),
     };
-    let receipts_directory = tempfile::tempdir().expect("prepared overrun receipts");
+    let receipts_directory = prepared_tempdir();
     let receipts = ExecutionReceiptStore::new(
         receipts_directory.path(),
         ReceiptRetention::new(4, 1_000_000).expect("prepared overrun retention"),
@@ -3405,18 +3673,22 @@ fn prepared_resource_overrun_fails_closed_without_censoring_the_peak() {
 #[test]
 fn public_prepared_cache_evicts_deterministically_and_rejects_casa_boundaries() {
     for marker in ["table.dat", "table.info", "table.f0", "table.lock"] {
-        let table_root = tempfile::tempdir().expect("ordinary-named casacore table root");
+        let table_root = prepared_tempdir();
         fs::write(table_root.path().join(marker), b"casacore table marker")
             .expect("casacore table marker");
         let before = directory_entry_names(table_root.path());
         assert!(matches!(
-            PreparedArtifactStore::open(table_root.path(), prepared_budget()),
+            PreparedArtifactStore::open(
+                table_root.path(),
+                prepared_storage_domain(),
+                prepared_budget()
+            ),
             Err(PreparedArtifactError::CasaVisiblePath(_))
         ));
         assert_eq!(directory_entry_names(table_root.path()), before);
     }
 
-    let table_root = tempfile::tempdir().expect("nested casacore table root");
+    let table_root = prepared_tempdir();
     fs::write(
         table_root.path().join("table.info"),
         b"casacore table marker",
@@ -3425,57 +3697,81 @@ fn public_prepared_cache_evicts_deterministically_and_rejects_casa_boundaries() 
     let before = directory_entry_names(table_root.path());
     let nested_private_root = table_root.path().join("private-cache");
     assert!(matches!(
-        PreparedArtifactStore::open(&nested_private_root, prepared_budget()),
+        PreparedArtifactStore::open(
+            &nested_private_root,
+            prepared_storage_domain(),
+            prepared_budget()
+        ),
         Err(PreparedArtifactError::CasaVisiblePath(_))
     ));
     assert_eq!(directory_entry_names(table_root.path()), before);
 
     #[cfg(unix)]
     {
-        let symlink_parent = tempfile::tempdir().expect("casacore table symlink parent");
+        let symlink_parent = prepared_tempdir();
         let symlink_root = symlink_parent.path().join("private-cache");
         std::os::unix::fs::symlink(table_root.path(), &symlink_root)
             .expect("casacore table symlink");
         assert!(matches!(
-            PreparedArtifactStore::open(&symlink_root, prepared_budget()),
+            PreparedArtifactStore::open(
+                &symlink_root,
+                prepared_storage_domain(),
+                prepared_budget()
+            ),
             Err(PreparedArtifactError::CasaVisiblePath(_))
         ));
         assert_eq!(directory_entry_names(table_root.path()), before);
     }
 
-    let casa_root = tempfile::tempdir().expect("CASA-looking root contents");
+    let casa_root = prepared_tempdir();
     fs::create_dir(casa_root.path().join("foo.im")).expect("generic CASA image directory");
     assert!(matches!(
-        PreparedArtifactStore::open(casa_root.path(), prepared_budget()),
+        PreparedArtifactStore::open(
+            casa_root.path(),
+            prepared_storage_domain(),
+            prepared_budget()
+        ),
         Err(PreparedArtifactError::CasaVisiblePath(_))
     ));
     assert!(!casa_root.path().join("objects-v3").exists());
-    let private_parent = tempfile::tempdir().expect("private cache parent");
+    let private_parent = prepared_tempdir();
     let casa_named_root = private_parent.path().join("foo.im");
     assert!(matches!(
-        PreparedArtifactStore::open(&casa_named_root, prepared_budget()),
+        PreparedArtifactStore::open(
+            &casa_named_root,
+            prepared_storage_domain(),
+            prepared_budget()
+        ),
         Err(PreparedArtifactError::CasaVisiblePath(_))
     ));
     assert!(!casa_named_root.exists());
 
-    let ancestor_parent = tempfile::tempdir().expect("CASA ancestor parent");
+    let ancestor_parent = prepared_tempdir();
     let casa_ancestor = ancestor_parent.path().join("ancestor.im");
     fs::create_dir(&casa_ancestor).expect("existing CASA image ancestor");
     let nested_private_root = casa_ancestor.join("private-cache");
     assert!(matches!(
-        PreparedArtifactStore::open(&nested_private_root, prepared_budget()),
+        PreparedArtifactStore::open(
+            &nested_private_root,
+            prepared_storage_domain(),
+            prepared_budget()
+        ),
         Err(PreparedArtifactError::CasaVisiblePath(_))
     ));
     assert!(!nested_private_root.exists());
 
     for casa_entry in ["CFS_0_0_CF_0_0_0.im", "WTCFS_0_0_CF_0_0_0.im", "generic.im"] {
-        let casa_cache_parent = tempfile::tempdir().expect("CASA cache parent");
+        let casa_cache_parent = prepared_tempdir();
         let casa_cache = casa_cache_parent.path().join("CASA-cache");
         fs::create_dir(&casa_cache).expect("ordinary-named CASA cache root");
         fs::create_dir(casa_cache.join(casa_entry)).expect("existing CASA image");
         let nested_private_root = casa_cache.join("private");
-        let nested = PreparedArtifactStore::open(&nested_private_root, prepared_budget())
-            .expect("an unrelated CASA-like sibling does not make the parent a CASA table");
+        let nested = PreparedArtifactStore::open(
+            &nested_private_root,
+            prepared_storage_domain(),
+            prepared_budget(),
+        )
+        .expect("an unrelated CASA-like sibling does not make the parent a CASA table");
         assert!(
             nested.root().ends_with("private"),
             "the candidate private cache is still independently validated for {casa_entry}"
@@ -3484,13 +3780,17 @@ fn public_prepared_cache_evicts_deterministically_and_rejects_casa_boundaries() 
 
     #[cfg(unix)]
     {
-        let symlink_parent = tempfile::tempdir().expect("symlink cache parent");
+        let symlink_parent = prepared_tempdir();
         let casa_target = symlink_parent.path().join("foo.im");
         fs::create_dir(&casa_target).expect("CASA symlink target");
         let symlink_root = symlink_parent.path().join("private-cache");
         std::os::unix::fs::symlink(&casa_target, &symlink_root).expect("CASA cache symlink");
         assert!(matches!(
-            PreparedArtifactStore::open(&symlink_root, prepared_budget()),
+            PreparedArtifactStore::open(
+                &symlink_root,
+                prepared_storage_domain(),
+                prepared_budget()
+            ),
             Err(PreparedArtifactError::CasaVisiblePath(_))
                 | Err(PreparedArtifactError::UnknownCacheEntry(_))
         ));
@@ -3508,7 +3808,11 @@ fn public_prepared_cache_evicts_deterministically_and_rejects_casa_boundaries() 
         std::os::unix::fs::symlink(&ordinary_target, &casa_named_symlink)
             .expect("generic CASA-named symlink");
         assert!(matches!(
-            PreparedArtifactStore::open(&casa_named_symlink, prepared_budget()),
+            PreparedArtifactStore::open(
+                &casa_named_symlink,
+                prepared_storage_domain(),
+                prepared_budget()
+            ),
             Err(PreparedArtifactError::CasaVisiblePath(_))
         ));
         assert!(
@@ -3519,8 +3823,8 @@ fn public_prepared_cache_evicts_deterministically_and_rejects_casa_boundaries() 
         );
     }
 
-    let cache_directory = tempfile::tempdir().expect("eviction cache");
-    let receipts_directory = tempfile::tempdir().expect("eviction receipts");
+    let cache_directory = prepared_tempdir();
+    let receipts_directory = prepared_tempdir();
     let receipts = ExecutionReceiptStore::new(
         receipts_directory.path(),
         ReceiptRetention::new(8, 1_000_000).expect("eviction receipt retention"),
@@ -3536,8 +3840,9 @@ fn public_prepared_cache_evicts_deterministically_and_rejects_casa_boundaries() 
     let mut eviction_ledgers = Vec::new();
     let mut attempt_ids = Vec::new();
     for (index, problem) in problems.iter().enumerate() {
-        let store = PreparedArtifactStore::open(cache_directory.path(), budget)
-            .expect("eviction operation store");
+        let store =
+            PreparedArtifactStore::open(cache_directory.path(), prepared_storage_domain(), budget)
+                .expect("eviction operation store");
         let descriptor = prepared_descriptor(&store, problem);
         identities.push(descriptor.identity());
         eviction_ledgers.push(
@@ -3603,8 +3908,9 @@ fn public_prepared_cache_evicts_deterministically_and_rejects_casa_boundaries() 
     let mut replay_ledger = None;
     let mut replay_attempt = None;
     for (index, problem) in problems.iter().enumerate() {
-        let store = PreparedArtifactStore::open(cache_directory.path(), budget)
-            .expect("replayed eviction operation store");
+        let store =
+            PreparedArtifactStore::open(cache_directory.path(), prepared_storage_domain(), budget)
+                .expect("replayed eviction operation store");
         let descriptor = prepared_descriptor(&store, problem);
         if index == 2 {
             replay_ledger = Some(
@@ -3652,13 +3958,13 @@ fn public_prepared_cache_evicts_deterministically_and_rejects_casa_boundaries() 
 
 #[test]
 fn private_cache_ancestor_inventory_ignores_unrelated_casa_like_siblings() {
-    let parent = tempfile::tempdir().expect("private-cache parent");
+    let parent = prepared_tempdir();
     fs::create_dir(parent.path().join("unrelated.ms")).expect("unrelated CASA-looking sibling");
     fs::create_dir(parent.path().join("CFS_0_0_CF_0_0_0.im"))
         .expect("unrelated CF-cache-looking sibling");
 
     let root = parent.path().join("private-cache");
-    let store = PreparedArtifactStore::open(&root, prepared_budget())
+    let store = PreparedArtifactStore::open(&root, prepared_storage_domain(), prepared_budget())
         .expect("siblings do not make their parent a CASA/casacore store");
     assert_eq!(
         store.root(),

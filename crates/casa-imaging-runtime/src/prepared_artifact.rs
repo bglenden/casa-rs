@@ -35,9 +35,9 @@ use tempfile::Builder;
 use crate::{
     ArtifactDisposition, ArtifactIdentity, ArtifactMeasurement, ArtifactRole, CacheIdentity,
     ImplementationRegistry, ImplementationRegistryId, IoBufferKind, IoMeasurement, LeaseResource,
-    PlannedArtifact, RedactedPath, ResourceMeasurement, StorageDomainId, StorageUseKind,
-    WorkDependency, WorkExecutionContext, WorkImplementationId, WorkKind, WorkMeasurements,
-    WorkNodeId,
+    PlannedArtifact, RedactedPath, ResourceMeasurement, StorageDomain, StorageDomainId,
+    StorageUseKind, WorkDependency, WorkExecutionContext, WorkImplementationId, WorkKind,
+    WorkMeasurements, WorkNodeId,
 };
 
 const ARTIFACT_IDENTITY_DOMAIN: &[u8] = b"casa-rs/private-prepared-artifact/identity\0";
@@ -645,7 +645,7 @@ pub struct PreparedArtifactDescriptor {
 
 impl PreparedArtifactDescriptor {
     fn storage_demand_id(&self) -> String {
-        format!("private-prepared-cache-{}", self.cache_identity)
+        format!("private-prepared-cache-{}", self.identity)
     }
 
     fn storage_domain_id(&self) -> StorageDomainId {
@@ -1083,6 +1083,8 @@ pub struct PreparedArtifactSourceSegment {
     name: Box<str>,
     source: Box<Path>,
     sha256: [u8; 32],
+    storage_domain: StorageDomainId,
+    storage_root_identity: [u8; 32],
 }
 
 impl PreparedArtifactSourceSegment {
@@ -1097,11 +1099,33 @@ impl PreparedArtifactSourceSegment {
         name: impl Into<String>,
         source: impl Into<PathBuf>,
         sha256: [u8; 32],
+        storage_domain: &StorageDomain,
     ) -> Result<Self, PreparedArtifactError> {
         let name = name.into();
         let source = source.into();
+        let domain_root = storage_domain
+            .root
+            .canonicalize()
+            .map_err(|_| PreparedArtifactError::InvalidSource)?;
+        let source = match source.canonicalize() {
+            Ok(source) => source,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                let parent = source
+                    .parent()
+                    .ok_or(PreparedArtifactError::InvalidSource)?
+                    .canonicalize()
+                    .map_err(|_| PreparedArtifactError::InvalidSource)?;
+                let file_name = source
+                    .file_name()
+                    .ok_or(PreparedArtifactError::InvalidSource)?;
+                parent.join(file_name)
+            }
+            Err(_) => return Err(PreparedArtifactError::InvalidSource),
+        };
         if !valid_segment_name(&name)
             || !source.is_absolute()
+            || !source.starts_with(&domain_root)
+            || !valid_identifier(storage_domain.id.as_str())
             || source.as_os_str().as_encoded_bytes().len() > Self::MAX_PATH_BYTES
         {
             return Err(PreparedArtifactError::InvalidSource);
@@ -1110,7 +1134,17 @@ impl PreparedArtifactSourceSegment {
             name: name.into_boxed_str(),
             source: source.into_boxed_path(),
             sha256,
+            storage_domain: storage_domain.id.clone(),
+            storage_root_identity: derive_cache_root_identity(&domain_root),
         })
+    }
+
+    fn storage_demand_id(&self, source_identity: ArtifactIdentity) -> String {
+        format!(
+            "private-prepared-source-{source_identity}-{}-{}",
+            self.storage_domain.as_str(),
+            encode_hex(&self.storage_root_identity)
+        )
     }
 }
 
@@ -1160,6 +1194,18 @@ impl PreparedArtifactLoadSource {
             ArtifactRole::Input,
             None,
         )
+    }
+
+    fn storage_demands(&self) -> BTreeMap<String, StorageDomainId> {
+        self.segments
+            .iter()
+            .map(|segment| {
+                (
+                    segment.storage_demand_id(self.identity),
+                    segment.storage_domain.clone(),
+                )
+            })
+            .collect()
     }
 }
 
@@ -1954,6 +2000,8 @@ fn derive_load_source_identity(
     for segment in segments {
         hash_bytes(&mut hasher, segment.name.as_bytes())?;
         hasher.update(segment.sha256);
+        hash_bytes(&mut hasher, segment.storage_domain.as_str().as_bytes())?;
+        hasher.update(segment.storage_root_identity);
     }
     Ok(ArtifactIdentity::from_owner_digest(
         hasher.finalize().into(),
@@ -2644,6 +2692,25 @@ fn decode_digest(value: &str) -> Option<[u8; 32]> {
 mod tests {
     use super::*;
 
+    fn test_storage_domain(root: &Path) -> StorageDomain {
+        StorageDomain {
+            id: StorageDomainId::new("atomic-output"),
+            root: root.to_path_buf(),
+            capacity_bytes: u64::MAX,
+            read_rate: crate::RateResourceId::new("test-read"),
+            write_rate: crate::RateResourceId::new("test-write"),
+            operations_rate: Some(crate::RateResourceId::new("test-operations")),
+            queue: crate::QueueResourceId::new("test-queue"),
+        }
+    }
+
+    fn open_test_store(
+        root: &Path,
+        budget: PreparedArtifactBudget,
+    ) -> Result<PreparedArtifactStore, PreparedArtifactError> {
+        PreparedArtifactStore::open(root, &test_storage_domain(root), budget)
+    }
+
     #[test]
     fn private_store_control_is_storage_manager_work_not_publication() {
         let mut evidence = ValidationEvidence::default();
@@ -2705,6 +2772,7 @@ mod tests {
         assert_eq!(
             observed_resource_peak(
                 &LeaseResource::IoBuffer(IoBufferKind::StorageManager),
+                "private-cache",
                 PreparedArtifactOperation::Generate,
                 0,
                 0,
@@ -2720,6 +2788,7 @@ mod tests {
                     demand_id: "private-cache".to_string(),
                     use_kind: StorageUseKind::Temporary,
                 },
+                "private-cache",
                 PreparedArtifactOperation::Generate,
                 0,
                 failed_temporary_bytes,
@@ -2759,7 +2828,7 @@ mod tests {
     fn private_store_lock_creation_is_counted_once_as_writeback() {
         let directory = tempfile::tempdir().expect("private lock cache");
         let budget = PreparedArtifactBudget::new(200, 3, 1).expect("bounded cache");
-        let store = PreparedArtifactStore::open(directory.path(), budget).expect("store");
+        let store = open_test_store(directory.path(), budget).expect("store");
         assert!(!store.lock_path.exists());
 
         let mut created = ValidationEvidence::default();
@@ -2789,7 +2858,7 @@ mod tests {
     fn partial_eviction_failure_retains_every_completed_mutation() {
         let directory = tempfile::tempdir().expect("eviction failure cache");
         let budget = PreparedArtifactBudget::new(200, 3, 1).expect("bounded cache");
-        let mut store = PreparedArtifactStore::open(directory.path(), budget).expect("store");
+        let mut store = open_test_store(directory.path(), budget).expect("store");
         let identities = [
             ArtifactIdentity::from_owner_digest([1; 32]),
             ArtifactIdentity::from_owner_digest([2; 32]),
@@ -2829,7 +2898,7 @@ mod tests {
         let bytes_directory = tempfile::tempdir().expect("staging byte-budget cache");
         let bytes_budget = PreparedArtifactBudget::new(100, 3, 1).expect("staging byte budget");
         let bytes_store =
-            PreparedArtifactStore::open(bytes_directory.path(), bytes_budget).expect("byte store");
+            open_test_store(bytes_directory.path(), bytes_budget).expect("byte store");
         let staging = bytes_store.cache.join(format!("{STAGING_PREFIX}bytes"));
         fs::create_dir(&staging).expect("staging byte directory");
         fs::write(staging.join(MANIFEST_FILE), [0_u8; 64]).expect("staging manifest");
@@ -2857,8 +2926,8 @@ mod tests {
         let entries_directory = tempfile::tempdir().expect("staging entry-budget cache");
         let entries_budget =
             PreparedArtifactBudget::new(1_000, 1, 1).expect("staging entry budget");
-        let entries_store = PreparedArtifactStore::open(entries_directory.path(), entries_budget)
-            .expect("entry store");
+        let entries_store =
+            open_test_store(entries_directory.path(), entries_budget).expect("entry store");
         for suffix in ["first", "second"] {
             fs::create_dir(
                 entries_store
@@ -2891,10 +2960,14 @@ mod tests {
     fn source_descriptor_residency_is_bounded_and_observed() {
         let directory = tempfile::tempdir().expect("source descriptor residency");
         let source = directory.path().join("imaging.bin");
-        let inputs = [
-            PreparedArtifactSourceSegment::new("imaging", source.clone(), [0; 32])
-                .expect("bounded source descriptor"),
-        ];
+        fs::write(&source, []).expect("source descriptor file");
+        let inputs = [PreparedArtifactSourceSegment::new(
+            "imaging",
+            source.clone(),
+            [0; 32],
+            &test_storage_domain(directory.path()),
+        )
+        .expect("bounded source descriptor")];
         let budget = PreparedArtifactBudget::new(1, 1, 1).expect("source descriptor budget");
         let mut evidence = ValidationEvidence::new(budget);
         let baseline = evidence.resident_current_bytes;
@@ -2927,7 +3000,7 @@ mod tests {
     fn post_rename_failure_removes_visibility_and_retains_mutation_evidence() {
         let directory = tempfile::tempdir().expect("publication failure cache");
         let budget = PreparedArtifactBudget::new(200, 3, 1).expect("bounded cache");
-        let mut store = PreparedArtifactStore::open(directory.path(), budget).expect("store");
+        let mut store = open_test_store(directory.path(), budget).expect("store");
         store.fail_after_publication_rename = true;
         let staging = store.cache.join(format!("{STAGING_PREFIX}publication"));
         let target = store.entry_path(ArtifactIdentity::from_owner_digest([3; 32]));

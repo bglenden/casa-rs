@@ -67,8 +67,11 @@ impl<'a> PreparedArtifactPlanFragment<'a> {
             PreparedArtifactOperation::Load => "load",
             PreparedArtifactOperation::Reuse => "reuse",
         };
-        let allocation_id = AllocationId::new(format!("prepared-resident-buffer-{suffix}"));
-        let slot_id = PhysicalSlotId::new(format!("prepared-resident-slot-{suffix}"));
+        let cell_identity = self.descriptor.identity();
+        let allocation_id =
+            AllocationId::new(format!("prepared-resident-buffer-{suffix}-{cell_identity}"));
+        let slot_id =
+            PhysicalSlotId::new(format!("prepared-resident-slot-{suffix}-{cell_identity}"));
         let compatibility = SlotCompatibility {
             memory_domain: CapacityDomainId::new("host-memory"),
             views: BTreeSet::from([CapacityViewId::new("host-memory")]),
@@ -81,19 +84,26 @@ impl<'a> PreparedArtifactPlanFragment<'a> {
         let demand_id = self.descriptor.storage_demand_id();
         let mut alternative: DemandAlternative =
             base.execution_dag().resource_alternative().clone();
-        alternative.id = AlternativeId::new(format!("prepared-{suffix}"));
+        alternative.id = AlternativeId::new(format!(
+            "{}-prepared-{suffix}-{cell_identity}",
+            alternative.id.as_str()
+        ));
         alternative.demand.memory.push(MemoryDemand {
             allocation_id: allocation_id.as_str().to_string(),
             hard_bytes: reservation.resident_buffer_bytes(),
             preferred_bytes: reservation.resident_buffer_bytes(),
             views: vec![CapacityViewId::new("host-memory")],
         });
-        alternative.demand.locks = CountDemand::new(2, 2);
-        alternative.demand.file_descriptors = CountDemand::new(
-            reservation.file_descriptors(),
+        alternative.demand.locks = combine_count(alternative.demand.locks, 2);
+        alternative.demand.file_descriptors = combine_count(
+            alternative.demand.file_descriptors,
             reservation.file_descriptors(),
         );
-        alternative.demand.io_buffers.storage_manager_bytes = reservation.resident_buffer_bytes();
+        alternative.demand.io_buffers.storage_manager_bytes = alternative
+            .demand
+            .io_buffers
+            .storage_manager_bytes
+            .max(reservation.resident_buffer_bytes());
         alternative.demand.storage.push(StorageDemand {
             demand_id: demand_id.clone(),
             domain: self.store.storage_domain().clone(),
@@ -106,6 +116,25 @@ impl<'a> PreparedArtifactPlanFragment<'a> {
             operations_rate: CountDemand::new(1, 1),
             queue_slots: CountDemand::new(1, 1),
         });
+
+        let source_demands = self
+            .load_source
+            .map(PreparedArtifactLoadSource::storage_demands)
+            .unwrap_or_default();
+        alternative.demand.storage.extend(source_demands.iter().map(
+            |(source_demand_id, source_domain)| StorageDemand {
+                demand_id: source_demand_id.clone(),
+                domain: source_domain.clone(),
+                temporary_bytes: 0,
+                staged_output_bytes: 0,
+                final_output_bytes: 0,
+                persistent_cache_bytes: 0,
+                read_rate: CountDemand::new(1, 1),
+                write_rate: CountDemand::zero(),
+                operations_rate: CountDemand::new(1, 1),
+                queue_slots: CountDemand::new(1, 1),
+            },
+        ));
 
         let mut claims = vec![
             claim(LeaseResource::Workers, 1),
@@ -158,6 +187,28 @@ impl<'a> PreparedArtifactPlanFragment<'a> {
                 },
                 reservation.temporary_staging_bytes(),
             ));
+        }
+        for source_demand_id in source_demands.keys() {
+            claims.extend([
+                claim(
+                    LeaseResource::StorageReadRate {
+                        demand_id: source_demand_id.clone(),
+                    },
+                    1,
+                ),
+                claim(
+                    LeaseResource::StorageOperationsRate {
+                        demand_id: source_demand_id.clone(),
+                    },
+                    1,
+                ),
+                claim(
+                    LeaseResource::StorageQueue {
+                        demand_id: source_demand_id.clone(),
+                    },
+                    1,
+                ),
+            ]);
         }
         let prepared_node = WorkNode {
             id: self.descriptor.work_node_id(self.operation),
@@ -312,6 +363,10 @@ fn claim(resource: LeaseResource, amount: u64) -> ResourceClaim {
         amount,
         lifetime: ClaimLifetime::Work,
     }
+}
+
+fn combine_count(base: CountDemand, fragment: u64) -> CountDemand {
+    CountDemand::new(base.hard().max(fragment), base.preferred().max(fragment))
 }
 
 /// Failure to compose a prepared operation with an existing physical plan.

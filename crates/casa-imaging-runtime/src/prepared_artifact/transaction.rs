@@ -10,21 +10,20 @@ impl PreparedArtifactStore {
     /// or otherwise mutate cache entries.
     pub fn open(
         root: impl AsRef<Path>,
+        storage_domain: &StorageDomain,
         budget: PreparedArtifactBudget,
     ) -> Result<Self, PreparedArtifactError> {
-        Self::open_in_domain(root, StorageDomainId::new("atomic-output"), budget)
-    }
-
-    /// Open a private cache explicitly bound to one Resource Authority storage domain.
-    pub fn open_in_domain(
-        root: impl AsRef<Path>,
-        storage_domain: StorageDomainId,
-        budget: PreparedArtifactBudget,
-    ) -> Result<Self, PreparedArtifactError> {
-        if !valid_identifier(storage_domain.as_str()) {
+        if !valid_identifier(storage_domain.id.as_str()) {
             return Err(PreparedArtifactError::InvalidDescriptor);
         }
+        let storage_root = storage_domain
+            .root
+            .canonicalize()
+            .map_err(|_| PreparedArtifactError::InvalidDescriptor)?;
         let root = prepare_private_root(root.as_ref())?;
+        if !root.starts_with(&storage_root) {
+            return Err(PreparedArtifactError::InvalidDescriptor);
+        }
         reject_casa_cache_contents(&root)?;
         let cache = root.join(CACHE_DIRECTORY);
         ensure_private_child_directory(&root, &cache)?;
@@ -38,14 +37,14 @@ impl PreparedArtifactStore {
             Ok(_) => {}
         }
         let state = root_state(&root)?;
-        let scope = CacheScope::new(&root, &storage_domain, budget)?;
+        let scope = CacheScope::new(&root, &storage_domain.id, budget)?;
         Ok(Self {
             root,
             cache,
             lock_path,
             budget,
             scope,
-            storage_domain,
+            storage_domain: storage_domain.id.clone(),
             state,
             #[cfg(test)]
             fail_after_evictions: None,

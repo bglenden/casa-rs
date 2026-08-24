@@ -25,16 +25,7 @@ pub(super) fn validate_plan_binding(
         }
         (PreparedArtifactOperation::Generate | PreparedArtifactOperation::Reuse, None) => {}
     }
-    let planned = context.planned_artifacts().cloned().collect::<Vec<_>>();
-    validate_plan_declaration(
-        context.node(),
-        &planned,
-        context.stage_prediction(),
-        context.resource_alternative(),
-        descriptor,
-        operation,
-        reservation,
-    )
+    validate_plan_declaration(context, descriptor, operation, reservation, source)
 }
 
 pub(super) fn validate_load_source_binding(
@@ -68,14 +59,16 @@ pub(super) fn validate_load_source_binding(
 }
 
 pub(super) fn validate_plan_declaration(
-    node: &crate::WorkNode,
-    planned: &[PlannedArtifact],
-    stage: &crate::StagePrediction,
-    alternative: &crate::DemandAlternative,
+    context: WorkExecutionContext<'_>,
     descriptor: &PreparedArtifactDescriptor,
     operation: PreparedArtifactOperation,
     reservation: PreparedArtifactReservation,
+    source: Option<&PreparedArtifactLoadSource>,
 ) -> Result<(), PreparedArtifactError> {
+    let node = context.node();
+    let planned = context.planned_artifacts().cloned().collect::<Vec<_>>();
+    let stage = context.stage_prediction();
+    let alternative = context.resource_alternative();
     if node.kind != WorkKind::Cache {
         return Err(PreparedArtifactError::UnplannedOperation);
     }
@@ -232,6 +225,56 @@ pub(super) fn validate_plan_declaration(
     ] {
         require_claim(node, |claim| claim == &resource, 1, label)?;
     }
+    let source_demands = source
+        .map(PreparedArtifactLoadSource::storage_demands)
+        .unwrap_or_default();
+    for (source_demand_id, source_domain) in source_demands {
+        let matching = alternative
+            .demand
+            .storage
+            .iter()
+            .filter(|demand| demand.demand_id == source_demand_id && demand.domain == source_domain)
+            .collect::<Vec<_>>();
+        if matching.len() != 1
+            || alternative.demand.storage.iter().any(|demand| {
+                demand.demand_id == source_demand_id && demand.domain != source_domain
+            })
+            || matching[0].read_rate.hard() == 0
+            || matching[0].write_rate.hard() != 0
+            || matching[0].operations_rate.hard() == 0
+            || matching[0].queue_slots.hard() == 0
+            || matching[0].temporary_bytes != 0
+            || matching[0].staged_output_bytes != 0
+            || matching[0].final_output_bytes != 0
+            || matching[0].persistent_cache_bytes != 0
+        {
+            return Err(PreparedArtifactError::MissingReservation(
+                "cold-load source storage demand",
+            ));
+        }
+        for (resource, label) in [
+            (
+                LeaseResource::StorageReadRate {
+                    demand_id: source_demand_id.clone(),
+                },
+                "cold-load source read rate",
+            ),
+            (
+                LeaseResource::StorageOperationsRate {
+                    demand_id: source_demand_id.clone(),
+                },
+                "cold-load source operations rate",
+            ),
+            (
+                LeaseResource::StorageQueue {
+                    demand_id: source_demand_id,
+                },
+                "cold-load source queue",
+            ),
+        ] {
+            require_claim(node, |claim| claim == &resource, 1, label)?;
+        }
+    }
     // Generation and load use one Vec as both the file-source read buffer
     // and the private-store write buffer. The complete resident envelope,
     // including source descriptors and that Vec, therefore has one
@@ -295,6 +338,7 @@ pub(super) fn measurements(
 ) -> WorkMeasurements {
     let resources = resource_measurements(
         context,
+        descriptor,
         input.operation,
         input.cache_bytes,
         validated.disk_bytes,
@@ -348,6 +392,7 @@ pub(super) fn rejected_measurements(
 ) -> WorkMeasurements {
     let resources = resource_measurements(
         context,
+        descriptor,
         PreparedArtifactOperation::Reuse,
         cache_bytes,
         0,
@@ -391,6 +436,7 @@ pub(super) fn failed_measurements(
 ) -> WorkMeasurements {
     let resources = resource_measurements(
         context,
+        descriptor,
         operation,
         evidence.cache_bytes_peak,
         evidence.cache_write.bytes,
@@ -432,6 +478,7 @@ pub(super) fn failed_measurements(
 
 pub(super) fn resource_measurements(
     context: WorkExecutionContext<'_>,
+    descriptor: &PreparedArtifactDescriptor,
     operation: PreparedArtifactOperation,
     cache_bytes: u64,
     entry_bytes: u64,
@@ -446,6 +493,7 @@ pub(super) fn resource_measurements(
                 capability.lifetime().clone(),
                 observed_resource_peak(
                     capability.resource(),
+                    &descriptor.storage_demand_id(),
                     operation,
                     cache_bytes,
                     entry_bytes,
@@ -458,6 +506,7 @@ pub(super) fn resource_measurements(
 
 pub(super) fn observed_resource_peak(
     resource: &LeaseResource,
+    cache_demand_id: &str,
     operation: PreparedArtifactOperation,
     cache_bytes: u64,
     entry_bytes: u64,
@@ -469,30 +518,55 @@ pub(super) fn observed_resource_peak(
         LeaseResource::FileDescriptors => evidence.file_descriptors_peak,
         LeaseResource::IoBuffer(IoBufferKind::StorageManager) => evidence.resident_buffer_bytes,
         LeaseResource::Storage {
+            demand_id,
             use_kind: StorageUseKind::PersistentCache,
-            ..
-        } => cache_bytes,
+        } if demand_id == cache_demand_id => cache_bytes,
         LeaseResource::Storage {
+            demand_id,
             use_kind: StorageUseKind::Temporary,
-            ..
-        } if operation != PreparedArtifactOperation::Reuse => {
+        } if demand_id == cache_demand_id && operation != PreparedArtifactOperation::Reuse => {
             evidence.temporary_storage_peak.max(entry_bytes)
         }
-        LeaseResource::StorageReadRate { .. } if evidence.cache_read.bytes > 0 => 1,
-        LeaseResource::StorageWriteRate { .. } if evidence.cache_write.bytes > 0 => 1,
-        LeaseResource::StorageOperationsRate { .. }
-            if evidence.cache_read.operations
-                + evidence.cache_write.operations
-                + evidence.cache_control.operations
-                > 0 =>
+        LeaseResource::StorageReadRate { demand_id }
+            if demand_id == cache_demand_id && evidence.cache_read.bytes > 0 =>
         {
             1
         }
-        LeaseResource::StorageQueue { .. }
-            if evidence.cache_read.operations
-                + evidence.cache_write.operations
-                + evidence.cache_control.operations
-                > 0 =>
+        LeaseResource::StorageReadRate { demand_id }
+            if demand_id != cache_demand_id && evidence.source_read.bytes > 0 =>
+        {
+            1
+        }
+        LeaseResource::StorageWriteRate { demand_id }
+            if demand_id == cache_demand_id && evidence.cache_write.bytes > 0 =>
+        {
+            1
+        }
+        LeaseResource::StorageOperationsRate { demand_id }
+            if demand_id == cache_demand_id
+                && evidence.cache_read.operations
+                    + evidence.cache_write.operations
+                    + evidence.cache_control.operations
+                    > 0 =>
+        {
+            1
+        }
+        LeaseResource::StorageOperationsRate { demand_id }
+            if demand_id != cache_demand_id && evidence.source_read.operations > 0 =>
+        {
+            1
+        }
+        LeaseResource::StorageQueue { demand_id }
+            if demand_id == cache_demand_id
+                && evidence.cache_read.operations
+                    + evidence.cache_write.operations
+                    + evidence.cache_control.operations
+                    > 0 =>
+        {
+            1
+        }
+        LeaseResource::StorageQueue { demand_id }
+            if demand_id != cache_demand_id && evidence.source_read.operations > 0 =>
         {
             1
         }
