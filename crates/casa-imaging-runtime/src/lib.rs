@@ -30,16 +30,13 @@ pub use execution_bindings::{
 
 pub use casa_imaging_reconstruction::ContinuumPrimitiveCatalog;
 pub use complete_data_operator::{
-    CompleteDataOperatorCompletion, CompleteDataOperatorError, CompleteDataOperatorResult,
-    CompleteDataPlanError, CompleteDataPlanFragment, CompleteDataPreparedState,
-    CompleteDataResidency, SerialMfsOperatorState,
+    CompleteDataOperatorError, CompleteDataOperatorResult, CompleteDataPlanError,
+    CompleteDataPlanFragment, CompleteDataPreparedState, CompleteDataResidency,
+    SerialMfsOperatorState,
 };
 pub use cost_model::{
     PlannerCostModelProfileBootstrap, PlannerCostModelProfileRecord, ProfileEvidenceEntry,
     ProfilePromotionError, ProfileReview, open_cost_model_profile, promote_cost_model_profile,
-};
-pub use major_cycle::{
-    MajorCycleOperatorError, MajorCycleOperatorResult, MajorCycleOperatorState,
 };
 pub use execution::{
     AdaptationId, AdaptationTransition, AllocationAccess, AllocationId, AllocationLayout,
@@ -49,6 +46,7 @@ pub use execution::{
     ResourceClaim, SlotCompatibility, StorageMode, WorkAllocationCapability, WorkDependency,
     WorkDomain, WorkImplementationId, WorkKind, WorkNode, WorkNodeId, WorkResourceCapability,
 };
+pub use major_cycle::{MajorCycleOperatorError, MajorCycleOperatorResult, MajorCycleOperatorState};
 pub use observation_transaction::{
     BoundObservationTransaction, ObservationTransactionPlanError, ObservationTransactionWork,
 };

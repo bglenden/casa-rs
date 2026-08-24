@@ -17,7 +17,7 @@ use casa_imaging_reconstruction::{
     ContinuumPrimitiveCatalog, SerialMfsError, SerialMfsPrimitives, SerialMfsSpecification,
     WeightingAlgorithmState, WeightingGenerationId, WeightingReplayCoverageId, WeightingReplayId,
     runtime_adapter::{
-        CompleteDataOwnerCompletion, CompleteDataOwnerState, PreparedSerialMfsOperator,
+        CompleteDataOwnerResult, CompleteDataOwnerState, PreparedSerialMfsOperator,
         SerialMfsWorkload, prepare_serial_mfs_operator, serial_mfs_workload,
     },
 };
@@ -97,6 +97,7 @@ pub struct CompleteDataPlanFragment {
     residency: CompleteDataResidency,
     preparation_node: WorkNodeId,
     replay_node: WorkNodeId,
+    reconciliation_node: Option<WorkNodeId>,
 }
 
 impl CompleteDataPlanFragment {
@@ -119,10 +120,11 @@ impl CompleteDataPlanFragment {
                 shape[0], shape[1]
             )),
             replay_node,
+            reconciliation_node: None,
         })
     }
 
-    /// Return the explicit FFT-planning node inserted before replay.
+    /// Return the exact FFT-planning node inserted before replay.
     #[must_use]
     pub const fn preparation_node(&self) -> &WorkNodeId {
         &self.preparation_node
@@ -154,6 +156,7 @@ impl CompleteDataPlanFragment {
             attempt: context.attempt_id(),
             preparation_node: self.preparation_node.clone(),
             replay_node: self.replay_node.clone(),
+            reconciliation_node: self.reconciliation_node.clone(),
             lease_epoch: context.lease_epoch(),
         })
     }
@@ -266,10 +269,17 @@ impl CompleteDataPlanFragment {
     }
 
     /// Add shared grids, FFT scratch, and primitive outputs to physical work.
+    ///
+    /// Composition also binds this fragment to the sealed observation
+    /// transaction's final-reconciliation node: afterwards, reconciliation may
+    /// execute only at that exact plan-authoritative Compute node.
+    ///
+    /// Returns the composed physical work together with this fragment bound to
+    /// its authoritative reconciliation node.
     pub fn compose(
-        &self,
+        mut self,
         base: &PhysicalWorkBinding,
-    ) -> Result<PhysicalWorkBinding, CompleteDataPlanError> {
+    ) -> Result<(PhysicalWorkBinding, Self), CompleteDataPlanError> {
         let reconciliation = base.observation_transaction().final_reconciliation();
         if !base.execution_dag().nodes().contains_key(&self.replay_node) {
             return Err(CompleteDataPlanError::MissingReplayNode);
@@ -326,13 +336,17 @@ impl CompleteDataPlanFragment {
             specs[4].usage(replay_fence),
         ]);
         nodes.push(preparation.clone());
-        let reconciliation_node = nodes
+        let planned_reconciliation = nodes
             .iter_mut()
             .find(|node| &node.id == reconciliation)
             .ok_or(CompleteDataPlanError::MissingReconciliationNode)?;
-        reconciliation_node
+        if planned_reconciliation.kind != WorkKind::Compute {
+            return Err(CompleteDataPlanError::MissingReconciliationNode);
+        }
+        planned_reconciliation
             .allocations
             .push(specs[4].usage(ClaimLifetime::Work));
+        self.reconciliation_node = Some(reconciliation.clone());
 
         let mut alternative = base.execution_dag().resource_alternative().clone();
         alternative.id =
@@ -396,14 +410,15 @@ impl CompleteDataPlanFragment {
                 .chain([preparation_prediction])
                 .collect(),
         )?;
-        Ok(PhysicalWorkBinding::with_implementation_contract(
+        let physical = PhysicalWorkBinding::with_implementation_contract(
             base.implementation_contract().for_execution_dag(&dag)?,
             dag,
             prediction,
             base.artifacts().to_vec(),
             base.observation_transaction().clone(),
             base.publication_layouts().clone(),
-        )?)
+        )?;
+        Ok((physical, self))
     }
 
     fn allocation_specs(
@@ -692,6 +707,7 @@ pub struct CompleteDataPreparedState {
     attempt: ExecutionAttemptId,
     preparation_node: WorkNodeId,
     replay_node: WorkNodeId,
+    reconciliation_node: Option<WorkNodeId>,
     lease_epoch: u64,
 }
 
@@ -707,11 +723,15 @@ impl CompleteDataPreparedState {
             || self.attempt != context.attempt_id()
             || self.preparation_node != fragment.preparation_node
             || self.replay_node != fragment.replay_node
+            || self.reconciliation_node != fragment.reconciliation_node
             || self.replay_node != context.node().id
             || self.lease_epoch != context.lease_epoch()
         {
             return Err(CompleteDataPlanError::PlanMismatch);
         }
+        let reconciliation_node = self
+            .reconciliation_node
+            .ok_or(CompleteDataPlanError::MissingReconciliationNode)?;
         let state = self.owner.begin(problem, weighting).map_err(|error| {
             CompleteDataPlanError::Operator(CompleteDataOperatorError::Owner(error))
         })?;
@@ -721,18 +741,22 @@ impl CompleteDataPreparedState {
                 problem: problem.problem_id(),
                 attempt: context.attempt_id(),
                 replay_node: context.node().id.clone(),
+                reconciliation_node,
                 lease_epoch: context.lease_epoch(),
             },
         })
     }
 }
 
-/// Opaque owner-minted proof that one complete weighted replay reached the operator.
+/// Runtime attempt-bound envelope around one owner-minted T19 complete-data
+/// result.
 ///
-/// The completion is deliberately not constructible from caller digests or a
-/// generic runtime completion. It is minted only by consuming a
-/// [`SerialMfsOperatorState`] after that state has accepted the complete ordered
-/// stream of [`WeightedObservationBlock`] values and the terminal
+/// The envelope pairs the reconstruction evidence inseparably with the exact
+/// runtime attempt, lease epoch, settled replay node, and plan-authoritative
+/// final-reconciliation node. It is deliberately not constructible from caller
+/// digests or a generic scheduler completion: it is minted only by consuming a
+/// [`SerialMfsOperatorState`] after that state has accepted the complete
+/// ordered stream of [`WeightedObservationBlock`] values and the terminal
 /// [`WeightingReplayCompletion`].
 ///
 /// A caller cannot substitute a generic scheduler completion:
@@ -753,78 +777,78 @@ impl CompleteDataPreparedState {
 /// Nor can a caller construct completion evidence from its own digest:
 ///
 /// ```compile_fail
-/// use casa_imaging_runtime::CompleteDataOperatorCompletion;
+/// use casa_imaging_runtime::CompleteDataOperatorResult;
 ///
-/// let _ = CompleteDataOperatorCompletion {};
+/// let _ = CompleteDataOperatorResult {};
 /// ```
 #[derive(Debug)]
-pub struct CompleteDataOperatorCompletion {
-    owner: CompleteDataOwnerCompletion,
-    selected_generation: SelectedObservationGenerationId,
+pub struct CompleteDataOperatorResult {
+    evidence: CompleteDataOwnerResult,
     attempt: ExecutionAttemptId,
     replay_node: WorkNodeId,
+    reconciliation_node: WorkNodeId,
     lease_epoch: u64,
 }
 
-impl CompleteDataOperatorCompletion {
-    pub(crate) const fn owner_completion(
-        &self,
-    ) -> &casa_imaging_reconstruction::runtime_adapter::CompleteDataOwnerCompletion {
-        &self.owner
+impl CompleteDataOperatorResult {
+    /// Return reconstruction-owned unnormalized primitives.
+    #[must_use]
+    pub const fn primitives(&self) -> &SerialMfsPrimitives {
+        self.evidence.primitives()
     }
 
     /// Return the exact Compiled Problem executed by this operator.
     #[must_use]
     pub const fn problem_id(&self) -> CompiledProblemId {
-        self.owner.problem_id()
+        self.evidence.completion().problem_id()
     }
 
     /// Return the compiled geometry/operator coordinate commitment.
     #[must_use]
     pub const fn geometry_id(&self) -> CompiledGeometryId {
-        self.owner.geometry_id()
+        self.evidence.completion().geometry_id()
     }
 
     /// Return the exact numerical contract.
     #[must_use]
     pub const fn numerics_id(&self) -> NumericsContractId {
-        self.owner.numerics_id()
+        self.evidence.completion().numerics_id()
     }
 
     /// Return the compiler-owned weighting commitment used by T18.
     #[must_use]
     pub const fn weighting_commitment_id(&self) -> WeightingCommitmentId {
-        self.owner.weighting_commitment_id()
+        self.evidence.completion().weighting_commitment_id()
     }
 
     /// Return the frozen W generation carried by every accepted block.
     #[must_use]
     pub const fn weighting_generation(&self) -> WeightingGenerationId {
-        self.owner.weighting_generation()
+        self.evidence.completion().weighting_generation()
     }
 
     /// Return the unique terminal replay identity.
     #[must_use]
     pub const fn replay_id(&self) -> WeightingReplayId {
-        self.owner.replay_id()
+        self.evidence.completion().replay_id()
     }
 
-    /// Return the exact T17 selected-observation generation from terminal T18 proof.
+    /// Return the exact T17 selected-observation generation behind every sample.
     #[must_use]
     pub const fn selected_generation(&self) -> SelectedObservationGenerationId {
-        self.selected_generation
+        self.evidence.completion().selected_generation()
     }
 
     /// Return exact T18 weighted-sample coverage.
     #[must_use]
     pub const fn coverage(&self) -> WeightingReplayCoverageId {
-        self.owner.coverage()
+        self.evidence.completion().coverage()
     }
 
     /// Return the versioned primitive set produced by the science owner.
     #[must_use]
     pub const fn primitive_catalog(&self) -> ContinuumPrimitiveCatalog {
-        self.owner.primitive_catalog()
+        self.evidence.completion().primitive_catalog()
     }
 
     /// Return the execution attempt that authorized this complete replay.
@@ -839,6 +863,12 @@ impl CompleteDataOperatorCompletion {
         &self.replay_node
     }
 
+    /// Return the plan-authoritative final-reconciliation node bound at compose time.
+    #[must_use]
+    pub(crate) const fn reconciliation_node(&self) -> &WorkNodeId {
+        &self.reconciliation_node
+    }
+
     /// Return the Resource Authority lease epoch held through completion.
     #[must_use]
     pub const fn lease_epoch(&self) -> u64 {
@@ -848,34 +878,20 @@ impl CompleteDataOperatorCompletion {
     /// Return the exhaustive selected-sample count.
     #[must_use]
     pub const fn sample_count(&self) -> u64 {
-        self.owner.sample_count()
+        self.evidence.completion().sample_count()
     }
 
     /// Return the exhaustive replay block count.
     #[must_use]
     pub const fn block_count(&self) -> u64 {
-        self.owner.block_count()
-    }
-}
-
-/// Runtime attempt binding paired with reconstruction-owned primitives.
-#[derive(Debug)]
-pub struct CompleteDataOperatorResult {
-    primitives: SerialMfsPrimitives,
-    completion: CompleteDataOperatorCompletion,
-}
-
-impl CompleteDataOperatorResult {
-    /// Return reconstruction-owned unnormalized primitives.
-    #[must_use]
-    pub const fn primitives(&self) -> &SerialMfsPrimitives {
-        &self.primitives
+        self.evidence.completion().block_count()
     }
 
-    /// Return scientific completion bound to the exact runtime attempt and lease.
+    /// Consume the envelope into its intact reconstruction evidence for the
+    /// Major-Cycle owner; the pairing is never split outside this crate.
     #[must_use]
-    pub const fn completion(&self) -> &CompleteDataOperatorCompletion {
-        &self.completion
+    pub(crate) fn into_evidence(self) -> CompleteDataOwnerResult {
+        self.evidence
     }
 }
 
@@ -906,6 +922,7 @@ struct CompleteDataExecutionBinding {
     problem: CompiledProblemId,
     attempt: ExecutionAttemptId,
     replay_node: WorkNodeId,
+    reconciliation_node: WorkNodeId,
     lease_epoch: u64,
 }
 
@@ -936,7 +953,11 @@ impl SerialMfsOperatorState {
             .predict_block(model, block.reconstruction_block())?)
     }
 
-    /// Consume terminal T18 proof and mint the complete-data operator completion.
+    /// Consume terminal T18 proof and mint the runtime complete-data envelope.
+    ///
+    /// The reconstruction evidence stays inseparably paired inside the
+    /// envelope together with the attempt, lease, replay node, and
+    /// plan-authoritative reconciliation node that produced it.
     pub fn complete(
         self,
         replay: &WeightingReplayCompletion,
@@ -948,17 +969,16 @@ impl SerialMfsOperatorState {
         {
             return Err(CompleteDataOperatorError::ExecutionBinding);
         }
-        let owner = self.state.complete(replay.reconstruction_summary())?;
-        let (primitives, owner) = owner.into_parts();
+        let evidence = self.state.complete(
+            replay.reconstruction_summary(),
+            replay.selected_generation(),
+        )?;
         Ok(CompleteDataOperatorResult {
-            primitives,
-            completion: CompleteDataOperatorCompletion {
-                owner,
-                selected_generation: replay.selected_generation(),
-                attempt: replay.attempt_id(),
-                replay_node: replay.owner_node().clone(),
-                lease_epoch: replay.lease_epoch(),
-            },
+            evidence,
+            attempt: self.binding.attempt,
+            replay_node: self.binding.replay_node,
+            reconciliation_node: self.binding.reconciliation_node,
+            lease_epoch: self.binding.lease_epoch,
         })
     }
 }

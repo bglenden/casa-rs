@@ -75,9 +75,9 @@ const REPROJECTED_PROOF_VERSION: u32 = 1;
 const FINAL_COMPLETION_DOMAIN: &[u8] = b"casa-rs-final-model-completion";
 const FINAL_COMPLETION_VERSION: u32 = 2;
 const FINAL_NORMAL_STATE_DOMAIN: &[u8] = b"casa-rs-final-normal-state";
-const FINAL_NORMAL_STATE_VERSION: u32 = 1;
+const FINAL_NORMAL_STATE_VERSION: u32 = 2;
 const MAJOR_CYCLE_DOMAIN: &[u8] = b"casa-rs-major-cycle-completion";
-const MAJOR_CYCLE_VERSION: u32 = 1;
+const MAJOR_CYCLE_VERSION: u32 = 2;
 
 macro_rules! lifecycle_identity {
     ($name:ident, $version:ident, $summary:literal) => {
@@ -615,6 +615,16 @@ impl ModelLifecycle {
     #[must_use]
     pub const fn epoch(&self) -> u64 {
         self.epoch
+    }
+
+    /// Return the stable lifecycle authority behind every owner-minted ID.
+    ///
+    /// Unlike the per-instance process-local seal, this identity binds the
+    /// compiled problem, lifecycle commitment, attempt, and epoch, so IDs
+    /// derived from it remain stable across separate owner allocations.
+    #[must_use]
+    pub(crate) const fn authority(&self) -> LogicalIdentity {
+        self.authority
     }
 
     /// Establish the compiled empty initial generation.

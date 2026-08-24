@@ -8,7 +8,7 @@ use casa_imaging_model::{
     CompiledGeometryId, CompiledProblem, CompiledProblemId, CorrelationType, FiniteValuePolicy,
     InstrumentResponse, LogicalIdentity, NumericPrecision, NumericsContractId,
     PolarizationCoordinate, Projection, ReconstructionBasis, ReductionPolicy,
-    SelectedVisibilitySample, WeightingCommitmentId,
+    SelectedObservationGenerationId, SelectedVisibilitySample, WeightingCommitmentId,
 };
 use ndarray::{Array2, Axis};
 use num_complex::Complex64;
@@ -437,6 +437,55 @@ impl SerialMfsPrimitives {
         self.sum_weight
     }
 
+    /// Apply the v1 Major-Cycle normal-operator composition.
+    ///
+    /// For the `UnnormalizedNterms1V1` catalog the logical normal operator
+    /// H = A* W A acts on one constant-basis model plane x as the discrete
+    /// convolution with the unnormalized PSF kernel, so the authoritative
+    /// unnormalized residual g(x) = b - psf (*) x replaces the data-side
+    /// dirty plane b. Per-pixel accumulation is Kahan-compensated under the
+    /// compensated reduction policy, zero model cells contribute nothing, and
+    /// an empty model therefore reproduces the T19 dirty plane bit-exactly.
+    pub(crate) fn apply_major_cycle_residual(
+        &mut self,
+        model_plane: &[Complex64],
+    ) -> Result<(), SerialMfsError> {
+        if model_plane.len() != self.dirty.len() {
+            return Err(SerialMfsError::ModelShape);
+        }
+        let [width, height] = self.shape;
+        let mut residual = self.dirty.to_vec();
+        for x in 0..width {
+            for y in 0..height {
+                let index = x * height + y;
+                let mut accumulator = Complex64::default();
+                let mut compensation = Complex64::default();
+                for (u, sample) in model_plane.iter().enumerate() {
+                    if sample.re == 0.0 && sample.im == 0.0 {
+                        continue;
+                    }
+                    let source_x = u / height;
+                    let source_y = u % height;
+                    let kernel_index = ((x + width - source_x) % width) * height
+                        + (y + height - source_y) % height;
+                    let term = sample * self.psf[kernel_index] - compensation;
+                    let updated = accumulator + term;
+                    compensation = (updated - accumulator) - term;
+                    accumulator = updated;
+                }
+                residual[index] -= accumulator;
+            }
+        }
+        if residual
+            .iter()
+            .any(|value| !value.re.is_finite() || !value.im.is_finite())
+        {
+            return Err(SerialMfsError::GeneratedNonfinite);
+        }
+        self.dirty = residual.into_boxed_slice();
+        Ok(())
+    }
+
     /// Derive the owner content identity of the exact unnormalized evidence.
     ///
     /// The identity binds every primitive value bit, so a Major Cycle names
@@ -481,6 +530,7 @@ pub struct CompleteDataOwnerCompletion {
     replay: WeightingReplayId,
     coverage: WeightingReplayCoverageId,
     primitives: ContinuumPrimitiveCatalog,
+    selected_generation: SelectedObservationGenerationId,
     sample_count: u64,
     block_count: u64,
 }
@@ -534,6 +584,13 @@ impl CompleteDataOwnerCompletion {
         self.primitives
     }
 
+    /// Return the exact authoritative T17 observation generation behind every
+    /// weighted sample of this replay.
+    #[must_use]
+    pub const fn selected_generation(&self) -> SelectedObservationGenerationId {
+        self.selected_generation
+    }
+
     /// Return the exhaustive selected-sample count.
     #[must_use]
     pub const fn sample_count(&self) -> u64 {
@@ -568,9 +625,10 @@ impl CompleteDataOwnerResult {
         &self.completion
     }
 
-    /// Consume the pairing without turning its primitives into Product Graph artifacts.
+    /// Consume the pairing without exposing either member separately outside
+    /// this crate; the Major-Cycle owner is the only split consumer.
     #[must_use]
-    pub fn into_parts(self) -> (SerialMfsPrimitives, CompleteDataOwnerCompletion) {
+    pub(crate) fn into_parts(self) -> (SerialMfsPrimitives, CompleteDataOwnerCompletion) {
         (self.primitives, self.completion)
     }
 }
@@ -700,9 +758,14 @@ impl CompleteDataOwnerState {
     }
 
     /// Consume terminal T18 algorithm evidence and mint complete-data evidence.
+    ///
+    /// The authoritative T17 observation generation arrives beside the replay
+    /// proof so the minted completion binds data content and observation
+    /// lineage inseparably.
     pub fn complete(
         self,
         replay: &WeightingReplaySummary,
+        selected_generation: SelectedObservationGenerationId,
     ) -> Result<CompleteDataOwnerResult, SerialMfsError> {
         if self.weighting_generation != replay.weighting_generation() {
             return Err(SerialMfsError::WeightingGeneration);
@@ -727,6 +790,7 @@ impl CompleteDataOwnerState {
                 replay: replay.replay_id(),
                 coverage,
                 primitives: ContinuumPrimitiveCatalog::UnnormalizedNterms1V1,
+                selected_generation,
                 sample_count: replay.sample_count(),
                 block_count: replay.block_count(),
             },
@@ -1571,5 +1635,61 @@ mod tests {
             operator().prepare_prediction_grid(&model),
             Err(SerialMfsError::GeneratedNonfinite)
         );
+    }
+
+    /// Drive one adjoint pass and finish it into unnormalized primitives.
+    fn dirty_psf_primitives() -> crate::SerialMfsPrimitives {
+        let mut state = operator();
+        for sample in samples(&[[1.0, 0.0], [2.0, -1.0], [0.5, 0.25]]) {
+            state.push(sample).expect("adjoint push");
+        }
+        state.finish().expect("primitives")
+    }
+
+    #[test]
+    fn empty_model_residual_reproduces_the_dirty_plane_bit_exactly() {
+        let mut primitives = dirty_psf_primitives();
+        let content_before = primitives.normal_state_content_identity();
+        let model = vec![Complex64::default(); primitives.dirty().len()];
+        primitives
+            .apply_major_cycle_residual(&model)
+            .expect("empty-model composition");
+        assert_eq!(
+            primitives.normal_state_content_identity(),
+            content_before,
+            "an empty model must not perturb one bit of the data-side plane"
+        );
+    }
+
+    #[test]
+    fn residual_subtracts_the_model_convolved_with_the_exact_psf_kernel() {
+        let mut primitives = dirty_psf_primitives();
+        let [width, height] = primitives.shape();
+        let cells = width * height;
+        let dirty: Vec<Complex64> = primitives.dirty().to_vec();
+        let psf: Vec<Complex64> = primitives.psf().to_vec();
+
+        // One positive unit point source away from the phase centre.
+        let source_flat = 3 * height + 5;
+        let mut model = vec![Complex64::default(); cells];
+        model[source_flat] = Complex64::new(1.0, 0.0);
+        primitives
+            .apply_major_cycle_residual(&model)
+            .expect("point-source composition");
+
+        // g(p) = b(p) - x(q) * psf((p - q) mod shape), elementwise exact.
+        let residual = primitives.dirty();
+        assert_eq!(residual.len(), cells);
+        for px in 0..width {
+            for py in 0..height {
+                let index = px * height + py;
+                let kernel_index = ((px + width - 3) % width) * height + (py + height - 5) % height;
+                let expected = dirty[index] - psf[kernel_index];
+                assert!(
+                    (residual[index] - expected).norm() <= 4.0 * f64::EPSILON,
+                    "residual[{index}] deviated from the declared composition"
+                );
+            }
+        }
     }
 }
