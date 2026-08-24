@@ -52,7 +52,7 @@ use casa_imaging_runtime::{
     MemoryDemand, MemoryView, MemoryViewKind, ObservationReadCompletionContext,
     ObservationTransactionWork, PhysicalLayoutId, PhysicalSlot, PhysicalSlotId,
     PhysicalWorkBinding, PhysicalWorkBindingError, PlanError, PlanPrediction, PlannedArtifact,
-    PlannerCostModelProfileId, PlannerCostModelProfileRecord, PlanningBindings,
+    PlannerCostModelProfileBootstrap, PlannerCostModelProfileId, PlanningBindings,
     PredictionConfidence, PredictionUncertainty, PreparedArtifactBudget,
     PreparedArtifactDescriptor, PreparedArtifactError, PreparedArtifactLoadSource,
     PreparedArtifactOperation, PreparedArtifactOrder, PreparedArtifactPlanFragment,
@@ -94,8 +94,8 @@ fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
     )
 }
 
-fn planning_profile(byte: u8) -> PlannerCostModelProfileRecord {
-    PlannerCostModelProfileRecord::initial(cost_model(byte))
+fn planning_profile(byte: u8) -> PlannerCostModelProfileBootstrap {
+    PlannerCostModelProfileBootstrap::new(cost_model(byte))
 }
 
 mod common;
@@ -969,6 +969,7 @@ fn failing_transaction_executor(
 fn physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
     let problem = compile(request(1)).expect("default physical-work problem");
     physical_work_with_transaction_staging(
+        &problem,
         implementation_byte,
         product_participants(&problem),
         false,
@@ -980,6 +981,7 @@ fn physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
 fn physical_work_with_synchronous_observation_read(implementation_byte: u8) -> PhysicalWorkBinding {
     let problem = compile(request(1)).expect("synchronous observation-read problem");
     physical_work_with_transaction_staging(
+        &problem,
         implementation_byte,
         product_participants(&problem),
         false,
@@ -1028,6 +1030,7 @@ fn physical_work_for_problem(
         )
         .collect();
     let base = physical_work_with_transaction_staging(
+        problem,
         implementation_byte,
         participants,
         !problem
@@ -1090,6 +1093,7 @@ fn physical_work_for_problem(
     })
     .expect("problem-bound transaction DAG");
     PhysicalWorkBinding::new(
+        problem,
         dag,
         base.prediction().clone(),
         base.artifacts().to_vec(),
@@ -1100,10 +1104,18 @@ fn physical_work_for_problem(
 }
 
 fn physical_work_with_product_staging(
+    problem: &casa_imaging_model::CompiledProblem,
     implementation_byte: u8,
     participants: Vec<PublicationParticipant>,
 ) -> PhysicalWorkBinding {
-    physical_work_with_transaction_staging(implementation_byte, participants, false, false, true)
+    physical_work_with_transaction_staging(
+        problem,
+        implementation_byte,
+        participants,
+        false,
+        false,
+        true,
+    )
 }
 
 fn physical_work_with_model_staging(implementation_byte: u8) -> PhysicalWorkBinding {
@@ -1115,6 +1127,7 @@ fn physical_work_with_early_publication_buffer(implementation_byte: u8) -> Physi
     let problem = compile(request(1)).expect("early-publication physical-work problem");
     let graph_id = problem.product_graph().graph_id();
     physical_work_with_transaction_staging(
+        &problem,
         implementation_byte,
         problem
             .product_graph()
@@ -1131,6 +1144,7 @@ fn physical_work_with_early_publication_buffer(implementation_byte: u8) -> Physi
 }
 
 fn physical_work_with_transaction_staging(
+    problem: &casa_imaging_model::CompiledProblem,
     implementation_byte: u8,
     participants: Vec<PublicationParticipant>,
     include_model_staging: bool,
@@ -1230,6 +1244,7 @@ fn physical_work_with_transaction_staging(
         adaptations: Vec::new(),
     };
     transaction_binding(
+        problem,
         specification,
         implementation(implementation_byte),
         participants,
@@ -1240,6 +1255,7 @@ fn physical_work_with_transaction_staging(
 }
 
 fn transaction_binding(
+    problem: &casa_imaging_model::CompiledProblem,
     mut specification: ExecutionDagSpecification,
     work_implementation: WorkImplementationId,
     participants: Vec<PublicationParticipant>,
@@ -1812,6 +1828,7 @@ fn transaction_binding(
     )
     .expect("complete transaction prediction");
     PhysicalWorkBinding::new(
+        problem,
         dag,
         prediction,
         participants
@@ -1872,6 +1889,7 @@ fn transaction_binding(
 }
 
 fn evidenced_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
+    let problem = compile(request(1)).expect("evidenced physical-work problem");
     let base = physical_work(implementation_byte);
     let base_dag = base.execution_dag();
     let read = WorkNodeId::new("read");
@@ -1992,6 +2010,7 @@ fn evidenced_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
     )
     .expect("complete evidence prediction");
     PhysicalWorkBinding::new(
+        &problem,
         dag,
         prediction,
         vec![
@@ -2018,6 +2037,7 @@ fn evidenced_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
 }
 
 fn adaptive_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
+    let problem = compile(request(1)).expect("adaptive physical-work problem");
     let work_implementation = implementation(implementation_byte);
     let first_id = WorkNodeId::new("first-major-work");
     let boundary_id = WorkNodeId::new("major-boundary");
@@ -2112,6 +2132,7 @@ fn adaptive_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
         }],
     };
     transaction_binding(
+        &problem,
         specification,
         implementation(implementation_byte),
         default_product_participants(),
@@ -2121,7 +2142,10 @@ fn adaptive_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
     )
 }
 
-fn auditable_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
+fn auditable_physical_work(
+    problem: &casa_imaging_model::CompiledProblem,
+    implementation_byte: u8,
+) -> PhysicalWorkBinding {
     let base = adaptive_physical_work(implementation_byte);
     let base_dag = base.execution_dag();
     let allocation = AllocationId::new("audit-generation");
@@ -2200,6 +2224,7 @@ fn auditable_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
     })
     .expect("valid auditable physical work DAG");
     PhysicalWorkBinding::new(
+        problem,
         dag,
         base.prediction().clone(),
         [PlannedArtifact::new(
@@ -2222,6 +2247,7 @@ fn release_failure_physical_work(
     release_implementation_byte: u8,
     fail_at_fence: bool,
 ) -> PhysicalWorkBinding {
+    let problem = compile(request(1)).expect("release-failure physical-work problem");
     let (independent_id, prepare_id, release_id, allocation_name, slot_name) = if fail_at_fence {
         (
             WorkNodeId::new("z-independent-io"),
@@ -2462,6 +2488,7 @@ fn release_failure_physical_work(
         adaptations: Vec::new(),
     };
     transaction_binding(
+        &problem,
         specification,
         implementation(implementation_byte),
         default_product_participants(),
@@ -2476,6 +2503,7 @@ fn mapped_publication_candidate(
     terminal: WorkDependency,
     allocation: AllocationId,
 ) -> Result<PhysicalWorkBinding, PhysicalWorkBindingError> {
+    let problem = compile(request(1)).expect("mapped-publication physical-work problem");
     let base = release_failure_physical_work(6, 8, false);
     let mapped = PublicationMappedStaging::new(producer, terminal, allocation)
         .expect("mapped producer and release differ");
@@ -2510,6 +2538,7 @@ fn mapped_publication_candidate(
     )
     .expect("one mapped layout per participant");
     PhysicalWorkBinding::new(
+        &problem,
         base.execution_dag().clone(),
         base.prediction().clone(),
         base.artifacts().to_vec(),
@@ -2869,6 +2898,7 @@ fn execute_plan(
 
 #[test]
 fn physical_work_binding_rejects_io_and_publication_evidence_outside_plan_semantics() {
+    let problem = compile(request(1)).expect("physical-work contract problem");
     let io_base = physical_work(6);
     let io_dag = io_base.execution_dag().clone();
     let io_prediction = PlanPrediction::new(
@@ -2896,6 +2926,7 @@ fn physical_work_binding_rejects_io_and_publication_evidence_outside_plan_semant
 
     assert!(matches!(
         PhysicalWorkBinding::new(
+            &problem,
             io_dag,
             io_prediction,
             Vec::new(),
@@ -2963,6 +2994,7 @@ fn physical_work_binding_rejects_io_and_publication_evidence_outside_plan_semant
     .expect("well-formed prediction ledger");
     assert!(matches!(
         PhysicalWorkBinding::new(
+            &problem,
             contract_dag,
             contract_prediction,
             Vec::new(),
@@ -2987,6 +3019,7 @@ fn physical_work_binding_rejects_io_and_publication_evidence_outside_plan_semant
 
     assert!(matches!(
         PhysicalWorkBinding::new(
+            &problem,
             publication_dag,
             publication_prediction,
             vec![output],
@@ -2999,6 +3032,7 @@ fn physical_work_binding_rejects_io_and_publication_evidence_outside_plan_semant
 
 #[test]
 fn physical_work_binding_rejects_typed_io_contracts_without_predictions() {
+    let problem = compile(request(1)).expect("physical-work contract problem");
     let base = evidenced_physical_work(6);
     let dag = base.execution_dag().clone();
     let prediction = PlanPrediction::new(
@@ -3015,6 +3049,7 @@ fn physical_work_binding_rejects_typed_io_contracts_without_predictions() {
 
     assert!(matches!(
         PhysicalWorkBinding::new(
+            &problem,
             dag,
             prediction,
             Vec::new(),
@@ -3027,6 +3062,7 @@ fn physical_work_binding_rejects_typed_io_contracts_without_predictions() {
 
 #[test]
 fn physical_work_binding_rejects_cpu_io_buffer_contracts_without_predictions() {
+    let problem = compile(request(1)).expect("physical-work contract problem");
     let base = evidenced_physical_work(6);
     let base_dag = base.execution_dag();
     let prepare = WorkNodeId::new("read");
@@ -3106,6 +3142,7 @@ fn physical_work_binding_rejects_cpu_io_buffer_contracts_without_predictions() {
 
     assert!(matches!(
         PhysicalWorkBinding::new(
+            &problem,
             dag,
             prediction,
             Vec::new(),
@@ -3444,7 +3481,7 @@ fn transaction_seal_rejects_omitted_product_graph_publication_member() {
     let result = plan(
         &problem,
         PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
-        |_, _| Ok::<_, io::Error>(physical_work_with_product_staging(6, omitted)),
+        |_, _| Ok::<_, io::Error>(physical_work_with_product_staging(&problem, 6, omitted)),
     );
 
     let error = result.expect_err("one omitted product must fail the exact plan seal");
@@ -3482,6 +3519,7 @@ fn transaction_seal_rejects_matching_ordinals_from_a_foreign_product_graph() {
         PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| {
             Ok::<_, io::Error>(physical_work_with_product_staging(
+                &problem,
                 6,
                 product_participants(&foreign),
             ))
@@ -3553,6 +3591,7 @@ fn transaction_seal_blocks_unbound_transaction_work() {
     let problem = compile(request(1)).expect("logical compilation");
     let base = physical_work_for_problem(&problem, 6);
     let unbound = PhysicalWorkBinding::new(
+        &problem,
         base.execution_dag().clone(),
         base.prediction().clone(),
         base.artifacts().to_vec(),
@@ -4153,7 +4192,7 @@ fn receipt_finalize_failure_after_publish_returns_success_and_reopens_prepared_e
     assert_eq!(outcome, ExecutionOutcome::Succeeded);
     assert!(publication_launched.load(Ordering::SeqCst));
     assert_eq!(visible_generation.load(Ordering::SeqCst), 1);
-    assert_eq!(receipt.schema_version(), 11);
+    assert_eq!(receipt.schema_version(), 13);
     assert_eq!(receipt.status(), ReceiptStatus::PublicationPrepared);
     for layout in execution_plan.publication_layouts().entries() {
         assert_eq!(
@@ -4946,7 +4985,7 @@ fn run_persists_a_reopenable_receipt_with_exact_identities_and_every_plan_node()
         .expect("reopen durable receipt");
 
     assert_eq!(outcome, ExecutionOutcome::Succeeded);
-    assert_eq!(receipt.schema_version(), 11);
+    assert_eq!(receipt.schema_version(), 13);
     assert_eq!(receipt.route_matrix_schema_version(), 1);
     assert_eq!(receipt.route_matrix_contract_revision(), 1);
     assert_eq!(receipt.route_disposition(), "native");
@@ -5442,7 +5481,7 @@ fn receipt_reopens_the_complete_selected_plan_projection() {
     let execution_plan = plan(
         &problem,
         PlanningBindings::new(registry(3), policy.clone(), planning_profile(4)),
-        |_, _| Ok::<_, ()>(auditable_physical_work(6)),
+        |_, _| Ok::<_, ()>(auditable_physical_work(&problem, 6)),
     )
     .expect("auditable physical planning");
     let current = RunBindings::new(problem.inputs().clone(), &policy, cost_model(4));

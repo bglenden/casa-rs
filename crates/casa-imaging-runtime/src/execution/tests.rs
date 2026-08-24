@@ -881,6 +881,7 @@ fn physical_work_binding_with_artifacts(
         )
     }));
     PhysicalWorkBinding::new(
+        &problem,
         dag,
         prediction,
         artifacts,
@@ -1685,7 +1686,7 @@ fn planning_fails_before_sealing_when_no_candidate_is_feasible() {
 }
 
 #[test]
-fn recorded_failed_and_aborted_executions_constrain_planning_without_learning() {
+fn recorded_failures_do_not_blacklist_recovered_or_capability_only_regions() {
     let problem = compiled_problem();
     let sealed_dag = ExecutionDag::new(plan_spec(vec![cpu_node("work", BTreeSet::new())]))
         .expect("valid physical work");
@@ -1759,28 +1760,16 @@ fn recorded_failed_and_aborted_executions_constrain_planning_without_learning() 
             PlannerCostModelProfileRecord::initial(PlannerCostModelProfileId::from_sha256([8; 32])),
         )
     };
-    let error = authority_plan(&problem, bindings(), &authority, &recorded, |_, _| {
+    let planned = authority_plan(&problem, bindings(), &authority, &recorded, |_, _| {
         Ok::<_, std::convert::Infallible>(vec![physical_work_binding(
             ExecutionDag::new(plan_spec(vec![cpu_node("work", BTreeSet::new())]))
                 .expect("candidate physical work"),
         )])
     })
-    .expect_err("recorded failures must constrain the infeasible region");
-
-    let certificate = match &error {
-        crate::PlanError::Resource(crate::ResourceError::NoFeasibleAlternative(certificate)) => {
-            certificate.clone()
-        }
-        other => panic!("expected a recorded-infeasibility refusal, got {other:?}"),
-    };
-    assert_eq!(certificate.rejections().len(), 1);
-    assert_eq!(certificate.rejections()[0].alternative(), &alternative_id);
+    .expect("current Resource Authority admission remains authoritative");
     assert_eq!(
-        certificate.rejections()[0].reason(),
-        &crate::AlternativeRejectionReason::RecordedFailure {
-            attempt: crate::ExecutionAttemptId::from_sha256([91; 32]),
-            status: crate::ReceiptStatus::Failed,
-        }
+        planned.execution_dag().resource_alternative().id,
+        alternative_id
     );
 
     // Without recorded terminal failures the same candidate admits: recorded
@@ -4515,6 +4504,7 @@ fn receipts_reopen_machine_readable_infeasibility_certificates() {
             .infeasibility_certificate(),
         Some(crate::ReceiptInfeasibilityCertificate::Infeasible {
             resource: "host-memory".to_string(),
+            resource_identity: crate::ResourceIdentity::new("host-memory"),
             required: 4_096,
             available: 1_024,
         })

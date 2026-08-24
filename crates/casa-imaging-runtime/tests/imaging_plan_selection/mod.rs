@@ -6,7 +6,8 @@
 use std::io;
 
 use casa_imaging_runtime::{
-    AlternativeRejectionReason, ExecutionPlan, PlannerCostModelProfileRecord, RecordedInfeasibility,
+    AlternativeRejectionReason, ExecutionPlan, PlannerCostModelProfileBootstrap,
+    RecordedInfeasibility,
 };
 
 mod support;
@@ -19,6 +20,7 @@ use self::support::{
 };
 
 fn candidate(
+    problem: &casa_imaging_model::CompiledProblem,
     base: &PhysicalWorkBinding,
     alternative: &str,
     stage_nanos: u64,
@@ -64,6 +66,7 @@ fn candidate(
         adaptations: dag.adaptations().values().cloned().collect(),
     };
     PhysicalWorkBinding::new(
+        problem,
         ExecutionDag::new(specification).expect("variant physical DAG"),
         prediction,
         base.artifacts().to_vec(),
@@ -85,7 +88,7 @@ fn multi_candidate_plan(
         PlanningBindings::new(
             registry(3),
             ResourcePolicy::Exclusive,
-            PlannerCostModelProfileRecord::initial(cost_model(4)),
+            PlannerCostModelProfileBootstrap::new(cost_model(4)),
         ),
         authority(),
         &RecordedInfeasibility::default(),
@@ -97,8 +100,8 @@ fn multi_candidate_plan(
 fn planning_commits_to_the_minimum_conservative_predicted_time_among_feasible_candidates() {
     let problem = compile(request(1)).expect("logical compilation");
     let base = physical_work(6);
-    let slow = candidate(&base, "alt-slow", 300, 1);
-    let fast = candidate(&base, "alt-fast", 100, 1);
+    let slow = candidate(&problem, &base, "alt-slow", 300, 1);
+    let fast = candidate(&problem, &base, "alt-fast", 100, 1);
     assert!(
         fast.prediction().conservative_nanos() < slow.prediction().conservative_nanos(),
         "the fixture must offer a strictly slower conservative prediction"
@@ -128,8 +131,8 @@ fn planning_commits_to_the_minimum_conservative_predicted_time_among_feasible_ca
 fn hard_feasibility_precedes_predicted_time_in_lexicographic_planning() {
     let problem = compile(request(1)).expect("logical compilation");
     let base = physical_work(6);
-    let fast_infeasible = candidate(&base, "alt-fast-infeasible", 100, 1_000);
-    let slow_feasible = candidate(&base, "alt-slow-feasible", 400, 1);
+    let fast_infeasible = candidate(&problem, &base, "alt-fast-infeasible", 100, 2_000_000);
+    let slow_feasible = candidate(&problem, &base, "alt-slow-feasible", 400, 1);
 
     let selected = multi_candidate_plan(&problem, vec![fast_infeasible, slow_feasible])
         .expect("the feasible candidate admits the plan");
@@ -142,11 +145,11 @@ fn hard_feasibility_precedes_predicted_time_in_lexicographic_planning() {
 }
 
 #[test]
-fn planning_allows_implementation_alternatives_with_the_same_contract_surface() {
+fn planning_rejects_implementation_alternatives_with_divergent_contracts() {
     let problem = compile(request(1)).expect("logical compilation");
     let base = physical_work(6);
-    let slow = candidate(&base, "alt-slow", 300, 1);
-    let fast = candidate(&base, "alt-fast", 100, 1);
+    let slow = candidate(&problem, &base, "alt-slow", 300, 1);
+    let fast = candidate(&problem, &base, "alt-fast", 100, 1);
 
     // A physically valid variant that swaps one node's implementation: same
     // capabilities and resource shape, different numerics-bearing semantics.
@@ -165,6 +168,7 @@ fn planning_allows_implementation_alternatives_with_the_same_contract_surface() 
         adaptations: dag.adaptations().values().cloned().collect(),
     };
     let divergent = PhysicalWorkBinding::new(
+        &problem,
         ExecutionDag::new(specification).expect("variant physical DAG"),
         fast.prediction().clone(),
         fast.artifacts().to_vec(),
@@ -173,23 +177,9 @@ fn planning_allows_implementation_alternatives_with_the_same_contract_surface() 
     )
     .expect("variant physical work");
 
-    let selected = multi_candidate_plan(&problem, vec![slow, divergent])
-        .expect("implementation alternatives remain selectable when their declared contract surface matches");
-
-    assert_eq!(
-        selected.execution_dag().resource_alternative().id,
-        AlternativeId::new("alt-fast")
-    );
-    assert_eq!(
-        selected
-            .execution_dag()
-            .nodes()
-            .values()
-            .next()
-            .unwrap()
-            .implementation,
-        swapped
-    );
+    let error = multi_candidate_plan(&problem, vec![slow, divergent])
+        .expect_err("different implementation commitments must not compete on timing");
+    assert!(matches!(error, PlanError::InvalidCandidate(_)));
 }
 
 #[test]
@@ -198,8 +188,8 @@ fn planning_reports_machine_readable_infeasibility_when_no_candidate_fits() {
     let base = physical_work(6);
     // Both candidates exceed host memory once their plan-owned slots are
     // scaled; the slower one sorts later so rejection order is deterministic.
-    let oversized_fast = candidate(&base, "alt-oversized-fast", 100, 1_000);
-    let oversized_slow = candidate(&base, "alt-oversized-slow", 400, 1_000);
+    let oversized_fast = candidate(&problem, &base, "alt-oversized-fast", 100, 2_000_000);
+    let oversized_slow = candidate(&problem, &base, "alt-oversized-slow", 400, 2_000_000);
 
     let error = multi_candidate_plan(&problem, vec![oversized_slow, oversized_fast])
         .expect_err("no candidate fits current policy, pressure, and reservations");

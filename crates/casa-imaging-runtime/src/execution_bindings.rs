@@ -23,7 +23,8 @@ use crate::{
     DemandAlternatives, ExecutionAttemptId, ExecutionError, ExecutionKnobs, ExecutionOutcome,
     ExecutionReceiptBinding, FenceKind, IoBufferKind, LeaseResource, PhysicalSlotId,
     PublicationLayoutLedger, ReceiptError, ReceiptFailureKind, ReceiptStatus, ResourceAuthority,
-    ResourceError, ResourceOverride, ResourcePolicy, WorkImplementationId, WorkKind, WorkNodeId,
+    ResourceError, ResourceIdentity, ResourceOverride, ResourcePolicy, WorkImplementationId,
+    WorkKind, WorkNodeId,
     cost_model::PlannerCostModelProfileRecord,
     execution::{
         ExecutionDag, ExecutionScheduler, PublicationReservation, SchedulerAction,
@@ -87,12 +88,13 @@ digest_identity!(
 );
 
 impl PlannerCostModelProfileId {
-    /// Bind an explicitly selected initial profile before reviewed promotion.
+    /// Mark this deployment-selected identity as the initial planner baseline.
     #[must_use]
-    pub fn initial_record(self) -> PlannerCostModelProfileRecord {
-        PlannerCostModelProfileRecord::initial(self)
+    pub const fn bootstrap(self) -> crate::PlannerCostModelProfileBootstrap {
+        crate::PlannerCostModelProfileBootstrap::new(self)
     }
 }
+
 digest_identity!(
     PhysicalWorkId,
     "Stable content identity of the physical work emitted by planning."
@@ -1047,6 +1049,7 @@ impl Error for ExecutionEvidenceError {}
 /// Complete physical work emitted by the sole planning seam.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PhysicalWorkBinding {
+    implementation_contract: ImplementationContractCommitment,
     execution_dag: ExecutionDag,
     prediction: PlanPrediction,
     artifacts: Vec<PlannedArtifact>,
@@ -1054,9 +1057,81 @@ pub struct PhysicalWorkBinding {
     publication_layouts: PublicationLayoutLedger,
 }
 
+/// Exact compiled science, numerics, and capability contract implemented by
+/// every adapter selected in one physical candidate.
+///
+/// The commitment can only be derived from a real [`CompiledProblem`]. This
+/// prevents a planner from making implementation identities compete on price
+/// while leaving their numerics-bearing behavior implicit.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImplementationContractCommitment {
+    problem: CompiledProblemId,
+    numerics: NumericsContractId,
+    required_capabilities: BTreeSet<RequiredCapability>,
+    implementation_ids: BTreeMap<WorkNodeId, WorkImplementationId>,
+}
+
+impl ImplementationContractCommitment {
+    fn for_problem(problem: &CompiledProblem, execution_dag: &ExecutionDag) -> Self {
+        Self {
+            problem: problem.problem_id(),
+            numerics: problem.numerics_id(),
+            required_capabilities: problem.required_capabilities().clone(),
+            implementation_ids: execution_dag
+                .nodes()
+                .iter()
+                .map(|(node, work)| (node.clone(), work.implementation.clone()))
+                .collect(),
+        }
+    }
+
+    /// Return the exact compiled problem whose science is implemented.
+    #[must_use]
+    pub const fn problem_id(&self) -> CompiledProblemId {
+        self.problem
+    }
+
+    /// Return the exact numerical contract implemented by the candidate.
+    #[must_use]
+    pub const fn numerics_id(&self) -> NumericsContractId {
+        self.numerics
+    }
+
+    /// Return the compiler-derived capability set implemented by the candidate.
+    #[must_use]
+    pub const fn required_capabilities(&self) -> &BTreeSet<RequiredCapability> {
+        &self.required_capabilities
+    }
+
+    /// Return the registry-selected implementation identity for each node.
+    #[must_use]
+    pub const fn implementation_ids(&self) -> &BTreeMap<WorkNodeId, WorkImplementationId> {
+        &self.implementation_ids
+    }
+}
+
 impl PhysicalWorkBinding {
     /// Bind a complete immutable physical work DAG, prediction, artifacts, and transaction.
     pub fn new(
+        problem: &CompiledProblem,
+        execution_dag: ExecutionDag,
+        prediction: PlanPrediction,
+        artifacts: Vec<PlannedArtifact>,
+        observation_transaction: ObservationTransactionWork,
+        publication_layouts: PublicationLayoutLedger,
+    ) -> Result<Self, PhysicalWorkBindingError> {
+        Self::with_implementation_contract(
+            ImplementationContractCommitment::for_problem(problem, &execution_dag),
+            execution_dag,
+            prediction,
+            artifacts,
+            observation_transaction,
+            publication_layouts,
+        )
+    }
+
+    pub(crate) fn with_implementation_contract(
+        implementation_contract: ImplementationContractCommitment,
         execution_dag: ExecutionDag,
         prediction: PlanPrediction,
         mut artifacts: Vec<PlannedArtifact>,
@@ -1112,12 +1187,20 @@ impl PhysicalWorkBinding {
             &publication_layouts,
         )?;
         Ok(Self {
+            implementation_contract,
             execution_dag,
             prediction,
             artifacts,
             observation_transaction,
             publication_layouts,
         })
+    }
+
+    /// Return the exact science, numerics, and capability commitment carried
+    /// by every selected implementation in this candidate.
+    #[must_use]
+    pub const fn implementation_contract(&self) -> &ImplementationContractCommitment {
+        &self.implementation_contract
     }
 
     /// Return the stable physical-work identity.
@@ -1532,6 +1615,10 @@ impl ResourcePolicyId {
     pub const fn as_bytes(self) -> [u8; 32] {
         self.0
     }
+
+    pub(crate) const fn from_sha256(digest: [u8; 32]) -> Self {
+        Self(digest)
+    }
 }
 
 impl fmt::Debug for ResourcePolicyId {
@@ -1589,17 +1676,20 @@ pub struct PlanningBindings {
 impl PlanningBindings {
     /// Bind one registry snapshot, host-use policy, and reviewed cost model.
     #[must_use]
-    pub fn new(
+    pub fn new<P>(
         implementation_registry: ImplementationRegistryId,
         resource_policy: ResourcePolicy,
-        planner_cost_model_profile: PlannerCostModelProfileRecord,
-    ) -> Self {
+        planner_cost_model_profile: P,
+    ) -> Self
+    where
+        P: Into<PlannerCostModelProfileRecord>,
+    {
         let resource_policy_id = resource_policy_id(&resource_policy);
         Self {
             implementation_registry,
             resource_policy,
             resource_policy_id,
-            planner_cost_model_profile,
+            planner_cost_model_profile: planner_cost_model_profile.into(),
         }
     }
 
@@ -1811,8 +1901,9 @@ impl<E: Error + 'static> Error for PlanError<E> {
 /// hard feasibility with reserved headroom is proven only by Resource Authority
 /// admission under the bound host-use policy; and among admitted candidates
 /// the plan commits to the minimum conservative predicted wall time including
-/// uncertainty. Recorded terminal failures constrain their regions before
-/// admission. When no candidate fits, the returned
+/// uncertainty. Recorded terminal failures remain reopenable evidence, but
+/// current feasibility is decided only by Resource Authority admission. When
+/// no candidate fits, the returned
 /// [`PlanError::infeasibility_certificate`] reports exactly why each
 /// alternative was refused.
 pub fn plan<E>(
@@ -1833,6 +1924,31 @@ pub fn plan<E>(
     let reference_transaction = first.observation_transaction.clone();
     let reference_layouts = first.publication_layouts.clone();
     for candidate in &candidates {
+        let commitment = candidate.implementation_contract();
+        if commitment.problem_id() != problem.problem_id() {
+            return Err(PlanError::InvalidCandidate(ExecutionError::InvalidPlan(
+                "physical candidate implementations are not committed to the compiled problem"
+                    .to_string(),
+            )));
+        }
+        if commitment.numerics_id() != problem.numerics_id() {
+            return Err(PlanError::InvalidCandidate(ExecutionError::InvalidPlan(
+                "physical candidate implementations are not committed to the Numerics Contract"
+                    .to_string(),
+            )));
+        }
+        if commitment.required_capabilities() != problem.required_capabilities() {
+            return Err(PlanError::InvalidCandidate(ExecutionError::InvalidPlan(
+                "physical candidate implementations do not commit to every compiler-derived capability"
+                    .to_string(),
+            )));
+        }
+        if commitment != first.implementation_contract() {
+            return Err(PlanError::InvalidCandidate(ExecutionError::InvalidPlan(
+                "physical candidates disagree on their registry-owned science and numerics commitments"
+                    .to_string(),
+            )));
+        }
         if candidate.execution_dag.required_resource_capabilities() != &required_capabilities {
             return Err(PlanError::InvalidCandidate(ExecutionError::InvalidPlan(
                 "physical candidates disagree on required resource capabilities".to_string(),
@@ -1856,32 +1972,6 @@ pub fn plan<E>(
         validate_topology(&candidate.execution_dag, authority.topology())
             .map_err(PlanError::InvalidCandidate)?;
     }
-    // Recorded terminal failures constrain their regions before admission:
-    // a failed or aborted execution is evidence of an infeasible region, never
-    // cost-model learning.
-    let mut constrained_rejections = Vec::new();
-    candidates.retain(|candidate| {
-        match recorded_infeasibility.constraint(
-            problem.problem_id().as_bytes(),
-            candidate.execution_dag.physical_work_id().as_bytes(),
-            bindings.resource_policy_id.as_bytes(),
-            &candidate.execution_dag.resource_alternative().id,
-        ) {
-            Some((attempt, status)) => {
-                constrained_rejections.push(AlternativeRejection::new(
-                    candidate.execution_dag.resource_alternative().id.clone(),
-                    AlternativeRejectionReason::RecordedFailure { attempt, status },
-                ));
-                false
-            }
-            None => true,
-        }
-    });
-    if candidates.is_empty() {
-        return Err(PlanError::Resource(ResourceError::NoFeasibleAlternative(
-            AdmissionInfeasibilityCertificate::from_rejections(constrained_rejections),
-        )));
-    }
     // Hard feasibility is decidable only by admission, so candidates are offered
     // in ascending conservative-predicted-time order and the authority commits
     // to the first feasible one: the minimum-time feasible candidate.
@@ -1897,13 +1987,15 @@ pub fn plan<E>(
         },
     ) {
         Ok(lease) => lease,
-        Err(ResourceError::NoFeasibleAlternative(certificate))
-            if !constrained_rejections.is_empty() =>
-        {
-            let mut rejections = constrained_rejections;
-            rejections.extend(certificate.rejections().iter().cloned());
+        Err(ResourceError::NoFeasibleAlternative(certificate)) => {
+            let certificate = recorded_infeasibility.annotate_current_rejections(
+                problem.problem_id().as_bytes(),
+                bindings.resource_policy_id.as_bytes(),
+                &candidates,
+                certificate,
+            );
             return Err(PlanError::Resource(ResourceError::NoFeasibleAlternative(
-                AdmissionInfeasibilityCertificate::from_rejections(rejections),
+                certificate,
             )));
         }
         Err(error) => return Err(PlanError::Resource(error)),
@@ -1968,11 +2060,11 @@ fn product_surface(candidate: &PhysicalWorkBinding) -> BTreeMap<ArtifactIdentity
 /// Recorded terminal failed or aborted executions that constrain planning.
 ///
 /// Each entry is durable receipt evidence that one demand alternative of one
-/// compiled problem terminally failed or was aborted. Planning refuses those
-/// regions before admission instead of re-attempting them blindly. This is
-/// explicit recorded evidence, not silent online learning: it never enters the
-/// performance cost model, which changes only through reviewed profile
-/// promotion.
+/// compiled problem terminally failed or was aborted. Resource Authority still
+/// decides every current admission; matching receipt evidence is only appended
+/// to a current refusal certificate. This is explicit recorded evidence, not
+/// silent online learning: it never enters the performance cost model, which
+/// changes only through reviewed profile promotion.
 #[derive(Clone, Debug, Default)]
 pub struct RecordedInfeasibility {
     regions: Vec<RegionFailure>,
@@ -1986,6 +2078,9 @@ struct RegionFailure {
     alternative: AlternativeId,
     attempt: ExecutionAttemptId,
     status: ReceiptStatus,
+    resource_identity: ResourceIdentity,
+    required: u64,
+    available: u64,
 }
 
 impl RecordedInfeasibility {
@@ -2004,10 +2099,21 @@ impl RecordedInfeasibility {
                 status,
                 ReceiptStatus::Failed | ReceiptStatus::Aborted | ReceiptStatus::Infeasible
             ) || receipt.failure_kind() != Some(ReceiptFailureKind::ResourceInfeasible)
-                || receipt.infeasibility_certificate().is_none()
             {
                 continue;
             }
+            let Some(crate::ReceiptInfeasibilityCertificate::Infeasible {
+                resource_identity,
+                required,
+                available,
+                ..
+            }) = receipt.infeasibility_certificate()
+            else {
+                // Capability gaps and references to earlier receipts are not
+                // quantitative pressure regions and cannot constrain a later
+                // Resource Authority decision.
+                continue;
+            };
             regions.push(RegionFailure {
                 problem: receipt.problem_identity(),
                 physical_work: receipt.dag_identity(),
@@ -2015,27 +2121,60 @@ impl RecordedInfeasibility {
                 alternative: receipt.selected_alternative_projection().id,
                 attempt,
                 status,
+                resource_identity,
+                required,
+                available,
             });
         }
         Ok(Self { regions })
     }
 
-    fn constraint(
+    fn annotate_current_rejections(
         &self,
         problem: [u8; 32],
-        physical_work: [u8; 32],
         resource_policy: [u8; 32],
-        alternative: &AlternativeId,
-    ) -> Option<(ExecutionAttemptId, ReceiptStatus)> {
-        self.regions
-            .iter()
-            .find(|region| {
+        candidates: &[PhysicalWorkBinding],
+        certificate: AdmissionInfeasibilityCertificate,
+    ) -> AdmissionInfeasibilityCertificate {
+        let mut rejections = Vec::new();
+        for rejection in certificate.rejections() {
+            rejections.push(rejection.clone());
+            let AlternativeRejectionReason::Infeasible {
+                resource,
+                required,
+                available,
+            } = rejection.reason()
+            else {
+                continue;
+            };
+            let Some(candidate) = candidates.iter().find(|candidate| {
+                &candidate.execution_dag.resource_alternative().id == rejection.alternative()
+            }) else {
+                continue;
+            };
+            for region in self.regions.iter().filter(|region| {
                 region.problem == problem
-                    && region.physical_work == physical_work
+                    && region.physical_work == candidate.physical_work_id().as_bytes()
                     && region.resource_policy == resource_policy
-                    && &region.alternative == alternative
-            })
-            .map(|region| (region.attempt, region.status))
+                    && &region.alternative == rejection.alternative()
+                    && region.resource_identity == ResourceIdentity::new(resource.clone())
+                    && region.required == *required
+                    && *available <= region.available
+            }) {
+                // Historical evidence only annotates a current authority
+                // rejection when the current point is inside the same or a
+                // stricter quantitative pressure region. It never pre-filters
+                // a candidate or vetoes recovered capacity.
+                rejections.push(AlternativeRejection::new(
+                    rejection.alternative().clone(),
+                    AlternativeRejectionReason::RecordedFailure {
+                        attempt: region.attempt,
+                        status: region.status,
+                    },
+                ));
+            }
+        }
+        AdmissionInfeasibilityCertificate::from_rejections(rejections)
     }
 }
 

@@ -8,7 +8,7 @@ use std::path::Path;
 
 use casa_imaging_model::{ModelColumnWrite, ProductKind, compile};
 use casa_imaging_runtime::{
-    ExecutionAttemptId, ExecutionPlan, PlannerCostModelProfileRecord, open_cost_model_profile,
+    ExecutionAttemptId, ExecutionPlan, PlannerCostModelProfileBootstrap, open_cost_model_profile,
     promote_cost_model_profile,
 };
 
@@ -41,7 +41,7 @@ fn skeleton(lineage: u8) -> Skeleton {
         PlanningBindings::new(
             registry(3),
             ResourcePolicy::Balanced,
-            PlannerCostModelProfileRecord::initial(cost_model(lineage)),
+            PlannerCostModelProfileBootstrap::new(cost_model(lineage)),
         ),
         |problem, _| Ok::<_, std::io::Error>(physical_work_for_problem(problem, 6)),
     )

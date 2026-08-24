@@ -46,7 +46,7 @@ fn walking_skeleton() -> WalkingSkeleton {
         PlanningBindings::new(
             registry(3),
             ResourcePolicy::Balanced,
-            cost_model(4).initial_record(),
+            cost_model(4).bootstrap(),
         ),
         |problem, _| Ok::<_, io::Error>(physical_work_for_problem(problem, 6)),
     )

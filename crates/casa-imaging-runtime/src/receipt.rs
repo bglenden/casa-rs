@@ -45,13 +45,13 @@ use crate::{
     ArtifactIdentity, ArtifactMeasurement, ArtifactRole, CacheIdentity, CapabilityId,
     ClaimLifetime, DemandAlternative, ExecutionKnobs, ExecutionPlan, FenceId, FenceKind,
     InitializationPolicy, IoBufferKind, LeaseResource, PhysicalLayoutId, PhysicalSlotId,
-    PublicationParticipant, PublicationResourceBounds, QuiescencePoint, ResourcePolicy,
-    StorageMode, WorkDependency, WorkDomain, WorkImplementationId, WorkKind, WorkMeasurements,
-    WorkNodeId,
+    PublicationParticipant, PublicationResourceBounds, QuiescencePoint, ResourceIdentity,
+    ResourcePolicy, StorageMode, WorkDependency, WorkDomain, WorkImplementationId, WorkKind,
+    WorkMeasurements, WorkNodeId,
 };
 
 const RECEIPT_SCHEMA: &str = "casa-rs-imaging-execution-receipt";
-const RECEIPT_SCHEMA_VERSION: u32 = 12;
+const RECEIPT_SCHEMA_VERSION: u32 = 13;
 const COMPILED_PROBLEM_EVIDENCE_VERSION: u32 = 7;
 const RECEIPT_SUFFIX: &str = ".receipt.json";
 const RECEIPT_STAGING_PREFIX: &str = ".casa-rs-receipt-staging-";
@@ -462,6 +462,9 @@ pub enum ReceiptInfeasibilityCertificate {
     Infeasible {
         /// Stable resource category reported by the Resource Authority.
         resource: String,
+        /// Exact typed Resource Authority identity retained independently of
+        /// the bounded/redacted display string.
+        resource_identity: ResourceIdentity,
         /// Mandatory requested amount.
         required: u64,
         /// Available amount after policy, pressure, and active reservations.
@@ -1464,7 +1467,7 @@ impl ExecutionReceiptStore {
     ///
     /// Identities come from receipt filenames; reopening still validates each
     /// document's integrity.
-    pub fn attempts(&self) -> Result<Vec<ExecutionAttemptId>, ReceiptError> {
+    pub(crate) fn attempts(&self) -> Result<Vec<ExecutionAttemptId>, ReceiptError> {
         let mut attempts = Vec::new();
         for entry in fs::read_dir(&self.root).map_err(|source| ReceiptError::Io {
             action: "list execution receipts",
@@ -1765,6 +1768,7 @@ impl ReceiptBody {
             subject: Some(maximum_json_escaped_evidence()),
             infeasibility: Some(InfeasibilityProjection::Infeasible {
                 resource: maximum_json_escaped_evidence(),
+                resource_identity: maximum_json_escaped_evidence(),
                 required: u64::MAX,
                 available: u64::MAX,
             }),
@@ -1866,6 +1870,7 @@ enum InfeasibilityProjection {
     NoCapableAlternative,
     Infeasible {
         resource: String,
+        resource_identity: String,
         required: u64,
         available: u64,
     },
@@ -1881,10 +1886,12 @@ impl InfeasibilityProjection {
             Self::NoCapableAlternative => ReceiptInfeasibilityCertificate::NoCapableAlternative,
             Self::Infeasible {
                 resource,
+                resource_identity,
                 required,
                 available,
             } => ReceiptInfeasibilityCertificate::Infeasible {
                 resource: resource.clone(),
+                resource_identity: ResourceIdentity::new(resource_identity.clone()),
                 required: *required,
                 available: *available,
             },
@@ -1984,6 +1991,7 @@ impl ReceiptFailure {
                         available,
                     } => InfeasibilityProjection::Infeasible {
                         resource: bounded_evidence_text(resource),
+                        resource_identity: resource.clone(),
                         required: *required,
                         available: *available,
                     },
@@ -2001,6 +2009,7 @@ impl ReceiptFailure {
                 available,
             } => InfeasibilityProjection::Infeasible {
                 resource: bounded_evidence_text(resource),
+                resource_identity: resource.clone(),
                 required: *required,
                 available: *available,
             },
@@ -4537,20 +4546,21 @@ fn validate_body(body: &ReceiptBody) -> Result<(), ReceiptError> {
                 FailureKindProjection::ResourceInfeasible,
                 Some(InfeasibilityProjection::Infeasible {
                     resource,
+                    resource_identity,
                     required,
                     available,
                 }),
             ) => require_integrity(
                 is_redacted_text(resource)
                     && resource.len() <= MAX_FAILURE_SUBJECT_BYTES
+                    && !resource_identity.is_empty()
                     && required > available,
             )?,
             (
                 FailureKindProjection::ResourceInfeasible,
                 Some(InfeasibilityProjection::RecordedFailure { attempt, status }),
             ) => require_integrity(
-                is_redacted_text(attempt)
-                    && attempt.len() <= MAX_FAILURE_SUBJECT_BYTES
+                is_digest(attempt)
                     && matches!(
                         status,
                         ReceiptStatus::Failed | ReceiptStatus::Aborted | ReceiptStatus::Infeasible

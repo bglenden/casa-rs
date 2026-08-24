@@ -17,12 +17,13 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    ExecutionAttemptId, ExecutionReceiptStore, PlannerCostModelProfileId, ReceiptError,
-    ReceiptStatus, WorkNodeId, execution_bindings::CanonicalEncoder, receipt::ExecutionReceipt,
+    BuildIdentity, ExecutionAttemptId, ExecutionReceiptStore, ImplementationRegistryId,
+    PlannerCostModelProfileId, ReceiptError, ReceiptStatus, ResourcePolicyId, WorkNodeId,
+    execution_bindings::CanonicalEncoder, receipt::ExecutionReceipt,
 };
 
 const PROFILE_SCHEMA_NAME: &str = "casa-rs-planner-cost-model-profile";
-const PROFILE_SCHEMA_VERSION: u32 = 1;
+const PROFILE_SCHEMA_VERSION: u32 = 2;
 const PROFILE_IDENTITY_DOMAIN: &[u8] = b"casa-rs-planner-cost-model-profile";
 
 /// Operator review evidence authorizing one explicit profile promotion.
@@ -68,6 +69,32 @@ pub struct ProfileEvidenceEntry {
     actual_nanos: u64,
 }
 
+/// Explicit deployment authority for the initial planner profile.
+///
+/// A bootstrap is intentionally distinct from a promoted profile: it may be
+/// selected only while constructing the first planning bindings, whereas every
+/// later profile must be reopened from durable evidence or produced by the
+/// reviewed promotion command.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PlannerCostModelProfileBootstrap {
+    profile_id: PlannerCostModelProfileId,
+}
+
+impl PlannerCostModelProfileBootstrap {
+    /// Select the deployment baseline used before the first reviewed profile
+    /// promotion.
+    #[must_use]
+    pub const fn new(profile_id: PlannerCostModelProfileId) -> Self {
+        Self { profile_id }
+    }
+
+    /// Return the deployment-selected baseline identity.
+    #[must_use]
+    pub const fn profile_id(self) -> PlannerCostModelProfileId {
+        self.profile_id
+    }
+}
+
 impl ProfileEvidenceEntry {
     /// Return the receipt attempt this observation was promoted from.
     #[must_use]
@@ -100,10 +127,22 @@ impl ProfileEvidenceEntry {
 pub struct PlannerCostModelProfileRecord {
     profile_id: PlannerCostModelProfileId,
     lineage_cost_model: PlannerCostModelProfileId,
+    plan_identity: [u8; 32],
+    implementation_registry_identity: ImplementationRegistryId,
+    resource_policy_identity: ResourcePolicyId,
+    build_identity: BuildIdentity,
     prediction_confidence_ppm: u32,
     promoted_unix_millis: u64,
     review: ProfileReview,
     entries: Vec<ProfileEvidenceEntry>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ProfileComparabilityBoundary {
+    plan_identity: [u8; 32],
+    implementation_registry_identity: ImplementationRegistryId,
+    resource_policy_identity: ResourcePolicyId,
+    build_identity: BuildIdentity,
 }
 
 impl PlannerCostModelProfileRecord {
@@ -114,10 +153,14 @@ impl PlannerCostModelProfileRecord {
     /// persisted promotion documents. Every subsequent profile must come
     /// from [`promote_cost_model_profile`] or [`open_cost_model_profile`].
     #[must_use]
-    pub fn initial(profile_id: PlannerCostModelProfileId) -> Self {
+    pub(crate) fn initial(profile_id: PlannerCostModelProfileId) -> Self {
         Self {
             profile_id,
             lineage_cost_model: profile_id,
+            plan_identity: [0; 32],
+            implementation_registry_identity: ImplementationRegistryId::from_sha256([0; 32]),
+            resource_policy_identity: ResourcePolicyId::from_sha256([0; 32]),
+            build_identity: BuildIdentity::from_sha256([0; 32]),
             prediction_confidence_ppm: 0,
             promoted_unix_millis: 0,
             review: ProfileReview {
@@ -145,6 +188,30 @@ impl PlannerCostModelProfileRecord {
         self.lineage_cost_model
     }
 
+    /// Return the exact effective plan identity represented by the promoted evidence.
+    #[must_use]
+    pub const fn plan_identity(&self) -> [u8; 32] {
+        self.plan_identity
+    }
+
+    /// Return the exact implementation-registry snapshot represented by the evidence.
+    #[must_use]
+    pub const fn implementation_registry_identity(&self) -> ImplementationRegistryId {
+        self.implementation_registry_identity
+    }
+
+    /// Return the exact resource-policy identity represented by the evidence.
+    #[must_use]
+    pub const fn resource_policy_identity(&self) -> ResourcePolicyId {
+        self.resource_policy_identity
+    }
+
+    /// Return the exact executable build identity represented by the evidence.
+    #[must_use]
+    pub const fn build_identity(&self) -> BuildIdentity {
+        self.build_identity
+    }
+
     /// Return the plans' fixed-point prediction confidence.
     #[must_use]
     pub const fn prediction_confidence_ppm(&self) -> u32 {
@@ -167,6 +234,12 @@ impl PlannerCostModelProfileRecord {
     #[must_use]
     pub fn entries(&self) -> &[ProfileEvidenceEntry] {
         &self.entries
+    }
+}
+
+impl From<PlannerCostModelProfileBootstrap> for PlannerCostModelProfileRecord {
+    fn from(bootstrap: PlannerCostModelProfileBootstrap) -> Self {
+        Self::initial(bootstrap.profile_id())
     }
 }
 
@@ -320,6 +393,14 @@ pub fn promote_cost_model_profile(
         .collect::<Result<Vec<_>, _>>()?;
     let first = &opened[0];
     let lineage_cost_model = first.cost_model_identity();
+    let boundary = ProfileComparabilityBoundary {
+        plan_identity: first.plan_identity(),
+        implementation_registry_identity: ImplementationRegistryId::from_sha256(
+            first.implementation_registry_identity(),
+        ),
+        resource_policy_identity: ResourcePolicyId::from_sha256(first.resource_policy_identity()),
+        build_identity: first.build_identity(),
+    };
     for (attempt, receipt) in ordered.iter().zip(&opened) {
         validate_comparability(*attempt, first, receipt)?;
     }
@@ -350,11 +431,16 @@ pub fn promote_cost_model_profile(
     let record = PlannerCostModelProfileRecord {
         profile_id: profile_identity(&record_digest_input(
             lineage_cost_model,
+            boundary,
             confidence_ppm,
             &review,
             &entries,
         )),
         lineage_cost_model: PlannerCostModelProfileId::from_sha256(lineage_cost_model),
+        plan_identity: boundary.plan_identity,
+        implementation_registry_identity: boundary.implementation_registry_identity,
+        resource_policy_identity: boundary.resource_policy_identity,
+        build_identity: boundary.build_identity,
         prediction_confidence_ppm: confidence_ppm,
         promoted_unix_millis: now_unix_millis,
         review,
@@ -405,6 +491,7 @@ fn validate_comparability(
 
 fn record_digest_input(
     lineage_cost_model: [u8; 32],
+    boundary: ProfileComparabilityBoundary,
     confidence_ppm: u32,
     review: &ProfileReview,
     entries: &[ProfileEvidenceEntry],
@@ -413,6 +500,10 @@ fn record_digest_input(
     encoder.string(std::str::from_utf8(PROFILE_IDENTITY_DOMAIN).expect("ASCII domain"));
     encoder.u32(PROFILE_SCHEMA_VERSION);
     encoder.digest(lineage_cost_model);
+    encoder.digest(boundary.plan_identity);
+    encoder.digest(boundary.implementation_registry_identity.as_bytes());
+    encoder.digest(boundary.resource_policy_identity.as_bytes());
+    encoder.digest(boundary.build_identity.as_bytes());
     encoder.u32(confidence_ppm);
     encoder.string(review.reviewer());
     encoder.string(review.note());
@@ -447,6 +538,10 @@ struct ProfileSchema {
 struct ProfileBody {
     profile_id: String,
     lineage_cost_model: String,
+    plan_identity: String,
+    implementation_registry_identity: String,
+    resource_policy_identity: String,
+    build_identity: String,
     prediction_confidence_ppm: u32,
     promoted_unix_millis: u64,
     reviewer: String,
@@ -468,6 +563,10 @@ fn encode_profile(
     let body = ProfileBody {
         profile_id: hex(&record.profile_id.as_bytes()),
         lineage_cost_model: hex(&record.lineage_cost_model.as_bytes()),
+        plan_identity: hex(&record.plan_identity),
+        implementation_registry_identity: hex(&record.implementation_registry_identity.as_bytes()),
+        resource_policy_identity: hex(&record.resource_policy_identity.as_bytes()),
+        build_identity: hex(&record.build_identity.as_bytes()),
         prediction_confidence_ppm: record.prediction_confidence_ppm(),
         promoted_unix_millis: record.promoted_unix_millis(),
         reviewer: record.review.reviewer().to_string(),
@@ -538,8 +637,38 @@ fn decode_profile(bytes: &[u8]) -> Result<PlannerCostModelProfileRecord, Profile
         });
     };
     let lineage_cost_model = PlannerCostModelProfileId::from_sha256(lineage_bytes);
+    let Some(plan_identity) = parse_hex32(&body.plan_identity) else {
+        return Err(ProfilePromotionError::CorruptProfile {
+            profile: declared_id,
+        });
+    };
+    let Some(implementation_registry_bytes) = parse_hex32(&body.implementation_registry_identity)
+    else {
+        return Err(ProfilePromotionError::CorruptProfile {
+            profile: declared_id,
+        });
+    };
+    let Some(resource_policy_bytes) = parse_hex32(&body.resource_policy_identity) else {
+        return Err(ProfilePromotionError::CorruptProfile {
+            profile: declared_id,
+        });
+    };
+    let Some(build_bytes) = parse_hex32(&body.build_identity) else {
+        return Err(ProfilePromotionError::CorruptProfile {
+            profile: declared_id,
+        });
+    };
+    let boundary = ProfileComparabilityBoundary {
+        plan_identity,
+        implementation_registry_identity: ImplementationRegistryId::from_sha256(
+            implementation_registry_bytes,
+        ),
+        resource_policy_identity: ResourcePolicyId::from_sha256(resource_policy_bytes),
+        build_identity: BuildIdentity::from_sha256(build_bytes),
+    };
     let expected = profile_identity(&record_digest_input(
         lineage_bytes,
+        boundary,
         body.prediction_confidence_ppm,
         &review,
         &entries,
@@ -552,6 +681,10 @@ fn decode_profile(bytes: &[u8]) -> Result<PlannerCostModelProfileRecord, Profile
     Ok(PlannerCostModelProfileRecord {
         profile_id: declared_id,
         lineage_cost_model,
+        plan_identity: boundary.plan_identity,
+        implementation_registry_identity: boundary.implementation_registry_identity,
+        resource_policy_identity: boundary.resource_policy_identity,
+        build_identity: boundary.build_identity,
         prediction_confidence_ppm: body.prediction_confidence_ppm,
         promoted_unix_millis: body.promoted_unix_millis,
         review,

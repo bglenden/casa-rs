@@ -15,18 +15,19 @@ pub use execution_bindings::{
     ArtifactDisposition, ArtifactIdentity, ArtifactMeasurement, ArtifactMeasurementError,
     ArtifactRole, AttemptBoundObservationCompletion, BindingKind, CacheIdentity,
     CompiledWorkContext, ExecutionEvidenceError, ExecutionPlan, ExecutionPlanId, ExecutionStatus,
-    ImplementationRegistry, ImplementationRegistryId, IoMeasurement, IoPrediction,
-    ObservationCompletionBindingError, ObservationReadCompletionContext, PhysicalWorkBinding,
-    PhysicalWorkBindingError, PhysicalWorkId, PlanError, PlanPrediction, PlannedArtifact,
-    PlannerCostModelProfileId, PlanningBindings, PredictionConfidence, PredictionUncertainty,
-    PublicationResources, RecordedInfeasibility, RedactedPath, ResourceMeasurement,
-    ResourcePolicyId, RunBindings, RunController, RunDirective, RunError, RunToCompletion,
-    StagePrediction, WorkExecutionContext, WorkImplementation, WorkMeasurements, plan, run,
+    ImplementationContractCommitment, ImplementationRegistry, ImplementationRegistryId,
+    IoMeasurement, IoPrediction, ObservationCompletionBindingError,
+    ObservationReadCompletionContext, PhysicalWorkBinding, PhysicalWorkBindingError,
+    PhysicalWorkId, PlanError, PlanPrediction, PlannedArtifact, PlannerCostModelProfileId,
+    PlanningBindings, PredictionConfidence, PredictionUncertainty, PublicationResources,
+    RecordedInfeasibility, RedactedPath, ResourceMeasurement, ResourcePolicyId, RunBindings,
+    RunController, RunDirective, RunError, RunToCompletion, StagePrediction, WorkExecutionContext,
+    WorkImplementation, WorkMeasurements, plan, run,
 };
 
 pub use cost_model::{
-    PlannerCostModelProfileRecord, ProfileEvidenceEntry, ProfilePromotionError, ProfileReview,
-    open_cost_model_profile, promote_cost_model_profile,
+    PlannerCostModelProfileBootstrap, PlannerCostModelProfileRecord, ProfileEvidenceEntry,
+    ProfilePromotionError, ProfileReview, open_cost_model_profile, promote_cost_model_profile,
 };
 pub use execution::{
     AdaptationId, AdaptationTransition, AllocationAccess, AllocationId, AllocationLayout,
@@ -71,8 +72,8 @@ pub use resource_authority::{
     LeaseResource, MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand, MemoryView,
     MemoryViewKind, PressureUpdate, QueueDemand, QueueResource, QueueResourceId, QuiescencePoint,
     RateDemand, RateResource, RateResourceId, RateUnit, ResourceAuthority, ResourceError,
-    ResourceFence, ResourceGrant, ResourceHeadroom, ResourceLease, ResourceOverride,
-    ResourcePermit, ResourcePolicy, ResourceTopology, RuntimeOverheadDemand, RuntimeOverheadKind,
-    ScalingMetadata, StorageDemand, StorageDomain, StorageDomainId, StorageUseKind, TransferDemand,
-    TransferLink, TransferLinkId,
+    ResourceFence, ResourceGrant, ResourceHeadroom, ResourceIdentity, ResourceLease,
+    ResourceOverride, ResourcePermit, ResourcePolicy, ResourceTopology, RuntimeOverheadDemand,
+    RuntimeOverheadKind, ScalingMetadata, StorageDemand, StorageDomain, StorageDomainId,
+    StorageUseKind, TransferDemand, TransferLink, TransferLinkId,
 };

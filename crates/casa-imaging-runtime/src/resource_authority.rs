@@ -72,6 +72,10 @@ resource_identity!(RateResourceId, "Stable identity of one rate resource.");
 resource_identity!(QueueResourceId, "Stable identity of one bounded queue.");
 resource_identity!(AlternativeId, "Stable identity of one demand alternative.");
 resource_identity!(CapabilityId, "Stable identity of one required capability.");
+resource_identity!(
+    ResourceIdentity,
+    "Stable identity of one Resource Authority resource."
+);
 
 /// Physical location represented by a memory-capacity domain.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1171,10 +1175,9 @@ pub enum AlternativeRejectionReason {
         /// Amount available after policy, pressure, and active leases.
         available: u64,
     },
-    /// Planning refused the alternative before admission because a prior
-    /// execution of it terminally failed or was aborted. This is recorded
-    /// receipt evidence constraining an infeasible region, not cost-model
-    /// learning.
+    /// A current Resource Authority refusal matches a prior terminal receipt
+    /// for the same quantitative pressure region. This is receipt annotation,
+    /// not a pre-admission veto or cost-model learning.
     RecordedFailure {
         /// Attempt whose terminal receipt recorded the failure.
         attempt: ExecutionAttemptId,
