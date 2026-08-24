@@ -533,7 +533,7 @@ pub(super) fn observed_resource_peak(
             1
         }
         LeaseResource::StorageReadRate { demand_id }
-            if demand_id != cache_demand_id && evidence.source_read.bytes > 0 =>
+            if demand_id != cache_demand_id && evidence.source_counter(demand_id).bytes > 0 =>
         {
             1
         }
@@ -552,7 +552,8 @@ pub(super) fn observed_resource_peak(
             1
         }
         LeaseResource::StorageOperationsRate { demand_id }
-            if demand_id != cache_demand_id && evidence.source_read.operations > 0 =>
+            if demand_id != cache_demand_id
+                && evidence.source_counter(demand_id).operations > 0 =>
         {
             1
         }
@@ -566,7 +567,8 @@ pub(super) fn observed_resource_peak(
             1
         }
         LeaseResource::StorageQueue { demand_id }
-            if demand_id != cache_demand_id && evidence.source_read.operations > 0 =>
+            if demand_id != cache_demand_id
+                && evidence.source_counter(demand_id).operations > 0 =>
         {
             1
         }

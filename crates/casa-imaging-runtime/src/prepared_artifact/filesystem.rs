@@ -158,18 +158,19 @@ pub(super) fn reject_casa_visible_root(path: &Path) -> Result<(), PreparedArtifa
 pub(super) fn reject_casa_source_path(
     path: &Path,
     evidence: &mut ValidationEvidence,
+    demand_id: &str,
 ) -> Result<(), PreparedArtifactError> {
     reject_casa_visible_root(path)?;
     for ancestor in path.ancestors().skip(1) {
         let table_dat = ancestor.join("table.dat");
         let table_info = ancestor.join("table.info");
-        evidence.source_read_operation();
+        evidence.source_read_operation(demand_id);
         let has_table_dat = match table_dat.symlink_metadata() {
             Ok(metadata) => metadata.file_type().is_file(),
             Err(error) if error.kind() == io::ErrorKind::NotFound => false,
             Err(error) => return Err(error.into()),
         };
-        evidence.source_read_operation();
+        evidence.source_read_operation(demand_id);
         let has_table_info = match table_info.symlink_metadata() {
             Ok(metadata) => metadata.file_type().is_file(),
             Err(error) if error.kind() == io::ErrorKind::NotFound => false,
@@ -331,14 +332,21 @@ pub(super) fn source_descriptor_reservation(segments: usize) -> Result<u64, Prep
     let input_bytes = size_of::<PreparedArtifactSourceSegment>()
         .checked_add(MAX_IDENTIFIER_BYTES)
         .and_then(|bytes| bytes.checked_add(MAX_SOURCE_PATH_BYTES))
+        .and_then(|bytes| bytes.checked_add(MAX_SOURCE_PATH_BYTES))
         .and_then(|bytes| bytes.checked_mul(segments))
         .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
     let canonical_path_bytes = size_of::<PathBuf>()
         .checked_add(MAX_SOURCE_PATH_BYTES)
         .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
+    let source_counters = size_of::<SourceIoCounter>()
+        .checked_add(MAX_IDENTIFIER_BYTES)
+        .and_then(|bytes| bytes.checked_add(3 * 64))
+        .and_then(|bytes| bytes.checked_mul(segments))
+        .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
     u64::try_from(
         input_bytes
             .checked_add(canonical_path_bytes)
+            .and_then(|bytes| bytes.checked_add(source_counters))
             .ok_or(PreparedArtifactError::ArtifactTooLarge)?,
     )
     .map_err(|_| PreparedArtifactError::ArtifactTooLarge)

@@ -2653,6 +2653,7 @@ fn runtime_inventory(available_locks: u64) -> HostInventory {
     let transaction_rate = RateResourceId::new("transaction-io-rate");
     let transaction_queue = QueueResourceId::new("transaction-io-queue");
     let storage = StorageDomainId::new("atomic-output");
+    let source_storage = StorageDomainId::new("prepared-source-secondary");
     HostInventory {
         topology: ResourceTopology {
             memory_domains: vec![MemoryCapacityDomain {
@@ -2667,22 +2668,33 @@ fn runtime_inventory(available_locks: u64) -> HostInventory {
             }],
             accelerators: Vec::new(),
             transfer_links: Vec::new(),
-            storage_domains: vec![StorageDomain {
-                id: storage.clone(),
-                root: PathBuf::from("/tmp/casa-rs-imaging-runtime-tests"),
-                capacity_bytes: 1_048_576,
-                read_rate: rate.clone(),
-                write_rate: rate.clone(),
-                operations_rate: Some(operations_rate.clone()),
-                queue: queue.clone(),
-            }],
+            storage_domains: vec![
+                StorageDomain {
+                    id: storage.clone(),
+                    root: PathBuf::from("/tmp/casa-rs-imaging-runtime-tests"),
+                    capacity_bytes: 1_048_576,
+                    read_rate: rate.clone(),
+                    write_rate: rate.clone(),
+                    operations_rate: Some(operations_rate.clone()),
+                    queue: queue.clone(),
+                },
+                StorageDomain {
+                    id: source_storage.clone(),
+                    root: PathBuf::from("/tmp/casa-rs-imaging-runtime-source-tests"),
+                    capacity_bytes: 1_048_576,
+                    read_rate: rate.clone(),
+                    write_rate: rate.clone(),
+                    operations_rate: Some(operations_rate.clone()),
+                    queue: queue.clone(),
+                },
+            ],
             rate_resources: vec![
                 RateResource::new(rate.clone(), RateUnit::BytesPerSecond, 16),
                 RateResource::new(operations_rate.clone(), RateUnit::OperationsPerSecond, 16),
                 RateResource::new(transaction_rate.clone(), RateUnit::BytesPerSecond, 16),
             ],
             queue_resources: vec![
-                QueueResource::new(queue.clone(), 4),
+                QueueResource::new(queue.clone(), 8),
                 QueueResource::new(transaction_queue.clone(), 4),
             ],
             logical_cpu_threads: 4,
@@ -2694,13 +2706,16 @@ fn runtime_inventory(available_locks: u64) -> HostInventory {
         pressure: ExternalPressure {
             memory_available_bytes: BTreeMap::from([(domain, 1_048_576)]),
             available_cpu_threads: 4,
-            storage_available_bytes: BTreeMap::from([(storage, 1_048_576)]),
+            storage_available_bytes: BTreeMap::from([
+                (storage, 1_048_576),
+                (source_storage, 1_048_576),
+            ]),
             rate_available_per_second: BTreeMap::from([
                 (rate, 16),
                 (operations_rate, 16),
                 (transaction_rate, 16),
             ]),
-            queue_available_slots: BTreeMap::from([(queue, 4), (transaction_queue, 4)]),
+            queue_available_slots: BTreeMap::from([(queue, 8), (transaction_queue, 4)]),
             accelerator_available_slots: BTreeMap::new(),
             cache_available_bytes: 1_048_576,
             available_locks,

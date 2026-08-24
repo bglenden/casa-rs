@@ -104,18 +104,39 @@ impl<'a> PreparedArtifactPlanFragment<'a> {
             .io_buffers
             .storage_manager_bytes
             .max(reservation.resident_buffer_bytes());
-        alternative.demand.storage.push(StorageDemand {
-            demand_id: demand_id.clone(),
-            domain: self.store.storage_domain().clone(),
-            temporary_bytes: reservation.temporary_staging_bytes(),
-            staged_output_bytes: 0,
-            final_output_bytes: 0,
-            persistent_cache_bytes: reservation.persistent_cache_bytes(),
-            read_rate: CountDemand::new(1, 1),
-            write_rate: CountDemand::new(1, 1),
-            operations_rate: CountDemand::new(1, 1),
-            queue_slots: CountDemand::new(1, 1),
-        });
+        if let Some(cache_demand) = alternative
+            .demand
+            .storage
+            .iter_mut()
+            .find(|demand| demand.demand_id == demand_id)
+        {
+            if cache_demand.domain != *self.store.storage_domain() {
+                return Err(PreparedArtifactError::CachePolicyMismatch.into());
+            }
+            cache_demand.temporary_bytes = cache_demand
+                .temporary_bytes
+                .max(reservation.temporary_staging_bytes());
+            cache_demand.persistent_cache_bytes = cache_demand
+                .persistent_cache_bytes
+                .max(reservation.persistent_cache_bytes());
+            cache_demand.read_rate = combine_count(cache_demand.read_rate, 1);
+            cache_demand.write_rate = combine_count(cache_demand.write_rate, 1);
+            cache_demand.operations_rate = combine_count(cache_demand.operations_rate, 1);
+            cache_demand.queue_slots = combine_count(cache_demand.queue_slots, 1);
+        } else {
+            alternative.demand.storage.push(StorageDemand {
+                demand_id: demand_id.clone(),
+                domain: self.store.storage_domain().clone(),
+                temporary_bytes: reservation.temporary_staging_bytes(),
+                staged_output_bytes: 0,
+                final_output_bytes: 0,
+                persistent_cache_bytes: reservation.persistent_cache_bytes(),
+                read_rate: CountDemand::new(1, 1),
+                write_rate: CountDemand::new(1, 1),
+                operations_rate: CountDemand::new(1, 1),
+                queue_slots: CountDemand::new(1, 1),
+            });
+        }
 
         let source_demands = self
             .load_source

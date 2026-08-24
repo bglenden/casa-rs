@@ -13,6 +13,15 @@ fn prepared_storage_domain() -> &'static StorageDomain {
         .expect("prepared storage domain")
 }
 
+fn secondary_source_domain() -> &'static StorageDomain {
+    authority()
+        .topology()
+        .storage_domains
+        .iter()
+        .find(|domain| domain.id == StorageDomainId::new("prepared-source-secondary"))
+        .expect("secondary prepared source domain")
+}
+
 fn prepared_tempdir() -> tempfile::TempDir {
     fs::create_dir_all(&prepared_storage_domain().root).expect("prepared storage root");
     tempfile::tempdir_in(&prepared_storage_domain().root).expect("prepared temporary directory")
@@ -85,13 +94,17 @@ struct PreparedOperationAdapter {
     store: PreparedArtifactStore,
     descriptor: PreparedArtifactDescriptor,
     sources: Option<PreparedSourceFiles>,
+    bound_source: Option<PreparedArtifactLoadSource>,
     observed: Mutex<Option<PreparedObserved>>,
 }
 
 struct PreparedSourceFiles {
     _directory: tempfile::TempDir,
+    _weight_directory: Option<tempfile::TempDir>,
     imaging: PathBuf,
     weight: PathBuf,
+    imaging_domain: StorageDomain,
+    weight_domain: StorageDomain,
     producer: WorkNodeId,
 }
 
@@ -105,10 +118,28 @@ impl PreparedSourceFiles {
         fs::write(&weight_path, weight).expect("prepared weight source");
         Self {
             _directory: directory,
+            _weight_directory: None,
             imaging: imaging_path,
             weight: weight_path,
+            imaging_domain: prepared_storage_domain().clone(),
+            weight_domain: prepared_storage_domain().clone(),
             producer: WorkNodeId::new("execute"),
         }
+    }
+
+    fn across_domains() -> Self {
+        let mut files = Self::new();
+        fs::create_dir_all(&secondary_source_domain().root)
+            .expect("secondary prepared source root");
+        let weight_directory = tempfile::tempdir_in(&secondary_source_domain().root)
+            .expect("secondary prepared source directory");
+        let weight_path = weight_directory.path().join("weight.bin");
+        let (_, weight) = prepared_payloads();
+        fs::write(&weight_path, weight).expect("secondary prepared weight source");
+        files.weight = weight_path;
+        files.weight_domain = secondary_source_domain().clone();
+        files._weight_directory = Some(weight_directory);
+        files
     }
 
     fn load_source(
@@ -124,13 +155,13 @@ impl PreparedSourceFiles {
                     "imaging",
                     self.imaging.clone(),
                     Sha256::digest(imaging).into(),
-                    prepared_storage_domain(),
+                    &self.imaging_domain,
                 )?,
                 PreparedArtifactSourceSegment::new(
                     "weight",
                     self.weight.clone(),
                     Sha256::digest(weight).into(),
-                    prepared_storage_domain(),
+                    &self.weight_domain,
                 )?,
             ],
         )
@@ -159,6 +190,7 @@ impl PreparedOperationAdapter {
             store,
             descriptor,
             sources: (operation == PreparedArtifactOperation::Load).then(PreparedSourceFiles::new),
+            bound_source: None,
             observed: Mutex::new(None),
         }
     }
@@ -224,12 +256,15 @@ impl WorkImplementation for PreparedOperationAdapter {
     }
 
     fn execute(&self, context: WorkExecutionContext<'_>) -> Result<WorkMeasurements, Self::Error> {
-        let source = self
-            .sources
-            .as_ref()
-            .map(|sources| sources.load_source(&self.descriptor))
-            .transpose()
-            .map_err(prepared_io_error)?;
+        let source = if let Some(source) = &self.bound_source {
+            Some(source.clone())
+        } else {
+            self.sources
+                .as_ref()
+                .map(|sources| sources.load_source(&self.descriptor))
+                .transpose()
+                .map_err(prepared_io_error)?
+        };
         let (observed, measurements) = match self.operation {
             PreparedArtifactOperation::Generate => {
                 let mut generator = fill_prepared_segment;
@@ -599,13 +634,20 @@ fn prepared_release_node_id(
 fn prepared_base_executor(
     descriptor: &PreparedArtifactDescriptor,
     operation: PreparedArtifactOperation,
+    bound_source: Option<&PreparedArtifactLoadSource>,
 ) -> RecordingExecutor {
     let mut base = recording_executor(6, None, None);
     if operation == PreparedArtifactOperation::Load {
-        let sources = PreparedSourceFiles::new();
-        let source = sources
-            .load_source(descriptor)
-            .expect("canonical plan-bound load source");
+        let sources = bound_source.is_none().then(PreparedSourceFiles::new);
+        let source = if let Some(source) = bound_source {
+            source.clone()
+        } else {
+            sources
+                .as_ref()
+                .expect("default load source")
+                .load_source(descriptor)
+                .expect("canonical plan-bound load source")
+        };
         base.measurements
             .entry(WorkNodeId::new("execute"))
             .or_insert_with(|| (Vec::new(), Vec::new()))
@@ -615,7 +657,9 @@ fn prepared_base_executor(
                 Some(source.identity()),
                 ArtifactDisposition::Loaded,
                 PREPARED_PAYLOAD_BYTES,
-                Some(RedactedPath::from_path(sources._directory.path())),
+                sources
+                    .as_ref()
+                    .map(|sources| RedactedPath::from_path(sources._directory.path())),
             ));
     }
     base.measurements.insert(
@@ -633,7 +677,7 @@ fn prepared_storage_resource(
     use_kind: StorageUseKind,
 ) -> LeaseResource {
     LeaseResource::Storage {
-        demand_id: format!("private-prepared-cache-{}", descriptor.identity()),
+        demand_id: format!("private-prepared-cache-{}", descriptor.cache_identity()),
         use_kind,
     }
 }
@@ -678,7 +722,11 @@ fn prepared_registry(
     .into_iter()
     .find(|operation| adapter.descriptor.work_implementation_id(*operation) == prepared_id)
     .expect("adapter identity names one canonical prepared operation");
-    let base = prepared_base_executor(&adapter.descriptor, planned_operation);
+    let base = prepared_base_executor(
+        &adapter.descriptor,
+        planned_operation,
+        adapter.bound_source.as_ref(),
+    );
     (
         PreparedSuiteRegistry {
             id: registry(3),
@@ -960,9 +1008,10 @@ fn prepared_streaming_residency_is_admitted_once_without_overlapping_slots() {
 fn distinct_prepared_cells_compose_without_resource_identity_collisions() {
     let problem = compile(request(1)).expect("multi-cell prepared problem");
     let cache = prepared_tempdir();
-    let store =
-        PreparedArtifactStore::open(cache.path(), prepared_storage_domain(), prepared_budget())
-            .expect("multi-cell prepared store");
+    let shared_budget =
+        PreparedArtifactBudget::new(600_000, 8, 128).expect("shared domain-capacity budget");
+    let store = PreparedArtifactStore::open(cache.path(), prepared_storage_domain(), shared_budget)
+        .expect("multi-cell prepared store");
     let first = prepared_descriptor_with_registration_and_cell(
         &store,
         &problem,
@@ -1016,9 +1065,19 @@ fn distinct_prepared_cells_compose_without_resource_identity_collisions() {
         .storage
         .iter()
         .filter(|demand| demand.demand_id.starts_with("private-prepared-cache-"))
-        .map(|demand| &demand.demand_id)
-        .collect::<BTreeSet<_>>();
-    assert_eq!(prepared_demands.len(), 2);
+        .collect::<Vec<_>>();
+    assert_eq!(prepared_demands.len(), 1);
+    assert_eq!(
+        prepared_demands[0].persistent_cache_bytes,
+        shared_budget.cache_bytes(),
+        "one store budget is charged once even when multiple cells share it"
+    );
+    plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| Ok::<_, ()>(composed),
+    )
+    .expect("shared cache demand remains feasible below domain capacity");
 }
 
 #[test]
@@ -1127,8 +1186,8 @@ fn prepared_sources_are_bounded_accounted_files_and_never_casa_tables() {
             &LeaseResource::FileDescriptors,
             &ClaimLifetime::Work,
         ),
-        Some(2),
-        "the failed source open retains its lock-and-staging descriptor peak"
+        Some(3),
+        "the failed source validation retains its lock, staging, and source descriptor peak"
     );
     assert_eq!(
         fs::read_dir(cache_directory.path().join("objects-v3"))
@@ -1247,7 +1306,7 @@ fn cold_load_source_identity_is_owned_and_accounted_by_its_predecessor_receipt()
         &store,
         PreparedArtifactOperation::Load,
     );
-    let cache_demand_id = format!("private-prepared-cache-{}", descriptor.identity());
+    let cache_demand_id = format!("private-prepared-cache-{}", descriptor.cache_identity());
     let source_read_resource = work.execution_dag().nodes()
         [&descriptor.work_node_id(PreparedArtifactOperation::Load)]
         .claims
@@ -1319,6 +1378,106 @@ fn cold_load_source_identity_is_owned_and_accounted_by_its_predecessor_receipt()
         ),
         Some(1),
         "cold source reads are attributed to their source-domain demand"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn cold_load_rejects_post_plan_symlink_escape_and_keeps_domains_exact() {
+    use std::os::unix::fs::symlink;
+
+    let problem = compile(request(1)).expect("multi-domain source problem");
+    let cache = prepared_tempdir();
+    let store =
+        PreparedArtifactStore::open(cache.path(), prepared_storage_domain(), prepared_budget())
+            .expect("multi-domain source store");
+    let descriptor = prepared_descriptor(&store, &problem);
+    let sources = PreparedSourceFiles::across_domains();
+    fs::remove_file(&sources.weight).expect("reserve nonexistent in-domain source path");
+    let bound_source = sources
+        .load_source(&descriptor)
+        .expect("plan nonexistent in-domain source path");
+    let work = PreparedArtifactPlanFragment::new(
+        &descriptor,
+        &store,
+        PreparedArtifactOperation::Load,
+        WorkNodeId::new("execute"),
+        WorkNodeId::new("transaction-commit"),
+        implementation(6),
+    )
+    .with_load_source(&bound_source)
+    .compose(&physical_work_for_problem(&problem, 6))
+    .expect("multi-domain source composition");
+    let source_demand = |domain: &StorageDomainId| {
+        work.execution_dag()
+            .resource_alternative()
+            .demand
+            .storage
+            .iter()
+            .find(|demand| {
+                &demand.domain == domain
+                    && demand.persistent_cache_bytes == 0
+                    && demand.read_rate.hard() > 0
+            })
+            .map(|demand| LeaseResource::StorageReadRate {
+                demand_id: demand.demand_id.clone(),
+            })
+            .expect("exact source-domain demand")
+    };
+    let first_source_read = source_demand(&prepared_storage_domain().id);
+    let untouched_source_read = source_demand(&secondary_source_domain().id);
+    let plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| Ok::<_, ()>(work),
+    )
+    .expect("multi-domain source plan");
+
+    let outside = prepared_tempdir();
+    let outside_weight = outside.path().join("escaped-weight.bin");
+    let (_, weight) = prepared_payloads();
+    fs::write(&outside_weight, weight).expect("outside source target");
+    symlink(&outside_weight, &sources.weight).expect("post-plan source replacement");
+    let mut adapter =
+        PreparedOperationAdapter::new(PreparedArtifactOperation::Load, store, descriptor.clone());
+    adapter.sources = Some(sources);
+    adapter.bound_source = Some(bound_source);
+    let (registry, _) = prepared_registry(adapter);
+    let receipt_directory = prepared_tempdir();
+    let receipts = ExecutionReceiptStore::new(
+        receipt_directory.path(),
+        ReceiptRetention::new(4, 1_000_000).expect("multi-domain source retention"),
+    )
+    .expect("multi-domain source receipt store");
+    let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([195; 32]);
+    let error = run_prepared(
+        &problem,
+        &plan,
+        &registry,
+        receipts.bind(execution_provenance(
+            attempt,
+            BuildIdentity::from_sha256([196; 32]),
+        )),
+    )
+    .expect_err("post-plan source escape must fail closed");
+    assert!(matches!(
+        error,
+        RunError::Execution { source, .. }
+            if source.to_string() == PreparedArtifactError::InvalidSource.to_string()
+    ));
+    let receipt = receipts
+        .open(attempt)
+        .expect("multi-domain failure receipt");
+    let load_node = descriptor.work_node_id(PreparedArtifactOperation::Load);
+    assert_eq!(
+        receipt.actual_resource_peak(&load_node, &first_source_read, &ClaimLifetime::Work),
+        Some(1),
+        "the first domain retains its completed source activity"
+    );
+    assert_eq!(
+        receipt.actual_resource_peak(&load_node, &untouched_source_read, &ClaimLifetime::Work),
+        Some(0),
+        "the escaped second domain receives no activity attribution"
     );
 }
 
@@ -3087,6 +3246,7 @@ fn failed_prepared_receipt_retains_materialization_eviction_and_io_evidence() {
                 PreparedSuiteImplementation::Base(Box::new(prepared_base_executor(
                     &descriptor,
                     operation,
+                    None,
                 ))),
             ),
             (
@@ -3594,6 +3754,7 @@ fn prepared_resource_overrun_fails_closed_without_censoring_the_peak() {
                 PreparedSuiteImplementation::Base(Box::new(prepared_base_executor(
                     &descriptor,
                     operation,
+                    None,
                 ))),
             ),
             (

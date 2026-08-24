@@ -326,7 +326,7 @@ impl PreparedArtifactStore {
         let mut evidence =
             ValidationEvidence::for_operation(self.budget, reservation.resident_buffer_bytes);
         if let Some(source) = source {
-            evidence.observe_source_inputs(&source.segments);
+            evidence.observe_source_inputs(source);
         }
         if let Err(error) = evidence.ensure_resident_budget() {
             let measurements = failed_measurements(*context, descriptor, operation, &evidence);
@@ -431,14 +431,20 @@ impl PreparedArtifactStore {
                             }
                             PreparedArtifactMaterialization::Load(source) => {
                                 let input = &source.segments[index];
-                                let mut file =
-                                    self.open_segment_source(input, segment, evidence)?;
+                                let source_demand_id = input.storage_demand_id(source.identity);
+                                let mut file = self.open_segment_source(
+                                    input,
+                                    segment,
+                                    &source_demand_id,
+                                    evidence,
+                                )?;
                                 let digest = stream_segment(
                                     &mut file,
                                     &mut payload,
                                     &mut payload_hasher,
                                     &mut buffer,
                                     segment,
+                                    &source_demand_id,
                                     evidence,
                                 )?;
                                 if digest != input.sha256 {
@@ -597,24 +603,30 @@ impl PreparedArtifactStore {
         &self,
         input: &PreparedArtifactSourceSegment,
         segment: &PreparedArtifactSegmentDescriptor,
+        source_demand_id: &str,
         evidence: &mut ValidationEvidence,
     ) -> Result<File, PreparedArtifactError> {
         reject_casa_visible_root(&input.source)?;
-        evidence.source_read_operation();
         let source = fs::canonicalize(&input.source).map_err(map_incomplete)?;
         evidence.with_resident(observed_owned_path_bytes(&source), |evidence| {
-            reject_casa_source_path(&source, evidence)?;
-            if source.starts_with(&self.root) {
+            if !source.starts_with(&input.storage_root) || source.starts_with(&self.root) {
                 return Err(PreparedArtifactError::InvalidSource);
             }
-            evidence.source_read_operation();
             let file = File::open(&source).map_err(map_incomplete)?;
             evidence.observe_file_descriptors(3);
-            evidence.source_read_operation();
             let metadata = file.metadata().map_err(map_incomplete)?;
-            if !metadata.file_type().is_file() {
+            let opened_source = fs::canonicalize(&input.source).map_err(map_incomplete)?;
+            let opened_metadata = fs::metadata(&opened_source).map_err(map_incomplete)?;
+            if !opened_source.starts_with(&input.storage_root)
+                || opened_source != source
+                || !metadata.file_type().is_file()
+                || metadata.dev() != opened_metadata.dev()
+                || metadata.ino() != opened_metadata.ino()
+            {
                 return Err(PreparedArtifactError::InvalidSource);
             }
+            evidence.record_source_operations(source_demand_id, 5);
+            reject_casa_source_path(&source, evidence, source_demand_id)?;
             let expected = segment.byte_len()?;
             match metadata.len().cmp(&expected) {
                 std::cmp::Ordering::Less => Err(PreparedArtifactError::IncompleteArtifact),

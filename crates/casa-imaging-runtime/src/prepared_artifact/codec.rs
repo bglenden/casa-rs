@@ -50,7 +50,7 @@ pub(super) fn read_exact_counted<R: Read + ?Sized>(
     input: &mut R,
     output: &mut [u8],
     evidence: &mut ValidationEvidence,
-    class: IoClass,
+    class: CacheIoClass,
 ) -> Result<(), PreparedArtifactError> {
     let mut offset = 0;
     while offset < output.len() {
@@ -67,10 +67,38 @@ pub(super) fn read_counted<R: Read + ?Sized>(
     input: &mut R,
     output: &mut [u8],
     evidence: &mut ValidationEvidence,
-    class: IoClass,
+    class: CacheIoClass,
 ) -> Result<usize, PreparedArtifactError> {
     let bytes = input.read(output).map_err(map_incomplete)?;
     evidence.record(class, bytes as u64);
+    Ok(bytes)
+}
+
+pub(super) fn read_exact_source_counted<R: Read + ?Sized>(
+    input: &mut R,
+    output: &mut [u8],
+    evidence: &mut ValidationEvidence,
+    demand_id: &str,
+) -> Result<(), PreparedArtifactError> {
+    let mut offset = 0;
+    while offset < output.len() {
+        let bytes = read_source_counted(input, &mut output[offset..], evidence, demand_id)?;
+        if bytes == 0 {
+            return Err(PreparedArtifactError::IncompleteArtifact);
+        }
+        offset += bytes;
+    }
+    Ok(())
+}
+
+pub(super) fn read_source_counted<R: Read + ?Sized>(
+    input: &mut R,
+    output: &mut [u8],
+    evidence: &mut ValidationEvidence,
+    demand_id: &str,
+) -> Result<usize, PreparedArtifactError> {
+    let bytes = input.read(output).map_err(map_incomplete)?;
+    evidence.record_source(demand_id, bytes as u64);
     Ok(bytes)
 }
 
@@ -78,7 +106,7 @@ pub(super) fn write_all_counted<W: Write + ?Sized>(
     output: &mut W,
     mut input: &[u8],
     evidence: &mut ValidationEvidence,
-    class: IoClass,
+    class: CacheIoClass,
 ) -> Result<(), PreparedArtifactError> {
     while !input.is_empty() {
         let written = output.write(input).map_err(PreparedArtifactError::Io)?;

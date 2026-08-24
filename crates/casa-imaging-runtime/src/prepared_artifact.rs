@@ -20,6 +20,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, BufReader, Read, Write},
     mem::{size_of, size_of_val},
+    os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard, OnceLock, Weak},
 };
@@ -645,7 +646,7 @@ pub struct PreparedArtifactDescriptor {
 
 impl PreparedArtifactDescriptor {
     fn storage_demand_id(&self) -> String {
-        format!("private-prepared-cache-{}", self.identity)
+        format!("private-prepared-cache-{}", self.cache_identity)
     }
 
     fn storage_domain_id(&self) -> StorageDomainId {
@@ -1084,6 +1085,7 @@ pub struct PreparedArtifactSourceSegment {
     source: Box<Path>,
     sha256: [u8; 32],
     storage_domain: StorageDomainId,
+    storage_root: Box<Path>,
     storage_root_identity: [u8; 32],
 }
 
@@ -1126,6 +1128,7 @@ impl PreparedArtifactSourceSegment {
             || !source.is_absolute()
             || !source.starts_with(&domain_root)
             || !valid_identifier(storage_domain.id.as_str())
+            || domain_root.as_os_str().as_encoded_bytes().len() > Self::MAX_PATH_BYTES
             || source.as_os_str().as_encoded_bytes().len() > Self::MAX_PATH_BYTES
         {
             return Err(PreparedArtifactError::InvalidSource);
@@ -1135,6 +1138,7 @@ impl PreparedArtifactSourceSegment {
             source: source.into_boxed_path(),
             sha256,
             storage_domain: storage_domain.id.clone(),
+            storage_root: domain_root.clone().into_boxed_path(),
             storage_root_identity: derive_cache_root_identity(&domain_root),
         })
     }
@@ -2050,7 +2054,7 @@ fn generate_segment(
         limit -= limit % scalar_bytes;
         generator.fill_segment(segment, byte_offset, &mut buffer[..limit])?;
         validate_finite(&buffer[..limit], segment.precision, &segment.name, scalar)?;
-        write_all_counted(output, &buffer[..limit], evidence, IoClass::StoreWrite)?;
+        write_all_counted(output, &buffer[..limit], evidence, CacheIoClass::Write)?;
         payload_hasher.update(&buffer[..limit]);
         segment_hasher.update(&buffer[..limit]);
         remaining -= limit as u64;
@@ -2093,6 +2097,7 @@ fn stream_segment(
     payload_hasher: &mut Sha256,
     buffer: &mut [u8],
     segment: &PreparedArtifactSegmentDescriptor,
+    source_demand_id: &str,
     evidence: &mut ValidationEvidence,
 ) -> Result<[u8; 32], PreparedArtifactError> {
     let mut remaining = segment.byte_len()?;
@@ -2103,17 +2108,17 @@ fn stream_segment(
         let mut limit = usize::try_from(remaining.min(buffer.len() as u64))
             .map_err(|_| PreparedArtifactError::ArtifactTooLarge)?;
         limit -= limit % scalar_bytes;
-        read_exact_counted(input, &mut buffer[..limit], evidence, IoClass::SourceRead)?;
+        read_exact_source_counted(input, &mut buffer[..limit], evidence, source_demand_id)?;
         validate_finite(&buffer[..limit], segment.precision, &segment.name, scalar)?;
-        evidence.source_read_operation();
-        write_all_counted(output, &buffer[..limit], evidence, IoClass::StoreWrite)?;
+        evidence.source_read_operation(source_demand_id);
+        write_all_counted(output, &buffer[..limit], evidence, CacheIoClass::Write)?;
         payload_hasher.update(&buffer[..limit]);
         segment_hasher.update(&buffer[..limit]);
         remaining -= limit as u64;
         scalar += (limit / scalar_bytes) as u64;
     }
     let mut extra = [0_u8; 1];
-    if read_counted(input, &mut extra, evidence, IoClass::SourceRead)? != 0 {
+    if read_source_counted(input, &mut extra, evidence, source_demand_id)? != 0 {
         return Err(PreparedArtifactError::OversizedArtifact);
     }
     Ok(segment_hasher.finalize().into())
@@ -2146,7 +2151,7 @@ fn validate_payload(
                     &mut payload,
                     &mut buffer[..limit],
                     evidence,
-                    IoClass::StoreRead,
+                    CacheIoClass::Read,
                 )?;
                 validate_finite(&buffer[..limit], segment.precision, &segment.name, scalar)?;
                 evidence.store_validation();
@@ -2164,7 +2169,7 @@ fn validate_payload(
                 .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
         }
         let mut extra = [0_u8; 1];
-        if read_counted(&mut payload, &mut extra, evidence, IoClass::StoreRead)? != 0 {
+        if read_counted(&mut payload, &mut extra, evidence, CacheIoClass::Read)? != 0 {
             return Err(PreparedArtifactError::OversizedArtifact);
         }
         Ok((payload_hasher.finalize().into(), total))
@@ -2177,17 +2182,22 @@ struct IoCounter {
     operations: u64,
 }
 
+#[derive(Clone, Debug)]
+struct SourceIoCounter {
+    demand_id: String,
+    counter: IoCounter,
+}
+
 #[derive(Clone, Copy, Debug)]
-enum IoClass {
-    SourceRead,
-    StoreRead,
-    StoreControl,
-    StoreWrite,
+enum CacheIoClass {
+    Read,
+    Control,
+    Write,
 }
 
 #[derive(Clone, Debug, Default)]
 struct ValidationEvidence {
-    source_read: IoCounter,
+    source_reads: Vec<SourceIoCounter>,
     cache_read: IoCounter,
     cache_control: IoCounter,
     cache_write: IoCounter,
@@ -2227,24 +2237,24 @@ impl ValidationEvidence {
         evidence
     }
 
-    fn source_read_operation(&mut self) {
-        self.record(IoClass::SourceRead, 0);
+    fn source_read_operation(&mut self, demand_id: &str) {
+        self.record_source_operations(demand_id, 1);
     }
 
     fn store_read_operation(&mut self) {
-        self.record(IoClass::StoreRead, 0);
+        self.record(CacheIoClass::Read, 0);
     }
 
     fn store_control_operation(&mut self) {
-        self.record(IoClass::StoreControl, 0);
+        self.record(CacheIoClass::Control, 0);
     }
 
     fn store_write_operation(&mut self) {
-        self.record(IoClass::StoreWrite, 0);
+        self.record(CacheIoClass::Write, 0);
     }
 
     fn store_validation(&mut self) {
-        self.record(IoClass::StoreRead, 0);
+        self.record(CacheIoClass::Read, 0);
     }
 
     fn acquire_resident(&mut self, bytes: u64) {
@@ -2294,7 +2304,23 @@ impl ValidationEvidence {
         *current = next;
     }
 
-    fn observe_source_inputs(&mut self, inputs: &[PreparedArtifactSourceSegment]) {
+    fn observe_source_inputs(&mut self, source: &PreparedArtifactLoadSource) {
+        self.observe_source_descriptors(&source.segments);
+        self.source_reads = source
+            .storage_demands()
+            .into_keys()
+            .map(|demand_id| SourceIoCounter {
+                demand_id,
+                counter: IoCounter::default(),
+            })
+            .collect();
+        self.acquire_resident(observed_source_counter_bytes(
+            &self.source_reads,
+            self.source_reads.capacity(),
+        ));
+    }
+
+    fn observe_source_descriptors(&mut self, inputs: &[PreparedArtifactSourceSegment]) {
         self.acquire_resident(observed_source_descriptor_bytes(inputs));
     }
 
@@ -2314,29 +2340,66 @@ impl ValidationEvidence {
         self.file_descriptors_peak = self.file_descriptors_peak.max(file_descriptors);
     }
 
-    fn record(&mut self, class: IoClass, bytes: u64) {
+    fn record(&mut self, class: CacheIoClass, bytes: u64) {
         let counter = match class {
-            IoClass::SourceRead => &mut self.source_read,
-            IoClass::StoreRead => &mut self.cache_read,
-            IoClass::StoreControl => &mut self.cache_control,
-            IoClass::StoreWrite => &mut self.cache_write,
+            CacheIoClass::Read => &mut self.cache_read,
+            CacheIoClass::Control => &mut self.cache_control,
+            CacheIoClass::Write => &mut self.cache_write,
         };
         counter.bytes = counter.bytes.saturating_add(bytes);
         counter.operations = counter.operations.saturating_add(1);
     }
 
+    fn record_source(&mut self, demand_id: &str, bytes: u64) {
+        let counter = &mut self
+            .source_reads
+            .iter_mut()
+            .find(|counter| counter.demand_id == demand_id)
+            .expect("source counter initialized from the bound load source")
+            .counter;
+        counter.bytes = counter.bytes.saturating_add(bytes);
+        counter.operations = counter.operations.saturating_add(1);
+    }
+
+    fn record_source_operations(&mut self, demand_id: &str, operations: u64) {
+        let counter = &mut self
+            .source_reads
+            .iter_mut()
+            .find(|counter| counter.demand_id == demand_id)
+            .expect("source counter initialized from the bound load source")
+            .counter;
+        counter.operations = counter.operations.saturating_add(operations);
+    }
+
+    fn source_counter(&self, demand_id: &str) -> IoCounter {
+        self.source_reads
+            .iter()
+            .find(|counter| counter.demand_id == demand_id)
+            .map(|counter| counter.counter)
+            .unwrap_or_default()
+    }
+
+    fn aggregate_source_counter(&self) -> IoCounter {
+        self.source_reads
+            .iter()
+            .fold(IoCounter::default(), |total, source| IoCounter {
+                bytes: total.bytes.saturating_add(source.counter.bytes),
+                operations: total.operations.saturating_add(source.counter.operations),
+            })
+    }
+
     fn counter(&self, kind: IoBufferKind) -> IoCounter {
         match kind {
-            IoBufferKind::SourceReadAhead => self.source_read,
+            IoBufferKind::SourceReadAhead => self.aggregate_source_counter(),
             IoBufferKind::Writeback => self.cache_write,
             IoBufferKind::StorageManager => IoCounter {
                 bytes: self
-                    .source_read
+                    .aggregate_source_counter()
                     .bytes
                     .saturating_add(self.cache_read.bytes)
                     .saturating_add(self.cache_write.bytes),
                 operations: self
-                    .source_read
+                    .aggregate_source_counter()
                     .operations
                     .saturating_add(self.cache_read.operations)
                     .saturating_add(self.cache_write.operations)
@@ -2401,7 +2464,7 @@ impl Write for BoundedFileWriter<'_> {
         }
         let written = self.file.write(bytes)?;
         self.written = self.written.saturating_add(written as u64);
-        self.evidence.record(IoClass::StoreWrite, written as u64);
+        self.evidence.record(CacheIoClass::Write, written as u64);
         Ok(written)
     }
 
@@ -2431,7 +2494,7 @@ impl Read for BoundedFileReader<'_> {
         if self.remaining == 0 {
             let mut probe = [0_u8; 1];
             let bytes = self.file.read(&mut probe)?;
-            self.evidence.record(IoClass::StoreRead, bytes as u64);
+            self.evidence.record(CacheIoClass::Read, bytes as u64);
             if bytes != 0 {
                 self.exceeded = true;
                 return Err(io::Error::new(
@@ -2444,7 +2507,7 @@ impl Read for BoundedFileReader<'_> {
         let limit = output.len().min(self.remaining as usize);
         let bytes = self.file.read(&mut output[..limit])?;
         self.remaining = self.remaining.saturating_sub(bytes as u64);
-        self.evidence.record(IoClass::StoreRead, bytes as u64);
+        self.evidence.record(CacheIoClass::Read, bytes as u64);
         Ok(bytes)
     }
 }
@@ -2590,7 +2653,21 @@ fn observed_source_descriptor_bytes(inputs: &[PreparedArtifactSourceSegment]) ->
         total
             .saturating_add(input.name.len())
             .saturating_add(input.source.as_os_str().as_encoded_bytes().len())
+            .saturating_add(input.storage_domain.as_str().len())
+            .saturating_add(input.storage_root.as_os_str().as_encoded_bytes().len())
     }));
+    u64::try_from(bytes).unwrap_or(u64::MAX)
+}
+
+fn observed_source_counter_bytes(counters: &[SourceIoCounter], capacity: usize) -> u64 {
+    let bytes = capacity
+        .saturating_mul(size_of::<SourceIoCounter>())
+        .saturating_add(
+            counters
+                .iter()
+                .map(|counter| counter.demand_id.capacity())
+                .sum::<usize>(),
+        );
     u64::try_from(bytes).unwrap_or(u64::MAX)
 }
 
@@ -2974,7 +3051,7 @@ mod tests {
         let descriptor_bytes = observed_source_descriptor_bytes(&inputs);
         let canonical_bytes = observed_owned_path_bytes(&source);
 
-        evidence.observe_source_inputs(&inputs);
+        evidence.observe_source_descriptors(&inputs);
         assert_eq!(evidence.resident_current_bytes, baseline + descriptor_bytes);
         evidence
             .with_resident(canonical_bytes, |evidence| {
