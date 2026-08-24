@@ -321,6 +321,11 @@ pub struct WeightingAlgorithmState {
 }
 
 impl WeightingAlgorithmState {
+    pub(crate) fn matches_problem(&self, problem: &CompiledProblem) -> bool {
+        self.problem == problem.problem_id()
+            && self.commitment == problem.weighting().commitment_id()
+    }
+
     /// Return the reconstruction algorithm identity for runtime authorization.
     #[must_use]
     pub const fn generation_id(&self) -> WeightingGenerationId {

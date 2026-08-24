@@ -5,7 +5,7 @@
 use std::{collections::BTreeSet, error::Error, fmt, mem::align_of};
 
 use casa_imaging_model::{
-    CompiledProblem, SelectedObservationGenerationId, SelectedObservationSample,
+    CompiledProblem, CompiledProblemId, SelectedObservationGenerationId, SelectedObservationSample,
     SelectedSpectralContribution,
 };
 use casa_imaging_reconstruction::{
@@ -686,13 +686,14 @@ impl WeightingExecutionState {
     pub fn begin_complete_data(
         &self,
         context: WorkExecutionContext<'_>,
-        fragment: &crate::CompleteDataPlanFragment<'_>,
+        fragment: &crate::CompleteDataPlanFragment,
         problem: &CompiledProblem,
+        prepared: crate::CompleteDataPreparedState,
     ) -> Result<crate::SerialMfsOperatorState, crate::CompleteDataPlanError> {
         let WeightingExecutionPhase::Frozen(frozen) = &self.phase else {
             return Err(crate::CompleteDataPlanError::MissingFrozenWeighting);
         };
-        fragment.begin(context, problem, &frozen.state)
+        fragment.begin(context, problem, &frozen.state, prepared)
     }
 
     /// Construct an empty lifecycle before the generation node is dispatched.
@@ -1889,6 +1890,7 @@ impl PendingWeightingReplay {
             ));
         }
         let selected_generation = self.owner_completion.generation_id();
+        let problem = self.owner_completion.problem_id();
         let sample_count = self.owner_completion.sample_count();
         let owner_completion = context
             .bind(self.owner_completion)
@@ -1896,6 +1898,7 @@ impl PendingWeightingReplay {
         Ok((
             WeightingReplayCompletion {
                 state: self.state,
+                problem,
                 selected_generation,
                 sample_count,
                 binding: self.binding,
@@ -1909,6 +1912,7 @@ impl PendingWeightingReplay {
 #[derive(Debug)]
 pub struct WeightingReplayCompletion {
     state: WeightingReplaySummary,
+    problem: CompiledProblemId,
     selected_generation: SelectedObservationGenerationId,
     sample_count: u64,
     binding: WeightingGenerationBinding,
@@ -1917,6 +1921,12 @@ pub struct WeightingReplayCompletion {
 impl WeightingReplayCompletion {
     pub(crate) const fn reconstruction_summary(&self) -> &WeightingReplaySummary {
         &self.state
+    }
+
+    /// Return the exact Compiled Problem whose T17 traversal produced this replay.
+    #[must_use]
+    pub const fn problem_id(&self) -> CompiledProblemId {
+        self.problem
     }
 
     /// Return the unique replay identity.

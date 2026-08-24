@@ -32,9 +32,20 @@ mod serial_mfs;
 mod weighting;
 
 pub use serial_mfs::{
-    CompleteDataCompletion, CompleteDataResult, CompleteDataState, ContinuumPrimitiveCatalog,
-    SerialMfsError, SerialMfsPlan, SerialMfsPrimitives, SerialMfsResidency,
+    ContinuumPrimitiveCatalog, SerialMfsError, SerialMfsPrimitives, SerialMfsSpecification,
 };
+
+/// Internal composition surface used by `casa-imaging-runtime`.
+///
+/// These opaque operations are public only because Rust crates have no friend
+/// visibility. Application code should use the runtime's plan-bound T19 API.
+#[doc(hidden)]
+pub mod runtime_adapter {
+    pub use crate::serial_mfs::{
+        CompleteDataOwnerCompletion, CompleteDataOwnerState, PreparedSerialMfsOperator,
+        SerialMfsWorkload, prepare_serial_mfs_operator, serial_mfs_workload,
+    };
+}
 
 pub use weighting::{
     WeightingAlgorithmState, WeightingError, WeightingExecutionLimits, WeightingGenerationId,

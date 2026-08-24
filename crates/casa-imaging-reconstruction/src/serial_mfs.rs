@@ -2,13 +2,12 @@
 
 //! Serial CPU constant-basis MFS measurement operator and normal-state primitives.
 
-use std::{fmt, mem::size_of, sync::Arc};
+use std::{fmt, sync::Arc};
 
 use casa_imaging_model::{
     CompiledGeometryId, CompiledProblem, CompiledProblemId, CorrelationType, FiniteValuePolicy,
     InstrumentResponse, NumericPrecision, NumericsContractId, PolarizationCoordinate, Projection,
-    ReconstructionBasis, ReductionPolicy, SelectedObservationGenerationId,
-    SelectedVisibilitySample, WeightingCommitmentId,
+    ReconstructionBasis, ReductionPolicy, SelectedVisibilitySample, WeightingCommitmentId,
 };
 use ndarray::{Array2, Axis};
 use num_complex::Complex64;
@@ -30,6 +29,9 @@ const OVERSAMPLING: usize = 100;
 // gives a hard, architecture-independent upper bound while the library keeps
 // its plan internals opaque.
 const FFT_PLAN_COMPLEX_BOUND_PER_AXIS: usize = 4 * usize::BITS as usize;
+// One recipe plus both direction-specific cache entries per decomposition
+// point, including hash-table control storage and Arc metadata.
+const FFT_PLANNING_WORD_BOUND_PER_POINT: usize = 16;
 
 /// One already-weighted spectral contribution accepted by the T19 algorithm.
 ///
@@ -92,75 +94,35 @@ impl SerialMfsSample {
     }
 }
 
-/// Exact resident-byte projection for one serial operator instance.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SerialMfsResidency {
-    grid_bytes: usize,
-    convolution_cache_bytes: usize,
-    fft_scratch_bytes: usize,
-    forward_workspace_bytes: usize,
-    primitive_output_bytes: usize,
-    peak_bytes: usize,
-}
-
-impl SerialMfsResidency {
-    /// Bytes for the dirty and PSF accumulation grids.
-    #[must_use]
-    pub const fn grid_bytes(self) -> usize {
-        self.grid_bytes
-    }
-
-    /// Retained normalized convolution taps and image-correction axes.
-    #[must_use]
-    pub const fn convolution_cache_bytes(self) -> usize {
-        self.convolution_cache_bytes
-    }
-
-    /// Reusable lane, library scratch, and conservative opaque FFT-plan residency.
-    #[must_use]
-    pub const fn fft_scratch_bytes(self) -> usize {
-        self.fft_scratch_bytes
-    }
-
-    /// One forward padded grid and one bounded predicted replay block.
-    #[must_use]
-    pub const fn forward_workspace_bytes(self) -> usize {
-        self.forward_workspace_bytes
-    }
-
-    /// Bytes retained by dirty, PSF, and sensitivity primitive planes.
-    #[must_use]
-    pub const fn primitive_output_bytes(self) -> usize {
-        self.primitive_output_bytes
-    }
-
-    /// Conservative peak with no full-grid worker duplicate.
-    #[must_use]
-    pub const fn peak_bytes(self) -> usize {
-        self.peak_bytes
-    }
-}
-
-/// Immutable physical plan for the serial CPU standard convolutional operator.
+/// Immutable scientific specification for the serial CPU standard operator.
+///
+/// This value validates the supported geometry, polarization, reconstruction,
+/// and numerical semantics. Physical allocations and execution nodes belong to
+/// `casa-imaging-runtime` and are deliberately absent here.
 #[derive(Debug, Clone, PartialEq)]
-pub struct SerialMfsPlan {
+pub struct SerialMfsSpecification {
+    problem: CompiledProblemId,
+    geometry: CompiledGeometryId,
+    numerics: NumericsContractId,
+    weighting_commitment: WeightingCommitmentId,
+    finite_values: FiniteValuePolicy,
     image_shape: [usize; 2],
     grid_shape: [usize; 2],
     image_blc: [usize; 2],
     increment_rad: [f64; 2],
-    max_replay_block_samples: usize,
-    residency: SerialMfsResidency,
 }
 
-impl SerialMfsPlan {
-    /// Plan one single-field scalar Stokes-I constant-basis problem.
-    pub fn new(
-        problem: &CompiledProblem,
-        max_replay_block_samples: usize,
-    ) -> Result<Self, SerialMfsError> {
-        if max_replay_block_samples == 0 {
-            return Err(SerialMfsError::UnsupportedProblem);
-        }
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct SerialMfsGeometry {
+    image_shape: [usize; 2],
+    grid_shape: [usize; 2],
+    image_blc: [usize; 2],
+    increment_rad: [f64; 2],
+}
+
+impl SerialMfsSpecification {
+    /// Compile one single-field scalar Stokes-I constant-basis specification.
+    pub fn new(problem: &CompiledProblem) -> Result<Self, SerialMfsError> {
         if problem.geometry().domains().len() != 1
             || problem.reconstruction().basis() != ReconstructionBasis::Constant
             || problem.reconstruction().polarization().coordinates()
@@ -207,50 +169,16 @@ impl SerialMfsPlan {
             grid_shape[0] / 2 - supported_reference_pixel[0] as usize,
             grid_shape[1] / 2 - supported_reference_pixel[1] as usize,
         ];
-        let cells = checked_cells(grid_shape)?;
-        let image_cells = checked_cells(image_shape)?;
-        let complex_bytes = size_of::<Complex64>();
-        let grid_bytes = cells
-            .checked_mul(complex_bytes)
-            .and_then(|bytes| bytes.checked_mul(4))
-            .ok_or(SerialMfsError::ResidencyOverflow)?;
-        let fft_scratch_bytes = fft_workspace_bytes(grid_shape)?;
-        let convolution_cache_bytes = (OVERSAMPLING + 1)
-            .checked_mul(TAP_COUNT)
-            .and_then(|values| values.checked_add(grid_shape[0] + grid_shape[1]))
-            .and_then(|values| values.checked_mul(size_of::<f64>()))
-            .ok_or(SerialMfsError::ResidencyOverflow)?;
-        let forward_workspace_bytes = cells
-            .checked_add(
-                max_replay_block_samples
-                    .checked_mul(2)
-                    .ok_or(SerialMfsError::ResidencyOverflow)?,
-            )
-            .and_then(|values| values.checked_mul(complex_bytes))
-            .ok_or(SerialMfsError::ResidencyOverflow)?;
-        let primitive_output_bytes = image_cells
-            .checked_mul(complex_bytes * 2 + size_of::<f64>())
-            .ok_or(SerialMfsError::ResidencyOverflow)?;
-        let peak_bytes = grid_bytes
-            .checked_add(convolution_cache_bytes)
-            .and_then(|bytes| bytes.checked_add(forward_workspace_bytes))
-            .and_then(|bytes| bytes.checked_add(fft_scratch_bytes))
-            .and_then(|bytes| bytes.checked_add(primitive_output_bytes))
-            .ok_or(SerialMfsError::ResidencyOverflow)?;
         Ok(Self {
+            problem: problem.problem_id(),
+            geometry: problem.geometry().geometry_id(),
+            numerics: problem.numerics_id(),
+            weighting_commitment: problem.weighting().commitment_id(),
+            finite_values: problem.numerics().finite_values(),
             image_shape,
             grid_shape,
             image_blc,
             increment_rad: direction.increment_rad(),
-            max_replay_block_samples,
-            residency: SerialMfsResidency {
-                grid_bytes,
-                convolution_cache_bytes,
-                fft_scratch_bytes,
-                forward_workspace_bytes,
-                primitive_output_bytes,
-                peak_bytes,
-            },
         })
     }
 
@@ -266,11 +194,201 @@ impl SerialMfsPlan {
         self.grid_shape
     }
 
-    /// Return the complete resident-byte projection.
+    /// Return the exact compiled problem identity.
     #[must_use]
-    pub const fn residency(&self) -> SerialMfsResidency {
-        self.residency
+    pub const fn problem_id(&self) -> CompiledProblemId {
+        self.problem
     }
+
+    fn operator_geometry(&self) -> SerialMfsGeometry {
+        SerialMfsGeometry {
+            image_shape: self.image_shape,
+            grid_shape: self.grid_shape,
+            image_blc: self.image_blc,
+            increment_rad: self.increment_rad,
+        }
+    }
+}
+
+/// Runtime-facing workload dimensions for one serial operator instance.
+///
+/// The runtime converts these implementation counts into physical byte
+/// allocations; reconstruction does not own that projection.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SerialMfsWorkload {
+    grid_shape: [usize; 2],
+    grid_complex_values: usize,
+    convolution_f64_values: usize,
+    fft_resident_complex_values: usize,
+    fft_planning_words: usize,
+    forward_complex_values: usize,
+    primitive_complex_values: usize,
+    primitive_f64_values: usize,
+    max_replay_block_samples: usize,
+}
+
+impl SerialMfsWorkload {
+    #[must_use]
+    pub const fn grid_shape(self) -> [usize; 2] {
+        self.grid_shape
+    }
+
+    #[must_use]
+    pub const fn grid_complex_values(self) -> usize {
+        self.grid_complex_values
+    }
+
+    #[must_use]
+    pub const fn convolution_f64_values(self) -> usize {
+        self.convolution_f64_values
+    }
+
+    #[must_use]
+    pub const fn fft_resident_complex_values(self) -> usize {
+        self.fft_resident_complex_values
+    }
+
+    #[must_use]
+    pub const fn fft_planning_words(self) -> usize {
+        self.fft_planning_words
+    }
+
+    #[must_use]
+    pub const fn forward_complex_values(self) -> usize {
+        self.forward_complex_values
+    }
+
+    #[must_use]
+    pub const fn primitive_complex_values(self) -> usize {
+        self.primitive_complex_values
+    }
+
+    #[must_use]
+    pub const fn primitive_f64_values(self) -> usize {
+        self.primitive_f64_values
+    }
+
+    #[must_use]
+    pub const fn max_replay_block_samples(self) -> usize {
+        self.max_replay_block_samples
+    }
+}
+
+/// Return implementation dimensions for the runtime's physical projection.
+#[doc(hidden)]
+pub fn serial_mfs_workload(
+    specification: &SerialMfsSpecification,
+    max_replay_block_samples: usize,
+) -> Result<SerialMfsWorkload, SerialMfsError> {
+    if max_replay_block_samples == 0 {
+        return Err(SerialMfsError::UnsupportedProblem);
+    }
+    let cells = checked_cells(specification.grid_shape)?;
+    let image_cells = checked_cells(specification.image_shape)?;
+    let grid_complex_values = cells
+        .checked_mul(4)
+        .ok_or(SerialMfsError::ResidencyOverflow)?;
+    let convolution_f64_values = (OVERSAMPLING + 1)
+        .checked_mul(TAP_COUNT)
+        .and_then(|values| {
+            values.checked_add(specification.grid_shape[0] + specification.grid_shape[1])
+        })
+        .ok_or(SerialMfsError::ResidencyOverflow)?;
+    let max_axis = specification.grid_shape.into_iter().max().unwrap_or(0);
+    let opaque_plans = specification
+        .grid_shape
+        .into_iter()
+        .try_fold(0_usize, |total, length| {
+            length
+                .checked_mul(FFT_PLAN_COMPLEX_BOUND_PER_AXIS)
+                .and_then(|values| total.checked_add(values))
+        })
+        .ok_or(SerialMfsError::ResidencyOverflow)?;
+    let reusable_lane_and_scratch = max_axis
+        .checked_mul(FFT_PLAN_COMPLEX_BOUND_PER_AXIS + 1)
+        .ok_or(SerialMfsError::ResidencyOverflow)?;
+    let fft_resident_complex_values = opaque_plans
+        .checked_add(reusable_lane_and_scratch)
+        .ok_or(SerialMfsError::ResidencyOverflow)?;
+    let fft_planning_words = specification
+        .grid_shape
+        .into_iter()
+        .try_fold(0_usize, |total, length| {
+            length
+                .checked_mul(FFT_PLANNING_WORD_BOUND_PER_POINT)
+                .and_then(|values| total.checked_add(values))
+        })
+        .ok_or(SerialMfsError::ResidencyOverflow)?;
+    let forward_complex_values = cells
+        .checked_add(
+            max_replay_block_samples
+                .checked_mul(2)
+                .ok_or(SerialMfsError::ResidencyOverflow)?,
+        )
+        .ok_or(SerialMfsError::ResidencyOverflow)?;
+    Ok(SerialMfsWorkload {
+        grid_shape: specification.grid_shape,
+        grid_complex_values,
+        convolution_f64_values,
+        fft_resident_complex_values,
+        fft_planning_words,
+        forward_complex_values,
+        primitive_complex_values: image_cells
+            .checked_mul(2)
+            .ok_or(SerialMfsError::ResidencyOverflow)?,
+        primitive_f64_values: image_cells,
+        max_replay_block_samples,
+    })
+}
+
+/// FFT preparation retained by runtime between its explicit planning and replay nodes.
+#[doc(hidden)]
+pub struct PreparedSerialMfsOperator {
+    specification: SerialMfsSpecification,
+    workload: SerialMfsWorkload,
+    fft: PreparedFft,
+}
+
+impl fmt::Debug for PreparedSerialMfsOperator {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PreparedSerialMfsOperator")
+            .field("specification", &self.specification)
+            .field("workload", &self.workload)
+            .finish_non_exhaustive()
+    }
+}
+
+impl PreparedSerialMfsOperator {
+    /// Begin the opaque science owner from the exact frozen T18 generation.
+    pub fn begin(
+        self,
+        problem: &CompiledProblem,
+        weighting: &WeightingAlgorithmState,
+    ) -> Result<CompleteDataOwnerState, SerialMfsError> {
+        CompleteDataOwnerState::new(problem, weighting, self)
+    }
+}
+
+/// Prepare the reusable FFT implementation under runtime planning authority.
+#[doc(hidden)]
+pub fn prepare_serial_mfs_operator(
+    specification: SerialMfsSpecification,
+    workload: SerialMfsWorkload,
+) -> Result<PreparedSerialMfsOperator, SerialMfsError> {
+    if workload != serial_mfs_workload(&specification, workload.max_replay_block_samples)? {
+        return Err(SerialMfsError::ProblemMismatch);
+    }
+    let fft = PreparedFft::new(
+        specification.grid_shape,
+        workload.fft_resident_complex_values,
+    )?;
+    Ok(PreparedSerialMfsOperator {
+        specification,
+        workload,
+        fft,
+    })
 }
 
 /// Unnormalized continuum primitives; these are not Product Graph artifacts.
@@ -323,22 +441,22 @@ pub enum ContinuumPrimitiveCatalog {
 }
 
 /// Opaque reconstruction-owned proof that one complete weighted replay reached A/A*.
+#[doc(hidden)]
 #[derive(Debug)]
-pub struct CompleteDataCompletion {
+pub struct CompleteDataOwnerCompletion {
     problem: CompiledProblemId,
     geometry: CompiledGeometryId,
     numerics: NumericsContractId,
     weighting_commitment: WeightingCommitmentId,
     weighting_generation: WeightingGenerationId,
     replay: WeightingReplayId,
-    selected_generation: SelectedObservationGenerationId,
     coverage: WeightingReplayCoverageId,
     primitives: ContinuumPrimitiveCatalog,
     sample_count: u64,
     block_count: u64,
 }
 
-impl CompleteDataCompletion {
+impl CompleteDataOwnerCompletion {
     /// Return the exact Compiled Problem executed by this operator.
     #[must_use]
     pub const fn problem_id(&self) -> CompiledProblemId {
@@ -375,12 +493,6 @@ impl CompleteDataCompletion {
         self.replay
     }
 
-    /// Return the independently traversed selected-observation generation.
-    #[must_use]
-    pub const fn selected_generation(&self) -> SelectedObservationGenerationId {
-        self.selected_generation
-    }
-
     /// Return the exact T18 weighted-sample coverage.
     #[must_use]
     pub const fn coverage(&self) -> WeightingReplayCoverageId {
@@ -407,13 +519,14 @@ impl CompleteDataCompletion {
 }
 
 /// Complete unnormalized primitives paired with reconstruction-owned evidence.
+#[doc(hidden)]
 #[derive(Debug)]
-pub struct CompleteDataResult {
+pub struct CompleteDataOwnerResult {
     primitives: SerialMfsPrimitives,
-    completion: CompleteDataCompletion,
+    completion: CompleteDataOwnerCompletion,
 }
 
-impl CompleteDataResult {
+impl CompleteDataOwnerResult {
     /// Return dirty, PSF, sensitivity, and sum-weight normal-state primitives.
     #[must_use]
     pub const fn primitives(&self) -> &SerialMfsPrimitives {
@@ -422,20 +535,21 @@ impl CompleteDataResult {
 
     /// Return the owner-minted complete-data proof for these exact primitives.
     #[must_use]
-    pub const fn completion(&self) -> &CompleteDataCompletion {
+    pub const fn completion(&self) -> &CompleteDataOwnerCompletion {
         &self.completion
     }
 
     /// Consume the pairing without turning its primitives into Product Graph artifacts.
     #[must_use]
-    pub fn into_parts(self) -> (SerialMfsPrimitives, CompleteDataCompletion) {
+    pub fn into_parts(self) -> (SerialMfsPrimitives, CompleteDataOwnerCompletion) {
         (self.primitives, self.completion)
     }
 }
 
 /// Reconstruction owner for one complete, ordered weighted replay.
+#[doc(hidden)]
 #[derive(Debug)]
-pub struct CompleteDataState {
+pub struct CompleteDataOwnerState {
     problem: CompiledProblemId,
     geometry: CompiledGeometryId,
     numerics: NumericsContractId,
@@ -444,26 +558,31 @@ pub struct CompleteDataState {
     next_block_sequence: u64,
     sample_count: u64,
     coverage: CoverageEncoder,
+    finite_values: FiniteValuePolicy,
     operator: SerialMfsOperator,
 }
 
-impl CompleteDataState {
+impl CompleteDataOwnerState {
     fn new(
         problem: &CompiledProblem,
-        weighting_generation: WeightingGenerationId,
-        max_replay_block_samples: usize,
+        weighting: &WeightingAlgorithmState,
+        prepared: PreparedSerialMfsOperator,
     ) -> Result<Self, SerialMfsError> {
-        let plan = SerialMfsPlan::new(problem, max_replay_block_samples)?;
+        let specification = SerialMfsSpecification::new(problem)?;
+        if specification != prepared.specification || !weighting.matches_problem(problem) {
+            return Err(SerialMfsError::ProblemMismatch);
+        }
         Ok(Self {
-            problem: problem.problem_id(),
-            geometry: problem.geometry().geometry_id(),
-            numerics: problem.numerics_id(),
-            weighting_commitment: problem.weighting().commitment_id(),
-            weighting_generation,
+            problem: specification.problem,
+            geometry: specification.geometry,
+            numerics: specification.numerics,
+            weighting_commitment: specification.weighting_commitment,
+            weighting_generation: weighting.generation_id(),
             next_block_sequence: 0,
             sample_count: 0,
-            coverage: CoverageEncoder::new(weighting_generation),
-            operator: SerialMfsOperator::new(plan),
+            coverage: CoverageEncoder::new(weighting.generation_id()),
+            finite_values: specification.finite_values,
+            operator: SerialMfsOperator::new(specification, prepared.workload, prepared.fft),
         })
     }
 
@@ -481,7 +600,9 @@ impl CompleteDataState {
         for weighted in block.samples() {
             self.coverage.push(weighted);
             let selected = weighted.selected();
-            if stokes_i_parallel_hand(selected.address.correlation_type) {
+            if self.accept_input(selected)?
+                && stokes_i_parallel_hand(selected.address.correlation_type)
+            {
                 let visibility = match selected.visibility {
                     SelectedVisibilitySample::Float32(value) => [f64::from(value), 0.0],
                     SelectedVisibilitySample::Complex32([real, imaginary]) => {
@@ -517,18 +638,20 @@ impl CompleteDataState {
 
     /// Apply the paired forward operator to one opaque bounded T18 replay block.
     pub fn predict_block(
-        &self,
+        &mut self,
         model: &[Complex64],
         block: &WeightingReplayChunk,
-    ) -> Result<Box<[Complex64]>, SerialMfsError> {
-        if block.samples().len() > self.operator.plan.max_replay_block_samples {
+    ) -> Result<&[Complex64], SerialMfsError> {
+        if block.samples().len() > self.operator.workload.max_replay_block_samples {
             return Err(SerialMfsError::IncompleteCoverage);
         }
-        let padded = self.operator.prediction_grid(model)?;
-        let mut predicted = Vec::with_capacity(block.samples().len().saturating_mul(2));
+        self.operator.prepare_prediction_grid(model)?;
+        self.operator.prediction_len = 0;
         for weighted in block.samples() {
             let selected = weighted.selected();
-            if !stokes_i_parallel_hand(selected.address.correlation_type) {
+            if !self.accept_input(selected)?
+                || !stokes_i_parallel_hand(selected.address.correlation_type)
+            {
                 continue;
             }
             for spectral in weighted.spectral_values() {
@@ -541,18 +664,17 @@ impl CompleteDataState {
                     spectral.imaging_weight(),
                     f64::from(contribution.factor()),
                 )?;
-                predicted.push(self.operator.predict_one(&padded, sample));
+                self.operator.push_prediction(sample)?;
             }
         }
-        Ok(predicted.into_boxed_slice())
+        Ok(&self.operator.predictions[..self.operator.prediction_len])
     }
 
     /// Consume terminal T18 algorithm evidence and mint complete-data evidence.
     pub fn complete(
         self,
         replay: &WeightingReplaySummary,
-        selected_generation: SelectedObservationGenerationId,
-    ) -> Result<CompleteDataResult, SerialMfsError> {
+    ) -> Result<CompleteDataOwnerResult, SerialMfsError> {
         if self.weighting_generation != replay.weighting_generation() {
             return Err(SerialMfsError::WeightingGeneration);
         }
@@ -565,16 +687,15 @@ impl CompleteDataState {
         if coverage != replay.coverage() {
             return Err(SerialMfsError::IncompleteCoverage);
         }
-        Ok(CompleteDataResult {
+        Ok(CompleteDataOwnerResult {
             primitives: self.operator.finish()?,
-            completion: CompleteDataCompletion {
+            completion: CompleteDataOwnerCompletion {
                 problem: self.problem,
                 geometry: self.geometry,
                 numerics: self.numerics,
                 weighting_commitment: self.weighting_commitment,
                 weighting_generation: replay.weighting_generation(),
                 replay: replay.replay_id(),
-                selected_generation,
                 coverage,
                 primitives: ContinuumPrimitiveCatalog::UnnormalizedNterms1V1,
                 sample_count: replay.sample_count(),
@@ -582,23 +703,50 @@ impl CompleteDataState {
             },
         })
     }
-}
 
-impl WeightingAlgorithmState {
-    /// Begin the T19 owner only from an opaque frozen T18 generation.
-    pub fn begin_complete_data(
+    fn accept_input(
         &self,
-        problem: &CompiledProblem,
-    ) -> Result<CompleteDataState, SerialMfsError> {
-        if self.commitment_id() != problem.weighting().commitment_id() {
-            return Err(SerialMfsError::WeightingGeneration);
-        }
-        CompleteDataState::new(
-            problem,
-            self.generation_id(),
-            self.max_replay_block_samples(),
+        sample: &casa_imaging_model::SelectedObservationSample,
+    ) -> Result<bool, SerialMfsError> {
+        let nonfinite = sample
+            .coordinates
+            .transformed_uvw_m
+            .iter()
+            .any(|value| !value.is_finite())
+            || !sample.coordinates.phase_shift_m.is_finite()
+            || !sample.address.frequency_centre_hz.is_finite()
+            || !sample.input_weight.is_finite()
+            || match sample.visibility {
+                SelectedVisibilitySample::Float32(value) => !value.is_finite(),
+                SelectedVisibilitySample::Complex32(value) => {
+                    value.into_iter().any(|component| !component.is_finite())
+                }
+            };
+        apply_input_policy(
+            nonfinite,
+            sample.row_flag || sample.channel_flag,
+            self.finite_values,
         )
     }
+}
+
+fn apply_finite_value_policy(
+    nonfinite_input: bool,
+    policy: FiniteValuePolicy,
+) -> Result<bool, SerialMfsError> {
+    match (nonfinite_input, policy) {
+        (false, _) => Ok(true),
+        (true, FiniteValuePolicy::FlagInputRejectGenerated) => Ok(false),
+        (true, FiniteValuePolicy::RejectAll) => Err(SerialMfsError::InvalidSample),
+    }
+}
+
+fn apply_input_policy(
+    nonfinite_input: bool,
+    declared_flag: bool,
+    policy: FiniteValuePolicy,
+) -> Result<bool, SerialMfsError> {
+    Ok(apply_finite_value_policy(nonfinite_input, policy)? && !declared_flag)
 }
 
 fn stokes_i_parallel_hand(correlation: CorrelationType) -> bool {
@@ -614,13 +762,17 @@ fn stokes_i_parallel_hand(correlation: CorrelationType) -> bool {
 
 /// Reconstruction-owned serial CPU operator accumulator.
 struct SerialMfsOperator {
-    plan: SerialMfsPlan,
+    geometry: SerialMfsGeometry,
+    workload: SerialMfsWorkload,
     gridder: StandardConvolution,
     fft: PreparedFft,
     dirty_grid: Array2<Complex64>,
     dirty_compensation: Array2<Complex64>,
     psf_grid: Array2<Complex64>,
     psf_compensation: Array2<Complex64>,
+    forward_grid: Array2<Complex64>,
+    predictions: Box<[Complex64]>,
+    prediction_len: usize,
     sum_weight: f64,
     sum_weight_compensation: f64,
 }
@@ -629,27 +781,48 @@ impl fmt::Debug for SerialMfsOperator {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("SerialMfsOperator")
-            .field("plan", &self.plan)
+            .field("geometry", &self.geometry)
+            .field("workload", &self.workload)
             .field("sum_weight", &self.sum_weight)
             .finish_non_exhaustive()
     }
 }
 
 impl SerialMfsOperator {
-    /// Allocate the two planned accumulation grids and no worker-local duplicate.
+    /// Allocate the runtime-projected buffers and no worker-local grid duplicate.
     #[must_use]
-    pub fn new(plan: SerialMfsPlan) -> Self {
-        let gridder = StandardConvolution::new(&plan);
-        let fft = PreparedFft::new(plan.grid_shape);
-        let shape = (plan.grid_shape[0], plan.grid_shape[1]);
+    fn new(
+        specification: SerialMfsSpecification,
+        workload: SerialMfsWorkload,
+        fft: PreparedFft,
+    ) -> Self {
+        let geometry = specification.operator_geometry();
+        Self::new_with_geometry(geometry, workload, fft)
+    }
+
+    fn new_with_geometry(
+        geometry: SerialMfsGeometry,
+        workload: SerialMfsWorkload,
+        fft: PreparedFft,
+    ) -> Self {
+        let gridder = StandardConvolution::new(&geometry);
+        let shape = (geometry.grid_shape[0], geometry.grid_shape[1]);
+        let prediction_values = workload
+            .max_replay_block_samples
+            .checked_mul(2)
+            .expect("validated serial MFS workload");
         Self {
-            plan,
+            geometry,
+            workload,
             gridder,
             fft,
             dirty_grid: Array2::zeros(shape),
             dirty_compensation: Array2::zeros(shape),
             psf_grid: Array2::zeros(shape),
             psf_compensation: Array2::zeros(shape),
+            forward_grid: Array2::zeros(shape),
+            predictions: vec![Complex64::default(); prediction_values].into_boxed_slice(),
+            prediction_len: 0,
             sum_weight: 0.0,
             sum_weight_compensation: 0.0,
         }
@@ -689,58 +862,87 @@ impl SerialMfsOperator {
     /// Predict unweighted selected visibilities with the paired forward operator.
     #[cfg(test)]
     pub fn predict(
-        &self,
+        &mut self,
         model: &[Complex64],
         samples: &[SerialMfsSample],
     ) -> Result<Box<[Complex64]>, SerialMfsError> {
-        let padded = self.prediction_grid(model)?;
-        Ok(samples
-            .iter()
-            .map(|sample| self.predict_one(&padded, *sample))
-            .collect::<Vec<_>>()
-            .into_boxed_slice())
+        self.prepare_prediction_grid(model)?;
+        let mut predicted = Vec::with_capacity(samples.len());
+        for sample in samples {
+            predicted.push(self.predict_one(*sample)?);
+        }
+        Ok(predicted.into_boxed_slice())
     }
 
-    fn prediction_grid(&self, model: &[Complex64]) -> Result<Array2<Complex64>, SerialMfsError> {
-        if model.len() != checked_cells(self.plan.image_shape)? {
+    fn prepare_prediction_grid(&mut self, model: &[Complex64]) -> Result<(), SerialMfsError> {
+        if model.len() != checked_cells(self.geometry.image_shape)? {
             return Err(SerialMfsError::ModelShape);
         }
-        let mut padded = Array2::zeros((self.plan.grid_shape[0], self.plan.grid_shape[1]));
-        for x in 0..self.plan.image_shape[0] {
-            for y in 0..self.plan.image_shape[1] {
+        self.forward_grid.fill(Complex64::default());
+        for x in 0..self.geometry.image_shape[0] {
+            for y in 0..self.geometry.image_shape[1] {
                 let correction = self.gridder.image_correction(x, y);
-                padded[(self.plan.image_blc[0] + x, self.plan.image_blc[1] + y)] =
-                    model[x * self.plan.image_shape[1] + y] * correction;
+                self.forward_grid[(
+                    self.geometry.image_blc[0] + x,
+                    self.geometry.image_blc[1] + y,
+                )] = model[x * self.geometry.image_shape[1] + y] * correction;
             }
         }
-        self.fft.transform(&mut padded, false);
-        Ok(padded)
+        self.fft.transform(&mut self.forward_grid, false);
+        if self
+            .forward_grid
+            .iter()
+            .any(|value| !value.re.is_finite() || !value.im.is_finite())
+        {
+            return Err(SerialMfsError::GeneratedNonfinite);
+        }
+        Ok(())
     }
 
-    fn predict_one(&self, padded: &Array2<Complex64>, sample: SerialMfsSample) -> Complex64 {
+    fn predict_one(&self, sample: SerialMfsSample) -> Result<Complex64, SerialMfsError> {
         let Some(taps) = self.gridder.taps(sample.uv_lambda()) else {
-            return Complex64::new(0.0, 0.0);
+            return Ok(Complex64::new(0.0, 0.0));
         };
-        self.gridder.degrid(padded, taps) * sample.phase().conj() * sample.spectral_factor
+        let predicted = self.gridder.degrid(&self.forward_grid, taps)
+            * sample.phase().conj()
+            * sample.spectral_factor;
+        if predicted.re.is_finite() && predicted.im.is_finite() {
+            Ok(predicted)
+        } else {
+            Err(SerialMfsError::GeneratedNonfinite)
+        }
+    }
+
+    fn push_prediction(&mut self, sample: SerialMfsSample) -> Result<(), SerialMfsError> {
+        if self.prediction_len == self.predictions.len() {
+            return Err(SerialMfsError::IncompleteCoverage);
+        }
+        self.predictions[self.prediction_len] = self.predict_one(sample)?;
+        self.prediction_len += 1;
+        Ok(())
     }
 
     /// Finish the paired inverse transforms and return unnormalized primitives.
     pub fn finish(mut self) -> Result<SerialMfsPrimitives, SerialMfsError> {
         self.fft.transform(&mut self.dirty_grid, true);
         self.fft.transform(&mut self.psf_grid, true);
-        let cells = self.plan.image_shape[0] * self.plan.image_shape[1];
+        let cells = self.geometry.image_shape[0] * self.geometry.image_shape[1];
         let mut dirty = Vec::with_capacity(cells);
         let mut psf = Vec::with_capacity(cells);
-        for x in 0..self.plan.image_shape[0] {
-            for y in 0..self.plan.image_shape[1] {
+        for x in 0..self.geometry.image_shape[0] {
+            for y in 0..self.geometry.image_shape[1] {
                 let correction = self.gridder.image_correction(x, y);
                 dirty.push(
-                    self.dirty_grid[(self.plan.image_blc[0] + x, self.plan.image_blc[1] + y)]
-                        * correction,
+                    self.dirty_grid[(
+                        self.geometry.image_blc[0] + x,
+                        self.geometry.image_blc[1] + y,
+                    )] * correction,
                 );
                 psf.push(
-                    self.psf_grid[(self.plan.image_blc[0] + x, self.plan.image_blc[1] + y)]
-                        * correction,
+                    self.psf_grid[(
+                        self.geometry.image_blc[0] + x,
+                        self.geometry.image_blc[1] + y,
+                    )] * correction,
                 );
             }
         }
@@ -753,7 +955,7 @@ impl SerialMfsOperator {
             return Err(SerialMfsError::GeneratedNonfinite);
         }
         Ok(SerialMfsPrimitives {
-            shape: self.plan.image_shape,
+            shape: self.geometry.image_shape,
             dirty: dirty.into_boxed_slice(),
             psf: psf.into_boxed_slice(),
             sensitivity: vec![self.sum_weight; cells].into_boxed_slice(),
@@ -785,15 +987,15 @@ struct StandardConvolution {
 }
 
 impl StandardConvolution {
-    fn new(plan: &SerialMfsPlan) -> Self {
+    fn new(geometry: &SerialMfsGeometry) -> Self {
         Self {
-            grid_shape: plan.grid_shape,
-            image_blc: plan.image_blc,
-            du_lambda: 1.0 / (plan.grid_shape[0] as f64 * plan.increment_rad[0].abs()),
-            dv_lambda: 1.0 / (plan.grid_shape[1] as f64 * plan.increment_rad[1].abs()),
+            grid_shape: geometry.grid_shape,
+            image_blc: geometry.image_blc,
+            du_lambda: 1.0 / (geometry.grid_shape[0] as f64 * geometry.increment_rad[0].abs()),
+            dv_lambda: 1.0 / (geometry.grid_shape[1] as f64 * geometry.increment_rad[1].abs()),
             weights: build_normalized_tap_weights(),
-            correction_x: build_correction_axis(plan.grid_shape[0]),
-            correction_y: build_correction_axis(plan.grid_shape[1]),
+            correction_x: build_correction_axis(geometry.grid_shape[0]),
+            correction_y: build_correction_axis(geometry.grid_shape[1]),
         }
     }
 
@@ -866,24 +1068,52 @@ impl StandardConvolution {
 struct PreparedFft {
     forward: [Arc<dyn Fft<f64>>; 2],
     inverse: [Arc<dyn Fft<f64>>; 2],
+    lane: Vec<Complex64>,
+    scratch: Vec<Complex64>,
 }
 
 impl PreparedFft {
-    fn new(shape: [usize; 2]) -> Self {
+    fn new(shape: [usize; 2], reserved_complex_values: usize) -> Result<Self, SerialMfsError> {
         let mut planner = FftPlanner::<f64>::new();
-        Self {
-            forward: [
-                planner.plan_fft_forward(shape[0]),
-                planner.plan_fft_forward(shape[1]),
-            ],
-            inverse: [
-                planner.plan_fft_inverse(shape[0]),
-                planner.plan_fft_inverse(shape[1]),
-            ],
+        let forward = [
+            planner.plan_fft_forward(shape[0]),
+            planner.plan_fft_forward(shape[1]),
+        ];
+        let inverse = [
+            planner.plan_fft_inverse(shape[0]),
+            planner.plan_fft_inverse(shape[1]),
+        ];
+        let lane_values = shape.into_iter().max().unwrap_or(0);
+        let scratch_values = forward
+            .iter()
+            .chain(&inverse)
+            .map(|fft| fft.get_inplace_scratch_len())
+            .max()
+            .unwrap_or(0);
+        let opaque_plan_values = shape
+            .into_iter()
+            .try_fold(0_usize, |total, length| {
+                length
+                    .checked_mul(FFT_PLAN_COMPLEX_BOUND_PER_AXIS)
+                    .and_then(|values| total.checked_add(values))
+            })
+            .ok_or(SerialMfsError::ResidencyOverflow)?;
+        let required = lane_values
+            .checked_add(scratch_values)
+            .and_then(|values| values.checked_add(opaque_plan_values))
+            .ok_or(SerialMfsError::ResidencyOverflow)?;
+        if required > reserved_complex_values {
+            return Err(SerialMfsError::ResidencyOverflow);
         }
+        Ok(Self {
+            forward,
+            inverse,
+            lane: vec![Complex64::default(); lane_values],
+            scratch: vec![Complex64::default(); scratch_values],
+        })
     }
 
-    fn transform(&self, data: &mut Array2<Complex64>, inverse: bool) {
+    fn transform(&mut self, data: &mut Array2<Complex64>, inverse: bool) {
         shift_even(data);
         for axis in 0..2 {
             let fft = if inverse {
@@ -891,7 +1121,7 @@ impl PreparedFft {
             } else {
                 &self.forward[axis]
             };
-            transform_axis(data, Axis(axis), fft);
+            transform_axis(data, Axis(axis), fft, &mut self.lane, &mut self.scratch);
         }
         shift_even(data);
     }
@@ -903,50 +1133,25 @@ impl fmt::Debug for PreparedFft {
     }
 }
 
-fn transform_axis(data: &mut Array2<Complex64>, axis: Axis, fft: &Arc<dyn Fft<f64>>) {
+fn transform_axis(
+    data: &mut Array2<Complex64>,
+    axis: Axis,
+    fft: &Arc<dyn Fft<f64>>,
+    lane_workspace: &mut [Complex64],
+    scratch_workspace: &mut [Complex64],
+) {
     let length = data.len_of(axis);
-    let mut values = vec![Complex64::default(); length];
-    let mut scratch = vec![Complex64::default(); fft.get_inplace_scratch_len()];
+    let values = &mut lane_workspace[..length];
+    let scratch = &mut scratch_workspace[..fft.get_inplace_scratch_len()];
     for mut lane in data.lanes_mut(axis) {
         for (target, value) in values.iter_mut().zip(lane.iter()) {
             *target = *value;
         }
-        fft.process_with_scratch(&mut values, &mut scratch);
-        for (target, value) in lane.iter_mut().zip(&values) {
+        fft.process_with_scratch(values, scratch);
+        for (target, value) in lane.iter_mut().zip(values.iter()) {
             *target = *value;
         }
     }
-}
-
-fn fft_workspace_bytes(grid_shape: [usize; 2]) -> Result<usize, SerialMfsError> {
-    let mut peak_elements = 0_usize;
-    for length in grid_shape {
-        for inverse in [false, true] {
-            let mut planner = FftPlanner::<f64>::new();
-            let fft = if inverse {
-                planner.plan_fft_inverse(length)
-            } else {
-                planner.plan_fft_forward(length)
-            };
-            let elements = length
-                .checked_add(fft.get_inplace_scratch_len())
-                .ok_or(SerialMfsError::ResidencyOverflow)?;
-            peak_elements = peak_elements.max(elements);
-        }
-    }
-    let plan_elements = grid_shape
-        .into_iter()
-        .try_fold(0_usize, |sum, length| {
-            length
-                .checked_mul(FFT_PLAN_COMPLEX_BOUND_PER_AXIS)
-                .and_then(|elements| sum.checked_add(elements))
-        })
-        .ok_or(SerialMfsError::ResidencyOverflow)?;
-    peak_elements
-        .checked_add(plan_elements)
-        .ok_or(SerialMfsError::ResidencyOverflow)?
-        .checked_mul(size_of::<Complex64>())
-        .ok_or(SerialMfsError::ResidencyOverflow)
 }
 
 fn shift_even(data: &mut Array2<Complex64>) {
@@ -1085,6 +1290,9 @@ fn checked_cells(shape: [usize; 2]) -> Result<usize, SerialMfsError> {
 /// Exact reason the serial MFS plan or operator rejected its input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum SerialMfsError {
+    /// Runtime supplied science or weighting state for another compiled problem.
+    #[error("serial MFS science and weighting state do not match the compiled problem")]
+    ProblemMismatch,
     /// The problem is outside the T19 constant-basis single-field surface.
     #[error("serial MFS requires one scalar-response Stokes-I constant-basis domain")]
     UnsupportedProblem,
@@ -1122,31 +1330,42 @@ pub enum SerialMfsError {
 
 #[cfg(test)]
 mod tests {
+    use casa_imaging_model::FiniteValuePolicy;
     use num_complex::Complex64;
 
     use super::{
-        SerialMfsOperator, SerialMfsPlan, SerialMfsResidency, SerialMfsSample, checked_cells,
+        PreparedFft, SerialMfsError, SerialMfsGeometry, SerialMfsOperator, SerialMfsSample,
+        SerialMfsWorkload, apply_finite_value_policy, apply_input_policy, checked_cells,
     };
 
-    fn plan() -> SerialMfsPlan {
-        let image_shape = [8, 8];
-        let grid_shape = [10, 10];
-        let image_blc = [2, 2];
-        SerialMfsPlan {
-            image_shape,
-            grid_shape,
-            image_blc,
+    fn geometry() -> SerialMfsGeometry {
+        SerialMfsGeometry {
+            image_shape: [8, 8],
+            grid_shape: [10, 10],
+            image_blc: [2, 2],
             increment_rad: [-2.0e-3, 2.0e-3],
-            max_replay_block_samples: 3,
-            residency: SerialMfsResidency {
-                grid_bytes: 6_400,
-                convolution_cache_bytes: 5_816,
-                fft_scratch_bytes: 160,
-                forward_workspace_bytes: 1_696,
-                primitive_output_bytes: 2_560,
-                peak_bytes: 16_632,
-            },
         }
+    }
+
+    fn workload() -> SerialMfsWorkload {
+        SerialMfsWorkload {
+            grid_shape: [10, 10],
+            grid_complex_values: 400,
+            convolution_f64_values: 727,
+            fft_resident_complex_values: 7_690,
+            fft_planning_words: 320,
+            forward_complex_values: 106,
+            primitive_complex_values: 128,
+            primitive_f64_values: 64,
+            max_replay_block_samples: 3,
+        }
+    }
+
+    fn operator() -> SerialMfsOperator {
+        let workload = workload();
+        let fft = PreparedFft::new([10, 10], workload.fft_resident_complex_values)
+            .expect("reserved FFT workspace");
+        SerialMfsOperator::new_with_geometry(geometry(), workload, fft)
     }
 
     fn samples(visibilities: &[[f64; 2]]) -> Vec<SerialMfsSample> {
@@ -1178,12 +1397,11 @@ mod tests {
 
     #[test]
     fn forward_and_weighted_adjoint_share_one_operator() {
-        let plan = plan();
         let sample_values = samples(&[[0.4, -0.7], [-1.2, 0.3], [0.8, 1.1]]);
-        let model = (0..checked_cells(plan.image_shape).expect("shape"))
+        let model = (0..checked_cells(geometry().image_shape).expect("shape"))
             .map(|index| Complex64::new(index as f64 * 0.01 - 0.2, index as f64 * -0.003))
             .collect::<Vec<_>>();
-        let prediction = SerialMfsOperator::new(plan.clone())
+        let prediction = operator()
             .predict(&model, &sample_values)
             .expect("prediction");
         let visibility = sample_values
@@ -1194,7 +1412,7 @@ mod tests {
             .iter()
             .map(|sample| sample.visibility * sample.imaging_weight)
             .collect::<Vec<_>>();
-        let mut adjoint = SerialMfsOperator::new(plan);
+        let mut adjoint = operator();
         for sample in &sample_values {
             adjoint.push(*sample).expect("adjoint sample");
         }
@@ -1207,9 +1425,8 @@ mod tests {
 
     #[test]
     fn forward_is_linear_and_a_unit_centre_source_is_constant() {
-        let plan = plan();
         let sample_values = samples(&[[0.0, 0.0]; 3]);
-        let cells = checked_cells(plan.image_shape).expect("shape");
+        let cells = checked_cells(geometry().image_shape).expect("shape");
         let mut first = vec![Complex64::new(0.0, 0.0); cells];
         let mut second = first.clone();
         first[3 * 8 + 3] = Complex64::new(1.0, 0.0);
@@ -1219,7 +1436,7 @@ mod tests {
             .zip(&second)
             .map(|(first, second)| first + second)
             .collect::<Vec<_>>();
-        let operator = SerialMfsOperator::new(plan);
+        let mut operator = operator();
         let first_prediction = operator.predict(&first, &sample_values).expect("first");
         let second_prediction = operator.predict(&second, &sample_values).expect("second");
         let sum_prediction = operator.predict(&sum, &sample_values).expect("sum");
@@ -1241,10 +1458,9 @@ mod tests {
 
     #[test]
     fn physical_block_partition_does_not_change_primitives() {
-        let plan = plan();
         let sample_values = samples(&[[0.4, -0.7], [-1.2, 0.3], [0.8, 1.1]]);
         let run = |partitions: &[&[SerialMfsSample]]| {
-            let mut operator = SerialMfsOperator::new(plan.clone());
+            let mut operator = operator();
             for sample in partitions.iter().flat_map(|partition| partition.iter()) {
                 operator.push(*sample).expect("sample");
             }
@@ -1260,16 +1476,15 @@ mod tests {
 
     #[test]
     fn samples_outside_the_planned_grid_contribute_zero_to_both_operators() {
-        let plan = plan();
         let sample = SerialMfsSample::new([1.0e9, -1.0e9, 0.0], 1.0e9, 0.0, [3.0, -2.0], 4.0, 1.0)
             .expect("finite sample");
-        let model = vec![Complex64::new(1.0, -0.5); checked_cells(plan.image_shape).unwrap()];
-        let prediction = SerialMfsOperator::new(plan.clone())
+        let model = vec![Complex64::new(1.0, -0.5); checked_cells(geometry().image_shape).unwrap()];
+        let prediction = operator()
             .predict(&model, &[sample])
             .expect("out-of-grid prediction is defined");
         assert_eq!(prediction.as_ref(), &[Complex64::new(0.0, 0.0)]);
 
-        let mut adjoint = SerialMfsOperator::new(plan);
+        let mut adjoint = operator();
         adjoint
             .push(sample)
             .expect("out-of-grid adjoint is defined");
@@ -1290,18 +1505,42 @@ mod tests {
     }
 
     #[test]
-    fn plan_charges_shared_grids_fft_scratch_and_all_outputs_once() {
-        let residency = plan().residency();
-        assert_eq!(residency.grid_bytes(), 4 * 10 * 10 * 16);
-        assert!(residency.fft_scratch_bytes() >= 10 * 16);
-        assert_eq!(residency.primitive_output_bytes(), 8 * 8 * 40);
+    fn workload_reports_every_runtime_projected_buffer_once() {
+        let workload = workload();
+        assert_eq!(workload.grid_complex_values(), 4 * 10 * 10);
+        assert_eq!(workload.convolution_f64_values(), 101 * 7 + 20);
+        assert!(workload.fft_resident_complex_values() >= 4 * 10);
+        assert_eq!(workload.fft_planning_words(), 16 * 20);
+        assert_eq!(workload.forward_complex_values(), 10 * 10 + 2 * 3);
+        assert_eq!(workload.primitive_complex_values(), 2 * 8 * 8);
+        assert_eq!(workload.primitive_f64_values(), 8 * 8);
+    }
+
+    #[test]
+    fn finite_policy_flags_declared_input_but_rejects_generated_values() {
         assert_eq!(
-            residency.peak_bytes(),
-            residency.grid_bytes()
-                + residency.convolution_cache_bytes()
-                + residency.fft_scratch_bytes()
-                + residency.forward_workspace_bytes()
-                + residency.primitive_output_bytes()
+            apply_finite_value_policy(true, FiniteValuePolicy::FlagInputRejectGenerated),
+            Ok(false)
+        );
+        assert_eq!(
+            apply_finite_value_policy(true, FiniteValuePolicy::RejectAll),
+            Err(SerialMfsError::InvalidSample)
+        );
+        assert_eq!(
+            apply_input_policy(true, true, FiniteValuePolicy::RejectAll),
+            Err(SerialMfsError::InvalidSample),
+            "RejectAll must reject a flagged non-finite input rather than silently skip it"
+        );
+        assert_eq!(
+            apply_input_policy(true, true, FiniteValuePolicy::FlagInputRejectGenerated),
+            Ok(false)
+        );
+        let mut model =
+            vec![Complex64::new(0.0, 0.0); checked_cells(geometry().image_shape).expect("shape")];
+        model[0] = Complex64::new(f64::NAN, 0.0);
+        assert_eq!(
+            operator().prepare_prediction_grid(&model),
+            Err(SerialMfsError::GeneratedNonfinite)
         );
     }
 }

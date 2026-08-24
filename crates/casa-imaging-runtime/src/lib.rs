@@ -30,7 +30,8 @@ pub use execution_bindings::{
 pub use casa_imaging_reconstruction::ContinuumPrimitiveCatalog;
 pub use complete_data_operator::{
     CompleteDataOperatorCompletion, CompleteDataOperatorError, CompleteDataOperatorResult,
-    CompleteDataPlanError, CompleteDataPlanFragment, SerialMfsOperatorState,
+    CompleteDataPlanError, CompleteDataPlanFragment, CompleteDataPreparedState,
+    CompleteDataResidency, SerialMfsOperatorState,
 };
 pub use cost_model::{
     PlannerCostModelProfileBootstrap, PlannerCostModelProfileRecord, ProfileEvidenceEntry,
