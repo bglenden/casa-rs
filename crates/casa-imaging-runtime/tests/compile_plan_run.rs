@@ -3525,7 +3525,7 @@ fn versioned_request_compiles_before_physical_planning() {
 
 #[test]
 fn plan_seals_physical_work_and_every_required_binding() {
-    assert_eq!(ExecutionPlanId::SCHEMA_VERSION, 9);
+    assert_eq!(ExecutionPlanId::SCHEMA_VERSION, 10);
     let problem = compile(request(1)).expect("logical compilation");
     let expected_problem_id = problem.problem_id();
     let bindings =
@@ -3599,10 +3599,39 @@ fn plan_seals_physical_work_and_every_required_binding() {
     assert_eq!(
         execution_plan.plan_id().as_bytes(),
         [
-            250, 214, 201, 229, 243, 157, 94, 167, 26, 63, 183, 96, 95, 93, 104, 216, 241, 5, 19,
-            123, 44, 102, 140, 136, 94, 187, 200, 217, 70, 183, 161, 12,
+            77, 181, 61, 162, 209, 72, 0, 226, 247, 93, 108, 139, 13, 90, 218, 105, 50, 134, 224,
+            8, 28, 163, 76, 9, 42, 110, 105, 30, 216, 114, 4, 56,
         ]
     );
+}
+
+#[test]
+fn receipt_store_location_does_not_change_the_logical_plan_identity() {
+    let problem = compile(request(1)).expect("logical compilation");
+    let first_directory = tempfile::tempdir().expect("first receipt directory");
+    let second_directory = tempfile::tempdir().expect("second receipt directory");
+    let retention = ReceiptRetention::new(4, 1_048_576).expect("plan-id retention");
+    let first_receipts =
+        ExecutionReceiptStore::new(first_directory.path(), retention).expect("first receipt store");
+    let second_receipts = ExecutionReceiptStore::new(second_directory.path(), retention)
+        .expect("second receipt store");
+    let first = plan_with_receipts(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        &first_receipts,
+        |_, _| Ok::<_, ()>(physical_work(6)),
+    )
+    .expect("first physical planning");
+    let second = plan_with_receipts(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        &second_receipts,
+        |_, _| Ok::<_, ()>(physical_work(6)),
+    )
+    .expect("second physical planning");
+
+    assert_eq!(first.plan_id(), second.plan_id());
+    assert_ne!(first.receipt_store(), second.receipt_store());
 }
 
 #[test]

@@ -1388,7 +1388,6 @@ impl Eq for ExecutionReceiptStore {}
 struct ReceiptRootState {
     retention: ReceiptRetention,
     mutation: Mutex<()>,
-    identity: [u8; 32],
 }
 
 /// Process-local, unforgeable identity of one canonical receipt root.
@@ -1404,12 +1403,6 @@ impl PartialEq for ReceiptEvidenceSource {
 }
 
 impl Eq for ReceiptEvidenceSource {}
-
-impl ReceiptEvidenceSource {
-    pub(crate) fn identity(&self) -> [u8; 32] {
-        self.state.identity
-    }
-}
 
 static RECEIPT_ROOT_STATES: OnceLock<Mutex<BTreeMap<PathBuf, Weak<ReceiptRootState>>>> =
     OnceLock::new();
@@ -1430,17 +1423,9 @@ fn receipt_root_state(
     let state = Arc::new(ReceiptRootState {
         retention,
         mutation: Mutex::new(()),
-        identity: receipt_root_identity(root),
     });
     states.insert(root.to_owned(), Arc::downgrade(&state));
     Ok(state)
-}
-
-fn receipt_root_identity(root: &Path) -> [u8; 32] {
-    let mut hasher = Sha256::new();
-    hasher.update(b"casa-rs-execution-receipt-root\0");
-    hasher.update(root.as_os_str().as_encoded_bytes());
-    hasher.finalize().into()
 }
 
 /// One attempt-scoped durable-evidence binding consumed by the run seam.

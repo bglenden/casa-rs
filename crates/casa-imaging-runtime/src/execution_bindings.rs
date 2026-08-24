@@ -37,7 +37,7 @@ use crate::{
 };
 
 const EXECUTION_PLAN_IDENTITY_DOMAIN: &[u8] = b"casa-rs-execution-plan";
-const EXECUTION_PLAN_IDENTITY_VERSION: u32 = 9;
+const EXECUTION_PLAN_IDENTITY_VERSION: u32 = 10;
 const RESOURCE_POLICY_IDENTITY_DOMAIN: &[u8] = b"casa-rs-resource-policy";
 const RESOURCE_POLICY_IDENTITY_VERSION: u32 = 1;
 
@@ -4370,7 +4370,7 @@ fn execution_plan_id(plan: &ExecutionPlan) -> ExecutionPlanId {
     }
     encoder.digest(plan.numerics.as_bytes());
     encoder.digest(plan.implementation_registry.as_bytes());
-    encoder.digest(plan.recorded_receipt_source.identity());
+    // The receipt root is process-local execution authority, not portable logical plan identity.
     encoder.digest(plan.resource_policy_id.as_bytes());
     encoder.digest(plan.planner_cost_model_profile.as_bytes());
     encoder.digest(plan.execution_dag.physical_work_id().as_bytes());
