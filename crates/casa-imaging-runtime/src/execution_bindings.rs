@@ -2043,6 +2043,7 @@ pub struct WorkExecutionContext<'a> {
     scheduled: &'a crate::execution::WorkExecutionContext,
     planned_artifacts: &'a [PlannedArtifact],
     stage_prediction: &'a StagePrediction,
+    resource_alternative: &'a crate::DemandAlternative,
     observation_consistency: Option<&'a ObservationTransactionContract>,
     observation_reads: Option<&'a ObservationReadSet>,
     model_writes: Option<&'a ObservationWriteSet>,
@@ -2112,6 +2113,12 @@ impl<'a> WorkExecutionContext<'a> {
     #[must_use]
     pub const fn stage_prediction(self) -> &'a StagePrediction {
         self.stage_prediction
+    }
+
+    /// Return the exact admitted resource alternative that owns this node's lease.
+    #[must_use]
+    pub const fn resource_alternative(self) -> &'a crate::DemandAlternative {
+        self.resource_alternative
     }
 
     /// Return the expected observation state only for the initial consistency check.
@@ -2777,6 +2784,7 @@ fn work_execution_context<'a>(
         scheduled: work,
         planned_artifacts: &plan.artifacts,
         stage_prediction: &plan.prediction.stages[&work.node().id],
+        resource_alternative: plan.execution_dag.resource_alternative(),
         observation_consistency,
         observation_reads,
         model_writes,

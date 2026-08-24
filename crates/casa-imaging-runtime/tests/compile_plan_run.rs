@@ -24,13 +24,15 @@ use casa_imaging_model::{
     ObservationSourceState, ObservationTransactionId, ObservationTransactionRequirements,
     PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic,
     PointingExtrapolation, PointingInterpolation, PointingTimeSampling, PolarizationContract,
-    PolarizationCoordinate, ProblemSpecification, ProductKind, ProductNormalization,
-    ProductRequirements, Projection, ReconstructionAlgorithm, ReconstructionBasis,
-    ReconstructionContract, ReconstructionControls, ReductionPolicy, ReferenceDataKind,
-    RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection, SpectralContract,
-    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSampling, SpectralWcs,
-    StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct, WeightDensityScope,
-    WeightingContract, WeightingScheme, compile,
+    PolarizationCoordinate, PreparedArtifactAwInterpretation, PreparedArtifactCellSemantics,
+    PreparedArtifactKernelAlgorithm, PreparedArtifactKernelSemantics,
+    PreparedArtifactScientificIdentity, PreparedArtifactSpectralMapSemantics, ProblemSpecification,
+    ProductKind, ProductNormalization, ProductRequirements, Projection, ReconstructionAlgorithm,
+    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
+    ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection,
+    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
+    SpectralSampling, SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct,
+    WeightDensityScope, WeightingContract, WeightingScheme, compile,
 };
 use casa_imaging_reconstruction::ExecutableModelProblem;
 use casa_imaging_runtime::{
@@ -50,23 +52,22 @@ use casa_imaging_runtime::{
     ObservationTransactionWork, PhysicalLayoutId, PhysicalSlot, PhysicalSlotId,
     PhysicalWorkBinding, PhysicalWorkBindingError, PlanError, PlanPrediction, PlannedArtifact,
     PlannerCostModelProfileId, PlanningBindings, PredictionConfidence, PredictionUncertainty,
-    PreparedArtifactBudget, PreparedArtifactCellKey, PreparedArtifactDescriptor,
-    PreparedArtifactError, PreparedArtifactKernelAlgorithm, PreparedArtifactKernelKey,
+    PreparedArtifactBudget, PreparedArtifactDescriptor, PreparedArtifactError,
     PreparedArtifactLoadSource, PreparedArtifactOperation, PreparedArtifactOrder,
-    PreparedArtifactPlaneDescriptor, PreparedArtifactPrecision, PreparedArtifactRegistration,
-    PreparedArtifactRejection, PreparedArtifactReuseOutcome, PreparedArtifactScientificKey,
-    PreparedArtifactSegmentDescriptor, PreparedArtifactSourceSegment,
-    PreparedArtifactSpectralMapKey, PreparedArtifactStore, PreparedArtifactUvAffine,
-    PublicationLayoutLedger, PublicationMappedStaging, PublicationParticipant,
-    PublicationPhysicalLayout, PublicationResourceBounds, PublicationStaging, QueueDemand,
-    QueueResource, QueueResourceId, QuiescencePoint, RateDemand, RateResource, RateResourceId,
-    RateUnit, ReceiptFailureKind, ReceiptRetention, ReceiptStatus, RedactedPath, ResourceAuthority,
-    ResourceClaim, ResourceError, ResourceHeadroom, ResourceMeasurement, ResourceOverride,
-    ResourcePolicy, ResourceTopology, RunBindings, RunController, RunDirective, RunError,
-    RunToCompletion, RuntimeOverheadDemand, ScalingMetadata, SlotCompatibility, StagePrediction,
-    StorageDomain, StorageDomainId, StorageMode, StorageUseKind, WorkDependency, WorkDomain,
-    WorkExecutionContext, WorkImplementation, WorkImplementationId, WorkKind, WorkMeasurements,
-    WorkNode, WorkNodeId, plan as runtime_plan, run as runtime_run,
+    PreparedArtifactPlanFragment, PreparedArtifactPlaneDescriptor, PreparedArtifactPrecision,
+    PreparedArtifactRegistration, PreparedArtifactRejection, PreparedArtifactReuseOutcome,
+    PreparedArtifactSegmentDescriptor, PreparedArtifactSourceSegment, PreparedArtifactStore,
+    PreparedArtifactUvAffine, PublicationLayoutLedger, PublicationMappedStaging,
+    PublicationParticipant, PublicationPhysicalLayout, PublicationResourceBounds,
+    PublicationStaging, QueueDemand, QueueResource, QueueResourceId, QuiescencePoint, RateDemand,
+    RateResource, RateResourceId, RateUnit, ReceiptFailureKind, ReceiptRetention, ReceiptStatus,
+    RedactedPath, ResourceAuthority, ResourceClaim, ResourceError, ResourceHeadroom,
+    ResourceMeasurement, ResourceOverride, ResourcePolicy, ResourceTopology, RunBindings,
+    RunController, RunDirective, RunError, RunToCompletion, RuntimeOverheadDemand, ScalingMetadata,
+    SlotCompatibility, StagePrediction, StorageDomain, StorageDomainId, StorageMode,
+    StorageUseKind, WorkDependency, WorkDomain, WorkExecutionContext, WorkImplementation,
+    WorkImplementationId, WorkKind, WorkMeasurements, WorkNode, WorkNodeId, plan as runtime_plan,
+    run as runtime_run,
 };
 use casa_ms::{
     BoundSelectedObservation, ObservationSourceBinding, SelectedObservationCompletion,
@@ -2647,6 +2648,7 @@ fn runtime_inventory(available_locks: u64) -> HostInventory {
     let domain = CapacityDomainId::new("host-memory");
     let view = CapacityViewId::new("host-memory");
     let rate = RateResourceId::new("io-rate");
+    let operations_rate = RateResourceId::new("io-operations-rate");
     let queue = QueueResourceId::new("io-queue");
     let transaction_rate = RateResourceId::new("transaction-io-rate");
     let transaction_queue = QueueResourceId::new("transaction-io-queue");
@@ -2671,11 +2673,12 @@ fn runtime_inventory(available_locks: u64) -> HostInventory {
                 capacity_bytes: 1_048_576,
                 read_rate: rate.clone(),
                 write_rate: rate.clone(),
-                operations_rate: None,
+                operations_rate: Some(operations_rate.clone()),
                 queue: queue.clone(),
             }],
             rate_resources: vec![
                 RateResource::new(rate.clone(), RateUnit::BytesPerSecond, 16),
+                RateResource::new(operations_rate.clone(), RateUnit::OperationsPerSecond, 16),
                 RateResource::new(transaction_rate.clone(), RateUnit::BytesPerSecond, 16),
             ],
             queue_resources: vec![
@@ -2692,7 +2695,11 @@ fn runtime_inventory(available_locks: u64) -> HostInventory {
             memory_available_bytes: BTreeMap::from([(domain, 1_048_576)]),
             available_cpu_threads: 4,
             storage_available_bytes: BTreeMap::from([(storage, 1_048_576)]),
-            rate_available_per_second: BTreeMap::from([(rate, 16), (transaction_rate, 16)]),
+            rate_available_per_second: BTreeMap::from([
+                (rate, 16),
+                (operations_rate, 16),
+                (transaction_rate, 16),
+            ]),
             queue_available_slots: BTreeMap::from([(queue, 4), (transaction_queue, 4)]),
             accelerator_available_slots: BTreeMap::new(),
             cache_available_bytes: 1_048_576,
