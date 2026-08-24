@@ -574,3 +574,9 @@ Work is not complete until:
 - any approved-scope deferral records explicit user signoff
 - final merge, cleanup, and release actions receive an independent review and
   explicit authorization
+
+For an exact pull request, the repository `AGENTS.md` informed as-is waiver may
+replace the independent-final-review and current-check portions of this gate.
+Record each waived item on the pull request and issue; do not describe waived
+evidence as passing. The waiver changes process evidence only, never the
+accepted behavior or persistent-interoperability contract.

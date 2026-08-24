@@ -131,6 +131,15 @@ or release. Those actions require an independent final review of scope, diff,
 acceptance evidence, and current checks, plus explicit user authorization for
 the action. The final reviewer must be independent of the implementation pass.
 
+For an exact pull request, an explicit user instruction to merge or close out
+"as-is" after the agent has reported the outstanding review or check evidence
+is an informed waiver of the independent-final-review and current-check
+requirements for that merge. Obey the waiver instead of restoring the default
+gate. Record the waived evidence and the user's direction on the pull request
+and issue. The waiver does not change the accepted scientific, persistence, or
+interoperability contract and does not authorize release, branch/worktree
+cleanup, or another pull request.
+
 ## Stop And Ask Before
 
 - adding a new top-level app or product family
@@ -147,7 +156,8 @@ the action. The final reviewer must be independent of the implementation pass.
 - editing accepted ADRs except for explicitly requested supersession metadata
 - committing directly to `main`
 - merging, pruning branches, deleting worktrees, or publishing a release without
-  explicit user authorization and an independent final review
+  explicit user authorization and an independent final review, except for an
+  exact merge covered by the informed as-is waiver above
 
 ## Project Boundaries
 
