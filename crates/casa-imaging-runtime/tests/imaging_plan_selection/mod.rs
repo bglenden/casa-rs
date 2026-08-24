@@ -6,16 +6,18 @@
 use std::io;
 
 use casa_imaging_runtime::{
-    AlternativeRejectionReason, ExecutionPlan, PlannerCostModelProfileBootstrap,
+    AlternativeRejectionReason, ExecutionPlan, ExecutionReceiptStore,
+    PlannerCostModelProfileBootstrap, ReceiptRetention,
 };
 
 mod support;
 
 use self::support::{
-    AlternativeId, ExecutionDag, ExecutionDagSpecification, PhysicalWorkBinding, PlanError,
-    PlanPrediction, PlanningBindings, PredictionConfidence, PredictionUncertainty, ResourcePolicy,
-    StagePrediction, WorkImplementationId, authority, compile, cost_model, implementation_catalog,
-    no_recorded_infeasibility, physical_work, registry, request, run_lock, runtime_plan,
+    AlternativeId, ContractOnlyRegistry, ExecutionDag, ExecutionDagSpecification,
+    PhysicalWorkBinding, PlanError, PlanPrediction, PlanningBindings, PredictionConfidence,
+    PredictionUncertainty, ResourcePolicy, StagePrediction, WorkImplementationId, authority,
+    compile, cost_model, implementation_catalog, implementation_metadata, physical_work, registry,
+    request, run_lock, runtime_plan,
 };
 
 fn candidate(
@@ -83,6 +85,26 @@ fn multi_candidate_plan(
     let _guard = run_lock()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let directory = tempfile::tempdir().expect("empty receipt directory");
+    let root = directory.keep();
+    let receipts = ExecutionReceiptStore::new(
+        root,
+        ReceiptRetention::new(4, 1_048_576).expect("retention"),
+    )
+    .expect("empty receipt store");
+    let implementation_ids = candidates.iter().flat_map(|candidate| {
+        candidate
+            .execution_dag()
+            .nodes()
+            .values()
+            .map(|node| node.implementation.clone())
+            .collect::<Vec<_>>()
+    });
+    let contract_registry = ContractOnlyRegistry::new(
+        registry(3),
+        implementation_metadata(problem),
+        implementation_ids,
+    );
     runtime_plan(
         problem,
         PlanningBindings::new(
@@ -91,7 +113,8 @@ fn multi_candidate_plan(
             PlannerCostModelProfileBootstrap::new(cost_model(4)),
         ),
         authority(),
-        &no_recorded_infeasibility(),
+        &contract_registry,
+        &receipts,
         |_, _| Ok(candidates),
     )
 }

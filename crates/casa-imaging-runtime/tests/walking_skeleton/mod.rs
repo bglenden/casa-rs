@@ -23,8 +23,8 @@ mod support;
 use self::support::{
     CancelAfterLaunch, PublicationProbe, TestRegistry, authority, cost_model, execution_provenance,
     failing_transaction_executor, geometry, implementation, physical_work_for_problem, plan,
-    problem_inputs, publication_recording_executor, recording_executor, registry,
-    request_with_products_and_model, run_receipted, test_registry,
+    plan_with_receipts, problem_inputs, publication_recording_executor, recording_executor,
+    registry, request_with_products_and_model, run_receipted, test_registry,
 };
 
 struct WalkingSkeleton {
@@ -48,6 +48,37 @@ fn walking_skeleton() -> WalkingSkeleton {
             ResourcePolicy::Balanced,
             cost_model(4).bootstrap(),
         ),
+        |problem, _| Ok::<_, io::Error>(physical_work_for_problem(problem, 6)),
+    )
+    .expect("Resource Authority-backed physical planning");
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &ResourcePolicy::Balanced,
+        cost_model(4),
+    );
+    WalkingSkeleton {
+        problem,
+        plan,
+        current,
+    }
+}
+
+fn walking_skeleton_with_receipts(receipts: &ExecutionReceiptStore) -> WalkingSkeleton {
+    let problem = compile(request_with_products_and_model(
+        15,
+        geometry(255.0),
+        vec![ProductKind::Psf, ProductKind::Residual, ProductKind::Model],
+        ModelColumnWrite::SelectedRows,
+    ))
+    .expect("private synthetic logical compilation");
+    let plan = plan_with_receipts(
+        &problem,
+        PlanningBindings::new(
+            registry(3),
+            ResourcePolicy::Balanced,
+            cost_model(4).bootstrap(),
+        ),
+        receipts,
         |problem, _| Ok::<_, io::Error>(physical_work_for_problem(problem, 6)),
     )
     .expect("Resource Authority-backed physical planning");
@@ -175,8 +206,7 @@ fn private_synthetic_request_crosses_the_complete_compile_plan_run_seam() {
         );
     }
 
-    let directory = tempfile::tempdir().expect("success receipt directory");
-    let receipts = receipt_store(directory.path(), 1_048_576);
+    let receipts = Arc::new(skeleton.plan.receipt_store());
     let provenance = provenance(151);
     let publication_launched = Arc::new(AtomicBool::new(false));
     let visible_generation = Arc::new(AtomicUsize::new(0));
@@ -197,6 +227,7 @@ fn private_synthetic_request_crosses_the_complete_compile_plan_run_seam() {
     executor.publication_buffer_held = Some(Arc::clone(&publication_lease_observed));
     let registry = TestRegistry {
         id: registry(3),
+        metadata: TestRegistry::metadata_for(&skeleton.problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
     let mut completion = RunToCompletion;
@@ -304,9 +335,8 @@ fn stale_synthetic_binding_stops_before_the_plan_can_launch() {
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let registry = test_registry(3, 6, None);
-    let directory = tempfile::tempdir().expect("stale receipt directory");
-    let receipts = receipt_store(directory.path(), 1_048_576);
+    let registry = test_registry(&skeleton.problem, 3, 6, None);
+    let receipts = skeleton.plan.receipt_store();
     let provenance = provenance(157);
     let mut completion = RunToCompletion;
 
@@ -372,10 +402,10 @@ fn synthetic_adapter_cannot_report_unlisted_work() {
     );
     let registry = TestRegistry {
         id: registry(3),
+        metadata: TestRegistry::metadata_for(&skeleton.problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
-    let directory = tempfile::tempdir().expect("unlisted-work receipt directory");
-    let receipts = receipt_store(directory.path(), 1_048_576);
+    let receipts = skeleton.plan.receipt_store();
     let provenance = provenance(159);
     let mut completion = RunToCompletion;
 
@@ -426,10 +456,10 @@ fn synthetic_allocation_peak_cannot_overflow_its_plan_claim() {
         .insert(WorkNodeId::new("execute"), 2);
     let registry = TestRegistry {
         id: registry(3),
+        metadata: TestRegistry::metadata_for(&skeleton.problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
-    let directory = tempfile::tempdir().expect("overflow receipt directory");
-    let receipts = receipt_store(directory.path(), 1_048_576);
+    let receipts = skeleton.plan.receipt_store();
     let provenance = provenance(161);
     let mut completion = RunToCompletion;
 
@@ -474,6 +504,7 @@ fn synthetic_cancellation_rolls_back_before_visibility() {
     let visible_generation = Arc::new(AtomicUsize::new(0));
     let registry = TestRegistry {
         id: registry(3),
+        metadata: TestRegistry::metadata_for(&skeleton.problem),
         executors: BTreeMap::from([(
             implementation(6),
             publication_recording_executor(
@@ -483,8 +514,7 @@ fn synthetic_cancellation_rolls_back_before_visibility() {
             ),
         )]),
     };
-    let directory = tempfile::tempdir().expect("cancelled receipt directory");
-    let receipts = receipt_store(directory.path(), 1_048_576);
+    let receipts = skeleton.plan.receipt_store();
     let provenance = provenance(163);
     let mut cancellation = CancelAfterLaunch::default();
 
@@ -548,6 +578,7 @@ fn synthetic_mutation_output_and_publication_failures_remain_private() {
         let visible_generation = Arc::new(AtomicUsize::new(0));
         let registry = TestRegistry {
             id: registry(3),
+            metadata: TestRegistry::metadata_for(&skeleton.problem),
             executors: BTreeMap::from([(
                 implementation(6),
                 failing_transaction_executor(
@@ -559,8 +590,7 @@ fn synthetic_mutation_output_and_publication_failures_remain_private() {
                 ),
             )]),
         };
-        let directory = tempfile::tempdir().expect("failure receipt directory");
-        let receipts = receipt_store(directory.path(), 1_048_576);
+        let receipts = skeleton.plan.receipt_store();
         let provenance = provenance(seed);
         let mut completion = RunToCompletion;
 
@@ -606,9 +636,9 @@ fn synthetic_mutation_output_and_publication_failures_remain_private() {
 
 #[test]
 fn durable_prepare_failure_prevents_the_visibility_operation() {
-    let skeleton = walking_skeleton();
     let directory = tempfile::tempdir().expect("prepare-failure receipt directory");
     let receipts = receipt_store(directory.path(), 80_000);
+    let skeleton = walking_skeleton_with_receipts(&receipts);
     let provenance = provenance(171);
     let publication_launched = Arc::new(AtomicBool::new(false));
     let visible_generation = Arc::new(AtomicUsize::new(0));
@@ -621,6 +651,7 @@ fn durable_prepare_failure_prevents_the_visibility_operation() {
     );
     let registry = TestRegistry {
         id: registry(3),
+        metadata: TestRegistry::metadata_for(&skeleton.problem),
         executors: BTreeMap::from([(implementation(6), {
             executor.publication_probe = Some(PublicationProbe {
                 receipts: Arc::clone(&receipts),
@@ -665,8 +696,7 @@ fn durable_prepare_failure_prevents_the_visibility_operation() {
 #[test]
 fn receipt_promotion_failure_retains_prepared_reconciliation_evidence() {
     let skeleton = walking_skeleton();
-    let directory = tempfile::tempdir().expect("promotion-failure receipt directory");
-    let receipts = receipt_store(directory.path(), 1_048_576);
+    let receipts = Arc::new(skeleton.plan.receipt_store());
     let provenance = provenance(173);
     let publication_launched = Arc::new(AtomicBool::new(false));
     let visible_generation = Arc::new(AtomicUsize::new(0));
@@ -683,9 +713,10 @@ fn receipt_promotion_failure_retains_prepared_reconciliation_evidence() {
         prepared_observed: Arc::clone(&prepared_observed),
         publication_calls: Arc::clone(&publication_calls),
     });
-    executor.receipt_root_to_disrupt = Some(directory.path().to_owned());
+    executor.receipt_root_to_disrupt = Some(receipts.root_path().to_owned());
     let registry = TestRegistry {
         id: registry(3),
+        metadata: TestRegistry::metadata_for(&skeleton.problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
     let mut completion = RunToCompletion;

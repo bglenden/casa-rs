@@ -37,9 +37,9 @@ use crate::{
     MemoryView, MemoryViewKind, ObservationTransactionWork, PhysicalWorkBinding,
     PlannerCostModelProfileId, PlannerCostModelProfileRecord, PlanningBindings, QueueDemand,
     QueueResource, QueueResourceId, QuiescencePoint, RateDemand, RateResource, RateResourceId,
-    RateUnit, RecordedInfeasibility, ResourceAuthority, ResourceHeadroom, ResourcePolicy,
-    ResourceTopology, RuntimeOverheadDemand, ScalingMetadata, StorageDemand, StorageDomain,
-    StorageDomainId, plan as authority_plan,
+    RateUnit, ResourceAuthority, ResourceHeadroom, ResourcePolicy, ResourceTopology,
+    RuntimeOverheadDemand, ScalingMetadata, StorageDemand, StorageDomain, StorageDomainId,
+    plan as authority_plan,
 };
 
 fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
@@ -68,6 +68,19 @@ fn plan<E>(
         &PlanningBindings,
     ) -> Result<PhysicalWorkBinding, E>,
 ) -> Result<crate::ExecutionPlan, crate::PlanError<E>> {
+    let receipts = empty_receipt_store();
+    plan_with_receipts(problem, bindings, &receipts, planner)
+}
+
+fn plan_with_receipts<E>(
+    problem: &casa_imaging_model::CompiledProblem,
+    bindings: PlanningBindings,
+    receipts: &crate::ExecutionReceiptStore,
+    planner: impl FnOnce(
+        &casa_imaging_model::CompiledProblem,
+        &PlanningBindings,
+    ) -> Result<PhysicalWorkBinding, E>,
+) -> Result<crate::ExecutionPlan, crate::PlanError<E>> {
     let candidate = planner(problem, &bindings).map_err(crate::PlanError::Planner)?;
     let demand = &candidate.execution_dag().resource_alternative().demand;
     let uses_unified_domain = candidate
@@ -82,17 +95,33 @@ fn plan<E>(
     } else {
         cpu_authority()
     };
+    let implementation_ids = candidate
+        .execution_dag()
+        .nodes()
+        .values()
+        .map(|node| node.implementation.clone());
+    let registry = ContractOnlyRegistry::new(
+        bindings.implementation_registry_id(),
+        ImplementationContractMetadata::new(
+            problem.problem_id(),
+            problem.numerics_id(),
+            problem.required_capabilities().clone(),
+        ),
+        implementation_ids,
+    );
     match authority_plan(
         problem,
         bindings,
         &authority,
-        &no_recorded_infeasibility(),
+        &registry,
+        receipts,
         |_, _| Ok::<_, std::convert::Infallible>(vec![candidate]),
     ) {
         Ok(plan) => Ok(plan),
         Err(crate::PlanError::InvalidCandidate(error)) => {
             Err(crate::PlanError::InvalidCandidate(error))
         }
+        Err(crate::PlanError::Receipt(error)) => Err(crate::PlanError::Receipt(error)),
         Err(crate::PlanError::Resource(error)) => Err(crate::PlanError::Resource(error)),
         Err(crate::PlanError::ObservationTransaction(error)) => {
             Err(crate::PlanError::ObservationTransaction(error))
@@ -455,6 +484,16 @@ fn bound_plan_with_authority(
     authority: &ResourceAuthority,
 ) -> crate::ExecutionPlan {
     let problem = compiled_problem();
+    let implementation_ids = dag.nodes().values().map(|node| node.implementation.clone());
+    let registry = ContractOnlyRegistry::new(
+        ImplementationRegistryId::from_sha256([7; 32]),
+        ImplementationContractMetadata::new(
+            problem.problem_id(),
+            problem.numerics_id(),
+            problem.required_capabilities().clone(),
+        ),
+        implementation_ids,
+    );
     authority_plan(
         &problem,
         PlanningBindings::new(
@@ -463,20 +502,21 @@ fn bound_plan_with_authority(
             PlannerCostModelProfileRecord::initial(PlannerCostModelProfileId::from_sha256([8; 32])),
         ),
         authority,
-        &no_recorded_infeasibility(),
+        &registry,
+        &empty_receipt_store(),
         |_, _| Ok::<_, std::convert::Infallible>(vec![physical_work_binding(dag)]),
     )
     .expect("physical planning succeeds")
 }
 
-fn no_recorded_infeasibility() -> RecordedInfeasibility {
+fn empty_receipt_store() -> crate::ExecutionReceiptStore {
     let directory = tempfile::tempdir().expect("empty receipt directory");
-    let store = crate::ExecutionReceiptStore::new(
-        directory.path(),
+    let root = directory.keep();
+    crate::ExecutionReceiptStore::new(
+        root,
         crate::ReceiptRetention::new(4, 1_048_576).expect("retention"),
     )
-    .expect("empty receipt store");
-    RecordedInfeasibility::from_store(&store).expect("empty recorded constraints")
+    .expect("empty receipt store")
 }
 
 fn execution_provenance(
@@ -932,14 +972,15 @@ fn implementation_catalog(
     problem: &casa_imaging_model::CompiledProblem,
     dag: &ExecutionDag,
 ) -> ImplementationContractCatalog {
-    let registry = ContractOnlyRegistry {
-        id: ImplementationRegistryId::from_sha256([7; 32]),
-        metadata: ImplementationContractMetadata::new(
+    let registry = ContractOnlyRegistry::new(
+        ImplementationRegistryId::from_sha256([7; 32]),
+        ImplementationContractMetadata::new(
             problem.problem_id(),
             problem.numerics_id(),
             problem.required_capabilities().clone(),
         ),
-    };
+        [WorkImplementationId::new("cpu-reference")],
+    );
     ImplementationContractCatalog::from_registry(
         &registry,
         dag.nodes().values().map(|node| node.implementation.clone()),
@@ -1213,12 +1254,44 @@ impl crate::WorkImplementation for MalformedRejectionImplementation {
 
 struct MalformedRejectionRegistry {
     id: ImplementationRegistryId,
+    metadata: ImplementationContractMetadata,
     implementation: MalformedRejectionImplementation,
 }
 
 struct ContractOnlyRegistry {
     id: ImplementationRegistryId,
     metadata: ImplementationContractMetadata,
+    implementations: BTreeMap<WorkImplementationId, MalformedRejectionImplementation>,
+}
+
+impl ContractOnlyRegistry {
+    fn new(
+        id: ImplementationRegistryId,
+        metadata: ImplementationContractMetadata,
+        implementation_ids: impl IntoIterator<Item = WorkImplementationId>,
+    ) -> Self {
+        let implementations = implementation_ids
+            .into_iter()
+            .map(|implementation_id| {
+                (
+                    implementation_id.clone(),
+                    MalformedRejectionImplementation {
+                        id: implementation_id,
+                        node: WorkNodeId::new("contract-only"),
+                        artifact: crate::ArtifactIdentity::from_sha256([0; 32]),
+                        ledger: crate::ArtifactIdentity::from_sha256([1; 32]),
+                        observed: None,
+                        selected_observation_completion: std::sync::Mutex::new(None),
+                    },
+                )
+            })
+            .collect();
+        Self {
+            id,
+            metadata,
+            implementations,
+        }
+    }
 }
 
 impl crate::ImplementationRegistry for ContractOnlyRegistry {
@@ -1228,15 +1301,17 @@ impl crate::ImplementationRegistry for ContractOnlyRegistry {
         self.id
     }
 
-    fn resolve(&self, _id: &WorkImplementationId) -> Option<&Self::Implementation> {
-        None
+    fn resolve(&self, id: &WorkImplementationId) -> Option<&Self::Implementation> {
+        self.implementations.get(id)
     }
 
     fn implementation_contract(
         &self,
-        _id: &WorkImplementationId,
+        id: &WorkImplementationId,
     ) -> Option<ImplementationContractMetadata> {
-        Some(self.metadata.clone())
+        self.implementations
+            .contains_key(id)
+            .then(|| self.metadata.clone())
     }
 }
 
@@ -1249,6 +1324,13 @@ impl crate::ImplementationRegistry for MalformedRejectionRegistry {
 
     fn resolve(&self, id: &WorkImplementationId) -> Option<&Self::Implementation> {
         (id == &self.implementation.id).then_some(&self.implementation)
+    }
+
+    fn implementation_contract(
+        &self,
+        id: &WorkImplementationId,
+    ) -> Option<ImplementationContractMetadata> {
+        (id == &self.implementation.id).then(|| self.metadata.clone())
     }
 }
 
@@ -1290,22 +1372,23 @@ fn malformed_store_owned_rejection_is_rejected_without_partial_receipt_mutation(
         ],
     );
     let cost_model = PlannerCostModelProfileId::from_sha256([8; 32]);
-    let plan = plan(
-        &problem,
-        PlanningBindings::new(
-            ImplementationRegistryId::from_sha256([7; 32]),
-            ResourcePolicy::Exclusive,
-            PlannerCostModelProfileRecord::initial(cost_model),
-        ),
-        |_, _| Ok::<_, std::convert::Infallible>(physical),
-    )
-    .expect("malformed rejection plan");
     let receipts_directory = tempfile::tempdir().expect("malformed rejection receipts");
     let receipts = crate::ExecutionReceiptStore::new(
         receipts_directory.path(),
         crate::ReceiptRetention::new(4, 1_000_000).expect("receipt retention"),
     )
     .expect("malformed rejection receipt store");
+    let plan = plan_with_receipts(
+        &problem,
+        PlanningBindings::new(
+            ImplementationRegistryId::from_sha256([7; 32]),
+            ResourcePolicy::Exclusive,
+            PlannerCostModelProfileRecord::initial(cost_model),
+        ),
+        &receipts,
+        |_, _| Ok::<_, std::convert::Infallible>(physical),
+    )
+    .expect("malformed rejection plan");
     let current = crate::RunBindings::new(
         problem.inputs().clone(),
         plan.resource_policy(),
@@ -1322,6 +1405,11 @@ fn malformed_store_owned_rejection_is_rejected_without_partial_receipt_mutation(
     for (index, observed) in malformed.into_iter().enumerate() {
         let registry = MalformedRejectionRegistry {
             id: ImplementationRegistryId::from_sha256([7; 32]),
+            metadata: ImplementationContractMetadata::new(
+                problem.problem_id(),
+                problem.numerics_id(),
+                problem.required_capabilities().clone(),
+            ),
             implementation: MalformedRejectionImplementation {
                 id: WorkImplementationId::new("cpu-reference"),
                 node: node_id.clone(),
@@ -1706,6 +1794,15 @@ fn execution_plan_owns_the_resource_policy_selected_during_planning() {
 #[test]
 fn planning_seals_the_first_resource_authority_feasible_candidate() {
     let problem = compiled_problem();
+    let registry = ContractOnlyRegistry::new(
+        ImplementationRegistryId::from_sha256([7; 32]),
+        ImplementationContractMetadata::new(
+            problem.problem_id(),
+            problem.numerics_id(),
+            problem.required_capabilities().clone(),
+        ),
+        [WorkImplementationId::new("cpu-reference")],
+    );
     let mut infeasible = plan_spec(vec![cpu_node("work", BTreeSet::new())]);
     infeasible.resource_alternative.id = AlternativeId::new("parallel");
     infeasible.resource_alternative.demand.workers = CountDemand::new(3, 3);
@@ -1727,7 +1824,8 @@ fn planning_seals_the_first_resource_authority_feasible_candidate() {
             PlannerCostModelProfileRecord::initial(PlannerCostModelProfileId::from_sha256([8; 32])),
         ),
         &io_authority(),
-        &no_recorded_infeasibility(),
+        &registry,
+        &empty_receipt_store(),
         |_, _| Ok::<_, std::convert::Infallible>(candidates),
     )
     .expect("serial candidate is feasible");
@@ -1741,6 +1839,15 @@ fn planning_seals_the_first_resource_authority_feasible_candidate() {
 #[test]
 fn planning_fails_before_sealing_when_no_candidate_is_feasible() {
     let problem = compiled_problem();
+    let registry = ContractOnlyRegistry::new(
+        ImplementationRegistryId::from_sha256([7; 32]),
+        ImplementationContractMetadata::new(
+            problem.problem_id(),
+            problem.numerics_id(),
+            problem.required_capabilities().clone(),
+        ),
+        [WorkImplementationId::new("cpu-reference")],
+    );
     let mut infeasible = plan_spec(vec![cpu_node("work", BTreeSet::new())]);
     infeasible.resource_alternative.id = AlternativeId::new("parallel");
     infeasible.resource_alternative.demand.workers = CountDemand::new(3, 3);
@@ -1758,7 +1865,8 @@ fn planning_fails_before_sealing_when_no_candidate_is_feasible() {
             PlannerCostModelProfileRecord::initial(PlannerCostModelProfileId::from_sha256([8; 32])),
         ),
         &cpu_authority(),
-        &no_recorded_infeasibility(),
+        &registry,
+        &empty_receipt_store(),
         |_, _| Ok::<_, std::convert::Infallible>(vec![candidate]),
     )
     .expect_err("no candidate fits the authority inventory");
@@ -1769,17 +1877,26 @@ fn planning_fails_before_sealing_when_no_candidate_is_feasible() {
 #[test]
 fn recorded_quantitative_failures_constrain_planning_through_resource_authority() {
     let problem = compiled_problem();
+    let registry = ContractOnlyRegistry::new(
+        ImplementationRegistryId::from_sha256([7; 32]),
+        ImplementationContractMetadata::new(
+            problem.problem_id(),
+            problem.numerics_id(),
+            problem.required_capabilities().clone(),
+        ),
+        [WorkImplementationId::new("cpu-reference")],
+    );
     let mut constrained_spec = plan_spec(vec![cpu_node("work", BTreeSet::new())]);
-    constrained_spec.resource_alternative.demand.workers = CountDemand::new(3, 3);
+    constrained_spec.resource_alternative.demand.workers = CountDemand::new(1, 1);
     constrained_spec
         .resource_alternative
         .scaling
-        .minimum_workers = 3;
+        .minimum_workers = 1;
     constrained_spec
         .resource_alternative
         .scaling
-        .maximum_workers = 3;
-    constrained_spec.initial_knobs.workers = 3;
+        .maximum_workers = 1;
+    constrained_spec.initial_knobs.workers = 1;
     let sealed_dag = ExecutionDag::new(constrained_spec).expect("valid constrained physical work");
     let alternative_id = sealed_dag.resource_alternative().id.clone();
     let sealed = bound_plan_with_authority(sealed_dag.clone(), &io_authority_with_workers(4));
@@ -1838,7 +1955,6 @@ fn recorded_quantitative_failures_constrain_planning_through_resource_authority(
             .expect("finish terminal receipt");
     }
 
-    let recorded = RecordedInfeasibility::from_store(&store).expect("recorded constraints");
     // Mirror the shared fixture's authority selection for this DAG shape.
     let demand = &sealed.execution_dag().resource_alternative().demand;
     let uses_unified_domain = sealed
@@ -1860,9 +1976,26 @@ fn recorded_quantitative_failures_constrain_planning_through_resource_authority(
             PlannerCostModelProfileRecord::initial(PlannerCostModelProfileId::from_sha256([8; 32])),
         )
     };
-    let error = authority_plan(&problem, bindings(), &authority, &recorded, |_, _| {
-        Ok::<_, std::convert::Infallible>(vec![physical_work_binding(sealed_dag.clone())])
-    })
+    authority_plan(
+        &problem,
+        bindings(),
+        &authority,
+        &registry,
+        &empty_receipt_store(),
+        |_, _| Ok::<_, std::convert::Infallible>(vec![physical_work_binding(sealed_dag.clone())]),
+    )
+    .expect(
+        "current Resource Authority would admit the declared demand without the receipt region",
+    );
+
+    let error = authority_plan(
+        &problem,
+        bindings(),
+        &authority,
+        &registry,
+        &store,
+        |_, _| Ok::<_, std::convert::Infallible>(vec![physical_work_binding(sealed_dag.clone())]),
+    )
     .expect_err("recorded quantitative failure must constrain the alternative");
     let certificate = match &error {
         crate::PlanError::Resource(crate::ResourceError::NoFeasibleAlternative(certificate)) => {
@@ -1880,20 +2013,21 @@ fn recorded_quantitative_failures_constrain_planning_through_resource_authority(
         }
     );
 
-    // Without the recorded quantitative constraint the same candidate admits;
-    // the receipt is an explicit Resource Authority input, never online
-    // learning in the cost model.
+    // The recorded region reopens once current availability exceeds the
+    // failure's recorded availability; current Resource Authority admission
+    // remains the sole feasibility decision.
     let recovered_authority = io_authority_with_workers(4);
-    let unconstrained = authority_plan(
+    let recovered = authority_plan(
         &problem,
         bindings(),
         &recovered_authority,
-        &no_recorded_infeasibility(),
+        &registry,
+        &store,
         |_, _| Ok::<_, std::convert::Infallible>(vec![physical_work_binding(sealed_dag.clone())]),
     )
-    .expect("the same candidate plans without recorded constraints");
+    .expect("increased current capacity reopens the recorded pressure region");
     assert_eq!(
-        unconstrained.execution_dag().resource_alternative().id,
+        recovered.execution_dag().resource_alternative().id,
         alternative_id
     );
 }

@@ -197,7 +197,7 @@
           "use std :: { collections :: { BTreeMap , BTreeSet } , io , path :: Path , sync :: { Arc , atomic :: { AtomicBool , AtomicUsize , Ordering } , } , } ;",
           "use casa_imaging_model :: { ModelColumnWrite , ModelStateIdentity , ProductKind , compile } ;",
           "use casa_imaging_runtime :: { ArtifactDisposition , ArtifactIdentity , ArtifactMeasurement , BindingKind , BuildIdentity , ExecutionEvidenceError , ExecutionOutcome , ExecutionProvenance , ExecutionReceiptStore , LeaseResource , PlanningBindings , PublicationParticipant , ReceiptFailureKind , ReceiptRetention , ReceiptStatus , ResourcePolicy , RunBindings , RunError , RunToCompletion , WorkNodeId , } ;",
-          "use self :: support :: { CancelAfterLaunch , PublicationProbe , TestRegistry , authority , cost_model , execution_provenance , failing_transaction_executor , geometry , implementation , physical_work_for_problem , plan , problem_inputs , publication_recording_executor , recording_executor , registry , request_with_products_and_model , run_receipted , test_registry , } ;"
+          "use self :: support :: { CancelAfterLaunch , PublicationProbe , TestRegistry , authority , cost_model , execution_provenance , failing_transaction_executor , geometry , implementation , physical_work_for_problem , plan , plan_with_receipts , problem_inputs , publication_recording_executor , recording_executor , registry , request_with_products_and_model , run_receipted , test_registry , } ;"
         ],
         "allowed_items": {
           "fn:durable_prepare_failure_prevents_the_visibility_operation": 1,
@@ -213,6 +213,7 @@
           "fn:synthetic_mutation_output_and_publication_failures_remain_private": 1,
           "mod:support": 1,
           "fn:walking_skeleton": 1,
+          "fn:walking_skeleton_with_receipts": 1,
           "struct:WalkingSkeleton": 1
         },
         "allowed_qualified_paths": {
@@ -249,7 +250,7 @@
       "forbidden_patterns": [],
       "rust_allowlist": {
         "allowed_imports": [
-          "use super :: super :: { CancelAfterLaunch , PublicationProbe , TestRegistry , authority , cost_model , execution_provenance , failing_transaction_executor , geometry , implementation , physical_work_for_problem , plan , problem_inputs , publication_recording_executor , recording_executor , registry , request_with_products_and_model , run_receipted , test_registry , } ;"
+          "use super :: super :: { CancelAfterLaunch , PublicationProbe , TestRegistry , authority , cost_model , execution_provenance , failing_transaction_executor , geometry , implementation , physical_work_for_problem , plan , plan_with_receipts , problem_inputs , publication_recording_executor , recording_executor , registry , request_with_products_and_model , run_receipted , test_registry , } ;"
         ],
         "allowed_items": {},
         "allowed_qualified_paths": {},

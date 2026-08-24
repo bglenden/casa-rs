@@ -4,8 +4,6 @@
 //! promotion: completed comparable receipts only, versioned auditable output,
 //! and no silent training from successful or failed runs.
 
-use std::path::Path;
-
 use casa_imaging_model::{ModelColumnWrite, ProductKind, compile};
 use casa_imaging_runtime::{
     ExecutionAttemptId, ExecutionPlan, PlannerCostModelProfileBootstrap, open_cost_model_profile,
@@ -18,9 +16,10 @@ mod support;
 
 use self::support::{
     BuildIdentity, ExecutionOutcome, ExecutionProvenance, ExecutionReceiptStore, PlanningBindings,
-    ProfilePromotionError, ProfileReview, ReceiptRetention, ReceiptStatus, ResourcePolicy,
-    RunBindings, RunToCompletion, authority, cost_model, execution_provenance, geometry,
-    physical_work_for_problem, plan, registry, run_receipted, test_registry,
+    ProfilePromotionError, ProfileReview, ReceiptStatus, ResourcePolicy, RunBindings,
+    RunToCompletion, authority, cost_model, execution_provenance, geometry,
+    physical_work_for_problem, plan, plan_with_receipts, planning_profile, registry, run_receipted,
+    test_registry,
 };
 use support::request_with_products_and_model;
 
@@ -60,14 +59,6 @@ fn skeleton(lineage: u8) -> Skeleton {
     }
 }
 
-fn receipt_store(root: &Path) -> ExecutionReceiptStore {
-    ExecutionReceiptStore::new(
-        root,
-        ReceiptRetention::new(8, 4_194_304).expect("retention"),
-    )
-    .expect("receipt store")
-}
-
 fn provenance(seed: u8) -> ExecutionProvenance {
     // Comparable evidence shares one executable build identity.
     execution_provenance(
@@ -78,7 +69,7 @@ fn provenance(seed: u8) -> ExecutionProvenance {
 
 /// Execute the skeleton twice into one store and return both attempt ids.
 fn two_completed_receipts(
-    root: &std::path::Path,
+    _root: &std::path::Path,
     lineage: u8,
 ) -> (
     ExecutionReceiptStore,
@@ -86,14 +77,14 @@ fn two_completed_receipts(
     ExecutionPlan,
 ) {
     let skeleton = skeleton(lineage);
-    let receipts = receipt_store(root);
+    let receipts = skeleton.plan.receipt_store();
     let mut completion = RunToCompletion;
     for seed in [61u8, 62] {
         let outcome = run_receipted(
             &skeleton.problem,
             &skeleton.plan,
             &skeleton.current,
-            &test_registry(3, 6, None),
+            &test_registry(&skeleton.problem, 3, 6, None),
             authority(),
             &mut completion,
             receipts.bind(provenance(seed)),
@@ -220,14 +211,14 @@ fn divergent_build_identities_are_not_comparable_evidence() {
     let directory = tempfile::tempdir().expect("build-divergence root");
     let profiles = directory.path().join("profiles");
     let skeleton = skeleton(4);
-    let receipts = receipt_store(directory.path());
+    let receipts = skeleton.plan.receipt_store();
     let mut completion = RunToCompletion;
     for seed in [61u8, 62] {
         run_receipted(
             &skeleton.problem,
             &skeleton.plan,
             &skeleton.current,
-            &test_registry(3, 6, None),
+            &test_registry(&skeleton.problem, 3, 6, None),
             authority(),
             &mut completion,
             receipts.bind(provenance(seed)),
@@ -243,7 +234,7 @@ fn divergent_build_identities_are_not_comparable_evidence() {
         &skeleton.problem,
         &skeleton.plan,
         &skeleton.current,
-        &test_registry(3, 6, None),
+        &test_registry(&skeleton.problem, 3, 6, None),
         authority(),
         &mut completion,
         receipts.bind(rebuilt),
@@ -341,7 +332,7 @@ fn non_completed_receipts_never_promote_a_profile() {
     let directory = tempfile::tempdir().expect("failed-run promotion root");
     let profiles = directory.path().join("profiles");
     let skeleton = skeleton(4);
-    let receipts = receipt_store(directory.path());
+    let receipts = skeleton.plan.receipt_store();
 
     // One completed receipt...
     let mut completion = RunToCompletion;
@@ -349,7 +340,7 @@ fn non_completed_receipts_never_promote_a_profile() {
         &skeleton.problem,
         &skeleton.plan,
         &skeleton.current,
-        &test_registry(3, 6, None),
+        &test_registry(&skeleton.problem, 3, 6, None),
         authority(),
         &mut completion,
         receipts.bind(provenance(61)),
@@ -363,7 +354,7 @@ fn non_completed_receipts_never_promote_a_profile() {
         &skeleton.problem,
         &skeleton.plan,
         &skeleton.current,
-        &test_registry(3, 6, Some("execute failed")),
+        &test_registry(&skeleton.problem, 3, 6, Some("execute failed")),
         authority(),
         &mut failing,
         receipts.bind(provenance(63)),
@@ -414,15 +405,28 @@ fn incomparable_completed_receipts_are_refused() {
 
     // A second completed pair planned under a different cost-model lineage.
     let other = skeleton(5);
+    let other_receipts = receipts.clone();
+    let other_plan = plan_with_receipts(
+        &other.problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(5)),
+        &other_receipts,
+        |problem, _| Ok::<_, std::io::Error>(physical_work_for_problem(problem, 6)),
+    )
+    .expect("divergent-lineage physical planning");
+    let other_current = RunBindings::new(
+        other.problem.inputs().clone(),
+        &ResourcePolicy::Balanced,
+        cost_model(5),
+    );
     let mut completion = RunToCompletion;
     let outcome = run_receipted(
         &other.problem,
-        &other.plan,
-        &other.current,
-        &test_registry(3, 6, None),
+        &other_plan,
+        &other_current,
+        &test_registry(&other.problem, 3, 6, None),
         authority(),
         &mut completion,
-        receipts.bind(provenance(71)),
+        other_receipts.bind(provenance(71)),
     )
     .expect("completed divergent-lineage run");
 
@@ -488,7 +492,7 @@ fn completed_runs_alone_create_no_profiles_and_empty_evidence_is_refused() {
         "successful runs never silently train future plans"
     );
 
-    let receipts = receipt_store(directory.path());
+    let receipts = skeleton(4).plan.receipt_store();
     assert!(matches!(
         promote_cost_model_profile(&profiles, &receipts, &[], review(), 1),
         Err(ProfilePromotionError::EmptyEvidence)

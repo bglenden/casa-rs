@@ -821,17 +821,15 @@ pub(crate) struct RecordedAdmissionConstraint {
 }
 
 impl RecordedAdmissionConstraint {
-    fn matches_infeasibility(
+    fn current_available(
         &self,
         alternative: &AlternativeId,
-        resource: &str,
-        required: u64,
-        available: u64,
-    ) -> bool {
-        self.alternative == *alternative
-            && self.resource.as_str() == resource
-            && self.required == required
-            && self.available == available
+        available: &ResourceGrant,
+    ) -> Result<Option<u64>, ResourceError> {
+        if self.alternative != *alternative {
+            return Ok(None);
+        }
+        resource_available(available, &self.resource).map(Some)
     }
 }
 
@@ -1542,37 +1540,50 @@ impl ResourceAuthority {
                 hard: reserved.clone(),
                 preferred: reserved.clone(),
             };
+            let mut recorded = None;
+            for constraint in recorded_constraints {
+                let Some(current_available) =
+                    constraint.current_available(&alternative.id, &policy_available.hard)?
+                else {
+                    continue;
+                };
+                // A receipt constrains only the pressure region it observed.
+                // Any increase above that recorded availability reopens the
+                // candidate for normal current admission.
+                if current_available <= constraint.available
+                    && recorded.as_ref().is_none_or(
+                        |(current, _): &(&RecordedAdmissionConstraint, u64)| {
+                            constraint.available > current.available
+                        },
+                    )
+                {
+                    recorded = Some((constraint, current_available));
+                }
+            }
+            if let Some((constraint, _current_available)) = recorded {
+                rejections.push(AlternativeRejection::new(
+                    alternative.id.clone(),
+                    AlternativeRejectionReason::RecordedFailure {
+                        attempt: constraint.attempt,
+                        status: constraint.status,
+                    },
+                ));
+                continue;
+            }
             if let Err(ResourceError::Infeasible {
                 resource,
                 required,
                 available,
             }) = admit_totals(&reservation_totals, &policy_available)
             {
-                if let Some(constraint) = recorded_constraints.iter().find(|constraint| {
-                    constraint.matches_infeasibility(
-                        &alternative.id,
-                        &resource,
+                rejections.push(AlternativeRejection::new(
+                    alternative.id.clone(),
+                    AlternativeRejectionReason::Infeasible {
+                        resource,
                         required,
                         available,
-                    )
-                }) {
-                    rejections.push(AlternativeRejection::new(
-                        alternative.id.clone(),
-                        AlternativeRejectionReason::RecordedFailure {
-                            attempt: constraint.attempt,
-                            status: constraint.status,
-                        },
-                    ));
-                } else {
-                    rejections.push(AlternativeRejection::new(
-                        alternative.id.clone(),
-                        AlternativeRejectionReason::Infeasible {
-                            resource,
-                            required,
-                            available,
-                        },
-                    ));
-                }
+                    },
+                ));
                 continue;
             }
             let granted = admit_totals(&totals, &policy_available)?;
@@ -2356,6 +2367,45 @@ fn admit_totals(
         &available.preferred.accelerator_slots,
     )?;
     Ok(GrantedTotals { hard, preferred })
+}
+
+fn resource_available(
+    available: &ResourceGrant,
+    resource: &ResourceIdentity,
+) -> Result<u64, ResourceError> {
+    let identity = resource.as_str();
+    let scalar = match identity {
+        "workers" => Some(available.workers),
+        "cache-bytes" => Some(available.cache_bytes),
+        "locks" => Some(available.locks),
+        "file-descriptors" => Some(available.file_descriptors),
+        _ => None,
+    };
+    scalar
+        .or_else(|| {
+            available.memory_bytes.iter().find_map(|(id, amount)| {
+                (identity == format!("memory-domain:{}", id.as_str())).then_some(*amount)
+            })
+        })
+        .or_else(|| resource_map_available("storage-domain", &available.storage_bytes, identity))
+        .or_else(|| resource_map_available("rate-resource", &available.rates_per_second, identity))
+        .or_else(|| resource_map_available("queue-resource", &available.queue_slots, identity))
+        .or_else(|| resource_map_available("accelerator", &available.accelerator_slots, identity))
+        .ok_or_else(|| {
+            ResourceError::Invalid(format!(
+                "recorded receipt names unknown resource identity {identity}"
+            ))
+        })
+}
+
+fn resource_map_available<Id: fmt::Debug>(
+    kind: &str,
+    available: &BTreeMap<Id, u64>,
+    identity: &str,
+) -> Option<u64> {
+    available
+        .iter()
+        .find_map(|(id, amount)| (identity == format!("{kind}:{id:?}")).then_some(*amount))
 }
 
 fn admit_resource_map<Id: Clone + Ord + fmt::Debug>(

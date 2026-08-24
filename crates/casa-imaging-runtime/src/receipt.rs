@@ -1370,16 +1370,45 @@ impl ExecutionReceipt {
 }
 
 /// Local, bounded owner of atomic imaging Execution Receipts.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ExecutionReceiptStore {
     root: PathBuf,
     state: Arc<ReceiptRootState>,
 }
 
+impl PartialEq for ExecutionReceiptStore {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.state, &other.state)
+    }
+}
+
+impl Eq for ExecutionReceiptStore {}
+
 #[derive(Debug)]
 struct ReceiptRootState {
     retention: ReceiptRetention,
     mutation: Mutex<()>,
+    identity: [u8; 32],
+}
+
+/// Process-local, unforgeable identity of one canonical receipt root.
+#[derive(Clone, Debug)]
+pub(crate) struct ReceiptEvidenceSource {
+    state: Arc<ReceiptRootState>,
+}
+
+impl PartialEq for ReceiptEvidenceSource {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.state, &other.state)
+    }
+}
+
+impl Eq for ReceiptEvidenceSource {}
+
+impl ReceiptEvidenceSource {
+    pub(crate) fn identity(&self) -> [u8; 32] {
+        self.state.identity
+    }
 }
 
 static RECEIPT_ROOT_STATES: OnceLock<Mutex<BTreeMap<PathBuf, Weak<ReceiptRootState>>>> =
@@ -1401,9 +1430,17 @@ fn receipt_root_state(
     let state = Arc::new(ReceiptRootState {
         retention,
         mutation: Mutex::new(()),
+        identity: receipt_root_identity(root),
     });
     states.insert(root.to_owned(), Arc::downgrade(&state));
     Ok(state)
+}
+
+fn receipt_root_identity(root: &Path) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"casa-rs-execution-receipt-root\0");
+    hasher.update(root.as_os_str().as_encoded_bytes());
+    hasher.finalize().into()
 }
 
 /// One attempt-scoped durable-evidence binding consumed by the run seam.
@@ -1414,6 +1451,16 @@ pub struct ExecutionReceiptBinding<'store> {
 }
 
 impl<'store> ExecutionReceiptBinding<'store> {
+    /// Return the caller-owned provenance carried by this binding.
+    #[must_use]
+    pub const fn provenance(&self) -> &ExecutionProvenance {
+        &self.provenance
+    }
+
+    pub(crate) fn evidence_source(&self) -> ReceiptEvidenceSource {
+        self.store.evidence_source()
+    }
+
     pub(crate) fn begin(
         self,
         problem: &ExecutableModelProblem,
@@ -1445,12 +1492,24 @@ impl ExecutionReceiptStore {
         Ok(store)
     }
 
+    /// Return the canonical local root owned by this receipt store.
+    #[must_use]
+    pub fn root_path(&self) -> &Path {
+        &self.root
+    }
+
     /// Bind one caller-owned attempt and build identity to this local store.
     #[must_use]
     pub const fn bind(&self, provenance: ExecutionProvenance) -> ExecutionReceiptBinding<'_> {
         ExecutionReceiptBinding {
             store: self,
             provenance,
+        }
+    }
+
+    pub(crate) fn evidence_source(&self) -> ReceiptEvidenceSource {
+        ReceiptEvidenceSource {
+            state: Arc::clone(&self.state),
         }
     }
 

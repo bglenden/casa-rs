@@ -63,14 +63,13 @@ use casa_imaging_runtime::{
     PublicationLayoutLedger, PublicationMappedStaging, PublicationParticipant,
     PublicationPhysicalLayout, PublicationResourceBounds, PublicationStaging, QueueDemand,
     QueueResource, QueueResourceId, QuiescencePoint, RateDemand, RateResource, RateResourceId,
-    RateUnit, ReceiptFailureKind, ReceiptRetention, ReceiptStatus, RecordedInfeasibility,
-    RedactedPath, ResourceAuthority, ResourceClaim, ResourceError, ResourceHeadroom,
-    ResourceMeasurement, ResourceOverride, ResourcePolicy, ResourceTopology, RunBindings,
-    RunController, RunDirective, RunError, RunToCompletion, RuntimeOverheadDemand, ScalingMetadata,
-    SlotCompatibility, StagePrediction, StorageDomain, StorageDomainId, StorageMode,
-    StorageUseKind, WorkDependency, WorkDomain, WorkExecutionContext, WorkImplementation,
-    WorkImplementationId, WorkKind, WorkMeasurements, WorkNode, WorkNodeId, plan as runtime_plan,
-    run as runtime_run,
+    RateUnit, ReceiptFailureKind, ReceiptRetention, ReceiptStatus, RedactedPath, ResourceAuthority,
+    ResourceClaim, ResourceError, ResourceHeadroom, ResourceMeasurement, ResourceOverride,
+    ResourcePolicy, ResourceTopology, RunBindings, RunController, RunDirective, RunError,
+    RunToCompletion, RuntimeOverheadDemand, ScalingMetadata, SlotCompatibility, StagePrediction,
+    StorageDomain, StorageDomainId, StorageMode, StorageUseKind, WorkDependency, WorkDomain,
+    WorkExecutionContext, WorkImplementation, WorkImplementationId, WorkKind, WorkMeasurements,
+    WorkNode, WorkNodeId, plan as runtime_plan, run as runtime_run,
 };
 use casa_ms::{
     BoundSelectedObservation, ObservationSourceBinding, SelectedObservationCompletion,
@@ -81,19 +80,26 @@ fn implementation_catalog(
     problem: &casa_imaging_model::CompiledProblem,
     dag: &ExecutionDag,
 ) -> ImplementationContractCatalog {
-    let registry = ContractOnlyRegistry {
-        id: registry(3),
-        metadata: ImplementationContractMetadata::new(
-            problem.problem_id(),
-            problem.numerics_id(),
-            problem.required_capabilities().clone(),
-        ),
-    };
+    let registry = ContractOnlyRegistry::new(
+        registry(3),
+        implementation_metadata(problem),
+        dag.nodes().values().map(|node| node.implementation.clone()),
+    );
     ImplementationContractCatalog::from_registry(
         &registry,
         dag.nodes().values().map(|node| node.implementation.clone()),
     )
     .expect("registry publishes every physical implementation contract")
+}
+
+fn implementation_metadata(
+    problem: &casa_imaging_model::CompiledProblem,
+) -> ImplementationContractMetadata {
+    ImplementationContractMetadata::new(
+        problem.problem_id(),
+        problem.numerics_id(),
+        problem.required_capabilities().clone(),
+    )
 }
 
 fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
@@ -2569,12 +2575,14 @@ fn mapped_publication_candidate(
 }
 
 fn test_registry(
+    problem: &casa_imaging_model::CompiledProblem,
     registry_byte: u8,
     implementation_byte: u8,
     failure: Option<&'static str>,
 ) -> TestRegistry {
     TestRegistry {
         id: registry(registry_byte),
+        metadata: implementation_metadata(problem),
         executors: BTreeMap::from([(
             implementation(implementation_byte),
             recording_executor(implementation_byte, failure, None),
@@ -2584,12 +2592,44 @@ fn test_registry(
 
 struct TestRegistry {
     id: ImplementationRegistryId,
+    metadata: ImplementationContractMetadata,
     executors: BTreeMap<WorkImplementationId, RecordingExecutor>,
+}
+
+impl TestRegistry {
+    fn metadata_for(
+        problem: &casa_imaging_model::CompiledProblem,
+    ) -> ImplementationContractMetadata {
+        implementation_metadata(problem)
+    }
 }
 
 struct ContractOnlyRegistry {
     id: ImplementationRegistryId,
     metadata: ImplementationContractMetadata,
+    executors: BTreeMap<WorkImplementationId, RecordingExecutor>,
+}
+
+impl ContractOnlyRegistry {
+    fn new(
+        id: ImplementationRegistryId,
+        metadata: ImplementationContractMetadata,
+        implementation_ids: impl IntoIterator<Item = WorkImplementationId>,
+    ) -> Self {
+        let executors = implementation_ids
+            .into_iter()
+            .map(|implementation_id| {
+                let mut executor = recording_executor(0, None, None);
+                executor.id = implementation_id.clone();
+                (implementation_id, executor)
+            })
+            .collect();
+        Self {
+            id,
+            metadata,
+            executors,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -2697,6 +2737,15 @@ impl ImplementationRegistry for TestRegistry {
     fn resolve(&self, id: &WorkImplementationId) -> Option<&Self::Implementation> {
         self.executors.get(id)
     }
+
+    fn implementation_contract(
+        &self,
+        id: &WorkImplementationId,
+    ) -> Option<ImplementationContractMetadata> {
+        self.executors
+            .contains_key(id)
+            .then(|| self.metadata.clone())
+    }
 }
 
 impl ImplementationRegistry for ContractOnlyRegistry {
@@ -2706,15 +2755,17 @@ impl ImplementationRegistry for ContractOnlyRegistry {
         self.id
     }
 
-    fn resolve(&self, _id: &WorkImplementationId) -> Option<&Self::Implementation> {
-        None
+    fn resolve(&self, id: &WorkImplementationId) -> Option<&Self::Implementation> {
+        self.executors.get(id)
     }
 
     fn implementation_contract(
         &self,
-        _id: &WorkImplementationId,
+        id: &WorkImplementationId,
     ) -> Option<ImplementationContractMetadata> {
-        Some(self.metadata.clone())
+        self.executors
+            .contains_key(id)
+            .then(|| self.metadata.clone())
     }
 }
 
@@ -2811,16 +2862,6 @@ fn run_lock() -> &'static Mutex<()> {
     &RUN_LOCK
 }
 
-fn no_recorded_infeasibility() -> RecordedInfeasibility {
-    let directory = tempfile::tempdir().expect("empty receipt directory");
-    let store = ExecutionReceiptStore::new(
-        directory.path(),
-        ReceiptRetention::new(4, 1_048_576).expect("retention"),
-    )
-    .expect("empty receipt store");
-    RecordedInfeasibility::from_store(&store).expect("empty recorded constraints")
-}
-
 fn plan<E>(
     problem: &casa_imaging_model::CompiledProblem,
     bindings: PlanningBindings,
@@ -2829,15 +2870,47 @@ fn plan<E>(
         &PlanningBindings,
     ) -> Result<PhysicalWorkBinding, E>,
 ) -> Result<casa_imaging_runtime::ExecutionPlan, PlanError<E>> {
+    let directory = tempfile::tempdir().expect("empty receipt directory");
+    let root = directory.keep();
+    let receipts = ExecutionReceiptStore::new(
+        root,
+        ReceiptRetention::new(4, 1_048_576).expect("retention"),
+    )
+    .expect("empty receipt store");
+    plan_with_receipts(problem, bindings, &receipts, planner)
+}
+
+fn plan_with_receipts<E>(
+    problem: &casa_imaging_model::CompiledProblem,
+    bindings: PlanningBindings,
+    receipts: &ExecutionReceiptStore,
+    planner: impl FnOnce(
+        &casa_imaging_model::CompiledProblem,
+        &PlanningBindings,
+    ) -> Result<PhysicalWorkBinding, E>,
+) -> Result<casa_imaging_runtime::ExecutionPlan, PlanError<E>> {
     let _guard = run_lock()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let candidate = planner(problem, &bindings).map_err(PlanError::Planner)?;
+    let implementation_ids = candidate
+        .execution_dag()
+        .nodes()
+        .values()
+        .map(|node| node.implementation.clone());
+    let registry = ContractOnlyRegistry::new(
+        bindings.implementation_registry_id(),
+        implementation_metadata(problem),
+        implementation_ids,
+    );
+    let candidates = vec![candidate];
     runtime_plan(
         problem,
         bindings,
         authority(),
-        &no_recorded_infeasibility(),
-        |problem, bindings| planner(problem, bindings).map(|candidate| vec![candidate]),
+        &registry,
+        receipts,
+        move |_, _| Ok(candidates),
     )
 }
 
@@ -2889,12 +2962,11 @@ fn run<C: RunController>(
     authority: &ResourceAuthority,
     controller: &mut C,
 ) -> Result<ExecutionOutcome, RunError<io::Error>> {
-    let directory = tempfile::tempdir().expect("receipt directory");
-    let receipts = ExecutionReceiptStore::new(
-        directory.path(),
-        ReceiptRetention::new(8, 1_048_576).expect("bounded retention"),
-    )
-    .expect("receipt store");
+    let receipts = plan.receipt_store();
+    static NEXT_RUN_ATTEMPT: AtomicUsize = AtomicUsize::new(241);
+    let attempt_seed =
+        u8::try_from(NEXT_RUN_ATTEMPT.fetch_add(1, Ordering::SeqCst) % usize::from(u8::MAX))
+            .expect("bounded synthetic attempt seed");
     run_receipted(
         problem,
         plan,
@@ -2903,7 +2975,7 @@ fn run<C: RunController>(
         authority,
         controller,
         receipts.bind(execution_provenance(
-            casa_imaging_runtime::ExecutionAttemptId::from_sha256([241; 32]),
+            casa_imaging_runtime::ExecutionAttemptId::from_sha256([attempt_seed; 32]),
             BuildIdentity::from_sha256([242; 32]),
         )),
     )
@@ -3240,6 +3312,7 @@ fn run_rejects_artifact_dispositions_that_contradict_plan_semantics() {
     )]);
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
 
@@ -3270,6 +3343,7 @@ fn run_can_invoke_only_the_implementation_identity_sealed_by_plan() {
     let different = recording_executor(7, None, None);
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([
             (implementation(6), selected),
             (implementation(7), different),
@@ -3329,6 +3403,7 @@ fn initial_consistency_check_receives_the_exact_observation_transaction() {
     ));
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
 
@@ -3360,6 +3435,7 @@ fn generic_io_cannot_receive_observation_sources() {
     executor.generic_source_access = Some(Arc::clone(&generic_source_access));
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
 
@@ -3380,7 +3456,7 @@ fn run_rejects_a_registry_that_cannot_resolve_the_bound_implementation() {
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
-    let registry = test_registry(3, 7, None);
+    let registry = test_registry(&problem, 3, 7, None);
     let current = RunBindings::new(
         problem.inputs().clone(),
         &ResourcePolicy::Balanced,
@@ -3411,7 +3487,7 @@ fn run_rejects_a_different_implementation_returned_under_the_bound_key() {
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
-    let mut registry = test_registry(3, 6, None);
+    let mut registry = test_registry(&problem, 3, 6, None);
     registry
         .executors
         .get_mut(&implementation(6))
@@ -3449,16 +3525,26 @@ fn versioned_request_compiles_before_physical_planning() {
 
 #[test]
 fn plan_seals_physical_work_and_every_required_binding() {
-    assert_eq!(ExecutionPlanId::SCHEMA_VERSION, 8);
+    assert_eq!(ExecutionPlanId::SCHEMA_VERSION, 9);
     let problem = compile(request(1)).expect("logical compilation");
     let expected_problem_id = problem.problem_id();
     let bindings =
         PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4));
-    let execution_plan = plan(&problem, bindings.clone(), |problem, bindings| {
-        assert_eq!(problem.problem_id(), expected_problem_id);
-        assert_eq!(bindings.resource_policy(), &ResourcePolicy::Balanced);
-        Ok::<_, ()>(physical_work(6))
-    })
+    let receipts = ExecutionReceiptStore::new(
+        "/tmp/casa-rs-imaging-plan-id-regression",
+        ReceiptRetention::new(4, 1_048_576).expect("plan-id retention"),
+    )
+    .expect("plan-id receipt store");
+    let execution_plan = plan_with_receipts(
+        &problem,
+        bindings.clone(),
+        &receipts,
+        |problem, bindings| {
+            assert_eq!(problem.problem_id(), expected_problem_id);
+            assert_eq!(bindings.resource_policy(), &ResourcePolicy::Balanced);
+            Ok::<_, ()>(physical_work(6))
+        },
+    )
     .expect("physical planning");
 
     assert_eq!(execution_plan.problem_id(), problem.problem_id());
@@ -3505,14 +3591,16 @@ fn plan_seals_physical_work_and_every_required_binding() {
         execution_plan.physical_work_id()
     );
 
-    let repeated = plan(&problem, bindings, |_, _| Ok::<_, ()>(physical_work(6)))
-        .expect("repeat physical planning");
+    let repeated = plan_with_receipts(&problem, bindings, &receipts, |_, _| {
+        Ok::<_, ()>(physical_work(6))
+    })
+    .expect("repeat physical planning");
     assert_eq!(execution_plan.plan_id(), repeated.plan_id());
     assert_eq!(
         execution_plan.plan_id().as_bytes(),
         [
-            247, 196, 220, 222, 254, 25, 213, 243, 10, 98, 169, 162, 212, 100, 95, 202, 222, 107,
-            5, 16, 38, 32, 214, 157, 157, 230, 118, 175, 73, 151, 8, 207,
+            250, 214, 201, 229, 243, 157, 94, 167, 26, 63, 183, 96, 95, 93, 104, 216, 241, 5, 19,
+            123, 44, 102, 140, 136, 94, 187, 200, 217, 70, 183, 161, 12,
         ]
     );
 }
@@ -3688,8 +3776,8 @@ fn run_rejects_changed_registry_policy_and_cost_model_bindings() {
     let current =
         |policy, cost_model_id| RunBindings::new(problem.inputs().clone(), policy, cost_model_id);
     let reject = |bindings, registry| execute_plan(&problem, &execution_plan, &bindings, registry);
-    let wrong_registry = test_registry(9, 6, None);
-    let correct_registry = test_registry(3, 6, None);
+    let wrong_registry = test_registry(&problem, 9, 6, None);
+    let correct_registry = test_registry(&problem, 3, 6, None);
 
     assert!(matches!(
         reject(
@@ -3729,7 +3817,7 @@ fn run_rejects_every_stale_problem_input_before_calling_the_executor() {
         Ok::<_, ()>(physical_work(6))
     })
     .expect("physical planning");
-    let registry = test_registry(3, 6, None);
+    let registry = test_registry(&problem, 3, 6, None);
     let stale_inputs = [
         (
             problem_inputs(9, default_references(), ModelStateIdentity::Empty),
@@ -3819,7 +3907,7 @@ fn run_executes_one_exactly_bound_plan_without_routing_or_replanning() {
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let registry = test_registry(3, 6, None);
+    let registry = test_registry(&problem, 3, 6, None);
 
     let output =
         execute_plan(&problem, &execution_plan, &current, &registry).expect("exact execution");
@@ -3855,7 +3943,7 @@ fn run_preserves_the_selected_executors_error_chain() {
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let registry = test_registry(3, 6, Some("selected executor failed"));
+    let registry = test_registry(&problem, 3, 6, Some("selected executor failed"));
 
     let error =
         execute_plan(&problem, &execution_plan, &current, &registry).expect_err("executor failure");
@@ -3880,7 +3968,7 @@ fn rejected_post_launch_adaptation_drains_fences_before_returning() {
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let registry = test_registry(3, 6, None);
+    let registry = test_registry(&problem, 3, 6, None);
     let mut controller = RejectAfterLaunch::default();
 
     let error = run(
@@ -3923,7 +4011,7 @@ fn run_applies_an_eligible_transition_to_later_scheduled_work() {
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let registry = test_registry(3, 6, None);
+    let registry = test_registry(&problem, 3, 6, None);
     let mut controller = AdaptAtMajorBoundary::default();
 
     let outcome = run(
@@ -3971,6 +4059,7 @@ fn run_cancellation_at_the_pre_read_cut_releases_authority_capacity() {
     let visible_generation = Arc::new(AtomicUsize::new(0));
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(
             implementation(6),
             publication_recording_executor(
@@ -4058,6 +4147,7 @@ fn cancellation_cannot_report_cancelled_after_atomic_publication_is_irrevocable(
         let visible_generation = Arc::new(AtomicUsize::new(0));
         let registry = TestRegistry {
             id: registry(3),
+            metadata: implementation_metadata(&problem),
             executors: BTreeMap::from([(
                 implementation(6),
                 publication_recording_executor(
@@ -4119,6 +4209,7 @@ fn controller_cannot_adapt_after_atomic_publication_is_irrevocable() {
     let visible_generation = Arc::new(AtomicUsize::new(0));
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(
             implementation(6),
             publication_recording_executor(
@@ -4172,6 +4263,7 @@ fn publication_visibility_is_final_after_fence_and_scheduler_settlement() {
     executor.visibility_during_fence_settlement = Some(Arc::clone(&visible_during_settlement));
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
     let mut controller = RunToCompletion;
@@ -4207,12 +4299,7 @@ fn receipt_finalize_failure_after_publish_returns_success_and_reopens_prepared_e
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let directory = tempfile::tempdir().expect("receipt directory");
-    let receipts = ExecutionReceiptStore::new(
-        directory.path(),
-        ReceiptRetention::new(8, 1_048_576).expect("bounded retention"),
-    )
-    .expect("receipt store");
+    let receipts = execution_plan.receipt_store();
     let provenance = execution_provenance(
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([91; 32]),
         BuildIdentity::from_sha256([92; 32]),
@@ -4224,9 +4311,10 @@ fn receipt_finalize_failure_after_publish_returns_success_and_reopens_prepared_e
         Arc::clone(&publication_launched),
         Arc::clone(&visible_generation),
     );
-    executor.receipt_root_to_disrupt = Some(directory.path().to_owned());
+    executor.receipt_root_to_disrupt = Some(receipts.root_path().to_owned());
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
     let mut controller = RunToCompletion;
@@ -4280,18 +4368,14 @@ fn prepared_publication_holds_the_shared_root_reservation_through_publish() {
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let directory = tempfile::tempdir().expect("receipt directory");
     let max_bytes = 1_048_576;
-    let receipts = ExecutionReceiptStore::new(
-        directory.path(),
-        ReceiptRetention::new(8, max_bytes).expect("bounded retention"),
-    )
-    .expect("receipt store");
+    let receipts = execution_plan.receipt_store();
     let pause = Arc::new(PublicationPause::default());
     let mut executor = recording_executor(6, None, None);
     executor.publication_pause = Some(Arc::clone(&pause));
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
     let first = execution_provenance(
@@ -4329,7 +4413,7 @@ fn prepared_publication_holds_the_shared_root_reservation_through_publish() {
         });
 
         pause.wait_until_entered();
-        let retained_bytes = fs::read_dir(directory.path())
+        let retained_bytes = fs::read_dir(receipts.root_path())
             .expect("receipt root")
             .map(|entry| {
                 entry
@@ -4417,6 +4501,7 @@ fn earlier_acquired_publication_buffer_is_held_through_publish_and_then_released
     executor.publication_buffer_held = Some(Arc::clone(&held_during_publish));
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
     for attempt in 1..=2 {
@@ -4454,18 +4539,14 @@ fn observation_completion_is_attempt_node_and_fence_bound_after_successful_settl
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let directory = tempfile::tempdir().expect("receipt directory");
-    let receipts = ExecutionReceiptStore::new(
-        directory.path(),
-        ReceiptRetention::new(8, 1_048_576).expect("bounded retention"),
-    )
-    .expect("receipt store");
+    let receipts = execution_plan.receipt_store();
     let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([157; 32]);
     let completions = Arc::new(Mutex::new(Vec::new()));
     let mut executor = recording_executor(6, None, None);
     executor.observation_completions = Some(Arc::clone(&completions));
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
     let mut controller = RunToCompletion;
@@ -4522,18 +4603,14 @@ fn synchronous_observation_completion_is_exactly_once_attempt_node_and_lease_bou
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let directory = tempfile::tempdir().expect("receipt directory");
-    let receipts = ExecutionReceiptStore::new(
-        directory.path(),
-        ReceiptRetention::new(8, 1_048_576).expect("bounded retention"),
-    )
-    .expect("receipt store");
+    let receipts = execution_plan.receipt_store();
     let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([159; 32]);
     let completions = Arc::new(Mutex::new(Vec::new()));
     let mut executor = recording_executor(6, None, None);
     executor.observation_completions = Some(Arc::clone(&completions));
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
     let mut controller = RunToCompletion;
@@ -4579,6 +4656,7 @@ fn completion_from_a_different_compiled_observation_cannot_unlock_dependents() {
     executor.bind_foreign_observation_completion = true;
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
     let mut controller = RunToCompletion;
@@ -4626,6 +4704,7 @@ fn failed_synchronous_observation_completion_prevents_dependent_work() {
     executor.observation_completion_failure = Some("selected-observation completion failed");
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
     let mut controller = RunToCompletion;
@@ -4686,6 +4765,7 @@ fn failed_observation_fence_cannot_mint_attempt_bound_completion() {
     executor.observation_completions = Some(Arc::clone(&completions));
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
     let mut controller = RunToCompletion;
@@ -4754,6 +4834,7 @@ fn transaction_failures_leave_the_old_generation_visible() {
         let visible_generation = Arc::new(AtomicUsize::new(0));
         let registry = TestRegistry {
             id: registry(3),
+            metadata: implementation_metadata(&problem),
             executors: BTreeMap::from([(
                 implementation(6),
                 failing_transaction_executor(
@@ -4798,6 +4879,7 @@ fn transaction_failures_leave_the_old_generation_visible() {
     let visible_generation = Arc::new(AtomicUsize::new(0));
     let model_registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(
             implementation(6),
             failing_transaction_executor(
@@ -4841,18 +4923,14 @@ fn transaction_failures_leave_the_old_generation_visible() {
     let visible_generation = Arc::new(AtomicUsize::new(0));
     let admission_registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(
             implementation(6),
             failing_transaction_executor(6, Arc::clone(&visible_generation), None, None, None),
         )]),
     };
     let mut completion = RunToCompletion;
-    let admission_receipts_directory = tempfile::tempdir().expect("admission receipt directory");
-    let admission_receipts = ExecutionReceiptStore::new(
-        admission_receipts_directory.path(),
-        ReceiptRetention::new(8, 1_048_576).expect("admission receipt retention"),
-    )
-    .expect("admission receipt store");
+    let admission_receipts = execution_plan.receipt_store();
     let pressure_guard = run_lock()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -4903,19 +4981,23 @@ fn transaction_failures_leave_the_old_generation_visible() {
     // for historical quantitative constraints. Replaying it at the same
     // pressure is reported as a recorded refusal rather than a fresh
     // synthetic admission failure.
-    let recorded = RecordedInfeasibility::from_store(&admission_receipts)
-        .expect("production admission receipt yields recorded constraints");
     let pressure_guard = run_lock()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     authority()
         .update_external_pressure(runtime_inventory(0).pressure)
         .expect("reinstall zero-lock pressure for receipt replay");
+    let replay_registry = ContractOnlyRegistry::new(
+        registry(3),
+        implementation_metadata(&problem),
+        [implementation(6)],
+    );
     let replay = runtime_plan(
         &problem,
         PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         authority(),
-        &recorded,
+        &replay_registry,
+        &admission_receipts,
         |_, _| Ok::<_, io::Error>(vec![physical_work(6)]),
     );
     authority()
@@ -4977,6 +5059,7 @@ fn release_failures_drain_independent_fences_and_quarantine_only_failed_slots() 
         );
         let executor_registry = TestRegistry {
             id: registry(3),
+            metadata: implementation_metadata(&problem),
             executors: BTreeMap::from([
                 (implementation(6), prepare_executor),
                 (implementation(8), release_executor),
@@ -5046,13 +5129,8 @@ fn run_persists_a_reopenable_receipt_with_exact_identities_and_every_plan_node()
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let registry = test_registry(3, 6, None);
-    let directory = tempfile::tempdir().expect("receipt directory");
-    let receipts = ExecutionReceiptStore::new(
-        directory.path(),
-        ReceiptRetention::new(8, 1_048_576).expect("bounded retention"),
-    )
-    .expect("receipt store");
+    let registry = test_registry(&problem, 3, 6, None);
+    let receipts = execution_plan.receipt_store();
     let provenance = execution_provenance(
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([9; 32]),
         BuildIdentity::from_sha256([10; 32]),
@@ -5171,13 +5249,8 @@ fn receipt_rejects_checksum_valid_typed_projection_and_audit_forgery() {
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let registry = test_registry(3, 6, None);
-    let directory = tempfile::tempdir().expect("receipt directory");
-    let receipts = ExecutionReceiptStore::new(
-        directory.path(),
-        ReceiptRetention::new(8, 1_048_576).expect("bounded retention"),
-    )
-    .expect("receipt store");
+    let registry = test_registry(&problem, 3, 6, None);
+    let receipts = execution_plan.receipt_store();
     let provenance = execution_provenance(
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([85; 32]),
         BuildIdentity::from_sha256([86; 32]),
@@ -5194,7 +5267,7 @@ fn receipt_rejects_checksum_valid_typed_projection_and_audit_forgery() {
         receipts.bind(provenance.clone()),
     )
     .expect("receipted execution");
-    let path = only_receipt_path(directory.path());
+    let path = only_receipt_path(receipts.root_path());
     let original = fs::read_to_string(&path).expect("serialized receipt");
     let checksum_marker = "\"payload_sha256\": \"";
     let checksum_start =
@@ -5354,13 +5427,8 @@ fn receipt_reopens_the_complete_versioned_effective_problem_projection() {
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let registry = test_registry(3, 6, None);
-    let directory = tempfile::tempdir().expect("receipt directory");
-    let receipts = ExecutionReceiptStore::new(
-        directory.path(),
-        ReceiptRetention::new(8, 1_048_576).expect("bounded retention"),
-    )
-    .expect("receipt store");
+    let registry = test_registry(&problem, 3, 6, None);
+    let receipts = execution_plan.receipt_store();
     let provenance = execution_provenance(
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([83; 32]),
         BuildIdentity::from_sha256([84; 32]),
@@ -5591,14 +5659,10 @@ fn receipt_reopens_the_complete_selected_plan_projection() {
     )]);
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
-    let directory = tempfile::tempdir().expect("receipt directory");
-    let receipts = ExecutionReceiptStore::new(
-        directory.path(),
-        ReceiptRetention::new(8, 1_048_576).expect("bounded retention"),
-    )
-    .expect("receipt store");
+    let receipts = execution_plan.receipt_store();
     let provenance = execution_provenance(
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([61; 32]),
         BuildIdentity::from_sha256([62; 32]),
@@ -5705,13 +5769,8 @@ fn receipt_compares_plan_predictions_with_actual_stage_resource_and_fence_use() 
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let registry = test_registry(3, 6, None);
-    let directory = tempfile::tempdir().expect("receipt directory");
-    let receipts = ExecutionReceiptStore::new(
-        directory.path(),
-        ReceiptRetention::new(8, 1_048_576).expect("bounded retention"),
-    )
-    .expect("receipt store");
+    let registry = test_registry(&problem, 3, 6, None);
+    let receipts = execution_plan.receipt_store();
     let provenance = execution_provenance(
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([11; 32]),
         BuildIdentity::from_sha256([12; 32]),
@@ -5823,14 +5882,10 @@ fn receipt_compares_planned_and_actual_io_artifacts_and_never_persists_paths() {
     ]);
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
-    let directory = tempfile::tempdir().expect("receipt directory");
-    let receipts = ExecutionReceiptStore::new(
-        directory.path(),
-        ReceiptRetention::new(8, 1_048_576).expect("bounded retention"),
-    )
-    .expect("receipt store");
+    let receipts = execution_plan.receipt_store();
     let provenance = execution_provenance(
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([37; 32]),
         BuildIdentity::from_sha256([38; 32]),
@@ -5903,7 +5958,7 @@ fn receipt_compares_planned_and_actual_io_artifacts_and_never_persists_paths() {
         Some(output_path.as_bytes())
     );
     let persisted = std::fs::read_to_string(
-        std::fs::read_dir(directory.path())
+        std::fs::read_dir(receipts.root_path())
             .expect("receipt directory listing")
             .next()
             .expect("receipt file")
@@ -5968,14 +6023,10 @@ fn failed_publication_fence_never_records_a_published_output() {
     ]);
     let registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
-    let directory = tempfile::tempdir().expect("receipt directory");
-    let receipts = ExecutionReceiptStore::new(
-        directory.path(),
-        ReceiptRetention::new(1, 1_048_576).expect("retention"),
-    )
-    .expect("receipt store");
+    let receipts = execution_plan.receipt_store();
     let provenance = execution_provenance(
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([87; 32]),
         BuildIdentity::from_sha256([88; 32]),
@@ -6033,20 +6084,12 @@ fn receipts_preserve_typed_terminal_outcomes_and_every_node_state() {
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let store = |root: &std::path::Path| {
-        ExecutionReceiptStore::new(
-            root,
-            ReceiptRetention::new(8, 1_048_576).expect("bounded retention"),
-        )
-        .expect("receipt store")
-    };
-    let failed_directory = tempfile::tempdir().expect("failed receipt directory");
-    let failed_receipts = store(failed_directory.path());
+    let failed_receipts = balanced_plan.receipt_store();
     let failed_provenance = execution_provenance(
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([41; 32]),
         BuildIdentity::from_sha256([42; 32]),
     );
-    let failed_registry = test_registry(3, 6, Some("adapter failed"));
+    let failed_registry = test_registry(&problem, 3, 6, Some("adapter failed"));
     let mut completion = RunToCompletion;
     assert!(matches!(
         run_receipted(
@@ -6078,13 +6121,12 @@ fn receipts_preserve_typed_terminal_outcomes_and_every_node_state() {
         Some(ReceiptStatus::Cancelled)
     );
 
-    let cancelled_directory = tempfile::tempdir().expect("cancelled receipt directory");
-    let cancelled_receipts = store(cancelled_directory.path());
+    let cancelled_receipts = balanced_plan.receipt_store();
     let cancelled_provenance = execution_provenance(
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([43; 32]),
         BuildIdentity::from_sha256([44; 32]),
     );
-    let successful_registry = test_registry(3, 6, None);
+    let successful_registry = test_registry(&problem, 3, 6, None);
     let mut cancellation = CancelAfterLaunch::default();
     assert_eq!(
         run_receipted(
@@ -6113,8 +6155,7 @@ fn receipts_preserve_typed_terminal_outcomes_and_every_node_state() {
         Some(ReceiptStatus::Cancelled)
     );
 
-    let mutation_directory = tempfile::tempdir().expect("mutation receipt directory");
-    let mutation_receipts = store(mutation_directory.path());
+    let mutation_receipts = balanced_plan.receipt_store();
     let mutation_provenance = execution_provenance(
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([45; 32]),
         BuildIdentity::from_sha256([46; 32]),
@@ -6150,8 +6191,7 @@ fn receipts_preserve_typed_terminal_outcomes_and_every_node_state() {
         Some(ReceiptStatus::NotStarted)
     );
 
-    let aborted_directory = tempfile::tempdir().expect("aborted receipt directory");
-    let aborted_receipts = store(aborted_directory.path());
+    let aborted_receipts = balanced_plan.receipt_store();
     let aborted_provenance = execution_provenance(
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([49; 32]),
         BuildIdentity::from_sha256([50; 32]),
@@ -6160,6 +6200,7 @@ fn receipts_preserve_typed_terminal_outcomes_and_every_node_state() {
     interrupted_executor.panic_on_execute = true;
     let interrupted_registry = TestRegistry {
         id: registry(3),
+        metadata: implementation_metadata(&problem),
         executors: BTreeMap::from([(implementation(6), interrupted_executor)]),
     };
     let mut completion = RunToCompletion;
@@ -6195,6 +6236,55 @@ fn receipts_preserve_typed_terminal_outcomes_and_every_node_state() {
         aborted.node_status(&WorkNodeId::new("read")),
         Some(ReceiptStatus::NotStarted)
     );
+}
+
+#[test]
+fn stale_binding_uses_the_plan_receipt_store_for_mutation_evidence() {
+    let problem = compile(request(1)).expect("logical compilation");
+    let plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        |_, _| Ok::<_, ()>(physical_work(6)),
+    )
+    .expect("physical planning");
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &ResourcePolicy::Interactive,
+        cost_model(4),
+    );
+    let canonical = plan.receipt_store();
+    let alternate_directory = tempfile::tempdir().expect("alternate receipt directory");
+    let alternate = ExecutionReceiptStore::new(
+        alternate_directory.path(),
+        ReceiptRetention::new(4, 1_048_576).expect("retention"),
+    )
+    .expect("alternate receipt store");
+    let provenance = execution_provenance(
+        casa_imaging_runtime::ExecutionAttemptId::from_sha256([47; 32]),
+        BuildIdentity::from_sha256([48; 32]),
+    );
+    let registry = test_registry(&problem, 3, 6, None);
+    let mut completion = RunToCompletion;
+    assert!(matches!(
+        run_receipted(
+            &problem,
+            &plan,
+            &current,
+            &registry,
+            authority(),
+            &mut completion,
+            alternate.bind(provenance.clone()),
+        ),
+        Err(RunError::BindingMismatch { .. })
+    ));
+    let mutation = canonical
+        .open(provenance.attempt_id())
+        .expect("mutation receipt is canonicalized to the plan store");
+    assert_eq!(mutation.status(), ReceiptStatus::Mutation);
+    assert!(matches!(
+        alternate.open(provenance.attempt_id()),
+        Err(casa_imaging_runtime::ReceiptError::Io { .. })
+    ));
 }
 
 #[path = "compile_plan_run/prepared_artifact.rs"]

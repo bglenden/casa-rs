@@ -2,8 +2,8 @@
 
 pub(super) use super::super::{
     BuildIdentity, ExecutionOutcome, ExecutionProvenance, ExecutionReceiptStore, PlanningBindings,
-    ReceiptRetention, ReceiptStatus, ResourcePolicy, RunBindings, RunToCompletion, authority,
-    cost_model, execution_provenance, geometry, physical_work_for_problem, plan, registry,
-    request_with_products_and_model, run_receipted, test_registry,
+    ReceiptStatus, ResourcePolicy, RunBindings, RunToCompletion, authority, cost_model,
+    execution_provenance, geometry, physical_work_for_problem, plan, plan_with_receipts,
+    planning_profile, registry, request_with_products_and_model, run_receipted, test_registry,
 };
 pub(super) use casa_imaging_runtime::{ProfilePromotionError, ProfileReview};
