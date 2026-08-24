@@ -16,21 +16,22 @@ use std::{
 use sha2::{Digest, Sha256};
 
 use casa_imaging_model::{
-    AxisOrder, CentreLaws, DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec,
-    DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy, FrequencyFrame,
-    GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, ImagingRequest,
-    ImagingRequestVersion, InstrumentResponse, MeasurementEquationContract, MetadataTableKind,
-    MissingPointingPolicy, ModelColumnWrite, ModelInnerProduct, ModelStateIdentity, MsColumnKind,
-    NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
-    ObservationSourceState, ObservationTransactionId, ObservationTransactionRequirements,
-    PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic,
-    PointingExtrapolation, PointingInterpolation, PointingTimeSampling, PolarizationContract,
-    PolarizationCoordinate, PreparedArtifactAwInterpretation, PreparedArtifactCellSemantics,
-    PreparedArtifactKernelAlgorithm, PreparedArtifactKernelSemantics,
-    PreparedArtifactScientificIdentity, PreparedArtifactSpectralMapSemantics, ProblemSpecification,
-    ProductKind, ProductNormalization, ProductRequirements, Projection, ReconstructionAlgorithm,
-    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
-    ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection,
+    AxisOrder, CentreLaws, CorrelationType, DeclaredInnerProducts, DelayCentreLaw,
+    DirectionCoordinateSpec, DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy,
+    FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
+    ImagingRequest, ImagingRequestVersion, InstrumentResponse, MeasurementEquationContract,
+    MetadataTableKind, MissingPointingPolicy, ModelColumnWrite, ModelInnerProduct,
+    ModelStateIdentity, MsColumnKind, NumericPrecision, NumericalStage, NumericsContract,
+    ObservationPointingLaw, ObservationSourceState, ObservationTransactionId,
+    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn,
+    PointingDirectionSemantic, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
+    PolarizationContract, PolarizationCoordinate, PreparedArtifactAwInterpretation,
+    PreparedArtifactCellSemantics, PreparedArtifactKernelAlgorithm,
+    PreparedArtifactKernelSemantics, PreparedArtifactScientificIdentity,
+    PreparedArtifactSpectralMapSemantics, ProblemSpecification, ProductKind, ProductNormalization,
+    ProductRequirements, Projection, ReconstructionAlgorithm, ReconstructionBasis,
+    ReconstructionContract, ReconstructionControls, ReductionPolicy, ReferenceDataKind,
+    RestFrequency, RestoringBeamPolicy, ScientificContract, SelectedVisibilitySample, SkyDirection,
     SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
     SpectralSampling, SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct,
     WeightDensityScope, WeightingContract, WeightingScheme, compile,
@@ -44,7 +45,8 @@ use casa_imaging_runtime::{
     AlternativeRejectionReason, ArtifactDisposition, ArtifactIdentity, ArtifactMeasurement,
     ArtifactRole, AttemptBoundObservationCompletion, BindingKind, BuildIdentity, CacheDemand,
     CacheIdentity, CapabilityPredicate, CapacityDomainId, CapacityViewId, ClaimLifetime,
-    CompiledProblemEvidence, CountDemand, CpuClassCapacity, DemandAlternative, DemandEnvelope,
+    CompiledProblemEvidence, CompleteDataOperatorResult, CompleteDataPlanFragment,
+    CompleteDataPreparedState, CountDemand, CpuClassCapacity, DemandAlternative, DemandEnvelope,
     ExecutionDag, ExecutionDagSpecification, ExecutionError, ExecutionEvidenceError,
     ExecutionKnobs, ExecutionOutcome, ExecutionPlanId, ExecutionProvenance, ExecutionReceipt,
     ExecutionReceiptBinding, ExecutionReceiptStore, ExecutionRouteDisposition,
@@ -70,10 +72,11 @@ use casa_imaging_runtime::{
     ResourceClaim, ResourceError, ResourceHeadroom, ResourceMeasurement, ResourceOverride,
     ResourcePolicy, ResourceTopology, RunBindings, RunController, RunDirective, RunError,
     RunToCompletion, RuntimeOverheadDemand, ScalingMetadata, SelectedObservationSourceResources,
-    SlotCompatibility, StagePrediction, StorageDomain, StorageDomainId, StorageMode,
-    StorageUseKind, WeightingExecutionState, WeightingPlanFragment, WorkDependency, WorkDomain,
-    WorkExecutionContext, WorkImplementation, WorkImplementationId, WorkKind, WorkMeasurements,
-    WorkNode, WorkNodeId, plan as runtime_plan, run as runtime_run,
+    SerialMfsOperatorState, SlotCompatibility, StagePrediction, StorageDomain, StorageDomainId,
+    StorageMode, StorageUseKind, WeightedObservationBlock, WeightingExecutionState,
+    WeightingPlanFragment, WorkDependency, WorkDomain, WorkExecutionContext, WorkImplementation,
+    WorkImplementationId, WorkKind, WorkMeasurements, WorkNode, WorkNodeId, plan as runtime_plan,
+    run as runtime_run,
 };
 use casa_ms::{
     BoundSelectedObservation, ObservationSourceBinding, SelectedObservationCompletion,
@@ -567,18 +570,34 @@ fn with_retained_claim_tamper(document: &str, tamper: RetainedClaimTamper) -> St
 }
 
 fn geometry(reference_pixel: f64) -> GeometryInput {
+    geometry_with_shape([reference_pixel, 255.0], ImageShape::new(512, 512))
+}
+
+fn geometry_with_shape(reference_pixel: [f64; 2], image_shape: ImageShape) -> GeometryInput {
+    geometry_with_shape_and_increment(
+        reference_pixel,
+        image_shape,
+        [-4.848_136_811_095_36e-6, 4.848_136_811_095_36e-6],
+    )
+}
+
+fn geometry_with_shape_and_increment(
+    reference_pixel: [f64; 2],
+    image_shape: ImageShape,
+    increment_rad: [f64; 2],
+) -> GeometryInput {
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
         SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
-        [reference_pixel, 255.0],
-        [-4.848_136_811_095_36e-6, 4.848_136_811_095_36e-6],
+        reference_pixel,
+        increment_rad,
         [[1.0, 0.0], [0.0, 1.0]],
         [180.0, 0.0],
     );
     GeometryInput::new(
         vec![ImageDomainSpec::new(
             ImageDomainRole::Main,
-            ImageShape::new(512, 512),
+            image_shape,
             direction,
             FacetLayout::Single,
             AxisOrder::new([
@@ -887,6 +906,12 @@ fn recording_executor(
         weighting_actual_source_residency: None,
         weighting_source_read: WorkNodeId::new("transaction-read"),
         weighting_state: Mutex::new(WeightingExecutionState::new()),
+        complete_data_plan: None,
+        complete_data_prepared: Mutex::new(None),
+        complete_data_state: Mutex::new(None),
+        complete_data_result: Mutex::new(None),
+        complete_data_prediction_count: AtomicUsize::new(0),
+        complete_data_laws: Mutex::new(CompleteDataLawEvidence::default()),
         weighting_source_sample_count: AtomicUsize::new(0),
         weighted_sample_count: AtomicUsize::new(0),
         weighting_reconciled: AtomicBool::new(false),
@@ -928,6 +953,128 @@ struct RecordedObservationCompletion {
 
 type DeliveredObservationCompletions = Arc<Mutex<Vec<(WorkNodeId, WorkNodeId)>>>;
 
+#[derive(Debug, Default)]
+struct CompleteDataLawEvidence {
+    blocks: usize,
+    unit_source_max_error: f64,
+    linearity_max_error: f64,
+    weighted_adjoint_left: num_complex::Complex64,
+}
+
+impl CompleteDataLawEvidence {
+    fn observe(
+        &mut self,
+        operator: &mut SerialMfsOperatorState,
+        block: &WeightedObservationBlock,
+    ) -> io::Result<usize> {
+        const CELLS: usize = 8 * 8;
+        let mut unit = vec![num_complex::Complex64::new(0.0, 0.0); CELLS];
+        unit[3 * 8 + 3] = num_complex::Complex64::new(1.0, 0.0);
+        let first = complete_data_adjoint_model();
+        let mut second = vec![num_complex::Complex64::new(0.0, 0.0); CELLS];
+        second[3 * 8 + 5] = num_complex::Complex64::new(-0.25, 0.5);
+        let sum = first
+            .iter()
+            .zip(&second)
+            .map(|(first, second)| first + second)
+            .collect::<Vec<_>>();
+
+        let unit_prediction = operator
+            .predict_weighted_block(&unit, block)
+            .map_err(io::Error::other)?
+            .to_vec();
+        let first_prediction = operator
+            .predict_weighted_block(&first, block)
+            .map_err(io::Error::other)?
+            .to_vec();
+        let second_prediction = operator
+            .predict_weighted_block(&second, block)
+            .map_err(io::Error::other)?
+            .to_vec();
+        let sum_prediction = operator
+            .predict_weighted_block(&sum, block)
+            .map_err(io::Error::other)?
+            .to_vec();
+
+        let mut expected_unit = Vec::new();
+        let mut weighted_visibility = Vec::new();
+        for weighted in block.samples() {
+            let selected = weighted.selected();
+            if selected.row_flag
+                || selected.channel_flag
+                || !complete_data_parallel_hand(selected.address.correlation_type)
+            {
+                continue;
+            }
+            let visibility = match selected.visibility {
+                SelectedVisibilitySample::Float32(value) => {
+                    num_complex::Complex64::new(f64::from(value), 0.0)
+                }
+                SelectedVisibilitySample::Complex32([real, imaginary]) => {
+                    num_complex::Complex64::new(f64::from(real), f64::from(imaginary))
+                }
+            };
+            let phase = num_complex::Complex64::from_polar(
+                1.0,
+                std::f64::consts::TAU
+                    * selected.coordinates.phase_shift_m
+                    * selected.address.frequency_centre_hz
+                    / 299_792_458.0,
+            );
+            for spectral in weighted.spectral_values() {
+                expected_unit.push(phase.conj() * f64::from(spectral.contribution().factor()));
+                weighted_visibility.push(visibility * spectral.imaging_weight());
+            }
+        }
+        if unit_prediction.len() != expected_unit.len()
+            || first_prediction.len() != weighted_visibility.len()
+            || second_prediction.len() != first_prediction.len()
+            || sum_prediction.len() != first_prediction.len()
+        {
+            return Err(io::Error::other(
+                "T19 law probe did not preserve T18 contribution cardinality",
+            ));
+        }
+        for (actual, expected) in unit_prediction.iter().zip(expected_unit) {
+            self.unit_source_max_error =
+                self.unit_source_max_error.max((*actual - expected).norm());
+        }
+        for ((sum, first), second) in sum_prediction
+            .iter()
+            .zip(&first_prediction)
+            .zip(&second_prediction)
+        {
+            self.linearity_max_error = self
+                .linearity_max_error
+                .max((*sum - *first - *second).norm());
+        }
+        self.weighted_adjoint_left += first_prediction
+            .iter()
+            .zip(weighted_visibility)
+            .map(|(prediction, visibility)| prediction.conj() * visibility)
+            .sum::<num_complex::Complex64>();
+        self.blocks += 1;
+        Ok(first_prediction.len())
+    }
+}
+
+fn complete_data_adjoint_model() -> Vec<num_complex::Complex64> {
+    (0..8 * 8)
+        .map(|index| num_complex::Complex64::new(index as f64 * 0.01 - 0.2, index as f64 * -0.003))
+        .collect()
+}
+
+const fn complete_data_parallel_hand(correlation: CorrelationType) -> bool {
+    matches!(
+        correlation,
+        CorrelationType::StokesI
+            | CorrelationType::LinearXx
+            | CorrelationType::LinearYy
+            | CorrelationType::CircularRr
+            | CorrelationType::CircularLl
+    )
+}
+
 struct RecordingExecutor {
     id: WorkImplementationId,
     failure: Option<&'static str>,
@@ -964,6 +1111,12 @@ struct RecordingExecutor {
     weighting_actual_source_residency: Option<SelectedObservationResidencyCertificate>,
     weighting_source_read: WorkNodeId,
     weighting_state: Mutex<WeightingExecutionState>,
+    complete_data_plan: Option<CompleteDataPlanFragment>,
+    complete_data_prepared: Mutex<Option<CompleteDataPreparedState>>,
+    complete_data_state: Mutex<Option<SerialMfsOperatorState>>,
+    complete_data_result: Mutex<Option<CompleteDataOperatorResult>>,
+    complete_data_prediction_count: AtomicUsize,
+    complete_data_laws: Mutex<CompleteDataLawEvidence>,
     weighting_source_sample_count: AtomicUsize,
     weighted_sample_count: AtomicUsize,
     weighting_reconciled: AtomicBool,
@@ -1055,7 +1208,15 @@ impl WorkImplementation for RecordingExecutor {
         if self.weighting_failure_node.as_ref() == Some(&context.node().id) {
             return Err(io::Error::other("weighting lifecycle execute failure"));
         }
-        if context.node().kind == WorkKind::ObservationRead {
+        if let Some(complete) = &self.complete_data_plan
+            && context.node().id == *complete.preparation_node()
+        {
+            let prepared = complete.prepare(context).map_err(io::Error::other)?;
+            *self
+                .complete_data_prepared
+                .lock()
+                .expect("complete-data preparation lock") = Some(prepared);
+        } else if context.node().kind == WorkKind::ObservationRead {
             let bound_problem = context
                 .selected_observation()
                 .expect("ObservationRead owns exact selected-observation authority");
@@ -1104,6 +1265,24 @@ impl WorkImplementation for RecordingExecutor {
             } else if let Some(fragment) = fragment.as_ref()
                 && context.node().id == *fragment.replay_node()
             {
+                if let Some(complete) = &self.complete_data_plan {
+                    let prepared = self
+                        .complete_data_prepared
+                        .lock()
+                        .expect("complete-data preparation lock")
+                        .take()
+                        .ok_or_else(|| io::Error::other("T19 FFT preparation did not run"))?;
+                    let operator = self
+                        .weighting_state
+                        .lock()
+                        .expect("weighting execution state lock")
+                        .begin_complete_data(context, complete, problem, prepared)
+                        .map_err(io::Error::other)?;
+                    *self
+                        .complete_data_state
+                        .lock()
+                        .expect("complete-data state lock") = Some(operator);
+                }
                 if self.reopen_weighting_before_replay {
                     let replacement = open_selected_observation(problem, &residency)?;
                     self.weighting_state
@@ -1120,6 +1299,23 @@ impl WorkImplementation for RecordingExecutor {
                     .traverse_replay(context, fragment, problem, |block| {
                         self.weighted_sample_count
                             .fetch_add(block.samples().count(), Ordering::SeqCst);
+                        if let Some(operator) = self
+                            .complete_data_state
+                            .lock()
+                            .expect("complete-data state lock")
+                            .as_mut()
+                        {
+                            let prediction_count = self
+                                .complete_data_laws
+                                .lock()
+                                .expect("complete-data law evidence lock")
+                                .observe(operator, block)?;
+                            self.complete_data_prediction_count
+                                .fetch_add(prediction_count, Ordering::SeqCst);
+                            operator
+                                .consume_weighted_block(block)
+                                .map_err(io::Error::other)?;
+                        }
                         Ok::<_, io::Error>(())
                     })
                     .map_err(io::Error::other)?;
@@ -1367,6 +1563,21 @@ impl WorkImplementation for RecordingExecutor {
                     let predecessor = state
                         .complete_replay(completion)
                         .map_err(io::Error::other)?;
+                    if let Some(operator) = self
+                        .complete_data_state
+                        .lock()
+                        .expect("complete-data state lock")
+                        .take()
+                    {
+                        let replay = state
+                            .replay_completion()
+                            .expect("completed replay retains terminal proof");
+                        let result = operator.complete(replay).map_err(io::Error::other)?;
+                        *self
+                            .complete_data_result
+                            .lock()
+                            .expect("complete-data result lock") = Some(result);
+                    }
                     self.weighting_owner_at_replay_fence
                         .store(state.has_retained_observation(), Ordering::SeqCst);
                     predecessor
@@ -6492,7 +6703,11 @@ fn multi_source_weighting_receipts_certified_aggregate_residency_through_release
 
 #[test]
 fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
-    let problem = compile(request(1)).expect("logical weighting compilation");
+    let problem = compile(request_with_geometry(
+        1,
+        geometry_with_shape_and_increment([3.0, 3.0], ImageShape::new(8, 8), [-1.0e-6, 1.0e-6]),
+    ))
+    .expect("logical weighting compilation");
     let weighting_plan = plan_weighting(
         &problem,
         WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
@@ -6519,6 +6734,16 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
     let physical = fragment
         .compose(&base)
         .expect("production weighting physical work");
+    let operator_plan = CompleteDataPlanFragment::new(
+        &problem,
+        weighting_plan.limits().max_block_samples(),
+        replay.clone(),
+    )
+    .expect("serial MFS runtime plan");
+    let preparation = operator_plan.preparation_node().clone();
+    let physical = operator_plan
+        .compose(&physical)
+        .expect("T19 resources compose onto T18 replay");
     let source = WorkNodeId::new("transaction-read");
     let retained_lifetime = ClaimLifetime::retained_until(release.clone());
     let retained_resources = physical.execution_dag().nodes()[&source]
@@ -6551,7 +6776,7 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
         .filter(|slot| !base.execution_dag().physical_slots().contains_key(*slot))
         .cloned()
         .collect::<BTreeSet<_>>();
-    let expected_uses = [&source, &generation, &replay, &release]
+    let expected_uses = [&source, &generation, &preparation, &replay, &release]
         .into_iter()
         .map(|node| {
             (
@@ -6579,6 +6804,7 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
     executor.id = pathlike_implementation.clone();
     executor.weighting_source_residency = Some(selected_content_residency(&problem));
     executor.weighting_plan = Some(weighting_plan);
+    executor.complete_data_plan = Some(operator_plan);
     let registry = TestRegistry {
         id: registry(3),
         metadata: implementation_metadata(&problem),
@@ -6604,9 +6830,9 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
     let receipt = receipts
         .open(provenance.attempt_id())
         .expect("weighting execution receipt");
-    assert_eq!(weighting_allocations.len(), 5);
+    assert_eq!(weighting_allocations.len(), 10);
     assert!(weighting_allocations.is_subset(&receipt.allocation_generation_identities()));
-    assert_eq!(weighting_slots.len(), 5);
+    assert_eq!(weighting_slots.len(), 10);
     assert!(weighting_slots.is_subset(&receipt.physical_slot_identities()));
     for (node, uses) in expected_uses {
         assert_eq!(receipt.allocation_uses(&node), Some(uses));
@@ -6679,6 +6905,75 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
         .executors
         .get(&pathlike_implementation)
         .expect("weighting executor");
+    let complete_data = executor
+        .complete_data_result
+        .lock()
+        .expect("complete-data result lock");
+    let complete_data = complete_data
+        .as_ref()
+        .expect("T18 replay mints T19 complete-data result");
+    assert_eq!(
+        complete_data.completion().sample_count(),
+        executor.weighted_sample_count.load(Ordering::SeqCst) as u64
+    );
+    assert_eq!(
+        complete_data.completion().block_count(),
+        complete_data.completion().sample_count()
+    );
+    assert_eq!(complete_data.primitives().shape(), [8, 8]);
+    assert!(complete_data.primitives().sum_weight() > 0.0);
+    assert!(
+        executor
+            .complete_data_prediction_count
+            .load(Ordering::SeqCst)
+            > 0
+    );
+    assert_eq!(
+        complete_data.completion().attempt_id(),
+        provenance.attempt_id()
+    );
+    assert_eq!(complete_data.completion().replay_node(), &replay);
+    assert_eq!(
+        complete_data.completion().problem_id(),
+        problem.problem_id()
+    );
+    assert_eq!(
+        complete_data.completion().geometry_id(),
+        problem.geometry().geometry_id()
+    );
+    assert_eq!(
+        complete_data.completion().numerics_id(),
+        problem.numerics_id()
+    );
+    let laws = executor
+        .complete_data_laws
+        .lock()
+        .expect("complete-data law evidence lock");
+    assert_eq!(laws.blocks as u64, complete_data.completion().block_count());
+    assert!(
+        laws.unit_source_max_error <= 1.0e-10,
+        "T18-authorized unit source error was {}",
+        laws.unit_source_max_error
+    );
+    assert!(
+        laws.linearity_max_error <= 1.0e-10,
+        "T18-authorized linearity error was {}",
+        laws.linearity_max_error
+    );
+    let weighted_adjoint_right = complete_data_adjoint_model()
+        .iter()
+        .zip(complete_data.primitives().dirty())
+        .map(|(model, dirty)| model.conj() * dirty)
+        .sum::<num_complex::Complex64>();
+    let adjoint_scale = laws
+        .weighted_adjoint_left
+        .norm()
+        .max(weighted_adjoint_right.norm())
+        .max(1.0);
+    assert!(
+        (laws.weighted_adjoint_left - weighted_adjoint_right).norm() <= 1.0e-9 * adjoint_scale,
+        "T18-authorized paired operators violated weighted adjointness"
+    );
     assert!(executor.weighting_reconciled.load(Ordering::SeqCst));
     assert!(executor.weighting_released.load(Ordering::SeqCst));
     assert!(!executor.weighting_cleanup_released.load(Ordering::SeqCst));

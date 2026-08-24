@@ -321,6 +321,11 @@ pub struct WeightingAlgorithmState {
 }
 
 impl WeightingAlgorithmState {
+    pub(crate) fn matches_problem(&self, problem: &CompiledProblem) -> bool {
+        self.problem == problem.problem_id()
+            && self.commitment == problem.weighting().commitment_id()
+    }
+
     /// Return the reconstruction algorithm identity for runtime authorization.
     #[must_use]
     pub const fn generation_id(&self) -> WeightingGenerationId {
@@ -355,6 +360,12 @@ impl WeightingAlgorithmState {
     #[must_use]
     pub const fn generation_residency(&self) -> WeightingResidency {
         self.generation_residency
+    }
+
+    /// Return the maximum selected samples in one planned replay block.
+    #[must_use]
+    pub const fn max_replay_block_samples(&self) -> usize {
+        self.planned_residency.weighted_block_bytes / std::mem::size_of::<WeightingSampleValue>()
     }
 
     /// Begin one bounded weighted replay callback phase.
@@ -1502,10 +1513,11 @@ fn hash_usize(hasher: &mut Sha256, value: usize) {
     hasher.update((value as u128).to_be_bytes());
 }
 
-struct CoverageEncoder(Sha256);
+#[derive(Debug)]
+pub(super) struct CoverageEncoder(Sha256);
 
 impl CoverageEncoder {
-    fn new(generation: WeightingGenerationId) -> Self {
+    pub(super) fn new(generation: WeightingGenerationId) -> Self {
         let mut hasher = Sha256::new();
         hasher.update(COVERAGE_DOMAIN);
         hasher.update(COVERAGE_VERSION.to_be_bytes());
@@ -1513,7 +1525,7 @@ impl CoverageEncoder {
         Self(hasher)
     }
 
-    fn push(&mut self, weighted: &WeightingSampleValue) {
+    pub(super) fn push(&mut self, weighted: &WeightingSampleValue) {
         let sample = weighted.selected();
         self.0
             .update(sample.address.measurement_set.identity().as_bytes());
@@ -1537,7 +1549,7 @@ impl CoverageEncoder {
         self.0.update([count]);
     }
 
-    fn finish(mut self, sample_count: u64) -> WeightingReplayCoverageId {
+    pub(super) fn finish(mut self, sample_count: u64) -> WeightingReplayCoverageId {
         self.0.update(sample_count.to_be_bytes());
         WeightingReplayCoverageId(LogicalIdentity::from_sha256(self.0.finalize().into()))
     }

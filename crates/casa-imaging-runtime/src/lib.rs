@@ -2,6 +2,7 @@
 #![warn(missing_docs)]
 //! Plan-bound imaging execution, process resource arbitration, and leases.
 
+mod complete_data_operator;
 mod cost_model;
 mod execution;
 mod execution_bindings;
@@ -26,6 +27,12 @@ pub use execution_bindings::{
     WorkMeasurements, plan, run,
 };
 
+pub use casa_imaging_reconstruction::ContinuumPrimitiveCatalog;
+pub use complete_data_operator::{
+    CompleteDataOperatorCompletion, CompleteDataOperatorError, CompleteDataOperatorResult,
+    CompleteDataPlanError, CompleteDataPlanFragment, CompleteDataPreparedState,
+    CompleteDataResidency, SerialMfsOperatorState,
+};
 pub use cost_model::{
     PlannerCostModelProfileBootstrap, PlannerCostModelProfileRecord, ProfileEvidenceEntry,
     ProfilePromotionError, ProfileReview, open_cost_model_profile, promote_cost_model_profile,

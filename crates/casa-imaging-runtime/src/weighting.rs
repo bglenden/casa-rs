@@ -5,7 +5,7 @@
 use std::{collections::BTreeSet, error::Error, fmt, mem::align_of};
 
 use casa_imaging_model::{
-    CompiledProblem, SelectedObservationGenerationId, SelectedObservationSample,
+    CompiledProblem, CompiledProblemId, SelectedObservationGenerationId, SelectedObservationSample,
     SelectedSpectralContribution,
 };
 use casa_imaging_reconstruction::{
@@ -458,6 +458,7 @@ impl<'a> WeightingPlanFragment<'a> {
                 problem,
                 residency: &self.source_resources.residency,
                 queue: &self.source_resources.queue,
+                source_allocations: &self.source_resources.allocations,
             },
         )?;
         Ok(&self.source_resources.residency)
@@ -483,6 +484,7 @@ impl<'a> WeightingPlanFragment<'a> {
                 problem,
                 residency: actual,
                 queue: &self.source_resources.queue,
+                source_allocations: &self.source_resources.allocations,
             },
         )
     }
@@ -504,6 +506,7 @@ impl<'a> WeightingPlanFragment<'a> {
                 problem,
                 residency: &self.source_resources.residency,
                 queue: &self.source_resources.queue,
+                source_allocations: &self.source_resources.allocations,
             },
         )?;
         let predecessor = context
@@ -545,6 +548,7 @@ impl<'a> WeightingPlanFragment<'a> {
                 problem,
                 residency: &self.source_resources.residency,
                 queue: &self.source_resources.queue,
+                source_allocations: &self.source_resources.allocations,
             },
         )?;
         let predecessor = context
@@ -678,6 +682,20 @@ enum WeightingExecutionPhase {
 }
 
 impl WeightingExecutionState {
+    /// Begin the T19 owner from the exact frozen generation and replay lease.
+    pub fn begin_complete_data(
+        &self,
+        context: WorkExecutionContext<'_>,
+        fragment: &crate::CompleteDataPlanFragment,
+        problem: &CompiledProblem,
+        prepared: crate::CompleteDataPreparedState,
+    ) -> Result<crate::SerialMfsOperatorState, crate::CompleteDataPlanError> {
+        let WeightingExecutionPhase::Frozen(frozen) = &self.phase else {
+            return Err(crate::CompleteDataPlanError::MissingFrozenWeighting);
+        };
+        fragment.begin(context, problem, &frozen.state, prepared)
+    }
+
     /// Construct an empty lifecycle before the generation node is dispatched.
     #[must_use]
     pub const fn new() -> Self {
@@ -1221,6 +1239,7 @@ enum WeightingWorkContract<'a> {
         problem: &'a CompiledProblem,
         residency: &'a SelectedObservationResidencyCertificate,
         queue: &'a LeaseResource,
+        source_allocations: &'a BTreeSet<AllocationId>,
     },
     Release,
 }
@@ -1237,12 +1256,13 @@ fn validate_work_authority(
                 problem,
                 residency,
                 queue,
+                source_allocations,
             } => (
                 WorkKind::ObservationRead,
                 WorkDomain::Io,
                 Some(problem),
                 ClaimLifetime::through_fence(FenceKind::Io),
-                Some((residency, queue)),
+                Some((residency, queue, source_allocations)),
             ),
             WeightingWorkContract::Release => (
                 WorkKind::Release,
@@ -1285,7 +1305,7 @@ fn validate_work_authority(
     {
         return Err(WeightingEvidenceError);
     }
-    if let Some((residency, queue)) = selected_content_budget {
+    if let Some((residency, queue, source_allocations)) = selected_content_budget {
         if !residency
             .matches_problem(problem.expect("selected traversal always carries a compiled problem"))
         {
@@ -1295,14 +1315,10 @@ fn validate_work_authority(
             .map_err(|_| WeightingEvidenceError)?;
         let required_blocks =
             u64::try_from(residency.peak_live_blocks()).map_err(|_| WeightingEvidenceError)?;
-        let expected_ids = expected_allocations
-            .iter()
-            .map(|spec| &spec.allocation)
-            .collect::<BTreeSet<_>>();
         let source_capacity = context
             .allocations()
             .iter()
-            .filter(|capability| !expected_ids.contains(capability.allocation()))
+            .filter(|capability| source_allocations.contains(capability.allocation()))
             .try_fold(0_u64, |total, capability| {
                 total.checked_add(capability.capacity_bytes())
             })
@@ -1325,7 +1341,14 @@ fn validate_work_authority(
             .next()
             .is_some_and(|capability| capability.amount() == required_blocks)
             && queue_capabilities.next().is_none();
-        if read_buffer_bytes != required_bytes
+        if source_allocations.is_empty()
+            || context
+                .allocations()
+                .iter()
+                .filter(|capability| source_allocations.contains(capability.allocation()))
+                .count()
+                != source_allocations.len()
+            || read_buffer_bytes != required_bytes
             || source_capacity != required_bytes
             || !queue_capability_covers
             || !queue_demand_covers(context.resource_alternative(), queue, required_blocks)
@@ -1583,19 +1606,12 @@ impl WeightedObservationSample<'_> {
 #[derive(Debug)]
 pub struct WeightedObservationBlock {
     generation: WeightingGenerationId,
-    sequence: u64,
-    samples: Vec<ReconstructionWeightedSample>,
+    block: ReconstructionWeightedBlock,
 }
 
 impl WeightedObservationBlock {
     fn authorize(generation: WeightingGenerationId, block: ReconstructionWeightedBlock) -> Self {
-        let sequence = block.sequence();
-        let samples = block.into_samples();
-        Self {
-            generation,
-            sequence,
-            samples,
-        }
+        Self { generation, block }
     }
 
     /// Return the frozen W generation authorizing every sample.
@@ -1607,15 +1623,22 @@ impl WeightedObservationBlock {
     /// Return the zero-based replay block sequence.
     #[must_use]
     pub const fn sequence(&self) -> u64 {
-        self.sequence
+        self.block.sequence()
     }
 
     /// Iterate over weighted samples for synchronous bounded consumption.
     pub fn samples(&self) -> impl Iterator<Item = WeightedObservationSample<'_>> {
-        self.samples.iter().map(|sample| WeightedObservationSample {
-            sample,
-            generation: self.generation,
-        })
+        self.block
+            .samples()
+            .iter()
+            .map(|sample| WeightedObservationSample {
+                sample,
+                generation: self.generation,
+            })
+    }
+
+    pub(crate) const fn reconstruction_block(&self) -> &ReconstructionWeightedBlock {
+        &self.block
     }
 }
 
@@ -1867,6 +1890,7 @@ impl PendingWeightingReplay {
             ));
         }
         let selected_generation = self.owner_completion.generation_id();
+        let problem = self.owner_completion.problem_id();
         let sample_count = self.owner_completion.sample_count();
         let owner_completion = context
             .bind(self.owner_completion)
@@ -1874,6 +1898,7 @@ impl PendingWeightingReplay {
         Ok((
             WeightingReplayCompletion {
                 state: self.state,
+                problem,
                 selected_generation,
                 sample_count,
                 binding: self.binding,
@@ -1887,12 +1912,23 @@ impl PendingWeightingReplay {
 #[derive(Debug)]
 pub struct WeightingReplayCompletion {
     state: WeightingReplaySummary,
+    problem: CompiledProblemId,
     selected_generation: SelectedObservationGenerationId,
     sample_count: u64,
     binding: WeightingGenerationBinding,
 }
 
 impl WeightingReplayCompletion {
+    pub(crate) const fn reconstruction_summary(&self) -> &WeightingReplaySummary {
+        &self.state
+    }
+
+    /// Return the exact Compiled Problem whose T17 traversal produced this replay.
+    #[must_use]
+    pub const fn problem_id(&self) -> CompiledProblemId {
+        self.problem
+    }
+
     /// Return the unique replay identity.
     #[must_use]
     pub const fn replay_id(&self) -> WeightingReplayId {

@@ -127,12 +127,12 @@ ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256 = (
     "4589711ae6224b94916d05e214df510fab5ba01a16e21a0b913b4b851c1d0e89"
 )
 ACCEPTED_MATRIX_ROWS_SHA256 = (
-    "d67425376a6ad1dcf3fb2389d174996d2e97c477db8188944520d279e39343dc"
+    "da2f7bd73c6d7f6a6108272c37d8582afc54f27e927212a4773dd06635acbf79"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "10dcbe7c8a7f0747951c954cfddbc17fd9d7c2e3092cbfd3c931affadf10ad23"
+    "3048d1868a8082d358a5f417e54009ca74e147354c624f859aff30e0ecdcc6d5"
 )
-ACCEPTED_MATRIX_CONTRACT_REVISION = 27
+ACCEPTED_MATRIX_CONTRACT_REVISION = 30
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "scientific-products-v1",
@@ -3246,7 +3246,7 @@ def validate_t18_global_weighting_sources(
     take_block = rust_function_body(weighting, "take_input_block", weighting_path)
     if (
         block_fields.get("generation") != "WeightingGenerationId"
-        or block_fields.get("samples") != "Vec<ReconstructionWeightedSample>"
+        or block_fields.get("block") != "ReconstructionWeightedBlock"
         or replay_chunk_fields.get("samples") != "Vec<WeightingSampleValue>"
         or replay_input_fields
         != {
