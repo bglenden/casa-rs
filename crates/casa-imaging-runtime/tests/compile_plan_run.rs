@@ -5,6 +5,7 @@ use std::{
     error::Error,
     fs, io,
     path::{Path, PathBuf},
+    process::Command,
     sync::{
         Arc, Condvar, Mutex, OnceLock,
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -34,7 +35,9 @@ use casa_imaging_model::{
     SpectralSampling, SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct,
     WeightDensityScope, WeightingContract, WeightingScheme, compile,
 };
-use casa_imaging_reconstruction::ExecutableModelProblem;
+use casa_imaging_reconstruction::{
+    ExecutableModelProblem, WeightingExecutionLimits, WeightingPlan, plan_weighting,
+};
 use casa_imaging_runtime::{
     AdaptationId, AdaptationTransition, AllocationAccess, AllocationId, AllocationLayout,
     AllocationLifetime, AllocationPurpose, AllocationUse, AlternativeId, ArtifactDisposition,
@@ -64,14 +67,15 @@ use casa_imaging_runtime::{
     RedactedPath, ResourceAuthority, ResourceClaim, ResourceError, ResourceHeadroom,
     ResourceMeasurement, ResourceOverride, ResourcePolicy, ResourceTopology, RunBindings,
     RunController, RunDirective, RunError, RunToCompletion, RuntimeOverheadDemand, ScalingMetadata,
-    SlotCompatibility, StagePrediction, StorageDomain, StorageDomainId, StorageMode,
-    StorageUseKind, WorkDependency, WorkDomain, WorkExecutionContext, WorkImplementation,
-    WorkImplementationId, WorkKind, WorkMeasurements, WorkNode, WorkNodeId, plan as runtime_plan,
-    run as runtime_run,
+    SelectedObservationSourceResources, SlotCompatibility, StagePrediction, StorageDomain,
+    StorageDomainId, StorageMode, StorageUseKind, WeightingExecutionState, WeightingPlanFragment,
+    WorkDependency, WorkDomain, WorkExecutionContext, WorkImplementation, WorkImplementationId,
+    WorkKind, WorkMeasurements, WorkNode, WorkNodeId, plan as runtime_plan, run as runtime_run,
 };
 use casa_ms::{
     BoundSelectedObservation, ObservationSourceBinding, SelectedObservationCompletion,
     SelectedObservationContentBudget, SelectedObservationMeasures,
+    SelectedObservationResidencyCertificate,
 };
 
 fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
@@ -96,7 +100,70 @@ mod common;
 
 mod walking_skeleton;
 
-use common::{identity, model_lifecycle, problem_inputs};
+use common::{identity, model_lifecycle, problem_inputs, problem_inputs_with_source_count};
+
+const SELECTED_CONTENT_BYTES: usize = 128 * 1024;
+
+const fn selected_content_budget() -> SelectedObservationContentBudget {
+    SelectedObservationContentBudget::new(SELECTED_CONTENT_BYTES, 1, 4)
+}
+
+fn selected_content_allocations() -> BTreeSet<AllocationId> {
+    BTreeSet::from([AllocationId::new("selected-observation-source-buffer")])
+}
+
+fn selected_content_queue() -> LeaseResource {
+    LeaseResource::Queue {
+        demand_id: "transaction-io-queue".to_string(),
+    }
+}
+
+fn selected_observation_bindings(
+    problem: &casa_imaging_model::CompiledProblem,
+    mut budget: impl FnMut(usize) -> SelectedObservationContentBudget,
+) -> Vec<ObservationSourceBinding> {
+    problem
+        .inputs()
+        .observation_snapshot()
+        .sources()
+        .iter()
+        .enumerate()
+        .map(|(source_index, source)| {
+            ObservationSourceBinding::new(
+                ObservationSourceState::new(
+                    source.identity(),
+                    source.selection().rows().clone(),
+                    source.generations().clone(),
+                ),
+                budget(source_index),
+            )
+        })
+        .collect()
+}
+
+fn selected_content_residency(
+    problem: &casa_imaging_model::CompiledProblem,
+) -> SelectedObservationResidencyCertificate {
+    selected_content_residency_with(problem, |_| selected_content_budget())
+}
+
+fn selected_content_residency_with(
+    problem: &casa_imaging_model::CompiledProblem,
+    budget: impl FnMut(usize) -> SelectedObservationContentBudget,
+) -> SelectedObservationResidencyCertificate {
+    let bindings = selected_observation_bindings(problem, budget);
+    BoundSelectedObservation::certify_residency(problem, &bindings)
+        .expect("owner-certified selected-content residency")
+}
+
+fn selected_content_resources(
+    problem: &casa_imaging_model::CompiledProblem,
+) -> SelectedObservationSourceResources {
+    let residency = selected_content_residency(problem);
+    let allocations = selected_content_allocations();
+    let queue = selected_content_queue();
+    SelectedObservationSourceResources::new(residency, allocations, queue)
+}
 
 fn only_receipt_path(root: &Path) -> PathBuf {
     let mut entries = fs::read_dir(root)
@@ -310,6 +377,160 @@ fn with_forged_audit_field(mut document: String, field: &str, value: &str) -> St
     with_current_payload_checksum(document)
 }
 
+#[derive(Clone, Copy, Debug)]
+enum RetainedClaimTamper {
+    RemoveClaim,
+    ChangeAmount,
+    WrongRelease,
+    AddUnorderedUse,
+    AddPostReleaseUse,
+    ChangeDagIdentity,
+}
+
+fn with_retained_claim_tamper(document: &str, tamper: RetainedClaimTamper) -> String {
+    let value: serde_json::Value = serde_json::from_str(document).expect("receipt JSON");
+    let plan = value["receipt"]["plan"]
+        .as_object()
+        .expect("typed plan projection");
+    let mut document = document.to_owned();
+    if matches!(tamper, RetainedClaimTamper::ChangeDagIdentity) {
+        let marker = "\"dag_identity\": \"";
+        let start = document.find(marker).expect("DAG identity") + marker.len();
+        document.replace_range(start..start + 64, &"f".repeat(64));
+    } else {
+        let nodes = plan["nodes"]
+            .as_array()
+            .expect("typed work-node projections");
+        let retained_nodes = nodes
+            .iter()
+            .filter(|node| {
+                node["claims"]
+                    .as_array()
+                    .expect("typed resource claims")
+                    .iter()
+                    .any(|claim| {
+                        claim["lifetime"]
+                            .as_str()
+                            .is_some_and(|value| value.starts_with("retained_until:"))
+                    })
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            retained_nodes.len() >= 4,
+            "weighting retained-claim topology"
+        );
+        let retained_marker = "\"lifetime\": \"retained_until:";
+        let lifetime_start = document
+            .find(retained_marker)
+            .expect("serialized retained claim");
+        let claim_start = document[..lifetime_start]
+            .rfind('{')
+            .expect("retained claim object");
+        let claim_end = document[lifetime_start..]
+            .find('}')
+            .map(|offset| lifetime_start + offset + 1)
+            .expect("retained claim object end");
+        match tamper {
+            RetainedClaimTamper::RemoveClaim => {
+                let mut end = claim_end;
+                while document
+                    .as_bytes()
+                    .get(end)
+                    .is_some_and(u8::is_ascii_whitespace)
+                {
+                    end += 1;
+                }
+                if document.as_bytes().get(end) == Some(&b',') {
+                    end += 1;
+                    document.replace_range(claim_start..end, "");
+                } else {
+                    let mut start = claim_start;
+                    while start > 0
+                        && document
+                            .as_bytes()
+                            .get(start - 1)
+                            .is_some_and(u8::is_ascii_whitespace)
+                    {
+                        start -= 1;
+                    }
+                    assert_eq!(document.as_bytes().get(start - 1), Some(&b','));
+                    document.replace_range(start - 1..claim_end, "");
+                }
+            }
+            RetainedClaimTamper::ChangeAmount => {
+                let marker = "\"amount\": ";
+                let start = document[claim_start..lifetime_start]
+                    .find(marker)
+                    .map(|offset| claim_start + offset + marker.len())
+                    .expect("retained claim amount");
+                let end = document[start..]
+                    .find(',')
+                    .map(|offset| start + offset)
+                    .expect("retained claim amount end");
+                let amount = document[start..end]
+                    .parse::<u64>()
+                    .expect("numeric retained claim amount");
+                document.replace_range(start..end, &(amount + 1).to_string());
+            }
+            RetainedClaimTamper::WrongRelease => {
+                let wrong_release = nodes
+                    .iter()
+                    .find(|node| node["kind"] != "release")
+                    .and_then(|node| node["node_id"].as_str())
+                    .expect("non-release node")
+                    .to_owned();
+                let start = lifetime_start + retained_marker.len();
+                let end = document[start..]
+                    .find('"')
+                    .map(|offset| start + offset)
+                    .expect("retained release end");
+                document.replace_range(start..end, &wrong_release);
+            }
+            RetainedClaimTamper::AddUnorderedUse | RetainedClaimTamper::AddPostReleaseUse => {
+                let claim = document[claim_start..claim_end].to_owned();
+                let release_start = lifetime_start + retained_marker.len();
+                let release = document[release_start..]
+                    .split('"')
+                    .next()
+                    .expect("retained release");
+                let release_event = format!("work:{release}");
+                let target = if matches!(tamper, RetainedClaimTamper::AddUnorderedUse) {
+                    nodes.iter().find(|node| {
+                        node["kind"] == "serialization"
+                            && node["claims"]
+                                .as_array()
+                                .is_some_and(|claims| !claims.is_empty())
+                    })
+                } else {
+                    nodes.iter().find(|node| {
+                        node["dependencies"].as_array().is_some_and(|dependencies| {
+                            dependencies
+                                .iter()
+                                .any(|dependency| dependency == &release_event)
+                        }) && node["claims"]
+                            .as_array()
+                            .is_some_and(|claims| !claims.is_empty())
+                    })
+                }
+                .and_then(|node| node["node_id"].as_str())
+                .expect("unexpected retained-claim target with claims");
+                let target_marker = format!("\"node_id\": \"{target}\"");
+                let target_start = document
+                    .find(&target_marker)
+                    .expect("target node projection");
+                let claims_marker = "\"claims\": [";
+                let insertion = document[target_start..]
+                    .find(claims_marker)
+                    .map(|offset| target_start + offset + claims_marker.len())
+                    .expect("target claims projection");
+                document.insert_str(insertion, &format!("\n{claim},"));
+            }
+            RetainedClaimTamper::ChangeDagIdentity => unreachable!(),
+        }
+    }
+    with_current_payload_checksum(document)
+}
+
 fn geometry(reference_pixel: f64) -> GeometryInput {
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
@@ -363,6 +584,19 @@ fn geometry(reference_pixel: f64) -> GeometryInput {
 
 fn request(observation: u8) -> ImagingRequest {
     request_with_geometry_and_references(observation, geometry(255.0), default_references())
+}
+
+fn request_with_source_count(observation: u8, source_count: usize) -> ImagingRequest {
+    request_with_geometry_references_weighting_products_model_write_input_and_source_count(
+        observation,
+        geometry(255.0),
+        default_references(),
+        WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
+        vec![ProductKind::Psf],
+        ModelColumnWrite::Disabled,
+        ModelStateIdentity::Empty,
+        source_count,
+    )
 }
 
 fn request_with_geometry(observation: u8, geometry: GeometryInput) -> ImagingRequest {
@@ -487,6 +721,29 @@ fn request_with_geometry_references_weighting_products_model_write_and_input(
     model_column_write: ModelColumnWrite,
     model: ModelStateIdentity,
 ) -> ImagingRequest {
+    request_with_geometry_references_weighting_products_model_write_input_and_source_count(
+        observation,
+        geometry,
+        references,
+        weighting,
+        products,
+        model_column_write,
+        model,
+        1,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn request_with_geometry_references_weighting_products_model_write_input_and_source_count(
+    observation: u8,
+    geometry: GeometryInput,
+    references: Vec<(ReferenceDataKind, casa_imaging_model::LogicalIdentity)>,
+    weighting: WeightingContract,
+    products: Vec<ProductKind>,
+    model_column_write: ModelColumnWrite,
+    model: ModelStateIdentity,
+    source_count: usize,
+) -> ImagingRequest {
     let numerics = NumericsContract::new(
         vec![NumericPrecision::F64],
         ReductionPolicy::Compensated,
@@ -526,7 +783,7 @@ fn request_with_geometry_references_weighting_products_model_write_and_input(
     ImagingRequest::new(
         specification,
         geometry,
-        problem_inputs(observation, references, model),
+        problem_inputs_with_source_count(observation, references, model, source_count),
         model_lifecycle(model),
     )
 }
@@ -574,6 +831,8 @@ fn recording_executor(
         visible_generation: None,
         failure_node: None,
         fence_failure_event: None,
+        weighting_failure_node: None,
+        weighting_fence_failure_event: None,
         publication_failure: None,
         generic_source_access: None,
         initial_consistency_expected: None,
@@ -583,9 +842,24 @@ fn recording_executor(
         publication_pause: None,
         publication_probe: None,
         observation_completions: None,
+        delivered_observation_completions: None,
         observation_completion_failure: None,
         bind_foreign_observation_completion: false,
         selected_observation_completion: Mutex::new(None),
+        reopen_weighting_before_replay: false,
+        weighting_plan: None,
+        weighting_source_residency: None,
+        weighting_actual_source_residency: None,
+        weighting_source_read: WorkNodeId::new("transaction-read"),
+        weighting_state: Mutex::new(WeightingExecutionState::new()),
+        weighting_source_sample_count: AtomicUsize::new(0),
+        weighted_sample_count: AtomicUsize::new(0),
+        weighting_reconciled: AtomicBool::new(false),
+        weighting_released: AtomicBool::new(false),
+        weighting_cleanup_released: AtomicBool::new(false),
+        weighting_owner_at_replay_fence: AtomicBool::new(false),
+        weighting_owner_at_reconciliation: AtomicBool::new(false),
+        weighting_owner_at_release: AtomicBool::new(false),
     }
 }
 
@@ -617,7 +891,8 @@ struct RecordedObservationCompletion {
     lease_epoch: u64,
 }
 
-#[derive(Debug)]
+type DeliveredObservationCompletions = Arc<Mutex<Vec<(WorkNodeId, WorkNodeId)>>>;
+
 struct RecordingExecutor {
     id: WorkImplementationId,
     failure: Option<&'static str>,
@@ -633,6 +908,8 @@ struct RecordingExecutor {
     visible_generation: Option<Arc<AtomicUsize>>,
     failure_node: Option<&'static str>,
     fence_failure_event: Option<(&'static str, FenceKind)>,
+    weighting_failure_node: Option<WorkNodeId>,
+    weighting_fence_failure_event: Option<(WorkNodeId, FenceKind)>,
     publication_failure: Option<&'static str>,
     generic_source_access: Option<Arc<AtomicBool>>,
     initial_consistency_expected: Option<(ObservationTransactionId, Arc<AtomicBool>)>,
@@ -642,9 +919,24 @@ struct RecordingExecutor {
     publication_pause: Option<Arc<PublicationPause>>,
     publication_probe: Option<PublicationProbe>,
     observation_completions: Option<Arc<Mutex<Vec<RecordedObservationCompletion>>>>,
+    delivered_observation_completions: Option<DeliveredObservationCompletions>,
     observation_completion_failure: Option<&'static str>,
     bind_foreign_observation_completion: bool,
     selected_observation_completion: Mutex<Option<SelectedObservationCompletion>>,
+    reopen_weighting_before_replay: bool,
+    weighting_plan: Option<WeightingPlan>,
+    weighting_source_residency: Option<SelectedObservationResidencyCertificate>,
+    weighting_actual_source_residency: Option<SelectedObservationResidencyCertificate>,
+    weighting_source_read: WorkNodeId,
+    weighting_state: Mutex<WeightingExecutionState>,
+    weighting_source_sample_count: AtomicUsize,
+    weighted_sample_count: AtomicUsize,
+    weighting_reconciled: AtomicBool,
+    weighting_released: AtomicBool,
+    weighting_cleanup_released: AtomicBool,
+    weighting_owner_at_replay_fence: AtomicBool,
+    weighting_owner_at_reconciliation: AtomicBool,
+    weighting_owner_at_release: AtomicBool,
 }
 
 #[derive(Debug)]
@@ -653,6 +945,56 @@ struct PublicationProbe {
     attempt: casa_imaging_runtime::ExecutionAttemptId,
     prepared_observed: Arc<AtomicBool>,
     publication_calls: Arc<AtomicUsize>,
+}
+
+impl RecordingExecutor {
+    fn weighting_fragment(&self) -> Option<WeightingPlanFragment<'_>> {
+        self.weighting_plan.as_ref().map(|plan| {
+            WeightingPlanFragment::new(
+                plan,
+                self.weighting_source_read.clone(),
+                SelectedObservationSourceResources::new(
+                    self.weighting_source_residency
+                        .clone()
+                        .expect("weighting executor source residency"),
+                    selected_content_allocations(),
+                    selected_content_queue(),
+                ),
+                self.id.clone(),
+                self.id.clone(),
+                self.id.clone(),
+            )
+        })
+    }
+}
+
+fn open_selected_observation(
+    problem: &casa_imaging_model::CompiledProblem,
+    residency: &SelectedObservationResidencyCertificate,
+) -> io::Result<BoundSelectedObservation> {
+    let sources = problem.inputs().observation_snapshot().sources();
+    let mut budgets = Vec::with_capacity(sources.len());
+    for source in sources {
+        budgets.push(
+            residency
+                .content_budget(source.identity())
+                .ok_or_else(|| io::Error::other("residency certificate omits source"))?,
+        );
+    }
+    let bindings = selected_observation_bindings(problem, |index| budgets[index]);
+    let measures_identity = problem
+        .inputs()
+        .reference_data()
+        .iter()
+        .find_map(|(kind, identity)| (*kind == ReferenceDataKind::Measures).then_some(*identity))
+        .ok_or_else(|| io::Error::other("ObservationRead has no Measures identity"))?;
+    let measures = SelectedObservationMeasures::new(
+        casa_test_support::deterministic_measures_provider_for_identity(
+            measures_identity.as_bytes(),
+        ),
+    )
+    .map_err(io::Error::other)?;
+    BoundSelectedObservation::open(problem, measures, bindings).map_err(io::Error::other)
 }
 
 impl WorkImplementation for RecordingExecutor {
@@ -675,6 +1017,9 @@ impl WorkImplementation for RecordingExecutor {
         if self.failure_node == Some(context.node().id.as_str()) {
             return Err(io::Error::other("stateful transaction execute failure"));
         }
+        if self.weighting_failure_node.as_ref() == Some(&context.node().id) {
+            return Err(io::Error::other("weighting lifecycle execute failure"));
+        }
         if context.node().kind == WorkKind::ObservationRead {
             let bound_problem = context
                 .selected_observation()
@@ -684,45 +1029,148 @@ impl WorkImplementation for RecordingExecutor {
                 .then(|| compile(request(2)).map_err(io::Error::other))
                 .transpose()?;
             let problem = foreign_problem.as_ref().unwrap_or(bound_problem);
-            let bindings = problem
-                .inputs()
-                .observation_snapshot()
-                .sources()
-                .iter()
-                .map(|source| {
-                    ObservationSourceBinding::new(
-                        ObservationSourceState::new(
-                            source.identity(),
-                            source.selection().rows().clone(),
-                            source.generations().clone(),
-                        ),
-                        SelectedObservationContentBudget::new(4 * 1024 * 1024, 1, 4),
-                    )
+            let fragment = self.weighting_fragment();
+            let mut residency = fragment
+                .as_ref()
+                .filter(|fragment| {
+                    context.node().id == *fragment.generation_node()
+                        || context.node().id == *fragment.replay_node()
                 })
-                .collect();
-            let measures_identity = problem
-                .inputs()
-                .reference_data()
-                .iter()
-                .find_map(|(kind, identity)| {
-                    (*kind == ReferenceDataKind::Measures).then_some(*identity)
-                })
-                .ok_or_else(|| io::Error::other("ObservationRead has no Measures identity"))?;
-            let measures = SelectedObservationMeasures::new(
-                casa_test_support::deterministic_measures_provider_for_identity(
-                    measures_identity.as_bytes(),
-                ),
-            )
-            .map_err(io::Error::other)?;
-            let mut observation = BoundSelectedObservation::open(problem, measures, bindings)
-                .map_err(io::Error::other)?;
-            let completion = observation
-                .traverse(problem, |_| Ok::<_, io::Error>(()))
-                .map_err(io::Error::other)?;
-            *self
-                .selected_observation_completion
-                .lock()
-                .expect("selected-observation completion lock") = Some(completion);
+                .map_or_else(
+                    || {
+                        Ok::<_, io::Error>(
+                            self.weighting_source_residency
+                                .clone()
+                                .unwrap_or_else(|| selected_content_residency(problem)),
+                        )
+                    },
+                    |fragment| {
+                        fragment
+                            .selected_observation_residency(context, problem)
+                            .cloned()
+                            .map_err(io::Error::other)
+                    },
+                )?;
+            if fragment
+                .as_ref()
+                .is_some_and(|fragment| context.node().id == *fragment.source_read_node())
+                && let Some(actual) = &self.weighting_actual_source_residency
+            {
+                residency = actual.clone();
+            }
+            if let Some(fragment) = fragment.as_ref()
+                && context.node().id == *fragment.generation_node()
+            {
+                self.weighting_state
+                    .lock()
+                    .expect("weighting execution state lock")
+                    .traverse_generation(context, fragment, problem)
+                    .map_err(io::Error::other)?;
+            } else if let Some(fragment) = fragment.as_ref()
+                && context.node().id == *fragment.replay_node()
+            {
+                if self.reopen_weighting_before_replay {
+                    let replacement = open_selected_observation(problem, &residency)?;
+                    self.weighting_state
+                        .lock()
+                        .expect("weighting execution state lock")
+                        .traverse_and_retain_source(context, fragment, replacement, problem, |_| {
+                            Ok::<_, io::Error>(())
+                        })
+                        .map_err(io::Error::other)?;
+                }
+                self.weighting_state
+                    .lock()
+                    .expect("weighting execution state lock")
+                    .traverse_replay(context, fragment, problem, |block| {
+                        self.weighted_sample_count
+                            .fetch_add(block.samples().count(), Ordering::SeqCst);
+                        Ok::<_, io::Error>(())
+                    })
+                    .map_err(io::Error::other)?;
+            } else {
+                let observation = open_selected_observation(problem, &residency)?;
+                let completion = if let Some(fragment) = fragment.as_ref()
+                    && context.node().id == *fragment.source_read_node()
+                {
+                    self.weighting_state
+                        .lock()
+                        .expect("weighting execution state lock")
+                        .traverse_and_retain_source(context, fragment, observation, problem, |_| {
+                            self.weighting_source_sample_count
+                                .fetch_add(1, Ordering::SeqCst);
+                            Ok::<_, io::Error>(())
+                        })
+                        .map_err(io::Error::other)?
+                } else {
+                    let mut observation = observation;
+                    observation
+                        .traverse(problem, |_| Ok::<_, io::Error>(()))
+                        .map_err(io::Error::other)?
+                };
+                *self
+                    .selected_observation_completion
+                    .lock()
+                    .expect("selected-observation completion lock") = Some(completion);
+            }
+        } else if let Some(delivered) = &self.delivered_observation_completions {
+            let owner = WorkNodeId::new("transaction-read");
+            if let Some(completion) = context.predecessor_observation_completion(&owner) {
+                assert_eq!(completion.owner_node(), &owner);
+                assert!(
+                    context
+                        .predecessor_observation_completion(&WorkNodeId::new("not-a-predecessor"))
+                        .is_none(),
+                    "attempt evidence must not escape its explicit dependency edge"
+                );
+                delivered
+                    .lock()
+                    .expect("delivered observation completion lock")
+                    .push((context.node().id.clone(), owner));
+            }
+        }
+        if let Some(fragment) = self.weighting_fragment() {
+            if context.node().id == *fragment.release_node() {
+                self.weighting_owner_at_release.store(
+                    self.weighting_state
+                        .lock()
+                        .expect("weighting execution state lock")
+                        .has_retained_observation(),
+                    Ordering::SeqCst,
+                );
+                self.weighting_state
+                    .lock()
+                    .expect("weighting execution state lock")
+                    .release(context, &fragment)
+                    .map_err(io::Error::other)?;
+                self.weighting_released.store(true, Ordering::SeqCst);
+                self.weighting_cleanup_released
+                    .store(context.is_cleanup(), Ordering::SeqCst);
+            } else if let Some(predecessor) =
+                context.predecessor_observation_completion(fragment.replay_node())
+            {
+                let state = self
+                    .weighting_state
+                    .lock()
+                    .expect("weighting execution state lock");
+                self.weighting_owner_at_reconciliation
+                    .store(state.has_retained_observation(), Ordering::SeqCst);
+                let completion = state
+                    .replay_completion()
+                    .ok_or_else(|| io::Error::other("reconciliation has no weighting replay"))?;
+                if predecessor.attempt_id() != completion.attempt_id()
+                    || predecessor.owner_node() != completion.owner_node()
+                    || predecessor.lease_epoch() != completion.lease_epoch()
+                    || predecessor.owner_completion().generation_id()
+                        != completion.selected_generation()
+                    || predecessor.owner_completion().sample_count() != completion.sample_count()
+                {
+                    return Err(io::Error::other(
+                        "reconciliation received mismatched weighting replay evidence",
+                    ));
+                }
+                self.weighting_reconciled.store(true, Ordering::SeqCst);
+            }
         }
         if let Some((expected, accessed)) = &self.initial_consistency_expected {
             if context.node().kind == WorkKind::DataCensus {
@@ -831,6 +1279,13 @@ impl WorkImplementation for RecordingExecutor {
             return Err(io::Error::other("stateful transaction fence failure"));
         }
         if self
+            .weighting_fence_failure_event
+            .as_ref()
+            .is_some_and(|(node, kind)| node == &context.node().id && *kind == fence)
+        {
+            return Err(io::Error::other("weighting lifecycle fence failure"));
+        }
+        if self
             .visible_generation
             .as_ref()
             .is_some_and(|visible| visible.load(Ordering::SeqCst) == 1)
@@ -858,6 +1313,31 @@ impl WorkImplementation for RecordingExecutor {
         }
         if let Some(message) = self.observation_completion_failure {
             return Err(io::Error::other(message));
+        }
+        if let Some(fragment) = self.weighting_fragment() {
+            if completion.owner_node() == fragment.generation_node() {
+                return self
+                    .weighting_state
+                    .lock()
+                    .expect("weighting execution state lock")
+                    .complete_generation(completion)
+                    .map_err(io::Error::other);
+            }
+            if completion.owner_node() == fragment.replay_node() {
+                let predecessor = {
+                    let mut state = self
+                        .weighting_state
+                        .lock()
+                        .expect("weighting execution state lock");
+                    let predecessor = state
+                        .complete_replay(completion)
+                        .map_err(io::Error::other)?;
+                    self.weighting_owner_at_replay_fence
+                        .store(state.has_retained_observation(), Ordering::SeqCst);
+                    predecessor
+                };
+                return Ok(predecessor);
+            }
         }
         let owner_completion = self
             .selected_observation_completion
@@ -980,6 +1460,277 @@ fn physical_work_with_synchronous_observation_read(implementation_byte: u8) -> P
     )
 }
 
+#[test]
+fn production_weighting_fragment_owns_generation_replay_and_release_lifetimes() {
+    let problem = compile(request(1)).expect("logical weighting compilation");
+    let plan = plan_weighting(
+        &problem,
+        WeightingExecutionLimits::new(2, 3).expect("weighting limits"),
+    )
+    .expect("weighting plan");
+    let base = physical_work_for_weighting_problem(&problem, 6);
+    let fragment = WeightingPlanFragment::new(
+        &plan,
+        WorkNodeId::new("transaction-read"),
+        selected_content_resources(&problem),
+        implementation(6),
+        implementation(6),
+        implementation(6),
+    );
+    let generation = fragment.generation_node().clone();
+    let replay = fragment.replay_node().clone();
+    let release = fragment.release_node().clone();
+    let frozen = fragment.frozen_allocation().clone();
+    let composed = fragment
+        .compose(&base)
+        .expect("production weighting fragment");
+    let dag = composed.execution_dag();
+    let source = WorkNodeId::new("transaction-read");
+    let source_buffer = AllocationId::new("selected-observation-source-buffer");
+    let source_lifetime = ClaimLifetime::through_fence(FenceKind::Io);
+    let retained_lifetime = ClaimLifetime::retained_until(release.clone());
+    let retained_resources = dag.nodes()[&source]
+        .claims
+        .iter()
+        .filter(|claim| {
+            matches!(
+                claim.resource,
+                LeaseResource::MeasurementSetLock { .. } | LeaseResource::FileDescriptors
+            )
+        })
+        .map(|claim| (claim.resource.clone(), claim.amount))
+        .collect::<BTreeSet<_>>();
+
+    assert_eq!(dag.nodes()[&generation].kind, WorkKind::ObservationRead);
+    assert_eq!(dag.nodes()[&replay].kind, WorkKind::ObservationRead);
+    assert_eq!(dag.nodes()[&release].kind, WorkKind::Release);
+    assert_eq!(
+        retained_resources.len(),
+        2,
+        "the test source must exercise both retained handle classes"
+    );
+    assert_eq!(
+        dag.logical_allocations().len() - base.execution_dag().logical_allocations().len(),
+        5
+    );
+    assert_eq!(
+        dag.physical_slots().len() - base.execution_dag().physical_slots().len(),
+        5
+    );
+    assert_eq!(
+        dag.logical_allocations()[&frozen].lifetime.release_after,
+        BTreeSet::from([WorkDependency::Work(release.clone())])
+    );
+    assert_eq!(
+        dag.logical_allocations()[&frozen].lifetime.acquire_at,
+        source
+    );
+    assert!(
+        dag.nodes()[&source]
+            .allocations
+            .iter()
+            .any(|usage| usage.allocation == frozen)
+    );
+    assert_eq!(
+        dag.logical_allocations()[&source_buffer]
+            .lifetime
+            .release_after,
+        BTreeSet::from([WorkDependency::Work(release.clone())])
+    );
+    for node in [&generation, &replay] {
+        assert!(dag.nodes()[node].claims.iter().any(|claim| {
+            claim.resource == LeaseResource::Workers
+                && claim.amount == 1
+                && claim.lifetime == ClaimLifetime::Work
+        }));
+        assert!(dag.nodes()[node].claims.iter().any(|claim| {
+            claim.resource == LeaseResource::IoBuffer(IoBufferKind::SourceReadAhead)
+                && claim.amount == SELECTED_CONTENT_BYTES as u64
+                && claim.lifetime == source_lifetime
+        }));
+        assert!(dag.nodes()[node].claims.iter().any(|claim| {
+            matches!(claim.resource, LeaseResource::Queue { .. })
+                && claim.amount == 1
+                && claim.lifetime == source_lifetime
+        }));
+        assert!(dag.nodes()[node].allocations.iter().any(|usage| {
+            usage.allocation == source_buffer && usage.lifetime == source_lifetime
+        }));
+    }
+    for node in [&source, &generation, &replay, &release] {
+        for (resource, amount) in &retained_resources {
+            assert!(dag.nodes()[node].claims.iter().any(|claim| {
+                &claim.resource == resource
+                    && claim.amount == *amount
+                    && claim.lifetime == retained_lifetime
+            }));
+        }
+    }
+    assert!(dag.nodes()[&release].allocations.iter().any(|usage| {
+        usage.allocation == source_buffer && usage.lifetime == ClaimLifetime::Work
+    }));
+    assert!(dag.nodes()[&release].claims.iter().any(|claim| {
+        claim.resource == LeaseResource::IoBuffer(IoBufferKind::SourceReadAhead)
+            && claim.amount == SELECTED_CONTENT_BYTES as u64
+            && claim.lifetime == ClaimLifetime::Work
+    }));
+    assert!(dag.nodes()[&release].claims.iter().all(|claim| {
+        matches!(claim.resource, LeaseResource::Workers)
+            || claim.resource == LeaseResource::IoBuffer(IoBufferKind::SourceReadAhead)
+            || retained_resources
+                .iter()
+                .any(|(resource, _)| resource == &claim.resource)
+    }));
+    assert!(
+        dag.nodes()[&replay]
+            .dependencies
+            .contains(&WorkDependency::Fence(FenceId::new(
+                generation,
+                FenceKind::Io,
+            )))
+    );
+    assert!(
+        dag.nodes()[base.observation_transaction().final_reconciliation()]
+            .dependencies
+            .contains(&WorkDependency::Fence(FenceId::new(replay, FenceKind::Io,)))
+    );
+    assert!(
+        dag.nodes()[&release]
+            .dependencies
+            .contains(&WorkDependency::Work(
+                base.observation_transaction()
+                    .final_reconciliation()
+                    .clone(),
+            ))
+    );
+    assert!(
+        dag.nodes()[base.observation_transaction().commit()]
+            .dependencies
+            .contains(&WorkDependency::Work(release))
+    );
+}
+
+#[test]
+fn production_weighting_fragment_rejects_unplanned_source_traversal_resources() {
+    let problem = compile(request(1)).expect("logical weighting compilation");
+    let plan = plan_weighting(
+        &problem,
+        WeightingExecutionLimits::new(2, 3).expect("weighting limits"),
+    )
+    .expect("weighting plan");
+    let fragment = WeightingPlanFragment::new(
+        &plan,
+        WorkNodeId::new("transaction-read"),
+        selected_content_resources(&problem),
+        implementation(6),
+        implementation(6),
+        implementation(6),
+    );
+
+    let error = fragment
+        .compose(&physical_work_with_synchronous_observation_read(6))
+        .expect_err("an unplanned worker and source buffer must fail closed");
+
+    assert!(matches!(
+        error,
+        casa_imaging_runtime::WeightingPlanFragmentError::InvalidSourceAuthority { .. }
+    ));
+}
+
+#[test]
+fn production_weighting_fragment_rejects_fungible_unrelated_queues() {
+    let problem = compile(request(1)).expect("logical weighting compilation");
+    let plan = plan_weighting(
+        &problem,
+        WeightingExecutionLimits::new(2, 3).expect("weighting limits"),
+    )
+    .expect("weighting plan");
+    let base = physical_work_for_weighting_problem(&problem, 6);
+    let mut nodes = base
+        .execution_dag()
+        .nodes()
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    nodes
+        .iter_mut()
+        .find(|node| node.id == WorkNodeId::new("transaction-read"))
+        .expect("transaction source read")
+        .claims
+        .push(ResourceClaim {
+            resource: LeaseResource::Queue {
+                demand_id: "unrelated-queue".to_string(),
+            },
+            amount: 1,
+            lifetime: ClaimLifetime::through_fence(FenceKind::Io),
+        });
+    let mut alternative = base.execution_dag().resource_alternative().clone();
+    alternative.demand.queues.push(QueueDemand {
+        demand_id: "unrelated-queue".to_string(),
+        resource: QueueResourceId::new("unrelated-queue"),
+        slots: CountDemand::new(1, 1),
+    });
+    let split_queue_dag = ExecutionDag::new(ExecutionDagSpecification {
+        required_resource_capabilities: base
+            .execution_dag()
+            .required_resource_capabilities()
+            .clone(),
+        resource_alternative: alternative,
+        nodes,
+        logical_allocations: base
+            .execution_dag()
+            .logical_allocations()
+            .values()
+            .cloned()
+            .collect(),
+        physical_slots: base
+            .execution_dag()
+            .physical_slots()
+            .values()
+            .cloned()
+            .collect(),
+        initial_knobs: base.execution_dag().initial_knobs().clone(),
+        adaptations: base
+            .execution_dag()
+            .adaptations()
+            .values()
+            .cloned()
+            .collect(),
+    })
+    .expect("two distinct queue identities are structurally valid");
+    let split_queue_base = PhysicalWorkBinding::new(
+        split_queue_dag,
+        base.prediction().clone(),
+        base.artifacts().to_vec(),
+        base.observation_transaction().clone(),
+        base.publication_layouts().clone(),
+    )
+    .expect("split-queue physical work");
+    let fragment = WeightingPlanFragment::new(
+        &plan,
+        WorkNodeId::new("transaction-read"),
+        SelectedObservationSourceResources::new(
+            selected_content_residency_with(&problem, |_| {
+                SelectedObservationContentBudget::new(SELECTED_CONTENT_BYTES, 2, 4)
+            }),
+            selected_content_allocations(),
+            selected_content_queue(),
+        ),
+        implementation(6),
+        implementation(6),
+        implementation(6),
+    );
+
+    let error = fragment
+        .compose(&split_queue_base)
+        .expect_err("unrelated queue capacity cannot satisfy the selected-content queue");
+
+    assert!(matches!(
+        error,
+        casa_imaging_runtime::WeightingPlanFragmentError::InvalidSourceAuthority { .. }
+    ));
+}
+
 fn product_participants(
     problem: &casa_imaging_model::CompiledProblem,
 ) -> Vec<PublicationParticipant> {
@@ -1037,10 +1788,9 @@ fn physical_work_for_problem(
         .iter()
         .map(|source| source.measurement_set())
         .collect::<Vec<_>>();
-    assert_eq!(
-        measurement_sets.len(),
-        1,
-        "this focused fixture models one MeasurementSet"
+    assert!(
+        !measurement_sets.is_empty(),
+        "compiled read set is non-empty"
     );
     let mut nodes = base
         .execution_dag()
@@ -1048,17 +1798,36 @@ fn physical_work_for_problem(
         .values()
         .cloned()
         .collect::<Vec<_>>();
-    for claim in nodes.iter_mut().flat_map(|node| &mut node.claims) {
-        if let LeaseResource::MeasurementSetLock { measurement_set } = &mut claim.resource {
-            *measurement_set = measurement_sets[0];
+    for node in &mut nodes {
+        let mut claims = Vec::with_capacity(
+            node.claims
+                .len()
+                .saturating_add(measurement_sets.len().saturating_sub(1)),
+        );
+        for claim in std::mem::take(&mut node.claims) {
+            if matches!(claim.resource, LeaseResource::MeasurementSetLock { .. }) {
+                claims.extend(measurement_sets.iter().copied().map(|measurement_set| {
+                    ResourceClaim {
+                        resource: LeaseResource::MeasurementSetLock { measurement_set },
+                        amount: claim.amount,
+                        lifetime: claim.lifetime.clone(),
+                    }
+                }));
+            } else {
+                claims.push(claim);
+            }
         }
+        node.claims = claims;
     }
+    let mut alternative = base.execution_dag().resource_alternative().clone();
+    let lock_count = u64::try_from(measurement_sets.len()).expect("test lock count fits u64");
+    alternative.demand.locks = CountDemand::new(lock_count, lock_count);
     let dag = ExecutionDag::new(ExecutionDagSpecification {
         required_resource_capabilities: base
             .execution_dag()
             .required_resource_capabilities()
             .clone(),
-        resource_alternative: base.execution_dag().resource_alternative().clone(),
+        resource_alternative: alternative,
         nodes,
         logical_allocations: base
             .execution_dag()
@@ -1089,6 +1858,229 @@ fn physical_work_for_problem(
         base.publication_layouts().clone(),
     )
     .expect("problem-bound physical work")
+}
+
+fn physical_work_for_weighting_problem(
+    problem: &casa_imaging_model::CompiledProblem,
+    implementation_byte: u8,
+) -> PhysicalWorkBinding {
+    let residency = selected_content_residency(problem);
+    physical_work_for_weighting_problem_with_residency(problem, implementation_byte, &residency)
+}
+
+fn physical_work_for_weighting_problem_with_residency(
+    problem: &casa_imaging_model::CompiledProblem,
+    implementation_byte: u8,
+    residency: &SelectedObservationResidencyCertificate,
+) -> PhysicalWorkBinding {
+    let base = physical_work_for_problem(problem, implementation_byte);
+    let mut nodes = base
+        .execution_dag()
+        .nodes()
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    let source_buffer = AllocationId::new("selected-observation-source-buffer");
+    let source_slot = PhysicalSlotId::new("selected-observation-source-slot");
+    let source_bytes = u64::try_from(residency.aggregate_resident_bytes())
+        .expect("test source residency fits u64");
+    let source_blocks =
+        u64::try_from(residency.peak_live_blocks()).expect("test source queue depth fits u64");
+    let source_count = u64::try_from(problem.inputs().observation_snapshot().sources().len())
+        .expect("test source count fits u64");
+    let source_lifetime = ClaimLifetime::through_fence(FenceKind::Io);
+    let source_compatibility = SlotCompatibility {
+        memory_domain: CapacityDomainId::new("host-memory"),
+        views: BTreeSet::from([CapacityViewId::new("host-memory")]),
+        alignment_bytes: 64,
+        storage_mode: StorageMode::Host,
+        layout: AllocationLayout::new("selected-observation-source-buffer"),
+        initialization: InitializationPolicy::OverwriteBeforeRead,
+        access: AllocationAccess::ReadWrite,
+    };
+    let source_read = nodes
+        .iter_mut()
+        .find(|node| node.id == WorkNodeId::new("transaction-read"))
+        .expect("transaction source read");
+    source_read
+        .claims
+        .iter_mut()
+        .filter(|claim| claim.resource == selected_content_queue())
+        .for_each(|claim| claim.amount = source_blocks);
+    source_read.claims.extend([
+        ResourceClaim {
+            resource: LeaseResource::Workers,
+            amount: 1,
+            lifetime: ClaimLifetime::Work,
+        },
+        ResourceClaim {
+            resource: LeaseResource::IoBuffer(IoBufferKind::SourceReadAhead),
+            amount: source_bytes,
+            lifetime: source_lifetime.clone(),
+        },
+        ResourceClaim {
+            resource: LeaseResource::FileDescriptors,
+            amount: source_count,
+            lifetime: source_lifetime.clone(),
+        },
+    ]);
+    source_read.allocations.push(AllocationUse {
+        allocation: source_buffer.clone(),
+        lifetime: source_lifetime,
+    });
+    let mut alternative = base.execution_dag().resource_alternative().clone();
+    alternative.demand.memory.push(MemoryDemand {
+        allocation_id: "selected-observation-source-memory".to_string(),
+        hard_bytes: source_bytes,
+        preferred_bytes: source_bytes,
+        views: vec![CapacityViewId::new("host-memory")],
+    });
+    alternative.demand.io_buffers.source_read_ahead_bytes = source_bytes;
+    alternative.demand.file_descriptors = CountDemand::new(source_count, source_count);
+    for demand in &mut alternative.demand.queues {
+        if demand.demand_id == "transaction-io-queue" {
+            demand.slots = CountDemand::new(source_blocks, source_blocks);
+        }
+    }
+    let mut logical_allocations = base
+        .execution_dag()
+        .logical_allocations()
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    logical_allocations.push(LogicalAllocation {
+        id: source_buffer.clone(),
+        bytes: source_bytes,
+        purpose: AllocationPurpose::IoBuffer(IoBufferKind::SourceReadAhead),
+        compatibility: source_compatibility.clone(),
+        physical_slot: source_slot.clone(),
+        lifetime: AllocationLifetime {
+            acquire_at: WorkNodeId::new("transaction-read"),
+            release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
+                WorkNodeId::new("transaction-read"),
+                FenceKind::Io,
+            ))]),
+        },
+    });
+    let mut physical_slots = base
+        .execution_dag()
+        .physical_slots()
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    physical_slots.push(PhysicalSlot {
+        id: source_slot,
+        lease_resource: LeaseResource::Memory {
+            allocation_id: "selected-observation-source-memory".to_string(),
+        },
+        capacity_bytes: source_bytes,
+        compatibility: source_compatibility,
+    });
+    let dag = ExecutionDag::new(ExecutionDagSpecification {
+        required_resource_capabilities: base
+            .execution_dag()
+            .required_resource_capabilities()
+            .clone(),
+        resource_alternative: alternative,
+        nodes,
+        logical_allocations,
+        physical_slots,
+        initial_knobs: base.execution_dag().initial_knobs().clone(),
+        adaptations: base
+            .execution_dag()
+            .adaptations()
+            .values()
+            .cloned()
+            .collect(),
+    })
+    .expect("problem-bound transaction DAG");
+    let prediction = PlanPrediction::new(
+        base.prediction().elapsed_nanos(),
+        base.prediction().confidence(),
+        base.prediction().uncertainty().to_vec(),
+        base.prediction()
+            .stages()
+            .values()
+            .map(|stage| {
+                if stage.node() == &WorkNodeId::new("transaction-read") {
+                    StagePrediction::new(stage.node().clone(), stage.elapsed_nanos()).with_io(
+                        stage
+                            .io()
+                            .iter()
+                            .copied()
+                            .chain([IoPrediction::new(
+                                IoBufferKind::SourceReadAhead,
+                                source_bytes,
+                                1,
+                            )])
+                            .collect(),
+                    )
+                } else {
+                    stage.clone()
+                }
+            })
+            .collect(),
+    )
+    .expect("problem-bound source prediction");
+    PhysicalWorkBinding::new(
+        dag,
+        prediction,
+        base.artifacts().to_vec(),
+        base.observation_transaction().clone(),
+        base.publication_layouts().clone(),
+    )
+    .expect("problem-bound physical work")
+}
+
+fn with_work_implementation(
+    base: &PhysicalWorkBinding,
+    implementation: WorkImplementationId,
+) -> PhysicalWorkBinding {
+    let dag = ExecutionDag::new(ExecutionDagSpecification {
+        required_resource_capabilities: base
+            .execution_dag()
+            .required_resource_capabilities()
+            .clone(),
+        resource_alternative: base.execution_dag().resource_alternative().clone(),
+        nodes: base
+            .execution_dag()
+            .nodes()
+            .values()
+            .cloned()
+            .map(|mut node| {
+                node.implementation = implementation.clone();
+                node
+            })
+            .collect(),
+        logical_allocations: base
+            .execution_dag()
+            .logical_allocations()
+            .values()
+            .cloned()
+            .collect(),
+        physical_slots: base
+            .execution_dag()
+            .physical_slots()
+            .values()
+            .cloned()
+            .collect(),
+        initial_knobs: base.execution_dag().initial_knobs().clone(),
+        adaptations: base
+            .execution_dag()
+            .adaptations()
+            .values()
+            .cloned()
+            .collect(),
+    })
+    .expect("rebinding a validated DAG preserves its topology");
+    PhysicalWorkBinding::new(
+        dag,
+        base.prediction().clone(),
+        base.artifacts().to_vec(),
+        base.observation_transaction().clone(),
+        base.publication_layouts().clone(),
+    )
+    .expect("rebinding a validated physical plan preserves its contracts")
 }
 
 fn physical_work_with_product_staging(
@@ -3406,8 +4398,8 @@ fn plan_seals_physical_work_and_every_required_binding() {
     assert_eq!(
         execution_plan.plan_id().as_bytes(),
         [
-            247, 196, 220, 222, 254, 25, 213, 243, 10, 98, 169, 162, 212, 100, 95, 202, 222, 107,
-            5, 16, 38, 32, 214, 157, 157, 230, 118, 175, 73, 151, 8, 207,
+            140, 225, 250, 81, 172, 175, 79, 76, 73, 60, 67, 85, 102, 151, 0, 131, 114, 195, 101,
+            65, 12, 77, 120, 39, 218, 246, 101, 4, 218, 181, 221, 171,
         ]
     );
 }
@@ -4383,6 +5375,55 @@ fn observation_completion_is_attempt_node_and_fence_bound_after_successful_settl
 }
 
 #[test]
+fn settled_observation_completion_is_delivered_only_to_explicit_predecessor_consumers() {
+    let problem = compile(request(1)).expect("logical compilation");
+    let execution_plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| Ok::<_, ()>(physical_work(6)),
+    )
+    .expect("physical planning");
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &ResourcePolicy::Balanced,
+        cost_model(4),
+    );
+    let delivered = Arc::new(Mutex::new(Vec::new()));
+    let mut executor = recording_executor(6, None, None);
+    executor.delivered_observation_completions = Some(Arc::clone(&delivered));
+    let registry = TestRegistry {
+        id: registry(3),
+        executors: BTreeMap::from([(implementation(6), executor)]),
+    };
+    let mut controller = RunToCompletion;
+
+    run(
+        &problem,
+        &execution_plan,
+        &current,
+        &registry,
+        authority(),
+        &mut controller,
+    )
+    .expect("settled selected-observation completion unlocks dependent work");
+
+    let delivered = delivered
+        .lock()
+        .expect("delivered observation completion lock");
+    assert!(
+        delivered.iter().any(|(consumer, owner)| {
+            consumer == &WorkNodeId::new("read") && owner == &WorkNodeId::new("transaction-read")
+        }),
+        "the first physical consumer must receive its scheduler-retained T17 predecessor evidence"
+    );
+    assert!(
+        delivered
+            .iter()
+            .all(|(_, owner)| owner == &WorkNodeId::new("transaction-read"))
+    );
+}
+
+#[test]
 fn synchronous_observation_completion_is_exactly_once_attempt_node_and_lease_bound() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
@@ -4448,6 +5489,1017 @@ fn synchronous_observation_completion_is_exactly_once_attempt_node_and_lease_bou
     assert_eq!(completion.owner_node, WorkNodeId::new("transaction-read"));
     assert!(completion.settled_fences.is_empty());
     assert!(completion.lease_epoch > 0);
+}
+
+#[test]
+fn actual_bound_observation_traversals_drive_both_weighting_generation_passes() {
+    let problem = compile(request(198)).expect("logical weighting compilation");
+    let weighting_plan = plan_weighting(
+        &problem,
+        WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
+    )
+    .expect("weighting plan");
+    let fragment = WeightingPlanFragment::new(
+        &weighting_plan,
+        WorkNodeId::new("transaction-read"),
+        selected_content_resources(&problem),
+        implementation(6),
+        implementation(6),
+        implementation(6),
+    );
+    let physical = fragment
+        .compose(&physical_work_for_weighting_problem(&problem, 6))
+        .expect("production weighting physical work");
+    let execution_plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| Ok::<_, ()>(physical),
+    )
+    .expect("production weighting execution plan");
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &ResourcePolicy::Balanced,
+        cost_model(4),
+    );
+    let mut executor = recording_executor(6, None, None);
+    executor.weighting_source_residency = Some(selected_content_residency(&problem));
+    executor.weighting_plan = Some(weighting_plan);
+    let registry = TestRegistry {
+        id: registry(3),
+        executors: BTreeMap::from([(implementation(6), executor)]),
+    };
+    let mut controller = RunToCompletion;
+
+    run(
+        &problem,
+        &execution_plan,
+        &current,
+        &registry,
+        authority(),
+        &mut controller,
+    )
+    .expect("all three owner traversals and explicit release complete");
+
+    let executor = &registry.executors[&implementation(6)];
+    assert_eq!(executor.weighted_sample_count.load(Ordering::SeqCst), 1);
+    assert!(
+        executor
+            .weighting_owner_at_replay_fence
+            .load(Ordering::SeqCst)
+    );
+    assert!(
+        executor
+            .weighting_owner_at_reconciliation
+            .load(Ordering::SeqCst)
+    );
+    assert!(executor.weighting_owner_at_release.load(Ordering::SeqCst));
+    assert!(executor.weighting_reconciled.load(Ordering::SeqCst));
+    assert!(executor.weighting_released.load(Ordering::SeqCst));
+    assert!(
+        executor
+            .weighting_state
+            .lock()
+            .expect("weighting execution state lock")
+            .is_empty()
+    );
+}
+
+#[test]
+fn failed_weighting_release_quarantines_the_actual_selected_observation_owner() {
+    const CHILD_PROCESS: &str = "CASA_RS_T18_FAILED_RELEASE_CHILD";
+    if std::env::var_os(CHILD_PROCESS).is_none() {
+        let status =
+            Command::new(std::env::current_exe().expect("current integration-test binary"))
+                .args([
+                    "--exact",
+                    "failed_weighting_release_quarantines_the_actual_selected_observation_owner",
+                    "--nocapture",
+                ])
+                .env(CHILD_PROCESS, "1")
+                .status()
+                .expect("isolated failed-release integration test");
+        assert!(
+            status.success(),
+            "isolated failed-release integration test must pass"
+        );
+        return;
+    }
+
+    let problem = compile(request(198)).expect("logical weighting compilation");
+    let weighting_plan = plan_weighting(
+        &problem,
+        WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
+    )
+    .expect("weighting plan");
+    let fragment = WeightingPlanFragment::new(
+        &weighting_plan,
+        WorkNodeId::new("transaction-read"),
+        selected_content_resources(&problem),
+        implementation(6),
+        implementation(6),
+        implementation(6),
+    );
+    let release = fragment.release_node().clone();
+    let physical = fragment
+        .compose(&physical_work_for_weighting_problem(&problem, 6))
+        .expect("production weighting physical work");
+    let execution_plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| Ok::<_, ()>(physical),
+    )
+    .expect("production weighting execution plan");
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &ResourcePolicy::Balanced,
+        cost_model(4),
+    );
+    let mut executor = recording_executor(6, None, None);
+    executor.weighting_source_residency = Some(selected_content_residency(&problem));
+    executor.weighting_plan = Some(weighting_plan);
+    executor.weighting_failure_node = Some(release.clone());
+    let registry = TestRegistry {
+        id: registry(3),
+        executors: BTreeMap::from([(implementation(6), executor)]),
+    };
+    let mut controller = RunToCompletion;
+    let directory = tempfile::tempdir().expect("failed-release receipt directory");
+    let receipts = ExecutionReceiptStore::new(
+        directory.path(),
+        ReceiptRetention::new(2, 1_048_576).expect("failed-release receipt retention"),
+    )
+    .expect("failed-release receipt store");
+    let provenance = execution_provenance(
+        casa_imaging_runtime::ExecutionAttemptId::from_sha256([201; 32]),
+        BuildIdentity::from_sha256([202; 32]),
+    );
+
+    let error = run_receipted(
+        &problem,
+        &execution_plan,
+        &current,
+        &registry,
+        authority(),
+        &mut controller,
+        receipts.bind(provenance.clone()),
+    )
+    .expect_err("failed success and cleanup release must quarantine ownership");
+
+    assert!(matches!(error, RunError::Execution { node, .. } if node == release));
+    let receipt = receipts
+        .open(provenance.attempt_id())
+        .expect("failed release remains durably receipted");
+    let selected_content_allocation = selected_content_allocations()
+        .into_iter()
+        .next()
+        .expect("one selected-content allocation");
+    assert_eq!(receipt.status(), ReceiptStatus::Failed);
+    assert_eq!(receipt.node_status(&release), Some(ReceiptStatus::Failed));
+    assert_eq!(
+        receipt
+            .allocation_uses(&release)
+            .and_then(|uses| uses.get(&selected_content_allocation).cloned()),
+        Some(ClaimLifetime::Work)
+    );
+    let executor = &registry.executors[&implementation(6)];
+    let state = executor
+        .weighting_state
+        .lock()
+        .expect("weighting execution state lock");
+    assert!(state.has_retained_observation());
+    assert!(!state.is_empty());
+    assert!(!executor.weighting_released.load(Ordering::SeqCst));
+    assert!(!executor.weighting_cleanup_released.load(Ordering::SeqCst));
+}
+
+#[test]
+fn failed_weighting_lifecycle_cuts_run_the_scheduler_owned_release() {
+    #[derive(Clone, Copy, Debug)]
+    enum FailureCut {
+        SourceFence,
+        GenerationFence,
+        ReplayWork,
+        ReplayFence,
+        Reconciliation,
+    }
+
+    for (cut_index, cut) in [
+        FailureCut::SourceFence,
+        FailureCut::GenerationFence,
+        FailureCut::ReplayWork,
+        FailureCut::ReplayFence,
+        FailureCut::Reconciliation,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let problem = compile(request(198)).expect("logical weighting compilation");
+        let weighting_plan = plan_weighting(
+            &problem,
+            WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
+        )
+        .expect("weighting plan");
+        let fragment = WeightingPlanFragment::new(
+            &weighting_plan,
+            WorkNodeId::new("transaction-read"),
+            selected_content_resources(&problem),
+            implementation(6),
+            implementation(6),
+            implementation(6),
+        );
+        let generation = fragment.generation_node().clone();
+        let replay = fragment.replay_node().clone();
+        let release = fragment.release_node().clone();
+        let source = WorkNodeId::new("transaction-read");
+        let expected_failure = match cut {
+            FailureCut::SourceFence => source.clone(),
+            FailureCut::GenerationFence => generation.clone(),
+            FailureCut::ReplayWork | FailureCut::ReplayFence => replay.clone(),
+            FailureCut::Reconciliation => WorkNodeId::new("transaction-reconciliation"),
+        };
+        let physical = fragment
+            .compose(&physical_work_for_weighting_problem(&problem, 6))
+            .expect("production weighting physical work");
+        let execution_plan = plan(
+            &problem,
+            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+            |_, _| Ok::<_, ()>(physical),
+        )
+        .expect("production weighting execution plan");
+        let current = RunBindings::new(
+            problem.inputs().clone(),
+            &ResourcePolicy::Balanced,
+            cost_model(4),
+        );
+        let mut executor = recording_executor(6, None, None);
+        executor.weighting_source_residency = Some(selected_content_residency(&problem));
+        executor.weighting_plan = Some(weighting_plan);
+        match cut {
+            FailureCut::SourceFence => {
+                executor.weighting_fence_failure_event = Some((source, FenceKind::Io));
+            }
+            FailureCut::GenerationFence => {
+                executor.weighting_fence_failure_event = Some((generation, FenceKind::Io));
+            }
+            FailureCut::ReplayWork => executor.weighting_failure_node = Some(replay),
+            FailureCut::ReplayFence => {
+                executor.weighting_fence_failure_event = Some((replay, FenceKind::Io));
+            }
+            FailureCut::Reconciliation => {
+                executor.weighting_failure_node = Some(expected_failure.clone());
+            }
+        }
+        let registry = TestRegistry {
+            id: registry(3),
+            executors: BTreeMap::from([(implementation(6), executor)]),
+        };
+        let mut controller = RunToCompletion;
+        let directory = tempfile::tempdir().expect("lifecycle-cut receipt directory");
+        let receipts = ExecutionReceiptStore::new(
+            directory.path(),
+            ReceiptRetention::new(2, 1_048_576).expect("lifecycle-cut receipt retention"),
+        )
+        .expect("lifecycle-cut receipt store");
+        let attempt_byte = u8::try_from(210 + cut_index).expect("bounded failure-cut index");
+        let provenance = execution_provenance(
+            casa_imaging_runtime::ExecutionAttemptId::from_sha256([attempt_byte; 32]),
+            BuildIdentity::from_sha256([220; 32]),
+        );
+
+        let error = run_receipted(
+            &problem,
+            &execution_plan,
+            &current,
+            &registry,
+            authority(),
+            &mut controller,
+            receipts.bind(provenance.clone()),
+        )
+        .expect_err("the injected lifecycle cut must fail the attempt");
+
+        assert!(
+            matches!(&error, RunError::Execution { node, .. } if node == &expected_failure),
+            "unexpected {cut:?} failure: {error:?}"
+        );
+        let receipt = receipts
+            .open(provenance.attempt_id())
+            .expect("failed lifecycle cut remains durably receipted");
+        let selected_content_allocation = selected_content_allocations()
+            .into_iter()
+            .next()
+            .expect("one selected-content allocation");
+        assert_eq!(receipt.status(), ReceiptStatus::Failed);
+        assert_eq!(
+            receipt.node_status(&release),
+            Some(ReceiptStatus::Completed)
+        );
+        assert_eq!(
+            receipt
+                .allocation_uses(&release)
+                .and_then(|uses| uses.get(&selected_content_allocation).cloned()),
+            Some(ClaimLifetime::Work)
+        );
+        let release_buffer = LeaseResource::IoBuffer(IoBufferKind::SourceReadAhead);
+        assert_eq!(
+            receipt.actual_resource_peak(&release, &release_buffer, &ClaimLifetime::Work),
+            Some(SELECTED_CONTENT_BYTES as u64)
+        );
+        let executor = &registry.executors[&implementation(6)];
+        assert!(
+            executor
+                .weighting_state
+                .lock()
+                .expect("weighting execution state lock")
+                .is_empty(),
+            "{cut:?} must not retain weighting state after draining"
+        );
+        assert!(executor.weighting_released.load(Ordering::SeqCst));
+        assert!(executor.weighting_cleanup_released.load(Ordering::SeqCst));
+    }
+}
+
+#[test]
+fn weighting_replay_rejects_a_fresh_binding_with_identical_selected_content() {
+    let problem = compile(request(198)).expect("logical weighting compilation");
+    let weighting_plan = plan_weighting(
+        &problem,
+        WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
+    )
+    .expect("weighting plan");
+    let fragment = WeightingPlanFragment::new(
+        &weighting_plan,
+        WorkNodeId::new("transaction-read"),
+        selected_content_resources(&problem),
+        implementation(6),
+        implementation(6),
+        implementation(6),
+    );
+    let replay = fragment.replay_node().clone();
+    let physical = fragment
+        .compose(&physical_work_for_weighting_problem(&problem, 6))
+        .expect("production weighting physical work");
+    let execution_plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| Ok::<_, ()>(physical),
+    )
+    .expect("production weighting execution plan");
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &ResourcePolicy::Balanced,
+        cost_model(4),
+    );
+    let mut executor = recording_executor(6, None, None);
+    executor.weighting_source_residency = Some(selected_content_residency(&problem));
+    executor.weighting_plan = Some(weighting_plan);
+    executor.reopen_weighting_before_replay = true;
+    let registry = TestRegistry {
+        id: registry(3),
+        executors: BTreeMap::from([(implementation(6), executor)]),
+    };
+    let mut controller = RunToCompletion;
+
+    let error = run(
+        &problem,
+        &execution_plan,
+        &current,
+        &registry,
+        authority(),
+        &mut controller,
+    )
+    .expect_err("content identity cannot substitute for retained owner identity");
+
+    assert!(matches!(error, RunError::Execution { node, .. } if node == replay));
+    let executor = &registry.executors[&implementation(6)];
+    assert_eq!(executor.weighted_sample_count.load(Ordering::SeqCst), 0);
+    assert!(
+        executor
+            .weighting_state
+            .lock()
+            .expect("weighting execution state lock")
+            .is_empty()
+    );
+    assert!(executor.weighting_cleanup_released.load(Ordering::SeqCst));
+    assert!(!executor.weighting_reconciled.load(Ordering::SeqCst));
+}
+
+#[test]
+fn weighting_generation_rejects_missing_direct_predecessor_before_state_exists() {
+    let problem = compile(request(198)).expect("logical weighting compilation");
+    let weighting_plan = plan_weighting(
+        &problem,
+        WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
+    )
+    .expect("weighting plan");
+    let fragment = WeightingPlanFragment::new(
+        &weighting_plan,
+        WorkNodeId::new("transaction-read"),
+        selected_content_resources(&problem),
+        implementation(6),
+        implementation(6),
+        implementation(6),
+    );
+    let generation = fragment.generation_node().clone();
+    let physical = fragment
+        .compose(&physical_work_for_weighting_problem(&problem, 6))
+        .expect("production weighting physical work");
+    let execution_plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| Ok::<_, ()>(physical),
+    )
+    .expect("production weighting execution plan");
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &ResourcePolicy::Balanced,
+        cost_model(4),
+    );
+    let mut executor = recording_executor(6, None, None);
+    executor.weighting_source_residency = Some(selected_content_residency(&problem));
+    executor.weighting_plan = Some(weighting_plan);
+    executor.weighting_source_read = WorkNodeId::new("not-a-direct-predecessor");
+    let registry = TestRegistry {
+        id: registry(3),
+        executors: BTreeMap::from([(implementation(6), executor)]),
+    };
+    let mut controller = RunToCompletion;
+
+    let error = run(
+        &problem,
+        &execution_plan,
+        &current,
+        &registry,
+        authority(),
+        &mut controller,
+    )
+    .expect_err("generation must not begin without its direct T17 predecessor");
+
+    assert!(matches!(error, RunError::Execution { node, .. } if node == generation));
+    let executor = &registry.executors[&implementation(6)];
+    assert!(
+        executor
+            .weighting_state
+            .lock()
+            .expect("weighting execution state lock")
+            .is_empty()
+    );
+    assert!(executor.weighting_cleanup_released.load(Ordering::SeqCst));
+    assert_eq!(executor.weighted_sample_count.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn weighting_generation_rejects_mismatched_allocation_capabilities_before_state_exists() {
+    let problem = compile(request(198)).expect("logical weighting compilation");
+    let planned_weighting = plan_weighting(
+        &problem,
+        WeightingExecutionLimits::new(1, 1).expect("planned weighting limits"),
+    )
+    .expect("planned weighting");
+    let fragment = WeightingPlanFragment::new(
+        &planned_weighting,
+        WorkNodeId::new("transaction-read"),
+        selected_content_resources(&problem),
+        implementation(6),
+        implementation(6),
+        implementation(6),
+    );
+    let generation = fragment.generation_node().clone();
+    let physical = fragment
+        .compose(&physical_work_for_weighting_problem(&problem, 6))
+        .expect("production weighting physical work");
+    let execution_plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| Ok::<_, ()>(physical),
+    )
+    .expect("production weighting execution plan");
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &ResourcePolicy::Balanced,
+        cost_model(4),
+    );
+    let differently_sized_weighting = plan_weighting(
+        &problem,
+        WeightingExecutionLimits::new(2, 3).expect("different weighting limits"),
+    )
+    .expect("differently sized weighting");
+    let mut executor = recording_executor(6, None, None);
+    executor.weighting_source_residency = Some(selected_content_residency(&problem));
+    executor.weighting_plan = Some(differently_sized_weighting);
+    let registry = TestRegistry {
+        id: registry(3),
+        executors: BTreeMap::from([(implementation(6), executor)]),
+    };
+    let mut controller = RunToCompletion;
+
+    let error = run(
+        &problem,
+        &execution_plan,
+        &current,
+        &registry,
+        authority(),
+        &mut controller,
+    )
+    .expect_err("generation must not begin with different allocation capacities");
+
+    assert!(matches!(error, RunError::Execution { node, .. } if node == generation));
+    let executor = &registry.executors[&implementation(6)];
+    assert!(
+        executor
+            .weighting_state
+            .lock()
+            .expect("weighting execution state lock")
+            .is_empty()
+    );
+    assert_eq!(executor.weighted_sample_count.load(Ordering::SeqCst), 0);
+}
+
+fn assert_source_residency_mismatch_fails_before_traversal(
+    problem: &casa_imaging_model::CompiledProblem,
+    planned: SelectedObservationResidencyCertificate,
+    actual: SelectedObservationResidencyCertificate,
+) {
+    let weighting_plan = plan_weighting(
+        problem,
+        WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
+    )
+    .expect("weighting plan");
+    let fragment = WeightingPlanFragment::new(
+        &weighting_plan,
+        WorkNodeId::new("transaction-read"),
+        SelectedObservationSourceResources::new(
+            planned.clone(),
+            selected_content_allocations(),
+            selected_content_queue(),
+        ),
+        implementation(6),
+        implementation(6),
+        implementation(6),
+    );
+    let physical = fragment
+        .compose(&physical_work_for_weighting_problem_with_residency(
+            problem, 6, &planned,
+        ))
+        .expect("planned source residency composes");
+    let execution_plan = plan(
+        problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| Ok::<_, ()>(physical),
+    )
+    .expect("plan with mismatched runtime owner");
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &ResourcePolicy::Balanced,
+        cost_model(4),
+    );
+    let mut executor = recording_executor(6, None, None);
+    executor.weighting_source_residency = Some(planned);
+    executor.weighting_actual_source_residency = Some(actual);
+    executor.weighting_plan = Some(weighting_plan);
+    let registry = TestRegistry {
+        id: registry(3),
+        executors: BTreeMap::from([(implementation(6), executor)]),
+    };
+    let mut controller = RunToCompletion;
+
+    let error = run(
+        problem,
+        &execution_plan,
+        &current,
+        &registry,
+        authority(),
+        &mut controller,
+    )
+    .expect_err("a different owner residency certificate must fail closed");
+
+    assert!(
+        matches!(error, RunError::Execution { node, .. } if node == WorkNodeId::new("transaction-read"))
+    );
+    let executor = &registry.executors[&implementation(6)];
+    assert_eq!(
+        executor
+            .weighting_source_sample_count
+            .load(Ordering::SeqCst),
+        0,
+        "owner mismatch must fail before the first selected sample"
+    );
+    assert!(
+        executor
+            .weighting_state
+            .lock()
+            .expect("weighting execution state lock")
+            .is_empty()
+    );
+}
+
+#[test]
+fn weighting_source_rejects_incomplete_and_differently_budgeted_owner_certificates() {
+    let problem = compile(request_with_source_count(230, 2)).expect("multi-source compilation");
+    let planned = selected_content_residency_with(&problem, |source_index| {
+        SelectedObservationContentBudget::new(
+            (source_index + 1) * SELECTED_CONTENT_BYTES,
+            source_index + 1,
+            4,
+        )
+    });
+    let differently_budgeted = selected_content_residency_with(&problem, |source_index| {
+        SelectedObservationContentBudget::new(
+            if source_index == 0 {
+                SELECTED_CONTENT_BYTES
+            } else {
+                3 * SELECTED_CONTENT_BYTES
+            },
+            source_index + 1,
+            4,
+        )
+    });
+    assert_source_residency_mismatch_fails_before_traversal(
+        &problem,
+        planned.clone(),
+        differently_budgeted,
+    );
+
+    let single_source_problem =
+        compile(request(231)).expect("single-source certificate compilation");
+    assert_source_residency_mismatch_fails_before_traversal(
+        &problem,
+        selected_content_residency(&single_source_problem),
+        planned,
+    );
+}
+
+#[test]
+fn multi_source_weighting_receipts_certified_aggregate_residency_through_release() {
+    let problem = compile(request_with_source_count(232, 2)).expect("multi-source compilation");
+    let residency = selected_content_residency_with(&problem, |source_index| {
+        SelectedObservationContentBudget::new(
+            (source_index + 1) * SELECTED_CONTENT_BYTES,
+            source_index + 1,
+            4,
+        )
+    });
+    let aggregate_bytes = u64::try_from(residency.aggregate_resident_bytes())
+        .expect("aggregate source residency fits u64");
+    let peak_blocks =
+        u64::try_from(residency.peak_live_blocks()).expect("source queue depth fits u64");
+    assert_eq!(aggregate_bytes, 3 * SELECTED_CONTENT_BYTES as u64);
+    assert_eq!(peak_blocks, 2);
+    let weighting_plan = plan_weighting(
+        &problem,
+        WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
+    )
+    .expect("weighting plan");
+    let fragment = WeightingPlanFragment::new(
+        &weighting_plan,
+        WorkNodeId::new("transaction-read"),
+        SelectedObservationSourceResources::new(
+            residency.clone(),
+            selected_content_allocations(),
+            selected_content_queue(),
+        ),
+        implementation(6),
+        implementation(6),
+        implementation(6),
+    );
+    let source = WorkNodeId::new("transaction-read");
+    let generation = fragment.generation_node().clone();
+    let replay = fragment.replay_node().clone();
+    let release = fragment.release_node().clone();
+    let base = physical_work_for_weighting_problem_with_residency(&problem, 6, &residency);
+    let physical = fragment
+        .compose(&base)
+        .expect("owner-certified multi-source weighting work");
+    assert_eq!(
+        physical.execution_dag().logical_allocations().len()
+            - base.execution_dag().logical_allocations().len(),
+        5,
+        "the existing selected-source allocation is reused"
+    );
+    let execution_plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| Ok::<_, ()>(physical),
+    )
+    .expect("plan owner-certified multi-source weighting");
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &ResourcePolicy::Balanced,
+        cost_model(4),
+    );
+    let mut executor = recording_executor(6, None, None);
+    executor.weighting_source_residency = Some(residency);
+    executor.weighting_plan = Some(weighting_plan);
+    let registry = TestRegistry {
+        id: registry(3),
+        executors: BTreeMap::from([(implementation(6), executor)]),
+    };
+    let mut controller = RunToCompletion;
+    let directory = tempfile::tempdir().expect("multi-source receipt directory");
+    let receipts = ExecutionReceiptStore::new(
+        directory.path(),
+        ReceiptRetention::new(2, 1_048_576).expect("multi-source receipt retention"),
+    )
+    .expect("multi-source receipt store");
+    let provenance = execution_provenance(
+        casa_imaging_runtime::ExecutionAttemptId::from_sha256([233; 32]),
+        BuildIdentity::from_sha256([234; 32]),
+    );
+
+    run_receipted(
+        &problem,
+        &execution_plan,
+        &current,
+        &registry,
+        authority(),
+        &mut controller,
+        receipts.bind(provenance.clone()),
+    )
+    .expect("owner-certified multi-source weighting completes");
+    let receipt = receipts
+        .open(provenance.attempt_id())
+        .expect("multi-source weighting receipt");
+    let io_lifetime = ClaimLifetime::through_fence(FenceKind::Io);
+    let buffer = LeaseResource::IoBuffer(IoBufferKind::SourceReadAhead);
+    let queue = selected_content_queue();
+    for node in [&source, &generation, &replay] {
+        assert_eq!(
+            receipt.planned_resource_amount(node, &buffer, &io_lifetime),
+            Some(aggregate_bytes)
+        );
+        assert_eq!(
+            receipt.actual_resource_peak(node, &buffer, &io_lifetime),
+            Some(aggregate_bytes)
+        );
+        assert_eq!(
+            receipt.planned_resource_amount(node, &queue, &io_lifetime),
+            Some(peak_blocks)
+        );
+        assert_eq!(
+            receipt.actual_resource_peak(node, &queue, &io_lifetime),
+            Some(peak_blocks)
+        );
+    }
+    assert_eq!(
+        receipt.planned_resource_amount(&release, &buffer, &ClaimLifetime::Work),
+        Some(aggregate_bytes)
+    );
+    assert_eq!(
+        receipt.actual_resource_peak(&release, &buffer, &ClaimLifetime::Work),
+        Some(aggregate_bytes)
+    );
+    let selected_allocation = selected_content_allocations()
+        .pop_first()
+        .expect("one selected-source allocation");
+    assert_eq!(
+        receipt
+            .allocation_uses(&release)
+            .and_then(|uses| uses.get(&selected_allocation).cloned()),
+        Some(ClaimLifetime::Work)
+    );
+    let executor = &registry.executors[&implementation(6)];
+    assert_eq!(
+        executor
+            .weighting_source_sample_count
+            .load(Ordering::SeqCst),
+        2,
+        "both certified sources traverse before retention"
+    );
+    assert!(executor.weighting_released.load(Ordering::SeqCst));
+    assert!(
+        executor
+            .weighting_state
+            .lock()
+            .expect("weighting execution state lock")
+            .is_empty()
+    );
+}
+
+#[test]
+fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
+    let problem = compile(request(1)).expect("logical weighting compilation");
+    let weighting_plan = plan_weighting(
+        &problem,
+        WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
+    )
+    .expect("weighting residency plan");
+    let pathlike_implementation =
+        WorkImplementationId::new("/private/t18/selected-observation-owner");
+    let base = with_work_implementation(
+        &physical_work_for_weighting_problem(&problem, 6),
+        pathlike_implementation.clone(),
+    );
+    let fragment = WeightingPlanFragment::new(
+        &weighting_plan,
+        WorkNodeId::new("transaction-read"),
+        selected_content_resources(&problem),
+        pathlike_implementation.clone(),
+        pathlike_implementation.clone(),
+        pathlike_implementation.clone(),
+    );
+    let generation = fragment.generation_node().clone();
+    let replay = fragment.replay_node().clone();
+    let release = fragment.release_node().clone();
+    let physical = fragment
+        .compose(&base)
+        .expect("production weighting physical work");
+    let source = WorkNodeId::new("transaction-read");
+    let retained_lifetime = ClaimLifetime::retained_until(release.clone());
+    let retained_resources = physical.execution_dag().nodes()[&source]
+        .claims
+        .iter()
+        .filter(|claim| {
+            matches!(
+                claim.resource,
+                LeaseResource::MeasurementSetLock { .. } | LeaseResource::FileDescriptors
+            )
+        })
+        .map(|claim| (claim.resource.clone(), claim.amount))
+        .collect::<BTreeSet<_>>();
+    let weighting_allocations = physical
+        .execution_dag()
+        .logical_allocations()
+        .keys()
+        .filter(|allocation| {
+            !base
+                .execution_dag()
+                .logical_allocations()
+                .contains_key(*allocation)
+        })
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let weighting_slots = physical
+        .execution_dag()
+        .physical_slots()
+        .keys()
+        .filter(|slot| !base.execution_dag().physical_slots().contains_key(*slot))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let expected_uses = [&source, &generation, &replay, &release]
+        .into_iter()
+        .map(|node| {
+            (
+                node.clone(),
+                physical.execution_dag().nodes()[node]
+                    .allocations
+                    .iter()
+                    .map(|usage| (usage.allocation.clone(), usage.lifetime.clone()))
+                    .collect::<BTreeMap<_, _>>(),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let execution_plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| Ok::<_, ()>(physical),
+    )
+    .expect("plan with production weighting lifecycle");
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &ResourcePolicy::Balanced,
+        cost_model(4),
+    );
+    let mut executor = recording_executor(6, None, None);
+    executor.id = pathlike_implementation.clone();
+    executor.weighting_source_residency = Some(selected_content_residency(&problem));
+    executor.weighting_plan = Some(weighting_plan);
+    let registry = TestRegistry {
+        id: registry(3),
+        executors: BTreeMap::from([(pathlike_implementation.clone(), executor)]),
+    };
+    let mut controller = RunToCompletion;
+    let directory = tempfile::tempdir().expect("weighting receipt directory");
+    let receipts = ExecutionReceiptStore::new(
+        directory.path(),
+        ReceiptRetention::new(8, 1_048_576).expect("weighting receipt retention"),
+    )
+    .expect("weighting receipt store");
+    let provenance = execution_provenance(
+        casa_imaging_runtime::ExecutionAttemptId::from_sha256([199; 32]),
+        BuildIdentity::from_sha256([200; 32]),
+    );
+
+    run_receipted(
+        &problem,
+        &execution_plan,
+        &current,
+        &registry,
+        authority(),
+        &mut controller,
+        receipts.bind(provenance.clone()),
+    )
+    .expect("scheduler-authorized weighting lifecycle completes");
+    let receipt = receipts
+        .open(provenance.attempt_id())
+        .expect("weighting execution receipt");
+    assert_eq!(weighting_allocations.len(), 5);
+    assert!(weighting_allocations.is_subset(&receipt.allocation_generation_identities()));
+    assert_eq!(weighting_slots.len(), 5);
+    assert!(weighting_slots.is_subset(&receipt.physical_slot_identities()));
+    for (node, uses) in expected_uses {
+        assert_eq!(receipt.allocation_uses(&node), Some(uses));
+    }
+    let selected_content_allocation = selected_content_allocations()
+        .pop_first()
+        .expect("one selected-content allocation");
+    assert!(
+        receipt
+            .allocation_generation_identities()
+            .contains(&selected_content_allocation)
+    );
+    assert_eq!(
+        receipt
+            .allocation_uses(&release)
+            .and_then(|uses| uses.get(&selected_content_allocation).cloned()),
+        Some(ClaimLifetime::Work)
+    );
+    let io_lifetime = ClaimLifetime::through_fence(FenceKind::Io);
+    let source_resources = [
+        (LeaseResource::Workers, ClaimLifetime::Work, 1),
+        (
+            LeaseResource::Queue {
+                demand_id: "transaction-io-queue".to_string(),
+            },
+            io_lifetime.clone(),
+            1,
+        ),
+        (
+            LeaseResource::IoBuffer(IoBufferKind::SourceReadAhead),
+            io_lifetime,
+            SELECTED_CONTENT_BYTES as u64,
+        ),
+    ];
+    for node in [&generation, &replay] {
+        for (resource, lifetime, amount) in &source_resources {
+            assert_eq!(
+                receipt.planned_resource_amount(node, resource, lifetime),
+                Some(*amount)
+            );
+            assert_eq!(
+                receipt.actual_resource_peak(node, resource, lifetime),
+                Some(*amount)
+            );
+        }
+    }
+    for node in [&source, &generation, &replay, &release] {
+        for (resource, amount) in &retained_resources {
+            assert_eq!(
+                receipt.planned_resource_amount(node, resource, &retained_lifetime),
+                Some(*amount)
+            );
+            assert_eq!(
+                receipt.actual_resource_peak(node, resource, &retained_lifetime),
+                Some(*amount)
+            );
+        }
+    }
+    let release_buffer = LeaseResource::IoBuffer(IoBufferKind::SourceReadAhead);
+    assert_eq!(
+        receipt.planned_resource_amount(&release, &release_buffer, &ClaimLifetime::Work),
+        Some(SELECTED_CONTENT_BYTES as u64)
+    );
+    assert_eq!(
+        receipt.actual_resource_peak(&release, &release_buffer, &ClaimLifetime::Work),
+        Some(SELECTED_CONTENT_BYTES as u64)
+    );
+
+    let executor = registry
+        .executors
+        .get(&pathlike_implementation)
+        .expect("weighting executor");
+    assert!(executor.weighting_reconciled.load(Ordering::SeqCst));
+    assert!(executor.weighting_released.load(Ordering::SeqCst));
+    assert!(!executor.weighting_cleanup_released.load(Ordering::SeqCst));
+    assert!(
+        executor
+            .weighting_state
+            .lock()
+            .expect("weighting execution state lock")
+            .is_empty(),
+        "the explicit release node must consume the complete weighting lifecycle"
+    );
+
+    let path = only_receipt_path(directory.path());
+    let original = fs::read_to_string(&path).expect("serialized weighting receipt");
+    assert!(original.contains("redacted:"));
+    assert!(!original.contains(pathlike_implementation.as_str()));
+    for tamper in [
+        RetainedClaimTamper::RemoveClaim,
+        RetainedClaimTamper::ChangeAmount,
+        RetainedClaimTamper::WrongRelease,
+        RetainedClaimTamper::AddUnorderedUse,
+        RetainedClaimTamper::AddPostReleaseUse,
+        RetainedClaimTamper::ChangeDagIdentity,
+    ] {
+        fs::write(&path, with_retained_claim_tamper(&original, tamper))
+            .expect("rewrite checksum-valid weighting receipt");
+        assert!(
+            matches!(
+                receipts.open(provenance.attempt_id()),
+                Err(casa_imaging_runtime::ReceiptError::IntegrityMismatch)
+            ),
+            "{tamper:?} must fail canonical retained-topology validation"
+        );
+    }
 }
 
 #[test]
@@ -5176,8 +7228,8 @@ fn effective_problem_projection_normalizes_signed_zero_like_canonical_identities
 
     assert_eq!(positive_zero.problem_id(), negative_zero.problem_id());
     assert_eq!(
-        positive_zero.weighting().generation_id(),
-        negative_zero.weighting().generation_id()
+        positive_zero.weighting().commitment_id(),
+        negative_zero.weighting().commitment_id()
     );
 
     let positive_projection = CompiledProblemEvidence::project(&positive_zero);
@@ -5265,7 +7317,7 @@ fn receipt_reopens_the_complete_versioned_effective_problem_projection() {
         .expect("antenna generation")
         .to_string();
 
-    assert_eq!(projected.schema_version(), 7);
+    assert_eq!(projected.schema_version(), 9);
     assert_eq!(projected, &CompiledProblemEvidence::project(&problem));
     assert_eq!(
         reopened.model_lifecycle_identity(),
@@ -5332,22 +7384,36 @@ fn receipt_reopens_the_complete_versioned_effective_problem_projection() {
     );
     assert_eq!(projected.field("weighting.scheme.kind"), Some("natural"));
     assert_eq!(
-        projected.field("weighting.generation.identity"),
+        projected.field("weighting.commitment.identity"),
         Some(
             problem
                 .normal_equation()
                 .weighting()
-                .generation_id()
+                .commitment_id()
                 .to_string()
                 .as_str()
         )
+    );
+    assert_eq!(
+        projected.field("weighting.commitment.selected_observation"),
+        Some(
+            problem
+                .selected_observation()
+                .commitment_id()
+                .to_string()
+                .as_str()
+        )
+    );
+    assert_eq!(
+        projected.field("weighting.commitment.visibility_inner_product"),
+        Some("hermitian_euclidean")
     );
     assert_eq!(
         projected.field("weighting.sources.0.flag_policy"),
         Some("flag_or_flag_row")
     );
     assert_eq!(
-        projected.field("weighting.generation.snapshot_identity"),
+        projected.field("weighting.commitment.snapshot_identity"),
         Some(problem.inputs().observation().to_string().as_str())
     );
     assert_eq!(

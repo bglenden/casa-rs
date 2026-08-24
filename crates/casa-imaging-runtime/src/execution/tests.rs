@@ -1851,6 +1851,7 @@ fn fence_context_exposes_only_capabilities_live_for_that_fence() {
         node,
         knobs: ExecutionKnobs::serial(),
         lease_epoch: 7,
+        cleanup: false,
         resources: vec![
             WorkResourceCapability {
                 resource: crate::LeaseResource::Workers,
@@ -2470,6 +2471,7 @@ fn every_io_buffer_kind_has_exact_supported_and_unsupported_work_semantics() {
         WorkKind::Spill,
         WorkKind::Prefetch,
         WorkKind::Io,
+        WorkKind::ObservationRead,
         WorkKind::Serialization,
         WorkKind::Writeback,
         WorkKind::Publication,
@@ -2479,7 +2481,12 @@ fn every_io_buffer_kind_has_exact_supported_and_unsupported_work_semantics() {
     let mappings = [
         (
             crate::IoBufferKind::SourceReadAhead,
-            &[WorkKind::Prefetch, WorkKind::Cache][..],
+            &[
+                WorkKind::Prefetch,
+                WorkKind::Cache,
+                WorkKind::ObservationRead,
+                WorkKind::Release,
+            ][..],
         ),
         (crate::IoBufferKind::Decode, &[WorkKind::Preparation][..]),
         (
@@ -3295,7 +3302,7 @@ fn adaptation_feasibility_uses_the_exact_repeated_boundary_occurrence() {
 }
 
 #[test]
-fn release_node_must_own_exactly_one_logical_allocation() {
+fn release_node_can_atomically_own_multiple_external_allocations() {
     let first_prepare_id = WorkNodeId::new("prepare-first");
     let second_prepare_id = WorkNodeId::new("prepare-second");
     let release_id = WorkNodeId::new("release-both");
@@ -3387,11 +3394,8 @@ fn release_node_must_own_exactly_one_logical_allocation() {
         },
     ];
 
-    let error = ExecutionDag::new(specification)
-        .expect_err("a Release node cannot make partial failure ownership ambiguous");
-    assert!(
-        matches!(error, ExecutionError::InvalidPlan(message) if message.contains("exactly one logical allocation"))
-    );
+    ExecutionDag::new(specification)
+        .expect("one Release may atomically drop every allocation owned by one adapter state");
 }
 
 #[test]

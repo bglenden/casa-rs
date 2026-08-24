@@ -391,7 +391,7 @@ fn empty_generation_and_delta_have_exact_golden_identities_and_finalization_is_a
     assert_eq!(FinalModelCompletionId::SCHEMA_VERSION, 1);
     assert_eq!(
         base.generation_id().to_string(),
-        "2df2ed90d1c1ebb61eabae11985632f7271c1349a52f9c27716fe9e861ccd479"
+        "c8aa1f9f2d0df2cd47f25696232e8f0f12d0058ba35783dd3ea1dc87b394ad37"
     );
 
     let delta = owner
@@ -402,7 +402,7 @@ fn empty_generation_and_delta_have_exact_golden_identities_and_finalization_is_a
         .expect("compile replay delta");
     assert_eq!(
         delta.delta_id().to_string(),
-        "eb19c13ca94694438b70bde3c9bcf9ea04fb94e6467491b7e4c59893cb5394fb"
+        "c51140ee15cc8f4e318f71c534e3791106433916ffaf108712fc7ec2c3be4e87"
     );
     let update = owner
         .apply_final_delta(base, delta)

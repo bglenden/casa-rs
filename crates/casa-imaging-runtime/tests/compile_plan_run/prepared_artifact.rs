@@ -990,7 +990,10 @@ fn prepared_streaming_residency_is_admitted_once_without_overlapping_slots() {
         .iter()
         .map(|demand| demand.hard_bytes)
         .sum::<u64>();
-    assert!(admitted_host_bytes <= balanced_host_limit);
+    assert!(
+        admitted_host_bytes <= balanced_host_limit,
+        "single-buffer plan needs {admitted_host_bytes} host bytes within {balanced_host_limit}"
+    );
     assert!(
         admitted_host_bytes + 2 * reservation.streaming_buffer_bytes() > balanced_host_limit,
         "the former duplicate source/writeback slots would make this feasible plan look infeasible"

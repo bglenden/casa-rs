@@ -9,6 +9,7 @@ mod prepared_artifact;
 mod publication_layout;
 mod receipt;
 mod resource_authority;
+mod weighting;
 
 pub use execution_bindings::{
     ArtifactDisposition, ArtifactIdentity, ArtifactMeasurement, ArtifactMeasurementError,
@@ -68,4 +69,11 @@ pub use resource_authority::{
     ResourceLease, ResourceOverride, ResourcePermit, ResourcePolicy, ResourceTopology,
     RuntimeOverheadDemand, RuntimeOverheadKind, ScalingMetadata, StorageDemand, StorageDomain,
     StorageDomainId, StorageUseKind, TransferDemand, TransferLink, TransferLinkId,
+};
+pub use weighting::{
+    ReplayCallbackError, SelectedObservationSourceResources, WeightedObservationBlock,
+    WeightedObservationSample, WeightedSpectralValue, WeightingEvidenceError,
+    WeightingExecutionState, WeightingGenerationCompletionError, WeightingGenerationError,
+    WeightingPlanFragment, WeightingPlanFragmentError, WeightingReplayCompletion,
+    WeightingReplayCompletionError, WeightingReplayError, WeightingSourceTraversalError,
 };
