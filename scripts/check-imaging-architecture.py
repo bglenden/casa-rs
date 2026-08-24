@@ -124,15 +124,15 @@ ACCEPTED_ISSUE_OUTCOMES_SHA256 = (
     "6aa3525971d60dbb09fefa17a201c173c36db3f211aa87bec3a22df957533703"
 )
 ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256 = (
-    "b62233e109a3b57d9006e94183659cac979d3efc8e221bfb39db64c6aabfbf15"
+    "4589711ae6224b94916d05e214df510fab5ba01a16e21a0b913b4b851c1d0e89"
 )
 ACCEPTED_MATRIX_ROWS_SHA256 = (
-    "42710f8e539073bf21ae635fda18891957ff5eac278ba10ac8b51a3733e7365b"
+    "dc0c4328145c847c98d9f3046dabdcda8f566522f084bab59cd4d763dd6cfd13"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "3ac1eb0fd8d1b2e16622bd1497c1f5dfca085ba7106ddec3c026bc37daadee1a"
+    "e160ca9ff1d0f0434c1c1b9bb75e19c6ac46c83a20e52009874f2821ea768897"
 )
-ACCEPTED_MATRIX_CONTRACT_REVISION = 15
+ACCEPTED_MATRIX_CONTRACT_REVISION = 16
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "scientific-products-v1",
@@ -218,6 +218,18 @@ ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
         "model-lifecycle-foundation-v1",
         "resource_gates",
     ): "b77d11665914730df97d1aee20b7db613ae2cd285f96a4987cdc79ab1759accc",
+    (
+        "global-weighting-v1",
+        "thresholds",
+    ): "ba44ae208fff6e3e499a419dcac95736dc7f58200002f3048df7a664c043f819",
+    (
+        "global-weighting-v1",
+        "laws",
+    ): "9fb09c33452bcc79cc14a774fa8b0a26f6899e5b2bcd035cbbc87aa58bb006b9",
+    (
+        "global-weighting-v1",
+        "resource_gates",
+    ): "53b3c9557ac55a8c62531feb41ea072417d5f9bf82ddc54c4c5e57f5b4f332b2",
     (
         "observation-transaction-v1",
         "thresholds",
@@ -2542,6 +2554,7 @@ def validate_migration_matrix(
         )
     if enforce_accepted_scope:
         validate_t28_model_lifecycle_transfer(rows)
+        validate_t18_global_weighting_transfer(rows)
 
 
 def validate_t28_model_lifecycle_transfer(rows: list[dict[str, Any]]) -> None:
@@ -2825,6 +2838,151 @@ def validate_t28_model_lifecycle_sources(
     )
     if not all(field in projection for field in required_audit_fields):
         raise ArchitectureError("T28 receipt projection omits reprojection audit evidence")
+
+
+def validate_t18_global_weighting_transfer(rows: list[dict[str, Any]]) -> None:
+    row = next(
+        (item for item in rows if item.get("id") == "capability.global-weighting"),
+        None,
+    )
+    if row is None or row.get("status") != "Native":
+        raise ArchitectureError("T18 must leave capability.global-weighting Native")
+    required_evidence = {
+        "crates/casa-imaging-model/src/measurement_equation.rs::pub struct WeightingOperatorContract",
+        "crates/casa-imaging-reconstruction/src/weighting.rs::pub fn plan_weighting",
+        "crates/casa-imaging-reconstruction/src/weighting.rs::pub fn begin_weighting_generation",
+        "crates/casa-imaging-reconstruction/src/weighting.rs::pub struct WeightingDensityPhase",
+        "crates/casa-imaging-reconstruction/src/weighting.rs::pub struct WeightingSumWeightPhase",
+        "crates/casa-imaging-reconstruction/src/weighting.rs::pub struct WeightedObservationBlock",
+        "crates/casa-imaging-runtime/src/weighting.rs::pub fn freeze_weighting_generation",
+        "crates/casa-imaging-runtime/src/weighting.rs::pub struct FrozenWeightingGeneration",
+        "crates/casa-imaging-runtime/src/weighting.rs::pub struct WeightingReplayCompletion",
+        "crates/casa-imaging-runtime/src/receipt.rs::fn project_weighting",
+    }
+    required_baselines = {
+        "repo://crates/casa-imaging-model/src/measurement_equation.rs",
+        "repo://crates/casa-imaging-reconstruction/src/weighting.rs",
+        "repo://crates/casa-imaging-runtime/src/weighting.rs",
+        "repo://crates/casa-imaging-runtime/src/receipt.rs",
+    }
+    if not required_evidence.issubset(set(row.get("source_evidence", []))):
+        raise ArchitectureError("T18 lacks the accepted weighting-owner source evidence")
+    if not required_baselines.issubset(set(row.get("baseline_manifests", []))):
+        raise ArchitectureError("T18 lacks pinned weighting-owner baseline evidence")
+
+    model_path = REPO_ROOT / "crates/casa-imaging-model/src/measurement_equation.rs"
+    weighting_path = REPO_ROOT / "crates/casa-imaging-reconstruction/src/weighting.rs"
+    runtime_weighting_path = REPO_ROOT / "crates/casa-imaging-runtime/src/weighting.rs"
+    receipt_path = REPO_ROOT / "crates/casa-imaging-runtime/src/receipt.rs"
+    try:
+        model = model_path.read_text(encoding="utf-8")
+        weighting = weighting_path.read_text(encoding="utf-8")
+        runtime_weighting = runtime_weighting_path.read_text(encoding="utf-8")
+        receipt = receipt_path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise ArchitectureError(f"cannot inspect T18 weighting sources: {error}") from error
+    validate_t18_global_weighting_sources(
+        model,
+        weighting,
+        runtime_weighting,
+        receipt,
+        model_path=model_path,
+        weighting_path=weighting_path,
+        runtime_weighting_path=runtime_weighting_path,
+        receipt_path=receipt_path,
+    )
+
+
+def validate_t18_global_weighting_sources(
+    model: str,
+    weighting: str,
+    runtime_weighting: str,
+    receipt: str,
+    *,
+    model_path: Path,
+    weighting_path: Path,
+    runtime_weighting_path: Path,
+    receipt_path: Path,
+) -> None:
+    commitment = re.sub(
+        r"\s+", "", rust_function_body(model, "weighting_commitment_id", model_path)
+    )
+    required_commitment_inputs = (
+        "snapshot.as_bytes()",
+        "geometry.as_bytes()",
+        "sampling",
+        "numerics.as_bytes()",
+        "weighting.scheme()",
+        "weighting.density_scope()",
+        "weighting.uv_taper()",
+    )
+    forbidden_physical_inputs = ("block", "worker", "replay", "backend", "resource", "partition")
+    if not all(binding in commitment for binding in required_commitment_inputs) or any(
+        binding in commitment.lower() for binding in forbidden_physical_inputs
+    ):
+        raise ArchitectureError(
+            "T18 compiler commitment does not isolate logical weighting from physical execution"
+        )
+
+    frozen_fields = rust_struct_fields(runtime_weighting, "FrozenWeightingGeneration", runtime_weighting_path)
+    for field in (
+        "state",
+        "density_completion",
+        "sum_weight_completion",
+    ):
+        if field not in frozen_fields:
+            raise ArchitectureError("T18 frozen generation omits reconstruction or T17 evidence")
+    if frozen_fields.get("density_completion") != "SelectedObservationCompletion" or frozen_fields.get("sum_weight_completion") != "SelectedObservationCompletion":
+        raise ArchitectureError("T18 frozen generation does not retain concrete opaque T17 completions")
+    freeze = rust_function_body(runtime_weighting, "freeze_weighting_generation", runtime_weighting_path)
+    if freeze.count(".traverse(") != 2:
+        raise ArchitectureError(
+            "T18 frozen generation must require distinct exhaustive density and sum-weight passes"
+        )
+    replay = rust_impl_method_body(runtime_weighting, "FrozenWeightingGeneration", "replay", runtime_weighting_path)
+    if replay.count(".traverse(") != 1 or ".finish(" not in replay:
+        raise ArchitectureError(
+            "T18 replay must require its own exhaustive traversal and exact coverage"
+        )
+    if "IntoIterator" in weighting or "inspect_selected_observation(" in weighting:
+        raise ArchitectureError("T18 reconstruction exposes a bypass around T17 callback traversal")
+    if "SelectedObservationGenerationId" in weighting:
+        raise ArchitectureError("T18 reconstruction accepts caller-authored T17 completion identity")
+    replay_completion = rust_struct_fields(runtime_weighting, "WeightingReplayCompletion", runtime_weighting_path)
+    if replay_completion.get("owner_completion") != "SelectedObservationCompletion":
+        raise ArchitectureError("T18 replay completion does not retain concrete opaque T17 evidence")
+    if re.search(
+        r"\bpub\s+(?:const\s+)?fn\s+(?:from_sha256|from_identity|new_generation)\b",
+        weighting,
+    ):
+        raise ArchitectureError("T18 exposes a raw weighting evidence constructor")
+    block_fields = rust_struct_fields(weighting, "WeightedObservationBlock", weighting_path)
+    sample_fields = rust_struct_fields(weighting, "WeightedObservationSample", weighting_path)
+    if block_fields.get("generation") != "WeightingGenerationId" or sample_fields.get(
+        "generation"
+    ) != "WeightingGenerationId":
+        raise ArchitectureError("T18 weighted replay does not carry one opaque W generation")
+    residency_fields = rust_struct_fields(weighting, "WeightingResidency", weighting_path)
+    required_residency = {
+        "density_grid_bytes",
+        "deterministic_partial_bytes",
+        "reduction_scratch_bytes",
+        "replay_read_bytes",
+        "weighted_block_bytes",
+        "queue_bytes",
+        "simultaneous_selected_weighted_bytes",
+        "peak_bytes",
+    }
+    if not required_residency.issubset(residency_fields):
+        raise ArchitectureError("T18 residency omits a weighting-owned buffer class")
+    projection = rust_function_body(receipt, "project_weighting", receipt_path)
+    if (
+        "weighting.commitment.identity" not in projection
+        or "weighting.generation.identity" in projection
+    ):
+        raise ArchitectureError(
+            "T18 receipt conflates compiler commitment with reconstruction generation evidence"
+        )
 
 
 def validate_t17_ms_selection_transfer(rows: list[dict[str, Any]]) -> None:

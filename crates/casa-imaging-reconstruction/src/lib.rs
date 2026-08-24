@@ -28,6 +28,10 @@ use casa_imaging_model::{
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+mod weighting;
+
+pub use weighting::*;
+
 const AUTHORITY_DOMAIN: &[u8] = b"casa-rs-model-lifecycle-authority";
 const AUTHORITY_VERSION: u32 = 2;
 const GENERATION_DOMAIN: &[u8] = b"casa-rs-model-generation";

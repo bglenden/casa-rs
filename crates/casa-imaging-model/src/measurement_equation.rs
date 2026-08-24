@@ -15,7 +15,7 @@ use sha2::{Digest, Sha256};
 use crate::{
     ProblemInputIdentities,
     compiled_problem::{
-        InstrumentResponse, LogicalIdentity, PolarizationContract, ProductKind,
+        InstrumentResponse, LogicalIdentity, NumericsContractId, PolarizationContract, ProductKind,
         ProductNormalization, ReconstructionBasis, ReconstructionContract, RestoringBeamPolicy,
         ScientificContract, SpectralSampling, UvTaper, WeightDensityScope, WeightingContract,
         WeightingScheme,
@@ -26,8 +26,8 @@ use crate::{
     },
 };
 
-const WEIGHTING_GENERATION_IDENTITY_DOMAIN: &[u8] = b"casa-rs-weighting-generation";
-const WEIGHTING_GENERATION_IDENTITY_VERSION: u32 = 1;
+const WEIGHTING_COMMITMENT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-weighting-commitment";
+const WEIGHTING_COMMITMENT_IDENTITY_VERSION: u32 = 2;
 
 /// Inner product on the model-coefficient space.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -237,13 +237,17 @@ impl MeasurementOperatorContract {
     }
 }
 
-/// Stable identity of one immutable complete-selection weighting generation.
+/// Stable identity of the compiler-owned weighting-generation commitment.
+///
+/// This describes the requested logical W; it is not evidence that density,
+/// reduction, sum-weight, or replay work ran. Only the reconstruction owner
+/// can turn it into a frozen generation.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct WeightingGenerationId([u8; 32]);
+pub struct WeightingCommitmentId([u8; 32]);
 
-impl WeightingGenerationId {
-    /// Identity schema version used by the weighting-generation encoder.
-    pub const SCHEMA_VERSION: u32 = WEIGHTING_GENERATION_IDENTITY_VERSION;
+impl WeightingCommitmentId {
+    /// Identity schema version used by the weighting-commitment encoder.
+    pub const SCHEMA_VERSION: u32 = WEIGHTING_COMMITMENT_IDENTITY_VERSION;
 
     /// Return the exact SHA-256 digest.
     #[must_use]
@@ -252,15 +256,15 @@ impl WeightingGenerationId {
     }
 }
 
-impl fmt::Debug for WeightingGenerationId {
+impl fmt::Debug for WeightingCommitmentId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("WeightingGenerationId(")?;
+        formatter.write_str("WeightingCommitmentId(")?;
         write_hex(formatter, &self.0)?;
         formatter.write_str(")")
     }
 }
 
-impl fmt::Display for WeightingGenerationId {
+impl fmt::Display for WeightingCommitmentId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write_hex(formatter, &self.0)
     }
@@ -315,7 +319,7 @@ impl WeightingSource {
     }
 }
 
-/// Positive-semidefinite data metric W and its frozen global generation.
+/// Positive-semidefinite data metric W and its compiler-owned commitment.
 ///
 /// Callers cannot construct a weighting operator with a snapshot or source
 /// generation different from the compiled problem inputs.
@@ -327,7 +331,7 @@ impl WeightingSource {
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct WeightingOperatorContract {
-    generation_id: WeightingGenerationId,
+    commitment_id: WeightingCommitmentId,
     snapshot: ObservationSnapshotId,
     scheme: WeightingScheme,
     density_scope: WeightDensityScope,
@@ -336,10 +340,10 @@ pub struct WeightingOperatorContract {
 }
 
 impl WeightingOperatorContract {
-    /// Return the immutable weighting generation identity.
+    /// Return the immutable compiler-owned weighting commitment.
     #[must_use]
-    pub const fn generation_id(&self) -> WeightingGenerationId {
-        self.generation_id
+    pub const fn commitment_id(&self) -> WeightingCommitmentId {
+        self.commitment_id
     }
 
     /// Return the selected observation bound into this generation.
@@ -495,6 +499,7 @@ pub(crate) fn compile_normal_equation(
     science: &ScientificContract,
     reconstruction: &ReconstructionContract,
     weighting: WeightingContract,
+    numerics: NumericsContractId,
 ) -> NormalEquationContract {
     let inner_products = science.measurement_equation().inner_products();
     let domain = ModelCoefficientSpace {
@@ -533,7 +538,13 @@ pub(crate) fn compile_normal_equation(
         codomain,
         transforms: transforms.into_boxed_slice(),
     };
-    let weighting = compile_weighting_operator(geometry, inputs, weighting);
+    let weighting = compile_weighting_operator(
+        geometry,
+        inputs,
+        science.spectral().sampling(),
+        weighting,
+        numerics,
+    );
     NormalEquationContract {
         measurement_operator,
         weighting,
@@ -578,7 +589,9 @@ pub(crate) fn compile_product_boundary(
 fn compile_weighting_operator(
     geometry: &CompiledGeometry,
     inputs: &ProblemInputIdentities,
+    sampling: SpectralSampling,
     weighting: WeightingContract,
+    numerics: NumericsContractId,
 ) -> WeightingOperatorContract {
     let snapshot = inputs.observation_snapshot();
     let sources = snapshot
@@ -609,10 +622,12 @@ fn compile_weighting_operator(
         .collect::<Vec<_>>()
         .into_boxed_slice();
     WeightingOperatorContract {
-        generation_id: weighting_generation_id(
+        commitment_id: weighting_commitment_id(
             snapshot.snapshot_id(),
             geometry.geometry_id(),
+            sampling,
             weighting,
+            numerics,
         ),
         snapshot: snapshot.snapshot_id(),
         scheme: weighting.scheme(),
@@ -622,16 +637,28 @@ fn compile_weighting_operator(
     }
 }
 
-fn weighting_generation_id(
+fn weighting_commitment_id(
     snapshot: ObservationSnapshotId,
     geometry: CompiledGeometryId,
+    sampling: SpectralSampling,
     weighting: WeightingContract,
-) -> WeightingGenerationId {
+    numerics: NumericsContractId,
+) -> WeightingCommitmentId {
     let mut hasher = Sha256::new();
-    hasher.update(WEIGHTING_GENERATION_IDENTITY_DOMAIN);
-    hasher.update(WEIGHTING_GENERATION_IDENTITY_VERSION.to_be_bytes());
+    hasher.update(WEIGHTING_COMMITMENT_IDENTITY_DOMAIN);
+    hasher.update(WEIGHTING_COMMITMENT_IDENTITY_VERSION.to_be_bytes());
     hasher.update(snapshot.as_bytes());
     hasher.update(geometry.as_bytes());
+    match sampling {
+        SpectralSampling::Identity => hasher.update([0]),
+        SpectralSampling::Nearest => hasher.update([1]),
+        SpectralSampling::Linear => hasher.update([2]),
+        SpectralSampling::ChannelAverage { channels_per_bin } => {
+            hasher.update([3]);
+            hasher.update((channels_per_bin as u128).to_be_bytes());
+        }
+    }
+    hasher.update(numerics.as_bytes());
     match weighting.scheme() {
         WeightingScheme::Natural => hasher.update([0]),
         WeightingScheme::Uniform => hasher.update([1]),
@@ -658,7 +685,7 @@ fn weighting_generation_id(
             hash_f64(&mut hasher, taper.position_angle_rad());
         }
     }
-    WeightingGenerationId(hasher.finalize().into())
+    WeightingCommitmentId(hasher.finalize().into())
 }
 
 fn hash_f64(hasher: &mut Sha256, value: f64) {

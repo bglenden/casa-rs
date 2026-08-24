@@ -8,6 +8,7 @@ mod observation_transaction;
 mod publication_layout;
 mod receipt;
 mod resource_authority;
+mod weighting;
 
 pub use execution_bindings::{
     ArtifactDisposition, ArtifactIdentity, ArtifactMeasurement, ArtifactRole,
@@ -58,4 +59,9 @@ pub use resource_authority::{
     ResourceLease, ResourceOverride, ResourcePermit, ResourcePolicy, ResourceTopology,
     RuntimeOverheadDemand, RuntimeOverheadKind, ScalingMetadata, StorageDemand, StorageDomain,
     StorageDomainId, StorageUseKind, TransferDemand, TransferLink, TransferLinkId,
+};
+pub use weighting::{
+    FrozenWeightingGeneration, ReplayCallbackError, WeightingEvidenceError,
+    WeightingGenerationError, WeightingReplayCompletion, WeightingReplayError,
+    freeze_weighting_generation,
 };

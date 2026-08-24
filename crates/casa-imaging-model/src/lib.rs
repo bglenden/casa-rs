@@ -43,7 +43,7 @@ pub use measurement_equation::{
     NormalEquationContract, NormalEquationForm, NormalStateNormalization, NormalStateSpace,
     PairedMeasurementTransform, PairedTransformKind, ProductBoundaryOperation,
     ProductNormalizationBoundary, VisibilityInnerProduct, VisibilitySampleSpace,
-    WeightingGenerationId, WeightingOperatorContract, WeightingSource,
+    WeightingCommitmentId, WeightingOperatorContract, WeightingSource,
 };
 
 pub use model_state::{

@@ -2040,6 +2040,100 @@ class MigrationMatrixTests(unittest.TestCase):
                         receipt_path=receipt_path,
                     )
 
+    def test_t18_transfer_rejects_merged_passes_and_rebindable_weighting(self) -> None:
+        model_path = REPO_ROOT / "crates/casa-imaging-model/src/measurement_equation.rs"
+        weighting_path = REPO_ROOT / "crates/casa-imaging-reconstruction/src/weighting.rs"
+        runtime_weighting_path = REPO_ROOT / "crates/casa-imaging-runtime/src/weighting.rs"
+        receipt_path = REPO_ROOT / "crates/casa-imaging-runtime/src/receipt.rs"
+        model = model_path.read_text(encoding="utf-8")
+        weighting = weighting_path.read_text(encoding="utf-8")
+        runtime_weighting = runtime_weighting_path.read_text(encoding="utf-8")
+        receipt = receipt_path.read_text(encoding="utf-8")
+
+        one_pass = runtime_weighting.replace(
+            ".traverse(problem, |sample| sum_weight.consume(problem, sample))",
+            ".reuse(density_completion)",
+            1,
+        )
+        self.assertNotEqual(one_pass, runtime_weighting)
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"distinct exhaustive density and sum-weight passes",
+        ):
+            checker.validate_t18_global_weighting_sources(
+                model,
+                weighting,
+                one_pass,
+                receipt,
+                model_path=model_path,
+                weighting_path=weighting_path,
+                runtime_weighting_path=runtime_weighting_path,
+                receipt_path=receipt_path,
+            )
+
+        rebindable = weighting.replace(
+            "    generation: WeightingGenerationId,\n    sequence: u64,",
+            "    pub generation: LogicalIdentity,\n    sequence: u64,",
+            1,
+        )
+        self.assertNotEqual(rebindable, weighting)
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"one opaque W generation",
+        ):
+            checker.validate_t18_global_weighting_sources(
+                model,
+                rebindable,
+                runtime_weighting,
+                receipt,
+                model_path=model_path,
+                weighting_path=weighting_path,
+                runtime_weighting_path=runtime_weighting_path,
+                receipt_path=receipt_path,
+            )
+
+        iterator_bypass = weighting.replace(
+            "pub fn begin_weighting_generation(",
+            "pub fn freeze_from_iterators(samples: impl IntoIterator<Item = SelectedObservationSample>) -> () { let _ = samples; }\npub fn begin_weighting_generation(",
+            1,
+        )
+        self.assertNotEqual(iterator_bypass, weighting)
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"bypass around T17 callback traversal",
+        ):
+            checker.validate_t18_global_weighting_sources(
+                model,
+                iterator_bypass,
+                runtime_weighting,
+                receipt,
+                model_path=model_path,
+                weighting_path=weighting_path,
+                runtime_weighting_path=runtime_weighting_path,
+                receipt_path=receipt_path,
+            )
+
+        raw_completion = weighting.replace(
+            "pub fn finish(self) -> Result<WeightingGenerationState, WeightingError>",
+            "pub fn finish(self, selected: SelectedObservationGenerationId) -> Result<WeightingGenerationState, WeightingError>",
+            1,
+        )
+        self.assertNotEqual(raw_completion, weighting)
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"caller-authored T17 completion identity",
+        ):
+            checker.validate_t18_global_weighting_sources(
+                model,
+                raw_completion,
+                runtime_weighting,
+                receipt,
+                model_path=model_path,
+                weighting_path=weighting_path,
+                runtime_weighting_path=runtime_weighting_path,
+                receipt_path=receipt_path,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

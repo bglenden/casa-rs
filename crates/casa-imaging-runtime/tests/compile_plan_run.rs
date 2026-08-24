@@ -394,6 +394,67 @@ fn request_with_geometry_references_and_weighting(
     )
 }
 
+#[test]
+fn real_t17_traversals_freeze_and_replay_one_global_weighting_generation() {
+    let problem = compile(request_with_geometry_references_and_weighting(
+        42,
+        geometry(255.0),
+        default_references(),
+        WeightingContract::new(
+            WeightingScheme::Uniform,
+            WeightDensityScope::GlobalSelection,
+        ),
+    ))
+    .expect("compile uniform-weighting fixture");
+    let bindings = problem
+        .inputs()
+        .observation_snapshot()
+        .sources()
+        .iter()
+        .map(|source| {
+            ObservationSourceBinding::new(
+                ObservationSourceState::new(
+                    source.identity(),
+                    source.selection().rows().clone(),
+                    source.generations().clone(),
+                ),
+                SelectedObservationContentBudget::new(4 * 1024 * 1024, 1, 2),
+            )
+        })
+        .collect();
+    let measures = SelectedObservationMeasures::new(
+        casa_test_support::deterministic_measures_provider_for_identity(identity(90).as_bytes()),
+    )
+    .expect("bind deterministic Measures provider");
+    let mut selected = BoundSelectedObservation::open(&problem, measures, bindings)
+        .expect("open real T17 selected observation");
+    let plan = casa_imaging_reconstruction::plan_weighting(
+        &problem,
+        casa_imaging_reconstruction::WeightingExecutionLimits::new(2, 2, 1)
+            .expect("weighting limits"),
+    )
+    .expect("weighting plan");
+
+    let generation =
+        casa_imaging_runtime::freeze_weighting_generation(&mut selected, &problem, &plan)
+            .expect("two exhaustive real T17 passes freeze W");
+    let mut weighted_sample_count = 0_u64;
+    let replay = generation
+        .replay(&mut selected, &problem, &plan, |block| {
+            weighted_sample_count += block.samples().len() as u64;
+            Ok::<_, io::Error>(())
+        })
+        .expect("one exhaustive real T17 replay");
+
+    assert_eq!(
+        generation.selected_generation(),
+        replay.selected_generation()
+    );
+    assert_eq!(generation.sample_count(), replay.sample_count());
+    assert_eq!(weighted_sample_count, replay.sample_count());
+    assert_eq!(generation.generation_id(), replay.weighting_generation(),);
+}
+
 fn request_with_products(
     observation: u8,
     geometry: GeometryInput,
@@ -3364,8 +3425,8 @@ fn plan_seals_physical_work_and_every_required_binding() {
     assert_eq!(
         execution_plan.plan_id().as_bytes(),
         [
-            247, 196, 220, 222, 254, 25, 213, 243, 10, 98, 169, 162, 212, 100, 95, 202, 222, 107,
-            5, 16, 38, 32, 214, 157, 157, 230, 118, 175, 73, 151, 8, 207,
+            157, 99, 231, 211, 201, 79, 33, 201, 121, 90, 94, 246, 53, 61, 55, 105, 221, 45, 41,
+            120, 15, 210, 40, 184, 80, 150, 247, 104, 96, 17, 33, 46,
         ]
     );
 }
@@ -5118,8 +5179,8 @@ fn effective_problem_projection_normalizes_signed_zero_like_canonical_identities
 
     assert_eq!(positive_zero.problem_id(), negative_zero.problem_id());
     assert_eq!(
-        positive_zero.weighting().generation_id(),
-        negative_zero.weighting().generation_id()
+        positive_zero.weighting().commitment_id(),
+        negative_zero.weighting().commitment_id()
     );
 
     let positive_projection = CompiledProblemEvidence::project(&positive_zero);
@@ -5207,7 +5268,7 @@ fn receipt_reopens_the_complete_versioned_effective_problem_projection() {
         .expect("antenna generation")
         .to_string();
 
-    assert_eq!(projected.schema_version(), 7);
+    assert_eq!(projected.schema_version(), 8);
     assert_eq!(projected, &CompiledProblemEvidence::project(&problem));
     assert_eq!(
         reopened.model_lifecycle_identity(),
@@ -5274,12 +5335,12 @@ fn receipt_reopens_the_complete_versioned_effective_problem_projection() {
     );
     assert_eq!(projected.field("weighting.scheme.kind"), Some("natural"));
     assert_eq!(
-        projected.field("weighting.generation.identity"),
+        projected.field("weighting.commitment.identity"),
         Some(
             problem
                 .normal_equation()
                 .weighting()
-                .generation_id()
+                .commitment_id()
                 .to_string()
                 .as_str()
         )
@@ -5289,7 +5350,7 @@ fn receipt_reopens_the_complete_versioned_effective_problem_projection() {
         Some("flag_or_flag_row")
     );
     assert_eq!(
-        projected.field("weighting.generation.snapshot_identity"),
+        projected.field("weighting.commitment.snapshot_identity"),
         Some(problem.inputs().observation().to_string().as_str())
     );
     assert_eq!(

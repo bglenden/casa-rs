@@ -52,7 +52,7 @@ use crate::{
 
 const RECEIPT_SCHEMA: &str = "casa-rs-imaging-execution-receipt";
 const RECEIPT_SCHEMA_VERSION: u32 = 11;
-const COMPILED_PROBLEM_EVIDENCE_VERSION: u32 = 7;
+const COMPILED_PROBLEM_EVIDENCE_VERSION: u32 = 8;
 const RECEIPT_SUFFIX: &str = ".receipt.json";
 const RECEIPT_STAGING_PREFIX: &str = ".casa-rs-receipt-staging-";
 const RECEIPT_STAGING_SUFFIX: &str = ".tmp";
@@ -5539,12 +5539,12 @@ fn project_weighting(fields: &mut BTreeMap<String, String>, problem: &CompiledPr
     }
     evidence_field(
         fields,
-        "weighting.generation.identity",
-        hex(&weighting.generation_id().as_bytes()),
+        "weighting.commitment.identity",
+        hex(&weighting.commitment_id().as_bytes()),
     );
     evidence_field(
         fields,
-        "weighting.generation.snapshot_identity",
+        "weighting.commitment.snapshot_identity",
         hex(&weighting.snapshot().as_bytes()),
     );
     for (index, source) in weighting.sources().iter().enumerate() {
