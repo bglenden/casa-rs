@@ -138,6 +138,7 @@ pub use selected_observation::{
     ObservationSourceBinding, SelectedObservationCompletion, SelectedObservationContentBudget,
     SelectedObservationMeasures, SelectedObservationMeasuresError, SelectedObservationRow,
     SelectedObservationRowSelection, SelectedObservationTraversalError,
+    SelectedObservationTraversalSample,
 };
 pub(crate) use selected_observation_buffer::{
     SelectedObservationBuffer, SelectedObservationBufferRequest, SelectedStoredSample,

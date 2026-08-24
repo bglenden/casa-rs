@@ -1501,6 +1501,12 @@ pub fn compile(request: ImagingRequest) -> Result<CompiledProblem, CompileProble
     let reconstruction = specification.reconstruction.canonicalize()?;
     validate_weighting(specification.weighting)?;
     validate_products(&science, &reconstruction, &products)?;
+    let selected_observation = compile_selected_observation_commitment(
+        &observation_transaction,
+        geometry.geometry_id(),
+        science.measurement_equation().inner_products().visibility(),
+        science.spectral().sampling(),
+    );
     let normal_equation = compile_normal_equation(
         &geometry,
         &inputs,
@@ -1508,15 +1514,7 @@ pub fn compile(request: ImagingRequest) -> Result<CompiledProblem, CompileProble
         &reconstruction,
         specification.weighting,
         numerics_id,
-    );
-    let selected_observation = compile_selected_observation_commitment(
-        &observation_transaction,
-        geometry.geometry_id(),
-        normal_equation
-            .measurement_operator()
-            .codomain()
-            .inner_product(),
-        science.spectral().sampling(),
+        selected_observation.commitment_id(),
     );
     let required_capabilities = derive_capabilities(
         &geometry,

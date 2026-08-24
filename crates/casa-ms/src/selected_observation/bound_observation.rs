@@ -18,6 +18,7 @@ use super::{
     BoundObservationSamples, BoundObservationSource, BoundObservationSourceError,
     SelectedObservationContentBudget, SelectedObservationMeasures,
     SelectedObservationMeasuresError, content_plan::SelectedObservationSharedBytes,
+    spectral_contributions::SelectedObservationTraversalSample,
 };
 
 /// One current storage-owner state probe and bounded-content budget.
@@ -227,7 +228,7 @@ impl BoundSelectedObservation {
     pub fn traverse<E>(
         &mut self,
         problem: &CompiledProblem,
-        mut consume: impl FnMut(SelectedObservationSample) -> Result<(), E>,
+        mut consume: impl FnMut(SelectedObservationTraversalSample) -> Result<(), E>,
     ) -> Result<SelectedObservationCompletion, SelectedObservationTraversalError<E>>
     where
         E: Error + 'static,
@@ -240,8 +241,12 @@ impl BoundSelectedObservation {
         let samples = self
             .selected_samples(problem)
             .map_err(SelectedObservationTraversalError::Binding)?;
-        let (generation_id, sample_count) =
-            consume_validated_stream(problem, samples, &mut consume)?;
+        let (generation_id, sample_count) = consume_projected_validated_stream(
+            problem,
+            samples,
+            |sample| SelectedObservationTraversalSample::from_owner(problem, sample),
+            &mut consume,
+        )?;
         self.next_traversal = next_traversal;
         Ok(SelectedObservationCompletion {
             problem_id: problem.problem_id(),
@@ -256,6 +261,7 @@ impl BoundSelectedObservation {
     }
 }
 
+#[cfg(test)]
 pub(super) fn consume_validated_stream<E>(
     problem: &CompiledProblem,
     samples: impl Iterator<Item = Result<SelectedObservationSample, BoundObservationSourceError>>,
@@ -264,11 +270,24 @@ pub(super) fn consume_validated_stream<E>(
 where
     E: Error + 'static,
 {
+    consume_projected_validated_stream(problem, samples, Ok, &mut consume)
+}
+
+fn consume_projected_validated_stream<E, T>(
+    problem: &CompiledProblem,
+    samples: impl Iterator<Item = Result<SelectedObservationSample, BoundObservationSourceError>>,
+    mut project: impl FnMut(SelectedObservationSample) -> Result<T, BoundObservationSourceError>,
+    mut consume: impl FnMut(T) -> Result<(), E>,
+) -> Result<(SelectedObservationGenerationId, u64), SelectedObservationTraversalError<E>>
+where
+    E: Error + 'static,
+{
     // Iterator exhaustion performs the terminal poll before completion can be
     // minted; a terminal source error is therefore observed as an item.
     let samples = samples.map(|sample| sample.map_err(TraversalPassError::Source));
-    match problem.inspect_selected_observation(samples, |sample| {
-        consume(sample).map_err(TraversalPassError::Consumer)
+    match problem.inspect_selected_observation(samples, |sample| match project(sample) {
+        Ok(projected) => consume(projected).map_err(TraversalPassError::Consumer),
+        Err(error) => Err(TraversalPassError::Source(error)),
     }) {
         Ok(completion) => Ok(completion),
         Err(SelectedObservationPassError::Inspection(error)) => {

@@ -34,7 +34,9 @@ use casa_imaging_model::{
     SpectralSampling, SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct,
     WeightDensityScope, WeightingContract, WeightingScheme, compile,
 };
-use casa_imaging_reconstruction::ExecutableModelProblem;
+use casa_imaging_reconstruction::{
+    ExecutableModelProblem, WeightingExecutionLimits, plan_weighting,
+};
 use casa_imaging_runtime::{
     AdaptationId, AdaptationTransition, AllocationAccess, AllocationId, AllocationLayout,
     AllocationLifetime, AllocationPurpose, AllocationUse, AlternativeId, ArtifactDisposition,
@@ -45,29 +47,30 @@ use casa_imaging_runtime::{
     ExecutionEvidenceError, ExecutionKnobs, ExecutionOutcome, ExecutionPlanId, ExecutionProvenance,
     ExecutionReceipt, ExecutionReceiptBinding, ExecutionReceiptStore, ExecutionRouteDisposition,
     ExecutionRouteEvidence, ExecutionRouteRequirement, ExecutionRouteRequirementKind,
-    ExecutionStatus, ExternalPressure, FenceId, FenceKind, HostInventory, ImplementationRegistry,
-    ImplementationRegistryId, InitializationPolicy, IoBufferDemand, IoBufferKind, IoMeasurement,
-    IoPrediction, LeaseResource, LogicalAllocation, MemoryCapacityDomain, MemoryCapacityKind,
-    MemoryDemand, MemoryView, MemoryViewKind, ObservationReadCompletionContext,
-    ObservationTransactionWork, PhysicalLayoutId, PhysicalSlot, PhysicalSlotId,
-    PhysicalWorkBinding, PhysicalWorkBindingError, PlanError, PlanPrediction, PlannedArtifact,
-    PlannerCostModelProfileId, PlanningBindings, PredictionConfidence, PredictionUncertainty,
-    PreparedArtifactBudget, PreparedArtifactDescriptor, PreparedArtifactError,
-    PreparedArtifactLoadSource, PreparedArtifactOperation, PreparedArtifactOrder,
-    PreparedArtifactPlanFragment, PreparedArtifactPlaneDescriptor, PreparedArtifactPrecision,
-    PreparedArtifactRegistration, PreparedArtifactRejection, PreparedArtifactReuseOutcome,
-    PreparedArtifactSegmentDescriptor, PreparedArtifactSourceSegment, PreparedArtifactStore,
-    PreparedArtifactUvAffine, PublicationLayoutLedger, PublicationMappedStaging,
-    PublicationParticipant, PublicationPhysicalLayout, PublicationResourceBounds,
-    PublicationStaging, QueueDemand, QueueResource, QueueResourceId, QuiescencePoint, RateDemand,
-    RateResource, RateResourceId, RateUnit, ReceiptFailureKind, ReceiptRetention, ReceiptStatus,
-    RedactedPath, ResourceAuthority, ResourceClaim, ResourceError, ResourceHeadroom,
-    ResourceMeasurement, ResourceOverride, ResourcePolicy, ResourceTopology, RunBindings,
-    RunController, RunDirective, RunError, RunToCompletion, RuntimeOverheadDemand, ScalingMetadata,
-    SlotCompatibility, StagePrediction, StorageDomain, StorageDomainId, StorageMode,
-    StorageUseKind, WorkDependency, WorkDomain, WorkExecutionContext, WorkImplementation,
-    WorkImplementationId, WorkKind, WorkMeasurements, WorkNode, WorkNodeId, plan as runtime_plan,
-    run as runtime_run,
+    ExecutionStatus, ExternalPressure, FenceId, FenceKind, FrozenWeightingGeneration,
+    HostInventory, ImplementationRegistry, ImplementationRegistryId, InitializationPolicy,
+    IoBufferDemand, IoBufferKind, IoMeasurement, IoPrediction, LeaseResource, LogicalAllocation,
+    MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand, MemoryView, MemoryViewKind,
+    ObservationReadCompletionContext, ObservationTransactionWork, PendingWeightingGeneration,
+    PhysicalLayoutId, PhysicalSlot, PhysicalSlotId, PhysicalWorkBinding, PhysicalWorkBindingError,
+    PlanError, PlanPrediction, PlannedArtifact, PlannerCostModelProfileId, PlanningBindings,
+    PredictionConfidence, PredictionUncertainty, PreparedArtifactBudget,
+    PreparedArtifactDescriptor, PreparedArtifactError, PreparedArtifactLoadSource,
+    PreparedArtifactOperation, PreparedArtifactOrder, PreparedArtifactPlanFragment,
+    PreparedArtifactPlaneDescriptor, PreparedArtifactPrecision, PreparedArtifactRegistration,
+    PreparedArtifactRejection, PreparedArtifactReuseOutcome, PreparedArtifactSegmentDescriptor,
+    PreparedArtifactSourceSegment, PreparedArtifactStore, PreparedArtifactUvAffine,
+    PublicationLayoutLedger, PublicationMappedStaging, PublicationParticipant,
+    PublicationPhysicalLayout, PublicationResourceBounds, PublicationStaging, QueueDemand,
+    QueueResource, QueueResourceId, QuiescencePoint, RateDemand, RateResource, RateResourceId,
+    RateUnit, ReceiptFailureKind, ReceiptRetention, ReceiptStatus, RedactedPath, ResourceAuthority,
+    ResourceClaim, ResourceError, ResourceHeadroom, ResourceMeasurement, ResourceOverride,
+    ResourcePolicy, ResourceTopology, RunBindings, RunController, RunDirective, RunError,
+    RunToCompletion, RuntimeOverheadDemand, ScalingMetadata, SlotCompatibility, StagePrediction,
+    StorageDomain, StorageDomainId, StorageMode, StorageUseKind, WorkDependency, WorkDomain,
+    WorkExecutionContext, WorkImplementation, WorkImplementationId, WorkKind, WorkMeasurements,
+    WorkNode, WorkNodeId, complete_weighting_generation, plan as runtime_plan, run as runtime_run,
+    traverse_weighting_generation,
 };
 use casa_ms::{
     BoundSelectedObservation, ObservationSourceBinding, SelectedObservationCompletion,
@@ -402,67 +405,6 @@ fn request_with_geometry_references_and_weighting(
     )
 }
 
-#[test]
-fn real_t17_traversals_freeze_and_replay_one_global_weighting_generation() {
-    let problem = compile(request_with_geometry_references_and_weighting(
-        42,
-        geometry(255.0),
-        default_references(),
-        WeightingContract::new(
-            WeightingScheme::Uniform,
-            WeightDensityScope::GlobalSelection,
-        ),
-    ))
-    .expect("compile uniform-weighting fixture");
-    let bindings = problem
-        .inputs()
-        .observation_snapshot()
-        .sources()
-        .iter()
-        .map(|source| {
-            ObservationSourceBinding::new(
-                ObservationSourceState::new(
-                    source.identity(),
-                    source.selection().rows().clone(),
-                    source.generations().clone(),
-                ),
-                SelectedObservationContentBudget::new(4 * 1024 * 1024, 1, 2),
-            )
-        })
-        .collect();
-    let measures = SelectedObservationMeasures::new(
-        casa_test_support::deterministic_measures_provider_for_identity(identity(90).as_bytes()),
-    )
-    .expect("bind deterministic Measures provider");
-    let mut selected = BoundSelectedObservation::open(&problem, measures, bindings)
-        .expect("open real T17 selected observation");
-    let plan = casa_imaging_reconstruction::plan_weighting(
-        &problem,
-        casa_imaging_reconstruction::WeightingExecutionLimits::new(2, 2, 1)
-            .expect("weighting limits"),
-    )
-    .expect("weighting plan");
-
-    let generation =
-        casa_imaging_runtime::freeze_weighting_generation(&mut selected, &problem, &plan)
-            .expect("two exhaustive real T17 passes freeze W");
-    let mut weighted_sample_count = 0_u64;
-    let replay = generation
-        .replay(&mut selected, &problem, &plan, |block| {
-            weighted_sample_count += block.samples().len() as u64;
-            Ok::<_, io::Error>(())
-        })
-        .expect("one exhaustive real T17 replay");
-
-    assert_eq!(
-        generation.selected_generation(),
-        replay.selected_generation()
-    );
-    assert_eq!(generation.sample_count(), replay.sample_count());
-    assert_eq!(weighted_sample_count, replay.sample_count());
-    assert_eq!(generation.generation_id(), replay.weighting_generation(),);
-}
-
 fn request_with_products(
     observation: u8,
     geometry: GeometryInput,
@@ -644,9 +586,14 @@ fn recording_executor(
         publication_pause: None,
         publication_probe: None,
         observation_completions: None,
+        delivered_observation_completions: None,
         observation_completion_failure: None,
         bind_foreign_observation_completion: false,
         selected_observation_completion: Mutex::new(None),
+        run_weighting_generation: false,
+        expected_weighting_residency_bytes: None,
+        pending_weighting_generation: Mutex::new(None),
+        frozen_weighting_generation: Mutex::new(None),
     }
 }
 
@@ -678,6 +625,8 @@ struct RecordedObservationCompletion {
     lease_epoch: u64,
 }
 
+type DeliveredObservationCompletions = Arc<Mutex<Vec<(WorkNodeId, WorkNodeId)>>>;
+
 #[derive(Debug)]
 struct RecordingExecutor {
     id: WorkImplementationId,
@@ -703,9 +652,14 @@ struct RecordingExecutor {
     publication_pause: Option<Arc<PublicationPause>>,
     publication_probe: Option<PublicationProbe>,
     observation_completions: Option<Arc<Mutex<Vec<RecordedObservationCompletion>>>>,
+    delivered_observation_completions: Option<DeliveredObservationCompletions>,
     observation_completion_failure: Option<&'static str>,
     bind_foreign_observation_completion: bool,
     selected_observation_completion: Mutex<Option<SelectedObservationCompletion>>,
+    run_weighting_generation: bool,
+    expected_weighting_residency_bytes: Option<u64>,
+    pending_weighting_generation: Mutex<Option<PendingWeightingGeneration>>,
+    frozen_weighting_generation: Mutex<Option<FrozenWeightingGeneration>>,
 }
 
 #[derive(Debug)]
@@ -777,13 +731,58 @@ impl WorkImplementation for RecordingExecutor {
             .map_err(io::Error::other)?;
             let mut observation = BoundSelectedObservation::open(problem, measures, bindings)
                 .map_err(io::Error::other)?;
-            let completion = observation
-                .traverse(problem, |_| Ok::<_, io::Error>(()))
+            if self.run_weighting_generation {
+                let plan = plan_weighting(
+                    problem,
+                    WeightingExecutionLimits::new(1, 1, 1).map_err(io::Error::other)?,
+                )
                 .map_err(io::Error::other)?;
-            *self
-                .selected_observation_completion
-                .lock()
-                .expect("selected-observation completion lock") = Some(completion);
+                if let Some(expected) = self.expected_weighting_residency_bytes {
+                    assert_eq!(
+                        u64::try_from(plan.planned_residency().peak_bytes())
+                            .map_err(io::Error::other)?,
+                        expected,
+                        "the scheduler lease must use the exact weighting plan"
+                    );
+                    let weighting_allocation = AllocationId::new("weighting-residency-allocation");
+                    let weighting_slot = PhysicalSlotId::new("weighting-residency-slot");
+                    assert!(context.allocations().iter().any(|capability| {
+                        capability.allocation() == &weighting_allocation
+                            && capability.physical_slot() == &weighting_slot
+                            && capability.capacity_bytes() == expected
+                            && capability.lifetime() == &ClaimLifetime::Work
+                    }));
+                }
+                let pending = traverse_weighting_generation(&mut observation, problem, &plan)
+                    .map_err(io::Error::other)?;
+                *self
+                    .pending_weighting_generation
+                    .lock()
+                    .expect("pending weighting generation lock") = Some(pending);
+            } else {
+                let completion = observation
+                    .traverse(problem, |_| Ok::<_, io::Error>(()))
+                    .map_err(io::Error::other)?;
+                *self
+                    .selected_observation_completion
+                    .lock()
+                    .expect("selected-observation completion lock") = Some(completion);
+            }
+        } else if let Some(delivered) = &self.delivered_observation_completions {
+            let owner = WorkNodeId::new("transaction-read");
+            if let Some(completion) = context.predecessor_observation_completion(&owner) {
+                assert_eq!(completion.owner_node(), &owner);
+                assert!(
+                    context
+                        .predecessor_observation_completion(&WorkNodeId::new("not-a-predecessor"))
+                        .is_none(),
+                    "attempt evidence must not escape its explicit dependency edge"
+                );
+                delivered
+                    .lock()
+                    .expect("delivered observation completion lock")
+                    .push((context.node().id.clone(), owner));
+            }
         }
         if let Some((expected, accessed)) = &self.initial_consistency_expected {
             if context.node().kind == WorkKind::DataCensus {
@@ -920,6 +919,21 @@ impl WorkImplementation for RecordingExecutor {
         if let Some(message) = self.observation_completion_failure {
             return Err(io::Error::other(message));
         }
+        if self.run_weighting_generation {
+            let pending = self
+                .pending_weighting_generation
+                .lock()
+                .expect("pending weighting generation lock")
+                .take()
+                .ok_or_else(|| io::Error::other("ObservationRead produced no pending W"))?;
+            let (frozen, predecessor) =
+                complete_weighting_generation(pending, completion).map_err(io::Error::other)?;
+            *self
+                .frozen_weighting_generation
+                .lock()
+                .expect("frozen weighting generation lock") = Some(frozen);
+            return Ok(predecessor);
+        }
         let owner_completion = self
             .selected_observation_completion
             .lock()
@@ -1039,6 +1053,101 @@ fn physical_work_with_synchronous_observation_read(implementation_byte: u8) -> P
         false,
         false,
     )
+}
+
+fn physical_work_with_weighting_residency(
+    implementation_byte: u8,
+    weighting_residency_bytes: u64,
+) -> PhysicalWorkBinding {
+    let base = physical_work_with_synchronous_observation_read(implementation_byte);
+    let owner = WorkNodeId::new("transaction-read");
+    let allocation = AllocationId::new("weighting-residency-allocation");
+    let slot = PhysicalSlotId::new("weighting-residency-slot");
+    let compatibility = SlotCompatibility {
+        memory_domain: CapacityDomainId::new("host-memory"),
+        views: BTreeSet::from([CapacityViewId::new("host-memory")]),
+        alignment_bytes: std::mem::align_of::<usize>() as u64,
+        storage_mode: StorageMode::Host,
+        layout: AllocationLayout::new("weighting-residency"),
+        initialization: InitializationPolicy::OverwriteBeforeRead,
+        access: AllocationAccess::ReadWrite,
+    };
+    let mut alternative = base.execution_dag().resource_alternative().clone();
+    alternative.demand.memory.push(MemoryDemand {
+        allocation_id: "weighting-residency".to_string(),
+        hard_bytes: weighting_residency_bytes,
+        preferred_bytes: weighting_residency_bytes,
+        views: vec![CapacityViewId::new("host-memory")],
+    });
+    let mut nodes = base
+        .execution_dag()
+        .nodes()
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    let owner_node = nodes
+        .iter_mut()
+        .find(|node| node.id == owner)
+        .expect("weighting owner read node");
+    owner_node.allocations.push(AllocationUse {
+        allocation: allocation.clone(),
+        lifetime: ClaimLifetime::Work,
+    });
+    let dag = ExecutionDag::new(ExecutionDagSpecification {
+        required_resource_capabilities: base
+            .execution_dag()
+            .required_resource_capabilities()
+            .clone(),
+        resource_alternative: alternative,
+        nodes,
+        logical_allocations: base
+            .execution_dag()
+            .logical_allocations()
+            .values()
+            .cloned()
+            .chain([LogicalAllocation {
+                id: allocation,
+                bytes: weighting_residency_bytes,
+                purpose: AllocationPurpose::Data,
+                compatibility: compatibility.clone(),
+                physical_slot: slot.clone(),
+                lifetime: AllocationLifetime {
+                    acquire_at: owner.clone(),
+                    release_after: BTreeSet::from([WorkDependency::Work(owner)]),
+                },
+            }])
+            .collect(),
+        physical_slots: base
+            .execution_dag()
+            .physical_slots()
+            .values()
+            .cloned()
+            .chain([PhysicalSlot {
+                id: slot,
+                lease_resource: LeaseResource::Memory {
+                    allocation_id: "weighting-residency".to_string(),
+                },
+                capacity_bytes: weighting_residency_bytes,
+                compatibility,
+            }])
+            .collect(),
+        initial_knobs: base.execution_dag().initial_knobs().clone(),
+        adaptations: base
+            .execution_dag()
+            .adaptations()
+            .values()
+            .cloned()
+            .collect(),
+    })
+    .expect("weighting residency-bound DAG");
+    PhysicalWorkBinding::new(
+        dag,
+        base.prediction().clone(),
+        base.artifacts().to_vec(),
+        base.observation_transaction().clone(),
+        base.publication_layouts().clone(),
+    )
+    .expect("weighting residency-bound physical work")
 }
 
 fn product_participants(
@@ -3467,8 +3576,8 @@ fn plan_seals_physical_work_and_every_required_binding() {
     assert_eq!(
         execution_plan.plan_id().as_bytes(),
         [
-            157, 99, 231, 211, 201, 79, 33, 201, 121, 90, 94, 246, 53, 61, 55, 105, 221, 45, 41,
-            120, 15, 210, 40, 184, 80, 150, 247, 104, 96, 17, 33, 46,
+            140, 225, 250, 81, 172, 175, 79, 76, 73, 60, 67, 85, 102, 151, 0, 131, 114, 195, 101,
+            65, 12, 77, 120, 39, 218, 246, 101, 4, 218, 181, 221, 171,
         ]
     );
 }
@@ -4444,6 +4553,55 @@ fn observation_completion_is_attempt_node_and_fence_bound_after_successful_settl
 }
 
 #[test]
+fn settled_observation_completion_is_delivered_only_to_explicit_predecessor_consumers() {
+    let problem = compile(request(1)).expect("logical compilation");
+    let execution_plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| Ok::<_, ()>(physical_work(6)),
+    )
+    .expect("physical planning");
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &ResourcePolicy::Balanced,
+        cost_model(4),
+    );
+    let delivered = Arc::new(Mutex::new(Vec::new()));
+    let mut executor = recording_executor(6, None, None);
+    executor.delivered_observation_completions = Some(Arc::clone(&delivered));
+    let registry = TestRegistry {
+        id: registry(3),
+        executors: BTreeMap::from([(implementation(6), executor)]),
+    };
+    let mut controller = RunToCompletion;
+
+    run(
+        &problem,
+        &execution_plan,
+        &current,
+        &registry,
+        authority(),
+        &mut controller,
+    )
+    .expect("settled selected-observation completion unlocks dependent work");
+
+    let delivered = delivered
+        .lock()
+        .expect("delivered observation completion lock");
+    assert!(
+        delivered.iter().any(|(consumer, owner)| {
+            consumer == &WorkNodeId::new("read") && owner == &WorkNodeId::new("transaction-read")
+        }),
+        "the first physical consumer must receive its scheduler-retained T17 predecessor evidence"
+    );
+    assert!(
+        delivered
+            .iter()
+            .all(|(_, owner)| owner == &WorkNodeId::new("transaction-read"))
+    );
+}
+
+#[test]
 fn synchronous_observation_completion_is_exactly_once_attempt_node_and_lease_bound() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
@@ -4509,6 +4667,143 @@ fn synchronous_observation_completion_is_exactly_once_attempt_node_and_lease_bou
     assert_eq!(completion.owner_node, WorkNodeId::new("transaction-read"));
     assert!(completion.settled_fences.is_empty());
     assert!(completion.lease_epoch > 0);
+}
+
+#[test]
+fn actual_bound_observation_traversals_drive_both_weighting_generation_passes() {
+    let problem = compile(request(198)).expect("logical weighting compilation");
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let measures_identity = problem
+        .inputs()
+        .reference_data()
+        .iter()
+        .find_map(|(kind, identity)| (*kind == ReferenceDataKind::Measures).then_some(*identity))
+        .expect("weighting fixture has Measures identity");
+    let measures = SelectedObservationMeasures::new(
+        casa_test_support::deterministic_measures_provider_for_identity(
+            measures_identity.as_bytes(),
+        ),
+    )
+    .expect("bind deterministic Measures provider");
+    let binding = ObservationSourceBinding::new(
+        ObservationSourceState::new(
+            source.identity(),
+            source.selection().rows().clone(),
+            source.generations().clone(),
+        ),
+        SelectedObservationContentBudget::new(4 * 1024 * 1024, 1, 4),
+    );
+    let mut selected = BoundSelectedObservation::open(&problem, measures, vec![binding])
+        .expect("bind actual MeasurementSet traversal");
+    let plan = plan_weighting(
+        &problem,
+        WeightingExecutionLimits::new(1, 1, 1).expect("weighting limits"),
+    )
+    .expect("weighting plan");
+
+    let _pending = traverse_weighting_generation(&mut selected, &problem, &plan)
+        .expect("exhaust both owner-derived weighting traversals");
+}
+
+#[test]
+fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
+    let problem = compile(request(1)).expect("logical weighting compilation");
+    let weighting_plan = plan_weighting(
+        &problem,
+        WeightingExecutionLimits::new(1, 1, 1).expect("weighting limits"),
+    )
+    .expect("weighting residency plan");
+    let weighting_residency_bytes = u64::try_from(weighting_plan.planned_residency().peak_bytes())
+        .expect("weighting residency fits the resource authority");
+    let execution_plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| {
+            Ok::<_, ()>(physical_work_with_weighting_residency(
+                6,
+                weighting_residency_bytes,
+            ))
+        },
+    )
+    .expect("plan with synchronous ObservationRead");
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &ResourcePolicy::Balanced,
+        cost_model(4),
+    );
+    let delivered = Arc::new(Mutex::new(Vec::new()));
+    let mut executor = recording_executor(6, None, None);
+    executor.run_weighting_generation = true;
+    executor.expected_weighting_residency_bytes = Some(weighting_residency_bytes);
+    executor.delivered_observation_completions = Some(Arc::clone(&delivered));
+    let registry = TestRegistry {
+        id: registry(3),
+        executors: BTreeMap::from([(implementation(6), executor)]),
+    };
+    let mut controller = RunToCompletion;
+    let directory = tempfile::tempdir().expect("weighting receipt directory");
+    let receipts = ExecutionReceiptStore::new(
+        directory.path(),
+        ReceiptRetention::new(8, 1_048_576).expect("weighting receipt retention"),
+    )
+    .expect("weighting receipt store");
+    let provenance = execution_provenance(
+        casa_imaging_runtime::ExecutionAttemptId::from_sha256([199; 32]),
+        BuildIdentity::from_sha256([200; 32]),
+    );
+
+    run_receipted(
+        &problem,
+        &execution_plan,
+        &current,
+        &registry,
+        authority(),
+        &mut controller,
+        receipts.bind(provenance.clone()),
+    )
+    .expect("settled ObservationRead binds owner-traversed W");
+    let receipt = receipts
+        .open(provenance.attempt_id())
+        .expect("weighting execution receipt");
+    let weighting_allocation = AllocationId::new("weighting-residency-allocation");
+    assert!(
+        receipt
+            .allocation_generation_identities()
+            .contains(&weighting_allocation)
+    );
+    assert_eq!(
+        receipt.allocation_uses(&WorkNodeId::new("transaction-read")),
+        Some(BTreeMap::from([(
+            weighting_allocation,
+            ClaimLifetime::Work
+        )]))
+    );
+    assert!(
+        receipt
+            .physical_slot_identities()
+            .contains(&PhysicalSlotId::new("weighting-residency-slot"))
+    );
+
+    let executor = registry
+        .executors
+        .get(&implementation(6))
+        .expect("weighting executor");
+    let frozen = executor
+        .frozen_weighting_generation
+        .lock()
+        .expect("frozen weighting generation lock");
+    let frozen = frozen.as_ref().expect("scheduler-authorized frozen W");
+    assert_eq!(frozen.sample_count(), 1);
+    assert_eq!(frozen.sum_weights().len(), 1);
+    assert!(frozen.sum_weights()[0] > 0.0);
+    assert!(
+        delivered
+            .lock()
+            .expect("delivered weighting predecessor lock")
+            .iter()
+            .any(|(_, owner)| owner == &WorkNodeId::new("transaction-read")),
+        "the frozen generation's sole scheduler predecessor must reach dependent work"
+    );
 }
 
 #[test]
@@ -5326,7 +5621,7 @@ fn receipt_reopens_the_complete_versioned_effective_problem_projection() {
         .expect("antenna generation")
         .to_string();
 
-    assert_eq!(projected.schema_version(), 8);
+    assert_eq!(projected.schema_version(), 9);
     assert_eq!(projected, &CompiledProblemEvidence::project(&problem));
     assert_eq!(
         reopened.model_lifecycle_identity(),
@@ -5402,6 +5697,20 @@ fn receipt_reopens_the_complete_versioned_effective_problem_projection() {
                 .to_string()
                 .as_str()
         )
+    );
+    assert_eq!(
+        projected.field("weighting.commitment.selected_observation"),
+        Some(
+            problem
+                .selected_observation()
+                .commitment_id()
+                .to_string()
+                .as_str()
+        )
+    );
+    assert_eq!(
+        projected.field("weighting.commitment.visibility_inner_product"),
+        Some("hermitian_euclidean")
     );
     assert_eq!(
         projected.field("weighting.sources.0.flag_policy"),

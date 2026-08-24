@@ -466,6 +466,103 @@ fn measures_provider_growth_during_traversal_prevents_owner_completion() {
 }
 
 #[test]
+fn real_ms_cube_linear_traversal_reports_owner_derived_output_contributions() {
+    let directory = tempfile::tempdir().expect("temporary cube-contribution fixture");
+    let path = directory.path().join("cube-contributions.ms");
+    generate_fixture(&path);
+    let problem = compiled_problem_with_sampling(
+        &path,
+        2,
+        SpectralSampling::Linear,
+        SpectralWcs::Tabular {
+            channel_centres_hz: vec![1.3995e9, 1.4005e9],
+            channel_boundaries_hz: vec![1.399e9, 1.4e9, 1.401e9],
+        },
+    );
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let mut observation = BoundSelectedObservation::open(
+        &problem,
+        test_measures(&problem),
+        vec![ObservationSourceBinding::new(
+            source_state(source),
+            content_budget_for_rows(&problem, source, 1, 1),
+        )],
+    )
+    .expect("bind real MeasurementSet cube traversal");
+    let mut values = Vec::new();
+
+    let completion = observation
+        .traverse(&problem, |reported| {
+            values.push((
+                reported.selected().address.channel_index,
+                reported
+                    .spectral_contributions()
+                    .iter()
+                    .map(|contribution| (contribution.output_channel(), contribution.factor()))
+                    .collect::<Vec<_>>(),
+            ));
+            Ok::<_, Infallible>(())
+        })
+        .expect("complete owner-derived cube traversal");
+
+    assert_eq!(completion.sample_count(), 8);
+    assert_eq!(values[0], (0, vec![(0, 0.5), (1, 0.5)]));
+    assert_eq!(values[1], values[0]);
+    assert_eq!(values[2], (2, Vec::new()));
+    assert_eq!(values[3], values[2]);
+}
+
+#[test]
+fn real_ms_cubedata_channel_average_reports_normalized_bin_coefficients() {
+    let directory = tempfile::tempdir().expect("temporary cubedata-contribution fixture");
+    let path = directory.path().join("cubedata-contributions.ms");
+    generate_fixture(&path);
+    let problem = compiled_problem_with_sampling(
+        &path,
+        2,
+        SpectralSampling::ChannelAverage {
+            channels_per_bin: 2,
+        },
+        SpectralWcs::Linear {
+            channels: 1,
+            reference_pixel: 0.0,
+            reference_frequency_hz: 1.401e9,
+            increment_hz: 2.0e6,
+        },
+    );
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let mut observation = BoundSelectedObservation::open(
+        &problem,
+        test_measures(&problem),
+        vec![ObservationSourceBinding::new(
+            source_state(source),
+            content_budget_for_rows(&problem, source, 1, 1),
+        )],
+    )
+    .expect("bind real MeasurementSet cubedata traversal");
+    let mut values = Vec::new();
+
+    observation
+        .traverse(&problem, |reported| {
+            values.push((
+                reported.selected().address.channel_index,
+                reported
+                    .spectral_contributions()
+                    .iter()
+                    .map(|contribution| (contribution.output_channel(), contribution.factor()))
+                    .collect::<Vec<_>>(),
+            ));
+            Ok::<_, Infallible>(())
+        })
+        .expect("complete owner-derived cubedata traversal");
+
+    assert_eq!(values[0], (0, vec![(0, 0.5)]));
+    assert_eq!(values[1], values[0]);
+    assert_eq!(values[2], (2, vec![(0, 0.5)]));
+    assert_eq!(values[3], values[2]);
+}
+
+#[test]
 fn measures_provider_residency_is_charged_once_and_rejected_under_a_tight_budget() {
     let directory = tempfile::tempdir().expect("temporary Measures-budget fixture");
     let path = directory.path().join("measures-budget.ms");
@@ -1812,7 +1909,7 @@ fn retained_selected_observation_owns_canonical_multi_source_order() {
     assert_eq!(
         one_row_samples
             .chunks_exact(8)
-            .map(|samples| samples[0].address.measurement_set)
+            .map(|samples| samples[0].selected().address.measurement_set)
             .collect::<Vec<_>>(),
         problem
             .selected_observation()
@@ -2728,6 +2825,27 @@ fn compiled_problem(
     compiled_problem_with_sources(&[(path, 1, row_count)])
 }
 
+fn compiled_problem_with_sampling(
+    path: &std::path::Path,
+    row_count: usize,
+    sampling: SpectralSampling,
+    wcs: SpectralWcs,
+) -> casa_imaging_model::CompiledProblem {
+    let snapshot = compile_observation(ObservationSnapshotInput::new(
+        vec![source_input(path, 1, row_count)],
+        vec![(ReferenceDataKind::Measures, identity(90))],
+        ModelStateIdentity::Empty,
+    ))
+    .expect("compile spectral-contribution observation");
+    compile(ImagingRequest::new(
+        specification_with_sampling(sampling),
+        geometry_with_spectral_wcs(wcs),
+        ProblemInputIdentities::new(snapshot),
+        model_lifecycle(),
+    ))
+    .expect("compile spectral-contribution problem")
+}
+
 fn compiled_problem_with_centres(
     path: &std::path::Path,
     row_count: usize,
@@ -3072,9 +3190,13 @@ fn scoped_identity(source: u8, byte: u8) -> LogicalIdentity {
 }
 
 fn specification() -> ProblemSpecification {
+    specification_with_sampling(SpectralSampling::Identity)
+}
+
+fn specification_with_sampling(sampling: SpectralSampling) -> ProblemSpecification {
     ProblemSpecification::new(
         ScientificContract::new(
-            SpectralContract::new(SpectralSampling::Identity, SpectralCoupling::Independent),
+            SpectralContract::new(sampling, SpectralCoupling::Independent),
             MeasurementEquationContract::new(
                 InstrumentResponse::Scalar,
                 DeclaredInnerProducts::new(
@@ -3128,6 +3250,17 @@ fn geometry() -> GeometryInput {
         PhaseCentreLaw::Observation,
         DelayCentreLaw::PhaseTrackingCentre,
         PointingCentreLaw::PhaseTrackingCentre,
+    ))
+}
+
+fn geometry_with_spectral_wcs(wcs: SpectralWcs) -> GeometryInput {
+    geometry().with_spectral(SpectralCoordinateSpec::new(
+        FrequencyFrame::Topocentric,
+        FrequencyFrame::Topocentric,
+        SpectralFrameAnchor::NotApplicable,
+        wcs,
+        RestFrequency::NotApplicable,
+        casa_imaging_model::DopplerConvention::NotApplicable,
     ))
 }
 

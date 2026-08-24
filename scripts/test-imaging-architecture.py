@@ -2042,17 +2042,30 @@ class MigrationMatrixTests(unittest.TestCase):
 
     def test_t18_transfer_rejects_merged_passes_and_rebindable_weighting(self) -> None:
         model_path = REPO_ROOT / "crates/casa-imaging-model/src/measurement_equation.rs"
+        sample_model_path = (
+            REPO_ROOT / "crates/casa-imaging-model/src/selected_observation_sample.rs"
+        )
+        traversal_sample_path = (
+            REPO_ROOT
+            / "crates/casa-ms/src/selected_observation/spectral_contributions.rs"
+        )
+        bound_observation_path = (
+            REPO_ROOT / "crates/casa-ms/src/selected_observation/bound_observation.rs"
+        )
         weighting_path = REPO_ROOT / "crates/casa-imaging-reconstruction/src/weighting.rs"
         runtime_weighting_path = REPO_ROOT / "crates/casa-imaging-runtime/src/weighting.rs"
         receipt_path = REPO_ROOT / "crates/casa-imaging-runtime/src/receipt.rs"
         model = model_path.read_text(encoding="utf-8")
+        sample_model = sample_model_path.read_text(encoding="utf-8")
+        traversal_sample = traversal_sample_path.read_text(encoding="utf-8")
+        bound_observation = bound_observation_path.read_text(encoding="utf-8")
         weighting = weighting_path.read_text(encoding="utf-8")
         runtime_weighting = runtime_weighting_path.read_text(encoding="utf-8")
         receipt = receipt_path.read_text(encoding="utf-8")
 
         one_pass = runtime_weighting.replace(
-            ".traverse(problem, |sample| sum_weight.consume(problem, sample))",
-            ".reuse(density_completion)",
+            "let sum_weight_completion = selected\n        .traverse(problem, |reported| {",
+            "let sum_weight_completion = selected\n        .reuse(density_completion, |reported| {",
             1,
         )
         self.assertNotEqual(one_pass, runtime_weighting)
@@ -2062,16 +2075,22 @@ class MigrationMatrixTests(unittest.TestCase):
         ):
             checker.validate_t18_global_weighting_sources(
                 model,
+                sample_model,
+                traversal_sample,
+                bound_observation,
                 weighting,
                 one_pass,
                 receipt,
                 model_path=model_path,
+                sample_model_path=sample_model_path,
+                traversal_sample_path=traversal_sample_path,
+                bound_observation_path=bound_observation_path,
                 weighting_path=weighting_path,
                 runtime_weighting_path=runtime_weighting_path,
                 receipt_path=receipt_path,
             )
 
-        rebindable = weighting.replace(
+        rebindable = runtime_weighting.replace(
             "    generation: WeightingGenerationId,\n    sequence: u64,",
             "    pub generation: LogicalIdentity,\n    sequence: u64,",
             1,
@@ -2083,10 +2102,16 @@ class MigrationMatrixTests(unittest.TestCase):
         ):
             checker.validate_t18_global_weighting_sources(
                 model,
+                sample_model,
+                traversal_sample,
+                bound_observation,
+                weighting,
                 rebindable,
-                runtime_weighting,
                 receipt,
                 model_path=model_path,
+                sample_model_path=sample_model_path,
+                traversal_sample_path=traversal_sample_path,
+                bound_observation_path=bound_observation_path,
                 weighting_path=weighting_path,
                 runtime_weighting_path=runtime_weighting_path,
                 receipt_path=receipt_path,
@@ -2104,31 +2129,97 @@ class MigrationMatrixTests(unittest.TestCase):
         ):
             checker.validate_t18_global_weighting_sources(
                 model,
+                sample_model,
+                traversal_sample,
+                bound_observation,
                 iterator_bypass,
                 runtime_weighting,
                 receipt,
                 model_path=model_path,
+                sample_model_path=sample_model_path,
+                traversal_sample_path=traversal_sample_path,
+                bound_observation_path=bound_observation_path,
                 weighting_path=weighting_path,
                 runtime_weighting_path=runtime_weighting_path,
                 receipt_path=receipt_path,
             )
 
-        raw_completion = weighting.replace(
-            "pub fn finish(self) -> Result<WeightingGenerationState, WeightingError>",
-            "pub fn finish(self, selected: SelectedObservationGenerationId) -> Result<WeightingGenerationState, WeightingError>",
+        caller_frozen = runtime_weighting.replace(
+            "    pending: PendingWeightingGeneration,\n    context: ObservationReadCompletionContext,",
+            "    pending: WeightingAlgorithmState,\n    context: ObservationReadCompletionContext,",
             1,
         )
-        self.assertNotEqual(raw_completion, weighting)
+        self.assertNotEqual(caller_frozen, runtime_weighting)
         with self.assertRaisesRegex(
             checker.ArchitectureError,
-            r"caller-authored T17 completion identity",
+            r"owner traversals and scheduler-issued completion authority",
         ):
             checker.validate_t18_global_weighting_sources(
                 model,
-                raw_completion,
+                sample_model,
+                traversal_sample,
+                bound_observation,
+                weighting,
+                caller_frozen,
+                receipt,
+                model_path=model_path,
+                sample_model_path=sample_model_path,
+                traversal_sample_path=traversal_sample_path,
+                bound_observation_path=bound_observation_path,
+                weighting_path=weighting_path,
+                runtime_weighting_path=runtime_weighting_path,
+                receipt_path=receipt_path,
+            )
+
+        forgeable_envelope = traversal_sample.replace(
+            "    pub(super) fn from_owner(",
+            "    pub fn from_owner(",
+            1,
+        )
+        self.assertNotEqual(forgeable_envelope, traversal_sample)
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"envelope construction must remain owner-only",
+        ):
+            checker.validate_t18_global_weighting_sources(
+                model,
+                sample_model,
+                forgeable_envelope,
+                bound_observation,
+                weighting,
                 runtime_weighting,
                 receipt,
                 model_path=model_path,
+                sample_model_path=sample_model_path,
+                traversal_sample_path=traversal_sample_path,
+                bound_observation_path=bound_observation_path,
+                weighting_path=weighting_path,
+                runtime_weighting_path=runtime_weighting_path,
+                receipt_path=receipt_path,
+            )
+
+        persisted_contributions = sample_model.replace(
+            "    pub input_weight: f32,",
+            "    pub input_weight: f32,\n    pub spectral_contributions: SelectedSpectralContributions,",
+            1,
+        )
+        self.assertNotEqual(persisted_contributions, sample_model)
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"outside the persisted selected-sample schema",
+        ):
+            checker.validate_t18_global_weighting_sources(
+                model,
+                persisted_contributions,
+                traversal_sample,
+                bound_observation,
+                weighting,
+                runtime_weighting,
+                receipt,
+                model_path=model_path,
+                sample_model_path=sample_model_path,
+                traversal_sample_path=traversal_sample_path,
+                bound_observation_path=bound_observation_path,
                 weighting_path=weighting_path,
                 runtime_weighting_path=runtime_weighting_path,
                 receipt_path=receipt_path,

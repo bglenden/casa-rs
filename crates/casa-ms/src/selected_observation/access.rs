@@ -640,6 +640,19 @@ pub enum BoundObservationSourceError {
         /// Standard casacore `MFrequency` reference code.
         code: i32,
     },
+    /// T18 does not broaden the T36 spectral-frame conversion boundary.
+    #[error(
+        "selected spectral contributions require one frequency frame, found {source_frame:?} to {output_frame:?}"
+    )]
+    UnsupportedSpectralContributionFrame {
+        /// Selected MeasurementSet source frame.
+        source_frame: FrequencyFrame,
+        /// Compiled output spectral frame.
+        output_frame: FrequencyFrame,
+    },
+    /// Compiled sampling and selected coordinates could not form a bounded contribution set.
+    #[error("selected sample has no valid bounded spectral contribution mapping")]
+    SpectralContributionMismatch,
     /// A stored epoch reference cannot be represented by the selected-sample schema.
     #[error("MeasurementSet epoch reference {name} is unsupported")]
     UnsupportedTimeScale {

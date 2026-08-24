@@ -24,10 +24,11 @@ use crate::{
     observation::{
         FlagPolicy, MeasurementSetIdentity, MsColumnKind, ObservationSnapshotId, WeightColumn,
     },
+    selected_observation::SelectedObservationCommitmentId,
 };
 
 const WEIGHTING_COMMITMENT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-weighting-commitment";
-const WEIGHTING_COMMITMENT_IDENTITY_VERSION: u32 = 2;
+const WEIGHTING_COMMITMENT_IDENTITY_VERSION: u32 = 3;
 
 /// Inner product on the model-coefficient space.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -332,6 +333,8 @@ impl WeightingSource {
 #[derive(Debug, Clone, PartialEq)]
 pub struct WeightingOperatorContract {
     commitment_id: WeightingCommitmentId,
+    selected_observation: SelectedObservationCommitmentId,
+    visibility_inner_product: VisibilityInnerProduct,
     snapshot: ObservationSnapshotId,
     scheme: WeightingScheme,
     density_scope: WeightDensityScope,
@@ -344,6 +347,18 @@ impl WeightingOperatorContract {
     #[must_use]
     pub const fn commitment_id(&self) -> WeightingCommitmentId {
         self.commitment_id
+    }
+
+    /// Return the exact selected-observation authority consumed by W.
+    #[must_use]
+    pub const fn selected_observation(&self) -> SelectedObservationCommitmentId {
+        self.selected_observation
+    }
+
+    /// Return the visibility-space inner-product law under which W is defined.
+    #[must_use]
+    pub const fn visibility_inner_product(&self) -> VisibilityInnerProduct {
+        self.visibility_inner_product
     }
 
     /// Return the selected observation bound into this generation.
@@ -500,6 +515,7 @@ pub(crate) fn compile_normal_equation(
     reconstruction: &ReconstructionContract,
     weighting: WeightingContract,
     numerics: NumericsContractId,
+    selected_observation: SelectedObservationCommitmentId,
 ) -> NormalEquationContract {
     let inner_products = science.measurement_equation().inner_products();
     let domain = ModelCoefficientSpace {
@@ -544,6 +560,8 @@ pub(crate) fn compile_normal_equation(
         science.spectral().sampling(),
         weighting,
         numerics,
+        selected_observation,
+        inner_products.visibility(),
     );
     NormalEquationContract {
         measurement_operator,
@@ -592,6 +610,8 @@ fn compile_weighting_operator(
     sampling: SpectralSampling,
     weighting: WeightingContract,
     numerics: NumericsContractId,
+    selected_observation: SelectedObservationCommitmentId,
+    visibility_inner_product: VisibilityInnerProduct,
 ) -> WeightingOperatorContract {
     let snapshot = inputs.observation_snapshot();
     let sources = snapshot
@@ -628,7 +648,11 @@ fn compile_weighting_operator(
             sampling,
             weighting,
             numerics,
+            selected_observation,
+            visibility_inner_product,
         ),
+        selected_observation,
+        visibility_inner_product,
         snapshot: snapshot.snapshot_id(),
         scheme: weighting.scheme(),
         density_scope: weighting.density_scope(),
@@ -643,6 +667,8 @@ fn weighting_commitment_id(
     sampling: SpectralSampling,
     weighting: WeightingContract,
     numerics: NumericsContractId,
+    selected_observation: SelectedObservationCommitmentId,
+    visibility_inner_product: VisibilityInnerProduct,
 ) -> WeightingCommitmentId {
     let mut hasher = Sha256::new();
     hasher.update(WEIGHTING_COMMITMENT_IDENTITY_DOMAIN);
@@ -659,6 +685,10 @@ fn weighting_commitment_id(
         }
     }
     hasher.update(numerics.as_bytes());
+    hasher.update(selected_observation.as_bytes());
+    hasher.update([match visibility_inner_product {
+        VisibilityInnerProduct::HermitianEuclidean => 0,
+    }]);
     match weighting.scheme() {
         WeightingScheme::Natural => hasher.update([0]),
         WeightingScheme::Uniform => hasher.update([1]),

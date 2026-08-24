@@ -71,7 +71,9 @@ pub use resource_authority::{
     StorageDomainId, StorageUseKind, TransferDemand, TransferLink, TransferLinkId,
 };
 pub use weighting::{
-    FrozenWeightingGeneration, ReplayCallbackError, WeightingEvidenceError,
+    FrozenWeightingGeneration, PendingWeightingGeneration, PendingWeightingReplay,
+    ReplayCallbackError, WeightedObservationBlock, WeightedObservationSample,
+    WeightedSpectralValue, WeightingEvidenceError, WeightingGenerationCompletionError,
     WeightingGenerationError, WeightingReplayCompletion, WeightingReplayError,
-    freeze_weighting_generation,
+    complete_weighting_generation, traverse_weighting_generation,
 };

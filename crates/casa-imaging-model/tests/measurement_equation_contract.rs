@@ -307,6 +307,17 @@ fn weighting_commitment_binds_sampling_and_numerics() {
         linear.weighting().commitment_id(),
         deterministic.weighting().commitment_id()
     );
+    assert_eq!(
+        linear.weighting().selected_observation(),
+        linear.selected_observation().commitment_id()
+    );
+    assert_eq!(
+        linear.weighting().visibility_inner_product(),
+        linear
+            .selected_observation()
+            .sample_evaluation()
+            .visibility_inner_product()
+    );
 }
 
 #[test]
@@ -453,7 +464,7 @@ fn schema_ten_problem_and_weighting_commitment_identities_are_pinned() {
     let problem = compile_contract(SpectralSampling::Linear);
 
     assert_eq!(CompiledProblemId::SCHEMA_VERSION, 10);
-    assert_eq!(WeightingCommitmentId::SCHEMA_VERSION, 2);
+    assert_eq!(WeightingCommitmentId::SCHEMA_VERSION, 3);
     assert_eq!(
         (
             problem.problem_id().to_string(),
@@ -464,8 +475,8 @@ fn schema_ten_problem_and_weighting_commitment_identities_are_pinned() {
                 .to_string(),
         ),
         (
-            "5f9005199f7567046a0cd684b4efe0192df76dfb925598c686708fa24d69187d".to_string(),
-            "fa6fa624878c2ea0dbb4a4d6f2f94b34f004fe1e7b975aa15a52f1ce6fb3566b".to_string(),
+            "bf7da4a3bcd3fb3cee94f2c4f9037326a69d378df86803b04630960bcd95dc89".to_string(),
+            "dc44b5ca510dffb0642fa3e261803dd80e704e3598cfc0e5fe025e454703c792".to_string(),
         )
     );
 }

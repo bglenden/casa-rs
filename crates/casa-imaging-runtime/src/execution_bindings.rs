@@ -2049,6 +2049,7 @@ pub struct WorkExecutionContext<'a> {
     model_writes: Option<&'a ObservationWriteSet>,
     publication: Option<&'a ObservationTransactionContract>,
     publication_resources: Option<PublicationResources<'a>>,
+    completed_observation_reads: &'a BTreeMap<WorkNodeId, AttemptBoundObservationCompletion>,
 }
 
 impl<'a> WorkExecutionContext<'a> {
@@ -2166,6 +2167,24 @@ impl<'a> WorkExecutionContext<'a> {
     #[must_use]
     pub const fn publication_resources(self) -> Option<PublicationResources<'a>> {
         self.publication_resources
+    }
+
+    /// Return one scheduler-retained selected-observation completion when its
+    /// owning read is an explicit predecessor of this exact node.
+    #[must_use]
+    pub fn predecessor_observation_completion(
+        self,
+        owner: &WorkNodeId,
+    ) -> Option<&'a AttemptBoundObservationCompletion> {
+        self.node()
+            .dependencies
+            .iter()
+            .any(|dependency| match dependency {
+                crate::WorkDependency::Work(node) => node == owner,
+                crate::WorkDependency::Fence(fence) => fence.node() == owner,
+            })
+            .then(|| self.completed_observation_reads.get(owner))
+            .flatten()
     }
 }
 
@@ -2771,6 +2790,7 @@ fn work_execution_context<'a>(
     problem: &'a CompiledProblem,
     plan: &'a ExecutionPlan,
     work: &'a crate::execution::WorkExecutionContext,
+    completed_observation_reads: &'a BTreeMap<WorkNodeId, AttemptBoundObservationCompletion>,
 ) -> WorkExecutionContext<'a> {
     let compiled = CompiledWorkContext { problem };
     let transaction_work = plan.observation_transaction.work();
@@ -2790,6 +2810,7 @@ fn work_execution_context<'a>(
         model_writes,
         publication,
         publication_resources,
+        completed_observation_reads,
     };
     if work.node().kind == WorkKind::ObservationRead {
         common(
@@ -2832,8 +2853,9 @@ fn publication_execution_context<'a>(
     plan: &'a ExecutionPlan,
     work: &'a crate::execution::WorkExecutionContext,
     reservation: &'a PublicationReservation,
+    completed_observation_reads: &'a BTreeMap<WorkNodeId, AttemptBoundObservationCompletion>,
 ) -> WorkExecutionContext<'a> {
-    let mut context = work_execution_context(problem, plan, work);
+    let mut context = work_execution_context(problem, plan, work, completed_observation_reads);
     context.publication_resources = Some(PublicationResources { reservation });
     context
 }
@@ -3093,7 +3115,8 @@ where
                     }
                     continue;
                 }
-                let context = work_execution_context(problem, plan, &work);
+                let context =
+                    work_execution_context(problem, plan, &work, &completed_observation_reads);
                 match implementation.execute(context) {
                     Ok(measurements) => {
                         if work.node().kind == WorkKind::Publication {
@@ -3329,7 +3352,12 @@ where
                 };
                 let implementation = implementations[&work.node().implementation];
                 let fence_work = work.for_fence(fence.kind());
-                let context = work_execution_context(problem, plan, &fence_work);
+                let context = work_execution_context(
+                    problem,
+                    plan,
+                    &fence_work,
+                    &completed_observation_reads,
+                );
                 if let Err(source) = implementation.wait_for_fence(context, fence.kind()) {
                     if pending.is_none() {
                         pending = Some(PendingRunError::Execution {
@@ -3451,7 +3479,13 @@ where
                     ))
                 })?;
                 let implementation = implementations[&work.node().implementation];
-                let context = publication_execution_context(problem, plan, work, &resources);
+                let context = publication_execution_context(
+                    problem,
+                    plan,
+                    work,
+                    &resources,
+                    &completed_observation_reads,
+                );
                 let prepared = receipt.prepare_publication().map_err(RunError::Receipt)?;
                 match implementation.publish(context) {
                     Ok(()) => {

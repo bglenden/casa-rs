@@ -137,6 +137,80 @@ pub struct SelectedSampleMetadata {
     pub array_id: i32,
 }
 
+/// One source-sample contribution to a compiled output spectral channel.
+///
+/// The factor is the owner-evaluated interpolation or channel-averaging
+/// coefficient in `(0, 1]`. This reported value carries no traversal authority
+/// and is deliberately outside [`SelectedObservationSample`]'s persisted
+/// schema and content identity.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SelectedSpectralContribution {
+    output_channel: u32,
+    factor: f32,
+}
+
+impl SelectedSpectralContribution {
+    /// Construct one finite, positive, normalized contribution.
+    #[must_use]
+    pub fn new(output_channel: u32, factor: f32) -> Option<Self> {
+        (factor.is_finite() && factor > 0.0 && factor <= 1.0).then_some(Self {
+            output_channel,
+            factor,
+        })
+    }
+
+    /// Return the zero-based compiled output-channel index.
+    #[must_use]
+    pub const fn output_channel(self) -> u32 {
+        self.output_channel
+    }
+
+    /// Return the interpolation or averaging coefficient.
+    #[must_use]
+    pub const fn factor(self) -> f32 {
+        self.factor
+    }
+}
+
+/// At most two output-channel contributions reported for one selected sample.
+///
+/// Entries are compact and address distinct output channels. Nearest and
+/// channel-average sampling report at most one entry; linear interpolation may
+/// report two. Empty coverage is represented explicitly.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SelectedSpectralContributions {
+    entries: [Option<SelectedSpectralContribution>; 2],
+}
+
+impl SelectedSpectralContributions {
+    /// Construct a compact contribution set with distinct output channels.
+    #[must_use]
+    pub fn new(entries: [Option<SelectedSpectralContribution>; 2]) -> Option<Self> {
+        if entries[0].is_none() && entries[1].is_some() {
+            return None;
+        }
+        if entries[0].is_some_and(|first| {
+            entries[1].is_some_and(|second| first.output_channel == second.output_channel)
+        }) {
+            return None;
+        }
+        Some(Self { entries })
+    }
+
+    /// Return an empty contribution set.
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self {
+            entries: [None, None],
+        }
+    }
+
+    /// Iterate through contributions in owner-reported order.
+    pub fn iter(&self) -> impl Iterator<Item = SelectedSpectralContribution> + '_ {
+        self.entries.iter().flatten().copied()
+    }
+}
+
 /// One backend-independent selected-observation sample report.
 ///
 /// This is a closed value schema only. Constructing it does not mint content
@@ -389,6 +463,35 @@ mod tests {
         "observation_id:i32",
         "array_id:i32",
     ];
+
+    #[test]
+    fn spectral_contributions_are_bounded_values_outside_the_selected_sample_schema() {
+        let first = SelectedSpectralContribution::new(2, 0.25).expect("finite coefficient");
+        let second = SelectedSpectralContribution::new(3, 0.75).expect("finite coefficient");
+        let contributions = SelectedSpectralContributions::new([Some(first), Some(second)])
+            .expect("two distinct output contributions");
+
+        assert_eq!(first.output_channel(), 2);
+        assert_eq!(first.factor(), 0.25);
+        assert_eq!(
+            contributions.iter().collect::<Vec<_>>(),
+            vec![first, second]
+        );
+        assert_eq!(SelectedSpectralContributions::empty().iter().count(), 0);
+        assert!(SelectedSpectralContribution::new(0, f32::NAN).is_none());
+        assert!(SelectedSpectralContribution::new(0, -0.5).is_none());
+        assert!(SelectedSpectralContribution::new(0, 1.5).is_none());
+        assert!(SelectedSpectralContributions::new([None, Some(first)]).is_none());
+        assert!(SelectedSpectralContributions::new([Some(first), Some(first)]).is_none());
+        assert_eq!(SelectedObservationSample::SCHEMA_VERSION, 2);
+
+        let samples = generation_fixture_samples();
+        assert_eq!(
+            generation(&[&samples]).to_string(),
+            fixture_value("generation_sha256"),
+            "reported spectral contributions must not alter selected-sample content identity"
+        );
+    }
 
     #[test]
     fn content_generation_is_block_independent_exhaustive_and_provenance_free() {

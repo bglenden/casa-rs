@@ -127,12 +127,12 @@ ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256 = (
     "4589711ae6224b94916d05e214df510fab5ba01a16e21a0b913b4b851c1d0e89"
 )
 ACCEPTED_MATRIX_ROWS_SHA256 = (
-    "f9f9c0bbb284a9c52860a308e5f808e7d5a393a3202a7a051e85265d1687211a"
+    "96c80b7e5a493ea167b8d42f3121862599f6af6c8bedb4b5664f215aaa3ee4ec"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "ed19d0a88b99c1043bf9a951891446f7ea6a06c3cc986669779518f9b7ca6e63"
+    "f645f34716f5ffdb0305d031c6fb74a4d2b4976740def7838b4e091024da804a"
 )
-ACCEPTED_MATRIX_CONTRACT_REVISION = 19
+ACCEPTED_MATRIX_CONTRACT_REVISION = 20
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "scientific-products-v1",
@@ -2849,18 +2849,26 @@ def validate_t18_global_weighting_transfer(rows: list[dict[str, Any]]) -> None:
         raise ArchitectureError("T18 must leave capability.global-weighting Native")
     required_evidence = {
         "crates/casa-imaging-model/src/measurement_equation.rs::pub struct WeightingOperatorContract",
+        "crates/casa-imaging-model/src/selected_observation_sample.rs::pub struct SelectedSpectralContribution",
+        "crates/casa-imaging-model/src/selected_observation_sample.rs::pub struct SelectedSpectralContributions",
+        "crates/casa-ms/src/selected_observation/spectral_contributions.rs::pub struct SelectedObservationTraversalSample",
+        "crates/casa-ms/src/selected_observation/bound_observation.rs::pub fn traverse",
         "crates/casa-imaging-reconstruction/src/weighting.rs::pub fn plan_weighting",
         "crates/casa-imaging-reconstruction/src/weighting.rs::pub fn begin_weighting_generation",
         "crates/casa-imaging-reconstruction/src/weighting.rs::pub struct WeightingDensityPhase",
         "crates/casa-imaging-reconstruction/src/weighting.rs::pub struct WeightingSumWeightPhase",
-        "crates/casa-imaging-reconstruction/src/weighting.rs::pub struct WeightedObservationBlock",
-        "crates/casa-imaging-runtime/src/weighting.rs::pub fn freeze_weighting_generation",
+        "crates/casa-imaging-runtime/src/weighting.rs::pub fn traverse_weighting_generation",
+        "crates/casa-imaging-runtime/src/weighting.rs::pub fn complete_weighting_generation",
+        "crates/casa-imaging-runtime/src/weighting.rs::pub struct WeightedObservationBlock",
         "crates/casa-imaging-runtime/src/weighting.rs::pub struct FrozenWeightingGeneration",
         "crates/casa-imaging-runtime/src/weighting.rs::pub struct WeightingReplayCompletion",
         "crates/casa-imaging-runtime/src/receipt.rs::fn project_weighting",
     }
     required_baselines = {
         "repo://crates/casa-imaging-model/src/measurement_equation.rs",
+        "repo://crates/casa-imaging-model/src/selected_observation_sample.rs",
+        "repo://crates/casa-ms/src/selected_observation/spectral_contributions.rs",
+        "repo://crates/casa-ms/src/selected_observation/bound_observation.rs",
         "repo://crates/casa-imaging-reconstruction/src/weighting.rs",
         "repo://crates/casa-imaging-runtime/src/weighting.rs",
         "repo://crates/casa-imaging-runtime/src/receipt.rs",
@@ -2871,11 +2879,23 @@ def validate_t18_global_weighting_transfer(rows: list[dict[str, Any]]) -> None:
         raise ArchitectureError("T18 lacks pinned weighting-owner baseline evidence")
 
     model_path = REPO_ROOT / "crates/casa-imaging-model/src/measurement_equation.rs"
+    sample_model_path = (
+        REPO_ROOT / "crates/casa-imaging-model/src/selected_observation_sample.rs"
+    )
+    traversal_sample_path = (
+        REPO_ROOT / "crates/casa-ms/src/selected_observation/spectral_contributions.rs"
+    )
+    bound_observation_path = (
+        REPO_ROOT / "crates/casa-ms/src/selected_observation/bound_observation.rs"
+    )
     weighting_path = REPO_ROOT / "crates/casa-imaging-reconstruction/src/weighting.rs"
     runtime_weighting_path = REPO_ROOT / "crates/casa-imaging-runtime/src/weighting.rs"
     receipt_path = REPO_ROOT / "crates/casa-imaging-runtime/src/receipt.rs"
     try:
         model = model_path.read_text(encoding="utf-8")
+        sample_model = sample_model_path.read_text(encoding="utf-8")
+        traversal_sample = traversal_sample_path.read_text(encoding="utf-8")
+        bound_observation = bound_observation_path.read_text(encoding="utf-8")
         weighting = weighting_path.read_text(encoding="utf-8")
         runtime_weighting = runtime_weighting_path.read_text(encoding="utf-8")
         receipt = receipt_path.read_text(encoding="utf-8")
@@ -2883,10 +2903,16 @@ def validate_t18_global_weighting_transfer(rows: list[dict[str, Any]]) -> None:
         raise ArchitectureError(f"cannot inspect T18 weighting sources: {error}") from error
     validate_t18_global_weighting_sources(
         model,
+        sample_model,
+        traversal_sample,
+        bound_observation,
         weighting,
         runtime_weighting,
         receipt,
         model_path=model_path,
+        sample_model_path=sample_model_path,
+        traversal_sample_path=traversal_sample_path,
+        bound_observation_path=bound_observation_path,
         weighting_path=weighting_path,
         runtime_weighting_path=runtime_weighting_path,
         receipt_path=receipt_path,
@@ -2895,11 +2921,17 @@ def validate_t18_global_weighting_transfer(rows: list[dict[str, Any]]) -> None:
 
 def validate_t18_global_weighting_sources(
     model: str,
+    sample_model: str,
+    traversal_sample: str,
+    bound_observation: str,
     weighting: str,
     runtime_weighting: str,
     receipt: str,
     *,
     model_path: Path,
+    sample_model_path: Path,
+    traversal_sample_path: Path,
+    bound_observation_path: Path,
     weighting_path: Path,
     runtime_weighting_path: Path,
     receipt_path: Path,
@@ -2924,40 +2956,143 @@ def validate_t18_global_weighting_sources(
             "T18 compiler commitment does not isolate logical weighting from physical execution"
         )
 
-    frozen_fields = rust_struct_fields(runtime_weighting, "FrozenWeightingGeneration", runtime_weighting_path)
-    for field in (
-        "state",
-        "density_completion",
-        "sum_weight_completion",
+    contribution_fields = rust_struct_fields(
+        sample_model, "SelectedSpectralContribution", sample_model_path
+    )
+    contribution_set_fields = rust_struct_fields(
+        sample_model, "SelectedSpectralContributions", sample_model_path
+    )
+    selected_sample_fields = rust_struct_fields(
+        sample_model, "SelectedObservationSample", sample_model_path
+    )
+    if contribution_fields != {"output_channel": "u32", "factor": "f32"} or (
+        contribution_set_fields
+        != {"entries": "[Option<SelectedSpectralContribution>;2]"}
     ):
-        if field not in frozen_fields:
-            raise ArchitectureError("T18 frozen generation omits reconstruction or T17 evidence")
-    if frozen_fields.get("density_completion") != "SelectedObservationCompletion" or frozen_fields.get("sum_weight_completion") != "SelectedObservationCompletion":
-        raise ArchitectureError("T18 frozen generation does not retain concrete opaque T17 completions")
-    freeze = rust_function_body(runtime_weighting, "freeze_weighting_generation", runtime_weighting_path)
-    if freeze.count(".traverse(") != 2:
         raise ArchitectureError(
-            "T18 frozen generation must require distinct exhaustive density and sum-weight passes"
+            "T18 spectral contribution values differ from the accepted bounded model"
         )
-    replay = rust_impl_method_body(runtime_weighting, "FrozenWeightingGeneration", "replay", runtime_weighting_path)
-    if replay.count(".traverse(") != 1 or ".finish(" not in replay:
+    if (
+        "spectral_contributions" in selected_sample_fields
+        or "pub const SCHEMA_VERSION: u32 = 2;" not in sample_model
+    ):
         raise ArchitectureError(
-            "T18 replay must require its own exhaustive traversal and exact coverage"
+            "T18 spectral contributions must remain outside the persisted selected-sample schema"
+        )
+
+    traversal_fields = rust_struct_fields(
+        traversal_sample, "SelectedObservationTraversalSample", traversal_sample_path
+    )
+    if traversal_fields != {
+        "sample": "SelectedObservationSample",
+        "spectral_contributions": "SelectedSpectralContributions",
+    }:
+        raise ArchitectureError(
+            "T18 traversal envelope omits owner-derived spectral contributions"
+        )
+    if re.search(
+        r"\bpub\s+(?:const\s+)?fn\s+(?:new|from_owner)\b", traversal_sample
+    ):
+        raise ArchitectureError("T18 traversal envelope construction must remain owner-only")
+    derivation = rust_function_body(
+        traversal_sample, "derive_spectral_contributions", traversal_sample_path
+    )
+    required_derivation = (
+        "source_frame()",
+        "output_frame()",
+        "SpectralSampling::Identity",
+        "SpectralSampling::Nearest",
+        "SpectralSampling::Linear",
+        "SpectralSampling::ChannelAverage",
+    )
+    if not all(token in derivation for token in required_derivation) or (
+        "source_frequency_output_contributions(" not in traversal_sample
+    ):
+        raise ArchitectureError(
+            "T18 traversal envelope bypasses owner-derived spectral mapping"
+        )
+    traversal = rust_impl_method_body(
+        bound_observation, "BoundSelectedObservation", "traverse", bound_observation_path
+    )
+    if (
+        "SelectedObservationTraversalSample::from_owner(problem, sample)" not in traversal
+        or "consume_projected_validated_stream(" not in traversal
+    ):
+        raise ArchitectureError(
+            "T18 traversal does not issue its envelope after owner validation"
+        )
+
+    frozen_fields = rust_struct_fields(
+        runtime_weighting, "FrozenWeightingGeneration", runtime_weighting_path
+    )
+    pending_fields = rust_struct_fields(
+        runtime_weighting, "PendingWeightingGeneration", runtime_weighting_path
+    )
+    if (
+        frozen_fields.get("state") != "WeightingAlgorithmState"
+        or frozen_fields.get("density_completion") != "SelectedObservationCompletion"
+        or frozen_fields.get("binding") != "WeightingGenerationBinding"
+        or pending_fields.get("density_completion") != "SelectedObservationCompletion"
+        or pending_fields.get("sum_weight_completion")
+        != "SelectedObservationCompletion"
+    ):
+        raise ArchitectureError(
+            "T18 weighting generation does not retain reconstruction and opaque T17 evidence"
+        )
+    generation = rust_function_body(
+        runtime_weighting, "traverse_weighting_generation", runtime_weighting_path
+    )
+    if generation.count(".traverse(") != 2:
+        raise ArchitectureError(
+            "T18 weighting generation must require distinct exhaustive density and sum-weight passes"
+        )
+    completion = rust_function_body(
+        runtime_weighting, "complete_weighting_generation", runtime_weighting_path
+    )
+    compact_runtime = re.sub(r"\s+", "", runtime_weighting)
+    compact_completion = re.sub(r"\s+", "", completion)
+    if (
+        "pubfncomplete_weighting_generation(pending:PendingWeightingGeneration,context:ObservationReadCompletionContext,)"
+        not in compact_runtime
+        or "context.bind(pending.sum_weight_completion)" not in compact_completion
+        or "pubfnfreeze_weighting_generation(" in compact_runtime
+    ):
+        raise ArchitectureError(
+            "T18 weighting freeze must require owner traversals and scheduler-issued completion authority"
+        )
+    replay = rust_impl_method_body(
+        runtime_weighting, "FrozenWeightingGeneration", "replay", runtime_weighting_path
+    )
+    if (
+        replay.count(".traverse(") != 1
+        or ".finish(" not in replay
+        or "predecessor:&AttemptBoundObservationCompletion" not in compact_runtime
+    ):
+        raise ArchitectureError(
+            "T18 replay must require predecessor authority, its own exhaustive traversal, and exact coverage"
         )
     if "IntoIterator" in weighting or "inspect_selected_observation(" in weighting:
         raise ArchitectureError("T18 reconstruction exposes a bypass around T17 callback traversal")
     if "SelectedObservationGenerationId" in weighting:
         raise ArchitectureError("T18 reconstruction accepts caller-authored T17 completion identity")
-    replay_completion = rust_struct_fields(runtime_weighting, "WeightingReplayCompletion", runtime_weighting_path)
-    if replay_completion.get("owner_completion") != "SelectedObservationCompletion":
-        raise ArchitectureError("T18 replay completion does not retain concrete opaque T17 evidence")
+    replay_completion = rust_struct_fields(
+        runtime_weighting, "WeightingReplayCompletion", runtime_weighting_path
+    )
+    if replay_completion.get("owner_completion") != "AttemptBoundObservationCompletion":
+        raise ArchitectureError(
+            "T18 replay completion does not retain attempt-bound opaque T17 evidence"
+        )
     if re.search(
         r"\bpub\s+(?:const\s+)?fn\s+(?:from_sha256|from_identity|new_generation)\b",
         weighting,
     ):
         raise ArchitectureError("T18 exposes a raw weighting evidence constructor")
-    block_fields = rust_struct_fields(weighting, "WeightedObservationBlock", weighting_path)
-    sample_fields = rust_struct_fields(weighting, "WeightedObservationSample", weighting_path)
+    block_fields = rust_struct_fields(
+        runtime_weighting, "WeightedObservationBlock", runtime_weighting_path
+    )
+    sample_fields = rust_struct_fields(
+        runtime_weighting, "WeightedObservationSample", runtime_weighting_path
+    )
     if block_fields.get("generation") != "WeightingGenerationId" or sample_fields.get(
         "generation"
     ) != "WeightingGenerationId":
@@ -2965,6 +3100,8 @@ def validate_t18_global_weighting_sources(
     residency_fields = rust_struct_fields(weighting, "WeightingResidency", weighting_path)
     required_residency = {
         "density_grid_bytes",
+        "robust_factor_bytes",
+        "sum_weight_bytes",
         "deterministic_partial_bytes",
         "reduction_scratch_bytes",
         "replay_read_bytes",

@@ -87,7 +87,8 @@ pub use selected_observation::{
 pub use selected_observation_sample::{
     SelectedObservationGenerationId, SelectedObservationSample, SelectedPointingDirections,
     SelectedPredictionTarget, SelectedSampleAddress, SelectedSampleCoordinates,
-    SelectedSampleMetadata, SelectedVisibilitySample,
+    SelectedSampleMetadata, SelectedSpectralContribution, SelectedSpectralContributions,
+    SelectedVisibilitySample,
 };
 
 pub use product_graph::{
