@@ -334,7 +334,7 @@ fn matrix_contract_revision_is_a_positive_u32() {
     .unwrap();
 
     let revision: u32 = routed.route().matrix_contract_revision();
-    assert_eq!(revision, 24);
+    assert_eq!(revision, 25);
 
     for invalid in [serde_json::json!(0), serde_json::json!("5")] {
         let mut matrix = serde_json::from_str::<serde_json::Value>(MIGRATION_MATRIX_JSON).unwrap();
