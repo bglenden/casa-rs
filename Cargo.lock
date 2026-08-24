@@ -655,6 +655,7 @@ dependencies = [
  "casa-imaging-reconstruction",
  "casa-ms",
  "casa-test-support",
+ "fs2",
  "objc2-metal",
  "serde",
  "serde_json",

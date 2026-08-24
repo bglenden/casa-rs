@@ -5,15 +5,16 @@
 mod execution;
 mod execution_bindings;
 mod observation_transaction;
+mod prepared_artifact;
 mod publication_layout;
 mod receipt;
 mod resource_authority;
 mod weighting;
 
 pub use execution_bindings::{
-    ArtifactDisposition, ArtifactIdentity, ArtifactMeasurement, ArtifactRole,
-    AttemptBoundObservationCompletion, BindingKind, CacheIdentity, CompiledWorkContext,
-    ExecutionEvidenceError, ExecutionPlan, ExecutionPlanId, ExecutionStatus,
+    ArtifactDisposition, ArtifactIdentity, ArtifactMeasurement, ArtifactMeasurementError,
+    ArtifactRole, AttemptBoundObservationCompletion, BindingKind, CacheIdentity,
+    CompiledWorkContext, ExecutionEvidenceError, ExecutionPlan, ExecutionPlanId, ExecutionStatus,
     ImplementationRegistry, ImplementationRegistryId, IoMeasurement, IoPrediction,
     ObservationCompletionBindingError, ObservationReadCompletionContext, PhysicalWorkBinding,
     PhysicalWorkBindingError, PhysicalWorkId, PlanError, PlanPrediction, PlannedArtifact,
@@ -33,6 +34,15 @@ pub use execution::{
 };
 pub use observation_transaction::{
     BoundObservationTransaction, ObservationTransactionPlanError, ObservationTransactionWork,
+};
+pub use prepared_artifact::{
+    PreparedArtifact, PreparedArtifactBudget, PreparedArtifactDescriptor, PreparedArtifactError,
+    PreparedArtifactGenerator, PreparedArtifactKind, PreparedArtifactLoadSource,
+    PreparedArtifactOperation, PreparedArtifactOrder, PreparedArtifactPlanError,
+    PreparedArtifactPlanFragment, PreparedArtifactPlaneDescriptor, PreparedArtifactPrecision,
+    PreparedArtifactRegistration, PreparedArtifactRejection, PreparedArtifactReservation,
+    PreparedArtifactReuseOutcome, PreparedArtifactSegmentDescriptor, PreparedArtifactSourceSegment,
+    PreparedArtifactStore, PreparedArtifactUvAffine,
 };
 pub use publication_layout::{
     PhysicalLayoutId, PublicationBoundKind, PublicationLayoutError, PublicationLayoutLedger,

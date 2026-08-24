@@ -1,7 +1,7 @@
 # Architecture
 
 Truth class: current descriptive
-Last reality check: 2026-08-22
+Last reality check: 2026-08-23
 Verification: just docs-check
 
 ## System purpose
@@ -44,7 +44,52 @@ reconstruction completions and depends only inward on the model.
 and depends inward on the model plus reconstruction's opaque executable-problem
 brand. That reconstruction edge is limited to admitting owner-prepared model
 inputs at the execution and receipt boundary; runtime does not own or invoke
-reprojection algorithms.
+reprojection algorithms. Runtime also
+owns content-addressed prepared implementation artifacts: an exact artifact
+identity, a separate cache identity, bounded generation or load, integrity
+validation, private atomic caching, and deterministic eviction. Artifact
+identity commits to the registry/catalog owner, implementation version,
+compiled scientific commitments, artifact kind, and canonical named layout;
+`CacheIdentity` separately commits to the canonical private root and full cache
+policy. Neither identity includes an execution-local source path. The selected
+implementation owner derives artifact identity from exact `CompiledProblem`
+commitments, an owner-derived per-cell scientific key, named segment semantics,
+and the registry owner; it derives cache identity from that owner, the canonical
+private root, and the full cache policy. The plan-selected operation
+implementation identity is domain-separated and length-prefixed; its owner
+registry is checked against the actual plan and running implementation registry,
+so caller-authored metadata cannot substitute a registry entry. Cold generation,
+cold load, and warm reuse have distinct plan node, implementation, and
+artifact-role bindings; their canonical measurements reach the immutable
+execution receipt, including `RejectedStale` evidence for a missing,
+incomplete, incompatible, corrupt, or nonfinite warm candidate. Rejection
+evidence uses the existing typed observed-identity field and records the actual
+cache operations and bytes inspected. Successful `PreparedArtifact` handles
+are identity-only values with no payload access or file descriptors; the cache
+node closes every descriptor before returning its measurements. Store I/O
+evidence covers the private-store operation through
+final validation; later consumer copies are separately owned. Opening the store
+canonicalizes and checks the private root before creating anything, and performs
+no hidden lookup, integrity work, or eviction. That private casa-rs cache is not
+Product Graph authority or a CASA-visible persisted format. Existing CASA
+CFS/WTCFS directories remain read-only interoperability inputs supplied through
+the validated legacy adapter; the runtime neither mutates them nor creates
+sidecars. Cold load accepts only bounded absolute regular-file source
+descriptors through a content-committed source artifact listed in the canonical
+plan, owned by an exact predecessor/import node, and retained in that
+predecessor's receipt. Generation is pathless: the selected generator supplies
+bytes through the store-owned bounded buffer, with zero source reads or
+source-descriptor residency and a two-file-descriptor peak. Cold load opens at
+most one source while the execution lease is live, rejects CASA image,
+MeasurementSet, or table ancestry, verifies source digests while its lease is
+live, and reserves the source-read ceiling, source-descriptor residency, and
+three-file-descriptor peak. Reuse reserves two descriptors and no source reads.
+Source descriptors, the canonicalized source path, and the shared streaming
+buffer are charged inside one
+`StorageManager`-backed physical-memory allocation rather than a duplicate
+`SourceReadAhead` slot. Every `WorkImplementation` also states its failure
+measurement policy explicitly; there is no default that can silently discard
+completed I/O or mutation evidence.
 `casa-imaging-router` is the application-layer owner of the one pre-plan
 migration decision. It compiles the logical request, derives every applicable
 matrix row, records the authoritative row evidence, and invokes exactly one

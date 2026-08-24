@@ -125,7 +125,9 @@ in separate worktrees without becoming dependencies of the continuum tranche:
   spectral maps, and kernels. A `PreparedArtifact` is not a scientific
   Product Graph artifact, product-generation member, or publication seal. T50
   may reuse lower-level atomic-storage mechanics but cannot share or extend the
-  product authority.
+  product authority. Its content-addressed store uses a private casa-rs schema;
+  CASA CFS/WTCFS caches remain read-only sources through the existing validated
+  adapter, with no mutation or CASA-visible sidecar.
 - T61 projects only the canonical request and matrix semantics already merged
   to `main`. It does not predeclare a later ticket's control, default,
   capability, or validation rule. Each later owner extends the same catalog in
