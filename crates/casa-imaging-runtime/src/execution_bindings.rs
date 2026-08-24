@@ -1943,6 +1943,18 @@ pub fn plan<E>(
                     .to_string(),
             )));
         }
+        let implementation_ids = candidate
+            .execution_dag
+            .nodes()
+            .iter()
+            .map(|(node, work)| (node.clone(), work.implementation.clone()))
+            .collect::<BTreeMap<_, _>>();
+        if commitment.implementation_ids() != &implementation_ids {
+            return Err(PlanError::InvalidCandidate(ExecutionError::InvalidPlan(
+                "physical candidate implementation commitment does not match its execution DAG"
+                    .to_string(),
+            )));
+        }
         if commitment != first.implementation_contract() {
             return Err(PlanError::InvalidCandidate(ExecutionError::InvalidPlan(
                 "physical candidates disagree on their registry-owned science and numerics commitments"
