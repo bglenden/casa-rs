@@ -792,7 +792,7 @@ fn execute_prepared_operation(
 ) -> PreparedObserved {
     let plan = plan(
         problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| {
             Ok::<_, ()>(prepared_physical_work(
                 problem,
@@ -998,7 +998,7 @@ fn prepared_streaming_residency_is_admitted_once_without_overlapping_slots() {
 
     plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(work),
     )
     .expect("a feasible single-buffer prepared plan must be admitted");
@@ -1074,7 +1074,7 @@ fn distinct_prepared_cells_compose_without_resource_identity_collisions() {
     );
     plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(composed),
     )
     .expect("shared cache demand remains feasible below domain capacity");
@@ -1136,7 +1136,7 @@ fn prepared_sources_are_bounded_accounted_files_and_never_casa_tables() {
     let operation = PreparedArtifactOperation::Load;
     let plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |problem, _| {
             Ok::<_, ()>(prepared_physical_work(
                 problem,
@@ -1223,7 +1223,7 @@ fn cold_load_rejects_missing_mismatched_unlisted_and_wrong_producer_sources() {
         };
         let plan = plan(
             &problem,
-            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
             |problem, _| {
                 Ok::<_, ()>(prepared_physical_work(
                     problem,
@@ -1320,7 +1320,7 @@ fn cold_load_source_identity_is_owned_and_accounted_by_its_predecessor_receipt()
         .expect("separate cold-source read claim");
     let plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(work),
     )
     .expect("source-receipt plan");
@@ -1428,7 +1428,7 @@ fn cold_load_rejects_post_plan_symlink_escape_and_keeps_domains_exact() {
     let untouched_source_read = source_demand(&secondary_source_domain().id);
     let plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |_, _| Ok::<_, ()>(work),
     )
     .expect("multi-domain source plan");
@@ -1491,7 +1491,7 @@ fn cold_load_cannot_run_without_its_predecessor_source_receipt() {
     let descriptor = prepared_descriptor(&store, &problem);
     let plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |problem, _| {
             Ok::<_, ()>(prepared_physical_work(
                 problem,
@@ -1597,7 +1597,7 @@ fn public_prepared_generate_reuse_and_load_are_plan_and_receipt_bound() {
     );
     let generate_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |problem, _| {
             Ok::<_, ()>(prepared_physical_work(
                 problem,
@@ -1800,7 +1800,7 @@ fn public_prepared_generate_reuse_and_load_are_plan_and_receipt_bound() {
     assert_eq!(reuse_descriptor, generated_descriptor);
     let reuse_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |problem, _| {
             Ok::<_, ()>(prepared_physical_work(
                 problem,
@@ -1887,7 +1887,7 @@ fn public_prepared_generate_reuse_and_load_are_plan_and_receipt_bound() {
     );
     let load_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |problem, _| {
             Ok::<_, ()>(prepared_physical_work(
                 problem,
@@ -1992,7 +1992,7 @@ fn prepared_operation_identity_cannot_authorize_a_different_operation() {
     let mismatch_descriptor = prepared_descriptor(&mismatch_store, &problem);
     let mismatch_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |problem, _| {
             Ok::<_, ()>(prepared_physical_work(
                 problem,
@@ -2179,7 +2179,7 @@ fn prepared_owner_and_cell_identities_fail_closed() {
     ));
     let owner_mismatch_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |problem, _| {
             Ok::<_, ()>(prepared_physical_work(
                 problem,
@@ -2685,7 +2685,7 @@ fn public_prepared_reuse_receipts_fail_closed_rejections() {
     let missing_descriptor = prepared_descriptor(&missing_store, &problem);
     let missing_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |problem, _| {
             Ok::<_, ()>(prepared_physical_work(
                 problem,
@@ -2769,7 +2769,7 @@ fn public_prepared_reuse_receipts_fail_closed_rejections() {
     let generate_descriptor = prepared_descriptor(&generate_store, &problem);
     let generate_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |problem, _| {
             Ok::<_, ()>(prepared_physical_work(
                 problem,
@@ -2817,7 +2817,7 @@ fn public_prepared_reuse_receipts_fail_closed_rejections() {
     let corrupt_descriptor = prepared_descriptor(&corrupt_store, &problem);
     let corrupt_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |problem, _| {
             Ok::<_, ()>(prepared_physical_work(
                 problem,
@@ -3191,7 +3191,7 @@ fn failed_prepared_receipt_retains_materialization_eviction_and_io_evidence() {
     let operation = PreparedArtifactOperation::Generate;
     let plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |problem, _| {
             Ok::<_, ()>(prepared_physical_work(
                 problem,
@@ -3391,7 +3391,7 @@ fn orphan_staging_is_included_in_reuse_budget_and_receipt_evidence() {
     let over_budget_descriptor = prepared_descriptor(&over_budget_store, &problem);
     let over_budget_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |problem, _| {
             Ok::<_, ()>(prepared_physical_work(
                 problem,
@@ -3588,7 +3588,7 @@ fn cold_operation_fails_before_deleting_over_budget_orphan_staging() {
         let descriptor = prepared_descriptor(&store, &problem);
         let plan = plan(
             &problem,
-            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
             |problem, _| {
                 Ok::<_, ()>(prepared_physical_work(
                     problem,
@@ -3692,7 +3692,7 @@ fn prepared_resource_overrun_fails_closed_without_censoring_the_peak() {
         .expect("prepared overrun reservation");
     let plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
         |problem, _| {
             Ok::<_, ()>(prepared_physical_work(
                 problem,

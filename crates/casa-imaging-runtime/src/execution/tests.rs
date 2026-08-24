@@ -1213,7 +1213,7 @@ fn malformed_store_owned_rejection_is_rejected_without_partial_receipt_mutation(
         PlanningBindings::new(
             ImplementationRegistryId::from_sha256([7; 32]),
             ResourcePolicy::Exclusive,
-            cost_model,
+            PlannerCostModelProfileRecord::initial(cost_model),
         ),
         |_, _| Ok::<_, std::convert::Infallible>(physical),
     )
