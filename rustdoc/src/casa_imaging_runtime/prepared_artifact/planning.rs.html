@@ -368,76 +368,77 @@
 <a href=#368 id=368 data-nosnippet>368</a>            <span class="self">self</span>.descriptor.planned_artifact(<span class="self">self</span>.operation),
 <a href=#369 id=369 data-nosnippet>369</a>            <span class="self">self</span>.descriptor.eviction_artifact(<span class="self">self</span>.operation),
 <a href=#370 id=370 data-nosnippet>370</a>        ]);
-<a href=#371 id=371 data-nosnippet>371</a>        <span class="prelude-val">Ok</span>(PhysicalWorkBinding::new(
-<a href=#372 id=372 data-nosnippet>372</a>            dag,
-<a href=#373 id=373 data-nosnippet>373</a>            prediction,
-<a href=#374 id=374 data-nosnippet>374</a>            artifacts,
-<a href=#375 id=375 data-nosnippet>375</a>            base.observation_transaction().clone(),
-<a href=#376 id=376 data-nosnippet>376</a>            base.publication_layouts().clone(),
-<a href=#377 id=377 data-nosnippet>377</a>        )<span class="question-mark">?</span>)
-<a href=#378 id=378 data-nosnippet>378</a>    }
-<a href=#379 id=379 data-nosnippet>379</a>}
-<a href=#380 id=380 data-nosnippet>380</a>
-<a href=#381 id=381 data-nosnippet>381</a><span class="kw">fn </span>claim(resource: LeaseResource, amount: u64) -&gt; ResourceClaim {
-<a href=#382 id=382 data-nosnippet>382</a>    ResourceClaim {
-<a href=#383 id=383 data-nosnippet>383</a>        resource,
-<a href=#384 id=384 data-nosnippet>384</a>        amount,
-<a href=#385 id=385 data-nosnippet>385</a>        lifetime: ClaimLifetime::Work,
-<a href=#386 id=386 data-nosnippet>386</a>    }
-<a href=#387 id=387 data-nosnippet>387</a>}
-<a href=#388 id=388 data-nosnippet>388</a>
-<a href=#389 id=389 data-nosnippet>389</a><span class="kw">fn </span>combine_count(base: CountDemand, fragment: u64) -&gt; CountDemand {
-<a href=#390 id=390 data-nosnippet>390</a>    CountDemand::new(base.hard().max(fragment), base.preferred().max(fragment))
-<a href=#391 id=391 data-nosnippet>391</a>}
-<a href=#392 id=392 data-nosnippet>392</a>
-<a href=#393 id=393 data-nosnippet>393</a><span class="doccomment">/// Failure to compose a prepared operation with an existing physical plan.
-<a href=#394 id=394 data-nosnippet>394</a></span><span class="attr">#[derive(Debug)]
-<a href=#395 id=395 data-nosnippet>395</a></span><span class="kw">pub enum </span>PreparedArtifactPlanError {
-<a href=#396 id=396 data-nosnippet>396</a>    <span class="doccomment">/// The store could not derive a bounded reservation.
-<a href=#397 id=397 data-nosnippet>397</a>    </span>Prepared(PreparedArtifactError),
-<a href=#398 id=398 data-nosnippet>398</a>    <span class="doccomment">/// The composed execution DAG is invalid.
-<a href=#399 id=399 data-nosnippet>399</a>    </span>Execution(ExecutionError),
-<a href=#400 id=400 data-nosnippet>400</a>    <span class="doccomment">/// The complete physical binding is inconsistent.
-<a href=#401 id=401 data-nosnippet>401</a>    </span>Binding(PhysicalWorkBindingError),
-<a href=#402 id=402 data-nosnippet>402</a>    <span class="doccomment">/// A cold load omitted its source or another operation supplied one.
-<a href=#403 id=403 data-nosnippet>403</a>    </span>InvalidSourceBinding,
-<a href=#404 id=404 data-nosnippet>404</a>    <span class="doccomment">/// The named publication commit was absent from the base plan.
-<a href=#405 id=405 data-nosnippet>405</a>    </span>MissingPublicationCommit,
-<a href=#406 id=406 data-nosnippet>406</a>}
-<a href=#407 id=407 data-nosnippet>407</a>
-<a href=#408 id=408 data-nosnippet>408</a><span class="kw">impl </span>fmt::Display <span class="kw">for </span>PreparedArtifactPlanError {
-<a href=#409 id=409 data-nosnippet>409</a>    <span class="kw">fn </span>fmt(<span class="kw-2">&amp;</span><span class="self">self</span>, formatter: <span class="kw-2">&amp;mut </span>fmt::Formatter&lt;<span class="lifetime">'_</span>&gt;) -&gt; fmt::Result {
-<a href=#410 id=410 data-nosnippet>410</a>        <span class="kw">match </span><span class="self">self </span>{
-<a href=#411 id=411 data-nosnippet>411</a>            <span class="self">Self</span>::Prepared(error) =&gt; error.fmt(formatter),
-<a href=#412 id=412 data-nosnippet>412</a>            <span class="self">Self</span>::Execution(error) =&gt; error.fmt(formatter),
-<a href=#413 id=413 data-nosnippet>413</a>            <span class="self">Self</span>::Binding(error) =&gt; error.fmt(formatter),
-<a href=#414 id=414 data-nosnippet>414</a>            <span class="self">Self</span>::InvalidSourceBinding =&gt; {
-<a href=#415 id=415 data-nosnippet>415</a>                formatter.write_str(<span class="string">"invalid prepared load-source binding"</span>)
-<a href=#416 id=416 data-nosnippet>416</a>            }
-<a href=#417 id=417 data-nosnippet>417</a>            <span class="self">Self</span>::MissingPublicationCommit =&gt; {
-<a href=#418 id=418 data-nosnippet>418</a>                formatter.write_str(<span class="string">"prepared fragment publication commit is absent"</span>)
-<a href=#419 id=419 data-nosnippet>419</a>            }
-<a href=#420 id=420 data-nosnippet>420</a>        }
-<a href=#421 id=421 data-nosnippet>421</a>    }
-<a href=#422 id=422 data-nosnippet>422</a>}
-<a href=#423 id=423 data-nosnippet>423</a>
-<a href=#424 id=424 data-nosnippet>424</a><span class="kw">impl </span>Error <span class="kw">for </span>PreparedArtifactPlanError {}
-<a href=#425 id=425 data-nosnippet>425</a>
-<a href=#426 id=426 data-nosnippet>426</a><span class="kw">impl </span>From&lt;PreparedArtifactError&gt; <span class="kw">for </span>PreparedArtifactPlanError {
-<a href=#427 id=427 data-nosnippet>427</a>    <span class="kw">fn </span>from(error: PreparedArtifactError) -&gt; <span class="self">Self </span>{
-<a href=#428 id=428 data-nosnippet>428</a>        <span class="self">Self</span>::Prepared(error)
-<a href=#429 id=429 data-nosnippet>429</a>    }
-<a href=#430 id=430 data-nosnippet>430</a>}
-<a href=#431 id=431 data-nosnippet>431</a>
-<a href=#432 id=432 data-nosnippet>432</a><span class="kw">impl </span>From&lt;ExecutionError&gt; <span class="kw">for </span>PreparedArtifactPlanError {
-<a href=#433 id=433 data-nosnippet>433</a>    <span class="kw">fn </span>from(error: ExecutionError) -&gt; <span class="self">Self </span>{
-<a href=#434 id=434 data-nosnippet>434</a>        <span class="self">Self</span>::Execution(error)
-<a href=#435 id=435 data-nosnippet>435</a>    }
-<a href=#436 id=436 data-nosnippet>436</a>}
-<a href=#437 id=437 data-nosnippet>437</a>
-<a href=#438 id=438 data-nosnippet>438</a><span class="kw">impl </span>From&lt;PhysicalWorkBindingError&gt; <span class="kw">for </span>PreparedArtifactPlanError {
-<a href=#439 id=439 data-nosnippet>439</a>    <span class="kw">fn </span>from(error: PhysicalWorkBindingError) -&gt; <span class="self">Self </span>{
-<a href=#440 id=440 data-nosnippet>440</a>        <span class="self">Self</span>::Binding(error)
-<a href=#441 id=441 data-nosnippet>441</a>    }
-<a href=#442 id=442 data-nosnippet>442</a>}
+<a href=#371 id=371 data-nosnippet>371</a>        <span class="prelude-val">Ok</span>(PhysicalWorkBinding::with_implementation_contract(
+<a href=#372 id=372 data-nosnippet>372</a>            base.implementation_contract().for_execution_dag(<span class="kw-2">&amp;</span>dag)<span class="question-mark">?</span>,
+<a href=#373 id=373 data-nosnippet>373</a>            dag,
+<a href=#374 id=374 data-nosnippet>374</a>            prediction,
+<a href=#375 id=375 data-nosnippet>375</a>            artifacts,
+<a href=#376 id=376 data-nosnippet>376</a>            base.observation_transaction().clone(),
+<a href=#377 id=377 data-nosnippet>377</a>            base.publication_layouts().clone(),
+<a href=#378 id=378 data-nosnippet>378</a>        )<span class="question-mark">?</span>)
+<a href=#379 id=379 data-nosnippet>379</a>    }
+<a href=#380 id=380 data-nosnippet>380</a>}
+<a href=#381 id=381 data-nosnippet>381</a>
+<a href=#382 id=382 data-nosnippet>382</a><span class="kw">fn </span>claim(resource: LeaseResource, amount: u64) -&gt; ResourceClaim {
+<a href=#383 id=383 data-nosnippet>383</a>    ResourceClaim {
+<a href=#384 id=384 data-nosnippet>384</a>        resource,
+<a href=#385 id=385 data-nosnippet>385</a>        amount,
+<a href=#386 id=386 data-nosnippet>386</a>        lifetime: ClaimLifetime::Work,
+<a href=#387 id=387 data-nosnippet>387</a>    }
+<a href=#388 id=388 data-nosnippet>388</a>}
+<a href=#389 id=389 data-nosnippet>389</a>
+<a href=#390 id=390 data-nosnippet>390</a><span class="kw">fn </span>combine_count(base: CountDemand, fragment: u64) -&gt; CountDemand {
+<a href=#391 id=391 data-nosnippet>391</a>    CountDemand::new(base.hard().max(fragment), base.preferred().max(fragment))
+<a href=#392 id=392 data-nosnippet>392</a>}
+<a href=#393 id=393 data-nosnippet>393</a>
+<a href=#394 id=394 data-nosnippet>394</a><span class="doccomment">/// Failure to compose a prepared operation with an existing physical plan.
+<a href=#395 id=395 data-nosnippet>395</a></span><span class="attr">#[derive(Debug)]
+<a href=#396 id=396 data-nosnippet>396</a></span><span class="kw">pub enum </span>PreparedArtifactPlanError {
+<a href=#397 id=397 data-nosnippet>397</a>    <span class="doccomment">/// The store could not derive a bounded reservation.
+<a href=#398 id=398 data-nosnippet>398</a>    </span>Prepared(PreparedArtifactError),
+<a href=#399 id=399 data-nosnippet>399</a>    <span class="doccomment">/// The composed execution DAG is invalid.
+<a href=#400 id=400 data-nosnippet>400</a>    </span>Execution(ExecutionError),
+<a href=#401 id=401 data-nosnippet>401</a>    <span class="doccomment">/// The complete physical binding is inconsistent.
+<a href=#402 id=402 data-nosnippet>402</a>    </span>Binding(PhysicalWorkBindingError),
+<a href=#403 id=403 data-nosnippet>403</a>    <span class="doccomment">/// A cold load omitted its source or another operation supplied one.
+<a href=#404 id=404 data-nosnippet>404</a>    </span>InvalidSourceBinding,
+<a href=#405 id=405 data-nosnippet>405</a>    <span class="doccomment">/// The named publication commit was absent from the base plan.
+<a href=#406 id=406 data-nosnippet>406</a>    </span>MissingPublicationCommit,
+<a href=#407 id=407 data-nosnippet>407</a>}
+<a href=#408 id=408 data-nosnippet>408</a>
+<a href=#409 id=409 data-nosnippet>409</a><span class="kw">impl </span>fmt::Display <span class="kw">for </span>PreparedArtifactPlanError {
+<a href=#410 id=410 data-nosnippet>410</a>    <span class="kw">fn </span>fmt(<span class="kw-2">&amp;</span><span class="self">self</span>, formatter: <span class="kw-2">&amp;mut </span>fmt::Formatter&lt;<span class="lifetime">'_</span>&gt;) -&gt; fmt::Result {
+<a href=#411 id=411 data-nosnippet>411</a>        <span class="kw">match </span><span class="self">self </span>{
+<a href=#412 id=412 data-nosnippet>412</a>            <span class="self">Self</span>::Prepared(error) =&gt; error.fmt(formatter),
+<a href=#413 id=413 data-nosnippet>413</a>            <span class="self">Self</span>::Execution(error) =&gt; error.fmt(formatter),
+<a href=#414 id=414 data-nosnippet>414</a>            <span class="self">Self</span>::Binding(error) =&gt; error.fmt(formatter),
+<a href=#415 id=415 data-nosnippet>415</a>            <span class="self">Self</span>::InvalidSourceBinding =&gt; {
+<a href=#416 id=416 data-nosnippet>416</a>                formatter.write_str(<span class="string">"invalid prepared load-source binding"</span>)
+<a href=#417 id=417 data-nosnippet>417</a>            }
+<a href=#418 id=418 data-nosnippet>418</a>            <span class="self">Self</span>::MissingPublicationCommit =&gt; {
+<a href=#419 id=419 data-nosnippet>419</a>                formatter.write_str(<span class="string">"prepared fragment publication commit is absent"</span>)
+<a href=#420 id=420 data-nosnippet>420</a>            }
+<a href=#421 id=421 data-nosnippet>421</a>        }
+<a href=#422 id=422 data-nosnippet>422</a>    }
+<a href=#423 id=423 data-nosnippet>423</a>}
+<a href=#424 id=424 data-nosnippet>424</a>
+<a href=#425 id=425 data-nosnippet>425</a><span class="kw">impl </span>Error <span class="kw">for </span>PreparedArtifactPlanError {}
+<a href=#426 id=426 data-nosnippet>426</a>
+<a href=#427 id=427 data-nosnippet>427</a><span class="kw">impl </span>From&lt;PreparedArtifactError&gt; <span class="kw">for </span>PreparedArtifactPlanError {
+<a href=#428 id=428 data-nosnippet>428</a>    <span class="kw">fn </span>from(error: PreparedArtifactError) -&gt; <span class="self">Self </span>{
+<a href=#429 id=429 data-nosnippet>429</a>        <span class="self">Self</span>::Prepared(error)
+<a href=#430 id=430 data-nosnippet>430</a>    }
+<a href=#431 id=431 data-nosnippet>431</a>}
+<a href=#432 id=432 data-nosnippet>432</a>
+<a href=#433 id=433 data-nosnippet>433</a><span class="kw">impl </span>From&lt;ExecutionError&gt; <span class="kw">for </span>PreparedArtifactPlanError {
+<a href=#434 id=434 data-nosnippet>434</a>    <span class="kw">fn </span>from(error: ExecutionError) -&gt; <span class="self">Self </span>{
+<a href=#435 id=435 data-nosnippet>435</a>        <span class="self">Self</span>::Execution(error)
+<a href=#436 id=436 data-nosnippet>436</a>    }
+<a href=#437 id=437 data-nosnippet>437</a>}
+<a href=#438 id=438 data-nosnippet>438</a>
+<a href=#439 id=439 data-nosnippet>439</a><span class="kw">impl </span>From&lt;PhysicalWorkBindingError&gt; <span class="kw">for </span>PreparedArtifactPlanError {
+<a href=#440 id=440 data-nosnippet>440</a>    <span class="kw">fn </span>from(error: PhysicalWorkBindingError) -&gt; <span class="self">Self </span>{
+<a href=#441 id=441 data-nosnippet>441</a>        <span class="self">Self</span>::Binding(error)
+<a href=#442 id=442 data-nosnippet>442</a>    }
+<a href=#443 id=443 data-nosnippet>443</a>}
 </code></pre></div></section></main></body></html>
