@@ -107,6 +107,27 @@ pub struct PlannerCostModelProfileRecord {
 }
 
 impl PlannerCostModelProfileRecord {
+    /// Bind the immutable initial planner profile before any reviewed
+    /// promotion has been performed.
+    ///
+    /// Initial profiles are selected by deployment configuration and are not
+    /// persisted promotion documents. Every subsequent profile must come
+    /// from [`promote_cost_model_profile`] or [`open_cost_model_profile`].
+    #[must_use]
+    pub fn initial(profile_id: PlannerCostModelProfileId) -> Self {
+        Self {
+            profile_id,
+            lineage_cost_model: profile_id,
+            prediction_confidence_ppm: 0,
+            promoted_unix_millis: 0,
+            review: ProfileReview {
+                reviewer: "initial-baseline".to_string(),
+                note: "deployment-selected initial planner profile".to_string(),
+            },
+            entries: Vec::new(),
+        }
+    }
+
     /// Return the stable content identity of this profile.
     ///
     /// The digest covers the lineage profile, prediction confidence, review
@@ -299,7 +320,7 @@ pub fn promote_cost_model_profile(
         .collect::<Result<Vec<_>, _>>()?;
     let first = &opened[0];
     let lineage_cost_model = first.cost_model_identity();
-    for (attempt, receipt) in attempts.iter().zip(&opened) {
+    for (attempt, receipt) in ordered.iter().zip(&opened) {
         validate_comparability(*attempt, first, receipt)?;
     }
     let confidence_ppm = first.prediction_confidence_ppm();

@@ -34,10 +34,11 @@ use crate::{
     DemandAlternative, DemandEnvelope, ExternalPressure, HostInventory, ImplementationRegistryId,
     IoBufferDemand, IoBufferKind, MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand,
     MemoryView, MemoryViewKind, ObservationTransactionWork, PhysicalWorkBinding,
-    PlannerCostModelProfileId, PlanningBindings, QueueDemand, QueueResource, QueueResourceId,
-    QuiescencePoint, RateDemand, RateResource, RateResourceId, RateUnit, RecordedInfeasibility,
-    ResourceAuthority, ResourceHeadroom, ResourcePolicy, ResourceTopology, RuntimeOverheadDemand,
-    ScalingMetadata, StorageDemand, StorageDomain, StorageDomainId, plan as authority_plan,
+    PlannerCostModelProfileId, PlannerCostModelProfileRecord, PlanningBindings, QueueDemand,
+    QueueResource, QueueResourceId, QuiescencePoint, RateDemand, RateResource, RateResourceId,
+    RateUnit, RecordedInfeasibility, ResourceAuthority, ResourceHeadroom, ResourcePolicy,
+    ResourceTopology, RuntimeOverheadDemand, ScalingMetadata, StorageDemand, StorageDomain,
+    StorageDomainId, plan as authority_plan,
 };
 
 fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
@@ -434,7 +435,7 @@ fn bound_plan(dag: ExecutionDag) -> crate::ExecutionPlan {
         PlanningBindings::new(
             ImplementationRegistryId::from_sha256([7; 32]),
             ResourcePolicy::Exclusive,
-            PlannerCostModelProfileId::from_sha256([8; 32]),
+            PlannerCostModelProfileRecord::initial(PlannerCostModelProfileId::from_sha256([8; 32])),
         ),
         |_, _| Ok::<_, std::convert::Infallible>(physical_work_binding(dag)),
     )
@@ -1279,7 +1280,7 @@ fn execution_plan_owns_the_bound_physical_work_dag() {
     let bindings = PlanningBindings::new(
         ImplementationRegistryId::from_sha256([7; 32]),
         ResourcePolicy::Exclusive,
-        PlannerCostModelProfileId::from_sha256([8; 32]),
+        PlannerCostModelProfileRecord::initial(PlannerCostModelProfileId::from_sha256([8; 32])),
     );
 
     let physical = physical_work_binding(dag);
@@ -1306,7 +1307,7 @@ fn execution_plan_owns_the_resource_policy_selected_during_planning() {
         PlanningBindings::new(
             ImplementationRegistryId::from_sha256([7; 32]),
             ResourcePolicy::Balanced,
-            PlannerCostModelProfileId::from_sha256([8; 32]),
+            PlannerCostModelProfileRecord::initial(PlannerCostModelProfileId::from_sha256([8; 32])),
         ),
         |_, _| Ok::<_, std::convert::Infallible>(physical_work_binding(dag)),
     )
@@ -1343,7 +1344,7 @@ fn planning_seals_the_first_resource_authority_feasible_candidate() {
         PlanningBindings::new(
             ImplementationRegistryId::from_sha256([7; 32]),
             ResourcePolicy::Exclusive,
-            PlannerCostModelProfileId::from_sha256([8; 32]),
+            PlannerCostModelProfileRecord::initial(PlannerCostModelProfileId::from_sha256([8; 32])),
         ),
         &io_authority(),
         &RecordedInfeasibility::default(),
@@ -1374,7 +1375,7 @@ fn planning_fails_before_sealing_when_no_candidate_is_feasible() {
         PlanningBindings::new(
             ImplementationRegistryId::from_sha256([7; 32]),
             ResourcePolicy::Exclusive,
-            PlannerCostModelProfileId::from_sha256([8; 32]),
+            PlannerCostModelProfileRecord::initial(PlannerCostModelProfileId::from_sha256([8; 32])),
         ),
         &cpu_authority(),
         &RecordedInfeasibility::default(),
@@ -1399,14 +1400,22 @@ fn recorded_failed_and_aborted_executions_constrain_planning_without_learning() 
         crate::ReceiptRetention::new(4, 1_048_576).expect("retention"),
     )
     .expect("receipt store");
-    for (attempt, build, status) in [
-        (91_u8, 92_u8, crate::ReceiptStatus::Failed),
-        (93, 94, crate::ReceiptStatus::Aborted),
-        (95, 96, crate::ReceiptStatus::Cancelled),
+    for (attempt, build, status, resource_failure) in [
+        (91_u8, 92_u8, crate::ReceiptStatus::Failed, true),
+        (93, 94, crate::ReceiptStatus::Aborted, true),
+        (95, 96, crate::ReceiptStatus::Cancelled, false),
+        (97, 98, crate::ReceiptStatus::Failed, false),
     ] {
-        // Failed and aborted receipts retain failure evidence; cancelled ones do not.
+        // Only resource-infeasibility evidence constrains a region. A generic
+        // interrupted failure is terminal evidence, but it is not a capacity
+        // proof and must not blacklist the candidate.
         let failure = match status {
-            crate::ReceiptStatus::Failed | crate::ReceiptStatus::Aborted => {
+            crate::ReceiptStatus::Failed | crate::ReceiptStatus::Aborted if resource_failure => {
+                Some(crate::receipt::ReceiptFailure::infeasible(
+                    &crate::ResourceError::NoCapableAlternative,
+                ))
+            }
+            crate::ReceiptStatus::Failed if !resource_failure => {
                 Some(crate::receipt::ReceiptFailure::new(
                     crate::ReceiptFailureKind::Interrupted,
                     None,
@@ -1449,7 +1458,7 @@ fn recorded_failed_and_aborted_executions_constrain_planning_without_learning() 
         PlanningBindings::new(
             ImplementationRegistryId::from_sha256([7; 32]),
             ResourcePolicy::Exclusive,
-            PlannerCostModelProfileId::from_sha256([8; 32]),
+            PlannerCostModelProfileRecord::initial(PlannerCostModelProfileId::from_sha256([8; 32])),
         )
     };
     let error = authority_plan(&problem, bindings(), &authority, &recorded, |_, _| {
@@ -4152,7 +4161,7 @@ fn receipts_reopen_machine_readable_infeasibility_certificates() {
     let directory = tempfile::tempdir().expect("receipt directory");
     let store = crate::ExecutionReceiptStore::new(
         directory.path(),
-        crate::ReceiptRetention::new(2, 1_048_576).expect("retention"),
+        crate::ReceiptRetention::new(3, 1_048_576).expect("retention"),
     )
     .expect("receipt store");
     let provenance = |attempt| {
@@ -4207,6 +4216,39 @@ fn receipts_reopen_machine_readable_infeasibility_certificates() {
             resource: "host-memory".to_string(),
             required: 4_096,
             available: 1_024,
+        })
+    );
+
+    let recorded = provenance(80);
+    let mut recorder = store
+        .begin(recorded.clone(), &problem, &plan)
+        .expect("begin recorded-failure receipt");
+    recorder
+        .finish(
+            crate::ReceiptStatus::Infeasible,
+            Some(crate::receipt::ReceiptFailure::infeasible(
+                &crate::ResourceError::NoFeasibleAlternative(
+                    crate::AdmissionInfeasibilityCertificate::from_rejections(vec![
+                        crate::AlternativeRejection::new(
+                            crate::AlternativeId::new("cpu"),
+                            crate::AlternativeRejectionReason::RecordedFailure {
+                                attempt: crate::ExecutionAttemptId::from_sha256([81; 32]),
+                                status: crate::ReceiptStatus::Failed,
+                            },
+                        ),
+                    ]),
+                ),
+            )),
+        )
+        .expect("finish recorded-failure receipt");
+    assert_eq!(
+        store
+            .open(recorded.attempt_id())
+            .expect("recorded-failure receipt")
+            .infeasibility_certificate(),
+        Some(crate::ReceiptInfeasibilityCertificate::RecordedFailure {
+            attempt: crate::ExecutionAttemptId::from_sha256([81; 32]).to_string(),
+            status: crate::ReceiptStatus::Failed,
         })
     );
 }

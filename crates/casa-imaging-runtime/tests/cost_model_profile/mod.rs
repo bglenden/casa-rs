@@ -8,7 +8,8 @@ use std::path::Path;
 
 use casa_imaging_model::{ModelColumnWrite, ProductKind, compile};
 use casa_imaging_runtime::{
-    ExecutionAttemptId, ExecutionPlan, open_cost_model_profile, promote_cost_model_profile,
+    ExecutionAttemptId, ExecutionPlan, PlannerCostModelProfileRecord, open_cost_model_profile,
+    promote_cost_model_profile,
 };
 
 mod support;
@@ -37,7 +38,11 @@ fn skeleton(lineage: u8) -> Skeleton {
     .expect("private synthetic logical compilation");
     let plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(lineage)),
+        PlanningBindings::new(
+            registry(3),
+            ResourcePolicy::Balanced,
+            PlannerCostModelProfileRecord::initial(cost_model(lineage)),
+        ),
         |problem, _| Ok::<_, std::io::Error>(physical_work_for_problem(problem, 6)),
     )
     .expect("Resource Authority-backed physical planning");

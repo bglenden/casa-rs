@@ -5,7 +5,9 @@
 
 use std::io;
 
-use casa_imaging_runtime::{AlternativeRejectionReason, ExecutionPlan, RecordedInfeasibility};
+use casa_imaging_runtime::{
+    AlternativeRejectionReason, ExecutionPlan, PlannerCostModelProfileRecord, RecordedInfeasibility,
+};
 
 mod support;
 
@@ -80,7 +82,11 @@ fn multi_candidate_plan(
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     runtime_plan(
         problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Exclusive, cost_model(4)),
+        PlanningBindings::new(
+            registry(3),
+            ResourcePolicy::Exclusive,
+            PlannerCostModelProfileRecord::initial(cost_model(4)),
+        ),
         authority(),
         &RecordedInfeasibility::default(),
         |_, _| Ok(candidates),
@@ -136,7 +142,7 @@ fn hard_feasibility_precedes_predicted_time_in_lexicographic_planning() {
 }
 
 #[test]
-fn planning_refuses_candidates_that_diverge_on_the_product_contract_surface() {
+fn planning_allows_implementation_alternatives_with_the_same_contract_surface() {
     let problem = compile(request(1)).expect("logical compilation");
     let base = physical_work(6);
     let slow = candidate(&base, "alt-slow", 300, 1);
@@ -148,7 +154,7 @@ fn planning_refuses_candidates_that_diverge_on_the_product_contract_surface() {
     let mut nodes = dag.nodes().values().cloned().collect::<Vec<_>>();
     let swapped = WorkImplementationId::new("variant-deconvolver".to_string());
     assert_ne!(nodes[0].implementation, swapped);
-    nodes[0].implementation = swapped;
+    nodes[0].implementation = swapped.clone();
     let specification = ExecutionDagSpecification {
         required_resource_capabilities: dag.required_resource_capabilities().clone(),
         resource_alternative: dag.resource_alternative().clone(),
@@ -167,13 +173,22 @@ fn planning_refuses_candidates_that_diverge_on_the_product_contract_surface() {
     )
     .expect("variant physical work");
 
-    let error = multi_candidate_plan(&problem, vec![slow, divergent])
-        .expect_err("a faster candidate may not trade away the science contract");
+    let selected = multi_candidate_plan(&problem, vec![slow, divergent])
+        .expect("implementation alternatives remain selectable when their declared contract surface matches");
 
-    let message = error.to_string();
-    assert!(
-        message.contains("disagree on selected implementations"),
-        "unexpected refusal: {message}"
+    assert_eq!(
+        selected.execution_dag().resource_alternative().id,
+        AlternativeId::new("alt-fast")
+    );
+    assert_eq!(
+        selected
+            .execution_dag()
+            .nodes()
+            .values()
+            .next()
+            .unwrap()
+            .implementation,
+        swapped
     );
 }
 

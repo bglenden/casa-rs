@@ -24,6 +24,7 @@ use crate::{
     ExecutionReceiptBinding, FenceKind, IoBufferKind, LeaseResource, PhysicalSlotId,
     PublicationLayoutLedger, ReceiptError, ReceiptFailureKind, ReceiptStatus, ResourceAuthority,
     ResourceError, ResourceOverride, ResourcePolicy, WorkImplementationId, WorkKind, WorkNodeId,
+    cost_model::PlannerCostModelProfileRecord,
     execution::{
         ExecutionDag, ExecutionScheduler, PublicationReservation, SchedulerAction,
         SchedulerTerminal, WorkResult, io_buffer_kind_supports_work_kind, validate_topology,
@@ -84,6 +85,14 @@ digest_identity!(
     PlannerCostModelProfileId,
     "Stable content identity of one reviewed planner cost-model profile."
 );
+
+impl PlannerCostModelProfileId {
+    /// Bind an explicitly selected initial profile before reviewed promotion.
+    #[must_use]
+    pub fn initial_record(self) -> PlannerCostModelProfileRecord {
+        PlannerCostModelProfileRecord::initial(self)
+    }
+}
 digest_identity!(
     PhysicalWorkId,
     "Stable content identity of the physical work emitted by planning."
@@ -1490,7 +1499,7 @@ pub struct PlanningBindings {
     implementation_registry: ImplementationRegistryId,
     resource_policy: ResourcePolicy,
     resource_policy_id: ResourcePolicyId,
-    planner_cost_model_profile: PlannerCostModelProfileId,
+    planner_cost_model_profile: PlannerCostModelProfileRecord,
 }
 
 impl PlanningBindings {
@@ -1499,7 +1508,7 @@ impl PlanningBindings {
     pub fn new(
         implementation_registry: ImplementationRegistryId,
         resource_policy: ResourcePolicy,
-        planner_cost_model_profile: PlannerCostModelProfileId,
+        planner_cost_model_profile: PlannerCostModelProfileRecord,
     ) -> Self {
         let resource_policy_id = resource_policy_id(&resource_policy);
         Self {
@@ -1531,7 +1540,13 @@ impl PlanningBindings {
     /// Return the exact reviewed cost-model profile identity.
     #[must_use]
     pub const fn planner_cost_model_profile_id(&self) -> PlannerCostModelProfileId {
-        self.planner_cost_model_profile
+        self.planner_cost_model_profile.profile_id()
+    }
+
+    /// Return the reviewed or deployment-selected profile bound to planning.
+    #[must_use]
+    pub const fn planner_cost_model_profile(&self) -> &PlannerCostModelProfileRecord {
+        &self.planner_cost_model_profile
     }
 }
 
@@ -1730,7 +1745,6 @@ pub fn plan<E>(
         )));
     };
     let required_capabilities = first.execution_dag.required_resource_capabilities().clone();
-    let reference_implementations = first.execution_dag.selected_implementations().clone();
     let reference_products = product_surface(first);
     let reference_transaction = first.observation_transaction.clone();
     let reference_layouts = first.publication_layouts.clone();
@@ -1738,11 +1752,6 @@ pub fn plan<E>(
         if candidate.execution_dag.required_resource_capabilities() != &required_capabilities {
             return Err(PlanError::InvalidCandidate(ExecutionError::InvalidPlan(
                 "physical candidates disagree on required resource capabilities".to_string(),
-            )));
-        }
-        if candidate.execution_dag.selected_implementations() != &reference_implementations {
-            return Err(PlanError::InvalidCandidate(ExecutionError::InvalidPlan(
-                "physical candidates disagree on selected implementations; lexicographic planning preserves science and numerics contracts".to_string(),
             )));
         }
         if product_surface(candidate) != reference_products {
@@ -1770,6 +1779,8 @@ pub fn plan<E>(
     candidates.retain(|candidate| {
         match recorded_infeasibility.constraint(
             problem.problem_id().as_bytes(),
+            candidate.execution_dag.physical_work_id().as_bytes(),
+            bindings.resource_policy_id.as_bytes(),
             &candidate.execution_dag.resource_alternative().id,
         ) {
             Some((attempt, status)) => {
@@ -1791,18 +1802,28 @@ pub fn plan<E>(
     // in ascending conservative-predicted-time order and the authority commits
     // to the first feasible one: the minimum-time feasible candidate.
     candidates.sort_by_key(|candidate| candidate.prediction().conservative_nanos());
-    let lease = authority
-        .acquire(
-            bindings.resource_policy.clone(),
-            DemandAlternatives {
-                required_capabilities,
-                alternatives: candidates
-                    .iter()
-                    .map(|candidate| candidate.execution_dag.resource_alternative().clone())
-                    .collect(),
-            },
-        )
-        .map_err(PlanError::Resource)?;
+    let lease = match authority.acquire(
+        bindings.resource_policy.clone(),
+        DemandAlternatives {
+            required_capabilities,
+            alternatives: candidates
+                .iter()
+                .map(|candidate| candidate.execution_dag.resource_alternative().clone())
+                .collect(),
+        },
+    ) {
+        Ok(lease) => lease,
+        Err(ResourceError::NoFeasibleAlternative(certificate))
+            if !constrained_rejections.is_empty() =>
+        {
+            let mut rejections = constrained_rejections;
+            rejections.extend(certificate.rejections().iter().cloned());
+            return Err(PlanError::Resource(ResourceError::NoFeasibleAlternative(
+                AdmissionInfeasibilityCertificate::from_rejections(rejections),
+            )));
+        }
+        Err(error) => return Err(PlanError::Resource(error)),
+    };
     let selected = lease.selected_alternative().clone();
     let release = lease.release().map_err(PlanError::Resource)?;
     if !release.is_released() {
@@ -1826,6 +1847,7 @@ pub fn plan<E>(
         &physical_work.artifacts,
     )
     .map_err(PlanError::ObservationTransaction)?;
+    let planner_cost_model_profile = bindings.planner_cost_model_profile_id();
     let mut plan = ExecutionPlan {
         plan_id: ExecutionPlanId([0; 32]),
         problem_id: problem.problem_id(),
@@ -1836,7 +1858,7 @@ pub fn plan<E>(
         implementation_registry: bindings.implementation_registry,
         resource_policy: bindings.resource_policy,
         resource_policy_id: bindings.resource_policy_id,
-        planner_cost_model_profile: bindings.planner_cost_model_profile,
+        planner_cost_model_profile,
         execution_dag: physical_work.execution_dag,
         prediction: physical_work.prediction,
         artifacts: physical_work.artifacts,
@@ -1875,27 +1897,41 @@ pub struct RecordedInfeasibility {
 #[derive(Clone, Debug)]
 struct RegionFailure {
     problem: [u8; 32],
+    physical_work: [u8; 32],
+    resource_policy: [u8; 32],
     alternative: AlternativeId,
     attempt: ExecutionAttemptId,
     status: ReceiptStatus,
 }
 
 impl RecordedInfeasibility {
-    /// Derive constraints from every integrity-checked terminal failed or
-    /// aborted receipt in `store`.
+    /// Derive constraints from integrity-checked resource-infeasibility
+    /// receipts in `store`.
+    ///
+    /// Other failed or aborted receipts are deliberately ignored: an
+    /// interrupted scheduler, adapter, or evidence-contract failure is not
+    /// proof that the candidate's resource region is infeasible.
     pub fn from_store(store: &crate::ExecutionReceiptStore) -> Result<Self, ReceiptError> {
         let mut regions = Vec::new();
         for attempt in store.attempts()? {
             let receipt = store.open(attempt)?;
             let status = receipt.status();
-            if matches!(status, ReceiptStatus::Failed | ReceiptStatus::Aborted) {
-                regions.push(RegionFailure {
-                    problem: receipt.problem_identity(),
-                    alternative: receipt.selected_alternative_projection().id,
-                    attempt,
-                    status,
-                });
+            if !matches!(
+                status,
+                ReceiptStatus::Failed | ReceiptStatus::Aborted | ReceiptStatus::Infeasible
+            ) || receipt.failure_kind() != Some(ReceiptFailureKind::ResourceInfeasible)
+                || receipt.infeasibility_certificate().is_none()
+            {
+                continue;
             }
+            regions.push(RegionFailure {
+                problem: receipt.problem_identity(),
+                physical_work: receipt.dag_identity(),
+                resource_policy: receipt.resource_policy_identity(),
+                alternative: receipt.selected_alternative_projection().id,
+                attempt,
+                status,
+            });
         }
         Ok(Self { regions })
     }
@@ -1903,11 +1939,18 @@ impl RecordedInfeasibility {
     fn constraint(
         &self,
         problem: [u8; 32],
+        physical_work: [u8; 32],
+        resource_policy: [u8; 32],
         alternative: &AlternativeId,
     ) -> Option<(ExecutionAttemptId, ReceiptStatus)> {
         self.regions
             .iter()
-            .find(|region| region.problem == problem && &region.alternative == alternative)
+            .find(|region| {
+                region.problem == problem
+                    && region.physical_work == physical_work
+                    && region.resource_policy == resource_policy
+                    && &region.alternative == alternative
+            })
             .map(|region| (region.attempt, region.status))
     }
 }

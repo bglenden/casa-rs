@@ -51,7 +51,7 @@ use crate::{
 };
 
 const RECEIPT_SCHEMA: &str = "casa-rs-imaging-execution-receipt";
-const RECEIPT_SCHEMA_VERSION: u32 = 11;
+const RECEIPT_SCHEMA_VERSION: u32 = 12;
 const COMPILED_PROBLEM_EVIDENCE_VERSION: u32 = 7;
 const RECEIPT_SUFFIX: &str = ".receipt.json";
 const RECEIPT_STAGING_PREFIX: &str = ".casa-rs-receipt-staging-";
@@ -4530,19 +4530,35 @@ fn validate_body(body: &ReceiptBody) -> Result<(), ReceiptError> {
                     && resource.len() <= MAX_FAILURE_SUBJECT_BYTES
                     && required > available,
             )?,
+            (
+                FailureKindProjection::ResourceInfeasible,
+                Some(InfeasibilityProjection::RecordedFailure { attempt, status }),
+            ) => require_integrity(
+                is_redacted_text(attempt)
+                    && attempt.len() <= MAX_FAILURE_SUBJECT_BYTES
+                    && matches!(
+                        status,
+                        ReceiptStatus::Failed | ReceiptStatus::Aborted | ReceiptStatus::Infeasible
+                    ),
+            )?,
             (FailureKindProjection::ResourceInfeasible, None) | (_, Some(_)) => {
                 return Err(ReceiptError::IntegrityMismatch);
             }
             (_, None) => {}
         }
     }
-    require_integrity(
-        (body.status == ReceiptStatus::Infeasible)
-            == body
-                .failure
-                .as_ref()
-                .is_some_and(|failure| failure.infeasibility.is_some()),
-    )?;
+    let has_infeasibility = body
+        .failure
+        .as_ref()
+        .is_some_and(|failure| failure.infeasibility.is_some());
+    require_integrity(if has_infeasibility {
+        matches!(
+            body.status,
+            ReceiptStatus::Failed | ReceiptStatus::Aborted | ReceiptStatus::Infeasible
+        )
+    } else {
+        body.status != ReceiptStatus::Infeasible
+    })?;
     Ok(())
 }
 
