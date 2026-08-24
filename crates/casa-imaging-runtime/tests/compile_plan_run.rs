@@ -1221,12 +1221,30 @@ fn production_weighting_fragment_owns_generation_replay_and_release_lifetimes() 
         .compose(&base)
         .expect("production weighting fragment");
     let dag = composed.execution_dag();
+    let source = WorkNodeId::new("transaction-read");
     let source_buffer = AllocationId::new("selected-observation-source-buffer");
     let source_lifetime = ClaimLifetime::through_fence(FenceKind::Io);
+    let retained_lifetime = ClaimLifetime::retained_until(release.clone());
+    let retained_resources = dag.nodes()[&source]
+        .claims
+        .iter()
+        .filter(|claim| {
+            matches!(
+                claim.resource,
+                LeaseResource::MeasurementSetLock { .. } | LeaseResource::FileDescriptors
+            )
+        })
+        .map(|claim| (claim.resource.clone(), claim.amount))
+        .collect::<BTreeSet<_>>();
 
     assert_eq!(dag.nodes()[&generation].kind, WorkKind::ObservationRead);
     assert_eq!(dag.nodes()[&replay].kind, WorkKind::ObservationRead);
     assert_eq!(dag.nodes()[&release].kind, WorkKind::Release);
+    assert_eq!(
+        retained_resources.len(),
+        2,
+        "the test source must exercise both retained handle classes"
+    );
     assert_eq!(
         dag.logical_allocations().len() - base.execution_dag().logical_allocations().len(),
         5
@@ -1238,6 +1256,16 @@ fn production_weighting_fragment_owns_generation_replay_and_release_lifetimes() 
     assert_eq!(
         dag.logical_allocations()[&frozen].lifetime.release_after,
         BTreeSet::from([WorkDependency::Work(release.clone())])
+    );
+    assert_eq!(
+        dag.logical_allocations()[&frozen].lifetime.acquire_at,
+        source
+    );
+    assert!(
+        dag.nodes()[&source]
+            .allocations
+            .iter()
+            .any(|usage| usage.allocation == frozen)
     );
     assert_eq!(
         dag.logical_allocations()[&source_buffer]
@@ -1271,6 +1299,21 @@ fn production_weighting_fragment_owns_generation_replay_and_release_lifetimes() 
             usage.allocation == source_buffer && usage.lifetime == source_lifetime
         }));
     }
+    for node in [&source, &generation, &replay, &release] {
+        for (resource, amount) in &retained_resources {
+            assert!(dag.nodes()[node].claims.iter().any(|claim| {
+                &claim.resource == resource
+                    && claim.amount == *amount
+                    && claim.lifetime == retained_lifetime
+            }));
+        }
+    }
+    assert!(dag.nodes()[&release].claims.iter().all(|claim| {
+        matches!(claim.resource, LeaseResource::Workers)
+            || retained_resources
+                .iter()
+                .any(|(resource, _)| resource == &claim.resource)
+    }));
     assert!(
         dag.nodes()[&replay]
             .dependencies
@@ -1567,6 +1610,11 @@ fn physical_work_for_weighting_problem(
             amount: source_bytes,
             lifetime: source_lifetime.clone(),
         },
+        ResourceClaim {
+            resource: LeaseResource::FileDescriptors,
+            amount: 1,
+            lifetime: source_lifetime.clone(),
+        },
     ]);
     source_read.allocations.push(AllocationUse {
         allocation: source_buffer.clone(),
@@ -1580,6 +1628,7 @@ fn physical_work_for_weighting_problem(
         views: vec![CapacityViewId::new("host-memory")],
     });
     alternative.demand.io_buffers.source_read_ahead_bytes = source_bytes;
+    alternative.demand.file_descriptors = CountDemand::new(1, 1);
     let mut logical_allocations = base
         .execution_dag()
         .logical_allocations()
@@ -5144,6 +5193,7 @@ fn actual_bound_observation_traversals_drive_both_weighting_generation_passes() 
 fn failed_weighting_lifecycle_cuts_run_the_scheduler_owned_release() {
     #[derive(Clone, Copy, Debug)]
     enum FailureCut {
+        SourceFence,
         GenerationFence,
         ReplayWork,
         ReplayFence,
@@ -5151,6 +5201,7 @@ fn failed_weighting_lifecycle_cuts_run_the_scheduler_owned_release() {
     }
 
     for cut in [
+        FailureCut::SourceFence,
         FailureCut::GenerationFence,
         FailureCut::ReplayWork,
         FailureCut::ReplayFence,
@@ -5173,7 +5224,9 @@ fn failed_weighting_lifecycle_cuts_run_the_scheduler_owned_release() {
         );
         let generation = fragment.generation_node().clone();
         let replay = fragment.replay_node().clone();
+        let source = WorkNodeId::new("transaction-read");
         let expected_failure = match cut {
+            FailureCut::SourceFence => source.clone(),
             FailureCut::GenerationFence => generation.clone(),
             FailureCut::ReplayWork | FailureCut::ReplayFence => replay.clone(),
             FailureCut::Reconciliation => WorkNodeId::new("transaction-reconciliation"),
@@ -5195,6 +5248,9 @@ fn failed_weighting_lifecycle_cuts_run_the_scheduler_owned_release() {
         let mut executor = recording_executor(6, None, None);
         executor.weighting_plan = Some(weighting_plan);
         match cut {
+            FailureCut::SourceFence => {
+                executor.weighting_fence_failure_event = Some((source, FenceKind::Io));
+            }
             FailureCut::GenerationFence => {
                 executor.weighting_fence_failure_event = Some((generation, FenceKind::Io));
             }
@@ -5468,6 +5524,19 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
     let physical = fragment
         .compose(&base)
         .expect("production weighting physical work");
+    let source = WorkNodeId::new("transaction-read");
+    let retained_lifetime = ClaimLifetime::retained_until(release.clone());
+    let retained_resources = physical.execution_dag().nodes()[&source]
+        .claims
+        .iter()
+        .filter(|claim| {
+            matches!(
+                claim.resource,
+                LeaseResource::MeasurementSetLock { .. } | LeaseResource::FileDescriptors
+            )
+        })
+        .map(|claim| (claim.resource.clone(), claim.amount))
+        .collect::<BTreeSet<_>>();
     let weighting_allocations = physical
         .execution_dag()
         .logical_allocations()
@@ -5487,7 +5556,7 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
         .filter(|slot| !base.execution_dag().physical_slots().contains_key(*slot))
         .cloned()
         .collect::<BTreeSet<_>>();
-    let expected_uses = [&generation, &replay, &release]
+    let expected_uses = [&source, &generation, &replay, &release]
         .into_iter()
         .map(|node| {
             (
@@ -5573,6 +5642,18 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
             );
             assert_eq!(
                 receipt.actual_resource_peak(node, resource, lifetime),
+                Some(*amount)
+            );
+        }
+    }
+    for node in [&source, &generation, &replay, &release] {
+        for (resource, amount) in &retained_resources {
+            assert_eq!(
+                receipt.planned_resource_amount(node, resource, &retained_lifetime),
+                Some(*amount)
+            );
+            assert_eq!(
+                receipt.actual_resource_peak(node, resource, &retained_lifetime),
                 Some(*amount)
             );
         }

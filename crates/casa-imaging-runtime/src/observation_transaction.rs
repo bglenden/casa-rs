@@ -19,8 +19,8 @@ use casa_imaging_model::{
 };
 
 use crate::{
-    ExecutionDag, FenceId, FenceKind, IoBufferKind, LeaseResource, PhysicalWorkId, StorageUseKind,
-    WorkDependency, WorkKind, WorkNode, WorkNodeId,
+    ClaimLifetime, ExecutionDag, FenceId, FenceKind, IoBufferKind, LeaseResource, PhysicalWorkId,
+    StorageUseKind, WorkDependency, WorkKind, WorkNode, WorkNodeId,
 };
 
 /// Exact execution-DAG events that implement one observation transaction.
@@ -458,7 +458,15 @@ fn derive_observation_reads(
             .any(|claim| matches!(claim.resource, LeaseResource::MeasurementSetLock { .. }));
         if node.kind == WorkKind::ObservationRead {
             completions.extend(completion_events(node));
-        } else if holds_measurement_set_lock && node.id != initial.id && &node.id != commit {
+        } else if holds_measurement_set_lock
+            && node.id != initial.id
+            && &node.id != commit
+            && !(node.kind == WorkKind::Release
+                && node.claims.iter().all(|claim| {
+                    !matches!(claim.resource, LeaseResource::MeasurementSetLock { .. })
+                        || claim.lifetime == ClaimLifetime::retained_until(node.id.clone())
+                }))
+        {
             return invalid(format!(
                 "node {} declares a MeasurementSet lock without the observation-read role",
                 node.id.as_str()
@@ -616,6 +624,13 @@ fn validate_measurement_set_lock_identities(
     for read in &work.observation_reads {
         lock_nodes.push(require_event(nodes, read, "observation read")?);
     }
+    lock_nodes.extend(nodes.values().filter(|node| {
+        node.kind == WorkKind::Release
+            && node
+                .claims
+                .iter()
+                .any(|claim| matches!(claim.resource, LeaseResource::MeasurementSetLock { .. }))
+    }));
     lock_nodes.sort_unstable_by(|left, right| left.id.cmp(&right.id));
     lock_nodes.dedup_by(|left, right| left.id == right.id);
     for node in lock_nodes {

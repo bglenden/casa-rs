@@ -2227,6 +2227,141 @@ class MigrationMatrixTests(unittest.TestCase):
                 receipt_path=receipt_path,
             )
 
+        phantom_replay_input = weighting.replace(
+            "self.input.push(WeightingReplayInputSample {",
+            "self.block.push(WeightingSampleValue {",
+            1,
+        )
+        self.assertNotEqual(phantom_replay_input, weighting)
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"real bounded input and output blocks",
+        ):
+            checker.validate_t18_global_weighting_sources(
+                model,
+                sample_model,
+                traversal_sample,
+                bound_observation,
+                phantom_replay_input,
+                runtime_weighting,
+                receipt,
+                model_path=model_path,
+                sample_model_path=sample_model_path,
+                traversal_sample_path=traversal_sample_path,
+                bound_observation_path=bound_observation_path,
+                weighting_path=weighting_path,
+                runtime_weighting_path=runtime_weighting_path,
+                receipt_path=receipt_path,
+            )
+
+        local_source_handles = runtime_weighting.replace(
+            "claim.lifetime = ClaimLifetime::retained_until(release.clone());",
+            "claim.lifetime = io_lifetime.clone();",
+            1,
+        )
+        self.assertNotEqual(local_source_handles, runtime_weighting)
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"continuous retained-source authority",
+        ):
+            checker.validate_t18_global_weighting_sources(
+                model,
+                sample_model,
+                traversal_sample,
+                bound_observation,
+                weighting,
+                local_source_handles,
+                receipt,
+                model_path=model_path,
+                sample_model_path=sample_model_path,
+                traversal_sample_path=traversal_sample_path,
+                bound_observation_path=bound_observation_path,
+                weighting_path=weighting_path,
+                runtime_weighting_path=runtime_weighting_path,
+                receipt_path=receipt_path,
+            )
+
+        early_retained_release = runtime_execution.replace(
+            "self.complete_retained_event(&node_id)?;",
+            "self.release_all_retained_permits()?;",
+            1,
+        )
+        self.assertNotEqual(early_retained_release, runtime_execution)
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"continuous retained-source authority",
+        ):
+            checker.validate_t18_global_weighting_sources(
+                model,
+                sample_model,
+                traversal_sample,
+                bound_observation,
+                weighting,
+                runtime_weighting,
+                receipt,
+                runtime_execution=early_retained_release,
+                model_path=model_path,
+                sample_model_path=sample_model_path,
+                traversal_sample_path=traversal_sample_path,
+                bound_observation_path=bound_observation_path,
+                weighting_path=weighting_path,
+                runtime_weighting_path=runtime_weighting_path,
+                receipt_path=receipt_path,
+                runtime_execution_path=runtime_execution_path,
+            )
+
+        unreceipted_retention = receipt.replace("retained_until:", "retained:")
+        self.assertNotEqual(unreceipted_retention, receipt)
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"receipts must project weighting allocation generations",
+        ):
+            checker.validate_t18_global_weighting_sources(
+                model,
+                sample_model,
+                traversal_sample,
+                bound_observation,
+                weighting,
+                runtime_weighting,
+                unreceipted_retention,
+                model_path=model_path,
+                sample_model_path=sample_model_path,
+                traversal_sample_path=traversal_sample_path,
+                bound_observation_path=bound_observation_path,
+                weighting_path=weighting_path,
+                runtime_weighting_path=runtime_weighting_path,
+                receipt_path=receipt_path,
+            )
+
+        late_cleanup_anchor = runtime_weighting.replace(
+            '                "weighting-frozen-generation",\n'
+            "                self.source_read.clone(),",
+            '                "weighting-frozen-generation",\n'
+            "                self.ids.generation_node.clone(),",
+            1,
+        )
+        self.assertNotEqual(late_cleanup_anchor, runtime_weighting)
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"continuous retained-source authority",
+        ):
+            checker.validate_t18_global_weighting_sources(
+                model,
+                sample_model,
+                traversal_sample,
+                bound_observation,
+                weighting,
+                late_cleanup_anchor,
+                receipt,
+                model_path=model_path,
+                sample_model_path=sample_model_path,
+                traversal_sample_path=traversal_sample_path,
+                bound_observation_path=bound_observation_path,
+                weighting_path=weighting_path,
+                runtime_weighting_path=runtime_weighting_path,
+                receipt_path=receipt_path,
+            )
+
         missing_allocation = runtime_weighting.replace(
             "AllocationSpec::new(", "MissingSpec::new(", 1
         )

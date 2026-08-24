@@ -4695,6 +4695,12 @@ fn validate_plan_projection(
         .map(|slot| slot.slot_identity.as_str())
         .collect::<BTreeSet<_>>();
     require_integrity(slot_ids.len() == plan.physical_slots.len())?;
+    let release_nodes = plan
+        .nodes
+        .iter()
+        .filter(|node| node.kind == "release")
+        .map(|node| node.node_id.as_str())
+        .collect::<BTreeSet<_>>();
 
     let mut used_allocations = BTreeSet::new();
     for node in &plan.nodes {
@@ -4713,7 +4719,7 @@ fn validate_plan_projection(
                     .all(|event| valid_events.contains(event))
                 && node.allocation_uses.iter().all(|usage| {
                     allocation_ids.contains(usage.generation_identity.as_str())
-                        && claim_lifetime_is_valid(&usage.lifetime)
+                        && allocation_claim_lifetime_is_valid(&usage.lifetime)
                 })
                 && node_allocations.len() == node.allocation_uses.len()
                 && node.fences.iter().all(|kind| fence_kind_is_valid(kind))
@@ -4724,6 +4730,10 @@ fn validate_plan_projection(
                 && node.claims.iter().all(|claim| {
                     is_redacted_text(&claim.resource)
                         && claim_lifetime_is_valid(&claim.lifetime)
+                        && claim
+                            .lifetime
+                            .strip_prefix("retained_until:")
+                            .is_none_or(|release| release_nodes.contains(release))
                         && claim.actual_peak.is_none_or(|peak| {
                             peak <= claim.amount || node.status == ReceiptStatus::Failed
                         })
@@ -5151,6 +5161,13 @@ fn io_buffer_is_valid(value: &str) -> bool {
 }
 
 fn claim_lifetime_is_valid(value: &str) -> bool {
+    if let Some(release) = value.strip_prefix("retained_until:") {
+        return is_redacted_text(release);
+    }
+    allocation_claim_lifetime_is_valid(value)
+}
+
+fn allocation_claim_lifetime_is_valid(value: &str) -> bool {
     if value == "work" {
         return true;
     }
@@ -7531,12 +7548,18 @@ fn claim_lifetime(lifetime: &ClaimLifetime) -> String {
                 .collect::<Vec<_>>()
                 .join(",")
         ),
+        ClaimLifetime::RetainedUntil(release) => {
+            format!("retained_until:{}", stable_text(release.as_str()))
+        }
     }
 }
 
 fn parse_claim_lifetime(value: &str) -> ClaimLifetime {
     if value == "work" {
         return ClaimLifetime::Work;
+    }
+    if let Some(release) = value.strip_prefix("retained_until:") {
+        return ClaimLifetime::retained_until(WorkNodeId::new(release.to_string()));
     }
     ClaimLifetime::through_fences(
         value

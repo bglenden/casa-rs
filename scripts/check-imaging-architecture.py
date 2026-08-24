@@ -127,12 +127,12 @@ ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256 = (
     "4589711ae6224b94916d05e214df510fab5ba01a16e21a0b913b4b851c1d0e89"
 )
 ACCEPTED_MATRIX_ROWS_SHA256 = (
-    "4afef8f8241f49c078faff72f627d8ca7330a1ef2dd915d7bddcb560e381850a"
+    "3c4990c47000d959362a4f64cc6acefcb501b04ffcc0efa166578f4e5f312888"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "680892370564ce80775ac2bad0e333edad3dcc187440a5c212e8c5ee05df6f18"
+    "81a7381492e25bff4b87da0d2cd15ba9bd4db361cc65179ec20a27678aef180f"
 )
-ACCEPTED_MATRIX_CONTRACT_REVISION = 21
+ACCEPTED_MATRIX_CONTRACT_REVISION = 22
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "scientific-products-v1",
@@ -2857,7 +2857,12 @@ def validate_t18_global_weighting_transfer(rows: list[dict[str, Any]]) -> None:
         "crates/casa-ms/src/selected_observation/bound_observation.rs::pub fn traverse",
         "crates/casa-imaging-reconstruction/src/weighting.rs::pub fn plan_weighting",
         "crates/casa-imaging-reconstruction/src/weighting.rs::pub fn begin_weighting_generation",
+        "crates/casa-imaging-reconstruction/src/weighting.rs::struct WeightingReplayInputSample",
+        "crates/casa-imaging-runtime/src/execution.rs::pub enum ClaimLifetime",
         "crates/casa-imaging-runtime/src/execution.rs::fn begin_draining",
+        "crates/casa-imaging-runtime/src/execution.rs::fn validate_retained_claims",
+        "crates/casa-imaging-runtime/src/observation_transaction.rs::fn derive_observation_reads",
+        "crates/casa-imaging-runtime/src/resource_authority.rs::pub(crate) fn quarantine_external_permits",
         "crates/casa-imaging-runtime/src/weighting.rs::pub struct WeightingPlanFragment",
         "crates/casa-imaging-runtime/src/weighting.rs::pub struct WeightingExecutionState",
         "crates/casa-imaging-runtime/src/weighting.rs::pub fn traverse_generation",
@@ -2871,6 +2876,7 @@ def validate_t18_global_weighting_transfer(rows: list[dict[str, Any]]) -> None:
         "crates/casa-imaging-runtime/src/execution_bindings.rs::pub const fn is_cleanup",
         "crates/casa-imaging-runtime/src/receipt.rs::pub fn allocation_generation_identities",
         "crates/casa-imaging-runtime/src/receipt.rs::pub fn allocation_uses",
+        "crates/casa-imaging-runtime/src/receipt.rs::fn claim_lifetime",
         "crates/casa-imaging-runtime/src/receipt.rs::fn project_weighting",
     }
     required_baselines = {
@@ -2886,6 +2892,8 @@ def validate_t18_global_weighting_transfer(rows: list[dict[str, Any]]) -> None:
         "repo://crates/casa-imaging-runtime/src/lib.rs",
         "repo://crates/casa-imaging-runtime/src/execution.rs",
         "repo://crates/casa-imaging-runtime/src/execution_bindings.rs",
+        "repo://crates/casa-imaging-runtime/src/observation_transaction.rs",
+        "repo://crates/casa-imaging-runtime/src/resource_authority.rs",
         "repo://crates/casa-imaging-runtime/src/weighting.rs",
         "repo://crates/casa-imaging-runtime/src/receipt.rs",
     }
@@ -3218,20 +3226,42 @@ def validate_t18_global_weighting_sources(
     replay_chunk_fields = rust_struct_fields(
         weighting, "WeightingReplayChunk", weighting_path
     )
+    replay_input_fields = rust_struct_fields(
+        weighting, "WeightingReplayInputSample", weighting_path
+    )
+    replay_phase_fields = rust_struct_fields(
+        weighting, "WeightingReplayPhase", weighting_path
+    )
     sample_fields = rust_struct_fields(
         runtime_weighting, "WeightedObservationSample", runtime_weighting_path
     )
-    take_block = rust_function_body(weighting, "take_block", weighting_path)
+    replay_consume = rust_impl_method_body(
+        weighting, "WeightingReplayPhase<'_>", "consume", weighting_path
+    )
+    take_block = rust_function_body(weighting, "take_input_block", weighting_path)
     if (
         block_fields.get("generation") != "WeightingGenerationId"
         or block_fields.get("samples") != "Vec<ReconstructionWeightedSample>"
         or replay_chunk_fields.get("samples") != "Vec<WeightingSampleValue>"
+        or replay_input_fields
+        != {
+            "sample": "SelectedObservationSample",
+            "contributions": "SelectedSpectralContributions",
+        }
+        or replay_phase_fields.get("input") != "Vec<WeightingReplayInputSample>"
+        or replay_phase_fields.get("block") != "Vec<WeightingSampleValue>"
         or sample_fields.get("generation") != "WeightingGenerationId"
         or "into_boxed_slice" in take_block
+        or "self.input.push(WeightingReplayInputSample" not in replay_consume
+        or "for input in &self.input" not in take_block
+        or "self.input.clear()" not in take_block
         or "std::mem::take(&mut self.block)" not in take_block
         or "Vec::with_capacity(self.max_block_samples)" not in weighting
+        or "size_of::<WeightingReplayInputSample>()" not in weighting
     ):
-        raise ArchitectureError("T18 weighted replay does not carry one opaque W generation")
+        raise ArchitectureError(
+            "T18 weighted replay does not carry one opaque W generation through real bounded input and output blocks"
+        )
     residency_fields = rust_struct_fields(weighting, "WeightingResidency", weighting_path)
     required_residency = {
         "density_grid_bytes",
@@ -3253,6 +3283,7 @@ def validate_t18_global_weighting_sources(
         runtime_weighting, "WeightingPlanFragment", runtime_weighting_path
     )
     compose = rust_function_body(runtime_weighting, "compose", runtime_weighting_path)
+    compact_compose = re.sub(r"\s+", "", compose)
     allocation_specs = rust_function_body(
         runtime_weighting, "allocation_specs", runtime_weighting_path
     )
@@ -3277,6 +3308,18 @@ def validate_t18_global_weighting_sources(
     drain = rust_function_body(
         runtime_execution, "begin_draining", runtime_execution_path
     )
+    retained_validation = rust_function_body(
+        runtime_execution, "validate_retained_claims", runtime_execution_path
+    )
+    retained_completion = rust_function_body(
+        runtime_execution, "complete_retained_event", runtime_execution_path
+    )
+    finish_work = rust_function_body(
+        runtime_execution, "finish_work", runtime_execution_path
+    )
+    finish_draining = rust_function_body(
+        runtime_execution, "finish_draining", runtime_execution_path
+    )
     if (
         fragment_fields.get("plan") != "&'aWeightingPlan"
         or fragment_fields.get("source_read") != "WorkNodeId"
@@ -3293,6 +3336,13 @@ def validate_t18_global_weighting_sources(
         or "fragment.authorize_release(context)" not in release
         or "context.is_cleanup()" not in release
         or "WeightingExecutionPhase::Empty" not in release
+        or "LeaseResource::MeasurementSetLock" not in source_contract
+        or "LeaseResource::FileDescriptors" not in source_contract
+        or "ClaimLifetime::retained_until(release.clone())" not in source_contract
+        or ".chain(source_contract.retained_claims.iter().cloned())" not in compose
+        or "source_node.allocations.push(allocation_use(&self.ids.frozen_allocation,io_lifetime))"
+        not in compact_compose
+        or "self.source_read.clone()" not in allocation_specs
         or "&claim.resource == queue" not in source_contract
         or "queue_demand_covers(" not in source_contract
         or not all(
@@ -3305,9 +3355,19 @@ def validate_t18_global_weighting_sources(
         )
         or "self.has_external_release(allocation)" not in drain
         or "NodeState::CleanupPending" not in drain
+        or "RetainedUntil(WorkNodeId)" not in runtime_execution
+        or "WorkKind::Release" not in retained_validation
+        or "event_strictly_precedes" not in retained_validation
+        or "event_precedes" not in retained_validation
+        or ".remove(&id)" not in retained_completion
+        or ".permit" not in retained_completion
+        or ".release()?" not in retained_completion
+        or "self.complete_retained_event(&node_id)?" not in finish_work
+        or "self.release_all_retained_permits()?" not in finish_draining
+        or "quarantine_external_permits" not in finish_draining
     ):
         raise ArchitectureError(
-            "T18 production fragment must own five allocations, exact queue authority, and fail-closed scheduler release"
+            "T18 production fragment must own five allocations, exact queue authority, continuous retained-source authority, and fail-closed scheduler release"
         )
 
     plan_projection = rust_impl_method_body(receipt, "PlanProjection", "new", receipt_path)
@@ -3319,6 +3379,8 @@ def validate_t18_global_weighting_sources(
         or "AllocationUseProjection" not in node_projection
         or "generation_identity" not in node_projection
         or "claim_lifetime" not in node_projection
+        or "retained_until:" not in receipt
+        or "ClaimLifetime::RetainedUntil" not in receipt
     ):
         raise ArchitectureError(
             "T18 receipts must project weighting allocation generations and exact node uses"

@@ -261,9 +261,7 @@ pub fn plan_weighting(
         .checked_add(sum_weight_reduction_bytes)
         .and_then(|bytes| bytes.checked_add(size_of::<BTreeMap<usize, ExactF32Sum>>()))
         .ok_or(WeightingError::ResidencyOverflow)?;
-    let replay_sample_bytes = size_of::<SelectedObservationSample>()
-        .checked_add(size_of::<SelectedSpectralContributions>())
-        .ok_or(WeightingError::ResidencyOverflow)?;
+    let replay_sample_bytes = size_of::<WeightingReplayInputSample>();
     let replay_read_bytes = limits
         .max_block_samples
         .checked_mul(replay_sample_bytes)
@@ -362,7 +360,7 @@ impl WeightingAlgorithmState {
     /// Begin one bounded weighted replay callback phase.
     pub fn begin_replay<'a>(
         &'a self,
-        problem: &CompiledProblem,
+        problem: &'a CompiledProblem,
         plan: &WeightingPlan,
     ) -> Result<WeightingReplayPhase<'a>, WeightingError> {
         self.validate_binding(problem, plan)?;
@@ -370,10 +368,16 @@ impl WeightingAlgorithmState {
         if replay_sequence == u64::MAX {
             return Err(WeightingError::ReplayIdentityExhausted);
         }
+        let input = Vec::with_capacity(plan.limits.max_block_samples);
+        let block = Vec::with_capacity(plan.limits.max_block_samples);
+        let peak_weighted_capacity = block.capacity();
         Ok(WeightingReplayPhase {
             generation: self,
+            problem,
             max_block_samples: plan.limits.max_block_samples,
-            block: Vec::with_capacity(plan.limits.max_block_samples),
+            input,
+            block,
+            peak_weighted_capacity,
             block_sequence: 0,
             coverage: CoverageEncoder::new(self.generation_id),
             sample_count: 0,
@@ -813,6 +817,12 @@ pub struct WeightingReplayChunk {
     samples: Vec<WeightingSampleValue>,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct WeightingReplayInputSample {
+    sample: SelectedObservationSample,
+    contributions: SelectedSpectralContributions,
+}
+
 impl WeightingReplayChunk {
     /// Return the zero-based replay block sequence.
     #[must_use]
@@ -836,8 +846,11 @@ impl WeightingReplayChunk {
 /// Mutable reconstruction state for one bounded replay callback pass.
 pub struct WeightingReplayPhase<'a> {
     generation: &'a WeightingAlgorithmState,
+    problem: &'a CompiledProblem,
     max_block_samples: usize,
+    input: Vec<WeightingReplayInputSample>,
     block: Vec<WeightingSampleValue>,
+    peak_weighted_capacity: usize,
     block_sequence: u64,
     coverage: CoverageEncoder,
     sample_count: u64,
@@ -853,39 +866,17 @@ impl WeightingReplayPhase<'_> {
         contributions: SelectedSpectralContributions,
     ) -> Result<Option<WeightingReplayChunk>, WeightingError> {
         if self.generation.problem != problem.problem_id()
+            || self.problem.problem_id() != problem.problem_id()
             || self.generation.commitment != problem.weighting().commitment_id()
         {
             return Err(WeightingError::ProblemMismatch);
         }
-        let mut spectral_values = [None, None];
-        for (slot, contribution) in contributions.iter().enumerate() {
-            let weight_contribution = matches!(
-                problem.weighting().density_scope(),
-                WeightDensityScope::PerOutputChannel
-            )
-            .then_some(contribution);
-            spectral_values[slot] = Some(WeightingSpectralValue {
-                contribution,
-                imaging_weight: self
-                    .generation
-                    .weight(problem, &sample, weight_contribution)?,
-            });
-        }
-        let weighted = WeightingSampleValue {
+        self.input.push(WeightingReplayInputSample {
             sample,
-            spectral_values,
-        };
-        self.coverage.push(&weighted);
-        self.sample_count = self
-            .sample_count
-            .checked_add(1)
-            .ok_or(WeightingError::SampleCountOverflow)?;
-        if self.block.capacity() == 0 {
-            self.block = Vec::with_capacity(self.max_block_samples);
-        }
-        self.block.push(weighted);
-        if self.block.len() == self.max_block_samples {
-            self.take_block().map(Some)
+            contributions,
+        });
+        if self.input.len() == self.max_block_samples {
+            self.take_input_block().map(Some)
         } else {
             Ok(None)
         }
@@ -895,14 +886,14 @@ impl WeightingReplayPhase<'_> {
     pub fn finish(
         mut self,
     ) -> Result<(Option<WeightingReplayChunk>, WeightingReplaySummary), WeightingError> {
+        let final_block = if self.input.is_empty() {
+            None
+        } else {
+            Some(self.take_input_block()?)
+        };
         if self.sample_count != self.generation.sample_count {
             return Err(WeightingError::SelectedGenerationMismatch);
         }
-        let final_block = if self.block.is_empty() {
-            None
-        } else {
-            Some(self.take_block()?)
-        };
         let coverage = self.coverage.finish(self.sample_count);
         let replay_id = replay_identity(
             self.generation.generation_id,
@@ -912,15 +903,13 @@ impl WeightingReplayPhase<'_> {
             self.replay_sequence,
         );
         let weighted_block_bytes = self
-            .max_block_samples
+            .peak_weighted_capacity
             .checked_mul(size_of::<WeightingSampleValue>())
             .ok_or(WeightingError::ResidencyOverflow)?;
-        let replay_sample_bytes = size_of::<SelectedObservationSample>()
-            .checked_add(size_of::<SelectedSpectralContributions>())
-            .ok_or(WeightingError::ResidencyOverflow)?;
         let replay_read_bytes = self
-            .max_block_samples
-            .checked_mul(replay_sample_bytes)
+            .input
+            .capacity()
+            .checked_mul(size_of::<WeightingReplayInputSample>())
             .ok_or(WeightingError::ResidencyOverflow)?;
         let simultaneous_selected_weighted_bytes = replay_read_bytes
             .checked_add(weighted_block_bytes)
@@ -959,7 +948,40 @@ impl WeightingReplayPhase<'_> {
         ))
     }
 
-    fn take_block(&mut self) -> Result<WeightingReplayChunk, WeightingError> {
+    fn take_input_block(&mut self) -> Result<WeightingReplayChunk, WeightingError> {
+        if self.block.capacity() == 0 {
+            self.block = Vec::with_capacity(self.max_block_samples);
+        }
+        self.peak_weighted_capacity = self.peak_weighted_capacity.max(self.block.capacity());
+        for input in &self.input {
+            let mut spectral_values = [None, None];
+            for (slot, contribution) in input.contributions.iter().enumerate() {
+                let weight_contribution = matches!(
+                    self.problem.weighting().density_scope(),
+                    WeightDensityScope::PerOutputChannel
+                )
+                .then_some(contribution);
+                spectral_values[slot] = Some(WeightingSpectralValue {
+                    contribution,
+                    imaging_weight: self.generation.weight(
+                        self.problem,
+                        &input.sample,
+                        weight_contribution,
+                    )?,
+                });
+            }
+            let weighted = WeightingSampleValue {
+                sample: input.sample,
+                spectral_values,
+            };
+            self.coverage.push(&weighted);
+            self.sample_count = self
+                .sample_count
+                .checked_add(1)
+                .ok_or(WeightingError::SampleCountOverflow)?;
+            self.block.push(weighted);
+        }
+        self.input.clear();
         let sequence = self.block_sequence;
         self.block_sequence = self
             .block_sequence

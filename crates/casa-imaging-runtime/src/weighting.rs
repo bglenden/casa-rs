@@ -127,9 +127,15 @@ impl<'a> WeightingPlanFragment<'a> {
             source,
             self.selected_content_budget,
             &self.selected_content_queue,
+            &self.ids.release_node,
         )?;
         let io_lifetime = ClaimLifetime::through_fence(FenceKind::Io);
-        let read_claims = source_contract.claims.clone();
+        let read_claims = source_contract
+            .traversal_claims
+            .iter()
+            .chain(&source_contract.retained_claims)
+            .cloned()
+            .collect::<Vec<_>>();
         let read_allocations = source_contract.allocations.clone();
         let generation = WorkNode {
             id: self.ids.generation_node.clone(),
@@ -159,29 +165,32 @@ impl<'a> WeightingPlanFragment<'a> {
                 self.ids.generation_node.clone(),
                 FenceKind::Io,
             ))]),
-            claims: read_claims,
+            claims: read_claims.clone(),
             allocations: read_allocations
                 .into_iter()
                 .chain([
                     allocation_use(&self.ids.frozen_allocation, io_lifetime.clone()),
                     allocation_use(&self.ids.replay_read_allocation, io_lifetime.clone()),
-                    allocation_use(&self.ids.weighted_block_allocation, io_lifetime),
+                    allocation_use(&self.ids.weighted_block_allocation, io_lifetime.clone()),
                 ])
                 .collect(),
             fences: BTreeSet::from([FenceKind::Io]),
             quiescence_after: BTreeSet::new(),
         };
+        let release_claims = std::iter::once(ResourceClaim {
+            resource: LeaseResource::Workers,
+            amount: 1,
+            lifetime: ClaimLifetime::Work,
+        })
+        .chain(source_contract.retained_claims.iter().cloned())
+        .collect();
         let release = WorkNode {
             id: self.ids.release_node.clone(),
             kind: WorkKind::Release,
             domain: WorkDomain::Cpu,
             implementation: self.release_implementation.clone(),
             dependencies: terminal_events(reconciliation),
-            claims: vec![ResourceClaim {
-                resource: LeaseResource::Workers,
-                amount: 1,
-                lifetime: ClaimLifetime::Work,
-            }],
+            claims: release_claims,
             allocations: vec![allocation_use(
                 &self.ids.frozen_allocation,
                 ClaimLifetime::Work,
@@ -196,6 +205,14 @@ impl<'a> WeightingPlanFragment<'a> {
             .values()
             .cloned()
             .collect::<Vec<_>>();
+        let source_node = nodes
+            .iter_mut()
+            .find(|node| node.id == self.source_read)
+            .ok_or_else(|| WeightingPlanFragmentError::MissingNode(self.source_read.clone()))?;
+        source_node.claims = read_claims.clone();
+        source_node
+            .allocations
+            .push(allocation_use(&self.ids.frozen_allocation, io_lifetime));
         nodes
             .iter_mut()
             .find(|node| &node.id == reconciliation_id)
@@ -326,7 +343,7 @@ impl<'a> WeightingPlanFragment<'a> {
                 self.ids.frozen_slot.clone(),
                 frozen_bytes,
                 "weighting-frozen-generation",
-                self.ids.generation_node.clone(),
+                self.source_read.clone(),
                 BTreeSet::from([WorkDependency::Work(self.ids.release_node.clone())]),
             )?,
             AllocationSpec::new(
@@ -737,7 +754,8 @@ impl WeightingPlanIds {
 
 #[derive(Clone)]
 struct SourceTraversalContract {
-    claims: Vec<ResourceClaim>,
+    traversal_claims: Vec<ResourceClaim>,
+    retained_claims: Vec<ResourceClaim>,
     allocations: Vec<AllocationUse>,
     allocation_ids: BTreeSet<AllocationId>,
 }
@@ -748,6 +766,7 @@ impl SourceTraversalContract {
         source: &WorkNode,
         budget: SelectedObservationContentBudget,
         queue: &LeaseResource,
+        release: &WorkNodeId,
     ) -> Result<Self, WeightingPlanFragmentError> {
         if budget.available_bytes() == 0
             || budget.maximum_live_blocks() == 0
@@ -816,10 +835,25 @@ impl SourceTraversalContract {
         }
 
         let io_lifetime = ClaimLifetime::through_fence(FenceKind::Io);
-        let claims = source
+        let (retained_claims, traversal_claims) = source
             .claims
             .iter()
             .cloned()
+            .partition::<Vec<_>, _>(|claim| {
+                matches!(
+                    claim.resource,
+                    LeaseResource::MeasurementSetLock { .. } | LeaseResource::FileDescriptors
+                )
+            });
+        let retained_claims = retained_claims
+            .into_iter()
+            .map(|mut claim| {
+                claim.lifetime = ClaimLifetime::retained_until(release.clone());
+                claim
+            })
+            .collect();
+        let traversal_claims = traversal_claims
+            .into_iter()
             .map(|mut claim| {
                 claim.lifetime = if matches!(
                     claim.resource,
@@ -843,7 +877,8 @@ impl SourceTraversalContract {
             .map(|usage| usage.allocation.clone())
             .collect();
         Ok(Self {
-            claims,
+            traversal_claims,
+            retained_claims,
             allocations,
             allocation_ids,
         })

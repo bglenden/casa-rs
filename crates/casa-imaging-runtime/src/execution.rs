@@ -192,6 +192,11 @@ pub enum ClaimLifetime {
     Work,
     /// Retain until every listed asynchronous fence completes.
     Fences(BTreeSet<FenceKind>),
+    /// Retain one permit continuously through an explicit terminal Release node.
+    ///
+    /// Ordered intermediate nodes borrow the same scheduler-held permit; they
+    /// never reacquire or double-charge the underlying resource.
+    RetainedUntil(WorkNodeId),
 }
 
 impl ClaimLifetime {
@@ -207,8 +212,15 @@ impl ClaimLifetime {
         Self::Fences(kinds.into_iter().collect())
     }
 
+    /// Retains one permit continuously until the named Release work returns.
+    #[must_use]
+    pub fn retained_until(release: WorkNodeId) -> Self {
+        Self::RetainedUntil(release)
+    }
+
     fn retains_fence(&self, kind: FenceKind) -> bool {
         matches!(self, Self::Fences(kinds) if kinds.contains(&kind))
+            || matches!(self, Self::RetainedUntil(_))
     }
 }
 
@@ -471,6 +483,7 @@ impl ExecutionDag {
             specification.resource_alternative.demand.io_buffers,
         )?;
         let topological_order = validate_acyclic(&nodes)?;
+        validate_retained_claims(&nodes)?;
         validate_allocations(
             &nodes,
             &logical_allocations,
@@ -829,6 +842,18 @@ struct DeferredPermit {
     permit: ResourcePermit,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct RetainedPermitId {
+    resource: LeaseResource,
+    release: WorkNodeId,
+}
+
+#[derive(Debug)]
+struct RetainedPermit {
+    amount: u64,
+    permit: ResourcePermit,
+}
+
 #[derive(Debug)]
 struct ActiveAllocation {
     slot: PhysicalSlotId,
@@ -847,6 +872,7 @@ pub(crate) struct ExecutionScheduler<'plan> {
     completed_fences: BTreeSet<FenceId>,
     failed_cleanup_fences: BTreeSet<FenceId>,
     deferred_permits: Vec<DeferredPermit>,
+    retained_permits: BTreeMap<RetainedPermitId, RetainedPermit>,
     terminal_publication: Option<WorkNodeId>,
     publication_permits: Vec<ResourcePermit>,
     publication_allocations: BTreeSet<AllocationId>,
@@ -921,6 +947,7 @@ impl<'plan> ExecutionScheduler<'plan> {
             completed_fences: BTreeSet::new(),
             failed_cleanup_fences: BTreeSet::new(),
             deferred_permits: Vec::new(),
+            retained_permits: BTreeMap::new(),
             terminal_publication: terminal_publication.cloned(),
             publication_permits: Vec::new(),
             publication_allocations: BTreeSet::new(),
@@ -1101,6 +1128,11 @@ impl<'plan> ExecutionScheduler<'plan> {
                     "completed work retained a logical allocation beyond its terminal events",
                 ));
             }
+            if !self.retained_permits.is_empty() {
+                return Err(ExecutionError::invalid_state(
+                    "completed work retained a resource beyond its explicit release node",
+                ));
+            }
             return self.finish(SchedulerTerminal::Succeeded);
         }
         Err(ExecutionError::Deadlock)
@@ -1131,11 +1163,27 @@ impl<'plan> ExecutionScheduler<'plan> {
                     remaining: fence_ids(&node_id, &kinds),
                     permit: held.permit,
                 }),
+                ClaimLifetime::RetainedUntil(release) => {
+                    let id = RetainedPermitId {
+                        resource: held.permit.resource().clone(),
+                        release,
+                    };
+                    let retained = RetainedPermit {
+                        amount: held.permit.amount(),
+                        permit: held.permit,
+                    };
+                    if self.retained_permits.insert(id, retained).is_some() {
+                        return Err(ExecutionError::invalid_state(
+                            "retained resource permit was acquired more than once",
+                        ));
+                    }
+                }
             }
         }
         let fences = active.fences.keys().cloned().collect::<BTreeSet<_>>();
         self.outstanding_fences.extend(active.fences);
         self.complete_allocation_event(&WorkDependency::Work(node_id.clone()))?;
+        self.complete_retained_event(&node_id)?;
         if let WorkResult::Failed { message } = result {
             self.begin_draining(SchedulerTerminal::Failed {
                 node: node_id.clone(),
@@ -1408,7 +1456,23 @@ impl<'plan> ExecutionScheduler<'plan> {
             (&left.resource, &left.lifetime).cmp(&(&right.resource, &right.lifetime))
         });
         let mut permits = Vec::with_capacity(claims.len());
-        for claim in claims {
+        for claim in &claims {
+            if let ClaimLifetime::RetainedUntil(release) = &claim.lifetime {
+                let id = RetainedPermitId {
+                    resource: claim.resource.clone(),
+                    release: release.clone(),
+                };
+                if let Some(retained) = self.retained_permits.get(&id) {
+                    if retained.amount != claim.amount {
+                        return Err(ExecutionError::invalid_state(format!(
+                            "retained resource {:?} changed amount before release {}",
+                            claim.resource,
+                            release.as_str()
+                        )));
+                    }
+                    continue;
+                }
+            }
             match lease.permit(claim.resource.clone(), claim.amount) {
                 Ok(permit) => permits.push(HeldPermit {
                     lifetime: claim.lifetime.clone(),
@@ -1454,12 +1518,12 @@ impl<'plan> ExecutionScheduler<'plan> {
             );
         }
         self.states.insert(node.id.clone(), NodeState::Running);
-        let resources = permits
+        let resources = claims
             .iter()
-            .map(|held| WorkResourceCapability {
-                resource: held.permit.resource().clone(),
-                amount: held.permit.amount(),
-                lifetime: held.lifetime.clone(),
+            .map(|claim| WorkResourceCapability {
+                resource: claim.resource.clone(),
+                amount: claim.amount,
+                lifetime: claim.lifetime.clone(),
             })
             .collect();
         let allocation_capabilities = node
@@ -1529,6 +1593,11 @@ impl<'plan> ExecutionScheduler<'plan> {
             .values()
             .flat_map(|work| work.permits.iter().map(|held| &held.permit))
             .chain(self.deferred_permits.iter().map(|held| &held.permit))
+            .chain(
+                self.retained_permits
+                    .values()
+                    .map(|retained| &retained.permit),
+            )
             .chain(self.publication_permits.iter())
             .filter(|permit| predicate(permit.resource()))
             .try_fold(0_u64, |total, permit| {
@@ -1536,6 +1605,23 @@ impl<'plan> ExecutionScheduler<'plan> {
                     .checked_add(permit.amount())
                     .ok_or_else(|| ExecutionError::invalid_state("active resource claims overflow"))
             })
+    }
+
+    fn complete_retained_event(&mut self, node: &WorkNodeId) -> Result<(), ExecutionError> {
+        let completed = self
+            .retained_permits
+            .keys()
+            .filter(|id| &id.release == node)
+            .cloned()
+            .collect::<Vec<_>>();
+        for id in completed {
+            self.retained_permits
+                .remove(&id)
+                .expect("retained permit key was collected from this map")
+                .permit
+                .release()?;
+        }
+        Ok(())
     }
 
     fn complete_allocation_event(&mut self, event: &WorkDependency) -> Result<(), ExecutionError> {
@@ -1602,12 +1688,20 @@ impl<'plan> ExecutionScheduler<'plan> {
         Ok(())
     }
 
+    fn release_all_retained_permits(&mut self) -> Result<(), ExecutionError> {
+        for (_, retained) in std::mem::take(&mut self.retained_permits) {
+            retained.permit.release()?;
+        }
+        Ok(())
+    }
+
     fn finish_draining(
         &mut self,
         outcome: SchedulerTerminal,
     ) -> Result<SchedulerAction, ExecutionError> {
         if self.quarantined_allocations.is_empty() {
             self.release_all_allocations()?;
+            self.release_all_retained_permits()?;
             self.release_publication_permits()?;
             return self.finish(outcome);
         }
@@ -1646,9 +1740,15 @@ impl<'plan> ExecutionScheduler<'plan> {
             self.active_slots.remove(&active.slot);
             quarantined_permits.push(active.permit);
         }
+        quarantined_permits.extend(
+            std::mem::take(&mut self.retained_permits)
+                .into_values()
+                .map(|retained| retained.permit),
+        );
         if !self.running.is_empty()
             || !self.outstanding_fences.is_empty()
             || !self.deferred_permits.is_empty()
+            || !self.retained_permits.is_empty()
             || !self.publication_permits.is_empty()
             || !self.active_allocations.is_empty()
             || !self.active_slots.is_empty()
@@ -1661,7 +1761,7 @@ impl<'plan> ExecutionScheduler<'plan> {
             .lease
             .take()
             .ok_or_else(|| ExecutionError::invalid_state("execution lease was already released"))?;
-        lease.quarantine_memory_permits(quarantined_permits)?;
+        lease.quarantine_external_permits(quarantined_permits)?;
         self.terminal = Some(outcome.clone());
         Ok(SchedulerAction::Complete(outcome))
     }
@@ -1739,6 +1839,7 @@ impl<'plan> ExecutionScheduler<'plan> {
         if !self.running.is_empty()
             || !self.outstanding_fences.is_empty()
             || !self.deferred_permits.is_empty()
+            || !self.retained_permits.is_empty()
             || !self.publication_permits.is_empty()
             || !self.active_allocations.is_empty()
             || !self.active_slots.is_empty()
@@ -2301,6 +2402,10 @@ fn encode_lifetime(encoder: &mut CanonicalEncoder, lifetime: &ClaimLifetime) {
                 encode_fence(encoder, *kind);
             }
         }
+        ClaimLifetime::RetainedUntil(release) => {
+            encoder.u8(2);
+            encoder.string(release.as_str());
+        }
     }
 }
 
@@ -2547,6 +2652,12 @@ fn validate_nodes(
                 )));
             }
             validate_lifetime(node, &allocation_use.lifetime)?;
+            if matches!(allocation_use.lifetime, ClaimLifetime::RetainedUntil(_)) {
+                return Err(ExecutionError::invalid_plan(format!(
+                    "logical allocation use on node {} must use its allocation ledger for cross-node retention",
+                    node.id.as_str()
+                )));
+            }
             if matches!(&node.domain, WorkDomain::Metal { .. } | WorkDomain::Io)
                 && allocation_use.lifetime != required_payload_lifetime(node)
             {
@@ -2572,6 +2683,7 @@ fn validate_claims(node: &WorkNode) -> Result<(), ExecutionError> {
         validate_lifetime(node, &claim.lifetime)?;
         if claim_requires_domain_lifetime(node, &claim.resource)
             && claim.lifetime != required_payload_lifetime(node)
+            && !matches!(claim.lifetime, ClaimLifetime::RetainedUntil(_))
         {
             return Err(ExecutionError::invalid_plan(format!(
                 "work node {} has a payload claim without its exact asynchronous lifetime",
@@ -2583,6 +2695,79 @@ fn validate_claims(node: &WorkNode) -> Result<(), ExecutionError> {
                 "work node {} duplicates one resource claim and lifetime",
                 node.id.as_str()
             )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_retained_claims(nodes: &BTreeMap<WorkNodeId, WorkNode>) -> Result<(), ExecutionError> {
+    let mut groups = BTreeMap::<(LeaseResource, WorkNodeId), Vec<(&WorkNode, u64)>>::new();
+    for node in nodes.values() {
+        for claim in &node.claims {
+            let ClaimLifetime::RetainedUntil(release) = &claim.lifetime else {
+                continue;
+            };
+            if !matches!(
+                claim.resource,
+                LeaseResource::MeasurementSetLock { .. } | LeaseResource::FileDescriptors
+            ) {
+                return Err(ExecutionError::invalid_plan(format!(
+                    "work node {} retains a resource that is not an external source handle",
+                    node.id.as_str()
+                )));
+            }
+            groups
+                .entry((claim.resource.clone(), release.clone()))
+                .or_default()
+                .push((node, claim.amount));
+        }
+    }
+    for ((resource, release), uses) in groups {
+        let release_node = nodes.get(&release).ok_or_else(|| {
+            ExecutionError::invalid_plan(format!(
+                "retained resource {resource:?} names missing release node {}",
+                release.as_str()
+            ))
+        })?;
+        if release_node.kind != WorkKind::Release
+            || !uses.iter().any(|(node, _)| node.id == release)
+            || !uses.iter().any(|(node, _)| node.id != release)
+        {
+            return Err(ExecutionError::invalid_plan(format!(
+                "retained resource {resource:?} requires pre-release use and ownership by Release node {}",
+                release.as_str()
+            )));
+        }
+        let amount = uses[0].1;
+        if uses.iter().any(|(_, candidate)| *candidate != amount) {
+            return Err(ExecutionError::invalid_plan(format!(
+                "retained resource {resource:?} changes amount before release {}",
+                release.as_str()
+            )));
+        }
+        let release_event = WorkDependency::Work(release.clone());
+        for (node, _) in &uses {
+            let event = WorkDependency::Work(node.id.clone());
+            if node.id != release && !event_strictly_precedes(nodes, &event, &release_event) {
+                return Err(ExecutionError::invalid_plan(format!(
+                    "retained resource {resource:?} has use outside its release-ordered lifetime"
+                )));
+            }
+        }
+        for (index, (left, _)) in uses.iter().enumerate() {
+            for (right, _) in &uses[index + 1..] {
+                let left_event = WorkDependency::Work(left.id.clone());
+                let right_event = WorkDependency::Work(right.id.clone());
+                if !event_precedes(nodes, &left_event, &right_event)
+                    && !event_precedes(nodes, &right_event, &left_event)
+                {
+                    return Err(ExecutionError::invalid_plan(format!(
+                        "retained resource {resource:?} has unordered uses at {} and {}",
+                        left.id.as_str(),
+                        right.id.as_str()
+                    )));
+                }
+            }
         }
     }
     Ok(())
@@ -3377,6 +3562,9 @@ fn local_use_end_events(node: &WorkNode, lifetime: &ClaimLifetime) -> Vec<WorkDe
             .iter()
             .map(|kind| WorkDependency::Fence(FenceId::new(node.id.clone(), *kind)))
             .collect(),
+        ClaimLifetime::RetainedUntil(release) => {
+            vec![WorkDependency::Work(release.clone())]
+        }
     }
 }
 

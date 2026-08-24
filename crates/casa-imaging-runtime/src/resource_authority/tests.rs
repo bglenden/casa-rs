@@ -749,7 +749,7 @@ fn io_buffer_activity_ceilings_do_not_duplicate_physical_slot_capacity() {
 }
 
 #[test]
-fn narrowed_quarantine_reserves_only_memory_without_retaining_policy_caps() {
+fn narrowed_quarantine_reserves_only_external_resources_without_retaining_policy_caps() {
     let domain = CapacityDomainId::new("unified-memory");
     let host = CapacityViewId::new("host-memory");
     let authority = ResourceAuthority::with_inventory(inventory_with_views(vec![MemoryView {
@@ -797,7 +797,7 @@ fn narrowed_quarantine_reserves_only_memory_without_retaining_policy_caps() {
         .expect("failed physical slot is live");
 
     lease
-        .quarantine_memory_permits(vec![failed_slot])
+        .quarantine_external_permits(vec![failed_slot])
         .expect("quarantine narrows to the failed memory permit");
 
     let exclusive = authority
@@ -819,6 +819,79 @@ fn narrowed_quarantine_reserves_only_memory_without_retaining_policy_caps() {
         )
         .expect_err("the quarantined one hundred memory bytes remain unavailable");
     assert_eq!(error.available(), Some(900));
+}
+
+#[test]
+fn source_handle_quarantine_retains_exact_lock_and_file_descriptor_reservations() {
+    let domain = CapacityDomainId::new("unified-memory");
+    let host = CapacityViewId::new("host-memory");
+    let authority = ResourceAuthority::with_inventory(inventory_with_views(vec![MemoryView {
+        id: host.clone(),
+        domain,
+        kind: MemoryViewKind::Host,
+    }]))
+    .expect("valid source-handle quarantine inventory");
+    let demand = |locks, file_descriptors, workers| DemandEnvelope {
+        host_memory_view: host.clone(),
+        memory: Vec::new(),
+        workers: CountDemand::new(workers, workers),
+        overhead: RuntimeOverheadDemand::zero(),
+        storage: Vec::new(),
+        rates: Vec::new(),
+        caches: CacheDemand::zero(),
+        locks: CountDemand::new(locks, locks),
+        file_descriptors: CountDemand::new(file_descriptors, file_descriptors),
+        queues: Vec::new(),
+        transfers: Vec::new(),
+        accelerators: Vec::new(),
+        io_buffers: IoBufferDemand::zero(),
+    };
+    let lease = authority
+        .acquire(
+            ResourcePolicy::Interactive,
+            single_alternative(demand(1, 2, 1)),
+        )
+        .expect("source-handle run is admitted");
+    let measurement_set = casa_imaging_model::MeasurementSetIdentity::new(
+        casa_imaging_model::LogicalIdentity::from_sha256([17; 32]),
+    );
+    let lock = lease
+        .permit(LeaseResource::MeasurementSetLock { measurement_set }, 1)
+        .expect("MeasurementSet lock is live");
+    let file_descriptors = lease
+        .permit(LeaseResource::FileDescriptors, 2)
+        .expect("source file descriptors are live");
+
+    lease
+        .quarantine_external_permits(vec![lock, file_descriptors])
+        .expect("failed source release retains only its source handles");
+
+    let lock_error = authority
+        .acquire(
+            ResourcePolicy::Exclusive,
+            single_alternative(demand(10, 0, 1)),
+        )
+        .expect_err("one quarantined lock remains unavailable");
+    assert_eq!(lock_error.available(), Some(9));
+    let descriptor_error = authority
+        .acquire(
+            ResourcePolicy::Exclusive,
+            single_alternative(demand(0, 9, 1)),
+        )
+        .expect_err("two quarantined file descriptors remain unavailable");
+    assert_eq!(descriptor_error.available(), Some(8));
+    let unrelated = authority
+        .acquire(
+            ResourcePolicy::Exclusive,
+            single_alternative(demand(0, 0, 4)),
+        )
+        .expect("quarantined Interactive policy does not cap unrelated workers");
+    assert!(
+        unrelated
+            .release()
+            .expect("unrelated worker lease releases")
+            .is_released()
+    );
 }
 
 #[test]
