@@ -32,11 +32,14 @@ pub struct MajorCycleOperatorState {
 
 impl MajorCycleOperatorState {
     /// Retain the T19 operator output as the sole input to reconciliation.
+    ///
+    /// The exact normal-state content is bound here; [`Self::reconcile`]
+    /// rejects any later substitution or mutation of that evidence.
     pub fn begin(result: CompleteDataOperatorResult) -> Result<Self, MajorCycleOperatorError> {
-        if result.completion().sample_count() == 0 || result.completion().block_count() == 0 {
-            return Err(MajorCycleOperatorError::IncompleteCoverage);
-        }
-        let owner = MajorCycleOwner::from_complete_data(result.completion().owner_completion())?;
+        let owner = MajorCycleOwner::from_owner_evidence(
+            result.completion().owner_completion(),
+            result.primitives(),
+        )?;
         Ok(Self { owner, result })
     }
 
@@ -47,6 +50,14 @@ impl MajorCycleOperatorState {
     /// evidence, and the model lifecycle must be bound to that same canonical
     /// attempt identity and lease epoch. Any mismatch fails atomically before
     /// the reconstruction owner mints either typed completion record.
+    ///
+    /// Stale weighting evidence cannot reach this seam: the frozen T18
+    /// generation, replay identity, and coverage were bound into the T19
+    /// completion when it was minted from the terminal replay proof, and the
+    /// replay-predecessor check below rebinds that same settled completion to
+    /// this node. A cancelled run never dispatches its reconciliation work or
+    /// drains past the commit gate, so an envelope minted here is discarded
+    /// with its attempt and nothing becomes visible through publication.
     pub fn reconcile(
         self,
         context: WorkExecutionContext<'_>,
@@ -156,8 +167,6 @@ pub enum MajorCycleOperatorError {
     StaleProblemEvidence,
     /// The model lifecycle is not bound to this attempt's canonical identity and epoch.
     ModelAttemptBinding,
-    /// The retained T19 evidence lacks exhaustive weighted coverage.
-    IncompleteCoverage,
     /// The reconstruction owner rejected the scientific join.
     Owner(MajorCycleError),
 }
@@ -180,7 +189,6 @@ impl fmt::Display for MajorCycleOperatorError {
             Self::ModelAttemptBinding => formatter.write_str(
                 "model lifecycle is not bound to the executing attempt and lease epoch",
             ),
-            Self::IncompleteCoverage => formatter.write_str("T19 evidence lacks exhaustive coverage"),
             Self::Owner(error) => error.fmt(formatter),
         }
     }

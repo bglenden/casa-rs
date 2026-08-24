@@ -208,14 +208,24 @@ pub struct MajorCycleOwner {
     replay: WeightingReplayId,
     coverage: WeightingReplayCoverageId,
     catalog: ContinuumPrimitiveCatalog,
+    content: LogicalIdentity,
     sample_count: u64,
     block_count: u64,
 }
 
 impl MajorCycleOwner {
-    /// Derive the reconciliation owner from owner-minted T19 complete-data evidence.
-    pub fn from_complete_data(
+    /// Derive the reconciliation owner from one owner-minted T19 result.
+    ///
+    /// The exact normal-state content is bound at construction so a later
+    /// reconciliation rejects substituted or mutated primitives.
+    pub fn from_complete_data(result: &crate::runtime_adapter::CompleteDataOwnerResult) -> Result<Self, MajorCycleError> {
+        Self::from_owner_evidence(result.completion(), result.primitives())
+    }
+
+    /// Bind one T19 owner completion to its exact primitives.
+    pub fn from_owner_evidence(
         completion: &CompleteDataOwnerCompletion,
+        primitives: &SerialMfsPrimitives,
     ) -> Result<Self, MajorCycleError> {
         if completion.sample_count() == 0 || completion.block_count() == 0 {
             return Err(MajorCycleError::IncompleteCoverage);
@@ -229,6 +239,7 @@ impl MajorCycleOwner {
             replay: completion.replay_id(),
             coverage: completion.coverage(),
             catalog: completion.primitive_catalog(),
+            content: primitives.normal_state_content_identity(),
             sample_count: completion.sample_count(),
             block_count: completion.block_count(),
         })
@@ -258,7 +269,9 @@ impl MajorCycleOwner {
         if lifecycle.problem() != self.problem {
             return Err(MajorCycleError::StaleModelEvidence);
         }
-        lifecycle.validate_named_generation(&named)?;
+        if primitives.normal_state_content_identity() != self.content {
+            return Err(MajorCycleError::MutatedNormalStateEvidence);
+        }
         let update = match delta {
             Some(delta) => lifecycle.apply_final_delta(named, delta)?,
             None => lifecycle.confirm_final_model(named)?,
@@ -372,6 +385,9 @@ pub enum MajorCycleError {
     IncompleteCoverage,
     /// The model owner rejected the named generation or pending delta.
     Model(ModelLifecycleError),
+    /// The primitives presented at reconciliation differ from the exact
+    /// complete-data output bound when this owner was constructed.
+    MutatedNormalStateEvidence,
 }
 
 impl fmt::Display for MajorCycleError {
@@ -384,6 +400,9 @@ impl fmt::Display for MajorCycleError {
                 formatter.write_str("complete-data evidence lacks exhaustive coverage")
             }
             Self::Model(error) => error.fmt(formatter),
+            Self::MutatedNormalStateEvidence => formatter.write_str(
+                "normal-state primitives differ from their bound complete-data evidence",
+            ),
         }
     }
 }

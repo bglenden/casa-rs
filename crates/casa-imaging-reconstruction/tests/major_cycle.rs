@@ -155,10 +155,18 @@ fn validity() -> ProductValidityPolicies {
 }
 
 fn t19_compatible_problem(observation: u8) -> casa_imaging_model::CompiledProblem {
+    t19_compatible_problem_with_width(observation, 8)
+}
+
+fn t19_compatible_problem_with_width(
+    observation: u8,
+    width: usize,
+) -> casa_imaging_model::CompiledProblem {
+    let centre = ((width - 1) / 2) as f64;
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
         SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
-        [3.0, 3.0],
+        [centre, centre],
         [-1.0e-6, 1.0e-6],
         [[1.0, 0.0], [0.0, 1.0]],
         [180.0, 0.0],
@@ -166,7 +174,7 @@ fn t19_compatible_problem(observation: u8) -> casa_imaging_model::CompiledProble
     let geometry = GeometryInput::new(
         vec![ImageDomainSpec::new(
             ImageDomainRole::Main,
-            ImageShape::new(8, 8),
+            ImageShape::new(width, width),
             direction,
             FacetLayout::Single,
             AxisOrder::new([
@@ -445,7 +453,7 @@ fn reconciliation_applies_one_pending_delta_through_the_model_owner() {
         .expect("pending Högbom-style delta");
     let delta_id = delta.delta_id();
 
-    let owner = MajorCycleOwner::from_complete_data(&completion).expect("T20 owner from T19");
+    let owner = MajorCycleOwner::from_owner_evidence(&completion, &primitives).expect("T20 owner from T19");
     assert_eq!(owner.weighting_generation(), completion.weighting_generation());
     let joined = owner
         .reconcile(&mut lifecycle, named, Some(delta), &primitives)
@@ -515,7 +523,7 @@ fn reconciliation_without_a_pending_delta_confirms_the_named_generation_final() 
     let named = lifecycle.initial_empty().expect("empty named generation");
     let input_id = named.generation_id();
 
-    let owner = MajorCycleOwner::from_complete_data(&completion).expect("T20 owner from T19");
+    let owner = MajorCycleOwner::from_owner_evidence(&completion, &primitives).expect("T20 owner from T19");
     let joined = owner
         .reconcile(&mut lifecycle, named, None, &primitives)
         .expect("confirm-only reconciliation");
@@ -540,7 +548,7 @@ fn reconciliation_fails_atomically_and_leaves_both_authorities_intact() {
         .expect("foreign empty generation");
     let mut lifecycle = bind_lifecycle(&problem, attempt(23));
 
-    let owner = MajorCycleOwner::from_complete_data(&completion).expect("T20 owner from T19");
+    let owner = MajorCycleOwner::from_owner_evidence(&completion, &primitives).expect("T20 owner from T19");
     let stale_problem = owner
         .reconcile(
             &mut foreign_problem_lifecycle,
@@ -556,7 +564,7 @@ fn reconciliation_fails_atomically_and_leaves_both_authorities_intact() {
     let foreign_generation = other_owner_same_problem
         .initial_empty()
         .expect("same-problem foreign generation");
-    let owner = MajorCycleOwner::from_complete_data(&completion).expect("T20 owner from T19");
+    let owner = MajorCycleOwner::from_owner_evidence(&completion, &primitives).expect("T20 owner from T19");
     let foreign = owner
         .reconcile(&mut lifecycle, foreign_generation, None, &primitives)
         .expect_err("foreign generation must fail closed");
@@ -582,7 +590,7 @@ fn reconciliation_fails_atomically_and_leaves_both_authorities_intact() {
         .expect("delta against the alternative base");
     let named = lifecycle.initial_empty().expect("fresh named generation");
     assert_ne!(alternative_base.generation_id(), named.generation_id());
-    let owner = MajorCycleOwner::from_complete_data(&completion).expect("T20 owner from T19");
+    let owner = MajorCycleOwner::from_owner_evidence(&completion, &primitives).expect("T20 owner from T19");
     let misbound = owner
         .reconcile(&mut lifecycle, named, Some(misbound_delta), &primitives)
         .expect_err("misbound delta must fail atomically");
@@ -596,7 +604,7 @@ fn reconciliation_fails_atomically_and_leaves_both_authorities_intact() {
     let delta = lifecycle
         .compile_delta(&named, [ModelDeltaTerm::new(cell(2), delta_value(1.0))])
         .expect("correctly bound delta");
-    let owner = MajorCycleOwner::from_complete_data(&completion).expect("T20 owner from T19");
+    let owner = MajorCycleOwner::from_owner_evidence(&completion, &primitives).expect("T20 owner from T19");
     let joined = owner
         .reconcile(&mut lifecycle, named, Some(delta), &primitives)
         .expect("reconciliation succeeds after atomic failures");
@@ -614,10 +622,46 @@ fn reconciliation_fails_atomically_and_leaves_both_authorities_intact() {
 }
 
 #[test]
+fn substituted_normal_state_evidence_fails_atomically() {
+    let problem = t19_compatible_problem(17);
+    let (true_primitives, true_completion) = run_t19_complete_data(&problem);
+
+    // Deliberately pair another execution's primitives with this completion;
+    // reconciliation accepts only the exact bound pairing.
+    let other_problem = t19_compatible_problem_with_width(18, 12);
+    let (other_primitives, _) = run_t19_complete_data(&other_problem);
+    let mispaired = MajorCycleOwner::from_owner_evidence(
+        &true_completion,
+        &other_primitives,
+    )
+    .expect("the constructor binds exactly the pairing it is given");
+
+    let mut lifecycle = bind_lifecycle(&problem, attempt(25));
+    let named = lifecycle.initial_empty().expect("empty named generation");
+    let rejected = mispaired
+        .reconcile(&mut lifecycle, named, None, &true_primitives)
+        .expect_err("substituted primitives must fail atomically");
+    assert!(matches!(rejected, MajorCycleError::MutatedNormalStateEvidence));
+
+    // The correctly paired owner still reconciles afterwards.
+    let mut lifecycle = bind_lifecycle(&problem, attempt(26));
+    let named = lifecycle.initial_empty().expect("fresh empty generation");
+    let joined = MajorCycleOwner::from_owner_evidence(
+        &true_completion,
+        &true_primitives,
+    )
+    .expect("owner from the exact T19 pairing")
+    .reconcile(&mut lifecycle, named, None, &true_primitives)
+    .expect("correct pairing reconciles");
+    assert_eq!(joined.model_completion().delta(), None);
+}
+
+#[test]
 fn incomplete_or_foreign_operator_evidence_cannot_become_a_major_cycle_owner() {
     let problem = t19_compatible_problem(15);
-    let (_, completion) = run_t19_complete_data(&problem);
-    let owner = MajorCycleOwner::from_complete_data(&completion).expect("owner from T19 evidence");
+    let (primitives, completion) = run_t19_complete_data(&problem);
+    let owner =
+        MajorCycleOwner::from_owner_evidence(&completion, &primitives).expect("owner from T19 evidence");
     assert_eq!(owner.weighting_generation(), completion.weighting_generation());
 
     // A specification mismatch keeps raw problems from forging operator plans.

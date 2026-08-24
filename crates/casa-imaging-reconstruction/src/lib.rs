@@ -43,8 +43,9 @@ pub use serial_mfs::{
 #[doc(hidden)]
 pub mod runtime_adapter {
     pub use crate::serial_mfs::{
-        CompleteDataOwnerCompletion, CompleteDataOwnerState, PreparedSerialMfsOperator,
-        SerialMfsWorkload, prepare_serial_mfs_operator, serial_mfs_workload,
+        CompleteDataOwnerCompletion, CompleteDataOwnerResult, CompleteDataOwnerState,
+        PreparedSerialMfsOperator, SerialMfsWorkload, prepare_serial_mfs_operator,
+        serial_mfs_workload,
     };
 }
 
@@ -934,37 +935,7 @@ impl ModelLifecycle {
         mut base: ModelGeneration,
         delta: ModelDelta,
     ) -> Result<ModelGeneration, ModelLifecycleError> {
-        self.validate_base(&base)?;
-        if delta.seal != self.seal
-            || delta.authority != self.authority
-            || delta.base != base.generation_id
-        {
-            return Err(ModelLifecycleError::DeltaBaseMismatch);
-        }
-        let expected = delta_id(
-            self.authority,
-            base.generation_id,
-            self.contract.target(),
-            &delta.terms,
-        );
-        if expected != delta.delta_id {
-            return Err(ModelLifecycleError::DeltaIdentityMismatch);
-        }
-        for term in &delta.terms {
-            let index = self
-                .contract
-                .target()
-                .flat_index(term.cell())
-                .ok_or(ModelLifecycleError::CellOutsideShape)?;
-            let updated = add_with_precision(
-                self.contract.arithmetic_precision(),
-                base.samples[index].value().value(),
-                term.increment().value(),
-            );
-            let updated = ModelValue::new(updated)?;
-            validate_model_value(updated, self.contract.bounds().max_absolute_model_value())?;
-        }
-        let parent = base.generation_id;
+        self.validate_delta_update(&base, &delta)?;
         for term in &delta.terms {
             let index = self
                 .contract
@@ -978,6 +949,7 @@ impl ModelLifecycle {
             );
             base.samples[index] = ModelSample::valid(ModelValue::new(updated)?);
         }
+        let parent = base.generation_id;
         base.authority = self.authority;
         base.seal = self.seal;
         base.origin = ModelGenerationOrigin::Delta {
