@@ -11,6 +11,8 @@ use casa_imaging_runtime::{
     ExecutionAttemptId, ExecutionPlan, PlannerCostModelProfileBootstrap, open_cost_model_profile,
     promote_cost_model_profile,
 };
+use serde_json::json;
+use sha2::{Digest, Sha256};
 
 mod support;
 
@@ -112,6 +114,13 @@ fn review() -> ProfileReview {
         "reviewed comparable MFS calibration evidence",
     )
     .expect("complete review evidence")
+}
+
+fn digest_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 #[test]
@@ -295,6 +304,33 @@ fn opening_a_profile_rejects_a_document_stored_under_another_identity() {
 
     assert!(matches!(
         open_cost_model_profile(&profiles, other.profile_id()),
+        Err(ProfilePromotionError::CorruptProfile { .. })
+    ));
+}
+
+#[test]
+fn opening_a_profile_rejects_a_rewritten_promotion_timestamp() {
+    let directory = tempfile::tempdir().expect("timestamp-integrity root");
+    let profiles = directory.path().join("profiles");
+    let (receipts, attempts, _) = two_completed_receipts(directory.path(), 4);
+    let record =
+        promote_cost_model_profile(&profiles, &receipts, &attempts, review(), 1_700_000_000_000)
+            .expect("explicit reviewed promotion");
+    let path = profiles.join(format!("{}.json", record.profile_id()));
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("profile document"))
+            .expect("valid profile JSON");
+    document["profile"]["promoted_unix_millis"] = json!(1_700_000_001_000_u64);
+    let payload = serde_json::to_vec(&document["profile"]).expect("profile payload");
+    document["payload_sha256"] = json!(digest_hex(&payload));
+    std::fs::write(
+        &path,
+        serde_json::to_vec_pretty(&document).expect("rewritten profile JSON"),
+    )
+    .expect("rewrite profile document");
+
+    assert!(matches!(
+        open_cost_model_profile(&profiles, record.profile_id()),
         Err(ProfilePromotionError::CorruptProfile { .. })
     ));
 }

@@ -369,7 +369,7 @@ impl<'a> PreparedArtifactPlanFragment<'a> {
             self.descriptor.eviction_artifact(self.operation),
         ]);
         Ok(PhysicalWorkBinding::with_implementation_contract(
-            base.implementation_contract().clone(),
+            base.implementation_contract().for_execution_dag(&dag),
             dag,
             prediction,
             artifacts,

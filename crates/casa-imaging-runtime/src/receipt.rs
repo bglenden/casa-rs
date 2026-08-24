@@ -51,7 +51,7 @@ use crate::{
 };
 
 const RECEIPT_SCHEMA: &str = "casa-rs-imaging-execution-receipt";
-const RECEIPT_SCHEMA_VERSION: u32 = 13;
+const RECEIPT_SCHEMA_VERSION: u32 = 14;
 const COMPILED_PROBLEM_EVIDENCE_VERSION: u32 = 7;
 const RECEIPT_SUFFIX: &str = ".receipt.json";
 const RECEIPT_STAGING_PREFIX: &str = ".casa-rs-receipt-staging-";
@@ -469,15 +469,6 @@ pub enum ReceiptInfeasibilityCertificate {
         required: u64,
         /// Available amount after policy, pressure, and active reservations.
         available: u64,
-    },
-    /// Planning refused the alternative because a prior execution of it
-    /// terminally failed or was aborted; recorded evidence constrains the
-    /// infeasible region without entering the cost model.
-    RecordedFailure {
-        /// Attempt whose terminal receipt recorded the failure.
-        attempt: String,
-        /// Terminal status retained by that receipt.
-        status: ReceiptStatus,
     },
 }
 
@@ -1874,10 +1865,6 @@ enum InfeasibilityProjection {
         required: u64,
         available: u64,
     },
-    RecordedFailure {
-        attempt: String,
-        status: ReceiptStatus,
-    },
 }
 
 impl InfeasibilityProjection {
@@ -1895,12 +1882,6 @@ impl InfeasibilityProjection {
                 required: *required,
                 available: *available,
             },
-            Self::RecordedFailure { attempt, status } => {
-                ReceiptInfeasibilityCertificate::RecordedFailure {
-                    attempt: attempt.clone(),
-                    status: *status,
-                }
-            }
         }
     }
 }
@@ -1995,12 +1976,9 @@ impl ReceiptFailure {
                         required: *required,
                         available: *available,
                     },
-                    crate::AlternativeRejectionReason::RecordedFailure { attempt, status } => {
-                        InfeasibilityProjection::RecordedFailure {
-                            attempt: hex(&attempt.as_bytes()),
-                            status: *status,
-                        }
-                    }
+                    crate::AlternativeRejectionReason::RecordedFailure { .. } => unreachable!(
+                        "recorded planning annotations are not persisted as execution failures"
+                    ),
                 }
             }
             crate::ResourceError::Infeasible {
@@ -4555,16 +4533,6 @@ fn validate_body(body: &ReceiptBody) -> Result<(), ReceiptError> {
                     && resource.len() <= MAX_FAILURE_SUBJECT_BYTES
                     && !resource_identity.is_empty()
                     && required > available,
-            )?,
-            (
-                FailureKindProjection::ResourceInfeasible,
-                Some(InfeasibilityProjection::RecordedFailure { attempt, status }),
-            ) => require_integrity(
-                is_digest(attempt)
-                    && matches!(
-                        status,
-                        ReceiptStatus::Failed | ReceiptStatus::Aborted | ReceiptStatus::Infeasible
-                    ),
             )?,
             (FailureKindProjection::ResourceInfeasible, None) | (_, Some(_)) => {
                 return Err(ReceiptError::IntegrityMismatch);

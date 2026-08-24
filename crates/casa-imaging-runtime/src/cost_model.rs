@@ -23,8 +23,9 @@ use crate::{
 };
 
 const PROFILE_SCHEMA_NAME: &str = "casa-rs-planner-cost-model-profile";
-const PROFILE_SCHEMA_VERSION: u32 = 2;
+const PROFILE_SCHEMA_VERSION: u32 = 3;
 const PROFILE_IDENTITY_DOMAIN: &[u8] = b"casa-rs-planner-cost-model-profile";
+const PROMOTION_RECORD_IDENTITY_DOMAIN: &[u8] = b"casa-rs-planner-cost-model-promotion-record";
 
 /// Operator review evidence authorizing one explicit profile promotion.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -126,6 +127,7 @@ impl ProfileEvidenceEntry {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PlannerCostModelProfileRecord {
     profile_id: PlannerCostModelProfileId,
+    promotion_record_id: [u8; 32],
     lineage_cost_model: PlannerCostModelProfileId,
     plan_identity: [u8; 32],
     implementation_registry_identity: ImplementationRegistryId,
@@ -156,6 +158,7 @@ impl PlannerCostModelProfileRecord {
     pub(crate) fn initial(profile_id: PlannerCostModelProfileId) -> Self {
         Self {
             profile_id,
+            promotion_record_id: [0; 32],
             lineage_cost_model: profile_id,
             plan_identity: [0; 32],
             implementation_registry_identity: ImplementationRegistryId::from_sha256([0; 32]),
@@ -171,15 +174,25 @@ impl PlannerCostModelProfileRecord {
         }
     }
 
-    /// Return the stable content identity of this profile.
+    /// Return the stable behavior/content identity of this profile.
     ///
     /// The digest covers the lineage profile, prediction confidence, review
-    /// evidence, and every calibration entry; it deliberately excludes the
-    /// promotion timestamp so re-running one identical command cannot fork a
-    /// second profile identity.
+    /// evidence, and every calibration entry. The separate promotion-record
+    /// identity binds the audit timestamp without changing this deterministic
+    /// planner behavior identity.
     #[must_use]
     pub const fn profile_id(&self) -> PlannerCostModelProfileId {
         self.profile_id
+    }
+
+    /// Return the integrity identity of this persisted promotion record.
+    ///
+    /// Unlike [`Self::profile_id`], this identity includes the promotion
+    /// timestamp so an audit record cannot be rewritten under the same profile
+    /// behavior identity.
+    #[must_use]
+    pub const fn promotion_record_id(&self) -> [u8; 32] {
+        self.promotion_record_id
     }
 
     /// Return the cost-model profile identity the promoted plans ran under.
@@ -428,14 +441,16 @@ pub fn promote_cost_model_profile(
             });
         }
     }
+    let profile_id = profile_identity(&record_digest_input(
+        lineage_cost_model,
+        boundary,
+        confidence_ppm,
+        &review,
+        &entries,
+    ));
     let record = PlannerCostModelProfileRecord {
-        profile_id: profile_identity(&record_digest_input(
-            lineage_cost_model,
-            boundary,
-            confidence_ppm,
-            &review,
-            &entries,
-        )),
+        profile_id,
+        promotion_record_id: promotion_record_identity(profile_id, now_unix_millis),
         lineage_cost_model: PlannerCostModelProfileId::from_sha256(lineage_cost_model),
         plan_identity: boundary.plan_identity,
         implementation_registry_identity: boundary.implementation_registry_identity,
@@ -521,6 +536,17 @@ fn profile_identity(input: &[u8]) -> PlannerCostModelProfileId {
     PlannerCostModelProfileId::from_sha256(Sha256::digest(input).into())
 }
 
+fn promotion_record_identity(
+    profile_id: PlannerCostModelProfileId,
+    promoted_unix_millis: u64,
+) -> [u8; 32] {
+    let mut encoder = CanonicalEncoder::new();
+    encoder.string(std::str::from_utf8(PROMOTION_RECORD_IDENTITY_DOMAIN).expect("ASCII domain"));
+    encoder.digest(profile_id.as_bytes());
+    encoder.u64(promoted_unix_millis);
+    Sha256::digest(encoder.finish()).into()
+}
+
 #[derive(Serialize, Deserialize)]
 struct ProfileDocument {
     schema: ProfileSchema,
@@ -537,6 +563,7 @@ struct ProfileSchema {
 #[derive(Clone, Serialize, Deserialize)]
 struct ProfileBody {
     profile_id: String,
+    promotion_record_id: String,
     lineage_cost_model: String,
     plan_identity: String,
     implementation_registry_identity: String,
@@ -562,6 +589,7 @@ fn encode_profile(
 ) -> Result<Vec<u8>, ProfilePromotionError> {
     let body = ProfileBody {
         profile_id: hex(&record.profile_id.as_bytes()),
+        promotion_record_id: hex(&record.promotion_record_id),
         lineage_cost_model: hex(&record.lineage_cost_model.as_bytes()),
         plan_identity: hex(&record.plan_identity),
         implementation_registry_identity: hex(&record.implementation_registry_identity.as_bytes()),
@@ -614,6 +642,11 @@ fn decode_profile(bytes: &[u8]) -> Result<PlannerCostModelProfileRecord, Profile
     }
     let body = document.profile;
     let declared_id = declared_profile_id(&body);
+    let Some(promotion_record_id) = parse_hex32(&body.promotion_record_id) else {
+        return Err(ProfilePromotionError::CorruptProfile {
+            profile: declared_id,
+        });
+    };
     let review = ProfileReview::new(body.reviewer, body.note)?;
     let entries = body
         .entries
@@ -678,8 +711,14 @@ fn decode_profile(bytes: &[u8]) -> Result<PlannerCostModelProfileRecord, Profile
             profile: declared_id,
         });
     }
+    if promotion_record_id != promotion_record_identity(declared_id, body.promoted_unix_millis) {
+        return Err(ProfilePromotionError::CorruptProfile {
+            profile: declared_id,
+        });
+    }
     Ok(PlannerCostModelProfileRecord {
         profile_id: declared_id,
+        promotion_record_id,
         lineage_cost_model,
         plan_identity: boundary.plan_identity,
         implementation_registry_identity: boundary.implementation_registry_identity,

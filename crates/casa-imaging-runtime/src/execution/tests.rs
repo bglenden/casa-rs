@@ -499,6 +499,15 @@ fn physical_work_binding_with_artifacts(
     dag: ExecutionDag,
     artifacts: Vec<crate::PlannedArtifact>,
 ) -> PhysicalWorkBinding {
+    let problem = compiled_problem();
+    physical_work_binding_with_problem(&problem, dag, artifacts)
+}
+
+fn physical_work_binding_with_problem(
+    problem: &casa_imaging_model::CompiledProblem,
+    dag: ExecutionDag,
+    artifacts: Vec<crate::PlannedArtifact>,
+) -> PhysicalWorkBinding {
     let initial = WorkNodeId::new("transaction-check");
     let read = WorkNodeId::new("transaction-read");
     let reconciliation = WorkNodeId::new("transaction-reconciliation");
@@ -835,7 +844,6 @@ fn physical_work_binding_with_artifacts(
         stages,
     )
     .expect("complete test prediction");
-    let problem = compiled_problem();
     let product_graph_id = problem.product_graph().graph_id();
     let bounds =
         crate::PublicationResourceBounds::new(1, 1, 1, 0).expect("unit publication bounds");
@@ -881,7 +889,7 @@ fn physical_work_binding_with_artifacts(
         )
     }));
     PhysicalWorkBinding::new(
-        &problem,
+        problem,
         dag,
         prediction,
         artifacts,
@@ -1196,7 +1204,8 @@ fn malformed_store_owned_rejection_is_rejected_without_partial_receipt_mutation(
     let artifact = crate::ArtifactIdentity::from_sha256([210; 32]);
     let ledger = crate::ArtifactIdentity::from_sha256([211; 32]);
     let cache = crate::CacheIdentity::from_sha256([212; 32]);
-    let physical = physical_work_binding_with_artifacts(
+    let physical = physical_work_binding_with_problem(
+        &problem,
         dag,
         vec![
             crate::PlannedArtifact::new(
@@ -4507,39 +4516,6 @@ fn receipts_reopen_machine_readable_infeasibility_certificates() {
             resource_identity: crate::ResourceIdentity::new("host-memory"),
             required: 4_096,
             available: 1_024,
-        })
-    );
-
-    let recorded = provenance(80);
-    let mut recorder = store
-        .begin(recorded.clone(), &problem, &plan)
-        .expect("begin recorded-failure receipt");
-    recorder
-        .finish(
-            crate::ReceiptStatus::Infeasible,
-            Some(crate::receipt::ReceiptFailure::infeasible(
-                &crate::ResourceError::NoFeasibleAlternative(
-                    crate::AdmissionInfeasibilityCertificate::from_rejections(vec![
-                        crate::AlternativeRejection::new(
-                            crate::AlternativeId::new("cpu"),
-                            crate::AlternativeRejectionReason::RecordedFailure {
-                                attempt: crate::ExecutionAttemptId::from_sha256([81; 32]),
-                                status: crate::ReceiptStatus::Failed,
-                            },
-                        ),
-                    ]),
-                ),
-            )),
-        )
-        .expect("finish recorded-failure receipt");
-    assert_eq!(
-        store
-            .open(recorded.attempt_id())
-            .expect("recorded-failure receipt")
-            .infeasibility_certificate(),
-        Some(crate::ReceiptInfeasibilityCertificate::RecordedFailure {
-            attempt: crate::ExecutionAttemptId::from_sha256([81; 32]).to_string(),
-            status: crate::ReceiptStatus::Failed,
         })
     );
 }

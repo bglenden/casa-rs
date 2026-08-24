@@ -1064,7 +1064,7 @@ pub struct PhysicalWorkBinding {
 /// prevents a planner from making implementation identities compete on price
 /// while leaving their numerics-bearing behavior implicit.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ImplementationContractCommitment {
+pub(crate) struct ImplementationContractCommitment {
     problem: CompiledProblemId,
     numerics: NumericsContractId,
     required_capabilities: BTreeSet<RequiredCapability>,
@@ -1077,37 +1077,50 @@ impl ImplementationContractCommitment {
             problem: problem.problem_id(),
             numerics: problem.numerics_id(),
             required_capabilities: problem.required_capabilities().clone(),
-            implementation_ids: execution_dag
-                .nodes()
-                .iter()
-                .map(|(node, work)| (node.clone(), work.implementation.clone()))
-                .collect(),
+            implementation_ids: implementation_ids(execution_dag),
+        }
+    }
+
+    pub(crate) fn for_execution_dag(&self, execution_dag: &ExecutionDag) -> Self {
+        Self {
+            problem: self.problem,
+            numerics: self.numerics,
+            required_capabilities: self.required_capabilities.clone(),
+            implementation_ids: implementation_ids(execution_dag),
         }
     }
 
     /// Return the exact compiled problem whose science is implemented.
     #[must_use]
-    pub const fn problem_id(&self) -> CompiledProblemId {
+    pub(crate) const fn problem_id(&self) -> CompiledProblemId {
         self.problem
     }
 
     /// Return the exact numerical contract implemented by the candidate.
     #[must_use]
-    pub const fn numerics_id(&self) -> NumericsContractId {
+    pub(crate) const fn numerics_id(&self) -> NumericsContractId {
         self.numerics
     }
 
     /// Return the compiler-derived capability set implemented by the candidate.
     #[must_use]
-    pub const fn required_capabilities(&self) -> &BTreeSet<RequiredCapability> {
+    pub(crate) const fn required_capabilities(&self) -> &BTreeSet<RequiredCapability> {
         &self.required_capabilities
     }
 
     /// Return the registry-selected implementation identity for each node.
     #[must_use]
-    pub const fn implementation_ids(&self) -> &BTreeMap<WorkNodeId, WorkImplementationId> {
+    pub(crate) const fn implementation_ids(&self) -> &BTreeMap<WorkNodeId, WorkImplementationId> {
         &self.implementation_ids
     }
+}
+
+fn implementation_ids(execution_dag: &ExecutionDag) -> BTreeMap<WorkNodeId, WorkImplementationId> {
+    execution_dag
+        .nodes()
+        .iter()
+        .map(|(node, work)| (node.clone(), work.implementation.clone()))
+        .collect()
 }
 
 impl PhysicalWorkBinding {
@@ -1199,7 +1212,7 @@ impl PhysicalWorkBinding {
     /// Return the exact science, numerics, and capability commitment carried
     /// by every selected implementation in this candidate.
     #[must_use]
-    pub const fn implementation_contract(&self) -> &ImplementationContractCommitment {
+    pub(crate) const fn implementation_contract(&self) -> &ImplementationContractCommitment {
         &self.implementation_contract
     }
 
@@ -1955,12 +1968,6 @@ pub fn plan<E>(
                     .to_string(),
             )));
         }
-        if commitment != first.implementation_contract() {
-            return Err(PlanError::InvalidCandidate(ExecutionError::InvalidPlan(
-                "physical candidates disagree on their registry-owned science and numerics commitments"
-                    .to_string(),
-            )));
-        }
         if candidate.execution_dag.required_resource_capabilities() != &required_capabilities {
             return Err(PlanError::InvalidCandidate(ExecutionError::InvalidPlan(
                 "physical candidates disagree on required resource capabilities".to_string(),
@@ -2060,11 +2067,13 @@ pub fn plan<E>(
 /// The science- and product-bearing surface one physical candidate commits to.
 ///
 /// Legal physical alternatives may vary resource claims, slots, knobs,
-/// adaptations, and execution-only work, but never this surface.
+/// adaptations, implementation identities, and execution-only prepared/cache
+/// artifacts, but never this surface.
 fn product_surface(candidate: &PhysicalWorkBinding) -> BTreeMap<ArtifactIdentity, ArtifactRole> {
     candidate
         .artifacts
         .iter()
+        .filter(|artifact| matches!(artifact.role(), ArtifactRole::Input | ArtifactRole::Output))
         .map(|artifact| (artifact.identity(), artifact.role()))
         .collect()
 }

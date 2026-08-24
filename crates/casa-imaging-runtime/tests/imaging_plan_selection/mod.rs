@@ -145,7 +145,7 @@ fn hard_feasibility_precedes_predicted_time_in_lexicographic_planning() {
 }
 
 #[test]
-fn planning_rejects_implementation_alternatives_with_divergent_contracts() {
+fn planning_compares_distinct_registry_implementation_alternatives() {
     let problem = compile(request(1)).expect("logical compilation");
     let base = physical_work(6);
     let slow = candidate(&problem, &base, "alt-slow", 300, 1);
@@ -177,9 +177,13 @@ fn planning_rejects_implementation_alternatives_with_divergent_contracts() {
     )
     .expect("variant physical work");
 
-    let error = multi_candidate_plan(&problem, vec![slow, divergent])
-        .expect_err("different implementation commitments must not compete on timing");
-    assert!(matches!(error, PlanError::InvalidCandidate(_)));
+    let selected = multi_candidate_plan(&problem, vec![slow, divergent])
+        .expect("distinct registry implementations may compete on timing");
+    assert_eq!(
+        selected.execution_dag().resource_alternative().id,
+        AlternativeId::new("alt-fast"),
+        "implementation identity does not override the lexicographic resource/time order"
+    );
 }
 
 #[test]
