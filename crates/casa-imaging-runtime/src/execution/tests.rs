@@ -4752,4 +4752,40 @@ fn receipts_reopen_machine_readable_infeasibility_certificates() {
             available: 1_024,
         })
     );
+
+    let path_shaped = provenance(80);
+    let mut recorder = store
+        .begin(path_shaped.clone(), &problem, &plan)
+        .expect("begin path-shaped quantitative receipt");
+    recorder
+        .finish(
+            crate::ReceiptStatus::Infeasible,
+            Some(crate::receipt::ReceiptFailure::infeasible(
+                &crate::ResourceError::Infeasible {
+                    resource: "storage-domain:/private/data".to_string(),
+                    required: 8_192,
+                    available: 2_048,
+                },
+            )),
+        )
+        .expect("finish path-shaped quantitative receipt");
+    let certificate = store
+        .open(path_shaped.attempt_id())
+        .expect("path-shaped quantitative receipt")
+        .infeasibility_certificate()
+        .expect("path-shaped infeasibility certificate");
+    let crate::ReceiptInfeasibilityCertificate::Infeasible {
+        resource,
+        resource_identity,
+        required,
+        available,
+    } = certificate
+    else {
+        panic!("expected quantitative path-shaped certificate");
+    };
+    assert!(resource.starts_with("redacted:"));
+    assert!(resource_identity.as_str().starts_with("redacted:"));
+    assert!(!resource.contains('/'));
+    assert!(!resource_identity.as_str().contains('/'));
+    assert_eq!((required, available), (8_192, 2_048));
 }

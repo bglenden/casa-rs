@@ -2022,7 +2022,9 @@ impl ReceiptFailure {
                         available,
                     } => InfeasibilityProjection::Infeasible {
                         resource: bounded_evidence_text(resource),
-                        resource_identity: resource.clone(),
+                        resource_identity: ResourceIdentity::new(resource.clone())
+                            .as_str()
+                            .to_string(),
                         required: *required,
                         available: *available,
                     },
@@ -2037,7 +2039,7 @@ impl ReceiptFailure {
                 available,
             } => InfeasibilityProjection::Infeasible {
                 resource: bounded_evidence_text(resource),
-                resource_identity: resource.clone(),
+                resource_identity: ResourceIdentity::new(resource.clone()).as_str().to_string(),
                 required: *required,
                 available: *available,
             },
@@ -4585,7 +4587,7 @@ fn validate_body(body: &ReceiptBody) -> Result<(), ReceiptError> {
             ) => require_integrity(
                 is_redacted_text(resource)
                     && resource.len() <= MAX_FAILURE_SUBJECT_BYTES
-                    && !resource_identity.is_empty()
+                    && is_redacted_text(resource_identity)
                     && required > available,
             )?,
             (FailureKindProjection::ResourceInfeasible, None) | (_, Some(_)) => {

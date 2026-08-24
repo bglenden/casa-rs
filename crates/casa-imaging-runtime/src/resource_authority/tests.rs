@@ -1589,3 +1589,17 @@ fn os_swap_or_compression_never_becomes_planned_capacity() {
         .expect_err("planned capacity stays bounded by physical domains");
     assert_eq!(error.available(), Some(1_000));
 }
+
+#[test]
+fn path_shaped_resource_identity_is_redacted_and_still_matches_capacity() {
+    let domain = StorageDomainId::new("/private/data");
+    let available = BTreeMap::from([(domain.clone(), 42)]);
+    let identity = ResourceIdentity::new(format!("storage-domain:{domain:?}"));
+
+    assert!(identity.as_str().starts_with("redacted:"));
+    assert!(!identity.as_str().contains('/'));
+    assert_eq!(
+        resource_map_available("storage-domain", &available, identity.as_str()),
+        Some(42)
+    );
+}

@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use crate::{ExecutionAttemptId, ReceiptStatus};
 
 use casa_imaging_model::MeasurementSetIdentity;
+use sha2::{Digest, Sha256};
 
 static PRODUCTION_AUTHORITY: OnceLock<Result<ResourceAuthority, ResourceError>> = OnceLock::new();
 
@@ -72,10 +73,34 @@ resource_identity!(RateResourceId, "Stable identity of one rate resource.");
 resource_identity!(QueueResourceId, "Stable identity of one bounded queue.");
 resource_identity!(AlternativeId, "Stable identity of one demand alternative.");
 resource_identity!(CapabilityId, "Stable identity of one required capability.");
-resource_identity!(
-    ResourceIdentity,
-    "Stable identity of one Resource Authority resource."
-);
+/// Stable, path-free identity of one Resource Authority resource.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ResourceIdentity(String);
+
+impl ResourceIdentity {
+    /// Creates a stable resource identity, digesting path-shaped caller text so
+    /// it can be retained safely in persistent receipts.
+    pub fn new(value: impl Into<String>) -> Self {
+        let value = value.into();
+        if value.contains('/') || value.contains('\\') || value.starts_with('~') {
+            Self(format!("redacted:{}", hex_digest(&value)))
+        } else {
+            Self(value)
+        }
+    }
+
+    /// Returns the identity text.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+fn hex_digest(value: &str) -> String {
+    Sha256::digest(value.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
 
 /// Physical location represented by a memory-capacity domain.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2401,7 +2426,9 @@ fn resource_available(
     scalar
         .or_else(|| {
             available.memory_bytes.iter().find_map(|(id, amount)| {
-                (identity == format!("memory-domain:{}", id.as_str())).then_some(*amount)
+                (identity
+                    == ResourceIdentity::new(format!("memory-domain:{}", id.as_str())).as_str())
+                .then_some(*amount)
             })
         })
         .or_else(|| resource_map_available("storage-domain", &available.storage_bytes, identity))
@@ -2420,9 +2447,9 @@ fn resource_map_available<Id: fmt::Debug>(
     available: &BTreeMap<Id, u64>,
     identity: &str,
 ) -> Option<u64> {
-    available
-        .iter()
-        .find_map(|(id, amount)| (identity == format!("{kind}:{id:?}")).then_some(*amount))
+    available.iter().find_map(|(id, amount)| {
+        (identity == ResourceIdentity::new(format!("{kind}:{id:?}")).as_str()).then_some(*amount)
+    })
 }
 
 fn admit_resource_map<Id: Clone + Ord + fmt::Debug>(
