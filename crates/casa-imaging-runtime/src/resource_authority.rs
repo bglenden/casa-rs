@@ -7,6 +7,8 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::{Arc, Mutex, OnceLock};
 
+use crate::{ExecutionAttemptId, ReceiptStatus};
+
 use casa_imaging_model::MeasurementSetIdentity;
 
 static PRODUCTION_AUTHORITY: OnceLock<Result<ResourceAuthority, ResourceError>> = OnceLock::new();
@@ -1169,6 +1171,16 @@ pub enum AlternativeRejectionReason {
         /// Amount available after policy, pressure, and active leases.
         available: u64,
     },
+    /// Planning refused the alternative before admission because a prior
+    /// execution of it terminally failed or was aborted. This is recorded
+    /// receipt evidence constraining an infeasible region, not cost-model
+    /// learning.
+    RecordedFailure {
+        /// Attempt whose terminal receipt recorded the failure.
+        attempt: ExecutionAttemptId,
+        /// Terminal status retained by that receipt.
+        status: ReceiptStatus,
+    },
 }
 
 /// Machine-readable refusal evidence for one named demand alternative.
@@ -1179,7 +1191,7 @@ pub struct AlternativeRejection {
 }
 
 impl AlternativeRejection {
-    fn new(alternative: AlternativeId, reason: AlternativeRejectionReason) -> Self {
+    pub(crate) fn new(alternative: AlternativeId, reason: AlternativeRejectionReason) -> Self {
         Self {
             alternative,
             reason,
@@ -1207,7 +1219,7 @@ pub struct AdmissionInfeasibilityCertificate {
 }
 
 impl AdmissionInfeasibilityCertificate {
-    fn new(rejections: Vec<AlternativeRejection>) -> Self {
+    pub(crate) fn from_rejections(rejections: Vec<AlternativeRejection>) -> Self {
         Self { rejections }
     }
 
@@ -1227,7 +1239,8 @@ impl AdmissionInfeasibilityCertificate {
                     available,
                     ..
                 } => Some((*required, *available)),
-                AlternativeRejectionReason::NoCapableAlternative => None,
+                AlternativeRejectionReason::NoCapableAlternative
+                | AlternativeRejectionReason::RecordedFailure { .. } => None,
             })
     }
 }
@@ -1250,6 +1263,10 @@ impl fmt::Display for AdmissionInfeasibilityCertificate {
                 } => write!(
                     formatter,
                     "{alternative} requires {required} {resource}, but only {available} is available"
+                )?,
+                AlternativeRejectionReason::RecordedFailure { attempt, status } => write!(
+                    formatter,
+                    "{alternative} was recorded terminally {status:?} by attempt {attempt}"
                 )?,
             }
         }
@@ -1503,7 +1520,7 @@ impl ResourceAuthority {
         }
         let Some((alternative, granted, reserved, limits)) = selected else {
             return Err(ResourceError::NoFeasibleAlternative(
-                AdmissionInfeasibilityCertificate::new(rejections),
+                AdmissionInfeasibilityCertificate::from_rejections(rejections),
             ));
         };
         let lease_id = state.next_lease_id;

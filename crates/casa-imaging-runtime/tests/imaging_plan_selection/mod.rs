@@ -5,16 +5,16 @@
 
 use std::io;
 
-use casa_imaging_runtime::{AlternativeRejectionReason, ExecutionPlan};
+use casa_imaging_runtime::{AlternativeRejectionReason, ExecutionPlan, RecordedInfeasibility};
 
 mod support;
 
 use self::support::{
-    AlternativeId, PhysicalWorkBinding, PlanError, PlanPrediction, PlanningBindings,
-    PredictionConfidence, PredictionUncertainty, ResourcePolicy, StagePrediction, authority,
-    compile, cost_model, physical_work, registry, request, run_lock, runtime_plan,
+    AlternativeId, ExecutionDag, ExecutionDagSpecification, PhysicalWorkBinding, PlanError,
+    PlanPrediction, PlanningBindings, PredictionConfidence, PredictionUncertainty, ResourcePolicy,
+    StagePrediction, WorkImplementationId, authority, compile, cost_model, physical_work, registry,
+    request, run_lock, runtime_plan,
 };
-use support::{ExecutionDag, ExecutionDagSpecification};
 
 fn candidate(
     base: &PhysicalWorkBinding,
@@ -82,6 +82,7 @@ fn multi_candidate_plan(
         problem,
         PlanningBindings::new(registry(3), ResourcePolicy::Exclusive, cost_model(4)),
         authority(),
+        &RecordedInfeasibility::default(),
         |_, _| Ok(candidates),
     )
 }
@@ -131,6 +132,48 @@ fn hard_feasibility_precedes_predicted_time_in_lexicographic_planning() {
         selected.execution_dag().resource_alternative().id,
         AlternativeId::new("alt-slow-feasible"),
         "hard capacity feasibility outranks predicted time"
+    );
+}
+
+#[test]
+fn planning_refuses_candidates_that_diverge_on_the_product_contract_surface() {
+    let problem = compile(request(1)).expect("logical compilation");
+    let base = physical_work(6);
+    let slow = candidate(&base, "alt-slow", 300, 1);
+    let fast = candidate(&base, "alt-fast", 100, 1);
+
+    // A physically valid variant that swaps one node's implementation: same
+    // capabilities and resource shape, different numerics-bearing semantics.
+    let dag = fast.execution_dag();
+    let mut nodes = dag.nodes().values().cloned().collect::<Vec<_>>();
+    let swapped = WorkImplementationId::new("variant-deconvolver".to_string());
+    assert_ne!(nodes[0].implementation, swapped);
+    nodes[0].implementation = swapped;
+    let specification = ExecutionDagSpecification {
+        required_resource_capabilities: dag.required_resource_capabilities().clone(),
+        resource_alternative: dag.resource_alternative().clone(),
+        nodes,
+        logical_allocations: dag.logical_allocations().values().cloned().collect(),
+        physical_slots: dag.physical_slots().values().cloned().collect(),
+        initial_knobs: dag.initial_knobs().clone(),
+        adaptations: dag.adaptations().values().cloned().collect(),
+    };
+    let divergent = PhysicalWorkBinding::new(
+        ExecutionDag::new(specification).expect("variant physical DAG"),
+        fast.prediction().clone(),
+        fast.artifacts().to_vec(),
+        fast.observation_transaction().clone(),
+        fast.publication_layouts().clone(),
+    )
+    .expect("variant physical work");
+
+    let error = multi_candidate_plan(&problem, vec![slow, divergent])
+        .expect_err("a faster candidate may not trade away the science contract");
+
+    let message = error.to_string();
+    assert!(
+        message.contains("disagree on selected implementations"),
+        "unexpected refusal: {message}"
     );
 }
 

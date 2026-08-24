@@ -62,9 +62,10 @@ fn receipt_store(root: &Path) -> ExecutionReceiptStore {
 }
 
 fn provenance(seed: u8) -> ExecutionProvenance {
+    // Comparable evidence shares one executable build identity.
     execution_provenance(
         ExecutionAttemptId::from_sha256([seed; 32]),
-        BuildIdentity::from_sha256([seed.wrapping_add(1); 32]),
+        BuildIdentity::from_sha256([249; 32]),
     )
 }
 
@@ -157,6 +158,139 @@ fn explicit_promotion_produces_a_versioned_auditable_profile() {
     assert!(matches!(
         repeated,
         Err(ProfilePromotionError::AlreadyPromoted { profile }) if profile == record.profile_id()
+    ));
+}
+
+#[test]
+fn profile_identity_is_independent_of_reviewer_order_and_duplicates_are_refused() {
+    let directory = tempfile::tempdir().expect("order-independence root");
+    let profiles = directory.path().join("profiles");
+    let (receipts, attempts, _) = two_completed_receipts(directory.path(), 4);
+
+    let ascending =
+        promote_cost_model_profile(&profiles, &receipts, &attempts, review(), 1_700_000_000_000)
+            .expect("explicit reviewed promotion");
+    let mut descending = attempts;
+    descending.reverse();
+    let reordered = promote_cost_model_profile(
+        directory.path().join("profiles-mirror"),
+        &receipts,
+        &descending,
+        review(),
+        1_700_000_000_000,
+    )
+    .expect("reordered promotion of the same evidence set");
+
+    assert_eq!(
+        ascending.profile_id(),
+        reordered.profile_id(),
+        "the profile identity is a function of the reviewed evidence set"
+    );
+
+    let duplicated = promote_cost_model_profile(
+        &profiles,
+        &receipts,
+        &[attempts[0], attempts[0]],
+        review(),
+        1,
+    );
+    assert!(matches!(
+        duplicated,
+        Err(ProfilePromotionError::DuplicateEvidence { .. })
+    ));
+}
+
+#[test]
+fn divergent_build_identities_are_not_comparable_evidence() {
+    let directory = tempfile::tempdir().expect("build-divergence root");
+    let profiles = directory.path().join("profiles");
+    let skeleton = skeleton(4);
+    let receipts = receipt_store(directory.path());
+    let mut completion = RunToCompletion;
+    for seed in [61u8, 62] {
+        run_receipted(
+            &skeleton.problem,
+            &skeleton.plan,
+            &skeleton.current,
+            &test_registry(3, 6, None),
+            authority(),
+            &mut completion,
+            receipts.bind(provenance(seed)),
+        )
+        .expect("completed synthetic run");
+    }
+    // One more completed run from a different executable build.
+    let rebuilt = execution_provenance(
+        ExecutionAttemptId::from_sha256([71; 32]),
+        BuildIdentity::from_sha256([42; 32]),
+    );
+    run_receipted(
+        &skeleton.problem,
+        &skeleton.plan,
+        &skeleton.current,
+        &test_registry(3, 6, None),
+        authority(),
+        &mut completion,
+        receipts.bind(rebuilt),
+    )
+    .expect("completed rebuilt-binary run");
+
+    let error = promote_cost_model_profile(
+        &profiles,
+        &receipts,
+        &[
+            ExecutionAttemptId::from_sha256([61; 32]),
+            ExecutionAttemptId::from_sha256([71; 32]),
+        ],
+        review(),
+        1_700_000_000_000,
+    )
+    .expect_err("evidence from different builds is not comparable");
+    assert!(matches!(
+        error,
+        ProfilePromotionError::NotComparable {
+            field: "build identity",
+            ..
+        }
+    ));
+    assert!(!profiles.exists());
+}
+
+#[test]
+fn opening_a_profile_rejects_a_document_stored_under_another_identity() {
+    let directory = tempfile::tempdir().expect("identity-mismatch root");
+    let profiles = directory.path().join("profiles");
+    let (receipts, attempts, _) = two_completed_receipts(directory.path(), 4);
+    let record =
+        promote_cost_model_profile(&profiles, &receipts, &attempts, review(), 1_700_000_000_000)
+            .expect("explicit reviewed promotion");
+
+    // A second self-consistent profile document with different reviewed scope.
+    let other_review = ProfileReview::new(
+        "imaging-operator",
+        "reviewed comparable MFS calibration evidence, second wave",
+    )
+    .expect("complete review evidence");
+    let other = promote_cost_model_profile(
+        &profiles,
+        &receipts,
+        &attempts,
+        other_review,
+        1_700_000_001_000,
+    )
+    .expect("second reviewed promotion");
+    assert_ne!(other.profile_id(), record.profile_id());
+
+    std::fs::write(
+        profiles.join(format!("{}.json", other.profile_id())),
+        std::fs::read(profiles.join(format!("{}.json", record.profile_id())))
+            .expect("first profile document"),
+    )
+    .expect("store first document under second identity");
+
+    assert!(matches!(
+        open_cost_model_profile(&profiles, other.profile_id()),
+        Err(ProfilePromotionError::CorruptProfile { .. })
     ));
 }
 

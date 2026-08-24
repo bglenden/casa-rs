@@ -54,13 +54,13 @@ use casa_imaging_runtime::{
     PublicationLayoutLedger, PublicationMappedStaging, PublicationParticipant,
     PublicationPhysicalLayout, PublicationResourceBounds, PublicationStaging, QueueDemand,
     QueueResource, QueueResourceId, QuiescencePoint, RateDemand, RateResource, RateResourceId,
-    RateUnit, ReceiptFailureKind, ReceiptRetention, ReceiptStatus, RedactedPath, ResourceAuthority,
-    ResourceClaim, ResourceError, ResourceHeadroom, ResourceMeasurement, ResourceOverride,
-    ResourcePolicy, ResourceTopology, RunBindings, RunController, RunDirective, RunError,
-    RunToCompletion, RuntimeOverheadDemand, ScalingMetadata, SlotCompatibility, StagePrediction,
-    StorageDomain, StorageDomainId, StorageMode, WorkDependency, WorkDomain, WorkExecutionContext,
-    WorkImplementation, WorkImplementationId, WorkKind, WorkMeasurements, WorkNode, WorkNodeId,
-    plan as runtime_plan, run as runtime_run,
+    RateUnit, ReceiptFailureKind, ReceiptRetention, ReceiptStatus, RecordedInfeasibility,
+    RedactedPath, ResourceAuthority, ResourceClaim, ResourceError, ResourceHeadroom,
+    ResourceMeasurement, ResourceOverride, ResourcePolicy, ResourceTopology, RunBindings,
+    RunController, RunDirective, RunError, RunToCompletion, RuntimeOverheadDemand, ScalingMetadata,
+    SlotCompatibility, StagePrediction, StorageDomain, StorageDomainId, StorageMode,
+    WorkDependency, WorkDomain, WorkExecutionContext, WorkImplementation, WorkImplementationId,
+    WorkKind, WorkMeasurements, WorkNode, WorkNodeId, plan as runtime_plan, run as runtime_run,
 };
 use casa_ms::{
     BoundSelectedObservation, ObservationSourceBinding, SelectedObservationCompletion,
@@ -2695,9 +2695,13 @@ fn plan<E>(
     let _guard = run_lock()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    runtime_plan(problem, bindings, authority(), |problem, bindings| {
-        planner(problem, bindings).map(|candidate| vec![candidate])
-    })
+    runtime_plan(
+        problem,
+        bindings,
+        authority(),
+        &RecordedInfeasibility::default(),
+        |problem, bindings| planner(problem, bindings).map(|candidate| vec![candidate]),
+    )
 }
 
 fn execution_provenance(

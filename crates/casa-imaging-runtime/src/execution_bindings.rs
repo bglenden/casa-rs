@@ -19,11 +19,11 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     AdaptationId, AdaptationTransition, AdmissionInfeasibilityCertificate, AllocationId,
-    ClaimLifetime, DemandAlternatives, ExecutionAttemptId, ExecutionError, ExecutionKnobs,
-    ExecutionOutcome, ExecutionReceiptBinding, FenceKind, IoBufferKind, LeaseResource,
-    PhysicalSlotId, PublicationLayoutLedger, ReceiptError, ReceiptFailureKind, ReceiptStatus,
-    ResourceAuthority, ResourceError, ResourceOverride, ResourcePolicy, WorkImplementationId,
-    WorkKind, WorkNodeId,
+    AlternativeId, AlternativeRejection, AlternativeRejectionReason, ClaimLifetime,
+    DemandAlternatives, ExecutionAttemptId, ExecutionError, ExecutionKnobs, ExecutionOutcome,
+    ExecutionReceiptBinding, FenceKind, IoBufferKind, LeaseResource, PhysicalSlotId,
+    PublicationLayoutLedger, ReceiptError, ReceiptFailureKind, ReceiptStatus, ResourceAuthority,
+    ResourceError, ResourceOverride, ResourcePolicy, WorkImplementationId, WorkKind, WorkNodeId,
     execution::{
         ExecutionDag, ExecutionScheduler, PublicationReservation, SchedulerAction,
         SchedulerTerminal, WorkResult, io_buffer_kind_supports_work_kind, validate_topology,
@@ -374,6 +374,12 @@ impl PlannedArtifact {
     #[must_use]
     pub const fn node(&self) -> &WorkNodeId {
         &self.node
+    }
+
+    /// Return the optional cache identity bound to this artifact.
+    #[must_use]
+    pub const fn cache(&self) -> Option<CacheIdentity> {
+        self.cache
     }
 
     /// Return the plan-visible artifact role.
@@ -1702,46 +1708,95 @@ impl<E: Error + 'static> Error for PlanError<E> {
 /// Ask the Resource Authority to select one feasible planner-emitted physical candidate and seal it.
 ///
 /// Selection follows ADR-0010's lexicographic order. Every candidate must
-/// preserve identical science, capability, and numerics requirements; hard
-/// feasibility with reserved headroom is proven only by Resource Authority
+/// preserve identical science, product, numerics, and capability requirements;
+/// hard feasibility with reserved headroom is proven only by Resource Authority
 /// admission under the bound host-use policy; and among admitted candidates
 /// the plan commits to the minimum conservative predicted wall time including
-/// uncertainty. When no candidate fits, the returned
+/// uncertainty. Recorded terminal failures constrain their regions before
+/// admission. When no candidate fits, the returned
 /// [`PlanError::infeasibility_certificate`] reports exactly why each
 /// alternative was refused.
 pub fn plan<E>(
     problem: &CompiledProblem,
     bindings: PlanningBindings,
     authority: &ResourceAuthority,
+    recorded_infeasibility: &RecordedInfeasibility,
     planner: impl FnOnce(&CompiledProblem, &PlanningBindings) -> Result<Vec<PhysicalWorkBinding>, E>,
 ) -> Result<ExecutionPlan, PlanError<E>> {
-    let candidates = planner(problem, &bindings).map_err(PlanError::Planner)?;
+    let mut candidates = planner(problem, &bindings).map_err(PlanError::Planner)?;
     let Some(first) = candidates.first() else {
         return Err(PlanError::InvalidCandidate(ExecutionError::InvalidPlan(
             "physical planner emitted no candidates".to_string(),
         )));
     };
     let required_capabilities = first.execution_dag.required_resource_capabilities().clone();
+    let reference_implementations = first.execution_dag.selected_implementations().clone();
+    let reference_products = product_surface(first);
+    let reference_transaction = first.observation_transaction.clone();
+    let reference_layouts = first.publication_layouts.clone();
     for candidate in &candidates {
         if candidate.execution_dag.required_resource_capabilities() != &required_capabilities {
             return Err(PlanError::InvalidCandidate(ExecutionError::InvalidPlan(
                 "physical candidates disagree on required resource capabilities".to_string(),
             )));
         }
+        if candidate.execution_dag.selected_implementations() != &reference_implementations {
+            return Err(PlanError::InvalidCandidate(ExecutionError::InvalidPlan(
+                "physical candidates disagree on selected implementations; lexicographic planning preserves science and numerics contracts".to_string(),
+            )));
+        }
+        if product_surface(candidate) != reference_products {
+            return Err(PlanError::InvalidCandidate(ExecutionError::InvalidPlan(
+                "physical candidates disagree on the product artifact surface; lexicographic planning preserves product contracts".to_string(),
+            )));
+        }
+        if candidate.observation_transaction != reference_transaction {
+            return Err(PlanError::InvalidCandidate(ExecutionError::InvalidPlan(
+                "physical candidates disagree on the observation transaction; lexicographic planning preserves science contracts".to_string(),
+            )));
+        }
+        if candidate.publication_layouts != reference_layouts {
+            return Err(PlanError::InvalidCandidate(ExecutionError::InvalidPlan(
+                "physical candidates disagree on publication layouts; lexicographic planning preserves product contracts".to_string(),
+            )));
+        }
         validate_topology(&candidate.execution_dag, authority.topology())
             .map_err(PlanError::InvalidCandidate)?;
+    }
+    // Recorded terminal failures constrain their regions before admission:
+    // a failed or aborted execution is evidence of an infeasible region, never
+    // cost-model learning.
+    let mut constrained_rejections = Vec::new();
+    candidates.retain(|candidate| {
+        match recorded_infeasibility.constraint(
+            problem.problem_id().as_bytes(),
+            &candidate.execution_dag.resource_alternative().id,
+        ) {
+            Some((attempt, status)) => {
+                constrained_rejections.push(AlternativeRejection::new(
+                    candidate.execution_dag.resource_alternative().id.clone(),
+                    AlternativeRejectionReason::RecordedFailure { attempt, status },
+                ));
+                false
+            }
+            None => true,
+        }
+    });
+    if candidates.is_empty() {
+        return Err(PlanError::Resource(ResourceError::NoFeasibleAlternative(
+            AdmissionInfeasibilityCertificate::from_rejections(constrained_rejections),
+        )));
     }
     // Hard feasibility is decidable only by admission, so candidates are offered
     // in ascending conservative-predicted-time order and the authority commits
     // to the first feasible one: the minimum-time feasible candidate.
-    let mut ordered_candidates = candidates;
-    ordered_candidates.sort_by_key(|candidate| candidate.prediction().conservative_nanos());
+    candidates.sort_by_key(|candidate| candidate.prediction().conservative_nanos());
     let lease = authority
         .acquire(
             bindings.resource_policy.clone(),
             DemandAlternatives {
                 required_capabilities,
-                alternatives: ordered_candidates
+                alternatives: candidates
                     .iter()
                     .map(|candidate| candidate.execution_dag.resource_alternative().clone())
                     .collect(),
@@ -1755,7 +1810,7 @@ pub fn plan<E>(
             "provisional planning lease retained an unexpected fence".to_string(),
         )));
     }
-    let physical_work = ordered_candidates
+    let physical_work = candidates
         .into_iter()
         .find(|candidate| candidate.execution_dag.resource_alternative().id == selected)
         .ok_or_else(|| {
@@ -1790,6 +1845,71 @@ pub fn plan<E>(
     };
     plan.plan_id = execution_plan_id(&plan);
     Ok(plan)
+}
+
+/// The science- and product-bearing surface one physical candidate commits to.
+///
+/// Legal physical alternatives may vary resource claims, slots, knobs,
+/// adaptations, and execution-only work, but never this surface.
+fn product_surface(candidate: &PhysicalWorkBinding) -> BTreeMap<ArtifactIdentity, ArtifactRole> {
+    candidate
+        .artifacts
+        .iter()
+        .map(|artifact| (artifact.identity(), artifact.role()))
+        .collect()
+}
+
+/// Recorded terminal failed or aborted executions that constrain planning.
+///
+/// Each entry is durable receipt evidence that one demand alternative of one
+/// compiled problem terminally failed or was aborted. Planning refuses those
+/// regions before admission instead of re-attempting them blindly. This is
+/// explicit recorded evidence, not silent online learning: it never enters the
+/// performance cost model, which changes only through reviewed profile
+/// promotion.
+#[derive(Clone, Debug, Default)]
+pub struct RecordedInfeasibility {
+    regions: Vec<RegionFailure>,
+}
+
+#[derive(Clone, Debug)]
+struct RegionFailure {
+    problem: [u8; 32],
+    alternative: AlternativeId,
+    attempt: ExecutionAttemptId,
+    status: ReceiptStatus,
+}
+
+impl RecordedInfeasibility {
+    /// Derive constraints from every integrity-checked terminal failed or
+    /// aborted receipt in `store`.
+    pub fn from_store(store: &crate::ExecutionReceiptStore) -> Result<Self, ReceiptError> {
+        let mut regions = Vec::new();
+        for attempt in store.attempts()? {
+            let receipt = store.open(attempt)?;
+            let status = receipt.status();
+            if matches!(status, ReceiptStatus::Failed | ReceiptStatus::Aborted) {
+                regions.push(RegionFailure {
+                    problem: receipt.problem_identity(),
+                    alternative: receipt.selected_alternative_projection().id,
+                    attempt,
+                    status,
+                });
+            }
+        }
+        Ok(Self { regions })
+    }
+
+    fn constraint(
+        &self,
+        problem: [u8; 32],
+        alternative: &AlternativeId,
+    ) -> Option<(ExecutionAttemptId, ReceiptStatus)> {
+        self.regions
+            .iter()
+            .find(|region| region.problem == problem && &region.alternative == alternative)
+            .map(|region| (region.attempt, region.status))
+    }
 }
 
 /// Effective identities observed immediately before execution.

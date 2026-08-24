@@ -35,9 +35,9 @@ use crate::{
     IoBufferDemand, IoBufferKind, MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand,
     MemoryView, MemoryViewKind, ObservationTransactionWork, PhysicalWorkBinding,
     PlannerCostModelProfileId, PlanningBindings, QueueDemand, QueueResource, QueueResourceId,
-    QuiescencePoint, RateDemand, RateResource, RateResourceId, RateUnit, ResourceAuthority,
-    ResourceHeadroom, ResourcePolicy, ResourceTopology, RuntimeOverheadDemand, ScalingMetadata,
-    StorageDemand, StorageDomain, StorageDomainId, plan as authority_plan,
+    QuiescencePoint, RateDemand, RateResource, RateResourceId, RateUnit, RecordedInfeasibility,
+    ResourceAuthority, ResourceHeadroom, ResourcePolicy, ResourceTopology, RuntimeOverheadDemand,
+    ScalingMetadata, StorageDemand, StorageDomain, StorageDomainId, plan as authority_plan,
 };
 
 fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
@@ -80,9 +80,13 @@ fn plan<E>(
     } else {
         cpu_authority()
     };
-    match authority_plan(problem, bindings, &authority, |_, _| {
-        Ok::<_, std::convert::Infallible>(vec![candidate])
-    }) {
+    match authority_plan(
+        problem,
+        bindings,
+        &authority,
+        &RecordedInfeasibility::default(),
+        |_, _| Ok::<_, std::convert::Infallible>(vec![candidate]),
+    ) {
         Ok(plan) => Ok(plan),
         Err(crate::PlanError::InvalidCandidate(error)) => {
             Err(crate::PlanError::InvalidCandidate(error))
@@ -1342,6 +1346,7 @@ fn planning_seals_the_first_resource_authority_feasible_candidate() {
             PlannerCostModelProfileId::from_sha256([8; 32]),
         ),
         &io_authority(),
+        &RecordedInfeasibility::default(),
         |_, _| Ok::<_, std::convert::Infallible>(candidates),
     )
     .expect("serial candidate is feasible");
@@ -1372,11 +1377,124 @@ fn planning_fails_before_sealing_when_no_candidate_is_feasible() {
             PlannerCostModelProfileId::from_sha256([8; 32]),
         ),
         &cpu_authority(),
+        &RecordedInfeasibility::default(),
         |_, _| Ok::<_, std::convert::Infallible>(vec![candidate]),
     )
     .expect_err("no candidate fits the authority inventory");
 
     assert!(matches!(error, crate::PlanError::Resource(_)));
+}
+
+#[test]
+fn recorded_failed_and_aborted_executions_constrain_planning_without_learning() {
+    let problem = compiled_problem();
+    let sealed_dag = ExecutionDag::new(plan_spec(vec![cpu_node("work", BTreeSet::new())]))
+        .expect("valid physical work");
+    let alternative_id = sealed_dag.resource_alternative().id.clone();
+    let sealed = bound_plan(sealed_dag.clone());
+
+    let directory = tempfile::tempdir().expect("receipt directory");
+    let store = crate::ExecutionReceiptStore::new(
+        directory.path(),
+        crate::ReceiptRetention::new(4, 1_048_576).expect("retention"),
+    )
+    .expect("receipt store");
+    for (attempt, build, status) in [
+        (91_u8, 92_u8, crate::ReceiptStatus::Failed),
+        (93, 94, crate::ReceiptStatus::Aborted),
+        (95, 96, crate::ReceiptStatus::Cancelled),
+    ] {
+        // Failed and aborted receipts retain failure evidence; cancelled ones do not.
+        let failure = match status {
+            crate::ReceiptStatus::Failed | crate::ReceiptStatus::Aborted => {
+                Some(crate::receipt::ReceiptFailure::new(
+                    crate::ReceiptFailureKind::Interrupted,
+                    None,
+                    Some("synthetic terminal failure".to_string()),
+                ))
+            }
+            _ => None,
+        };
+        let mut recorder = store
+            .begin(
+                execution_provenance(
+                    crate::ExecutionAttemptId::from_sha256([attempt; 32]),
+                    crate::BuildIdentity::from_sha256([build; 32]),
+                ),
+                &problem,
+                &sealed,
+            )
+            .expect("begin receipt");
+        recorder
+            .finish(status, failure)
+            .expect("finish terminal receipt");
+    }
+
+    let recorded = RecordedInfeasibility::from_store(&store).expect("recorded constraints");
+    // Mirror the shared fixture's authority selection for this DAG shape.
+    let demand = &sealed.execution_dag().resource_alternative().demand;
+    let uses_unified_domain = sealed
+        .execution_dag()
+        .physical_slots()
+        .values()
+        .any(|slot| slot.compatibility.memory_domain.as_str() == "unified-memory");
+    let authority = if !demand.accelerators.is_empty() || uses_unified_domain {
+        unified_authority()
+    } else if !demand.rates.is_empty() || !demand.queues.is_empty() {
+        io_authority()
+    } else {
+        cpu_authority()
+    };
+    let bindings = || {
+        PlanningBindings::new(
+            ImplementationRegistryId::from_sha256([7; 32]),
+            ResourcePolicy::Exclusive,
+            PlannerCostModelProfileId::from_sha256([8; 32]),
+        )
+    };
+    let error = authority_plan(&problem, bindings(), &authority, &recorded, |_, _| {
+        Ok::<_, std::convert::Infallible>(vec![physical_work_binding(
+            ExecutionDag::new(plan_spec(vec![cpu_node("work", BTreeSet::new())]))
+                .expect("candidate physical work"),
+        )])
+    })
+    .expect_err("recorded failures must constrain the infeasible region");
+
+    let certificate = match &error {
+        crate::PlanError::Resource(crate::ResourceError::NoFeasibleAlternative(certificate)) => {
+            certificate.clone()
+        }
+        other => panic!("expected a recorded-infeasibility refusal, got {other:?}"),
+    };
+    assert_eq!(certificate.rejections().len(), 1);
+    assert_eq!(certificate.rejections()[0].alternative(), &alternative_id);
+    assert_eq!(
+        certificate.rejections()[0].reason(),
+        &crate::AlternativeRejectionReason::RecordedFailure {
+            attempt: crate::ExecutionAttemptId::from_sha256([91; 32]),
+            status: crate::ReceiptStatus::Failed,
+        }
+    );
+
+    // Without recorded terminal failures the same candidate admits: recorded
+    // evidence constrains regions; it never silently rewrites feasibility.
+    let unconstrained = authority_plan(
+        &problem,
+        bindings(),
+        &authority,
+        &RecordedInfeasibility::default(),
+        |_, _| {
+            Ok::<_, std::convert::Infallible>(vec![physical_work_binding(
+                ExecutionDag::new(plan_spec(vec![cpu_node("work", BTreeSet::new())]))
+                    .expect("candidate physical work"),
+            )])
+        },
+    )
+    .expect("the same candidate plans without recorded constraints");
+    assert_eq!(
+        unconstrained.execution_dag().resource_alternative().id,
+        alternative_id
+    );
 }
 
 #[test]

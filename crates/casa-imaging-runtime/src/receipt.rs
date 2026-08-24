@@ -467,6 +467,15 @@ pub enum ReceiptInfeasibilityCertificate {
         /// Available amount after policy, pressure, and active reservations.
         available: u64,
     },
+    /// Planning refused the alternative because a prior execution of it
+    /// terminally failed or was aborted; recorded evidence constrains the
+    /// infeasible region without entering the cost model.
+    RecordedFailure {
+        /// Attempt whose terminal receipt recorded the failure.
+        attempt: String,
+        /// Terminal status retained by that receipt.
+        status: ReceiptStatus,
+    },
 }
 
 /// One plan-authorized adaptation and its durable application evidence.
@@ -1448,6 +1457,34 @@ impl ExecutionReceiptStore {
         }
     }
 
+    /// Return every stored attempt identity in ascending order.
+    ///
+    /// Identities come from receipt filenames; reopening still validates each
+    /// document's integrity.
+    pub fn attempts(&self) -> Result<Vec<ExecutionAttemptId>, ReceiptError> {
+        let mut attempts = Vec::new();
+        for entry in fs::read_dir(&self.root).map_err(|source| ReceiptError::Io {
+            action: "list execution receipts",
+            source,
+        })? {
+            let name = entry
+                .map_err(|source| ReceiptError::Io {
+                    action: "read execution receipt entry",
+                    source,
+                })?
+                .file_name();
+            let name = name.to_string_lossy();
+            let Some(stem) = name.strip_suffix(RECEIPT_SUFFIX) else {
+                continue;
+            };
+            if stem.len() == 64 && stem.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                attempts.push(ExecutionAttemptId::from_sha256(parse_digest(stem)));
+            }
+        }
+        attempts.sort();
+        Ok(attempts)
+    }
+
     /// Reopen and integrity-check one receipt by its caller-owned attempt identity.
     pub fn open(&self, attempt: ExecutionAttemptId) -> Result<ExecutionReceipt, ReceiptError> {
         let path = self.receipt_path(attempt);
@@ -1829,6 +1866,10 @@ enum InfeasibilityProjection {
         required: u64,
         available: u64,
     },
+    RecordedFailure {
+        attempt: String,
+        status: ReceiptStatus,
+    },
 }
 
 impl InfeasibilityProjection {
@@ -1844,6 +1885,12 @@ impl InfeasibilityProjection {
                 required: *required,
                 available: *available,
             },
+            Self::RecordedFailure { attempt, status } => {
+                ReceiptInfeasibilityCertificate::RecordedFailure {
+                    attempt: attempt.clone(),
+                    status: *status,
+                }
+            }
         }
     }
 }
@@ -1937,6 +1984,12 @@ impl ReceiptFailure {
                         required: *required,
                         available: *available,
                     },
+                    crate::AlternativeRejectionReason::RecordedFailure { attempt, status } => {
+                        InfeasibilityProjection::RecordedFailure {
+                            attempt: hex(&attempt.as_bytes()),
+                            status: *status,
+                        }
+                    }
                 }
             }
             crate::ResourceError::Infeasible {

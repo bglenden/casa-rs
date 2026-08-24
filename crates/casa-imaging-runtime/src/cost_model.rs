@@ -18,7 +18,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     ExecutionAttemptId, ExecutionReceiptStore, PlannerCostModelProfileId, ReceiptError,
-    ReceiptStatus, WorkNodeId, receipt::ExecutionReceipt,
+    ReceiptStatus, WorkNodeId, execution_bindings::CanonicalEncoder, receipt::ExecutionReceipt,
 };
 
 const PROFILE_SCHEMA_NAME: &str = "casa-rs-planner-cost-model-profile";
@@ -184,6 +184,11 @@ pub enum ProfilePromotionError {
         /// Identity field that diverged from the first reviewed receipt.
         field: &'static str,
     },
+    /// A reviewed attempt appeared more than once in one promotion request.
+    DuplicateEvidence {
+        /// Duplicated attempt.
+        attempt: ExecutionAttemptId,
+    },
     /// A comparable receipt omitted predicted or actual stage evidence.
     MissingStageEvidence {
         /// Refused attempt.
@@ -215,6 +220,9 @@ impl fmt::Display for ProfilePromotionError {
             Self::Io { action, source } => write!(formatter, "{action} failed: {source}"),
             Self::Json { source } => write!(formatter, "profile document failed: {source}"),
             Self::EmptyEvidence => formatter.write_str("promotion requires reviewed receipts"),
+            Self::DuplicateEvidence { attempt } => {
+                write!(formatter, "attempt {attempt} was offered more than once")
+            }
             Self::InvalidReview => {
                 formatter.write_str("promotion requires a reviewer identity and justification")
             }
@@ -260,7 +268,10 @@ impl std::error::Error for ProfilePromotionError {
 /// This command is the only way planner behavior changes after planning began.
 /// Every offered attempt must reopen from the receipt store as an integrity-
 /// checked `Completed` run sharing the first receipt's effective plan,
-/// implementation registry, resource policy, and lineage cost-model identity.
+/// implementation registry, resource policy, build identity, and lineage
+/// cost-model identity. Evidence is canonicalized: the profile identity is a
+/// function of the reviewed evidence *set*, so caller order never matters and
+/// duplicate attempts are refused.
 pub fn promote_cost_model_profile(
     profiles_root: impl AsRef<Path>,
     receipts: &ExecutionReceiptStore,
@@ -271,7 +282,14 @@ pub fn promote_cost_model_profile(
     if attempts.is_empty() {
         return Err(ProfilePromotionError::EmptyEvidence);
     }
-    let opened = attempts
+    let mut ordered = attempts.to_vec();
+    ordered.sort();
+    for pair in ordered.windows(2) {
+        if pair[0] == pair[1] {
+            return Err(ProfilePromotionError::DuplicateEvidence { attempt: pair[0] });
+        }
+    }
+    let opened = ordered
         .iter()
         .map(|attempt| {
             receipts
@@ -286,7 +304,7 @@ pub fn promote_cost_model_profile(
     }
     let confidence_ppm = first.prediction_confidence_ppm();
     let mut entries = Vec::new();
-    for (attempt, receipt) in attempts.iter().zip(&opened) {
+    for (attempt, receipt) in ordered.iter().zip(&opened) {
         for node in receipt.plan_node_identities() {
             let Some(predicted_nanos) = receipt.stage_predicted_elapsed_nanos(&node) else {
                 return Err(ProfilePromotionError::MissingStageEvidence {
@@ -348,6 +366,10 @@ fn validate_comparability(
             "resource policy",
         ),
         (
+            first.build_identity() != receipt.build_identity(),
+            "build identity",
+        ),
+        (
             first.cost_model_identity() != receipt.cost_model_identity(),
             "lineage cost model",
         ),
@@ -366,25 +388,21 @@ fn record_digest_input(
     review: &ProfileReview,
     entries: &[ProfileEvidenceEntry],
 ) -> Vec<u8> {
-    let mut input = Vec::new();
-    input.extend_from_slice(PROFILE_IDENTITY_DOMAIN);
-    input.extend_from_slice(&PROFILE_SCHEMA_VERSION.to_le_bytes());
-    input.extend_from_slice(&lineage_cost_model);
-    input.extend_from_slice(&confidence_ppm.to_le_bytes());
-    input.push(0);
-    input.extend_from_slice(review.reviewer().as_bytes());
-    input.push(0);
-    input.extend_from_slice(review.note().as_bytes());
-    input.push(0);
+    let mut encoder = CanonicalEncoder::new();
+    encoder.string(std::str::from_utf8(PROFILE_IDENTITY_DOMAIN).expect("ASCII domain"));
+    encoder.u32(PROFILE_SCHEMA_VERSION);
+    encoder.digest(lineage_cost_model);
+    encoder.u32(confidence_ppm);
+    encoder.string(review.reviewer());
+    encoder.string(review.note());
+    encoder.usize(entries.len());
     for entry in entries {
-        input.extend_from_slice(&entry.attempt.as_bytes());
-        input.push(0);
-        input.extend_from_slice(entry.node.as_str().as_bytes());
-        input.push(0);
-        input.extend_from_slice(&entry.predicted_nanos.to_le_bytes());
-        input.extend_from_slice(&entry.actual_nanos.to_le_bytes());
+        encoder.digest(entry.attempt.as_bytes());
+        encoder.string(entry.node.as_str());
+        encoder.u64(entry.predicted_nanos);
+        encoder.u64(entry.actual_nanos);
     }
-    input
+    encoder.finish().to_vec()
 }
 
 fn profile_identity(input: &[u8]) -> PlannerCostModelProfileId {
@@ -546,6 +564,13 @@ fn persist_profile(
             action: "write staged profile document",
             source,
         })?;
+    temporary
+        .as_file()
+        .sync_all()
+        .map_err(|source| ProfilePromotionError::Io {
+            action: "sync staged profile document",
+            source,
+        })?;
     match temporary.persist_noclobber(&path) {
         Ok(_) => sync_directory(root),
         Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
@@ -565,6 +590,10 @@ fn profile_path(root: &Path, profile: PlannerCostModelProfileId) -> PathBuf {
 }
 
 /// Reopen and integrity-check one promoted profile by its content identity.
+///
+/// The stored document must recompute to exactly the requested profile
+/// identity; a self-consistent document stored under a different name is
+/// rejected as corrupt rather than silently accepted.
 pub fn open_cost_model_profile(
     profiles_root: impl AsRef<Path>,
     profile: PlannerCostModelProfileId,
@@ -580,7 +609,11 @@ pub fn open_cost_model_profile(
             }
         }
     })?;
-    decode_profile(&bytes)
+    let record = decode_profile(&bytes)?;
+    if record.profile_id() != profile {
+        return Err(ProfilePromotionError::CorruptProfile { profile });
+    }
+    Ok(record)
 }
 
 fn sync_directory(path: &Path) -> Result<(), ProfilePromotionError> {
