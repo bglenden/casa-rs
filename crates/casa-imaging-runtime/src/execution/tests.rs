@@ -96,6 +96,15 @@ fn plan<E>(
 }
 
 fn compiled_problem() -> casa_imaging_model::CompiledProblem {
+    compiled_problem_with_reference_data(Vec::new())
+}
+
+fn compiled_problem_with_reference_data(
+    reference_data: Vec<(
+        casa_imaging_model::ReferenceDataKind,
+        casa_imaging_model::LogicalIdentity,
+    )>,
+) -> casa_imaging_model::CompiledProblem {
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
         SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
@@ -172,7 +181,7 @@ fn compiled_problem() -> casa_imaging_model::CompiledProblem {
                 .collect(),
         ),
     );
-    let inputs = problem_inputs(1, Vec::new(), ModelStateIdentity::Empty);
+    let inputs = problem_inputs(1, reference_data, ModelStateIdentity::Empty);
     compile(ImagingRequest::new(
         specification,
         geometry,
@@ -531,15 +540,8 @@ fn physical_work_binding_with_artifacts(
         })
         .collect::<BTreeSet<_>>();
     let read_completion = WorkDependency::Fence(FenceId::new(read.clone(), FenceKind::Io));
-    let prepared_nodes = artifacts
-        .iter()
-        .map(|artifact| artifact.node().clone())
-        .collect::<BTreeSet<_>>();
     let mut nodes = dag.nodes().values().cloned().collect::<Vec<_>>();
-    for node in nodes
-        .iter_mut()
-        .filter(|node| node.dependencies.is_empty() && !prepared_nodes.contains(&node.id))
-    {
+    for node in nodes.iter_mut().filter(|node| node.dependencies.is_empty()) {
         node.dependencies.insert(read_completion.clone());
     }
     let measurement_set = casa_imaging_model::MeasurementSetIdentity::new(identity(1));
@@ -1015,6 +1017,8 @@ struct MalformedRejectionImplementation {
     artifact: crate::ArtifactIdentity,
     ledger: crate::ArtifactIdentity,
     observed: Option<crate::ArtifactIdentity>,
+    selected_observation_completion:
+        std::sync::Mutex<Option<casa_ms::SelectedObservationCompletion>>,
 }
 
 impl crate::WorkImplementation for MalformedRejectionImplementation {
@@ -1028,6 +1032,51 @@ impl crate::WorkImplementation for MalformedRejectionImplementation {
         &self,
         context: crate::WorkExecutionContext<'_>,
     ) -> Result<crate::WorkMeasurements, Self::Error> {
+        if context.node().kind == WorkKind::ObservationRead {
+            let problem = context
+                .selected_observation()
+                .ok_or_else(|| std::io::Error::other("missing selected-observation authority"))?;
+            let bindings = problem
+                .inputs()
+                .observation_snapshot()
+                .sources()
+                .iter()
+                .map(|source| {
+                    casa_ms::ObservationSourceBinding::new(
+                        casa_imaging_model::ObservationSourceState::new(
+                            source.identity(),
+                            source.selection().rows().clone(),
+                            source.generations().clone(),
+                        ),
+                        casa_ms::SelectedObservationContentBudget::new(4 * 1024 * 1024, 1, 4),
+                    )
+                })
+                .collect();
+            let measures_identity = problem
+                .inputs()
+                .reference_data()
+                .iter()
+                .find_map(|(kind, identity)| {
+                    (*kind == casa_imaging_model::ReferenceDataKind::Measures).then_some(*identity)
+                })
+                .ok_or_else(|| std::io::Error::other("missing Measures identity"))?;
+            let measures = casa_ms::SelectedObservationMeasures::new(
+                casa_test_support::deterministic_measures_provider_for_identity(
+                    measures_identity.as_bytes(),
+                ),
+            )
+            .map_err(std::io::Error::other)?;
+            let mut observation =
+                casa_ms::BoundSelectedObservation::open(problem, measures, bindings)
+                    .map_err(std::io::Error::other)?;
+            let completion = observation
+                .traverse(problem, |_| Ok::<_, std::io::Error>(()))
+                .map_err(std::io::Error::other)?;
+            *self
+                .selected_observation_completion
+                .lock()
+                .expect("selected-observation completion lock") = Some(completion);
+        }
         let resources = context
             .node()
             .claims
@@ -1082,11 +1131,17 @@ impl crate::WorkImplementation for MalformedRejectionImplementation {
 
     fn complete_observation_read(
         &self,
-        _completion: crate::ObservationReadCompletionContext,
+        completion: crate::ObservationReadCompletionContext,
     ) -> Result<crate::AttemptBoundObservationCompletion, Self::Error> {
-        Err(std::io::Error::other(
-            "malformed-evidence test must fail before observation traversal",
-        ))
+        let owner_completion = self
+            .selected_observation_completion
+            .lock()
+            .expect("selected-observation completion lock")
+            .take()
+            .ok_or_else(|| std::io::Error::other("ObservationRead produced no completion"))?;
+        completion
+            .bind(owner_completion)
+            .map_err(std::io::Error::other)
     }
 
     fn publish(&self, _context: crate::WorkExecutionContext<'_>) -> Result<(), Self::Error> {
@@ -1113,7 +1168,10 @@ impl crate::ImplementationRegistry for MalformedRejectionRegistry {
 
 #[test]
 fn malformed_store_owned_rejection_is_rejected_without_partial_receipt_mutation() {
-    let problem = compiled_problem();
+    let problem = compiled_problem_with_reference_data(vec![(
+        casa_imaging_model::ReferenceDataKind::Measures,
+        identity(90),
+    )]);
     let node_id = WorkNodeId::new("malformed-rejection-cache");
     let mut cache_node = cpu_node(node_id.as_str(), BTreeSet::new());
     cache_node.kind = WorkKind::Cache;
@@ -1183,6 +1241,7 @@ fn malformed_store_owned_rejection_is_rejected_without_partial_receipt_mutation(
                 artifact,
                 ledger,
                 observed,
+                selected_observation_completion: std::sync::Mutex::new(None),
             },
         };
         let attempt_byte = 153 + u8::try_from(index).expect("small malformed-evidence index");
@@ -1205,13 +1264,16 @@ fn malformed_store_owned_rejection_is_rejected_without_partial_receipt_mutation(
             receipts.bind(provenance),
         )
         .expect_err("malformed store-owned rejection identity must fail closed");
-        assert!(matches!(
-            error,
-            crate::RunError::Evidence(crate::ExecutionEvidenceError::ArtifactDispositionMismatch {
-                artifact: rejected,
-                ..
-            }) if rejected == artifact
-        ));
+        assert!(
+            matches!(
+                &error,
+                crate::RunError::Evidence(crate::ExecutionEvidenceError::ArtifactDispositionMismatch {
+                    artifact: rejected,
+                    ..
+                }) if *rejected == artifact
+            ),
+            "unexpected malformed-rejection failure: {error:?}"
+        );
 
         let receipt = receipts.open(attempt).expect("malformed rejection receipt");
         assert_eq!(receipt.status(), crate::ReceiptStatus::Failed);

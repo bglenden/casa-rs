@@ -620,15 +620,6 @@ fn prepared_storage_resource(
 }
 
 fn prepared_physical_work(
-    descriptor: &PreparedArtifactDescriptor,
-    store: &PreparedArtifactStore,
-    operation: PreparedArtifactOperation,
-) -> PhysicalWorkBinding {
-    let problem = compile(request(1)).expect("default prepared physical-work problem");
-    prepared_physical_work_for_problem(&problem, descriptor, store, operation)
-}
-
-fn prepared_physical_work_for_problem(
     problem: &casa_imaging_model::CompiledProblem,
     descriptor: &PreparedArtifactDescriptor,
     store: &PreparedArtifactStore,
@@ -966,7 +957,14 @@ fn execute_prepared_operation(
     let plan = plan(
         problem,
         PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
-        |_, _| Ok::<_, ()>(prepared_physical_work(&descriptor, &store, operation)),
+        |_, _| {
+            Ok::<_, ()>(prepared_physical_work(
+                problem,
+                &descriptor,
+                &store,
+                operation,
+            ))
+        },
     )
     .expect("prepared operation plan");
     let adapter = PreparedOperationAdapter::new(operation, store, descriptor);
@@ -1081,7 +1079,12 @@ fn prepared_streaming_residency_is_admitted_once_without_overlapping_slots() {
     );
     assert_eq!(reservation.source_descriptor_bytes(), 0);
     assert_eq!(reservation.file_descriptors(), 2);
-    let work = prepared_physical_work(&descriptor, &store, PreparedArtifactOperation::Generate);
+    let work = prepared_physical_work(
+        &problem,
+        &descriptor,
+        &store,
+        PreparedArtifactOperation::Generate,
+    );
 
     let prepared_demands = work
         .execution_dag()
@@ -1167,7 +1170,14 @@ fn prepared_sources_are_bounded_accounted_files_and_never_casa_tables() {
     let plan = plan(
         &problem,
         PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
-        |_, _| Ok::<_, ()>(prepared_physical_work(&descriptor, &store, operation)),
+        |problem, _| {
+            Ok::<_, ()>(prepared_physical_work(
+                problem,
+                &descriptor,
+                &store,
+                operation,
+            ))
+        },
     )
     .expect("CASA-source plan");
     let casa_table = tempfile::tempdir().expect("CASA table source");
@@ -1246,8 +1256,9 @@ fn cold_load_rejects_missing_mismatched_unlisted_and_wrong_producer_sources() {
         let plan = plan(
             &problem,
             PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
-            |_, _| {
+            |problem, _| {
                 Ok::<_, ()>(prepared_physical_work(
+                    problem,
                     &descriptor,
                     &store,
                     planned_operation,
@@ -1323,8 +1334,9 @@ fn cold_load_source_identity_is_owned_and_accounted_by_its_predecessor_receipt()
     let plan = plan(
         &problem,
         PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
-        |_, _| {
+        |problem, _| {
             Ok::<_, ()>(prepared_physical_work(
+                problem,
                 &descriptor,
                 &store,
                 PreparedArtifactOperation::Load,
@@ -1390,8 +1402,9 @@ fn cold_load_cannot_run_without_its_predecessor_source_receipt() {
     let plan = plan(
         &problem,
         PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
-        |_, _| {
+        |problem, _| {
             Ok::<_, ()>(prepared_physical_work(
+                problem,
                 &descriptor,
                 &store,
                 PreparedArtifactOperation::Load,
@@ -1492,8 +1505,9 @@ fn public_prepared_generate_load_and_reuse_are_plan_and_receipt_bound() {
     let generate_plan = plan(
         &problem,
         PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
-        |_, _| {
+        |problem, _| {
             Ok::<_, ()>(prepared_physical_work(
+                problem,
                 &generated_descriptor,
                 &generated_store,
                 PreparedArtifactOperation::Generate,
@@ -1689,8 +1703,9 @@ fn public_prepared_generate_load_and_reuse_are_plan_and_receipt_bound() {
     let reuse_plan = plan(
         &problem,
         PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
-        |_, _| {
+        |problem, _| {
             Ok::<_, ()>(prepared_physical_work(
+                problem,
                 &reuse_descriptor,
                 &reuse_store,
                 PreparedArtifactOperation::Reuse,
@@ -1771,8 +1786,9 @@ fn public_prepared_generate_load_and_reuse_are_plan_and_receipt_bound() {
     let load_plan = plan(
         &problem,
         PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
-        |_, _| {
+        |problem, _| {
             Ok::<_, ()>(prepared_physical_work(
+                problem,
                 &loaded_descriptor,
                 &loaded_store,
                 PreparedArtifactOperation::Load,
@@ -1861,8 +1877,9 @@ fn public_prepared_generate_load_and_reuse_are_plan_and_receipt_bound() {
     let mismatch_plan = plan(
         &problem,
         PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
-        |_, _| {
+        |problem, _| {
             Ok::<_, ()>(prepared_physical_work(
+                problem,
                 &mismatch_descriptor,
                 &mismatch_store,
                 PreparedArtifactOperation::Generate,
@@ -2031,8 +2048,9 @@ fn public_prepared_generate_load_and_reuse_are_plan_and_receipt_bound() {
     let owner_mismatch_plan = plan(
         &problem,
         PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
-        |_, _| {
+        |problem, _| {
             Ok::<_, ()>(prepared_physical_work(
+                problem,
                 &spoofed_owner_descriptor,
                 &owner_mismatch_store,
                 PreparedArtifactOperation::Generate,
@@ -2492,8 +2510,9 @@ fn public_prepared_reuse_receipts_fail_closed_rejections() {
     let missing_plan = plan(
         &problem,
         PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
-        |_, _| {
+        |problem, _| {
             Ok::<_, ()>(prepared_physical_work(
+                problem,
                 &missing_descriptor,
                 &missing_store,
                 PreparedArtifactOperation::Reuse,
@@ -2571,8 +2590,9 @@ fn public_prepared_reuse_receipts_fail_closed_rejections() {
     let generate_plan = plan(
         &problem,
         PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
-        |_, _| {
+        |problem, _| {
             Ok::<_, ()>(prepared_physical_work(
+                problem,
                 &generate_descriptor,
                 &generate_store,
                 PreparedArtifactOperation::Generate,
@@ -2614,8 +2634,9 @@ fn public_prepared_reuse_receipts_fail_closed_rejections() {
     let corrupt_plan = plan(
         &problem,
         PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
-        |_, _| {
+        |problem, _| {
             Ok::<_, ()>(prepared_physical_work(
+                problem,
                 &corrupt_descriptor,
                 &corrupt_store,
                 PreparedArtifactOperation::Reuse,
@@ -2959,7 +2980,14 @@ fn failed_prepared_receipt_retains_materialization_eviction_and_io_evidence() {
     let plan = plan(
         &problem,
         PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
-        |_, _| Ok::<_, ()>(prepared_physical_work(&descriptor, &store, operation)),
+        |problem, _| {
+            Ok::<_, ()>(prepared_physical_work(
+                problem,
+                &descriptor,
+                &store,
+                operation,
+            ))
+        },
     )
     .expect("prepared failure plan");
     let node_id = descriptor.work_node_id(operation);
@@ -3143,8 +3171,9 @@ fn orphan_staging_is_included_in_reuse_budget_and_receipt_evidence() {
     let over_budget_plan = plan(
         &problem,
         PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
-        |_, _| {
+        |problem, _| {
             Ok::<_, ()>(prepared_physical_work(
+                problem,
                 &over_budget_descriptor,
                 &over_budget_store,
                 operation,
@@ -3334,7 +3363,14 @@ fn cold_operation_fails_before_deleting_over_budget_orphan_staging() {
         let plan = plan(
             &problem,
             PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
-            |_, _| Ok::<_, ()>(prepared_physical_work(&descriptor, &store, operation)),
+            |problem, _| {
+                Ok::<_, ()>(prepared_physical_work(
+                    problem,
+                    &descriptor,
+                    &store,
+                    operation,
+                ))
+            },
         )
         .expect("over-budget cold orphan plan");
         let adapter = PreparedOperationAdapter::new(operation, store, descriptor);
@@ -3427,7 +3463,14 @@ fn prepared_resource_overrun_fails_closed_without_censoring_the_peak() {
     let plan = plan(
         &problem,
         PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
-        |_, _| Ok::<_, ()>(prepared_physical_work(&descriptor, &store, operation)),
+        |problem, _| {
+            Ok::<_, ()>(prepared_physical_work(
+                problem,
+                &descriptor,
+                &store,
+                operation,
+            ))
+        },
     )
     .expect("prepared overrun plan");
     let node_id = descriptor.work_node_id(operation);
