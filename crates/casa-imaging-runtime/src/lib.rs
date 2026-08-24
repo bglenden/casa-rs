@@ -6,6 +6,7 @@ mod complete_data_operator;
 mod cost_model;
 mod execution;
 mod execution_bindings;
+mod major_cycle;
 mod observation_transaction;
 mod prepared_artifact;
 mod publication_layout;
@@ -36,6 +37,9 @@ pub use complete_data_operator::{
 pub use cost_model::{
     PlannerCostModelProfileBootstrap, PlannerCostModelProfileRecord, ProfileEvidenceEntry,
     ProfilePromotionError, ProfileReview, open_cost_model_profile, promote_cost_model_profile,
+};
+pub use major_cycle::{
+    MajorCycleOperatorError, MajorCycleOperatorResult, MajorCycleOperatorState,
 };
 pub use execution::{
     AdaptationId, AdaptationTransition, AllocationAccess, AllocationId, AllocationLayout,

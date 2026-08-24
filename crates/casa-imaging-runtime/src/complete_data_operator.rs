@@ -767,6 +767,12 @@ pub struct CompleteDataOperatorCompletion {
 }
 
 impl CompleteDataOperatorCompletion {
+    pub(crate) const fn owner_completion(
+        &self,
+    ) -> &casa_imaging_reconstruction::runtime_adapter::CompleteDataOwnerCompletion {
+        &self.owner
+    }
+
     /// Return the exact Compiled Problem executed by this operator.
     #[must_use]
     pub const fn problem_id(&self) -> CompiledProblemId {

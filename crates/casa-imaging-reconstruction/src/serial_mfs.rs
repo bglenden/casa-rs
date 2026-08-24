@@ -6,20 +6,25 @@ use std::{fmt, sync::Arc};
 
 use casa_imaging_model::{
     CompiledGeometryId, CompiledProblem, CompiledProblemId, CorrelationType, FiniteValuePolicy,
-    InstrumentResponse, NumericPrecision, NumericsContractId, PolarizationCoordinate, Projection,
-    ReconstructionBasis, ReductionPolicy, SelectedVisibilitySample, WeightingCommitmentId,
+    InstrumentResponse, LogicalIdentity, NumericPrecision, NumericsContractId,
+    PolarizationCoordinate, Projection, ReconstructionBasis, ReductionPolicy,
+    SelectedVisibilitySample, WeightingCommitmentId,
 };
 use ndarray::{Array2, Axis};
 use num_complex::Complex64;
 use rustfft::{Fft, FftPlanner};
 use thiserror::Error;
 
-use crate::weighting::{
-    CoverageEncoder, WeightingAlgorithmState, WeightingGenerationId, WeightingReplayChunk,
-    WeightingReplayCoverageId, WeightingReplayId, WeightingReplaySummary,
+use crate::{
+    canonical_f64_bits,
+    weighting::{
+        CoverageEncoder, WeightingAlgorithmState, WeightingGenerationId, WeightingReplayChunk,
+        WeightingReplayCoverageId, WeightingReplayId, WeightingReplaySummary,
+    },
 };
 
 const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
+const NORMAL_STATE_CONTENT_DOMAIN: &[u8] = b"casa-rs-normal-state-content";
 const SUPPORT: usize = 3;
 const TAP_COUNT: usize = SUPPORT * 2 + 1;
 const OVERSAMPLING: usize = 100;
@@ -430,6 +435,30 @@ impl SerialMfsPrimitives {
     #[must_use]
     pub const fn sum_weight(&self) -> f64 {
         self.sum_weight
+    }
+
+    /// Derive the owner content identity of the exact unnormalized evidence.
+    ///
+    /// The identity binds every primitive value bit, so a Major Cycle names
+    /// exact normal-state content without promising residency or density.
+    #[must_use]
+    pub fn normal_state_content_identity(&self) -> LogicalIdentity {
+        let mut encoder = crate::Encoder::new(NORMAL_STATE_CONTENT_DOMAIN, 1);
+        encoder.usize(self.shape[0]);
+        encoder.usize(self.shape[1]);
+        for value in &self.dirty {
+            encoder.u64(value.re.to_bits());
+            encoder.u64(value.im.to_bits());
+        }
+        for value in &self.psf {
+            encoder.u64(value.re.to_bits());
+            encoder.u64(value.im.to_bits());
+        }
+        for value in &self.sensitivity {
+            encoder.u64(canonical_f64_bits(*value));
+        }
+        encoder.u64(canonical_f64_bits(self.sum_weight));
+        LogicalIdentity::from_sha256(encoder.finish())
     }
 }
 

@@ -388,7 +388,7 @@ fn empty_generation_and_delta_have_exact_golden_identities_and_finalization_is_a
     assert_eq!(ModelGenerationId::SCHEMA_VERSION, 2);
     assert_eq!(ModelDeltaId::SCHEMA_VERSION, 2);
     assert_eq!(ModelReprojectionId::SCHEMA_VERSION, 3);
-    assert_eq!(FinalModelCompletionId::SCHEMA_VERSION, 1);
+    assert_eq!(FinalModelCompletionId::SCHEMA_VERSION, 2);
     assert_eq!(
         base.generation_id().to_string(),
         "c8aa1f9f2d0df2cd47f25696232e8f0f12d0058ba35783dd3ea1dc87b394ad37"
