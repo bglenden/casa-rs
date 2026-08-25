@@ -530,6 +530,15 @@ mod window_geometry {
 #[test]
 fn controls_are_validated_explicitly() {
     assert!(matches!(
+        HogbomControls::from_compiled(ReconstructionControls::new(8, 0.5, 0.0)),
+        Err(MinorCycleError::MissingMaximumModelUpdate)
+    ));
+    let compiled = HogbomControls::from_compiled(
+        ReconstructionControls::new(8, 0.5, 0.0).with_maximum_model_update(2.5),
+    )
+    .expect("explicit compiled staleness envelope");
+    assert_eq!(compiled.maximum_model_update(), 2.5);
+    assert!(matches!(
         HogbomControls::new(0.0, 1.0, 8, 1.0),
         Err(MinorCycleError::InvalidGain)
     ));

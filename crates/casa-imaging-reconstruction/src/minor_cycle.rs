@@ -23,7 +23,7 @@ use std::{collections::BTreeMap, fmt};
 
 use casa_imaging_model::{
     CompiledProblemId, LogicalIdentity, ModelCell, ModelDeltaTerm, ModelExecutionAttemptId,
-    ModelSupport, ModelValue,
+    ModelSupport, ModelValue, ReconstructionControls,
 };
 use thiserror::Error;
 
@@ -99,6 +99,22 @@ pub struct HogbomControls {
 }
 
 impl HogbomControls {
+    /// Derive the executable minor-cycle controls from the compiled contract.
+    ///
+    /// Unlike the general model constructor, this production seam requires an
+    /// explicit staleness envelope and never invents an unbounded default.
+    pub fn from_compiled(controls: ReconstructionControls) -> Result<Self, MinorCycleError> {
+        let maximum_model_update = controls
+            .maximum_model_update()
+            .ok_or(MinorCycleError::MissingMaximumModelUpdate)?;
+        Self::new(
+            controls.gain(),
+            controls.threshold_jy_per_beam(),
+            controls.max_minor_iterations(),
+            maximum_model_update,
+        )
+    }
+
     /// Construct validated controls.
     ///
     /// # Errors
@@ -494,6 +510,9 @@ impl HogbomMinorCycle {
 /// Exact reason a bounded Högbom solve failed closed.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum MinorCycleError {
+    /// The compiled problem omitted the mandatory linear-view envelope.
+    #[error("compiled Högbom controls require an explicit maximum model update")]
+    MissingMaximumModelUpdate,
     /// The Högbom gain was outside `(0, 1]`.
     #[error("Högbom gain must lie in (0, 1]")]
     InvalidGain,

@@ -53,7 +53,7 @@ use crate::{
 };
 
 const RECEIPT_SCHEMA: &str = "casa-rs-imaging-execution-receipt";
-const RECEIPT_SCHEMA_VERSION: u32 = 14;
+const RECEIPT_SCHEMA_VERSION: u32 = 15;
 const COMPILED_PROBLEM_EVIDENCE_VERSION: u32 = 9;
 const RECEIPT_SUFFIX: &str = ".receipt.json";
 const RECEIPT_STAGING_PREFIX: &str = ".casa-rs-receipt-staging-";
@@ -777,6 +777,17 @@ impl ExecutionReceipt {
     #[must_use]
     pub fn plan_identity(&self) -> [u8; 32] {
         parse_digest(&self.body.plan.plan_identity)
+    }
+
+    /// Return the transaction publication scope proven by this receipt.
+    #[must_use]
+    pub const fn observation_transaction_publication_scope(
+        &self,
+    ) -> crate::ObservationTransactionPublicationScope {
+        self.body
+            .plan
+            .observation_transaction_publication_scope
+            .to_runtime()
     }
 
     /// Return the canonical compiled-problem identity.
@@ -2633,6 +2644,7 @@ struct PlanProjection {
     plan_identity: String,
     dag_identity: String,
     product_graph_identity: String,
+    observation_transaction_publication_scope: ObservationTransactionPublicationScopeProjection,
     implementation_registry_identity: String,
     resource_policy_identity: String,
     resource_policy: ResourcePolicyProjection,
@@ -2675,6 +2687,10 @@ impl PlanProjection {
             plan_identity: hex(&plan.plan_id().as_bytes()),
             dag_identity: String::new(),
             product_graph_identity: hex(&plan.product_graph_id().as_bytes()),
+            observation_transaction_publication_scope:
+                ObservationTransactionPublicationScopeProjection::new(
+                    plan.observation_transaction().work().publication_scope(),
+                ),
             implementation_registry_identity: hex(&plan.implementation_registry_id().as_bytes()),
             resource_policy_identity: hex(&plan.resource_policy_id().as_bytes()),
             resource_policy: ResourcePolicyProjection::new(plan.resource_policy()),
@@ -2725,6 +2741,37 @@ impl PlanProjection {
             .physical_work_id()
             .as_bytes());
         Ok(projection)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ObservationTransactionPublicationScopeProjection {
+    ReconstructionOnly,
+    ProductPublication,
+}
+
+impl ObservationTransactionPublicationScopeProjection {
+    const fn new(scope: crate::ObservationTransactionPublicationScope) -> Self {
+        match scope {
+            crate::ObservationTransactionPublicationScope::ReconstructionOnly => {
+                Self::ReconstructionOnly
+            }
+            crate::ObservationTransactionPublicationScope::ProductPublication => {
+                Self::ProductPublication
+            }
+        }
+    }
+
+    const fn to_runtime(self) -> crate::ObservationTransactionPublicationScope {
+        match self {
+            Self::ReconstructionOnly => {
+                crate::ObservationTransactionPublicationScope::ReconstructionOnly
+            }
+            Self::ProductPublication => {
+                crate::ObservationTransactionPublicationScope::ProductPublication
+            }
+        }
     }
 }
 
@@ -4957,7 +5004,14 @@ fn validate_plan_projection(
             PublicationParticipantProjection::ModelData { .. } => None,
         })
         .collect::<Vec<_>>();
-    require_integrity(product_participants.as_slice() == publication_members)?;
+    match plan.observation_transaction_publication_scope {
+        ObservationTransactionPublicationScopeProjection::ReconstructionOnly => {
+            require_integrity(product_participants.is_empty())?;
+        }
+        ObservationTransactionPublicationScopeProjection::ProductPublication => {
+            require_integrity(product_participants.as_slice() == publication_members)?;
+        }
+    }
     for layout in &plan.publication_layouts {
         let bounds = &layout.resource_bounds;
         let participant_is_valid = match &layout.participant {
@@ -5944,6 +5998,13 @@ fn project_reconstruction(fields: &mut BTreeMap<String, String>, problem: &Compi
         "reconstruction.controls.threshold_jy_per_beam",
         stable_float(controls.threshold_jy_per_beam()),
     );
+    if let Some(bound) = controls.maximum_model_update() {
+        evidence_field(
+            fields,
+            "reconstruction.controls.maximum_model_update",
+            stable_float(bound),
+        );
+    }
     for (index, coordinate) in reconstruction
         .polarization()
         .coordinates()

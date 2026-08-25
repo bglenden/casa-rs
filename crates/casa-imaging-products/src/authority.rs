@@ -228,6 +228,8 @@ impl ProductGenerationAuthority {
         }
         Ok(PlannedContinuumGeneration {
             authority: self.identity,
+            problem_id: self.problem_id,
+            graph_id: self.graph_id,
             generation_id: PlannedGenerationId(encoder.finish()),
             commitment_id,
             psf_cutoff: controls.psf_cutoff(),
@@ -440,6 +442,8 @@ fn encode_contract(encoder: &mut Encoder, node: &casa_imaging_model::ProductNode
 #[derive(Debug)]
 pub struct PlannedContinuumGeneration {
     authority: [u8; 32],
+    problem_id: CompiledProblemId,
+    graph_id: ProductGraphId,
     generation_id: PlannedGenerationId,
     commitment_id: ContinuumCommitmentId,
     psf_cutoff: f32,
@@ -448,6 +452,18 @@ pub struct PlannedContinuumGeneration {
 }
 
 impl PlannedContinuumGeneration {
+    /// Return the exact compiled problem this generation was planned for.
+    #[must_use]
+    pub const fn problem_id(&self) -> CompiledProblemId {
+        self.problem_id
+    }
+
+    /// Return the exact compiler-owned Product Graph this generation realizes.
+    #[must_use]
+    pub const fn graph_id(&self) -> ProductGraphId {
+        self.graph_id
+    }
+
     /// Return the stable planned-generation identity.
     #[must_use]
     pub const fn generation_id(&self) -> PlannedGenerationId {

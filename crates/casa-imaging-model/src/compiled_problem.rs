@@ -408,6 +408,7 @@ pub struct ReconstructionControls {
     max_minor_iterations: usize,
     gain: f64,
     threshold_jy_per_beam: f64,
+    maximum_model_update: Option<f64>,
 }
 
 impl ReconstructionControls {
@@ -418,7 +419,15 @@ impl ReconstructionControls {
             max_minor_iterations,
             gain,
             threshold_jy_per_beam,
+            maximum_model_update: None,
         }
+    }
+
+    /// Bind the explicit linear-view staleness envelope for a minor cycle.
+    #[must_use]
+    pub const fn with_maximum_model_update(mut self, maximum_model_update: f64) -> Self {
+        self.maximum_model_update = Some(maximum_model_update);
+        self
     }
 
     /// Return the maximum number of minor-cycle updates.
@@ -437,6 +446,12 @@ impl ReconstructionControls {
     #[must_use]
     pub const fn threshold_jy_per_beam(self) -> f64 {
         self.threshold_jy_per_beam
+    }
+
+    /// Return the explicit cumulative model-update envelope, when supplied.
+    #[must_use]
+    pub const fn maximum_model_update(self) -> Option<f64> {
+        self.maximum_model_update
     }
 }
 
@@ -1657,6 +1672,15 @@ fn validate_reconstruction(
             reason: "reconstruction gain and threshold must be finite and in their valid domains",
         });
     }
+    if contract
+        .controls
+        .maximum_model_update
+        .is_some_and(|bound| !bound.is_finite() || bound <= 0.0)
+    {
+        return Err(CompileProblemError::InvalidCapabilityCombination {
+            reason: "maximum model update must be finite and positive when supplied",
+        });
+    }
     if let ReconstructionAlgorithm::Multiscale { scales_px } = &contract.algorithm {
         if scales_px.is_empty()
             || scales_px
@@ -2064,6 +2088,13 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
     encoder.usize(reconstruction.controls.max_minor_iterations);
     encoder.f64(reconstruction.controls.gain);
     encoder.f64(reconstruction.controls.threshold_jy_per_beam);
+    match reconstruction.controls.maximum_model_update {
+        Some(bound) => {
+            encoder.u8(1);
+            encoder.f64(bound);
+        }
+        None => encoder.u8(0),
+    }
     encoder.usize(reconstruction.polarization.coordinates.len());
     for coordinate in &reconstruction.polarization.coordinates {
         encoder.u8(polarization_tag(*coordinate));

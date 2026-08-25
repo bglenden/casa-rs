@@ -13,6 +13,8 @@ pub mod product_publication;
 mod publication_layout;
 mod receipt;
 mod resource_authority;
+mod serial_continuum;
+mod serial_continuum_plan;
 mod weighting;
 
 pub use execution_bindings::{
@@ -49,7 +51,8 @@ pub use execution::{
 };
 pub use major_cycle::{MajorCycleOperatorError, MajorCycleOperatorResult, MajorCycleOperatorState};
 pub use observation_transaction::{
-    BoundObservationTransaction, ObservationTransactionPlanError, ObservationTransactionWork,
+    BoundObservationTransaction, ObservationTransactionPlanError,
+    ObservationTransactionPublicationScope, ObservationTransactionWork,
 };
 pub use prepared_artifact::{
     PreparedArtifact, PreparedArtifactBudget, PreparedArtifactDescriptor, PreparedArtifactError,
@@ -61,7 +64,8 @@ pub use prepared_artifact::{
     PreparedArtifactStore, PreparedArtifactUvAffine,
 };
 pub use product_publication::{
-    ProductPublicationEntry, ProductPublicationError, ProductPublicationPlan,
+    AuthorizedProductPublicationEntry, ProductPublicationAuthorization, ProductPublicationEntry,
+    ProductPublicationError, ProductPublicationPlan,
 };
 pub use publication_layout::{
     PhysicalLayoutId, PublicationBoundKind, PublicationLayoutError, PublicationLayoutLedger,
@@ -91,10 +95,19 @@ pub use resource_authority::{
     RuntimeOverheadKind, ScalingMetadata, StorageDemand, StorageDomain, StorageDomainId,
     StorageUseKind, TransferDemand, TransferLink, TransferLinkId,
 };
+pub use serial_continuum::{
+    FinalMajorPhaseInput, InitialMajorPhaseCompletion, MinorCyclePhaseCompletion,
+    MinorCyclePhaseEvidence, SerialContinuumExecutor, SerialContinuumPassInput,
+    SerialContinuumRegistry,
+};
+pub use serial_continuum_plan::{
+    SerialContinuumExecutionPolicy, SerialContinuumPlan, SerialContinuumPlanError,
+};
 pub use weighting::{
-    ReplayCallbackError, SelectedObservationSourceResources, WeightedObservationBlock,
-    WeightedObservationSample, WeightedSpectralValue, WeightingEvidenceError,
-    WeightingExecutionState, WeightingGenerationCompletionError, WeightingGenerationError,
-    WeightingPlanFragment, WeightingPlanFragmentError, WeightingReplayCompletion,
-    WeightingReplayCompletionError, WeightingReplayError, WeightingSourceTraversalError,
+    ContinuumPassIdentity, ContinuumPassPhase, ReplayCallbackError,
+    SelectedObservationSourceResources, WeightedObservationBlock, WeightedObservationSample,
+    WeightedSpectralValue, WeightingEvidenceError, WeightingExecutionState,
+    WeightingGenerationCompletionError, WeightingGenerationError, WeightingPlanFragment,
+    WeightingPlanFragmentError, WeightingReplayCompletion, WeightingReplayCompletionError,
+    WeightingReplayError, WeightingSourceTraversalError,
 };

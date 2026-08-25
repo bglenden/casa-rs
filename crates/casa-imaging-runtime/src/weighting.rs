@@ -33,6 +33,50 @@ use crate::{
     WorkNode, WorkNodeId,
 };
 
+/// Scientific phase occupied by one ordinary continuum reconstruction plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ContinuumPassPhase {
+    /// Normal state used to drive a minor cycle.
+    InitialMajor,
+    /// Mandatory reconciliation of the accepted final model.
+    FinalMajor,
+}
+
+/// Stable phase and ordinal namespace for one continuum pass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ContinuumPassIdentity {
+    phase: ContinuumPassPhase,
+    ordinal: u32,
+}
+
+impl ContinuumPassIdentity {
+    /// Construct one explicit pass namespace.
+    #[must_use]
+    pub const fn new(phase: ContinuumPassPhase, ordinal: u32) -> Self {
+        Self { phase, ordinal }
+    }
+
+    /// Return the semantic phase namespace.
+    #[must_use]
+    pub const fn phase(self) -> ContinuumPassPhase {
+        self.phase
+    }
+
+    /// Return the phase-local plan ordinal.
+    #[must_use]
+    pub const fn ordinal(self) -> u32 {
+        self.ordinal
+    }
+
+    fn suffix(self) -> String {
+        let phase = match self.phase {
+            ContinuumPassPhase::InitialMajor => "initial-major",
+            ContinuumPassPhase::FinalMajor => "final-major",
+        };
+        format!("{phase}-{}", self.ordinal)
+    }
+}
+
 /// Exact source resources retained by one selected-observation weighting lifecycle.
 ///
 /// This binds the selected-content budget to the logical source allocations and
@@ -86,6 +130,28 @@ impl<'a> WeightingPlanFragment<'a> {
         replay_implementation: WorkImplementationId,
         release_implementation: WorkImplementationId,
     ) -> Self {
+        Self::new_for_pass(
+            plan,
+            source_read,
+            source_resources,
+            generation_implementation,
+            replay_implementation,
+            release_implementation,
+            ContinuumPassIdentity::new(ContinuumPassPhase::InitialMajor, 0),
+        )
+    }
+
+    /// Bind one reconstruction plan in an explicit phase/ordinal namespace.
+    #[must_use]
+    pub fn new_for_pass(
+        plan: &'a WeightingPlan,
+        source_read: WorkNodeId,
+        source_resources: SelectedObservationSourceResources,
+        generation_implementation: WorkImplementationId,
+        replay_implementation: WorkImplementationId,
+        release_implementation: WorkImplementationId,
+        pass: ContinuumPassIdentity,
+    ) -> Self {
         Self {
             plan,
             source_read,
@@ -93,7 +159,7 @@ impl<'a> WeightingPlanFragment<'a> {
             generation_implementation,
             replay_implementation,
             release_implementation,
-            ids: WeightingPlanIds::new(plan),
+            ids: WeightingPlanIds::new(plan, pass),
         }
     }
 
@@ -968,8 +1034,8 @@ struct WeightingPlanIds {
 }
 
 impl WeightingPlanIds {
-    fn new(plan: &WeightingPlan) -> Self {
-        let suffix = plan.commitment_id().to_string();
+    fn new(plan: &WeightingPlan, pass: ContinuumPassIdentity) -> Self {
+        let suffix = format!("{}-{}", pass.suffix(), plan.commitment_id());
         Self {
             generation_node: WorkNodeId::new(format!("weighting-generation-{suffix}")),
             replay_node: WorkNodeId::new(format!("weighting-replay-{suffix}")),

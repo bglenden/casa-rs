@@ -37,7 +37,7 @@ use crate::{
 };
 
 const EXECUTION_PLAN_IDENTITY_DOMAIN: &[u8] = b"casa-rs-execution-plan";
-const EXECUTION_PLAN_IDENTITY_VERSION: u32 = 11;
+const EXECUTION_PLAN_IDENTITY_VERSION: u32 = 12;
 const RESOURCE_POLICY_IDENTITY_DOMAIN: &[u8] = b"casa-rs-resource-policy";
 const RESOURCE_POLICY_IDENTITY_VERSION: u32 = 1;
 
@@ -753,7 +753,7 @@ pub enum PhysicalWorkBindingError {
         /// Stable diagnostic for the rejected physical declaration.
         reason: String,
     },
-    /// Product publication layouts were not derived from the exact authorized seal.
+    /// Product publication layouts or completed seal evidence do not match the plan.
     InvalidProductPublication {
         /// Stable diagnostic for the rejected seal binding.
         reason: String,
@@ -1109,12 +1109,7 @@ pub(crate) enum ProductPublicationAuthority {
         matrix_schema_version: u32,
         matrix_contract_revision: u32,
     },
-    Sealed {
-        problem_id: CompiledProblemId,
-        graph_id: ProductGraphId,
-        seal_id: casa_imaging_products::ContinuumSealId,
-        generation_id: casa_imaging_products::PlannedGenerationId,
-    },
+    Planned(crate::ProductPublicationPlan),
 }
 
 /// Registry-owned science, numerics, and capability metadata for one
@@ -1494,7 +1489,7 @@ fn implementation_ids(execution_dag: &ExecutionDag) -> BTreeMap<WorkNodeId, Work
 impl PhysicalWorkBinding {
     /// Bind a complete immutable physical work DAG, prediction, artifacts,
     /// and transaction to an explicit registry-owned implementation contract.
-    pub fn new(
+    pub fn new_reconstruction(
         catalog: ImplementationContractCatalog,
         execution_dag: ExecutionDag,
         prediction: PlanPrediction,
@@ -1502,6 +1497,13 @@ impl PhysicalWorkBinding {
         observation_transaction: ObservationTransactionWork,
         publication_layouts: PublicationLayoutLedger,
     ) -> Result<Self, PhysicalWorkBindingError> {
+        if observation_transaction.publication_scope()
+            != crate::ObservationTransactionPublicationScope::ReconstructionOnly
+        {
+            return invalid_product_publication(
+                "reconstruction physical work requires ReconstructionOnly transaction scope",
+            );
+        }
         Self::with_implementation_contract(
             ImplementationContractCommitment::from_catalog(&catalog, &execution_dag)?,
             execution_dag,
@@ -1527,6 +1529,13 @@ impl PhysicalWorkBinding {
         publication_layouts: PublicationLayoutLedger,
         authority: &LegacyWholeRunPublicationAuthority,
     ) -> Result<Self, PhysicalWorkBindingError> {
+        if observation_transaction.publication_scope()
+            != crate::ObservationTransactionPublicationScope::ProductPublication
+        {
+            return invalid_product_publication(
+                "legacy product publication requires ProductPublication transaction scope",
+            );
+        }
         Self::with_implementation_contract(
             ImplementationContractCommitment::from_catalog(&catalog, &execution_dag)?,
             execution_dag,
@@ -1541,12 +1550,12 @@ impl PhysicalWorkBinding {
         )
     }
 
-    /// Bind native product publication through the exact Product Generation seal.
+    /// Bind native product publication through an exact planned generation.
     ///
     /// This is the production construction path for physical work containing
     /// [`crate::PublicationParticipant::Product`] layouts. It validates the
     /// ordinary DAG, resource, artifact, and layout contracts, then requires
-    /// the product subset to match the seal-derived publication plan exactly
+    /// the product subset to match the planned-generation publication plan exactly
     /// by compiled problem, Product Graph, member, and artifact identity.
     pub fn new_with_product_publication(
         catalog: ImplementationContractCatalog,
@@ -1557,6 +1566,13 @@ impl PhysicalWorkBinding {
         publication_layouts: PublicationLayoutLedger,
         product_publication: &crate::ProductPublicationPlan,
     ) -> Result<Self, PhysicalWorkBindingError> {
+        if observation_transaction.publication_scope()
+            != crate::ObservationTransactionPublicationScope::ProductPublication
+        {
+            return invalid_product_publication(
+                "native product publication requires ProductPublication transaction scope",
+            );
+        }
         let binding = Self::with_implementation_contract(
             ImplementationContractCommitment::from_catalog(&catalog, &execution_dag)?,
             execution_dag,
@@ -1564,12 +1580,7 @@ impl PhysicalWorkBinding {
             artifacts,
             observation_transaction,
             publication_layouts,
-            ProductPublicationAuthority::Sealed {
-                problem_id: product_publication.problem_id(),
-                graph_id: product_publication.graph_id(),
-                seal_id: product_publication.seal_id(),
-                generation_id: product_publication.generation_id(),
-            },
+            ProductPublicationAuthority::Planned(product_publication.clone()),
         )?;
         binding.validate_product_publication(product_publication)?;
         Ok(binding)
@@ -1581,7 +1592,7 @@ impl PhysicalWorkBinding {
     ) -> Result<(), PhysicalWorkBindingError> {
         if product_publication.problem_id() != self.implementation_contract.problem_id() {
             return invalid_product_publication(
-                "seal and implementation contract name different compiled problems",
+                "product generation and implementation contract name different compiled problems",
             );
         }
         let product_layouts = self
@@ -1597,7 +1608,7 @@ impl PhysicalWorkBinding {
             .collect::<Vec<_>>();
         if product_layouts.len() != product_publication.entries().len() {
             return invalid_product_publication(
-                "product layouts do not exactly cover the sealed member set",
+                "product layouts do not exactly cover the planned member set",
             );
         }
         for entry in product_publication.entries() {
@@ -1607,7 +1618,7 @@ impl PhysicalWorkBinding {
                     && *artifact == entry.artifact()
             }) {
                 return invalid_product_publication(format!(
-                    "sealed product node {} has no exact publication layout",
+                    "planned product node {} has no exact publication layout",
                     entry.node().ordinal()
                 ));
             }
@@ -1680,7 +1691,7 @@ impl PhysicalWorkBinding {
         });
         if has_product_layout && matches!(product_publication, ProductPublicationAuthority::None) {
             return invalid_product_publication(
-                "Product layouts require either a sealed native plan or explicit LegacyWholeRun authority",
+                "Product layouts require either a planned native generation or explicit LegacyWholeRun authority",
             );
         }
         Ok(Self {
@@ -2830,6 +2841,8 @@ pub enum RunError<E> {
     Scheduler(ExecutionError),
     /// A successful adapter return omitted, duplicated, or exceeded sealed evidence.
     Evidence(ExecutionEvidenceError),
+    /// Completed product authority or staged identities did not match the immutable plan.
+    ProductPublication(crate::ProductPublicationError),
     /// One exact plan-owned work node or its asynchronous fence failed.
     Execution {
         /// Node whose adapter reported the failure.
@@ -2861,6 +2874,12 @@ impl<E: fmt::Display> fmt::Display for RunError<E> {
             ),
             Self::Scheduler(error) => write!(formatter, "execution scheduling failed: {error}"),
             Self::Evidence(error) => write!(formatter, "execution evidence failed: {error}"),
+            Self::ProductPublication(error) => {
+                write!(
+                    formatter,
+                    "product publication authorization failed: {error}"
+                )
+            }
             Self::Execution { node, source } => {
                 write!(formatter, "work node {} failed: {source}", node.as_str())
             }
@@ -2877,6 +2896,7 @@ impl<E: Error + 'static> Error for RunError<E> {
             | Self::ImplementationMismatch { .. } => None,
             Self::Scheduler(error) => Some(error),
             Self::Evidence(error) => Some(error),
+            Self::ProductPublication(error) => Some(error),
             Self::Execution { source, .. } => Some(source),
         }
     }
@@ -2970,6 +2990,7 @@ pub struct WorkExecutionContext<'a> {
     model_writes: Option<&'a ObservationWriteSet>,
     publication: Option<&'a ObservationTransactionContract>,
     publication_resources: Option<PublicationResources<'a>>,
+    product_publication: Option<&'a crate::ProductPublicationAuthorization>,
     completed_observation_reads: &'a BTreeMap<WorkNodeId, AttemptBoundObservationCompletion>,
 }
 
@@ -3105,6 +3126,12 @@ impl<'a> WorkExecutionContext<'a> {
     #[must_use]
     pub const fn publication_resources(self) -> Option<PublicationResources<'a>> {
         self.publication_resources
+    }
+
+    /// Return the runtime-validated Product Generation seal only to the final publish call.
+    #[must_use]
+    pub const fn product_publication(self) -> Option<&'a crate::ProductPublicationAuthorization> {
+        self.product_publication
     }
 
     /// Return one scheduler-retained selected-observation completion when its
@@ -3346,6 +3373,19 @@ pub trait WorkImplementation {
         &self,
         completion: ObservationReadCompletionContext,
     ) -> Result<AttemptBoundObservationCompletion, Self::Error>;
+
+    /// Return the Product Generation seal produced by this completed publication node.
+    ///
+    /// The runtime invokes this after synchronous work and every declared fence
+    /// have settled but before it prepares the durable publication receipt or
+    /// exposes staging. Native product publication plans require one projection;
+    /// implementations without native product members may retain the default.
+    fn complete_product_generation(
+        &self,
+        _context: WorkExecutionContext<'_>,
+    ) -> Result<Option<casa_imaging_products::PublicationProjection>, Self::Error> {
+        Ok(None)
+    }
 
     /// Atomically activate all staged products and optional model-column output.
     ///
@@ -3761,6 +3801,7 @@ fn work_execution_context<'a>(
         model_writes,
         publication,
         publication_resources,
+        product_publication: None,
         completed_observation_reads,
     };
     if work.node().kind == WorkKind::ObservationRead {
@@ -3805,11 +3846,13 @@ fn publication_execution_context<'a>(
     plan: &'a ExecutionPlan,
     work: &'a crate::execution::WorkExecutionContext,
     reservation: &'a PublicationReservation,
+    product_publication: Option<&'a crate::ProductPublicationAuthorization>,
     completed_observation_reads: &'a BTreeMap<WorkNodeId, AttemptBoundObservationCompletion>,
 ) -> WorkExecutionContext<'a> {
     let mut context =
         work_execution_context(attempt_id, problem, plan, work, completed_observation_reads);
     context.publication_resources = Some(PublicationResources { reservation });
+    context.product_publication = product_publication;
     context
 }
 
@@ -3902,6 +3945,11 @@ fn receipt_failure<E>(result: &Result<ExecutionOutcome, RunError<E>>) -> Option<
             Some(error.node().clone()),
             None,
         ),
+        RunError::ProductPublication(error) => ReceiptFailure::new(
+            ReceiptFailureKind::EvidenceContract,
+            None,
+            Some(error.to_string()),
+        ),
         RunError::Execution { node, .. } => {
             ReceiptFailure::new(ReceiptFailureKind::Adapter, Some(node.clone()), None)
         }
@@ -3968,6 +4016,7 @@ where
     let mut settled_observation_fences = BTreeMap::<WorkNodeId, BTreeSet<FenceKind>>::new();
     let mut completed_observation_reads =
         BTreeMap::<WorkNodeId, AttemptBoundObservationCompletion>::new();
+    let mut publication_measurements = None;
     let mut pending = None;
     let mut controller_stopped = false;
     loop {
@@ -4107,6 +4156,9 @@ where
                         }
                         match validate_work_measurements(plan, &context, &measurements) {
                             Ok(()) => {
+                                if work.node().kind == WorkKind::Publication {
+                                    publication_measurements = Some(measurements.clone());
+                                }
                                 let mut receipt_error = receipt.fences_launched(&node_id).err();
                                 if let Err(error) = receipt.work_completed(&node_id, &measurements)
                                     && receipt_error.is_none()
@@ -4463,12 +4515,55 @@ where
                     ))
                 })?;
                 let implementation = implementations[&work.node().implementation];
+                let completion_context = publication_execution_context(
+                    receipt.attempt_id(),
+                    problem,
+                    plan,
+                    work,
+                    &resources,
+                    None,
+                    &completed_observation_reads,
+                );
+                let projection = implementation
+                    .complete_product_generation(completion_context)
+                    .map_err(|source| RunError::Execution {
+                        node: publication.clone(),
+                        source,
+                    })?;
+                let product_publication = match (&plan.product_publication, projection) {
+                    (ProductPublicationAuthority::Planned(planned), Some(projection)) => {
+                        let authorization = planned
+                            .authorize(&projection)
+                            .map_err(RunError::ProductPublication)?;
+                        let measurements = publication_measurements.as_ref().ok_or_else(|| {
+                            RunError::ProductPublication(
+                                crate::ProductPublicationError::MissingProjection,
+                            )
+                        })?;
+                        authorization
+                            .validate_staging(measurements)
+                            .map_err(RunError::ProductPublication)?;
+                        Some(authorization)
+                    }
+                    (ProductPublicationAuthority::Planned(_), None) => {
+                        return Err(RunError::ProductPublication(
+                            crate::ProductPublicationError::MissingProjection,
+                        ));
+                    }
+                    (_, Some(_)) => {
+                        return Err(RunError::ProductPublication(
+                            crate::ProductPublicationError::UnexpectedProjection,
+                        ));
+                    }
+                    (_, None) => None,
+                };
                 let context = publication_execution_context(
                     receipt.attempt_id(),
                     problem,
                     plan,
                     work,
                     &resources,
+                    product_publication.as_ref(),
                     &completed_observation_reads,
                 );
                 let prepared = receipt.prepare_publication().map_err(RunError::Receipt)?;
@@ -4636,17 +4731,17 @@ fn execution_plan_id(plan: &ExecutionPlan) -> ExecutionPlanId {
             encoder.u32(*matrix_schema_version);
             encoder.u32(*matrix_contract_revision);
         }
-        ProductPublicationAuthority::Sealed {
-            problem_id,
-            graph_id,
-            seal_id,
-            generation_id,
-        } => {
+        ProductPublicationAuthority::Planned(publication) => {
             encoder.u8(2);
-            encoder.digest(problem_id.as_bytes());
-            encoder.digest(graph_id.as_bytes());
-            encoder.digest(seal_id.as_bytes());
-            encoder.digest(generation_id.as_bytes());
+            encoder.digest(publication.problem_id().as_bytes());
+            encoder.digest(publication.graph_id().as_bytes());
+            encoder.digest(publication.generation_id().as_bytes());
+            encoder.usize(publication.entries().len());
+            for entry in publication.entries() {
+                encoder.usize(entry.node().ordinal());
+                encoder.digest(entry.artifact().as_bytes());
+                encoder.u64(entry.payload_bytes());
+            }
         }
     }
     encoder.u64(plan.prediction.elapsed_nanos());
@@ -4730,6 +4825,10 @@ fn encode_observation_transaction(
     encoder: &mut CanonicalEncoder,
     transaction: &BoundObservationTransaction,
 ) {
+    encoder.u8(match transaction.work().publication_scope() {
+        crate::ObservationTransactionPublicationScope::ReconstructionOnly => 0,
+        crate::ObservationTransactionPublicationScope::ProductPublication => 1,
+    });
     encoder.digest(transaction.problem_id().as_bytes());
     encoder.digest(transaction.product_graph_id().as_bytes());
     encoder.digest(transaction.transaction_id().as_bytes());

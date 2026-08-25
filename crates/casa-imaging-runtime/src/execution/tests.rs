@@ -962,7 +962,7 @@ fn physical_work_binding_with_problem(
         dag,
         prediction,
         artifacts,
-        ObservationTransactionWork::new(initial, reconciliation, None, commit),
+        ObservationTransactionWork::new_product_publication(initial, reconciliation, None, commit),
         layouts,
         &legacy_publication_authority(),
     )
