@@ -288,11 +288,7 @@ impl MajorCycleCompletion {
     /// product authority) that consume the entire minted result at once.
     #[must_use]
     pub fn into_parts(self) -> (FinalNormalState, FinalModelCompletion, ModelGeneration) {
-        (
-            self.normal_state,
-            self.model_completion,
-            self.final_model,
-        )
+        (self.normal_state, self.model_completion, self.final_model)
     }
 }
 

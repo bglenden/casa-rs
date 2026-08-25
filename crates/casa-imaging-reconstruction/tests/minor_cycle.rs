@@ -13,33 +13,33 @@ use casa_imaging_model::{
     GeometryInput, IdSelection, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
     ImagingRequest, InstrumentResponse, IntentSelection, LogicalIdentity,
     MeasurementEquationContract, MeasurementSetIdentity, MetadataGeneration, MetadataTableKind,
-    ModelBounds, ModelColumnState, ModelColumnWrite,
-    ModelExecutionAttemptId, ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements,
-    ModelStateIdentity, ModelSupport, MsColumnKind, NumericPrecision, NumericalStage,
-    NumericsContract, ObservationSelection, ObservationSnapshotInput, ObservationSourceInput,
-    ObservationSourceProvenance, ObservationTransactionRequirements, PhaseCentreLaw,
-    PointingCentreLaw, PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy,
-    ProblemInputIdentities, ProblemSpecification, ProductBlankingPolicy, ProductKind,
-    ProductNormalization, ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
-    Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
-    ReconstructionControls, ReductionPolicy, RestFrequency, RestoringBeamPolicy, RowSelection,
-    ScientificContract, SelectedColumns, SelectedMainRow, SelectedObservationGenerationId,
-    SelectedObservationSample, SelectedPredictionTarget, SelectedRows, SelectedSampleAddress,
-    SelectedSampleCoordinates, SelectedSampleMetadata, SelectedSpectralContribution,
-    SelectedSpectralContributions, SelectedVisibilitySample, SkyDirection, SourceGenerations,
-    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSampling, SpectralWcs, SpectralWindowSelection, StageErrorBudget,
-    TaylorSupportReference, TaylorValidityPolicy, TimeScale, TimeSelection, UvSelection,
-    UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope,
-    WeightingContract, WeightingScheme, compile, compile_observation,
+    ModelBounds, ModelColumnState, ModelColumnWrite, ModelExecutionAttemptId, ModelInnerProduct,
+    ModelInputCommitment, ModelLifecycleRequirements, ModelStateIdentity, ModelSupport,
+    MsColumnKind, NumericPrecision, NumericalStage, NumericsContract, ObservationSelection,
+    ObservationSnapshotInput, ObservationSourceInput, ObservationSourceProvenance,
+    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PolarizationContract,
+    PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInputIdentities,
+    ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
+    ProductRequirements, ProductSupportComparison, ProductValidityPolicies, Projection,
+    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
+    ReductionPolicy, RestFrequency, RestoringBeamPolicy, RowSelection, ScientificContract,
+    SelectedColumns, SelectedMainRow, SelectedObservationGenerationId, SelectedObservationSample,
+    SelectedPredictionTarget, SelectedRows, SelectedSampleAddress, SelectedSampleCoordinates,
+    SelectedSampleMetadata, SelectedSpectralContribution, SelectedSpectralContributions,
+    SelectedVisibilitySample, SkyDirection, SourceGenerations, SpectralContract,
+    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSampling, SpectralWcs,
+    SpectralWindowSelection, StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy,
+    TimeScale, TimeSelection, UvSelection, UvwCoordinateLaw, VisibilityColumn,
+    VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract, WeightingScheme,
+    compile, compile_observation,
 };
 use casa_imaging_reconstruction::{
-    CleanWindow, ExecutableModelProblem, FinalModelCompletion,
-    FinalNormalState, HogbomControls, MajorCycleOwner, MajorCyclePreparation,
-    MinorCycleError, MinorCycleStopReason, ModelGeneration, ModelLifecycle,
-    ModelLifecycleError, SerialMfsSpecification, WeightingAlgorithmState, WeightingError,
-    WeightingExecutionLimits, WeightingPlan, WeightingReplayChunk, WeightingReplaySummary,
-    begin_weighting_generation, hogbom_minor_cycle, model_support_identity, plan_weighting,
+    CleanWindow, ExecutableModelProblem, FinalModelCompletion, FinalNormalState, HogbomControls,
+    MajorCycleOwner, MajorCyclePreparation, MinorCycleError, MinorCycleStopReason, ModelGeneration,
+    ModelLifecycle, ModelLifecycleError, SerialMfsSpecification, WeightingAlgorithmState,
+    WeightingError, WeightingExecutionLimits, WeightingPlan, WeightingReplayChunk,
+    WeightingReplaySummary, begin_weighting_generation, hogbom_minor_cycle, model_support_identity,
+    plan_weighting,
     runtime_adapter::{CompleteDataOwnerResult, prepare_serial_mfs_operator, serial_mfs_workload},
 };
 
@@ -186,9 +186,7 @@ fn problem_with_model_and_width(
 ) -> casa_imaging_model::CompiledProblem {
     let input = match model {
         ModelStateIdentity::Empty => ModelInputCommitment::Empty,
-        ModelStateIdentity::Generation(generation) => {
-            ModelInputCommitment::Generation(generation)
-        }
+        ModelStateIdentity::Generation(generation) => ModelInputCommitment::Generation(generation),
         // Seeded fixtures declare their exact aligned-support commitment.
         ModelStateIdentity::Seed(_) => unreachable!("seeded fixtures pass their own commitment"),
     };
@@ -660,11 +658,16 @@ fn minor_cycle_delta_composes_with_the_next_major_cycle_reconciliation() {
         evidence.normal_state_content(),
         round.normal_state.content_identity()
     );
-    assert!(evidence.iterations() > 1, "the fixture must clean repeatedly");
+    assert!(
+        evidence.iterations() > 1,
+        "the fixture must clean repeatedly"
+    );
     assert!(
         matches!(
             evidence.stop_reason(),
-            MinorCycleStopReason::IterationBound | MinorCycleStopReason::StalenessBound | MinorCycleStopReason::ThresholdReached
+            MinorCycleStopReason::IterationBound
+                | MinorCycleStopReason::StalenessBound
+                | MinorCycleStopReason::ThresholdReached
         ),
         "the solve stops explicitly"
     );
@@ -735,11 +738,14 @@ fn minor_cycle_delta_composes_with_the_next_major_cycle_reconciliation() {
         residual_peak_pixel,
         "the first component sits on the residual peak inside the window"
     );
-    let expected_first_flux =
-        controls().gain() * round.normal_state.residual()[plane_index(residual_peak_pixel)].re
-            / psf_peak;
+    let expected_first_flux = controls().gain()
+        * round.normal_state.residual()[plane_index(residual_peak_pixel)].re
+        / psf_peak;
     assert!((recorded[0].flux() - expected_first_flux).abs() <= 1.0e-12);
-    assert!((evidence.total_flux() - recorded.iter().map(|c| c.flux().abs()).sum::<f64>()).abs() <= 1.0e-12);
+    assert!(
+        (evidence.total_flux() - recorded.iter().map(|c| c.flux().abs()).sum::<f64>()).abs()
+            <= 1.0e-12
+    );
 
     // Applying the delta happens only through the owner, which mints the next
     // generation and reconciles a strictly reduced residual.
@@ -800,7 +806,10 @@ fn threshold_stop_converges_without_a_delta_or_a_reconciliation_request() {
     )
     .expect("bounded Högbom solve");
     let evidence = outcome.evidence();
-    assert_eq!(evidence.stop_reason(), MinorCycleStopReason::ThresholdReached);
+    assert_eq!(
+        evidence.stop_reason(),
+        MinorCycleStopReason::ThresholdReached
+    );
     assert_eq!(evidence.iterations(), 0);
     assert!(!evidence.requests_reconciliation());
     assert!(outcome.delta().is_none());
@@ -821,10 +830,7 @@ fn threshold_stop_converges_without_a_delta_or_a_reconciliation_request() {
         evidence.evidence_id(),
         "evidence identities hash stable authorities, not process-local seals"
     );
-    assert!(repeat
-        .evidence()
-        .first_divergence(evidence)
-        .is_none());
+    assert!(repeat.evidence().first_divergence(evidence).is_none());
 }
 
 #[test]
@@ -914,7 +920,10 @@ fn window_and_valid_support_constrain_component_placement() {
         .ingest_aligned(seed, lifecycle.contract().target(), seed_values)
         .expect("aligned stream")
         .expect("aligned seed ingest");
-    assert_eq!(seeded.samples()[invalid_flat].support(), ModelSupport::Invalid);
+    assert_eq!(
+        seeded.samples()[invalid_flat].support(),
+        ModelSupport::Invalid
+    );
 
     let preparation =
         MajorCyclePreparation::prepare(&lifecycle, seeded, None).expect("prepare seeded model");
@@ -1126,10 +1135,12 @@ fn component_sequence_divergence_is_informational_only() {
         unrecorded_controls,
     )
     .expect("unrecorded solve");
-    assert!(unrecorded
-        .evidence()
-        .first_divergence(baseline.evidence())
-        .is_none());
+    assert!(
+        unrecorded
+            .evidence()
+            .first_divergence(baseline.evidence())
+            .is_none()
+    );
 }
 
 fn maximal_pixel(plane: &[num_complex::Complex64]) -> [usize; 2] {

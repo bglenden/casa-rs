@@ -140,10 +140,7 @@ impl HogbomControls {
     /// # Errors
     ///
     /// Rejects a zero limit.
-    pub fn record_component_sequence(
-        mut self,
-        limit: usize,
-    ) -> Result<Self, MinorCycleError> {
+    pub fn record_component_sequence(mut self, limit: usize) -> Result<Self, MinorCycleError> {
         if limit == 0 {
             return Err(MinorCycleError::InvalidRecordingLimit);
         }
@@ -585,9 +582,8 @@ pub fn hogbom_minor_cycle(
 
     // The PSF peak normalization follows the reference cleaner: peaks are
     // reported in model units regardless of the accumulated weight scale.
-    let psf_peak_index =
-        find_peak_abs(view.normal_approximation(), shape, |v| v.re, |_| true)
-            .ok_or(MinorCycleError::InvalidPsfPeak)?;
+    let psf_peak_index = find_peak_abs(view.normal_approximation(), shape, |v| v.re, |_| true)
+        .ok_or(MinorCycleError::InvalidPsfPeak)?;
     let psf_peak = view.normal_approximation()[psf_peak_index].re;
     if !psf_peak.is_finite() || psf_peak <= 0.0 {
         return Err(MinorCycleError::InvalidPsfPeak);
@@ -649,8 +645,8 @@ pub fn hogbom_minor_cycle(
         )?;
         iterations += 1;
         total_flux += flux.abs();
-        let cell = model_cell(shape, peak_pixel)
-            .expect("a scanned peak pixel lies inside the plane");
+        let cell =
+            model_cell(shape, peak_pixel).expect("a scanned peak pixel lies inside the plane");
         *terms.entry(canonical_flat(base, cell)).or_insert(0.0) += flux;
         if let Some(limit) = controls.component_sequence_limit()
             && recorded.len() < limit
@@ -815,10 +811,7 @@ fn minor_cycle_evidence_id(
     final_peak_flux: f64,
     stop_reason: MinorCycleStopReason,
 ) -> MinorCycleEvidenceId {
-    let mut encoder = Encoder::new(
-        MINOR_CYCLE_EVIDENCE_DOMAIN,
-        MINOR_CYCLE_EVIDENCE_VERSION,
-    );
+    let mut encoder = Encoder::new(MINOR_CYCLE_EVIDENCE_DOMAIN, MINOR_CYCLE_EVIDENCE_VERSION);
     encoder.identity(authority.as_bytes());
     encoder.identity(attempt.identity().as_bytes());
     encoder.u64(epoch);
