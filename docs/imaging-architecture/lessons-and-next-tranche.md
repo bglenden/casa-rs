@@ -149,8 +149,8 @@ second review and may not reopen design or inspect untouched work.
 | 5 | T19/#505 | Serial CPU complete-data operator consuming only weighted blocks and replay completion | No re-binding of W and no product authority |
 | 6 | T20/#506 | Major-Cycle reconciliation joining T19 output with the T28 model lifecycle | No independently forgeable normal-state/final-model pair |
 | 7 | T21/#507 | Bounded Högbom Model Deltas against named model generations | No authoritative residual mutation |
-| 8 | T22/#508 | Continuum product algorithms plus the first real Product Generation Authority, planned-generation/seal cutover, and atomic publication | No raw/manual generation path retained |
-| 9 | T23/#509 | Continuum Acceptance Contract, matrix transfer, and legacy-route deletion | No native-to-legacy fallback |
+| 8 | T22/#508 | Continuum product algorithms plus the first real Product Generation Authority, planned-generation/seal cutover, and independently atomic conventional CASA product replacement | No raw/manual generation path retained; no false whole-set atomicity claim |
+| 9 | T23/#509 | Continuum Acceptance Contract, matrix transfer, and displaced-route deletion | No native-to-displaced fallback |
 
 T17 and T28 may proceed in parallel after T15 because neither owns the other's
 interface. T20 waits for both the complete-data operator and model lifecycle.
@@ -188,7 +188,7 @@ cutover are:
 | Owner | Direct workspace dependencies |
 |---|---|
 | `casa-imaging-model` | none |
-| native Selected Observation path in `casa-ms` | `casa-imaging-model` plus storage/foundation crates; no legacy, application, task-runtime, or imaging-runtime dependency |
+| native Selected Observation path in `casa-ms` | `casa-imaging-model` plus storage/foundation crates; no displaced imaging, application, task-runtime, or imaging-runtime dependency |
 | `casa-imaging-reconstruction` | `casa-imaging-model` |
 | `casa-imaging-products` | `casa-imaging-model`, `casa-imaging-reconstruction` |
 | `casa-imaging-runtime` | `casa-imaging-model`, `casa-ms`, `casa-imaging-reconstruction`, `casa-imaging-products` |
@@ -198,7 +198,7 @@ cutover are:
 - `casa-ms` is already the logical observation layer. T17 makes its native
   Selected Observation path depend inward on the model and own retained source
   access, canonical bounded traversal, and traversal completion. The current
-  crate's legacy/application-shaped dependencies may not leak into that path;
+  crate's displaced application-shaped dependencies may not leak into that path;
   T17 removes or relocates them as necessary before the path is classified
   native. The model never depends outward on `casa-ms`.
 - `casa-imaging-reconstruction` depends only on the model (plus ecosystem

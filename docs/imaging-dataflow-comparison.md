@@ -67,12 +67,35 @@ flowchart LR
     class density,gridloop,fft,normalize,refresh hot;
 ```
 
-## `casa-rs` Overlay
+## `casa-rs` Native Overlay
 
-The current Rust structure has a useful hard boundary: `casa-imaging` is a pure
+The production continuum route is now one native-only composition:
+
+```mermaid
+flowchart LR
+    surface["Task/CLI surface<br/>parse and unit conversion"] --> application["casa-imaging-application<br/>canonical request and MS binding"]
+    application --> compile["compile<br/>problem and product graph"]
+    compile --> plan["plan<br/>resources, leases, and publication"]
+    plan --> run["run<br/>weighting, paired operators, cycles, products"]
+    run --> publish["independent CASA products<br/>image, psf, residual, model, sumwt"]
+```
+
+`casars-imager` does not own MeasurementSet interpretation, scientific
+operators, planning, product generation, or persistence. Unsupported cube,
+mosaic, W/AW-projection, and backend choices fail as
+`TemporarilyUnavailable`; they do not enter the pre-T23 runners described
+below.
+
+## Historical pre-T23 `casa-rs` Overlay
+
+The remainder of this section is retained only to explain the implementation
+that T23 removed and the pressure that motivated the refactor. It is not an
+active route or architecture description.
+
+The pre-T23 Rust structure had a useful hard boundary: `casa-imaging` was a pure
 core that consumes prepared batches and emits products, while `casars-imager`
-owns MeasurementSet I/O, mode routing, coordinates, masks, and product writing.
-Most near-term collapse pressure is therefore in the adapter/orchestration
+owned MeasurementSet I/O, mode routing, coordinates, masks, and product writing.
+Most collapse pressure was therefore in the adapter/orchestration
 layer, not in the pure core boundary.
 
 ```mermaid

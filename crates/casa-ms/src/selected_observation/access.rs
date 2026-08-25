@@ -61,6 +61,54 @@ impl BoundObservationSource {
         size_of::<Self>()
     }
 
+    /// Derive the smallest owner-coherent budget that can retain one selected row.
+    #[cfg(unix)]
+    pub(crate) fn minimum_content_budget_with_measures(
+        problem: &CompiledProblem,
+        source: &ObservationSource,
+        current_state: &ObservationSourceState,
+        measures: &SelectedObservationMeasures,
+        shared_bytes: SelectedObservationSharedBytes,
+        maximum_budget: SelectedObservationContentBudget,
+    ) -> Result<SelectedObservationContentBudget, BoundObservationSourceError> {
+        measures.validate_problem(problem)?;
+        let measurement_set = MeasurementSet::open_retained_read(source.provenance().locator())?;
+        validate_current_state(source, current_state)?;
+        selected_content_plan(
+            &measurement_set,
+            problem,
+            source,
+            shared_bytes,
+            maximum_budget,
+        )?;
+
+        let mut lower = 0_usize;
+        let mut upper = maximum_budget.available_bytes();
+        while lower + 1 < upper {
+            let candidate_bytes = lower + (upper - lower) / 2;
+            let candidate = SelectedObservationContentBudget::new(
+                candidate_bytes,
+                maximum_budget.maximum_live_blocks(),
+                maximum_budget.maximum_pointing_polynomial_terms(),
+            );
+            match selected_content_plan(&measurement_set, problem, source, shared_bytes, candidate)
+            {
+                Ok(_) => upper = candidate_bytes,
+                Err(
+                    SelectedObservationContentPlanError::InvalidBudget
+                    | SelectedObservationContentPlanError::InsufficientBudget { .. }
+                    | SelectedObservationContentPlanError::InsufficientRetainedBudget { .. },
+                ) => lower = candidate_bytes,
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Ok(SelectedObservationContentBudget::new(
+            upper,
+            maximum_budget.maximum_live_blocks(),
+            maximum_budget.maximum_pointing_polynomial_terms(),
+        ))
+    }
+
     /// Open the source locator under retained read locks without traversing MAIN rows.
     #[cfg(unix)]
     pub(crate) fn open_with_measures(
@@ -887,6 +935,13 @@ fn selected_coordinates(
         });
     }
     Ok(coordinates.into_boxed_slice())
+}
+
+pub(crate) fn validate_selected_coordinates(
+    measurement_set: &MeasurementSet,
+    selection: &ObservationSelection,
+) -> Result<(), BoundObservationSourceError> {
+    selected_coordinates(measurement_set, selection).map(drop)
 }
 
 #[derive(Clone, Copy)]

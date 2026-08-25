@@ -36,9 +36,10 @@ scientific state rather than solvers or execution implementations. Backends
 implement declarative work-node and operator interfaces and do not own modes,
 coordinates, weighting, normalization, or products.
 
-The sole whole-run legacy adapter is a leaf reachable only from the migration
-router. Native modules do not import the adapter or legacy-owned modules. CI
-enforces the permitted crate/module graph and rejects forbidden edges.
+There is one production engine behind the migration router. Capabilities whose
+owners have not landed are unavailable rather than delegated to an alternate
+implementation. CI enforces the permitted crate/module graph and rejects
+forbidden edges.
 
 ### Compile, plan, and run boundary
 
@@ -54,7 +55,7 @@ resource contract.
 
 `run(problem, plan)` validates the bindings and executes only the plan. It does
 not silently recompile, perform capability routing, choose an unlisted backend,
-or fall back to legacy.
+or fall back to another implementation.
 
 ### Measurement equation and weighting
 
@@ -165,23 +166,24 @@ PB-corrected products.
 
 ### Migration
 
-The authoritative migration matrix classifies each supported request capability
-as Native, LegacyWholeRun, or TemporarilyUnavailable. Routing occurs once before
-planning and is recorded in the request disposition and receipt. A native
-compile, plan, or execution failure is never retried through legacy. Native
-execution never delegates a stage to legacy, and a mixed request remains wholly
-legacy until all required capabilities are native.
+The authoritative migration matrix classifies each request capability as Native
+or TemporarilyUnavailable. Routing occurs once before planning and is recorded
+in the request disposition and receipt. An unavailable request invokes no
+engine. A compile, plan, or execution failure is terminal, and execution never
+delegates a stage to an alternate implementation.
 
 Migration Obligations are typed and executable. Each records the capability key,
 current owner, reason, authoritative issue/evidence, Acceptance Contract,
 destination ticket, transfer milestone, and deletion condition. A capability
 transfers only when its native Acceptance Contract passes and the same merge
-makes the legacy route unreachable. Helpers still needed by other legacy
-capabilities are quarantined behind the legacy dependency boundary. A test-only
-differential harness may invoke both engines but is not production routing.
+makes the displaced route unreachable. Useful algorithms move directly to their
+authoritative owner; otherwise the displaced implementation is deleted. A
+test-only differential harness may read frozen evidence but is not production
+routing.
 
-Before transfer, corrective and performance work lands only in the legacy owner;
-after transfer it lands only in the native owner. Dual production ownership and
+Before transfer, the capability is unavailable in production; implementation
+work lands only in its accepted destination owner. After transfer it lands only
+in the native owner. Dual production ownership and
 dual patching are prohibited.
 
 ## Consequences
@@ -214,7 +216,7 @@ Neutral / tradeoffs:
 3. Build one broad imaging-run object owning science, resources, solvers, and products.
 4. Treat continuum, line, mosaic, and projections as independent top-level modes.
 5. Let a channel-local basis alone define spectral-line semantics.
-6. Allow capability transfer without deleting or quarantining the legacy route.
+6. Allow capability transfer without deleting the displaced route.
 
 ## Enforcement
 
@@ -222,12 +224,12 @@ This decision is enforced by:
 - tests: weighted-adjoint and linearity laws, spectral identity/nonidentity
   cases, cycle invariants, mutation/cancellation rollback, product-generation
   consistency, differential evidence, and versioned Acceptance Contracts
-- lint/import/dependency rules: CI rejects forbidden frontend, backend, native,
-  legacy, observation, reconstruction, and product dependencies
+- lint/import/dependency rules: CI rejects forbidden frontend, backend,
+  observation, reconstruction, and product dependencies
 - CI checks: the migration matrix and obligations remain executable; transferred
   routes are unreachable; products/model-column writes are atomic
-- review trigger: stop before adding a second public run interface, a per-stage
-  legacy path, backend-owned science/product semantics, or unpaired sampling
+- review trigger: stop before adding a second public run interface, an alternate
+  stage path, backend-owned science/product semantics, or unpaired sampling
 - none / guidance only:
 
 ## Drift detection
@@ -237,5 +239,5 @@ Suspect drift if:
 - Geometry owns sample-sized arrays or execution tiling
 - spectral interpolation is not represented in prediction and adjoint paths
 - a Minor Cycle mutates authoritative residual state or exceeds its view envelope
-- a capability can silently retry through legacy
+- a capability can silently retry through another implementation
 - a solver or backend defines normalization, restoration, or output semantics

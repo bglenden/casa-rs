@@ -17,8 +17,8 @@ coordinates, measures, and related workflows.
 | core codecs (`casa-values`, `casa-aipsio`) | Internal generic value model and AipsIO-style framing used by higher layers | Rust ecosystem crates only |
 | foundation crates (`casa-types`, `casa-measures-data`, `casa-measures-tools`) | Public scalar/quanta/measures algorithms and contracts plus explicit runtime-data validation, loading, installation, and maintenance | core codecs; `casa-measures-data` also uses canonical `casa-tables` accessors |
 | persistent storage (`casa-tables`) | CASA table persistence, codecs, data managers/storage backends, schema/mutation APIs, and TaQL engine | core codecs, foundation crates |
-| native imaging contracts (`casa-imaging-model`, `casa-imaging-reconstruction`, `casa-imaging-products`, `casa-imaging-runtime`) | Dependency-free logical schemas and commitments; authoritative model-state ingest, reprojection, delta, and completion algorithms; continuum product algorithms and the two-phase Product Generation Authority with planned generations, artifact identities, seals, and publication projection; process-level resource topology, policies, demand envelopes, arbitration, and leases | `casa-imaging-model` has no workspace dependencies; `casa-imaging-reconstruction` depends only on the model; `casa-imaging-products` depends on the model and reconstruction; `casa-imaging-runtime` depends on the model and the reconstruction-owned executable-problem brand at its execution boundary and composes product authority at its publication boundary in the continuing tranche cutover; none may depend on current legacy imaging crates |
-| imaging migration router (`casa-imaging-router`) | Sole pre-plan whole-run dispatch owner, deriving authoritative capability rows and recording one `Native`, `LegacyWholeRun`, or `TemporarilyUnavailable` disposition | `casa-imaging-model` only; its sealed engine ports cannot invoke or mix stages and the crate has no legacy dependency |
+| native imaging contracts (`casa-imaging-model`, `casa-imaging-reconstruction`, `casa-imaging-products`, `casa-imaging-runtime`) | Dependency-free logical schemas and commitments; authoritative model-state ingest, reprojection, delta, and completion algorithms; continuum product algorithms and the Product Generation Authority with planned generations, artifact identities, seals, and independently atomic member publication; process-level resource topology, policies, demand envelopes, arbitration, and leases | `casa-imaging-model` has no workspace dependencies; `casa-imaging-reconstruction` depends only on the model; `casa-imaging-products` depends on the model and reconstruction; `casa-imaging-runtime` depends on the model and the reconstruction-owned executable-problem brand at its execution boundary and composes product authority at its publication boundary; none may depend on displaced imaging implementations |
+| imaging application composition (`casa-imaging-application`) and migration router (`casa-imaging-router`) | The application crate is the sole production composition seam across MeasurementSet authority, reconstruction, products, resources, execution, and CASA product publication; the router is the sole pre-plan owner of the `Native` or `TemporarilyUnavailable` decision | The application crate depends inward only on the router and native imaging owners; the router depends only on `casa-imaging-model`; unavailable requests invoke no execution implementation |
 | domain libraries (`casa-ms`, `casa-lattices`, `casa-coordinates`, `casa-images`, `casa-imaging`, `casa-calibration`, `casa-vla`) | Higher-level astronomy data models and algorithms built on table/image persistence | foundation crates, `casa-tables`, selected peer domain crates where documented |
 | boundary contracts (`casa-provider-contracts`, `casars-imagebrowser-protocol`, `casars-tablebrowser-protocol`) | The generic provider envelope, canonical parameter and application catalogs, task/session surface definitions, and protocol surfaces between providers, apps, and Python/runtime layers | domain libraries and foundation crates; must not become a second source of truth |
 | parameter and task runtime (`casa-task-runtime`) | Format-neutral parameter resolution, sparse TOML profiles, migrations, typed task/session lifecycle coordination, managed Last storage, and the common one-shot task CLI host | boundary contracts and `casa-types`; must not implement provider science behavior |
@@ -73,7 +73,7 @@ canonicalizes and checks the private root before creating anything, and performs
 no hidden lookup, integrity work, or eviction. That private casa-rs cache is not
 Product Graph authority or a CASA-visible persisted format. Existing CASA
 CFS/WTCFS directories remain read-only interoperability inputs supplied through
-the validated legacy adapter; the runtime neither mutates them nor creates
+the validated import adapter; the runtime neither mutates them nor creates
 sidecars. Cold load accepts only bounded absolute regular-file source
 descriptors through a content-committed source artifact listed in the canonical
 plan, owned by an exact predecessor/import node, and retained in that
@@ -90,17 +90,19 @@ buffer are charged inside one
 `SourceReadAhead` slot. Every `WorkImplementation` also states its failure
 measurement policy explicitly; there is no default that can silently discard
 completed I/O or mutation evidence.
-`casa-imaging-router` is the application-layer owner of the one pre-plan
-migration decision. It compiles the logical request, derives every applicable
-matrix row, records the authoritative row evidence, and invokes exactly one
-whole-run engine port. A selected native failure is terminal; the router never
-retries through legacy or exposes stage-level delegation. The current
-`casa-imaging` and `casars-imager` crates remain frozen legacy owners during the
-migration; their exact existing edges are ratcheted rather than treated as
-permission for new native dependencies. Three current surface-to-domain edges
-that violate the accepted logical direction are separately frozen as
-transitional exceptions; the architecture gate permits no additions to either
-ledger.
+`casa-imaging-application` owns production composition across
+MeasurementSet observation authority, reconstruction, products, and physical
+execution. `casa-imaging-router` owns the one pre-plan migration decision. It
+compiles the logical request, derives every applicable matrix row, records the
+authoritative row evidence, and either invokes the single production engine or
+returns `TemporarilyUnavailable` before planning. A selected production failure
+is terminal; there is no alternate implementation, retry path, or stage-level
+delegation. `casars-imager` is a thin frontend projection over this interface:
+it owns parsing, unit and representation conversion, canonical request
+construction, and result presentation only. Displaced `casa-imaging` source is
+not production-reachable and may not gain new callers or dependencies; later
+capability tickets either transfer useful algorithms to their authoritative
+owners or delete them.
 
 The remaining programme introduces the product owner only in the ticket that
 can migrate all callers and enforce its exact dependencies.
@@ -273,8 +275,8 @@ set, and live lease epoch. A physical I/O fence alone cannot mint this proof.
 Equal science content may share a content generation while remaining distinct
 logical source and access commitments; prediction destination is provenance and
 therefore cannot split prediction and residual views of the same content
-generation. The legacy
-`casars-imager` `MsSelection`/`resolve_selection` preparation route is removed:
+generation. The displaced `casars-imager`
+`MsSelection`/`resolve_selection` preparation route is removed:
 its frontend projection delegates to the same bounded `casa-ms` predicate as
 native Selected Observation access.
 
@@ -600,14 +602,14 @@ or provider semantics that bypass the Rust-owned contracts.
 
 ### Imaging execution
 
-During migration, `casars-imager` owns user-facing MeasurementSet expression
-resolution, bounded source streaming, mode dispatch, runtime policy, protocol
-telemetry, and persisted product writing. Resolved immutable selection identity
-belongs only to `casa-imaging-model`'s Observation Snapshot compiler; the legacy
-application does not yet consume that contract in production.
-`casa-imaging` remains the prepared-visibility computation boundary for
-weighting, gridding/degridding, FFTs, normalization, deconvolution, restoration,
-and product semantics.
+`casars-imager` owns only user-facing parsing, unit and representation
+conversion, canonical task-request projection, protocol telemetry, and result
+presentation. `casa-imaging-application` owns MeasurementSet expression
+resolution, bounded source access, route admission, runtime policy, and
+independently atomic product publication. Resolved immutable selection identity
+belongs to `casa-imaging-model`'s Observation Snapshot compiler. Scientific
+weighting, gridding/degridding, FFT, normalization, deconvolution, restoration,
+and product meaning reside only in their declared native owners.
 
 The application admits one immutable `ImagingResolvedPlan` from explicit task
 policy, workload shape, and a reservation in its process resource ledger.
@@ -810,14 +812,12 @@ compatibility block facade or normal-path host full-grid upload is retained.
 
 - GitHub Project/issue adoption is now the planning source of truth, but older `docs/Planning/` material still exists and may need incremental retirement or summarization.
 - `just` provides a stable command vocabulary, but some contributors may still use the underlying `cargo` and `scripts/*` commands directly until it is installed locally.
-- Current production frontends still enter the frozen legacy implementation;
-  their later migrations will bind adapters to `casa-imaging-router`. Until a
-  request's last required row transfers, the router keeps that request wholly
-  legacy. `just arch-check` pins the router package, source, matrix binding, and
-  unique engine-port ownership; it also rejects unclassified workspace
-  packages, non-exact native dependency sets, forbidden Rust/Swift source
-  imports, and any change to the 16 exact frozen legacy or three exact
-  transitional edges.
+- Imaging capabilities whose authoritative tickets have not landed are
+  `TemporarilyUnavailable`; production never enters a displaced implementation.
+  `just arch-check` pins the router package, source, matrix binding, and unique
+  production-engine ownership; it also rejects unclassified workspace packages,
+  non-exact native dependency sets, forbidden Rust/Swift source imports, and
+  unapproved dependency exceptions.
 
 ## ADR index
 

@@ -164,6 +164,12 @@ impl MajorCycleOperatorResult {
     pub const fn lease_epoch(&self) -> u64 {
         self.lease_epoch
     }
+
+    /// Consume the runtime envelope into the reconstruction-owned completion.
+    #[must_use]
+    pub fn into_completion(self) -> casa_imaging_reconstruction::MajorCycleCompletion {
+        self.completion
+    }
 }
 
 /// Exact reason the runtime rejected a Major-Cycle reconciliation attempt.

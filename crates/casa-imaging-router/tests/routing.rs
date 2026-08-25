@@ -22,7 +22,7 @@ use casa_imaging_model::{
     WeightDensityScope, WeightingContract, WeightingScheme,
 };
 use casa_imaging_router::{
-    DispatchError, ImagingRouter, LegacyWholeRunEnginePort, NativeEnginePort, RequestDisposition,
+    DispatchError, ImagingRouter, NativeEnginePort, RequestDisposition, TaskRouteRequirement,
 };
 
 mod common;
@@ -45,57 +45,32 @@ fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
     )
 }
 #[test]
-fn legacy_request_invokes_only_whole_run_legacy_engine() {
+fn native_request_invokes_the_only_engine() {
     let native_calls = Arc::new(AtomicUsize::new(0));
-    let legacy_calls = Arc::new(AtomicUsize::new(0));
-    let router = ImagingRouter::new(
-        NativeEnginePort::new({
-            let native_calls = Arc::clone(&native_calls);
-            move |_, _| {
-                native_calls.fetch_add(1, Ordering::SeqCst);
-                Ok::<_, &'static str>("native")
-            }
-        }),
-        LegacyWholeRunEnginePort::new({
-            let legacy_calls = Arc::clone(&legacy_calls);
-            move |_, _| {
-                legacy_calls.fetch_add(1, Ordering::SeqCst);
-                Ok::<_, &'static str>("legacy")
-            }
-        }),
-    );
+    let router = ImagingRouter::new(NativeEnginePort::new({
+        let native_calls = Arc::clone(&native_calls);
+        move |_, _| {
+            native_calls.fetch_add(1, Ordering::SeqCst);
+            Ok::<_, &'static str>("native")
+        }
+    }));
 
     let outcome = router.dispatch(standard_dirty_request()).unwrap();
-
-    assert_eq!(
-        outcome.route().disposition(),
-        RequestDisposition::LegacyWholeRun
-    );
-    assert_eq!(outcome.output(), &"legacy");
-    assert_eq!(native_calls.load(Ordering::SeqCst), 0);
-    assert_eq!(legacy_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(outcome.route().disposition(), RequestDisposition::Native);
+    assert_eq!(outcome.output(), &"native");
+    assert_eq!(native_calls.load(Ordering::SeqCst), 1);
 }
 
 #[test]
 fn unavailable_request_invokes_neither_engine_and_reports_its_migration_obligation() {
     let native_calls = Arc::new(AtomicUsize::new(0));
-    let legacy_calls = Arc::new(AtomicUsize::new(0));
-    let router = ImagingRouter::new(
-        NativeEnginePort::new({
-            let native_calls = Arc::clone(&native_calls);
-            move |_, _| {
-                native_calls.fetch_add(1, Ordering::SeqCst);
-                Ok::<_, &'static str>("native")
-            }
-        }),
-        LegacyWholeRunEnginePort::new({
-            let legacy_calls = Arc::clone(&legacy_calls);
-            move |_, _| {
-                legacy_calls.fetch_add(1, Ordering::SeqCst);
-                Ok::<_, &'static str>("legacy")
-            }
-        }),
-    );
+    let router = ImagingRouter::new(NativeEnginePort::new({
+        let native_calls = Arc::clone(&native_calls);
+        move |_, _| {
+            native_calls.fetch_add(1, Ordering::SeqCst);
+            Ok::<_, &'static str>("native")
+        }
+    }));
 
     let error = router.dispatch(moving_source_request()).unwrap_err();
 
@@ -127,7 +102,33 @@ fn unavailable_request_invokes_neither_engine_and_reports_its_migration_obligati
     assert!(!obligation.transfer_point().is_empty());
     assert!(!obligation.deletion_condition().is_empty());
     assert_eq!(native_calls.load(Ordering::SeqCst), 0);
-    assert_eq!(legacy_calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn unavailable_automatic_backend_rows_cannot_disappear_at_dispatch() {
+    let router = ImagingRouter::new(NativeEnginePort::new(|_, _| {
+        Ok::<_, &'static str>("native")
+    }));
+
+    let error = router
+        .dispatch_with_task_requirements(
+            standard_dirty_request(),
+            [
+                TaskRouteRequirement::ExecutionAuto,
+                TaskRouteRequirement::FftAuto,
+            ],
+        )
+        .unwrap_err();
+    let DispatchError::TemporarilyUnavailable(route) = error else {
+        panic!("automatic backend rows did not fail closed");
+    };
+    let ids = route
+        .requirements()
+        .iter()
+        .map(|requirement| requirement.id())
+        .collect::<Vec<_>>();
+    assert!(ids.contains(&"backend.execution-auto"));
+    assert!(ids.contains(&"backend.fft-auto"));
 }
 
 fn standard_dirty_request() -> ImagingRequest {

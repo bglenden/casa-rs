@@ -19,10 +19,10 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_POLICY = REPO_ROOT / "resources/imaging-architecture/dependency-policy.json"
-VALID_STATUSES = {"Native", "LegacyWholeRun", "TemporarilyUnavailable"}
+VALID_STATUSES = {"Native", "TemporarilyUnavailable"}
 MATRIX_KINDS = {"capability", "product", "solver", "frontend", "backend"}
 LOCATOR_KEYS = {"commit", "issue", "locator", "path", "receipt", "token", "url"}
-PACKAGE_CLASSIFICATIONS = {"native", "legacy", "surface", "support"}
+PACKAGE_CLASSIFICATIONS = {"native", "displaced", "surface", "support"}
 ACCEPTED_MIGRATION_ISSUES = frozenset(
     {
         35,
@@ -48,26 +48,26 @@ ACCEPTED_MIGRATION_ISSUES = frozenset(
 )
 # Independent ratchets for readable policy and matrix scopes. Update a digest
 # only when review accepts the corresponding human-readable contract change.
-ACCEPTED_FROZEN_LEGACY_EDGES_SHA256 = (
-    "93cce3cc2d3979ce6af82b3d76529c7ec8768fb5cfc1b0ce500453d6e128f95f"
+ACCEPTED_FROZEN_DISPLACED_EDGES_SHA256 = (
+    "e663f99ccda6780d6747185e763f90e1ee030a3162c7cc9a3b60762a3701bc09"
 )
 ACCEPTED_LOGICAL_GRAPH_SHA256 = (
-    "7101b6d90196b1ea3d3c750080d703bb5e305e91c8ac19553e1dda7ed58c4e33"
+    "8f45c41e99aad2fa674b9b55fbb3d7036b23af1ffba13c79e45b593fd11e6428"
 )
 ACCEPTED_SOURCE_BOUNDARIES_SHA256 = (
-    "c170647abd49654b29aedfadcd1cc2336dcf21270fffc82d34c7c559acc5e11b"
+    "7e427ffe6e7bf48d28070bb0dc01719082039562d5cdac18baca569fd5d2db73"
 )
 ACCEPTED_FROZEN_TRANSITIONAL_EDGES_SHA256 = (
-    "0077e28528d2160616d34e17fb7124586f346557917e0bfac99b0dff6739a1d1"
+    "72c56efd7f9b78e3a2e9c58bcc98e2ffa1d74acdf59bb257e63cfb2406a1a6d9"
 )
 ACCEPTED_PACKAGE_POLICY_SHA256 = (
-    "405f99e6099654ed84b570b301ccc2a4af97547a29e6b4554ca6870eafe74f2f"
+    "e04b376058e4083bb700e9445c593960ed50ac7b1e9af19846725809b42d71c1"
 )
-ACCEPTED_WHOLE_RUN_ROUTER_SHA256 = (
-    "c855dae5d5b4239e21fa0fe43d1d2f4bbb4114d245374db674fb81713af11a2d"
+ACCEPTED_MIGRATION_ROUTER_SHA256 = (
+    "1290fee63ac69d4a3392bbf8b09f6b810c493c2b0b76bf09eb1e4e4636f81105"
 )
 ACCEPTED_MATRIX_INVENTORY_SHA256 = (
-    "95f98d0bf3fc1a676bef079d32ae5391a5bac4ff594f211d9f9420949a2e40a6"
+    "c5f48830fc76f27f2100f899f988c7bb4d1df6673832851670999309a548bed5"
 )
 ACCEPTED_PRODUCT_KIND_INVENTORY_SHA256 = (
     "f4e04101f0d6e89d9bc12584cd580f5f8924f80e71b867ee252422f648fdced5"
@@ -114,25 +114,19 @@ ACCEPTED_STANDARD_MFS_ACCELERATION_POLICY_INVENTORY_SHA256 = (
 ACCEPTED_STANDARD_MFS_MINOR_CYCLE_BACKEND_INVENTORY_SHA256 = (
     "d96f704776bd4e88fee221e14e7c863894c5a7c1e6e2d3d0510976ad76a1822e"
 )
-ACCEPTED_SINGLE_PLANE_ACCELERATION_POLICY_INVENTORY_SHA256 = (
-    "d762618f2f100f2af0ea77f2244e19bd7d07d911ae23500432ae667f56bd46c6"
-)
-ACCEPTED_PER_PLANE_EXECUTION_BACKEND_INVENTORY_SHA256 = (
-    "2f622825a283efc3580072ae37c6dbf78dc52530923b9a1c56834a44f23b2583"
-)
 ACCEPTED_ISSUE_OUTCOMES_SHA256 = (
-    "6aa3525971d60dbb09fefa17a201c173c36db3f211aa87bec3a22df957533703"
+    "b6bb1b5a8c78aefda1e9c1ab228d0e2472c91d78ffd5b26dd68fb9b2a7522a4d"
 )
 ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256 = (
-    "4589711ae6224b94916d05e214df510fab5ba01a16e21a0b913b4b851c1d0e89"
+    "778bcf42be2ff392cc86c9ca3eb67dc0591c11a24496881841b980c80f1fdbaf"
 )
 ACCEPTED_MATRIX_ROWS_SHA256 = (
-    "c1adb1f5d89ae082c7696dea0f67250f7b1d4cc3a86670f5a7b95f38d287aaf9"
+    "12246ca4739431f06925563dcf6adbc0ce38885af0a774cc4ae075183f60522b"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "620b3b9ce34f8ee8292c87e6456508758f213f5a68070090cddbdb2875a37e95"
+    "9b057dc8327dd45a3fffb52a2502d0973f4380f904e6d8b79af7a16ee2be95ab"
 )
-ACCEPTED_MATRIX_CONTRACT_REVISION = 32
+ACCEPTED_MATRIX_CONTRACT_REVISION = 35
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "scientific-products-v1",
@@ -153,7 +147,7 @@ ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "exact-routing-v1",
         "laws",
-    ): "640f5af8c6808ebba8df8d36cc2b30fa5422e7e671785c931f5d034940b199b2",
+    ): "3199d2c99bfbe9c54fd69fc38b35edefecbacebea4ad64bd0570de1aa1d1a471",
     (
         "exact-routing-v1",
         "resource_gates",
@@ -237,7 +231,7 @@ ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "observation-transaction-v1",
         "laws",
-    ): "418e0eb39337066849b06e25fdef8468ea0b9b3efbe7cd2ccc1c439cf5bb57a9",
+    ): "be111815bc7667c2534f031f5e1dca586ab7cf12b624fddbd61f1040044d18c8",
     (
         "observation-transaction-v1",
         "resource_gates",
@@ -333,8 +327,8 @@ def validate_policy(
     require_string(policy.get("decision"), "dependency policy decision")
     layers = require_string_list(policy.get("layers"), "dependency policy layers")
     layer_set = set(layers)
-    if "legacy" not in layer_set:
-        raise ArchitectureError("dependency policy layers must include legacy")
+    if "displaced" not in layer_set:
+        raise ArchitectureError("dependency policy layers must include displaced")
 
     allowed = policy.get("allowed_logical_edges")
     if not isinstance(allowed, dict) or set(allowed) != layer_set:
@@ -358,9 +352,9 @@ def validate_policy(
             raise ArchitectureError(
                 f"allowed_logical_edges.{source} may not contain itself"
             )
-        if source != "legacy" and "legacy" in targets:
+        if source != "displaced" and "displaced" in targets:
             raise ArchitectureError(
-                f"native layer {source} may not import legacy; T04 owns the sole router seam"
+                f"native layer {source} may not import displaced code; the migration router owns admission"
             )
     if "backend" in allowed["application"]:
         raise ArchitectureError(
@@ -407,11 +401,11 @@ def validate_policy(
         )
     for package, layer in package_layers.items():
         classification = classifications[package]
-        if layer == "legacy" and classification != "legacy":
+        if layer == "displaced" and classification != "displaced":
             raise ArchitectureError(
-                f"legacy package {package} must be classified legacy"
+                f"displaced package {package} must be classified displaced"
             )
-        if layer != "legacy" and classification not in {"native", "surface"}:
+        if layer != "displaced" and classification not in {"native", "surface"}:
             raise ArchitectureError(
                 f"logical imaging package {package} must be classified native or surface"
             )
@@ -433,7 +427,7 @@ def validate_policy(
             f"removed={sorted(classified_native - set(native_rules))}"
         )
     for package, dependencies in native_rules.items():
-        if package_layers.get(package) in (None, "legacy"):
+        if package_layers.get(package) in (None, "displaced"):
             raise ArchitectureError(
                 f"native dependency rule {package} is not a native package"
             )
@@ -449,28 +443,28 @@ def validate_policy(
                 f"native_package_workspace_dependencies.{package} contains duplicates"
             )
 
-    validate_whole_run_router_policy(
+    validate_migration_router_policy(
         policy, package_layers, classifications, native_rules
     )
 
-    legacy_packages = set(
-        require_string_list(policy.get("legacy_packages"), "legacy_packages")
+    displaced_packages = set(
+        require_string_list(policy.get("displaced_packages"), "displaced_packages")
     )
-    mapped_legacy = {
-        package for package, layer in package_layers.items() if layer == "legacy"
+    mapped_displaced = {
+        package for package, layer in package_layers.items() if layer == "displaced"
     }
-    if legacy_packages != mapped_legacy:
+    if displaced_packages != mapped_displaced:
         raise ArchitectureError(
-            "legacy_packages must exactly match packages assigned to the legacy layer"
+            "displaced_packages must exactly match packages assigned to the displaced layer"
         )
-    classified_legacy = {
+    classified_displaced = {
         package
         for package, classification in classifications.items()
-        if classification == "legacy"
+        if classification == "displaced"
     }
-    if classified_legacy != legacy_packages:
+    if classified_displaced != displaced_packages:
         raise ArchitectureError(
-            "legacy package classification must exactly match legacy_packages"
+            "displaced package classification must exactly match displaced_packages"
         )
     frozen_edges(policy)
     frozen_transitional_edges(policy)
@@ -525,13 +519,13 @@ def validate_policy(
         )
 
 
-def validate_whole_run_router_policy(
+def validate_migration_router_policy(
     policy: dict[str, Any],
     package_layers: dict[str, str],
     classifications: dict[str, str],
     native_rules: dict[str, list[str]],
 ) -> None:
-    router = policy.get("whole_run_router")
+    router = policy.get("migration_router")
     required = {
         "package",
         "source",
@@ -541,13 +535,13 @@ def validate_whole_run_router_policy(
     }
     if not isinstance(router, dict) or set(router) != required:
         raise ArchitectureError(
-            f"whole_run_router must contain exactly {sorted(required)}"
+            f"migration_router must contain exactly {sorted(required)}"
         )
-    package = require_string(router.get("package"), "whole_run_router.package")
-    source = require_string(router.get("source"), "whole_run_router.source")
-    require_string(router.get("router_type"), "whole_run_router.router_type")
-    require_string(router.get("dispatch_method"), "whole_run_router.dispatch_method")
-    require_string_list(router.get("engine_ports"), "whole_run_router.engine_ports")
+    package = require_string(router.get("package"), "migration_router.package")
+    source = require_string(router.get("source"), "migration_router.source")
+    require_string(router.get("router_type"), "migration_router.router_type")
+    require_string(router.get("dispatch_method"), "migration_router.dispatch_method")
+    require_string_list(router.get("engine_ports"), "migration_router.engine_ports")
     source_path = Path(source)
     if (
         source_path.is_absolute()
@@ -555,11 +549,11 @@ def validate_whole_run_router_policy(
         or source_path.suffix != ".rs"
     ):
         raise ArchitectureError(
-            "whole_run_router.source must be a repository Rust source"
+            "migration_router.source must be a repository Rust source"
         )
-    if stable_digest(router) != ACCEPTED_WHOLE_RUN_ROUTER_SHA256:
+    if stable_digest(router) != ACCEPTED_MIGRATION_ROUTER_SHA256:
         raise ArchitectureError(
-            "whole-run migration router differs from the accepted owner"
+            "migration router differs from the accepted owner"
         )
     if (
         package_layers.get(package) != "application"
@@ -567,7 +561,7 @@ def validate_whole_run_router_policy(
         or native_rules.get(package) != ["casa-imaging-model"]
     ):
         raise ArchitectureError(
-            "whole-run migration router must be a native application package with only the imaging model dependency"
+            "migration router must be a native application package with only the imaging model dependency"
         )
 
 
@@ -769,26 +763,26 @@ def edge_tuple(edge: Any, context: str) -> tuple[str, str, str]:
 
 
 def frozen_edges(policy: dict[str, Any]) -> set[tuple[str, str, str]]:
-    values = policy.get("frozen_legacy_workspace_edges")
+    values = policy.get("frozen_displaced_workspace_edges")
     if not isinstance(values, list) or not values:
         raise ArchitectureError(
-            "frozen_legacy_workspace_edges must be a non-empty array"
+            "frozen_displaced_workspace_edges must be a non-empty array"
         )
     result = {
-        edge_tuple(edge, f"frozen_legacy_workspace_edges[{index}]")
+        edge_tuple(edge, f"frozen_displaced_workspace_edges[{index}]")
         for index, edge in enumerate(values)
     }
     if len(result) != len(values):
-        raise ArchitectureError("frozen_legacy_workspace_edges contains duplicates")
-    if stable_digest(sorted(result)) != ACCEPTED_FROZEN_LEGACY_EDGES_SHA256:
+        raise ArchitectureError("frozen_displaced_workspace_edges contains duplicates")
+    if stable_digest(sorted(result)) != ACCEPTED_FROZEN_DISPLACED_EDGES_SHA256:
         raise ArchitectureError(
-            "frozen_legacy_workspace_edges differs from the 16 accepted exceptions"
+            "frozen_displaced_workspace_edges differs from the accepted exceptions"
         )
-    legacy = set(policy["legacy_packages"])
+    displaced = set(policy["displaced_packages"])
     for source, target, _kind in result:
-        if source not in legacy and target not in legacy:
+        if source not in displaced and target not in displaced:
             raise ArchitectureError(
-                f"frozen legacy edge {source} -> {target} does not touch a legacy package"
+                f"frozen displaced edge {source} -> {target} does not touch a displaced package"
             )
     return result
 
@@ -814,15 +808,15 @@ def frozen_transitional_edges(
             "frozen_transitional_workspace_edges differs from the accepted exceptions"
         )
     package_layers = policy["package_layers"]
-    legacy = set(policy["legacy_packages"])
+    displaced = set(policy["displaced_packages"])
     for source, target, _kind in result:
         if source not in package_layers or target not in package_layers:
             raise ArchitectureError(
                 f"frozen transitional edge {source} -> {target} lacks a logical package layer"
             )
-        if source in legacy or target in legacy:
+        if source in displaced or target in displaced:
             raise ArchitectureError(
-                f"frozen transitional edge {source} -> {target} belongs in the legacy ledger"
+                f"frozen transitional edge {source} -> {target} belongs in the displaced ledger"
             )
         try:
             validate_logical_edge(
@@ -940,14 +934,16 @@ def validate_workspace(policy: dict[str, Any], metadata: dict[str, Any]) -> None
             f"policy-owned workspace packages are missing: {missing}"
         )
 
-    legacy = set(policy["legacy_packages"])
-    actual_legacy = {edge for edge in edges if edge[0] in legacy or edge[1] in legacy}
-    expected_legacy = frozen_edges(policy)
-    added = sorted(actual_legacy - expected_legacy)
-    removed = sorted(expected_legacy - actual_legacy)
+    displaced = set(policy["displaced_packages"])
+    actual_displaced = {
+        edge for edge in edges if edge[0] in displaced or edge[1] in displaced
+    }
+    expected_displaced = frozen_edges(policy)
+    added = sorted(actual_displaced - expected_displaced)
+    removed = sorted(expected_displaced - actual_displaced)
     if added or removed:
         raise ArchitectureError(
-            "frozen legacy workspace edges changed: "
+            "frozen displaced workspace edges changed: "
             f"added={format_edges(added)}, removed={format_edges(removed)}"
         )
 
@@ -960,15 +956,15 @@ def validate_workspace(policy: dict[str, Any], metadata: dict[str, Any]) -> None
         )
 
     for source, target, kind in sorted(edges):
-        if (source, target, kind) in expected_legacy | expected_transitional:
+        if (source, target, kind) in expected_displaced | expected_transitional:
             continue
         source_layer = package_layers.get(source)
         target_layer = package_layers.get(target)
-        if source_layer is None or source_layer == "legacy" or target_layer is None:
+        if source_layer is None or source_layer == "displaced" or target_layer is None:
             continue
-        if target_layer == "legacy":
+        if target_layer == "displaced":
             raise ArchitectureError(
-                f"native package imports legacy: {source}({source_layer}) -> {target}(legacy)"
+                f"native package imports displaced code: {source}({source_layer}) -> {target}(displaced)"
             )
         if source_layer == target_layer:
             continue
@@ -1706,30 +1702,30 @@ def validate_source_boundaries(
             )
 
 
-def validate_whole_run_router_source(
+def validate_migration_router_source(
     policy: dict[str, Any], repo_root: Path = REPO_ROOT
 ) -> None:
-    router = policy["whole_run_router"]
+    router = policy["migration_router"]
     source_relative = Path(router["source"])
     source_path = repo_root / source_relative
     try:
         source = source_path.read_text(encoding="utf-8")
     except OSError as error:
         raise ArchitectureError(
-            f"whole-run migration router cannot read {source_relative}: {error}"
+            f"migration router cannot read {source_relative}: {error}"
         ) from error
 
     matrix_name = Path(policy["migration_matrix"]).name
     if "include_str!" not in source or matrix_name not in source:
         raise ArchitectureError(
-            "whole-run migration router must embed the authoritative migration matrix"
+            "migration router must embed the authoritative migration matrix"
         )
 
     owner_symbols = [router["router_type"], *router["engine_ports"]]
     owners: dict[str, list[str]] = {symbol: [] for symbol in owner_symbols}
     crates_root = repo_root / "crates"
     if not crates_root.is_dir():
-        raise ArchitectureError("whole-run migration router cannot inspect crates")
+        raise ArchitectureError("migration router cannot inspect crates")
     for crate in sorted(crates_root.iterdir()):
         source_root = crate / "src"
         if not source_root.is_dir():
@@ -1739,7 +1735,7 @@ def validate_whole_run_router_source(
                 candidate = path.read_text(encoding="utf-8")
             except OSError as error:
                 raise ArchitectureError(
-                    f"whole-run migration router cannot read {path}: {error}"
+                    f"migration router cannot read {path}: {error}"
                 ) from error
             for symbol in owner_symbols:
                 definition = re.compile(
@@ -1754,7 +1750,7 @@ def validate_whole_run_router_source(
     for symbol, actual_owners in owners.items():
         if actual_owners != [expected_owner]:
             raise ArchitectureError(
-                f"whole-run router symbol {symbol} must be owned exactly once by "
+                f"migration router symbol {symbol} must be owned exactly once by "
                 f"{expected_owner}: found={actual_owners}"
             )
 
@@ -1763,7 +1759,7 @@ def validate_whole_run_router_source(
     )
     if len(dispatch.findall(source)) != 1:
         raise ArchitectureError(
-            "whole-run migration router must expose exactly one accepted dispatch method"
+            "migration router must expose exactly one accepted dispatch method"
         )
 
 
@@ -2194,7 +2190,6 @@ def validate_migration_matrix(
             )
         if matrix.get("status_values") != [
             "Native",
-            "LegacyWholeRun",
             "TemporarilyUnavailable",
         ]:
             raise ArchitectureError(
@@ -2387,20 +2382,6 @@ def validate_migration_matrix(
             REPO_ROOT / "crates/casa-imaging/src/lib.rs",
             "StandardMfsMinorCycleBackend",
             ACCEPTED_STANDARD_MFS_MINOR_CYCLE_BACKEND_INVENTORY_SHA256,
-        )
-        validate_rust_enum_inventory(
-            matrix,
-            "single_plane_acceleration_policy_inventory",
-            REPO_ROOT / "crates/casa-imaging/src/single_plane_plan.rs",
-            "SinglePlaneAccelerationPolicy",
-            ACCEPTED_SINGLE_PLANE_ACCELERATION_POLICY_INVENTORY_SHA256,
-        )
-        validate_rust_enum_inventory(
-            matrix,
-            "per_plane_execution_backend_inventory",
-            REPO_ROOT / "crates/casars-imager/src/lib.rs",
-            "PerPlaneExecutionBackend",
-            ACCEPTED_PER_PLANE_EXECUTION_BACKEND_INVENTORY_SHA256,
         )
     baseline_registry = validate_baseline_manifest_registry(
         matrix.get("baseline_manifest_digests")
@@ -3524,7 +3505,7 @@ def validate_t17_ms_selection_transfer(rows: list[dict[str, Any]]) -> None:
         "crates/casa-types/src/measures/provider.rs::MeasuresProviderState",
         "resources/imaging-architecture/dependency-policy.json::t17-selected-observation-provider-injection",
         "crates/casa-imaging-runtime/src/execution_bindings.rs::ObservationReadCompletionContext",
-        "crates/casars-imager/src/lib.rs::select_main_rows",
+        "crates/casa-imaging-application/src/continuum_request.rs::fn prepare(",
     }
     if not required_evidence.issubset(set(row.get("source_evidence", []))):
         raise ArchitectureError(
@@ -3539,7 +3520,9 @@ def validate_t17_ms_selection_transfer(rows: list[dict[str, Any]]) -> None:
             "capability.ms-selection lacks pinned T17 generation source and fixture evidence"
         )
 
-    imager_path = REPO_ROOT / "crates/casars-imager/src/lib.rs"
+    application_path = (
+        REPO_ROOT / "crates/casa-imaging-application/src/continuum_request.rs"
+    )
     access_path = REPO_ROOT / "crates/casa-ms/src/selected_observation/access.rs"
     bound_path = (
         REPO_ROOT / "crates/casa-ms/src/selected_observation/bound_observation.rs"
@@ -3562,7 +3545,7 @@ def validate_t17_ms_selection_transfer(rows: list[dict[str, Any]]) -> None:
     model_lib_path = REPO_ROOT / "crates/casa-imaging-model/src/lib.rs"
     runtime_path = REPO_ROOT / "crates/casa-imaging-runtime/src/execution_bindings.rs"
     try:
-        imager = imager_path.read_text(encoding="utf-8")
+        application = application_path.read_text(encoding="utf-8")
         access = access_path.read_text(encoding="utf-8")
         bound = bound_path.read_text(encoding="utf-8")
         content_plan = content_plan_path.read_text(encoding="utf-8")
@@ -3581,18 +3564,20 @@ def validate_t17_ms_selection_transfer(rows: list[dict[str, Any]]) -> None:
             f"cannot inspect T17 transfer sources: {error}"
         ) from error
 
-    forbidden_imager_patterns = {
-        r"\bMsSelection\b": "casars-imager retains the legacy selection request",
-        r"\bResolvedMsSelectionRow\b": "casars-imager retains the legacy resolved-row contract",
-        r"\.resolve_selection\s*\(": "casars-imager can still reach legacy MS selection evaluation",
+    forbidden_application_patterns = {
+        r"\bMsSelection\b": "imaging application retains the displaced selection request",
+        r"\bResolvedMsSelectionRow\b": "imaging application retains the displaced resolved-row contract",
+        r"\.resolve_selection\s*\(": "imaging application can still reach displaced MS selection evaluation",
     }
-    for pattern, message in forbidden_imager_patterns.items():
-        if re.search(pattern, imager):
+    for pattern, message in forbidden_application_patterns.items():
+        if re.search(pattern, application):
             raise ArchitectureError(message)
-    imager_selection = rust_function_body(imager, "select_main_rows", imager_path)
-    if ".visit_selected_observation_rows(" not in imager_selection:
+    application_preparation = rust_function_body(
+        application, "prepare", application_path
+    )
+    if ".visit_selected_observation_rows(" not in application_preparation:
         raise ArchitectureError(
-            "casars-imager must delegate row evaluation to canonical selected-observation access"
+            "imaging application must delegate row evaluation to canonical selected-observation access"
         )
     if "fn validate_selected_rows(" in access:
         raise ArchitectureError(
@@ -3865,6 +3850,14 @@ def validate_t17_selected_observation_resource_sources(
 
     bound_fields = rust_struct_fields(bound, "BoundSelectedObservation", bound_path)
     bound_open = re.sub(r"\s+", "", rust_function_body(bound, "open", bound_path))
+    bound_shared_bytes = re.sub(
+        r"\s+", "", rust_function_body(bound, "shared_bytes", bound_path)
+    )
+    bound_single_source_shared_bytes = re.sub(
+        r"\s+",
+        "",
+        rust_function_body(bound, "single_source_shared_bytes", bound_path),
+    )
     compact_access = re.sub(r"\s+", "", access)
     access_open = re.sub(
         r"\s+", "", rust_function_body(access, "open_with_measures", access_path)
@@ -3893,19 +3886,28 @@ def validate_t17_selected_observation_resource_sources(
         }
         or "measures.validate_problem(problem)?;" not in bound_open
         or "letmutsources=Vec::with_capacity(expected.len());" not in bound_open
-        or "letbinding_slot_bytes=bindings.capacity().checked_mul(size_of::<ObservationSourceBinding>())"
+        or "letfirst_source_shared_bytes=Self::shared_bytes(problem,&measures,&bindings,bindings.capacity(),sources.capacity(),)?;"
         not in bound_open
+        or "letbinding_slot_bytes=binding_capacity.checked_mul(size_of::<ObservationSourceBinding>())"
+        not in bound_shared_bytes
         or "letbinding_graph_initialization_bytes=bindings.iter().enumerate().try_fold(binding_slot_bytes,"
-        not in bound_open
-        or ".additional_retained_heap_bytes(already_accounted_rows)" not in bound_open
+        not in bound_shared_bytes
+        or ".additional_retained_heap_bytes(already_accounted_rows)"
+        not in bound_shared_bytes
         or "bindings[..binding_index].iter().map(|prior|prior.current_state.selected_rows())"
-        not in bound_open
-        or ".capacity().checked_mul(BoundObservationSource::retained_source_slot_bytes())"
-        not in bound_open
+        not in bound_shared_bytes
+        or "source_capacity.checked_mul(BoundObservationSource::retained_source_slot_bytes())"
+        not in bound_shared_bytes
+        or "Ok(SelectedObservationSharedBytes::new(measures.retained_bytes(),source_slots_retained_bytes,binding_graph_initialization_bytes,))"
+        not in bound_shared_bytes
+        or bound_shared_bytes.count("measures.retained_bytes()") != 1
+        or "letbindings=vec![binding.clone()];" not in bound_single_source_shared_bytes
+        or "Self::shared_bytes(problem,measures,&bindings,bindings.capacity(),source_capacity,)"
+        not in bound_single_source_shared_bytes
         or bound_open.count("source_index==0") != 1
-        or "letshared_bytes=ifsource_index==0{SelectedObservationSharedBytes::new(measures.retained_bytes(),source_slots_retained_bytes,binding_graph_initialization_bytes,)}else{SelectedObservationSharedBytes::NONE};"
+        or "letshared_bytes=ifsource_index==0{first_source_shared_bytes}else{SelectedObservationSharedBytes::NONE};"
         not in bound_open
-        or bound_open.count("measures.retained_bytes()") != 1
+        or "measures.retained_bytes()" in bound_open
         or "&measures,shared_bytes,binding.content_budget," not in bound_open
         or "measures.verify_state()?;" not in bound_open
         or "constfnretained_source_slot_bytes()->usize{size_of::<Self>()}"
@@ -4115,8 +4117,8 @@ def synthetic_matrix(policy: dict[str, Any]) -> dict[str, Any]:
             {
                 "id": "synthetic-row",
                 "kind": "capability",
-                "status": "LegacyWholeRun",
-                "current_owner": "synthetic legacy",
+                "status": "TemporarilyUnavailable",
+                "current_owner": "synthetic displaced owner",
                 "destination_tickets": ["#488"],
                 "evidence_issues": policy["required_migration_evidence_issues"],
                 "baseline_manifests": [baseline],
@@ -4209,7 +4211,7 @@ def main() -> int:
         )
         validate_workspace(policy, metadata)
         validate_source_boundaries(policy)
-        validate_whole_run_router_source(policy)
+        validate_migration_router_source(policy)
 
         matrix_path = (
             resolve_input(args.migration_matrix)
@@ -4227,7 +4229,7 @@ def main() -> int:
             "imaging-architecture: validated "
             f"{len(metadata['packages'])} workspace packages, "
             f"{len(policy['layers'])} logical layers, "
-            f"{len(policy['frozen_legacy_workspace_edges'])} frozen legacy edges, "
+            f"{len(policy['frozen_displaced_workspace_edges'])} frozen displaced edges, "
             f"{len(policy['frozen_transitional_workspace_edges'])} frozen transitional edges, "
             f"{matrix_rows} migration rows"
         )

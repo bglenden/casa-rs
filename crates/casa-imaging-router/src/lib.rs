@@ -26,10 +26,90 @@ const MIGRATION_MATRIX_JSON: &str = include_str!(concat!(
 pub enum RequestDisposition {
     /// Every required matrix row is owned by the native compile/plan/run path.
     Native,
-    /// At least one required row remains owned by the sole whole-run legacy path.
-    LegacyWholeRun,
     /// At least one required row has no production implementation during migration.
     TemporarilyUnavailable,
+}
+
+/// Task-surface requirement that is not derivable from the backend-independent
+/// compiled problem alone.
+///
+/// These requirements may only add migration constraints. They cannot remove
+/// a capability inferred from the compiled problem or force a Native route.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TaskRouteRequirement {
+    /// Spectral-cube task surface.
+    SpectralCube,
+    /// Cubedata task surface.
+    SpectralCubedata,
+    /// Mosaic gridder request.
+    MosaicGridder,
+    /// W-projection gridder request.
+    WProjection,
+    /// A/W-projection gridder request.
+    AwProjection,
+    /// Facet or outlier-file request.
+    FacetsOutliers,
+    /// Auto-multithreshold masking request.
+    Automasking,
+    /// Standalone CLEAN-mask product request.
+    MaskProduct,
+    /// Initial model supplied by the caller.
+    StartModel,
+    /// MODEL_DATA persistence request.
+    ModelColumnWrite,
+    /// Serial CPU execution was selected explicitly.
+    SerialCpu,
+    /// Automatic execution selection requires the shared planner and registry.
+    ExecutionAuto,
+    /// Fixed-tile CPU execution override.
+    FixedTileCpu,
+    /// Metal gridding override.
+    MetalGridder,
+    /// Metal row-run gridding override.
+    MetalRowRunGridder,
+    /// Grouped Metal row-run gridding override.
+    MetalRowRunGroupedGridder,
+    /// Automatic FFT selection requires the shared planner and registry.
+    FftAuto,
+    /// RustFFT override.
+    RustFft,
+    /// Accelerate FFT override.
+    Accelerate,
+    /// FFTW override.
+    Fftw,
+    /// Metal MPSGraph FFT override.
+    MetalMpsGraph,
+    /// Task controls outside the exact native serial-continuum v1 contract.
+    NativeV1UnsupportedControls,
+}
+
+impl TaskRouteRequirement {
+    const fn row_id(self) -> &'static str {
+        match self {
+            Self::SpectralCube => "capability.spectral-cube",
+            Self::SpectralCubedata => "capability.spectral-cubedata",
+            Self::MosaicGridder => "capability.mosaic-gridder",
+            Self::WProjection => "capability.w-projection",
+            Self::AwProjection => "capability.aw-projection",
+            Self::FacetsOutliers => "capability.facets-outliers",
+            Self::Automasking => "capability.automasking",
+            Self::MaskProduct => "product.mask",
+            Self::StartModel => "capability.start-model",
+            Self::ModelColumnWrite => "capability.model-column-write",
+            Self::SerialCpu => "backend.serial-cpu",
+            Self::ExecutionAuto => "backend.execution-auto",
+            Self::FixedTileCpu => "backend.fixed-tile-cpu",
+            Self::MetalGridder => "backend.metal-gridder",
+            Self::MetalRowRunGridder => "backend.metal-row-run-gridder",
+            Self::MetalRowRunGroupedGridder => "backend.metal-row-run-grouped-gridder",
+            Self::FftAuto => "backend.fft-auto",
+            Self::RustFft => "backend.rustfft",
+            Self::Accelerate => "backend.accelerate",
+            Self::Fftw => "backend.fftw",
+            Self::MetalMpsGraph => "backend.metal-mpsgraph",
+            Self::NativeV1UnsupportedControls => "frontend.native-v1-unsupported",
+        }
+    }
 }
 
 /// Opaque native whole-run engine port. Only [`ImagingRouter`] can invoke it.
@@ -39,24 +119,6 @@ pub struct NativeEnginePort<Output, EngineError> {
 
 impl<Output, EngineError> NativeEnginePort<Output, EngineError> {
     /// Seal a native whole-run adapter behind the router-owned port.
-    #[must_use]
-    pub fn new(
-        run: impl Fn(&CompiledProblem, &RouteRecord) -> Result<Output, EngineError>
-        + Send
-        + Sync
-        + 'static,
-    ) -> Self {
-        Self { run: Box::new(run) }
-    }
-}
-
-/// Opaque legacy whole-run engine port. Only [`ImagingRouter`] can invoke it.
-pub struct LegacyWholeRunEnginePort<Output, EngineError> {
-    run: Box<EngineFn<Output, EngineError>>,
-}
-
-impl<Output, EngineError> LegacyWholeRunEnginePort<Output, EngineError> {
-    /// Seal the sole legacy whole-run adapter behind the router-owned port.
     #[must_use]
     pub fn new(
         run: impl Fn(&CompiledProblem, &RouteRecord) -> Result<Output, EngineError>
@@ -321,18 +383,11 @@ pub enum DispatchError<EngineError> {
     InvalidMatrix(String),
     /// The request contains a capability with no production owner during migration.
     TemporarilyUnavailable(RouteRecord),
-    /// The selected native whole-run engine failed without retrying through legacy.
+    /// The selected native whole-run engine failed without retrying through another engine.
     Native {
         /// Evidence for the route that selected native execution.
         route: RouteRecord,
         /// Failure returned by the selected native engine.
-        source: EngineError,
-    },
-    /// The selected legacy whole-run engine failed without invoking native execution.
-    LegacyWholeRun {
-        /// Evidence for the route that selected legacy execution.
-        route: RouteRecord,
-        /// Failure returned by the selected legacy engine.
         source: EngineError,
     },
 }
@@ -350,9 +405,6 @@ impl<EngineError: fmt::Display> fmt::Display for DispatchError<EngineError> {
                 formatter.write_str("imaging request is temporarily unavailable")
             }
             Self::Native { source, .. } => write!(formatter, "native imaging run failed: {source}"),
-            Self::LegacyWholeRun { source, .. } => {
-                write!(formatter, "legacy whole-run imaging failed: {source}")
-            }
         }
     }
 }
@@ -361,7 +413,7 @@ impl<EngineError: Error + 'static> Error for DispatchError<EngineError> {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Compile(error) => Some(error),
-            Self::Native { source, .. } | Self::LegacyWholeRun { source, .. } => Some(source),
+            Self::Native { source, .. } => Some(source),
             Self::InvalidMatrix(_) | Self::TemporarilyUnavailable(_) => None,
         }
     }
@@ -370,21 +422,16 @@ impl<EngineError: Error + 'static> Error for DispatchError<EngineError> {
 /// Sole executable pre-plan migration router.
 pub struct ImagingRouter<Output, EngineError> {
     native: NativeEnginePort<Output, EngineError>,
-    legacy: LegacyWholeRunEnginePort<Output, EngineError>,
     #[cfg(test)]
     matrix: Option<MatrixCatalog>,
 }
 
 impl<Output, EngineError> ImagingRouter<Output, EngineError> {
-    /// Bind the only two whole-run engine ports. Stages are never exposed.
+    /// Bind the sole native whole-run engine port. Stages are never exposed.
     #[must_use]
-    pub const fn new(
-        native: NativeEnginePort<Output, EngineError>,
-        legacy: LegacyWholeRunEnginePort<Output, EngineError>,
-    ) -> Self {
+    pub const fn new(native: NativeEnginePort<Output, EngineError>) -> Self {
         Self {
             native,
-            legacy,
             #[cfg(test)]
             matrix: None,
         }
@@ -393,12 +440,10 @@ impl<Output, EngineError> ImagingRouter<Output, EngineError> {
     #[cfg(test)]
     fn with_matrix_json(
         native: NativeEnginePort<Output, EngineError>,
-        legacy: LegacyWholeRunEnginePort<Output, EngineError>,
         matrix_json: String,
     ) -> Self {
         Self {
             native,
-            legacy,
             matrix: Some(parse_matrix(&matrix_json).expect("test migration matrix must be valid")),
         }
     }
@@ -408,16 +453,24 @@ impl<Output, EngineError> ImagingRouter<Output, EngineError> {
         &self,
         request: ImagingRequest,
     ) -> Result<DispatchOutcome<Output>, DispatchError<EngineError>> {
+        self.dispatch_with_task_requirements(request, [])
+    }
+
+    /// Compile, classify with task-only requirements, and invoke exactly one
+    /// whole-run engine before planning.
+    pub fn dispatch_with_task_requirements(
+        &self,
+        request: ImagingRequest,
+        task_requirements: impl IntoIterator<Item = TaskRouteRequirement>,
+    ) -> Result<DispatchOutcome<Output>, DispatchError<EngineError>> {
         let problem = compile(request).map_err(DispatchError::Compile)?;
-        let route = self.route(&problem).map_err(DispatchError::InvalidMatrix)?;
+        let route = self
+            .route(&problem, task_requirements)
+            .map_err(DispatchError::InvalidMatrix)?;
         match route.disposition {
             RequestDisposition::Native => match (self.native.run)(&problem, &route) {
                 Ok(output) => Ok(DispatchOutcome { route, output }),
                 Err(source) => Err(DispatchError::Native { route, source }),
-            },
-            RequestDisposition::LegacyWholeRun => match (self.legacy.run)(&problem, &route) {
-                Ok(output) => Ok(DispatchOutcome { route, output }),
-                Err(source) => Err(DispatchError::LegacyWholeRun { route, source }),
             },
             RequestDisposition::TemporarilyUnavailable => {
                 Err(DispatchError::TemporarilyUnavailable(route))
@@ -425,12 +478,16 @@ impl<Output, EngineError> ImagingRouter<Output, EngineError> {
         }
     }
 
-    fn route(&self, problem: &CompiledProblem) -> Result<RouteRecord, String> {
+    fn route(
+        &self,
+        problem: &CompiledProblem,
+        task_requirements: impl IntoIterator<Item = TaskRouteRequirement>,
+    ) -> Result<RouteRecord, String> {
         #[cfg(test)]
         if let Some(catalog) = &self.matrix {
-            return route_with_catalog(problem, catalog);
+            return route_with_catalog_and_task_requirements(problem, catalog, task_requirements);
         }
-        route(problem)
+        route_with_task_requirements(problem, task_requirements)
     }
 }
 
@@ -451,7 +508,6 @@ struct MatrixDocument {
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
 enum MatrixStatus {
     Native,
-    LegacyWholeRun,
     TemporarilyUnavailable,
 }
 
@@ -459,7 +515,6 @@ impl From<MatrixStatus> for RequestDisposition {
     fn from(status: MatrixStatus) -> Self {
         match status {
             MatrixStatus::Native => Self::Native,
-            MatrixStatus::LegacyWholeRun => Self::LegacyWholeRun,
             MatrixStatus::TemporarilyUnavailable => Self::TemporarilyUnavailable,
         }
     }
@@ -505,16 +560,24 @@ struct MatrixBindings {
     solvers: BTreeMap<String, String>,
 }
 
-fn route(problem: &CompiledProblem) -> Result<RouteRecord, String> {
+fn route_with_task_requirements(
+    problem: &CompiledProblem,
+    task_requirements: impl IntoIterator<Item = TaskRouteRequirement>,
+) -> Result<RouteRecord, String> {
     let catalog = matrix_catalog()?;
-    route_with_catalog(problem, catalog)
+    route_with_catalog_and_task_requirements(problem, catalog, task_requirements)
 }
 
-fn route_with_catalog(
+fn route_with_catalog_and_task_requirements<'a>(
     problem: &CompiledProblem,
-    catalog: &MatrixCatalog,
+    catalog: &'a MatrixCatalog,
+    task_requirements: impl IntoIterator<Item = TaskRouteRequirement>,
 ) -> Result<RouteRecord, String> {
-    let required_rows = required_rows(problem, catalog)?;
+    let mut required_rows: BTreeSet<&'a str> = required_rows(problem, catalog)?;
+    for requirement in task_requirements {
+        let identifier: &'a str = requirement.row_id();
+        required_rows.insert(identifier);
+    }
     let mut disposition = RequestDisposition::Native;
     let mut requirements = Vec::with_capacity(required_rows.len());
     for identifier in required_rows {
@@ -530,7 +593,6 @@ fn route_with_catalog(
             (RequestDisposition::TemporarilyUnavailable, _) => {
                 RequestDisposition::TemporarilyUnavailable
             }
-            (_, RequestDisposition::LegacyWholeRun) => RequestDisposition::LegacyWholeRun,
             (current, RequestDisposition::Native) => current,
         };
         requirements.push(requirement);
@@ -560,14 +622,8 @@ fn parse_matrix(json: &str) -> Result<MatrixCatalog, String> {
             document.schema_version
         ));
     }
-    if document.status_values
-        != [
-            MatrixStatus::Native,
-            MatrixStatus::LegacyWholeRun,
-            MatrixStatus::TemporarilyUnavailable,
-        ]
-    {
-        return Err("status inventory differs from the three accepted dispositions".to_string());
+    if document.status_values != [MatrixStatus::Native, MatrixStatus::TemporarilyUnavailable] {
+        return Err("status inventory differs from the two accepted dispositions".to_string());
     }
     if document.contract_revision == 0 {
         return Err("contract revision must be a positive integer".to_string());

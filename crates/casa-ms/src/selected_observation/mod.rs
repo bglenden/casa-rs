@@ -17,7 +17,9 @@ mod spectral_contributions;
 mod tests;
 
 pub use access::BoundObservationSourceError;
-pub(crate) use access::{BoundObservationSamples, BoundObservationSource};
+pub(crate) use access::{
+    BoundObservationSamples, BoundObservationSource, validate_selected_coordinates,
+};
 pub use bound_observation::{
     BoundSelectedObservation, BoundSelectedObservationError, ObservationSourceBinding,
     SelectedObservationCompletion, SelectedObservationResidencyCertificate,

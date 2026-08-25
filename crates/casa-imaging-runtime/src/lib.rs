@@ -13,6 +13,9 @@ pub mod product_publication;
 mod publication_layout;
 mod receipt;
 mod resource_authority;
+mod serial_continuum;
+mod serial_continuum_plan;
+mod serial_product_publication;
 mod weighting;
 
 pub use execution_bindings::{
@@ -20,10 +23,10 @@ pub use execution_bindings::{
     ArtifactRole, AttemptBoundObservationCompletion, BindingKind, CacheIdentity,
     CompiledWorkContext, ExecutionEvidenceError, ExecutionPlan, ExecutionPlanId, ExecutionStatus,
     ImplementationContractCatalog, ImplementationContractMetadata, ImplementationRegistry,
-    ImplementationRegistryId, IoMeasurement, IoPrediction, LegacyWholeRunPublicationAuthority,
-    ObservationCompletionBindingError, ObservationReadCompletionContext, PhysicalWorkBinding,
-    PhysicalWorkBindingError, PhysicalWorkId, PlanError, PlanPrediction, PlannedArtifact,
-    PlannerCostModelProfileId, PlanningBindings, PredictionConfidence, PredictionUncertainty,
+    ImplementationRegistryId, IoMeasurement, IoPrediction, ObservationCompletionBindingError,
+    ObservationReadCompletionContext, PhysicalWorkBinding, PhysicalWorkBindingError,
+    PhysicalWorkId, PlanError, PlanPrediction, PlannedArtifact, PlannerCostModelProfileId,
+    PlanningBindings, PredictionConfidence, PredictionUncertainty, ProductMemberPublicationFailure,
     PublicationResources, RedactedPath, ResourceMeasurement, ResourcePolicyId, RunBindings,
     RunController, RunDirective, RunError, RunToCompletion, StagePrediction, WorkExecutionContext,
     WorkImplementation, WorkMeasurements, plan, run,
@@ -49,7 +52,8 @@ pub use execution::{
 };
 pub use major_cycle::{MajorCycleOperatorError, MajorCycleOperatorResult, MajorCycleOperatorState};
 pub use observation_transaction::{
-    BoundObservationTransaction, ObservationTransactionPlanError, ObservationTransactionWork,
+    BoundObservationTransaction, ObservationTransactionPlanError,
+    ObservationTransactionPublicationScope, ObservationTransactionWork,
 };
 pub use prepared_artifact::{
     PreparedArtifact, PreparedArtifactBudget, PreparedArtifactDescriptor, PreparedArtifactError,
@@ -61,7 +65,8 @@ pub use prepared_artifact::{
     PreparedArtifactStore, PreparedArtifactUvAffine,
 };
 pub use product_publication::{
-    ProductPublicationEntry, ProductPublicationError, ProductPublicationPlan,
+    AuthorizedProductPublicationEntry, ProductPublicationAuthorization, ProductPublicationEntry,
+    ProductPublicationError, ProductPublicationPlan,
 };
 pub use publication_layout::{
     PhysicalLayoutId, PublicationBoundKind, PublicationLayoutError, PublicationLayoutLedger,
@@ -84,17 +89,33 @@ pub use resource_authority::{
     CapacityViewId, CountDemand, CpuClassCapacity, DemandAlternative, DemandAlternatives,
     DemandEnvelope, ExternalPressure, HostInventory, IoBufferDemand, IoBufferKind, LeaseRelease,
     LeaseResource, MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand, MemoryView,
-    MemoryViewKind, PressureUpdate, QueueDemand, QueueResource, QueueResourceId, QuiescencePoint,
-    RateDemand, RateResource, RateResourceId, RateUnit, ResourceAuthority, ResourceError,
-    ResourceFence, ResourceGrant, ResourceHeadroom, ResourceIdentity, ResourceLease,
-    ResourceOverride, ResourcePermit, ResourcePolicy, ResourceTopology, RuntimeOverheadDemand,
-    RuntimeOverheadKind, ScalingMetadata, StorageDemand, StorageDomain, StorageDomainId,
-    StorageUseKind, TransferDemand, TransferLink, TransferLinkId,
+    MemoryViewKind, PressureUpdate, ProductionStorageProfile, QueueDemand, QueueResource,
+    QueueResourceId, QuiescencePoint, RateDemand, RateResource, RateResourceId, RateUnit,
+    ResourceAuthority, ResourceError, ResourceFence, ResourceGrant, ResourceHeadroom,
+    ResourceIdentity, ResourceLease, ResourceOverride, ResourcePermit, ResourcePolicy,
+    ResourceTopology, RuntimeOverheadDemand, RuntimeOverheadKind, ScalingMetadata, StorageDemand,
+    StorageDomain, StorageDomainId, StorageIoResourceBinding, StorageUseKind, TransferDemand,
+    TransferLink, TransferLinkId,
+};
+pub use serial_continuum::{
+    FinalMajorPhaseInput, InitialMajorPhaseCompletion, MinorCyclePhaseCompletion,
+    MinorCyclePhaseEvidence, SerialContinuumExecutor, SerialContinuumPassInput,
+    SerialContinuumRegistry,
+};
+pub use serial_continuum_plan::{
+    SerialContinuumExecutionPolicy, SerialContinuumPlan, SerialContinuumPlanError,
+};
+pub use serial_product_publication::{
+    MemberPromotionFailure, MemberPromotionFailureKind, SerialProductPublicationExecutionError,
+    SerialProductPublicationExecutor, SerialProductPublicationPlan,
+    SerialProductPublicationPlanError, SerialProductPublicationPolicy,
+    SerialProductPublicationRegistry, SerialProductPublicationSink,
 };
 pub use weighting::{
-    ReplayCallbackError, SelectedObservationSourceResources, WeightedObservationBlock,
-    WeightedObservationSample, WeightedSpectralValue, WeightingEvidenceError,
-    WeightingExecutionState, WeightingGenerationCompletionError, WeightingGenerationError,
-    WeightingPlanFragment, WeightingPlanFragmentError, WeightingReplayCompletion,
-    WeightingReplayCompletionError, WeightingReplayError, WeightingSourceTraversalError,
+    ContinuumPassIdentity, ContinuumPassPhase, ReplayCallbackError,
+    SelectedObservationSourceResources, WeightedObservationBlock, WeightedObservationSample,
+    WeightedSpectralValue, WeightingEvidenceError, WeightingExecutionState,
+    WeightingGenerationCompletionError, WeightingGenerationError, WeightingPlanFragment,
+    WeightingPlanFragmentError, WeightingReplayCompletion, WeightingReplayCompletionError,
+    WeightingReplayError, WeightingSourceTraversalError,
 };

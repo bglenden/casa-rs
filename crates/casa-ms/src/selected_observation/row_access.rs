@@ -2,8 +2,9 @@
 
 use crate::{MeasurementSet, MsError, MsReadPlan, MsResult, MsSelectionIoBudget};
 use casa_imaging_model::{
-    AntennaSelection, DataDescriptionSelection, IdSelection, IntentSelection, ResolvedIntent,
-    RowSelection, SelectionBound, TimeSelection, UvDistanceRange, UvDistanceUnit, UvSelection,
+    AntennaSelection, DataDescriptionSelection, IdSelection, IntentSelection, ObservationSelection,
+    ResolvedIntent, RowSelection, SelectionBound, TimeSelection, UvDistanceRange, UvDistanceUnit,
+    UvSelection,
 };
 
 use super::row_selection::{CompiledRowPredicate, RowSelectionEvaluationError, StoredMainRow};
@@ -19,6 +20,27 @@ const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
 pub struct SelectedObservationRowSelection {
     rows: RowSelection,
     data_descriptions: Vec<DataDescriptionSelection>,
+}
+
+impl SelectedObservationRowSelection {
+    pub(crate) fn from_compiled(selection: &ObservationSelection) -> Self {
+        Self {
+            rows: selection.rows_filter().clone(),
+            data_descriptions: selection.data_descriptions().to_vec(),
+        }
+    }
+
+    /// Return the canonical row predicate resolved from the application selectors.
+    #[must_use]
+    pub fn rows(&self) -> &RowSelection {
+        &self.rows
+    }
+
+    /// Return the selected data-description bindings resolved by the storage owner.
+    #[must_use]
+    pub fn data_descriptions(&self) -> &[DataDescriptionSelection] {
+        &self.data_descriptions
+    }
 }
 
 /// One selected MAIN row reported by the canonical bounded row traversal.

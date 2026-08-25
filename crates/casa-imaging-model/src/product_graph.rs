@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Compiler-owned product meaning, topology, and atomic publication contract.
+//! Compiler-owned product meaning, topology, and independently atomic publication contract.
 
 use std::{collections::BTreeMap, fmt};
 
@@ -318,41 +318,47 @@ impl ProductNode {
     }
 }
 
-/// The fixed atomic-store protocol shared with runtime transaction publication.
+/// The fixed independently atomic product-store protocol.
+///
+/// CASA image products have conventional sibling names and independent
+/// lifetimes: users may retain or delete one product without the others.  A
+/// generation therefore authorizes one private prepare and one atomic
+/// replacement per member, rather than claiming one atomic visibility change
+/// for the whole product set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AtomicStoreProtocol;
+pub struct IndependentProductStoreProtocol;
 
-impl AtomicStoreProtocol {
-    /// Exact staged evidence and terminal receipt candidate are durable before visibility.
+impl IndependentProductStoreProtocol {
+    /// Exact staged evidence is durable before any member replacement.
     #[must_use]
     pub const fn requires_durable_prepare(self) -> bool {
         true
     }
 
-    /// One observation-transaction operation is the sole visibility change.
+    /// Every member has exactly one independently atomic visibility operation.
     #[must_use]
-    pub const fn has_one_visibility_operation(self) -> bool {
+    pub const fn has_one_visibility_operation_per_member(self) -> bool {
         true
     }
 
-    /// Receipt terminal promotion after visibility has no fallible result path.
+    /// A promoted member remains valid even if a later member fails.
     #[must_use]
-    pub const fn has_infallible_terminal_promotion(self) -> bool {
+    pub const fn preserves_promoted_members_on_later_failure(self) -> bool {
         true
     }
 }
 
-/// One atomic publication set for all materialized graph members.
+/// One independently atomic publication sequence for all materialized members.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProductPublication {
-    protocol: AtomicStoreProtocol,
+    protocol: IndependentProductStoreProtocol,
     members: Box<[ProductNodeId]>,
 }
 
 impl ProductPublication {
     /// Return the fixed atomic-store choreography.
     #[must_use]
-    pub const fn protocol(&self) -> AtomicStoreProtocol {
+    pub const fn protocol(&self) -> IndependentProductStoreProtocol {
         self.protocol
     }
 
@@ -405,7 +411,7 @@ impl ProductGraph {
         matching.next().is_none().then_some(node)
     }
 
-    /// Return the sole atomic publication set.
+    /// Return the canonical independently published member sequence.
     #[must_use]
     pub const fn publication(&self) -> &ProductPublication {
         &self.publication
@@ -450,7 +456,7 @@ impl<'a> GraphBuilder<'a> {
             &publication_members,
         );
         let publication = ProductPublication {
-            protocol: AtomicStoreProtocol,
+            protocol: IndependentProductStoreProtocol,
             members: publication_members,
         };
         ProductGraph {

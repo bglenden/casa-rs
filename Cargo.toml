@@ -24,6 +24,7 @@ members = [
     "crates/casa-imaging-model",
     "crates/casa-imaging-reconstruction",
     "crates/casa-imaging-products",
+    "crates/casa-imaging-application",
     "crates/casa-imaging-router",
     "crates/casa-imaging-runtime",
     "crates/casa-imaging",

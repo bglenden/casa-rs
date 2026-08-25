@@ -202,7 +202,7 @@ fn compile_problem(
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
         SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
-        [((width - 1) / 2) as f64; 2],
+        [width as f64 / 2.0; 2],
         [-1.0e-6, 1.0e-6],
         [[1.0, 0.0], [0.0, 1.0]],
         [180.0, 0.0],
@@ -530,6 +530,15 @@ mod window_geometry {
 #[test]
 fn controls_are_validated_explicitly() {
     assert!(matches!(
+        HogbomControls::from_compiled(ReconstructionControls::new(8, 0.5, 0.0)),
+        Err(MinorCycleError::MissingMaximumModelUpdate)
+    ));
+    let compiled = HogbomControls::from_compiled(
+        ReconstructionControls::new(8, 0.5, 0.0).with_maximum_model_update(2.5),
+    )
+    .expect("explicit compiled staleness envelope");
+    assert_eq!(compiled.maximum_model_update(), 2.5);
+    assert!(matches!(
         HogbomControls::new(0.0, 1.0, 8, 1.0),
         Err(MinorCycleError::InvalidGain)
     ));
@@ -595,7 +604,7 @@ fn first_confirm_round(observation: u8, attempt_byte: u8) -> FirstRound {
         .expect("atomic Major-Cycle reconciliation");
     let residual_peak = residual_peak(joined.normal_state().residual());
     let (normal_state, model_completion, final_model) = joined.into_parts();
-    // The closed lifecycle cannot mint anything further.
+    // The completed lifecycle cannot reopen or finalize its model again.
     assert!(matches!(
         lifecycle.initial_empty(),
         Err(ModelLifecycleError::FinalModelAlreadyCompleted)
@@ -778,6 +787,76 @@ fn minor_cycle_delta_composes_with_the_next_major_cycle_reconciliation() {
         "one clean-and-reconcile round must reduce the residual peak: {peak2} !< {}",
         round.residual_peak
     );
+}
+
+#[test]
+fn completed_nonempty_model_is_carried_affinely_into_the_next_major_cycle() {
+    let problem = problem_with_model(45, ModelStateIdentity::Empty);
+    let samples = fixture_samples(&problem);
+    let mut initial = bind_lifecycle(&problem, 46, 9);
+    let empty = initial.initial_empty().expect("initial empty model");
+    let cell = empty.shape().cell_at(9).expect("fixture model cell");
+    let seed_delta = initial
+        .compile_delta(
+            &empty,
+            [casa_imaging_model::ModelDeltaTerm::new(
+                cell,
+                casa_imaging_model::ModelValue::new(2.5).expect("seed value"),
+            )],
+        )
+        .expect("initial non-empty model delta");
+    let preparation = MajorCyclePreparation::prepare(&initial, empty, Some(seed_delta))
+        .expect("prepare non-empty initial model");
+    let complete_data = run_t19_complete_data(&problem, Some(&preparation), &samples);
+    let initial_completion = MajorCycleOwner::from_complete_data(complete_data, preparation)
+        .expect("initial Major Cycle owner")
+        .reconcile(&mut initial)
+        .expect("initial non-empty Major Cycle");
+    let carried_id = initial_completion.final_model().generation_id();
+    assert_eq!(
+        initial_completion.final_model().samples()[9]
+            .value()
+            .value(),
+        2.5
+    );
+
+    let (initial_normal, continuation) = initial_completion.into_continuation();
+    assert_eq!(initial_normal.final_model_generation(), carried_id);
+    let (mut continued, carried) = ModelLifecycle::continue_from(
+        ExecutableModelProblem::from_compiled(problem.clone()).expect("executable continuation"),
+        attempt(47),
+        10,
+        continuation,
+    )
+    .expect("consume completed model continuation exactly once");
+    assert_eq!(carried.generation_id(), carried_id);
+    assert_eq!(carried.samples()[9].value().value(), 2.5);
+
+    let next_delta = continued
+        .compile_delta(
+            &carried,
+            [casa_imaging_model::ModelDeltaTerm::new(
+                cell,
+                casa_imaging_model::ModelValue::new(-0.5).expect("continued value"),
+            )],
+        )
+        .expect("continued lifecycle accepts only its carried base");
+    let preparation = MajorCyclePreparation::prepare(&continued, carried, Some(next_delta))
+        .expect("prepare continued final model");
+    let complete_data = run_t19_complete_data(&problem, Some(&preparation), &samples);
+    let final_completion = MajorCycleOwner::from_complete_data(complete_data, preparation)
+        .expect("continued Major Cycle owner")
+        .reconcile(&mut continued)
+        .expect("continued Major Cycle");
+    assert_eq!(final_completion.model_completion().base(), carried_id);
+    assert_eq!(
+        final_completion.final_model().samples()[9].value().value(),
+        2.0
+    );
+    assert!(matches!(
+        continued.initial_empty(),
+        Err(ModelLifecycleError::FinalModelAlreadyCompleted)
+    ));
 }
 
 #[test]

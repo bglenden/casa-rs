@@ -67,7 +67,8 @@ fn candidate(
         adaptations: dag.adaptations().values().cloned().collect(),
     };
     let dag = ExecutionDag::new(specification).expect("variant physical DAG");
-    super::legacy_physical_work(
+    super::native_product_physical_work(
+        problem,
         implementation_catalog(problem, &dag),
         dag,
         prediction,
@@ -191,7 +192,8 @@ fn planning_compares_distinct_registry_implementation_alternatives() {
         adaptations: dag.adaptations().values().cloned().collect(),
     };
     let divergent_dag = ExecutionDag::new(specification).expect("variant physical DAG");
-    let divergent = super::legacy_physical_work(
+    let divergent = super::native_product_physical_work(
+        &problem,
         implementation_catalog(&problem, &divergent_dag),
         divergent_dag,
         fast.prediction().clone(),
@@ -217,7 +219,8 @@ fn planning_rejects_an_explicit_science_contract_mismatch() {
     assert_ne!(problem.problem_id(), other_problem.problem_id());
     let base = physical_work(6);
     let dag = base.execution_dag().clone();
-    let divergent = super::legacy_physical_work(
+    let divergent = super::native_product_physical_work(
+        &problem,
         implementation_catalog(&other_problem, &dag),
         dag,
         base.prediction().clone(),

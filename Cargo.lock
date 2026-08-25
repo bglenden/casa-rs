@@ -621,6 +621,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "casa-imaging-application"
+version = "0.27.0"
+dependencies = [
+ "casa-coordinates",
+ "casa-images",
+ "casa-imaging-model",
+ "casa-imaging-products",
+ "casa-imaging-reconstruction",
+ "casa-imaging-router",
+ "casa-imaging-runtime",
+ "casa-ms",
+ "casa-types",
+ "libc",
+ "ndarray",
+ "sha2",
+ "tempfile",
+]
+
+[[package]]
 name = "casa-imaging-model"
 version = "0.27.0"
 dependencies = [
@@ -751,6 +770,7 @@ dependencies = [
  "casa-test-support",
  "casa-types",
  "flate2",
+ "getrandom 0.3.4",
  "image 0.25.10",
  "libc",
  "libm",
@@ -762,6 +782,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "sha2",
  "sofars",
  "tar",
  "tempfile",
@@ -981,29 +1002,19 @@ dependencies = [
 name = "casars-imager"
 version = "0.27.0"
 dependencies = [
- "casa-coordinates",
  "casa-images",
- "casa-imaging",
+ "casa-imaging-application",
  "casa-logging",
- "casa-measures-data",
  "casa-ms",
  "casa-provider-contracts",
- "casa-tables",
  "casa-task-runtime",
- "casa-test-support",
  "casa-types",
- "flate2",
  "image 0.25.10",
- "libc",
  "ndarray",
- "num-complex",
- "objc2-metal",
  "schemars",
  "serde",
  "serde_json",
- "sha2",
  "tempfile",
- "thiserror 2.0.18",
  "tracing",
 ]
 

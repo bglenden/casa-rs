@@ -23,9 +23,19 @@ use crate::{
     StorageUseKind, WorkDependency, WorkKind, WorkNode, WorkNodeId,
 };
 
+/// Closed publication authority carried by one observation-transaction plan.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ObservationTransactionPublicationScope {
+    /// Reconcile reconstruction state without staging or publishing products.
+    ReconstructionOnly,
+    /// Stage and atomically publish every required Product Graph member.
+    ProductPublication,
+}
+
 /// Exact execution-DAG events that implement one observation transaction.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ObservationTransactionWork {
+    publication_scope: ObservationTransactionPublicationScope,
     initial_consistency_check: WorkNodeId,
     observation_reads: BTreeSet<WorkDependency>,
     final_reconciliation: WorkNodeId,
@@ -35,18 +45,19 @@ pub struct ObservationTransactionWork {
 }
 
 impl ObservationTransactionWork {
-    /// Name every semantic checkpoint and private staging completion event.
+    /// Name every checkpoint for a reconstruction-only transaction.
     ///
     /// Observation-read completions are derived from every typed
     /// [`WorkKind::ObservationRead`] node during the mandatory plan seal.
     #[must_use]
-    pub const fn new(
+    pub const fn new_reconstruction(
         initial_consistency_check: WorkNodeId,
         final_reconciliation: WorkNodeId,
         model_column_staging: Option<WorkNodeId>,
         commit: WorkNodeId,
     ) -> Self {
         Self {
+            publication_scope: ObservationTransactionPublicationScope::ReconstructionOnly,
             initial_consistency_check,
             observation_reads: BTreeSet::new(),
             final_reconciliation,
@@ -54,6 +65,31 @@ impl ObservationTransactionWork {
             model_column_staging,
             commit,
         }
+    }
+
+    /// Name every checkpoint for an atomic product-publication transaction.
+    #[must_use]
+    pub const fn new_product_publication(
+        initial_consistency_check: WorkNodeId,
+        final_reconciliation: WorkNodeId,
+        model_column_staging: Option<WorkNodeId>,
+        commit: WorkNodeId,
+    ) -> Self {
+        Self {
+            publication_scope: ObservationTransactionPublicationScope::ProductPublication,
+            initial_consistency_check,
+            observation_reads: BTreeSet::new(),
+            final_reconciliation,
+            product_staging: BTreeSet::new(),
+            model_column_staging,
+            commit,
+        }
+    }
+
+    /// Return whether this transaction reconciles only or publishes products.
+    #[must_use]
+    pub const fn publication_scope(&self) -> ObservationTransactionPublicationScope {
+        self.publication_scope
     }
 
     /// Return the consistency check that must precede observation reads.
@@ -198,10 +234,21 @@ pub(crate) fn bind_observation_transaction(
             crate::PublicationParticipant::ModelData(_) => None,
         })
         .collect::<BTreeSet<_>>();
-    if declared_products != expected_products {
-        return invalid(format!(
-            "publication product nodes {declared_products:?} do not match graph members {expected_products:?}"
-        ));
+    match work.publication_scope {
+        ObservationTransactionPublicationScope::ReconstructionOnly => {
+            if !declared_products.is_empty() {
+                return invalid(
+                    "reconstruction-only transaction declares product publication layouts",
+                );
+            }
+        }
+        ObservationTransactionPublicationScope::ProductPublication => {
+            if declared_products != expected_products {
+                return invalid(format!(
+                    "publication product nodes {declared_products:?} do not match graph members {expected_products:?}"
+                ));
+            }
+        }
     }
     let expected_model_data = contract
         .write_set()
@@ -260,8 +307,17 @@ pub(crate) fn bind_observation_transaction(
         })
         .map(|entry| entry.staging().terminal().clone())
         .collect();
-    if work.product_staging.is_empty() {
-        return invalid("product publication layout is empty");
+    match work.publication_scope {
+        ObservationTransactionPublicationScope::ReconstructionOnly => {
+            if !work.product_staging.is_empty() {
+                return invalid("reconstruction-only transaction stages products");
+            }
+        }
+        ObservationTransactionPublicationScope::ProductPublication => {
+            if work.product_staging.is_empty() {
+                return invalid("product publication layout is empty");
+            }
+        }
     }
     work.observation_reads = validate_transaction_nodes(
         contract.read_set().sources().len(),
@@ -1058,8 +1114,12 @@ mod tests {
             adaptations: Vec::new(),
         })
         .expect("canonical transaction test DAG");
-        let mut work =
-            ObservationTransactionWork::new(initial, reconciliation, Some(model), commit);
+        let mut work = ObservationTransactionWork::new_product_publication(
+            initial,
+            reconciliation,
+            Some(model),
+            commit,
+        );
         work.product_staging = BTreeSet::from([product_completion]);
         (dag.nodes().clone(), work)
     }
@@ -1408,7 +1468,7 @@ mod tests {
         validate_transaction_nodes(1, 1, &nodes, &writable).expect("writable transaction");
         assert!(validate_transaction_nodes(1, 0, &nodes, &writable).is_err());
 
-        let mut read_only = ObservationTransactionWork::new(
+        let mut read_only = ObservationTransactionWork::new_product_publication(
             writable.initial_consistency_check.clone(),
             writable.final_reconciliation.clone(),
             None,

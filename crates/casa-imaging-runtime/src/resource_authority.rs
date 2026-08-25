@@ -73,6 +73,61 @@ resource_identity!(RateResourceId, "Stable identity of one rate resource.");
 resource_identity!(QueueResourceId, "Stable identity of one bounded queue.");
 resource_identity!(AlternativeId, "Stable identity of one demand alternative.");
 resource_identity!(CapabilityId, "Stable identity of one required capability.");
+
+/// Exact authority-owned resources for I/O against one storage domain.
+///
+/// Read and write rates are distinct because a calibrated filesystem can have
+/// asymmetric throughput. The queue is shared because both rates address the
+/// same bounded storage service.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StorageIoResourceBinding {
+    domain: StorageDomainId,
+    read_rate: RateResourceId,
+    write_rate: RateResourceId,
+    queue: QueueResourceId,
+}
+
+impl StorageIoResourceBinding {
+    /// Bind the exact resource identities registered by a resource authority.
+    #[must_use]
+    pub const fn new(
+        domain: StorageDomainId,
+        read_rate: RateResourceId,
+        write_rate: RateResourceId,
+        queue: QueueResourceId,
+    ) -> Self {
+        Self {
+            domain,
+            read_rate,
+            write_rate,
+            queue,
+        }
+    }
+
+    /// Return the storage capacity-domain identity.
+    #[must_use]
+    pub const fn domain(&self) -> &StorageDomainId {
+        &self.domain
+    }
+
+    /// Return the calibrated read-rate identity.
+    #[must_use]
+    pub const fn read_rate(&self) -> &RateResourceId {
+        &self.read_rate
+    }
+
+    /// Return the calibrated write-rate identity.
+    #[must_use]
+    pub const fn write_rate(&self) -> &RateResourceId {
+        &self.write_rate
+    }
+
+    /// Return the bounded storage-queue identity.
+    #[must_use]
+    pub const fn queue(&self) -> &QueueResourceId {
+        &self.queue
+    }
+}
 /// Stable, path-free identity of one Resource Authority resource.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ResourceIdentity(String);
@@ -317,7 +372,171 @@ pub struct HostInventory {
     pub pressure: ExternalPressure,
 }
 
+/// Calibrated production facts for one atomic output filesystem.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProductionStorageProfile {
+    filesystem_root: PathBuf,
+    capacity_bytes: u64,
+    available_bytes: u64,
+    read_bytes_per_second: u64,
+    write_bytes_per_second: u64,
+    queue_slots: u64,
+    table_lock_slots: u64,
+    domain: StorageDomainId,
+    read_rate: RateResourceId,
+    write_rate: RateResourceId,
+    queue: QueueResourceId,
+}
+
+impl ProductionStorageProfile {
+    /// Validate one caller-measured filesystem profile and derive path-free identities.
+    ///
+    /// `filesystem_root` is the root of the filesystem or independently
+    /// capacity-accounted storage domain containing the output, not an
+    /// arbitrary per-run output directory.
+    pub fn new(
+        filesystem_root: impl Into<PathBuf>,
+        capacity_bytes: u64,
+        available_bytes: u64,
+        read_bytes_per_second: u64,
+        write_bytes_per_second: u64,
+        queue_slots: u64,
+        table_lock_slots: u64,
+    ) -> Result<Self, ResourceError> {
+        let filesystem_root = filesystem_root.into();
+        if !filesystem_root.is_absolute()
+            || capacity_bytes == 0
+            || available_bytes == 0
+            || available_bytes > capacity_bytes
+            || read_bytes_per_second == 0
+            || write_bytes_per_second == 0
+            || queue_slots == 0
+            || table_lock_slots == 0
+        {
+            return Err(ResourceError::Invalid(
+                "production storage profile requires an absolute root, positive coherent capacity/rates/queues, and positive table-lock capacity"
+                    .to_string(),
+            ));
+        }
+        let digest = hex_digest(&filesystem_root.to_string_lossy());
+        let suffix = &digest[..16];
+        Ok(Self {
+            filesystem_root,
+            capacity_bytes,
+            available_bytes,
+            read_bytes_per_second,
+            write_bytes_per_second,
+            queue_slots,
+            table_lock_slots,
+            domain: StorageDomainId::new(format!("production-output-{suffix}")),
+            read_rate: RateResourceId::new(format!("production-output-read-{suffix}")),
+            write_rate: RateResourceId::new(format!("production-output-write-{suffix}")),
+            queue: QueueResourceId::new(format!("production-output-queue-{suffix}")),
+        })
+    }
+
+    /// Return the path-free storage-domain identity.
+    #[must_use]
+    pub const fn domain_id(&self) -> &StorageDomainId {
+        &self.domain
+    }
+
+    /// Return the calibrated read-rate identity.
+    #[must_use]
+    pub const fn read_rate_id(&self) -> &RateResourceId {
+        &self.read_rate
+    }
+
+    /// Return the calibrated write-rate identity.
+    #[must_use]
+    pub const fn write_rate_id(&self) -> &RateResourceId {
+        &self.write_rate
+    }
+
+    /// Return the bounded output queue identity.
+    #[must_use]
+    pub const fn queue_id(&self) -> &QueueResourceId {
+        &self.queue
+    }
+
+    /// Return the exact path-free resource identities registered by this profile.
+    #[must_use]
+    pub fn io_resources(&self) -> StorageIoResourceBinding {
+        StorageIoResourceBinding::new(
+            self.domain.clone(),
+            self.read_rate.clone(),
+            self.write_rate.clone(),
+            self.queue.clone(),
+        )
+    }
+
+    fn same_calibration(&self, other: &Self) -> bool {
+        self.filesystem_root == other.filesystem_root
+            && self.capacity_bytes == other.capacity_bytes
+            && self.read_bytes_per_second == other.read_bytes_per_second
+            && self.write_bytes_per_second == other.write_bytes_per_second
+            && self.queue_slots == other.queue_slots
+            && self.table_lock_slots == other.table_lock_slots
+    }
+}
+
 impl HostInventory {
+    /// Detect host resources and attach one explicitly profiled storage domain.
+    ///
+    /// Storage throughput is deployment evidence rather than a portable host
+    /// property, so callers provide its capacity, rates, and queue while the
+    /// runtime retains ownership of CPU, memory, pressure, and topology detection.
+    pub fn detect_with_storage_profile(
+        profile: &ProductionStorageProfile,
+    ) -> Result<Self, ResourceError> {
+        let mut inventory = Self::detect()?;
+        inventory
+            .pressure
+            .storage_available_bytes
+            .insert(profile.domain.clone(), profile.available_bytes);
+        inventory
+            .pressure
+            .rate_available_per_second
+            .insert(profile.read_rate.clone(), profile.read_bytes_per_second);
+        inventory
+            .pressure
+            .rate_available_per_second
+            .insert(profile.write_rate.clone(), profile.write_bytes_per_second);
+        inventory
+            .pressure
+            .queue_available_slots
+            .insert(profile.queue.clone(), profile.queue_slots);
+        inventory.topology.storage_domains.push(StorageDomain {
+            id: profile.domain.clone(),
+            root: profile.filesystem_root.clone(),
+            capacity_bytes: profile.capacity_bytes,
+            read_rate: profile.read_rate.clone(),
+            write_rate: profile.write_rate.clone(),
+            operations_rate: None,
+            queue: profile.queue.clone(),
+        });
+        inventory.topology.rate_resources.extend([
+            RateResource::new(
+                profile.read_rate.clone(),
+                RateUnit::BytesPerSecond,
+                profile.read_bytes_per_second,
+            ),
+            RateResource::new(
+                profile.write_rate.clone(),
+                RateUnit::BytesPerSecond,
+                profile.write_bytes_per_second,
+            ),
+        ]);
+        inventory.topology.queue_resources.push(QueueResource::new(
+            profile.queue.clone(),
+            profile.queue_slots,
+        ));
+        inventory.topology.lock_capacity = profile.table_lock_slots;
+        inventory.pressure.available_locks = profile.table_lock_slots;
+        validate_inventory(&inventory)?;
+        Ok(inventory)
+    }
+
     /// Detects local CPU, memory, and Metal topology inside the runtime.
     /// Storage domains and measured rates require an explicit bootstrap
     /// profile and are never inferred from the current working directory.
@@ -330,8 +549,8 @@ impl HostInventory {
             .map(|cores| CpuClassCapacity::Known(cores.clamp(1, logical_cpu_threads)))
             .unwrap_or(CpuClassCapacity::Unknown);
         let unified_metal_available = detect_unified_metal_device();
-        let host_domain = CapacityDomainId::new("production-host-memory");
-        let host_view = CapacityViewId::new("production-host-memory");
+        let host_domain = CapacityDomainId::new("host-memory");
+        let host_view = CapacityViewId::new("host-memory");
         let mut memory_views = vec![MemoryView {
             id: host_view.clone(),
             domain: host_domain.clone(),
@@ -1140,6 +1359,8 @@ pub enum ResourceError {
     Detection(String),
     /// The process production authority was already initialized.
     ProductionAlreadyInitialized,
+    /// The process authority was initialized with another storage profile.
+    IncompatibleProductionStorageProfile,
     /// No declared alternative satisfied the required capabilities.
     NoCapableAlternative,
     /// No declared alternative fits current policy, pressure, and reservations.
@@ -1337,6 +1558,8 @@ impl fmt::Display for ResourceError {
             Self::ProductionAlreadyInitialized => {
                 formatter.write_str("production resource authority is already initialized")
             }
+            Self::IncompatibleProductionStorageProfile => formatter
+                .write_str("production resource authority has an incompatible storage profile"),
             Self::NoCapableAlternative => {
                 formatter.write_str("no demand alternative satisfies the required capabilities")
             }
@@ -1406,6 +1629,7 @@ struct AuthorityState {
 #[derive(Debug)]
 struct AuthorityInner {
     topology: ResourceTopology,
+    production_storage_profile: Option<ProductionStorageProfile>,
     state: Mutex<AuthorityState>,
 }
 
@@ -1445,6 +1669,38 @@ impl ResourceAuthority {
         }
     }
 
+    /// Detect a standalone production authority with one calibrated output profile.
+    pub fn detected_with_storage_profile(
+        profile: &ProductionStorageProfile,
+    ) -> Result<Self, ResourceError> {
+        Self::with_inventory_and_storage_profile(
+            HostInventory::detect_with_storage_profile(profile)?,
+            Some(profile.clone()),
+        )
+    }
+
+    /// Return the process authority initialized with one exact storage profile.
+    ///
+    /// Repeating the same topology and calibration refreshes its mutable
+    /// availability snapshot and returns the existing singleton. A different
+    /// calibration, or a prior unprofiled/custom initialization, fails closed.
+    pub fn production_with_storage_profile(
+        profile: &ProductionStorageProfile,
+    ) -> Result<&'static Self, ResourceError> {
+        if let Some(initialized) = PRODUCTION_AUTHORITY.get() {
+            let authority = initialized.as_ref().map_err(Clone::clone)?;
+            authority.refresh_storage_profile_pressure(profile)?;
+            return Ok(authority);
+        }
+        let inventory = HostInventory::detect_with_storage_profile(profile)?;
+        let initialized = PRODUCTION_AUTHORITY.get_or_init(|| {
+            Self::with_inventory_and_storage_profile(inventory, Some(profile.clone()))
+        });
+        let authority = initialized.as_ref().map_err(Clone::clone)?;
+        authority.refresh_storage_profile_pressure(profile)?;
+        Ok(authority)
+    }
+
     /// Installs the inventory used by the one process production authority.
     ///
     /// This must be called by runtime bootstrap before [`Self::production`].
@@ -1470,6 +1726,46 @@ impl ResourceAuthority {
         &self.inner.topology
     }
 
+    fn matches_storage_profile(&self, profile: &ProductionStorageProfile) -> bool {
+        self.inner
+            .production_storage_profile
+            .as_ref()
+            .is_some_and(|installed| installed.same_calibration(profile))
+    }
+
+    /// Refresh mutable output pressure for an unchanged storage calibration.
+    ///
+    /// A different filesystem root, capacity, rate, queue capacity, or table
+    /// lock capacity is a topology change and fails closed.
+    pub fn refresh_storage_profile_pressure(
+        &self,
+        profile: &ProductionStorageProfile,
+    ) -> Result<PressureUpdate, ResourceError> {
+        if !self.matches_storage_profile(profile) {
+            return Err(ResourceError::IncompatibleProductionStorageProfile);
+        }
+        let mut pressure = self
+            .inner
+            .state
+            .lock()
+            .map_err(|_| ResourceError::AuthorityPoisoned)?
+            .pressure
+            .clone();
+        pressure
+            .storage_available_bytes
+            .insert(profile.domain.clone(), profile.available_bytes);
+        pressure
+            .rate_available_per_second
+            .insert(profile.read_rate.clone(), profile.read_bytes_per_second);
+        pressure
+            .rate_available_per_second
+            .insert(profile.write_rate.clone(), profile.write_bytes_per_second);
+        pressure
+            .queue_available_slots
+            .insert(profile.queue.clone(), profile.queue_slots);
+        self.update_external_pressure(pressure)
+    }
+
     /// Returns the current external-pressure epoch.
     pub fn pressure_epoch(&self) -> Result<u64, ResourceError> {
         let state = self
@@ -1481,10 +1777,18 @@ impl ResourceAuthority {
     }
 
     pub(crate) fn with_inventory(inventory: HostInventory) -> Result<Self, ResourceError> {
+        Self::with_inventory_and_storage_profile(inventory, None)
+    }
+
+    fn with_inventory_and_storage_profile(
+        inventory: HostInventory,
+        production_storage_profile: Option<ProductionStorageProfile>,
+    ) -> Result<Self, ResourceError> {
         validate_inventory(&inventory)?;
         Ok(Self {
             inner: Arc::new(AuthorityInner {
                 topology: inventory.topology,
+                production_storage_profile,
                 state: Mutex::new(AuthorityState {
                     pressure: inventory.pressure,
                     leases: BTreeMap::new(),

@@ -22,11 +22,11 @@ use casa_imaging_model::{
 
 use crate::{
     ContinuumPrimitiveCatalog, Encoder, FINAL_NORMAL_STATE_DOMAIN, FINAL_NORMAL_STATE_VERSION,
-    FinalModelCompletion, FinalModelCompletionId, FinalNormalStateCompletionId, MAJOR_CYCLE_DOMAIN,
-    MAJOR_CYCLE_VERSION, MajorCycleCompletionId, ModelDelta, ModelGeneration, ModelGenerationId,
-    ModelLifecycle, ModelLifecycleError, PreparedFinalModel, SerialMfsError, SerialMfsPrimitives,
-    WeightingGenerationId, WeightingReplayCoverageId, WeightingReplayId,
-    runtime_adapter::CompleteDataOwnerResult,
+    FinalModelCompletion, FinalModelCompletionId, FinalModelContinuation,
+    FinalNormalStateCompletionId, MAJOR_CYCLE_DOMAIN, MAJOR_CYCLE_VERSION, MajorCycleCompletionId,
+    ModelDelta, ModelGeneration, ModelGenerationId, ModelLifecycle, ModelLifecycleError,
+    PreparedFinalModel, SerialMfsError, SerialMfsPrimitives, WeightingGenerationId,
+    WeightingReplayCoverageId, WeightingReplayId, runtime_adapter::CompleteDataOwnerResult,
 };
 
 /// Versioned Normal State Generation catalog minted by a Major Cycle.
@@ -289,6 +289,20 @@ impl MajorCycleCompletion {
     #[must_use]
     pub fn into_parts(self) -> (FinalNormalState, FinalModelCompletion, ModelGeneration) {
         (self.normal_state, self.model_completion, self.final_model)
+    }
+
+    /// Consume the whole reconciliation into its normal state and the affine
+    /// model continuation required by a following Minor/Major Cycle pair.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn into_continuation(self) -> (FinalNormalState, FinalModelContinuation) {
+        (
+            self.normal_state,
+            FinalModelContinuation {
+                completion: self.model_completion,
+                generation: self.final_model,
+            },
+        )
     }
 }
 

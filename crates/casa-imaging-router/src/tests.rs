@@ -30,8 +30,8 @@ use casa_imaging_runtime::{
 mod common;
 
 use super::{
-    DispatchError, ImagingRouter, LegacyWholeRunEnginePort, MIGRATION_MATRIX_JSON,
-    MigrationRowKind, NativeEnginePort, RequestDisposition, RouteRecord, parse_matrix,
+    DispatchError, ImagingRouter, MIGRATION_MATRIX_JSON, MigrationRowKind, NativeEnginePort,
+    RequestDisposition, RouteRecord, parse_matrix,
 };
 
 fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
@@ -76,25 +76,24 @@ const MTMFS_ROWS: [&str; 10] = [
 ];
 
 #[test]
-fn mixed_request_stays_wholly_legacy_until_its_last_required_row_transfers() {
+fn incomplete_request_is_unavailable_until_its_last_required_row_transfers() {
     let native_calls = Arc::new(AtomicUsize::new(0));
-    let legacy_calls = Arc::new(AtomicUsize::new(0));
     let mixed_router = router(
         matrix_with_transfers(&STANDARD_DIRTY_ROWS[..6]),
         Arc::clone(&native_calls),
-        Arc::clone(&legacy_calls),
     );
 
-    let mixed = mixed_router.dispatch(standard_dirty_request()).unwrap();
-
+    let DispatchError::TemporarilyUnavailable(route) =
+        mixed_router.dispatch(standard_dirty_request()).unwrap_err()
+    else {
+        panic!("partially transferred request did not fail closed");
+    };
     assert_eq!(
-        mixed.route().disposition(),
-        RequestDisposition::LegacyWholeRun
+        route.disposition(),
+        RequestDisposition::TemporarilyUnavailable
     );
-    assert_eq!(mixed.output(), &"legacy");
     assert_eq!(
-        mixed
-            .route()
+        route
             .requirements()
             .iter()
             .map(|requirement| requirement.id())
@@ -102,12 +101,10 @@ fn mixed_request_stays_wholly_legacy_until_its_last_required_row_transfers() {
         STANDARD_DIRTY_ROWS
     );
     assert_eq!(native_calls.load(Ordering::SeqCst), 0);
-    assert_eq!(legacy_calls.load(Ordering::SeqCst), 1);
 
     let transferred_router = router(
         matrix_with_transfers(&STANDARD_DIRTY_ROWS),
         Arc::clone(&native_calls),
-        Arc::clone(&legacy_calls),
     );
     let transferred = transferred_router
         .dispatch(standard_dirty_request())
@@ -118,14 +115,12 @@ fn mixed_request_stays_wholly_legacy_until_its_last_required_row_transfers() {
     );
     assert_eq!(transferred.output(), &"native");
     assert_eq!(native_calls.load(Ordering::SeqCst), 1);
-    assert_eq!(legacy_calls.load(Ordering::SeqCst), 1);
 }
 
 #[test]
 fn selected_engine_receives_the_exact_route_record() {
     let router = ImagingRouter::with_matrix_json(
         NativeEnginePort::new(|_, route| Ok::<_, &'static str>(route.clone())),
-        LegacyWholeRunEnginePort::new(|_, route| Ok::<_, &'static str>(route.clone())),
         matrix_with_transfers(&STANDARD_DIRTY_ROWS),
     );
 
@@ -133,7 +128,7 @@ fn selected_engine_receives_the_exact_route_record() {
 
     assert_eq!(outcome.output(), outcome.route());
     assert_eq!(outcome.output().matrix_schema_version(), 1);
-    assert_eq!(outcome.output().matrix_contract_revision(), 30);
+    assert_eq!(outcome.output().matrix_contract_revision(), 34);
     assert_eq!(outcome.output().disposition(), RequestDisposition::Native);
     assert_eq!(
         outcome
@@ -150,7 +145,6 @@ fn selected_engine_receives_the_exact_route_record() {
 fn authoritative_route_record_projects_losslessly_to_receipt_evidence() {
     let routed = router(
         MIGRATION_MATRIX_JSON.to_string(),
-        Arc::new(AtomicUsize::new(0)),
         Arc::new(AtomicUsize::new(0)),
     )
     .dispatch(standard_dirty_request())
@@ -256,7 +250,6 @@ fn execution_route_evidence(route: &RouteRecord) -> ExecutionRouteEvidence {
 const fn execution_disposition(disposition: RequestDisposition) -> ExecutionRouteDisposition {
     match disposition {
         RequestDisposition::Native => ExecutionRouteDisposition::Native,
-        RequestDisposition::LegacyWholeRun => ExecutionRouteDisposition::LegacyWholeRun,
         RequestDisposition::TemporarilyUnavailable => {
             ExecutionRouteDisposition::TemporarilyUnavailable
         }
@@ -275,17 +268,18 @@ const fn execution_kind(kind: MigrationRowKind) -> ExecutionRouteRequirementKind
 
 #[test]
 fn mtmfs_request_derives_its_solver_and_major_minor_cycle_rows() {
-    let routed = router(
+    let error = router(
         MIGRATION_MATRIX_JSON.to_string(),
-        Arc::new(AtomicUsize::new(0)),
         Arc::new(AtomicUsize::new(0)),
     )
     .dispatch(mtmfs_request())
-    .unwrap();
+    .unwrap_err();
+    let DispatchError::TemporarilyUnavailable(route) = error else {
+        panic!("MT-MFS request did not fail closed");
+    };
 
     assert_eq!(
-        routed
-            .route()
+        route
             .requirements()
             .iter()
             .map(|requirement| requirement.id())
@@ -298,7 +292,6 @@ fn mtmfs_request_derives_its_solver_and_major_minor_cycle_rows() {
 fn authoritative_matrix_binding_drives_product_requirement() {
     let routed = router(
         matrix_with_product_binding("Psf", "product.residual"),
-        Arc::new(AtomicUsize::new(0)),
         Arc::new(AtomicUsize::new(0)),
     )
     .dispatch(standard_dirty_request())
@@ -328,13 +321,12 @@ fn matrix_contract_revision_is_a_positive_u32() {
     let routed = router(
         MIGRATION_MATRIX_JSON.to_string(),
         Arc::new(AtomicUsize::new(0)),
-        Arc::new(AtomicUsize::new(0)),
     )
     .dispatch(standard_dirty_request())
     .unwrap();
 
     let revision: u32 = routed.route().matrix_contract_revision();
-    assert_eq!(revision, 30);
+    assert_eq!(revision, 34);
 
     for invalid in [serde_json::json!(0), serde_json::json!("5")] {
         let mut matrix = serde_json::from_str::<serde_json::Value>(MIGRATION_MATRIX_JSON).unwrap();
@@ -347,7 +339,6 @@ fn matrix_contract_revision_is_a_positive_u32() {
 fn observation_transaction_contract_is_required_by_every_native_plan() {
     let routed = router(
         MIGRATION_MATRIX_JSON.to_string(),
-        Arc::new(AtomicUsize::new(0)),
         Arc::new(AtomicUsize::new(0)),
     )
     .dispatch(standard_dirty_request())
@@ -375,26 +366,25 @@ fn observation_transaction_contract_is_required_by_every_native_plan() {
 }
 
 #[test]
-fn selected_model_column_write_keeps_the_whole_request_legacy() {
-    let routed = router(
+fn selected_model_column_write_is_unavailable_until_its_owner_lands() {
+    let error = router(
         matrix_with_transfers(&STANDARD_DIRTY_ROWS),
-        Arc::new(AtomicUsize::new(0)),
         Arc::new(AtomicUsize::new(0)),
     )
     .dispatch(standard_dirty_model_write_request())
-    .unwrap();
-
-    assert_eq!(
-        routed.route().disposition(),
-        RequestDisposition::LegacyWholeRun
-    );
-    let model_write = routed
-        .route()
+    .unwrap_err();
+    let DispatchError::TemporarilyUnavailable(route) = error else {
+        panic!("MODEL_DATA request did not fail closed");
+    };
+    let model_write = route
         .requirements()
         .iter()
         .find(|requirement| requirement.id() == "capability.model-column-write")
         .expect("selected MODEL_DATA writes require their migration row");
-    assert_eq!(model_write.status(), RequestDisposition::LegacyWholeRun);
+    assert_eq!(
+        model_write.status(),
+        RequestDisposition::TemporarilyUnavailable
+    );
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -405,24 +395,18 @@ enum NativeStageFailure {
 }
 
 #[test]
-fn native_compile_plan_or_run_failure_never_invokes_legacy() {
+fn native_compile_plan_or_run_failure_is_terminal() {
     for failure in [
         NativeStageFailure::Compile,
         NativeStageFailure::Plan,
         NativeStageFailure::Run,
     ] {
         let native_calls = Arc::new(AtomicUsize::new(0));
-        let legacy_calls = Arc::new(AtomicUsize::new(0));
         let native_counter = Arc::clone(&native_calls);
-        let legacy_counter = Arc::clone(&legacy_calls);
-        let router = ImagingRouter::with_matrix_json(
+        let router: ImagingRouter<(), NativeStageFailure> = ImagingRouter::with_matrix_json(
             NativeEnginePort::new(move |_, _| {
                 native_counter.fetch_add(1, Ordering::SeqCst);
                 Err(failure)
-            }),
-            LegacyWholeRunEnginePort::new(move |_, _| {
-                legacy_counter.fetch_add(1, Ordering::SeqCst);
-                Ok("legacy")
             }),
             matrix_with_transfers(&STANDARD_DIRTY_ROWS),
         );
@@ -437,18 +421,15 @@ fn native_compile_plan_or_run_failure_never_invokes_legacy() {
             other => panic!("expected terminal native failure, got {other:?}"),
         }
         assert_eq!(native_calls.load(Ordering::SeqCst), 1);
-        assert_eq!(legacy_calls.load(Ordering::SeqCst), 0);
     }
 }
 
 #[test]
 fn absent_required_matrix_row_fails_closed_before_engine_invocation() {
     let native_calls = Arc::new(AtomicUsize::new(0));
-    let legacy_calls = Arc::new(AtomicUsize::new(0));
     let router = router(
         matrix_without("capability.compiled-problem"),
         Arc::clone(&native_calls),
-        Arc::clone(&legacy_calls),
     );
 
     let error = router.dispatch(standard_dirty_request()).unwrap_err();
@@ -458,22 +439,16 @@ fn absent_required_matrix_row_fails_closed_before_engine_invocation() {
         DispatchError::InvalidMatrix(message) if message.contains("capability.compiled-problem")
     ));
     assert_eq!(native_calls.load(Ordering::SeqCst), 0);
-    assert_eq!(legacy_calls.load(Ordering::SeqCst), 0);
 }
 
 fn router(
     matrix_json: String,
     native_calls: Arc<AtomicUsize>,
-    legacy_calls: Arc<AtomicUsize>,
 ) -> ImagingRouter<&'static str, &'static str> {
     ImagingRouter::with_matrix_json(
         NativeEnginePort::new(move |_, _| {
             native_calls.fetch_add(1, Ordering::SeqCst);
             Ok("native")
-        }),
-        LegacyWholeRunEnginePort::new(move |_, _| {
-            legacy_calls.fetch_add(1, Ordering::SeqCst);
-            Ok("legacy")
         }),
         matrix_json,
     )
@@ -486,6 +461,12 @@ fn matrix_with_transfers(native_rows: &[&str]) -> String {
         if native_rows.contains(&identifier) {
             row["status"] = serde_json::Value::String("Native".to_string());
             row["migration_obligation"] = serde_json::Value::Null;
+        } else if STANDARD_DIRTY_ROWS.contains(&identifier) {
+            row["status"] = serde_json::Value::String("TemporarilyUnavailable".to_string());
+            row["migration_obligation"] = serde_json::json!({
+                "ticket": "test",
+                "reason": "test transfer remains pending"
+            });
         }
     }
     serde_json::to_string(&matrix).unwrap()

@@ -57,7 +57,7 @@ def metadata_for_policy(policy: dict[str, Any]) -> dict[str, Any]:
     package_names.update(policy["native_package_workspace_dependencies"].keys())
     for allowed in policy["native_package_workspace_dependencies"].values():
         package_names.update(allowed)
-    for edge in policy["frozen_legacy_workspace_edges"]:
+    for edge in policy["frozen_displaced_workspace_edges"]:
         package_names.add(edge["source"])
         package_names.add(edge["target"])
     for edge in policy["frozen_transitional_workspace_edges"]:
@@ -66,7 +66,7 @@ def metadata_for_policy(policy: dict[str, Any]) -> dict[str, Any]:
     dependencies: dict[str, list[dict[str, Any]]] = {
         package: [] for package in package_names
     }
-    for edge in policy["frozen_legacy_workspace_edges"]:
+    for edge in policy["frozen_displaced_workspace_edges"]:
         dependencies[edge["source"]].append(dependency(edge["target"], edge["kind"]))
     for edge in policy["frozen_transitional_workspace_edges"]:
         dependencies[edge["source"]].append(dependency(edge["target"], edge["kind"]))
@@ -202,19 +202,19 @@ class ArchitecturePolicyTests(unittest.TestCase):
         ):
             checker.validate_policy(policy)
 
-    def test_whole_run_router_owner_is_pinned(self) -> None:
+    def test_migration_router_owner_is_pinned(self) -> None:
         policy = copy.deepcopy(self.policy)
-        policy["whole_run_router"]["package"] = "casa-imaging-runtime"
+        policy["migration_router"]["package"] = "casa-imaging-runtime"
         with self.assertRaisesRegex(
             checker.ArchitectureError,
-            r"whole-run migration router differs from the accepted owner",
+            r"migration router differs from the accepted owner",
         ):
             checker.validate_policy(policy)
 
     def test_whole_run_engine_ports_have_one_source_owner(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            source = root / self.policy["whole_run_router"]["source"]
+            source = root / self.policy["migration_router"]["source"]
             source.parent.mkdir(parents=True)
             source.write_text(
                 'const MATRIX: &str = include_str!("migration-matrix.json");\n'
@@ -223,24 +223,24 @@ class ArchitecturePolicyTests(unittest.TestCase):
                 "    pub fn dispatch(&self) {}\n"
                 "}\n"
                 "pub struct NativeEnginePort;\n"
-                "pub struct LegacyWholeRunEnginePort;\n",
+                "pub struct DisplacedWholeRunEnginePort;\n",
                 encoding="utf-8",
             )
-            checker.validate_whole_run_router_source(self.policy, root)
+            checker.validate_migration_router_source(self.policy, root)
 
             duplicate = root / "crates/duplicate/src/lib.rs"
             duplicate.parent.mkdir(parents=True)
             duplicate.write_text("pub struct NativeEnginePort;\n", encoding="utf-8")
             with self.assertRaisesRegex(
                 checker.ArchitectureError,
-                r"whole-run router symbol NativeEnginePort must be owned exactly once",
+                r"migration router symbol NativeEnginePort must be owned exactly once",
             ):
-                checker.validate_whole_run_router_source(self.policy, root)
+                checker.validate_migration_router_source(self.policy, root)
 
-    def test_whole_run_router_must_embed_the_authoritative_matrix(self) -> None:
+    def test_migration_router_must_embed_the_authoritative_matrix(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            source = root / self.policy["whole_run_router"]["source"]
+            source = root / self.policy["migration_router"]["source"]
             source.parent.mkdir(parents=True)
             source.write_text(
                 "pub struct ImagingRouter;\n"
@@ -248,16 +248,16 @@ class ArchitecturePolicyTests(unittest.TestCase):
                 "    pub fn dispatch(&self) {}\n"
                 "}\n"
                 "pub struct NativeEnginePort;\n"
-                "pub struct LegacyWholeRunEnginePort;\n",
+                "pub struct DisplacedWholeRunEnginePort;\n",
                 encoding="utf-8",
             )
             with self.assertRaisesRegex(
                 checker.ArchitectureError,
                 r"must embed the authoritative migration matrix",
             ):
-                checker.validate_whole_run_router_source(self.policy, root)
+                checker.validate_migration_router_source(self.policy, root)
 
-    def test_native_runtime_and_router_reject_legacy_imports(self) -> None:
+    def test_native_runtime_and_router_reject_displaced_imports(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             runtime = root / "crates/casa-imaging-runtime/src"
@@ -266,17 +266,17 @@ class ArchitecturePolicyTests(unittest.TestCase):
             router.mkdir(parents=True)
             (runtime / "lib.rs").write_text("", encoding="utf-8")
             (router / "lib.rs").write_text(
-                "use casa_imaging::LegacyBackend;\n", encoding="utf-8"
+                "use casa_imaging::DisplacedBackend;\n", encoding="utf-8"
             )
             boundary = next(
                 value
                 for value in self.policy["source_boundaries"]
-                if value["id"] == "native-runtime-router-legacy-isolation"
+                if value["id"] == "native-runtime-router-displaced-isolation"
             )
             policy = {"source_boundaries": [boundary]}
             with self.assertRaisesRegex(
                 checker.ArchitectureError,
-                r"native runtime or whole-run router imports a legacy imaging API",
+                r"native runtime or migration router imports a displaced imaging API",
             ):
                 checker.validate_source_boundaries(policy, root)
 
@@ -309,9 +309,9 @@ class ArchitecturePolicyTests(unittest.TestCase):
         ):
             checker.validate_logical_edge(self.policy, "application", "backend")
 
-    def test_workspace_check_freezes_legacy_edges_exactly(self) -> None:
+    def test_workspace_check_freezes_displaced_edges_exactly(self) -> None:
         metadata = metadata_for_policy(self.policy)
-        edge = self.policy["frozen_legacy_workspace_edges"][0]
+        edge = self.policy["frozen_displaced_workspace_edges"][0]
         source = package(metadata, edge["source"])
         source["dependencies"] = [
             value
@@ -324,12 +324,12 @@ class ArchitecturePolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(checker.ArchitectureError, r"removed=\["):
             checker.validate_workspace(self.policy, metadata)
 
-    def test_policy_cannot_replace_a_frozen_legacy_exception(self) -> None:
+    def test_policy_cannot_replace_a_frozen_displaced_exception(self) -> None:
         policy = copy.deepcopy(self.policy)
-        policy["frozen_legacy_workspace_edges"][0]["target"] = "casa-values"
+        policy["frozen_displaced_workspace_edges"][0]["target"] = "casa-values"
         with self.assertRaisesRegex(
             checker.ArchitectureError,
-            r"differs from the 16 accepted exceptions",
+            r"frozen_displaced_workspace_edges differs from the accepted exceptions",
         ):
             checker.validate_policy(policy)
 
@@ -452,7 +452,7 @@ class ArchitecturePolicyTests(unittest.TestCase):
                 ]
                 with self.assertRaisesRegex(
                     checker.ArchitectureError,
-                    r"native science or reconstruction Rust source imports an execution, backend, legacy, or device API",
+                    r"native science or reconstruction Rust source imports an execution, backend, displaced, or device API",
                 ):
                     checker.validate_source_boundaries(policy, root)
 
@@ -494,7 +494,7 @@ class ArchitecturePolicyTests(unittest.TestCase):
                 "forbidden_patterns": [
                     {
                         "regex": r"\bcasa_imaging::",
-                        "message": "frontend imports legacy imaging",
+                        "message": "frontend imports displaced imaging",
                     }
                 ],
                 "accepted_violation_digest": checker.stable_digest([]),
@@ -1111,7 +1111,7 @@ fn probe() {
             source = root / "frontend"
             source.mkdir()
             module = source / "lib.rs"
-            module.write_text("use casa_imaging::LegacyBackend;\n", encoding="utf-8")
+            module.write_text("use casa_imaging::DisplacedBackend;\n", encoding="utf-8")
             boundary = {
                 "id": "synthetic-transitional-frontend",
                 "roots": ["frontend"],
@@ -1119,7 +1119,7 @@ fn probe() {
                 "forbidden_patterns": [
                     {
                         "regex": r"\bcasa_imaging::",
-                        "message": "frontend imports legacy imaging",
+                        "message": "frontend imports displaced imaging",
                     }
                 ],
                 "accepted_violation_digest": None,
@@ -1145,8 +1145,6 @@ fn probe() {
         selectors = [
             ("StandardMfsBackend", "Cpu", "Metal"),
             ("StandardMfsMinorCycleBackend", "Cpu", "Metal"),
-            ("SinglePlaneAccelerationPolicy", "Cpu", "Metal"),
-            ("PerPlaneExecutionBackend", "SerialCpu", "Wave3MetalGrouped"),
         ]
         production_boundary = next(
             boundary
@@ -1259,7 +1257,7 @@ class MigrationMatrixTests(unittest.TestCase):
         matrix["rows"].pop()
         with self.assertRaisesRegex(
             checker.ArchitectureError,
-            r"inventory and rows differ",
+            r"content-pinned baseline manifest|inventory and rows differ",
         ):
             checker.validate_migration_matrix(matrix, self.policy)
 
@@ -1371,16 +1369,6 @@ class MigrationMatrixTests(unittest.TestCase):
                 "standard_mfs_minor_cycle_backend_inventory",
                 "Metal",
                 "StandardMfsMinorCycleBackend",
-            ),
-            (
-                "single_plane_acceleration_policy_inventory",
-                "MultiCpu",
-                "SinglePlaneAccelerationPolicy",
-            ),
-            (
-                "per_plane_execution_backend_inventory",
-                "Wave3MetalGrouped",
-                "PerPlaneExecutionBackend",
             ),
         ]
         for field, variant, enum_name in cases:
@@ -1495,7 +1483,9 @@ class MigrationMatrixTests(unittest.TestCase):
 
     def test_live_row_cannot_be_silently_reclassified_native(self) -> None:
         matrix = checker.load_object(MATRIX_PATH, "migration matrix")
-        row = next(row for row in matrix["rows"] if row["id"] == "product.psf")
+        row = next(
+            row for row in matrix["rows"] if row["id"] == "capability.spectral-cube"
+        )
         row["status"] = "Native"
         row["current_owner"] = "arbitrary owner"
         row["transfer_point"] = "claimed without evidence"
@@ -1503,7 +1493,7 @@ class MigrationMatrixTests(unittest.TestCase):
         row["migration_obligation"] = None
         with self.assertRaisesRegex(
             checker.ArchitectureError,
-            r"row ledger differs from the accepted scope",
+            r"content-pinned baseline manifest|row ledger differs from the accepted scope",
         ):
             checker.validate_migration_matrix(matrix, self.policy)
 
@@ -1520,7 +1510,10 @@ class MigrationMatrixTests(unittest.TestCase):
 
     def test_live_obligation_requires_a_ticket_and_reason(self) -> None:
         matrix = checker.load_object(MATRIX_PATH, "migration matrix")
-        matrix["rows"][0]["migration_obligation"] = {"ticket": "T23/#509"}
+        row = next(
+            row for row in matrix["rows"] if row["id"] == "capability.spectral-cube"
+        )
+        row["migration_obligation"] = {"ticket": "T23/#509"}
         with self.assertRaisesRegex(
             checker.ArchitectureError,
             r"migration_obligation.reason must be a non-empty string",
@@ -1705,8 +1698,8 @@ class MigrationMatrixTests(unittest.TestCase):
             (
                 "bound",
                 sources["bound"].replace(
-                    "bindings\n            .capacity()",
-                    "bindings\n            .len()",
+                    "bindings.capacity(),",
+                    "bindings.len(),",
                     1,
                 ),
                 "provider, source slots, and complete consumed binding graph must be charged exactly once",

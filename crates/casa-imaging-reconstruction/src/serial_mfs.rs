@@ -143,10 +143,7 @@ impl SerialMfsSpecification {
         let domain = &problem.geometry().domains()[0];
         let image_shape = domain.shape().pixels();
         let direction = domain.direction();
-        let supported_reference_pixel = [
-            ((image_shape[0] - 1) / 2) as f64,
-            ((image_shape[1] - 1) / 2) as f64,
-        ];
+        let supported_reference_pixel = [image_shape[0] as f64 / 2.0, image_shape[1] as f64 / 2.0];
         if direction.projection() != Projection::Sin
             || direction.pc() != [[1.0, 0.0], [0.0, 1.0]]
             || direction.reference_pixel() != supported_reference_pixel

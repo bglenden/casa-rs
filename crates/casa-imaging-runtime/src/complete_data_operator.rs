@@ -117,16 +117,32 @@ impl CompleteDataPlanFragment {
     ) -> Result<Self, CompleteDataPlanError> {
         let specification = SerialMfsSpecification::new(problem)?;
         let workload = serial_mfs_workload(&specification, max_replay_block_samples)?;
-        let residency = project_residency(problem, workload)?;
         let shape = workload.grid_shape();
+        let preparation_node =
+            WorkNodeId::new(format!("serial-mfs-fft-plan-{}x{}", shape[0], shape[1]));
+        Self::new_with_preparation_node(
+            problem,
+            max_replay_block_samples,
+            replay_node,
+            preparation_node,
+        )
+    }
+
+    /// Compile runtime resources with a caller-supplied plan-unique FFT node.
+    pub fn new_with_preparation_node(
+        problem: &CompiledProblem,
+        max_replay_block_samples: usize,
+        replay_node: WorkNodeId,
+        preparation_node: WorkNodeId,
+    ) -> Result<Self, CompleteDataPlanError> {
+        let specification = SerialMfsSpecification::new(problem)?;
+        let workload = serial_mfs_workload(&specification, max_replay_block_samples)?;
+        let residency = project_residency(problem, workload)?;
         Ok(Self {
             specification,
             workload,
             residency,
-            preparation_node: WorkNodeId::new(format!(
-                "serial-mfs-fft-plan-{}x{}",
-                shape[0], shape[1]
-            )),
+            preparation_node,
             replay_node,
             reconciliation_node: None,
         })
@@ -136,6 +152,12 @@ impl CompleteDataPlanFragment {
     #[must_use]
     pub const fn preparation_node(&self) -> &WorkNodeId {
         &self.preparation_node
+    }
+
+    /// Return the final-reconciliation node after composition.
+    #[must_use]
+    pub fn reconciliation_node(&self) -> Option<&WorkNodeId> {
+        self.reconciliation_node.as_ref()
     }
 
     /// Return the runtime-owned resident-byte projection.
