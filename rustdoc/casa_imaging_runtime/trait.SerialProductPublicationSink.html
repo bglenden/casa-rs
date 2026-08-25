@@ -6,7 +6,7 @@
         &amp;self,
         planned: <a class="struct" href="struct.ArtifactIdentity.html" title="struct casa_imaging_runtime::ArtifactIdentity">ArtifactIdentity</a>,
         observed: <a class="struct" href="struct.ArtifactIdentity.html" title="struct casa_imaging_runtime::ArtifactIdentity">ArtifactIdentity</a>,
-        member: &amp;<a class="struct" href="../casa_imaging_products/authority/struct.SealedMember.html" title="struct casa_imaging_products::authority::SealedMember">SealedMember</a>,
+        member: &amp;SealedMember,
     ) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.98.0/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.98.0/std/primitive.unit.html">()</a>, Self::<a class="associatedtype" href="trait.SerialProductPublicationSink.html#associatedtype.Error" title="type casa_imaging_runtime::SerialProductPublicationSink::Error">Error</a>&gt;;
 <span class="item-spacer"></span>    fn <a href="#tymethod.promote" class="fn">promote</a>(
         &amp;self,
@@ -21,7 +21,7 @@ not invalidate members already promoted from the same sealed generation.</p>
     &amp;self,
     planned: <a class="struct" href="struct.ArtifactIdentity.html" title="struct casa_imaging_runtime::ArtifactIdentity">ArtifactIdentity</a>,
     observed: <a class="struct" href="struct.ArtifactIdentity.html" title="struct casa_imaging_runtime::ArtifactIdentity">ArtifactIdentity</a>,
-    member: &amp;<a class="struct" href="../casa_imaging_products/authority/struct.SealedMember.html" title="struct casa_imaging_products::authority::SealedMember">SealedMember</a>,
+    member: &amp;SealedMember,
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.98.0/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.98.0/std/primitive.unit.html">()</a>, Self::<a class="associatedtype" href="trait.SerialProductPublicationSink.html#associatedtype.Error" title="type casa_imaging_runtime::SerialProductPublicationSink::Error">Error</a>&gt;</h4></section></summary><div class="docblock"><p>Privately stage one exact sealed member.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="tymethod.promote" class="method"><a class="src rightside" href="../src/casa_imaging_runtime/serial_product_publication.rs.html#51-54">Source</a><h4 class="code-header">fn <a href="#tymethod.promote" class="fn">promote</a>(
     &amp;self,

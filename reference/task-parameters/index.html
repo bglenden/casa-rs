@@ -1780,7 +1780,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-imager">Imager</a><br><code>imager</code></td>
 <td>task</td>
-<td style="text-align: right;">7</td>
+<td style="text-align: right;">8</td>
 <td><code>imager</code></td>
 <td style="text-align: right;">91</td>
 <td>Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet</td>
@@ -3212,7 +3212,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="imager-imager">Imager (<code>imager</code>)<a class="headerlink" href="#imager-imager" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>7</code></li>
+<li>Contract version: <code>8</code></li>
 <li>Category: Imaging</li>
 <li>Provider family: <code>imager</code></li>
 <li>Summary: Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet</li>
@@ -3729,7 +3729,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>standard_mfs_acceleration</code></td>
 <td><code>parameter.standard_mfs_acceleration@r1</code></td>
 <td><code>choice (4 values)</code></td>
-<td><code>"auto"</code>; optional</td>
+<td><code>"cpu"</code>; optional</td>
 <td>Stages</td>
 <td>Backend policy for standard/MFS-compatible gridding stages</td>
 </tr>
@@ -3753,7 +3753,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>imaging_fft_backend</code></td>
 <td><code>parameter.imaging_fft_backend@r1</code></td>
 <td><code>choice (4 values)</code></td>
-<td><code>"auto"</code>; optional</td>
+<td><code>"rustfft"</code>; optional</td>
 <td>Stages</td>
 <td>Backend policy for dirty and residual product FFT transforms</td>
 </tr>
