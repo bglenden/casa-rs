@@ -50,6 +50,7 @@
     "casa-provider-contracts": "application",
     "casa-ms": "observation",
     "casa-imaging-model": "science",
+    "casa-imaging-products": "product",
     "casa-imaging-reconstruction": "reconstruction",
     "casa-imaging-router": "application",
     "casa-imaging-runtime": "execution",
@@ -66,6 +67,7 @@
     "casa-images": "support",
     "casa-imaging": "legacy",
     "casa-imaging-model": "native",
+    "casa-imaging-products": "native",
     "casa-imaging-reconstruction": "native",
     "casa-imaging-router": "native",
     "casa-imaging-runtime": "native",
@@ -94,6 +96,10 @@
     "casa-imaging-model": [],
     "casa-imaging-reconstruction": [
       "casa-imaging-model"
+    ],
+    "casa-imaging-products": [
+      "casa-imaging-model",
+      "casa-imaging-reconstruction"
     ],
     "casa-imaging-router": [
       "casa-imaging-model"
