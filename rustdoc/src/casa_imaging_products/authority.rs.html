@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-imaging-products/src/authority.rs`."><title>authority.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-1ed95124.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casa_imaging_products" data-themes="" data-resource-suffix="" data-rustdoc-version="1.98.0 (88d9e12ae 2026-08-18)" data-channel="1.98.0" data-search-js="search-9944d736.js" data-stringdex-js="stringdex-2da4960a.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-417ebf0a.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_imaging_products/</div>authority.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-imaging-products/src/authority.rs`."><title>authority.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-1ed95124.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casa_imaging_products" data-themes="" data-resource-suffix="" data-rustdoc-version="1.98.0 (88d9e12ae 2026-08-18)" data-channel="1.98.0" data-search-js="search-9944d736.js" data-stringdex-js="stringdex-2da4960a.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-417ebf0a.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_imaging_products/</div>authority.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-4"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
 <a href=#2 id=2 data-nosnippet>2</a>
 <a href=#3 id=3 data-nosnippet>3</a></span><span class="doccomment">//! The two-phase Product Generation Authority for complete continuum products.
 <a href=#4 id=4 data-nosnippet>4</a>//!
@@ -228,768 +228,784 @@
 <a href=#228 id=228 data-nosnippet>228</a>        }
 <a href=#229 id=229 data-nosnippet>229</a>        <span class="prelude-val">Ok</span>(PlannedContinuumGeneration {
 <a href=#230 id=230 data-nosnippet>230</a>            authority: <span class="self">self</span>.identity,
-<a href=#231 id=231 data-nosnippet>231</a>            generation_id: PlannedGenerationId(encoder.finish()),
-<a href=#232 id=232 data-nosnippet>232</a>            commitment_id,
-<a href=#233 id=233 data-nosnippet>233</a>            psf_cutoff: controls.psf_cutoff(),
-<a href=#234 id=234 data-nosnippet>234</a>            members: members.into_boxed_slice(),
-<a href=#235 id=235 data-nosnippet>235</a>            final_model_generation: sources.final_model_generation(),
-<a href=#236 id=236 data-nosnippet>236</a>        })
-<a href=#237 id=237 data-nosnippet>237</a>    }
-<a href=#238 id=238 data-nosnippet>238</a>
-<a href=#239 id=239 data-nosnippet>239</a>    <span class="doccomment">/// Authorize one sealed generation over matching typed completions.
-<a href=#240 id=240 data-nosnippet>240</a>    ///
-<a href=#241 id=241 data-nosnippet>241</a>    /// The completions must name exactly the planned generation and its
-<a href=#242 id=242 data-nosnippet>242</a>    /// committed lineage, and every produced payload must re-digest to its
-<a href=#243 id=243 data-nosnippet>243</a>    /// claimed and planned artifact identity in the planned order with no
-<a href=#244 id=244 data-nosnippet>244</a>    /// missing, additional, reordered, or substituted members.
-<a href=#245 id=245 data-nosnippet>245</a>    ///
-<a href=#246 id=246 data-nosnippet>246</a>    /// # Errors
+<a href=#231 id=231 data-nosnippet>231</a>            problem_id: <span class="self">self</span>.problem_id,
+<a href=#232 id=232 data-nosnippet>232</a>            graph_id: <span class="self">self</span>.graph_id,
+<a href=#233 id=233 data-nosnippet>233</a>            generation_id: PlannedGenerationId(encoder.finish()),
+<a href=#234 id=234 data-nosnippet>234</a>            commitment_id,
+<a href=#235 id=235 data-nosnippet>235</a>            psf_cutoff: controls.psf_cutoff(),
+<a href=#236 id=236 data-nosnippet>236</a>            members: members.into_boxed_slice(),
+<a href=#237 id=237 data-nosnippet>237</a>            final_model_generation: sources.final_model_generation(),
+<a href=#238 id=238 data-nosnippet>238</a>        })
+<a href=#239 id=239 data-nosnippet>239</a>    }
+<a href=#240 id=240 data-nosnippet>240</a>
+<a href=#241 id=241 data-nosnippet>241</a>    <span class="doccomment">/// Authorize one sealed generation over matching typed completions.
+<a href=#242 id=242 data-nosnippet>242</a>    ///
+<a href=#243 id=243 data-nosnippet>243</a>    /// The completions must name exactly the planned generation and its
+<a href=#244 id=244 data-nosnippet>244</a>    /// committed lineage, and every produced payload must re-digest to its
+<a href=#245 id=245 data-nosnippet>245</a>    /// claimed and planned artifact identity in the planned order with no
+<a href=#246 id=246 data-nosnippet>246</a>    /// missing, additional, reordered, or substituted members.
 <a href=#247 id=247 data-nosnippet>247</a>    ///
-<a href=#248 id=248 data-nosnippet>248</a>    /// Rejects foreign generations, mismatched commitments or member sets,
-<a href=#249 id=249 data-nosnippet>249</a>    /// and any content-identity mismatch.
-<a href=#250 id=250 data-nosnippet>250</a>    </span><span class="kw">pub fn </span>authorize(
-<a href=#251 id=251 data-nosnippet>251</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#252 id=252 data-nosnippet>252</a>        planned: <span class="kw-2">&amp;</span>PlannedContinuumGeneration,
-<a href=#253 id=253 data-nosnippet>253</a>        completions: <span class="kw-2">&amp;</span>ContinuumProducedMembers,
-<a href=#254 id=254 data-nosnippet>254</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;SealedContinuumGeneration, ProductsError&gt; {
-<a href=#255 id=255 data-nosnippet>255</a>        <span class="kw">if </span>planned.authority != <span class="self">self</span>.identity
-<a href=#256 id=256 data-nosnippet>256</a>            || completions.planned_generation != planned.generation_id
-<a href=#257 id=257 data-nosnippet>257</a>        {
-<a href=#258 id=258 data-nosnippet>258</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ProductsError::ForeignPlannedGeneration);
-<a href=#259 id=259 data-nosnippet>259</a>        }
-<a href=#260 id=260 data-nosnippet>260</a>        <span class="kw">if </span>completions.commitment_id != planned.commitment_id {
-<a href=#261 id=261 data-nosnippet>261</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ProductsError::CommitmentMismatch);
-<a href=#262 id=262 data-nosnippet>262</a>        }
-<a href=#263 id=263 data-nosnippet>263</a>        <span class="kw">if </span>completions.members.len() != planned.members.len() {
-<a href=#264 id=264 data-nosnippet>264</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ProductsError::MemberSetMismatch {
-<a href=#265 id=265 data-nosnippet>265</a>                expected: planned.members.len(),
-<a href=#266 id=266 data-nosnippet>266</a>                actual: completions.members.len(),
-<a href=#267 id=267 data-nosnippet>267</a>            });
-<a href=#268 id=268 data-nosnippet>268</a>        }
-<a href=#269 id=269 data-nosnippet>269</a>        <span class="kw">for </span>(member, produced) <span class="kw">in </span>planned.members.iter().zip(<span class="kw-2">&amp;</span>completions.members) {
-<a href=#270 id=270 data-nosnippet>270</a>            <span class="comment">// The produced member must claim exactly this planned slot: same
-<a href=#271 id=271 data-nosnippet>271</a>            // graph node and same planned artifact identity. The recomputed
-<a href=#272 id=272 data-nosnippet>272</a>            // content identity must then match the produced claim, so any
-<a href=#273 id=273 data-nosnippet>273</a>            // substitution or tampering fails closed here rather than at
-<a href=#274 id=274 data-nosnippet>274</a>            // publication time.
-<a href=#275 id=275 data-nosnippet>275</a>            </span><span class="kw">if </span>member.node != produced.node || member.artifact_id != produced.artifact_id {
-<a href=#276 id=276 data-nosnippet>276</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(ProductsError::MemberSetMismatch {
-<a href=#277 id=277 data-nosnippet>277</a>                    expected: planned.members.len(),
-<a href=#278 id=278 data-nosnippet>278</a>                    actual: completions.members.len(),
-<a href=#279 id=279 data-nosnippet>279</a>                });
-<a href=#280 id=280 data-nosnippet>280</a>            }
-<a href=#281 id=281 data-nosnippet>281</a>            <span class="kw">if </span>produced.payload.len() != member.payload_values {
-<a href=#282 id=282 data-nosnippet>282</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(ProductsError::PayloadLengthMismatch {
-<a href=#283 id=283 data-nosnippet>283</a>                    expected: member.payload_values,
-<a href=#284 id=284 data-nosnippet>284</a>                    actual: produced.payload.len(),
-<a href=#285 id=285 data-nosnippet>285</a>                });
-<a href=#286 id=286 data-nosnippet>286</a>            }
-<a href=#287 id=287 data-nosnippet>287</a>            <span class="kw">let </span>digest = plane_digest(<span class="kw-2">&amp;</span>produced.payload);
-<a href=#288 id=288 data-nosnippet>288</a>            <span class="kw">if </span>digest != produced.digest.as_bytes() {
-<a href=#289 id=289 data-nosnippet>289</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(ProductsError::MemberContentMismatch);
-<a href=#290 id=290 data-nosnippet>290</a>            }
-<a href=#291 id=291 data-nosnippet>291</a>        }
-<a href=#292 id=292 data-nosnippet>292</a>
-<a href=#293 id=293 data-nosnippet>293</a>        <span class="kw">let </span><span class="kw-2">mut </span>encoder = Encoder::new(COMPLETIONS_DOMAIN, COMPLETIONS_VERSION);
-<a href=#294 id=294 data-nosnippet>294</a>        encoder.identity(planned.generation_id.as_bytes());
-<a href=#295 id=295 data-nosnippet>295</a>        encoder.identity(planned.commitment_id.as_bytes());
-<a href=#296 id=296 data-nosnippet>296</a>        encoder.u32(CONTINUUM_ALGORITHM_CATALOG_VERSION);
-<a href=#297 id=297 data-nosnippet>297</a>        <span class="kw">match </span>completions.restoring_beam {
-<a href=#298 id=298 data-nosnippet>298</a>            <span class="prelude-val">Some</span>(beam) =&gt; {
-<a href=#299 id=299 data-nosnippet>299</a>                encoder.u8(<span class="number">1</span>);
-<a href=#300 id=300 data-nosnippet>300</a>                encoder.u64(beam.major_fwhm_rad().to_bits());
-<a href=#301 id=301 data-nosnippet>301</a>                encoder.u64(beam.minor_fwhm_rad().to_bits());
-<a href=#302 id=302 data-nosnippet>302</a>                encoder.u64(beam.position_angle_rad().to_bits());
-<a href=#303 id=303 data-nosnippet>303</a>            }
-<a href=#304 id=304 data-nosnippet>304</a>            <span class="prelude-val">None </span>=&gt; encoder.u8(<span class="number">0</span>),
-<a href=#305 id=305 data-nosnippet>305</a>        }
-<a href=#306 id=306 data-nosnippet>306</a>        <span class="kw">for </span>pair <span class="kw">in </span>planned.members.iter().zip(<span class="kw-2">&amp;</span>completions.members) {
-<a href=#307 id=307 data-nosnippet>307</a>            <span class="kw">let </span>(member, produced) = pair;
-<a href=#308 id=308 data-nosnippet>308</a>            <span class="comment">// Bind the planned artifact identity and the exact produced
-<a href=#309 id=309 data-nosnippet>309</a>            // content together: a payload digest matching itself is not
-<a href=#310 id=310 data-nosnippet>310</a>            // authorization without this pairing.
-<a href=#311 id=311 data-nosnippet>311</a>            </span>encoder.identity(member.artifact_id.as_bytes());
-<a href=#312 id=312 data-nosnippet>312</a>            encoder.identity(produced.digest.as_bytes());
-<a href=#313 id=313 data-nosnippet>313</a>        }
-<a href=#314 id=314 data-nosnippet>314</a>        <span class="kw">let </span>completions_id = ContinuumCompletionsId(encoder.finish());
-<a href=#315 id=315 data-nosnippet>315</a>
-<a href=#316 id=316 data-nosnippet>316</a>        <span class="kw">let </span><span class="kw-2">mut </span>encoder = Encoder::new(SEAL_DOMAIN, SEAL_VERSION);
-<a href=#317 id=317 data-nosnippet>317</a>        encoder.identity(planned.generation_id.as_bytes());
-<a href=#318 id=318 data-nosnippet>318</a>        encoder.identity(completions_id.as_bytes());
-<a href=#319 id=319 data-nosnippet>319</a>        encoder.identity(<span class="self">self</span>.identity);
-<a href=#320 id=320 data-nosnippet>320</a>        <span class="kw">let </span>seal_id = ContinuumSealId(encoder.finish());
-<a href=#321 id=321 data-nosnippet>321</a>
-<a href=#322 id=322 data-nosnippet>322</a>        <span class="kw">let </span>members = planned
-<a href=#323 id=323 data-nosnippet>323</a>            .members
-<a href=#324 id=324 data-nosnippet>324</a>            .iter()
-<a href=#325 id=325 data-nosnippet>325</a>            .zip(<span class="kw-2">&amp;</span>completions.members)
-<a href=#326 id=326 data-nosnippet>326</a>            .map(|(member, produced)| SealedMember {
-<a href=#327 id=327 data-nosnippet>327</a>                node: member.node,
-<a href=#328 id=328 data-nosnippet>328</a>                name: member.name.clone(),
-<a href=#329 id=329 data-nosnippet>329</a>                artifact_id: member.artifact_id,
-<a href=#330 id=330 data-nosnippet>330</a>                content_identity: produced.digest,
-<a href=#331 id=331 data-nosnippet>331</a>                contract: SealedMemberContract {
-<a href=#332 id=332 data-nosnippet>332</a>                    role: member.role,
-<a href=#333 id=333 data-nosnippet>333</a>                    unit: member.unit,
-<a href=#334 id=334 data-nosnippet>334</a>                    schema: member.schema,
-<a href=#335 id=335 data-nosnippet>335</a>                    axes: member.axes.clone(),
-<a href=#336 id=336 data-nosnippet>336</a>                    beam_rule: member.beam_rule,
-<a href=#337 id=337 data-nosnippet>337</a>                    validity: member.validity,
-<a href=#338 id=338 data-nosnippet>338</a>                    dependencies: member.dependencies.clone(),
-<a href=#339 id=339 data-nosnippet>339</a>                },
-<a href=#340 id=340 data-nosnippet>340</a>                resolved_beam: sealed_beam(member.beam_rule, completions.restoring_beam),
-<a href=#341 id=341 data-nosnippet>341</a>                payload: produced.payload.clone(),
-<a href=#342 id=342 data-nosnippet>342</a>            })
-<a href=#343 id=343 data-nosnippet>343</a>            .collect::&lt;Box&lt;[<span class="kw">_</span>]&gt;&gt;();
-<a href=#344 id=344 data-nosnippet>344</a>        <span class="prelude-val">Ok</span>(SealedContinuumGeneration {
-<a href=#345 id=345 data-nosnippet>345</a>            problem_id: <span class="self">self</span>.problem_id,
-<a href=#346 id=346 data-nosnippet>346</a>            graph_id: <span class="self">self</span>.graph_id,
-<a href=#347 id=347 data-nosnippet>347</a>            seal_id,
-<a href=#348 id=348 data-nosnippet>348</a>            generation_id: planned.generation_id,
-<a href=#349 id=349 data-nosnippet>349</a>            completions_id,
-<a href=#350 id=350 data-nosnippet>350</a>            restoring_beam: completions.restoring_beam,
-<a href=#351 id=351 data-nosnippet>351</a>            members,
-<a href=#352 id=352 data-nosnippet>352</a>        })
-<a href=#353 id=353 data-nosnippet>353</a>    }
-<a href=#354 id=354 data-nosnippet>354</a>}
-<a href=#355 id=355 data-nosnippet>355</a>
-<a href=#356 id=356 data-nosnippet>356</a><span class="kw">fn </span>ensure_producible(role: ProductRole) -&gt; <span class="prelude-ty">Result</span>&lt;(), ProductsError&gt; {
-<a href=#357 id=357 data-nosnippet>357</a>    <span class="kw">match </span>role {
-<a href=#358 id=358 data-nosnippet>358</a>        ProductRole::Psf(
-<a href=#359 id=359 data-nosnippet>359</a>            casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(<span class="number">0</span>),
-<a href=#360 id=360 data-nosnippet>360</a>        )
-<a href=#361 id=361 data-nosnippet>361</a>        | ProductRole::Residual(
-<a href=#362 id=362 data-nosnippet>362</a>            casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(<span class="number">0</span>),
-<a href=#363 id=363 data-nosnippet>363</a>        )
-<a href=#364 id=364 data-nosnippet>364</a>        | ProductRole::Model(
-<a href=#365 id=365 data-nosnippet>365</a>            casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(<span class="number">0</span>),
-<a href=#366 id=366 data-nosnippet>366</a>        )
-<a href=#367 id=367 data-nosnippet>367</a>        | ProductRole::Weight(
-<a href=#368 id=368 data-nosnippet>368</a>            casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(<span class="number">0</span>),
-<a href=#369 id=369 data-nosnippet>369</a>        )
-<a href=#370 id=370 data-nosnippet>370</a>        | ProductRole::RestoredImage(
-<a href=#371 id=371 data-nosnippet>371</a>            casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(<span class="number">0</span>),
-<a href=#372 id=372 data-nosnippet>372</a>        )
-<a href=#373 id=373 data-nosnippet>373</a>        | ProductRole::SumWeights(<span class="kw">_</span>)
-<a href=#374 id=374 data-nosnippet>374</a>        | ProductRole::Sensitivity
-<a href=#375 id=375 data-nosnippet>375</a>        | ProductRole::CleanMask =&gt; <span class="prelude-val">Ok</span>(()),
-<a href=#376 id=376 data-nosnippet>376</a>        ProductRole::Psf(casa_imaging_model::ProductTerm::Taylor(<span class="kw">_</span>))
-<a href=#377 id=377 data-nosnippet>377</a>        | ProductRole::Residual(casa_imaging_model::ProductTerm::Taylor(<span class="kw">_</span>))
-<a href=#378 id=378 data-nosnippet>378</a>        | ProductRole::Model(casa_imaging_model::ProductTerm::Taylor(<span class="kw">_</span>))
-<a href=#379 id=379 data-nosnippet>379</a>        | ProductRole::Weight(casa_imaging_model::ProductTerm::Taylor(<span class="kw">_</span>))
-<a href=#380 id=380 data-nosnippet>380</a>        | ProductRole::RestoredImage(casa_imaging_model::ProductTerm::Taylor(<span class="kw">_</span>)) =&gt; {
-<a href=#381 id=381 data-nosnippet>381</a>            <span class="prelude-val">Err</span>(ProductsError::UnsupportedProductRole {
-<a href=#382 id=382 data-nosnippet>382</a>                role,
-<a href=#383 id=383 data-nosnippet>383</a>                catalog: CONTINUUM_ALGORITHM_CATALOG_VERSION,
-<a href=#384 id=384 data-nosnippet>384</a>            })
-<a href=#385 id=385 data-nosnippet>385</a>        }
-<a href=#386 id=386 data-nosnippet>386</a>        role =&gt; <span class="prelude-val">Err</span>(ProductsError::UnsupportedProductRole {
-<a href=#387 id=387 data-nosnippet>387</a>            role,
-<a href=#388 id=388 data-nosnippet>388</a>            catalog: CONTINUUM_ALGORITHM_CATALOG_VERSION,
-<a href=#389 id=389 data-nosnippet>389</a>        }),
-<a href=#390 id=390 data-nosnippet>390</a>    }
-<a href=#391 id=391 data-nosnippet>391</a>}
-<a href=#392 id=392 data-nosnippet>392</a>
-<a href=#393 id=393 data-nosnippet>393</a><span class="doccomment">/// Bind every compiled contract dimension of one node into an encoder.
-<a href=#394 id=394 data-nosnippet>394</a></span><span class="kw">fn </span>encode_contract(encoder: <span class="kw-2">&amp;mut </span>Encoder, node: <span class="kw-2">&amp;</span>casa_imaging_model::ProductNode) {
-<a href=#395 id=395 data-nosnippet>395</a>    encoder.u8(<span class="kw">match </span>node.schema() {
-<a href=#396 id=396 data-nosnippet>396</a>        ProductSchema::ImageF32V1 =&gt; <span class="number">0</span>,
-<a href=#397 id=397 data-nosnippet>397</a>        ProductSchema::LogicalCollectionV1 =&gt; <span class="number">1</span>,
-<a href=#398 id=398 data-nosnippet>398</a>        ProductSchema::EmbeddedImageMetadataV1 =&gt; <span class="number">2</span>,
-<a href=#399 id=399 data-nosnippet>399</a>        ProductSchema::InternalImageF32V1 =&gt; <span class="number">3</span>,
-<a href=#400 id=400 data-nosnippet>400</a>    });
-<a href=#401 id=401 data-nosnippet>401</a>    encoder.u8(<span class="kw">match </span>node.unit() {
-<a href=#402 id=402 data-nosnippet>402</a>        ProductUnit::NotApplicable =&gt; <span class="number">0</span>,
-<a href=#403 id=403 data-nosnippet>403</a>        ProductUnit::JyPerBeam =&gt; <span class="number">1</span>,
-<a href=#404 id=404 data-nosnippet>404</a>        ProductUnit::JyPerPixel =&gt; <span class="number">2</span>,
-<a href=#405 id=405 data-nosnippet>405</a>        ProductUnit::Dimensionless =&gt; <span class="number">3</span>,
-<a href=#406 id=406 data-nosnippet>406</a>        ProductUnit::VisibilityWeight =&gt; <span class="number">4</span>,
-<a href=#407 id=407 data-nosnippet>407</a>    });
-<a href=#408 id=408 data-nosnippet>408</a>    encoder.u8(<span class="kw">match </span>node.beam() {
-<a href=#409 id=409 data-nosnippet>409</a>        ProductBeamRule::None =&gt; <span class="number">0</span>,
-<a href=#410 id=410 data-nosnippet>410</a>        ProductBeamRule::Fitted =&gt; <span class="number">1</span>,
-<a href=#411 id=411 data-nosnippet>411</a>        ProductBeamRule::Restoring(<span class="kw">_</span>) =&gt; <span class="number">2</span>,
-<a href=#412 id=412 data-nosnippet>412</a>        ProductBeamRule::Inherit(<span class="kw">_</span>) =&gt; <span class="number">3</span>,
-<a href=#413 id=413 data-nosnippet>413</a>        ProductBeamRule::Metadata(<span class="kw">_</span>) =&gt; <span class="number">4</span>,
-<a href=#414 id=414 data-nosnippet>414</a>    });
-<a href=#415 id=415 data-nosnippet>415</a>    encoder.u8(<span class="kw">match </span>node.validity() {
-<a href=#416 id=416 data-nosnippet>416</a>        ProductValidityRule::All =&gt; <span class="number">0</span>,
-<a href=#417 id=417 data-nosnippet>417</a>        ProductValidityRule::FinalNormalState =&gt; <span class="number">1</span>,
-<a href=#418 id=418 data-nosnippet>418</a>        ProductValidityRule::PrimaryBeam(<span class="kw">_</span>) =&gt; <span class="number">2</span>,
-<a href=#419 id=419 data-nosnippet>419</a>        ProductValidityRule::Taylor(<span class="kw">_</span>) =&gt; <span class="number">3</span>,
-<a href=#420 id=420 data-nosnippet>420</a>        ProductValidityRule::TaylorAndPrimaryBeam { .. } =&gt; <span class="number">4</span>,
-<a href=#421 id=421 data-nosnippet>421</a>    });
-<a href=#422 id=422 data-nosnippet>422</a>    <span class="kw">let </span>axes = node.axes();
-<a href=#423 id=423 data-nosnippet>423</a>    <span class="kw">for </span>extent <span class="kw">in </span>axes.shape() {
-<a href=#424 id=424 data-nosnippet>424</a>        encoder.usize(extent);
-<a href=#425 id=425 data-nosnippet>425</a>    }
-<a href=#426 id=426 data-nosnippet>426</a>    <span class="kw">for </span>dependency <span class="kw">in </span>node.dependencies() {
-<a href=#427 id=427 data-nosnippet>427</a>        encoder.usize(dependency.ordinal());
-<a href=#428 id=428 data-nosnippet>428</a>    }
-<a href=#429 id=429 data-nosnippet>429</a>}
-<a href=#430 id=430 data-nosnippet>430</a>
-<a href=#431 id=431 data-nosnippet>431</a><span class="doccomment">/// Schema-versioned planned continuum generation.
-<a href=#432 id=432 data-nosnippet>432</a>///
-<a href=#433 id=433 data-nosnippet>433</a>/// Minted only by [`ProductGenerationAuthority::plan`]:
+<a href=#248 id=248 data-nosnippet>248</a>    /// # Errors
+<a href=#249 id=249 data-nosnippet>249</a>    ///
+<a href=#250 id=250 data-nosnippet>250</a>    /// Rejects foreign generations, mismatched commitments or member sets,
+<a href=#251 id=251 data-nosnippet>251</a>    /// and any content-identity mismatch.
+<a href=#252 id=252 data-nosnippet>252</a>    </span><span class="kw">pub fn </span>authorize(
+<a href=#253 id=253 data-nosnippet>253</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#254 id=254 data-nosnippet>254</a>        planned: <span class="kw-2">&amp;</span>PlannedContinuumGeneration,
+<a href=#255 id=255 data-nosnippet>255</a>        completions: <span class="kw-2">&amp;</span>ContinuumProducedMembers,
+<a href=#256 id=256 data-nosnippet>256</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;SealedContinuumGeneration, ProductsError&gt; {
+<a href=#257 id=257 data-nosnippet>257</a>        <span class="kw">if </span>planned.authority != <span class="self">self</span>.identity
+<a href=#258 id=258 data-nosnippet>258</a>            || completions.planned_generation != planned.generation_id
+<a href=#259 id=259 data-nosnippet>259</a>        {
+<a href=#260 id=260 data-nosnippet>260</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ProductsError::ForeignPlannedGeneration);
+<a href=#261 id=261 data-nosnippet>261</a>        }
+<a href=#262 id=262 data-nosnippet>262</a>        <span class="kw">if </span>completions.commitment_id != planned.commitment_id {
+<a href=#263 id=263 data-nosnippet>263</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ProductsError::CommitmentMismatch);
+<a href=#264 id=264 data-nosnippet>264</a>        }
+<a href=#265 id=265 data-nosnippet>265</a>        <span class="kw">if </span>completions.members.len() != planned.members.len() {
+<a href=#266 id=266 data-nosnippet>266</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ProductsError::MemberSetMismatch {
+<a href=#267 id=267 data-nosnippet>267</a>                expected: planned.members.len(),
+<a href=#268 id=268 data-nosnippet>268</a>                actual: completions.members.len(),
+<a href=#269 id=269 data-nosnippet>269</a>            });
+<a href=#270 id=270 data-nosnippet>270</a>        }
+<a href=#271 id=271 data-nosnippet>271</a>        <span class="kw">for </span>(member, produced) <span class="kw">in </span>planned.members.iter().zip(<span class="kw-2">&amp;</span>completions.members) {
+<a href=#272 id=272 data-nosnippet>272</a>            <span class="comment">// The produced member must claim exactly this planned slot: same
+<a href=#273 id=273 data-nosnippet>273</a>            // graph node and same planned artifact identity. The recomputed
+<a href=#274 id=274 data-nosnippet>274</a>            // content identity must then match the produced claim, so any
+<a href=#275 id=275 data-nosnippet>275</a>            // substitution or tampering fails closed here rather than at
+<a href=#276 id=276 data-nosnippet>276</a>            // publication time.
+<a href=#277 id=277 data-nosnippet>277</a>            </span><span class="kw">if </span>member.node != produced.node || member.artifact_id != produced.artifact_id {
+<a href=#278 id=278 data-nosnippet>278</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(ProductsError::MemberSetMismatch {
+<a href=#279 id=279 data-nosnippet>279</a>                    expected: planned.members.len(),
+<a href=#280 id=280 data-nosnippet>280</a>                    actual: completions.members.len(),
+<a href=#281 id=281 data-nosnippet>281</a>                });
+<a href=#282 id=282 data-nosnippet>282</a>            }
+<a href=#283 id=283 data-nosnippet>283</a>            <span class="kw">if </span>produced.payload.len() != member.payload_values {
+<a href=#284 id=284 data-nosnippet>284</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(ProductsError::PayloadLengthMismatch {
+<a href=#285 id=285 data-nosnippet>285</a>                    expected: member.payload_values,
+<a href=#286 id=286 data-nosnippet>286</a>                    actual: produced.payload.len(),
+<a href=#287 id=287 data-nosnippet>287</a>                });
+<a href=#288 id=288 data-nosnippet>288</a>            }
+<a href=#289 id=289 data-nosnippet>289</a>            <span class="kw">let </span>digest = plane_digest(<span class="kw-2">&amp;</span>produced.payload);
+<a href=#290 id=290 data-nosnippet>290</a>            <span class="kw">if </span>digest != produced.digest.as_bytes() {
+<a href=#291 id=291 data-nosnippet>291</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(ProductsError::MemberContentMismatch);
+<a href=#292 id=292 data-nosnippet>292</a>            }
+<a href=#293 id=293 data-nosnippet>293</a>        }
+<a href=#294 id=294 data-nosnippet>294</a>
+<a href=#295 id=295 data-nosnippet>295</a>        <span class="kw">let </span><span class="kw-2">mut </span>encoder = Encoder::new(COMPLETIONS_DOMAIN, COMPLETIONS_VERSION);
+<a href=#296 id=296 data-nosnippet>296</a>        encoder.identity(planned.generation_id.as_bytes());
+<a href=#297 id=297 data-nosnippet>297</a>        encoder.identity(planned.commitment_id.as_bytes());
+<a href=#298 id=298 data-nosnippet>298</a>        encoder.u32(CONTINUUM_ALGORITHM_CATALOG_VERSION);
+<a href=#299 id=299 data-nosnippet>299</a>        <span class="kw">match </span>completions.restoring_beam {
+<a href=#300 id=300 data-nosnippet>300</a>            <span class="prelude-val">Some</span>(beam) =&gt; {
+<a href=#301 id=301 data-nosnippet>301</a>                encoder.u8(<span class="number">1</span>);
+<a href=#302 id=302 data-nosnippet>302</a>                encoder.u64(beam.major_fwhm_rad().to_bits());
+<a href=#303 id=303 data-nosnippet>303</a>                encoder.u64(beam.minor_fwhm_rad().to_bits());
+<a href=#304 id=304 data-nosnippet>304</a>                encoder.u64(beam.position_angle_rad().to_bits());
+<a href=#305 id=305 data-nosnippet>305</a>            }
+<a href=#306 id=306 data-nosnippet>306</a>            <span class="prelude-val">None </span>=&gt; encoder.u8(<span class="number">0</span>),
+<a href=#307 id=307 data-nosnippet>307</a>        }
+<a href=#308 id=308 data-nosnippet>308</a>        <span class="kw">for </span>pair <span class="kw">in </span>planned.members.iter().zip(<span class="kw-2">&amp;</span>completions.members) {
+<a href=#309 id=309 data-nosnippet>309</a>            <span class="kw">let </span>(member, produced) = pair;
+<a href=#310 id=310 data-nosnippet>310</a>            <span class="comment">// Bind the planned artifact identity and the exact produced
+<a href=#311 id=311 data-nosnippet>311</a>            // content together: a payload digest matching itself is not
+<a href=#312 id=312 data-nosnippet>312</a>            // authorization without this pairing.
+<a href=#313 id=313 data-nosnippet>313</a>            </span>encoder.identity(member.artifact_id.as_bytes());
+<a href=#314 id=314 data-nosnippet>314</a>            encoder.identity(produced.digest.as_bytes());
+<a href=#315 id=315 data-nosnippet>315</a>        }
+<a href=#316 id=316 data-nosnippet>316</a>        <span class="kw">let </span>completions_id = ContinuumCompletionsId(encoder.finish());
+<a href=#317 id=317 data-nosnippet>317</a>
+<a href=#318 id=318 data-nosnippet>318</a>        <span class="kw">let </span><span class="kw-2">mut </span>encoder = Encoder::new(SEAL_DOMAIN, SEAL_VERSION);
+<a href=#319 id=319 data-nosnippet>319</a>        encoder.identity(planned.generation_id.as_bytes());
+<a href=#320 id=320 data-nosnippet>320</a>        encoder.identity(completions_id.as_bytes());
+<a href=#321 id=321 data-nosnippet>321</a>        encoder.identity(<span class="self">self</span>.identity);
+<a href=#322 id=322 data-nosnippet>322</a>        <span class="kw">let </span>seal_id = ContinuumSealId(encoder.finish());
+<a href=#323 id=323 data-nosnippet>323</a>
+<a href=#324 id=324 data-nosnippet>324</a>        <span class="kw">let </span>members = planned
+<a href=#325 id=325 data-nosnippet>325</a>            .members
+<a href=#326 id=326 data-nosnippet>326</a>            .iter()
+<a href=#327 id=327 data-nosnippet>327</a>            .zip(<span class="kw-2">&amp;</span>completions.members)
+<a href=#328 id=328 data-nosnippet>328</a>            .map(|(member, produced)| SealedMember {
+<a href=#329 id=329 data-nosnippet>329</a>                node: member.node,
+<a href=#330 id=330 data-nosnippet>330</a>                name: member.name.clone(),
+<a href=#331 id=331 data-nosnippet>331</a>                artifact_id: member.artifact_id,
+<a href=#332 id=332 data-nosnippet>332</a>                content_identity: produced.digest,
+<a href=#333 id=333 data-nosnippet>333</a>                contract: SealedMemberContract {
+<a href=#334 id=334 data-nosnippet>334</a>                    role: member.role,
+<a href=#335 id=335 data-nosnippet>335</a>                    unit: member.unit,
+<a href=#336 id=336 data-nosnippet>336</a>                    schema: member.schema,
+<a href=#337 id=337 data-nosnippet>337</a>                    axes: member.axes.clone(),
+<a href=#338 id=338 data-nosnippet>338</a>                    beam_rule: member.beam_rule,
+<a href=#339 id=339 data-nosnippet>339</a>                    validity: member.validity,
+<a href=#340 id=340 data-nosnippet>340</a>                    dependencies: member.dependencies.clone(),
+<a href=#341 id=341 data-nosnippet>341</a>                },
+<a href=#342 id=342 data-nosnippet>342</a>                resolved_beam: sealed_beam(member.beam_rule, completions.restoring_beam),
+<a href=#343 id=343 data-nosnippet>343</a>                payload: produced.payload.clone(),
+<a href=#344 id=344 data-nosnippet>344</a>            })
+<a href=#345 id=345 data-nosnippet>345</a>            .collect::&lt;Box&lt;[<span class="kw">_</span>]&gt;&gt;();
+<a href=#346 id=346 data-nosnippet>346</a>        <span class="prelude-val">Ok</span>(SealedContinuumGeneration {
+<a href=#347 id=347 data-nosnippet>347</a>            problem_id: <span class="self">self</span>.problem_id,
+<a href=#348 id=348 data-nosnippet>348</a>            graph_id: <span class="self">self</span>.graph_id,
+<a href=#349 id=349 data-nosnippet>349</a>            seal_id,
+<a href=#350 id=350 data-nosnippet>350</a>            generation_id: planned.generation_id,
+<a href=#351 id=351 data-nosnippet>351</a>            completions_id,
+<a href=#352 id=352 data-nosnippet>352</a>            restoring_beam: completions.restoring_beam,
+<a href=#353 id=353 data-nosnippet>353</a>            members,
+<a href=#354 id=354 data-nosnippet>354</a>        })
+<a href=#355 id=355 data-nosnippet>355</a>    }
+<a href=#356 id=356 data-nosnippet>356</a>}
+<a href=#357 id=357 data-nosnippet>357</a>
+<a href=#358 id=358 data-nosnippet>358</a><span class="kw">fn </span>ensure_producible(role: ProductRole) -&gt; <span class="prelude-ty">Result</span>&lt;(), ProductsError&gt; {
+<a href=#359 id=359 data-nosnippet>359</a>    <span class="kw">match </span>role {
+<a href=#360 id=360 data-nosnippet>360</a>        ProductRole::Psf(
+<a href=#361 id=361 data-nosnippet>361</a>            casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(<span class="number">0</span>),
+<a href=#362 id=362 data-nosnippet>362</a>        )
+<a href=#363 id=363 data-nosnippet>363</a>        | ProductRole::Residual(
+<a href=#364 id=364 data-nosnippet>364</a>            casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(<span class="number">0</span>),
+<a href=#365 id=365 data-nosnippet>365</a>        )
+<a href=#366 id=366 data-nosnippet>366</a>        | ProductRole::Model(
+<a href=#367 id=367 data-nosnippet>367</a>            casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(<span class="number">0</span>),
+<a href=#368 id=368 data-nosnippet>368</a>        )
+<a href=#369 id=369 data-nosnippet>369</a>        | ProductRole::Weight(
+<a href=#370 id=370 data-nosnippet>370</a>            casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(<span class="number">0</span>),
+<a href=#371 id=371 data-nosnippet>371</a>        )
+<a href=#372 id=372 data-nosnippet>372</a>        | ProductRole::RestoredImage(
+<a href=#373 id=373 data-nosnippet>373</a>            casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(<span class="number">0</span>),
+<a href=#374 id=374 data-nosnippet>374</a>        )
+<a href=#375 id=375 data-nosnippet>375</a>        | ProductRole::SumWeights(<span class="kw">_</span>)
+<a href=#376 id=376 data-nosnippet>376</a>        | ProductRole::Sensitivity
+<a href=#377 id=377 data-nosnippet>377</a>        | ProductRole::CleanMask =&gt; <span class="prelude-val">Ok</span>(()),
+<a href=#378 id=378 data-nosnippet>378</a>        ProductRole::Psf(casa_imaging_model::ProductTerm::Taylor(<span class="kw">_</span>))
+<a href=#379 id=379 data-nosnippet>379</a>        | ProductRole::Residual(casa_imaging_model::ProductTerm::Taylor(<span class="kw">_</span>))
+<a href=#380 id=380 data-nosnippet>380</a>        | ProductRole::Model(casa_imaging_model::ProductTerm::Taylor(<span class="kw">_</span>))
+<a href=#381 id=381 data-nosnippet>381</a>        | ProductRole::Weight(casa_imaging_model::ProductTerm::Taylor(<span class="kw">_</span>))
+<a href=#382 id=382 data-nosnippet>382</a>        | ProductRole::RestoredImage(casa_imaging_model::ProductTerm::Taylor(<span class="kw">_</span>)) =&gt; {
+<a href=#383 id=383 data-nosnippet>383</a>            <span class="prelude-val">Err</span>(ProductsError::UnsupportedProductRole {
+<a href=#384 id=384 data-nosnippet>384</a>                role,
+<a href=#385 id=385 data-nosnippet>385</a>                catalog: CONTINUUM_ALGORITHM_CATALOG_VERSION,
+<a href=#386 id=386 data-nosnippet>386</a>            })
+<a href=#387 id=387 data-nosnippet>387</a>        }
+<a href=#388 id=388 data-nosnippet>388</a>        role =&gt; <span class="prelude-val">Err</span>(ProductsError::UnsupportedProductRole {
+<a href=#389 id=389 data-nosnippet>389</a>            role,
+<a href=#390 id=390 data-nosnippet>390</a>            catalog: CONTINUUM_ALGORITHM_CATALOG_VERSION,
+<a href=#391 id=391 data-nosnippet>391</a>        }),
+<a href=#392 id=392 data-nosnippet>392</a>    }
+<a href=#393 id=393 data-nosnippet>393</a>}
+<a href=#394 id=394 data-nosnippet>394</a>
+<a href=#395 id=395 data-nosnippet>395</a><span class="doccomment">/// Bind every compiled contract dimension of one node into an encoder.
+<a href=#396 id=396 data-nosnippet>396</a></span><span class="kw">fn </span>encode_contract(encoder: <span class="kw-2">&amp;mut </span>Encoder, node: <span class="kw-2">&amp;</span>casa_imaging_model::ProductNode) {
+<a href=#397 id=397 data-nosnippet>397</a>    encoder.u8(<span class="kw">match </span>node.schema() {
+<a href=#398 id=398 data-nosnippet>398</a>        ProductSchema::ImageF32V1 =&gt; <span class="number">0</span>,
+<a href=#399 id=399 data-nosnippet>399</a>        ProductSchema::LogicalCollectionV1 =&gt; <span class="number">1</span>,
+<a href=#400 id=400 data-nosnippet>400</a>        ProductSchema::EmbeddedImageMetadataV1 =&gt; <span class="number">2</span>,
+<a href=#401 id=401 data-nosnippet>401</a>        ProductSchema::InternalImageF32V1 =&gt; <span class="number">3</span>,
+<a href=#402 id=402 data-nosnippet>402</a>    });
+<a href=#403 id=403 data-nosnippet>403</a>    encoder.u8(<span class="kw">match </span>node.unit() {
+<a href=#404 id=404 data-nosnippet>404</a>        ProductUnit::NotApplicable =&gt; <span class="number">0</span>,
+<a href=#405 id=405 data-nosnippet>405</a>        ProductUnit::JyPerBeam =&gt; <span class="number">1</span>,
+<a href=#406 id=406 data-nosnippet>406</a>        ProductUnit::JyPerPixel =&gt; <span class="number">2</span>,
+<a href=#407 id=407 data-nosnippet>407</a>        ProductUnit::Dimensionless =&gt; <span class="number">3</span>,
+<a href=#408 id=408 data-nosnippet>408</a>        ProductUnit::VisibilityWeight =&gt; <span class="number">4</span>,
+<a href=#409 id=409 data-nosnippet>409</a>    });
+<a href=#410 id=410 data-nosnippet>410</a>    encoder.u8(<span class="kw">match </span>node.beam() {
+<a href=#411 id=411 data-nosnippet>411</a>        ProductBeamRule::None =&gt; <span class="number">0</span>,
+<a href=#412 id=412 data-nosnippet>412</a>        ProductBeamRule::Fitted =&gt; <span class="number">1</span>,
+<a href=#413 id=413 data-nosnippet>413</a>        ProductBeamRule::Restoring(<span class="kw">_</span>) =&gt; <span class="number">2</span>,
+<a href=#414 id=414 data-nosnippet>414</a>        ProductBeamRule::Inherit(<span class="kw">_</span>) =&gt; <span class="number">3</span>,
+<a href=#415 id=415 data-nosnippet>415</a>        ProductBeamRule::Metadata(<span class="kw">_</span>) =&gt; <span class="number">4</span>,
+<a href=#416 id=416 data-nosnippet>416</a>    });
+<a href=#417 id=417 data-nosnippet>417</a>    encoder.u8(<span class="kw">match </span>node.validity() {
+<a href=#418 id=418 data-nosnippet>418</a>        ProductValidityRule::All =&gt; <span class="number">0</span>,
+<a href=#419 id=419 data-nosnippet>419</a>        ProductValidityRule::FinalNormalState =&gt; <span class="number">1</span>,
+<a href=#420 id=420 data-nosnippet>420</a>        ProductValidityRule::PrimaryBeam(<span class="kw">_</span>) =&gt; <span class="number">2</span>,
+<a href=#421 id=421 data-nosnippet>421</a>        ProductValidityRule::Taylor(<span class="kw">_</span>) =&gt; <span class="number">3</span>,
+<a href=#422 id=422 data-nosnippet>422</a>        ProductValidityRule::TaylorAndPrimaryBeam { .. } =&gt; <span class="number">4</span>,
+<a href=#423 id=423 data-nosnippet>423</a>    });
+<a href=#424 id=424 data-nosnippet>424</a>    <span class="kw">let </span>axes = node.axes();
+<a href=#425 id=425 data-nosnippet>425</a>    <span class="kw">for </span>extent <span class="kw">in </span>axes.shape() {
+<a href=#426 id=426 data-nosnippet>426</a>        encoder.usize(extent);
+<a href=#427 id=427 data-nosnippet>427</a>    }
+<a href=#428 id=428 data-nosnippet>428</a>    <span class="kw">for </span>dependency <span class="kw">in </span>node.dependencies() {
+<a href=#429 id=429 data-nosnippet>429</a>        encoder.usize(dependency.ordinal());
+<a href=#430 id=430 data-nosnippet>430</a>    }
+<a href=#431 id=431 data-nosnippet>431</a>}
+<a href=#432 id=432 data-nosnippet>432</a>
+<a href=#433 id=433 data-nosnippet>433</a><span class="doccomment">/// Schema-versioned planned continuum generation.
 <a href=#434 id=434 data-nosnippet>434</a>///
-<a href=#435 id=435 data-nosnippet>435</a>/// ```compile_fail
-<a href=#436 id=436 data-nosnippet>436</a>/// use casa_imaging_products::PlannedContinuumGeneration;
-<a href=#437 id=437 data-nosnippet>437</a>///
-<a href=#438 id=438 data-nosnippet>438</a>/// let _ = PlannedContinuumGeneration {};
-<a href=#439 id=439 data-nosnippet>439</a>/// ```
-<a href=#440 id=440 data-nosnippet>440</a></span><span class="attr">#[derive(Debug)]
-<a href=#441 id=441 data-nosnippet>441</a></span><span class="kw">pub struct </span>PlannedContinuumGeneration {
-<a href=#442 id=442 data-nosnippet>442</a>    authority: [u8; <span class="number">32</span>],
-<a href=#443 id=443 data-nosnippet>443</a>    generation_id: PlannedGenerationId,
-<a href=#444 id=444 data-nosnippet>444</a>    commitment_id: ContinuumCommitmentId,
-<a href=#445 id=445 data-nosnippet>445</a>    psf_cutoff: f32,
-<a href=#446 id=446 data-nosnippet>446</a>    members: Box&lt;[PlannedMember]&gt;,
-<a href=#447 id=447 data-nosnippet>447</a>    final_model_generation: casa_imaging_reconstruction::ModelGenerationId,
-<a href=#448 id=448 data-nosnippet>448</a>}
-<a href=#449 id=449 data-nosnippet>449</a>
-<a href=#450 id=450 data-nosnippet>450</a><span class="kw">impl </span>PlannedContinuumGeneration {
-<a href=#451 id=451 data-nosnippet>451</a>    <span class="doccomment">/// Return the stable planned-generation identity.
-<a href=#452 id=452 data-nosnippet>452</a>    </span><span class="attr">#[must_use]
-<a href=#453 id=453 data-nosnippet>453</a>    </span><span class="kw">pub const fn </span>generation_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; PlannedGenerationId {
-<a href=#454 id=454 data-nosnippet>454</a>        <span class="self">self</span>.generation_id
-<a href=#455 id=455 data-nosnippet>455</a>    }
-<a href=#456 id=456 data-nosnippet>456</a>
-<a href=#457 id=457 data-nosnippet>457</a>    <span class="doccomment">/// Return the committed source-lineage digest behind the plan.
-<a href=#458 id=458 data-nosnippet>458</a>    </span><span class="attr">#[must_use]
-<a href=#459 id=459 data-nosnippet>459</a>    </span><span class="kw">pub const fn </span>commitment_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ContinuumCommitmentId {
-<a href=#460 id=460 data-nosnippet>460</a>        <span class="self">self</span>.commitment_id
-<a href=#461 id=461 data-nosnippet>461</a>    }
-<a href=#462 id=462 data-nosnippet>462</a>
-<a href=#463 id=463 data-nosnippet>463</a>    <span class="doccomment">/// Return planned members in exact publication order.
-<a href=#464 id=464 data-nosnippet>464</a>    </span><span class="attr">#[must_use]
-<a href=#465 id=465 data-nosnippet>465</a>    </span><span class="kw">pub const fn </span>members(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[PlannedMember] {
-<a href=#466 id=466 data-nosnippet>466</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.members
-<a href=#467 id=467 data-nosnippet>467</a>    }
-<a href=#468 id=468 data-nosnippet>468</a>
-<a href=#469 id=469 data-nosnippet>469</a>    <span class="doccomment">/// Return the named final model generation this plan restores from.
-<a href=#470 id=470 data-nosnippet>470</a>    </span><span class="attr">#[must_use]
-<a href=#471 id=471 data-nosnippet>471</a>    </span><span class="kw">pub const fn </span>final_model_generation(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; casa_imaging_reconstruction::ModelGenerationId {
-<a href=#472 id=472 data-nosnippet>472</a>        <span class="self">self</span>.final_model_generation
-<a href=#473 id=473 data-nosnippet>473</a>    }
-<a href=#474 id=474 data-nosnippet>474</a>
-<a href=#475 id=475 data-nosnippet>475</a>    <span class="doccomment">/// Return the beam-fitting cutoff bound into this plan.
-<a href=#476 id=476 data-nosnippet>476</a>    </span><span class="attr">#[must_use]
-<a href=#477 id=477 data-nosnippet>477</a>    </span><span class="kw">pub const fn </span>psf_cutoff(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f32 {
-<a href=#478 id=478 data-nosnippet>478</a>        <span class="self">self</span>.psf_cutoff
-<a href=#479 id=479 data-nosnippet>479</a>    }
-<a href=#480 id=480 data-nosnippet>480</a>}
-<a href=#481 id=481 data-nosnippet>481</a>
-<a href=#482 id=482 data-nosnippet>482</a><span class="doccomment">/// One planned publication member in exact graph order.
-<a href=#483 id=483 data-nosnippet>483</a></span><span class="attr">#[derive(Debug, Clone)]
-<a href=#484 id=484 data-nosnippet>484</a></span><span class="kw">pub struct </span>PlannedMember {
-<a href=#485 id=485 data-nosnippet>485</a>    node: ProductNodeId,
-<a href=#486 id=486 data-nosnippet>486</a>    role: ProductRole,
-<a href=#487 id=487 data-nosnippet>487</a>    name: String,
-<a href=#488 id=488 data-nosnippet>488</a>    shape: [usize; <span class="number">4</span>],
-<a href=#489 id=489 data-nosnippet>489</a>    payload_values: usize,
-<a href=#490 id=490 data-nosnippet>490</a>    unit: ProductUnit,
-<a href=#491 id=491 data-nosnippet>491</a>    schema: ProductSchema,
-<a href=#492 id=492 data-nosnippet>492</a>    axes: ProductAxes,
-<a href=#493 id=493 data-nosnippet>493</a>    normalization: <span class="prelude-ty">Option</span>&lt;ProductNormalization&gt;,
-<a href=#494 id=494 data-nosnippet>494</a>    beam_rule: ProductBeamRule,
-<a href=#495 id=495 data-nosnippet>495</a>    validity: ProductValidityRule,
-<a href=#496 id=496 data-nosnippet>496</a>    dependencies: Box&lt;[ProductNodeId]&gt;,
-<a href=#497 id=497 data-nosnippet>497</a>    artifact_id: MemberArtifactId,
-<a href=#498 id=498 data-nosnippet>498</a>}
-<a href=#499 id=499 data-nosnippet>499</a>
-<a href=#500 id=500 data-nosnippet>500</a><span class="kw">impl </span>PlannedMember {
-<a href=#501 id=501 data-nosnippet>501</a>    <span class="doccomment">/// Return the graph-local node identity.
-<a href=#502 id=502 data-nosnippet>502</a>    </span><span class="attr">#[must_use]
-<a href=#503 id=503 data-nosnippet>503</a>    </span><span class="kw">pub const fn </span>node(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ProductNodeId {
-<a href=#504 id=504 data-nosnippet>504</a>        <span class="self">self</span>.node
-<a href=#505 id=505 data-nosnippet>505</a>    }
-<a href=#506 id=506 data-nosnippet>506</a>
-<a href=#507 id=507 data-nosnippet>507</a>    <span class="doccomment">/// Return the logical product role.
-<a href=#508 id=508 data-nosnippet>508</a>    </span><span class="attr">#[must_use]
-<a href=#509 id=509 data-nosnippet>509</a>    </span><span class="kw">pub const fn </span>role(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ProductRole {
-<a href=#510 id=510 data-nosnippet>510</a>        <span class="self">self</span>.role
-<a href=#511 id=511 data-nosnippet>511</a>    }
-<a href=#512 id=512 data-nosnippet>512</a>
-<a href=#513 id=513 data-nosnippet>513</a>    <span class="doccomment">/// Return the compiled product name.
-<a href=#514 id=514 data-nosnippet>514</a>    </span><span class="attr">#[must_use]
-<a href=#515 id=515 data-nosnippet>515</a>    </span><span class="kw">pub fn </span>name(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>str {
-<a href=#516 id=516 data-nosnippet>516</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.name
-<a href=#517 id=517 data-nosnippet>517</a>    }
-<a href=#518 id=518 data-nosnippet>518</a>
-<a href=#519 id=519 data-nosnippet>519</a>    <span class="doccomment">/// Return the declared four-axis shape.
-<a href=#520 id=520 data-nosnippet>520</a>    </span><span class="attr">#[must_use]
-<a href=#521 id=521 data-nosnippet>521</a>    </span><span class="kw">pub const fn </span>shape(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; [usize; <span class="number">4</span>] {
-<a href=#522 id=522 data-nosnippet>522</a>        <span class="self">self</span>.shape
-<a href=#523 id=523 data-nosnippet>523</a>    }
-<a href=#524 id=524 data-nosnippet>524</a>
-<a href=#525 id=525 data-nosnippet>525</a>    <span class="doccomment">/// Return the required physical unit of this member.
-<a href=#526 id=526 data-nosnippet>526</a>    </span><span class="attr">#[must_use]
-<a href=#527 id=527 data-nosnippet>527</a>    </span><span class="kw">pub const fn </span>unit(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ProductUnit {
-<a href=#528 id=528 data-nosnippet>528</a>        <span class="self">self</span>.unit
-<a href=#529 id=529 data-nosnippet>529</a>    }
-<a href=#530 id=530 data-nosnippet>530</a>
-<a href=#531 id=531 data-nosnippet>531</a>    <span class="doccomment">/// Return the backend-independent logical payload schema.
-<a href=#532 id=532 data-nosnippet>532</a>    </span><span class="attr">#[must_use]
-<a href=#533 id=533 data-nosnippet>533</a>    </span><span class="kw">pub const fn </span>schema(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ProductSchema {
-<a href=#534 id=534 data-nosnippet>534</a>        <span class="self">self</span>.schema
-<a href=#535 id=535 data-nosnippet>535</a>    }
-<a href=#536 id=536 data-nosnippet>536</a>
-<a href=#537 id=537 data-nosnippet>537</a>    <span class="doccomment">/// Return the exact WCS and storage-axis binding.
-<a href=#538 id=538 data-nosnippet>538</a>    </span><span class="attr">#[must_use]
-<a href=#539 id=539 data-nosnippet>539</a>    </span><span class="kw">pub const fn </span>axes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>ProductAxes {
-<a href=#540 id=540 data-nosnippet>540</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.axes
-<a href=#541 id=541 data-nosnippet>541</a>    }
-<a href=#542 id=542 data-nosnippet>542</a>
-<a href=#543 id=543 data-nosnippet>543</a>    <span class="doccomment">/// Return fitted, restoring, inherited, or absent beam semantics.
-<a href=#544 id=544 data-nosnippet>544</a>    </span><span class="attr">#[must_use]
-<a href=#545 id=545 data-nosnippet>545</a>    </span><span class="kw">pub const fn </span>beam_rule(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ProductBeamRule {
-<a href=#546 id=546 data-nosnippet>546</a>        <span class="self">self</span>.beam_rule
-<a href=#547 id=547 data-nosnippet>547</a>    }
-<a href=#548 id=548 data-nosnippet>548</a>
-<a href=#549 id=549 data-nosnippet>549</a>    <span class="doccomment">/// Return the output-validity rule of this member.
-<a href=#550 id=550 data-nosnippet>550</a>    </span><span class="attr">#[must_use]
-<a href=#551 id=551 data-nosnippet>551</a>    </span><span class="kw">pub const fn </span>validity(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ProductValidityRule {
-<a href=#552 id=552 data-nosnippet>552</a>        <span class="self">self</span>.validity
-<a href=#553 id=553 data-nosnippet>553</a>    }
-<a href=#554 id=554 data-nosnippet>554</a>
-<a href=#555 id=555 data-nosnippet>555</a>    <span class="doccomment">/// Return graph-node dependencies, all of which precede this node.
-<a href=#556 id=556 data-nosnippet>556</a>    </span><span class="attr">#[must_use]
-<a href=#557 id=557 data-nosnippet>557</a>    </span><span class="kw">pub const fn </span>dependencies(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[ProductNodeId] {
-<a href=#558 id=558 data-nosnippet>558</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.dependencies
-<a href=#559 id=559 data-nosnippet>559</a>    }
-<a href=#560 id=560 data-nosnippet>560</a>
-<a href=#561 id=561 data-nosnippet>561</a>    <span class="doccomment">/// Return the planned payload value count.
-<a href=#562 id=562 data-nosnippet>562</a>    </span><span class="attr">#[must_use]
-<a href=#563 id=563 data-nosnippet>563</a>    </span><span class="kw">pub const fn </span>payload_values(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-<a href=#564 id=564 data-nosnippet>564</a>        <span class="self">self</span>.payload_values
-<a href=#565 id=565 data-nosnippet>565</a>    }
-<a href=#566 id=566 data-nosnippet>566</a>
-<a href=#567 id=567 data-nosnippet>567</a>    <span class="doccomment">/// Return the compiled normalization of this member, when one applies.
-<a href=#568 id=568 data-nosnippet>568</a>    </span><span class="attr">#[must_use]
-<a href=#569 id=569 data-nosnippet>569</a>    </span><span class="kw">pub const fn </span>normalization(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;ProductNormalization&gt; {
-<a href=#570 id=570 data-nosnippet>570</a>        <span class="self">self</span>.normalization
-<a href=#571 id=571 data-nosnippet>571</a>    }
-<a href=#572 id=572 data-nosnippet>572</a>
-<a href=#573 id=573 data-nosnippet>573</a>    <span class="doccomment">/// Return the derived artifact identity of this member.
-<a href=#574 id=574 data-nosnippet>574</a>    </span><span class="attr">#[must_use]
-<a href=#575 id=575 data-nosnippet>575</a>    </span><span class="kw">pub const fn </span>artifact_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; MemberArtifactId {
-<a href=#576 id=576 data-nosnippet>576</a>        <span class="self">self</span>.artifact_id
-<a href=#577 id=577 data-nosnippet>577</a>    }
-<a href=#578 id=578 data-nosnippet>578</a>}
-<a href=#579 id=579 data-nosnippet>579</a>
-<a href=#580 id=580 data-nosnippet>580</a><span class="doccomment">/// Produced artifacts awaiting authorization.
-<a href=#581 id=581 data-nosnippet>581</a>///
-<a href=#582 id=582 data-nosnippet>582</a>/// Minted only by [`produce_continuum_members`].
-<a href=#583 id=583 data-nosnippet>583</a></span><span class="attr">#[derive(Debug)]
-<a href=#584 id=584 data-nosnippet>584</a></span><span class="kw">pub struct </span>ContinuumProducedMembers {
-<a href=#585 id=585 data-nosnippet>585</a>    planned_generation: PlannedGenerationId,
-<a href=#586 id=586 data-nosnippet>586</a>    commitment_id: ContinuumCommitmentId,
-<a href=#587 id=587 data-nosnippet>587</a>    restoring_beam: <span class="prelude-ty">Option</span>&lt;RestoringBeam&gt;,
-<a href=#588 id=588 data-nosnippet>588</a>    members: Box&lt;[ProducedMember]&gt;,
-<a href=#589 id=589 data-nosnippet>589</a>}
-<a href=#590 id=590 data-nosnippet>590</a>
-<a href=#591 id=591 data-nosnippet>591</a><span class="doccomment">/// One produced member payload with its computed content identity.
-<a href=#592 id=592 data-nosnippet>592</a></span><span class="attr">#[derive(Debug)]
-<a href=#593 id=593 data-nosnippet>593</a></span><span class="kw">struct </span>ProducedMember {
-<a href=#594 id=594 data-nosnippet>594</a>    node: ProductNodeId,
-<a href=#595 id=595 data-nosnippet>595</a>    artifact_id: MemberArtifactId,
-<a href=#596 id=596 data-nosnippet>596</a>    digest: MemberArtifactId,
-<a href=#597 id=597 data-nosnippet>597</a>    payload: Vec&lt;f32&gt;,
-<a href=#598 id=598 data-nosnippet>598</a>}
-<a href=#599 id=599 data-nosnippet>599</a>
-<a href=#600 id=600 data-nosnippet>600</a><span class="doccomment">/// Produce every planned member through the continuum algorithm catalog.
-<a href=#601 id=601 data-nosnippet>601</a>///
-<a href=#602 id=602 data-nosnippet>602</a>/// Runs restoring-beam fitting, restoration, residual scaling, normalization,
-<a href=#603 id=603 data-nosnippet>603</a>/// validity, and metadata exactly once per member, in the planned publication
-<a href=#604 id=604 data-nosnippet>604</a>/// order.
-<a href=#605 id=605 data-nosnippet>605</a>///
-<a href=#606 id=606 data-nosnippet>606</a>/// # Errors
-<a href=#607 id=607 data-nosnippet>607</a>///
-<a href=#608 id=608 data-nosnippet>608</a>/// Rejects plans minted from other lineages, unsupported roles, failed beam
-<a href=#609 id=609 data-nosnippet>609</a>/// fits, and generated non-finite payloads.
-<a href=#610 id=610 data-nosnippet>610</a></span><span class="kw">pub fn </span>produce_continuum_members(
-<a href=#611 id=611 data-nosnippet>611</a>    planned: <span class="kw-2">&amp;</span>PlannedContinuumGeneration,
-<a href=#612 id=612 data-nosnippet>612</a>    inputs: <span class="kw-2">&amp;</span>ContinuumProductInputs&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#613 id=613 data-nosnippet>613</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ContinuumProducedMembers, ProductsError&gt; {
-<a href=#614 id=614 data-nosnippet>614</a>    <span class="kw">if </span>inputs.final_model().generation_id() != planned.final_model_generation {
-<a href=#615 id=615 data-nosnippet>615</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ProductsError::CommitmentMismatch);
-<a href=#616 id=616 data-nosnippet>616</a>    }
-<a href=#617 id=617 data-nosnippet>617</a>    <span class="kw">let </span>normal_state = inputs.normal_state();
-<a href=#618 id=618 data-nosnippet>618</a>    <span class="kw">let </span>sensitivity = normal_state.sum_weight();
-<a href=#619 id=619 data-nosnippet>619</a>    <span class="kw">let </span>plane_shape = normal_state.shape();
-<a href=#620 id=620 data-nosnippet>620</a>
-<a href=#621 id=621 data-nosnippet>621</a>    <span class="comment">// Fit the restoring beam once: the supported graphs demand fitted beam
-<a href=#622 id=622 data-nosnippet>622</a>    // metadata on their PSF/residual/restored members whenever any such
-<a href=#623 id=623 data-nosnippet>623</a>    // member exists.
-<a href=#624 id=624 data-nosnippet>624</a>    </span><span class="kw">let </span>requires_beam = planned.members.iter().any(|member| {
-<a href=#625 id=625 data-nosnippet>625</a>        <span class="macro">matches!</span>(
-<a href=#626 id=626 data-nosnippet>626</a>            member.role(),
-<a href=#627 id=627 data-nosnippet>627</a>            ProductRole::Psf(<span class="kw">_</span>) | ProductRole::Residual(<span class="kw">_</span>) | ProductRole::RestoredImage(<span class="kw">_</span>)
-<a href=#628 id=628 data-nosnippet>628</a>        )
-<a href=#629 id=629 data-nosnippet>629</a>    });
-<a href=#630 id=630 data-nosnippet>630</a>    <span class="kw">let </span>restoring_beam = <span class="kw">if </span>requires_beam {
-<a href=#631 id=631 data-nosnippet>631</a>        <span class="prelude-val">Some</span>(fit_restoring_beam(
-<a href=#632 id=632 data-nosnippet>632</a>            <span class="kw-2">&amp;</span>psf_real_plane(normal_state),
-<a href=#633 id=633 data-nosnippet>633</a>            plane_shape,
-<a href=#634 id=634 data-nosnippet>634</a>            inputs.cell_size_rad(),
-<a href=#635 id=635 data-nosnippet>635</a>            planned.psf_cutoff(),
-<a href=#636 id=636 data-nosnippet>636</a>        )<span class="question-mark">?</span>)
-<a href=#637 id=637 data-nosnippet>637</a>    } <span class="kw">else </span>{
-<a href=#638 id=638 data-nosnippet>638</a>        <span class="prelude-val">None
-<a href=#639 id=639 data-nosnippet>639</a>    </span>};
-<a href=#640 id=640 data-nosnippet>640</a>
-<a href=#641 id=641 data-nosnippet>641</a>    <span class="kw">let </span>model_plane = model_real_plane(inputs.final_model(), plane_shape)<span class="question-mark">?</span>;
-<a href=#642 id=642 data-nosnippet>642</a>    <span class="kw">let </span>residual_unnormalized = residual_real_plane(normal_state);
-<a href=#643 id=643 data-nosnippet>643</a>
-<a href=#644 id=644 data-nosnippet>644</a>    <span class="kw">let </span><span class="kw-2">mut </span>members = Vec::with_capacity(planned.members.len());
-<a href=#645 id=645 data-nosnippet>645</a>    <span class="kw">for </span>member <span class="kw">in </span><span class="kw-2">&amp;</span>planned.members {
-<a href=#646 id=646 data-nosnippet>646</a>        <span class="kw">let </span>normalization = member.normalization;
-<a href=#647 id=647 data-nosnippet>647</a>        <span class="kw">let </span><span class="kw-2">mut </span>payload = <span class="kw">match </span>member.role {
-<a href=#648 id=648 data-nosnippet>648</a>            ProductRole::Psf(casa_imaging_model::ProductTerm::Single)
-<a href=#649 id=649 data-nosnippet>649</a>            | ProductRole::Psf(casa_imaging_model::ProductTerm::Taylor(<span class="number">0</span>)) =&gt; normalize_plane(
-<a href=#650 id=650 data-nosnippet>650</a>                <span class="kw-2">&amp;</span>psf_real_plane(normal_state),
-<a href=#651 id=651 data-nosnippet>651</a>                normalization.unwrap_or(ProductNormalization::UnitResponse),
-<a href=#652 id=652 data-nosnippet>652</a>                sensitivity,
-<a href=#653 id=653 data-nosnippet>653</a>            )<span class="question-mark">?</span>,
-<a href=#654 id=654 data-nosnippet>654</a>            ProductRole::Residual(
-<a href=#655 id=655 data-nosnippet>655</a>                casa_imaging_model::ProductTerm::Single
-<a href=#656 id=656 data-nosnippet>656</a>                | casa_imaging_model::ProductTerm::Taylor(<span class="number">0</span>),
-<a href=#657 id=657 data-nosnippet>657</a>            ) =&gt; normalize_plane(
-<a href=#658 id=658 data-nosnippet>658</a>                <span class="kw-2">&amp;</span>residual_unnormalized,
-<a href=#659 id=659 data-nosnippet>659</a>                required_normalization(member)<span class="question-mark">?</span>,
-<a href=#660 id=660 data-nosnippet>660</a>                sensitivity,
-<a href=#661 id=661 data-nosnippet>661</a>            )<span class="question-mark">?</span>,
-<a href=#662 id=662 data-nosnippet>662</a>            ProductRole::Model(
-<a href=#663 id=663 data-nosnippet>663</a>                casa_imaging_model::ProductTerm::Single
-<a href=#664 id=664 data-nosnippet>664</a>                | casa_imaging_model::ProductTerm::Taylor(<span class="number">0</span>),
-<a href=#665 id=665 data-nosnippet>665</a>            ) =&gt; model_plane.clone(),
-<a href=#666 id=666 data-nosnippet>666</a>            ProductRole::Weight(
-<a href=#667 id=667 data-nosnippet>667</a>                casa_imaging_model::ProductTerm::Single
-<a href=#668 id=668 data-nosnippet>668</a>                | casa_imaging_model::ProductTerm::Taylor(<span class="number">0</span>),
-<a href=#669 id=669 data-nosnippet>669</a>            ) =&gt; normal_state
-<a href=#670 id=670 data-nosnippet>670</a>                .sensitivity()
-<a href=#671 id=671 data-nosnippet>671</a>                .iter()
-<a href=#672 id=672 data-nosnippet>672</a>                .map(|value| <span class="kw-2">*</span>value <span class="kw">as </span>f32)
-<a href=#673 id=673 data-nosnippet>673</a>                .collect(),
-<a href=#674 id=674 data-nosnippet>674</a>            ProductRole::RestoredImage(
-<a href=#675 id=675 data-nosnippet>675</a>                casa_imaging_model::ProductTerm::Single
-<a href=#676 id=676 data-nosnippet>676</a>                | casa_imaging_model::ProductTerm::Taylor(<span class="number">0</span>),
-<a href=#677 id=677 data-nosnippet>677</a>            ) =&gt; {
-<a href=#678 id=678 data-nosnippet>678</a>                <span class="kw">let </span><span class="prelude-val">Some</span>(beam) = restoring_beam.as_ref() <span class="kw">else </span>{
-<a href=#679 id=679 data-nosnippet>679</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(ProductsError::BeamFitFailed(
-<a href=#680 id=680 data-nosnippet>680</a>                        <span class="string">"restoration requires a fitted restoring beam"</span>.to_string(),
-<a href=#681 id=681 data-nosnippet>681</a>                    ));
-<a href=#682 id=682 data-nosnippet>682</a>                };
-<a href=#683 id=683 data-nosnippet>683</a>                <span class="kw">let </span>kernel = gaussian_beam_image(plane_shape, beam, inputs.cell_size_rad());
-<a href=#684 id=684 data-nosnippet>684</a>                <span class="kw">let </span><span class="kw-2">mut </span>restored = fft_convolve(
-<a href=#685 id=685 data-nosnippet>685</a>                    <span class="kw-2">&amp;</span>model_plane,
-<a href=#686 id=686 data-nosnippet>686</a>                    kernel.as_slice().expect(<span class="string">"contiguous"</span>),
-<a href=#687 id=687 data-nosnippet>687</a>                    plane_shape,
-<a href=#688 id=688 data-nosnippet>688</a>                );
-<a href=#689 id=689 data-nosnippet>689</a>                <span class="comment">// CASA restoration equation (`SIImageStore::restore`):
-<a href=#690 id=690 data-nosnippet>690</a>                // restored = conv(model, beam) + residual, where the residual
-<a href=#691 id=691 data-nosnippet>691</a>                // enters exactly as it is published. The convolved sky model
-<a href=#692 id=692 data-nosnippet>692</a>                // is never divided by the residual sensitivity.
-<a href=#693 id=693 data-nosnippet>693</a>                </span><span class="kw">let </span>residual_component = normalize_plane(
-<a href=#694 id=694 data-nosnippet>694</a>                    <span class="kw-2">&amp;</span>residual_unnormalized,
-<a href=#695 id=695 data-nosnippet>695</a>                    required_normalization(member)<span class="question-mark">?</span>,
-<a href=#696 id=696 data-nosnippet>696</a>                    sensitivity,
-<a href=#697 id=697 data-nosnippet>697</a>                )<span class="question-mark">?</span>;
-<a href=#698 id=698 data-nosnippet>698</a>                <span class="kw">for </span>(restored, residual) <span class="kw">in </span>restored.iter_mut().zip(<span class="kw-2">&amp;</span>residual_component) {
-<a href=#699 id=699 data-nosnippet>699</a>                    <span class="kw-2">*</span>restored += residual;
-<a href=#700 id=700 data-nosnippet>700</a>                }
-<a href=#701 id=701 data-nosnippet>701</a>                restored
-<a href=#702 id=702 data-nosnippet>702</a>            }
-<a href=#703 id=703 data-nosnippet>703</a>            ProductRole::SumWeights(<span class="kw">_</span>) | ProductRole::Sensitivity =&gt; {
-<a href=#704 id=704 data-nosnippet>704</a>                <span class="macro">vec!</span>[sensitivity <span class="kw">as </span>f32; member.payload_values]
-<a href=#705 id=705 data-nosnippet>705</a>            }
-<a href=#706 id=706 data-nosnippet>706</a>            ProductRole::CleanMask =&gt; normal_state
-<a href=#707 id=707 data-nosnippet>707</a>                .sensitivity()
-<a href=#708 id=708 data-nosnippet>708</a>                .iter()
-<a href=#709 id=709 data-nosnippet>709</a>                .map(|value| {
-<a href=#710 id=710 data-nosnippet>710</a>                    <span class="kw">if </span><span class="kw-2">*</span>value &gt; <span class="number">0.0 </span>&amp;&amp; value.is_finite() {
-<a href=#711 id=711 data-nosnippet>711</a>                        <span class="number">1.0_f32
-<a href=#712 id=712 data-nosnippet>712</a>                    </span>} <span class="kw">else </span>{
-<a href=#713 id=713 data-nosnippet>713</a>                        <span class="number">0.0
-<a href=#714 id=714 data-nosnippet>714</a>                    </span>}
-<a href=#715 id=715 data-nosnippet>715</a>                })
-<a href=#716 id=716 data-nosnippet>716</a>                .collect(),
-<a href=#717 id=717 data-nosnippet>717</a>            role =&gt; {
-<a href=#718 id=718 data-nosnippet>718</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(ProductsError::UnsupportedProductRole {
-<a href=#719 id=719 data-nosnippet>719</a>                    role,
-<a href=#720 id=720 data-nosnippet>720</a>                    catalog: CONTINUUM_ALGORITHM_CATALOG_VERSION,
-<a href=#721 id=721 data-nosnippet>721</a>                });
-<a href=#722 id=722 data-nosnippet>722</a>            }
-<a href=#723 id=723 data-nosnippet>723</a>        };
-<a href=#724 id=724 data-nosnippet>724</a>        <span class="comment">// FinalNormalState validity blanks pixels without usable sensitivity.
-<a href=#725 id=725 data-nosnippet>725</a>        </span><span class="kw">if </span><span class="macro">matches!</span>(
-<a href=#726 id=726 data-nosnippet>726</a>            member.role,
-<a href=#727 id=727 data-nosnippet>727</a>            ProductRole::Residual(<span class="kw">_</span>) | ProductRole::RestoredImage(<span class="kw">_</span>)
-<a href=#728 id=728 data-nosnippet>728</a>        ) &amp;&amp; !(sensitivity.is_finite() &amp;&amp; sensitivity &gt; <span class="number">0.0</span>)
-<a href=#729 id=729 data-nosnippet>729</a>        {
-<a href=#730 id=730 data-nosnippet>730</a>            payload.fill(f32::NAN);
-<a href=#731 id=731 data-nosnippet>731</a>        }
-<a href=#732 id=732 data-nosnippet>732</a>        <span class="kw">if </span>payload.iter().any(|value| value.is_infinite()) {
-<a href=#733 id=733 data-nosnippet>733</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ProductsError::GeneratedNonfinite);
-<a href=#734 id=734 data-nosnippet>734</a>        }
-<a href=#735 id=735 data-nosnippet>735</a>        <span class="kw">if </span>payload.len() != member.payload_values {
-<a href=#736 id=736 data-nosnippet>736</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ProductsError::PayloadLengthMismatch {
-<a href=#737 id=737 data-nosnippet>737</a>                expected: member.payload_values,
-<a href=#738 id=738 data-nosnippet>738</a>                actual: payload.len(),
-<a href=#739 id=739 data-nosnippet>739</a>            });
-<a href=#740 id=740 data-nosnippet>740</a>        }
-<a href=#741 id=741 data-nosnippet>741</a>        <span class="kw">let </span>digest = MemberArtifactId(plane_digest(<span class="kw-2">&amp;</span>payload));
-<a href=#742 id=742 data-nosnippet>742</a>        members.push(ProducedMember {
-<a href=#743 id=743 data-nosnippet>743</a>            node: member.node,
-<a href=#744 id=744 data-nosnippet>744</a>            artifact_id: member.artifact_id,
-<a href=#745 id=745 data-nosnippet>745</a>            digest,
-<a href=#746 id=746 data-nosnippet>746</a>            payload,
-<a href=#747 id=747 data-nosnippet>747</a>        });
-<a href=#748 id=748 data-nosnippet>748</a>    }
-<a href=#749 id=749 data-nosnippet>749</a>
-<a href=#750 id=750 data-nosnippet>750</a>    <span class="prelude-val">Ok</span>(ContinuumProducedMembers {
-<a href=#751 id=751 data-nosnippet>751</a>        planned_generation: planned.generation_id,
-<a href=#752 id=752 data-nosnippet>752</a>        commitment_id: planned.commitment_id,
-<a href=#753 id=753 data-nosnippet>753</a>        restoring_beam,
-<a href=#754 id=754 data-nosnippet>754</a>        members: members.into_boxed_slice(),
-<a href=#755 id=755 data-nosnippet>755</a>    })
-<a href=#756 id=756 data-nosnippet>756</a>}
-<a href=#757 id=757 data-nosnippet>757</a>
-<a href=#758 id=758 data-nosnippet>758</a><span class="kw">fn </span>required_normalization(member: <span class="kw-2">&amp;</span>PlannedMember) -&gt; <span class="prelude-ty">Result</span>&lt;ProductNormalization, ProductsError&gt; {
-<a href=#759 id=759 data-nosnippet>759</a>    member
-<a href=#760 id=760 data-nosnippet>760</a>        .normalization
-<a href=#761 id=761 data-nosnippet>761</a>        .ok_or(ProductsError::UnsupportedProblem)
-<a href=#762 id=762 data-nosnippet>762</a>}
-<a href=#763 id=763 data-nosnippet>763</a>
-<a href=#764 id=764 data-nosnippet>764</a><span class="kw">fn </span>psf_real_plane(normal_state: <span class="kw-2">&amp;</span>casa_imaging_reconstruction::FinalNormalState) -&gt; Vec&lt;f32&gt; {
-<a href=#765 id=765 data-nosnippet>765</a>    normal_state
-<a href=#766 id=766 data-nosnippet>766</a>        .normal_approximation()
-<a href=#767 id=767 data-nosnippet>767</a>        .iter()
-<a href=#768 id=768 data-nosnippet>768</a>        .map(|value| value.re <span class="kw">as </span>f32)
-<a href=#769 id=769 data-nosnippet>769</a>        .collect()
-<a href=#770 id=770 data-nosnippet>770</a>}
-<a href=#771 id=771 data-nosnippet>771</a>
-<a href=#772 id=772 data-nosnippet>772</a><span class="kw">fn </span>residual_real_plane(normal_state: <span class="kw-2">&amp;</span>casa_imaging_reconstruction::FinalNormalState) -&gt; Vec&lt;f32&gt; {
-<a href=#773 id=773 data-nosnippet>773</a>    normal_state
-<a href=#774 id=774 data-nosnippet>774</a>        .residual()
-<a href=#775 id=775 data-nosnippet>775</a>        .iter()
-<a href=#776 id=776 data-nosnippet>776</a>        .map(|value| value.re <span class="kw">as </span>f32)
-<a href=#777 id=777 data-nosnippet>777</a>        .collect()
+<a href=#435 id=435 data-nosnippet>435</a>/// Minted only by [`ProductGenerationAuthority::plan`]:
+<a href=#436 id=436 data-nosnippet>436</a>///
+<a href=#437 id=437 data-nosnippet>437</a>/// ```compile_fail
+<a href=#438 id=438 data-nosnippet>438</a>/// use casa_imaging_products::PlannedContinuumGeneration;
+<a href=#439 id=439 data-nosnippet>439</a>///
+<a href=#440 id=440 data-nosnippet>440</a>/// let _ = PlannedContinuumGeneration {};
+<a href=#441 id=441 data-nosnippet>441</a>/// ```
+<a href=#442 id=442 data-nosnippet>442</a></span><span class="attr">#[derive(Debug)]
+<a href=#443 id=443 data-nosnippet>443</a></span><span class="kw">pub struct </span>PlannedContinuumGeneration {
+<a href=#444 id=444 data-nosnippet>444</a>    authority: [u8; <span class="number">32</span>],
+<a href=#445 id=445 data-nosnippet>445</a>    problem_id: CompiledProblemId,
+<a href=#446 id=446 data-nosnippet>446</a>    graph_id: ProductGraphId,
+<a href=#447 id=447 data-nosnippet>447</a>    generation_id: PlannedGenerationId,
+<a href=#448 id=448 data-nosnippet>448</a>    commitment_id: ContinuumCommitmentId,
+<a href=#449 id=449 data-nosnippet>449</a>    psf_cutoff: f32,
+<a href=#450 id=450 data-nosnippet>450</a>    members: Box&lt;[PlannedMember]&gt;,
+<a href=#451 id=451 data-nosnippet>451</a>    final_model_generation: casa_imaging_reconstruction::ModelGenerationId,
+<a href=#452 id=452 data-nosnippet>452</a>}
+<a href=#453 id=453 data-nosnippet>453</a>
+<a href=#454 id=454 data-nosnippet>454</a><span class="kw">impl </span>PlannedContinuumGeneration {
+<a href=#455 id=455 data-nosnippet>455</a>    <span class="doccomment">/// Return the exact compiled problem this generation was planned for.
+<a href=#456 id=456 data-nosnippet>456</a>    </span><span class="attr">#[must_use]
+<a href=#457 id=457 data-nosnippet>457</a>    </span><span class="kw">pub const fn </span>problem_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; CompiledProblemId {
+<a href=#458 id=458 data-nosnippet>458</a>        <span class="self">self</span>.problem_id
+<a href=#459 id=459 data-nosnippet>459</a>    }
+<a href=#460 id=460 data-nosnippet>460</a>
+<a href=#461 id=461 data-nosnippet>461</a>    <span class="doccomment">/// Return the exact compiler-owned Product Graph this generation realizes.
+<a href=#462 id=462 data-nosnippet>462</a>    </span><span class="attr">#[must_use]
+<a href=#463 id=463 data-nosnippet>463</a>    </span><span class="kw">pub const fn </span>graph_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ProductGraphId {
+<a href=#464 id=464 data-nosnippet>464</a>        <span class="self">self</span>.graph_id
+<a href=#465 id=465 data-nosnippet>465</a>    }
+<a href=#466 id=466 data-nosnippet>466</a>
+<a href=#467 id=467 data-nosnippet>467</a>    <span class="doccomment">/// Return the stable planned-generation identity.
+<a href=#468 id=468 data-nosnippet>468</a>    </span><span class="attr">#[must_use]
+<a href=#469 id=469 data-nosnippet>469</a>    </span><span class="kw">pub const fn </span>generation_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; PlannedGenerationId {
+<a href=#470 id=470 data-nosnippet>470</a>        <span class="self">self</span>.generation_id
+<a href=#471 id=471 data-nosnippet>471</a>    }
+<a href=#472 id=472 data-nosnippet>472</a>
+<a href=#473 id=473 data-nosnippet>473</a>    <span class="doccomment">/// Return the committed source-lineage digest behind the plan.
+<a href=#474 id=474 data-nosnippet>474</a>    </span><span class="attr">#[must_use]
+<a href=#475 id=475 data-nosnippet>475</a>    </span><span class="kw">pub const fn </span>commitment_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ContinuumCommitmentId {
+<a href=#476 id=476 data-nosnippet>476</a>        <span class="self">self</span>.commitment_id
+<a href=#477 id=477 data-nosnippet>477</a>    }
+<a href=#478 id=478 data-nosnippet>478</a>
+<a href=#479 id=479 data-nosnippet>479</a>    <span class="doccomment">/// Return planned members in exact publication order.
+<a href=#480 id=480 data-nosnippet>480</a>    </span><span class="attr">#[must_use]
+<a href=#481 id=481 data-nosnippet>481</a>    </span><span class="kw">pub const fn </span>members(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[PlannedMember] {
+<a href=#482 id=482 data-nosnippet>482</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.members
+<a href=#483 id=483 data-nosnippet>483</a>    }
+<a href=#484 id=484 data-nosnippet>484</a>
+<a href=#485 id=485 data-nosnippet>485</a>    <span class="doccomment">/// Return the named final model generation this plan restores from.
+<a href=#486 id=486 data-nosnippet>486</a>    </span><span class="attr">#[must_use]
+<a href=#487 id=487 data-nosnippet>487</a>    </span><span class="kw">pub const fn </span>final_model_generation(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; casa_imaging_reconstruction::ModelGenerationId {
+<a href=#488 id=488 data-nosnippet>488</a>        <span class="self">self</span>.final_model_generation
+<a href=#489 id=489 data-nosnippet>489</a>    }
+<a href=#490 id=490 data-nosnippet>490</a>
+<a href=#491 id=491 data-nosnippet>491</a>    <span class="doccomment">/// Return the beam-fitting cutoff bound into this plan.
+<a href=#492 id=492 data-nosnippet>492</a>    </span><span class="attr">#[must_use]
+<a href=#493 id=493 data-nosnippet>493</a>    </span><span class="kw">pub const fn </span>psf_cutoff(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f32 {
+<a href=#494 id=494 data-nosnippet>494</a>        <span class="self">self</span>.psf_cutoff
+<a href=#495 id=495 data-nosnippet>495</a>    }
+<a href=#496 id=496 data-nosnippet>496</a>}
+<a href=#497 id=497 data-nosnippet>497</a>
+<a href=#498 id=498 data-nosnippet>498</a><span class="doccomment">/// One planned publication member in exact graph order.
+<a href=#499 id=499 data-nosnippet>499</a></span><span class="attr">#[derive(Debug, Clone)]
+<a href=#500 id=500 data-nosnippet>500</a></span><span class="kw">pub struct </span>PlannedMember {
+<a href=#501 id=501 data-nosnippet>501</a>    node: ProductNodeId,
+<a href=#502 id=502 data-nosnippet>502</a>    role: ProductRole,
+<a href=#503 id=503 data-nosnippet>503</a>    name: String,
+<a href=#504 id=504 data-nosnippet>504</a>    shape: [usize; <span class="number">4</span>],
+<a href=#505 id=505 data-nosnippet>505</a>    payload_values: usize,
+<a href=#506 id=506 data-nosnippet>506</a>    unit: ProductUnit,
+<a href=#507 id=507 data-nosnippet>507</a>    schema: ProductSchema,
+<a href=#508 id=508 data-nosnippet>508</a>    axes: ProductAxes,
+<a href=#509 id=509 data-nosnippet>509</a>    normalization: <span class="prelude-ty">Option</span>&lt;ProductNormalization&gt;,
+<a href=#510 id=510 data-nosnippet>510</a>    beam_rule: ProductBeamRule,
+<a href=#511 id=511 data-nosnippet>511</a>    validity: ProductValidityRule,
+<a href=#512 id=512 data-nosnippet>512</a>    dependencies: Box&lt;[ProductNodeId]&gt;,
+<a href=#513 id=513 data-nosnippet>513</a>    artifact_id: MemberArtifactId,
+<a href=#514 id=514 data-nosnippet>514</a>}
+<a href=#515 id=515 data-nosnippet>515</a>
+<a href=#516 id=516 data-nosnippet>516</a><span class="kw">impl </span>PlannedMember {
+<a href=#517 id=517 data-nosnippet>517</a>    <span class="doccomment">/// Return the graph-local node identity.
+<a href=#518 id=518 data-nosnippet>518</a>    </span><span class="attr">#[must_use]
+<a href=#519 id=519 data-nosnippet>519</a>    </span><span class="kw">pub const fn </span>node(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ProductNodeId {
+<a href=#520 id=520 data-nosnippet>520</a>        <span class="self">self</span>.node
+<a href=#521 id=521 data-nosnippet>521</a>    }
+<a href=#522 id=522 data-nosnippet>522</a>
+<a href=#523 id=523 data-nosnippet>523</a>    <span class="doccomment">/// Return the logical product role.
+<a href=#524 id=524 data-nosnippet>524</a>    </span><span class="attr">#[must_use]
+<a href=#525 id=525 data-nosnippet>525</a>    </span><span class="kw">pub const fn </span>role(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ProductRole {
+<a href=#526 id=526 data-nosnippet>526</a>        <span class="self">self</span>.role
+<a href=#527 id=527 data-nosnippet>527</a>    }
+<a href=#528 id=528 data-nosnippet>528</a>
+<a href=#529 id=529 data-nosnippet>529</a>    <span class="doccomment">/// Return the compiled product name.
+<a href=#530 id=530 data-nosnippet>530</a>    </span><span class="attr">#[must_use]
+<a href=#531 id=531 data-nosnippet>531</a>    </span><span class="kw">pub fn </span>name(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>str {
+<a href=#532 id=532 data-nosnippet>532</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.name
+<a href=#533 id=533 data-nosnippet>533</a>    }
+<a href=#534 id=534 data-nosnippet>534</a>
+<a href=#535 id=535 data-nosnippet>535</a>    <span class="doccomment">/// Return the declared four-axis shape.
+<a href=#536 id=536 data-nosnippet>536</a>    </span><span class="attr">#[must_use]
+<a href=#537 id=537 data-nosnippet>537</a>    </span><span class="kw">pub const fn </span>shape(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; [usize; <span class="number">4</span>] {
+<a href=#538 id=538 data-nosnippet>538</a>        <span class="self">self</span>.shape
+<a href=#539 id=539 data-nosnippet>539</a>    }
+<a href=#540 id=540 data-nosnippet>540</a>
+<a href=#541 id=541 data-nosnippet>541</a>    <span class="doccomment">/// Return the required physical unit of this member.
+<a href=#542 id=542 data-nosnippet>542</a>    </span><span class="attr">#[must_use]
+<a href=#543 id=543 data-nosnippet>543</a>    </span><span class="kw">pub const fn </span>unit(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ProductUnit {
+<a href=#544 id=544 data-nosnippet>544</a>        <span class="self">self</span>.unit
+<a href=#545 id=545 data-nosnippet>545</a>    }
+<a href=#546 id=546 data-nosnippet>546</a>
+<a href=#547 id=547 data-nosnippet>547</a>    <span class="doccomment">/// Return the backend-independent logical payload schema.
+<a href=#548 id=548 data-nosnippet>548</a>    </span><span class="attr">#[must_use]
+<a href=#549 id=549 data-nosnippet>549</a>    </span><span class="kw">pub const fn </span>schema(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ProductSchema {
+<a href=#550 id=550 data-nosnippet>550</a>        <span class="self">self</span>.schema
+<a href=#551 id=551 data-nosnippet>551</a>    }
+<a href=#552 id=552 data-nosnippet>552</a>
+<a href=#553 id=553 data-nosnippet>553</a>    <span class="doccomment">/// Return the exact WCS and storage-axis binding.
+<a href=#554 id=554 data-nosnippet>554</a>    </span><span class="attr">#[must_use]
+<a href=#555 id=555 data-nosnippet>555</a>    </span><span class="kw">pub const fn </span>axes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>ProductAxes {
+<a href=#556 id=556 data-nosnippet>556</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.axes
+<a href=#557 id=557 data-nosnippet>557</a>    }
+<a href=#558 id=558 data-nosnippet>558</a>
+<a href=#559 id=559 data-nosnippet>559</a>    <span class="doccomment">/// Return fitted, restoring, inherited, or absent beam semantics.
+<a href=#560 id=560 data-nosnippet>560</a>    </span><span class="attr">#[must_use]
+<a href=#561 id=561 data-nosnippet>561</a>    </span><span class="kw">pub const fn </span>beam_rule(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ProductBeamRule {
+<a href=#562 id=562 data-nosnippet>562</a>        <span class="self">self</span>.beam_rule
+<a href=#563 id=563 data-nosnippet>563</a>    }
+<a href=#564 id=564 data-nosnippet>564</a>
+<a href=#565 id=565 data-nosnippet>565</a>    <span class="doccomment">/// Return the output-validity rule of this member.
+<a href=#566 id=566 data-nosnippet>566</a>    </span><span class="attr">#[must_use]
+<a href=#567 id=567 data-nosnippet>567</a>    </span><span class="kw">pub const fn </span>validity(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ProductValidityRule {
+<a href=#568 id=568 data-nosnippet>568</a>        <span class="self">self</span>.validity
+<a href=#569 id=569 data-nosnippet>569</a>    }
+<a href=#570 id=570 data-nosnippet>570</a>
+<a href=#571 id=571 data-nosnippet>571</a>    <span class="doccomment">/// Return graph-node dependencies, all of which precede this node.
+<a href=#572 id=572 data-nosnippet>572</a>    </span><span class="attr">#[must_use]
+<a href=#573 id=573 data-nosnippet>573</a>    </span><span class="kw">pub const fn </span>dependencies(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[ProductNodeId] {
+<a href=#574 id=574 data-nosnippet>574</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.dependencies
+<a href=#575 id=575 data-nosnippet>575</a>    }
+<a href=#576 id=576 data-nosnippet>576</a>
+<a href=#577 id=577 data-nosnippet>577</a>    <span class="doccomment">/// Return the planned payload value count.
+<a href=#578 id=578 data-nosnippet>578</a>    </span><span class="attr">#[must_use]
+<a href=#579 id=579 data-nosnippet>579</a>    </span><span class="kw">pub const fn </span>payload_values(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#580 id=580 data-nosnippet>580</a>        <span class="self">self</span>.payload_values
+<a href=#581 id=581 data-nosnippet>581</a>    }
+<a href=#582 id=582 data-nosnippet>582</a>
+<a href=#583 id=583 data-nosnippet>583</a>    <span class="doccomment">/// Return the compiled normalization of this member, when one applies.
+<a href=#584 id=584 data-nosnippet>584</a>    </span><span class="attr">#[must_use]
+<a href=#585 id=585 data-nosnippet>585</a>    </span><span class="kw">pub const fn </span>normalization(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;ProductNormalization&gt; {
+<a href=#586 id=586 data-nosnippet>586</a>        <span class="self">self</span>.normalization
+<a href=#587 id=587 data-nosnippet>587</a>    }
+<a href=#588 id=588 data-nosnippet>588</a>
+<a href=#589 id=589 data-nosnippet>589</a>    <span class="doccomment">/// Return the derived artifact identity of this member.
+<a href=#590 id=590 data-nosnippet>590</a>    </span><span class="attr">#[must_use]
+<a href=#591 id=591 data-nosnippet>591</a>    </span><span class="kw">pub const fn </span>artifact_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; MemberArtifactId {
+<a href=#592 id=592 data-nosnippet>592</a>        <span class="self">self</span>.artifact_id
+<a href=#593 id=593 data-nosnippet>593</a>    }
+<a href=#594 id=594 data-nosnippet>594</a>}
+<a href=#595 id=595 data-nosnippet>595</a>
+<a href=#596 id=596 data-nosnippet>596</a><span class="doccomment">/// Produced artifacts awaiting authorization.
+<a href=#597 id=597 data-nosnippet>597</a>///
+<a href=#598 id=598 data-nosnippet>598</a>/// Minted only by [`produce_continuum_members`].
+<a href=#599 id=599 data-nosnippet>599</a></span><span class="attr">#[derive(Debug)]
+<a href=#600 id=600 data-nosnippet>600</a></span><span class="kw">pub struct </span>ContinuumProducedMembers {
+<a href=#601 id=601 data-nosnippet>601</a>    planned_generation: PlannedGenerationId,
+<a href=#602 id=602 data-nosnippet>602</a>    commitment_id: ContinuumCommitmentId,
+<a href=#603 id=603 data-nosnippet>603</a>    restoring_beam: <span class="prelude-ty">Option</span>&lt;RestoringBeam&gt;,
+<a href=#604 id=604 data-nosnippet>604</a>    members: Box&lt;[ProducedMember]&gt;,
+<a href=#605 id=605 data-nosnippet>605</a>}
+<a href=#606 id=606 data-nosnippet>606</a>
+<a href=#607 id=607 data-nosnippet>607</a><span class="doccomment">/// One produced member payload with its computed content identity.
+<a href=#608 id=608 data-nosnippet>608</a></span><span class="attr">#[derive(Debug)]
+<a href=#609 id=609 data-nosnippet>609</a></span><span class="kw">struct </span>ProducedMember {
+<a href=#610 id=610 data-nosnippet>610</a>    node: ProductNodeId,
+<a href=#611 id=611 data-nosnippet>611</a>    artifact_id: MemberArtifactId,
+<a href=#612 id=612 data-nosnippet>612</a>    digest: MemberArtifactId,
+<a href=#613 id=613 data-nosnippet>613</a>    payload: Vec&lt;f32&gt;,
+<a href=#614 id=614 data-nosnippet>614</a>}
+<a href=#615 id=615 data-nosnippet>615</a>
+<a href=#616 id=616 data-nosnippet>616</a><span class="doccomment">/// Produce every planned member through the continuum algorithm catalog.
+<a href=#617 id=617 data-nosnippet>617</a>///
+<a href=#618 id=618 data-nosnippet>618</a>/// Runs restoring-beam fitting, restoration, residual scaling, normalization,
+<a href=#619 id=619 data-nosnippet>619</a>/// validity, and metadata exactly once per member, in the planned publication
+<a href=#620 id=620 data-nosnippet>620</a>/// order.
+<a href=#621 id=621 data-nosnippet>621</a>///
+<a href=#622 id=622 data-nosnippet>622</a>/// # Errors
+<a href=#623 id=623 data-nosnippet>623</a>///
+<a href=#624 id=624 data-nosnippet>624</a>/// Rejects plans minted from other lineages, unsupported roles, failed beam
+<a href=#625 id=625 data-nosnippet>625</a>/// fits, and generated non-finite payloads.
+<a href=#626 id=626 data-nosnippet>626</a></span><span class="kw">pub fn </span>produce_continuum_members(
+<a href=#627 id=627 data-nosnippet>627</a>    planned: <span class="kw-2">&amp;</span>PlannedContinuumGeneration,
+<a href=#628 id=628 data-nosnippet>628</a>    inputs: <span class="kw-2">&amp;</span>ContinuumProductInputs&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#629 id=629 data-nosnippet>629</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ContinuumProducedMembers, ProductsError&gt; {
+<a href=#630 id=630 data-nosnippet>630</a>    <span class="kw">if </span>inputs.final_model().generation_id() != planned.final_model_generation {
+<a href=#631 id=631 data-nosnippet>631</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ProductsError::CommitmentMismatch);
+<a href=#632 id=632 data-nosnippet>632</a>    }
+<a href=#633 id=633 data-nosnippet>633</a>    <span class="kw">let </span>normal_state = inputs.normal_state();
+<a href=#634 id=634 data-nosnippet>634</a>    <span class="kw">let </span>sensitivity = normal_state.sum_weight();
+<a href=#635 id=635 data-nosnippet>635</a>    <span class="kw">let </span>plane_shape = normal_state.shape();
+<a href=#636 id=636 data-nosnippet>636</a>
+<a href=#637 id=637 data-nosnippet>637</a>    <span class="comment">// Fit the restoring beam once: the supported graphs demand fitted beam
+<a href=#638 id=638 data-nosnippet>638</a>    // metadata on their PSF/residual/restored members whenever any such
+<a href=#639 id=639 data-nosnippet>639</a>    // member exists.
+<a href=#640 id=640 data-nosnippet>640</a>    </span><span class="kw">let </span>requires_beam = planned.members.iter().any(|member| {
+<a href=#641 id=641 data-nosnippet>641</a>        <span class="macro">matches!</span>(
+<a href=#642 id=642 data-nosnippet>642</a>            member.role(),
+<a href=#643 id=643 data-nosnippet>643</a>            ProductRole::Psf(<span class="kw">_</span>) | ProductRole::Residual(<span class="kw">_</span>) | ProductRole::RestoredImage(<span class="kw">_</span>)
+<a href=#644 id=644 data-nosnippet>644</a>        )
+<a href=#645 id=645 data-nosnippet>645</a>    });
+<a href=#646 id=646 data-nosnippet>646</a>    <span class="kw">let </span>restoring_beam = <span class="kw">if </span>requires_beam {
+<a href=#647 id=647 data-nosnippet>647</a>        <span class="prelude-val">Some</span>(fit_restoring_beam(
+<a href=#648 id=648 data-nosnippet>648</a>            <span class="kw-2">&amp;</span>psf_real_plane(normal_state),
+<a href=#649 id=649 data-nosnippet>649</a>            plane_shape,
+<a href=#650 id=650 data-nosnippet>650</a>            inputs.cell_size_rad(),
+<a href=#651 id=651 data-nosnippet>651</a>            planned.psf_cutoff(),
+<a href=#652 id=652 data-nosnippet>652</a>        )<span class="question-mark">?</span>)
+<a href=#653 id=653 data-nosnippet>653</a>    } <span class="kw">else </span>{
+<a href=#654 id=654 data-nosnippet>654</a>        <span class="prelude-val">None
+<a href=#655 id=655 data-nosnippet>655</a>    </span>};
+<a href=#656 id=656 data-nosnippet>656</a>
+<a href=#657 id=657 data-nosnippet>657</a>    <span class="kw">let </span>model_plane = model_real_plane(inputs.final_model(), plane_shape)<span class="question-mark">?</span>;
+<a href=#658 id=658 data-nosnippet>658</a>    <span class="kw">let </span>residual_unnormalized = residual_real_plane(normal_state);
+<a href=#659 id=659 data-nosnippet>659</a>
+<a href=#660 id=660 data-nosnippet>660</a>    <span class="kw">let </span><span class="kw-2">mut </span>members = Vec::with_capacity(planned.members.len());
+<a href=#661 id=661 data-nosnippet>661</a>    <span class="kw">for </span>member <span class="kw">in </span><span class="kw-2">&amp;</span>planned.members {
+<a href=#662 id=662 data-nosnippet>662</a>        <span class="kw">let </span>normalization = member.normalization;
+<a href=#663 id=663 data-nosnippet>663</a>        <span class="kw">let </span><span class="kw-2">mut </span>payload = <span class="kw">match </span>member.role {
+<a href=#664 id=664 data-nosnippet>664</a>            ProductRole::Psf(casa_imaging_model::ProductTerm::Single)
+<a href=#665 id=665 data-nosnippet>665</a>            | ProductRole::Psf(casa_imaging_model::ProductTerm::Taylor(<span class="number">0</span>)) =&gt; normalize_plane(
+<a href=#666 id=666 data-nosnippet>666</a>                <span class="kw-2">&amp;</span>psf_real_plane(normal_state),
+<a href=#667 id=667 data-nosnippet>667</a>                normalization.unwrap_or(ProductNormalization::UnitResponse),
+<a href=#668 id=668 data-nosnippet>668</a>                sensitivity,
+<a href=#669 id=669 data-nosnippet>669</a>            )<span class="question-mark">?</span>,
+<a href=#670 id=670 data-nosnippet>670</a>            ProductRole::Residual(
+<a href=#671 id=671 data-nosnippet>671</a>                casa_imaging_model::ProductTerm::Single
+<a href=#672 id=672 data-nosnippet>672</a>                | casa_imaging_model::ProductTerm::Taylor(<span class="number">0</span>),
+<a href=#673 id=673 data-nosnippet>673</a>            ) =&gt; normalize_plane(
+<a href=#674 id=674 data-nosnippet>674</a>                <span class="kw-2">&amp;</span>residual_unnormalized,
+<a href=#675 id=675 data-nosnippet>675</a>                required_normalization(member)<span class="question-mark">?</span>,
+<a href=#676 id=676 data-nosnippet>676</a>                sensitivity,
+<a href=#677 id=677 data-nosnippet>677</a>            )<span class="question-mark">?</span>,
+<a href=#678 id=678 data-nosnippet>678</a>            ProductRole::Model(
+<a href=#679 id=679 data-nosnippet>679</a>                casa_imaging_model::ProductTerm::Single
+<a href=#680 id=680 data-nosnippet>680</a>                | casa_imaging_model::ProductTerm::Taylor(<span class="number">0</span>),
+<a href=#681 id=681 data-nosnippet>681</a>            ) =&gt; model_plane.clone(),
+<a href=#682 id=682 data-nosnippet>682</a>            ProductRole::Weight(
+<a href=#683 id=683 data-nosnippet>683</a>                casa_imaging_model::ProductTerm::Single
+<a href=#684 id=684 data-nosnippet>684</a>                | casa_imaging_model::ProductTerm::Taylor(<span class="number">0</span>),
+<a href=#685 id=685 data-nosnippet>685</a>            ) =&gt; normal_state
+<a href=#686 id=686 data-nosnippet>686</a>                .sensitivity()
+<a href=#687 id=687 data-nosnippet>687</a>                .iter()
+<a href=#688 id=688 data-nosnippet>688</a>                .map(|value| <span class="kw-2">*</span>value <span class="kw">as </span>f32)
+<a href=#689 id=689 data-nosnippet>689</a>                .collect(),
+<a href=#690 id=690 data-nosnippet>690</a>            ProductRole::RestoredImage(
+<a href=#691 id=691 data-nosnippet>691</a>                casa_imaging_model::ProductTerm::Single
+<a href=#692 id=692 data-nosnippet>692</a>                | casa_imaging_model::ProductTerm::Taylor(<span class="number">0</span>),
+<a href=#693 id=693 data-nosnippet>693</a>            ) =&gt; {
+<a href=#694 id=694 data-nosnippet>694</a>                <span class="kw">let </span><span class="prelude-val">Some</span>(beam) = restoring_beam.as_ref() <span class="kw">else </span>{
+<a href=#695 id=695 data-nosnippet>695</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(ProductsError::BeamFitFailed(
+<a href=#696 id=696 data-nosnippet>696</a>                        <span class="string">"restoration requires a fitted restoring beam"</span>.to_string(),
+<a href=#697 id=697 data-nosnippet>697</a>                    ));
+<a href=#698 id=698 data-nosnippet>698</a>                };
+<a href=#699 id=699 data-nosnippet>699</a>                <span class="kw">let </span>kernel = gaussian_beam_image(plane_shape, beam, inputs.cell_size_rad());
+<a href=#700 id=700 data-nosnippet>700</a>                <span class="kw">let </span><span class="kw-2">mut </span>restored = fft_convolve(
+<a href=#701 id=701 data-nosnippet>701</a>                    <span class="kw-2">&amp;</span>model_plane,
+<a href=#702 id=702 data-nosnippet>702</a>                    kernel.as_slice().expect(<span class="string">"contiguous"</span>),
+<a href=#703 id=703 data-nosnippet>703</a>                    plane_shape,
+<a href=#704 id=704 data-nosnippet>704</a>                );
+<a href=#705 id=705 data-nosnippet>705</a>                <span class="comment">// CASA restoration equation (`SIImageStore::restore`):
+<a href=#706 id=706 data-nosnippet>706</a>                // restored = conv(model, beam) + residual, where the residual
+<a href=#707 id=707 data-nosnippet>707</a>                // enters exactly as it is published. The convolved sky model
+<a href=#708 id=708 data-nosnippet>708</a>                // is never divided by the residual sensitivity.
+<a href=#709 id=709 data-nosnippet>709</a>                </span><span class="kw">let </span>residual_component = normalize_plane(
+<a href=#710 id=710 data-nosnippet>710</a>                    <span class="kw-2">&amp;</span>residual_unnormalized,
+<a href=#711 id=711 data-nosnippet>711</a>                    required_normalization(member)<span class="question-mark">?</span>,
+<a href=#712 id=712 data-nosnippet>712</a>                    sensitivity,
+<a href=#713 id=713 data-nosnippet>713</a>                )<span class="question-mark">?</span>;
+<a href=#714 id=714 data-nosnippet>714</a>                <span class="kw">for </span>(restored, residual) <span class="kw">in </span>restored.iter_mut().zip(<span class="kw-2">&amp;</span>residual_component) {
+<a href=#715 id=715 data-nosnippet>715</a>                    <span class="kw-2">*</span>restored += residual;
+<a href=#716 id=716 data-nosnippet>716</a>                }
+<a href=#717 id=717 data-nosnippet>717</a>                restored
+<a href=#718 id=718 data-nosnippet>718</a>            }
+<a href=#719 id=719 data-nosnippet>719</a>            ProductRole::SumWeights(<span class="kw">_</span>) | ProductRole::Sensitivity =&gt; {
+<a href=#720 id=720 data-nosnippet>720</a>                <span class="macro">vec!</span>[sensitivity <span class="kw">as </span>f32; member.payload_values]
+<a href=#721 id=721 data-nosnippet>721</a>            }
+<a href=#722 id=722 data-nosnippet>722</a>            ProductRole::CleanMask =&gt; normal_state
+<a href=#723 id=723 data-nosnippet>723</a>                .sensitivity()
+<a href=#724 id=724 data-nosnippet>724</a>                .iter()
+<a href=#725 id=725 data-nosnippet>725</a>                .map(|value| {
+<a href=#726 id=726 data-nosnippet>726</a>                    <span class="kw">if </span><span class="kw-2">*</span>value &gt; <span class="number">0.0 </span>&amp;&amp; value.is_finite() {
+<a href=#727 id=727 data-nosnippet>727</a>                        <span class="number">1.0_f32
+<a href=#728 id=728 data-nosnippet>728</a>                    </span>} <span class="kw">else </span>{
+<a href=#729 id=729 data-nosnippet>729</a>                        <span class="number">0.0
+<a href=#730 id=730 data-nosnippet>730</a>                    </span>}
+<a href=#731 id=731 data-nosnippet>731</a>                })
+<a href=#732 id=732 data-nosnippet>732</a>                .collect(),
+<a href=#733 id=733 data-nosnippet>733</a>            role =&gt; {
+<a href=#734 id=734 data-nosnippet>734</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(ProductsError::UnsupportedProductRole {
+<a href=#735 id=735 data-nosnippet>735</a>                    role,
+<a href=#736 id=736 data-nosnippet>736</a>                    catalog: CONTINUUM_ALGORITHM_CATALOG_VERSION,
+<a href=#737 id=737 data-nosnippet>737</a>                });
+<a href=#738 id=738 data-nosnippet>738</a>            }
+<a href=#739 id=739 data-nosnippet>739</a>        };
+<a href=#740 id=740 data-nosnippet>740</a>        <span class="comment">// FinalNormalState validity blanks pixels without usable sensitivity.
+<a href=#741 id=741 data-nosnippet>741</a>        </span><span class="kw">if </span><span class="macro">matches!</span>(
+<a href=#742 id=742 data-nosnippet>742</a>            member.role,
+<a href=#743 id=743 data-nosnippet>743</a>            ProductRole::Residual(<span class="kw">_</span>) | ProductRole::RestoredImage(<span class="kw">_</span>)
+<a href=#744 id=744 data-nosnippet>744</a>        ) &amp;&amp; !(sensitivity.is_finite() &amp;&amp; sensitivity &gt; <span class="number">0.0</span>)
+<a href=#745 id=745 data-nosnippet>745</a>        {
+<a href=#746 id=746 data-nosnippet>746</a>            payload.fill(f32::NAN);
+<a href=#747 id=747 data-nosnippet>747</a>        }
+<a href=#748 id=748 data-nosnippet>748</a>        <span class="kw">if </span>payload.iter().any(|value| value.is_infinite()) {
+<a href=#749 id=749 data-nosnippet>749</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ProductsError::GeneratedNonfinite);
+<a href=#750 id=750 data-nosnippet>750</a>        }
+<a href=#751 id=751 data-nosnippet>751</a>        <span class="kw">if </span>payload.len() != member.payload_values {
+<a href=#752 id=752 data-nosnippet>752</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ProductsError::PayloadLengthMismatch {
+<a href=#753 id=753 data-nosnippet>753</a>                expected: member.payload_values,
+<a href=#754 id=754 data-nosnippet>754</a>                actual: payload.len(),
+<a href=#755 id=755 data-nosnippet>755</a>            });
+<a href=#756 id=756 data-nosnippet>756</a>        }
+<a href=#757 id=757 data-nosnippet>757</a>        <span class="kw">let </span>digest = MemberArtifactId(plane_digest(<span class="kw-2">&amp;</span>payload));
+<a href=#758 id=758 data-nosnippet>758</a>        members.push(ProducedMember {
+<a href=#759 id=759 data-nosnippet>759</a>            node: member.node,
+<a href=#760 id=760 data-nosnippet>760</a>            artifact_id: member.artifact_id,
+<a href=#761 id=761 data-nosnippet>761</a>            digest,
+<a href=#762 id=762 data-nosnippet>762</a>            payload,
+<a href=#763 id=763 data-nosnippet>763</a>        });
+<a href=#764 id=764 data-nosnippet>764</a>    }
+<a href=#765 id=765 data-nosnippet>765</a>
+<a href=#766 id=766 data-nosnippet>766</a>    <span class="prelude-val">Ok</span>(ContinuumProducedMembers {
+<a href=#767 id=767 data-nosnippet>767</a>        planned_generation: planned.generation_id,
+<a href=#768 id=768 data-nosnippet>768</a>        commitment_id: planned.commitment_id,
+<a href=#769 id=769 data-nosnippet>769</a>        restoring_beam,
+<a href=#770 id=770 data-nosnippet>770</a>        members: members.into_boxed_slice(),
+<a href=#771 id=771 data-nosnippet>771</a>    })
+<a href=#772 id=772 data-nosnippet>772</a>}
+<a href=#773 id=773 data-nosnippet>773</a>
+<a href=#774 id=774 data-nosnippet>774</a><span class="kw">fn </span>required_normalization(member: <span class="kw-2">&amp;</span>PlannedMember) -&gt; <span class="prelude-ty">Result</span>&lt;ProductNormalization, ProductsError&gt; {
+<a href=#775 id=775 data-nosnippet>775</a>    member
+<a href=#776 id=776 data-nosnippet>776</a>        .normalization
+<a href=#777 id=777 data-nosnippet>777</a>        .ok_or(ProductsError::UnsupportedProblem)
 <a href=#778 id=778 data-nosnippet>778</a>}
 <a href=#779 id=779 data-nosnippet>779</a>
-<a href=#780 id=780 data-nosnippet>780</a><span class="kw">fn </span>model_real_plane(
-<a href=#781 id=781 data-nosnippet>781</a>    model: <span class="kw-2">&amp;</span>casa_imaging_reconstruction::ModelGeneration,
-<a href=#782 id=782 data-nosnippet>782</a>    plane_shape: [usize; <span class="number">2</span>],
-<a href=#783 id=783 data-nosnippet>783</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;f32&gt;, ProductsError&gt; {
-<a href=#784 id=784 data-nosnippet>784</a>    <span class="kw">let </span>[width, height] = plane_shape;
-<a href=#785 id=785 data-nosnippet>785</a>    <span class="kw">if </span>model.shape().domains().len() != <span class="number">1
-<a href=#786 id=786 data-nosnippet>786</a>        </span>|| model.shape().coefficients() != <span class="number">1
-<a href=#787 id=787 data-nosnippet>787</a>        </span>|| model.shape().polarizations() != <span class="number">1
-<a href=#788 id=788 data-nosnippet>788</a>        </span>|| model.shape().domains()[<span class="number">0</span>].pixels() != plane_shape
-<a href=#789 id=789 data-nosnippet>789</a>        || model.samples().len() != width * height
-<a href=#790 id=790 data-nosnippet>790</a>    {
-<a href=#791 id=791 data-nosnippet>791</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ProductsError::SourceLineageMismatch);
-<a href=#792 id=792 data-nosnippet>792</a>    }
-<a href=#793 id=793 data-nosnippet>793</a>    <span class="comment">// Canonical model order is y-major (`flat = y * W + x`); product planes
-<a href=#794 id=794 data-nosnippet>794</a>    // are stored x-major like every normal-state primitive.
-<a href=#795 id=795 data-nosnippet>795</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>plane = <span class="macro">vec!</span>[<span class="number">0.0_f32</span>; width * height];
-<a href=#796 id=796 data-nosnippet>796</a>    <span class="kw">for </span>y <span class="kw">in </span><span class="number">0</span>..height {
-<a href=#797 id=797 data-nosnippet>797</a>        <span class="kw">for </span>x <span class="kw">in </span><span class="number">0</span>..width {
-<a href=#798 id=798 data-nosnippet>798</a>            plane[x * height + y] = model.samples()[y * width + x].value().value() <span class="kw">as </span>f32;
-<a href=#799 id=799 data-nosnippet>799</a>        }
-<a href=#800 id=800 data-nosnippet>800</a>    }
-<a href=#801 id=801 data-nosnippet>801</a>    <span class="prelude-val">Ok</span>(plane)
-<a href=#802 id=802 data-nosnippet>802</a>}
-<a href=#803 id=803 data-nosnippet>803</a>
-<a href=#804 id=804 data-nosnippet>804</a><span class="doccomment">/// The complete compiled contract carried by one sealed member.
-<a href=#805 id=805 data-nosnippet>805</a></span><span class="attr">#[derive(Debug, Clone)]
-<a href=#806 id=806 data-nosnippet>806</a></span><span class="kw">pub struct </span>SealedMemberContract {
-<a href=#807 id=807 data-nosnippet>807</a>    role: ProductRole,
-<a href=#808 id=808 data-nosnippet>808</a>    unit: ProductUnit,
-<a href=#809 id=809 data-nosnippet>809</a>    schema: ProductSchema,
-<a href=#810 id=810 data-nosnippet>810</a>    axes: ProductAxes,
-<a href=#811 id=811 data-nosnippet>811</a>    beam_rule: ProductBeamRule,
-<a href=#812 id=812 data-nosnippet>812</a>    validity: ProductValidityRule,
-<a href=#813 id=813 data-nosnippet>813</a>    dependencies: Box&lt;[ProductNodeId]&gt;,
-<a href=#814 id=814 data-nosnippet>814</a>}
-<a href=#815 id=815 data-nosnippet>815</a>
-<a href=#816 id=816 data-nosnippet>816</a><span class="kw">impl </span>SealedMemberContract {
-<a href=#817 id=817 data-nosnippet>817</a>    <span class="doccomment">/// Return the exact logical product meaning.
-<a href=#818 id=818 data-nosnippet>818</a>    </span><span class="attr">#[must_use]
-<a href=#819 id=819 data-nosnippet>819</a>    </span><span class="kw">pub const fn </span>role(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ProductRole {
-<a href=#820 id=820 data-nosnippet>820</a>        <span class="self">self</span>.role
-<a href=#821 id=821 data-nosnippet>821</a>    }
-<a href=#822 id=822 data-nosnippet>822</a>
-<a href=#823 id=823 data-nosnippet>823</a>    <span class="doccomment">/// Return the required physical unit.
-<a href=#824 id=824 data-nosnippet>824</a>    </span><span class="attr">#[must_use]
-<a href=#825 id=825 data-nosnippet>825</a>    </span><span class="kw">pub const fn </span>unit(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ProductUnit {
-<a href=#826 id=826 data-nosnippet>826</a>        <span class="self">self</span>.unit
-<a href=#827 id=827 data-nosnippet>827</a>    }
-<a href=#828 id=828 data-nosnippet>828</a>
-<a href=#829 id=829 data-nosnippet>829</a>    <span class="doccomment">/// Return the backend-independent logical payload schema.
-<a href=#830 id=830 data-nosnippet>830</a>    </span><span class="attr">#[must_use]
-<a href=#831 id=831 data-nosnippet>831</a>    </span><span class="kw">pub const fn </span>schema(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ProductSchema {
-<a href=#832 id=832 data-nosnippet>832</a>        <span class="self">self</span>.schema
-<a href=#833 id=833 data-nosnippet>833</a>    }
-<a href=#834 id=834 data-nosnippet>834</a>
-<a href=#835 id=835 data-nosnippet>835</a>    <span class="doccomment">/// Return the exact WCS and storage-axis binding.
-<a href=#836 id=836 data-nosnippet>836</a>    </span><span class="attr">#[must_use]
-<a href=#837 id=837 data-nosnippet>837</a>    </span><span class="kw">pub const fn </span>axes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>ProductAxes {
-<a href=#838 id=838 data-nosnippet>838</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.axes
-<a href=#839 id=839 data-nosnippet>839</a>    }
-<a href=#840 id=840 data-nosnippet>840</a>
-<a href=#841 id=841 data-nosnippet>841</a>    <span class="doccomment">/// Return fitted, restoring, inherited, or absent beam semantics.
-<a href=#842 id=842 data-nosnippet>842</a>    </span><span class="attr">#[must_use]
-<a href=#843 id=843 data-nosnippet>843</a>    </span><span class="kw">pub const fn </span>beam_rule(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ProductBeamRule {
-<a href=#844 id=844 data-nosnippet>844</a>        <span class="self">self</span>.beam_rule
-<a href=#845 id=845 data-nosnippet>845</a>    }
-<a href=#846 id=846 data-nosnippet>846</a>
-<a href=#847 id=847 data-nosnippet>847</a>    <span class="doccomment">/// Return the output-validity rule.
-<a href=#848 id=848 data-nosnippet>848</a>    </span><span class="attr">#[must_use]
-<a href=#849 id=849 data-nosnippet>849</a>    </span><span class="kw">pub const fn </span>validity(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ProductValidityRule {
-<a href=#850 id=850 data-nosnippet>850</a>        <span class="self">self</span>.validity
-<a href=#851 id=851 data-nosnippet>851</a>    }
-<a href=#852 id=852 data-nosnippet>852</a>
-<a href=#853 id=853 data-nosnippet>853</a>    <span class="doccomment">/// Return graph-node dependencies, all of which precede this node.
-<a href=#854 id=854 data-nosnippet>854</a>    </span><span class="attr">#[must_use]
-<a href=#855 id=855 data-nosnippet>855</a>    </span><span class="kw">pub const fn </span>dependencies(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[ProductNodeId] {
-<a href=#856 id=856 data-nosnippet>856</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.dependencies
-<a href=#857 id=857 data-nosnippet>857</a>    }
-<a href=#858 id=858 data-nosnippet>858</a>}
-<a href=#859 id=859 data-nosnippet>859</a>
-<a href=#860 id=860 data-nosnippet>860</a><span class="doccomment">/// One authorized member of an exactly-once sealed member set.
-<a href=#861 id=861 data-nosnippet>861</a></span><span class="attr">#[derive(Debug, Clone)]
-<a href=#862 id=862 data-nosnippet>862</a></span><span class="kw">pub struct </span>SealedMember {
-<a href=#863 id=863 data-nosnippet>863</a>    node: ProductNodeId,
-<a href=#864 id=864 data-nosnippet>864</a>    name: String,
-<a href=#865 id=865 data-nosnippet>865</a>    artifact_id: MemberArtifactId,
-<a href=#866 id=866 data-nosnippet>866</a>    content_identity: MemberArtifactId,
-<a href=#867 id=867 data-nosnippet>867</a>    contract: SealedMemberContract,
-<a href=#868 id=868 data-nosnippet>868</a>    resolved_beam: <span class="prelude-ty">Option</span>&lt;RestoringBeam&gt;,
-<a href=#869 id=869 data-nosnippet>869</a>    payload: Vec&lt;f32&gt;,
-<a href=#870 id=870 data-nosnippet>870</a>}
-<a href=#871 id=871 data-nosnippet>871</a>
-<a href=#872 id=872 data-nosnippet>872</a><span class="kw">impl </span>SealedMember {
-<a href=#873 id=873 data-nosnippet>873</a>    <span class="doccomment">/// Return the graph-local node identity.
-<a href=#874 id=874 data-nosnippet>874</a>    </span><span class="attr">#[must_use]
-<a href=#875 id=875 data-nosnippet>875</a>    </span><span class="kw">pub const fn </span>node(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ProductNodeId {
-<a href=#876 id=876 data-nosnippet>876</a>        <span class="self">self</span>.node
-<a href=#877 id=877 data-nosnippet>877</a>    }
-<a href=#878 id=878 data-nosnippet>878</a>
-<a href=#879 id=879 data-nosnippet>879</a>    <span class="doccomment">/// Return the compiled product name.
-<a href=#880 id=880 data-nosnippet>880</a>    </span><span class="attr">#[must_use]
-<a href=#881 id=881 data-nosnippet>881</a>    </span><span class="kw">pub fn </span>name(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>str {
-<a href=#882 id=882 data-nosnippet>882</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.name
-<a href=#883 id=883 data-nosnippet>883</a>    }
-<a href=#884 id=884 data-nosnippet>884</a>
-<a href=#885 id=885 data-nosnippet>885</a>    <span class="doccomment">/// Return the planned-and-sealed artifact identity.
-<a href=#886 id=886 data-nosnippet>886</a>    </span><span class="attr">#[must_use]
-<a href=#887 id=887 data-nosnippet>887</a>    </span><span class="kw">pub const fn </span>artifact_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; MemberArtifactId {
-<a href=#888 id=888 data-nosnippet>888</a>        <span class="self">self</span>.artifact_id
-<a href=#889 id=889 data-nosnippet>889</a>    }
-<a href=#890 id=890 data-nosnippet>890</a>
-<a href=#891 id=891 data-nosnippet>891</a>    <span class="doccomment">/// Return the content identity bound to this member's artifact identity
-<a href=#892 id=892 data-nosnippet>892</a>    /// by the authorization seal.
-<a href=#893 id=893 data-nosnippet>893</a>    </span><span class="attr">#[must_use]
-<a href=#894 id=894 data-nosnippet>894</a>    </span><span class="kw">pub const fn </span>content_identity(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; MemberArtifactId {
-<a href=#895 id=895 data-nosnippet>895</a>        <span class="self">self</span>.content_identity
-<a href=#896 id=896 data-nosnippet>896</a>    }
-<a href=#897 id=897 data-nosnippet>897</a>
-<a href=#898 id=898 data-nosnippet>898</a>    <span class="doccomment">/// Return the complete compiled contract of this member.
-<a href=#899 id=899 data-nosnippet>899</a>    </span><span class="attr">#[must_use]
-<a href=#900 id=900 data-nosnippet>900</a>    </span><span class="kw">pub const fn </span>contract(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>SealedMemberContract {
-<a href=#901 id=901 data-nosnippet>901</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.contract
-<a href=#902 id=902 data-nosnippet>902</a>    }
-<a href=#903 id=903 data-nosnippet>903</a>
-<a href=#904 id=904 data-nosnippet>904</a>    <span class="doccomment">/// Return the resolved beam metadata, when this member's beam rule
-<a href=#905 id=905 data-nosnippet>905</a>    /// resolves to the generation's fitted beam.
-<a href=#906 id=906 data-nosnippet>906</a>    </span><span class="attr">#[must_use]
-<a href=#907 id=907 data-nosnippet>907</a>    </span><span class="kw">pub const fn </span>resolved_beam(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>RestoringBeam&gt; {
-<a href=#908 id=908 data-nosnippet>908</a>        <span class="self">self</span>.resolved_beam.as_ref()
-<a href=#909 id=909 data-nosnippet>909</a>    }
-<a href=#910 id=910 data-nosnippet>910</a>
-<a href=#911 id=911 data-nosnippet>911</a>    <span class="doccomment">/// Borrow the sealed binary32 payload.
-<a href=#912 id=912 data-nosnippet>912</a>    </span><span class="attr">#[must_use]
-<a href=#913 id=913 data-nosnippet>913</a>    </span><span class="kw">pub fn </span>payload(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[f32] {
-<a href=#914 id=914 data-nosnippet>914</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.payload
-<a href=#915 id=915 data-nosnippet>915</a>    }
-<a href=#916 id=916 data-nosnippet>916</a>}
-<a href=#917 id=917 data-nosnippet>917</a>
-<a href=#918 id=918 data-nosnippet>918</a><span class="doccomment">/// Resolve one member's compiled beam rule against the fitted generation beam.
-<a href=#919 id=919 data-nosnippet>919</a></span><span class="kw">fn </span>sealed_beam(rule: ProductBeamRule, fitted: <span class="prelude-ty">Option</span>&lt;RestoringBeam&gt;) -&gt; <span class="prelude-ty">Option</span>&lt;RestoringBeam&gt; {
-<a href=#920 id=920 data-nosnippet>920</a>    <span class="kw">match </span>rule {
-<a href=#921 id=921 data-nosnippet>921</a>        ProductBeamRule::None =&gt; <span class="prelude-val">None</span>,
-<a href=#922 id=922 data-nosnippet>922</a>        ProductBeamRule::Fitted | ProductBeamRule::Metadata(<span class="kw">_</span>) | ProductBeamRule::Restoring(<span class="kw">_</span>) =&gt; {
-<a href=#923 id=923 data-nosnippet>923</a>            fitted
-<a href=#924 id=924 data-nosnippet>924</a>        }
-<a href=#925 id=925 data-nosnippet>925</a>        <span class="comment">// Inherit rules resolve through their referenced member; the
-<a href=#926 id=926 data-nosnippet>926</a>        // embedded metadata is identical because the generation carries one
-<a href=#927 id=927 data-nosnippet>927</a>        // fitted beam set, so resolving to it preserves the contract.
-<a href=#928 id=928 data-nosnippet>928</a>        </span>ProductBeamRule::Inherit(<span class="kw">_</span>) =&gt; fitted,
-<a href=#929 id=929 data-nosnippet>929</a>    }
-<a href=#930 id=930 data-nosnippet>930</a>}
-<a href=#931 id=931 data-nosnippet>931</a>
-<a href=#932 id=932 data-nosnippet>932</a><span class="doccomment">/// One authorized continuum generation carrying its exact sealed member set.
-<a href=#933 id=933 data-nosnippet>933</a>///
-<a href=#934 id=934 data-nosnippet>934</a>/// Minted only by [`ProductGenerationAuthority::authorize`]:
-<a href=#935 id=935 data-nosnippet>935</a>///
-<a href=#936 id=936 data-nosnippet>936</a>/// ```compile_fail
-<a href=#937 id=937 data-nosnippet>937</a>/// use casa_imaging_products::SealedContinuumGeneration;
-<a href=#938 id=938 data-nosnippet>938</a>///
-<a href=#939 id=939 data-nosnippet>939</a>/// let _ = SealedContinuumGeneration {};
-<a href=#940 id=940 data-nosnippet>940</a>/// ```
-<a href=#941 id=941 data-nosnippet>941</a></span><span class="attr">#[derive(Debug)]
-<a href=#942 id=942 data-nosnippet>942</a></span><span class="kw">pub struct </span>SealedContinuumGeneration {
-<a href=#943 id=943 data-nosnippet>943</a>    problem_id: CompiledProblemId,
-<a href=#944 id=944 data-nosnippet>944</a>    graph_id: ProductGraphId,
-<a href=#945 id=945 data-nosnippet>945</a>    seal_id: ContinuumSealId,
-<a href=#946 id=946 data-nosnippet>946</a>    generation_id: PlannedGenerationId,
-<a href=#947 id=947 data-nosnippet>947</a>    completions_id: ContinuumCompletionsId,
-<a href=#948 id=948 data-nosnippet>948</a>    restoring_beam: <span class="prelude-ty">Option</span>&lt;RestoringBeam&gt;,
-<a href=#949 id=949 data-nosnippet>949</a>    members: Box&lt;[SealedMember]&gt;,
-<a href=#950 id=950 data-nosnippet>950</a>}
-<a href=#951 id=951 data-nosnippet>951</a>
-<a href=#952 id=952 data-nosnippet>952</a><span class="kw">impl </span>SealedContinuumGeneration {
-<a href=#953 id=953 data-nosnippet>953</a>    <span class="doccomment">/// Return the exact compiled problem authorized by this seal.
-<a href=#954 id=954 data-nosnippet>954</a>    </span><span class="attr">#[must_use]
-<a href=#955 id=955 data-nosnippet>955</a>    </span><span class="kw">pub const fn </span>problem_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; CompiledProblemId {
-<a href=#956 id=956 data-nosnippet>956</a>        <span class="self">self</span>.problem_id
-<a href=#957 id=957 data-nosnippet>957</a>    }
-<a href=#958 id=958 data-nosnippet>958</a>
-<a href=#959 id=959 data-nosnippet>959</a>    <span class="doccomment">/// Return the exact compiled Product Graph authorized by this seal.
-<a href=#960 id=960 data-nosnippet>960</a>    </span><span class="attr">#[must_use]
-<a href=#961 id=961 data-nosnippet>961</a>    </span><span class="kw">pub const fn </span>graph_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ProductGraphId {
-<a href=#962 id=962 data-nosnippet>962</a>        <span class="self">self</span>.graph_id
-<a href=#963 id=963 data-nosnippet>963</a>    }
-<a href=#964 id=964 data-nosnippet>964</a>
-<a href=#965 id=965 data-nosnippet>965</a>    <span class="doccomment">/// Return the Product Generation seal identity.
-<a href=#966 id=966 data-nosnippet>966</a>    </span><span class="attr">#[must_use]
-<a href=#967 id=967 data-nosnippet>967</a>    </span><span class="kw">pub const fn </span>seal_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ContinuumSealId {
-<a href=#968 id=968 data-nosnippet>968</a>        <span class="self">self</span>.seal_id
-<a href=#969 id=969 data-nosnippet>969</a>    }
-<a href=#970 id=970 data-nosnippet>970</a>
-<a href=#971 id=971 data-nosnippet>971</a>    <span class="doccomment">/// Return the planned generation this seal authorizes.
-<a href=#972 id=972 data-nosnippet>972</a>    </span><span class="attr">#[must_use]
-<a href=#973 id=973 data-nosnippet>973</a>    </span><span class="kw">pub const fn </span>generation_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; PlannedGenerationId {
-<a href=#974 id=974 data-nosnippet>974</a>        <span class="self">self</span>.generation_id
-<a href=#975 id=975 data-nosnippet>975</a>    }
-<a href=#976 id=976 data-nosnippet>976</a>
-<a href=#977 id=977 data-nosnippet>977</a>    <span class="doccomment">/// Return the typed completions record behind this seal.
-<a href=#978 id=978 data-nosnippet>978</a>    </span><span class="attr">#[must_use]
-<a href=#979 id=979 data-nosnippet>979</a>    </span><span class="kw">pub const fn </span>completions_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ContinuumCompletionsId {
-<a href=#980 id=980 data-nosnippet>980</a>        <span class="self">self</span>.completions_id
-<a href=#981 id=981 data-nosnippet>981</a>    }
-<a href=#982 id=982 data-nosnippet>982</a>
-<a href=#983 id=983 data-nosnippet>983</a>    <span class="doccomment">/// Return the fitted restoring beam, when the graph required one.
-<a href=#984 id=984 data-nosnippet>984</a>    </span><span class="attr">#[must_use]
-<a href=#985 id=985 data-nosnippet>985</a>    </span><span class="kw">pub const fn </span>restoring_beam(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>RestoringBeam&gt; {
-<a href=#986 id=986 data-nosnippet>986</a>        <span class="self">self</span>.restoring_beam.as_ref()
-<a href=#987 id=987 data-nosnippet>987</a>    }
-<a href=#988 id=988 data-nosnippet>988</a>
-<a href=#989 id=989 data-nosnippet>989</a>    <span class="doccomment">/// Return the exact sealed member set in canonical publication order.
-<a href=#990 id=990 data-nosnippet>990</a>    </span><span class="attr">#[must_use]
-<a href=#991 id=991 data-nosnippet>991</a>    </span><span class="kw">pub const fn </span>members(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[SealedMember] {
-<a href=#992 id=992 data-nosnippet>992</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.members
-<a href=#993 id=993 data-nosnippet>993</a>    }
-<a href=#994 id=994 data-nosnippet>994</a>}
+<a href=#780 id=780 data-nosnippet>780</a><span class="kw">fn </span>psf_real_plane(normal_state: <span class="kw-2">&amp;</span>casa_imaging_reconstruction::FinalNormalState) -&gt; Vec&lt;f32&gt; {
+<a href=#781 id=781 data-nosnippet>781</a>    normal_state
+<a href=#782 id=782 data-nosnippet>782</a>        .normal_approximation()
+<a href=#783 id=783 data-nosnippet>783</a>        .iter()
+<a href=#784 id=784 data-nosnippet>784</a>        .map(|value| value.re <span class="kw">as </span>f32)
+<a href=#785 id=785 data-nosnippet>785</a>        .collect()
+<a href=#786 id=786 data-nosnippet>786</a>}
+<a href=#787 id=787 data-nosnippet>787</a>
+<a href=#788 id=788 data-nosnippet>788</a><span class="kw">fn </span>residual_real_plane(normal_state: <span class="kw-2">&amp;</span>casa_imaging_reconstruction::FinalNormalState) -&gt; Vec&lt;f32&gt; {
+<a href=#789 id=789 data-nosnippet>789</a>    normal_state
+<a href=#790 id=790 data-nosnippet>790</a>        .residual()
+<a href=#791 id=791 data-nosnippet>791</a>        .iter()
+<a href=#792 id=792 data-nosnippet>792</a>        .map(|value| value.re <span class="kw">as </span>f32)
+<a href=#793 id=793 data-nosnippet>793</a>        .collect()
+<a href=#794 id=794 data-nosnippet>794</a>}
+<a href=#795 id=795 data-nosnippet>795</a>
+<a href=#796 id=796 data-nosnippet>796</a><span class="kw">fn </span>model_real_plane(
+<a href=#797 id=797 data-nosnippet>797</a>    model: <span class="kw-2">&amp;</span>casa_imaging_reconstruction::ModelGeneration,
+<a href=#798 id=798 data-nosnippet>798</a>    plane_shape: [usize; <span class="number">2</span>],
+<a href=#799 id=799 data-nosnippet>799</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;f32&gt;, ProductsError&gt; {
+<a href=#800 id=800 data-nosnippet>800</a>    <span class="kw">let </span>[width, height] = plane_shape;
+<a href=#801 id=801 data-nosnippet>801</a>    <span class="kw">if </span>model.shape().domains().len() != <span class="number">1
+<a href=#802 id=802 data-nosnippet>802</a>        </span>|| model.shape().coefficients() != <span class="number">1
+<a href=#803 id=803 data-nosnippet>803</a>        </span>|| model.shape().polarizations() != <span class="number">1
+<a href=#804 id=804 data-nosnippet>804</a>        </span>|| model.shape().domains()[<span class="number">0</span>].pixels() != plane_shape
+<a href=#805 id=805 data-nosnippet>805</a>        || model.samples().len() != width * height
+<a href=#806 id=806 data-nosnippet>806</a>    {
+<a href=#807 id=807 data-nosnippet>807</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ProductsError::SourceLineageMismatch);
+<a href=#808 id=808 data-nosnippet>808</a>    }
+<a href=#809 id=809 data-nosnippet>809</a>    <span class="comment">// Canonical model order is y-major (`flat = y * W + x`); product planes
+<a href=#810 id=810 data-nosnippet>810</a>    // are stored x-major like every normal-state primitive.
+<a href=#811 id=811 data-nosnippet>811</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>plane = <span class="macro">vec!</span>[<span class="number">0.0_f32</span>; width * height];
+<a href=#812 id=812 data-nosnippet>812</a>    <span class="kw">for </span>y <span class="kw">in </span><span class="number">0</span>..height {
+<a href=#813 id=813 data-nosnippet>813</a>        <span class="kw">for </span>x <span class="kw">in </span><span class="number">0</span>..width {
+<a href=#814 id=814 data-nosnippet>814</a>            plane[x * height + y] = model.samples()[y * width + x].value().value() <span class="kw">as </span>f32;
+<a href=#815 id=815 data-nosnippet>815</a>        }
+<a href=#816 id=816 data-nosnippet>816</a>    }
+<a href=#817 id=817 data-nosnippet>817</a>    <span class="prelude-val">Ok</span>(plane)
+<a href=#818 id=818 data-nosnippet>818</a>}
+<a href=#819 id=819 data-nosnippet>819</a>
+<a href=#820 id=820 data-nosnippet>820</a><span class="doccomment">/// The complete compiled contract carried by one sealed member.
+<a href=#821 id=821 data-nosnippet>821</a></span><span class="attr">#[derive(Debug, Clone)]
+<a href=#822 id=822 data-nosnippet>822</a></span><span class="kw">pub struct </span>SealedMemberContract {
+<a href=#823 id=823 data-nosnippet>823</a>    role: ProductRole,
+<a href=#824 id=824 data-nosnippet>824</a>    unit: ProductUnit,
+<a href=#825 id=825 data-nosnippet>825</a>    schema: ProductSchema,
+<a href=#826 id=826 data-nosnippet>826</a>    axes: ProductAxes,
+<a href=#827 id=827 data-nosnippet>827</a>    beam_rule: ProductBeamRule,
+<a href=#828 id=828 data-nosnippet>828</a>    validity: ProductValidityRule,
+<a href=#829 id=829 data-nosnippet>829</a>    dependencies: Box&lt;[ProductNodeId]&gt;,
+<a href=#830 id=830 data-nosnippet>830</a>}
+<a href=#831 id=831 data-nosnippet>831</a>
+<a href=#832 id=832 data-nosnippet>832</a><span class="kw">impl </span>SealedMemberContract {
+<a href=#833 id=833 data-nosnippet>833</a>    <span class="doccomment">/// Return the exact logical product meaning.
+<a href=#834 id=834 data-nosnippet>834</a>    </span><span class="attr">#[must_use]
+<a href=#835 id=835 data-nosnippet>835</a>    </span><span class="kw">pub const fn </span>role(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ProductRole {
+<a href=#836 id=836 data-nosnippet>836</a>        <span class="self">self</span>.role
+<a href=#837 id=837 data-nosnippet>837</a>    }
+<a href=#838 id=838 data-nosnippet>838</a>
+<a href=#839 id=839 data-nosnippet>839</a>    <span class="doccomment">/// Return the required physical unit.
+<a href=#840 id=840 data-nosnippet>840</a>    </span><span class="attr">#[must_use]
+<a href=#841 id=841 data-nosnippet>841</a>    </span><span class="kw">pub const fn </span>unit(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ProductUnit {
+<a href=#842 id=842 data-nosnippet>842</a>        <span class="self">self</span>.unit
+<a href=#843 id=843 data-nosnippet>843</a>    }
+<a href=#844 id=844 data-nosnippet>844</a>
+<a href=#845 id=845 data-nosnippet>845</a>    <span class="doccomment">/// Return the backend-independent logical payload schema.
+<a href=#846 id=846 data-nosnippet>846</a>    </span><span class="attr">#[must_use]
+<a href=#847 id=847 data-nosnippet>847</a>    </span><span class="kw">pub const fn </span>schema(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ProductSchema {
+<a href=#848 id=848 data-nosnippet>848</a>        <span class="self">self</span>.schema
+<a href=#849 id=849 data-nosnippet>849</a>    }
+<a href=#850 id=850 data-nosnippet>850</a>
+<a href=#851 id=851 data-nosnippet>851</a>    <span class="doccomment">/// Return the exact WCS and storage-axis binding.
+<a href=#852 id=852 data-nosnippet>852</a>    </span><span class="attr">#[must_use]
+<a href=#853 id=853 data-nosnippet>853</a>    </span><span class="kw">pub const fn </span>axes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>ProductAxes {
+<a href=#854 id=854 data-nosnippet>854</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.axes
+<a href=#855 id=855 data-nosnippet>855</a>    }
+<a href=#856 id=856 data-nosnippet>856</a>
+<a href=#857 id=857 data-nosnippet>857</a>    <span class="doccomment">/// Return fitted, restoring, inherited, or absent beam semantics.
+<a href=#858 id=858 data-nosnippet>858</a>    </span><span class="attr">#[must_use]
+<a href=#859 id=859 data-nosnippet>859</a>    </span><span class="kw">pub const fn </span>beam_rule(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ProductBeamRule {
+<a href=#860 id=860 data-nosnippet>860</a>        <span class="self">self</span>.beam_rule
+<a href=#861 id=861 data-nosnippet>861</a>    }
+<a href=#862 id=862 data-nosnippet>862</a>
+<a href=#863 id=863 data-nosnippet>863</a>    <span class="doccomment">/// Return the output-validity rule.
+<a href=#864 id=864 data-nosnippet>864</a>    </span><span class="attr">#[must_use]
+<a href=#865 id=865 data-nosnippet>865</a>    </span><span class="kw">pub const fn </span>validity(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ProductValidityRule {
+<a href=#866 id=866 data-nosnippet>866</a>        <span class="self">self</span>.validity
+<a href=#867 id=867 data-nosnippet>867</a>    }
+<a href=#868 id=868 data-nosnippet>868</a>
+<a href=#869 id=869 data-nosnippet>869</a>    <span class="doccomment">/// Return graph-node dependencies, all of which precede this node.
+<a href=#870 id=870 data-nosnippet>870</a>    </span><span class="attr">#[must_use]
+<a href=#871 id=871 data-nosnippet>871</a>    </span><span class="kw">pub const fn </span>dependencies(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[ProductNodeId] {
+<a href=#872 id=872 data-nosnippet>872</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.dependencies
+<a href=#873 id=873 data-nosnippet>873</a>    }
+<a href=#874 id=874 data-nosnippet>874</a>}
+<a href=#875 id=875 data-nosnippet>875</a>
+<a href=#876 id=876 data-nosnippet>876</a><span class="doccomment">/// One authorized member of an exactly-once sealed member set.
+<a href=#877 id=877 data-nosnippet>877</a></span><span class="attr">#[derive(Debug, Clone)]
+<a href=#878 id=878 data-nosnippet>878</a></span><span class="kw">pub struct </span>SealedMember {
+<a href=#879 id=879 data-nosnippet>879</a>    node: ProductNodeId,
+<a href=#880 id=880 data-nosnippet>880</a>    name: String,
+<a href=#881 id=881 data-nosnippet>881</a>    artifact_id: MemberArtifactId,
+<a href=#882 id=882 data-nosnippet>882</a>    content_identity: MemberArtifactId,
+<a href=#883 id=883 data-nosnippet>883</a>    contract: SealedMemberContract,
+<a href=#884 id=884 data-nosnippet>884</a>    resolved_beam: <span class="prelude-ty">Option</span>&lt;RestoringBeam&gt;,
+<a href=#885 id=885 data-nosnippet>885</a>    payload: Vec&lt;f32&gt;,
+<a href=#886 id=886 data-nosnippet>886</a>}
+<a href=#887 id=887 data-nosnippet>887</a>
+<a href=#888 id=888 data-nosnippet>888</a><span class="kw">impl </span>SealedMember {
+<a href=#889 id=889 data-nosnippet>889</a>    <span class="doccomment">/// Return the graph-local node identity.
+<a href=#890 id=890 data-nosnippet>890</a>    </span><span class="attr">#[must_use]
+<a href=#891 id=891 data-nosnippet>891</a>    </span><span class="kw">pub const fn </span>node(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ProductNodeId {
+<a href=#892 id=892 data-nosnippet>892</a>        <span class="self">self</span>.node
+<a href=#893 id=893 data-nosnippet>893</a>    }
+<a href=#894 id=894 data-nosnippet>894</a>
+<a href=#895 id=895 data-nosnippet>895</a>    <span class="doccomment">/// Return the compiled product name.
+<a href=#896 id=896 data-nosnippet>896</a>    </span><span class="attr">#[must_use]
+<a href=#897 id=897 data-nosnippet>897</a>    </span><span class="kw">pub fn </span>name(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>str {
+<a href=#898 id=898 data-nosnippet>898</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.name
+<a href=#899 id=899 data-nosnippet>899</a>    }
+<a href=#900 id=900 data-nosnippet>900</a>
+<a href=#901 id=901 data-nosnippet>901</a>    <span class="doccomment">/// Return the planned-and-sealed artifact identity.
+<a href=#902 id=902 data-nosnippet>902</a>    </span><span class="attr">#[must_use]
+<a href=#903 id=903 data-nosnippet>903</a>    </span><span class="kw">pub const fn </span>artifact_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; MemberArtifactId {
+<a href=#904 id=904 data-nosnippet>904</a>        <span class="self">self</span>.artifact_id
+<a href=#905 id=905 data-nosnippet>905</a>    }
+<a href=#906 id=906 data-nosnippet>906</a>
+<a href=#907 id=907 data-nosnippet>907</a>    <span class="doccomment">/// Return the content identity bound to this member's artifact identity
+<a href=#908 id=908 data-nosnippet>908</a>    /// by the authorization seal.
+<a href=#909 id=909 data-nosnippet>909</a>    </span><span class="attr">#[must_use]
+<a href=#910 id=910 data-nosnippet>910</a>    </span><span class="kw">pub const fn </span>content_identity(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; MemberArtifactId {
+<a href=#911 id=911 data-nosnippet>911</a>        <span class="self">self</span>.content_identity
+<a href=#912 id=912 data-nosnippet>912</a>    }
+<a href=#913 id=913 data-nosnippet>913</a>
+<a href=#914 id=914 data-nosnippet>914</a>    <span class="doccomment">/// Return the complete compiled contract of this member.
+<a href=#915 id=915 data-nosnippet>915</a>    </span><span class="attr">#[must_use]
+<a href=#916 id=916 data-nosnippet>916</a>    </span><span class="kw">pub const fn </span>contract(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>SealedMemberContract {
+<a href=#917 id=917 data-nosnippet>917</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.contract
+<a href=#918 id=918 data-nosnippet>918</a>    }
+<a href=#919 id=919 data-nosnippet>919</a>
+<a href=#920 id=920 data-nosnippet>920</a>    <span class="doccomment">/// Return the resolved beam metadata, when this member's beam rule
+<a href=#921 id=921 data-nosnippet>921</a>    /// resolves to the generation's fitted beam.
+<a href=#922 id=922 data-nosnippet>922</a>    </span><span class="attr">#[must_use]
+<a href=#923 id=923 data-nosnippet>923</a>    </span><span class="kw">pub const fn </span>resolved_beam(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>RestoringBeam&gt; {
+<a href=#924 id=924 data-nosnippet>924</a>        <span class="self">self</span>.resolved_beam.as_ref()
+<a href=#925 id=925 data-nosnippet>925</a>    }
+<a href=#926 id=926 data-nosnippet>926</a>
+<a href=#927 id=927 data-nosnippet>927</a>    <span class="doccomment">/// Borrow the sealed binary32 payload.
+<a href=#928 id=928 data-nosnippet>928</a>    </span><span class="attr">#[must_use]
+<a href=#929 id=929 data-nosnippet>929</a>    </span><span class="kw">pub fn </span>payload(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[f32] {
+<a href=#930 id=930 data-nosnippet>930</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.payload
+<a href=#931 id=931 data-nosnippet>931</a>    }
+<a href=#932 id=932 data-nosnippet>932</a>}
+<a href=#933 id=933 data-nosnippet>933</a>
+<a href=#934 id=934 data-nosnippet>934</a><span class="doccomment">/// Resolve one member's compiled beam rule against the fitted generation beam.
+<a href=#935 id=935 data-nosnippet>935</a></span><span class="kw">fn </span>sealed_beam(rule: ProductBeamRule, fitted: <span class="prelude-ty">Option</span>&lt;RestoringBeam&gt;) -&gt; <span class="prelude-ty">Option</span>&lt;RestoringBeam&gt; {
+<a href=#936 id=936 data-nosnippet>936</a>    <span class="kw">match </span>rule {
+<a href=#937 id=937 data-nosnippet>937</a>        ProductBeamRule::None =&gt; <span class="prelude-val">None</span>,
+<a href=#938 id=938 data-nosnippet>938</a>        ProductBeamRule::Fitted | ProductBeamRule::Metadata(<span class="kw">_</span>) | ProductBeamRule::Restoring(<span class="kw">_</span>) =&gt; {
+<a href=#939 id=939 data-nosnippet>939</a>            fitted
+<a href=#940 id=940 data-nosnippet>940</a>        }
+<a href=#941 id=941 data-nosnippet>941</a>        <span class="comment">// Inherit rules resolve through their referenced member; the
+<a href=#942 id=942 data-nosnippet>942</a>        // embedded metadata is identical because the generation carries one
+<a href=#943 id=943 data-nosnippet>943</a>        // fitted beam set, so resolving to it preserves the contract.
+<a href=#944 id=944 data-nosnippet>944</a>        </span>ProductBeamRule::Inherit(<span class="kw">_</span>) =&gt; fitted,
+<a href=#945 id=945 data-nosnippet>945</a>    }
+<a href=#946 id=946 data-nosnippet>946</a>}
+<a href=#947 id=947 data-nosnippet>947</a>
+<a href=#948 id=948 data-nosnippet>948</a><span class="doccomment">/// One authorized continuum generation carrying its exact sealed member set.
+<a href=#949 id=949 data-nosnippet>949</a>///
+<a href=#950 id=950 data-nosnippet>950</a>/// Minted only by [`ProductGenerationAuthority::authorize`]:
+<a href=#951 id=951 data-nosnippet>951</a>///
+<a href=#952 id=952 data-nosnippet>952</a>/// ```compile_fail
+<a href=#953 id=953 data-nosnippet>953</a>/// use casa_imaging_products::SealedContinuumGeneration;
+<a href=#954 id=954 data-nosnippet>954</a>///
+<a href=#955 id=955 data-nosnippet>955</a>/// let _ = SealedContinuumGeneration {};
+<a href=#956 id=956 data-nosnippet>956</a>/// ```
+<a href=#957 id=957 data-nosnippet>957</a></span><span class="attr">#[derive(Debug)]
+<a href=#958 id=958 data-nosnippet>958</a></span><span class="kw">pub struct </span>SealedContinuumGeneration {
+<a href=#959 id=959 data-nosnippet>959</a>    problem_id: CompiledProblemId,
+<a href=#960 id=960 data-nosnippet>960</a>    graph_id: ProductGraphId,
+<a href=#961 id=961 data-nosnippet>961</a>    seal_id: ContinuumSealId,
+<a href=#962 id=962 data-nosnippet>962</a>    generation_id: PlannedGenerationId,
+<a href=#963 id=963 data-nosnippet>963</a>    completions_id: ContinuumCompletionsId,
+<a href=#964 id=964 data-nosnippet>964</a>    restoring_beam: <span class="prelude-ty">Option</span>&lt;RestoringBeam&gt;,
+<a href=#965 id=965 data-nosnippet>965</a>    members: Box&lt;[SealedMember]&gt;,
+<a href=#966 id=966 data-nosnippet>966</a>}
+<a href=#967 id=967 data-nosnippet>967</a>
+<a href=#968 id=968 data-nosnippet>968</a><span class="kw">impl </span>SealedContinuumGeneration {
+<a href=#969 id=969 data-nosnippet>969</a>    <span class="doccomment">/// Return the exact compiled problem authorized by this seal.
+<a href=#970 id=970 data-nosnippet>970</a>    </span><span class="attr">#[must_use]
+<a href=#971 id=971 data-nosnippet>971</a>    </span><span class="kw">pub const fn </span>problem_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; CompiledProblemId {
+<a href=#972 id=972 data-nosnippet>972</a>        <span class="self">self</span>.problem_id
+<a href=#973 id=973 data-nosnippet>973</a>    }
+<a href=#974 id=974 data-nosnippet>974</a>
+<a href=#975 id=975 data-nosnippet>975</a>    <span class="doccomment">/// Return the exact compiled Product Graph authorized by this seal.
+<a href=#976 id=976 data-nosnippet>976</a>    </span><span class="attr">#[must_use]
+<a href=#977 id=977 data-nosnippet>977</a>    </span><span class="kw">pub const fn </span>graph_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ProductGraphId {
+<a href=#978 id=978 data-nosnippet>978</a>        <span class="self">self</span>.graph_id
+<a href=#979 id=979 data-nosnippet>979</a>    }
+<a href=#980 id=980 data-nosnippet>980</a>
+<a href=#981 id=981 data-nosnippet>981</a>    <span class="doccomment">/// Return the Product Generation seal identity.
+<a href=#982 id=982 data-nosnippet>982</a>    </span><span class="attr">#[must_use]
+<a href=#983 id=983 data-nosnippet>983</a>    </span><span class="kw">pub const fn </span>seal_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ContinuumSealId {
+<a href=#984 id=984 data-nosnippet>984</a>        <span class="self">self</span>.seal_id
+<a href=#985 id=985 data-nosnippet>985</a>    }
+<a href=#986 id=986 data-nosnippet>986</a>
+<a href=#987 id=987 data-nosnippet>987</a>    <span class="doccomment">/// Return the planned generation this seal authorizes.
+<a href=#988 id=988 data-nosnippet>988</a>    </span><span class="attr">#[must_use]
+<a href=#989 id=989 data-nosnippet>989</a>    </span><span class="kw">pub const fn </span>generation_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; PlannedGenerationId {
+<a href=#990 id=990 data-nosnippet>990</a>        <span class="self">self</span>.generation_id
+<a href=#991 id=991 data-nosnippet>991</a>    }
+<a href=#992 id=992 data-nosnippet>992</a>
+<a href=#993 id=993 data-nosnippet>993</a>    <span class="doccomment">/// Return the typed completions record behind this seal.
+<a href=#994 id=994 data-nosnippet>994</a>    </span><span class="attr">#[must_use]
+<a href=#995 id=995 data-nosnippet>995</a>    </span><span class="kw">pub const fn </span>completions_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ContinuumCompletionsId {
+<a href=#996 id=996 data-nosnippet>996</a>        <span class="self">self</span>.completions_id
+<a href=#997 id=997 data-nosnippet>997</a>    }
+<a href=#998 id=998 data-nosnippet>998</a>
+<a href=#999 id=999 data-nosnippet>999</a>    <span class="doccomment">/// Return the fitted restoring beam, when the graph required one.
+<a href=#1000 id=1000 data-nosnippet>1000</a>    </span><span class="attr">#[must_use]
+<a href=#1001 id=1001 data-nosnippet>1001</a>    </span><span class="kw">pub const fn </span>restoring_beam(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>RestoringBeam&gt; {
+<a href=#1002 id=1002 data-nosnippet>1002</a>        <span class="self">self</span>.restoring_beam.as_ref()
+<a href=#1003 id=1003 data-nosnippet>1003</a>    }
+<a href=#1004 id=1004 data-nosnippet>1004</a>
+<a href=#1005 id=1005 data-nosnippet>1005</a>    <span class="doccomment">/// Return the exact sealed member set in canonical publication order.
+<a href=#1006 id=1006 data-nosnippet>1006</a>    </span><span class="attr">#[must_use]
+<a href=#1007 id=1007 data-nosnippet>1007</a>    </span><span class="kw">pub const fn </span>members(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[SealedMember] {
+<a href=#1008 id=1008 data-nosnippet>1008</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.members
+<a href=#1009 id=1009 data-nosnippet>1009</a>    }
+<a href=#1010 id=1010 data-nosnippet>1010</a>}
 </code></pre></div></section></main></body></html>

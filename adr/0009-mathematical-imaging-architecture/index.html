@@ -927,9 +927,10 @@ contracts rather than casacore or concrete backends. Product semantics depend on
 scientific state rather than solvers or execution implementations. Backends
 implement declarative work-node and operator interfaces and do not own modes,
 coordinates, weighting, normalization, or products.</p>
-<p>The sole whole-run legacy adapter is a leaf reachable only from the migration
-router. Native modules do not import the adapter or legacy-owned modules. CI
-enforces the permitted crate/module graph and rejects forbidden edges.</p>
+<p>There is one production engine behind the migration router. Capabilities whose
+owners have not landed are unavailable rather than delegated to an alternate
+implementation. CI enforces the permitted crate/module graph and rejects
+forbidden edges.</p>
 <h3 id="compile-plan-and-run-boundary">Compile, plan, and run boundary<a class="headerlink" href="#compile-plan-and-run-boundary" title="Permanent link">&para;</a></h3>
 <p><code>compile(request)</code> produces an immutable Compiled Problem containing logical
 science, an Observation Snapshot manifest, reference-data identities, required
@@ -941,7 +942,7 @@ the exact problem and input identities. ADR-0010 defines its physical work and
 resource contract.</p>
 <p><code>run(problem, plan)</code> validates the bindings and executes only the plan. It does
 not silently recompile, perform capability routing, choose an unlisted backend,
-or fall back to legacy.</p>
+or fall back to another implementation.</p>
 <h3 id="measurement-equation-and-weighting">Measurement equation and weighting<a class="headerlink" href="#measurement-equation-and-weighting" title="Permanent link">&para;</a></h3>
 <p>Let X be the declared model-coefficient space and D the selected unweighted
 visibility-sample space. The complete logical measurement operator is A: X -&gt; D.
@@ -1031,21 +1032,22 @@ and atomic publication. Backends may provide primitive transforms but may not
 define the meaning of image, residual, PSF, alpha, beam, mask, sensitivity, or
 PB-corrected products.</p>
 <h3 id="migration">Migration<a class="headerlink" href="#migration" title="Permanent link">&para;</a></h3>
-<p>The authoritative migration matrix classifies each supported request capability
-as Native, LegacyWholeRun, or TemporarilyUnavailable. Routing occurs once before
-planning and is recorded in the request disposition and receipt. A native
-compile, plan, or execution failure is never retried through legacy. Native
-execution never delegates a stage to legacy, and a mixed request remains wholly
-legacy until all required capabilities are native.</p>
+<p>The authoritative migration matrix classifies each request capability as Native
+or TemporarilyUnavailable. Routing occurs once before planning and is recorded
+in the request disposition and receipt. An unavailable request invokes no
+engine. A compile, plan, or execution failure is terminal, and execution never
+delegates a stage to an alternate implementation.</p>
 <p>Migration Obligations are typed and executable. Each records the capability key,
 current owner, reason, authoritative issue/evidence, Acceptance Contract,
 destination ticket, transfer milestone, and deletion condition. A capability
 transfers only when its native Acceptance Contract passes and the same merge
-makes the legacy route unreachable. Helpers still needed by other legacy
-capabilities are quarantined behind the legacy dependency boundary. A test-only
-differential harness may invoke both engines but is not production routing.</p>
-<p>Before transfer, corrective and performance work lands only in the legacy owner;
-after transfer it lands only in the native owner. Dual production ownership and
+makes the displaced route unreachable. Useful algorithms move directly to their
+authoritative owner; otherwise the displaced implementation is deleted. A
+test-only differential harness may read frozen evidence but is not production
+routing.</p>
+<p>Before transfer, the capability is unavailable in production; implementation
+work lands only in its accepted destination owner. After transfer it lands only
+in the native owner. Dual production ownership and
 dual patching are prohibited.</p>
 <h2 id="consequences">Consequences<a class="headerlink" href="#consequences" title="Permanent link">&para;</a></h2>
 <p>Positive:
@@ -1073,19 +1075,19 @@ dual patching are prohibited.</p>
 <li>Build one broad imaging-run object owning science, resources, solvers, and products.</li>
 <li>Treat continuum, line, mosaic, and projections as independent top-level modes.</li>
 <li>Let a channel-local basis alone define spectral-line semantics.</li>
-<li>Allow capability transfer without deleting or quarantining the legacy route.</li>
+<li>Allow capability transfer without deleting the displaced route.</li>
 </ol>
 <h2 id="enforcement">Enforcement<a class="headerlink" href="#enforcement" title="Permanent link">&para;</a></h2>
 <p>This decision is enforced by:
 - tests: weighted-adjoint and linearity laws, spectral identity/nonidentity
   cases, cycle invariants, mutation/cancellation rollback, product-generation
   consistency, differential evidence, and versioned Acceptance Contracts
-- lint/import/dependency rules: CI rejects forbidden frontend, backend, native,
-  legacy, observation, reconstruction, and product dependencies
+- lint/import/dependency rules: CI rejects forbidden frontend, backend,
+  observation, reconstruction, and product dependencies
 - CI checks: the migration matrix and obligations remain executable; transferred
   routes are unreachable; products/model-column writes are atomic
-- review trigger: stop before adding a second public run interface, a per-stage
-  legacy path, backend-owned science/product semantics, or unpaired sampling
+- review trigger: stop before adding a second public run interface, an alternate
+  stage path, backend-owned science/product semantics, or unpaired sampling
 - none / guidance only:</p>
 <h2 id="drift-detection">Drift detection<a class="headerlink" href="#drift-detection" title="Permanent link">&para;</a></h2>
 <p>Suspect drift if:
@@ -1093,7 +1095,7 @@ dual patching are prohibited.</p>
 - Geometry owns sample-sized arrays or execution tiling
 - spectral interpolation is not represented in prediction and adjoint paths
 - a Minor Cycle mutates authoritative residual state or exceeds its view envelope
-- a capability can silently retry through legacy
+- a capability can silently retry through another implementation
 - a solver or backend defines normalization, restoration, or output semantics</p>
 
 

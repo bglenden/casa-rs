@@ -739,8 +739,8 @@
 
 
 <h1 id="imaging-effects-inventory">Imaging Effects Inventory<a class="headerlink" href="#imaging-effects-inventory" title="Permanent link">&para;</a></h1>
-<p>Truth class: current descriptive
-Last reality check: 2026-07-16
+<p>Truth class: historical evidence inventory
+Last reality check: 2026-08-25
 Verification:
 - <code>just docs-check</code>
 - <code>cargo test -p casa-imaging mosaic_pointing_contribution_follows_casa_simple_pb_center_pixel_rule</code>
@@ -755,13 +755,19 @@ effects established by the completed first mosaic tranche: #38, #50, #53,</p>
 <p>The tutorial acceptance data are the Antennae Band 7 and 3C391 mosaics. Smaller
 pinned datasets such as <code>refim_alma_mosaic.ms</code>, <code>papersky_mosaic.ms</code>, and
 <code>refim_oneshiftpoint.mosaic.ms</code> remain the fast regression oracles.</p>
+<p>The locations below record where Wave 6 evidence was produced; they are not
+current production routes. T23 deleted the old continuum runner and product
+writer. Production continuum now enters through the thin <code>casars-imager</code>
+surface and the sole <code>casa-imaging-application</code> compile/plan/run composition.
+Capabilities not yet transferred to that composition are
+<code>TemporarilyUnavailable</code> rather than routed back to these historical paths.</p>
 <h2 id="source-seams">Source Seams<a class="headerlink" href="#source-seams" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
 <th>CASA / casacore seam</th>
 <th>Effect</th>
-<th>casa-rs location</th>
+<th>Historical Wave 6 evidence location</th>
 <th>Wave 6 status</th>
 </tr>
 </thead>
@@ -870,7 +876,7 @@ pinned datasets such as <code>refim_alma_mosaic.ms</code>, <code>papersky_mosaic
 </tr>
 </tbody>
 </table>
-<h2 id="current-mode-matrix">Current Mode Matrix<a class="headerlink" href="#current-mode-matrix" title="Permanent link">&para;</a></h2>
+<h2 id="historical-wave-6-mode-matrix">Historical Wave 6 Mode Matrix<a class="headerlink" href="#historical-wave-6-mode-matrix" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
@@ -941,7 +947,7 @@ pinned datasets such as <code>refim_alma_mosaic.ms</code>, <code>papersky_mosaic
 </tr>
 </tbody>
 </table>
-<h2 id="runtime-effects">Runtime Effects<a class="headerlink" href="#runtime-effects" title="Permanent link">&para;</a></h2>
+<h2 id="historical-runtime-effects">Historical Runtime Effects<a class="headerlink" href="#historical-runtime-effects" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Imager task protocol v3 carries <code>parallel</code>, <code>chanchunks</code>, shared source
   memory/prepare/row-block/read-ahead controls, and dirty-product FFT precision

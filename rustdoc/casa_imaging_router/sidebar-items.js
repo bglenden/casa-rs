@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["DispatchError","MigrationRowKind","RequestDisposition"],"struct":["DispatchOutcome","ImagingRouter","LegacyWholeRunEnginePort","MigrationObligation","NativeEnginePort","RouteRecord","RouteRequirement"]};
+window.SIDEBAR_ITEMS = {"enum":["DispatchError","MigrationRowKind","RequestDisposition","TaskRouteRequirement"],"struct":["DispatchOutcome","ImagingRouter","MigrationObligation","NativeEnginePort","RouteRecord","RouteRequirement"]};

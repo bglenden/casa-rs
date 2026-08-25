@@ -1060,14 +1060,14 @@ second review and may not reopen design or inspect untouched work.</p>
 <tr>
 <td>8</td>
 <td>T22/#508</td>
-<td>Continuum product algorithms plus the first real Product Generation Authority, planned-generation/seal cutover, and atomic publication</td>
-<td>No raw/manual generation path retained</td>
+<td>Continuum product algorithms plus the first real Product Generation Authority, planned-generation/seal cutover, and independently atomic conventional CASA product replacement</td>
+<td>No raw/manual generation path retained; no false whole-set atomicity claim</td>
 </tr>
 <tr>
 <td>9</td>
 <td>T23/#509</td>
-<td>Continuum Acceptance Contract, matrix transfer, and legacy-route deletion</td>
-<td>No native-to-legacy fallback</td>
+<td>Continuum Acceptance Contract, matrix transfer, and displaced-route deletion</td>
+<td>No native-to-displaced fallback</td>
 </tr>
 </tbody>
 </table>
@@ -1113,7 +1113,7 @@ cutover are:</p>
 </tr>
 <tr>
 <td>native Selected Observation path in <code>casa-ms</code></td>
-<td><code>casa-imaging-model</code> plus storage/foundation crates; no legacy, application, task-runtime, or imaging-runtime dependency</td>
+<td><code>casa-imaging-model</code> plus storage/foundation crates; no displaced imaging, application, task-runtime, or imaging-runtime dependency</td>
 </tr>
 <tr>
 <td><code>casa-imaging-reconstruction</code></td>
@@ -1135,7 +1135,7 @@ cutover are:</p>
 <li><code>casa-ms</code> is already the logical observation layer. T17 makes its native
   Selected Observation path depend inward on the model and own retained source
   access, canonical bounded traversal, and traversal completion. The current
-  crate's legacy/application-shaped dependencies may not leak into that path;
+  crate's displaced application-shaped dependencies may not leak into that path;
   T17 removes or relocates them as necessary before the path is classified
   native. The model never depends outward on <code>casa-ms</code>.</li>
 <li><code>casa-imaging-reconstruction</code> depends only on the model (plus ecosystem

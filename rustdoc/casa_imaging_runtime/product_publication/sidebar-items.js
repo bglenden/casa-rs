@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["ProductPublicationError"],"struct":["ProductPublicationEntry","ProductPublicationPlan"]};
+window.SIDEBAR_ITEMS = {"enum":["ProductPublicationError"],"struct":["AuthorizedProductPublicationEntry","ProductPublicationAuthorization","ProductPublicationEntry","ProductPublicationPlan"]};

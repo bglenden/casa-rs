@@ -744,10 +744,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#casa-rs-overlay" class="md-nav__link">
+  <a href="#casa-rs-native-overlay" class="md-nav__link">
     <span class="md-ellipsis">
       
-        casa-rs Overlay
+        casa-rs Native Overlay
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#historical-pre-t23-casa-rs-overlay" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Historical pre-T23 casa-rs Overlay
       
     </span>
   </a>
@@ -909,11 +920,29 @@ projected onto.</p>
 <span class="w">    </span><span class="kd">class</span><span class="w"> </span><span class="nx">density</span><span class="p">,</span><span class="nx">gridloop</span><span class="p">,</span><span class="nx">fft</span><span class="p">,</span><span class="nx">normalize</span><span class="p">,</span><span class="nx">refresh</span><span class="w"> </span><span class="nx">hot</span><span class="p">;</span>
 </code></pre></div>
 
-<h2 id="casa-rs-overlay"><code>casa-rs</code> Overlay<a class="headerlink" href="#casa-rs-overlay" title="Permanent link">&para;</a></h2>
-<p>The current Rust structure has a useful hard boundary: <code>casa-imaging</code> is a pure
+<h2 id="casa-rs-native-overlay"><code>casa-rs</code> Native Overlay<a class="headerlink" href="#casa-rs-native-overlay" title="Permanent link">&para;</a></h2>
+<p>The production continuum route is now one native-only composition:</p>
+<div class="codehilite"><pre><span></span><code><span class="n">flowchart</span><span class="w"> </span><span class="n">LR</span>
+<span class="w">    </span><span class="n">surface</span><span class="p">[</span><span class="s">"Task/CLI surface&lt;br/&gt;parse and unit conversion"</span><span class="p">]</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">application</span><span class="p">[</span><span class="s">"casa-imaging-application&lt;br/&gt;canonical request and MS binding"</span><span class="p">]</span>
+<span class="w">    </span><span class="n">application</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">compile</span><span class="p">[</span><span class="s">"compile&lt;br/&gt;problem and product graph"</span><span class="p">]</span>
+<span class="w">    </span><span class="n">compile</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">plan</span><span class="p">[</span><span class="s">"plan&lt;br/&gt;resources, leases, and publication"</span><span class="p">]</span>
+<span class="w">    </span><span class="n">plan</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">run</span><span class="p">[</span><span class="s">"run&lt;br/&gt;weighting, paired operators, cycles, products"</span><span class="p">]</span>
+<span class="w">    </span><span class="n">run</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">publish</span><span class="p">[</span><span class="s">"independent CASA products&lt;br/&gt;image, psf, residual, model, sumwt"</span><span class="p">]</span>
+</code></pre></div>
+
+<p><code>casars-imager</code> does not own MeasurementSet interpretation, scientific
+operators, planning, product generation, or persistence. Unsupported cube,
+mosaic, W/AW-projection, and backend choices fail as
+<code>TemporarilyUnavailable</code>; they do not enter the pre-T23 runners described
+below.</p>
+<h2 id="historical-pre-t23-casa-rs-overlay">Historical pre-T23 <code>casa-rs</code> Overlay<a class="headerlink" href="#historical-pre-t23-casa-rs-overlay" title="Permanent link">&para;</a></h2>
+<p>The remainder of this section is retained only to explain the implementation
+that T23 removed and the pressure that motivated the refactor. It is not an
+active route or architecture description.</p>
+<p>The pre-T23 Rust structure had a useful hard boundary: <code>casa-imaging</code> was a pure
 core that consumes prepared batches and emits products, while <code>casars-imager</code>
-owns MeasurementSet I/O, mode routing, coordinates, masks, and product writing.
-Most near-term collapse pressure is therefore in the adapter/orchestration
+owned MeasurementSet I/O, mode routing, coordinates, masks, and product writing.
+Most collapse pressure was therefore in the adapter/orchestration
 layer, not in the pure core boundary.</p>
 <div class="codehilite"><pre><span></span><code><span class="nt">flowchart</span><span class="w"> </span><span class="nt">TB</span>
 <span class="w">    </span><span class="nt">surface</span><span class="cp">[</span><span class="s2">"Task/API surfaces&lt;br/&gt;Python mfs(), CLI/JSON, GUI task tab"</span><span class="cp">]</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">runconfig</span><span class="cp">[</span><span class="s2">"Canonical request validation and mode dispatch&lt;br/&gt;casars-imager::run_from_request()"</span><span class="cp">]</span>
