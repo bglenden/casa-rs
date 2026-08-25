@@ -681,15 +681,22 @@ impl SelectedRows {
         I: IntoIterator<Item = SelectedMainRow>,
         I::IntoIter: ExactSizeIterator,
     {
-        let rows = rows.into_iter();
+        Self::from_ordered_main_row_vec(source_row_count, rows.into_iter().collect())
+    }
+
+    /// Validate and retain an already-compact ordered MAIN row manifest
+    /// without allocating a second selection-sized row buffer.
+    pub fn from_ordered_main_row_vec(
+        source_row_count: u64,
+        ordered_main_rows: Vec<SelectedMainRow>,
+    ) -> Result<Self, SelectedRowSequenceError> {
+        let rows = ordered_main_rows.iter().copied();
         let selected_row_count =
             u64::try_from(rows.len()).map_err(|_| SelectedRowSequenceError::RowCountOverflow)?;
         let mut accumulator =
             SelectedRowSequenceAccumulator::new(source_row_count, selected_row_count);
-        let mut ordered_main_rows = Vec::with_capacity(rows.len());
         for row in rows {
             accumulator.push(row)?;
-            ordered_main_rows.push(row);
         }
         let (observed_row_count, sequence_id, used_data_description_ids) = accumulator.finish();
         if observed_row_count != selected_row_count {

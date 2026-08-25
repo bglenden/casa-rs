@@ -162,6 +162,12 @@ struct AuthoritySeal(u64);
 #[derive(Debug)]
 struct FinalAuthority(AuthoritySeal);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ContinuationAuthority {
+    seal: AuthoritySeal,
+    generation: ModelGenerationId,
+}
+
 static NEXT_AUTHORITY_SEAL: AtomicU64 = AtomicU64::new(1);
 
 /// Fallible random-access source used by reconstruction-owned reprojection.
@@ -524,6 +530,37 @@ impl FinalModelCompletion {
     }
 }
 
+/// Affine handoff of one completed model generation to the next Major Cycle.
+///
+/// The token can be minted only by consuming a whole [`MajorCycleCompletion`]
+/// and is itself consumed when the next execution attempt binds its model
+/// lifecycle. Keeping the completion and generation inseparable prevents a
+/// caller from pairing a model buffer with foreign finalization evidence.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct FinalModelContinuation {
+    completion: FinalModelCompletion,
+    generation: ModelGeneration,
+}
+
+impl FinalModelContinuation {
+    /// Borrow the completed generation used as the next Major Cycle's base.
+    #[must_use]
+    pub const fn generation(&self) -> &ModelGeneration {
+        &self.generation
+    }
+
+    /// Borrow the finalization evidence paired with the generation.
+    #[must_use]
+    pub const fn completion(&self) -> &FinalModelCompletion {
+        &self.completion
+    }
+
+    fn into_parts(self) -> (FinalModelCompletion, ModelGeneration) {
+        (self.completion, self.generation)
+    }
+}
+
 /// Result of the sole affine final-model operation intended for T20 composition.
 #[derive(Debug)]
 pub struct FinalModelUpdate {
@@ -604,6 +641,7 @@ pub struct ModelLifecycle {
     authority: LogicalIdentity,
     seal: AuthoritySeal,
     final_authority: Option<FinalAuthority>,
+    continuation: Option<ContinuationAuthority>,
     prepared: Option<PreparedReprojectedSeed>,
 }
 
@@ -633,8 +671,48 @@ impl ModelLifecycle {
             authority,
             seal,
             final_authority: Some(FinalAuthority(seal)),
+            continuation: None,
             prepared,
         })
+    }
+
+    /// Bind the next execution attempt by consuming one completed generation.
+    ///
+    /// This is the sole cross-attempt model handoff. The previous completion
+    /// and generation stay inseparable until this method validates their
+    /// problem, content, and private owner seal. The returned generation is
+    /// accepted only by this newly bound lifecycle and remains affine.
+    pub fn continue_from(
+        problem: ExecutableModelProblem,
+        attempt: ModelExecutionAttemptId,
+        epoch: u64,
+        continuation: FinalModelContinuation,
+    ) -> Result<(Self, ModelGeneration), ModelLifecycleError> {
+        let mut lifecycle = Self::bind(problem, attempt, epoch)?;
+        let (completion, generation) = continuation.into_parts();
+        lifecycle.validate_generation_integrity(&generation)?;
+        let completion_identity = final_completion_id(
+            generation.authority,
+            completion.problem,
+            completion.attempt,
+            completion.epoch,
+            completion.base,
+            completion.delta,
+            completion.generation,
+        );
+        if completion.problem != lifecycle.problem
+            || completion.generation != generation.generation_id
+            || completion.seal != generation.seal
+            || completion_identity != completion.completion_id
+            || generation.shape != *lifecycle.contract.target()
+        {
+            return Err(ModelLifecycleError::ForeignModelLifecycle);
+        }
+        lifecycle.continuation = Some(ContinuationAuthority {
+            seal: generation.seal,
+            generation: generation.generation_id,
+        });
+        Ok((lifecycle, generation))
     }
 
     /// Return the exact compiled lifecycle commitment.
@@ -787,12 +865,14 @@ impl ModelLifecycle {
     ///
     /// Terms must arrive in strictly increasing canonical cell order, which
     /// removes the former full sorting/canonicalization allocation.
+    /// Delta derivation is independent of the lifecycle's one-shot final-model
+    /// completion authority: a completed Major Cycle may derive the bounded
+    /// T21 update that will be consumed by the next lifecycle attempt.
     pub fn compile_delta(
         &self,
         base: &ModelGeneration,
         terms: impl IntoIterator<Item = ModelDeltaTerm>,
     ) -> Result<ModelDelta, ModelLifecycleError> {
-        self.ensure_open()?;
         self.validate_base(base)?;
         let capacity = self
             .contract
@@ -1041,6 +1121,12 @@ impl ModelLifecycle {
             return Err(ModelLifecycleError::ForeignModelSpace);
         }
         if generation.seal == self.seal {
+            return Ok(());
+        }
+        if self.continuation.is_some_and(|continuation| {
+            continuation.seal == generation.seal
+                && continuation.generation == generation.generation_id
+        }) {
             return Ok(());
         }
         if matches!(

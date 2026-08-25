@@ -579,7 +579,7 @@ impl From<casa_imaging_model::ModelContractError> for MinorCycleError {
 ///
 /// Fails closed on mismatched lineage or geometry, invalid controls or
 /// windows, a degenerate PSF peak, non-finite arithmetic, and every model
-/// owner rejection (term bounds, value bounds, closed lifecycle).
+/// owner rejection (term bounds, value bounds, or foreign lineage).
 pub fn hogbom_minor_cycle(
     lifecycle: &ModelLifecycle,
     base: &ModelGeneration,
@@ -812,7 +812,7 @@ fn subtract_psf(
     let y_range = overlap(peak[1], psf_peak[1], shape[1]);
     for y in y_range.clone() {
         for x in x_range.clone() {
-            let source = [(x - peak[0] + psf_peak[0]), (y - peak[1] + psf_peak[1])];
+            let source = [x + psf_peak[0] - peak[0], y + psf_peak[1] - peak[1]];
             let index = source[0] * shape[1] + source[1];
             let target = x * shape[1] + y;
             let updated = residual[target] - flux * psf[index].re;
@@ -882,4 +882,25 @@ fn minor_cycle_evidence_id(
         MinorCycleStopReason::StalenessBound => 2,
     });
     MinorCycleEvidenceId(LogicalIdentity::from_sha256(encoder.finish()))
+}
+
+#[cfg(test)]
+mod tests {
+    use num_complex::Complex64;
+
+    use super::subtract_psf;
+
+    #[test]
+    fn shifted_psf_overlap_can_start_before_the_component_peak() {
+        let mut residual = vec![0.0; 9];
+        let psf = vec![Complex64::new(1.0, 0.0); 9];
+
+        subtract_psf(&mut residual, &psf, [3, 3], [2, 2], [1, 1], 1.0)
+            .expect("valid clipped negative shift");
+
+        assert_eq!(
+            residual,
+            vec![0.0, 0.0, 0.0, 0.0, -1.0, -1.0, 0.0, -1.0, -1.0]
+        );
+    }
 }

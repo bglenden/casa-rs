@@ -219,7 +219,11 @@ pub use write_session::{
     standard_main_scalar_column_plans,
 };
 
-pub(crate) fn open_measures_runtime()
+/// Open the production Measures provider used by MeasurementSet-backed applications.
+///
+/// Keeping discovery here ensures frontends use the same reference-data authority
+/// as selected-observation resolution and derived-column evaluation.
+pub fn open_measures_runtime()
 -> MsResult<std::sync::Arc<dyn casa_types::measures::MeasuresProvider>> {
     #[cfg(test)]
     {

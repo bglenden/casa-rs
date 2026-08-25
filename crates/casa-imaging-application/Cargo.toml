@@ -12,9 +12,18 @@ publish = false
 workspace = true
 
 [dependencies]
+casa-coordinates = { path = "../casa-coordinates" }
+casa-images = { path = "../casa-images" }
 casa-imaging-model = { path = "../casa-imaging-model" }
 casa-imaging-products = { path = "../casa-imaging-products" }
 casa-imaging-reconstruction = { path = "../casa-imaging-reconstruction" }
 casa-imaging-router = { path = "../casa-imaging-router" }
 casa-imaging-runtime = { path = "../casa-imaging-runtime" }
 casa-ms = { path = "../casa-ms" }
+casa-types = { path = "../casa-types" }
+libc = "0.2"
+ndarray.workspace = true
+sha2 = "0.10"
+
+[dev-dependencies]
+tempfile = "3"

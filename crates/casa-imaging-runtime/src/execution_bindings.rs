@@ -453,8 +453,14 @@ pub enum ArtifactDisposition {
     RejectedStale,
     /// Staged as an output and ready for the sole atomic publication operation.
     Staged,
+    /// Privately prepared for one independently atomic product replacement.
+    PublicationPrepared,
     /// Durably published as an output, as reported only by a completed receipt.
     Published,
+    /// A member replacement failed before visibility; the prior member remains visible.
+    PublicationFailed,
+    /// A member replacement returned without proving whether visibility changed.
+    PublicationUncertain,
 }
 
 /// Observed peak use of one exact resource claim.
@@ -1074,41 +1080,9 @@ pub struct PhysicalWorkBinding {
     product_publication: ProductPublicationAuthority,
 }
 
-/// Explicit authority for the temporary legacy whole-run publication route.
-///
-/// This token can be minted only from complete route evidence whose aggregate
-/// disposition is `LegacyWholeRun`. T23 deletes this token and its constructor
-/// when the last continuum requirement transfers.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LegacyWholeRunPublicationAuthority {
-    matrix_schema_version: u32,
-    matrix_contract_revision: u32,
-}
-
-impl LegacyWholeRunPublicationAuthority {
-    /// Bind the exact authoritative migration decision permitting legacy publication.
-    pub fn from_route(
-        route: &crate::ExecutionRouteEvidence,
-    ) -> Result<Self, PhysicalWorkBindingError> {
-        if route.disposition() != crate::ExecutionRouteDisposition::LegacyWholeRun {
-            return invalid_product_publication(
-                "legacy publication authority requires a LegacyWholeRun route",
-            );
-        }
-        Ok(Self {
-            matrix_schema_version: route.matrix_schema_version(),
-            matrix_contract_revision: route.matrix_contract_revision(),
-        })
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ProductPublicationAuthority {
     None,
-    LegacyWholeRun {
-        matrix_schema_version: u32,
-        matrix_contract_revision: u32,
-    },
     Planned(crate::ProductPublicationPlan),
 }
 
@@ -1515,41 +1489,6 @@ impl PhysicalWorkBinding {
         )
     }
 
-    /// Bind the explicitly routed legacy whole-run publication path.
-    ///
-    /// Product layouts are accepted here only with authority derived from a
-    /// complete `LegacyWholeRun` migration decision. Native product work must
-    /// use [`Self::new_with_product_publication`].
-    pub fn new_legacy_whole_run(
-        catalog: ImplementationContractCatalog,
-        execution_dag: ExecutionDag,
-        prediction: PlanPrediction,
-        artifacts: Vec<PlannedArtifact>,
-        observation_transaction: ObservationTransactionWork,
-        publication_layouts: PublicationLayoutLedger,
-        authority: &LegacyWholeRunPublicationAuthority,
-    ) -> Result<Self, PhysicalWorkBindingError> {
-        if observation_transaction.publication_scope()
-            != crate::ObservationTransactionPublicationScope::ProductPublication
-        {
-            return invalid_product_publication(
-                "legacy product publication requires ProductPublication transaction scope",
-            );
-        }
-        Self::with_implementation_contract(
-            ImplementationContractCommitment::from_catalog(&catalog, &execution_dag)?,
-            execution_dag,
-            prediction,
-            artifacts,
-            observation_transaction,
-            publication_layouts,
-            ProductPublicationAuthority::LegacyWholeRun {
-                matrix_schema_version: authority.matrix_schema_version,
-                matrix_contract_revision: authority.matrix_contract_revision,
-            },
-        )
-    }
-
     /// Bind native product publication through an exact planned generation.
     ///
     /// This is the production construction path for physical work containing
@@ -1691,7 +1630,7 @@ impl PhysicalWorkBinding {
         });
         if has_product_layout && matches!(product_publication, ProductPublicationAuthority::None) {
             return invalid_product_publication(
-                "Product layouts require either a planned native generation or explicit LegacyWholeRun authority",
+                "Product layouts require an exact planned native generation",
             );
         }
         Ok(Self {
@@ -3395,6 +3334,43 @@ pub trait WorkImplementation {
     /// the previous generation solely visible; returning success is the final
     /// operation before [`ExecutionOutcome::Succeeded`] and resource release.
     fn publish(&self, context: WorkExecutionContext<'_>) -> Result<(), Self::Error>;
+
+    /// Independently publish one authorized product member.
+    ///
+    /// Returning `None` retains the indivisible [`Self::publish`] path. Native
+    /// product publication implementations return one identity-bound outcome;
+    /// the runtime checkpoints it before attempting the next member.
+    fn publish_product_member(
+        &self,
+        _context: WorkExecutionContext<'_>,
+        _entry: crate::AuthorizedProductPublicationEntry,
+    ) -> Option<Result<ArtifactMeasurement, ProductMemberPublicationFailure<Self::Error>>> {
+        None
+    }
+}
+
+/// One failed member promotion together with its receipt evidence.
+#[derive(Debug)]
+pub struct ProductMemberPublicationFailure<E> {
+    source: E,
+    measurement: ArtifactMeasurement,
+}
+
+impl<E> ProductMemberPublicationFailure<E> {
+    /// Retain the adapter failure and exact failed/uncertain member evidence.
+    #[must_use]
+    pub const fn new(source: E, measurement: ArtifactMeasurement) -> Self {
+        Self {
+            source,
+            measurement,
+        }
+    }
+
+    /// Consume the failure into its adapter source and member evidence.
+    #[must_use]
+    pub fn into_parts(self) -> (E, ArtifactMeasurement) {
+        (self.source, self.measurement)
+    }
 }
 
 /// Immutable registry snapshot that resolves selected implementations by identity.
@@ -3718,7 +3694,10 @@ fn validate_artifact_measurements(
         };
         let disposition = measurement.disposition();
         let disposition_matches_role = if planned.role() == ArtifactRole::Output {
-            disposition == ArtifactDisposition::Staged
+            matches!(
+                disposition,
+                ArtifactDisposition::Staged | ArtifactDisposition::PublicationPrepared
+            )
         } else {
             matches!(
                 disposition,
@@ -4566,6 +4545,59 @@ where
                     product_publication.as_ref(),
                     &completed_observation_reads,
                 );
+                if let Some(authorization) = product_publication.as_ref() {
+                    receipt
+                        .prepare_independent_product_publication()
+                        .map_err(RunError::Receipt)?;
+                    for entry in authorization.entries() {
+                        let outcome = implementation
+                            .publish_product_member(context, *entry)
+                            .ok_or_else(|| {
+                                RunError::ProductPublication(
+                                    crate::ProductPublicationError::MissingMemberPublisher,
+                                )
+                            })?;
+                        match outcome {
+                            Ok(measurement) => {
+                                receipt
+                                    .record_publication_measurements(&WorkMeasurements::new(
+                                        Vec::new(),
+                                        Vec::new(),
+                                        vec![measurement],
+                                    ))
+                                    .map_err(RunError::Receipt)?;
+                            }
+                            Err(failure) => {
+                                let (source, measurement) = failure.into_parts();
+                                receipt
+                                    .record_publication_measurements(&WorkMeasurements::new(
+                                        Vec::new(),
+                                        Vec::new(),
+                                        vec![measurement],
+                                    ))
+                                    .map_err(RunError::Receipt)?;
+                                receipt
+                                    .finish(
+                                        ReceiptStatus::Failed,
+                                        Some(ReceiptFailure::new(
+                                            ReceiptFailureKind::Adapter,
+                                            Some(publication.clone()),
+                                            None,
+                                        )),
+                                    )
+                                    .map_err(RunError::Receipt)?;
+                                return Err(RunError::Execution {
+                                    node: publication,
+                                    source,
+                                });
+                            }
+                        }
+                    }
+                    receipt
+                        .complete_independent_product_publication()
+                        .map_err(RunError::Receipt)?;
+                    return Ok(ExecutionOutcome::Succeeded);
+                }
                 let prepared = receipt.prepare_publication().map_err(RunError::Receipt)?;
                 match implementation.publish(context) {
                     Ok(()) => {
@@ -4723,16 +4755,8 @@ fn execution_plan_id(plan: &ExecutionPlan) -> ExecutionPlanId {
     encoder.digest(plan.execution_dag.physical_work_id().as_bytes());
     match &plan.product_publication {
         ProductPublicationAuthority::None => encoder.u8(0),
-        ProductPublicationAuthority::LegacyWholeRun {
-            matrix_schema_version,
-            matrix_contract_revision,
-        } => {
-            encoder.u8(1);
-            encoder.u32(*matrix_schema_version);
-            encoder.u32(*matrix_contract_revision);
-        }
         ProductPublicationAuthority::Planned(publication) => {
-            encoder.u8(2);
+            encoder.u8(1);
             encoder.digest(publication.problem_id().as_bytes());
             encoder.digest(publication.graph_id().as_bytes());
             encoder.digest(publication.generation_id().as_bytes());

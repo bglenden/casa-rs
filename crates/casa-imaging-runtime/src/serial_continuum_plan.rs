@@ -19,6 +19,10 @@ const CHECK_NODE: &str = "transaction-check";
 const RECONCILE_NODE: &str = "transaction-reconciliation";
 const COMMIT_NODE: &str = "transaction-commit";
 const MINOR_NODE: &str = "serial-continuum-minor-cycle";
+const SOURCE_READ_RATE_DEMAND: &str = "serial-continuum-source-read-rate";
+const OUTPUT_WRITE_RATE_DEMAND: &str = "serial-continuum-output-write-rate";
+const IO_QUEUE_DEMAND: &str = "serial-continuum-storage-queue";
+const OUTPUT_STORAGE_DEMAND: &str = "serial-continuum-private-commit";
 
 /// Explicit non-scientific limits for one serial continuum physical plan.
 #[derive(Clone)]
@@ -26,6 +30,7 @@ pub struct SerialContinuumExecutionPolicy {
     implementation: WorkImplementationId,
     weighting_limits: WeightingExecutionLimits,
     selected_residency: SelectedObservationResidencyCertificate,
+    storage_io: StorageIoResourceBinding,
     stage_nanos: u64,
     minor_cycle_bytes: u64,
     confidence_parts_per_million: u32,
@@ -38,6 +43,7 @@ impl SerialContinuumExecutionPolicy {
         implementation: WorkImplementationId,
         weighting_limits: WeightingExecutionLimits,
         selected_residency: SelectedObservationResidencyCertificate,
+        storage_io: StorageIoResourceBinding,
         stage_nanos: u64,
         minor_cycle_bytes: u64,
         confidence_parts_per_million: u32,
@@ -46,6 +52,7 @@ impl SerialContinuumExecutionPolicy {
             implementation,
             weighting_limits,
             selected_residency,
+            storage_io,
             stage_nanos,
             minor_cycle_bytes,
             confidence_parts_per_million,
@@ -213,8 +220,10 @@ fn base_physical<R: ImplementationRegistry>(
     let source_slot = PhysicalSlotId::new("serial-continuum-selected-source-slot");
     let commit_allocation = AllocationId::new("serial-continuum-commit-buffer");
     let commit_slot = PhysicalSlotId::new("serial-continuum-commit-slot");
-    let queue_id = "transaction-io-queue".to_string();
-    let rate_id = "transaction-io-rate".to_string();
+    let queue_id = IO_QUEUE_DEMAND.to_string();
+    let source_rate_id = SOURCE_READ_RATE_DEMAND.to_string();
+    let output_rate_id = OUTPUT_WRITE_RATE_DEMAND.to_string();
+    let output_storage_id = OUTPUT_STORAGE_DEMAND.to_string();
     let io_lifetime = ClaimLifetime::through_fence(FenceKind::Io);
     let publication_lifetime =
         ClaimLifetime::through_fences([FenceKind::Io, FenceKind::Publication]);
@@ -243,7 +252,7 @@ fn base_physical<R: ImplementationRegistry>(
         },
         ResourceClaim {
             resource: LeaseResource::Rate {
-                demand_id: rate_id.clone(),
+                demand_id: source_rate_id.clone(),
             },
             amount: 1,
             lifetime: io_lifetime.clone(),
@@ -270,7 +279,7 @@ fn base_physical<R: ImplementationRegistry>(
     let mut commit_claims = vec![
         ResourceClaim {
             resource: LeaseResource::Storage {
-                demand_id: "serial-continuum-private-commit".to_string(),
+                demand_id: output_storage_id.clone(),
                 use_kind: StorageUseKind::StagedOutput,
             },
             amount: 1,
@@ -278,7 +287,7 @@ fn base_physical<R: ImplementationRegistry>(
         },
         ResourceClaim {
             resource: LeaseResource::Rate {
-                demand_id: rate_id.clone(),
+                demand_id: output_rate_id.clone(),
             },
             amount: 1,
             lifetime: publication_lifetime.clone(),
@@ -437,8 +446,8 @@ fn base_physical<R: ImplementationRegistry>(
             workers: CountDemand::new(1, 1),
             overhead: RuntimeOverheadDemand::zero(),
             storage: vec![StorageDemand {
-                demand_id: "serial-continuum-private-commit".to_string(),
-                domain: StorageDomainId::new("atomic-output"),
+                demand_id: output_storage_id,
+                domain: policy.storage_io.domain().clone(),
                 temporary_bytes: 0,
                 staged_output_bytes: 1,
                 final_output_bytes: 0,
@@ -448,17 +457,24 @@ fn base_physical<R: ImplementationRegistry>(
                 operations_rate: CountDemand::zero(),
                 queue_slots: CountDemand::zero(),
             }],
-            rates: vec![RateDemand {
-                demand_id: rate_id.clone(),
-                resource: RateResourceId::new(rate_id),
-                amount: CountDemand::new(1, 1),
-            }],
+            rates: vec![
+                RateDemand {
+                    demand_id: source_rate_id,
+                    resource: policy.storage_io.read_rate().clone(),
+                    amount: CountDemand::new(1, 1),
+                },
+                RateDemand {
+                    demand_id: output_rate_id,
+                    resource: policy.storage_io.write_rate().clone(),
+                    amount: CountDemand::new(1, 1),
+                },
+            ],
             caches: CacheDemand::zero(),
             locks: CountDemand::new(lock_count, lock_count),
             file_descriptors: CountDemand::new(source_count, source_count),
             queues: vec![QueueDemand {
                 demand_id: queue_id.clone(),
-                resource: QueueResourceId::new(queue_id.clone()),
+                resource: policy.storage_io.queue().clone(),
                 slots: CountDemand::new(blocks, blocks),
             }],
             transfers: vec![],

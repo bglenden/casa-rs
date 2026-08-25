@@ -64,9 +64,9 @@ use casa_imaging_runtime::{
     ExecutionRouteRequirementKind, ExecutionStatus, ExternalPressure, FenceId, FenceKind,
     HostInventory, ImplementationContractCatalog, ImplementationContractMetadata,
     ImplementationRegistry, ImplementationRegistryId, InitializationPolicy, IoBufferDemand,
-    IoBufferKind, IoMeasurement, IoPrediction, LeaseResource, LegacyWholeRunPublicationAuthority,
-    LogicalAllocation, MajorCycleOperatorResult, MajorCycleOperatorState, MemoryCapacityDomain,
-    MemoryCapacityKind, MemoryDemand, MemoryView, MemoryViewKind, ObservationReadCompletionContext,
+    IoBufferKind, IoMeasurement, IoPrediction, LeaseResource, LogicalAllocation,
+    MajorCycleOperatorResult, MajorCycleOperatorState, MemoryCapacityDomain, MemoryCapacityKind,
+    MemoryDemand, MemoryView, MemoryViewKind, ObservationReadCompletionContext,
     ObservationTransactionWork, PhysicalLayoutId, PhysicalSlot, PhysicalSlotId,
     PhysicalWorkBinding, PhysicalWorkBindingError, PlanError, PlanPrediction, PlannedArtifact,
     PlannerCostModelProfileBootstrap, PlannerCostModelProfileId, PlanningBindings,
@@ -76,18 +76,19 @@ use casa_imaging_runtime::{
     PreparedArtifactPlaneDescriptor, PreparedArtifactPrecision, PreparedArtifactRegistration,
     PreparedArtifactRejection, PreparedArtifactReuseOutcome, PreparedArtifactSegmentDescriptor,
     PreparedArtifactSourceSegment, PreparedArtifactStore, PreparedArtifactUvAffine,
-    ProductPublicationPlan, PublicationLayoutLedger, PublicationMappedStaging,
-    PublicationParticipant, PublicationPhysicalLayout, PublicationResourceBounds,
-    PublicationStaging, QueueDemand, QueueResource, QueueResourceId, QuiescencePoint, RateDemand,
-    RateResource, RateResourceId, RateUnit, ReceiptFailureKind, ReceiptRetention, ReceiptStatus,
-    RedactedPath, ResourceAuthority, ResourceClaim, ResourceError, ResourceHeadroom,
-    ResourceMeasurement, ResourceOverride, ResourcePolicy, ResourceTopology, RunBindings,
-    RunController, RunDirective, RunError, RunToCompletion, RuntimeOverheadDemand, ScalingMetadata,
-    SelectedObservationSourceResources, SerialContinuumExecutionPolicy, SerialContinuumExecutor,
-    SerialContinuumPassInput, SerialContinuumPlan, SerialContinuumRegistry, SerialMfsOperatorState,
-    SerialProductPublicationExecutor, SerialProductPublicationPlan, SerialProductPublicationPolicy,
-    SerialProductPublicationRegistry, SerialProductPublicationSink, SlotCompatibility,
-    StagePrediction, StorageDomain, StorageDomainId, StorageMode, StorageUseKind,
+    ProductPublicationPlan, ProductionStorageProfile, PublicationLayoutLedger,
+    PublicationMappedStaging, PublicationParticipant, PublicationPhysicalLayout,
+    PublicationResourceBounds, PublicationStaging, QueueDemand, QueueResource, QueueResourceId,
+    QuiescencePoint, RateDemand, RateResource, RateResourceId, RateUnit, ReceiptFailureKind,
+    ReceiptRetention, ReceiptStatus, RedactedPath, ResourceAuthority, ResourceClaim, ResourceError,
+    ResourceHeadroom, ResourceMeasurement, ResourceOverride, ResourcePolicy, ResourceTopology,
+    RunBindings, RunController, RunDirective, RunError, RunToCompletion, RuntimeOverheadDemand,
+    ScalingMetadata, SelectedObservationSourceResources, SerialContinuumExecutionPolicy,
+    SerialContinuumExecutor, SerialContinuumPassInput, SerialContinuumPlan,
+    SerialContinuumRegistry, SerialMfsOperatorState, SerialProductPublicationExecutor,
+    SerialProductPublicationPlan, SerialProductPublicationPolicy, SerialProductPublicationRegistry,
+    SerialProductPublicationSink, SlotCompatibility, StagePrediction, StorageDomain,
+    StorageDomainId, StorageIoResourceBinding, StorageMode, StorageUseKind,
     WeightedObservationBlock, WeightingExecutionState, WeightingPlanFragment, WorkDependency,
     WorkDomain, WorkExecutionContext, WorkImplementation, WorkImplementationId, WorkKind,
     WorkMeasurements, WorkNode, WorkNodeId, plan as runtime_plan, run as runtime_run,
@@ -168,6 +169,15 @@ fn selected_content_queue() -> LeaseResource {
     LeaseResource::Queue {
         demand_id: "transaction-io-queue".to_string(),
     }
+}
+
+fn serial_storage_io() -> StorageIoResourceBinding {
+    StorageIoResourceBinding::new(
+        StorageDomainId::new("atomic-output"),
+        RateResourceId::new("transaction-io-rate"),
+        RateResourceId::new("transaction-io-rate"),
+        QueueResourceId::new("transaction-io-queue"),
+    )
 }
 
 fn selected_observation_bindings(
@@ -2140,6 +2150,7 @@ fn serial_continuum_initial_plan_contains_resource_accounted_minor_cycle() {
         implementation(6),
         WeightingExecutionLimits::new(2, 3).expect("weighting limits"),
         selected_content_residency(&problem),
+        serial_storage_io(),
         1_000,
         8 * 8 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
         900_000,
@@ -2174,6 +2185,7 @@ fn serial_continuum_dirty_plan_omits_minor_cycle_work() {
             implementation(6),
             WeightingExecutionLimits::new(2, 3).expect("weighting limits"),
             selected_content_residency(&problem),
+            serial_storage_io(),
             1_000,
             8 * 8 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
             900_000,
@@ -2211,6 +2223,7 @@ fn serial_continuum_executes_initial_major_and_scheduler_minor_cycle() {
             implementation(73),
             WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
             residency.clone(),
+            serial_storage_io(),
             1_000,
             8 * 8 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
             900_000,
@@ -2300,6 +2313,7 @@ fn serial_continuum_executes_initial_major_and_scheduler_minor_cycle() {
             implementation(73),
             WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
             residency.clone(),
+            serial_storage_io(),
             1_000,
             8 * 8 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
             900_000,
@@ -2491,7 +2505,8 @@ fn production_weighting_fragment_rejects_fungible_unrelated_queues() {
             .collect(),
     })
     .expect("two distinct queue identities are structurally valid");
-    let split_queue_base = legacy_physical_work(
+    let split_queue_base = native_product_physical_work(
+        &problem,
         implementation_catalog(&problem, &split_queue_dag),
         split_queue_dag,
         base.prediction().clone(),
@@ -2645,14 +2660,14 @@ fn physical_work_for_problem(
             .collect(),
     })
     .expect("problem-bound transaction DAG");
-    PhysicalWorkBinding::new_legacy_whole_run(
+    native_product_physical_work(
+        problem,
         implementation_catalog(problem, &dag),
         dag,
         base.prediction().clone(),
         base.artifacts().to_vec(),
         base.observation_transaction().clone(),
         base.publication_layouts().clone(),
-        &legacy_publication_authority(),
     )
     .expect("problem-bound physical work")
 }
@@ -2819,7 +2834,8 @@ fn physical_work_for_weighting_problem_with_residency(
             .collect(),
     )
     .expect("problem-bound source prediction");
-    legacy_physical_work(
+    native_product_physical_work(
+        problem,
         implementation_catalog(problem, &dag),
         dag,
         prediction,
@@ -2872,7 +2888,8 @@ fn with_work_implementation(
             .collect(),
     })
     .expect("rebinding a validated DAG preserves its topology");
-    legacy_physical_work(
+    native_product_physical_work(
+        problem,
         implementation_catalog(problem, &dag),
         dag,
         base.prediction().clone(),
@@ -2887,14 +2904,16 @@ fn physical_work_with_product_staging(
     problem: &casa_imaging_model::CompiledProblem,
     implementation_byte: u8,
     participants: Vec<PublicationParticipant>,
-) -> PhysicalWorkBinding {
-    physical_work_with_transaction_staging(
+) -> Result<PhysicalWorkBinding, PhysicalWorkBindingError> {
+    let (publication, _) = sealed_publication_plan_for_problem(problem);
+    physical_work_with_optional_seal(
         problem,
         implementation_byte,
         participants,
         false,
         false,
         true,
+        &publication,
     )
 }
 
@@ -2931,6 +2950,7 @@ fn physical_work_with_transaction_staging(
     acquire_publication_early: bool,
     fenced_observation_read: bool,
 ) -> PhysicalWorkBinding {
+    let (publication, _) = sealed_publication_plan_for_problem(problem);
     physical_work_with_optional_seal(
         problem,
         implementation_byte,
@@ -2938,8 +2958,9 @@ fn physical_work_with_transaction_staging(
         include_model_staging,
         acquire_publication_early,
         fenced_observation_read,
-        None,
+        &publication,
     )
+    .expect("native product publication binding")
 }
 
 fn physical_work_with_optional_seal(
@@ -2949,8 +2970,8 @@ fn physical_work_with_optional_seal(
     include_model_staging: bool,
     acquire_publication_early: bool,
     fenced_observation_read: bool,
-    sealed: Option<&ProductPublicationPlan>,
-) -> PhysicalWorkBinding {
+    sealed: &ProductPublicationPlan,
+) -> Result<PhysicalWorkBinding, PhysicalWorkBindingError> {
     let work_implementation = implementation(implementation_byte);
     let specification = ExecutionDagSpecification {
         required_resource_capabilities: BTreeSet::new(),
@@ -3064,6 +3085,7 @@ fn transaction_binding(
     acquire_publication_early: bool,
     fenced_observation_read: bool,
 ) -> PhysicalWorkBinding {
+    let (publication, _) = sealed_publication_plan_for_problem(problem);
     transaction_binding_with_seal(
         problem,
         specification,
@@ -3072,8 +3094,9 @@ fn transaction_binding(
         include_model_staging,
         acquire_publication_early,
         fenced_observation_read,
-        None,
+        &publication,
     )
+    .expect("native product publication binding")
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3085,8 +3108,8 @@ fn transaction_binding_with_seal(
     include_model_staging: bool,
     acquire_publication_early: bool,
     fenced_observation_read: bool,
-    sealed: Option<&ProductPublicationPlan>,
-) -> PhysicalWorkBinding {
+    sealed: &ProductPublicationPlan,
+) -> Result<PhysicalWorkBinding, PhysicalWorkBindingError> {
     let product_count = participants
         .iter()
         .filter(|participant| matches!(participant, PublicationParticipant::Product { .. }))
@@ -3655,7 +3678,7 @@ fn transaction_binding_with_seal(
         let PublicationParticipant::Product { node_id, .. } = participant else {
             return None;
         };
-        sealed.and_then(|plan| plan.artifact(*node_id))
+        sealed.artifact(*node_id)
     };
     let catalog = implementation_catalog(problem, &dag);
     let artifacts = participants
@@ -3700,37 +3723,20 @@ fn transaction_binding_with_seal(
             .collect(),
     )
     .expect("complete publication layout ledger");
-    match sealed {
-        Some(product_publication) => PhysicalWorkBinding::new_with_product_publication(
-            catalog,
-            dag,
-            prediction,
-            artifacts,
-            ObservationTransactionWork::new_product_publication(
-                initial,
-                reconciliation,
-                include_model_staging.then_some(model.clone()),
-                commit.clone(),
-            ),
-            layouts,
-            product_publication,
+    PhysicalWorkBinding::new_with_product_publication(
+        catalog,
+        dag,
+        prediction,
+        artifacts,
+        ObservationTransactionWork::new_product_publication(
+            initial,
+            reconciliation,
+            include_model_staging.then_some(model),
+            commit,
         ),
-        None => PhysicalWorkBinding::new_legacy_whole_run(
-            catalog,
-            dag,
-            prediction,
-            artifacts,
-            ObservationTransactionWork::new_product_publication(
-                initial,
-                reconciliation,
-                include_model_staging.then_some(model),
-                commit,
-            ),
-            layouts,
-            &legacy_publication_authority(),
-        ),
-    }
-    .expect("bound transaction physical work")
+        layouts,
+        sealed,
+    )
 }
 
 fn evidenced_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
@@ -3854,7 +3860,8 @@ fn evidenced_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
         stages,
     )
     .expect("complete evidence prediction");
-    legacy_physical_work(
+    native_product_physical_work(
+        &problem,
         implementation_catalog(&problem, &dag),
         dag,
         prediction,
@@ -4068,7 +4075,8 @@ fn auditable_physical_work(
         adaptations: base_dag.adaptations().values().cloned().collect(),
     })
     .expect("valid auditable physical work DAG");
-    legacy_physical_work(
+    native_product_physical_work(
+        problem,
         implementation_catalog(problem, &dag),
         dag,
         base.prediction().clone(),
@@ -4383,7 +4391,8 @@ fn mapped_publication_candidate(
     )
     .expect("one mapped layout per participant");
     let dag = base.execution_dag().clone();
-    legacy_physical_work(
+    native_product_physical_work(
+        &problem,
         implementation_catalog(&problem, &dag),
         dag,
         base.prediction().clone(),
@@ -4773,41 +4782,8 @@ fn execution_provenance(
     )
 }
 
-fn legacy_publication_authority() -> LegacyWholeRunPublicationAuthority {
-    let requirement = ExecutionRouteRequirement::new(
-        "capability.continuum-mfs",
-        ExecutionRouteRequirementKind::Capability,
-        ExecutionRouteDisposition::LegacyWholeRun,
-        casa_imaging_runtime::ExecutionRouteRequirementEvidence {
-            current_owner: "legacy whole-run imaging route".to_string(),
-            destination_tickets: vec!["T23/#509".to_string()],
-            evidence_issues: vec![486, 509],
-            baseline_manifests: vec![
-                "repo://resources/imaging-architecture/migration-matrix.json".to_string(),
-            ],
-            acceptance_contract: "scientific-products-v1".to_string(),
-            transfer_point: "continuum native acceptance and legacy deletion".to_string(),
-            deletion_condition: "delete with T23 native transfer".to_string(),
-            source_evidence: vec![
-                "crates/casa-imaging-router/src/lib.rs::RequestDisposition".to_string(),
-            ],
-            obligation_ticket: Some("T23/#509".to_string()),
-            obligation_reason: Some("continuum transfer remains held".to_string()),
-        },
-    )
-    .expect("legacy continuum route requirement");
-    let route = ExecutionRouteEvidence::new(
-        1,
-        32,
-        ExecutionRouteDisposition::LegacyWholeRun,
-        vec![requirement],
-    )
-    .expect("legacy whole-run route evidence");
-    LegacyWholeRunPublicationAuthority::from_route(&route)
-        .expect("legacy whole-run publication authority")
-}
-
-fn legacy_physical_work(
+fn native_product_physical_work(
+    problem: &casa_imaging_model::CompiledProblem,
     catalog: ImplementationContractCatalog,
     execution_dag: ExecutionDag,
     prediction: PlanPrediction,
@@ -4815,14 +4791,15 @@ fn legacy_physical_work(
     observation_transaction: ObservationTransactionWork,
     publication_layouts: PublicationLayoutLedger,
 ) -> Result<PhysicalWorkBinding, PhysicalWorkBindingError> {
-    PhysicalWorkBinding::new_legacy_whole_run(
+    let (publication, _) = sealed_publication_plan_for_problem(problem);
+    PhysicalWorkBinding::new_with_product_publication(
         catalog,
         execution_dag,
         prediction,
         artifacts,
         observation_transaction,
         publication_layouts,
-        &legacy_publication_authority(),
+        &publication,
     )
 }
 
@@ -5140,7 +5117,8 @@ fn physical_work_binding_rejects_cpu_io_buffer_contracts_without_predictions() {
     .expect("complete prediction ledger without preparation I/O evidence");
 
     assert!(matches!(
-        legacy_physical_work(
+        native_product_physical_work(
+            &problem,
             implementation_catalog(&problem, &dag),
             dag,
             prediction,
@@ -5491,7 +5469,7 @@ fn reconstruction_only_transaction_scope_rejects_product_publication() {
         base.observation_transaction().clone(),
         base.publication_layouts().clone(),
     )
-    .expect_err("Product layouts require explicit sealed or legacy authority");
+    .expect_err("Product layouts require explicit sealed authority");
 
     assert!(matches!(
         error,
@@ -5572,16 +5550,12 @@ fn transaction_seal_rejects_omitted_product_graph_publication_member() {
     .expect("canonical complete two-product transaction seal");
 
     let omitted = product_participants(&problem).into_iter().take(1).collect();
-    let result = plan(
-        &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
-        |_, _| Ok::<_, io::Error>(physical_work_with_product_staging(&problem, 6, omitted)),
-    );
-
-    let error = result.expect_err("one omitted product must fail the exact plan seal");
+    let error = physical_work_with_product_staging(&problem, 6, omitted)
+        .expect_err("one omitted product must fail the exact plan seal");
     assert!(
-        error.to_string().contains("publication product nodes")
-            && error.to_string().contains("do not match graph members")
+        error
+            .to_string()
+            .contains("product layouts do not exactly cover the planned member set")
     );
 }
 
@@ -5608,21 +5582,13 @@ fn transaction_seal_rejects_matching_ordinals_from_a_foreign_product_graph() {
         foreign.product_graph().publication().members()
     );
 
-    let result = plan(
-        &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
-        |_, _| {
-            Ok::<_, io::Error>(physical_work_with_product_staging(
-                &problem,
-                6,
-                product_participants(&foreign),
-            ))
-        },
+    let error = physical_work_with_product_staging(&problem, 6, product_participants(&foreign))
+        .expect_err("foreign product graph must fail the transaction seal");
+    assert!(
+        error
+            .to_string()
+            .contains("has no exact publication layout")
     );
-
-    let error = result.expect_err("foreign product graph must fail the transaction seal");
-    assert!(matches!(error, PlanError::ObservationTransaction(_)));
-    assert!(error.to_string().contains("do not match graph members"));
 }
 
 #[test]
@@ -5685,7 +5651,8 @@ fn transaction_seal_blocks_unbound_transaction_work() {
     let problem = compile(request(1)).expect("logical compilation");
     let base = physical_work_for_problem(&problem, 6);
     let dag = base.execution_dag().clone();
-    let unbound = legacy_physical_work(
+    let unbound = native_product_physical_work(
+        &problem,
         implementation_catalog(&problem, &dag),
         dag,
         base.prediction().clone(),
@@ -10000,8 +9967,10 @@ fn product_publication_plans_before_member_production_and_sealing() {
 #[derive(Default)]
 struct InMemoryProductSink {
     staged: Mutex<Vec<ArtifactIdentity>>,
-    visible: Mutex<Option<casa_imaging_products::PlannedGenerationId>>,
+    visible: Mutex<Vec<ArtifactIdentity>>,
     publish_calls: AtomicUsize,
+    fail_at: Option<usize>,
+    uncertain: bool,
 }
 
 impl SerialProductPublicationSink for InMemoryProductSink {
@@ -10013,18 +9982,28 @@ impl SerialProductPublicationSink for InMemoryProductSink {
         _observed: ArtifactIdentity,
         _member: &casa_imaging_products::SealedMember,
     ) -> Result<(), Self::Error> {
-        assert!(self.visible.lock().expect("visible lock").is_none());
+        assert!(self.visible.lock().expect("visible lock").is_empty());
         self.staged.lock().expect("staging lock").push(planned);
         Ok(())
     }
 
-    fn publish(
+    fn promote(
         &self,
-        authorization: &casa_imaging_runtime::ProductPublicationAuthorization,
-    ) -> Result<(), Self::Error> {
-        assert!(self.visible.lock().expect("visible lock").is_none());
-        *self.visible.lock().expect("visible lock") = Some(authorization.generation_id());
-        self.publish_calls.fetch_add(1, Ordering::SeqCst);
+        entry: casa_imaging_runtime::AuthorizedProductPublicationEntry,
+    ) -> Result<(), casa_imaging_runtime::MemberPromotionFailure<Self::Error>> {
+        let call = self.publish_calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail_at == Some(call) {
+            let error = io::Error::other("injected member promotion failure");
+            return Err(if self.uncertain {
+                casa_imaging_runtime::MemberPromotionFailure::uncertain(error)
+            } else {
+                casa_imaging_runtime::MemberPromotionFailure::failed(error)
+            });
+        }
+        let mut visible = self.visible.lock().expect("visible lock");
+        if !visible.contains(&entry.observed_identity()) {
+            visible.push(entry.observed_identity());
+        }
         Ok(())
     }
 }
@@ -10046,16 +10025,18 @@ fn serial_product_publication_stages_privately_then_publishes_once() {
         SerialProductPublicationPolicy::new(
             implementation(77),
             residency.clone(),
-            StorageDomainId::new("atomic-output"),
-            RateResourceId::new("transaction-io-rate"),
-            QueueResourceId::new("transaction-io-queue"),
+            serial_storage_io(),
             1_000,
             900_000,
         ),
     )
     .expect("production publication plan");
-    let expected_generation = planned_runtime.publication().generation_id();
     let expected_members = planned_runtime.publication().entries().len();
+    let retry_entry = planned_runtime
+        .publication()
+        .authorize(&PublicationProjection::from_sealed(&sealed).expect("sealed projection"))
+        .expect("member authorization")
+        .entries()[0];
     let (physical, publication) = planned_runtime.into_parts();
     let executor = SerialProductPublicationExecutor::new(
         implementation(77),
@@ -10090,7 +10071,7 @@ fn serial_product_publication_stages_privately_then_publishes_once() {
             .visible
             .lock()
             .expect("visible lock")
-            .is_none()
+            .is_empty()
     );
     let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([78; 32]);
     let current = RunBindings::new(
@@ -10117,13 +10098,315 @@ fn serial_product_publication_stages_privately_then_publishes_once() {
         expected_members
     );
     assert_eq!(
-        *sink.visible.lock().expect("visible lock"),
-        Some(expected_generation)
+        sink.visible.lock().expect("visible lock").len(),
+        expected_members
     );
-    assert_eq!(sink.publish_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(sink.publish_calls.load(Ordering::SeqCst), expected_members);
+    sink.promote(retry_entry)
+        .expect("same member identity is idempotent");
+    assert_eq!(
+        sink.visible.lock().expect("visible lock").len(),
+        expected_members
+    );
     let receipt = receipts.open(attempt).expect("publication receipt");
     assert_eq!(receipt.status(), ReceiptStatus::Completed);
     assert_eq!(receipt.publication_layout_count(), expected_members);
+}
+
+#[test]
+fn production_storage_profile_admits_serial_scientific_and_publication_plans() {
+    let problem = compile(sealed_products_request(245)).expect("continuum compilation");
+    let (planned, _) = sealed_generation_for_problem(&problem);
+    let residency = selected_content_residency(&problem);
+    let planning_registry = ContractOnlyRegistry::new(
+        registry(81),
+        implementation_metadata(&problem),
+        [implementation(81)],
+    );
+    let storage_root = tempfile::tempdir().expect("storage root");
+    let storage = ProductionStorageProfile::new(
+        storage_root.path(),
+        1_073_741_824,
+        1_073_741_824,
+        1_000_000,
+        1_000_000,
+        64,
+        8,
+    )
+    .expect("valid production storage profile");
+    let authority = ResourceAuthority::detected_with_storage_profile(&storage)
+        .expect("detected production authority");
+    let scientific = SerialContinuumPlan::dirty(
+        &problem,
+        &planning_registry,
+        SerialContinuumExecutionPolicy::new(
+            implementation(81),
+            WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
+            residency.clone(),
+            storage.io_resources(),
+            1_000,
+            1,
+            900_000,
+        ),
+    )
+    .expect("production scientific plan");
+    let (scientific, _, _, _, _, _) = scientific.into_parts();
+    let planned_runtime = SerialProductPublicationPlan::new(
+        &problem,
+        &planned,
+        &planning_registry,
+        SerialProductPublicationPolicy::new(
+            implementation(81),
+            residency,
+            storage.io_resources(),
+            1_000,
+            900_000,
+        ),
+    )
+    .expect("production publication plan");
+    let (physical, _) = planned_runtime.into_parts();
+    let directory = tempfile::tempdir().expect("receipt directory");
+    let receipts = ExecutionReceiptStore::new(
+        directory.path(),
+        ReceiptRetention::new(4, 1_048_576).expect("retention"),
+    )
+    .expect("receipt store");
+
+    runtime_plan(
+        &problem,
+        PlanningBindings::new(registry(81), ResourcePolicy::Balanced, planning_profile(4)),
+        &authority,
+        &planning_registry,
+        &receipts,
+        move |_, _| Ok::<_, io::Error>(vec![scientific]),
+    )
+    .expect("profiled production resources admit the scientific plan");
+
+    runtime_plan(
+        &problem,
+        PlanningBindings::new(registry(81), ResourcePolicy::Balanced, planning_profile(4)),
+        &authority,
+        &planning_registry,
+        &receipts,
+        move |_, _| Ok::<_, io::Error>(vec![physical]),
+    )
+    .expect("profiled production resources admit the publication plan");
+}
+
+#[test]
+fn profiled_serial_plans_reject_every_substituted_storage_identity() {
+    let problem = compile(sealed_products_request(246)).expect("continuum compilation");
+    let (planned, _) = sealed_generation_for_problem(&problem);
+    let residency = selected_content_residency(&problem);
+    let planning_registry = ContractOnlyRegistry::new(
+        registry(82),
+        implementation_metadata(&problem),
+        [implementation(82)],
+    );
+    let storage_root = tempfile::tempdir().expect("storage root");
+    let storage = ProductionStorageProfile::new(
+        storage_root.path(),
+        1_073_741_824,
+        1_073_741_824,
+        1_000_000,
+        1_000_000,
+        64,
+        8,
+    )
+    .expect("valid production storage profile");
+    let authority = ResourceAuthority::detected_with_storage_profile(&storage)
+        .expect("detected production authority");
+    let exact = storage.io_resources();
+    let substitutions = [
+        StorageIoResourceBinding::new(
+            StorageDomainId::new("foreign-storage-domain"),
+            exact.read_rate().clone(),
+            exact.write_rate().clone(),
+            exact.queue().clone(),
+        ),
+        StorageIoResourceBinding::new(
+            exact.domain().clone(),
+            RateResourceId::new("foreign-read-rate"),
+            exact.write_rate().clone(),
+            exact.queue().clone(),
+        ),
+        StorageIoResourceBinding::new(
+            exact.domain().clone(),
+            exact.read_rate().clone(),
+            RateResourceId::new("foreign-write-rate"),
+            exact.queue().clone(),
+        ),
+        StorageIoResourceBinding::new(
+            exact.domain().clone(),
+            exact.read_rate().clone(),
+            exact.write_rate().clone(),
+            QueueResourceId::new("foreign-storage-queue"),
+        ),
+    ];
+    let directory = tempfile::tempdir().expect("receipt directory");
+    let receipts = ExecutionReceiptStore::new(
+        directory.path(),
+        ReceiptRetention::new(4, 1_048_576).expect("retention"),
+    )
+    .expect("receipt store");
+    let reject = |physical| {
+        let result = runtime_plan(
+            &problem,
+            PlanningBindings::new(registry(82), ResourcePolicy::Balanced, planning_profile(4)),
+            &authority,
+            &planning_registry,
+            &receipts,
+            move |_, _| Ok::<_, io::Error>(vec![physical]),
+        );
+        match result {
+            Err(PlanError::Resource(ResourceError::Invalid(message))) => {
+                assert!(
+                    message.contains("unknown"),
+                    "substitution failed for an unrelated reason: {message}"
+                );
+            }
+            Err(other) => panic!("unexpected substituted-resource failure: {other}"),
+            Ok(_) => panic!("substituted storage identity was admitted"),
+        }
+    };
+
+    for substitution in substitutions {
+        let scientific = SerialContinuumPlan::dirty(
+            &problem,
+            &planning_registry,
+            SerialContinuumExecutionPolicy::new(
+                implementation(82),
+                WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
+                residency.clone(),
+                substitution.clone(),
+                1_000,
+                1,
+                900_000,
+            ),
+        )
+        .expect("scientific plan construction");
+        reject(scientific.into_parts().0);
+
+        let publication = SerialProductPublicationPlan::new(
+            &problem,
+            &planned,
+            &planning_registry,
+            SerialProductPublicationPolicy::new(
+                implementation(82),
+                residency.clone(),
+                substitution,
+                1_000,
+                900_000,
+            ),
+        )
+        .expect("publication plan construction");
+        reject(publication.into_parts().0);
+    }
+}
+
+fn assert_member_failure_receipt(uncertain: bool, expected: ArtifactDisposition) {
+    let problem = compile(sealed_products_request(245)).expect("continuum compilation");
+    let (planned, sealed) = sealed_generation_for_problem(&problem);
+    let residency = selected_content_residency(&problem);
+    let planning_registry = ContractOnlyRegistry::new(
+        registry(81),
+        implementation_metadata(&problem),
+        [implementation(81)],
+    );
+    let planned_runtime = SerialProductPublicationPlan::new(
+        &problem,
+        &planned,
+        &planning_registry,
+        SerialProductPublicationPolicy::new(
+            implementation(81),
+            residency.clone(),
+            serial_storage_io(),
+            1_000,
+            900_000,
+        ),
+    )
+    .expect("member publication plan");
+    let entries = planned_runtime.publication().entries().to_vec();
+    assert!(
+        entries.len() > 2,
+        "fixture needs a published prefix and remainder"
+    );
+    let (physical, publication) = planned_runtime.into_parts();
+    let executor = SerialProductPublicationExecutor::new(
+        implementation(81),
+        problem.clone(),
+        publication,
+        sealed,
+        open_selected_observation(&problem, &residency).expect("publication observation owner"),
+        InMemoryProductSink {
+            fail_at: Some(1),
+            uncertain,
+            ..Default::default()
+        },
+    )
+    .expect("sealed publication executor");
+    let runtime_registry =
+        SerialProductPublicationRegistry::new(registry(81), implementation(81), &problem, executor);
+    let directory = tempfile::tempdir().expect("receipt directory");
+    let receipts = ExecutionReceiptStore::new(
+        directory.path(),
+        ReceiptRetention::new(4, 1_048_576).expect("retention"),
+    )
+    .expect("receipt store");
+    let execution_plan = runtime_plan(
+        &problem,
+        PlanningBindings::new(registry(81), ResourcePolicy::Balanced, planning_profile(4)),
+        authority(),
+        &runtime_registry,
+        &receipts,
+        move |_, _| Ok::<_, io::Error>(vec![physical]),
+    )
+    .expect("ordinary publication plan");
+    let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([82; 32]);
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &ResourcePolicy::Balanced,
+        cost_model(4),
+    );
+    runtime_run(
+        &ExecutableModelProblem::from_compiled(problem.clone()).expect("executable"),
+        &execution_plan,
+        &current,
+        &runtime_registry,
+        authority(),
+        &mut RunToCompletion,
+        receipts.bind(execution_provenance(
+            attempt,
+            BuildIdentity::from_sha256([83; 32]),
+        )),
+    )
+    .expect_err("second member promotion fails");
+    let receipt = receipts.open(attempt).expect("failed receipt is durable");
+    assert_eq!(receipt.status(), ReceiptStatus::Failed);
+    assert_eq!(
+        receipt.artifact_disposition(entries[0].artifact()),
+        Some(ArtifactDisposition::Published)
+    );
+    assert_eq!(
+        receipt.artifact_disposition(entries[1].artifact()),
+        Some(expected)
+    );
+    for entry in &entries[2..] {
+        assert_eq!(
+            receipt.artifact_disposition(entry.artifact()),
+            Some(ArtifactDisposition::PublicationPrepared)
+        );
+    }
+}
+
+#[test]
+fn serial_product_publication_checkpoints_published_prefix_before_member_failure() {
+    assert_member_failure_receipt(false, ArtifactDisposition::PublicationFailed);
+}
+
+#[test]
+fn serial_product_publication_records_uncertain_member_without_losing_published_prefix() {
+    assert_member_failure_receipt(true, ArtifactDisposition::PublicationUncertain);
 }
 
 #[test]
@@ -10161,15 +10444,9 @@ fn problem_bound_sealed_work(
         .copied()
         .map(|node_id| PublicationParticipant::Product { graph_id, node_id })
         .collect();
-    let base = physical_work_with_optional_seal(
-        problem,
-        6,
-        participants,
-        false,
-        false,
-        true,
-        Some(sealed),
-    );
+    let base =
+        physical_work_with_optional_seal(problem, 6, participants, false, false, true, sealed)
+            .expect("problem-bound native product publication");
     let measurement_sets = problem
         .observation_transaction()
         .read_set()

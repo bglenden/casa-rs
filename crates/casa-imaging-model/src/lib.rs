@@ -92,7 +92,7 @@ pub use selected_observation_sample::{
 };
 
 pub use product_graph::{
-    AtomicStoreProtocol, ProductAxes, ProductAxisKind, ProductBeamRule, ProductGraph,
+    IndependentProductStoreProtocol, ProductAxes, ProductAxisKind, ProductBeamRule, ProductGraph,
     ProductGraphId, ProductNode, ProductNodeId, ProductPublication, ProductRole, ProductSchema,
     ProductTerm, ProductUnit, ProductValidityRule,
 };

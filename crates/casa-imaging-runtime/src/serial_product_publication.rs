@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Production serial product staging and atomic publication.
+//! Production serial product staging and independently atomic publication.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -29,9 +29,9 @@ const COMMIT: &str = "product-publication-commit";
 
 /// Storage boundary used by the runtime publication owner.
 ///
-/// `stage` must write only private, non-visible state. `publish` must be one
-/// atomic visibility operation and must leave the previous generation solely
-/// visible whenever it returns an error or its outcome is uncertain.
+/// `stage` writes only private, non-visible state. `promote` independently and
+/// atomically replaces one conventional product. A later member failure does
+/// not invalidate members already promoted from the same sealed generation.
 pub trait SerialProductPublicationSink {
     /// Sink-specific failure.
     type Error: Error + 'static;
@@ -44,8 +44,62 @@ pub trait SerialProductPublicationSink {
         member: &SealedMember,
     ) -> Result<(), Self::Error>;
 
-    /// Atomically activate the exact runtime-authorized generation.
-    fn publish(&self, authorization: &ProductPublicationAuthorization) -> Result<(), Self::Error>;
+    /// Atomically activate one exact runtime-authorized member.
+    ///
+    /// Repeating the same planned/observed identity is idempotent and succeeds
+    /// without changing visible content.
+    fn promote(
+        &self,
+        entry: AuthorizedProductPublicationEntry,
+    ) -> Result<(), MemberPromotionFailure<Self::Error>>;
+}
+
+/// Certainty of a failed per-member atomic replacement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemberPromotionFailureKind {
+    /// The sink proved that the prior member remains visible.
+    Failed,
+    /// The sink could not prove which member is visible.
+    Uncertain,
+}
+
+/// Sink error retaining whether one member's visibility is known.
+#[derive(Debug)]
+pub struct MemberPromotionFailure<E> {
+    kind: MemberPromotionFailureKind,
+    source: E,
+}
+
+impl<E> MemberPromotionFailure<E> {
+    /// Report a failure known to leave the prior member visible.
+    #[must_use]
+    pub const fn failed(source: E) -> Self {
+        Self {
+            kind: MemberPromotionFailureKind::Failed,
+            source,
+        }
+    }
+
+    /// Report a failure whose visibility outcome could not be proved.
+    #[must_use]
+    pub const fn uncertain(source: E) -> Self {
+        Self {
+            kind: MemberPromotionFailureKind::Uncertain,
+            source,
+        }
+    }
+
+    /// Return the visibility certainty.
+    #[must_use]
+    pub const fn kind(&self) -> MemberPromotionFailureKind {
+        self.kind
+    }
+
+    /// Borrow the sink-specific failure.
+    #[must_use]
+    pub const fn source(&self) -> &E {
+        &self.source
+    }
 }
 
 /// Explicit physical policy for one serial product-publication plan.
@@ -53,9 +107,7 @@ pub trait SerialProductPublicationSink {
 pub struct SerialProductPublicationPolicy {
     implementation: WorkImplementationId,
     selected_residency: SelectedObservationResidencyCertificate,
-    storage_domain: StorageDomainId,
-    io_rate: RateResourceId,
-    io_queue: QueueResourceId,
+    storage_io: StorageIoResourceBinding,
     stage_nanos: u64,
     confidence_parts_per_million: u32,
 }
@@ -66,18 +118,14 @@ impl SerialProductPublicationPolicy {
     pub fn new(
         implementation: WorkImplementationId,
         selected_residency: SelectedObservationResidencyCertificate,
-        storage_domain: StorageDomainId,
-        io_rate: RateResourceId,
-        io_queue: QueueResourceId,
+        storage_io: StorageIoResourceBinding,
         stage_nanos: u64,
         confidence_parts_per_million: u32,
     ) -> Self {
         Self {
             implementation,
             selected_residency,
-            storage_domain,
-            io_rate,
-            io_queue,
+            storage_io,
             stage_nanos,
             confidence_parts_per_million,
         }
@@ -180,15 +228,16 @@ fn build_physical<R: ImplementationRegistry>(
     let io_lifetime = ClaimLifetime::through_fence(FenceKind::Io);
     let publication_lifetime =
         ClaimLifetime::through_fences([FenceKind::Io, FenceKind::Publication]);
-    let rate_demand = policy.io_rate.as_str().to_string();
-    let queue_demand = policy.io_queue.as_str().to_string();
+    let source_rate_demand = "product-publication-source-read-rate".to_string();
+    let output_rate_demand = "product-publication-output-write-rate".to_string();
+    let queue_demand = "product-publication-storage-queue".to_string();
     let storage_demand = "product-publication-output".to_string();
     let mut check_claims = vec![claim(LeaseResource::Workers, 1, ClaimLifetime::Work)];
     check_claims.extend(lock_claims(ClaimLifetime::Work));
     let mut read_claims = vec![
         claim(
             LeaseResource::Rate {
-                demand_id: rate_demand.clone(),
+                demand_id: source_rate_demand.clone(),
             },
             1,
             io_lifetime.clone(),
@@ -215,7 +264,7 @@ fn build_physical<R: ImplementationRegistry>(
     let mut commit_claims = vec![
         claim(
             LeaseResource::Rate {
-                demand_id: rate_demand.clone(),
+                demand_id: output_rate_demand.clone(),
             },
             1,
             publication_lifetime.clone(),
@@ -420,7 +469,7 @@ fn build_physical<R: ImplementationRegistry>(
             overhead: RuntimeOverheadDemand::zero(),
             storage: vec![StorageDemand {
                 demand_id: storage_demand,
-                domain: policy.storage_domain.clone(),
+                domain: policy.storage_io.domain().clone(),
                 temporary_bytes: 0,
                 staged_output_bytes: payload_bytes,
                 final_output_bytes: payload_bytes,
@@ -430,17 +479,24 @@ fn build_physical<R: ImplementationRegistry>(
                 operations_rate: CountDemand::zero(),
                 queue_slots: CountDemand::zero(),
             }],
-            rates: vec![RateDemand {
-                demand_id: rate_demand,
-                resource: policy.io_rate.clone(),
-                amount: CountDemand::new(1, 1),
-            }],
+            rates: vec![
+                RateDemand {
+                    demand_id: source_rate_demand,
+                    resource: policy.storage_io.read_rate().clone(),
+                    amount: CountDemand::new(1, 1),
+                },
+                RateDemand {
+                    demand_id: output_rate_demand,
+                    resource: policy.storage_io.write_rate().clone(),
+                    amount: CountDemand::new(1, 1),
+                },
+            ],
             caches: CacheDemand::zero(),
             locks: CountDemand::new(source_count, source_count),
             file_descriptors: CountDemand::new(source_count, source_count),
             queues: vec![QueueDemand {
                 demand_id: queue_demand,
-                resource: policy.io_queue.clone(),
+                resource: policy.storage_io.queue().clone(),
                 slots: CountDemand::new(blocks, blocks),
             }],
             transfers: vec![],
@@ -758,7 +814,7 @@ impl<S: SerialProductPublicationSink> WorkImplementation for SerialProductPublic
                     ArtifactMeasurement::new(
                         entry.planned_identity(),
                         Some(entry.observed_identity()),
-                        ArtifactDisposition::Staged,
+                        ArtifactDisposition::PublicationPrepared,
                         entry.payload_bytes(),
                         None,
                     )
@@ -835,19 +891,60 @@ impl<S: SerialProductPublicationSink> WorkImplementation for SerialProductPublic
         Ok(Some(self.projection.clone()))
     }
     fn publish(&self, context: WorkExecutionContext<'_>) -> Result<(), Self::Error> {
-        let authorization = context
-            .product_publication()
-            .ok_or(SerialProductPublicationExecutionError::MissingAuthorization)?;
-        if authorization.problem_id() != self.publication.problem_id()
-            || authorization.graph_id() != self.publication.graph_id()
-            || authorization.generation_id() != self.publication.generation_id()
-        {
-            return Err(SerialProductPublicationExecutionError::MissingAuthorization);
-        }
-        self.sink
-            .publish(authorization)
-            .map_err(SerialProductPublicationExecutionError::Sink)
+        let _ = context;
+        Err(SerialProductPublicationExecutionError::MissingAuthorization)
     }
+
+    fn publish_product_member(
+        &self,
+        context: WorkExecutionContext<'_>,
+        entry: AuthorizedProductPublicationEntry,
+    ) -> Option<Result<ArtifactMeasurement, ProductMemberPublicationFailure<Self::Error>>> {
+        let authorized = context.product_publication().is_some_and(|authorization| {
+            authorization.problem_id() == self.publication.problem_id()
+                && authorization.graph_id() == self.publication.graph_id()
+                && authorization.generation_id() == self.publication.generation_id()
+                && authorization.entries().contains(&entry)
+        });
+        if !authorized {
+            return Some(Err(ProductMemberPublicationFailure::new(
+                SerialProductPublicationExecutionError::MissingAuthorization,
+                publication_measurement(entry, ArtifactDisposition::PublicationFailed),
+            )));
+        }
+        Some(match self.sink.promote(entry) {
+            Ok(()) => Ok(publication_measurement(
+                entry,
+                ArtifactDisposition::Published,
+            )),
+            Err(error) => {
+                let disposition = match error.kind() {
+                    MemberPromotionFailureKind::Failed => ArtifactDisposition::PublicationFailed,
+                    MemberPromotionFailureKind::Uncertain => {
+                        ArtifactDisposition::PublicationUncertain
+                    }
+                };
+                Err(ProductMemberPublicationFailure::new(
+                    SerialProductPublicationExecutionError::Promotion(error),
+                    publication_measurement(entry, disposition),
+                ))
+            }
+        })
+    }
+}
+
+fn publication_measurement(
+    entry: AuthorizedProductPublicationEntry,
+    disposition: ArtifactDisposition,
+) -> ArtifactMeasurement {
+    ArtifactMeasurement::new(
+        entry.planned_identity(),
+        Some(entry.observed_identity()),
+        disposition,
+        entry.payload_bytes(),
+        None,
+    )
+    .expect("publication outcome is adapter-owned")
 }
 
 /// Execution failure from the serial publication owner.
@@ -863,8 +960,10 @@ pub enum SerialProductPublicationExecutionError<E> {
     Publication(ProductPublicationError),
     /// Product projection failed after scientific production.
     Products(casa_imaging_products::ProductsError),
-    /// The storage sink rejected staging or atomic visibility.
+    /// The storage sink rejected private staging.
     Sink(E),
+    /// One independently atomic member replacement failed or became uncertain.
+    Promotion(MemberPromotionFailure<E>),
 }
 impl<E: Error> fmt::Display for SerialProductPublicationExecutionError<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

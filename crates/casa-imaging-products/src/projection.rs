@@ -6,8 +6,9 @@
 //! choreography: it lists the exact sealed member set once, in canonical
 //! order, with the byte layout each member occupies in staging and final
 //! storage. The runtime publication path owns the actual state machine:
-//! durable preparation, the sole visibility operation, terminal receipt
-//! promotion, and retained Prepared evidence on uncertain promotion.
+//! durable preparation, independently atomic member replacements, per-member
+//! receipt checkpointing, and retained evidence for failed or uncertain
+//! promotions.
 
 use casa_imaging_model::{CompiledProblemId, ProductGraphId, ProductNodeId};
 
@@ -16,7 +17,7 @@ use crate::authority::{
 };
 use crate::error::ProductsError;
 
-/// One sealed member projected for atomic publication.
+/// One sealed member projected for independently atomic publication.
 #[derive(Debug, Clone)]
 pub struct PublicationMemberProjection {
     node: ProductNodeId,

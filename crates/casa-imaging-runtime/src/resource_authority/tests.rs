@@ -25,6 +25,53 @@ fn single_alternative(demand: DemandEnvelope) -> DemandAlternatives {
     }
 }
 
+#[test]
+fn profiled_authority_refreshes_mutable_storage_pressure_only_for_same_calibration() {
+    let root = tempfile::tempdir().expect("storage root");
+    let initial = ProductionStorageProfile::new(root.path(), 10_000, 8_000, 400, 300, 4, 3)
+        .expect("initial profile");
+    let authority =
+        ResourceAuthority::detected_with_storage_profile(&initial).expect("profiled authority");
+    let refreshed = ProductionStorageProfile::new(root.path(), 10_000, 6_000, 400, 300, 4, 3)
+        .expect("refreshed pressure");
+
+    let update = authority
+        .refresh_storage_profile_pressure(&refreshed)
+        .expect("same calibration accepts new pressure");
+    assert_eq!(update.previous_epoch(), 0);
+    assert_eq!(update.current_epoch(), 1);
+    let pressure = authority.inner.state.lock().expect("authority state");
+    assert_eq!(
+        pressure
+            .pressure
+            .storage_available_bytes
+            .get(refreshed.domain_id()),
+        Some(&6_000)
+    );
+    assert_eq!(
+        pressure
+            .pressure
+            .rate_available_per_second
+            .get(refreshed.read_rate_id()),
+        Some(&400)
+    );
+    assert_eq!(
+        pressure
+            .pressure
+            .queue_available_slots
+            .get(refreshed.queue_id()),
+        Some(&4)
+    );
+    drop(pressure);
+
+    let recalibrated = ProductionStorageProfile::new(root.path(), 10_000, 6_000, 401, 300, 4, 3)
+        .expect("different calibration");
+    assert!(matches!(
+        authority.refresh_storage_profile_pressure(&recalibrated),
+        Err(ResourceError::IncompatibleProductionStorageProfile)
+    ));
+}
+
 fn inventory_with_views(memory_views: Vec<MemoryView>) -> HostInventory {
     let domain = CapacityDomainId::new("unified-memory");
     HostInventory {

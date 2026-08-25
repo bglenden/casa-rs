@@ -110,8 +110,6 @@ receipt_identity!(
 pub enum ExecutionRouteDisposition {
     /// Every required migration row is native.
     Native,
-    /// At least one required row remains behind the sole legacy whole-run port.
-    LegacyWholeRun,
     /// At least one required row has no production implementation.
     TemporarilyUnavailable,
 }
@@ -211,12 +209,9 @@ impl ExecutionRouteRequirement {
             evidence.obligation_reason.as_deref(),
         ) {
             (ExecutionRouteDisposition::Native, None, None) => true,
-            (
-                ExecutionRouteDisposition::LegacyWholeRun
-                | ExecutionRouteDisposition::TemporarilyUnavailable,
-                Some(ticket),
-                Some(reason),
-            ) => !ticket.trim().is_empty() && !reason.trim().is_empty(),
+            (ExecutionRouteDisposition::TemporarilyUnavailable, Some(ticket), Some(reason)) => {
+                !ticket.trim().is_empty() && !reason.trim().is_empty()
+            }
             _ => false,
         };
         if !has_complete_evidence || !obligation_is_valid {
@@ -326,11 +321,8 @@ fn route_disposition_from_requirements(
             (_, ExecutionRouteDisposition::TemporarilyUnavailable)
             | (
                 ExecutionRouteDisposition::TemporarilyUnavailable,
-                ExecutionRouteDisposition::LegacyWholeRun | ExecutionRouteDisposition::Native,
+                ExecutionRouteDisposition::Native,
             ) => ExecutionRouteDisposition::TemporarilyUnavailable,
-            (_, ExecutionRouteDisposition::LegacyWholeRun) => {
-                ExecutionRouteDisposition::LegacyWholeRun
-            }
             (current, ExecutionRouteDisposition::Native) => current,
         },
     )
@@ -3787,7 +3779,10 @@ enum ArtifactDispositionProjection {
     Reused,
     RejectedStale,
     Staged,
+    PublicationPrepared,
     Published,
+    PublicationFailed,
+    PublicationUncertain,
 }
 
 impl From<ArtifactDisposition> for ArtifactDispositionProjection {
@@ -3798,7 +3793,10 @@ impl From<ArtifactDisposition> for ArtifactDispositionProjection {
             ArtifactDisposition::Reused => Self::Reused,
             ArtifactDisposition::RejectedStale => Self::RejectedStale,
             ArtifactDisposition::Staged => Self::Staged,
+            ArtifactDisposition::PublicationPrepared => Self::PublicationPrepared,
             ArtifactDisposition::Published => Self::Published,
+            ArtifactDisposition::PublicationFailed => Self::PublicationFailed,
+            ArtifactDisposition::PublicationUncertain => Self::PublicationUncertain,
         }
     }
 }
@@ -3811,7 +3809,10 @@ impl From<ArtifactDispositionProjection> for ArtifactDisposition {
             ArtifactDispositionProjection::Reused => Self::Reused,
             ArtifactDispositionProjection::RejectedStale => Self::RejectedStale,
             ArtifactDispositionProjection::Staged => Self::Staged,
+            ArtifactDispositionProjection::PublicationPrepared => Self::PublicationPrepared,
             ArtifactDispositionProjection::Published => Self::Published,
+            ArtifactDispositionProjection::PublicationFailed => Self::PublicationFailed,
+            ArtifactDispositionProjection::PublicationUncertain => Self::PublicationUncertain,
         }
     }
 }
@@ -4165,7 +4166,15 @@ impl<'store> ReceiptRecorder<'store> {
             .plan
             .artifacts
             .iter()
-            .filter(|artifact| artifact.disposition == Some(ArtifactDispositionProjection::Staged))
+            .filter(|artifact| {
+                matches!(
+                    artifact.disposition,
+                    Some(
+                        ArtifactDispositionProjection::Staged
+                            | ArtifactDispositionProjection::PublicationPrepared
+                    )
+                )
+            })
             .map(|artifact| artifact.artifact_identity.clone())
             .collect::<BTreeSet<_>>();
         if self.pending_publications != expected_publications
@@ -4196,6 +4205,65 @@ impl<'store> ReceiptRecorder<'store> {
         let publication = self.store.prepare_publication(&prepared, completed)?;
         self.body = prepared;
         Ok(publication)
+    }
+
+    pub(crate) fn prepare_independent_product_publication(&mut self) -> Result<(), ReceiptError> {
+        if self.body.status != ReceiptStatus::Running
+            || !self.active_nodes.is_empty()
+            || !self.active_fences.is_empty()
+            || self
+                .body
+                .plan
+                .nodes
+                .iter()
+                .any(|node| node.status != ReceiptStatus::Completed)
+            || self
+                .body
+                .plan
+                .fences
+                .iter()
+                .any(|fence| fence.status != ReceiptStatus::Completed)
+        {
+            return Err(ReceiptError::IncompleteSuccess);
+        }
+        let expected = self
+            .body
+            .plan
+            .artifacts
+            .iter()
+            .filter(|artifact| artifact.role == "output")
+            .map(|artifact| artifact.artifact_identity.clone())
+            .collect::<BTreeSet<_>>();
+        let prepared = self
+            .body
+            .plan
+            .artifacts
+            .iter()
+            .filter(|artifact| {
+                artifact.disposition == Some(ArtifactDispositionProjection::PublicationPrepared)
+            })
+            .map(|artifact| artifact.artifact_identity.clone())
+            .collect::<BTreeSet<_>>();
+        if self.pending_publications != expected || prepared != expected {
+            return Err(ReceiptError::IncompleteSuccess);
+        }
+        self.body.status = ReceiptStatus::PublicationPrepared;
+        self.body.failure = None;
+        self.body.finished_unix_millis = None;
+        self.checkpoint()
+    }
+
+    pub(crate) fn complete_independent_product_publication(&mut self) -> Result<(), ReceiptError> {
+        if self.body.status != ReceiptStatus::PublicationPrepared
+            || !self.pending_publications.is_empty()
+            || self.body.plan.artifacts.iter().any(|artifact| {
+                artifact.role == "output"
+                    && artifact.disposition != Some(ArtifactDispositionProjection::Published)
+            })
+        {
+            return Err(ReceiptError::IncompleteSuccess);
+        }
+        self.finish(ReceiptStatus::Completed, None)
     }
 
     pub(crate) fn complete_publication(&mut self, prepared: PreparedPublicationReceipt<'store>) {
@@ -4294,15 +4362,32 @@ impl<'store> ReceiptRecorder<'store> {
         artifact.observed_identity = measurement
             .observed_identity()
             .map(|identity| hex(&identity.as_bytes()));
-        if measurement.disposition() == ArtifactDisposition::Staged {
-            artifact.disposition = Some(ArtifactDispositionProjection::Staged);
+        if matches!(
+            measurement.disposition(),
+            ArtifactDisposition::Staged | ArtifactDisposition::PublicationPrepared
+        ) {
+            artifact.disposition = Some(measurement.disposition().into());
             self.pending_publications.insert(planned);
         } else {
             artifact.disposition = Some(measurement.disposition().into());
+            self.pending_publications.remove(&planned);
         }
         artifact.actual_bytes = Some(measurement.bytes());
         artifact.path_identity = measurement.path().map(|path| hex(&path.as_bytes()));
         Ok(())
+    }
+
+    pub(crate) fn record_publication_measurements(
+        &mut self,
+        measurements: &WorkMeasurements,
+    ) -> Result<(), ReceiptError> {
+        if self.body.status != ReceiptStatus::PublicationPrepared {
+            return Err(ReceiptError::IncompleteSuccess);
+        }
+        for measurement in measurements.artifacts() {
+            self.record_artifact(*measurement)?;
+        }
+        self.checkpoint()
     }
 
     fn finish_fence(&mut self, fence: &FenceId, status: ReceiptStatus) -> Result<(), ReceiptError> {
@@ -4598,15 +4683,67 @@ fn validate_body(body: &ReceiptBody) -> Result<(), ReceiptError> {
         .filter(|artifact| artifact.disposition == Some(ArtifactDispositionProjection::Staged))
         .map(|artifact| artifact.artifact_identity.as_str())
         .collect::<BTreeSet<_>>();
+    let member_prepared = body
+        .plan
+        .artifacts
+        .iter()
+        .filter(|artifact| {
+            artifact.disposition == Some(ArtifactDispositionProjection::PublicationPrepared)
+        })
+        .map(|artifact| artifact.artifact_identity.as_str())
+        .collect::<BTreeSet<_>>();
+    let publication_failed = body
+        .plan
+        .artifacts
+        .iter()
+        .filter(|artifact| {
+            artifact.disposition == Some(ArtifactDispositionProjection::PublicationFailed)
+        })
+        .map(|artifact| artifact.artifact_identity.as_str())
+        .collect::<BTreeSet<_>>();
+    let publication_uncertain = body
+        .plan
+        .artifacts
+        .iter()
+        .filter(|artifact| {
+            artifact.disposition == Some(ArtifactDispositionProjection::PublicationUncertain)
+        })
+        .map(|artifact| artifact.artifact_identity.as_str())
+        .collect::<BTreeSet<_>>();
     match body.status {
         ReceiptStatus::Completed => {
-            require_integrity(published == expected_publications && staged.is_empty())?;
+            require_integrity(
+                published == expected_publications
+                    && staged.is_empty()
+                    && member_prepared.is_empty()
+                    && publication_failed.is_empty()
+                    && publication_uncertain.is_empty(),
+            )?;
         }
         ReceiptStatus::PublicationPrepared => {
-            require_integrity(staged == expected_publications && published.is_empty())?;
+            let observed = staged
+                .union(&member_prepared)
+                .copied()
+                .collect::<BTreeSet<_>>()
+                .union(&published)
+                .copied()
+                .collect::<BTreeSet<_>>()
+                .union(&publication_failed)
+                .copied()
+                .collect::<BTreeSet<_>>()
+                .union(&publication_uncertain)
+                .copied()
+                .collect::<BTreeSet<_>>();
+            require_integrity(observed == expected_publications)?;
         }
         _ => {
-            require_integrity(published.is_empty() && staged.is_subset(&expected_publications))?;
+            require_integrity(
+                staged.is_subset(&expected_publications)
+                    && member_prepared.is_subset(&expected_publications)
+                    && published.is_subset(&expected_publications)
+                    && publication_failed.is_subset(&expected_publications)
+                    && publication_uncertain.is_subset(&expected_publications),
+            )?;
         }
     }
     if let Some(failure) = &body.failure {
@@ -4704,11 +4841,9 @@ fn validate_route_projection(route: &RouteProjection) -> Result<(), ReceiptError
                     requirement.obligation_reason.as_deref(),
                 ) {
                     ("native", None, None) => true,
-                    (
-                        "legacy_whole_run" | "temporarily_unavailable",
-                        Some(ticket),
-                        Some(reason),
-                    ) => !ticket.trim().is_empty() && !reason.trim().is_empty(),
+                    ("temporarily_unavailable", Some(ticket), Some(reason)) => {
+                        !ticket.trim().is_empty() && !reason.trim().is_empty()
+                    }
                     _ => false,
                 }
                 && previous.is_none_or(|id| id < requirement.id.as_str()),
@@ -4717,7 +4852,6 @@ fn validate_route_projection(route: &RouteProjection) -> Result<(), ReceiptError
         derived = match (derived, requirement.disposition.as_str()) {
             (_, "temporarily_unavailable") => "temporarily_unavailable",
             ("temporarily_unavailable", _) => "temporarily_unavailable",
-            (_, "legacy_whole_run") => "legacy_whole_run",
             (current, "native") => current,
             _ => return Err(ReceiptError::IntegrityMismatch),
         };
@@ -6267,13 +6401,17 @@ fn project_product_graph(fields: &mut BTreeMap<String, String>, problem: &Compil
     );
     evidence_field(
         fields,
-        "products.graph.publication.protocol.has_one_visibility_operation",
-        publication.protocol().has_one_visibility_operation(),
+        "products.graph.publication.protocol.has_one_visibility_operation_per_member",
+        publication
+            .protocol()
+            .has_one_visibility_operation_per_member(),
     );
     evidence_field(
         fields,
-        "products.graph.publication.protocol.has_infallible_terminal_promotion",
-        publication.protocol().has_infallible_terminal_promotion(),
+        "products.graph.publication.protocol.preserves_promoted_members_on_later_failure",
+        publication
+            .protocol()
+            .preserves_promoted_members_on_later_failure(),
     );
     for (index, member) in publication.members().iter().enumerate() {
         evidence_field(
@@ -7913,7 +8051,6 @@ fn reference_kind(kind: ReferenceDataKind) -> &'static str {
 const fn route_disposition(disposition: ExecutionRouteDisposition) -> &'static str {
     match disposition {
         ExecutionRouteDisposition::Native => "native",
-        ExecutionRouteDisposition::LegacyWholeRun => "legacy_whole_run",
         ExecutionRouteDisposition::TemporarilyUnavailable => "temporarily_unavailable",
     }
 }
@@ -7931,7 +8068,6 @@ const fn route_requirement_kind(kind: ExecutionRouteRequirementKind) -> &'static
 fn execution_route_disposition(value: &str) -> Option<ExecutionRouteDisposition> {
     match value {
         "native" => Some(ExecutionRouteDisposition::Native),
-        "legacy_whole_run" => Some(ExecutionRouteDisposition::LegacyWholeRun),
         "temporarily_unavailable" => Some(ExecutionRouteDisposition::TemporarilyUnavailable),
         _ => None,
     }
@@ -7949,10 +8085,7 @@ fn execution_route_requirement_kind(value: &str) -> Option<ExecutionRouteRequire
 }
 
 fn route_disposition_is_valid(value: &str) -> bool {
-    matches!(
-        value,
-        "native" | "legacy_whole_run" | "temporarily_unavailable"
-    )
+    matches!(value, "native" | "temporarily_unavailable")
 }
 
 fn route_requirement_kind_is_valid(value: &str) -> bool {
@@ -8382,15 +8515,15 @@ mod tests {
         let row = ExecutionRouteRequirement::new(
             "capability.compiled-problem",
             ExecutionRouteRequirementKind::Capability,
-            ExecutionRouteDisposition::LegacyWholeRun,
+            ExecutionRouteDisposition::TemporarilyUnavailable,
             ExecutionRouteRequirementEvidence {
-                current_owner: "legacy-imaging".to_string(),
+                current_owner: "untransferred-imaging".to_string(),
                 destination_tickets: vec!["T06".to_string()],
                 evidence_issues: vec![492],
                 baseline_manifests: vec!["tests/fixtures/imaging/manifest.json".to_string()],
                 acceptance_contract: "compiled-problem-v1".to_string(),
                 transfer_point: "T06 acceptance".to_string(),
-                deletion_condition: "legacy compiler removed".to_string(),
+                deletion_condition: "untransferred compiler removed".to_string(),
                 source_evidence: vec!["crates/casa-imaging/src/lib.rs".to_string()],
                 obligation_ticket: Some("T06".to_string()),
                 obligation_reason: Some("transfer remains incomplete".to_string()),

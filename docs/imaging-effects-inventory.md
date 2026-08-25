@@ -1,7 +1,7 @@
 # Imaging Effects Inventory
 
-Truth class: current descriptive
-Last reality check: 2026-07-16
+Truth class: historical evidence inventory
+Last reality check: 2026-08-25
 Verification:
 - `just docs-check`
 - `cargo test -p casa-imaging mosaic_pointing_contribution_follows_casa_simple_pb_center_pixel_rule`
@@ -20,9 +20,16 @@ The tutorial acceptance data are the Antennae Band 7 and 3C391 mosaics. Smaller
 pinned datasets such as `refim_alma_mosaic.ms`, `papersky_mosaic.ms`, and
 `refim_oneshiftpoint.mosaic.ms` remain the fast regression oracles.
 
+The locations below record where Wave 6 evidence was produced; they are not
+current production routes. T23 deleted the old continuum runner and product
+writer. Production continuum now enters through the thin `casars-imager`
+surface and the sole `casa-imaging-application` compile/plan/run composition.
+Capabilities not yet transferred to that composition are
+`TemporarilyUnavailable` rather than routed back to these historical paths.
+
 ## Source Seams
 
-| CASA / casacore seam | Effect | casa-rs location | Wave 6 status |
+| CASA / casacore seam | Effect | Historical Wave 6 evidence location | Wave 6 status |
 |---|---|---|---|
 | `GridFT` / `grd2d.f` `SHIFT` path | phase-center shift before standard gridding | `casars-imager` prepared-sample phase rotation plus `casa-imaging` standard gridder | partial; source-backed standard and wproject gates exist, tutorial proof is tracked by child issues |
 | `fwproj.f` / `fmosft.f` `dphase` paths | per-row phase correction in wproject and mosaic gridders | `casars-imager` row preparation, `casa-imaging` wproject/mosaic projectors | implemented for the MFS mosaic proof path; cube tutorial proof remains #161/#169 scope |
@@ -42,7 +49,7 @@ pinned datasets such as `refim_alma_mosaic.ms`, `papersky_mosaic.ms`, and
 | CASA `savemodel='modelcolumn'` | predict the final model image into MAIN.MODEL_DATA | `casars-imager --savemodel modelcolumn`; task contract `save_model`; Python `save_model` | implemented for single-MS standard MFS and cube paths; MTMFS and multi-MS requests are rejected; source seam is CASA `SynthesisImager::runMajorCycle` / `SynthesisImager::predictModel` writing `VisibilityIterator::Model` |
 | CASA `nmajor` / `fullsummary` | major-cycle limit and returned minor-cycle summary detail | `casars-imager --nmajor`; task contract `nmajor`, `fullsummary`, `iterdone`, `nmajordone`, `stopcode`, and `summaryminor` rows | #221 implements source-backed task parity: `nmajor=-1` is unlimited, `nmajor=0` stops after the initial residual, positive `nmajor` limits post-minor-cycle residual refreshes and reports CASA stop code 9. `fullsummary=false` keeps short minor-cycle rows; `fullsummary=true` adds start-iteration, start-peak, no-mask peak, and per-block stop-code fields. Slow parity on `unittest/tclean/refim_twochan.ms` matched CASA `iterdone=30`, `nmajordone=4`, `stopcode=9`, and 3 `summaryminor` rows for `niter=100`, `cycleniter=10`, `nmajor=3`, `threshold=0.01Jy`; image-product evidence recorded model peak `(50,50)` in both products, identical top 11 model components to CASA within `1e-5`, model RMS/max/corr `1.47e-4` / `8.84e-3` / `0.999871`, residual RMS/max/corr `1.05e-3` / `1.56e-2` / `0.998221`, and restored-image RMS/max/corr `4.94e-4` / `2.96e-3` / `0.999950` |
 
-## Current Mode Matrix
+## Historical Wave 6 Mode Matrix
 
 | Mode | Geometry / phase effects | Gridding / PB effects | Deconvolution | Output products | Tutorial impact |
 |---|---|---|---|---|---|
@@ -54,7 +61,7 @@ pinned datasets such as `refim_alma_mosaic.ms`, `papersky_mosaic.ms`, and
 | Mosaic cube | phase/PB are channel aware in the dirty multi-MS route | ALMA/ACA HetArray screen sizing and PB normalization now match the #163 CASA probe below 1% max image error | dirty path proven; cleaned cube scale-up remains issue scope | `.psf`, `.residual`, `.image`, `.image.pbcor`, `.sumwt`, `.weight`, `.pb` for the #163 probe | #163 M100 12m+7m combined cube |
 | Heterogeneous mosaic / AW-style | source-backed HetArray phase-gradient projector | ALMA/ACA Airy PBs, support-sized screens, and sky coverage | dirty path proven for #163; cleaned/full-cube proof still open | M100 two-channel probe products and panels | active Wave 6 capability, no longer deferred |
 
-## Runtime Effects
+## Historical Runtime Effects
 
 - Imager task protocol v3 carries `parallel`, `chanchunks`, shared source
   memory/prepare/row-block/read-ahead controls, and dirty-product FFT precision

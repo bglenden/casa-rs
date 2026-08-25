@@ -19,7 +19,7 @@ Every current imaging capability, product, solver, frontend, and backend has
 exactly one stable row. A row records:
 
 - its sole current production owner;
-- `Native`, `LegacyWholeRun`, or `TemporarilyUnavailable` disposition;
+- `Native` or `TemporarilyUnavailable` disposition;
 - exact evidence issues and baseline-manifest locators;
 - one versioned Acceptance Contract;
 - its destination ticket and transfer point;
@@ -42,21 +42,15 @@ not baseline evidence; issue-backed rows use exact committed snapshots with
 the issue title, body, URL, and source update timestamp. A baseline replacement
 therefore requires an explicit matrix revision and accepted digest update.
 
-`LegacyWholeRun` is an ownership classification, not a compatibility promise.
-It permits the current production implementation to remain reachable only
-through `casa-imaging-router` once a frontend is migrated to the router. It
-never permits a native stage to call into legacy code or a failed native run to
-retry through legacy.
-
 `casa-imaging-router` compiles each `ImagingRequest`, derives the required rows
 from the resulting immutable `CompiledProblem`, and records the matrix schema,
-contract revision, disposition, and complete evidence for each row. It then
-invokes exactly one sealed whole-run engine port. Enum-to-row bindings come
+contract revision, disposition, and complete evidence for each row. A Native
+decision invokes the sole sealed production engine; `TemporarilyUnavailable`
+invokes no engine. Enum-to-row bindings come
 directly from the matrix inventories already checked against their Rust enums;
-the router does not maintain a second binding table. `TemporarilyUnavailable`
-invokes neither port, and compile, matrix, native compile/plan/run, or selected
-legacy failures are terminal. Production code has no differential or
-stage-mixing entry point; test-only fake ports exercise both owners separately.
+invokes no engine, and compile, matrix, planning, or execution failures are
+terminal. Production code has no differential, fallback, or stage-mixing entry
+point.
 
 ## Acceptance contracts
 
@@ -92,8 +86,8 @@ A row transfers to `Native` only when the same change:
 
 1. passes its referenced Acceptance Contract;
 2. updates the row, evidence, and contract revision;
-3. makes the displaced production route unreachable, or quarantines a helper
-   still required by another legacy row behind the legacy boundary; and
+3. deletes the displaced production route and moves any still-useful algorithm
+   directly to its authoritative owner; and
 4. leaves no runtime fallback or dual patch owner.
 
 Before transfer, corrective and performance changes land only in the row's
@@ -103,11 +97,11 @@ T14/#500 is a boundary checkpoint, not a product-row transfer. The compiled
 measurement equation ends at an explicitly unnormalized normal state, while
 normalization, residual scaling, restoration, PB correction, blanking, and
 unit conversion are typed as Product Contract operations. `product.image` and
-`product.image-pbcor` therefore remain `LegacyWholeRun`: T13/#499 must land the
+`product.image-pbcor` therefore remain `TemporarilyUnavailable`: T13/#499 must land the
 Product Graph and atomic store, T22/#508 owns the first continuum Product
 Generation Authority and sealed publication, T39/#525 owns common-beam
 restoration, T47/#533 owns PB/sensitivity and mosaic normalization algorithms,
-and T43/#529 owns wideband `product.alpha-pbcor` behavior. Their legacy writers
+and T43/#529 owns wideband `product.alpha-pbcor` behavior. Their displaced writers
 are removed only under the transfer ratchet above.
 
 The next tranche corrects one dependency discovered during composition: model
@@ -125,12 +119,10 @@ row ledger, structured issue outcomes, content-pinned evidence locators,
 Migration Obligations, and source evidence. It binds the seventeen variant maps
 to their Rust enums, classifies every Cargo workspace package, requires native
 dependency sets to match exactly, pins `casa-imaging-router` as the sole owner
-of `ImagingRouter` and both whole-run engine ports, requires its direct matrix
-embedding, scans native science/runtime/router and Rust/Swift frontend roots for
-forbidden legacy/backend/device imports, ratchets the existing legacy
-Rust-frontend violations while rejecting additions, and permits only the 16
-exact frozen legacy edges plus three exact pre-existing transitional surface
-edges. Its mutation tests prove coordinated inventory and issue deletion, row
+of `ImagingRouter` and the sole production engine port, requires its direct
+matrix embedding, scans native science/runtime/router and Rust/Swift frontend
+roots for forbidden backend/device imports, and rejects unapproved dependency
+exceptions. Its mutation tests prove coordinated inventory and issue deletion, row
 reclassification, router relocation or duplication, matrix detachment,
 contract or graph weakening, unmapped packages, and forbidden logical,
 package, module, and Swift edges fail closed.

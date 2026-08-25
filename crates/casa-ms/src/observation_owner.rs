@@ -8,7 +8,11 @@
 //! is owner-minted from operating-system entropy; filesystem paths, inode and
 //! timestamp metadata, and content hashes never participate.
 
-use std::{collections::BTreeMap, path::Path, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    path::Path,
+    sync::{Arc, Mutex},
+};
 
 use casa_imaging_model::{
     ColumnGeneration, ConsistencyToken, FlagPolicy, LogicalIdentity, MeasurementSetIdentity,
@@ -23,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::selected_observation::validate_selected_coordinates;
+use crate::selected_observation::{BoundObservationSource, validate_selected_coordinates};
 use crate::{
     BoundObservationSourceError, BoundSelectedObservation, BoundSelectedObservationError,
     MeasurementSet, MsError, MsSelectionIoBudget, ObservationSourceBinding,
@@ -35,6 +39,7 @@ use crate::{
 const OWNER_MANIFEST_KEYWORD: &str = "CASA_RS_IMAGING_OWNER_MANIFEST";
 const OWNER_MANIFEST_SCHEMA_VERSION: u32 = 1;
 const OWNER_IDENTITY_DOMAIN: &[u8] = b"casa-rs-ms-owner-manifest-v1";
+static OWNER_INITIALIZATION_MUTEX: Mutex<()> = Mutex::new(());
 
 const TRACKED_COLUMNS: &[(MsColumnKind, &str)] = &[
     (MsColumnKind::Data, "DATA"),
@@ -116,6 +121,10 @@ const REQUIRED_METADATA: [MetadataTableKind; 9] = [
 ];
 
 /// Explicit production inputs for resolving one selected MeasurementSet owner.
+///
+/// Cloning duplicates only this immutable resolution description. Every call to
+/// [`resolve_selected_observation`] performs a fresh owner-state probe and
+/// returns a new affine access capability; live table authority is never cloned.
 #[derive(Clone)]
 pub struct SelectedObservationResolutionRequest {
     locator: String,
@@ -191,6 +200,48 @@ impl ResolvedSelectedObservationAccess {
         &self.binding
     }
 
+    /// Replace the caller's upper-bound content budget with the smallest budget
+    /// that the MeasurementSet owner can prove admits one complete selected row.
+    ///
+    /// The owner derives this value from the same retained metadata, Measures
+    /// state, shared allocation charges, and content planner used by [`Self::open`].
+    /// The caller's live-block and POINTING polynomial ceilings are preserved;
+    /// an upper bound too small to admit one row fails closed.
+    #[cfg(unix)]
+    pub fn with_minimum_content_budget(
+        mut self,
+        problem: &casa_imaging_model::CompiledProblem,
+    ) -> Result<Self, BoundSelectedObservationError> {
+        BoundSelectedObservation::certify_residency(problem, std::slice::from_ref(&self.binding))?;
+        let source = problem
+            .inputs()
+            .observation_snapshot()
+            .sources()
+            .first()
+            .ok_or(BoundSelectedObservationError::BindingSetMismatch)?;
+        let shared_bytes = BoundSelectedObservation::single_source_shared_bytes(
+            problem,
+            &self.measures,
+            &self.binding,
+        )?;
+        let measurement_set = self.binding.measurement_set();
+        let content_budget = BoundObservationSource::minimum_content_budget_with_measures(
+            problem,
+            source,
+            self.binding.current_state(),
+            &self.measures,
+            shared_bytes,
+            self.binding.content_budget(),
+        )
+        .map_err(|error| BoundSelectedObservationError::Source {
+            measurement_set,
+            error: Box::new(error),
+        })?;
+        self.binding =
+            ObservationSourceBinding::new(self.binding.current_state().clone(), content_budget);
+        Ok(self)
+    }
+
     /// Mint the scheduler-visible residency certificate for the compiled problem.
     pub fn certify_residency(
         &self,
@@ -219,6 +270,9 @@ impl ResolvedSelectedObservationAccess {
 pub fn initialize_measurement_set_owner_manifest(
     path: impl AsRef<Path>,
 ) -> Result<MeasurementSetIdentity, ObservationOwnerError> {
+    let _process_guard = OWNER_INITIALIZATION_MUTEX
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut measurement_set = MeasurementSet::open_retained_read(path)?;
     if measurement_set
         .main_table()
@@ -230,6 +284,18 @@ pub fn initialize_measurement_set_owner_manifest(
     }
     if !measurement_set.main_table_mut().lock(LockType::Write, 1)? {
         return Err(ObservationOwnerError::WriteLockUnavailable);
+    }
+    // Lock acquisition reloads table state after another writer commits. The
+    // pre-lock check is only a fast path; this check is the atomic once-only
+    // migration decision.
+    if measurement_set
+        .main_table()
+        .keywords()
+        .get(OWNER_MANIFEST_KEYWORD)
+        .is_some()
+    {
+        measurement_set.main_table_mut().unlock()?;
+        return Err(ObservationOwnerError::AlreadyInitialized);
     }
     let manifest = OwnerManifest::mint(&measurement_set)?;
     let encoded = serde_json::to_string(&manifest)?;
@@ -910,6 +976,58 @@ mod tests {
         ));
         initialize_measurement_set_owner_manifest(&path).expect("explicit migration");
         resolve_selected_observation(request(&path)).expect("marked owner resolves");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn concurrent_initialization_mints_exactly_one_owner_identity() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("concurrent.ms");
+        create_ms(&path, false);
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+
+        let workers = (0..2)
+            .map(|_| {
+                let path = path.clone();
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    initialize_measurement_set_owner_manifest(path)
+                })
+            })
+            .collect::<Vec<_>>();
+        let results = workers
+            .into_iter()
+            .map(|worker| worker.join().expect("initializer thread"))
+            .collect::<Vec<_>>();
+
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| matches!(result, Err(ObservationOwnerError::AlreadyInitialized)))
+                .count(),
+            1
+        );
+        let persisted = OwnerManifest::read(
+            MeasurementSet::open(&path)
+                .expect("reopen initialized MS")
+                .main_table()
+                .keywords(),
+        )
+        .expect("one complete persisted manifest");
+        let successful = results
+            .into_iter()
+            .find_map(Result::ok)
+            .expect("one successful identity");
+        assert_eq!(
+            parse_identity(
+                &persisted.measurement_set_identity,
+                "MeasurementSet identity"
+            )
+            .expect("persisted identity"),
+            successful.identity()
+        );
     }
 
     #[test]

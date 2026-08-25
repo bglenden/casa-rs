@@ -103,6 +103,8 @@ pub enum ProductPublicationError {
     MissingProjection,
     /// A projection was supplied to a plan without native product authority.
     UnexpectedProjection,
+    /// A native per-member plan reached an implementation without that capability.
+    MissingMemberPublisher,
 }
 
 impl fmt::Display for ProductPublicationError {
@@ -133,6 +135,9 @@ impl fmt::Display for ProductPublicationError {
             }
             Self::UnexpectedProjection => formatter.write_str(
                 "a product projection was supplied without native publication authority",
+            ),
+            Self::MissingMemberPublisher => formatter.write_str(
+                "native product publication implementation omitted per-member promotion",
             ),
         }
     }
@@ -354,7 +359,7 @@ impl ProductPublicationAuthorization {
                 return Err(ProductPublicationError::ArtifactEvidenceMismatch { node: entry.node });
             };
             if measurement.observed_identity() != Some(entry.observed)
-                || measurement.disposition() != crate::ArtifactDisposition::Staged
+                || measurement.disposition() != crate::ArtifactDisposition::PublicationPrepared
                 || measurement.bytes() != entry.payload_bytes
             {
                 return Err(ProductPublicationError::ArtifactEvidenceMismatch { node: entry.node });

@@ -18,8 +18,8 @@
 //! There is no other construction path: planned generations, artifact
 //! identities, and seals have no public constructors and cannot be
 //! reconstructed from digest bytes. Publication consumes only the exact
-//! sealed member set through the T08 prepare → sole visibility operation →
-//! terminal promotion choreography.
+//! sealed member set through private prepare → independently atomic member
+//! replacement → per-member terminal receipt choreography.
 
 mod authority;
 mod beam;

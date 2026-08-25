@@ -168,7 +168,7 @@ fn t19_compatible_problem_with_width(
     observation: u8,
     width: usize,
 ) -> casa_imaging_model::CompiledProblem {
-    let centre = ((width - 1) / 2) as f64;
+    let centre = width as f64 / 2.0;
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
         SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),

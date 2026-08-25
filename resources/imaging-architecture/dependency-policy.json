@@ -10,7 +10,7 @@
   "product",
   "execution",
   "backend",
-  "legacy"
+  "displaced"
  ],
  "allowed_logical_edges": {
   "frontend": [
@@ -44,7 +44,7 @@
    "science",
    "execution"
   ],
-  "legacy": []
+  "displaced": []
  },
  "package_layers": {
   "casa-provider-contracts": "application",
@@ -55,10 +55,10 @@
   "casa-imaging-reconstruction": "reconstruction",
   "casa-imaging-router": "application",
   "casa-imaging-runtime": "execution",
-  "casa-imaging": "legacy",
+  "casa-imaging": "displaced",
   "casars": "frontend",
   "casars-frontend-services": "frontend",
-  "casars-imager": "legacy",
+  "casars-imager": "frontend",
   "casars-python": "frontend"
  },
  "workspace_package_classification": {
@@ -66,7 +66,7 @@
   "casa-calibration": "support",
   "casa-coordinates": "support",
   "casa-images": "support",
-  "casa-imaging": "legacy",
+  "casa-imaging": "displaced",
   "casa-imaging-application": "native",
   "casa-imaging-model": "native",
   "casa-imaging-products": "native",
@@ -89,19 +89,22 @@
   "casars": "surface",
   "casars-frontend-services": "surface",
   "casars-imagebrowser-protocol": "support",
-  "casars-imager": "legacy",
+  "casars-imager": "surface",
   "casars-python": "surface",
   "casars-tablebrowser-protocol": "support",
   "ratatui-graphics": "support"
  },
  "native_package_workspace_dependencies": {
   "casa-imaging-application": [
+   "casa-coordinates",
+   "casa-images",
    "casa-imaging-model",
    "casa-imaging-products",
    "casa-imaging-reconstruction",
    "casa-imaging-router",
    "casa-imaging-runtime",
-   "casa-ms"
+   "casa-ms",
+   "casa-types"
   ],
   "casa-imaging-model": [],
   "casa-imaging-reconstruction": [
@@ -121,14 +124,13 @@
    "casa-ms"
   ]
  },
- "whole_run_router": {
+ "migration_router": {
   "package": "casa-imaging-router",
   "source": "crates/casa-imaging-router/src/lib.rs",
   "router_type": "ImagingRouter",
   "dispatch_method": "dispatch",
   "engine_ports": [
-   "NativeEnginePort",
-   "LegacyWholeRunEnginePort"
+   "NativeEnginePort"
   ]
  },
  "device_dependency_prefixes": [
@@ -162,13 +164,13 @@
    "forbidden_patterns": [
     {
      "regex": "(?m)^\\s*(?:pub\\s+)?(?:use|extern\\s+crate)\\s+(?:casa_imaging_runtime|casa_imaging|casars_imager|ash|cuda|cudarc|metal|objc2_metal|opencl|vulkano|wgpu)\\b|\\b(?:casa_imaging_runtime|casa_imaging|casars_imager|ash|cuda|cudarc|metal|objc2_metal|opencl|vulkano|wgpu)::",
-     "message": "native science or reconstruction Rust source imports an execution, backend, legacy, or device API"
+     "message": "native science or reconstruction Rust source imports an execution, backend, displaced, or device API"
     }
    ],
    "accepted_violation_digest": null
   },
   {
-   "id": "native-runtime-router-legacy-isolation",
+   "id": "native-runtime-router-displaced-isolation",
    "roots": [
     "crates/casa-imaging-runtime/src",
     "crates/casa-imaging-router/src"
@@ -179,7 +181,7 @@
    "forbidden_patterns": [
     {
      "regex": "(?m)^\\s*(?:pub\\s+)?(?:use|extern\\s+crate)\\s+(?:casa_imaging|casars_imager)\\b|\\b(?:casa_imaging|casars_imager)::",
-     "message": "native runtime or whole-run router imports a legacy imaging API"
+     "message": "native runtime or migration router imports a displaced imaging API"
     }
    ],
    "accepted_violation_digest": null
@@ -301,14 +303,14 @@
    "forbidden_patterns": [
     {
      "regex": "(?m)^\\s*(?:pub\\s+)?(?:use|extern\\s+crate)\\s+(?:casa_imaging_runtime|casa_imaging|casars_imager|ash|cuda|cudarc|metal|objc2_metal|opencl|vulkano|wgpu)\\b|\\b(?:casa_imaging_runtime|casa_imaging|casars_imager|ash|cuda|cudarc|metal|objc2_metal|opencl|vulkano|wgpu)::",
-     "message": "Rust frontend imports an execution, legacy imaging backend, or device API"
+     "message": "Rust frontend imports an execution, displaced imaging backend, or device API"
     },
     {
-     "regex": "\\b(?:StandardMfsBackend|StandardMfsMinorCycleBackend|SinglePlaneAccelerationPolicy|PerPlaneExecutionBackend|FftBackendChoice|ImagingFftBackendPolicy|StandardMfsAccelerationPolicy|MtmfsScaleFftBackend|DirtyProductFftPolicy|FftBackend)::[A-Za-z_][A-Za-z0-9_]*\\b|\\b(?:standard_mfs_metal_device_available|MTLCreateSystemDefaultDevice|MTLCopyAllDevices|MTLCopyAllDevicesWithObserver)\\s*\\(",
+     "regex": "\\b(?:StandardMfsBackend|StandardMfsMinorCycleBackend)::[A-Za-z_][A-Za-z0-9_]*\\b|\\b(?:standard_mfs_metal_device_available|MTLCreateSystemDefaultDevice|MTLCopyAllDevices|MTLCopyAllDevicesWithObserver)\\s*\\(",
      "message": "Rust frontend selects an imaging backend or inspects a device"
     }
    ],
-   "accepted_violation_digest": "4dc8a3e332be39601b21ca01889890284ead23c63f398afb942d37d13c04ba64"
+   "accepted_violation_digest": "62d03718c5a040c37765906b1f4bcccb0904904608d34ba2d00e97753575aed9"
   },
   {
    "id": "swift-imaging-frontends",
@@ -328,11 +330,10 @@
    "accepted_violation_digest": null
   }
  ],
- "legacy_packages": [
-  "casa-imaging",
-  "casars-imager"
+ "displaced_packages": [
+  "casa-imaging"
  ],
- "frozen_legacy_workspace_edges": [
+ "frozen_displaced_workspace_edges": [
   {
    "source": "casa-imaging",
    "target": "casa-coordinates",
@@ -362,56 +363,6 @@
    "source": "casars",
    "target": "casa-imaging",
    "kind": "normal"
-  },
-  {
-   "source": "casars",
-   "target": "casars-imager",
-   "kind": "normal"
-  },
-  {
-   "source": "casars-imager",
-   "target": "casa-coordinates",
-   "kind": "normal"
-  },
-  {
-   "source": "casars-imager",
-   "target": "casa-images",
-   "kind": "normal"
-  },
-  {
-   "source": "casars-imager",
-   "target": "casa-imaging",
-   "kind": "normal"
-  },
-  {
-   "source": "casars-imager",
-   "target": "casa-logging",
-   "kind": "normal"
-  },
-  {
-   "source": "casars-imager",
-   "target": "casa-ms",
-   "kind": "normal"
-  },
-  {
-   "source": "casars-imager",
-   "target": "casa-provider-contracts",
-   "kind": "normal"
-  },
-  {
-   "source": "casars-imager",
-   "target": "casa-tables",
-   "kind": "normal"
-  },
-  {
-   "source": "casars-imager",
-   "target": "casa-task-runtime",
-   "kind": "normal"
-  },
-  {
-   "source": "casars-imager",
-   "target": "casa-types",
-   "kind": "normal"
   }
  ],
  "frozen_transitional_workspace_edges": [
@@ -427,6 +378,11 @@
   },
   {
    "source": "casars-frontend-services",
+   "target": "casa-ms",
+   "kind": "normal"
+  },
+  {
+   "source": "casars-imager",
    "target": "casa-ms",
    "kind": "normal"
   }

@@ -7,6 +7,15 @@
 //! reconstruction and products, and the physical execution runtime. Frontends
 //! submit requests here; they do not compose native execution stages directly.
 
+mod casa_product_sink;
+mod continuum_request;
+
+pub use casa_product_sink::CasaImageProductSink;
+pub use continuum_request::{
+    ContinuumAlgorithm, ContinuumBeamPolicy, ContinuumImagingRequest, ContinuumImagingResult,
+    ContinuumStopReason, ContinuumWeighting, execute_continuum,
+};
+
 use std::{error::Error, fmt, io, sync::Mutex};
 
 use casa_imaging_model::{
@@ -21,11 +30,12 @@ use casa_imaging_products::{
 };
 use casa_imaging_reconstruction::{
     CleanWindow, ExecutableModelProblem, HogbomControls, MajorCycleCompletion,
-    WeightingExecutionLimits,
+    MinorCycleStopReason, WeightingExecutionLimits,
 };
+pub use casa_imaging_router::TaskRouteRequirement;
 use casa_imaging_router::{
-    DispatchError, ImagingRouter, LegacyWholeRunEnginePort, MigrationRowKind, NativeEnginePort,
-    RequestDisposition, RouteRecord,
+    DispatchError, ImagingRouter, MigrationRowKind, NativeEnginePort, RequestDisposition,
+    RouteRecord,
 };
 use casa_imaging_runtime::{
     AttemptBoundObservationCompletion, BuildIdentity, ExecutionAttemptId, ExecutionProvenance,
@@ -33,12 +43,12 @@ use casa_imaging_runtime::{
     ExecutionRouteRequirement, ExecutionRouteRequirementEvidence, ExecutionRouteRequirementKind,
     FenceKind, ImplementationContractMetadata, ImplementationRegistry, ImplementationRegistryId,
     ObservationReadCompletionContext, PlannerCostModelProfileBootstrap, PlanningBindings,
-    QueueResourceId, RateResourceId, ResourceAuthority, ResourcePolicy, RunBindings,
-    RunToCompletion, SerialContinuumExecutionPolicy, SerialContinuumExecutor,
-    SerialContinuumPassInput, SerialContinuumPlan, SerialContinuumRegistry,
-    SerialProductPublicationExecutor, SerialProductPublicationPlan, SerialProductPublicationPolicy,
-    SerialProductPublicationRegistry, SerialProductPublicationSink, StorageDomainId,
-    WorkExecutionContext, WorkImplementation, WorkImplementationId, WorkMeasurements, plan, run,
+    ResourceAuthority, ResourcePolicy, RunBindings, RunToCompletion,
+    SerialContinuumExecutionPolicy, SerialContinuumExecutor, SerialContinuumPassInput,
+    SerialContinuumPlan, SerialContinuumRegistry, SerialProductPublicationExecutor,
+    SerialProductPublicationPlan, SerialProductPublicationPolicy, SerialProductPublicationRegistry,
+    SerialProductPublicationSink, StorageIoResourceBinding, WorkExecutionContext,
+    WorkImplementation, WorkImplementationId, WorkMeasurements, plan, run,
 };
 use casa_ms::{
     ResolvedSelectedObservationAccess, SelectedObservationResolutionRequest,
@@ -61,6 +71,9 @@ pub struct ApplicationRuntime {
     pub stage_nanos: u64,
     /// Hard memory bound for the scheduler-owned minor-cycle view.
     pub minor_cycle_bytes: u64,
+    /// Exact profiled storage resources shared by selected-observation reads,
+    /// receipt commits, and product publication.
+    pub storage_io: StorageIoResourceBinding,
     /// Fixed-point confidence in parts per million.
     pub confidence_parts_per_million: u32,
     /// Host-use policy bound at planning and execution.
@@ -87,9 +100,19 @@ pub struct ApplicationRequest<S> {
     pub model_lifecycle: ModelLifecycleRequirements,
     /// Storage-owner request for the single selected MeasurementSet.
     pub observation: SelectedObservationResolutionRequest,
+    /// Task-surface constraints that cannot be inferred from the compiled
+    /// backend-independent problem.
+    pub task_route_requirements: Vec<TaskRouteRequirement>,
+    /// Native-only deployment inputs evaluated after request compilation.
+    /// A preparation error is terminal; there is no alternate execution path.
+    pub native: Result<ApplicationNative<S>, ApplicationError>,
+}
+
+/// Runtime and publication inputs consumed only by the Native engine port.
+pub struct ApplicationNative<S> {
     /// Explicit runtime/resource/receipt inputs.
     pub runtime: ApplicationRuntime,
-    /// Product-generation and atomic-publication configuration.
+    /// Product-generation and independently atomic publication configuration.
     pub publication: ApplicationPublication<S>,
 }
 
@@ -97,12 +120,6 @@ pub struct ApplicationRequest<S> {
 pub struct ApplicationPublication<S> {
     /// Scientific continuum-product controls.
     pub controls: ContinuumProductControls,
-    /// Storage capacity domain used for staged and final output.
-    pub storage_domain: StorageDomainId,
-    /// I/O rate resource selected for staging and promotion.
-    pub io_rate: RateResourceId,
-    /// I/O queue selected for staging and promotion.
-    pub io_queue: QueueResourceId,
     /// Storage adapter that privately stages and atomically publishes members.
     pub sink: S,
 }
@@ -113,6 +130,8 @@ pub struct NativeApplicationOutcome {
     pub initial_receipt: ExecutionReceipt,
     /// Mandatory post-minor final-major receipt for Högbom imaging.
     pub final_major_receipt: Option<ExecutionReceipt>,
+    /// T21 solve evidence captured before its affine final-major handoff.
+    pub minor_cycle: Option<NativeMinorCycleOutcome>,
     /// Atomic product-publication receipt.
     pub publication_receipt: ExecutionReceipt,
     /// Final authoritative complete-data and model state.
@@ -123,32 +142,32 @@ pub struct NativeApplicationOutcome {
     pub products: SealedContinuumGeneration,
 }
 
-/// Output of exactly one router-selected whole-run engine.
-pub enum ApplicationEngineOutcome<LegacyOutput> {
-    /// Native serial continuum execution.
-    Native(Box<NativeApplicationOutcome>),
-    /// Caller-supplied sealed legacy whole-run execution.
-    LegacyWholeRun(LegacyOutput),
+/// Stable application projection of the T21 owner evidence.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NativeMinorCycleOutcome {
+    /// Number of accepted component updates.
+    pub iterations: usize,
+    /// Final normalized residual peak.
+    pub final_peak_flux: f64,
+    /// Scientific terminal reason.
+    pub stop_reason: MinorCycleStopReason,
 }
 
 /// Whole-run result with the authoritative route record.
-pub struct ApplicationOutcome<LegacyOutput> {
+pub struct ApplicationOutcome {
     /// Pre-plan migration decision.
     pub route: RouteRecord,
     /// Output returned by the one selected engine.
-    pub output: ApplicationEngineOutcome<LegacyOutput>,
+    pub output: Box<NativeApplicationOutcome>,
 }
 
-/// Dispatch one imaging request through the sole production migration router.
-pub fn execute<LegacyOutput, S>(
+/// Dispatch one imaging request through the sole production native engine.
+/// Requests whose required capabilities are not native fail as temporarily
+/// unavailable before physical planning or execution begins.
+pub fn execute<S>(
     request: ApplicationRequest<S>,
-    legacy: impl Fn(&CompiledProblem, &RouteRecord) -> Result<LegacyOutput, ApplicationError>
-    + Send
-    + Sync
-    + 'static,
-) -> Result<ApplicationOutcome<LegacyOutput>, ApplicationDispatchError>
+) -> Result<ApplicationOutcome, ApplicationDispatchError>
 where
-    LegacyOutput: 'static,
     S: SerialProductPublicationSink + Send + 'static,
     S::Error: Send + Sync,
 {
@@ -166,26 +185,18 @@ where
     let native_input = Mutex::new(Some(NativeInput {
         observation: request.observation,
         initial_access: access,
-        runtime: request.runtime,
-        publication: request.publication,
+        native: request.native,
     }));
-    let router = ImagingRouter::new(
-        NativeEnginePort::new(move |problem, route| {
-            let input = native_input
-                .lock()
-                .map_err(|_| boxed("native application input lock poisoned"))?
-                .take()
-                .ok_or_else(|| boxed("native application request already consumed"))?;
-            run_native(problem, route, input)
-                .map(Box::new)
-                .map(ApplicationEngineOutcome::Native)
-        }),
-        LegacyWholeRunEnginePort::new(move |problem, route| {
-            legacy(problem, route).map(ApplicationEngineOutcome::LegacyWholeRun)
-        }),
-    );
+    let router = ImagingRouter::new(NativeEnginePort::new(move |problem, route| {
+        let input = native_input
+            .lock()
+            .map_err(|_| boxed("native application input lock poisoned"))?
+            .take()
+            .ok_or_else(|| boxed("native application request already consumed"))?;
+        run_native(problem, route, input).map(Box::new)
+    }));
     let dispatched = router
-        .dispatch(imaging)
+        .dispatch_with_task_requirements(imaging, request.task_route_requirements)
         .map_err(ApplicationDispatchError::Dispatch)?;
     let (route, output) = dispatched.into_parts();
     Ok(ApplicationOutcome { route, output })
@@ -194,8 +205,7 @@ where
 struct NativeInput<S> {
     observation: SelectedObservationResolutionRequest,
     initial_access: ResolvedSelectedObservationAccess,
-    runtime: ApplicationRuntime,
-    publication: ApplicationPublication<S>,
+    native: Result<ApplicationNative<S>, ApplicationError>,
 }
 
 fn run_native<S>(
@@ -207,16 +217,18 @@ where
     S: SerialProductPublicationSink + Send + 'static,
     S::Error: Send + Sync,
 {
+    let ApplicationNative {
+        runtime,
+        publication,
+    } = input.native?;
     validate_native_problem(problem)?;
     let route_evidence = execution_route(route)?;
     let algorithm = problem.reconstruction().algorithm().clone();
-    let residency = input.initial_access.certify_residency(problem)?;
-    let planning_registry = PlanningRegistry::new(
-        input.runtime.registry,
-        input.runtime.implementation.clone(),
-        problem,
-    );
-    let policy = execution_policy(&input.runtime, residency.clone());
+    let initial_access = input.initial_access.with_minimum_content_budget(problem)?;
+    let residency = initial_access.certify_residency(problem)?;
+    let planning_registry =
+        PlanningRegistry::new(runtime.registry, runtime.implementation.clone(), problem);
+    let policy = execution_policy(&runtime, residency.clone());
     let planned = match algorithm {
         ReconstructionAlgorithm::Dirty => {
             SerialContinuumPlan::dirty(problem, &planning_registry, policy)?
@@ -228,9 +240,9 @@ where
     };
     let minor_node = planned.minor_cycle_node().cloned();
     let (physical, weighting, complete, resources, pass, _) = planned.into_parts();
-    let selected = input.initial_access.open(problem)?;
+    let selected = initial_access.open(problem)?;
     let mut executor = SerialContinuumExecutor::new(
-        input.runtime.implementation.clone(),
+        runtime.implementation.clone(),
         problem.clone(),
         weighting,
         resources,
@@ -251,59 +263,65 @@ where
         );
     }
     let registry = SerialContinuumRegistry::new(
-        input.runtime.registry,
-        input.runtime.implementation.clone(),
+        runtime.registry,
+        runtime.implementation.clone(),
         problem,
         executor,
     );
     let initial_plan = plan(
         problem,
         PlanningBindings::new(
-            input.runtime.registry,
-            input.runtime.resource_policy.clone(),
-            input.runtime.cost_model,
+            runtime.registry,
+            runtime.resource_policy.clone(),
+            runtime.cost_model,
         ),
-        &input.runtime.authority,
+        &runtime.authority,
         &registry,
-        &input.runtime.receipts,
+        &runtime.receipts,
         move |_, _| Ok::<_, std::convert::Infallible>(vec![physical]),
     )?;
     run_phase(
         problem,
         &initial_plan,
         &registry,
-        &input.runtime,
+        &runtime,
         route_evidence.clone(),
-        input.runtime.attempts[0],
+        runtime.attempts[0],
     )?;
-    let initial_receipt = input.runtime.receipts.open(input.runtime.attempts[0])?;
+    let initial_receipt = runtime.receipts.open(runtime.attempts[0])?;
 
-    let (scientific, final_major_receipt) = match algorithm {
+    let (scientific, final_major_receipt, minor_cycle) = match algorithm {
         ReconstructionAlgorithm::Dirty => {
             let result = registry
                 .implementation()
                 .take_completion()
                 .ok_or_else(|| boxed("dirty execution omitted final major-cycle evidence"))?;
-            (result.into_completion(), None)
+            (result.into_completion(), None, None)
         }
         ReconstructionAlgorithm::Hogbom => {
-            let final_input = registry
+            let minor = registry
                 .implementation()
                 .take_minor_completion()
-                .ok_or_else(|| boxed("Högbom execution omitted minor-cycle evidence"))?
-                .into_final_major_input();
+                .ok_or_else(|| boxed("Högbom execution omitted minor-cycle evidence"))?;
+            let minor_cycle = Some(NativeMinorCycleOutcome {
+                iterations: minor.evidence().iterations(),
+                final_peak_flux: minor.evidence().final_peak_flux(),
+                stop_reason: minor.evidence().stop_reason(),
+            });
+            let final_input = minor.into_final_major_input();
             let resolved = resolve_selected_observation(input.observation.clone())?;
             let (_, access) = resolved.into_parts();
+            let access = access.with_minimum_content_budget(problem)?;
             let final_residency = access.certify_residency(problem)?;
             let final_planned = SerialContinuumPlan::final_major(
                 problem,
                 &planning_registry,
-                execution_policy(&input.runtime, final_residency),
+                execution_policy(&runtime, final_residency),
                 &final_input,
             )?;
             let (physical, weighting, complete, resources, pass, _) = final_planned.into_parts();
             let executor = SerialContinuumExecutor::new(
-                input.runtime.implementation.clone(),
+                runtime.implementation.clone(),
                 problem.clone(),
                 weighting,
                 resources,
@@ -314,38 +332,38 @@ where
                 SerialContinuumPassInput::FinalMajor(final_input),
             );
             let registry = SerialContinuumRegistry::new(
-                input.runtime.registry,
-                input.runtime.implementation.clone(),
+                runtime.registry,
+                runtime.implementation.clone(),
                 problem,
                 executor,
             );
             let final_plan = plan(
                 problem,
                 PlanningBindings::new(
-                    input.runtime.registry,
-                    input.runtime.resource_policy.clone(),
-                    input.runtime.cost_model,
+                    runtime.registry,
+                    runtime.resource_policy.clone(),
+                    runtime.cost_model,
                 ),
-                &input.runtime.authority,
+                &runtime.authority,
                 &registry,
-                &input.runtime.receipts,
+                &runtime.receipts,
                 move |_, _| Ok::<_, std::convert::Infallible>(vec![physical]),
             )?;
             run_phase(
                 problem,
                 &final_plan,
                 &registry,
-                &input.runtime,
+                &runtime,
                 route_evidence.clone(),
-                input.runtime.attempts[1],
+                runtime.attempts[1],
             )?;
             let completion = registry
                 .implementation()
                 .take_completion()
                 .ok_or_else(|| boxed("final-major execution omitted scientific evidence"))?
                 .into_completion();
-            let receipt = input.runtime.receipts.open(input.runtime.attempts[1])?;
-            (completion, Some(receipt))
+            let receipt = runtime.receipts.open(runtime.attempts[1])?;
+            (completion, Some(receipt), minor_cycle)
         }
         _ => unreachable!("native validation admits only dirty or Högbom"),
     };
@@ -354,12 +372,13 @@ where
         problem,
         scientific,
         input.observation,
-        input.runtime,
-        input.publication,
+        runtime,
+        publication,
         PriorPhaseOutcome {
             route: route_evidence,
             initial_receipt,
             final_major_receipt,
+            minor_cycle,
         },
     )
 }
@@ -368,6 +387,7 @@ struct PriorPhaseOutcome {
     route: ExecutionRouteEvidence,
     initial_receipt: ExecutionReceipt,
     final_major_receipt: Option<ExecutionReceipt>,
+    minor_cycle: Option<NativeMinorCycleOutcome>,
 }
 
 fn validate_native_problem(problem: &CompiledProblem) -> Result<(), ApplicationError> {
@@ -397,6 +417,7 @@ fn execution_policy(
         runtime.implementation.clone(),
         runtime.weighting_limits,
         residency,
+        runtime.storage_io.clone(),
         runtime.stage_nanos,
         runtime.minor_cycle_bytes,
         runtime.confidence_parts_per_million,
@@ -450,6 +471,7 @@ where
 
     let resolved = resolve_selected_observation(observation)?;
     let (_, access) = resolved.into_parts();
+    let access = access.with_minimum_content_budget(problem)?;
     let residency = access.certify_residency(problem)?;
     let planning_registry =
         PlanningRegistry::new(runtime.registry, runtime.implementation.clone(), problem);
@@ -463,9 +485,7 @@ where
         SerialProductPublicationPolicy::new(
             runtime.implementation.clone(),
             residency,
-            publication_config.storage_domain,
-            publication_config.io_rate,
-            publication_config.io_queue,
+            runtime.storage_io.clone(),
             runtime.stage_nanos,
             runtime.confidence_parts_per_million,
         ),
@@ -528,6 +548,7 @@ where
     Ok(NativeApplicationOutcome {
         initial_receipt: prior.initial_receipt,
         final_major_receipt: prior.final_major_receipt,
+        minor_cycle: prior.minor_cycle,
         publication_receipt,
         scientific,
         planned_products,
@@ -578,7 +599,6 @@ fn execution_route(route: &RouteRecord) -> Result<ExecutionRouteEvidence, Applic
 const fn route_disposition(value: RequestDisposition) -> ExecutionRouteDisposition {
     match value {
         RequestDisposition::Native => ExecutionRouteDisposition::Native,
-        RequestDisposition::LegacyWholeRun => ExecutionRouteDisposition::LegacyWholeRun,
         RequestDisposition::TemporarilyUnavailable => {
             ExecutionRouteDisposition::TemporarilyUnavailable
         }

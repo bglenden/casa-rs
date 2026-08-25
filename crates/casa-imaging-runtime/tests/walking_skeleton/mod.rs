@@ -140,8 +140,8 @@ fn private_synthetic_request_crosses_the_complete_compile_plan_run_seam() {
     );
     let protocol = skeleton.problem.product_graph().publication().protocol();
     assert!(protocol.requires_durable_prepare());
-    assert!(protocol.has_one_visibility_operation());
-    assert!(protocol.has_infallible_terminal_promotion());
+    assert!(protocol.has_one_visibility_operation_per_member());
+    assert!(protocol.preserves_promoted_members_on_later_failure());
     assert_eq!(
         skeleton
             .problem

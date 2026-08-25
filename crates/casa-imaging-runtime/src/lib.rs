@@ -23,10 +23,10 @@ pub use execution_bindings::{
     ArtifactRole, AttemptBoundObservationCompletion, BindingKind, CacheIdentity,
     CompiledWorkContext, ExecutionEvidenceError, ExecutionPlan, ExecutionPlanId, ExecutionStatus,
     ImplementationContractCatalog, ImplementationContractMetadata, ImplementationRegistry,
-    ImplementationRegistryId, IoMeasurement, IoPrediction, LegacyWholeRunPublicationAuthority,
-    ObservationCompletionBindingError, ObservationReadCompletionContext, PhysicalWorkBinding,
-    PhysicalWorkBindingError, PhysicalWorkId, PlanError, PlanPrediction, PlannedArtifact,
-    PlannerCostModelProfileId, PlanningBindings, PredictionConfidence, PredictionUncertainty,
+    ImplementationRegistryId, IoMeasurement, IoPrediction, ObservationCompletionBindingError,
+    ObservationReadCompletionContext, PhysicalWorkBinding, PhysicalWorkBindingError,
+    PhysicalWorkId, PlanError, PlanPrediction, PlannedArtifact, PlannerCostModelProfileId,
+    PlanningBindings, PredictionConfidence, PredictionUncertainty, ProductMemberPublicationFailure,
     PublicationResources, RedactedPath, ResourceMeasurement, ResourcePolicyId, RunBindings,
     RunController, RunDirective, RunError, RunToCompletion, StagePrediction, WorkExecutionContext,
     WorkImplementation, WorkMeasurements, plan, run,
@@ -89,12 +89,13 @@ pub use resource_authority::{
     CapacityViewId, CountDemand, CpuClassCapacity, DemandAlternative, DemandAlternatives,
     DemandEnvelope, ExternalPressure, HostInventory, IoBufferDemand, IoBufferKind, LeaseRelease,
     LeaseResource, MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand, MemoryView,
-    MemoryViewKind, PressureUpdate, QueueDemand, QueueResource, QueueResourceId, QuiescencePoint,
-    RateDemand, RateResource, RateResourceId, RateUnit, ResourceAuthority, ResourceError,
-    ResourceFence, ResourceGrant, ResourceHeadroom, ResourceIdentity, ResourceLease,
-    ResourceOverride, ResourcePermit, ResourcePolicy, ResourceTopology, RuntimeOverheadDemand,
-    RuntimeOverheadKind, ScalingMetadata, StorageDemand, StorageDomain, StorageDomainId,
-    StorageUseKind, TransferDemand, TransferLink, TransferLinkId,
+    MemoryViewKind, PressureUpdate, ProductionStorageProfile, QueueDemand, QueueResource,
+    QueueResourceId, QuiescencePoint, RateDemand, RateResource, RateResourceId, RateUnit,
+    ResourceAuthority, ResourceError, ResourceFence, ResourceGrant, ResourceHeadroom,
+    ResourceIdentity, ResourceLease, ResourceOverride, ResourcePermit, ResourcePolicy,
+    ResourceTopology, RuntimeOverheadDemand, RuntimeOverheadKind, ScalingMetadata, StorageDemand,
+    StorageDomain, StorageDomainId, StorageIoResourceBinding, StorageUseKind, TransferDemand,
+    TransferLink, TransferLinkId,
 };
 pub use serial_continuum::{
     FinalMajorPhaseInput, InitialMajorPhaseCompletion, MinorCyclePhaseCompletion,
@@ -105,9 +106,10 @@ pub use serial_continuum_plan::{
     SerialContinuumExecutionPolicy, SerialContinuumPlan, SerialContinuumPlanError,
 };
 pub use serial_product_publication::{
-    SerialProductPublicationExecutionError, SerialProductPublicationExecutor,
-    SerialProductPublicationPlan, SerialProductPublicationPlanError,
-    SerialProductPublicationPolicy, SerialProductPublicationRegistry, SerialProductPublicationSink,
+    MemberPromotionFailure, MemberPromotionFailureKind, SerialProductPublicationExecutionError,
+    SerialProductPublicationExecutor, SerialProductPublicationPlan,
+    SerialProductPublicationPlanError, SerialProductPublicationPolicy,
+    SerialProductPublicationRegistry, SerialProductPublicationSink,
 };
 pub use weighting::{
     ContinuumPassIdentity, ContinuumPassPhase, ReplayCallbackError,

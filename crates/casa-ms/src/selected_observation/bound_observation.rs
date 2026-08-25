@@ -207,24 +207,31 @@ impl BoundSelectedObservation {
         SelectedObservationResidencyCertificate::mint(problem, bindings)
     }
 
-    /// Open every compiled source under its fresh state probe and content budget.
-    ///
-    /// Caller plan order is irrelevant. Sources are retained and replayed only in the compiler's
-    /// canonical read-set order.
-    #[cfg(unix)]
-    pub fn open(
+    pub(crate) fn single_source_shared_bytes(
         problem: &CompiledProblem,
-        measures: SelectedObservationMeasures,
-        mut bindings: Vec<ObservationSourceBinding>,
-    ) -> Result<Self, BoundSelectedObservationError> {
-        measures.validate_problem(problem)?;
-        let residency = SelectedObservationResidencyCertificate::mint(problem, &bindings)?;
+        measures: &SelectedObservationMeasures,
+        binding: &ObservationSourceBinding,
+    ) -> Result<SelectedObservationSharedBytes, BoundSelectedObservationError> {
+        let bindings = vec![binding.clone()];
+        let source_capacity = Vec::<BoundObservationSource>::with_capacity(1).capacity();
+        Self::shared_bytes(
+            problem,
+            measures,
+            &bindings,
+            bindings.capacity(),
+            source_capacity,
+        )
+    }
+
+    fn shared_bytes(
+        problem: &CompiledProblem,
+        measures: &SelectedObservationMeasures,
+        bindings: &[ObservationSourceBinding],
+        binding_capacity: usize,
+        source_capacity: usize,
+    ) -> Result<SelectedObservationSharedBytes, BoundSelectedObservationError> {
         let expected = problem.inputs().observation_snapshot().sources();
-        if bindings.len() != expected.len() {
-            return Err(BoundSelectedObservationError::BindingSetMismatch);
-        }
-        let binding_slot_bytes = bindings
-            .capacity()
+        let binding_slot_bytes = binding_capacity
             .checked_mul(size_of::<ObservationSourceBinding>())
             .ok_or(BoundSelectedObservationError::BindingGraphByteOverflow)?;
         let binding_graph_initialization_bytes = bindings.iter().enumerate().try_fold(
@@ -245,11 +252,40 @@ impl BoundSelectedObservation {
                     .ok_or(BoundSelectedObservationError::BindingGraphByteOverflow)
             },
         )?;
-        let mut sources = Vec::with_capacity(expected.len());
-        let source_slots_retained_bytes = sources
-            .capacity()
+        let source_slots_retained_bytes = source_capacity
             .checked_mul(BoundObservationSource::retained_source_slot_bytes())
             .ok_or(BoundSelectedObservationError::SourceSlotByteOverflow)?;
+        Ok(SelectedObservationSharedBytes::new(
+            measures.retained_bytes(),
+            source_slots_retained_bytes,
+            binding_graph_initialization_bytes,
+        ))
+    }
+
+    /// Open every compiled source under its fresh state probe and content budget.
+    ///
+    /// Caller plan order is irrelevant. Sources are retained and replayed only in the compiler's
+    /// canonical read-set order.
+    #[cfg(unix)]
+    pub fn open(
+        problem: &CompiledProblem,
+        measures: SelectedObservationMeasures,
+        mut bindings: Vec<ObservationSourceBinding>,
+    ) -> Result<Self, BoundSelectedObservationError> {
+        measures.validate_problem(problem)?;
+        let residency = SelectedObservationResidencyCertificate::mint(problem, &bindings)?;
+        let expected = problem.inputs().observation_snapshot().sources();
+        if bindings.len() != expected.len() {
+            return Err(BoundSelectedObservationError::BindingSetMismatch);
+        }
+        let mut sources = Vec::with_capacity(expected.len());
+        let first_source_shared_bytes = Self::shared_bytes(
+            problem,
+            &measures,
+            &bindings,
+            bindings.capacity(),
+            sources.capacity(),
+        )?;
         for (source_index, source) in expected.iter().enumerate() {
             let identity = source.identity();
             let Some(position) = bindings
@@ -270,11 +306,7 @@ impl BoundSelectedObservation {
             }
             let binding = bindings.remove(position);
             let shared_bytes = if source_index == 0 {
-                SelectedObservationSharedBytes::new(
-                    measures.retained_bytes(),
-                    source_slots_retained_bytes,
-                    binding_graph_initialization_bytes,
-                )
+                first_source_shared_bytes
             } else {
                 SelectedObservationSharedBytes::NONE
             };

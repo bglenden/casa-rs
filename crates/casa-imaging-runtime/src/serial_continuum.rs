@@ -8,9 +8,9 @@ use casa_imaging_model::{
     CompiledProblem, LogicalIdentity, ModelDeltaTerm, ModelExecutionAttemptId, ModelInputCommitment,
 };
 use casa_imaging_reconstruction::{
-    CleanWindow, ExecutableModelProblem, FinalModelCompletion, FinalNormalState, HogbomControls,
-    MajorCyclePreparation, MinorCycleError, MinorCycleEvidence, ModelDeltaId, ModelLifecycle,
-    hogbom_minor_cycle,
+    CleanWindow, ExecutableModelProblem, FinalModelCompletion, FinalModelContinuation,
+    FinalNormalState, HogbomControls, MajorCyclePreparation, MinorCycleError, MinorCycleEvidence,
+    ModelDeltaId, ModelLifecycle, hogbom_minor_cycle,
 };
 
 use crate::{
@@ -158,6 +158,10 @@ impl FinalMajorPhaseInput {
     pub const fn evidence(&self) -> &MinorCyclePhaseEvidence {
         &self.evidence
     }
+
+    fn into_execution_parts(self) -> (Box<[ModelDeltaTerm]>, FinalModelContinuation) {
+        (self.terms, self.evidence.continuation)
+    }
 }
 
 struct SerialMinorCycleExecution {
@@ -265,41 +269,46 @@ impl SerialContinuumExecutor {
             .executable
             .take()
             .ok_or_else(|| io::Error::other("executable model input missing"))?;
-        let mut lifecycle = ModelLifecycle::bind(
-            executable,
-            ModelExecutionAttemptId::new(LogicalIdentity::from_sha256(
-                context.attempt_id().as_bytes(),
-            )),
-            context.lease_epoch(),
-        )
-        .map_err(io::Error::other)?;
         let input = state
             .pass_input
             .take()
             .ok_or_else(|| io::Error::other("serial continuum pass input missing"))?;
-        let named = match lifecycle.contract().input() {
-            ModelInputCommitment::Empty => lifecycle.initial_empty(),
-            ModelInputCommitment::ReprojectedSeed(_) => lifecycle.initial_reprojected(),
-            ModelInputCommitment::AlignedSeed { .. } | ModelInputCommitment::Generation(_) => {
-                return Err(io::Error::other(
-                    "serial continuum execution requires an owner-prepared direct model input",
-                ));
-            }
-        }
-        .map_err(io::Error::other)?;
-        let delta = match input {
-            SerialContinuumPassInput::Initial => None,
-            SerialContinuumPassInput::FinalMajor(input) => {
-                if input.terms.is_empty() {
-                    None
-                } else {
-                    Some(
-                        lifecycle
-                            .compile_delta(&named, input.terms.iter().copied())
-                            .map_err(io::Error::other)?,
-                    )
+        let attempt = ModelExecutionAttemptId::new(LogicalIdentity::from_sha256(
+            context.attempt_id().as_bytes(),
+        ));
+        let epoch = context.lease_epoch();
+        let (lifecycle, named, terms) = match input {
+            SerialContinuumPassInput::Initial => {
+                let mut lifecycle =
+                    ModelLifecycle::bind(executable, attempt, epoch).map_err(io::Error::other)?;
+                let named = match lifecycle.contract().input() {
+                    ModelInputCommitment::Empty => lifecycle.initial_empty(),
+                    ModelInputCommitment::ReprojectedSeed(_) => lifecycle.initial_reprojected(),
+                    ModelInputCommitment::AlignedSeed { .. }
+                    | ModelInputCommitment::Generation(_) => {
+                        return Err(io::Error::other(
+                            "serial continuum execution requires an owner-prepared direct model input",
+                        ));
+                    }
                 }
+                .map_err(io::Error::other)?;
+                (lifecycle, named, None)
             }
+            SerialContinuumPassInput::FinalMajor(input) => {
+                let (terms, continuation) = input.into_execution_parts();
+                let (lifecycle, named) =
+                    ModelLifecycle::continue_from(executable, attempt, epoch, continuation)
+                        .map_err(io::Error::other)?;
+                (lifecycle, named, Some(terms))
+            }
+        };
+        let delta = match terms {
+            Some(terms) if !terms.is_empty() => Some(
+                lifecycle
+                    .compile_delta(&named, terms.iter().copied())
+                    .map_err(io::Error::other)?,
+            ),
+            Some(_) | None => None,
         };
         state.preparation = Some(
             MajorCyclePreparation::prepare(&lifecycle, named, delta).map_err(io::Error::other)?,
@@ -555,12 +564,18 @@ impl InitialMajorPhaseCompletion {
         controls: HogbomControls,
     ) -> Result<MinorCyclePhaseCompletion, MinorCycleError> {
         let completion = self.result.into_completion();
-        let (normal_state, initial_model_completion, initial_model) = completion.into_parts();
-        let minor = hogbom_minor_cycle(lifecycle, &initial_model, &normal_state, window, controls)?;
+        let (normal_state, continuation) = completion.into_continuation();
+        let minor = hogbom_minor_cycle(
+            lifecycle,
+            continuation.generation(),
+            &normal_state,
+            window,
+            controls,
+        )?;
         let (delta, evidence) = minor.into_parts();
         Ok(MinorCyclePhaseCompletion {
             normal_state,
-            initial_model_completion,
+            continuation,
             delta,
             evidence,
         })
@@ -570,7 +585,7 @@ impl InitialMajorPhaseCompletion {
 /// Typed in-memory result carried from T21 into the ordinary final-major plan.
 pub struct MinorCyclePhaseCompletion {
     normal_state: FinalNormalState,
-    initial_model_completion: FinalModelCompletion,
+    continuation: FinalModelContinuation,
     delta: Option<casa_imaging_reconstruction::ModelDelta>,
     evidence: MinorCycleEvidence,
 }
@@ -594,7 +609,7 @@ impl MinorCyclePhaseCompletion {
             source_delta,
             evidence: Box::new(MinorCyclePhaseEvidence {
                 normal_state: self.normal_state,
-                initial_model_completion: self.initial_model_completion,
+                continuation: self.continuation,
                 minor_cycle: self.evidence,
             }),
         }
@@ -604,7 +619,7 @@ impl MinorCyclePhaseCompletion {
 /// Authoritative initial-normal, initial-model, and T21 evidence retained in memory.
 pub struct MinorCyclePhaseEvidence {
     normal_state: FinalNormalState,
-    initial_model_completion: FinalModelCompletion,
+    continuation: FinalModelContinuation,
     minor_cycle: MinorCycleEvidence,
 }
 
@@ -618,7 +633,13 @@ impl MinorCyclePhaseEvidence {
     /// Return the initial authoritative model completion.
     #[must_use]
     pub const fn initial_model_completion(&self) -> &FinalModelCompletion {
-        &self.initial_model_completion
+        self.continuation.completion()
+    }
+
+    /// Return the exact completed model generation retained for final-major input.
+    #[must_use]
+    pub const fn initial_model(&self) -> &casa_imaging_reconstruction::ModelGeneration {
+        self.continuation.generation()
     }
 
     /// Return the accepted minor-cycle evidence.
