@@ -29,6 +29,7 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 mod major_cycle;
+mod minor_cycle;
 mod serial_mfs;
 mod weighting;
 
@@ -52,6 +53,11 @@ pub mod runtime_adapter {
 pub use major_cycle::{
     FinalNormalState, MajorCycleCompletion, MajorCycleError, MajorCycleOwner,
     MajorCyclePreparation, NormalStateCatalog,
+};
+pub use minor_cycle::{
+    CleanWindow, ComponentDivergence, HogbomComponent, HogbomControls, HogbomMinorCycle,
+    MinorCycleError, MinorCycleEvidence, MinorCycleEvidenceId, MinorCycleStopReason,
+    hogbom_minor_cycle,
 };
 pub use weighting::{
     WeightingAlgorithmState, WeightingError, WeightingExecutionLimits, WeightingGenerationId,
