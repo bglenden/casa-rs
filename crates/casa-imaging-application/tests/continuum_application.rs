@@ -350,7 +350,7 @@ fn request(
         threshold_jy: 0.0,
         psf_cutoff: 0.2,
         beam_policy: ContinuumBeamPolicy::PerPlane,
-        route_requirements: Vec::new(),
+        task_requirements: Vec::new(),
     }
 }
 

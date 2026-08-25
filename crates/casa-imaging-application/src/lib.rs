@@ -2,26 +2,31 @@
 #![warn(missing_docs)]
 //! Production composition owner for native imaging.
 //!
-//! This crate is the single application-layer seam that binds the whole-run
-//! migration router to MeasurementSet observation authority, scientific
+//! This crate is the single application-layer seam that binds compiled request
+//! availability to MeasurementSet observation authority, scientific
 //! reconstruction and products, and the physical execution runtime. Frontends
 //! submit requests here; they do not compose native execution stages directly.
 
+mod availability;
 mod casa_product_sink;
 mod continuum_request;
 
+pub use availability::{
+    ImplementationUnavailable, TaskRequirement, UnsupportedRequirement,
+    validate_installed_implementation,
+};
 pub use casa_product_sink::CasaImageProductSink;
 pub use continuum_request::{
     ContinuumAlgorithm, ContinuumBeamPolicy, ContinuumImagingRequest, ContinuumImagingResult,
     ContinuumStopReason, ContinuumWeighting, execute_continuum,
 };
 
-use std::{error::Error, fmt, io, sync::Mutex};
+use std::{error::Error, fmt, io};
 
 use casa_imaging_model::{
-    CompiledProblem, GeometryInput, ImagingRequest, ModelLifecycleRequirements,
-    PolarizationCoordinate, ProblemInputIdentities, ProblemSpecification, ReconstructionAlgorithm,
-    ReconstructionBasis, compile_observation,
+    CompileProblemError, CompiledProblem, GeometryInput, ImagingRequest,
+    ModelLifecycleRequirements, ProblemInputIdentities, ProblemSpecification,
+    ReconstructionAlgorithm, compile, compile_observation,
 };
 use casa_imaging_products::{
     ContinuumProductControls, ContinuumProductInputs, ContinuumSourceCatalog,
@@ -32,30 +37,23 @@ use casa_imaging_reconstruction::{
     CleanWindow, ExecutableModelProblem, HogbomControls, MajorCycleCompletion,
     MinorCycleStopReason, WeightingExecutionLimits,
 };
-pub use casa_imaging_router::TaskRouteRequirement;
-use casa_imaging_router::{
-    DispatchError, ImagingRouter, MigrationRowKind, NativeEnginePort, RequestDisposition,
-    RouteRecord,
-};
 use casa_imaging_runtime::{
     AttemptBoundObservationCompletion, BuildIdentity, ExecutionAttemptId, ExecutionProvenance,
-    ExecutionReceipt, ExecutionReceiptStore, ExecutionRouteDisposition, ExecutionRouteEvidence,
-    ExecutionRouteRequirement, ExecutionRouteRequirementEvidence, ExecutionRouteRequirementKind,
-    FenceKind, ImplementationContractMetadata, ImplementationRegistry, ImplementationRegistryId,
-    ObservationReadCompletionContext, PlannerCostModelProfileBootstrap, PlanningBindings,
-    ResourceAuthority, ResourcePolicy, RunBindings, RunToCompletion,
-    SerialContinuumExecutionPolicy, SerialContinuumExecutor, SerialContinuumPassInput,
-    SerialContinuumPlan, SerialContinuumRegistry, SerialProductPublicationExecutor,
-    SerialProductPublicationPlan, SerialProductPublicationPolicy, SerialProductPublicationRegistry,
-    SerialProductPublicationSink, StorageIoResourceBinding, WorkExecutionContext,
-    WorkImplementation, WorkImplementationId, WorkMeasurements, plan, run,
+    ExecutionReceipt, ExecutionReceiptStore, FenceKind, ImplementationContractMetadata,
+    ImplementationRegistry, ImplementationRegistryId, ObservationReadCompletionContext,
+    PlannerCostModelProfileBootstrap, PlanningBindings, ResourceAuthority, ResourcePolicy,
+    RunBindings, RunToCompletion, SerialContinuumExecutionPolicy, SerialContinuumExecutor,
+    SerialContinuumPassInput, SerialContinuumPlan, SerialContinuumRegistry,
+    SerialProductPublicationExecutor, SerialProductPublicationPlan, SerialProductPublicationPolicy,
+    SerialProductPublicationRegistry, SerialProductPublicationSink, StorageIoResourceBinding,
+    WorkExecutionContext, WorkImplementation, WorkImplementationId, WorkMeasurements, plan, run,
 };
 use casa_ms::{
     ResolvedSelectedObservationAccess, SelectedObservationResolutionRequest,
     resolve_selected_observation,
 };
 
-/// Boxed application failure accepted by both sealed router ports.
+/// Boxed application failure accepted by the native application composition.
 pub type ApplicationError = Box<dyn Error + Send + Sync>;
 
 /// Exact runtime identities and non-scientific limits for one native whole run.
@@ -102,7 +100,7 @@ pub struct ApplicationRequest<S> {
     pub observation: SelectedObservationResolutionRequest,
     /// Task-surface constraints that cannot be inferred from the compiled
     /// backend-independent problem.
-    pub task_route_requirements: Vec<TaskRouteRequirement>,
+    pub task_requirements: Vec<TaskRequirement>,
     /// Native-only deployment inputs evaluated after request compilation.
     /// A preparation error is terminal; there is no alternate execution path.
     pub native: Result<ApplicationNative<S>, ApplicationError>,
@@ -153,17 +151,14 @@ pub struct NativeMinorCycleOutcome {
     pub stop_reason: MinorCycleStopReason,
 }
 
-/// Whole-run result with the authoritative route record.
+/// Whole-run result from the sole installed implementation.
 pub struct ApplicationOutcome {
-    /// Pre-plan migration decision.
-    pub route: RouteRecord,
-    /// Output returned by the one selected engine.
+    /// Output returned by the installed implementation.
     pub output: Box<NativeApplicationOutcome>,
 }
 
-/// Dispatch one imaging request through the sole production native engine.
-/// Requests whose required capabilities are not native fail as temporarily
-/// unavailable before physical planning or execution begins.
+/// Execute one imaging request through the sole installed implementation.
+/// Unsupported requirements fail typed before physical planning or execution.
 pub fn execute<S>(
     request: ApplicationRequest<S>,
 ) -> Result<ApplicationOutcome, ApplicationDispatchError>
@@ -182,24 +177,18 @@ where
         ProblemInputIdentities::new(observation),
         request.model_lifecycle,
     );
-    let native_input = Mutex::new(Some(NativeInput {
+    let problem = compile(imaging).map_err(ApplicationDispatchError::Compile)?;
+    validate_installed_implementation(&problem, request.task_requirements)
+        .map_err(ApplicationDispatchError::Unavailable)?;
+    let input = NativeInput {
         observation: request.observation,
         initial_access: access,
         native: request.native,
-    }));
-    let router = ImagingRouter::new(NativeEnginePort::new(move |problem, route| {
-        let input = native_input
-            .lock()
-            .map_err(|_| boxed("native application input lock poisoned"))?
-            .take()
-            .ok_or_else(|| boxed("native application request already consumed"))?;
-        run_native(problem, route, input).map(Box::new)
-    }));
-    let dispatched = router
-        .dispatch_with_task_requirements(imaging, request.task_route_requirements)
-        .map_err(ApplicationDispatchError::Dispatch)?;
-    let (route, output) = dispatched.into_parts();
-    Ok(ApplicationOutcome { route, output })
+    };
+    let output = run_native(&problem, input).map_err(ApplicationDispatchError::Native)?;
+    Ok(ApplicationOutcome {
+        output: Box::new(output),
+    })
 }
 
 struct NativeInput<S> {
@@ -210,7 +199,6 @@ struct NativeInput<S> {
 
 fn run_native<S>(
     problem: &CompiledProblem,
-    route: &RouteRecord,
     input: NativeInput<S>,
 ) -> Result<NativeApplicationOutcome, ApplicationError>
 where
@@ -221,8 +209,6 @@ where
         runtime,
         publication,
     } = input.native?;
-    validate_native_problem(problem)?;
-    let route_evidence = execution_route(route)?;
     let algorithm = problem.reconstruction().algorithm().clone();
     let initial_access = input.initial_access.with_minimum_content_budget(problem)?;
     let residency = initial_access.certify_residency(problem)?;
@@ -285,7 +271,6 @@ where
         &initial_plan,
         &registry,
         &runtime,
-        route_evidence.clone(),
         runtime.attempts[0],
     )?;
     let initial_receipt = runtime.receipts.open(runtime.attempts[0])?;
@@ -354,7 +339,6 @@ where
                 &final_plan,
                 &registry,
                 &runtime,
-                route_evidence.clone(),
                 runtime.attempts[1],
             )?;
             let completion = registry
@@ -375,7 +359,6 @@ where
         runtime,
         publication,
         PriorPhaseOutcome {
-            route: route_evidence,
             initial_receipt,
             final_major_receipt,
             minor_cycle,
@@ -384,29 +367,9 @@ where
 }
 
 struct PriorPhaseOutcome {
-    route: ExecutionRouteEvidence,
     initial_receipt: ExecutionReceipt,
     final_major_receipt: Option<ExecutionReceipt>,
     minor_cycle: Option<NativeMinorCycleOutcome>,
-}
-
-fn validate_native_problem(problem: &CompiledProblem) -> Result<(), ApplicationError> {
-    let reconstruction = problem.reconstruction();
-    let supported = problem.inputs().observation_snapshot().sources().len() == 1
-        && problem.geometry().domains().len() == 1
-        && problem.geometry().domains()[0].facets().len() == 1
-        && reconstruction.basis() == ReconstructionBasis::Constant
-        && reconstruction.polarization().coordinates() == [PolarizationCoordinate::StokesI]
-        && matches!(
-            reconstruction.algorithm(),
-            ReconstructionAlgorithm::Dirty | ReconstructionAlgorithm::Hogbom
-        );
-    if !supported {
-        return Err(boxed(
-            "migration matrix routed an unsupported problem to the serial continuum engine",
-        ));
-    }
-    Ok(())
 }
 
 fn execution_policy(
@@ -429,7 +392,6 @@ fn run_phase(
     execution_plan: &casa_imaging_runtime::ExecutionPlan,
     registry: &SerialContinuumRegistry<SerialContinuumExecutor>,
     runtime: &ApplicationRuntime,
-    route: ExecutionRouteEvidence,
     attempt: ExecutionAttemptId,
 ) -> Result<(), ApplicationError> {
     let executable = ExecutableModelProblem::from_compiled(problem.clone())?;
@@ -448,7 +410,7 @@ fn run_phase(
         &mut controller,
         runtime
             .receipts
-            .bind(ExecutionProvenance::new(attempt, runtime.build, route)),
+            .bind(ExecutionProvenance::new(attempt, runtime.build)),
     )?;
     Ok(())
 }
@@ -534,11 +496,9 @@ where
         &registry,
         &runtime.authority,
         &mut controller,
-        runtime.receipts.bind(ExecutionProvenance::new(
-            runtime.attempts[2],
-            runtime.build,
-            prior.route,
-        )),
+        runtime
+            .receipts
+            .bind(ExecutionProvenance::new(runtime.attempts[2], runtime.build)),
     )?;
     let publication_receipt = runtime.receipts.open(runtime.attempts[2])?;
     let products = registry
@@ -554,55 +514,6 @@ where
         planned_products,
         products,
     })
-}
-
-fn execution_route(route: &RouteRecord) -> Result<ExecutionRouteEvidence, ApplicationError> {
-    let mut requirements = route
-        .requirements()
-        .iter()
-        .map(|row| {
-            let obligation = row.obligation();
-            ExecutionRouteRequirement::new(
-                row.id(),
-                match row.kind() {
-                    MigrationRowKind::Capability => ExecutionRouteRequirementKind::Capability,
-                    MigrationRowKind::Product => ExecutionRouteRequirementKind::Product,
-                    MigrationRowKind::Solver => ExecutionRouteRequirementKind::Solver,
-                    MigrationRowKind::Frontend => ExecutionRouteRequirementKind::Frontend,
-                    MigrationRowKind::Backend => ExecutionRouteRequirementKind::Backend,
-                },
-                route_disposition(row.status()),
-                ExecutionRouteRequirementEvidence {
-                    current_owner: row.current_owner().to_string(),
-                    destination_tickets: row.destination_tickets().to_vec(),
-                    evidence_issues: row.evidence_issues().to_vec(),
-                    baseline_manifests: row.baseline_manifests().to_vec(),
-                    acceptance_contract: row.acceptance_contract().to_string(),
-                    transfer_point: row.transfer_point().to_string(),
-                    deletion_condition: row.deletion_condition().to_string(),
-                    source_evidence: row.source_evidence().to_vec(),
-                    obligation_ticket: obligation.map(|item| item.ticket().to_string()),
-                    obligation_reason: obligation.map(|item| item.reason().to_string()),
-                },
-            )
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    requirements.sort_unstable_by(|left, right| left.id().cmp(right.id()));
-    Ok(ExecutionRouteEvidence::new(
-        route.matrix_schema_version(),
-        route.matrix_contract_revision(),
-        route_disposition(route.disposition()),
-        requirements,
-    )?)
-}
-
-const fn route_disposition(value: RequestDisposition) -> ExecutionRouteDisposition {
-    match value {
-        RequestDisposition::Native => ExecutionRouteDisposition::Native,
-        RequestDisposition::TemporarilyUnavailable => {
-            ExecutionRouteDisposition::TemporarilyUnavailable
-        }
-    }
 }
 
 struct PlanningRegistry {
@@ -683,13 +594,17 @@ impl WorkImplementation for PlanningImplementation {
     }
 }
 
-/// Failure before or within the router-selected whole run.
+/// Failure before or within the installed whole-run implementation.
 #[derive(Debug)]
 pub enum ApplicationDispatchError {
-    /// MeasurementSet resolution or request preparation failed before routing.
+    /// MeasurementSet resolution or request preparation failed before availability checking.
     Preparation(ApplicationError),
-    /// The router or selected whole-run engine failed.
-    Dispatch(DispatchError<ApplicationError>),
+    /// Backend-independent request compilation failed.
+    Compile(CompileProblemError),
+    /// No installed implementation satisfies the compiled and task contract.
+    Unavailable(ImplementationUnavailable),
+    /// The sole installed implementation failed.
+    Native(ApplicationError),
 }
 
 impl fmt::Display for ApplicationDispatchError {
@@ -698,7 +613,11 @@ impl fmt::Display for ApplicationDispatchError {
             Self::Preparation(error) => {
                 write!(formatter, "imaging application preparation failed: {error}")
             }
-            Self::Dispatch(error) => error.fmt(formatter),
+            Self::Compile(error) => {
+                write!(formatter, "imaging request compilation failed: {error}")
+            }
+            Self::Unavailable(error) => error.fmt(formatter),
+            Self::Native(error) => write!(formatter, "native imaging run failed: {error}"),
         }
     }
 }

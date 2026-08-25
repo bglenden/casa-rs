@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicUsize, Ordering},
+use casa_imaging_application::{
+    ImplementationUnavailable, TaskRequirement, UnsupportedRequirement,
 };
-
 use casa_imaging_model::{
     AxisOrder, CentreLaws, DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec,
     DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy, FrequencyFrame,
@@ -19,13 +17,17 @@ use casa_imaging_model::{
     ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract,
     SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
     SpectralSampling, SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct,
-    WeightDensityScope, WeightingContract, WeightingScheme,
-};
-use casa_imaging_router::{
-    DispatchError, ImagingRouter, NativeEnginePort, RequestDisposition, TaskRouteRequirement,
+    WeightDensityScope, WeightingContract, WeightingScheme, compile,
 };
 
 mod common;
+
+fn require_installed_implementation(
+    problem: &casa_imaging_model::CompiledProblem,
+    requirements: impl IntoIterator<Item = TaskRequirement>,
+) -> Result<(), ImplementationUnavailable> {
+    casa_imaging_application::validate_installed_implementation(problem, requirements)
+}
 
 fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
     casa_imaging_model::ProductValidityPolicies::new(
@@ -45,90 +47,42 @@ fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
     )
 }
 #[test]
-fn native_request_invokes_the_only_engine() {
-    let native_calls = Arc::new(AtomicUsize::new(0));
-    let router = ImagingRouter::new(NativeEnginePort::new({
-        let native_calls = Arc::clone(&native_calls);
-        move |_, _| {
-            native_calls.fetch_add(1, Ordering::SeqCst);
-            Ok::<_, &'static str>("native")
-        }
-    }));
-
-    let outcome = router.dispatch(standard_dirty_request()).unwrap();
-    assert_eq!(outcome.route().disposition(), RequestDisposition::Native);
-    assert_eq!(outcome.output(), &"native");
-    assert_eq!(native_calls.load(Ordering::SeqCst), 1);
+fn installed_serial_continuum_accepts_its_compiled_contract() {
+    let problem = compile(standard_dirty_request()).expect("compile serial continuum request");
+    require_installed_implementation(
+        &problem,
+        [TaskRequirement::SerialCpu, TaskRequirement::RustFft],
+    )
+    .expect("installed serial continuum contract");
 }
 
 #[test]
-fn unavailable_request_invokes_neither_engine_and_reports_its_migration_obligation() {
-    let native_calls = Arc::new(AtomicUsize::new(0));
-    let router = ImagingRouter::new(NativeEnginePort::new({
-        let native_calls = Arc::clone(&native_calls);
-        move |_, _| {
-            native_calls.fetch_add(1, Ordering::SeqCst);
-            Ok::<_, &'static str>("native")
-        }
-    }));
-
-    let error = router.dispatch(moving_source_request()).unwrap_err();
-
-    let DispatchError::TemporarilyUnavailable(route) = error else {
-        panic!("moving-source request did not fail at the routing seam");
-    };
-    assert_eq!(
-        route.disposition(),
-        RequestDisposition::TemporarilyUnavailable
+fn moving_source_fails_typed_before_execution() {
+    let problem = compile(moving_source_request()).expect("compile moving-source request");
+    let error = require_installed_implementation(&problem, [])
+        .expect_err("moving-source request must fail closed");
+    assert!(
+        error
+            .unsupported()
+            .contains(&UnsupportedRequirement::FixedPhaseCentre)
     );
-    let requirement = route
-        .requirements()
-        .iter()
-        .find(|requirement| requirement.id() == "capability.moving-source")
-        .expect("moving-source routing evidence");
-    assert_eq!(
-        requirement.status(),
-        RequestDisposition::TemporarilyUnavailable
-    );
-    assert_eq!(requirement.acceptance_contract(), "exact-routing-v1");
-    assert!(!requirement.evidence_issues().is_empty());
-    assert!(!requirement.baseline_manifests().is_empty());
-    let obligation = requirement.obligation().expect("migration obligation");
-    assert_eq!(obligation.capability(), "capability.moving-source");
-    assert_eq!(obligation.ticket(), "T41/#527");
-    assert!(!obligation.current_owner().is_empty());
-    assert!(!obligation.reason().is_empty());
-    assert!(!obligation.destination_tickets().is_empty());
-    assert!(!obligation.transfer_point().is_empty());
-    assert!(!obligation.deletion_condition().is_empty());
-    assert_eq!(native_calls.load(Ordering::SeqCst), 0);
 }
 
 #[test]
-fn unavailable_automatic_backend_rows_cannot_disappear_at_dispatch() {
-    let router = ImagingRouter::new(NativeEnginePort::new(|_, _| {
-        Ok::<_, &'static str>("native")
-    }));
-
-    let error = router
-        .dispatch_with_task_requirements(
-            standard_dirty_request(),
-            [
-                TaskRouteRequirement::ExecutionAuto,
-                TaskRouteRequirement::FftAuto,
-            ],
-        )
-        .unwrap_err();
-    let DispatchError::TemporarilyUnavailable(route) = error else {
-        panic!("automatic backend rows did not fail closed");
-    };
-    let ids = route
-        .requirements()
-        .iter()
-        .map(|requirement| requirement.id())
-        .collect::<Vec<_>>();
-    assert!(ids.contains(&"backend.execution-auto"));
-    assert!(ids.contains(&"backend.fft-auto"));
+fn unavailable_task_requirements_are_exact_and_typed() {
+    let problem = compile(standard_dirty_request()).expect("compile serial continuum request");
+    let error = require_installed_implementation(
+        &problem,
+        [TaskRequirement::ExecutionAuto, TaskRequirement::FftAuto],
+    )
+    .expect_err("automatic backends have no installed implementation");
+    assert_eq!(
+        error.unsupported(),
+        [
+            UnsupportedRequirement::Task(TaskRequirement::ExecutionAuto),
+            UnsupportedRequirement::Task(TaskRequirement::FftAuto),
+        ]
+    );
 }
 
 fn standard_dirty_request() -> ImagingRequest {

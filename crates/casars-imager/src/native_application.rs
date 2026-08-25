@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use casa_imaging_application::{
     ContinuumAlgorithm, ContinuumBeamPolicy, ContinuumImagingRequest, ContinuumStopReason,
-    ContinuumWeighting, TaskRouteRequirement, execute_continuum,
+    ContinuumWeighting, TaskRequirement, execute_continuum,
 };
 
 use super::{
@@ -89,82 +89,80 @@ fn application_request(config: &CliConfig) -> ContinuumImagingRequest {
             RestoringBeamMode::PerPlane => ContinuumBeamPolicy::PerPlane,
             RestoringBeamMode::Common => ContinuumBeamPolicy::Common,
         },
-        route_requirements: task_route_requirements(config),
+        task_requirements: task_requirements(config),
     }
 }
 
-fn task_route_requirements(config: &CliConfig) -> Vec<TaskRouteRequirement> {
+fn task_requirements(config: &CliConfig) -> Vec<TaskRequirement> {
     let mut requirements = vec![match config.spectral_mode {
-        SpectralMode::Mfs => TaskRouteRequirement::SerialCpu,
-        SpectralMode::Cube => TaskRouteRequirement::SpectralCube,
-        SpectralMode::Cubedata => TaskRouteRequirement::SpectralCubedata,
+        SpectralMode::Mfs => TaskRequirement::SerialCpu,
+        SpectralMode::Cube => TaskRequirement::SpectralCube,
+        SpectralMode::Cubedata => TaskRequirement::SpectralCubedata,
     }];
     if config.aw_project.is_some() {
-        requirements.push(TaskRouteRequirement::AwProjection);
+        requirements.push(TaskRequirement::AwProjection);
     } else if config.w_term_mode == WTermMode::WProject {
-        requirements.push(TaskRouteRequirement::WProjection);
+        requirements.push(TaskRequirement::WProjection);
     } else if config.use_pointing && !config.force_standard_gridder {
-        requirements.push(TaskRouteRequirement::MosaicGridder);
+        requirements.push(TaskRequirement::MosaicGridder);
     }
     if config.outlier_file.is_some() {
-        requirements.push(TaskRouteRequirement::FacetsOutliers);
+        requirements.push(TaskRequirement::FacetsOutliers);
     }
     if config.use_mask == CleanMaskMode::AutoMultiThreshold {
-        requirements.push(TaskRouteRequirement::Automasking);
+        requirements.push(TaskRequirement::Automasking);
     }
     if config.use_mask == CleanMaskMode::AutoMultiThreshold
         || !config.mask_boxes.is_empty()
         || config.mask_image.is_some()
     {
-        requirements.push(TaskRouteRequirement::MaskProduct);
+        requirements.push(TaskRequirement::MaskProduct);
     }
     if config.start_model.is_some() {
-        requirements.push(TaskRouteRequirement::StartModel);
+        requirements.push(TaskRequirement::StartModel);
     }
     if config.save_model != SaveModelMode::None {
-        requirements.push(TaskRouteRequirement::ModelColumnWrite);
+        requirements.push(TaskRequirement::ModelColumnWrite);
     }
     requirements.extend(backend_requirements(config));
     if unsupported_native_controls(config) {
-        requirements.push(TaskRouteRequirement::NativeV1UnsupportedControls);
+        requirements.push(TaskRequirement::UnsupportedControls);
     }
     requirements
 }
 
-fn backend_requirements(config: &CliConfig) -> Vec<TaskRouteRequirement> {
+fn backend_requirements(config: &CliConfig) -> Vec<TaskRequirement> {
     let mut requirements = Vec::new();
     match config.standard_mfs_acceleration {
         StandardMfsAccelerationPolicy::Auto => {
-            requirements.push(TaskRouteRequirement::ExecutionAuto);
+            requirements.push(TaskRequirement::ExecutionAuto);
         }
         StandardMfsAccelerationPolicy::Cpu => {}
         StandardMfsAccelerationPolicy::MultiCpu => {
-            requirements.push(TaskRouteRequirement::FixedTileCpu);
+            requirements.push(TaskRequirement::FixedTileCpu);
         }
         StandardMfsAccelerationPolicy::Metal => {
-            requirements.push(TaskRouteRequirement::MetalRowRunGroupedGridder);
+            requirements.push(TaskRequirement::MetalRowRunGroupedGridder);
         }
     }
     if let Some(backend) = config.standard_mfs_backend.as_deref() {
         requirements.push(match backend {
-            "cpu" | "serial" | "serial-cpu" => TaskRouteRequirement::SerialCpu,
-            "fixed-tile" | "fixed-tile-cpu" => TaskRouteRequirement::FixedTileCpu,
-            "metal" | "metal-gridder" => TaskRouteRequirement::MetalGridder,
-            "metal-row-run" | "metal-row-run-gridder" => TaskRouteRequirement::MetalRowRunGridder,
+            "cpu" | "serial" | "serial-cpu" => TaskRequirement::SerialCpu,
+            "fixed-tile" | "fixed-tile-cpu" => TaskRequirement::FixedTileCpu,
+            "metal" | "metal-gridder" => TaskRequirement::MetalGridder,
+            "metal-row-run" | "metal-row-run-gridder" => TaskRequirement::MetalRowRunGridder,
             "metal-row-run-grouped" | "metal-row-run-grouped-gridder" => {
-                TaskRouteRequirement::MetalRowRunGroupedGridder
+                TaskRequirement::MetalRowRunGroupedGridder
             }
-            _ => TaskRouteRequirement::NativeV1UnsupportedControls,
+            _ => TaskRequirement::UnsupportedControls,
         });
     }
     match config.imaging_fft_backend {
         ImagingFftBackendPolicy::RustFft => {}
-        ImagingFftBackendPolicy::Auto => requirements.push(TaskRouteRequirement::FftAuto),
-        ImagingFftBackendPolicy::Accelerate => requirements.push(TaskRouteRequirement::Accelerate),
-        ImagingFftBackendPolicy::MetalMpsGraph => {
-            requirements.push(TaskRouteRequirement::MetalMpsGraph)
-        }
-        ImagingFftBackendPolicy::Fftw => requirements.push(TaskRouteRequirement::Fftw),
+        ImagingFftBackendPolicy::Auto => requirements.push(TaskRequirement::FftAuto),
+        ImagingFftBackendPolicy::Accelerate => requirements.push(TaskRequirement::Accelerate),
+        ImagingFftBackendPolicy::MetalMpsGraph => requirements.push(TaskRequirement::MetalMpsGraph),
+        ImagingFftBackendPolicy::Fftw => requirements.push(TaskRequirement::Fftw),
     }
     requirements
 }
@@ -214,7 +212,7 @@ fn unsupported_native_controls(config: &CliConfig) -> bool {
 mod tests {
     use std::ffi::OsString;
 
-    use super::{CliConfig, TaskRouteRequirement, backend_requirements};
+    use super::{CliConfig, TaskRequirement, backend_requirements};
 
     fn config(extra: &[&str]) -> CliConfig {
         let mut args = vec![
@@ -232,7 +230,7 @@ mod tests {
     }
 
     #[test]
-    fn automatic_backend_choices_remain_explicit_route_requirements() {
+    fn automatic_backend_choices_remain_explicit_task_requirements() {
         assert_eq!(
             backend_requirements(&config(&[
                 "--standard-mfs-acceleration",
@@ -240,23 +238,20 @@ mod tests {
                 "--imaging-fft-backend",
                 "auto",
             ])),
-            vec![
-                TaskRouteRequirement::ExecutionAuto,
-                TaskRouteRequirement::FftAuto,
-            ]
+            vec![TaskRequirement::ExecutionAuto, TaskRequirement::FftAuto,]
         );
     }
 
     #[test]
-    fn default_backend_choices_select_the_available_native_cpu_route() {
+    fn default_backend_choices_select_the_installed_native_cpu_implementation() {
         assert!(backend_requirements(&config(&[])).is_empty());
     }
 
     #[test]
-    fn metal_acceleration_uses_the_matrix_grouped_row_run_capability() {
+    fn metal_acceleration_requires_the_uninstalled_grouped_row_run_implementation() {
         assert_eq!(
             backend_requirements(&config(&["--standard-mfs-acceleration", "metal"])),
-            vec![TaskRouteRequirement::MetalRowRunGroupedGridder]
+            vec![TaskRequirement::MetalRowRunGroupedGridder]
         );
     }
 }

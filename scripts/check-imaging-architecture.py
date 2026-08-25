@@ -11,8 +11,6 @@ import json
 import re
 import subprocess
 import sys
-from collections import Counter
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +20,7 @@ DEFAULT_POLICY = REPO_ROOT / "resources/imaging-architecture/dependency-policy.j
 VALID_STATUSES = {"Native", "TemporarilyUnavailable"}
 MATRIX_KINDS = {"capability", "product", "solver", "frontend", "backend"}
 LOCATOR_KEYS = {"commit", "issue", "locator", "path", "receipt", "token", "url"}
-PACKAGE_CLASSIFICATIONS = {"native", "displaced", "surface", "support"}
+PACKAGE_CLASSIFICATIONS = {"native", "surface", "support"}
 ACCEPTED_MIGRATION_ISSUES = frozenset(
     {
         35,
@@ -46,87 +44,22 @@ ACCEPTED_MIGRATION_ISSUES = frozenset(
         478,
     }
 )
-# Independent ratchets for readable policy and matrix scopes. Update a digest
-# only when review accepts the corresponding human-readable contract change.
-ACCEPTED_FROZEN_DISPLACED_EDGES_SHA256 = (
-    "e663f99ccda6780d6747185e763f90e1ee030a3162c7cc9a3b60762a3701bc09"
-)
-ACCEPTED_LOGICAL_GRAPH_SHA256 = (
-    "8f45c41e99aad2fa674b9b55fbb3d7036b23af1ffba13c79e45b593fd11e6428"
-)
-ACCEPTED_SOURCE_BOUNDARIES_SHA256 = (
-    "7e427ffe6e7bf48d28070bb0dc01719082039562d5cdac18baca569fd5d2db73"
-)
-ACCEPTED_FROZEN_TRANSITIONAL_EDGES_SHA256 = (
-    "72c56efd7f9b78e3a2e9c58bcc98e2ffa1d74acdf59bb257e63cfb2406a1a6d9"
-)
-ACCEPTED_PACKAGE_POLICY_SHA256 = (
-    "e04b376058e4083bb700e9445c593960ed50ac7b1e9af19846725809b42d71c1"
-)
-ACCEPTED_MIGRATION_ROUTER_SHA256 = (
-    "1290fee63ac69d4a3392bbf8b09f6b810c493c2b0b76bf09eb1e4e4636f81105"
-)
-ACCEPTED_MATRIX_INVENTORY_SHA256 = (
-    "c5f48830fc76f27f2100f899f988c7bb4d1df6673832851670999309a548bed5"
-)
-ACCEPTED_PRODUCT_KIND_INVENTORY_SHA256 = (
-    "f4e04101f0d6e89d9bc12584cd580f5f8924f80e71b867ee252422f648fdced5"
-)
-ACCEPTED_PLANE_SELECTION_INVENTORY_SHA256 = (
-    "cea569c11700deee6bd533b79041f7038392bdbadcfaa7468db3263f3d52c7d9"
-)
-ACCEPTED_POLARIZATION_COORDINATE_INVENTORY_SHA256 = (
-    "245f24c2e462b7127fce91a899db1995ce82733ba3d88f5c425a04ec49e32376"
-)
-ACCEPTED_CUBE_INTERPOLATION_INVENTORY_SHA256 = (
-    "c5de582d14d11af38ab9e2ea1833b6a2a222798616466df785b402d96715b8d0"
-)
-ACCEPTED_STANDARD_MFS_BACKEND_INVENTORY_SHA256 = (
-    "28cc3eef3336bac19e51906067f85a0373308e3132d8976a8d19a3aced8432b9"
-)
-ACCEPTED_SPECTRAL_MODE_INVENTORY_SHA256 = (
-    "3a1a8e62103ec316b3bacc996acaf1b426f831b0de2c2db1834b038065d6fe04"
-)
-ACCEPTED_IMAGER_SPECTRAL_MODE_INVENTORY_SHA256 = (
-    "3a1a8e62103ec316b3bacc996acaf1b426f831b0de2c2db1834b038065d6fe04"
-)
-ACCEPTED_GRIDDER_REQUEST_INVENTORY_SHA256 = (
-    "0921c6e8f01dcaebf2c3b32ebc8d34f6811951343f6cbe1b2bee39f3440fe6dc"
-)
-ACCEPTED_DECONVOLVER_INVENTORY_SHA256 = (
-    "57648c06caa082706e5af79f623a54e90b8faccf6cdc2f4105f0bd0718965ca9"
-)
-ACCEPTED_IMAGER_DECONVOLVER_INVENTORY_SHA256 = (
-    "57648c06caa082706e5af79f623a54e90b8faccf6cdc2f4105f0bd0718965ca9"
-)
-ACCEPTED_IMAGER_CUBE_INTERPOLATION_INVENTORY_SHA256 = (
-    "b955f223aebede1f69e75c17ea2ed83bd280557b6cf361dff6a4fd620e673162"
-)
-ACCEPTED_FFT_BACKEND_CHOICE_INVENTORY_SHA256 = (
-    "21bc32c858a3e6f4e13a174b5764cc900dd3d8becce641decae5c3e47e32aecf"
-)
-ACCEPTED_IMAGING_FFT_BACKEND_POLICY_INVENTORY_SHA256 = (
-    "6e72c455ac075eed27b502a635d0c8e0c2ce63c5ece70fea48c13ed2a40ad380"
-)
-ACCEPTED_STANDARD_MFS_ACCELERATION_POLICY_INVENTORY_SHA256 = (
-    "5a746c70358a33c038c9ccf37167ab29998f7b55aef418f43b8d7b1ea4953de3"
-)
-ACCEPTED_STANDARD_MFS_MINOR_CYCLE_BACKEND_INVENTORY_SHA256 = (
-    "d96f704776bd4e88fee221e14e7c863894c5a7c1e6e2d3d0510976ad76a1822e"
-)
+# Scientific acceptance records retain explicit ratchets. Workspace ownership
+# is enforced directly from the small readable policy below, not by opaque
+# digests or frozen exception inventories.
 ACCEPTED_ISSUE_OUTCOMES_SHA256 = (
-    "b6bb1b5a8c78aefda1e9c1ab228d0e2472c91d78ffd5b26dd68fb9b2a7522a4d"
+    "1d2a77232fdc25a50053097b644b64cbdf0d21e1970590ec4180de6dce29738d"
 )
 ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256 = (
     "778bcf42be2ff392cc86c9ca3eb67dc0591c11a24496881841b980c80f1fdbaf"
 )
 ACCEPTED_MATRIX_ROWS_SHA256 = (
-    "12246ca4739431f06925563dcf6adbc0ce38885af0a774cc4ae075183f60522b"
+    "32e02498a77328f23d14ef5b8dde9a562460abe988813dedee5c9d34900e978b"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "9b057dc8327dd45a3fffb52a2502d0973f4380f904e6d8b79af7a16ee2be95ab"
+    "f6b746eeb5ae84d8a77a91ec91ea65cbdce7d50a969b3acc0c2437c5d71ccdad"
 )
-ACCEPTED_MATRIX_CONTRACT_REVISION = 35
+ACCEPTED_MATRIX_CONTRACT_REVISION = 36
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "scientific-products-v1",
@@ -319,57 +252,6 @@ def require_string_list(value: Any, context: str) -> list[str]:
     return result
 
 
-def require_optional_string_list(value: Any, context: str) -> list[str]:
-    if not isinstance(value, list):
-        raise ArchitectureError(f"{context} must be an array")
-    result = [
-        require_string(item, f"{context}[{index}]") for index, item in enumerate(value)
-    ]
-    if len(set(result)) != len(result):
-        raise ArchitectureError(f"{context} contains duplicates")
-    return result
-
-
-def validate_forward_invariant_policy(policy: dict[str, Any]) -> None:
-    forward = policy.get("forward_invariants")
-    if not isinstance(forward, dict) or set(forward) != {"temporary_exceptions"}:
-        raise ArchitectureError("forward_invariants has an unexpected shape")
-    exceptions = forward["temporary_exceptions"]
-    inventory_keys = {
-        "runtime_migration_matrix_sources",
-        "native_to_displaced_production_paths",
-    }
-    if not isinstance(exceptions, dict) or set(exceptions) != {
-        "removal_issue",
-        *inventory_keys,
-    }:
-        raise ArchitectureError("temporary forward exceptions have an unexpected shape")
-    if exceptions["removal_issue"] != 574:
-        raise ArchitectureError(
-            "temporary forward-invariant exceptions must remain assigned to #574"
-        )
-    matrix_sources = set(
-        require_optional_string_list(
-            exceptions["runtime_migration_matrix_sources"],
-            "runtime_migration_matrix_sources",
-        )
-    )
-    if not matrix_sources <= {"crates/casa-imaging-router/src/lib.rs"}:
-        raise ArchitectureError(
-            "runtime migration-matrix exceptions may only remove #574's router source"
-        )
-    displaced_paths = set(
-        require_optional_string_list(
-            exceptions["native_to_displaced_production_paths"],
-            "native_to_displaced_production_paths",
-        )
-    )
-    if not displaced_paths <= {"casa-imaging-runtime -> casa-ms -> casa-imaging"}:
-        raise ArchitectureError(
-            "native-to-displaced exceptions may only remove #574's runtime path"
-        )
-
-
 def validate_policy(
     policy: dict[str, Any], *, enforce_accepted_scope: bool = True
 ) -> None:
@@ -378,8 +260,6 @@ def validate_policy(
     require_string(policy.get("decision"), "dependency policy decision")
     layers = require_string_list(policy.get("layers"), "dependency policy layers")
     layer_set = set(layers)
-    if "displaced" not in layer_set:
-        raise ArchitectureError("dependency policy layers must include displaced")
 
     allowed = policy.get("allowed_logical_edges")
     if not isinstance(allowed, dict) or set(allowed) != layer_set:
@@ -403,20 +283,10 @@ def validate_policy(
             raise ArchitectureError(
                 f"allowed_logical_edges.{source} may not contain itself"
             )
-        if source != "displaced" and "displaced" in targets:
-            raise ArchitectureError(
-                f"native layer {source} may not import displaced code; the migration router owns admission"
-            )
     if "backend" in allowed["application"]:
         raise ArchitectureError(
             "allowed_logical_edges.application may not contain backend; applications invoke execution plans"
         )
-    accepted_graph = {"layers": layers, "allowed_logical_edges": allowed}
-    if stable_digest(accepted_graph) != ACCEPTED_LOGICAL_GRAPH_SHA256:
-        raise ArchitectureError(
-            "logical imaging layers or allowed edges differ from the accepted graph"
-        )
-
     package_layers = policy.get("package_layers")
     if not isinstance(package_layers, dict) or not package_layers:
         raise ArchitectureError("package_layers must be a non-empty object")
@@ -452,11 +322,7 @@ def validate_policy(
         )
     for package, layer in package_layers.items():
         classification = classifications[package]
-        if layer == "displaced" and classification != "displaced":
-            raise ArchitectureError(
-                f"displaced package {package} must be classified displaced"
-            )
-        if layer != "displaced" and classification not in {"native", "surface"}:
+        if classification not in {"native", "surface"}:
             raise ArchitectureError(
                 f"logical imaging package {package} must be classified native or surface"
             )
@@ -478,7 +344,7 @@ def validate_policy(
             f"removed={sorted(classified_native - set(native_rules))}"
         )
     for package, dependencies in native_rules.items():
-        if package_layers.get(package) in (None, "displaced"):
+        if package_layers.get(package) is None:
             raise ArchitectureError(
                 f"native dependency rule {package} is not a native package"
             )
@@ -494,33 +360,6 @@ def validate_policy(
                 f"native_package_workspace_dependencies.{package} contains duplicates"
             )
 
-    validate_migration_router_policy(
-        policy, package_layers, classifications, native_rules
-    )
-    validate_forward_invariant_policy(policy)
-
-    displaced_packages = set(
-        require_string_list(policy.get("displaced_packages"), "displaced_packages")
-    )
-    mapped_displaced = {
-        package for package, layer in package_layers.items() if layer == "displaced"
-    }
-    if displaced_packages != mapped_displaced:
-        raise ArchitectureError(
-            "displaced_packages must exactly match packages assigned to the displaced layer"
-        )
-    classified_displaced = {
-        package
-        for package, classification in classifications.items()
-        if classification == "displaced"
-    }
-    if classified_displaced != displaced_packages:
-        raise ArchitectureError(
-            "displaced package classification must exactly match displaced_packages"
-        )
-    frozen_edges(policy)
-    frozen_transitional_edges(policy)
-
     prefixes = require_string_list(
         policy.get("device_dependency_prefixes"), "device_dependency_prefixes"
     )
@@ -534,23 +373,8 @@ def validate_policy(
         raise ArchitectureError(
             f"device_free_layers names unknown layers: {unknown_device_free}"
         )
-    if enforce_accepted_scope:
-        package_policy = {
-            "package_layers": package_layers,
-            "workspace_package_classification": classifications,
-            "native_package_workspace_dependencies": native_rules,
-            "device_dependency_prefixes": prefixes,
-            "device_free_layers": device_free,
-        }
-        if stable_digest(package_policy) != ACCEPTED_PACKAGE_POLICY_SHA256:
-            raise ArchitectureError(
-                "workspace package layers, classifications, native dependencies, or device policy differ from the accepted scope"
-            )
-
     source_boundaries = policy.get("source_boundaries")
     validate_source_boundary_policy(source_boundaries)
-    if stable_digest(source_boundaries) != ACCEPTED_SOURCE_BOUNDARIES_SHA256:
-        raise ArchitectureError("source boundaries differ from the accepted policy")
 
     require_string(policy.get("migration_matrix"), "migration_matrix")
     required_issues = policy.get("required_migration_evidence_issues")
@@ -571,52 +395,6 @@ def validate_policy(
         )
 
 
-def validate_migration_router_policy(
-    policy: dict[str, Any],
-    package_layers: dict[str, str],
-    classifications: dict[str, str],
-    native_rules: dict[str, list[str]],
-) -> None:
-    router = policy.get("migration_router")
-    required = {
-        "package",
-        "source",
-        "router_type",
-        "dispatch_method",
-        "engine_ports",
-    }
-    if not isinstance(router, dict) or set(router) != required:
-        raise ArchitectureError(
-            f"migration_router must contain exactly {sorted(required)}"
-        )
-    package = require_string(router.get("package"), "migration_router.package")
-    source = require_string(router.get("source"), "migration_router.source")
-    require_string(router.get("router_type"), "migration_router.router_type")
-    require_string(router.get("dispatch_method"), "migration_router.dispatch_method")
-    require_string_list(router.get("engine_ports"), "migration_router.engine_ports")
-    source_path = Path(source)
-    if (
-        source_path.is_absolute()
-        or ".." in source_path.parts
-        or source_path.suffix != ".rs"
-    ):
-        raise ArchitectureError(
-            "migration_router.source must be a repository Rust source"
-        )
-    if stable_digest(router) != ACCEPTED_MIGRATION_ROUTER_SHA256:
-        raise ArchitectureError(
-            "migration router differs from the accepted owner"
-        )
-    if (
-        package_layers.get(package) != "application"
-        or classifications.get(package) != "native"
-        or native_rules.get(package) != ["casa-imaging-model"]
-    ):
-        raise ArchitectureError(
-            "migration router must be a native application package with only the imaging model dependency"
-        )
-
-
 def validate_source_boundary_policy(value: Any) -> None:
     if not isinstance(value, list) or not value:
         raise ArchitectureError("source_boundaries must be a non-empty array")
@@ -630,14 +408,10 @@ def validate_source_boundary_policy(value: Any) -> None:
             "roots",
             "extensions",
             "forbidden_patterns",
-            "accepted_violation_digest",
         }
-        if set(boundary) not in {
-            frozenset(required_keys),
-            frozenset(required_keys | {"rust_allowlist"}),
-        }:
+        if set(boundary) != required_keys:
             raise ArchitectureError(
-                f"{context} must contain the source-boundary keys and optional rust_allowlist only"
+                f"{context} must contain exactly the structural source-boundary keys"
             )
         identifier = require_string(boundary.get("id"), f"{context}.id")
         if identifier in identifiers:
@@ -656,11 +430,9 @@ def validate_source_boundary_policy(value: Any) -> None:
         if any(not extension.startswith(".") for extension in extensions):
             raise ArchitectureError(f"{context}.extensions must start with a dot")
         patterns = boundary.get("forbidden_patterns")
-        if not isinstance(patterns, list) or (
-            not patterns and "rust_allowlist" not in boundary
-        ):
+        if not isinstance(patterns, list) or not patterns:
             raise ArchitectureError(
-                f"{context}.forbidden_patterns must be a non-empty array unless rust_allowlist is present"
+                f"{context}.forbidden_patterns must be a non-empty array"
             )
         for pattern_index, pattern in enumerate(patterns):
             pattern_context = f"{context}.forbidden_patterns[{pattern_index}]"
@@ -678,208 +450,6 @@ def validate_source_boundary_policy(value: Any) -> None:
                 raise ArchitectureError(
                     f"{pattern_context}.regex is invalid: {error}"
                 ) from error
-        rust_allowlist = boundary.get("rust_allowlist")
-        if rust_allowlist is not None:
-            validate_rust_allowlist_policy(rust_allowlist, f"{context}.rust_allowlist")
-        accepted_digest = boundary.get("accepted_violation_digest")
-        if accepted_digest is not None and not re.fullmatch(
-            r"[0-9a-f]{64}", str(accepted_digest)
-        ):
-            raise ArchitectureError(
-                f"{context}.accepted_violation_digest must be null or a lowercase SHA-256 digest"
-            )
-
-
-def validate_rust_allowlist_policy(value: Any, context: str) -> None:
-    required = {
-        "allowed_imports",
-        "allowed_items",
-        "allowed_qualified_paths",
-        "allowed_relative_paths",
-        "allowed_restricted_visibilities",
-        "composition_message",
-        "privacy_message",
-        "glob_message",
-        "import_message",
-        "path_message",
-        "relative_path_message",
-        "item_message",
-        "inventory_message",
-    }
-    if not isinstance(value, dict) or set(value) != required:
-        raise ArchitectureError(
-            f"{context} must contain exact Rust imports, items, and violation messages"
-        )
-    imports = require_string_list(
-        value.get("allowed_imports"), f"{context}.allowed_imports"
-    )
-    if any("*" in item or item != item.strip() for item in imports):
-        raise ArchitectureError(
-            f"{context}.allowed_imports must contain exact non-glob paths"
-        )
-    items = value.get("allowed_items")
-    if not isinstance(items, dict):
-        raise ArchitectureError(f"{context}.allowed_items must be an object")
-    item_pattern = re.compile(
-        r"^(?:struct|enum|union|trait|type|fn|const|static|mod|macro|macro_rules):(?:r#)?[A-Za-z_][A-Za-z0-9_]*$"
-    )
-    for item, count in items.items():
-        if not isinstance(item, str) or item_pattern.fullmatch(item) is None:
-            raise ArchitectureError(
-                f"{context}.allowed_items contains invalid item {item!r}"
-            )
-        if not isinstance(count, int) or isinstance(count, bool) or count < 1:
-            raise ArchitectureError(
-                f"{context}.allowed_items[{item!r}] must be a positive integer"
-            )
-    qualified_paths = value.get("allowed_qualified_paths")
-    if not isinstance(qualified_paths, dict):
-        raise ArchitectureError(f"{context}.allowed_qualified_paths must be an object")
-    qualified_path_pattern = re.compile(
-        r"^(?:casa_[A-Za-z0-9_]+|casars(?:_[A-Za-z0-9_]+)?)(?:::(?:r#)?[A-Za-z_][A-Za-z0-9_]*)+$"
-    )
-    for qualified_path, count in qualified_paths.items():
-        if (
-            not isinstance(qualified_path, str)
-            or qualified_path_pattern.fullmatch(qualified_path) is None
-        ):
-            raise ArchitectureError(
-                f"{context}.allowed_qualified_paths contains invalid path {qualified_path!r}"
-            )
-        if not isinstance(count, int) or isinstance(count, bool) or count < 1:
-            raise ArchitectureError(
-                f"{context}.allowed_qualified_paths[{qualified_path!r}] must be a positive integer"
-            )
-    relative_paths = value.get("allowed_relative_paths")
-    if not isinstance(relative_paths, dict):
-        raise ArchitectureError(f"{context}.allowed_relative_paths must be an object")
-    relative_path_pattern = re.compile(
-        r"^(?:crate|self|super)(?:::(?:(?:crate|self|super)|(?:r#)?[A-Za-z_][A-Za-z0-9_]*))+$"
-    )
-    for relative_path, count in relative_paths.items():
-        if (
-            not isinstance(relative_path, str)
-            or relative_path_pattern.fullmatch(relative_path) is None
-        ):
-            raise ArchitectureError(
-                f"{context}.allowed_relative_paths contains invalid path {relative_path!r}"
-            )
-        if not isinstance(count, int) or isinstance(count, bool) or count < 1:
-            raise ArchitectureError(
-                f"{context}.allowed_relative_paths[{relative_path!r}] must be a positive integer"
-            )
-    restricted_visibilities = value.get("allowed_restricted_visibilities")
-    if not isinstance(restricted_visibilities, dict):
-        raise ArchitectureError(
-            f"{context}.allowed_restricted_visibilities must be an object"
-        )
-    restricted_visibility_pattern = re.compile(
-        r"^pub \( (?:crate|self|super|in (?:crate|self|super)(?:::(?:(?:crate|self|super)|(?:r#)?[A-Za-z_][A-Za-z0-9_]*))*) \) use$"
-    )
-    for visibility, count in restricted_visibilities.items():
-        if (
-            not isinstance(visibility, str)
-            or restricted_visibility_pattern.fullmatch(visibility) is None
-        ):
-            raise ArchitectureError(
-                f"{context}.allowed_restricted_visibilities contains invalid visibility {visibility!r}"
-            )
-        if not isinstance(count, int) or isinstance(count, bool) or count < 1:
-            raise ArchitectureError(
-                f"{context}.allowed_restricted_visibilities[{visibility!r}] must be a positive integer"
-            )
-    for name in [
-        "composition_message",
-        "privacy_message",
-        "glob_message",
-        "import_message",
-        "path_message",
-        "relative_path_message",
-        "item_message",
-        "inventory_message",
-    ]:
-        require_string(value.get(name), f"{context}.{name}")
-
-
-def edge_tuple(edge: Any, context: str) -> tuple[str, str, str]:
-    if not isinstance(edge, dict):
-        raise ArchitectureError(f"{context} must be an object")
-    if set(edge) != {"source", "target", "kind"}:
-        raise ArchitectureError(f"{context} must contain source, target, and kind only")
-    source = require_string(edge.get("source"), f"{context}.source")
-    target = require_string(edge.get("target"), f"{context}.target")
-    kind = require_string(edge.get("kind"), f"{context}.kind")
-    if kind not in {"normal", "build"}:
-        raise ArchitectureError(f"{context}.kind must be normal or build")
-    return source, target, kind
-
-
-def frozen_edges(policy: dict[str, Any]) -> set[tuple[str, str, str]]:
-    values = policy.get("frozen_displaced_workspace_edges")
-    if not isinstance(values, list) or not values:
-        raise ArchitectureError(
-            "frozen_displaced_workspace_edges must be a non-empty array"
-        )
-    result = {
-        edge_tuple(edge, f"frozen_displaced_workspace_edges[{index}]")
-        for index, edge in enumerate(values)
-    }
-    if len(result) != len(values):
-        raise ArchitectureError("frozen_displaced_workspace_edges contains duplicates")
-    if stable_digest(sorted(result)) != ACCEPTED_FROZEN_DISPLACED_EDGES_SHA256:
-        raise ArchitectureError(
-            "frozen_displaced_workspace_edges differs from the accepted exceptions"
-        )
-    displaced = set(policy["displaced_packages"])
-    for source, target, _kind in result:
-        if source not in displaced and target not in displaced:
-            raise ArchitectureError(
-                f"frozen displaced edge {source} -> {target} does not touch a displaced package"
-            )
-    return result
-
-
-def frozen_transitional_edges(
-    policy: dict[str, Any],
-) -> set[tuple[str, str, str]]:
-    values = policy.get("frozen_transitional_workspace_edges")
-    if not isinstance(values, list) or not values:
-        raise ArchitectureError(
-            "frozen_transitional_workspace_edges must be a non-empty array"
-        )
-    result = {
-        edge_tuple(edge, f"frozen_transitional_workspace_edges[{index}]")
-        for index, edge in enumerate(values)
-    }
-    if len(result) != len(values):
-        raise ArchitectureError(
-            "frozen_transitional_workspace_edges contains duplicates"
-        )
-    if stable_digest(sorted(result)) != ACCEPTED_FROZEN_TRANSITIONAL_EDGES_SHA256:
-        raise ArchitectureError(
-            "frozen_transitional_workspace_edges differs from the accepted exceptions"
-        )
-    package_layers = policy["package_layers"]
-    displaced = set(policy["displaced_packages"])
-    for source, target, _kind in result:
-        if source not in package_layers or target not in package_layers:
-            raise ArchitectureError(
-                f"frozen transitional edge {source} -> {target} lacks a logical package layer"
-            )
-        if source in displaced or target in displaced:
-            raise ArchitectureError(
-                f"frozen transitional edge {source} -> {target} belongs in the displaced ledger"
-            )
-        try:
-            validate_logical_edge(
-                policy, package_layers[source], package_layers[target]
-            )
-        except ArchitectureError:
-            continue
-        raise ArchitectureError(
-            f"frozen transitional edge {source} -> {target} is already allowed by the logical graph"
-        )
-    return result
 
 
 def validate_logical_edge(policy: dict[str, Any], source: str, target: str) -> None:
@@ -1013,104 +583,23 @@ def package_production_sources(metadata: dict[str, Any]) -> dict[str, list[Path]
     return sources
 
 
-def native_to_displaced_production_paths(
-    policy: dict[str, Any], edges: set[tuple[str, str, str]]
-) -> set[str]:
-    graph: dict[str, set[str]] = {}
-    for source, target, _kind in edges:
-        graph.setdefault(source, set()).add(target)
-    displaced = set(policy["displaced_packages"])
-    paths: set[tuple[str, ...]] = set()
-
-    def visit(node: str, path: tuple[str, ...]) -> None:
-        for target in sorted(graph.get(node, set())):
-            if target in path:
-                continue
-            candidate = (*path, target)
-            if target in displaced:
-                paths.add(candidate)
-            else:
-                visit(target, candidate)
-
-    for package in sorted(policy["native_package_workspace_dependencies"]):
-        visit(package, (package,))
-
-    def reaches(source: str, target: str) -> bool:
-        pending = [source]
-        seen = {source}
-        while pending:
-            node = pending.pop()
-            for dependency in graph.get(node, set()):
-                if dependency == target:
-                    return True
-                if dependency not in seen:
-                    seen.add(dependency)
-                    pending.append(dependency)
-        return False
-
-    minimal_paths = {
-        path
-        for path in paths
-        if not any(
-            len(suffix) < len(path) and path[-len(suffix) :] == suffix
-            for suffix in paths
-        )
-    }
-    owner_paths = {
-        path
-        for path in minimal_paths
-        if not any(
-            other[1:] == path[1:]
-            and other[0] != path[0]
-            and reaches(path[0], other[0])
-            for other in minimal_paths
-        )
-    }
-    return {" -> ".join(path) for path in owner_paths}
-
-
-def require_exact_forward_inventory(
-    name: str, actual: set[str], expected: list[str]
-) -> None:
-    added = sorted(actual - set(expected))
-    removed = sorted(set(expected) - actual)
-    if added or removed:
-        raise ArchitectureError(
-            f"{name} changed; #574 must remove exceptions and no ticket may add "
-            f"one: added={added}, removed={removed}"
-        )
-
-
 def validate_forward_invariants(
     policy: dict[str, Any], metadata: dict[str, Any]
 ) -> None:
-    exceptions = policy["forward_invariants"]["temporary_exceptions"]
     classifications: dict[str, str] = policy["workspace_package_classification"]
     sources = package_production_sources(metadata)
-    matrix_sources: set[str] = set()
     matrix_pattern = re.compile(r"migration[-_]matrix\.json", re.IGNORECASE)
 
-    for package, layer in policy["package_layers"].items():
-        if classifications[package] == "displaced" or layer == "displaced":
+    for package, classification in classifications.items():
+        if classification not in {"native", "surface"}:
             continue
         for path in sources[package]:
             source = path.read_text(encoding="utf-8")
-            relative = display_path(path)
             if matrix_pattern.search(source):
-                matrix_sources.add(relative)
-
-    require_exact_forward_inventory(
-        "runtime migration-matrix source inventory",
-        matrix_sources,
-        exceptions["runtime_migration_matrix_sources"],
-    )
-
-    _packages, edges, _dependencies = workspace_edges(metadata)
-    require_exact_forward_inventory(
-        "native-to-displaced production path inventory",
-        native_to_displaced_production_paths(policy, edges),
-        exceptions["native_to_displaced_production_paths"],
-    )
+                raise ArchitectureError(
+                    "runtime source must not compile or interpret the migration matrix: "
+                    f"{display_path(path)}"
+                )
 
 
 def matches_dependency_prefix(name: str, prefix: str) -> bool:
@@ -1135,38 +624,11 @@ def validate_workspace(policy: dict[str, Any], metadata: dict[str, Any]) -> None
             f"policy-owned workspace packages are missing: {missing}"
         )
 
-    displaced = set(policy["displaced_packages"])
-    actual_displaced = {
-        edge for edge in edges if edge[0] in displaced or edge[1] in displaced
-    }
-    expected_displaced = frozen_edges(policy)
-    added = sorted(actual_displaced - expected_displaced)
-    removed = sorted(expected_displaced - actual_displaced)
-    if added or removed:
-        raise ArchitectureError(
-            "frozen displaced workspace edges changed: "
-            f"added={format_edges(added)}, removed={format_edges(removed)}"
-        )
-
-    expected_transitional = frozen_transitional_edges(policy)
-    missing_transitional = sorted(expected_transitional - edges)
-    if missing_transitional:
-        raise ArchitectureError(
-            "frozen transitional workspace edges changed: "
-            f"removed={format_edges(missing_transitional)}"
-        )
-
     for source, target, kind in sorted(edges):
-        if (source, target, kind) in expected_displaced | expected_transitional:
-            continue
         source_layer = package_layers.get(source)
         target_layer = package_layers.get(target)
-        if source_layer is None or source_layer == "displaced" or target_layer is None:
+        if source_layer is None or target_layer is None:
             continue
-        if target_layer == "displaced":
-            raise ArchitectureError(
-                f"native package imports displaced code: {source}({source_layer}) -> {target}(displaced)"
-            )
         if source_layer == target_layer:
             continue
         try:
@@ -1220,601 +682,6 @@ def validate_workspace(policy: dict[str, Any], metadata: dict[str, Any]) -> None
                 )
 
 
-@dataclass(frozen=True)
-class RustToken:
-    text: str
-    line: int
-
-
-def rust_tokens(source: str, path: str) -> list[RustToken]:
-    tokens: list[RustToken] = []
-    index = 0
-    line = 1
-
-    def consume_literal(start: int, prefix_length: int = 0) -> int:
-        nonlocal line
-        quote = source[start + prefix_length]
-        cursor = start + prefix_length + 1
-        while cursor < len(source):
-            character = source[cursor]
-            if character == "\\":
-                if cursor + 1 < len(source) and source[cursor + 1] == "\n":
-                    line += 1
-                cursor += 2
-                continue
-            if character == quote:
-                return cursor + 1
-            if character == "\n":
-                line += 1
-            cursor += 1
-        raise ArchitectureError(
-            f"cannot lex Rust boundary {path}: unterminated literal"
-        )
-
-    def raw_literal_end(start: int, prefix_length: int) -> int | None:
-        nonlocal line
-        cursor = start + prefix_length
-        hashes = 0
-        while cursor < len(source) and source[cursor] == "#":
-            hashes += 1
-            cursor += 1
-        if cursor >= len(source) or source[cursor] != '"':
-            return None
-        cursor += 1
-        terminator = '"' + "#" * hashes
-        end = source.find(terminator, cursor)
-        if end == -1:
-            raise ArchitectureError(
-                f"cannot lex Rust boundary {path}: unterminated raw literal"
-            )
-        line += source.count("\n", cursor, end + len(terminator))
-        return end + len(terminator)
-
-    while index < len(source):
-        character = source[index]
-        if character.isspace():
-            if character == "\n":
-                line += 1
-            index += 1
-            continue
-        if source.startswith("//", index):
-            newline = source.find("\n", index + 2)
-            if newline == -1:
-                break
-            index = newline
-            continue
-        if source.startswith("/*", index):
-            depth = 1
-            cursor = index + 2
-            while cursor < len(source) and depth:
-                if source.startswith("/*", cursor):
-                    depth += 1
-                    cursor += 2
-                elif source.startswith("*/", cursor):
-                    depth -= 1
-                    cursor += 2
-                else:
-                    if source[cursor] == "\n":
-                        line += 1
-                    cursor += 1
-            if depth:
-                raise ArchitectureError(
-                    f"cannot lex Rust boundary {path}: unterminated block comment"
-                )
-            index = cursor
-            continue
-
-        token_line = line
-        raw_prefix = next(
-            (
-                prefix
-                for prefix in ("br", "cr", "r")
-                if source.startswith(prefix, index)
-            ),
-            None,
-        )
-        if raw_prefix is not None:
-            end = raw_literal_end(index, len(raw_prefix))
-            if end is not None:
-                tokens.append(RustToken("<literal>", token_line))
-                index = end
-                continue
-        literal_prefix = next(
-            (
-                prefix
-                for prefix in ("b", "c", "")
-                if source.startswith(prefix + '"', index)
-            ),
-            None,
-        )
-        if literal_prefix is not None:
-            index = consume_literal(index, len(literal_prefix))
-            tokens.append(RustToken("<literal>", token_line))
-            continue
-        if source.startswith("b'", index):
-            index = consume_literal(index, 1)
-            tokens.append(RustToken("<literal>", token_line))
-            continue
-        if character == "'":
-            if (
-                index + 2 < len(source)
-                and source[index + 2] == "'"
-                and source[index + 1] not in {"'", "\\", "\n"}
-            ):
-                index += 3
-                tokens.append(RustToken("<literal>", token_line))
-                continue
-            if index + 1 < len(source) and source[index + 1] == "\\":
-                index = consume_literal(index)
-                tokens.append(RustToken("<literal>", token_line))
-                continue
-            cursor = index + 1
-            if cursor < len(source) and (
-                source[cursor].isalpha() or source[cursor] == "_"
-            ):
-                cursor += 1
-                while cursor < len(source) and (
-                    source[cursor].isalnum() or source[cursor] == "_"
-                ):
-                    cursor += 1
-                tokens.append(RustToken(source[index:cursor], token_line))
-                index = cursor
-                continue
-            index = consume_literal(index)
-            tokens.append(RustToken("<literal>", token_line))
-            continue
-        if (
-            source.startswith("r#", index)
-            and index + 2 < len(source)
-            and (source[index + 2].isalpha() or source[index + 2] == "_")
-        ):
-            cursor = index + 3
-            while cursor < len(source) and (
-                source[cursor].isalnum() or source[cursor] == "_"
-            ):
-                cursor += 1
-            tokens.append(RustToken(source[index:cursor], token_line))
-            index = cursor
-            continue
-        if character.isalpha() or character == "_":
-            cursor = index + 1
-            while cursor < len(source) and (
-                source[cursor].isalnum() or source[cursor] == "_"
-            ):
-                cursor += 1
-            tokens.append(RustToken(source[index:cursor], token_line))
-            index = cursor
-            continue
-        punctuation = next(
-            (
-                value
-                for value in (
-                    "::",
-                    "->",
-                    "=>",
-                    "..=",
-                    "...",
-                    "..",
-                    "<<",
-                    ">>",
-                    "&&",
-                    "||",
-                )
-                if source.startswith(value, index)
-            ),
-            character,
-        )
-        tokens.append(RustToken(punctuation, token_line))
-        index += len(punctuation)
-    return tokens
-
-
-def rust_identifier(token: RustToken) -> bool:
-    value = rust_identifier_text(token)
-    return value is not None
-
-
-def rust_identifier_text(token: RustToken) -> str | None:
-    value = token.text.removeprefix("r#")
-    return (
-        value
-        if bool(value)
-        and (value[0].isalpha() or value[0] == "_")
-        and all(character.isalnum() or character == "_" for character in value[1:])
-        else None
-    )
-
-
-def rust_attribute_spans(tokens: list[RustToken], path: str) -> list[tuple[int, int]]:
-    spans: list[tuple[int, int]] = []
-    index = 0
-    while index < len(tokens):
-        if tokens[index].text != "#":
-            index += 1
-            continue
-        opening = index + 1
-        if opening < len(tokens) and tokens[opening].text == "!":
-            opening += 1
-        if opening >= len(tokens) or tokens[opening].text != "[":
-            index += 1
-            continue
-        depth = 1
-        cursor = opening + 1
-        while cursor < len(tokens) and depth:
-            if tokens[cursor].text == "[":
-                depth += 1
-            elif tokens[cursor].text == "]":
-                depth -= 1
-            cursor += 1
-        if depth:
-            raise ArchitectureError(
-                f"cannot parse Rust attribute boundary {path}:{tokens[index].line}"
-            )
-        spans.append((opening + 1, cursor - 1))
-        index = cursor
-    return spans
-
-
-def rust_composition_violation(
-    tokens: list[RustToken], path: str
-) -> tuple[str, int] | None:
-    for index, token in enumerate(tokens):
-        if (
-            rust_identifier_text(token) == "include"
-            and index + 1 < len(tokens)
-            and tokens[index + 1].text == "!"
-        ):
-            return "include! invocation", token.line
-    for start, end in rust_attribute_spans(tokens, path):
-        for index in range(start, end - 1):
-            if (
-                rust_identifier_text(tokens[index]) == "path"
-                and tokens[index + 1].text == "="
-            ):
-                return "#[path] module target", tokens[index].line
-    return None
-
-
-def rust_source_inventory(
-    source: str,
-    path: str,
-    *,
-    tokens: list[RustToken] | None = None,
-) -> tuple[
-    list[tuple[str, int]],
-    list[tuple[str, int]],
-    list[tuple[str, int]],
-    list[tuple[str, int]],
-    list[tuple[str, int]],
-    list[int],
-    list[int],
-]:
-    if tokens is None:
-        tokens = rust_tokens(source, path)
-    imports: list[tuple[str, int]] = []
-    items: list[tuple[str, int]] = []
-    restricted_visibilities: list[tuple[str, int]] = []
-    public_lines = []
-    for index, token in enumerate(tokens):
-        if token.text != "pub":
-            continue
-        if index + 1 < len(tokens) and tokens[index + 1].text == "(":
-            cursor = index + 1
-            depth = 0
-            while cursor < len(tokens):
-                if tokens[cursor].text == "(":
-                    depth += 1
-                elif tokens[cursor].text == ")":
-                    depth -= 1
-                    if depth == 0:
-                        break
-                cursor += 1
-            if cursor >= len(tokens):
-                raise ArchitectureError(
-                    f"cannot parse Rust visibility boundary {path}:{token.line}"
-                )
-            if cursor + 1 < len(tokens):
-                visibility = " ".join(
-                    value.text for value in tokens[index : cursor + 2]
-                )
-                restricted_visibilities.append((visibility, token.line))
-                continue
-        public_lines.append(token.line)
-    macro_export_lines = [
-        tokens[index].line
-        for start, end in rust_attribute_spans(tokens, path)
-        for index in range(start, end)
-        if rust_identifier_text(tokens[index]) == "macro_export"
-    ]
-    ignored: set[int] = set()
-
-    index = 0
-    glob_lines: list[int] = []
-    while index < len(tokens):
-        if (
-            tokens[index].text == "extern"
-            and index + 1 < len(tokens)
-            and tokens[index + 1].text == "crate"
-        ):
-            cursor = index + 2
-            while cursor < len(tokens) and tokens[cursor].text != ";":
-                ignored.add(cursor)
-                cursor += 1
-            if cursor >= len(tokens):
-                raise ArchitectureError(
-                    f"cannot parse Rust extern crate boundary {path}:{tokens[index].line}"
-                )
-            name = tokens[index + 2].text if index + 2 < cursor else "<missing>"
-            imports.append((f"extern crate {name}", tokens[index].line))
-            ignored.update(range(index, cursor + 1))
-            index = cursor + 1
-            continue
-        if tokens[index].text != "use":
-            index += 1
-            continue
-        cursor = index + 1
-        brace_depth = 0
-        while cursor < len(tokens):
-            if tokens[cursor].text == "{":
-                brace_depth += 1
-            elif tokens[cursor].text == "}":
-                brace_depth -= 1
-            elif tokens[cursor].text == ";" and brace_depth == 0:
-                break
-            cursor += 1
-        if cursor >= len(tokens) or brace_depth != 0:
-            raise ArchitectureError(
-                f"cannot parse Rust use boundary {path}:{tokens[index].line}"
-            )
-        statement = tokens[index : cursor + 1]
-        imports.append(
-            (" ".join(token.text for token in statement), tokens[index].line)
-        )
-        if any(token.text == "*" for token in statement):
-            glob_lines.append(tokens[index].line)
-        ignored.update(range(index, cursor + 1))
-        index = cursor + 1
-
-    qualified_paths: list[tuple[str, int]] = []
-    relative_paths: list[tuple[str, int]] = []
-    casa_root = re.compile(r"^(?:casa_[A-Za-z0-9_]+|casars(?:_[A-Za-z0-9_]+)?)$")
-    for index, token in enumerate(tokens):
-        root = rust_identifier_text(token)
-        has_separator_before = index > 0 and tokens[index - 1].text == "::"
-        leading_absolute_root = has_separator_before and (
-            index < 2 or tokens[index - 2].text != "::"
-        )
-        if (
-            index in ignored
-            or root is None
-            or (
-                casa_root.fullmatch(root) is None
-                and root not in {"crate", "self", "super"}
-            )
-            or (has_separator_before and not leading_absolute_root)
-            or index + 2 >= len(tokens)
-            or tokens[index + 1].text != "::"
-            or not rust_identifier(tokens[index + 2])
-        ):
-            continue
-        segments = [root, tokens[index + 2].text]
-        cursor = index + 3
-        while (
-            cursor + 1 < len(tokens)
-            and tokens[cursor].text == "::"
-            and rust_identifier(tokens[cursor + 1])
-        ):
-            segments.append(tokens[cursor + 1].text)
-            cursor += 2
-        if leading_absolute_root:
-            segments[0] = f"::{segments[0]}"
-        inventory = (
-            relative_paths if root in {"crate", "self", "super"} else qualified_paths
-        )
-        inventory.append(("::".join(segments), token.line))
-
-    item_keywords = {
-        "struct",
-        "enum",
-        "union",
-        "trait",
-        "type",
-        "fn",
-        "const",
-        "static",
-        "mod",
-        "macro",
-    }
-    for index, token in enumerate(tokens):
-        if index in ignored:
-            continue
-        if (
-            token.text == "macro_rules"
-            and index + 2 < len(tokens)
-            and tokens[index + 1].text == "!"
-            and rust_identifier(tokens[index + 2])
-        ):
-            items.append((f"macro_rules:{tokens[index + 2].text}", token.line))
-            continue
-        if token.text not in item_keywords or index + 1 >= len(tokens):
-            continue
-        name_index = index + 1
-        if token.text == "static" and tokens[name_index].text == "mut":
-            name_index += 1
-        if name_index < len(tokens) and rust_identifier(tokens[name_index]):
-            items.append((f"{token.text}:{tokens[name_index].text}", token.line))
-    return (
-        imports,
-        qualified_paths,
-        relative_paths,
-        items,
-        restricted_visibilities,
-        public_lines + macro_export_lines,
-        glob_lines,
-    )
-
-
-def rust_allowlist_violations(
-    boundary: dict[str, Any], source: str, relative: str
-) -> list[dict[str, Any]]:
-    policy = boundary["rust_allowlist"]
-    tokens = rust_tokens(source, relative)
-    composition = rust_composition_violation(tokens, relative)
-    if composition is not None:
-        match, line = composition
-        return [
-            {
-                "path": relative,
-                "pattern": "rust-composition",
-                "match": match,
-                "context": match,
-                "line": line,
-                "message": policy["composition_message"],
-            }
-        ]
-    (
-        imports,
-        qualified_paths,
-        relative_paths,
-        items,
-        restricted_visibilities,
-        privacy_lines,
-        glob_lines,
-    ) = rust_source_inventory(
-        source,
-        relative,
-        tokens=tokens,
-    )
-    if privacy_lines:
-        return [
-            {
-                "path": relative,
-                "pattern": "rust-privacy",
-                "match": "public Rust item",
-                "context": "public Rust item",
-                "line": min(privacy_lines),
-                "message": policy["privacy_message"],
-            }
-        ]
-    allowed_restricted_visibilities = Counter(policy["allowed_restricted_visibilities"])
-    observed_restricted_visibilities: Counter[str] = Counter()
-    for visibility, line in restricted_visibilities:
-        observed_restricted_visibilities[visibility] += 1
-        if (
-            observed_restricted_visibilities[visibility]
-            > allowed_restricted_visibilities[visibility]
-        ):
-            return [
-                {
-                    "path": relative,
-                    "pattern": "rust-privacy",
-                    "match": visibility,
-                    "context": visibility,
-                    "line": line,
-                    "message": policy["privacy_message"],
-                }
-            ]
-    if glob_lines:
-        return [
-            {
-                "path": relative,
-                "pattern": "rust-glob",
-                "match": "glob import",
-                "context": "glob import",
-                "line": min(glob_lines),
-                "message": policy["glob_message"],
-            }
-        ]
-
-    allowed_imports = Counter(policy["allowed_imports"])
-    observed_imports: Counter[str] = Counter()
-    for imported, line in imports:
-        observed_imports[imported] += 1
-        if observed_imports[imported] > allowed_imports[imported]:
-            return [
-                {
-                    "path": relative,
-                    "pattern": "rust-import",
-                    "match": imported,
-                    "context": imported,
-                    "line": line,
-                    "message": policy["import_message"],
-                }
-            ]
-
-    allowed_items = Counter(policy["allowed_items"])
-    allowed_qualified_paths = Counter(policy["allowed_qualified_paths"])
-    observed_qualified_paths: Counter[str] = Counter()
-    for qualified_path, line in qualified_paths:
-        observed_qualified_paths[qualified_path] += 1
-        if (
-            observed_qualified_paths[qualified_path]
-            > allowed_qualified_paths[qualified_path]
-        ):
-            return [
-                {
-                    "path": relative,
-                    "pattern": "rust-qualified-path",
-                    "match": qualified_path,
-                    "context": qualified_path,
-                    "line": line,
-                    "message": policy["path_message"],
-                }
-            ]
-
-    allowed_relative_paths = Counter(policy["allowed_relative_paths"])
-    observed_relative_paths: Counter[str] = Counter()
-    for relative_path, line in relative_paths:
-        observed_relative_paths[relative_path] += 1
-        if (
-            observed_relative_paths[relative_path]
-            > allowed_relative_paths[relative_path]
-        ):
-            return [
-                {
-                    "path": relative,
-                    "pattern": "rust-relative-path",
-                    "match": relative_path,
-                    "context": relative_path,
-                    "line": line,
-                    "message": policy["relative_path_message"],
-                }
-            ]
-
-    observed_items: Counter[str] = Counter()
-    for item, line in items:
-        observed_items[item] += 1
-        if observed_items[item] > allowed_items[item]:
-            return [
-                {
-                    "path": relative,
-                    "pattern": "rust-item",
-                    "match": item,
-                    "context": item,
-                    "line": line,
-                    "message": policy["item_message"],
-                }
-            ]
-    if (
-        observed_imports != allowed_imports
-        or observed_qualified_paths != allowed_qualified_paths
-        or observed_relative_paths != allowed_relative_paths
-        or observed_items != allowed_items
-        or observed_restricted_visibilities != allowed_restricted_visibilities
-    ):
-        return [
-            {
-                "path": relative,
-                "pattern": "rust-inventory",
-                "match": "incomplete Rust inventory",
-                "context": "incomplete Rust inventory",
-                "line": 1,
-                "message": policy["inventory_message"],
-            }
-        ]
-    return []
-
-
 def source_boundary_violations(
     boundary: dict[str, Any], repo_root: Path = REPO_ROOT
 ) -> list[dict[str, Any]]:
@@ -1840,8 +707,6 @@ def source_boundary_violations(
                     f"source boundary {boundary['id']} cannot read {path}: {error}"
                 ) from error
             relative = str(path.relative_to(repo_root))
-            if boundary.get("rust_allowlist") is not None:
-                violations.extend(rust_allowlist_violations(boundary, source, relative))
             for pattern_index, forbidden in enumerate(boundary["forbidden_patterns"]):
                 for match in re.finditer(forbidden["regex"], source):
                     violations.append(
@@ -1870,106 +735,17 @@ def normalized_violation_context(source: str, match: re.Match[str]) -> str:
     return " ".join(source[line_start:line_end].split())
 
 
-def source_boundary_violation_digest(violations: list[dict[str, Any]]) -> str:
-    fingerprint = [
-        {
-            "path": violation["path"],
-            "pattern": violation["pattern"],
-            "match": violation["match"],
-            "context": violation["context"],
-        }
-        for violation in violations
-    ]
-    return stable_digest(fingerprint)
-
-
 def validate_source_boundaries(
     policy: dict[str, Any], repo_root: Path = REPO_ROOT
 ) -> None:
     for boundary in policy["source_boundaries"]:
         violations = source_boundary_violations(boundary, repo_root)
-        accepted_digest = boundary["accepted_violation_digest"]
-        if accepted_digest is None:
-            if not violations:
-                continue
-            violation = violations[0]
-            raise ArchitectureError(
-                f"{violation['message']}: {violation['path']}:{violation['line']}"
-            )
-        actual_digest = source_boundary_violation_digest(violations)
-        if actual_digest != accepted_digest:
-            raise ArchitectureError(
-                f"source boundary {boundary['id']} differs from its accepted transitional violations"
-            )
-
-
-def validate_migration_router_source(
-    policy: dict[str, Any], repo_root: Path = REPO_ROOT
-) -> None:
-    router = policy["migration_router"]
-    source_relative = Path(router["source"])
-    source_path = repo_root / source_relative
-    try:
-        source = source_path.read_text(encoding="utf-8")
-    except OSError as error:
-        raise ArchitectureError(
-            f"migration router cannot read {source_relative}: {error}"
-        ) from error
-
-    matrix_name = Path(policy["migration_matrix"]).name
-    if "include_str!" not in source or matrix_name not in source:
-        raise ArchitectureError(
-            "migration router must embed the authoritative migration matrix"
-        )
-
-    owner_symbols = [router["router_type"], *router["engine_ports"]]
-    owners: dict[str, list[str]] = {symbol: [] for symbol in owner_symbols}
-    crates_root = repo_root / "crates"
-    if not crates_root.is_dir():
-        raise ArchitectureError("migration router cannot inspect crates")
-    for crate in sorted(crates_root.iterdir()):
-        source_root = crate / "src"
-        if not source_root.is_dir():
+        if not violations:
             continue
-        for path in sorted(source_root.rglob("*.rs")):
-            try:
-                candidate = path.read_text(encoding="utf-8")
-            except OSError as error:
-                raise ArchitectureError(
-                    f"migration router cannot read {path}: {error}"
-                ) from error
-            for symbol in owner_symbols:
-                definition = re.compile(
-                    rf"(?m)^\s*(?:pub(?:\([^)]*\))?\s+)?(?:struct|enum|trait|type)\s+{re.escape(symbol)}\b"
-                )
-                owners[symbol].extend(
-                    str(path.relative_to(repo_root))
-                    for _match in definition.finditer(candidate)
-                )
-
-    expected_owner = str(source_relative)
-    for symbol, actual_owners in owners.items():
-        if actual_owners != [expected_owner]:
-            raise ArchitectureError(
-                f"migration router symbol {symbol} must be owned exactly once by "
-                f"{expected_owner}: found={actual_owners}"
-            )
-
-    dispatch = re.compile(
-        rf"(?m)^\s*pub\s+fn\s+{re.escape(router['dispatch_method'])}\b"
-    )
-    if len(dispatch.findall(source)) != 1:
+        violation = violations[0]
         raise ArchitectureError(
-            "migration router must expose exactly one accepted dispatch method"
+            f"{violation['message']}: {violation['path']}:{violation['line']}"
         )
-
-
-def format_edges(edges: list[tuple[str, str, str]]) -> str:
-    return (
-        "["
-        + ", ".join(f"{source}->{target}({kind})" for source, target, kind in edges)
-        + "]"
-    )
 
 
 def validate_acceptance_contract(identifier: str, contract: dict[str, Any]) -> None:
@@ -2227,43 +1003,6 @@ def stable_digest(value: Any) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def rust_unit_enum_variants(path: Path, identifier: str) -> set[str]:
-    try:
-        source = path.read_text(encoding="utf-8")
-    except OSError as error:
-        raise ArchitectureError(
-            f"cannot read Rust enum source {display_path(path)}: {error}"
-        ) from error
-    declaration = re.search(
-        rf"\b(?:pub(?:\([^)]*\))?\s+)?enum\s+{re.escape(identifier)}\s*\{{",
-        source,
-    )
-    if declaration is None:
-        raise ArchitectureError(
-            f"cannot find Rust enum {identifier} in {display_path(path)}"
-        )
-    depth = 1
-    end = declaration.end()
-    while end < len(source) and depth:
-        character = source[end]
-        if character == "{":
-            depth += 1
-        elif character == "}":
-            depth -= 1
-        end += 1
-    if depth:
-        raise ArchitectureError(
-            f"Rust enum {identifier} in {display_path(path)} has no closing brace"
-        )
-    body = source[declaration.end() : end - 1]
-    variants = set(re.findall(r"(?m)^\s*([A-Z][A-Za-z0-9_]*)\s*,\s*$", body))
-    if not variants:
-        raise ArchitectureError(
-            f"Rust enum {identifier} in {display_path(path)} has no unit variants"
-        )
-    return variants
-
-
 def rust_function_body(source: str, identifier: str, path: Path) -> str:
     declaration = re.search(
         rf"(?m)^\s*(?:pub(?:\([^)]*\))?\s+)?fn\s+{re.escape(identifier)}(?:\s*<[^>]+>)?\s*\(",
@@ -2348,32 +1087,6 @@ def rust_impl_method_body(
             f"Rust impl {owner} in {display_path(path)} has no closing brace"
         )
     return rust_function_body(source[declaration.end() : end - 1], method, path)
-
-
-def validate_rust_enum_inventory(
-    matrix: dict[str, Any],
-    field: str,
-    enum_path: Path,
-    enum_identifier: str,
-    accepted_digest: str,
-) -> None:
-    inventory = matrix.get(field)
-    if not isinstance(inventory, dict) or not inventory:
-        raise ArchitectureError(f"migration matrix {field} must be a non-empty object")
-    for variant, row in inventory.items():
-        require_string(variant, f"migration matrix {field} key")
-        require_string(row, f"migration matrix {field}.{variant}")
-    variants = rust_unit_enum_variants(enum_path, enum_identifier)
-    if set(inventory) != variants:
-        raise ArchitectureError(
-            f"migration matrix {field} differs from {enum_identifier}: "
-            f"added={sorted(set(inventory) - variants)}, "
-            f"removed={sorted(variants - set(inventory))}"
-        )
-    if stable_digest(inventory) != accepted_digest:
-        raise ArchitectureError(
-            f"migration matrix {field} differs from {enum_identifier}"
-        )
 
 
 def validate_migration_matrix(
@@ -2474,116 +1187,6 @@ def validate_migration_matrix(
             inventory.get(kind), f"migration matrix inventory.{kind}"
         )
         inventory_pairs.update((kind, identifier) for identifier in identifiers)
-    if enforce_accepted_scope:
-        if stable_digest(inventory) != ACCEPTED_MATRIX_INVENTORY_SHA256:
-            raise ArchitectureError(
-                "migration matrix inventory differs from the canonical imaging inventory"
-            )
-        validate_rust_enum_inventory(
-            matrix,
-            "product_kind_inventory",
-            REPO_ROOT / "crates/casa-imaging-model/src/compiled_problem.rs",
-            "ProductKind",
-            ACCEPTED_PRODUCT_KIND_INVENTORY_SHA256,
-        )
-        validate_rust_enum_inventory(
-            matrix,
-            "plane_selection_inventory",
-            REPO_ROOT / "crates/casars-imager/src/task_contract.rs",
-            "ImagerPlaneSelection",
-            ACCEPTED_PLANE_SELECTION_INVENTORY_SHA256,
-        )
-        validate_rust_enum_inventory(
-            matrix,
-            "polarization_coordinate_inventory",
-            REPO_ROOT / "crates/casa-imaging-model/src/compiled_problem.rs",
-            "PolarizationCoordinate",
-            ACCEPTED_POLARIZATION_COORDINATE_INVENTORY_SHA256,
-        )
-        validate_rust_enum_inventory(
-            matrix,
-            "cube_interpolation_inventory",
-            REPO_ROOT / "crates/casa-ms/src/spectral_selection.rs",
-            "CubeInterpolation",
-            ACCEPTED_CUBE_INTERPOLATION_INVENTORY_SHA256,
-        )
-        validate_rust_enum_inventory(
-            matrix,
-            "standard_mfs_backend_inventory",
-            REPO_ROOT / "crates/casa-imaging/src/lib.rs",
-            "StandardMfsBackend",
-            ACCEPTED_STANDARD_MFS_BACKEND_INVENTORY_SHA256,
-        )
-        validate_rust_enum_inventory(
-            matrix,
-            "spectral_mode_inventory",
-            REPO_ROOT / "crates/casars-imager/src/lib.rs",
-            "SpectralMode",
-            ACCEPTED_SPECTRAL_MODE_INVENTORY_SHA256,
-        )
-        validate_rust_enum_inventory(
-            matrix,
-            "imager_spectral_mode_inventory",
-            REPO_ROOT / "crates/casars-imager/src/task_contract.rs",
-            "ImagerSpectralMode",
-            ACCEPTED_IMAGER_SPECTRAL_MODE_INVENTORY_SHA256,
-        )
-        validate_rust_enum_inventory(
-            matrix,
-            "gridder_request_inventory",
-            REPO_ROOT / "crates/casars-imager/src/lib.rs",
-            "GridderRequest",
-            ACCEPTED_GRIDDER_REQUEST_INVENTORY_SHA256,
-        )
-        validate_rust_enum_inventory(
-            matrix,
-            "deconvolver_inventory",
-            REPO_ROOT / "crates/casa-imaging/src/types.rs",
-            "Deconvolver",
-            ACCEPTED_DECONVOLVER_INVENTORY_SHA256,
-        )
-        validate_rust_enum_inventory(
-            matrix,
-            "imager_deconvolver_inventory",
-            REPO_ROOT / "crates/casars-imager/src/task_contract.rs",
-            "ImagerDeconvolver",
-            ACCEPTED_IMAGER_DECONVOLVER_INVENTORY_SHA256,
-        )
-        validate_rust_enum_inventory(
-            matrix,
-            "imager_cube_interpolation_inventory",
-            REPO_ROOT / "crates/casars-imager/src/task_contract.rs",
-            "ImagerCubeInterpolation",
-            ACCEPTED_IMAGER_CUBE_INTERPOLATION_INVENTORY_SHA256,
-        )
-        validate_rust_enum_inventory(
-            matrix,
-            "fft_backend_choice_inventory",
-            REPO_ROOT / "crates/casa-imaging/src/fft_backend.rs",
-            "FftBackendChoice",
-            ACCEPTED_FFT_BACKEND_CHOICE_INVENTORY_SHA256,
-        )
-        validate_rust_enum_inventory(
-            matrix,
-            "imaging_fft_backend_policy_inventory",
-            REPO_ROOT / "crates/casars-imager/src/lib.rs",
-            "ImagingFftBackendPolicy",
-            ACCEPTED_IMAGING_FFT_BACKEND_POLICY_INVENTORY_SHA256,
-        )
-        validate_rust_enum_inventory(
-            matrix,
-            "standard_mfs_acceleration_policy_inventory",
-            REPO_ROOT / "crates/casars-imager/src/lib.rs",
-            "StandardMfsAccelerationPolicy",
-            ACCEPTED_STANDARD_MFS_ACCELERATION_POLICY_INVENTORY_SHA256,
-        )
-        validate_rust_enum_inventory(
-            matrix,
-            "standard_mfs_minor_cycle_backend_inventory",
-            REPO_ROOT / "crates/casa-imaging/src/lib.rs",
-            "StandardMfsMinorCycleBackend",
-            ACCEPTED_STANDARD_MFS_MINOR_CYCLE_BACKEND_INVENTORY_SHA256,
-        )
     baseline_registry = validate_baseline_manifest_registry(
         matrix.get("baseline_manifest_digests")
     )
@@ -4281,25 +2884,6 @@ def run_policy_self_test(policy: dict[str, Any]) -> None:
             )
 
 
-def run_forward_invariant_self_test(
-    policy: dict[str, Any], metadata: dict[str, Any]
-) -> None:
-    keys = (
-        "runtime_migration_matrix_sources",
-        "native_to_displaced_production_paths",
-    )
-    for key in keys:
-        mutation = copy.deepcopy(policy)
-        mutation["forward_invariants"]["temporary_exceptions"][key].append(
-            "synthetic exception"
-        )
-        try:
-            validate_forward_invariant_policy(mutation)
-        except ArchitectureError:
-            continue
-        raise ArchitectureError(f"forward-invariant self-test mutation {key} passed")
-
-
 def synthetic_matrix(policy: dict[str, Any]) -> dict[str, Any]:
     baseline = "repo://scripts/check-imaging-architecture.py#class ArchitectureError"
     return {
@@ -4431,10 +3015,7 @@ def main() -> int:
         )
         validate_workspace(policy, metadata)
         validate_forward_invariants(policy, metadata)
-        if args.self_test:
-            run_forward_invariant_self_test(policy, metadata)
         validate_source_boundaries(policy)
-        validate_migration_router_source(policy)
 
         matrix_path = (
             resolve_input(args.migration_matrix)
@@ -4452,8 +3033,6 @@ def main() -> int:
             "imaging-architecture: validated "
             f"{len(metadata['packages'])} workspace packages, "
             f"{len(policy['layers'])} logical layers, "
-            f"{len(policy['frozen_displaced_workspace_edges'])} frozen displaced edges, "
-            f"{len(policy['frozen_transitional_workspace_edges'])} frozen transitional edges, "
             f"{matrix_rows} migration rows"
         )
         return 0

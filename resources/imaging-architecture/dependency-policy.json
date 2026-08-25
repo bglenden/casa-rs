@@ -9,12 +9,13 @@
   "reconstruction",
   "product",
   "execution",
-  "backend",
-  "displaced"
+  "backend"
  ],
  "allowed_logical_edges": {
   "frontend": [
-   "application"
+   "application",
+   "science",
+   "observation"
   ],
   "application": [
    "science",
@@ -43,19 +44,17 @@
   "backend": [
    "science",
    "execution"
-  ],
-  "displaced": []
+  ]
  },
  "package_layers": {
-  "casa-provider-contracts": "application",
+  "casa-provider-contracts": "science",
   "casa-ms": "observation",
   "casa-imaging-application": "application",
   "casa-imaging-model": "science",
   "casa-imaging-products": "product",
   "casa-imaging-reconstruction": "reconstruction",
-  "casa-imaging-router": "application",
   "casa-imaging-runtime": "execution",
-  "casa-imaging": "displaced",
+  "casa-simulation-synthesis": "science",
   "casars": "frontend",
   "casars-frontend-services": "frontend",
   "casars-imager": "frontend",
@@ -66,18 +65,17 @@
   "casa-calibration": "support",
   "casa-coordinates": "support",
   "casa-images": "support",
-  "casa-imaging": "displaced",
   "casa-imaging-application": "native",
   "casa-imaging-model": "native",
   "casa-imaging-products": "native",
   "casa-imaging-reconstruction": "native",
-  "casa-imaging-router": "native",
   "casa-imaging-runtime": "native",
   "casa-lattices": "support",
   "casa-logging": "support",
   "casa-measures-data": "support",
   "casa-measures-tools": "support",
   "casa-ms": "surface",
+  "casa-simulation-synthesis": "native",
   "casa-notebook": "support",
   "casa-provider-contracts": "surface",
   "casa-tables": "support",
@@ -101,7 +99,6 @@
    "casa-imaging-model",
    "casa-imaging-products",
    "casa-imaging-reconstruction",
-   "casa-imaging-router",
    "casa-imaging-runtime",
    "casa-ms",
    "casa-types"
@@ -114,35 +111,13 @@
    "casa-imaging-model",
    "casa-imaging-reconstruction"
   ],
-  "casa-imaging-router": [
-   "casa-imaging-model"
-  ],
   "casa-imaging-runtime": [
    "casa-imaging-model",
    "casa-imaging-products",
    "casa-imaging-reconstruction",
    "casa-ms"
-  ]
- },
- "migration_router": {
-  "package": "casa-imaging-router",
-  "source": "crates/casa-imaging-router/src/lib.rs",
-  "router_type": "ImagingRouter",
-  "dispatch_method": "dispatch",
-  "engine_ports": [
-   "NativeEnginePort"
-  ]
- },
- "forward_invariants": {
-  "temporary_exceptions": {
-   "removal_issue": 574,
-   "runtime_migration_matrix_sources": [
-    "crates/casa-imaging-router/src/lib.rs"
-   ],
-   "native_to_displaced_production_paths": [
-    "casa-imaging-runtime -> casa-ms -> casa-imaging"
-   ]
-  }
+  ],
+  "casa-simulation-synthesis": []
  },
  "device_dependency_prefixes": [
   "ash",
@@ -174,17 +149,15 @@
    ],
    "forbidden_patterns": [
     {
-     "regex": "(?m)^\\s*(?:pub\\s+)?(?:use|extern\\s+crate)\\s+(?:casa_imaging_runtime|casa_imaging|casars_imager|ash|cuda|cudarc|metal|objc2_metal|opencl|vulkano|wgpu)\\b|\\b(?:casa_imaging_runtime|casa_imaging|casars_imager|ash|cuda|cudarc|metal|objc2_metal|opencl|vulkano|wgpu)::",
+     "regex": "(?m)^\\s*(?:pub\\s+)?(?:use|extern\\s+crate)\\s+(?:casa_imaging_runtime|casa_imaging|ash|cuda|cudarc|metal|objc2_metal|opencl|vulkano|wgpu)\\b|\\b(?:casa_imaging_runtime|casa_imaging|ash|cuda|cudarc|metal|objc2_metal|opencl|vulkano|wgpu)::",
      "message": "native science or reconstruction Rust source imports an execution, backend, displaced, or device API"
     }
-   ],
-   "accepted_violation_digest": null
+   ]
   },
   {
-   "id": "native-runtime-router-displaced-isolation",
+   "id": "native-runtime-displaced-isolation",
    "roots": [
-    "crates/casa-imaging-runtime/src",
-    "crates/casa-imaging-router/src"
+    "crates/casa-imaging-runtime/src"
    ],
    "extensions": [
     ".rs"
@@ -192,10 +165,9 @@
    "forbidden_patterns": [
     {
      "regex": "(?m)^\\s*(?:pub\\s+)?(?:use|extern\\s+crate)\\s+(?:casa_imaging|casars_imager)\\b|\\b(?:casa_imaging|casars_imager)::",
-     "message": "native runtime or migration router imports a displaced imaging API"
+     "message": "native runtime imports a displaced imaging API"
     }
-   ],
-   "accepted_violation_digest": null
+   ]
   },
   {
    "id": "t17-selected-observation-provider-injection",
@@ -210,94 +182,22 @@
      "regex": "\\bopen_measures_runtime\\b|\\bcasa_measures_data\\s*::\\s*(?:MeasuresRuntime|\\{[^}]*\\bMeasuresRuntime\\b)|\\bMeasuresRuntime::(?:open|open_discovered|discover_candidates)\\b|\\bopen_discovered\\b",
      "message": "selected-observation source must receive an injected Measures provider and cannot discover MeasuresRuntime"
     }
-   ],
-   "accepted_violation_digest": null
+   ]
   },
   {
    "id": "t15-private-walking-skeleton",
    "roots": [
-    "crates/casa-imaging-runtime/tests/walking_skeleton/mod.rs"
+    "crates/casa-imaging-runtime/tests/walking_skeleton"
    ],
    "extensions": [
     ".rs"
    ],
-   "forbidden_patterns": [],
-   "rust_allowlist": {
-    "allowed_imports": [
-     "use std :: { collections :: { BTreeMap , BTreeSet } , io , path :: Path , sync :: { Arc , atomic :: { AtomicBool , AtomicUsize , Ordering } , } , } ;",
-     "use casa_imaging_model :: { ModelColumnWrite , ModelStateIdentity , ProductKind , compile } ;",
-     "use casa_imaging_runtime :: { ArtifactDisposition , ArtifactIdentity , ArtifactMeasurement , BindingKind , BuildIdentity , ExecutionEvidenceError , ExecutionOutcome , ExecutionProvenance , ExecutionReceiptStore , LeaseResource , PlanningBindings , PublicationParticipant , ReceiptFailureKind , ReceiptRetention , ReceiptStatus , ResourcePolicy , RunBindings , RunError , RunToCompletion , WorkNodeId , } ;",
-     "use self :: support :: { CancelAfterLaunch , PublicationProbe , TestRegistry , authority , cost_model , execution_provenance , failing_transaction_executor , geometry , implementation , physical_work_for_problem , plan , plan_with_receipts , problem_inputs , publication_recording_executor , recording_executor , registry , request_with_products_and_model , run_receipted , test_registry , } ;"
-    ],
-    "allowed_items": {
-     "fn:durable_prepare_failure_prevents_the_visibility_operation": 1,
-     "fn:private_synthetic_request_crosses_the_complete_compile_plan_run_seam": 1,
-     "fn:provenance": 1,
-     "fn:receipt_participant": 1,
-     "fn:receipt_promotion_failure_retains_prepared_reconciliation_evidence": 1,
-     "fn:receipt_store": 1,
-     "fn:stale_synthetic_binding_stops_before_the_plan_can_launch": 1,
-     "fn:synthetic_adapter_cannot_report_unlisted_work": 1,
-     "fn:synthetic_allocation_peak_cannot_overflow_its_plan_claim": 1,
-     "fn:synthetic_cancellation_rolls_back_before_visibility": 1,
-     "fn:synthetic_mutation_output_and_publication_failures_remain_private": 1,
-     "mod:support": 1,
-     "fn:walking_skeleton": 1,
-     "fn:walking_skeleton_with_receipts": 1,
-     "struct:WalkingSkeleton": 1
-    },
-    "allowed_qualified_paths": {
-     "casa_imaging_model::CompiledProblem": 1,
-     "casa_imaging_model::NormalStateNormalization::Unnormalized": 1,
-     "casa_imaging_runtime::ExecutionAttemptId::from_sha256": 1,
-     "casa_imaging_runtime::ExecutionPlan": 1,
-     "casa_imaging_runtime::ReceiptError::RetentionExceeded": 1,
-     "casa_imaging_runtime::ReceiptPublicationParticipant": 1,
-     "casa_imaging_runtime::ReceiptPublicationParticipant::ModelData": 1,
-     "casa_imaging_runtime::ReceiptPublicationParticipant::Product": 1
-    },
-    "allowed_relative_paths": {},
-    "allowed_restricted_visibilities": {},
-    "composition_message": "T15 walking skeleton must not include or redirect Rust source",
-    "privacy_message": "T15 walking skeleton must remain private test code",
-    "glob_message": "T15 walking skeleton must not use glob imports",
-    "import_message": "T15 walking skeleton imports outside its exact allowlist",
-    "path_message": "T15 walking skeleton references a qualified CASA path outside its exact allowlist",
-    "relative_path_message": "T15 walking skeleton references a relative path outside its exact allowlist",
-    "item_message": "T15 walking skeleton declares an item outside its exact allowlist",
-    "inventory_message": "T15 walking skeleton no longer matches its accepted import and item inventory"
-   },
-   "accepted_violation_digest": null
-  },
-  {
-   "id": "t15-private-parent-support",
-   "roots": [
-    "crates/casa-imaging-runtime/tests/walking_skeleton/support.rs"
-   ],
-   "extensions": [
-    ".rs"
-   ],
-   "forbidden_patterns": [],
-   "rust_allowlist": {
-    "allowed_imports": [
-     "use super :: super :: { CancelAfterLaunch , PublicationProbe , TestRegistry , authority , cost_model , execution_provenance , failing_transaction_executor , geometry , implementation , physical_work_for_problem , plan , plan_with_receipts , problem_inputs , publication_recording_executor , recording_executor , registry , request_with_products_and_model , run_receipted , test_registry , } ;"
-    ],
-    "allowed_items": {},
-    "allowed_qualified_paths": {},
-    "allowed_relative_paths": {},
-    "allowed_restricted_visibilities": {
-     "pub ( super ) use": 1
-    },
-    "composition_message": "T15 parent compile_plan_run support must not include or redirect Rust source",
-    "privacy_message": "T15 parent compile_plan_run support must remain private test code",
-    "glob_message": "T15 parent compile_plan_run support must not use glob imports",
-    "import_message": "T15 parent compile_plan_run support imports outside its exact allowlist",
-    "path_message": "T15 parent compile_plan_run support references a qualified CASA path outside its exact allowlist",
-    "relative_path_message": "T15 parent compile_plan_run support references a relative path outside its exact allowlist",
-    "item_message": "T15 parent compile_plan_run support declares an item outside its exact allowlist",
-    "inventory_message": "T15 parent compile_plan_run support no longer matches its accepted import and item inventory"
-   },
-   "accepted_violation_digest": null
+   "forbidden_patterns": [
+    {
+     "regex": "(?m)^\\s*pub\\s+(?:use|struct|enum|trait|type|fn|const|static|mod)\\b|\\binclude!\\s*\\(|#\\s*\\[\\s*path\\s*=",
+     "message": "T15 walking-skeleton evidence must remain private test code without redirected source"
+    }
+   ]
   },
   {
    "id": "rust-imaging-frontends",
@@ -313,15 +213,14 @@
    ],
    "forbidden_patterns": [
     {
-     "regex": "(?m)^\\s*(?:pub\\s+)?(?:use|extern\\s+crate)\\s+(?:casa_imaging_runtime|casa_imaging|casars_imager|ash|cuda|cudarc|metal|objc2_metal|opencl|vulkano|wgpu)\\b|\\b(?:casa_imaging_runtime|casa_imaging|casars_imager|ash|cuda|cudarc|metal|objc2_metal|opencl|vulkano|wgpu)::",
+     "regex": "(?m)^\\s*(?:pub\\s+)?(?:use|extern\\s+crate)\\s+(?:casa_imaging_runtime|casa_imaging|ash|cuda|cudarc|metal|objc2_metal|opencl|vulkano|wgpu)\\b|\\b(?:casa_imaging_runtime|casa_imaging|ash|cuda|cudarc|metal|objc2_metal|opencl|vulkano|wgpu)::",
      "message": "Rust frontend imports an execution, displaced imaging backend, or device API"
     },
     {
      "regex": "\\b(?:StandardMfsBackend|StandardMfsMinorCycleBackend)::[A-Za-z_][A-Za-z0-9_]*\\b|\\b(?:standard_mfs_metal_device_available|MTLCreateSystemDefaultDevice|MTLCopyAllDevices|MTLCopyAllDevicesWithObserver)\\s*\\(",
      "message": "Rust frontend selects an imaging backend or inspects a device"
     }
-   ],
-   "accepted_violation_digest": "7a7bee20be2f3d2876c0ddabad1e98b90c99786b5ab84a3d7f583c025891c918"
+   ]
   },
   {
    "id": "swift-imaging-frontends",
@@ -337,65 +236,7 @@
      "regex": "(?m)^\\s*import\\s+(?:Metal|MetalKit)\\b|\\b(?:MTLCreateSystemDefaultDevice|MTLCopyAllDevices|MTLCopyAllDevicesWithObserver|FftBackend|GridBackend|ImagingBackend|BackendEligibility|MetalBackend)\\b|\\bProcessInfo\\.processInfo\\.(?:activeProcessorCount|processorCount)\\b|\\b(?:sysctl|sysctlbyname|host_statistics|host_statistics64)\\s*\\(",
      "message": "Swift frontend inspects a device or selects an imaging backend"
     }
-   ],
-   "accepted_violation_digest": null
-  }
- ],
- "displaced_packages": [
-  "casa-imaging"
- ],
- "frozen_displaced_workspace_edges": [
-  {
-   "source": "casa-imaging",
-   "target": "casa-coordinates",
-   "kind": "normal"
-  },
-  {
-   "source": "casa-imaging",
-   "target": "casa-images",
-   "kind": "normal"
-  },
-  {
-   "source": "casa-imaging",
-   "target": "casa-lattices",
-   "kind": "normal"
-  },
-  {
-   "source": "casa-imaging",
-   "target": "casa-types",
-   "kind": "normal"
-  },
-  {
-   "source": "casa-ms",
-   "target": "casa-imaging",
-   "kind": "normal"
-  },
-  {
-   "source": "casars",
-   "target": "casa-imaging",
-   "kind": "normal"
-  }
- ],
- "frozen_transitional_workspace_edges": [
-  {
-   "source": "casars",
-   "target": "casa-ms",
-   "kind": "normal"
-  },
-  {
-   "source": "casa-ms",
-   "target": "casa-provider-contracts",
-   "kind": "normal"
-  },
-  {
-   "source": "casars-frontend-services",
-   "target": "casa-ms",
-   "kind": "normal"
-  },
-  {
-   "source": "casars-imager",
-   "target": "casa-ms",
-   "kind": "normal"
+   ]
   }
  ],
  "migration_matrix": "resources/imaging-architecture/migration-matrix.json",

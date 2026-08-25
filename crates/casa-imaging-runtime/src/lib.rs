@@ -76,11 +76,9 @@ pub use publication_layout::{
 };
 pub use receipt::{
     BuildIdentity, CompiledProblemEvidence, ExecutionAttemptId, ExecutionProvenance,
-    ExecutionReceipt, ExecutionReceiptBinding, ExecutionReceiptStore, ExecutionRouteDisposition,
-    ExecutionRouteEvidence, ExecutionRouteRequirement, ExecutionRouteRequirementEvidence,
-    ExecutionRouteRequirementKind, ReceiptAdaptation, ReceiptError, ReceiptFailureKind,
-    ReceiptInfeasibilityCertificate, ReceiptPublicationParticipant, ReceiptRetention,
-    ReceiptStatus,
+    ExecutionReceipt, ExecutionReceiptBinding, ExecutionReceiptStore, ReceiptAdaptation,
+    ReceiptError, ReceiptFailureKind, ReceiptInfeasibilityCertificate,
+    ReceiptPublicationParticipant, ReceiptRetention, ReceiptStatus,
 };
 pub use resource_authority::{
     Accelerator, AcceleratorDemand, AcceleratorId, AcceleratorKind,

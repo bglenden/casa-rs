@@ -47,7 +47,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     ApplicationDispatchError, ApplicationNative, ApplicationOutcome, ApplicationPublication,
-    ApplicationRequest, ApplicationRuntime, CasaImageProductSink, TaskRouteRequirement,
+    ApplicationRequest, ApplicationRuntime, CasaImageProductSink, TaskRequirement,
 };
 
 /// Native continuum reconstruction accepted by the application boundary.
@@ -150,13 +150,14 @@ pub struct ContinuumImagingRequest {
     /// Restoring-beam policy.
     pub beam_policy: ContinuumBeamPolicy,
     /// Capability constraints derived by the task surface. Unsupported
-    /// capabilities are rejected by the router before physical execution.
-    pub route_requirements: Vec<TaskRouteRequirement>,
+    /// capabilities are rejected by the installed implementation registry
+    /// before physical execution.
+    pub task_requirements: Vec<TaskRequirement>,
 }
 
 /// Small presentation projection of one completed native continuum run.
 pub struct ContinuumImagingResult {
-    /// Authoritative routed application result.
+    /// Authoritative application result.
     pub outcome: ApplicationOutcome,
     /// Number of accepted minor-cycle component updates.
     pub minor_iterations: usize,
@@ -166,7 +167,7 @@ pub struct ContinuumImagingResult {
     pub product_names: Vec<String>,
 }
 
-/// Prepare, route, execute, and publish one native continuum request.
+/// Prepare, execute, and publish one native continuum request.
 pub fn execute_continuum(
     request: ContinuumImagingRequest,
 ) -> Result<ContinuumImagingResult, ApplicationDispatchError> {
@@ -237,8 +238,8 @@ fn prepare(
     }
     if multiple_ddids || multiple_fields {
         request
-            .route_requirements
-            .push(TaskRouteRequirement::NativeV1UnsupportedControls);
+            .task_requirements
+            .push(TaskRequirement::UnsupportedControls);
     }
     let ddid = usize::try_from(selected_ddid.expect("nonempty selection"))
         .map_err(|_| boxed("selected DATA_DESC_ID is negative"))?;
@@ -375,7 +376,7 @@ fn prepare(
             content_budget,
             casa_ms::open_measures_runtime()?,
         ),
-        task_route_requirements: request.route_requirements,
+        task_requirements: request.task_requirements,
         native,
     })
 }
