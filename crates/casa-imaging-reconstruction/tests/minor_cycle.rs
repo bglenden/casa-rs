@@ -862,15 +862,19 @@ fn iteration_bound_stops_with_an_explicit_reconciliation_request() {
 }
 
 #[test]
-fn staleness_bound_stops_before_extrapolating_past_the_view_envelope() {
+fn staleness_bound_rejects_the_candidate_before_any_state_advances() {
     let round = first_confirm_round(53, 54);
     let continuation = problem_with_model(
         55,
         ModelStateIdentity::Generation(round.final_model.generation_id().identity()),
     );
     let lifecycle = bind_lifecycle(&continuation, 56, 11);
-    // One component already reaches the cumulative update ceiling.
-    let tight = HogbomControls::new(0.5, 0.0, 64, 1.0e-300).expect("valid controls");
+    // The very first candidate already exceeds the cumulative update
+    // ceiling, so nothing may be applied at all.
+    let tight = HogbomControls::new(0.5, 0.0, 64, 1.0e-300)
+        .expect("valid controls")
+        .record_component_sequence(8)
+        .expect("recording limit");
 
     let outcome = hogbom_minor_cycle(
         &lifecycle,
@@ -882,9 +886,120 @@ fn staleness_bound_stops_before_extrapolating_past_the_view_envelope() {
     .expect("bounded Högbom solve");
     let evidence = outcome.evidence();
     assert_eq!(evidence.stop_reason(), MinorCycleStopReason::StalenessBound);
-    assert_eq!(evidence.iterations(), 1);
-    assert!(evidence.total_flux() >= tight.maximum_model_update());
+    assert_eq!(evidence.iterations(), 0);
+    assert_eq!(evidence.total_flux(), 0.0);
+    assert!(outcome.delta().is_none());
+    assert!(
+        evidence
+            .recorded_component_sequence()
+            .unwrap_or(&[])
+            .is_empty()
+    );
     assert!(evidence.requests_reconciliation());
+}
+
+#[test]
+fn returned_deltas_never_exceed_the_accepted_view_envelope() {
+    let round = first_confirm_round(61, 62);
+    let continuation = problem_with_model(
+        63,
+        ModelStateIdentity::Generation(round.final_model.generation_id().identity()),
+    );
+    let lifecycle = bind_lifecycle(&continuation, 64, 12);
+    let envelope = residual_peak(round.normal_state.residual()) * 0.75;
+    let bounded = HogbomControls::new(0.5, 0.0, 64, envelope)
+        .expect("valid controls")
+        .record_component_sequence(64)
+        .expect("recording limit");
+
+    let outcome = hogbom_minor_cycle(
+        &lifecycle,
+        &round.final_model,
+        &round.normal_state,
+        CleanWindow::full_plane(SHAPE),
+        bounded,
+    )
+    .expect("bounded Högbom solve");
+    let evidence = outcome.evidence();
+    assert!(
+        evidence.total_flux() <= bounded.maximum_model_update(),
+        "cumulative flux {} exceeded the accepted envelope {}",
+        evidence.total_flux(),
+        bounded.maximum_model_update()
+    );
+    if let Some(delta) = outcome.delta() {
+        let delta_flux: f64 = delta
+            .terms()
+            .iter()
+            .map(|term| term.increment().value().abs())
+            .sum();
+        assert!(
+            delta_flux <= bounded.maximum_model_update() + f64::EPSILON * delta_flux.abs(),
+            "delta terms sum to {delta_flux}, beyond the accepted envelope"
+        );
+    }
+    // Whatever stopped the solve, the accepted envelope bound held.
+    assert_eq!(evidence.stop_reason(), MinorCycleStopReason::IterationBound);
+}
+
+#[test]
+fn threshold_boundary_follows_the_casa_hogbom_convention() {
+    // casacore LatticeCleaner stops only for abs(strength) strictly below
+    // the threshold; a peak exactly at the threshold cleans one component.
+    let round = first_confirm_round(65, 66);
+    let continuation = problem_with_model(
+        67,
+        ModelStateIdentity::Generation(round.final_model.generation_id().identity()),
+    );
+    let lifecycle = bind_lifecycle(&continuation, 68, 13);
+
+    // Recompute the solver's first normalized peak exactly: same scan over
+    // the same private copy, so the equality case is bit-exact.
+    let psf_peak = round
+        .normal_state
+        .normal_approximation()
+        .iter()
+        .map(|value| value.re.abs())
+        .fold(0.0_f64, f64::max);
+    let strength = residual_peak(round.normal_state.residual()) / psf_peak;
+
+    let solve = |threshold: f64| {
+        hogbom_minor_cycle(
+            &lifecycle,
+            &round.final_model,
+            &round.normal_state,
+            CleanWindow::full_plane(SHAPE),
+            HogbomControls::new(0.5, threshold, 64, 1.0e30).expect("valid controls"),
+        )
+        .expect("boundary solve")
+    };
+
+    // Above the peak: converges before cleaning anything.
+    let above = solve(strength * 1.01);
+    assert_eq!(
+        above.evidence().stop_reason(),
+        MinorCycleStopReason::ThresholdReached
+    );
+    assert_eq!(above.evidence().iterations(), 0);
+    assert!(above.delta().is_none());
+
+    // Exactly at the peak: not a stop; one component is cleaned and the
+    // reduced peak then falls below the threshold.
+    let equal = solve(strength);
+    assert_eq!(
+        equal.evidence().stop_reason(),
+        MinorCycleStopReason::ThresholdReached
+    );
+    assert_eq!(equal.evidence().iterations(), 1);
+    assert!(equal.delta().is_some());
+
+    // Strictly below the peak: the first component is cleaned too.
+    let below = solve(strength * 0.99);
+    assert_eq!(
+        below.evidence().stop_reason(),
+        MinorCycleStopReason::ThresholdReached
+    );
+    assert!(below.evidence().iterations() >= 1);
 }
 
 #[test]
