@@ -629,6 +629,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "casa-imaging-products"
+version = "0.27.0"
+dependencies = [
+ "casa-imaging-model",
+ "casa-imaging-reconstruction",
+ "ndarray",
+ "num-complex",
+ "rustfft",
+ "sha2",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "casa-imaging-reconstruction"
 version = "0.27.0"
 dependencies = [
