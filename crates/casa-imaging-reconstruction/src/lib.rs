@@ -28,6 +28,7 @@ use casa_imaging_model::{
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+mod major_cycle;
 mod serial_mfs;
 mod weighting;
 
@@ -42,11 +43,16 @@ pub use serial_mfs::{
 #[doc(hidden)]
 pub mod runtime_adapter {
     pub use crate::serial_mfs::{
-        CompleteDataOwnerCompletion, CompleteDataOwnerState, PreparedSerialMfsOperator,
-        SerialMfsWorkload, prepare_serial_mfs_operator, serial_mfs_workload,
+        CompleteDataOwnerCompletion, CompleteDataOwnerResult, CompleteDataOwnerState,
+        PreparedSerialMfsOperator, SerialMfsWorkload, prepare_serial_mfs_operator,
+        serial_mfs_workload,
     };
 }
 
+pub use major_cycle::{
+    FinalNormalState, MajorCycleCompletion, MajorCycleError, MajorCycleOwner,
+    MajorCyclePreparation, NormalStateCatalog,
+};
 pub use weighting::{
     WeightingAlgorithmState, WeightingError, WeightingExecutionLimits, WeightingGenerationId,
     WeightingPlan, WeightingReplayChunk, WeightingReplayCoverageId, WeightingReplayId,
@@ -68,7 +74,11 @@ const REPROJECTED_STENCIL_VERSION: u32 = 1;
 const REPROJECTED_PROOF_DOMAIN: &[u8] = b"casa-rs-reprojected-model-proof";
 const REPROJECTED_PROOF_VERSION: u32 = 1;
 const FINAL_COMPLETION_DOMAIN: &[u8] = b"casa-rs-final-model-completion";
-const FINAL_COMPLETION_VERSION: u32 = 1;
+const FINAL_COMPLETION_VERSION: u32 = 2;
+const FINAL_NORMAL_STATE_DOMAIN: &[u8] = b"casa-rs-final-normal-state";
+const FINAL_NORMAL_STATE_VERSION: u32 = 2;
+const MAJOR_CYCLE_DOMAIN: &[u8] = b"casa-rs-major-cycle-completion";
+const MAJOR_CYCLE_VERSION: u32 = 2;
 
 macro_rules! lifecycle_identity {
     ($name:ident, $version:ident, $summary:literal) => {
@@ -128,6 +138,16 @@ lifecycle_identity!(
     FinalModelCompletionId,
     FINAL_COMPLETION_VERSION,
     "Stable identity of one affine final-model completion."
+);
+lifecycle_identity!(
+    FinalNormalStateCompletionId,
+    FINAL_NORMAL_STATE_VERSION,
+    "Stable identity of one authoritative final Normal State completion."
+);
+lifecycle_identity!(
+    MajorCycleCompletionId,
+    MAJOR_CYCLE_VERSION,
+    "Stable identity of one atomic Major-Cycle reconciliation."
 );
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -439,7 +459,9 @@ impl ModelDelta {
 
 /// Opaque proof that one affine final-model update completed through the owner.
 ///
-/// This is reconstruction evidence, not a Product Generation seal.
+/// `delta` is `None` exactly when the named input generation was confirmed
+/// unchanged as final. This is reconstruction evidence, not a Product
+/// Generation seal.
 #[derive(Debug)]
 pub struct FinalModelCompletion {
     completion_id: FinalModelCompletionId,
@@ -448,7 +470,7 @@ pub struct FinalModelCompletion {
     attempt: ModelExecutionAttemptId,
     epoch: u64,
     base: ModelGenerationId,
-    delta: ModelDeltaId,
+    delta: Option<ModelDeltaId>,
     generation: ModelGenerationId,
 }
 
@@ -483,9 +505,9 @@ impl FinalModelCompletion {
         self.base
     }
 
-    /// Return the applied Model Delta.
+    /// Return the applied Model Delta, or `None` when the named input was confirmed unchanged.
     #[must_use]
-    pub const fn delta(&self) -> ModelDeltaId {
+    pub const fn delta(&self) -> Option<ModelDeltaId> {
         self.delta
     }
 
@@ -501,6 +523,43 @@ impl FinalModelCompletion {
 pub struct FinalModelUpdate {
     generation: ModelGeneration,
     completion: FinalModelCompletion,
+}
+
+/// Validated final-model candidate whose one-shot completion authority has not
+/// yet been consumed.
+///
+/// A Major Cycle prepares this value before its exhaustive operator replay and
+/// commits it only after every fallible scientific and resource-bound step has
+/// succeeded. The value has no public constructor and remains bound to one
+/// lifecycle owner.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct PreparedFinalModel {
+    generation: ModelGeneration,
+    authority: LogicalIdentity,
+    seal: AuthoritySeal,
+    base: ModelGenerationId,
+    delta: Option<ModelDeltaId>,
+}
+
+impl PreparedFinalModel {
+    /// Borrow the validated candidate generation for paired-operator work.
+    #[must_use]
+    pub const fn generation(&self) -> &ModelGeneration {
+        &self.generation
+    }
+
+    /// Return the named input generation.
+    #[must_use]
+    pub const fn base(&self) -> ModelGenerationId {
+        self.base
+    }
+
+    /// Return the candidate final generation.
+    #[must_use]
+    pub const fn generation_id(&self) -> ModelGenerationId {
+        self.generation.generation_id
+    }
 }
 
 impl FinalModelUpdate {
@@ -578,6 +637,12 @@ impl ModelLifecycle {
         &self.contract
     }
 
+    /// Return the exact compiled problem this lifecycle is bound to.
+    #[must_use]
+    pub const fn problem(&self) -> CompiledProblemId {
+        self.problem
+    }
+
     /// Return the bound execution attempt.
     #[must_use]
     pub const fn attempt(&self) -> ModelExecutionAttemptId {
@@ -588,6 +653,16 @@ impl ModelLifecycle {
     #[must_use]
     pub const fn epoch(&self) -> u64 {
         self.epoch
+    }
+
+    /// Return the stable lifecycle authority behind every owner-minted ID.
+    ///
+    /// Unlike the per-instance process-local seal, this identity binds the
+    /// compiled problem, lifecycle commitment, attempt, and epoch, so IDs
+    /// derived from it remain stable across separate owner allocations.
+    #[must_use]
+    pub(crate) const fn authority(&self) -> LogicalIdentity {
+        self.authority
     }
 
     /// Establish the compiled empty initial generation.
@@ -713,7 +788,12 @@ impl ModelLifecycle {
     ) -> Result<ModelDelta, ModelLifecycleError> {
         self.ensure_open()?;
         self.validate_base(base)?;
-        let mut canonical = Vec::new();
+        let capacity = self
+            .contract
+            .bounds()
+            .max_delta_terms()
+            .min(self.contract.target().sample_count());
+        let mut canonical = Vec::with_capacity(capacity);
         let mut prior = None;
         for term in terms {
             if canonical.len() == self.contract.bounds().max_delta_terms() {
@@ -772,51 +852,121 @@ impl ModelLifecycle {
         self.apply_delta_inner(base, delta)
     }
 
-    /// Perform the affine final-model update and mint distinct opaque completion evidence.
-    pub fn apply_final_delta(
+    /// Validate one authoritative candidate generation against this lifecycle
+    /// without consuming it.
+    ///
+    /// A Major Cycle names its exact input generation through this owner check
+    /// before any mutation; foreign, stale, or tampered evidence fails closed.
+    pub fn validate_named_generation(
+        &self,
+        generation: &ModelGeneration,
+    ) -> Result<(), ModelLifecycleError> {
+        self.validate_base(generation)
+    }
+
+    /// Prepare one final-model candidate without consuming final-completion
+    /// authority.
+    ///
+    /// This is the first phase of the Major-Cycle transaction. All model and
+    /// delta validation and arithmetic happen here, while the lifecycle remains
+    /// open if later complete-data reconciliation fails.
+    pub fn prepare_final_model(
+        &self,
+        named: ModelGeneration,
+        delta: Option<ModelDelta>,
+    ) -> Result<PreparedFinalModel, ModelLifecycleError> {
+        self.ensure_open()?;
+        let base = named.generation_id;
+        let (generation, delta) = match delta {
+            Some(delta) => {
+                let delta_id = delta.delta_id;
+                (self.apply_delta_inner(named, delta)?, Some(delta_id))
+            }
+            None => {
+                self.validate_named_generation(&named)?;
+                (named, None)
+            }
+        };
+        Ok(PreparedFinalModel {
+            generation,
+            authority: self.authority,
+            seal: self.seal,
+            base,
+            delta,
+        })
+    }
+
+    /// Commit a successfully reconciled final-model candidate and mint its
+    /// distinct completion evidence.
+    pub fn commit_final_model(
         &mut self,
-        base: ModelGeneration,
-        delta: ModelDelta,
+        prepared: PreparedFinalModel,
     ) -> Result<FinalModelUpdate, ModelLifecycleError> {
-        let final_authority = self
-            .final_authority
-            .take()
-            .ok_or(ModelLifecycleError::FinalModelAlreadyCompleted)?;
-        let base_id = base.generation_id;
-        let delta_id = delta.delta_id;
-        let generation = self.apply_delta_inner(base, delta)?;
+        self.ensure_open()?;
+        if prepared.authority != self.authority || prepared.seal != self.seal {
+            return Err(ModelLifecycleError::ForeignModelLifecycle);
+        }
+        self.validate_named_generation(&prepared.generation)?;
+        let generation_id = prepared.generation.generation_id;
         let completion_id = final_completion_id(
             self.authority,
             self.problem,
             self.attempt,
             self.epoch,
-            base_id,
-            delta_id,
-            generation.generation_id,
+            prepared.base,
+            prepared.delta,
+            generation_id,
         );
+        let final_authority = self
+            .final_authority
+            .take()
+            .expect("open lifecycle retains final authority");
         let completion = FinalModelCompletion {
             completion_id,
             seal: final_authority.0,
             problem: self.problem,
             attempt: self.attempt,
             epoch: self.epoch,
-            base: base_id,
-            delta: delta_id,
-            generation: generation.generation_id,
+            base: prepared.base,
+            delta: prepared.delta,
+            generation: generation_id,
         };
         debug_assert_eq!(completion.seal, self.seal);
         Ok(FinalModelUpdate {
-            generation,
+            generation: prepared.generation,
             completion,
         })
     }
 
-    fn apply_delta_inner(
-        &self,
-        mut base: ModelGeneration,
+    /// Confirm one validated named generation as the final model without a
+    /// pending Model Delta and mint distinct opaque completion evidence.
+    pub fn confirm_final_model(
+        &mut self,
+        named: ModelGeneration,
+    ) -> Result<FinalModelUpdate, ModelLifecycleError> {
+        let prepared = self.prepare_final_model(named, None)?;
+        self.commit_final_model(prepared)
+    }
+
+    /// Perform the affine final-model update and mint distinct opaque completion evidence.
+    ///
+    /// Every validation runs before the one-shot final-completion authority is
+    /// consumed, so a rejected update leaves the lifecycle exactly as it was.
+    pub fn apply_final_delta(
+        &mut self,
+        base: ModelGeneration,
         delta: ModelDelta,
-    ) -> Result<ModelGeneration, ModelLifecycleError> {
-        self.validate_base(&base)?;
+    ) -> Result<FinalModelUpdate, ModelLifecycleError> {
+        let prepared = self.prepare_final_model(base, Some(delta))?;
+        self.commit_final_model(prepared)
+    }
+
+    fn validate_delta_update(
+        &self,
+        base: &ModelGeneration,
+        delta: &ModelDelta,
+    ) -> Result<(), ModelLifecycleError> {
+        self.validate_base(base)?;
         if delta.seal != self.seal
             || delta.authority != self.authority
             || delta.base != base.generation_id
@@ -846,7 +996,15 @@ impl ModelLifecycle {
             let updated = ModelValue::new(updated)?;
             validate_model_value(updated, self.contract.bounds().max_absolute_model_value())?;
         }
-        let parent = base.generation_id;
+        Ok(())
+    }
+
+    fn apply_delta_inner(
+        &self,
+        mut base: ModelGeneration,
+        delta: ModelDelta,
+    ) -> Result<ModelGeneration, ModelLifecycleError> {
+        self.validate_delta_update(&base, &delta)?;
         for term in &delta.terms {
             let index = self
                 .contract
@@ -860,6 +1018,7 @@ impl ModelLifecycle {
             );
             base.samples[index] = ModelSample::valid(ModelValue::new(updated)?);
         }
+        let parent = base.generation_id;
         base.authority = self.authority;
         base.seal = self.seal;
         base.origin = ModelGenerationOrigin::Delta {
@@ -1876,7 +2035,7 @@ fn final_completion_id(
     attempt: ModelExecutionAttemptId,
     epoch: u64,
     base: ModelGenerationId,
-    delta: ModelDeltaId,
+    delta: Option<ModelDeltaId>,
     generation: ModelGenerationId,
 ) -> FinalModelCompletionId {
     let mut encoder = Encoder::new(FINAL_COMPLETION_DOMAIN, FINAL_COMPLETION_VERSION);
@@ -1885,7 +2044,13 @@ fn final_completion_id(
     encoder.identity(attempt.identity().as_bytes());
     encoder.u64(epoch);
     encoder.identity(base.as_bytes());
-    encoder.identity(delta.as_bytes());
+    match delta {
+        None => encoder.u8(0),
+        Some(delta) => {
+            encoder.u8(1);
+            encoder.identity(delta.as_bytes());
+        }
+    }
     encoder.identity(generation.as_bytes());
     FinalModelCompletionId(LogicalIdentity::from_sha256(encoder.finish()))
 }
@@ -1989,53 +2154,53 @@ fn canonical_f64(value: f64) -> f64 {
     if value == 0.0 { 0.0 } else { value }
 }
 
-fn canonical_f64_bits(value: f64) -> u64 {
+pub(crate) fn canonical_f64_bits(value: f64) -> u64 {
     if value == 0.0 { 0 } else { value.to_bits() }
 }
 
-fn write_hex(formatter: &mut fmt::Formatter<'_>, bytes: &[u8]) -> fmt::Result {
+pub(crate) fn write_hex(formatter: &mut fmt::Formatter<'_>, bytes: &[u8]) -> fmt::Result {
     for byte in bytes {
         write!(formatter, "{byte:02x}")?;
     }
     Ok(())
 }
 
-struct Encoder(Sha256);
+pub(crate) struct Encoder(Sha256);
 
 impl Encoder {
-    fn new(domain: &[u8], version: u32) -> Self {
+    pub(crate) fn new(domain: &[u8], version: u32) -> Self {
         let mut encoder = Self(Sha256::new());
         encoder.bytes(domain);
         encoder.u32(version);
         encoder
     }
 
-    fn finish(self) -> [u8; 32] {
+    pub(crate) fn finish(self) -> [u8; 32] {
         self.0.finalize().into()
     }
 
-    fn bytes(&mut self, value: &[u8]) {
+    pub(crate) fn bytes(&mut self, value: &[u8]) {
         self.usize(value.len());
         self.0.update(value);
     }
 
-    fn identity(&mut self, value: [u8; 32]) {
+    pub(crate) fn identity(&mut self, value: [u8; 32]) {
         self.0.update(value);
     }
 
-    fn u8(&mut self, value: u8) {
+    pub(crate) fn u8(&mut self, value: u8) {
         self.0.update([value]);
     }
 
-    fn u32(&mut self, value: u32) {
+    pub(crate) fn u32(&mut self, value: u32) {
         self.0.update(value.to_le_bytes());
     }
 
-    fn u64(&mut self, value: u64) {
+    pub(crate) fn u64(&mut self, value: u64) {
         self.0.update(value.to_le_bytes());
     }
 
-    fn usize(&mut self, value: usize) {
+    pub(crate) fn usize(&mut self, value: usize) {
         self.u64(u64::try_from(value).expect("usize fits in u64 on supported targets"));
     }
 }

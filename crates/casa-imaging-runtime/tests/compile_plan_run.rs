@@ -19,10 +19,11 @@ use casa_imaging_model::{
     AxisOrder, CentreLaws, CorrelationType, DeclaredInnerProducts, DelayCentreLaw,
     DirectionCoordinateSpec, DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy,
     FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
-    ImagingRequest, ImagingRequestVersion, InstrumentResponse, MeasurementEquationContract,
-    MetadataTableKind, MissingPointingPolicy, ModelColumnWrite, ModelInnerProduct,
-    ModelStateIdentity, MsColumnKind, NumericPrecision, NumericalStage, NumericsContract,
-    ObservationPointingLaw, ObservationSourceState, ObservationTransactionId,
+    ImagingRequest, ImagingRequestVersion, InstrumentResponse, LogicalIdentity,
+    MeasurementEquationContract, MetadataTableKind, MissingPointingPolicy, ModelCell,
+    ModelColumnWrite, ModelDeltaTerm, ModelExecutionAttemptId, ModelInnerProduct,
+    ModelStateIdentity, ModelValue, MsColumnKind, NumericPrecision, NumericalStage,
+    NumericsContract, ObservationPointingLaw, ObservationSourceState, ObservationTransactionId,
     ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn,
     PointingDirectionSemantic, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
     PolarizationContract, PolarizationCoordinate, PreparedArtifactAwInterpretation,
@@ -37,7 +38,8 @@ use casa_imaging_model::{
     WeightDensityScope, WeightingContract, WeightingScheme, compile,
 };
 use casa_imaging_reconstruction::{
-    ExecutableModelProblem, WeightingExecutionLimits, WeightingPlan, plan_weighting,
+    ExecutableModelProblem, MajorCyclePreparation, ModelLifecycle, WeightingExecutionLimits,
+    WeightingPlan, plan_weighting,
 };
 use casa_imaging_runtime::{
     AdaptationId, AdaptationTransition, AllocationAccess, AllocationId, AllocationLayout,
@@ -54,12 +56,12 @@ use casa_imaging_runtime::{
     ExecutionStatus, ExternalPressure, FenceId, FenceKind, HostInventory,
     ImplementationContractCatalog, ImplementationContractMetadata, ImplementationRegistry,
     ImplementationRegistryId, InitializationPolicy, IoBufferDemand, IoBufferKind, IoMeasurement,
-    IoPrediction, LeaseResource, LogicalAllocation, MemoryCapacityDomain, MemoryCapacityKind,
-    MemoryDemand, MemoryView, MemoryViewKind, ObservationReadCompletionContext,
-    ObservationTransactionWork, PhysicalLayoutId, PhysicalSlot, PhysicalSlotId,
-    PhysicalWorkBinding, PhysicalWorkBindingError, PlanError, PlanPrediction, PlannedArtifact,
-    PlannerCostModelProfileBootstrap, PlannerCostModelProfileId, PlanningBindings,
-    PredictionConfidence, PredictionUncertainty, PreparedArtifactBudget,
+    IoPrediction, LeaseResource, LogicalAllocation, MajorCycleOperatorResult,
+    MajorCycleOperatorState, MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand, MemoryView,
+    MemoryViewKind, ObservationReadCompletionContext, ObservationTransactionWork, PhysicalLayoutId,
+    PhysicalSlot, PhysicalSlotId, PhysicalWorkBinding, PhysicalWorkBindingError, PlanError,
+    PlanPrediction, PlannedArtifact, PlannerCostModelProfileBootstrap, PlannerCostModelProfileId,
+    PlanningBindings, PredictionConfidence, PredictionUncertainty, PreparedArtifactBudget,
     PreparedArtifactDescriptor, PreparedArtifactError, PreparedArtifactLoadSource,
     PreparedArtifactOperation, PreparedArtifactOrder, PreparedArtifactPlanFragment,
     PreparedArtifactPlaneDescriptor, PreparedArtifactPrecision, PreparedArtifactRegistration,
@@ -912,6 +914,13 @@ fn recording_executor(
         complete_data_result: Mutex::new(None),
         complete_data_prediction_count: AtomicUsize::new(0),
         complete_data_laws: Mutex::new(CompleteDataLawEvidence::default()),
+        major_cycle_node: None,
+        major_cycle_mode: MajorCycleMode::Confirm,
+        major_cycle_problem: None,
+        major_cycle_lifecycle: Mutex::new(None),
+        major_cycle_preparation: Mutex::new(None),
+        major_cycle_result: Mutex::new(None),
+        major_cycle_error: Mutex::new(None),
         weighting_source_sample_count: AtomicUsize::new(0),
         weighted_sample_count: AtomicUsize::new(0),
         weighting_reconciled: AtomicBool::new(false),
@@ -952,6 +961,19 @@ struct RecordedObservationCompletion {
 }
 
 type DeliveredObservationCompletions = Arc<Mutex<Vec<(WorkNodeId, WorkNodeId)>>>;
+
+/// Test scenarios driving the T20 reconciliation at its plan-authoritative node.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum MajorCycleMode {
+    #[default]
+    Confirm,
+    ApplyDelta,
+    /// Execute the reconciliation at a different post-replay node than the
+    /// plan-authoritative final-reconciliation node.
+    NodeSubstitution,
+    StaleLifecycleEpoch,
+    ForeignGeneration,
+}
 
 #[derive(Debug, Default)]
 struct CompleteDataLawEvidence {
@@ -1117,6 +1139,13 @@ struct RecordingExecutor {
     complete_data_result: Mutex<Option<CompleteDataOperatorResult>>,
     complete_data_prediction_count: AtomicUsize,
     complete_data_laws: Mutex<CompleteDataLawEvidence>,
+    major_cycle_node: Option<WorkNodeId>,
+    major_cycle_mode: MajorCycleMode,
+    major_cycle_problem: Option<casa_imaging_model::CompiledProblem>,
+    major_cycle_lifecycle: Mutex<Option<ModelLifecycle>>,
+    major_cycle_preparation: Mutex<Option<MajorCyclePreparation>>,
+    major_cycle_result: Mutex<Option<MajorCycleOperatorResult>>,
+    major_cycle_error: Mutex<Option<String>>,
     weighting_source_sample_count: AtomicUsize,
     weighted_sample_count: AtomicUsize,
     weighting_reconciled: AtomicBool,
@@ -1153,6 +1182,123 @@ impl RecordingExecutor {
                 self.id.clone(),
             )
         })
+    }
+
+    fn prepare_major_cycle(
+        &self,
+        context: WorkExecutionContext<'_>,
+    ) -> Result<MajorCyclePreparation, io::Error> {
+        let problem = self
+            .major_cycle_problem
+            .as_ref()
+            .ok_or_else(|| io::Error::other("major-cycle test lacks its compiled problem"))?;
+        let canonical_attempt = ModelExecutionAttemptId::new(LogicalIdentity::from_sha256(
+            context.attempt_id().as_bytes(),
+        ));
+        let epoch = match self.major_cycle_mode {
+            MajorCycleMode::StaleLifecycleEpoch => context.lease_epoch() + 1,
+            _ => context.lease_epoch(),
+        };
+        let lifecycle = ModelLifecycle::bind(
+            ExecutableModelProblem::from_compiled(problem.clone()).map_err(io::Error::other)?,
+            canonical_attempt,
+            epoch,
+        )
+        .map_err(io::Error::other)?;
+        let named = lifecycle.initial_empty().map_err(io::Error::other)?;
+        let preparation = match self.major_cycle_mode {
+            MajorCycleMode::ForeignGeneration => {
+                let foreign = ModelLifecycle::bind(
+                    ExecutableModelProblem::from_compiled(problem.clone())
+                        .map_err(io::Error::other)?,
+                    canonical_attempt,
+                    epoch,
+                )
+                .map_err(io::Error::other)?;
+                MajorCyclePreparation::prepare(
+                    &foreign,
+                    foreign.initial_empty().map_err(io::Error::other)?,
+                    None,
+                )
+                .map_err(io::Error::other)?
+            }
+            MajorCycleMode::ApplyDelta => {
+                let delta = lifecycle
+                    .compile_delta(
+                        &named,
+                        [ModelDeltaTerm::new(
+                            ModelCell::new(0, 0, 0, [1, 0]),
+                            ModelValue::new(2.0).map_err(io::Error::other)?,
+                        )],
+                    )
+                    .map_err(io::Error::other)?;
+                MajorCyclePreparation::prepare(&lifecycle, named, Some(delta))
+                    .map_err(io::Error::other)?
+            }
+            _ => {
+                MajorCyclePreparation::prepare(&lifecycle, named, None).map_err(io::Error::other)?
+            }
+        };
+        *self
+            .major_cycle_lifecycle
+            .lock()
+            .expect("major-cycle lifecycle lock") = Some(lifecycle);
+        Ok(preparation)
+    }
+
+    fn run_major_cycle(&self, context: WorkExecutionContext<'_>) -> Result<(), io::Error> {
+        let retained = self
+            .complete_data_result
+            .lock()
+            .expect("complete-data result lock")
+            .take()
+            .ok_or_else(|| io::Error::other("reconciliation ran without T19 evidence"))?;
+        let preparation = self
+            .major_cycle_preparation
+            .lock()
+            .expect("major-cycle preparation lock")
+            .take()
+            .ok_or_else(|| io::Error::other("reconciliation ran without prepared model"))?;
+        let state =
+            MajorCycleOperatorState::begin(retained, preparation).map_err(io::Error::other)?;
+        let mut lifecycle = self
+            .major_cycle_lifecycle
+            .lock()
+            .expect("major-cycle lifecycle lock")
+            .take()
+            .ok_or_else(|| io::Error::other("reconciliation ran without model lifecycle"))?;
+        match state.reconcile(context, &mut lifecycle) {
+            Ok(result) => {
+                // The Final Normal State must carry the exact authoritative
+                // T17 observation generation behind the settled replay.
+                if let Some(replay) = self
+                    .weighting_state
+                    .lock()
+                    .expect("weighting execution state lock")
+                    .replay_completion()
+                {
+                    assert_eq!(
+                        result.completion().normal_state().selected_generation(),
+                        replay.selected_generation(),
+                        "normal state must bind the replay's observation generation"
+                    );
+                }
+                *self
+                    .major_cycle_result
+                    .lock()
+                    .expect("major-cycle result lock") = Some(result);
+                Ok(())
+            }
+            Err(error) => {
+                *self
+                    .major_cycle_error
+                    .lock()
+                    .expect("major-cycle error lock") = Some(error.to_string());
+                Err(io::Error::other(format!(
+                    "T20 reconciliation failed: {error}"
+                )))
+            }
+        }
     }
 }
 
@@ -1272,12 +1418,22 @@ impl WorkImplementation for RecordingExecutor {
                         .expect("complete-data preparation lock")
                         .take()
                         .ok_or_else(|| io::Error::other("T19 FFT preparation did not run"))?;
-                    let operator = self
+                    let mut operator = self
                         .weighting_state
                         .lock()
                         .expect("weighting execution state lock")
                         .begin_complete_data(context, complete, problem, prepared)
                         .map_err(io::Error::other)?;
+                    if self.major_cycle_problem.is_some() {
+                        let preparation = self.prepare_major_cycle(context)?;
+                        operator
+                            .bind_major_cycle_model(&preparation)
+                            .map_err(io::Error::other)?;
+                        *self
+                            .major_cycle_preparation
+                            .lock()
+                            .expect("major-cycle preparation lock") = Some(preparation);
+                    }
                     *self
                         .complete_data_state
                         .lock()
@@ -1305,13 +1461,15 @@ impl WorkImplementation for RecordingExecutor {
                             .expect("complete-data state lock")
                             .as_mut()
                         {
-                            let prediction_count = self
-                                .complete_data_laws
-                                .lock()
-                                .expect("complete-data law evidence lock")
-                                .observe(operator, block)?;
-                            self.complete_data_prediction_count
-                                .fetch_add(prediction_count, Ordering::SeqCst);
+                            if self.major_cycle_problem.is_none() {
+                                let prediction_count = self
+                                    .complete_data_laws
+                                    .lock()
+                                    .expect("complete-data law evidence lock")
+                                    .observe(operator, block)?;
+                                self.complete_data_prediction_count
+                                    .fetch_add(prediction_count, Ordering::SeqCst);
+                            }
                             operator
                                 .consume_weighted_block(block)
                                 .map_err(io::Error::other)?;
@@ -1402,6 +1560,11 @@ impl WorkImplementation for RecordingExecutor {
                 }
                 self.weighting_reconciled.store(true, Ordering::SeqCst);
             }
+        }
+        if let Some(node) = &self.major_cycle_node
+            && context.node().id == *node
+        {
+            self.run_major_cycle(context)?;
         }
         if let Some((expected, accessed)) = &self.initial_consistency_expected {
             if context.node().kind == WorkKind::DataCensus {
@@ -6741,7 +6904,9 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
     )
     .expect("serial MFS runtime plan");
     let preparation = operator_plan.preparation_node().clone();
-    let physical = operator_plan
+    let reconciliation = WorkNodeId::new("transaction-reconciliation");
+    let major_cycle_model = AllocationId::new("serial-mfs-major-cycle-model-10x10");
+    let (physical, operator_plan) = operator_plan
         .compose(&physical)
         .expect("T19 resources compose onto T18 replay");
     let source = WorkNodeId::new("transaction-read");
@@ -6776,19 +6941,26 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
         .filter(|slot| !base.execution_dag().physical_slots().contains_key(*slot))
         .cloned()
         .collect::<BTreeSet<_>>();
-    let expected_uses = [&source, &generation, &preparation, &replay, &release]
-        .into_iter()
-        .map(|node| {
-            (
-                node.clone(),
-                physical.execution_dag().nodes()[node]
-                    .allocations
-                    .iter()
-                    .map(|usage| (usage.allocation.clone(), usage.lifetime.clone()))
-                    .collect::<BTreeMap<_, _>>(),
-            )
-        })
-        .collect::<BTreeMap<_, _>>();
+    let expected_uses = [
+        &source,
+        &generation,
+        &preparation,
+        &replay,
+        &reconciliation,
+        &release,
+    ]
+    .into_iter()
+    .map(|node| {
+        (
+            node.clone(),
+            physical.execution_dag().nodes()[node]
+                .allocations
+                .iter()
+                .map(|usage| (usage.allocation.clone(), usage.lifetime.clone()))
+                .collect::<BTreeMap<_, _>>(),
+        )
+    })
+    .collect::<BTreeMap<_, _>>();
     let execution_plan = plan(
         &problem,
         PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
@@ -6830,13 +7002,31 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
     let receipt = receipts
         .open(provenance.attempt_id())
         .expect("weighting execution receipt");
-    assert_eq!(weighting_allocations.len(), 10);
+    assert_eq!(weighting_allocations.len(), 11);
     assert!(weighting_allocations.is_subset(&receipt.allocation_generation_identities()));
-    assert_eq!(weighting_slots.len(), 10);
+    assert_eq!(weighting_slots.len(), 11);
     assert!(weighting_slots.is_subset(&receipt.physical_slot_identities()));
     for (node, uses) in expected_uses {
         assert_eq!(receipt.allocation_uses(&node), Some(uses));
     }
+    assert_eq!(
+        receipt
+            .allocation_uses(&preparation)
+            .and_then(|uses| uses.get(&major_cycle_model).cloned()),
+        Some(ClaimLifetime::Work)
+    );
+    assert_eq!(
+        receipt
+            .allocation_uses(&replay)
+            .and_then(|uses| uses.get(&major_cycle_model).cloned()),
+        Some(ClaimLifetime::through_fence(FenceKind::Io))
+    );
+    assert_eq!(
+        receipt
+            .allocation_uses(&reconciliation)
+            .and_then(|uses| uses.get(&major_cycle_model).cloned()),
+        Some(ClaimLifetime::Work)
+    );
     let selected_content_allocation = selected_content_allocations()
         .pop_first()
         .expect("one selected-content allocation");
@@ -6913,13 +7103,10 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
         .as_ref()
         .expect("T18 replay mints T19 complete-data result");
     assert_eq!(
-        complete_data.completion().sample_count(),
+        complete_data.sample_count(),
         executor.weighted_sample_count.load(Ordering::SeqCst) as u64
     );
-    assert_eq!(
-        complete_data.completion().block_count(),
-        complete_data.completion().sample_count()
-    );
+    assert_eq!(complete_data.block_count(), complete_data.sample_count());
     assert_eq!(complete_data.primitives().shape(), [8, 8]);
     assert!(complete_data.primitives().sum_weight() > 0.0);
     assert!(
@@ -6928,28 +7115,19 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
             .load(Ordering::SeqCst)
             > 0
     );
+    assert_eq!(complete_data.attempt_id(), provenance.attempt_id());
+    assert_eq!(complete_data.replay_node(), &replay);
+    assert_eq!(complete_data.problem_id(), problem.problem_id());
     assert_eq!(
-        complete_data.completion().attempt_id(),
-        provenance.attempt_id()
-    );
-    assert_eq!(complete_data.completion().replay_node(), &replay);
-    assert_eq!(
-        complete_data.completion().problem_id(),
-        problem.problem_id()
-    );
-    assert_eq!(
-        complete_data.completion().geometry_id(),
+        complete_data.geometry_id(),
         problem.geometry().geometry_id()
     );
-    assert_eq!(
-        complete_data.completion().numerics_id(),
-        problem.numerics_id()
-    );
+    assert_eq!(complete_data.numerics_id(), problem.numerics_id());
     let laws = executor
         .complete_data_laws
         .lock()
         .expect("complete-data law evidence lock");
-    assert_eq!(laws.blocks as u64, complete_data.completion().block_count());
+    assert_eq!(laws.blocks as u64, complete_data.block_count());
     assert!(
         laws.unit_source_max_error <= 1.0e-10,
         "T18-authorized unit source error was {}",
@@ -8671,6 +8849,267 @@ fn stale_binding_uses_the_plan_receipt_store_for_mutation_evidence() {
         alternate.open(provenance.attempt_id()),
         Err(casa_imaging_runtime::ReceiptError::Io { .. })
     ));
+}
+
+fn t20_major_cycle_harness(
+    mode: MajorCycleMode,
+) -> (
+    casa_imaging_model::CompiledProblem,
+    casa_imaging_runtime::ExecutionPlan,
+    RunBindings,
+    WorkImplementationId,
+    BTreeMap<WorkImplementationId, RecordingExecutor>,
+) {
+    let problem = compile(request_with_geometry(
+        1,
+        geometry_with_shape_and_increment([3.0, 3.0], ImageShape::new(8, 8), [-1.0e-6, 1.0e-6]),
+    ))
+    .expect("logical T20 compilation");
+    let weighting_plan = plan_weighting(
+        &problem,
+        WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
+    )
+    .expect("weighting residency plan");
+    let pathlike_implementation = WorkImplementationId::new("/private/t20/major-cycle-owner");
+    let base = with_work_implementation(
+        &problem,
+        &physical_work_for_weighting_problem(&problem, 6),
+        pathlike_implementation.clone(),
+    );
+    let fragment = WeightingPlanFragment::new(
+        &weighting_plan,
+        WorkNodeId::new("transaction-read"),
+        selected_content_resources(&problem),
+        pathlike_implementation.clone(),
+        pathlike_implementation.clone(),
+        pathlike_implementation.clone(),
+    );
+    let replay = fragment.replay_node().clone();
+    let physical = fragment
+        .compose(&base)
+        .expect("production weighting physical work");
+    let operator_plan = CompleteDataPlanFragment::new(
+        &problem,
+        weighting_plan.limits().max_block_samples(),
+        replay.clone(),
+    )
+    .expect("serial MFS runtime plan");
+    let (physical, operator_plan) = operator_plan
+        .compose(&physical)
+        .expect("T19 resources compose onto T18 replay");
+    let execution_plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        |_, _| Ok::<_, ()>(physical),
+    )
+    .expect("plan with production weighting and T19 lifecycle");
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &ResourcePolicy::Balanced,
+        cost_model(4),
+    );
+    let mut executor = recording_executor(6, None, None);
+    executor.id = pathlike_implementation.clone();
+    executor.weighting_source_residency = Some(selected_content_residency(&problem));
+    executor.weighting_plan = Some(weighting_plan);
+    executor.complete_data_plan = Some(operator_plan);
+    executor.major_cycle_node = Some(match mode {
+        MajorCycleMode::NodeSubstitution => WorkNodeId::new("transaction-stage-psf"),
+        _ => WorkNodeId::new("transaction-reconciliation"),
+    });
+    executor.major_cycle_mode = mode;
+    executor.major_cycle_problem = Some(problem.clone());
+    (
+        problem,
+        execution_plan,
+        current,
+        pathlike_implementation.clone(),
+        BTreeMap::from([(pathlike_implementation, executor)]),
+    )
+}
+
+fn run_t20_major_cycle(
+    mode: MajorCycleMode,
+    seed: u8,
+) -> (
+    Result<ExecutionOutcome, RunError<io::Error>>,
+    casa_imaging_model::CompiledProblem,
+    TestRegistry,
+    WorkImplementationId,
+) {
+    let (problem, execution_plan, current, implementation, executors) =
+        t20_major_cycle_harness(mode);
+    let registry = TestRegistry {
+        id: registry(3),
+        metadata: implementation_metadata(&problem),
+        executors,
+    };
+    let mut controller = RunToCompletion;
+    let receipts = execution_plan.receipt_store();
+    let provenance = execution_provenance(
+        casa_imaging_runtime::ExecutionAttemptId::from_sha256([seed; 32]),
+        BuildIdentity::from_sha256([seed.wrapping_add(1); 32]),
+    );
+    let outcome = run_receipted(
+        &problem,
+        &execution_plan,
+        &current,
+        &registry,
+        authority(),
+        &mut controller,
+        receipts.bind(provenance.clone()),
+    );
+    (outcome, problem, registry, implementation)
+}
+
+#[test]
+fn major_cycle_reconciles_t19_evidence_with_the_named_model_generation() {
+    let (outcome, problem, registry, implementation) =
+        run_t20_major_cycle(MajorCycleMode::Confirm, 211);
+    assert_eq!(
+        outcome.expect("T20 reconciliation completes the whole-run seam"),
+        ExecutionOutcome::Succeeded
+    );
+
+    let executor = &registry.executors[&implementation];
+    let result = executor
+        .major_cycle_result
+        .lock()
+        .expect("major-cycle result lock");
+    let result = result
+        .as_ref()
+        .expect("reconciliation recorded its runtime envelope");
+    assert_eq!(
+        result.attempt_id(),
+        casa_imaging_runtime::ExecutionAttemptId::from_sha256([211; 32])
+    );
+    assert_eq!(
+        result.node(),
+        &WorkNodeId::new("transaction-reconciliation")
+    );
+    assert!(result.lease_epoch() > 0);
+
+    let completion = result.completion();
+    let normal_state = completion.normal_state();
+    let model_completion = completion.model_completion();
+    assert_ne!(
+        normal_state.completion_id().as_bytes(),
+        model_completion.completion_id().as_bytes(),
+        "Final Normal State and Final Model remain distinct typed records"
+    );
+    assert_eq!(normal_state.problem_id(), problem.problem_id());
+    assert_eq!(normal_state.geometry_id(), problem.geometry().geometry_id());
+    assert_eq!(normal_state.numerics_id(), problem.numerics_id());
+    assert_eq!(
+        normal_state.sample_count(),
+        executor.weighted_sample_count.load(Ordering::SeqCst) as u64
+    );
+    assert!(normal_state.block_count() > 0);
+    assert_eq!(
+        normal_state.catalog(),
+        casa_imaging_reconstruction::NormalStateCatalog::UnnormalizedNterms1V1
+    );
+    // Confirm mode: the named input generation is final without a delta.
+    assert_eq!(model_completion.delta(), None);
+    assert_eq!(
+        normal_state.input_model_generation(),
+        model_completion.base()
+    );
+    assert_eq!(
+        normal_state.final_model_generation(),
+        normal_state.input_model_generation()
+    );
+}
+
+#[test]
+fn major_cycle_applies_pending_deltas_only_through_the_model_owner() {
+    let (outcome, _problem, registry, implementation) =
+        run_t20_major_cycle(MajorCycleMode::ApplyDelta, 213);
+    assert_eq!(
+        outcome.expect("delta reconciliation completes"),
+        ExecutionOutcome::Succeeded
+    );
+
+    let executor = &registry.executors[&implementation];
+    let result = executor
+        .major_cycle_result
+        .lock()
+        .expect("major-cycle result lock");
+    let result = result
+        .as_ref()
+        .expect("reconciliation recorded its runtime envelope");
+    let completion = result.completion();
+    let model_completion = completion.model_completion();
+    assert!(model_completion.delta().is_some());
+    assert_ne!(
+        completion.normal_state().final_model_generation(),
+        completion.normal_state().input_model_generation(),
+        "the pending delta advanced the authoritative generation"
+    );
+    assert_eq!(
+        model_completion.generation(),
+        completion.normal_state().final_model_generation()
+    );
+}
+
+#[test]
+fn major_cycle_rejects_reconciliation_outside_its_plan_authoritative_node() {
+    // The reconciliation executes at another post-replay node than the sealed
+    // plan's final-reconciliation node; the runtime derives the authoritative
+    // node itself, so the substituted placement must fail closed.
+    let (outcome, _problem, registry, implementation) =
+        run_t20_major_cycle(MajorCycleMode::NodeSubstitution, 215);
+    let error = outcome.expect_err("reconciliation outside its plan-authoritative node must fail");
+    assert!(matches!(
+        error,
+        RunError::Execution { ref node, .. }
+            if *node == WorkNodeId::new("transaction-stage-psf")
+    ));
+    let recorded = registry.executors[&implementation]
+        .major_cycle_error
+        .lock()
+        .expect("major-cycle error lock")
+        .clone()
+        .expect("node-substitution rejection recorded");
+    assert!(recorded.contains("plan-authoritative Compute reconciliation node"));
+}
+
+#[test]
+fn major_cycle_rejects_a_stale_model_lifecycle_binding() {
+    let (outcome, _problem, registry, implementation) =
+        run_t20_major_cycle(MajorCycleMode::StaleLifecycleEpoch, 217);
+    let error = outcome.expect_err("a stale lifecycle epoch must fail atomically");
+    assert!(matches!(
+        error,
+        RunError::Execution { ref node, .. }
+            if *node == WorkNodeId::new("transaction-reconciliation")
+    ));
+    let recorded = registry.executors[&implementation]
+        .major_cycle_error
+        .lock()
+        .expect("major-cycle error lock")
+        .clone()
+        .expect("stale-binding rejection recorded");
+    assert!(recorded.contains("model lifecycle is not bound"));
+}
+
+#[test]
+fn major_cycle_rejects_foreign_named_generations() {
+    let (outcome, _problem, registry, implementation) =
+        run_t20_major_cycle(MajorCycleMode::ForeignGeneration, 219);
+    let error = outcome.expect_err("foreign named generations must fail closed");
+    assert!(matches!(
+        error,
+        RunError::Execution { ref node, .. }
+            if *node == WorkNodeId::new("transaction-reconciliation")
+    ));
+    let recorded = registry.executors[&implementation]
+        .major_cycle_error
+        .lock()
+        .expect("major-cycle error lock")
+        .clone()
+        .expect("foreign-generation rejection recorded");
+    assert!(recorded.contains("different lifecycle owner"));
 }
 
 #[path = "compile_plan_run/prepared_artifact.rs"]
