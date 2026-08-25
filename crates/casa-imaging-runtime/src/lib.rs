@@ -15,6 +15,7 @@ mod receipt;
 mod resource_authority;
 mod serial_continuum;
 mod serial_continuum_plan;
+mod serial_product_publication;
 mod weighting;
 
 pub use execution_bindings::{
@@ -102,6 +103,11 @@ pub use serial_continuum::{
 };
 pub use serial_continuum_plan::{
     SerialContinuumExecutionPolicy, SerialContinuumPlan, SerialContinuumPlanError,
+};
+pub use serial_product_publication::{
+    SerialProductPublicationExecutionError, SerialProductPublicationExecutor,
+    SerialProductPublicationPlan, SerialProductPublicationPlanError,
+    SerialProductPublicationPolicy, SerialProductPublicationRegistry, SerialProductPublicationSink,
 };
 pub use weighting::{
     ContinuumPassIdentity, ContinuumPassPhase, ReplayCallbackError,

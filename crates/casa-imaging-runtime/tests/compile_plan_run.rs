@@ -85,10 +85,12 @@ use casa_imaging_runtime::{
     RunController, RunDirective, RunError, RunToCompletion, RuntimeOverheadDemand, ScalingMetadata,
     SelectedObservationSourceResources, SerialContinuumExecutionPolicy, SerialContinuumExecutor,
     SerialContinuumPassInput, SerialContinuumPlan, SerialContinuumRegistry, SerialMfsOperatorState,
-    SlotCompatibility, StagePrediction, StorageDomain, StorageDomainId, StorageMode,
-    StorageUseKind, WeightedObservationBlock, WeightingExecutionState, WeightingPlanFragment,
-    WorkDependency, WorkDomain, WorkExecutionContext, WorkImplementation, WorkImplementationId,
-    WorkKind, WorkMeasurements, WorkNode, WorkNodeId, plan as runtime_plan, run as runtime_run,
+    SerialProductPublicationExecutor, SerialProductPublicationPlan, SerialProductPublicationPolicy,
+    SerialProductPublicationRegistry, SerialProductPublicationSink, SlotCompatibility,
+    StagePrediction, StorageDomain, StorageDomainId, StorageMode, StorageUseKind,
+    WeightedObservationBlock, WeightingExecutionState, WeightingPlanFragment, WorkDependency,
+    WorkDomain, WorkExecutionContext, WorkImplementation, WorkImplementationId, WorkKind,
+    WorkMeasurements, WorkNode, WorkNodeId, plan as runtime_plan, run as runtime_run,
 };
 use casa_ms::{
     BoundSelectedObservation, ObservationSourceBinding, SelectedObservationCompletion,
@@ -9965,6 +9967,157 @@ fn product_publication_plans_before_member_production_and_sealing() {
         .expect("post-completion seal matches immutable plan");
     assert_eq!(authorized.generation_id(), planned.generation_id());
     assert_eq!(authorized.entries().len(), publication.entries().len());
+}
+
+#[derive(Default)]
+struct InMemoryProductSink {
+    staged: Mutex<Vec<ArtifactIdentity>>,
+    visible: Mutex<Option<casa_imaging_products::PlannedGenerationId>>,
+    publish_calls: AtomicUsize,
+}
+
+impl SerialProductPublicationSink for InMemoryProductSink {
+    type Error = io::Error;
+
+    fn stage(
+        &self,
+        planned: ArtifactIdentity,
+        _observed: ArtifactIdentity,
+        _member: &casa_imaging_products::SealedMember,
+    ) -> Result<(), Self::Error> {
+        assert!(self.visible.lock().expect("visible lock").is_none());
+        self.staged.lock().expect("staging lock").push(planned);
+        Ok(())
+    }
+
+    fn publish(
+        &self,
+        authorization: &casa_imaging_runtime::ProductPublicationAuthorization,
+    ) -> Result<(), Self::Error> {
+        assert!(self.visible.lock().expect("visible lock").is_none());
+        *self.visible.lock().expect("visible lock") = Some(authorization.generation_id());
+        self.publish_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+#[test]
+fn serial_product_publication_stages_privately_then_publishes_once() {
+    let problem = compile(sealed_products_request(242)).expect("continuum compilation");
+    let (planned, sealed) = sealed_generation_for_problem(&problem);
+    let residency = selected_content_residency(&problem);
+    let planning_registry = ContractOnlyRegistry::new(
+        registry(77),
+        implementation_metadata(&problem),
+        [implementation(77)],
+    );
+    let planned_runtime = SerialProductPublicationPlan::new(
+        &problem,
+        &planned,
+        &planning_registry,
+        SerialProductPublicationPolicy::new(
+            implementation(77),
+            residency.clone(),
+            StorageDomainId::new("atomic-output"),
+            RateResourceId::new("transaction-io-rate"),
+            QueueResourceId::new("transaction-io-queue"),
+            1_000,
+            900_000,
+        ),
+    )
+    .expect("production publication plan");
+    let expected_generation = planned_runtime.publication().generation_id();
+    let expected_members = planned_runtime.publication().entries().len();
+    let (physical, publication) = planned_runtime.into_parts();
+    let executor = SerialProductPublicationExecutor::new(
+        implementation(77),
+        problem.clone(),
+        publication,
+        sealed,
+        open_selected_observation(&problem, &residency).expect("publication observation owner"),
+        InMemoryProductSink::default(),
+    )
+    .expect("sealed publication executor");
+    let runtime_registry =
+        SerialProductPublicationRegistry::new(registry(77), implementation(77), &problem, executor);
+    let directory = tempfile::tempdir().expect("receipt directory");
+    let receipts = ExecutionReceiptStore::new(
+        directory.path(),
+        ReceiptRetention::new(4, 1_048_576).expect("retention"),
+    )
+    .expect("receipt store");
+    let execution_plan = runtime_plan(
+        &problem,
+        PlanningBindings::new(registry(77), ResourcePolicy::Balanced, planning_profile(4)),
+        authority(),
+        &runtime_registry,
+        &receipts,
+        move |_, _| Ok::<_, io::Error>(vec![physical]),
+    )
+    .expect("ordinary publication plan");
+    assert!(
+        runtime_registry
+            .implementation()
+            .sink()
+            .visible
+            .lock()
+            .expect("visible lock")
+            .is_none()
+    );
+    let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([78; 32]);
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &ResourcePolicy::Balanced,
+        cost_model(4),
+    );
+    runtime_run(
+        &ExecutableModelProblem::from_compiled(problem.clone()).expect("executable"),
+        &execution_plan,
+        &current,
+        &runtime_registry,
+        authority(),
+        &mut RunToCompletion,
+        receipts.bind(execution_provenance(
+            attempt,
+            BuildIdentity::from_sha256([79; 32]),
+        )),
+    )
+    .expect("atomic publication run");
+    let sink = runtime_registry.implementation().sink();
+    assert_eq!(
+        sink.staged.lock().expect("staging lock").len(),
+        expected_members
+    );
+    assert_eq!(
+        *sink.visible.lock().expect("visible lock"),
+        Some(expected_generation)
+    );
+    assert_eq!(sink.publish_calls.load(Ordering::SeqCst), 1);
+    let receipt = receipts.open(attempt).expect("publication receipt");
+    assert_eq!(receipt.status(), ReceiptStatus::Completed);
+    assert_eq!(receipt.publication_layout_count(), expected_members);
+}
+
+#[test]
+fn serial_product_publication_rejects_foreign_sealed_generation() {
+    let problem = compile(sealed_products_request(243)).expect("continuum compilation");
+    let foreign = compile(sealed_products_request(244)).expect("foreign compilation");
+    let (planned, _) = sealed_generation_for_problem(&problem);
+    let (_, foreign_sealed) = sealed_generation_for_problem(&foreign);
+    let publication = ProductPublicationPlan::bind(&problem, &planned).expect("publication plan");
+    let residency = selected_content_residency(&problem);
+    let error = match SerialProductPublicationExecutor::new(
+        implementation(80),
+        problem.clone(),
+        publication,
+        foreign_sealed,
+        open_selected_observation(&problem, &residency).expect("publication observation owner"),
+        InMemoryProductSink::default(),
+    ) {
+        Ok(_) => panic!("foreign seal must be rejected before staging"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("product publication"));
 }
 
 fn problem_bound_sealed_work(
