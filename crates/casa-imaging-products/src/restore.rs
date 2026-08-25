@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 //! Restoration and normalization algorithms for continuum image products.
+//!
+//! The restoring kernel is evaluated in physical radians: fitted beam widths
+//! and the image cell scale share one unit system, so a multi-pixel beam
+//! stays a multi-pixel kernel at any cell size.
 
 use ndarray::{Array2, Axis};
 use num_complex::Complex64;
@@ -46,8 +50,16 @@ pub fn normalize_plane(
 }
 
 /// Build the unit-peak elliptical-Gaussian restoring kernel image.
+///
+/// `cell_size_rad` is the image cell scale in radians per pixel on each
+/// axis: the fitted beam widths are radians, so pixel offsets must be
+/// converted to radians before they are divided by the Gaussian sigmas.
 #[must_use]
-pub fn gaussian_beam_image(shape: [usize; 2], beam: &RestoringBeam) -> Array2<f32> {
+pub fn gaussian_beam_image(
+    shape: [usize; 2],
+    beam: &RestoringBeam,
+    cell_size_rad: [f64; 2],
+) -> Array2<f32> {
     let [width, height] = shape;
     let sigma_major = (beam.major_fwhm_rad() * FWHM_TO_SIGMA).abs();
     let sigma_minor = (beam.minor_fwhm_rad() * FWHM_TO_SIGMA).abs();
@@ -58,8 +70,8 @@ pub fn gaussian_beam_image(shape: [usize; 2], beam: &RestoringBeam) -> Array2<f3
     let mut kernel = Array2::<f32>::zeros((width, height));
     for x in 0..width {
         for y in 0..height {
-            let dx = x as f64 - centre_x;
-            let dy = y as f64 - centre_y;
+            let dx = (x as f64 - centre_x) * cell_size_rad[0];
+            let dy = (y as f64 - centre_y) * cell_size_rad[1];
             let u = dx * cos_pa + dy * sin_pa;
             let v = -dx * sin_pa + dy * cos_pa;
             kernel[(x, y)] =

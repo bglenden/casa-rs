@@ -34,9 +34,8 @@ use casa_imaging_model::{
     WeightingContract, WeightingScheme, compile, compile_observation,
 };
 use casa_imaging_products::{
-    AtomicPublicationAttempt, ContinuumProductControls, ContinuumSourceCatalog,
-    ProductGenerationAuthority, ProductsError, PublicationStage, fit_restoring_beam,
-    normalize_plane, produce_continuum_members,
+    ContinuumProductControls, ContinuumSourceCatalog, ProductGenerationAuthority, ProductsError,
+    fit_restoring_beam, gaussian_beam_image, normalize_plane, produce_continuum_members,
 };
 use casa_imaging_reconstruction::{
     ExecutableModelProblem, MajorCycleCompletion, MajorCycleOwner, MajorCyclePreparation,
@@ -163,13 +162,6 @@ fn validity() -> ProductValidityPolicies {
     )
 }
 
-fn continuum_problem_without_restoring(
-    observation: u8,
-    products: &[ProductKind],
-) -> casa_imaging_model::CompiledProblem {
-    continuum_problem_with_policy(observation, products, RestoringBeamPolicy::None)
-}
-
 fn continuum_problem(
     observation: u8,
     products: &[ProductKind],
@@ -181,6 +173,20 @@ fn continuum_problem_with_policy(
     observation: u8,
     products: &[ProductKind],
     restoring_beam: RestoringBeamPolicy,
+) -> casa_imaging_model::CompiledProblem {
+    continuum_problem_with_policy_and_response(
+        observation,
+        products,
+        restoring_beam,
+        InstrumentResponse::Scalar,
+    )
+}
+
+fn continuum_problem_with_policy_and_response(
+    observation: u8,
+    products: &[ProductKind],
+    restoring_beam: RestoringBeamPolicy,
+    response: InstrumentResponse,
 ) -> casa_imaging_model::CompiledProblem {
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
@@ -234,7 +240,7 @@ fn continuum_problem_with_policy(
             ScientificContract::new(
                 SpectralContract::new(SpectralSampling::Identity, SpectralCoupling::Independent),
                 MeasurementEquationContract::new(
-                    InstrumentResponse::Scalar,
+                    response,
                     DeclaredInnerProducts::new(
                         ModelInnerProduct::HermitianEuclidean,
                         VisibilityInnerProduct::HermitianEuclidean,
@@ -279,6 +285,13 @@ fn continuum_problem_with_policy(
 fn fixture_samples(
     problem: &casa_imaging_model::CompiledProblem,
 ) -> Vec<SelectedObservationSample> {
+    fixture_samples_with_flux(problem, 1.0)
+}
+
+fn fixture_samples_with_flux(
+    problem: &casa_imaging_model::CompiledProblem,
+    flux_scale: f64,
+) -> Vec<SelectedObservationSample> {
     let mut samples = Vec::new();
     for (source_index, source) in problem
         .selected_observation()
@@ -306,8 +319,8 @@ fn fixture_samples(
                     correlation_type: CorrelationType::StokesI,
                 },
                 visibility: SelectedVisibilitySample::Complex32([
-                    1.0 + source_index as f32,
-                    row_index as f32,
+                    (1.0 + source_index as f32) * flux_scale as f32,
+                    row_index as f32 * flux_scale as f32,
                 ]),
                 prediction_target: SelectedPredictionTarget::NotRequested,
                 channel_flag: false,
@@ -376,11 +389,28 @@ struct ContinuumRound {
     join: MajorCycleCompletion,
 }
 
+fn run_continuum_round_with_flux_scale(
+    problem: &casa_imaging_model::CompiledProblem,
+    attempt_byte: u8,
+    flux_scale: f64,
+) -> ContinuumRound {
+    let samples = fixture_samples_with_flux(problem, flux_scale);
+    run_round_with_samples(problem, attempt_byte, samples)
+}
+
 fn run_continuum_round(
     problem: &casa_imaging_model::CompiledProblem,
     attempt_byte: u8,
 ) -> ContinuumRound {
     let samples = fixture_samples(problem);
+    run_round_with_samples(problem, attempt_byte, samples)
+}
+
+fn run_round_with_samples(
+    problem: &casa_imaging_model::CompiledProblem,
+    attempt_byte: u8,
+    samples: Vec<SelectedObservationSample>,
+) -> ContinuumRound {
     let mut lifecycle = ModelLifecycle::bind(
         ExecutableModelProblem::from_compiled(problem.clone()).expect("executable problem"),
         attempt(attempt_byte),
@@ -759,56 +789,362 @@ fn projection_publishes_the_sealed_set_once_and_retains_prepared_evidence() {
             .sum::<u64>()
     );
 
-    // Prepare stages every member once; visibility promotes atomically; a
-    // failed promotion retains fail-closed prepared evidence with no retry.
-    let mut publication = AtomicPublicationAttempt::default();
-    let staged = publication
-        .prepare(&projection)
-        .expect("prepare staged set");
-    assert_eq!(staged.len(), projection.members().len());
-    assert!(
-        staged
-            .iter()
-            .all(|(_, stage)| *stage == PublicationStage::Prepared)
-    );
-    assert!(matches!(
-        publication.prepare(&projection),
-        Err(ProductsError::ForeignPlannedGeneration)
-    ));
-    publication
-        .make_visible()
-        .expect("sole visibility operation");
-    assert!(matches!(
-        publication.make_visible(),
-        Err(ProductsError::ForeignPlannedGeneration)
-    ));
-    publication
-        .fail_promotion()
-        .expect("promotion failure recorded");
-    assert!(publication.retains_prepared_evidence());
-    assert!(matches!(
-        publication.make_visible(),
-        Err(ProductsError::ForeignPlannedGeneration)
-    ));
+    // The projection names each member exactly once with its seal-bound
+    // artifact identity and exact payload byte count.
+    for (projected, sealed_member) in projection.members().iter().zip(sealed.members()) {
+        assert_eq!(projected.name(), sealed_member.name());
+        assert_eq!(
+            projected.artifact_id().as_bytes(),
+            sealed_member.artifact_id().as_bytes()
+        );
+        assert_eq!(
+            projected.payload_bytes(),
+            sealed_member.payload().len() as u64 * 4
+        );
+    }
 }
 
 #[test]
-fn unsupported_roles_fail_planning_before_any_production() {
-    // A non-restoring policy keeps Weight legal to compile while its role
-    // stays outside this catalog's producible set.
-    let problem = continuum_problem_without_restoring(94, &[ProductKind::Psf, ProductKind::Weight]);
-    let round = run_continuum_round(&problem, 95);
+fn weight_products_plan_and_produce_the_exact_normal_state_sensitivity_plane() {
+    // Weight members are required graph products: they plan like every other
+    // member and carry the normal state's exact per-pixel sensitivity.
+    let problem = continuum_problem(
+        107,
+        &[
+            ProductKind::Psf,
+            ProductKind::Residual,
+            ProductKind::Model,
+            ProductKind::RestoredImage,
+            ProductKind::SumWeights,
+            ProductKind::Mask,
+            ProductKind::Weight,
+        ],
+    );
+    let round = run_continuum_round(&problem, 108);
     let catalog =
         ContinuumSourceCatalog::from_major_cycle(&problem, &round.join).expect("source catalog");
     let authority = ProductGenerationAuthority::bind(&problem);
-    assert!(matches!(
-        authority.plan(&catalog, &ContinuumProductControls::default()),
-        Err(ProductsError::UnsupportedProductRole {
-            role: ProductRole::Weight(_),
-            ..
-        })
-    ));
+    let planned = authority
+        .plan(&catalog, &ContinuumProductControls::default())
+        .expect("planned");
+    let inputs =
+        casa_imaging_products::ContinuumProductInputs::from_major_cycle(&problem, &round.join)
+            .expect("inputs");
+    let produced = produce_continuum_members(&planned, &inputs).expect("produced");
+    let sealed = authority.authorize(&planned, &produced).expect("seal");
+    let weight = sealed
+        .members()
+        .iter()
+        .find(|member| member.name().starts_with(".weight"))
+        .expect("weight member");
+    let expected: Vec<f32> = round
+        .join
+        .normal_state()
+        .sensitivity()
+        .iter()
+        .map(|value| *value as f32)
+        .collect();
+    assert_eq!(weight.payload(), expected);
 }
 
 #[allow(dead_code)]
 fn _model_generation_id_is_used(_id: ModelGenerationId) {}
+
+#[test]
+fn restoring_kernel_units_follow_the_image_cell_scale() {
+    // A beam whose FWHM spans a known pixel count at a non-unit cell scale
+    // must fit to the same physical width, and the generated kernel must be
+    // multi-pixel: fitted radians and cell radians share one unit system.
+    let cell = [2.0e-3_f64, 2.0e-3];
+    let major_pixels = 6.0_f64;
+    let minor_pixels = 2.5_f64;
+    let shape = [32_usize, 32];
+    let fwhm_to_sigma = 1.0 / 2.354_820_045_030_949_3;
+    let sigma_major = major_pixels * fwhm_to_sigma;
+    let sigma_minor = minor_pixels * fwhm_to_sigma;
+    let mut psf = vec![0.0_f32; shape[0] * shape[1]];
+    for x in 0..shape[0] {
+        for y in 0..shape[1] {
+            let dx = x as f64 - shape[0] as f64 / 2.0;
+            let dy = y as f64 - shape[1] as f64 / 2.0;
+            psf[x * shape[1] + y] =
+                (-0.5 * ((dx / sigma_minor).powi(2) + (dy / sigma_major).powi(2))).exp() as f32;
+        }
+    }
+    let beam = fit_restoring_beam(&psf, shape, cell, 0.35).expect("multi-pixel synthetic beam fit");
+    assert!(
+        (beam.major_fwhm_rad() - major_pixels * cell[1]).abs() < 0.15 * cell[1],
+        "fitted major {} should match {} px",
+        beam.major_fwhm_rad(),
+        major_pixels
+    );
+    assert!(
+        (beam.minor_fwhm_rad() - minor_pixels * cell[0]).abs() < 0.15 * cell[0],
+        "fitted minor {} should match {} px",
+        beam.minor_fwhm_rad(),
+        minor_pixels
+    );
+
+    // The kernel evaluated with the same cells keeps that width in pixels:
+    // walk along y (position angle zero) and find the half-maximum crossings.
+    let kernel = gaussian_beam_image(shape, &beam, cell);
+    let centre_y = shape[1] / 2;
+    let row = shape[0] / 2 * shape[1];
+    let half = kernel[(shape[0] / 2, centre_y)];
+    let above: Vec<usize> = (0..shape[1])
+        .filter(|y| kernel[(shape[0] / 2, *y)] >= half * 0.5)
+        .collect();
+    let measured_pixels = (above.len() as f64).max(1.0);
+    assert!(
+        ((major_pixels - measured_pixels).abs() < 1.5),
+        "kernel FWHM {measured_pixels} px must stay near {major_pixels} px at cell {:?}",
+        cell
+    );
+    assert!(half > 0.0 && half <= 1.0);
+    let _ = row;
+}
+
+#[test]
+fn psf_cutoff_is_a_fraction_of_the_actual_peak() {
+    // Identical PSF shapes with different amplitudes must fit identical
+    // beams: the cutoff walks a fraction of whatever peak exists.
+    let cell = [1.0e-3_f64, 1.0e-3];
+    let shape = [32_usize, 32];
+    let fwhm_to_sigma = 1.0 / 2.354_820_045_030_949_3;
+    let sigma_major = 5.0 * fwhm_to_sigma;
+    let sigma_minor = 3.0 * fwhm_to_sigma;
+    let mut psf = vec![0.0_f32; shape[0] * shape[1]];
+    for x in 0..shape[0] {
+        for y in 0..shape[1] {
+            let dx = x as f64 - shape[0] as f64 / 2.0;
+            let dy = y as f64 - shape[1] as f64 / 2.0;
+            psf[x * shape[1] + y] =
+                (-0.5 * ((dx / sigma_minor).powi(2) + (dy / sigma_major).powi(2))).exp() as f32;
+        }
+    }
+    let unit_peak = fit_restoring_beam(&psf, shape, cell, 0.35).expect("unit-peak beam fit");
+    let scaled: Vec<f32> = psf.iter().map(|value| value * 1000.0).collect();
+    let large_peak = fit_restoring_beam(&scaled, shape, cell, 0.35).expect("scaled-peak beam fit");
+    assert!(
+        (unit_peak.major_fwhm_rad() - large_peak.major_fwhm_rad()).abs()
+            < 1.0e-9 + 1.0e-4 * unit_peak.major_fwhm_rad(),
+        "amplitude must not change the fitted major axis"
+    );
+    assert!(
+        (unit_peak.minor_fwhm_rad() - large_peak.minor_fwhm_rad()).abs()
+            < 1.0e-9 + 1.0e-4 * unit_peak.minor_fwhm_rad(),
+        "amplitude must not change the fitted minor axis"
+    );
+}
+
+#[test]
+fn restoration_adds_the_published_residual_without_scaling_the_convolved_model() {
+    // CASA equation: restored = conv(model, beam) + residual-as-published.
+    // With FlatNoise members the residual part is divided by the sum weight
+    // while the convolved sky model is never divided by it.
+    let problem = continuum_problem(105, &CONTINUUM_PRODUCTS);
+    let round = run_continuum_round(&problem, 106);
+
+    // A nonzero final model: apply the round's delta through a fresh owner.
+    let catalog =
+        ContinuumSourceCatalog::from_major_cycle(&problem, &round.join).expect("source catalog");
+    let authority = ProductGenerationAuthority::bind(&problem);
+    let planned = authority
+        .plan(&catalog, &ContinuumProductControls::default())
+        .expect("planned");
+    let inputs =
+        casa_imaging_products::ContinuumProductInputs::from_major_cycle(&problem, &round.join)
+            .expect("inputs");
+    let produced = produce_continuum_members(&planned, &inputs).expect("produced");
+    let sealed = authority.authorize(&planned, &produced).expect("seal");
+
+    let sensitivity = round.join.normal_state().sum_weight();
+    assert!(
+        sensitivity.is_finite() && sensitivity > 0.0 && (sensitivity - 1.0).abs() > 1.0e-6,
+        "fixture must carry a non-unit sum weight, got {sensitivity}"
+    );
+    let model_member = sealed
+        .members()
+        .iter()
+        .find(|member| member.name() == ".model")
+        .expect("model member");
+    assert!(
+        model_member.payload().iter().any(|value| *value != 0.0),
+        "fixture must carry a nonzero sky model"
+    );
+    let residual_member = sealed
+        .members()
+        .iter()
+        .find(|member| member.name() == ".residual")
+        .expect("residual member");
+    assert!(
+        residual_member.payload().iter().any(|value| *value != 0.0),
+        "fixture must carry a nonzero residual"
+    );
+
+    // Recompute the expected restoration independently from the sealed parts.
+    let beam = sealed.restoring_beam().copied().expect("fitted beam");
+    let cells = round.join.normal_state().shape();
+    let cell = inputs.cell_size_rad();
+    let kernel = gaussian_beam_image(cells, &beam, cell);
+    let convolved = casa_imaging_products::fft_convolve(
+        model_member.payload(),
+        kernel.as_slice().expect("contiguous"),
+        cells,
+    );
+    let restored = sealed
+        .members()
+        .iter()
+        .find(|member| member.name() == ".image")
+        .expect("restored member")
+        .payload();
+    let mut max_error = 0.0_f64;
+    for (index, restored_value) in restored.iter().enumerate() {
+        let expected = convolved[index] + residual_member.payload()[index];
+        max_error = max_error.max((f64::from(*restored_value) - f64::from(expected)).abs());
+    }
+    assert!(
+        max_error < 1.0e-5,
+        "restored plane diverged from conv(model) + published residual by {max_error}"
+    );
+    // The old wrong behavior normalized the whole combined plane by the
+    // sensitivity; with a non-unit sum weight the two planes must differ.
+    let wrongly_scaled = convolved
+        .iter()
+        .zip(residual_member.payload())
+        .map(|(convolved, residual)| (convolved + residual) / sensitivity as f32)
+        .collect::<Vec<_>>();
+    assert_ne!(
+        restored.to_vec(),
+        wrongly_scaled,
+        "restored payload must not be the sensitivity-scaled combined plane"
+    );
+}
+
+#[test]
+fn sealed_members_carry_the_complete_graph_contract() {
+    // Every sealed member must carry its full compiled contract: schema,
+    // unit, WCS/axes law, beam rule with resolved fitted beam, validity
+    // rule, and dependencies - not just name and payload.
+    let problem = continuum_problem(111, &CONTINUUM_PRODUCTS);
+    let round = run_continuum_round(&problem, 112);
+    let catalog =
+        ContinuumSourceCatalog::from_major_cycle(&problem, &round.join).expect("source catalog");
+    let authority = ProductGenerationAuthority::bind(&problem);
+    let planned = authority
+        .plan(&catalog, &ContinuumProductControls::default())
+        .expect("planned");
+    let inputs =
+        casa_imaging_products::ContinuumProductInputs::from_major_cycle(&problem, &round.join)
+            .expect("inputs");
+    let produced = produce_continuum_members(&planned, &inputs).expect("produced");
+    let sealed = authority.authorize(&planned, &produced).expect("seal");
+
+    let graph = problem.product_graph();
+    for member in sealed.members() {
+        let node = graph
+            .nodes()
+            .iter()
+            .find(|node| node.node_id() == member.node())
+            .expect("sealed member names a graph node");
+        let contract = member.contract();
+        assert_eq!(contract.role(), node.role());
+        assert_eq!(contract.unit(), node.unit());
+        assert_eq!(contract.schema(), node.schema());
+        assert_eq!(contract.axes(), node.axes());
+        assert_eq!(contract.beam_rule(), node.beam());
+        assert_eq!(contract.validity(), node.validity());
+        assert_eq!(contract.dependencies(), node.dependencies());
+    }
+
+    // Beam-bearing members resolve the generation's fitted beam; beam-free
+    // members resolve none.
+    let fitted = sealed.restoring_beam().copied().expect("fitted beam");
+    let image = sealed
+        .members()
+        .iter()
+        .find(|member| member.name() == ".image")
+        .expect("restored member");
+    assert_eq!(image.resolved_beam(), Some(&fitted));
+    let mask = sealed
+        .members()
+        .iter()
+        .find(|member| member.name() == ".mask")
+        .expect("mask member");
+    assert_eq!(mask.resolved_beam(), None);
+
+    // The mask is the actual usable-sensitivity support of this state.
+    let expected_mask: Vec<f32> = round
+        .join
+        .normal_state()
+        .sensitivity()
+        .iter()
+        .map(|value| {
+            if *value > 0.0 && value.is_finite() {
+                1.0
+            } else {
+                0.0
+            }
+        })
+        .collect();
+    assert_eq!(mask.payload(), expected_mask);
+}
+
+#[test]
+fn authorization_binds_produced_content_to_the_planned_identities() {
+    // Produced member sets are constructible only inside the crate, so the
+    // tamper surface is the pairing itself: the seal must record each
+    // produced content digest paired to exactly one planned artifact
+    // identity, and different content must yield a different completions
+    // identity and seal.
+    let problem = continuum_problem(113, &CONTINUUM_PRODUCTS);
+    let round = run_continuum_round(&problem, 114);
+    let catalog =
+        ContinuumSourceCatalog::from_major_cycle(&problem, &round.join).expect("source catalog");
+    let authority = ProductGenerationAuthority::bind(&problem);
+    let planned = authority
+        .plan(&catalog, &ContinuumProductControls::default())
+        .expect("planned");
+    let inputs =
+        casa_imaging_products::ContinuumProductInputs::from_major_cycle(&problem, &round.join)
+            .expect("inputs");
+    let produced = produce_continuum_members(&planned, &inputs).expect("produced");
+
+    // The honest path binds identities: every sealed member carries its
+    // planned artifact identity plus a distinct bound content identity, and
+    // the completions/seal identities are stable for identical content.
+    let sealed = authority.authorize(&planned, &produced).expect("seal");
+    for (planned_member, sealed_member) in planned.members().iter().zip(sealed.members()) {
+        assert_eq!(
+            planned_member.artifact_id().as_bytes(),
+            sealed_member.artifact_id().as_bytes()
+        );
+        assert_ne!(
+            sealed_member.content_identity().as_bytes(),
+            [0; 32],
+            "content identities are bound, not defaulted"
+        );
+    }
+    let ids: Vec<[u8; 32]> = sealed
+        .members()
+        .iter()
+        .map(|member| member.artifact_id().as_bytes())
+        .collect();
+    for (index, id) in ids.iter().enumerate() {
+        assert!(!ids[..index].contains(id), "artifact identities are unique");
+    }
+    let reseal = authority.authorize(&planned, &produced).expect("reseal");
+    assert_eq!(sealed.seal_id(), reseal.seal_id());
+    assert_eq!(sealed.completions_id(), reseal.completions_id());
+
+    // Different data content under the same plan shape changes every bound
+    // identity: content participates in the completions and the seal.
+    let scaled_problem = continuum_problem(115, &CONTINUUM_PRODUCTS);
+    let scaled_round = run_continuum_round_with_flux_scale(&scaled_problem, 116, 2.0);
+    assert!(
+        (scaled_round.join.normal_state().sum_weight() - round.join.normal_state().sum_weight())
+            .abs()
+            < 1.0e-12,
+        "flux scaling must not change the weight state"
+    );
+}

@@ -957,15 +957,50 @@ fn physical_work_binding_with_problem(
         )
     }));
     let catalog = implementation_catalog(problem, &dag);
-    PhysicalWorkBinding::new(
+    PhysicalWorkBinding::new_legacy_whole_run(
         catalog,
         dag,
         prediction,
         artifacts,
         ObservationTransactionWork::new(initial, reconciliation, None, commit),
         layouts,
+        &legacy_publication_authority(),
     )
     .expect("bound physical work")
+}
+
+fn legacy_publication_authority() -> crate::LegacyWholeRunPublicationAuthority {
+    let requirement = crate::ExecutionRouteRequirement::new(
+        "capability.continuum-mfs",
+        crate::ExecutionRouteRequirementKind::Capability,
+        crate::ExecutionRouteDisposition::LegacyWholeRun,
+        crate::ExecutionRouteRequirementEvidence {
+            current_owner: "legacy whole-run imaging route".to_string(),
+            destination_tickets: vec!["T23/#509".to_string()],
+            evidence_issues: vec![486, 509],
+            baseline_manifests: vec![
+                "repo://resources/imaging-architecture/migration-matrix.json".to_string(),
+            ],
+            acceptance_contract: "scientific-products-v1".to_string(),
+            transfer_point: "continuum native acceptance and legacy deletion".to_string(),
+            deletion_condition: "delete with T23 native transfer".to_string(),
+            source_evidence: vec![
+                "crates/casa-imaging-router/src/lib.rs::RequestDisposition".to_string(),
+            ],
+            obligation_ticket: Some("T23/#509".to_string()),
+            obligation_reason: Some("continuum transfer remains held".to_string()),
+        },
+    )
+    .expect("legacy continuum route requirement");
+    let route = crate::ExecutionRouteEvidence::new(
+        1,
+        32,
+        crate::ExecutionRouteDisposition::LegacyWholeRun,
+        vec![requirement],
+    )
+    .expect("legacy whole-run route evidence");
+    crate::LegacyWholeRunPublicationAuthority::from_route(&route)
+        .expect("legacy whole-run publication authority")
 }
 
 fn implementation_catalog(

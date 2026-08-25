@@ -84,10 +84,11 @@ minor_cycle_identity!(
 ///
 /// Every control is explicit and validated; there are no defaults that could
 /// silently change deconvolution semantics. `maximum_model_update` is the
-/// error/staleness bound of the linear view envelope: once the cumulative
-/// absolute component flux reaches it, the solve stops before further
-/// extrapolating the frozen normal-state approximation and requests
-/// Major-Cycle reconciliation.
+/// error/staleness bound of the linear view envelope: before any component
+/// is applied, the candidate cumulative absolute flux is checked against it,
+/// and a candidate that would exceed the bound is rejected without touching
+/// the residual, the delta, recorded diagnostics, or evidence counters. The
+/// solve then stops and requests Major-Cycle reconciliation.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct HogbomControls {
     gain: f64,
@@ -309,13 +310,16 @@ impl ComponentDivergence {
 /// Why one bounded Högbom solve stopped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MinorCycleStopReason {
-    /// The normalized residual peak fell below the explicit threshold.
+    /// The normalized residual peak fell strictly below the explicit
+    /// threshold (the casacore HOGBOM convention; a peak exactly at the
+    /// threshold still cleans one component).
     ThresholdReached,
     /// The hard iteration bound was reached with work potentially remaining.
     IterationBound,
-    /// The cumulative component flux reached the maximum model update, so
-    /// continuing would extrapolate the frozen approximation beyond its
-    /// validity envelope.
+    /// Accepting the next candidate would push the cumulative component
+    /// flux past the maximum model update, so continuing would extrapolate
+    /// the frozen approximation beyond its validity envelope. The rejected
+    /// candidate left no trace in the delta or evidence.
     StalenessBound,
 }
 
@@ -409,15 +413,16 @@ impl MinorCycleEvidence {
         self.stop_reason
     }
 
-    /// Whether the exhausted view envelope explicitly requests Major-Cycle
-    /// reconciliation.
+    /// Whether the outcome explicitly requests Major-Cycle reconciliation.
     ///
-    /// Only a threshold stop resolves the solve inside its valid envelope;
-    /// iteration and staleness stops leave potential update outstanding and
-    /// must be followed by a fresh complete-data reconciliation.
+    /// A threshold stop needs no reconciliation only when it accepted no
+    /// component and therefore minted no delta. Every accepted component must
+    /// pass through the model owner and a fresh complete-data reconciliation,
+    /// even when the working residual subsequently falls below threshold.
+    /// Iteration and staleness stops request reconciliation unconditionally.
     #[must_use]
     pub const fn requests_reconciliation(&self) -> bool {
-        !matches!(self.stop_reason, MinorCycleStopReason::ThresholdReached)
+        self.iterations != 0 || !matches!(self.stop_reason, MinorCycleStopReason::ThresholdReached)
     }
 
     /// Return the optionally recorded leading component sequence.
@@ -627,6 +632,12 @@ pub fn hogbom_minor_cycle(
             return Err(MinorCycleError::GeneratedNonfinite);
         }
         final_peak_flux = strength.abs();
+        // The casacore HOGBOM cleaner stops only when the normalized peak is
+        // strictly below the threshold (`lattices/LatticeMath/
+        // LatticeCleaner.tcc`, stopping rule 1: "stop if below threshold",
+        // tested as `abs(itsStrengthOptimum) < threshold()`), so a peak
+        // exactly at the threshold still cleans one component. A zero peak
+        // has no flux to clean and converges trivially.
         if strength == 0.0 || strength.abs() < controls.threshold() {
             stop_reason = Some(MinorCycleStopReason::ThresholdReached);
             break;
@@ -634,6 +645,16 @@ pub fn hogbom_minor_cycle(
         let flux = controls.gain() * strength;
         if !flux.is_finite() {
             return Err(MinorCycleError::GeneratedNonfinite);
+        }
+        // Envelope guard: a candidate whose acceptance would push the
+        // cumulative absolute update past the maximum model update is
+        // rejected before it can touch the working residual, the accumulated
+        // delta terms, the recorded component sequence, or any evidence
+        // counter. Accepted components therefore never exceed the linear
+        // view envelope.
+        if total_flux + flux.abs() > controls.maximum_model_update() {
+            stop_reason = Some(MinorCycleStopReason::StalenessBound);
+            break;
         }
         subtract_psf(
             &mut residual,
@@ -652,10 +673,6 @@ pub fn hogbom_minor_cycle(
             && recorded.len() < limit
         {
             recorded.push(HogbomComponent { cell, flux });
-        }
-        if total_flux >= controls.maximum_model_update() {
-            stop_reason = Some(MinorCycleStopReason::StalenessBound);
-            break;
         }
     }
     let stop_reason = stop_reason.unwrap_or(MinorCycleStopReason::IterationBound);
@@ -719,7 +736,11 @@ fn plane_pixel(index: usize, shape: [usize; 2]) -> [usize; 2] {
 }
 
 fn model_cell(shape: [usize; 2], pixel: [usize; 2]) -> Option<ModelCell> {
-    Some(ModelCell::new(0, 0, 0, pixel)).filter(|_| pixel[0] < shape[0] && pixel[1] < shape[1])
+    if pixel[0] < shape[0] && pixel[1] < shape[1] {
+        Some(ModelCell::new(0, 0, 0, pixel))
+    } else {
+        None
+    }
 }
 
 fn canonical_flat(base: &ModelGeneration, cell: ModelCell) -> usize {

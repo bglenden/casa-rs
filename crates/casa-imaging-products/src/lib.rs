@@ -33,13 +33,12 @@ pub use authority::{
     CONTINUUM_ALGORITHM_CATALOG_VERSION, ContinuumCommitmentId, ContinuumCompletionsId,
     ContinuumProducedMembers, ContinuumProductControls, ContinuumSealId, DEFAULT_PSF_CUTOFF,
     MemberArtifactId, PlannedContinuumGeneration, PlannedGenerationId, PlannedMember,
-    ProductGenerationAuthority, SealedContinuumGeneration, SealedMember, produce_continuum_members,
+    ProductGenerationAuthority, SealedContinuumGeneration, SealedMember, SealedMemberContract,
+    produce_continuum_members,
 };
 pub use beam::{RestoringBeam, fit_restoring_beam};
 pub use error::ProductsError;
-pub use projection::{
-    AtomicPublicationAttempt, PublicationMemberProjection, PublicationProjection, PublicationStage,
-};
+pub use projection::{PublicationMemberProjection, PublicationProjection};
 pub use restore::{fft_convolve, gaussian_beam_image, normalize_plane};
 pub use source::{ContinuumProductInputs, ContinuumSourceCatalog};
 

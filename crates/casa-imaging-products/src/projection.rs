@@ -5,34 +5,44 @@
 //! The projection is the only hand-off into the T08 publication
 //! choreography: it lists the exact sealed member set once, in canonical
 //! order, with the byte layout each member occupies in staging and final
-//! storage. Runtime adapters consume it when building their publication
-//! layout ledgers and receipt participants.
+//! storage. The runtime publication path owns the actual state machine:
+//! durable preparation, the sole visibility operation, terminal receipt
+//! promotion, and retained Prepared evidence on uncertain promotion.
 
-use crate::authority::SealedContinuumGeneration;
+use casa_imaging_model::{CompiledProblemId, ProductGraphId, ProductNodeId};
+
+use crate::authority::{
+    ContinuumSealId, MemberArtifactId, PlannedGenerationId, SealedContinuumGeneration,
+};
 use crate::error::ProductsError;
-
-/// Publication stage of one projected member.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PublicationStage {
-    /// Durably prepared under its staged identity; not yet visible.
-    Prepared,
-    /// Promoted through the sole visibility operation.
-    Published,
-}
 
 /// One sealed member projected for atomic publication.
 #[derive(Debug, Clone)]
 pub struct PublicationMemberProjection {
-    artifact_id: crate::authority::MemberArtifactId,
+    node: ProductNodeId,
+    artifact_id: MemberArtifactId,
+    content_identity: MemberArtifactId,
     name: String,
     payload_bytes: u64,
 }
 
 impl PublicationMemberProjection {
+    /// Return the graph-local node identity.
+    #[must_use]
+    pub const fn node(&self) -> ProductNodeId {
+        self.node
+    }
+
     /// Return the sealed artifact identity.
     #[must_use]
-    pub const fn artifact_id(&self) -> crate::authority::MemberArtifactId {
+    pub const fn artifact_id(&self) -> MemberArtifactId {
         self.artifact_id
+    }
+
+    /// Return the exact content identity authorized for this artifact.
+    #[must_use]
+    pub const fn content_identity(&self) -> MemberArtifactId {
+        self.content_identity
     }
 
     /// Return the compiled product name.
@@ -51,7 +61,10 @@ impl PublicationMemberProjection {
 /// Exact-once publication projection of one sealed generation.
 #[derive(Debug, Clone)]
 pub struct PublicationProjection {
-    seal_id: crate::authority::ContinuumSealId,
+    problem_id: CompiledProblemId,
+    graph_id: ProductGraphId,
+    generation_id: PlannedGenerationId,
+    seal_id: ContinuumSealId,
     members: Box<[PublicationMemberProjection]>,
 }
 
@@ -70,7 +83,9 @@ impl PublicationProjection {
             .members()
             .iter()
             .map(|member| PublicationMemberProjection {
+                node: member.node(),
                 artifact_id: member.artifact_id(),
+                content_identity: member.content_identity(),
                 name: member.name().to_string(),
                 payload_bytes: u64::try_from(member.payload().len())
                     .expect("payload length fits in u64 on supported targets")
@@ -78,14 +93,35 @@ impl PublicationProjection {
             })
             .collect::<Box<[_]>>();
         Ok(Self {
+            problem_id: sealed.problem_id(),
+            graph_id: sealed.graph_id(),
+            generation_id: sealed.generation_id(),
             seal_id: sealed.seal_id(),
             members,
         })
     }
 
-    /// Return the seal this projection publishes exactly once.
+    /// Return the exact compiled problem authorized for publication.
     #[must_use]
-    pub const fn seal_id(&self) -> crate::authority::ContinuumSealId {
+    pub const fn problem_id(&self) -> CompiledProblemId {
+        self.problem_id
+    }
+
+    /// Return the exact compiled Product Graph authorized for publication.
+    #[must_use]
+    pub const fn graph_id(&self) -> ProductGraphId {
+        self.graph_id
+    }
+
+    /// Return the planned generation authorized by the seal.
+    #[must_use]
+    pub const fn generation_id(&self) -> PlannedGenerationId {
+        self.generation_id
+    }
+
+    /// Return the exact Product Generation seal.
+    #[must_use]
+    pub const fn seal_id(&self) -> ContinuumSealId {
         self.seal_id
     }
 
@@ -105,82 +141,5 @@ impl PublicationProjection {
             index += 1;
         }
         total
-    }
-}
-
-/// Fail-closed state of an in-flight atomic publication.
-///
-/// This mirrors the runtime's T08 choreography over the projection alone:
-/// preparing stages every member exactly once, visibility promotes the whole
-/// set or nothing, and promotion can never be re-entered after failure.
-#[derive(Debug, Default)]
-pub struct AtomicPublicationAttempt {
-    stage: Option<Stage>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Stage {
-    Prepared,
-    Visible,
-    Failed,
-}
-
-impl AtomicPublicationAttempt {
-    /// Durably prepare every projected member before any visibility.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the attempt already advanced past preparation.
-    pub fn prepare(
-        &mut self,
-        projection: &PublicationProjection,
-    ) -> Result<Vec<(crate::authority::MemberArtifactId, PublicationStage)>, ProductsError> {
-        if self.stage.is_some() {
-            return Err(ProductsError::ForeignPlannedGeneration);
-        }
-        self.stage = Some(Stage::Prepared);
-        Ok(projection
-            .members()
-            .iter()
-            .map(|member| (member.artifact_id(), PublicationStage::Prepared))
-            .collect())
-    }
-
-    /// Perform the sole visibility operation over the whole prepared set.
-    ///
-    /// # Errors
-    ///
-    /// Requires a prepared attempt; a failed attempt retains fail-closed
-    /// `Prepared` evidence and cannot retry.
-    pub fn make_visible(&mut self) -> Result<(), ProductsError> {
-        match self.stage {
-            Some(Stage::Prepared) => {
-                self.stage = Some(Stage::Visible);
-                Ok(())
-            }
-            Some(Stage::Failed) | None => Err(ProductsError::ForeignPlannedGeneration),
-            Some(Stage::Visible) => Err(ProductsError::ForeignPlannedGeneration),
-        }
-    }
-
-    /// Record that receipt promotion could not be confirmed.
-    ///
-    /// # Errors
-    ///
-    /// Requires a visible attempt.
-    pub fn fail_promotion(&mut self) -> Result<(), ProductsError> {
-        match self.stage {
-            Some(Stage::Visible) => {
-                self.stage = Some(Stage::Failed);
-                Ok(())
-            }
-            _ => Err(ProductsError::ForeignPlannedGeneration),
-        }
-    }
-
-    /// Whether the attempt retains fail-closed prepared evidence.
-    #[must_use]
-    pub const fn retains_prepared_evidence(&self) -> bool {
-        matches!(self.stage, Some(Stage::Failed))
     }
 }

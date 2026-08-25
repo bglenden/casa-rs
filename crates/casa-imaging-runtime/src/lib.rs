@@ -9,6 +9,7 @@ mod execution_bindings;
 mod major_cycle;
 mod observation_transaction;
 mod prepared_artifact;
+pub mod product_publication;
 mod publication_layout;
 mod receipt;
 mod resource_authority;
@@ -19,13 +20,13 @@ pub use execution_bindings::{
     ArtifactRole, AttemptBoundObservationCompletion, BindingKind, CacheIdentity,
     CompiledWorkContext, ExecutionEvidenceError, ExecutionPlan, ExecutionPlanId, ExecutionStatus,
     ImplementationContractCatalog, ImplementationContractMetadata, ImplementationRegistry,
-    ImplementationRegistryId, IoMeasurement, IoPrediction, ObservationCompletionBindingError,
-    ObservationReadCompletionContext, PhysicalWorkBinding, PhysicalWorkBindingError,
-    PhysicalWorkId, PlanError, PlanPrediction, PlannedArtifact, PlannerCostModelProfileId,
-    PlanningBindings, PredictionConfidence, PredictionUncertainty, PublicationResources,
-    RedactedPath, ResourceMeasurement, ResourcePolicyId, RunBindings, RunController, RunDirective,
-    RunError, RunToCompletion, StagePrediction, WorkExecutionContext, WorkImplementation,
-    WorkMeasurements, plan, run,
+    ImplementationRegistryId, IoMeasurement, IoPrediction, LegacyWholeRunPublicationAuthority,
+    ObservationCompletionBindingError, ObservationReadCompletionContext, PhysicalWorkBinding,
+    PhysicalWorkBindingError, PhysicalWorkId, PlanError, PlanPrediction, PlannedArtifact,
+    PlannerCostModelProfileId, PlanningBindings, PredictionConfidence, PredictionUncertainty,
+    PublicationResources, RedactedPath, ResourceMeasurement, ResourcePolicyId, RunBindings,
+    RunController, RunDirective, RunError, RunToCompletion, StagePrediction, WorkExecutionContext,
+    WorkImplementation, WorkMeasurements, plan, run,
 };
 
 pub use casa_imaging_reconstruction::{ContinuumPrimitiveCatalog, MajorCyclePreparation};
@@ -58,6 +59,9 @@ pub use prepared_artifact::{
     PreparedArtifactRegistration, PreparedArtifactRejection, PreparedArtifactReservation,
     PreparedArtifactReuseOutcome, PreparedArtifactSegmentDescriptor, PreparedArtifactSourceSegment,
     PreparedArtifactStore, PreparedArtifactUvAffine,
+};
+pub use product_publication::{
+    ProductPublicationEntry, ProductPublicationError, ProductPublicationPlan,
 };
 pub use publication_layout::{
     PhysicalLayoutId, PublicationBoundKind, PublicationLayoutError, PublicationLayoutLedger,
