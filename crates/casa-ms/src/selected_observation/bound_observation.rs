@@ -161,6 +161,12 @@ impl ObservationSourceBinding {
         self.current_state.identity()
     }
 
+    /// Return the exact storage-owner state captured by this binding.
+    #[must_use]
+    pub const fn current_state(&self) -> &ObservationSourceState {
+        &self.current_state
+    }
+
     /// Return the explicit selected-content memory budget.
     #[must_use]
     pub const fn content_budget(&self) -> SelectedObservationContentBudget {

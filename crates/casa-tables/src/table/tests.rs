@@ -5140,6 +5140,32 @@ mod lock_tests {
     }
 
     #[test]
+    fn observation_owner_locked_modify_counter_tracks_one_write_unlock() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let opts = build_test_table_on_disk(tmp.path(), DataManagerKind::StManAipsIO);
+        let lock_opts = LockOptions::new(LockMode::UserLocking);
+
+        let mut first = Table::open_with_lock(opts.clone(), lock_opts.clone()).unwrap();
+        assert!(first.lock(LockType::Read, 1).unwrap());
+        let before = first.locked_modify_counter().unwrap();
+        first.unlock().unwrap();
+
+        let mut writer = Table::open_with_lock(opts.clone(), lock_opts).unwrap();
+        assert!(writer.lock(LockType::Write, 1).unwrap());
+        assert_eq!(writer.locked_modify_counter().unwrap(), before);
+        writer
+            .keywords_mut()
+            .upsert("EXTERNAL_WRITE", Value::Scalar(ScalarValue::Bool(true)));
+        writer.unlock().unwrap();
+
+        assert!(first.lock(LockType::Read, 1).unwrap());
+        assert_eq!(
+            first.locked_modify_counter().unwrap(),
+            before.wrapping_add(1)
+        );
+    }
+
+    #[test]
     fn lock_reloads_after_external_modification() {
         let tmp = tempfile::TempDir::new().unwrap();
         let opts = build_test_table_on_disk(tmp.path(), DataManagerKind::StManAipsIO);

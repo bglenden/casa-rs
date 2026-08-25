@@ -295,6 +295,27 @@ impl Table {
             .unwrap_or(false)
     }
 
+    /// Return the casacore-compatible modification counter observed by this lock.
+    ///
+    /// The value is meaningful only while this table retains a read or write
+    /// lock. It is the durable counter used by table locking to decide whether
+    /// an already-open table must be reloaded after another writer commits.
+    #[cfg(unix)]
+    pub fn locked_modify_counter(&self) -> Result<u32, TableError> {
+        let state = self
+            .lock_state
+            .as_ref()
+            .ok_or_else(|| TableError::NotLocked {
+                operation: "locked_modify_counter".into(),
+            })?;
+        if !state.lock_file.has_lock(LockType::Read) {
+            return Err(TableError::NotLocked {
+                operation: "locked_modify_counter".into(),
+            });
+        }
+        Ok(state.sync_data.modify_counter)
+    }
+
     /// Tests if the table is opened by another process.
     ///
     /// Checks the in-use indicator in the lock file. Returns `false` if the

@@ -889,6 +889,13 @@ fn selected_coordinates(
     Ok(coordinates.into_boxed_slice())
 }
 
+pub(crate) fn validate_selected_coordinates(
+    measurement_set: &MeasurementSet,
+    selection: &ObservationSelection,
+) -> Result<(), BoundObservationSourceError> {
+    selected_coordinates(measurement_set, selection).map(drop)
+}
+
 #[derive(Clone, Copy)]
 pub(super) struct EvaluatedRowGeometry {
     density_uvw_m: [f64; 3],

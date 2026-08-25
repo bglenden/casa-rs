@@ -53,6 +53,7 @@ pub(crate) mod listobs;
 mod metadata;
 pub mod ms;
 pub mod msexplore;
+mod observation_owner;
 pub mod plot;
 mod plot_data;
 mod plot_visibility;
@@ -109,6 +110,11 @@ pub use msexplore::{
     build_msexplore_payload_from_spec, build_msexplore_plot_payload,
     build_msexplore_plot_payload_from_path, export_msexplore_plot, preview_msexplore_flag_edit,
     preview_msexplore_flag_edit_for_request, render_msexplore_plot_image,
+};
+pub use observation_owner::{
+    ObservationOwnerError, ResolvedSelectedObservation, ResolvedSelectedObservationAccess,
+    SelectedObservationResolutionRequest, initialize_measurement_set_owner_manifest,
+    resolve_selected_observation,
 };
 pub use plot::{
     ListObsPlotExportFormat as MeasurementSetPlotExportFormat,
