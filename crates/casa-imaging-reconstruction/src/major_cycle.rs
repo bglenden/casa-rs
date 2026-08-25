@@ -171,6 +171,12 @@ impl FinalNormalState {
         self.primitives.dirty()
     }
 
+    /// Return the exact unnormalized plane shape of every primitive.
+    #[must_use]
+    pub const fn shape(&self) -> [usize; 2] {
+        self.primitives.shape()
+    }
+
     /// Return the T19 normal approximation paired with the residual.
     #[must_use]
     pub const fn normal_approximation(&self) -> &[num_complex::Complex64] {
@@ -192,11 +198,12 @@ impl FinalNormalState {
 
 /// Inseparable result of the one atomic Major-Cycle reconciliation.
 ///
-/// The triple cannot be constructed, cloned, or split outside this operation:
-/// every successful reconciliation carries exactly one Final Normal State
-/// completion, exactly one Final Model completion, and the exact authoritative
-/// final model generation those completions name. None of the members is a
-/// Product Generation seal.
+/// The triple cannot be constructed, cloned, or paired by assembly outside
+/// this operation: every successful reconciliation carries exactly one Final
+/// Normal State completion, exactly one Final Model completion, and the exact
+/// authoritative final model generation those completions name. None of the
+/// members is a Product Generation seal. The only way to obtain members is to
+/// consume a whole minted join via [`MajorCycleCompletion::into_parts`].
 ///
 /// A caller cannot forge the join from its parts:
 ///
@@ -272,6 +279,16 @@ impl MajorCycleCompletion {
     #[must_use]
     pub const fn final_model(&self) -> &ModelGeneration {
         &self.final_model
+    }
+
+    /// Release the three typed members by consuming the whole join.
+    ///
+    /// Members can never be assembled or paired from parts; releasing them is
+    /// reserved for downstream owners (the next Major-Cycle round and the
+    /// product authority) that consume the entire minted result at once.
+    #[must_use]
+    pub fn into_parts(self) -> (FinalNormalState, FinalModelCompletion, ModelGeneration) {
+        (self.normal_state, self.model_completion, self.final_model)
     }
 }
 
