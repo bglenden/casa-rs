@@ -195,10 +195,10 @@ pub enum ImagingFftPrecisionPolicy {
 )]
 #[serde(rename_all = "kebab-case")]
 pub enum ImagingFftBackendPolicy {
-    /// Use the application default.
-    #[default]
+    /// Request automatic backend selection.
     Auto,
-    /// Use RustFFT.
+    /// Use RustFFT, the native portable default.
+    #[default]
     RustFft,
     /// Use Apple Accelerate.
     Accelerate,
@@ -222,10 +222,10 @@ pub enum ImagingFftBackendPolicy {
 )]
 #[serde(rename_all = "kebab-case")]
 pub enum StandardMfsAccelerationPolicy {
-    /// Use application selection.
-    #[default]
+    /// Request automatic acceleration selection.
     Auto,
-    /// Select serial CPU.
+    /// Select serial CPU, the native portable default.
+    #[default]
     Cpu,
     /// Select fixed-tile multi-CPU.
     MultiCpu,
@@ -472,16 +472,50 @@ impl CliConfig {
                 "--scales" => config.multiscale_scales = parse_csv(value(1)?, flag)?,
                 "--smallscalebias" => config.small_scale_bias = parse(value(1)?, flag)?,
                 "--niter" => config.niter = parse(value(1)?, flag)?,
+                "--nmajor" => {
+                    let limit = parse::<i64>(value(1)?, flag)?;
+                    config.nmajor = match limit {
+                        -1 => None,
+                        0.. => Some(limit as usize),
+                        _ => return Err("--nmajor expects -1 or a non-negative value".to_string()),
+                    };
+                }
+                "--fullsummary" => {
+                    config.fullsummary = true;
+                    consumed = 1;
+                }
                 "--gain" => config.gain = parse(value(1)?, flag)?,
                 "--threshold-jy" | "--threshold" => config.threshold_jy = parse(value(1)?, flag)?,
                 "--nsigma" => config.nsigma = parse(value(1)?, flag)?,
                 "--psf-cutoff" | "--psfcutoff" => config.psf_cutoff = parse(value(1)?, flag)?,
+                "--pblimit" => config.mosaic_pb_limit = parse(value(1)?, flag)?,
+                "--pbcor" => {
+                    config.pbcor = true;
+                    consumed = 1;
+                }
+                "--write-pb" => {
+                    config.write_pb = true;
+                    consumed = 1;
+                }
                 "--minor-cycle-length" => config.minor_cycle_length = parse(value(1)?, flag)?,
                 "--cyclefactor" => config.cyclefactor = parse(value(1)?, flag)?,
                 "--minpsffraction" => config.min_psf_fraction = parse(value(1)?, flag)?,
                 "--maxpsffraction" => config.max_psf_fraction = parse(value(1)?, flag)?,
+                "--hogbom-iteration-mode" => {
+                    config.hogbom_iteration_mode = match value(1)? {
+                        "strict" => HogbomIterationMode::Strict,
+                        "casa-inclusive" => HogbomIterationMode::CasaInclusive,
+                        other => {
+                            return Err(format!("unsupported --hogbom-iteration-mode {other:?}"));
+                        }
+                    }
+                }
                 "--perchanweightdensity" => {
                     config.per_channel_weight_density = true;
+                    consumed = 1;
+                }
+                "--no-perchanweightdensity" => {
+                    config.per_channel_weight_density = false;
                     consumed = 1;
                 }
                 "--uvtaper" => config.uv_taper = Some(parse_uv_taper(value(1)?)?),
@@ -491,6 +525,14 @@ impl CliConfig {
                     config.auto_mask.sidelobe_threshold = parse(value(1)?, flag)?
                 }
                 "--noisethreshold" => config.auto_mask.noise_threshold = parse(value(1)?, flag)?,
+                "--lownoisethreshold" => {
+                    config.auto_mask.low_noise_threshold = parse(value(1)?, flag)?
+                }
+                "--negativethreshold" => {
+                    config.auto_mask.negative_threshold = parse(value(1)?, flag)?
+                }
+                "--minbeamfrac" => config.auto_mask.min_beam_frac = parse(value(1)?, flag)?,
+                "--growiterations" => config.auto_mask.grow_iterations = parse(value(1)?, flag)?,
                 "--mask-box" => config.mask_boxes.push(parse_box(value(1)?)?),
                 "--mask-image" => config.mask_image = Some(PathBuf::from(value(1)?)),
                 "--gridder" => set_gridder(&mut config, value(1)?)?,
@@ -504,6 +546,15 @@ impl CliConfig {
                     config.dirty_only = true;
                     consumed = 1;
                 }
+                "--parallel" => {
+                    apply_parallel_runtime_control(Some(true), &mut config)?;
+                    consumed = 1;
+                }
+                "--no-parallel" => {
+                    apply_parallel_runtime_control(Some(false), &mut config)?;
+                    consumed = 1;
+                }
+                "--chanchunks" => config.chanchunks = Some(parse(value(1)?, flag)?),
                 "--no-preview-pngs" => {
                     config.write_preview_pngs = false;
                     consumed = 1;
@@ -516,6 +567,16 @@ impl CliConfig {
                     aw_controls(&mut config).cf_resident_bytes =
                         parse::<usize>(value(1)?, flag)?.saturating_mul(1024 * 1024)
                 }
+                "--facets" => aw_controls(&mut config).facets = parse(value(1)?, flag)?,
+                "--psfphasecenter" => {
+                    let direction = parse_csv::<f64>(value(1)?, flag)?;
+                    aw_controls(&mut config).psf_phase_center_direction_rad = Some(
+                        direction
+                            .try_into()
+                            .map_err(|_| "--psfphasecenter expects two radians".to_string())?,
+                    );
+                }
+                "--vptable" => aw_controls(&mut config).vp_table = Some(PathBuf::from(value(1)?)),
                 "--aterm" => {
                     aw_controls(&mut config).a_term = true;
                     consumed = 1;
@@ -574,11 +635,31 @@ impl CliConfig {
                 "--imaging-memory-pressure-policy" => {
                     config.imaging_memory_pressure_policy = parse_memory_policy(value(1)?)?
                 }
+                "--imaging-memory-target-mb" => {
+                    config.imaging_memory_target_mb = Some(parse(value(1)?, flag)?)
+                }
+                "--imaging-prepare-buffer-mb" => {
+                    config.imaging_prepare_buffer_mb = Some(parse(value(1)?, flag)?)
+                }
+                "--imaging-row-block-rows" => {
+                    config.imaging_row_block_rows = Some(parse(value(1)?, flag)?)
+                }
+                "--imaging-prepare-workers" => {
+                    config.imaging_prepare_workers = Some(parse(value(1)?, flag)?)
+                }
+                "--imaging-read-ahead-blocks" => {
+                    config.imaging_read_ahead_blocks = Some(parse(value(1)?, flag)?)
+                }
                 "--standard-mfs-acceleration" => {
                     config.standard_mfs_acceleration = parse_acceleration(value(1)?)?;
                 }
                 "--standard-mfs-backend" => {
                     config.standard_mfs_backend = Some(value(1)?.to_string());
+                }
+                "--standard-mfs-grid-threads" => {
+                    let threads = value(1)?;
+                    config.standard_mfs_grid_threads =
+                        (threads != "auto").then(|| threads.to_string());
                 }
                 "--imaging-fft-backend" => {
                     config.imaging_fft_backend = parse_fft_backend(value(1)?)?;
@@ -653,7 +734,7 @@ impl CliConfig {
             aw_project: None,
             dirty_only: false,
             chanchunks: None,
-            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Cpu,
             standard_mfs_backend: None,
             standard_mfs_grid_threads: None,
             standard_mfs_tile_anchor: None,
@@ -670,7 +751,7 @@ impl CliConfig {
             imaging_prepare_workers: None,
             imaging_read_ahead_blocks: None,
             imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
-            imaging_fft_backend: ImagingFftBackendPolicy::Auto,
+            imaging_fft_backend: ImagingFftBackendPolicy::RustFft,
             write_preview_pngs: false,
         }
     }
@@ -707,7 +788,29 @@ pub fn run_from_request(request: &ImagerRunTaskRequest) -> Result<RunSummary, St
 
 /// Run the machine or direct CLI surface.
 pub fn run_with_cli_args(args: impl IntoIterator<Item = OsString>) -> Result<(), String> {
-    let args = args.into_iter().collect::<Vec<_>>();
+    let raw_args = args.into_iter().collect::<Vec<_>>();
+    let mut managed_output = false;
+    let mut args = Vec::with_capacity(raw_args.len());
+    let mut index = 0;
+    while index < raw_args.len() {
+        if raw_args[index].to_str() == Some("--managed-output") {
+            managed_output = raw_args
+                .get(index + 1)
+                .and_then(|value| value.to_str())
+                .map(|value| parse_bool(value, "--managed-output"))
+                .transpose()?
+                .unwrap_or(true);
+            index += usize::from(
+                raw_args
+                    .get(index + 1)
+                    .and_then(|value| value.to_str())
+                    .is_some_and(|value| matches!(value, "true" | "false")),
+            ) + 1;
+            continue;
+        }
+        args.push(raw_args[index].clone());
+        index += 1;
+    }
     let host = casa_task_runtime::TaskCliHost::new(
         imager_task_schema_bundle(),
         |request: ImagerTaskRequest| request.execute(),
@@ -727,17 +830,25 @@ pub fn run_with_cli_args(args: impl IntoIterator<Item = OsString>) -> Result<(),
     let request = ImagerRunTaskRequest::from_cli_config(&config);
     let summary = run_from_request(&request)?;
     let result = ImagerRunTaskResult::from_run(request, &summary);
-    for warning in &result.run.warnings {
-        eprintln!("warning: {warning}");
+    if managed_output {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&ManagedImagingOutput::from_task_result(&result))
+                .map_err(|error| format!("serialize managed imaging output: {error}"))?
+        );
+    } else {
+        for warning in &result.run.warnings {
+            eprintln!("warning: {warning}");
+        }
+        println!(
+            "Wrote CASA-compatible products at prefix {} ({} gridded samples, {} major cycles, {} minor iterations, stop={:?})",
+            result.request.image_name.display(),
+            result.run.gridded_samples,
+            result.run.major_cycles,
+            result.run.minor_iterations,
+            result.run.clean_stop_reason,
+        );
     }
-    println!(
-        "Wrote CASA-compatible products at prefix {} ({} gridded samples, {} major cycles, {} minor iterations, stop={:?})",
-        result.request.image_name.display(),
-        result.run.gridded_samples,
-        result.run.major_cycles,
-        result.run.minor_iterations,
-        result.run.clean_stop_reason,
-    );
     Ok(())
 }
 
@@ -977,7 +1088,7 @@ fn parse_acceleration(value: &str) -> Result<StandardMfsAccelerationPolicy, Stri
 fn parse_fft_backend(value: &str) -> Result<ImagingFftBackendPolicy, String> {
     match value {
         "auto" => Ok(ImagingFftBackendPolicy::Auto),
-        "rustfft" => Ok(ImagingFftBackendPolicy::RustFft),
+        "rustfft" | "rust-fft" => Ok(ImagingFftBackendPolicy::RustFft),
         "accelerate" => Ok(ImagingFftBackendPolicy::Accelerate),
         "metal-mpsgraph" => Ok(ImagingFftBackendPolicy::MetalMpsGraph),
         "fftw" => Ok(ImagingFftBackendPolicy::Fftw),

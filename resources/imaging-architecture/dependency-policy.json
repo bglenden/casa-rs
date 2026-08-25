@@ -310,7 +310,7 @@
      "message": "Rust frontend selects an imaging backend or inspects a device"
     }
    ],
-   "accepted_violation_digest": "62d03718c5a040c37765906b1f4bcccb0904904608d34ba2d00e97753575aed9"
+   "accepted_violation_digest": "7a7bee20be2f3d2876c0ddabad1e98b90c99786b5ab84a3d7f583c025891c918"
   },
   {
    "id": "swift-imaging-frontends",

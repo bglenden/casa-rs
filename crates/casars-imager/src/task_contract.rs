@@ -2654,7 +2654,7 @@ fn default_max_psf_fraction() -> f32 {
 }
 
 fn default_write_preview_pngs() -> bool {
-    true
+    false
 }
 
 fn default_progress_max_uv_points() -> usize {
@@ -3222,7 +3222,7 @@ mod tests {
             dirty_only: false,
             parallel: None,
             chanchunks: None,
-            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Cpu,
             standard_mfs_backend: None,
             standard_mfs_grid_threads: None,
             standard_mfs_tile_anchor: None,
@@ -3239,8 +3239,8 @@ mod tests {
             imaging_prepare_workers: None,
             imaging_read_ahead_blocks: None,
             imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
-            imaging_fft_backend: ImagingFftBackendPolicy::Auto,
-            write_preview_pngs: true,
+            imaging_fft_backend: ImagingFftBackendPolicy::RustFft,
+            write_preview_pngs: false,
             progress: None,
         };
         let config = request.to_cli_config().unwrap();

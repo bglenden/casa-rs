@@ -92,7 +92,7 @@ mod tests {
             .iter()
             .find(|argument| argument.id == "standard_mfs_acceleration")
             .expect("standard_mfs_acceleration argument");
-        assert_eq!(standard_mfs_acceleration.default.as_deref(), Some("auto"));
+        assert_eq!(standard_mfs_acceleration.default.as_deref(), Some("cpu"));
         assert!(standard_mfs_acceleration.advanced);
         let UiArgumentParser::Option { flags, choices, .. } = &standard_mfs_acceleration.parser
         else {
@@ -140,7 +140,7 @@ mod tests {
         assert_eq!(default_for("chanchunks"), "none");
         assert_eq!(default_for("parallel"), "none");
         assert_eq!(default_for("imaging_read_ahead_blocks"), "none");
-        assert_eq!(default_for("imaging_fft_backend"), "auto");
+        assert_eq!(default_for("imaging_fft_backend"), "rustfft");
         assert_eq!(default_for("imaging_memory_target_mb"), "none");
         assert_eq!(default_for("imaging_memory_pressure_policy"), "auto");
         for id in [

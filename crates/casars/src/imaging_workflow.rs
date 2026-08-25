@@ -8,38 +8,32 @@ use casars_imager::{ManagedImagingArtifact, ManagedImagingOutput};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum ImagingDiagnosticKind {
-    PsfPreview,
-    ResidualPreview,
-    ModelPreview,
-    ImagePreview,
-    AlphaPreview,
-    ResidualByChannel,
-    IterationsByChannel,
+    Psf,
+    Residual,
+    Model,
+    Image,
+    Alpha,
 }
 
 impl ImagingDiagnosticKind {
     pub(crate) fn label(self) -> &'static str {
         match self {
-            Self::PsfPreview => "PSF Preview",
-            Self::ResidualPreview => "Residual Preview",
-            Self::ModelPreview => "Model Preview",
-            Self::ImagePreview => "Image Preview",
-            Self::AlphaPreview => "Alpha Preview",
-            Self::ResidualByChannel => "Residual By Channel",
-            Self::IterationsByChannel => "Iterations By Channel",
+            Self::Psf => "PSF Preview",
+            Self::Residual => "Residual Preview",
+            Self::Model => "Model Preview",
+            Self::Image => "Image Preview",
+            Self::Alpha => "Alpha Preview",
         }
     }
 }
 
 pub(crate) fn imaging_preferred_diagnostic(output: &ManagedImagingOutput) -> ImagingDiagnosticKind {
-    if !output.run.channels.is_empty() {
-        ImagingDiagnosticKind::ResidualByChannel
-    } else if artifact_preview_available(&output.artifacts, "image") {
-        ImagingDiagnosticKind::ImagePreview
+    if artifact_preview_available(&output.artifacts, "image") {
+        ImagingDiagnosticKind::Image
     } else if artifact_preview_available(&output.artifacts, "residual") {
-        ImagingDiagnosticKind::ResidualPreview
+        ImagingDiagnosticKind::Residual
     } else {
-        ImagingDiagnosticKind::PsfPreview
+        ImagingDiagnosticKind::Psf
     }
 }
 
@@ -49,25 +43,13 @@ pub(crate) fn imaging_catalog_entries(
 ) -> Vec<WorkflowCatalogEntryDisplay<ImagingDiagnosticKind>> {
     let mut entries = Vec::new();
     for (kind, artifact_kind) in [
-        (ImagingDiagnosticKind::PsfPreview, "psf"),
-        (ImagingDiagnosticKind::ResidualPreview, "residual"),
-        (ImagingDiagnosticKind::ModelPreview, "model"),
-        (ImagingDiagnosticKind::ImagePreview, "image"),
-        (ImagingDiagnosticKind::AlphaPreview, "alpha"),
+        (ImagingDiagnosticKind::Psf, "psf"),
+        (ImagingDiagnosticKind::Residual, "residual"),
+        (ImagingDiagnosticKind::Model, "model"),
+        (ImagingDiagnosticKind::Image, "image"),
+        (ImagingDiagnosticKind::Alpha, "alpha"),
     ] {
         if artifact_preview_available(&output.artifacts, artifact_kind) {
-            entries.push(WorkflowCatalogEntryDisplay {
-                target: kind,
-                label: kind.label().to_string(),
-                selected: selected == kind,
-            });
-        }
-    }
-    if !output.run.channels.is_empty() {
-        for kind in [
-            ImagingDiagnosticKind::ResidualByChannel,
-            ImagingDiagnosticKind::IterationsByChannel,
-        ] {
             entries.push(WorkflowCatalogEntryDisplay {
                 target: kind,
                 label: kind.label().to_string(),

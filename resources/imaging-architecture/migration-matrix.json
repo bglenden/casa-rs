@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "contract_revision": 34,
+  "contract_revision": 35,
   "programme_issue": 486,
   "owner_issue": 487,
   "status_values": ["Native", "TemporarilyUnavailable"],
@@ -129,7 +129,7 @@
     "repo://resources/imaging-architecture/baselines/issues-40-42-45-54-55-217.json#issue-55": "2107776fac407488af028a68188e40afc9333d2fba6646628e308999a5cb22a9",
     "repo://resources/imaging-architecture/baselines/issues-40-42-45-54-55-217.json#issue-217": "2107776fac407488af028a68188e40afc9333d2fba6646628e308999a5cb22a9",
     "repo://resources/imaging-architecture/baselines/selected-observation-generation-v3.txt": "678d66ee102ac635975aff340b0a1ad553c5e9c8f909e03b31409c5860e7d87c",
-    "repo://resources/parameter-contract-history.json": "d8207728f6f2c6f8f8eb1d0e2b2c562b2f2f628eaeb3a3b68aa4b738908850d1",
+    "repo://resources/parameter-contract-history.json": "b4734fe71d21697e3c44bff3ecdf0f7f5678aab3cced214b46ed4dc31f88588e",
     "repo://resources/test-profiles/imager-cross-surface.expected.json": "ddabae340d7eca44752f7aacb68b5de15136c035cb4e95308087e70234a53b0b",
     "repo://tools/perf/imager/evidence/imaging_performance_evidence_manifest.json": "be6dbbe33e118d12348f1cc0caafeaa43d250fefa6ff1ed278c8f5cb90c1a203",
     "repo://tools/perf/imager/evidence/imaging_performance_evidence_manifest.json#mosaic-cube-chanchunks-formula-comparison": "be6dbbe33e118d12348f1cc0caafeaa43d250fefa6ff1ed278c8f5cb90c1a203",

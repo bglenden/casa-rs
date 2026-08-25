@@ -157,20 +157,25 @@ fn backend_requirements(config: &CliConfig) -> Vec<TaskRouteRequirement> {
             _ => TaskRouteRequirement::NativeV1UnsupportedControls,
         });
     }
-    requirements.push(match config.imaging_fft_backend {
-        ImagingFftBackendPolicy::Auto => TaskRouteRequirement::FftAuto,
-        ImagingFftBackendPolicy::RustFft => TaskRouteRequirement::RustFft,
-        ImagingFftBackendPolicy::Accelerate => TaskRouteRequirement::Accelerate,
-        ImagingFftBackendPolicy::MetalMpsGraph => TaskRouteRequirement::MetalMpsGraph,
-        ImagingFftBackendPolicy::Fftw => TaskRouteRequirement::Fftw,
-    });
+    match config.imaging_fft_backend {
+        ImagingFftBackendPolicy::RustFft => {}
+        ImagingFftBackendPolicy::Auto => requirements.push(TaskRouteRequirement::FftAuto),
+        ImagingFftBackendPolicy::Accelerate => requirements.push(TaskRouteRequirement::Accelerate),
+        ImagingFftBackendPolicy::MetalMpsGraph => {
+            requirements.push(TaskRouteRequirement::MetalMpsGraph)
+        }
+        ImagingFftBackendPolicy::Fftw => requirements.push(TaskRouteRequirement::Fftw),
+    }
     requirements
 }
 
 fn unsupported_native_controls(config: &CliConfig) -> bool {
     config.phasecenter_field.is_some()
         || config.phasecenter.is_some()
-        || config.correlation.is_some()
+        || config
+            .correlation
+            .as_deref()
+            .is_some_and(|plane| !plane.eq_ignore_ascii_case("I"))
         || config.uv_taper.is_some()
         || config.nmajor.is_some()
         || config.nsigma != 0.0
@@ -229,7 +234,12 @@ mod tests {
     #[test]
     fn automatic_backend_choices_remain_explicit_route_requirements() {
         assert_eq!(
-            backend_requirements(&config(&[])),
+            backend_requirements(&config(&[
+                "--standard-mfs-acceleration",
+                "auto",
+                "--imaging-fft-backend",
+                "auto",
+            ])),
             vec![
                 TaskRouteRequirement::ExecutionAuto,
                 TaskRouteRequirement::FftAuto,
@@ -238,13 +248,15 @@ mod tests {
     }
 
     #[test]
+    fn default_backend_choices_select_the_available_native_cpu_route() {
+        assert!(backend_requirements(&config(&[])).is_empty());
+    }
+
+    #[test]
     fn metal_acceleration_uses_the_matrix_grouped_row_run_capability() {
         assert_eq!(
             backend_requirements(&config(&["--standard-mfs-acceleration", "metal"])),
-            vec![
-                TaskRouteRequirement::MetalRowRunGroupedGridder,
-                TaskRouteRequirement::FftAuto,
-            ]
+            vec![TaskRouteRequirement::MetalRowRunGroupedGridder]
         );
     }
 }

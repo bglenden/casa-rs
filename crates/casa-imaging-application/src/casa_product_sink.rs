@@ -177,6 +177,9 @@ fn identity_hex(identity: ArtifactIdentity) -> String {
 }
 
 fn visible_identity(path: &Path) -> Option<String> {
+    if !path.exists() {
+        return None;
+    }
     let image = PagedImage::<f32>::open(path).ok()?;
     match image.misc_info().get("casa_rs_observed_product_identity") {
         Some(Value::Scalar(ScalarValue::String(identity))) => Some(identity.clone()),

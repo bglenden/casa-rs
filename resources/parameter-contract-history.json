@@ -2349,6 +2349,11 @@
       "fingerprint": "817501c165110801bb06ebb1a8961feff085640f5c133d121d216f91ef1c68e3"
     },
     {
+      "id": "imager",
+      "contract_version": 8,
+      "fingerprint": "3bd6cad6d370af533a534bb4123fb734e18ef43c18d117260971118d22fc8597"
+    },
+    {
       "id": "imcollapse",
       "contract_version": 1,
       "fingerprint": "9d4b4bfa43e8f9f7a7e1037756abf26d99c48762d28ddb60b4caea69cc44978d"
