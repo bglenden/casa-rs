@@ -12,9 +12,9 @@
 
 use sha2::{Digest, Sha256};
 
-use casa_imaging_model::{CompiledProblem, ProductGraphId, ProductNodeId};
+use casa_imaging_model::{CompiledProblem, CompiledProblemId, ProductGraphId, ProductNodeId};
 use casa_imaging_products::{
-    ContinuumSealId, PlannedGenerationId, SealedContinuumGeneration, SealedMember,
+    ContinuumSealId, MemberArtifactId, PlannedGenerationId, PublicationProjection,
 };
 
 use crate::ArtifactIdentity;
@@ -61,10 +61,12 @@ impl ProductPublicationEntry {
 /// Failure to bind one sealed generation into publication planning.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProductPublicationError {
-    /// The sealed generation belongs to another product graph.
+    /// The sealed generation belongs to another compiled problem or Product Graph.
     ForeignSeal {
+        /// Problem named by the compiled publication plan.
+        expected_problem: CompiledProblemId,
         /// Graph named by the compiled problem.
-        expected: ProductGraphId,
+        expected_graph: ProductGraphId,
     },
     /// The sealed member set does not match the graph publication set.
     MemberSetMismatch {
@@ -78,6 +80,7 @@ pub enum ProductPublicationError {
 /// Exact-once publication plan derived from one authorized generation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProductPublicationPlan {
+    problem_id: CompiledProblemId,
     graph_id: ProductGraphId,
     seal_id: ContinuumSealId,
     generation_id: PlannedGenerationId,
@@ -93,11 +96,19 @@ impl ProductPublicationPlan {
     /// set is not exactly the graph publication set in canonical order.
     pub fn bind(
         problem: &CompiledProblem,
-        sealed: &SealedContinuumGeneration,
+        projection: &PublicationProjection,
     ) -> Result<Self, ProductPublicationError> {
         let graph = problem.product_graph();
+        if projection.problem_id() != problem.problem_id()
+            || projection.graph_id() != graph.graph_id()
+        {
+            return Err(ProductPublicationError::ForeignSeal {
+                expected_problem: problem.problem_id(),
+                expected_graph: graph.graph_id(),
+            });
+        }
         let publication = graph.publication().members();
-        let members = sealed.members();
+        let members = projection.members();
         if publication.len() != members.len() {
             return Err(ProductPublicationError::MemberSetMismatch {
                 expected: publication.len(),
@@ -108,29 +119,40 @@ impl ProductPublicationPlan {
         for (node_ordinal, member) in publication.iter().zip(members) {
             let Some(node) = graph.nodes().get(node_ordinal.ordinal()) else {
                 return Err(ProductPublicationError::ForeignSeal {
-                    expected: graph.graph_id(),
+                    expected_problem: problem.problem_id(),
+                    expected_graph: graph.graph_id(),
                 });
             };
             if node.node_id() != member.node() || node.name() != Some(member.name()) {
                 return Err(ProductPublicationError::ForeignSeal {
-                    expected: graph.graph_id(),
+                    expected_problem: problem.problem_id(),
+                    expected_graph: graph.graph_id(),
                 });
             }
             entries.push(ProductPublicationEntry {
                 node: member.node(),
                 name: member.name().to_string(),
-                artifact: sealed_artifact_identity(sealed.seal_id(), member),
-                payload_bytes: u64::try_from(member.payload().len())
-                    .expect("payload length fits in u64 on supported targets")
-                    * 4,
+                artifact: sealed_artifact_identity(
+                    projection.seal_id(),
+                    member.artifact_id(),
+                    member.content_identity(),
+                ),
+                payload_bytes: member.payload_bytes(),
             });
         }
         Ok(Self {
+            problem_id: problem.problem_id(),
             graph_id: graph.graph_id(),
-            seal_id: sealed.seal_id(),
-            generation_id: sealed.generation_id(),
+            seal_id: projection.seal_id(),
+            generation_id: projection.generation_id(),
             entries: entries.into_boxed_slice(),
         })
+    }
+
+    /// Return the exact compiled problem authorized for publication.
+    #[must_use]
+    pub const fn problem_id(&self) -> CompiledProblemId {
+        self.problem_id
     }
 
     /// Return the bound product graph identity.
@@ -169,13 +191,17 @@ impl ProductPublicationPlan {
 
 /// Derive one artifact identity from the seal, the planned artifact
 /// identity, and the bound content identity.
-fn sealed_artifact_identity(seal_id: ContinuumSealId, member: &SealedMember) -> ArtifactIdentity {
+fn sealed_artifact_identity(
+    seal_id: ContinuumSealId,
+    artifact_id: MemberArtifactId,
+    content_identity: MemberArtifactId,
+) -> ArtifactIdentity {
     let mut hasher = Sha256::new();
     hasher.update(SEALED_ARTIFACT_DOMAIN);
     hasher.update(SEALED_ARTIFACT_VERSION.to_le_bytes());
     hasher.update(seal_id.as_bytes());
-    hasher.update(member.artifact_id().as_bytes());
-    hasher.update(member.content_identity().as_bytes());
+    hasher.update(artifact_id.as_bytes());
+    hasher.update(content_identity.as_bytes());
     let digest: [u8; 32] = hasher.finalize().into();
     ArtifactIdentity::from_sha256(digest)
 }

@@ -372,6 +372,7 @@ impl<'a> WeightingPlanFragment<'a> {
             base.artifacts().to_vec(),
             base.observation_transaction().clone(),
             base.publication_layouts().clone(),
+            base.product_publication_authority(),
         )?)
     }
 

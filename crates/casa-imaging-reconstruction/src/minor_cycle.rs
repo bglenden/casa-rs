@@ -413,15 +413,16 @@ impl MinorCycleEvidence {
         self.stop_reason
     }
 
-    /// Whether the exhausted view envelope explicitly requests Major-Cycle
-    /// reconciliation.
+    /// Whether the outcome explicitly requests Major-Cycle reconciliation.
     ///
-    /// Only a threshold stop resolves the solve inside its valid envelope;
-    /// iteration and staleness stops leave potential update outstanding and
-    /// must be followed by a fresh complete-data reconciliation.
+    /// A threshold stop needs no reconciliation only when it accepted no
+    /// component and therefore minted no delta. Every accepted component must
+    /// pass through the model owner and a fresh complete-data reconciliation,
+    /// even when the working residual subsequently falls below threshold.
+    /// Iteration and staleness stops request reconciliation unconditionally.
     #[must_use]
     pub const fn requests_reconciliation(&self) -> bool {
-        !matches!(self.stop_reason, MinorCycleStopReason::ThresholdReached)
+        self.iterations != 0 || !matches!(self.stop_reason, MinorCycleStopReason::ThresholdReached)
     }
 
     /// Return the optionally recorded leading component sequence.

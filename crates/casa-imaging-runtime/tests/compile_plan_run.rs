@@ -39,7 +39,8 @@ use casa_imaging_model::{
 };
 use casa_imaging_products::{
     ContinuumProductControls, ContinuumProductInputs, ContinuumSourceCatalog,
-    ProductGenerationAuthority, produce_continuum_members,
+    ProductGenerationAuthority, PublicationProjection, SealedContinuumGeneration,
+    produce_continuum_members,
 };
 use casa_imaging_reconstruction::{
     ExecutableModelProblem, MajorCycleCompletion, MajorCycleOwner, MajorCyclePreparation,
@@ -63,12 +64,13 @@ use casa_imaging_runtime::{
     ExecutionStatus, ExternalPressure, FenceId, FenceKind, HostInventory,
     ImplementationContractCatalog, ImplementationContractMetadata, ImplementationRegistry,
     ImplementationRegistryId, InitializationPolicy, IoBufferDemand, IoBufferKind, IoMeasurement,
-    IoPrediction, LeaseResource, LogicalAllocation, MajorCycleOperatorResult,
-    MajorCycleOperatorState, MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand, MemoryView,
-    MemoryViewKind, ObservationReadCompletionContext, ObservationTransactionWork, PhysicalLayoutId,
-    PhysicalSlot, PhysicalSlotId, PhysicalWorkBinding, PhysicalWorkBindingError, PlanError,
-    PlanPrediction, PlannedArtifact, PlannerCostModelProfileBootstrap, PlannerCostModelProfileId,
-    PlanningBindings, PredictionConfidence, PredictionUncertainty, PreparedArtifactBudget,
+    IoPrediction, LeaseResource, LegacyWholeRunPublicationAuthority, LogicalAllocation,
+    MajorCycleOperatorResult, MajorCycleOperatorState, MemoryCapacityDomain, MemoryCapacityKind,
+    MemoryDemand, MemoryView, MemoryViewKind, ObservationReadCompletionContext,
+    ObservationTransactionWork, PhysicalLayoutId, PhysicalSlot, PhysicalSlotId,
+    PhysicalWorkBinding, PhysicalWorkBindingError, PlanError, PlanPrediction, PlannedArtifact,
+    PlannerCostModelProfileBootstrap, PlannerCostModelProfileId, PlanningBindings,
+    PredictionConfidence, PredictionUncertainty, PreparedArtifactBudget,
     PreparedArtifactDescriptor, PreparedArtifactError, PreparedArtifactLoadSource,
     PreparedArtifactOperation, PreparedArtifactOrder, PreparedArtifactPlanFragment,
     PreparedArtifactPlaneDescriptor, PreparedArtifactPrecision, PreparedArtifactRegistration,
@@ -2160,7 +2162,7 @@ fn production_weighting_fragment_rejects_fungible_unrelated_queues() {
             .collect(),
     })
     .expect("two distinct queue identities are structurally valid");
-    let split_queue_base = PhysicalWorkBinding::new(
+    let split_queue_base = legacy_physical_work(
         implementation_catalog(&problem, &split_queue_dag),
         split_queue_dag,
         base.prediction().clone(),
@@ -2314,13 +2316,14 @@ fn physical_work_for_problem(
             .collect(),
     })
     .expect("problem-bound transaction DAG");
-    PhysicalWorkBinding::new(
+    PhysicalWorkBinding::new_legacy_whole_run(
         implementation_catalog(problem, &dag),
         dag,
         base.prediction().clone(),
         base.artifacts().to_vec(),
         base.observation_transaction().clone(),
         base.publication_layouts().clone(),
+        &legacy_publication_authority(),
     )
     .expect("problem-bound physical work")
 }
@@ -2487,7 +2490,7 @@ fn physical_work_for_weighting_problem_with_residency(
             .collect(),
     )
     .expect("problem-bound source prediction");
-    PhysicalWorkBinding::new(
+    legacy_physical_work(
         implementation_catalog(problem, &dag),
         dag,
         prediction,
@@ -2540,7 +2543,7 @@ fn with_work_implementation(
             .collect(),
     })
     .expect("rebinding a validated DAG preserves its topology");
-    PhysicalWorkBinding::new(
+    legacy_physical_work(
         implementation_catalog(problem, &dag),
         dag,
         base.prediction().clone(),
@@ -3325,63 +3328,75 @@ fn transaction_binding_with_seal(
         };
         sealed.and_then(|plan| plan.artifact(*node_id))
     };
-    PhysicalWorkBinding::new(
-        implementation_catalog(problem, &dag),
-        dag,
-        prediction,
+    let catalog = implementation_catalog(problem, &dag);
+    let artifacts = participants
+        .iter()
+        .enumerate()
+        .map(|(index, participant)| {
+            let identity = sealed_artifact(participant)
+                .unwrap_or_else(|| ArtifactIdentity::from_sha256([34 + index as u8; 32]));
+            PlannedArtifact::new(identity, commit.clone(), ArtifactRole::Output, None)
+        })
+        .collect();
+    let transaction = ObservationTransactionWork::new(
+        initial,
+        reconciliation,
+        include_model_staging.then_some(model.clone()),
+        commit.clone(),
+    );
+    let layouts = PublicationLayoutLedger::new(
         participants
-            .iter()
+            .into_iter()
             .enumerate()
             .map(|(index, participant)| {
-                let identity = sealed_artifact(participant)
+                let (producer, terminal, kind, allocation) = match participant {
+                    PublicationParticipant::Product { .. } => (
+                        product.clone(),
+                        WorkDependency::Work(product.clone()),
+                        IoBufferKind::Serialization,
+                        product_writer_allocation.clone(),
+                    ),
+                    PublicationParticipant::ModelData(_) => (
+                        model.clone(),
+                        WorkDependency::Fence(FenceId::new(model.clone(), FenceKind::Writeback)),
+                        IoBufferKind::Writeback,
+                        writeback_allocation.clone(),
+                    ),
+                };
+                let identity = sealed_artifact(&participant)
                     .unwrap_or_else(|| ArtifactIdentity::from_sha256([34 + index as u8; 32]));
-                PlannedArtifact::new(identity, commit.clone(), ArtifactRole::Output, None)
+                PublicationPhysicalLayout::new(
+                    participant,
+                    identity,
+                    PhysicalLayoutId::from_sha256([150 + index as u8; 32]),
+                    PublicationStaging::new(producer, terminal, kind, allocation)
+                        .expect("valid publication staging"),
+                    PublicationResourceBounds::new(1, 1, 1, 0).expect("valid publication bounds"),
+                )
             })
             .collect(),
-        ObservationTransactionWork::new(
-            initial,
-            reconciliation,
-            include_model_staging.then_some(model.clone()),
-            commit.clone(),
-        ),
-        PublicationLayoutLedger::new(
-            participants
-                .into_iter()
-                .enumerate()
-                .map(|(index, participant)| {
-                    let (producer, terminal, kind, allocation) = match participant {
-                        PublicationParticipant::Product { .. } => (
-                            product.clone(),
-                            WorkDependency::Work(product.clone()),
-                            IoBufferKind::Serialization,
-                            product_writer_allocation.clone(),
-                        ),
-                        PublicationParticipant::ModelData(_) => (
-                            model.clone(),
-                            WorkDependency::Fence(FenceId::new(
-                                model.clone(),
-                                FenceKind::Writeback,
-                            )),
-                            IoBufferKind::Writeback,
-                            writeback_allocation.clone(),
-                        ),
-                    };
-                    let identity = sealed_artifact(&participant)
-                        .unwrap_or_else(|| ArtifactIdentity::from_sha256([34 + index as u8; 32]));
-                    PublicationPhysicalLayout::new(
-                        participant,
-                        identity,
-                        PhysicalLayoutId::from_sha256([150 + index as u8; 32]),
-                        PublicationStaging::new(producer, terminal, kind, allocation)
-                            .expect("valid publication staging"),
-                        PublicationResourceBounds::new(1, 1, 1, 0)
-                            .expect("valid publication bounds"),
-                    )
-                })
-                .collect(),
-        )
-        .expect("complete publication layout ledger"),
     )
+    .expect("complete publication layout ledger");
+    match sealed {
+        Some(product_publication) => PhysicalWorkBinding::new_with_product_publication(
+            catalog,
+            dag,
+            prediction,
+            artifacts,
+            transaction,
+            layouts,
+            product_publication,
+        ),
+        None => PhysicalWorkBinding::new_legacy_whole_run(
+            catalog,
+            dag,
+            prediction,
+            artifacts,
+            transaction,
+            layouts,
+            &legacy_publication_authority(),
+        ),
+    }
     .expect("bound transaction physical work")
 }
 
@@ -3506,7 +3521,7 @@ fn evidenced_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
         stages,
     )
     .expect("complete evidence prediction");
-    PhysicalWorkBinding::new(
+    legacy_physical_work(
         implementation_catalog(&problem, &dag),
         dag,
         prediction,
@@ -3720,7 +3735,7 @@ fn auditable_physical_work(
         adaptations: base_dag.adaptations().values().cloned().collect(),
     })
     .expect("valid auditable physical work DAG");
-    PhysicalWorkBinding::new(
+    legacy_physical_work(
         implementation_catalog(problem, &dag),
         dag,
         base.prediction().clone(),
@@ -4035,7 +4050,7 @@ fn mapped_publication_candidate(
     )
     .expect("one mapped layout per participant");
     let dag = base.execution_dag().clone();
-    PhysicalWorkBinding::new(
+    legacy_physical_work(
         implementation_catalog(&problem, &dag),
         dag,
         base.prediction().clone(),
@@ -4425,6 +4440,59 @@ fn execution_provenance(
     )
 }
 
+fn legacy_publication_authority() -> LegacyWholeRunPublicationAuthority {
+    let requirement = ExecutionRouteRequirement::new(
+        "capability.continuum-mfs",
+        ExecutionRouteRequirementKind::Capability,
+        ExecutionRouteDisposition::LegacyWholeRun,
+        casa_imaging_runtime::ExecutionRouteRequirementEvidence {
+            current_owner: "legacy whole-run imaging route".to_string(),
+            destination_tickets: vec!["T23/#509".to_string()],
+            evidence_issues: vec![486, 509],
+            baseline_manifests: vec![
+                "repo://resources/imaging-architecture/migration-matrix.json".to_string(),
+            ],
+            acceptance_contract: "scientific-products-v1".to_string(),
+            transfer_point: "continuum native acceptance and legacy deletion".to_string(),
+            deletion_condition: "delete with T23 native transfer".to_string(),
+            source_evidence: vec![
+                "crates/casa-imaging-router/src/lib.rs::RequestDisposition".to_string(),
+            ],
+            obligation_ticket: Some("T23/#509".to_string()),
+            obligation_reason: Some("continuum transfer remains held".to_string()),
+        },
+    )
+    .expect("legacy continuum route requirement");
+    let route = ExecutionRouteEvidence::new(
+        1,
+        32,
+        ExecutionRouteDisposition::LegacyWholeRun,
+        vec![requirement],
+    )
+    .expect("legacy whole-run route evidence");
+    LegacyWholeRunPublicationAuthority::from_route(&route)
+        .expect("legacy whole-run publication authority")
+}
+
+fn legacy_physical_work(
+    catalog: ImplementationContractCatalog,
+    execution_dag: ExecutionDag,
+    prediction: PlanPrediction,
+    artifacts: Vec<PlannedArtifact>,
+    observation_transaction: ObservationTransactionWork,
+    publication_layouts: PublicationLayoutLedger,
+) -> Result<PhysicalWorkBinding, PhysicalWorkBindingError> {
+    PhysicalWorkBinding::new_legacy_whole_run(
+        catalog,
+        execution_dag,
+        prediction,
+        artifacts,
+        observation_transaction,
+        publication_layouts,
+        &legacy_publication_authority(),
+    )
+}
+
 fn run<C: RunController>(
     problem: &casa_imaging_model::CompiledProblem,
     plan: &casa_imaging_runtime::ExecutionPlan,
@@ -4739,7 +4807,7 @@ fn physical_work_binding_rejects_cpu_io_buffer_contracts_without_predictions() {
     .expect("complete prediction ledger without preparation I/O evidence");
 
     assert!(matches!(
-        PhysicalWorkBinding::new(
+        legacy_physical_work(
             implementation_catalog(&problem, &dag),
             dag,
             prediction,
@@ -4996,7 +5064,7 @@ fn versioned_request_compiles_before_physical_planning() {
 
 #[test]
 fn plan_seals_physical_work_and_every_required_binding() {
-    assert_eq!(ExecutionPlanId::SCHEMA_VERSION, 10);
+    assert_eq!(ExecutionPlanId::SCHEMA_VERSION, 11);
     let problem = compile(request(1)).expect("logical compilation");
     let expected_problem_id = problem.problem_id();
     let bindings =
@@ -5070,10 +5138,32 @@ fn plan_seals_physical_work_and_every_required_binding() {
     assert_eq!(
         execution_plan.plan_id().as_bytes(),
         [
-            90, 161, 155, 186, 10, 78, 134, 46, 62, 1, 115, 175, 118, 198, 110, 233, 245, 140, 85,
-            30, 183, 39, 145, 242, 215, 131, 96, 32, 37, 197, 91, 101,
+            160, 95, 69, 253, 135, 109, 117, 176, 204, 73, 86, 215, 236, 238, 129, 19, 165, 65,
+            226, 181, 54, 35, 74, 226, 184, 1, 44, 63, 226, 100, 89, 14,
         ]
     );
+}
+
+#[test]
+fn generic_physical_work_cannot_bypass_product_publication_authority() {
+    let problem = compile(request(1)).expect("logical compilation");
+    let base = physical_work_for_problem(&problem, 6);
+    let dag = base.execution_dag().clone();
+
+    let error = PhysicalWorkBinding::new(
+        implementation_catalog(&problem, &dag),
+        dag,
+        base.prediction().clone(),
+        base.artifacts().to_vec(),
+        base.observation_transaction().clone(),
+        base.publication_layouts().clone(),
+    )
+    .expect_err("Product layouts require explicit sealed or legacy authority");
+
+    assert!(matches!(
+        error,
+        PhysicalWorkBindingError::InvalidProductPublication { .. }
+    ));
 }
 
 #[test]
@@ -5234,7 +5324,7 @@ fn transaction_seal_blocks_unbound_transaction_work() {
     let problem = compile(request(1)).expect("logical compilation");
     let base = physical_work_for_problem(&problem, 6);
     let dag = base.execution_dag().clone();
-    let unbound = PhysicalWorkBinding::new(
+    let unbound = legacy_physical_work(
         implementation_catalog(&problem, &dag),
         dag,
         base.prediction().clone(),
@@ -9469,9 +9559,9 @@ fn sealed_products_round(
         .expect("atomic reconciliation")
 }
 
-fn sealed_publication_plan_for_problem(
+fn sealed_generation_for_problem(
     problem: &casa_imaging_model::CompiledProblem,
-) -> SealedPublicationPlan {
+) -> SealedContinuumGeneration {
     let join = sealed_products_round(problem, 200);
     let catalog = ContinuumSourceCatalog::from_major_cycle(problem, &join)
         .expect("source catalog from released join");
@@ -9481,8 +9571,39 @@ fn sealed_publication_plan_for_problem(
         .expect("planned generation");
     let inputs = ContinuumProductInputs::from_major_cycle(problem, &join).expect("inputs");
     let produced = produce_continuum_members(&planned, &inputs).expect("produced members");
-    let sealed = authority.authorize(&planned, &produced).expect("sealed");
-    SealedPublicationPlan::bind(problem, &sealed).expect("seal-bound publication plan")
+    authority.authorize(&planned, &produced).expect("sealed")
+}
+
+fn sealed_publication_plan_for_problem(
+    problem: &casa_imaging_model::CompiledProblem,
+) -> SealedPublicationPlan {
+    let sealed = sealed_generation_for_problem(problem);
+    let projection = PublicationProjection::from_sealed(&sealed).expect("publication projection");
+    SealedPublicationPlan::bind(problem, &projection).expect("seal-bound publication plan")
+}
+
+#[test]
+fn sealed_publication_plan_rejects_another_problem_with_the_same_product_graph() {
+    let source = compile(sealed_products_request(236)).expect("source continuum compilation");
+    let foreign = compile(sealed_products_request(237)).expect("foreign continuum compilation");
+    assert_eq!(
+        source.product_graph().graph_id(),
+        foreign.product_graph().graph_id(),
+        "the probe isolates problem lineage from identical product topology"
+    );
+    assert_ne!(source.problem_id(), foreign.problem_id());
+
+    let sealed = sealed_generation_for_problem(&source);
+    let projection = PublicationProjection::from_sealed(&sealed).expect("publication projection");
+    let error = SealedPublicationPlan::bind(&foreign, &projection)
+        .expect_err("a seal from another problem must not enter publication planning");
+    assert_eq!(
+        error,
+        casa_imaging_runtime::ProductPublicationError::ForeignSeal {
+            expected_problem: foreign.problem_id(),
+            expected_graph: foreign.product_graph().graph_id(),
+        }
+    );
 }
 fn problem_bound_sealed_work(
     problem: &casa_imaging_model::CompiledProblem,
@@ -9567,13 +9688,14 @@ fn problem_bound_sealed_work(
             .collect(),
     })
     .expect("problem-bound transaction DAG");
-    PhysicalWorkBinding::new(
+    PhysicalWorkBinding::new_with_product_publication(
         implementation_catalog(problem, &dag),
         dag,
         base.prediction().clone(),
         base.artifacts().to_vec(),
         base.observation_transaction().clone(),
         base.publication_layouts().clone(),
+        sealed,
     )
     .expect("problem-bound sealed transaction work")
 }

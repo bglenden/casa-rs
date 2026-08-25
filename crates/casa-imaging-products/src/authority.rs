@@ -342,6 +342,8 @@ impl ProductGenerationAuthority {
             })
             .collect::<Box<[_]>>();
         Ok(SealedContinuumGeneration {
+            problem_id: self.problem_id,
+            graph_id: self.graph_id,
             seal_id,
             generation_id: planned.generation_id,
             completions_id,
@@ -938,6 +940,8 @@ fn sealed_beam(rule: ProductBeamRule, fitted: Option<RestoringBeam>) -> Option<R
 /// ```
 #[derive(Debug)]
 pub struct SealedContinuumGeneration {
+    problem_id: CompiledProblemId,
+    graph_id: ProductGraphId,
     seal_id: ContinuumSealId,
     generation_id: PlannedGenerationId,
     completions_id: ContinuumCompletionsId,
@@ -946,6 +950,18 @@ pub struct SealedContinuumGeneration {
 }
 
 impl SealedContinuumGeneration {
+    /// Return the exact compiled problem authorized by this seal.
+    #[must_use]
+    pub const fn problem_id(&self) -> CompiledProblemId {
+        self.problem_id
+    }
+
+    /// Return the exact compiled Product Graph authorized by this seal.
+    #[must_use]
+    pub const fn graph_id(&self) -> ProductGraphId {
+        self.graph_id
+    }
+
     /// Return the Product Generation seal identity.
     #[must_use]
     pub const fn seal_id(&self) -> ContinuumSealId {

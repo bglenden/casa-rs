@@ -3,7 +3,7 @@
 //! T21 bounded Högbom Minor Cycles over authoritative Normal State views,
 //! driven entirely through the reconstruction owner seams.
 
-use std::convert::Infallible;
+use std::{collections::BTreeMap, convert::Infallible};
 
 use casa_imaging_model::{
     AntennaSelection, AxisOrder, CentreLaws, ColumnGeneration, ConsistencyToken,
@@ -691,19 +691,15 @@ fn minor_cycle_delta_composes_with_the_next_major_cycle_reconciliation() {
     let recorded = evidence
         .recorded_component_sequence()
         .expect("recording was requested");
-    let mut expected: Vec<(usize, f64)> = Vec::new();
+    let mut expected = BTreeMap::<usize, f64>::new();
     for component in recorded {
         let flat = round
             .final_model
             .shape()
             .flat_index(component.cell())
             .expect("component cell inside shape");
-        match expected.last_mut() {
-            Some((last_flat, sum)) if *last_flat == flat => *sum += component.flux(),
-            _ => expected.push((flat, component.flux())),
-        }
+        *expected.entry(flat).or_default() += component.flux();
     }
-    expected.sort_by_key(|(flat, _)| *flat);
     let terms = delta
         .terms()
         .iter()
@@ -719,7 +715,7 @@ fn minor_cycle_delta_composes_with_the_next_major_cycle_reconciliation() {
         })
         .collect::<Vec<_>>();
     assert_eq!(terms.len(), expected.len());
-    for ((flat, sum), (expected_flat, expected_sum)) in terms.iter().zip(&expected) {
+    for ((flat, sum), (expected_flat, expected_sum)) in terms.iter().zip(expected.iter()) {
         assert_eq!(flat, expected_flat, "canonical ascending cell order");
         assert!((sum - expected_sum).abs() <= 1.0e-12 * sum.abs().max(1.0));
     }
@@ -992,6 +988,7 @@ fn threshold_boundary_follows_the_casa_hogbom_convention() {
     );
     assert_eq!(equal.evidence().iterations(), 1);
     assert!(equal.delta().is_some());
+    assert!(equal.evidence().requests_reconciliation());
 
     // Strictly below the peak: the first component is cleaned too.
     let below = solve(strength * 0.99);
@@ -1000,6 +997,7 @@ fn threshold_boundary_follows_the_casa_hogbom_convention() {
         MinorCycleStopReason::ThresholdReached
     );
     assert!(below.evidence().iterations() >= 1);
+    assert!(below.evidence().requests_reconciliation());
 }
 
 #[test]

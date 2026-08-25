@@ -20,13 +20,13 @@ pub use execution_bindings::{
     ArtifactRole, AttemptBoundObservationCompletion, BindingKind, CacheIdentity,
     CompiledWorkContext, ExecutionEvidenceError, ExecutionPlan, ExecutionPlanId, ExecutionStatus,
     ImplementationContractCatalog, ImplementationContractMetadata, ImplementationRegistry,
-    ImplementationRegistryId, IoMeasurement, IoPrediction, ObservationCompletionBindingError,
-    ObservationReadCompletionContext, PhysicalWorkBinding, PhysicalWorkBindingError,
-    PhysicalWorkId, PlanError, PlanPrediction, PlannedArtifact, PlannerCostModelProfileId,
-    PlanningBindings, PredictionConfidence, PredictionUncertainty, PublicationResources,
-    RedactedPath, ResourceMeasurement, ResourcePolicyId, RunBindings, RunController, RunDirective,
-    RunError, RunToCompletion, StagePrediction, WorkExecutionContext, WorkImplementation,
-    WorkMeasurements, plan, run,
+    ImplementationRegistryId, IoMeasurement, IoPrediction, LegacyWholeRunPublicationAuthority,
+    ObservationCompletionBindingError, ObservationReadCompletionContext, PhysicalWorkBinding,
+    PhysicalWorkBindingError, PhysicalWorkId, PlanError, PlanPrediction, PlannedArtifact,
+    PlannerCostModelProfileId, PlanningBindings, PredictionConfidence, PredictionUncertainty,
+    PublicationResources, RedactedPath, ResourceMeasurement, ResourcePolicyId, RunBindings,
+    RunController, RunDirective, RunError, RunToCompletion, StagePrediction, WorkExecutionContext,
+    WorkImplementation, WorkMeasurements, plan, run,
 };
 
 pub use casa_imaging_reconstruction::{ContinuumPrimitiveCatalog, MajorCyclePreparation};

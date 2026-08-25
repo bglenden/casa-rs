@@ -37,7 +37,7 @@ use crate::{
 };
 
 const EXECUTION_PLAN_IDENTITY_DOMAIN: &[u8] = b"casa-rs-execution-plan";
-const EXECUTION_PLAN_IDENTITY_VERSION: u32 = 10;
+const EXECUTION_PLAN_IDENTITY_VERSION: u32 = 11;
 const RESOURCE_POLICY_IDENTITY_DOMAIN: &[u8] = b"casa-rs-resource-policy";
 const RESOURCE_POLICY_IDENTITY_VERSION: u32 = 1;
 
@@ -753,6 +753,11 @@ pub enum PhysicalWorkBindingError {
         /// Stable diagnostic for the rejected physical declaration.
         reason: String,
     },
+    /// Product publication layouts were not derived from the exact authorized seal.
+    InvalidProductPublication {
+        /// Stable diagnostic for the rejected seal binding.
+        reason: String,
+    },
     /// The registry did not publish a contract for one selected implementation.
     MissingImplementationContract(WorkImplementationId),
     /// Registry-owned implementation contracts disagreed within one physical DAG.
@@ -829,6 +834,9 @@ impl fmt::Display for PhysicalWorkBindingError {
             ),
             Self::InvalidPublicationLayout { reason } => {
                 write!(formatter, "invalid publication layout: {reason}")
+            }
+            Self::InvalidProductPublication { reason } => {
+                write!(formatter, "invalid sealed product publication: {reason}")
             }
             Self::MissingImplementationContract(implementation) => write!(
                 formatter,
@@ -1063,6 +1071,50 @@ pub struct PhysicalWorkBinding {
     artifacts: Vec<PlannedArtifact>,
     observation_transaction: ObservationTransactionWork,
     publication_layouts: PublicationLayoutLedger,
+    product_publication: ProductPublicationAuthority,
+}
+
+/// Explicit authority for the temporary legacy whole-run publication route.
+///
+/// This token can be minted only from complete route evidence whose aggregate
+/// disposition is `LegacyWholeRun`. T23 deletes this token and its constructor
+/// when the last continuum requirement transfers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LegacyWholeRunPublicationAuthority {
+    matrix_schema_version: u32,
+    matrix_contract_revision: u32,
+}
+
+impl LegacyWholeRunPublicationAuthority {
+    /// Bind the exact authoritative migration decision permitting legacy publication.
+    pub fn from_route(
+        route: &crate::ExecutionRouteEvidence,
+    ) -> Result<Self, PhysicalWorkBindingError> {
+        if route.disposition() != crate::ExecutionRouteDisposition::LegacyWholeRun {
+            return invalid_product_publication(
+                "legacy publication authority requires a LegacyWholeRun route",
+            );
+        }
+        Ok(Self {
+            matrix_schema_version: route.matrix_schema_version(),
+            matrix_contract_revision: route.matrix_contract_revision(),
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ProductPublicationAuthority {
+    None,
+    LegacyWholeRun {
+        matrix_schema_version: u32,
+        matrix_contract_revision: u32,
+    },
+    Sealed {
+        problem_id: CompiledProblemId,
+        graph_id: ProductGraphId,
+        seal_id: casa_imaging_products::ContinuumSealId,
+        generation_id: casa_imaging_products::PlannedGenerationId,
+    },
 }
 
 /// Registry-owned science, numerics, and capability metadata for one
@@ -1457,7 +1509,110 @@ impl PhysicalWorkBinding {
             artifacts,
             observation_transaction,
             publication_layouts,
+            ProductPublicationAuthority::None,
         )
+    }
+
+    /// Bind the explicitly routed legacy whole-run publication path.
+    ///
+    /// Product layouts are accepted here only with authority derived from a
+    /// complete `LegacyWholeRun` migration decision. Native product work must
+    /// use [`Self::new_with_product_publication`].
+    pub fn new_legacy_whole_run(
+        catalog: ImplementationContractCatalog,
+        execution_dag: ExecutionDag,
+        prediction: PlanPrediction,
+        artifacts: Vec<PlannedArtifact>,
+        observation_transaction: ObservationTransactionWork,
+        publication_layouts: PublicationLayoutLedger,
+        authority: &LegacyWholeRunPublicationAuthority,
+    ) -> Result<Self, PhysicalWorkBindingError> {
+        Self::with_implementation_contract(
+            ImplementationContractCommitment::from_catalog(&catalog, &execution_dag)?,
+            execution_dag,
+            prediction,
+            artifacts,
+            observation_transaction,
+            publication_layouts,
+            ProductPublicationAuthority::LegacyWholeRun {
+                matrix_schema_version: authority.matrix_schema_version,
+                matrix_contract_revision: authority.matrix_contract_revision,
+            },
+        )
+    }
+
+    /// Bind native product publication through the exact Product Generation seal.
+    ///
+    /// This is the production construction path for physical work containing
+    /// [`crate::PublicationParticipant::Product`] layouts. It validates the
+    /// ordinary DAG, resource, artifact, and layout contracts, then requires
+    /// the product subset to match the seal-derived publication plan exactly
+    /// by compiled problem, Product Graph, member, and artifact identity.
+    pub fn new_with_product_publication(
+        catalog: ImplementationContractCatalog,
+        execution_dag: ExecutionDag,
+        prediction: PlanPrediction,
+        artifacts: Vec<PlannedArtifact>,
+        observation_transaction: ObservationTransactionWork,
+        publication_layouts: PublicationLayoutLedger,
+        product_publication: &crate::ProductPublicationPlan,
+    ) -> Result<Self, PhysicalWorkBindingError> {
+        let binding = Self::with_implementation_contract(
+            ImplementationContractCommitment::from_catalog(&catalog, &execution_dag)?,
+            execution_dag,
+            prediction,
+            artifacts,
+            observation_transaction,
+            publication_layouts,
+            ProductPublicationAuthority::Sealed {
+                problem_id: product_publication.problem_id(),
+                graph_id: product_publication.graph_id(),
+                seal_id: product_publication.seal_id(),
+                generation_id: product_publication.generation_id(),
+            },
+        )?;
+        binding.validate_product_publication(product_publication)?;
+        Ok(binding)
+    }
+
+    fn validate_product_publication(
+        &self,
+        product_publication: &crate::ProductPublicationPlan,
+    ) -> Result<(), PhysicalWorkBindingError> {
+        if product_publication.problem_id() != self.implementation_contract.problem_id() {
+            return invalid_product_publication(
+                "seal and implementation contract name different compiled problems",
+            );
+        }
+        let product_layouts = self
+            .publication_layouts
+            .entries()
+            .iter()
+            .filter_map(|layout| match layout.participant() {
+                crate::PublicationParticipant::Product { graph_id, node_id } => {
+                    Some((graph_id, node_id, layout.artifact()))
+                }
+                crate::PublicationParticipant::ModelData(_) => None,
+            })
+            .collect::<Vec<_>>();
+        if product_layouts.len() != product_publication.entries().len() {
+            return invalid_product_publication(
+                "product layouts do not exactly cover the sealed member set",
+            );
+        }
+        for entry in product_publication.entries() {
+            if !product_layouts.iter().any(|(graph_id, node_id, artifact)| {
+                *graph_id == product_publication.graph_id()
+                    && *node_id == entry.node()
+                    && *artifact == entry.artifact()
+            }) {
+                return invalid_product_publication(format!(
+                    "sealed product node {} has no exact publication layout",
+                    entry.node().ordinal()
+                ));
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn with_implementation_contract(
@@ -1467,6 +1622,7 @@ impl PhysicalWorkBinding {
         mut artifacts: Vec<PlannedArtifact>,
         observation_transaction: ObservationTransactionWork,
         publication_layouts: PublicationLayoutLedger,
+        product_publication: ProductPublicationAuthority,
     ) -> Result<Self, PhysicalWorkBindingError> {
         for node in execution_dag.nodes().keys() {
             if !prediction.stages.contains_key(node) {
@@ -1516,6 +1672,17 @@ impl PhysicalWorkBinding {
             &artifacts,
             &publication_layouts,
         )?;
+        let has_product_layout = publication_layouts.entries().iter().any(|layout| {
+            matches!(
+                layout.participant(),
+                crate::PublicationParticipant::Product { .. }
+            )
+        });
+        if has_product_layout && matches!(product_publication, ProductPublicationAuthority::None) {
+            return invalid_product_publication(
+                "Product layouts require either a sealed native plan or explicit LegacyWholeRun authority",
+            );
+        }
         Ok(Self {
             implementation_contract,
             execution_dag,
@@ -1523,6 +1690,7 @@ impl PhysicalWorkBinding {
             artifacts,
             observation_transaction,
             publication_layouts,
+            product_publication,
         })
     }
 
@@ -1531,6 +1699,10 @@ impl PhysicalWorkBinding {
     #[must_use]
     pub(crate) const fn implementation_contract(&self) -> &ImplementationContractCommitment {
         &self.implementation_contract
+    }
+
+    pub(crate) fn product_publication_authority(&self) -> ProductPublicationAuthority {
+        self.product_publication.clone()
     }
 
     fn bind_registry<R: ImplementationRegistry>(
@@ -1547,6 +1719,7 @@ impl PhysicalWorkBinding {
             self.artifacts,
             self.observation_transaction,
             self.publication_layouts,
+            self.product_publication,
         )
     }
 
@@ -1838,6 +2011,14 @@ fn invalid_publication_layout<T>(reason: impl Into<String>) -> Result<T, Physica
     })
 }
 
+fn invalid_product_publication<T>(
+    reason: impl Into<String>,
+) -> Result<T, PhysicalWorkBindingError> {
+    Err(PhysicalWorkBindingError::InvalidProductPublication {
+        reason: reason.into(),
+    })
+}
+
 fn validate_io_contracts(
     execution_dag: &ExecutionDag,
     prediction: &PlanPrediction,
@@ -2092,6 +2273,7 @@ pub struct ExecutionPlan {
     artifacts: Vec<PlannedArtifact>,
     observation_transaction: BoundObservationTransaction,
     publication_layouts: PublicationLayoutLedger,
+    product_publication: ProductPublicationAuthority,
 }
 
 impl ExecutionPlan {
@@ -2307,6 +2489,7 @@ where
     let reference_products = product_surface(first);
     let reference_transaction = first.observation_transaction.clone();
     let reference_layouts = first.publication_layouts.clone();
+    let reference_product_publication = first.product_publication.clone();
     for candidate in &candidates {
         candidate
             .implementation_contract()
@@ -2369,6 +2552,11 @@ where
         if candidate.publication_layouts != reference_layouts {
             return Err(PlanError::InvalidCandidate(ExecutionError::InvalidPlan(
                 "physical candidates disagree on publication layouts; lexicographic planning preserves product contracts".to_string(),
+            )));
+        }
+        if candidate.product_publication != reference_product_publication {
+            return Err(PlanError::InvalidCandidate(ExecutionError::InvalidPlan(
+                "physical candidates disagree on product-publication authority; lexicographic planning preserves publication capabilities".to_string(),
             )));
         }
         validate_topology(&candidate.execution_dag, authority.topology())
@@ -2440,6 +2628,7 @@ where
         artifacts: physical_work.artifacts,
         observation_transaction,
         publication_layouts: physical_work.publication_layouts,
+        product_publication: physical_work.product_publication,
     };
     plan.plan_id = execution_plan_id(&plan);
     Ok(plan)
@@ -4437,6 +4626,29 @@ fn execution_plan_id(plan: &ExecutionPlan) -> ExecutionPlanId {
     encoder.digest(plan.resource_policy_id.as_bytes());
     encoder.digest(plan.planner_cost_model_profile.as_bytes());
     encoder.digest(plan.execution_dag.physical_work_id().as_bytes());
+    match &plan.product_publication {
+        ProductPublicationAuthority::None => encoder.u8(0),
+        ProductPublicationAuthority::LegacyWholeRun {
+            matrix_schema_version,
+            matrix_contract_revision,
+        } => {
+            encoder.u8(1);
+            encoder.u32(*matrix_schema_version);
+            encoder.u32(*matrix_contract_revision);
+        }
+        ProductPublicationAuthority::Sealed {
+            problem_id,
+            graph_id,
+            seal_id,
+            generation_id,
+        } => {
+            encoder.u8(2);
+            encoder.digest(problem_id.as_bytes());
+            encoder.digest(graph_id.as_bytes());
+            encoder.digest(seal_id.as_bytes());
+            encoder.digest(generation_id.as_bytes());
+        }
+    }
     encoder.u64(plan.prediction.elapsed_nanos());
     encoder.u32(plan.prediction.confidence().parts_per_million());
     encoder.usize(plan.prediction.uncertainty().len());
