@@ -41,7 +41,7 @@ pub use projection::{
     AtomicPublicationAttempt, PublicationMemberProjection, PublicationProjection, PublicationStage,
 };
 pub use restore::{fft_convolve, gaussian_beam_image, normalize_plane};
-pub use source::{ContinuumProductInputs, ContinuumSourceCatalog, SourceRoleEvidence};
+pub use source::{ContinuumProductInputs, ContinuumSourceCatalog};
 
 #[cfg(test)]
 mod tests {

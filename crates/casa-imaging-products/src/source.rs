@@ -190,16 +190,3 @@ impl<'a> ContinuumProductInputs<'a> {
         self.final_model
     }
 }
-
-/// One typed owner record retained in completions or seals.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SourceRoleEvidence {
-    /// The Final Normal State completion of the lineage.
-    NormalState(FinalNormalStateCompletionId),
-    /// The Major-Cycle completion of the lineage.
-    MajorCycle(MajorCycleCompletionId),
-    /// The frozen T18 weighting generation of the lineage.
-    WeightingGeneration(casa_imaging_reconstruction::WeightingGenerationId),
-    /// The authoritative T17 observation generation of the lineage.
-    Observation(casa_imaging_model::SelectedObservationGenerationId),
-}
