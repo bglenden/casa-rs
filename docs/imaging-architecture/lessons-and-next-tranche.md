@@ -1,7 +1,7 @@
 # Imaging architecture lessons and next-tranche contract
 
 Truth class: normative programme delivery
-Last reality check: 2026-08-22
+Last reality check: 2026-08-25
 Verification: `just docs-check`; `just arch-check`
 
 This document records the delivery consequences learned while implementing and
@@ -95,6 +95,33 @@ appropriate even when the programme is far from complete.
 Each active ticket has one clean worktree and one linked pull request. A mixed
 experiment is preserved under an explicitly non-acceptance branch and is mined
 ticket by ticket. Completed work is not left unmerged merely to batch a wave.
+
+### Replacement is one-way
+
+Every remaining ticket leaves exactly one canonical production route. A
+replacement ticket names the final owner, the displaced production symbols and
+routes, the callers to migrate, and the focused proof that the old path is
+unreachable or deleted. It migrates those callers and deletes the displaced
+route in the same change. If a prerequisite prevents deletion, the work is
+explicitly foundation-only: it cannot mark the capability `Native` or claim a
+production transfer.
+
+Production Rust has no `Legacy*` API, compatibility route, fallback, dual
+authority, or runtime copy of programme migration policy. Frontend and surface
+code may parse inputs, convert units, project versioned requests, invoke the
+owning capability, and present results. It does not own scientific algorithms,
+execution or resource planning, persistence/publication semantics, product
+meaning, backend selection, or capability migration state. Unsupported work
+fails typed at the canonical owner rather than dispatching to an old route.
+CASA-interoperable persistent structures are the sole compatibility exception.
+
+The architecture checker enforces the mechanically decidable part of this
+rule. Its human-readable temporary exception inventory names only debt already
+assigned to #574; new runtime migration-matrix sources and new
+native-to-displaced-production dependency paths fail immediately. #574 empties
+the inventory after T23. Review then checks only
+the four concrete replacement facts above and the ticket's scientific contract;
+this is not an additional review, approval, or broad verification gate.
 
 ### Direct ticket closure policy
 

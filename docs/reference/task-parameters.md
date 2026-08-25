@@ -19,7 +19,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [MSExplore](#surface-msexplore)<br><code>msexplore</code> | task | 4 | <code>msexplore</code> | 68 | explore and export common MeasurementSet plotms-style plots |
 | [Calibrate](#surface-calibrate)<br><code>calibrate</code> | task | 3 | <code>calibration</code> | 51 | apply, inspect, and solve CASA-style calibration workflows |
 | [ImportVLA](#surface-importvla)<br><code>importvla</code> | task | 3 | <code>importvla</code> | 12 | scan or import old VLA export archives from disk |
-| [Imager](#surface-imager)<br><code>imager</code> | task | 7 | <code>imager</code> | 91 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
+| [Imager](#surface-imager)<br><code>imager</code> | task | 8 | <code>imager</code> | 91 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
 | [SimObserve](#surface-simobserve)<br><code>simobserve</code> | task | 3 | <code>simobserve</code> | 43 | Generate a CASA-compatible synthetic VLA MeasurementSet |
 | [Table Browser](#surface-tablebrowser)<br><code>tablebrowser</code> | session | 3 | <code>table_browser</code> | 7 | browse arbitrary casacore tables |
 | [ImExplore](#surface-imexplore)<br><code>imexplore</code> | session | 3 | <code>image_browser</code> | 17 | browse persistent casacore images |
@@ -234,7 +234,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Imager (<code>imager</code>)
 
 - Kind: `task`
-- Contract version: `7`
+- Contract version: `8`
 - Category: Imaging
 - Provider family: `imager`
 - Summary: Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet
@@ -303,10 +303,10 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>pblimit</code> | <code>parameter.pblimit@r1</code> | <code>float</code> | <code>0.2</code>; optional | Stages | Mosaic primary-beam cutoff for flat-noise normalization |
 | <code>wterm</code> | <code>parameter.wterm@r1</code> | <code>choice (3 values)</code> | <code>"none"</code>; optional | Stages | W-term correction mode |
 | <code>gridder</code> | <code>parameter.gridder@r1</code> | <code>choice (7 values)</code> | <code>"standard"</code>; optional | Stages | CASA tclean gridder family |
-| <code>standard_mfs_acceleration</code> | <code>parameter.standard_mfs_acceleration@r1</code> | <code>choice (4 values)</code> | <code>"auto"</code>; optional | Stages | Backend policy for standard/MFS-compatible gridding stages |
+| <code>standard_mfs_acceleration</code> | <code>parameter.standard_mfs_acceleration@r1</code> | <code>choice (4 values)</code> | <code>"cpu"</code>; optional | Stages | Backend policy for standard/MFS-compatible gridding stages |
 | <code>parallel</code> | <code>parameter.parallel@r1</code> | <code>optional&lt;bool&gt; (states: none)</code> | <code>"none"</code>; optional | Stages | Permit planned local parallel or accelerated execution; false forces the serial CPU comparison surface |
 | <code>imaging_read_ahead_blocks</code> | <code>parameter.imaging_read_ahead_blocks@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; optional | Stages | Maximum number of live source row blocks used for bounded read and prepare overlap<br><em>Surface:</em> The runtime rejects zero; Auto defaults are selected from mode and memory geometry. |
-| <code>imaging_fft_backend</code> | <code>parameter.imaging_fft_backend@r1</code> | <code>choice (4 values)</code> | <code>"auto"</code>; optional | Stages | Backend policy for dirty and residual product FFT transforms |
+| <code>imaging_fft_backend</code> | <code>parameter.imaging_fft_backend@r1</code> | <code>choice (4 values)</code> | <code>"rustfft"</code>; optional | Stages | Backend policy for dirty and residual product FFT transforms |
 | <code>chanchunks</code> | <code>parameter.chanchunks@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; optional | Stages | Requested number of top-level spectral channel chunks; the memory planner may select a larger active plane group when it fits<br><em>Surface:</em> Applies to cube and cubedata imaging; the runtime rejects zero and MFS use. |
 | <code>uvrange</code> | <code>ms.selection.uvrange@r1</code> | <code>string</code> | <code>"none"</code>; optional | Context | UV range selector.<br><em>Surface:</em> The complete CASA UV-range selector reaches the shared MeasurementSet selection engine. |
 | <code>intent</code> | <code>ms.selection.intent@r1</code> | <code>string</code> | <code>"none"</code>; optional | Context | Intent selector.<br><em>Surface:</em> The complete CASA intent selector reaches the shared MeasurementSet selection engine. |

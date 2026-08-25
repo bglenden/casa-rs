@@ -133,6 +133,17 @@
    "NativeEnginePort"
   ]
  },
+ "forward_invariants": {
+  "temporary_exceptions": {
+   "removal_issue": 574,
+   "runtime_migration_matrix_sources": [
+    "crates/casa-imaging-router/src/lib.rs"
+   ],
+   "native_to_displaced_production_paths": [
+    "casa-imaging-runtime -> casa-ms -> casa-imaging"
+   ]
+  }
+ },
  "device_dependency_prefixes": [
   "ash",
   "cuda",

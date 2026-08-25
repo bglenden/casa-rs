@@ -319,6 +319,57 @@ def require_string_list(value: Any, context: str) -> list[str]:
     return result
 
 
+def require_optional_string_list(value: Any, context: str) -> list[str]:
+    if not isinstance(value, list):
+        raise ArchitectureError(f"{context} must be an array")
+    result = [
+        require_string(item, f"{context}[{index}]") for index, item in enumerate(value)
+    ]
+    if len(set(result)) != len(result):
+        raise ArchitectureError(f"{context} contains duplicates")
+    return result
+
+
+def validate_forward_invariant_policy(policy: dict[str, Any]) -> None:
+    forward = policy.get("forward_invariants")
+    if not isinstance(forward, dict) or set(forward) != {"temporary_exceptions"}:
+        raise ArchitectureError("forward_invariants has an unexpected shape")
+    exceptions = forward["temporary_exceptions"]
+    inventory_keys = {
+        "runtime_migration_matrix_sources",
+        "native_to_displaced_production_paths",
+    }
+    if not isinstance(exceptions, dict) or set(exceptions) != {
+        "removal_issue",
+        *inventory_keys,
+    }:
+        raise ArchitectureError("temporary forward exceptions have an unexpected shape")
+    if exceptions["removal_issue"] != 574:
+        raise ArchitectureError(
+            "temporary forward-invariant exceptions must remain assigned to #574"
+        )
+    matrix_sources = set(
+        require_optional_string_list(
+            exceptions["runtime_migration_matrix_sources"],
+            "runtime_migration_matrix_sources",
+        )
+    )
+    if not matrix_sources <= {"crates/casa-imaging-router/src/lib.rs"}:
+        raise ArchitectureError(
+            "runtime migration-matrix exceptions may only remove #574's router source"
+        )
+    displaced_paths = set(
+        require_optional_string_list(
+            exceptions["native_to_displaced_production_paths"],
+            "native_to_displaced_production_paths",
+        )
+    )
+    if not displaced_paths <= {"casa-imaging-runtime -> casa-ms -> casa-imaging"}:
+        raise ArchitectureError(
+            "native-to-displaced exceptions may only remove #574's runtime path"
+        )
+
+
 def validate_policy(
     policy: dict[str, Any], *, enforce_accepted_scope: bool = True
 ) -> None:
@@ -446,6 +497,7 @@ def validate_policy(
     validate_migration_router_policy(
         policy, package_layers, classifications, native_rules
     )
+    validate_forward_invariant_policy(policy)
 
     displaced_packages = set(
         require_string_list(policy.get("displaced_packages"), "displaced_packages")
@@ -910,6 +962,155 @@ def workspace_edges(
             )
             edges.add((name, target, kind))
     return names, edges, dependencies
+
+
+def package_production_sources(metadata: dict[str, Any]) -> dict[str, list[Path]]:
+    sources: dict[str, list[Path]] = {}
+    for index, package in enumerate(metadata["packages"]):
+        name = require_string(
+            package.get("name"), f"Cargo metadata packages[{index}].name"
+        )
+        manifest = Path(
+            require_string(
+                package.get("manifest_path"),
+                f"Cargo metadata packages[{index}].manifest_path",
+            )
+        )
+        package_sources: set[Path] = set()
+        root = manifest.parent / "src"
+        if root.is_dir():
+            package_sources.update(
+                path
+                for path in sorted(root.rglob("*.rs"))
+                if path.name != "tests.rs" and "tests" not in path.relative_to(root).parts
+            )
+        targets = package.get("targets")
+        if not isinstance(targets, list) or any(
+            not isinstance(target, dict) for target in targets
+        ):
+            raise ArchitectureError(
+                f"Cargo metadata targets for {name} must be an array"
+            )
+        for target_index, target in enumerate(targets):
+            kinds = target.get("kind")
+            if not isinstance(kinds, list) or any(
+                not isinstance(kind, str) for kind in kinds
+            ):
+                raise ArchitectureError(
+                    f"Cargo metadata targets[{target_index}].kind for {name} must be an array"
+                )
+            if "custom-build" not in kinds:
+                continue
+            package_sources.add(
+                Path(
+                    require_string(
+                        target.get("src_path"),
+                        f"Cargo metadata targets[{target_index}].src_path for {name}",
+                    )
+                )
+            )
+        sources[name] = sorted(package_sources)
+    return sources
+
+
+def native_to_displaced_production_paths(
+    policy: dict[str, Any], edges: set[tuple[str, str, str]]
+) -> set[str]:
+    graph: dict[str, set[str]] = {}
+    for source, target, _kind in edges:
+        graph.setdefault(source, set()).add(target)
+    displaced = set(policy["displaced_packages"])
+    paths: set[tuple[str, ...]] = set()
+
+    def visit(node: str, path: tuple[str, ...]) -> None:
+        for target in sorted(graph.get(node, set())):
+            if target in path:
+                continue
+            candidate = (*path, target)
+            if target in displaced:
+                paths.add(candidate)
+            else:
+                visit(target, candidate)
+
+    for package in sorted(policy["native_package_workspace_dependencies"]):
+        visit(package, (package,))
+
+    def reaches(source: str, target: str) -> bool:
+        pending = [source]
+        seen = {source}
+        while pending:
+            node = pending.pop()
+            for dependency in graph.get(node, set()):
+                if dependency == target:
+                    return True
+                if dependency not in seen:
+                    seen.add(dependency)
+                    pending.append(dependency)
+        return False
+
+    minimal_paths = {
+        path
+        for path in paths
+        if not any(
+            len(suffix) < len(path) and path[-len(suffix) :] == suffix
+            for suffix in paths
+        )
+    }
+    owner_paths = {
+        path
+        for path in minimal_paths
+        if not any(
+            other[1:] == path[1:]
+            and other[0] != path[0]
+            and reaches(path[0], other[0])
+            for other in minimal_paths
+        )
+    }
+    return {" -> ".join(path) for path in owner_paths}
+
+
+def require_exact_forward_inventory(
+    name: str, actual: set[str], expected: list[str]
+) -> None:
+    added = sorted(actual - set(expected))
+    removed = sorted(set(expected) - actual)
+    if added or removed:
+        raise ArchitectureError(
+            f"{name} changed; #574 must remove exceptions and no ticket may add "
+            f"one: added={added}, removed={removed}"
+        )
+
+
+def validate_forward_invariants(
+    policy: dict[str, Any], metadata: dict[str, Any]
+) -> None:
+    exceptions = policy["forward_invariants"]["temporary_exceptions"]
+    classifications: dict[str, str] = policy["workspace_package_classification"]
+    sources = package_production_sources(metadata)
+    matrix_sources: set[str] = set()
+    matrix_pattern = re.compile(r"migration[-_]matrix\.json", re.IGNORECASE)
+
+    for package, layer in policy["package_layers"].items():
+        if classifications[package] == "displaced" or layer == "displaced":
+            continue
+        for path in sources[package]:
+            source = path.read_text(encoding="utf-8")
+            relative = display_path(path)
+            if matrix_pattern.search(source):
+                matrix_sources.add(relative)
+
+    require_exact_forward_inventory(
+        "runtime migration-matrix source inventory",
+        matrix_sources,
+        exceptions["runtime_migration_matrix_sources"],
+    )
+
+    _packages, edges, _dependencies = workspace_edges(metadata)
+    require_exact_forward_inventory(
+        "native-to-displaced production path inventory",
+        native_to_displaced_production_paths(policy, edges),
+        exceptions["native_to_displaced_production_paths"],
+    )
 
 
 def matches_dependency_prefix(name: str, prefix: str) -> bool:
@@ -4080,6 +4281,25 @@ def run_policy_self_test(policy: dict[str, Any]) -> None:
             )
 
 
+def run_forward_invariant_self_test(
+    policy: dict[str, Any], metadata: dict[str, Any]
+) -> None:
+    keys = (
+        "runtime_migration_matrix_sources",
+        "native_to_displaced_production_paths",
+    )
+    for key in keys:
+        mutation = copy.deepcopy(policy)
+        mutation["forward_invariants"]["temporary_exceptions"][key].append(
+            "synthetic exception"
+        )
+        try:
+            validate_forward_invariant_policy(mutation)
+        except ArchitectureError:
+            continue
+        raise ArchitectureError(f"forward-invariant self-test mutation {key} passed")
+
+
 def synthetic_matrix(policy: dict[str, Any]) -> dict[str, Any]:
     baseline = "repo://scripts/check-imaging-architecture.py#class ArchitectureError"
     return {
@@ -4210,6 +4430,9 @@ def main() -> int:
             resolve_input(args.metadata) if args.metadata else None
         )
         validate_workspace(policy, metadata)
+        validate_forward_invariants(policy, metadata)
+        if args.self_test:
+            run_forward_invariant_self_test(policy, metadata)
         validate_source_boundaries(policy)
         validate_migration_router_source(policy)
 
