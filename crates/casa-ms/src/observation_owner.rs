@@ -116,6 +116,7 @@ const REQUIRED_METADATA: [MetadataTableKind; 9] = [
 ];
 
 /// Explicit production inputs for resolving one selected MeasurementSet owner.
+#[derive(Clone)]
 pub struct SelectedObservationResolutionRequest {
     locator: String,
     selection_request: LogicalIdentity,

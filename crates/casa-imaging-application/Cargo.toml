@@ -1,0 +1,20 @@
+[package]
+name = "casa-imaging-application"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Production composition seam for native CASA-RS imaging"
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+casa-imaging-model = { path = "../casa-imaging-model" }
+casa-imaging-products = { path = "../casa-imaging-products" }
+casa-imaging-reconstruction = { path = "../casa-imaging-reconstruction" }
+casa-imaging-router = { path = "../casa-imaging-router" }
+casa-imaging-runtime = { path = "../casa-imaging-runtime" }
+casa-ms = { path = "../casa-ms" }

@@ -621,6 +621,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "casa-imaging-application"
+version = "0.27.0"
+dependencies = [
+ "casa-imaging-model",
+ "casa-imaging-products",
+ "casa-imaging-reconstruction",
+ "casa-imaging-router",
+ "casa-imaging-runtime",
+ "casa-ms",
+]
+
+[[package]]
 name = "casa-imaging-model"
 version = "0.27.0"
 dependencies = [
@@ -751,6 +763,7 @@ dependencies = [
  "casa-test-support",
  "casa-types",
  "flate2",
+ "getrandom 0.3.4",
  "image 0.25.10",
  "libc",
  "libm",
@@ -762,6 +775,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "sha2",
  "sofars",
  "tar",
  "tempfile",

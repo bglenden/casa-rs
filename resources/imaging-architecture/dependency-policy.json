@@ -49,6 +49,7 @@
  "package_layers": {
   "casa-provider-contracts": "application",
   "casa-ms": "observation",
+  "casa-imaging-application": "application",
   "casa-imaging-model": "science",
   "casa-imaging-products": "product",
   "casa-imaging-reconstruction": "reconstruction",
@@ -66,6 +67,7 @@
   "casa-coordinates": "support",
   "casa-images": "support",
   "casa-imaging": "legacy",
+  "casa-imaging-application": "native",
   "casa-imaging-model": "native",
   "casa-imaging-products": "native",
   "casa-imaging-reconstruction": "native",
@@ -93,6 +95,14 @@
   "ratatui-graphics": "support"
  },
  "native_package_workspace_dependencies": {
+  "casa-imaging-application": [
+   "casa-imaging-model",
+   "casa-imaging-products",
+   "casa-imaging-reconstruction",
+   "casa-imaging-router",
+   "casa-imaging-runtime",
+   "casa-ms"
+  ],
   "casa-imaging-model": [],
   "casa-imaging-reconstruction": [
    "casa-imaging-model"

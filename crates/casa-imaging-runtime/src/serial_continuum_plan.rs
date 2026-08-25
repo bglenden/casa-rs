@@ -64,6 +64,22 @@ pub struct SerialContinuumPlan {
 }
 
 impl SerialContinuumPlan {
+    /// Plan one complete-data dirty pass without minor-cycle work.
+    pub fn dirty<R: ImplementationRegistry>(
+        problem: &CompiledProblem,
+        registry: &R,
+        policy: SerialContinuumExecutionPolicy,
+    ) -> Result<Self, SerialContinuumPlanError> {
+        Self::build(
+            problem,
+            registry,
+            policy,
+            ContinuumPassIdentity::new(ContinuumPassPhase::InitialMajor, 0),
+            false,
+            None,
+        )
+    }
+
     /// Plan an initial major pass followed by one scheduler-accounted T21 node.
     pub fn initial<R: ImplementationRegistry>(
         problem: &CompiledProblem,

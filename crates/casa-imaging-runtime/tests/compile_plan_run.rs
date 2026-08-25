@@ -2164,6 +2164,34 @@ fn serial_continuum_initial_plan_contains_resource_accounted_minor_cycle() {
 }
 
 #[test]
+fn serial_continuum_dirty_plan_omits_minor_cycle_work() {
+    let problem = compile(request(1)).expect("logical continuum compilation");
+    let registry = test_registry(&problem, 3, 6, None);
+    let plan = SerialContinuumPlan::dirty(
+        &problem,
+        &registry,
+        SerialContinuumExecutionPolicy::new(
+            implementation(6),
+            WeightingExecutionLimits::new(2, 3).expect("weighting limits"),
+            selected_content_residency(&problem),
+            1_000,
+            8 * 8 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
+            900_000,
+        ),
+    )
+    .expect("production dirty plan");
+
+    assert!(plan.minor_cycle_node().is_none());
+    assert!(
+        plan.physical_work()
+            .execution_dag()
+            .nodes()
+            .keys()
+            .all(|node| node.as_str() != "serial-continuum-minor-cycle")
+    );
+}
+
+#[test]
 fn serial_continuum_executes_initial_major_and_scheduler_minor_cycle() {
     let problem = compile(request_with_geometry(
         1,

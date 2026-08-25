@@ -18,7 +18,7 @@ coordinates, measures, and related workflows.
 | foundation crates (`casa-types`, `casa-measures-data`, `casa-measures-tools`) | Public scalar/quanta/measures algorithms and contracts plus explicit runtime-data validation, loading, installation, and maintenance | core codecs; `casa-measures-data` also uses canonical `casa-tables` accessors |
 | persistent storage (`casa-tables`) | CASA table persistence, codecs, data managers/storage backends, schema/mutation APIs, and TaQL engine | core codecs, foundation crates |
 | native imaging contracts (`casa-imaging-model`, `casa-imaging-reconstruction`, `casa-imaging-products`, `casa-imaging-runtime`) | Dependency-free logical schemas and commitments; authoritative model-state ingest, reprojection, delta, and completion algorithms; continuum product algorithms and the two-phase Product Generation Authority with planned generations, artifact identities, seals, and publication projection; process-level resource topology, policies, demand envelopes, arbitration, and leases | `casa-imaging-model` has no workspace dependencies; `casa-imaging-reconstruction` depends only on the model; `casa-imaging-products` depends on the model and reconstruction; `casa-imaging-runtime` depends on the model and the reconstruction-owned executable-problem brand at its execution boundary and composes product authority at its publication boundary in the continuing tranche cutover; none may depend on current legacy imaging crates |
-| imaging migration router (`casa-imaging-router`) | Sole pre-plan whole-run dispatch owner, deriving authoritative capability rows and recording one `Native`, `LegacyWholeRun`, or `TemporarilyUnavailable` disposition | `casa-imaging-model` only; its sealed engine ports cannot invoke or mix stages and the crate has no legacy dependency |
+| imaging application composition (`casa-imaging-application`) and migration router (`casa-imaging-router`) | The application crate is the sole production native composition seam across MeasurementSet authority, reconstruction, products, and execution; the router remains the sole pre-plan whole-run dispatch owner and records one `Native`, `LegacyWholeRun`, or `TemporarilyUnavailable` disposition | The application crate depends inward only on the router and native imaging owners; the router depends only on `casa-imaging-model`, and neither crate depends on legacy imaging |
 | domain libraries (`casa-ms`, `casa-lattices`, `casa-coordinates`, `casa-images`, `casa-imaging`, `casa-calibration`, `casa-vla`) | Higher-level astronomy data models and algorithms built on table/image persistence | foundation crates, `casa-tables`, selected peer domain crates where documented |
 | boundary contracts (`casa-provider-contracts`, `casars-imagebrowser-protocol`, `casars-tablebrowser-protocol`) | The generic provider envelope, canonical parameter and application catalogs, task/session surface definitions, and protocol surfaces between providers, apps, and Python/runtime layers | domain libraries and foundation crates; must not become a second source of truth |
 | parameter and task runtime (`casa-task-runtime`) | Format-neutral parameter resolution, sparse TOML profiles, migrations, typed task/session lifecycle coordination, managed Last storage, and the common one-shot task CLI host | boundary contracts and `casa-types`; must not implement provider science behavior |
@@ -90,11 +90,14 @@ buffer are charged inside one
 `SourceReadAhead` slot. Every `WorkImplementation` also states its failure
 measurement policy explicitly; there is no default that can silently discard
 completed I/O or mutation evidence.
-`casa-imaging-router` is the application-layer owner of the one pre-plan
-migration decision. It compiles the logical request, derives every applicable
-matrix row, records the authoritative row evidence, and invokes exactly one
-whole-run engine port. A selected native failure is terminal; the router never
-retries through legacy or exposes stage-level delegation. The current
+`casa-imaging-application` owns production native composition across
+MeasurementSet observation authority, reconstruction, products, and physical
+execution. It is bound behind the native engine port of `casa-imaging-router`,
+which owns the one pre-plan migration decision. The router compiles the logical
+request, derives every applicable matrix row, records the authoritative row
+evidence, and invokes exactly one whole-run engine port. A selected native
+failure is terminal; the router never retries through legacy or exposes
+stage-level delegation. The current
 `casa-imaging` and `casars-imager` crates remain frozen legacy owners during the
 migration; their exact existing edges are ratcheted rather than treated as
 permission for new native dependencies. Three current surface-to-domain edges
