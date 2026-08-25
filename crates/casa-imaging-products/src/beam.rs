@@ -135,6 +135,11 @@ struct LobeSearchResult {
 }
 
 /// Faithful port of `StokesImageUtil::extractCasaFitSamples`.
+///
+/// `cutoff` is the CASA `psfcutoff` fraction of the ACTUAL PSF peak: the
+/// reference workflow normalizes the local PSF by its fitted peak
+/// (`lpsf /= bamp`) before walking the main lobe, so the cutoff always
+/// compares against `cutoff * peak`, never a bare sample value.
 fn extract_fit_samples(
     psf: &[f32],
     shape: [usize; 2],
@@ -147,7 +152,7 @@ fn extract_fit_samples(
     let nrow = PSF_PATCH_RADIUS
         .min(shape[0].saturating_sub(1))
         .min(shape[1].saturating_sub(1));
-    let first_pass = find_points_in_lobe(psf, shape, peak_index, nrow, cutoff)?;
+    let first_pass = find_points_in_lobe(psf, shape, peak_index, nrow, cutoff * peak)?;
 
     let mut blc_x = first_pass.blc.0.saturating_sub(REGION_PADDING);
     let mut blc_y = first_pass.blc.1.saturating_sub(REGION_PADDING);

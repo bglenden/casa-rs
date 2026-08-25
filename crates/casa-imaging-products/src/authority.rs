@@ -12,8 +12,9 @@
 //! construction path for the records they mint.
 
 use casa_imaging_model::{
-    CompiledProblem, CompiledProblemId, ProductBeamRule, ProductGraphId, ProductNodeId,
-    ProductNormalization, ProductRole, ProductSchema,
+    CompiledProblem, CompiledProblemId, ProductAxes, ProductBeamRule, ProductGraphId,
+    ProductNodeId, ProductNormalization, ProductRole, ProductSchema, ProductUnit,
+    ProductValidityRule,
 };
 
 use crate::beam::{RestoringBeam, fit_restoring_beam};
@@ -160,8 +161,9 @@ impl ProductGenerationAuthority {
     /// Plan the exact Product Graph over closed typed source commitments.
     ///
     /// Every publication member of the compiler-owned graph receives one
-    /// derived artifact identity binding its role, name, schema, shape, and
-    /// the full source lineage under this algorithm catalog version.
+    /// derived artifact identity binding its role, name, schema, shape,
+    /// physical unit, beam rule, validity rule, dependencies, and exact
+    /// WCS/axes law under this algorithm catalog version.
     ///
     /// # Errors
     ///
@@ -184,7 +186,8 @@ impl ProductGenerationAuthority {
                 .get(node_ordinal.ordinal())
                 .ok_or(ProductsError::UnsupportedProblem)?;
             ensure_producible(node.role())?;
-            let shape = node.axes().shape();
+            let axes = node.axes();
+            let shape = axes.shape();
             let payload_values = shape
                 .iter()
                 .copied()
@@ -195,22 +198,7 @@ impl ProductGenerationAuthority {
             encoder.u32(CONTINUUM_ALGORITHM_CATALOG_VERSION);
             encoder.usize(node.node_id().ordinal());
             encoder.bytes(node.name().unwrap_or_default().as_bytes());
-            encoder.u8(match node.schema() {
-                ProductSchema::ImageF32V1 => 0,
-                ProductSchema::LogicalCollectionV1 => 1,
-                ProductSchema::EmbeddedImageMetadataV1 => 2,
-                ProductSchema::InternalImageF32V1 => 3,
-            });
-            encoder.u8(match node.beam() {
-                ProductBeamRule::None => 0,
-                ProductBeamRule::Fitted => 1,
-                ProductBeamRule::Restoring(_) => 2,
-                ProductBeamRule::Inherit(_) => 3,
-                ProductBeamRule::Metadata(_) => 4,
-            });
-            for extent in shape {
-                encoder.usize(extent);
-            }
+            encode_contract(&mut encoder, node);
             let artifact_id = MemberArtifactId(encoder.finish());
             members.push(PlannedMember {
                 node: node.node_id(),
@@ -218,7 +206,13 @@ impl ProductGenerationAuthority {
                 name: node.name().unwrap_or_default().to_string(),
                 shape,
                 payload_values,
+                unit: node.unit(),
+                schema: node.schema(),
+                axes: axes.clone(),
                 normalization: node.normalization(),
+                beam_rule: node.beam(),
+                validity: node.validity(),
+                dependencies: node.dependencies().to_vec().into_boxed_slice(),
                 artifact_id,
             });
         }
@@ -273,7 +267,12 @@ impl ProductGenerationAuthority {
             });
         }
         for (member, produced) in planned.members.iter().zip(&completions.members) {
-            if member.node != produced.node {
+            // The produced member must claim exactly this planned slot: same
+            // graph node and same planned artifact identity. The recomputed
+            // content identity must then match the produced claim, so any
+            // substitution or tampering fails closed here rather than at
+            // publication time.
+            if member.node != produced.node || member.artifact_id != produced.artifact_id {
                 return Err(ProductsError::MemberSetMismatch {
                     expected: planned.members.len(),
                     actual: completions.members.len(),
@@ -285,9 +284,6 @@ impl ProductGenerationAuthority {
                     actual: produced.payload.len(),
                 });
             }
-            // The recomputed content identity must match the produced claim;
-            // the seal then binds these exact contents to the planned
-            // generation identities.
             let digest = plane_digest(&produced.payload);
             if digest != produced.digest.as_bytes() {
                 return Err(ProductsError::MemberContentMismatch);
@@ -307,8 +303,13 @@ impl ProductGenerationAuthority {
             }
             None => encoder.u8(0),
         }
-        for member in &completions.members {
-            encoder.identity(member.digest.as_bytes());
+        for pair in planned.members.iter().zip(&completions.members) {
+            let (member, produced) = pair;
+            // Bind the planned artifact identity and the exact produced
+            // content together: a payload digest matching itself is not
+            // authorization without this pairing.
+            encoder.identity(member.artifact_id.as_bytes());
+            encoder.identity(produced.digest.as_bytes());
         }
         let completions_id = ContinuumCompletionsId(encoder.finish());
 
@@ -326,6 +327,17 @@ impl ProductGenerationAuthority {
                 node: member.node,
                 name: member.name.clone(),
                 artifact_id: member.artifact_id,
+                content_identity: produced.digest,
+                contract: SealedMemberContract {
+                    role: member.role,
+                    unit: member.unit,
+                    schema: member.schema,
+                    axes: member.axes.clone(),
+                    beam_rule: member.beam_rule,
+                    validity: member.validity,
+                    dependencies: member.dependencies.clone(),
+                },
+                resolved_beam: sealed_beam(member.beam_rule, completions.restoring_beam),
                 payload: produced.payload.clone(),
             })
             .collect::<Box<[_]>>();
@@ -340,8 +352,6 @@ impl ProductGenerationAuthority {
 }
 
 fn ensure_producible(role: ProductRole) -> Result<(), ProductsError> {
-    const ZERO_TERM_OK: [bool; 2] = [true, true];
-    let _ = ZERO_TERM_OK;
     match role {
         ProductRole::Psf(
             casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
@@ -352,18 +362,19 @@ fn ensure_producible(role: ProductRole) -> Result<(), ProductsError> {
         | ProductRole::Model(
             casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
         )
+        | ProductRole::Weight(
+            casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
+        )
         | ProductRole::RestoredImage(
             casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
         )
         | ProductRole::SumWeights(_)
         | ProductRole::Sensitivity
         | ProductRole::CleanMask => Ok(()),
-        ProductRole::Weight(
-            casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
-        )
-        | ProductRole::Psf(casa_imaging_model::ProductTerm::Taylor(_))
+        ProductRole::Psf(casa_imaging_model::ProductTerm::Taylor(_))
         | ProductRole::Residual(casa_imaging_model::ProductTerm::Taylor(_))
         | ProductRole::Model(casa_imaging_model::ProductTerm::Taylor(_))
+        | ProductRole::Weight(casa_imaging_model::ProductTerm::Taylor(_))
         | ProductRole::RestoredImage(casa_imaging_model::ProductTerm::Taylor(_)) => {
             Err(ProductsError::UnsupportedProductRole {
                 role,
@@ -374,6 +385,44 @@ fn ensure_producible(role: ProductRole) -> Result<(), ProductsError> {
             role,
             catalog: CONTINUUM_ALGORITHM_CATALOG_VERSION,
         }),
+    }
+}
+
+/// Bind every compiled contract dimension of one node into an encoder.
+fn encode_contract(encoder: &mut Encoder, node: &casa_imaging_model::ProductNode) {
+    encoder.u8(match node.schema() {
+        ProductSchema::ImageF32V1 => 0,
+        ProductSchema::LogicalCollectionV1 => 1,
+        ProductSchema::EmbeddedImageMetadataV1 => 2,
+        ProductSchema::InternalImageF32V1 => 3,
+    });
+    encoder.u8(match node.unit() {
+        ProductUnit::NotApplicable => 0,
+        ProductUnit::JyPerBeam => 1,
+        ProductUnit::JyPerPixel => 2,
+        ProductUnit::Dimensionless => 3,
+        ProductUnit::VisibilityWeight => 4,
+    });
+    encoder.u8(match node.beam() {
+        ProductBeamRule::None => 0,
+        ProductBeamRule::Fitted => 1,
+        ProductBeamRule::Restoring(_) => 2,
+        ProductBeamRule::Inherit(_) => 3,
+        ProductBeamRule::Metadata(_) => 4,
+    });
+    encoder.u8(match node.validity() {
+        ProductValidityRule::All => 0,
+        ProductValidityRule::FinalNormalState => 1,
+        ProductValidityRule::PrimaryBeam(_) => 2,
+        ProductValidityRule::Taylor(_) => 3,
+        ProductValidityRule::TaylorAndPrimaryBeam { .. } => 4,
+    });
+    let axes = node.axes();
+    for extent in axes.shape() {
+        encoder.usize(extent);
+    }
+    for dependency in node.dependencies() {
+        encoder.usize(dependency.ordinal());
     }
 }
 
@@ -436,7 +485,13 @@ pub struct PlannedMember {
     name: String,
     shape: [usize; 4],
     payload_values: usize,
+    unit: ProductUnit,
+    schema: ProductSchema,
+    axes: ProductAxes,
     normalization: Option<ProductNormalization>,
+    beam_rule: ProductBeamRule,
+    validity: ProductValidityRule,
+    dependencies: Box<[ProductNodeId]>,
     artifact_id: MemberArtifactId,
 }
 
@@ -463,6 +518,42 @@ impl PlannedMember {
     #[must_use]
     pub const fn shape(&self) -> [usize; 4] {
         self.shape
+    }
+
+    /// Return the required physical unit of this member.
+    #[must_use]
+    pub const fn unit(&self) -> ProductUnit {
+        self.unit
+    }
+
+    /// Return the backend-independent logical payload schema.
+    #[must_use]
+    pub const fn schema(&self) -> ProductSchema {
+        self.schema
+    }
+
+    /// Return the exact WCS and storage-axis binding.
+    #[must_use]
+    pub const fn axes(&self) -> &ProductAxes {
+        &self.axes
+    }
+
+    /// Return fitted, restoring, inherited, or absent beam semantics.
+    #[must_use]
+    pub const fn beam_rule(&self) -> ProductBeamRule {
+        self.beam_rule
+    }
+
+    /// Return the output-validity rule of this member.
+    #[must_use]
+    pub const fn validity(&self) -> ProductValidityRule {
+        self.validity
+    }
+
+    /// Return graph-node dependencies, all of which precede this node.
+    #[must_use]
+    pub const fn dependencies(&self) -> &[ProductNodeId] {
+        &self.dependencies
     }
 
     /// Return the planned payload value count.
@@ -499,6 +590,7 @@ pub struct ContinuumProducedMembers {
 #[derive(Debug)]
 struct ProducedMember {
     node: ProductNodeId,
+    artifact_id: MemberArtifactId,
     digest: MemberArtifactId,
     payload: Vec<f32>,
 }
@@ -569,6 +661,14 @@ pub fn produce_continuum_members(
                 casa_imaging_model::ProductTerm::Single
                 | casa_imaging_model::ProductTerm::Taylor(0),
             ) => model_plane.clone(),
+            ProductRole::Weight(
+                casa_imaging_model::ProductTerm::Single
+                | casa_imaging_model::ProductTerm::Taylor(0),
+            ) => normal_state
+                .sensitivity()
+                .iter()
+                .map(|value| *value as f32)
+                .collect(),
             ProductRole::RestoredImage(
                 casa_imaging_model::ProductTerm::Single
                 | casa_imaging_model::ProductTerm::Taylor(0),
@@ -578,21 +678,40 @@ pub fn produce_continuum_members(
                         "restoration requires a fitted restoring beam".to_string(),
                     ));
                 };
-                let kernel = gaussian_beam_image(plane_shape, beam);
+                let kernel = gaussian_beam_image(plane_shape, beam, inputs.cell_size_rad());
                 let mut restored = fft_convolve(
                     &model_plane,
                     kernel.as_slice().expect("contiguous"),
                     plane_shape,
                 );
-                for (restored, residual) in restored.iter_mut().zip(&residual_unnormalized) {
+                // CASA restoration equation (`SIImageStore::restore`):
+                // restored = conv(model, beam) + residual, where the residual
+                // enters exactly as it is published. The convolved sky model
+                // is never divided by the residual sensitivity.
+                let residual_component = normalize_plane(
+                    &residual_unnormalized,
+                    required_normalization(member)?,
+                    sensitivity,
+                )?;
+                for (restored, residual) in restored.iter_mut().zip(&residual_component) {
                     *restored += residual;
                 }
-                normalize_plane(&restored, required_normalization(member)?, sensitivity)?
+                restored
             }
             ProductRole::SumWeights(_) | ProductRole::Sensitivity => {
                 vec![sensitivity as f32; member.payload_values]
             }
-            ProductRole::CleanMask => vec![1.0_f32; member.payload_values],
+            ProductRole::CleanMask => normal_state
+                .sensitivity()
+                .iter()
+                .map(|value| {
+                    if *value > 0.0 && value.is_finite() {
+                        1.0_f32
+                    } else {
+                        0.0
+                    }
+                })
+                .collect(),
             role => {
                 return Err(ProductsError::UnsupportedProductRole {
                     role,
@@ -620,6 +739,7 @@ pub fn produce_continuum_members(
         let digest = MemberArtifactId(plane_digest(&payload));
         members.push(ProducedMember {
             node: member.node,
+            artifact_id: member.artifact_id,
             digest,
             payload,
         });
@@ -679,12 +799,71 @@ fn model_real_plane(
     Ok(plane)
 }
 
+/// The complete compiled contract carried by one sealed member.
+#[derive(Debug, Clone)]
+pub struct SealedMemberContract {
+    role: ProductRole,
+    unit: ProductUnit,
+    schema: ProductSchema,
+    axes: ProductAxes,
+    beam_rule: ProductBeamRule,
+    validity: ProductValidityRule,
+    dependencies: Box<[ProductNodeId]>,
+}
+
+impl SealedMemberContract {
+    /// Return the exact logical product meaning.
+    #[must_use]
+    pub const fn role(&self) -> ProductRole {
+        self.role
+    }
+
+    /// Return the required physical unit.
+    #[must_use]
+    pub const fn unit(&self) -> ProductUnit {
+        self.unit
+    }
+
+    /// Return the backend-independent logical payload schema.
+    #[must_use]
+    pub const fn schema(&self) -> ProductSchema {
+        self.schema
+    }
+
+    /// Return the exact WCS and storage-axis binding.
+    #[must_use]
+    pub const fn axes(&self) -> &ProductAxes {
+        &self.axes
+    }
+
+    /// Return fitted, restoring, inherited, or absent beam semantics.
+    #[must_use]
+    pub const fn beam_rule(&self) -> ProductBeamRule {
+        self.beam_rule
+    }
+
+    /// Return the output-validity rule.
+    #[must_use]
+    pub const fn validity(&self) -> ProductValidityRule {
+        self.validity
+    }
+
+    /// Return graph-node dependencies, all of which precede this node.
+    #[must_use]
+    pub const fn dependencies(&self) -> &[ProductNodeId] {
+        &self.dependencies
+    }
+}
+
 /// One authorized member of an exactly-once sealed member set.
 #[derive(Debug, Clone)]
 pub struct SealedMember {
     node: ProductNodeId,
     name: String,
     artifact_id: MemberArtifactId,
+    content_identity: MemberArtifactId,
+    contract: SealedMemberContract,
+    resolved_beam: Option<RestoringBeam>,
     payload: Vec<f32>,
 }
 
@@ -701,16 +880,50 @@ impl SealedMember {
         &self.name
     }
 
-    /// Return the sealed artifact identity.
+    /// Return the planned-and-sealed artifact identity.
     #[must_use]
     pub const fn artifact_id(&self) -> MemberArtifactId {
         self.artifact_id
+    }
+
+    /// Return the content identity bound to this member's artifact identity
+    /// by the authorization seal.
+    #[must_use]
+    pub const fn content_identity(&self) -> MemberArtifactId {
+        self.content_identity
+    }
+
+    /// Return the complete compiled contract of this member.
+    #[must_use]
+    pub const fn contract(&self) -> &SealedMemberContract {
+        &self.contract
+    }
+
+    /// Return the resolved beam metadata, when this member's beam rule
+    /// resolves to the generation's fitted beam.
+    #[must_use]
+    pub const fn resolved_beam(&self) -> Option<&RestoringBeam> {
+        self.resolved_beam.as_ref()
     }
 
     /// Borrow the sealed binary32 payload.
     #[must_use]
     pub fn payload(&self) -> &[f32] {
         &self.payload
+    }
+}
+
+/// Resolve one member's compiled beam rule against the fitted generation beam.
+fn sealed_beam(rule: ProductBeamRule, fitted: Option<RestoringBeam>) -> Option<RestoringBeam> {
+    match rule {
+        ProductBeamRule::None => None,
+        ProductBeamRule::Fitted | ProductBeamRule::Metadata(_) | ProductBeamRule::Restoring(_) => {
+            fitted
+        }
+        // Inherit rules resolve through their referenced member; the
+        // embedded metadata is identical because the generation carries one
+        // fitted beam set, so resolving to it preserves the contract.
+        ProductBeamRule::Inherit(_) => fitted,
     }
 }
 

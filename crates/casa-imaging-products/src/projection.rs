@@ -5,20 +5,12 @@
 //! The projection is the only hand-off into the T08 publication
 //! choreography: it lists the exact sealed member set once, in canonical
 //! order, with the byte layout each member occupies in staging and final
-//! storage. Runtime adapters consume it when building their publication
-//! layout ledgers and receipt participants.
+//! storage. The runtime publication path owns the actual state machine:
+//! durable preparation, the sole visibility operation, terminal receipt
+//! promotion, and retained Prepared evidence on uncertain promotion.
 
 use crate::authority::SealedContinuumGeneration;
 use crate::error::ProductsError;
-
-/// Publication stage of one projected member.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PublicationStage {
-    /// Durably prepared under its staged identity; not yet visible.
-    Prepared,
-    /// Promoted through the sole visibility operation.
-    Published,
-}
 
 /// One sealed member projected for atomic publication.
 #[derive(Debug, Clone)]
@@ -105,82 +97,5 @@ impl PublicationProjection {
             index += 1;
         }
         total
-    }
-}
-
-/// Fail-closed state of an in-flight atomic publication.
-///
-/// This mirrors the runtime's T08 choreography over the projection alone:
-/// preparing stages every member exactly once, visibility promotes the whole
-/// set or nothing, and promotion can never be re-entered after failure.
-#[derive(Debug, Default)]
-pub struct AtomicPublicationAttempt {
-    stage: Option<Stage>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Stage {
-    Prepared,
-    Visible,
-    Failed,
-}
-
-impl AtomicPublicationAttempt {
-    /// Durably prepare every projected member before any visibility.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the attempt already advanced past preparation.
-    pub fn prepare(
-        &mut self,
-        projection: &PublicationProjection,
-    ) -> Result<Vec<(crate::authority::MemberArtifactId, PublicationStage)>, ProductsError> {
-        if self.stage.is_some() {
-            return Err(ProductsError::ForeignPlannedGeneration);
-        }
-        self.stage = Some(Stage::Prepared);
-        Ok(projection
-            .members()
-            .iter()
-            .map(|member| (member.artifact_id(), PublicationStage::Prepared))
-            .collect())
-    }
-
-    /// Perform the sole visibility operation over the whole prepared set.
-    ///
-    /// # Errors
-    ///
-    /// Requires a prepared attempt; a failed attempt retains fail-closed
-    /// `Prepared` evidence and cannot retry.
-    pub fn make_visible(&mut self) -> Result<(), ProductsError> {
-        match self.stage {
-            Some(Stage::Prepared) => {
-                self.stage = Some(Stage::Visible);
-                Ok(())
-            }
-            Some(Stage::Failed) | None => Err(ProductsError::ForeignPlannedGeneration),
-            Some(Stage::Visible) => Err(ProductsError::ForeignPlannedGeneration),
-        }
-    }
-
-    /// Record that receipt promotion could not be confirmed.
-    ///
-    /// # Errors
-    ///
-    /// Requires a visible attempt.
-    pub fn fail_promotion(&mut self) -> Result<(), ProductsError> {
-        match self.stage {
-            Some(Stage::Visible) => {
-                self.stage = Some(Stage::Failed);
-                Ok(())
-            }
-            _ => Err(ProductsError::ForeignPlannedGeneration),
-        }
-    }
-
-    /// Whether the attempt retains fail-closed prepared evidence.
-    #[must_use]
-    pub const fn retains_prepared_evidence(&self) -> bool {
-        matches!(self.stage, Some(Stage::Failed))
     }
 }

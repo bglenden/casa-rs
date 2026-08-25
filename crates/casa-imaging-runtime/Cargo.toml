@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 casa-imaging-model = { path = "../casa-imaging-model" }
+casa-imaging-products = { path = "../casa-imaging-products" }
 casa-imaging-reconstruction = { path = "../casa-imaging-reconstruction" }
 num-complex.workspace = true
 casa-ms = { path = "../casa-ms" }

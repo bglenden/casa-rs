@@ -9,6 +9,7 @@ mod execution_bindings;
 mod major_cycle;
 mod observation_transaction;
 mod prepared_artifact;
+pub mod product_publication;
 mod publication_layout;
 mod receipt;
 mod resource_authority;
@@ -58,6 +59,9 @@ pub use prepared_artifact::{
     PreparedArtifactRegistration, PreparedArtifactRejection, PreparedArtifactReservation,
     PreparedArtifactReuseOutcome, PreparedArtifactSegmentDescriptor, PreparedArtifactSourceSegment,
     PreparedArtifactStore, PreparedArtifactUvAffine,
+};
+pub use product_publication::{
+    ProductPublicationEntry, ProductPublicationError, ProductPublicationPlan,
 };
 pub use publication_layout::{
     PhysicalLayoutId, PublicationBoundKind, PublicationLayoutError, PublicationLayoutLedger,
