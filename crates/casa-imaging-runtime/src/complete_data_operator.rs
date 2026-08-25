@@ -10,12 +10,13 @@ use std::{
 };
 
 use casa_imaging_model::{
-    CompiledGeometryId, CompiledProblem, CompiledProblemId, NumericsContractId,
-    SelectedObservationGenerationId, WeightingCommitmentId,
+    CompiledGeometryId, CompiledProblem, CompiledProblemId, ModelDeltaTerm, ModelSample,
+    NumericsContractId, SelectedObservationGenerationId, WeightingCommitmentId,
 };
 use casa_imaging_reconstruction::{
-    ContinuumPrimitiveCatalog, SerialMfsError, SerialMfsPrimitives, SerialMfsSpecification,
-    WeightingAlgorithmState, WeightingGenerationId, WeightingReplayCoverageId, WeightingReplayId,
+    ContinuumPrimitiveCatalog, MajorCyclePreparation, SerialMfsError, SerialMfsPrimitives,
+    SerialMfsSpecification, WeightingAlgorithmState, WeightingGenerationId,
+    WeightingReplayCoverageId, WeightingReplayId,
     runtime_adapter::{
         CompleteDataOwnerResult, CompleteDataOwnerState, PreparedSerialMfsOperator,
         SerialMfsWorkload, prepare_serial_mfs_operator, serial_mfs_workload,
@@ -42,11 +43,12 @@ pub struct CompleteDataResidency {
     fft_planning_bytes: usize,
     forward_workspace_bytes: usize,
     primitive_output_bytes: usize,
+    major_cycle_model_bytes: usize,
     peak_bytes: usize,
 }
 
 impl CompleteDataResidency {
-    /// Bytes for dirty and PSF accumulation plus compensation grids.
+    /// Bytes for dirty, PSF, and exact residual accumulation plus compensation grids.
     #[must_use]
     pub const fn grid_bytes(self) -> usize {
         self.grid_bytes
@@ -76,10 +78,16 @@ impl CompleteDataResidency {
         self.forward_workspace_bytes
     }
 
-    /// Bytes retained by dirty, PSF, and sensitivity primitives.
+    /// Bytes retained by dirty, PSF, exact residual, and sensitivity primitives.
     #[must_use]
     pub const fn primitive_output_bytes(self) -> usize {
         self.primitive_output_bytes
+    }
+
+    /// Bytes for the current/final model samples and bounded pending delta.
+    #[must_use]
+    pub const fn major_cycle_model_bytes(self) -> usize {
+        self.major_cycle_model_bytes
     }
 
     /// Conservative peak of all runtime-owned T19 allocations.
@@ -109,7 +117,7 @@ impl CompleteDataPlanFragment {
     ) -> Result<Self, CompleteDataPlanError> {
         let specification = SerialMfsSpecification::new(problem)?;
         let workload = serial_mfs_workload(&specification, max_replay_block_samples)?;
-        let residency = project_residency(workload)?;
+        let residency = project_residency(problem, workload)?;
         let shape = workload.grid_shape();
         Ok(Self {
             specification,
@@ -208,6 +216,10 @@ impl CompleteDataPlanFragment {
             (
                 format!("serial-mfs-primitives-{}x{}", shape[0], shape[1]),
                 residency.primitive_output_bytes(),
+            ),
+            (
+                format!("serial-mfs-major-cycle-model-{}x{}", shape[0], shape[1]),
+                residency.major_cycle_model_bytes(),
             ),
         ];
         for (allocation, bytes) in required {
@@ -321,7 +333,10 @@ impl CompleteDataPlanFragment {
                     lifetime: ClaimLifetime::Work,
                 },
             ],
-            allocations: vec![specs[2].usage(ClaimLifetime::Work)],
+            allocations: vec![
+                specs[2].usage(ClaimLifetime::Work),
+                specs[5].usage(ClaimLifetime::Work),
+            ],
             fences: BTreeSet::new(),
             quiescence_after: BTreeSet::new(),
         };
@@ -333,7 +348,8 @@ impl CompleteDataPlanFragment {
             specs[1].usage(replay_fence.clone()),
             specs[2].usage(replay_fence.clone()),
             specs[3].usage(replay_fence.clone()),
-            specs[4].usage(replay_fence),
+            specs[4].usage(replay_fence.clone()),
+            specs[5].usage(replay_fence),
         ]);
         nodes.push(preparation.clone());
         let planned_reconciliation = nodes
@@ -343,9 +359,10 @@ impl CompleteDataPlanFragment {
         if planned_reconciliation.kind != WorkKind::Compute {
             return Err(CompleteDataPlanError::MissingReconciliationNode);
         }
-        planned_reconciliation
-            .allocations
-            .push(specs[4].usage(ClaimLifetime::Work));
+        planned_reconciliation.allocations.extend([
+            specs[4].usage(ClaimLifetime::Work),
+            specs[5].usage(ClaimLifetime::Work),
+        ]);
         self.reconciliation_node = Some(reconciliation.clone());
 
         let mut alternative = base.execution_dag().resource_alternative().clone();
@@ -424,7 +441,7 @@ impl CompleteDataPlanFragment {
     fn allocation_specs(
         &self,
         reconciliation: &WorkNodeId,
-    ) -> Result<[CompleteDataAllocation; 5], CompleteDataPlanError> {
+    ) -> Result<[CompleteDataAllocation; 6], CompleteDataPlanError> {
         let suffix = self.workload.grid_shape();
         let residency = self.residency;
         let replay_done = BTreeSet::from([WorkDependency::Fence(FenceId::new(
@@ -436,7 +453,7 @@ impl CompleteDataPlanFragment {
             CompleteDataAllocation::new(
                 format!("serial-mfs-grids-{}x{}", suffix[0], suffix[1]),
                 residency.grid_bytes(),
-                "serial-mfs-shared-dirty-psf-grids",
+                "serial-mfs-shared-dirty-psf-residual-grids",
                 InitializationPolicy::ZeroBeforeRead,
                 self.replay_node.clone(),
                 replay_done.clone(),
@@ -468,16 +485,25 @@ impl CompleteDataPlanFragment {
             CompleteDataAllocation::new(
                 format!("serial-mfs-primitives-{}x{}", suffix[0], suffix[1]),
                 residency.primitive_output_bytes(),
-                "serial-mfs-unnormalized-primitives",
+                "serial-mfs-unnormalized-dirty-psf-residual-primitives",
                 InitializationPolicy::OverwriteBeforeRead,
                 self.replay_node.clone(),
                 reconciled,
+            )?,
+            CompleteDataAllocation::new(
+                format!("serial-mfs-major-cycle-model-{}x{}", suffix[0], suffix[1]),
+                residency.major_cycle_model_bytes(),
+                "serial-mfs-current-final-model-and-pending-delta",
+                InitializationPolicy::OverwriteBeforeRead,
+                self.preparation_node.clone(),
+                BTreeSet::from([WorkDependency::Work(reconciliation.clone())]),
             )?,
         ])
     }
 }
 
 fn project_residency(
+    problem: &CompiledProblem,
     workload: SerialMfsWorkload,
 ) -> Result<CompleteDataResidency, CompleteDataPlanError> {
     let complex_bytes = size_of::<num_complex::Complex64>();
@@ -511,12 +537,26 @@ fn project_residency(
                 .and_then(|f64_bytes| bytes.checked_add(f64_bytes))
         })
         .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
+    let model = problem.model_lifecycle();
+    let model_samples = model.target().sample_count();
+    let major_cycle_model_bytes = model_samples
+        .checked_mul(size_of::<ModelSample>())
+        .and_then(|bytes| {
+            model
+                .bounds()
+                .max_delta_terms()
+                .min(model_samples)
+                .checked_mul(size_of::<ModelDeltaTerm>())
+                .and_then(|delta_bytes| bytes.checked_add(delta_bytes))
+        })
+        .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
     let peak_bytes = grid_bytes
         .checked_add(convolution_cache_bytes)
         .and_then(|bytes| bytes.checked_add(fft_resident_bytes))
         .and_then(|bytes| bytes.checked_add(fft_planning_bytes))
         .and_then(|bytes| bytes.checked_add(forward_workspace_bytes))
         .and_then(|bytes| bytes.checked_add(primitive_output_bytes))
+        .and_then(|bytes| bytes.checked_add(major_cycle_model_bytes))
         .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
     Ok(CompleteDataResidency {
         grid_bytes,
@@ -525,6 +565,7 @@ fn project_residency(
         fft_planning_bytes,
         forward_workspace_bytes,
         primitive_output_bytes,
+        major_cycle_model_bytes,
         peak_bytes,
     })
 }
@@ -927,6 +968,16 @@ struct CompleteDataExecutionBinding {
 }
 
 impl SerialMfsOperatorState {
+    /// Bind one validated final model before consuming the exhaustive replay.
+    pub fn bind_major_cycle_model(
+        &mut self,
+        preparation: &MajorCyclePreparation,
+    ) -> Result<(), CompleteDataOperatorError> {
+        self.state
+            .bind_major_cycle_model(preparation.final_model())
+            .map_err(CompleteDataOperatorError::Owner)
+    }
+
     /// Consume one ordered T18 weighted block synchronously.
     pub fn consume_weighted_block(
         &mut self,

@@ -16,16 +16,15 @@
 use std::fmt;
 
 use casa_imaging_model::{
-    CompiledGeometryId, CompiledProblemId, LogicalIdentity, ModelSupport, NumericsContractId,
+    CompiledGeometryId, CompiledProblemId, LogicalIdentity, NumericsContractId,
     SelectedObservationGenerationId, WeightingCommitmentId,
 };
-use num_complex::Complex64;
 
 use crate::{
     ContinuumPrimitiveCatalog, Encoder, FINAL_NORMAL_STATE_DOMAIN, FINAL_NORMAL_STATE_VERSION,
     FinalModelCompletion, FinalModelCompletionId, FinalNormalStateCompletionId, MAJOR_CYCLE_DOMAIN,
     MAJOR_CYCLE_VERSION, MajorCycleCompletionId, ModelDelta, ModelGeneration, ModelGenerationId,
-    ModelLifecycle, ModelLifecycleError, SerialMfsError, SerialMfsPrimitives,
+    ModelLifecycle, ModelLifecycleError, PreparedFinalModel, SerialMfsError, SerialMfsPrimitives,
     WeightingGenerationId, WeightingReplayCoverageId, WeightingReplayId,
     runtime_adapter::CompleteDataOwnerResult,
 };
@@ -34,7 +33,7 @@ use crate::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NormalStateCatalog {
     /// Unnormalized single-field Stokes-I constant-basis MFS normal state
-    /// whose residual follows the v1 `g(x) = b - psf (*) x` composition.
+    /// whose residual follows the exact paired `A* W (d - A x)` composition.
     UnnormalizedNterms1V1,
 }
 
@@ -69,6 +68,7 @@ pub struct FinalNormalState {
     input_model_generation: ModelGenerationId,
     final_model_generation: ModelGenerationId,
     selected_generation: SelectedObservationGenerationId,
+    primitives: SerialMfsPrimitives,
 }
 
 impl FinalNormalState {
@@ -164,6 +164,30 @@ impl FinalNormalState {
     pub const fn selected_generation(&self) -> SelectedObservationGenerationId {
         self.selected_generation
     }
+
+    /// Return the authoritative model-dependent residual plane.
+    #[must_use]
+    pub const fn residual(&self) -> &[num_complex::Complex64] {
+        self.primitives.dirty()
+    }
+
+    /// Return the T19 normal approximation paired with the residual.
+    #[must_use]
+    pub const fn normal_approximation(&self) -> &[num_complex::Complex64] {
+        self.primitives.psf()
+    }
+
+    /// Return sensitivity state in unnormalized normal-state units.
+    #[must_use]
+    pub const fn sensitivity(&self) -> &[f64] {
+        self.primitives.sensitivity()
+    }
+
+    /// Return the exact accumulated sum weight.
+    #[must_use]
+    pub const fn sum_weight(&self) -> f64 {
+        self.primitives.sum_weight()
+    }
 }
 
 /// Inseparable result of the one atomic Major-Cycle reconciliation.
@@ -187,6 +211,39 @@ pub struct MajorCycleCompletion {
     normal_state: FinalNormalState,
     model_completion: FinalModelCompletion,
     final_model: ModelGeneration,
+}
+
+/// Validated final-model candidate retained across the exhaustive T18/T19
+/// replay without consuming final-model completion authority.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct MajorCyclePreparation {
+    model: PreparedFinalModel,
+}
+
+impl MajorCyclePreparation {
+    /// Validate and prepare the exact final model before complete-data replay.
+    pub fn prepare(
+        lifecycle: &ModelLifecycle,
+        named: ModelGeneration,
+        delta: Option<ModelDelta>,
+    ) -> Result<Self, MajorCycleError> {
+        Ok(Self {
+            model: lifecycle.prepare_final_model(named, delta)?,
+        })
+    }
+
+    /// Borrow the exact candidate generation for paired-operator prediction.
+    #[must_use]
+    pub const fn final_model(&self) -> &ModelGeneration {
+        self.model.generation()
+    }
+
+    /// Return the exact candidate generation identity.
+    #[must_use]
+    pub const fn final_model_generation(&self) -> ModelGenerationId {
+        self.model.generation_id()
+    }
 }
 
 impl MajorCycleCompletion {
@@ -239,6 +296,7 @@ pub struct MajorCycleOwner {
     sample_count: u64,
     block_count: u64,
     primitives: SerialMfsPrimitives,
+    preparation: MajorCyclePreparation,
 }
 
 impl MajorCycleOwner {
@@ -250,11 +308,17 @@ impl MajorCycleOwner {
     /// # Errors
     ///
     /// Rejects evidence whose replay did not prove exhaustive coverage.
-    pub fn from_complete_data(result: CompleteDataOwnerResult) -> Result<Self, MajorCycleError> {
+    pub fn from_complete_data(
+        result: CompleteDataOwnerResult,
+        preparation: MajorCyclePreparation,
+    ) -> Result<Self, MajorCycleError> {
         if result.completion().sample_count() == 0 || result.completion().block_count() == 0 {
             return Err(MajorCycleError::IncompleteCoverage);
         }
         let (primitives, completion) = result.into_parts();
+        let primitives = primitives
+            .promote_major_cycle_residual(preparation.final_model_generation())
+            .map_err(MajorCycleError::Residual)?;
         Ok(Self {
             problem: completion.problem_id(),
             geometry: completion.geometry_id(),
@@ -268,6 +332,7 @@ impl MajorCycleOwner {
             sample_count: completion.sample_count(),
             block_count: completion.block_count(),
             primitives,
+            preparation,
         })
     }
 
@@ -308,28 +373,19 @@ impl MajorCycleOwner {
     /// # Errors
     ///
     /// Stale problem evidence, foreign generations or deltas, non-exhaustive
-    /// coverage, unsupported model spaces, and generated-nonfinite residuals
-    /// all fail closed with no partial record.
+    /// coverage, and generated-nonfinite residuals all fail closed with no
+    /// partial record.
     pub fn reconcile(
-        mut self,
+        self,
         lifecycle: &mut ModelLifecycle,
-        named: ModelGeneration,
-        delta: Option<ModelDelta>,
     ) -> Result<MajorCycleCompletion, MajorCycleError> {
         if lifecycle.problem() != self.problem {
             return Err(MajorCycleError::StaleModelEvidence);
         }
-        let update = match delta {
-            Some(delta) => lifecycle.apply_final_delta(named, delta)?,
-            None => lifecycle.confirm_final_model(named)?,
-        };
+        let update = lifecycle.commit_final_model(self.preparation.model)?;
         let (final_model, model_completion) = update.into_parts();
         let input_model_generation = model_completion.base();
         let final_model_generation = model_completion.generation();
-        let model_plane = major_cycle_model_plane(&final_model, self.primitives.shape())?;
-        self.primitives
-            .apply_major_cycle_residual(&model_plane)
-            .map_err(MajorCycleError::Residual)?;
         let content = self.primitives.normal_state_content_identity();
         let authority = lifecycle.authority();
         let attempt = lifecycle.attempt();
@@ -365,6 +421,7 @@ impl MajorCycleOwner {
             input_model_generation,
             final_model_generation,
             selected_generation: self.selected_generation,
+            primitives: self.primitives,
         };
         let completion_id = major_cycle_completion_id(
             authority,
@@ -384,39 +441,6 @@ impl MajorCycleOwner {
             final_model,
         })
     }
-}
-
-/// Flatten one final generation into the operator-plane order of the
-/// unnormalized primitives.
-///
-/// Lifecycle samples live in canonical target order (`y * width + x` per
-/// domain plane); the primitive planes index `[x * height + y]`. Only valid
-/// support contributes; invalid-support cells contribute zero.
-fn major_cycle_model_plane(
-    generation: &ModelGeneration,
-    primitive_shape: [usize; 2],
-) -> Result<Vec<Complex64>, MajorCycleError> {
-    let shape = generation.shape();
-    if shape.domains().len() != 1
-        || shape.coefficients() != 1
-        || shape.polarizations() != 1
-        || shape.domains()[0].pixels() != primitive_shape
-        || generation.samples().len() != primitive_shape[0] * primitive_shape[1]
-    {
-        return Err(MajorCycleError::UnsupportedModelSpace);
-    }
-    let height = primitive_shape[1];
-    let mut plane = vec![Complex64::default(); generation.samples().len()];
-    for (flat, sample) in generation.samples().iter().enumerate() {
-        let value = match sample.support() {
-            ModelSupport::Valid => sample.value().value(),
-            ModelSupport::Invalid => continue,
-        };
-        let y = flat / primitive_shape[0];
-        let x = flat % primitive_shape[0];
-        plane[x * height + y] = Complex64::new(value, 0.0);
-    }
-    Ok(plane)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -471,8 +495,6 @@ pub enum MajorCycleError {
     IncompleteCoverage,
     /// The model owner rejected the named generation or pending delta.
     Model(ModelLifecycleError),
-    /// The final generation does not describe the reconciled primitive plane.
-    UnsupportedModelSpace,
     /// Reconciling the final model produced or consumed invalid numbers.
     Residual(SerialMfsError),
 }
@@ -487,8 +509,6 @@ impl fmt::Display for MajorCycleError {
                 formatter.write_str("complete-data evidence lacks exhaustive coverage")
             }
             Self::Model(error) => error.fmt(formatter),
-            Self::UnsupportedModelSpace => formatter
-                .write_str("final model space does not describe the reconciled primitive plane"),
             Self::Residual(error) => error.fmt(formatter),
         }
     }

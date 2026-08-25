@@ -12,7 +12,7 @@ use std::{error::Error, fmt};
 
 use casa_imaging_model::{LogicalIdentity, ModelExecutionAttemptId};
 use casa_imaging_reconstruction::{
-    MajorCycleError, MajorCycleOwner, ModelDelta, ModelGeneration, ModelLifecycle,
+    MajorCycleError, MajorCycleOwner, MajorCyclePreparation, ModelLifecycle,
 };
 
 use crate::{
@@ -39,13 +39,16 @@ impl MajorCycleOperatorState {
     /// The reconstruction evidence stays inseparably paired inside the owner,
     /// and the plan-authoritative reconciliation node is retained beside it;
     /// [`Self::reconcile`] accepts no substitute node, evidence, or context.
-    pub fn begin(result: CompleteDataOperatorResult) -> Result<Self, MajorCycleOperatorError> {
+    pub fn begin(
+        result: CompleteDataOperatorResult,
+        preparation: MajorCyclePreparation,
+    ) -> Result<Self, MajorCycleOperatorError> {
         let state = Self {
             attempt: result.attempt_id(),
             replay_node: result.replay_node().clone(),
             reconciliation_node: result.reconciliation_node().clone(),
             lease_epoch: result.lease_epoch(),
-            owner: MajorCycleOwner::from_complete_data(result.into_evidence())?,
+            owner: MajorCycleOwner::from_complete_data(result.into_evidence(), preparation)?,
         };
         Ok(state)
     }
@@ -72,8 +75,6 @@ impl MajorCycleOperatorState {
         self,
         context: WorkExecutionContext<'_>,
         lifecycle: &mut ModelLifecycle,
-        named: ModelGeneration,
-        delta: Option<ModelDelta>,
     ) -> Result<MajorCycleOperatorResult, MajorCycleOperatorError> {
         if context.node().id != self.reconciliation_node || context.node().kind != WorkKind::Compute
         {
@@ -111,7 +112,7 @@ impl MajorCycleOperatorState {
             lease_epoch,
             ..
         } = self;
-        let completion = owner.reconcile(lifecycle, named, delta)?;
+        let completion = owner.reconcile(lifecycle)?;
         Ok(MajorCycleOperatorResult {
             completion,
             attempt,

@@ -38,7 +38,8 @@ use casa_imaging_model::{
     WeightDensityScope, WeightingContract, WeightingScheme, compile,
 };
 use casa_imaging_reconstruction::{
-    ExecutableModelProblem, ModelLifecycle, WeightingExecutionLimits, WeightingPlan, plan_weighting,
+    ExecutableModelProblem, MajorCyclePreparation, ModelLifecycle, WeightingExecutionLimits,
+    WeightingPlan, plan_weighting,
 };
 use casa_imaging_runtime::{
     AdaptationId, AdaptationTransition, AllocationAccess, AllocationId, AllocationLayout,
@@ -916,6 +917,8 @@ fn recording_executor(
         major_cycle_node: None,
         major_cycle_mode: MajorCycleMode::Confirm,
         major_cycle_problem: None,
+        major_cycle_lifecycle: Mutex::new(None),
+        major_cycle_preparation: Mutex::new(None),
         major_cycle_result: Mutex::new(None),
         major_cycle_error: Mutex::new(None),
         weighting_source_sample_count: AtomicUsize::new(0),
@@ -1139,6 +1142,8 @@ struct RecordingExecutor {
     major_cycle_node: Option<WorkNodeId>,
     major_cycle_mode: MajorCycleMode,
     major_cycle_problem: Option<casa_imaging_model::CompiledProblem>,
+    major_cycle_lifecycle: Mutex<Option<ModelLifecycle>>,
+    major_cycle_preparation: Mutex<Option<MajorCyclePreparation>>,
     major_cycle_result: Mutex<Option<MajorCycleOperatorResult>>,
     major_cycle_error: Mutex<Option<String>>,
     weighting_source_sample_count: AtomicUsize,
@@ -1179,18 +1184,14 @@ impl RecordingExecutor {
         })
     }
 
-    fn run_major_cycle(&self, context: WorkExecutionContext<'_>) -> Result<(), io::Error> {
+    fn prepare_major_cycle(
+        &self,
+        context: WorkExecutionContext<'_>,
+    ) -> Result<MajorCyclePreparation, io::Error> {
         let problem = self
             .major_cycle_problem
             .as_ref()
             .ok_or_else(|| io::Error::other("major-cycle test lacks its compiled problem"))?;
-        let retained = self
-            .complete_data_result
-            .lock()
-            .expect("complete-data result lock")
-            .take()
-            .ok_or_else(|| io::Error::other("reconciliation ran without T19 evidence"))?;
-        let state = MajorCycleOperatorState::begin(retained).map_err(io::Error::other)?;
         let canonical_attempt = ModelExecutionAttemptId::new(LogicalIdentity::from_sha256(
             context.attempt_id().as_bytes(),
         ));
@@ -1198,24 +1199,28 @@ impl RecordingExecutor {
             MajorCycleMode::StaleLifecycleEpoch => context.lease_epoch() + 1,
             _ => context.lease_epoch(),
         };
-        let mut lifecycle = ModelLifecycle::bind(
+        let lifecycle = ModelLifecycle::bind(
             ExecutableModelProblem::from_compiled(problem.clone()).map_err(io::Error::other)?,
             canonical_attempt,
             epoch,
         )
         .map_err(io::Error::other)?;
         let named = lifecycle.initial_empty().map_err(io::Error::other)?;
-        let (named, delta) = match self.major_cycle_mode {
+        let preparation = match self.major_cycle_mode {
             MajorCycleMode::ForeignGeneration => {
-                let foreign_epoch = context.lease_epoch();
                 let foreign = ModelLifecycle::bind(
                     ExecutableModelProblem::from_compiled(problem.clone())
                         .map_err(io::Error::other)?,
                     canonical_attempt,
-                    foreign_epoch,
+                    epoch,
                 )
                 .map_err(io::Error::other)?;
-                (foreign.initial_empty().map_err(io::Error::other)?, None)
+                MajorCyclePreparation::prepare(
+                    &foreign,
+                    foreign.initial_empty().map_err(io::Error::other)?,
+                    None,
+                )
+                .map_err(io::Error::other)?
             }
             MajorCycleMode::ApplyDelta => {
                 let delta = lifecycle
@@ -1227,11 +1232,42 @@ impl RecordingExecutor {
                         )],
                     )
                     .map_err(io::Error::other)?;
-                (named, Some(delta))
+                MajorCyclePreparation::prepare(&lifecycle, named, Some(delta))
+                    .map_err(io::Error::other)?
             }
-            _ => (named, None),
+            _ => {
+                MajorCyclePreparation::prepare(&lifecycle, named, None).map_err(io::Error::other)?
+            }
         };
-        match state.reconcile(context, &mut lifecycle, named, delta) {
+        *self
+            .major_cycle_lifecycle
+            .lock()
+            .expect("major-cycle lifecycle lock") = Some(lifecycle);
+        Ok(preparation)
+    }
+
+    fn run_major_cycle(&self, context: WorkExecutionContext<'_>) -> Result<(), io::Error> {
+        let retained = self
+            .complete_data_result
+            .lock()
+            .expect("complete-data result lock")
+            .take()
+            .ok_or_else(|| io::Error::other("reconciliation ran without T19 evidence"))?;
+        let preparation = self
+            .major_cycle_preparation
+            .lock()
+            .expect("major-cycle preparation lock")
+            .take()
+            .ok_or_else(|| io::Error::other("reconciliation ran without prepared model"))?;
+        let state =
+            MajorCycleOperatorState::begin(retained, preparation).map_err(io::Error::other)?;
+        let mut lifecycle = self
+            .major_cycle_lifecycle
+            .lock()
+            .expect("major-cycle lifecycle lock")
+            .take()
+            .ok_or_else(|| io::Error::other("reconciliation ran without model lifecycle"))?;
+        match state.reconcile(context, &mut lifecycle) {
             Ok(result) => {
                 // The Final Normal State must carry the exact authoritative
                 // T17 observation generation behind the settled replay.
@@ -1382,12 +1418,22 @@ impl WorkImplementation for RecordingExecutor {
                         .expect("complete-data preparation lock")
                         .take()
                         .ok_or_else(|| io::Error::other("T19 FFT preparation did not run"))?;
-                    let operator = self
+                    let mut operator = self
                         .weighting_state
                         .lock()
                         .expect("weighting execution state lock")
                         .begin_complete_data(context, complete, problem, prepared)
                         .map_err(io::Error::other)?;
+                    if self.major_cycle_problem.is_some() {
+                        let preparation = self.prepare_major_cycle(context)?;
+                        operator
+                            .bind_major_cycle_model(&preparation)
+                            .map_err(io::Error::other)?;
+                        *self
+                            .major_cycle_preparation
+                            .lock()
+                            .expect("major-cycle preparation lock") = Some(preparation);
+                    }
                     *self
                         .complete_data_state
                         .lock()
@@ -1415,13 +1461,15 @@ impl WorkImplementation for RecordingExecutor {
                             .expect("complete-data state lock")
                             .as_mut()
                         {
-                            let prediction_count = self
-                                .complete_data_laws
-                                .lock()
-                                .expect("complete-data law evidence lock")
-                                .observe(operator, block)?;
-                            self.complete_data_prediction_count
-                                .fetch_add(prediction_count, Ordering::SeqCst);
+                            if self.major_cycle_problem.is_none() {
+                                let prediction_count = self
+                                    .complete_data_laws
+                                    .lock()
+                                    .expect("complete-data law evidence lock")
+                                    .observe(operator, block)?;
+                                self.complete_data_prediction_count
+                                    .fetch_add(prediction_count, Ordering::SeqCst);
+                            }
                             operator
                                 .consume_weighted_block(block)
                                 .map_err(io::Error::other)?;
@@ -6856,6 +6904,8 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
     )
     .expect("serial MFS runtime plan");
     let preparation = operator_plan.preparation_node().clone();
+    let reconciliation = WorkNodeId::new("transaction-reconciliation");
+    let major_cycle_model = AllocationId::new("serial-mfs-major-cycle-model-10x10");
     let (physical, operator_plan) = operator_plan
         .compose(&physical)
         .expect("T19 resources compose onto T18 replay");
@@ -6891,19 +6941,26 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
         .filter(|slot| !base.execution_dag().physical_slots().contains_key(*slot))
         .cloned()
         .collect::<BTreeSet<_>>();
-    let expected_uses = [&source, &generation, &preparation, &replay, &release]
-        .into_iter()
-        .map(|node| {
-            (
-                node.clone(),
-                physical.execution_dag().nodes()[node]
-                    .allocations
-                    .iter()
-                    .map(|usage| (usage.allocation.clone(), usage.lifetime.clone()))
-                    .collect::<BTreeMap<_, _>>(),
-            )
-        })
-        .collect::<BTreeMap<_, _>>();
+    let expected_uses = [
+        &source,
+        &generation,
+        &preparation,
+        &replay,
+        &reconciliation,
+        &release,
+    ]
+    .into_iter()
+    .map(|node| {
+        (
+            node.clone(),
+            physical.execution_dag().nodes()[node]
+                .allocations
+                .iter()
+                .map(|usage| (usage.allocation.clone(), usage.lifetime.clone()))
+                .collect::<BTreeMap<_, _>>(),
+        )
+    })
+    .collect::<BTreeMap<_, _>>();
     let execution_plan = plan(
         &problem,
         PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
@@ -6945,13 +7002,31 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
     let receipt = receipts
         .open(provenance.attempt_id())
         .expect("weighting execution receipt");
-    assert_eq!(weighting_allocations.len(), 10);
+    assert_eq!(weighting_allocations.len(), 11);
     assert!(weighting_allocations.is_subset(&receipt.allocation_generation_identities()));
-    assert_eq!(weighting_slots.len(), 10);
+    assert_eq!(weighting_slots.len(), 11);
     assert!(weighting_slots.is_subset(&receipt.physical_slot_identities()));
     for (node, uses) in expected_uses {
         assert_eq!(receipt.allocation_uses(&node), Some(uses));
     }
+    assert_eq!(
+        receipt
+            .allocation_uses(&preparation)
+            .and_then(|uses| uses.get(&major_cycle_model).cloned()),
+        Some(ClaimLifetime::Work)
+    );
+    assert_eq!(
+        receipt
+            .allocation_uses(&replay)
+            .and_then(|uses| uses.get(&major_cycle_model).cloned()),
+        Some(ClaimLifetime::through_fence(FenceKind::Io))
+    );
+    assert_eq!(
+        receipt
+            .allocation_uses(&reconciliation)
+            .and_then(|uses| uses.get(&major_cycle_model).cloned()),
+        Some(ClaimLifetime::Work)
+    );
     let selected_content_allocation = selected_content_allocations()
         .pop_first()
         .expect("one selected-content allocation");

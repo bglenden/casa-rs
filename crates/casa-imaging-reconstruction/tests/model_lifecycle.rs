@@ -374,6 +374,34 @@ fn compiled_commitment_binds_problem_input_numerics_and_bounds() {
 }
 
 #[test]
+fn non_power_of_two_delta_bound_uses_the_explicit_canonical_capacity() {
+    const TERMS: usize = 65;
+    let bounded = ModelBounds::new(TERMS, TERMS, TERMS, TERMS, 1.0e30, 1.0e30)
+        .expect("non-power-of-two bounds");
+    let compiled = problem(
+        3,
+        TERMS,
+        ModelStateIdentity::Empty,
+        ModelLifecycleRequirements::new(
+            bounded,
+            NumericPrecision::F64,
+            ModelInputCommitment::Empty,
+        ),
+        NumericPrecision::F64,
+    );
+    let owner = bind_direct(&compiled, attempt(89), 1);
+    let base = owner.initial_empty().expect("bounded empty generation");
+    let delta = owner
+        .compile_delta(
+            &base,
+            (0..TERMS).map(|x| ModelDeltaTerm::new(cell(x), value(1.0))),
+        )
+        .expect("compile the full non-power-of-two delta bound");
+
+    assert_eq!(delta.terms().len(), TERMS);
+}
+
+#[test]
 fn empty_generation_and_delta_have_exact_golden_identities_and_finalization_is_affine() {
     let compiled = problem(
         1,

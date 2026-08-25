@@ -16,7 +16,7 @@ use rustfft::{Fft, FftPlanner};
 use thiserror::Error;
 
 use crate::{
-    canonical_f64_bits,
+    ModelGeneration, ModelGenerationId, ModelSupport, canonical_f64_bits,
     weighting::{
         CoverageEncoder, WeightingAlgorithmState, WeightingGenerationId, WeightingReplayChunk,
         WeightingReplayCoverageId, WeightingReplayId, WeightingReplaySummary,
@@ -292,7 +292,7 @@ pub fn serial_mfs_workload(
     let cells = checked_cells(specification.grid_shape)?;
     let image_cells = checked_cells(specification.image_shape)?;
     let grid_complex_values = cells
-        .checked_mul(4)
+        .checked_mul(6)
         .ok_or(SerialMfsError::ResidencyOverflow)?;
     let convolution_f64_values = (OVERSAMPLING + 1)
         .checked_mul(TAP_COUNT)
@@ -340,7 +340,7 @@ pub fn serial_mfs_workload(
         fft_planning_words,
         forward_complex_values,
         primitive_complex_values: image_cells
-            .checked_mul(2)
+            .checked_mul(3)
             .ok_or(SerialMfsError::ResidencyOverflow)?,
         primitive_f64_values: image_cells,
         max_replay_block_samples,
@@ -404,6 +404,8 @@ pub struct SerialMfsPrimitives {
     psf: Box<[Complex64]>,
     sensitivity: Box<[f64]>,
     sum_weight: f64,
+    major_cycle_residual: Option<Box<[Complex64]>>,
+    residual_model: Option<ModelGenerationId>,
 }
 
 impl SerialMfsPrimitives {
@@ -437,53 +439,18 @@ impl SerialMfsPrimitives {
         self.sum_weight
     }
 
-    /// Apply the v1 Major-Cycle normal-operator composition.
-    ///
-    /// For the `UnnormalizedNterms1V1` catalog the logical normal operator
-    /// H = A* W A acts on one constant-basis model plane x as the discrete
-    /// convolution with the unnormalized PSF kernel, so the authoritative
-    /// unnormalized residual g(x) = b - psf (*) x replaces the data-side
-    /// dirty plane b. Per-pixel accumulation is Kahan-compensated under the
-    /// compensated reduction policy, zero model cells contribute nothing, and
-    /// an empty model therefore reproduces the T19 dirty plane bit-exactly.
-    pub(crate) fn apply_major_cycle_residual(
-        &mut self,
-        model_plane: &[Complex64],
-    ) -> Result<(), SerialMfsError> {
-        if model_plane.len() != self.dirty.len() {
-            return Err(SerialMfsError::ModelShape);
+    pub(crate) fn promote_major_cycle_residual(
+        mut self,
+        expected_model: ModelGenerationId,
+    ) -> Result<Self, SerialMfsError> {
+        if self.residual_model != Some(expected_model) {
+            return Err(SerialMfsError::ModelMismatch);
         }
-        let [width, height] = self.shape;
-        let mut residual = self.dirty.to_vec();
-        for x in 0..width {
-            for y in 0..height {
-                let index = x * height + y;
-                let mut accumulator = Complex64::default();
-                let mut compensation = Complex64::default();
-                for (u, sample) in model_plane.iter().enumerate() {
-                    if sample.re == 0.0 && sample.im == 0.0 {
-                        continue;
-                    }
-                    let source_x = u / height;
-                    let source_y = u % height;
-                    let kernel_index = ((x + width - source_x) % width) * height
-                        + (y + height - source_y) % height;
-                    let term = sample * self.psf[kernel_index] - compensation;
-                    let updated = accumulator + term;
-                    compensation = (updated - accumulator) - term;
-                    accumulator = updated;
-                }
-                residual[index] -= accumulator;
-            }
-        }
-        if residual
-            .iter()
-            .any(|value| !value.re.is_finite() || !value.im.is_finite())
-        {
-            return Err(SerialMfsError::GeneratedNonfinite);
-        }
-        self.dirty = residual.into_boxed_slice();
-        Ok(())
+        self.dirty = self
+            .major_cycle_residual
+            .take()
+            .ok_or(SerialMfsError::MissingMajorCycleResidual)?;
+        Ok(self)
     }
 
     /// Derive the owner content identity of the exact unnormalized evidence.
@@ -646,6 +613,7 @@ pub struct CompleteDataOwnerState {
     sample_count: u64,
     coverage: CoverageEncoder,
     finite_values: FiniteValuePolicy,
+    residual_model: Option<ModelGenerationId>,
     operator: SerialMfsOperator,
 }
 
@@ -669,8 +637,23 @@ impl CompleteDataOwnerState {
             sample_count: 0,
             coverage: CoverageEncoder::new(weighting.generation_id()),
             finite_values: specification.finite_values,
+            residual_model: None,
             operator: SerialMfsOperator::new(specification, prepared.workload, prepared.fft),
         })
+    }
+
+    /// Bind the exact prepared final model before the exhaustive replay starts.
+    pub fn bind_major_cycle_model(
+        &mut self,
+        generation: &ModelGeneration,
+    ) -> Result<(), SerialMfsError> {
+        if self.sample_count != 0 || self.next_block_sequence != 0 || self.residual_model.is_some()
+        {
+            return Err(SerialMfsError::MajorCycleAlreadyBound);
+        }
+        self.operator.prepare_residual_model(generation)?;
+        self.residual_model = Some(generation.generation_id());
+        Ok(())
     }
 
     /// Return the sole frozen T18 generation accepted by this owner.
@@ -698,14 +681,19 @@ impl CompleteDataOwnerState {
                 };
                 for spectral in weighted.spectral_values() {
                     let contribution = spectral.contribution();
-                    self.operator.push(SerialMfsSample::new(
+                    let sample = SerialMfsSample::new(
                         selected.coordinates.transformed_uvw_m,
                         selected.address.frequency_centre_hz,
                         selected.coordinates.phase_shift_m,
                         visibility,
                         spectral.imaging_weight(),
                         f64::from(contribution.factor()),
-                    )?)?;
+                    )?;
+                    if self.residual_model.is_some() {
+                        self.operator.push_with_residual(sample)?;
+                    } else {
+                        self.operator.push(sample)?;
+                    }
                 }
             }
         }
@@ -729,6 +717,9 @@ impl CompleteDataOwnerState {
         model: &[Complex64],
         block: &WeightingReplayChunk,
     ) -> Result<&[Complex64], SerialMfsError> {
+        if self.residual_model.is_some() {
+            return Err(SerialMfsError::PredictionAfterMajorCycleBinding);
+        }
         if block.samples().len() > self.operator.workload.max_replay_block_samples {
             return Err(SerialMfsError::IncompleteCoverage);
         }
@@ -780,7 +771,7 @@ impl CompleteDataOwnerState {
             return Err(SerialMfsError::IncompleteCoverage);
         }
         Ok(CompleteDataOwnerResult {
-            primitives: self.operator.finish()?,
+            primitives: self.operator.finish_bound(self.residual_model)?,
             completion: CompleteDataOwnerCompletion {
                 problem: self.problem,
                 geometry: self.geometry,
@@ -863,6 +854,8 @@ struct SerialMfsOperator {
     dirty_compensation: Array2<Complex64>,
     psf_grid: Array2<Complex64>,
     psf_compensation: Array2<Complex64>,
+    residual_grid: Option<Array2<Complex64>>,
+    residual_compensation: Option<Array2<Complex64>>,
     forward_grid: Array2<Complex64>,
     predictions: Box<[Complex64]>,
     prediction_len: usize,
@@ -913,6 +906,8 @@ impl SerialMfsOperator {
             dirty_compensation: Array2::zeros(shape),
             psf_grid: Array2::zeros(shape),
             psf_compensation: Array2::zeros(shape),
+            residual_grid: None,
+            residual_compensation: None,
             forward_grid: Array2::zeros(shape),
             predictions: vec![Complex64::default(); prediction_values].into_boxed_slice(),
             prediction_len: 0,
@@ -937,6 +932,91 @@ impl SerialMfsOperator {
             &mut self.dirty_compensation,
             taps,
             weighted_visibility,
+        );
+        let psf_weight = sample.imaging_weight * factor * factor;
+        self.gridder.grid_compensated(
+            &mut self.psf_grid,
+            &mut self.psf_compensation,
+            taps,
+            Complex64::new(psf_weight, 0.0),
+        );
+        let corrected = psf_weight - self.sum_weight_compensation;
+        let updated = self.sum_weight + corrected;
+        self.sum_weight_compensation = (updated - self.sum_weight) - corrected;
+        self.sum_weight = updated;
+        Ok(())
+    }
+
+    fn prepare_residual_model(
+        &mut self,
+        generation: &ModelGeneration,
+    ) -> Result<(), SerialMfsError> {
+        let shape = generation.shape();
+        if shape.domains().len() != 1
+            || shape.coefficients() != 1
+            || shape.polarizations() != 1
+            || shape.domains()[0].pixels() != self.geometry.image_shape
+            || generation.samples().len()
+                != self.geometry.image_shape[0] * self.geometry.image_shape[1]
+        {
+            return Err(SerialMfsError::ModelShape);
+        }
+        self.forward_grid.fill(Complex64::default());
+        let width = self.geometry.image_shape[0];
+        for (flat, sample) in generation.samples().iter().enumerate() {
+            if sample.support() == ModelSupport::Invalid {
+                continue;
+            }
+            let y = flat / width;
+            let x = flat % width;
+            let correction = self.gridder.image_correction(x, y);
+            self.forward_grid[(
+                self.geometry.image_blc[0] + x,
+                self.geometry.image_blc[1] + y,
+            )] = Complex64::new(sample.value().value(), 0.0) * correction;
+        }
+        self.fft.transform(&mut self.forward_grid, false);
+        if self
+            .forward_grid
+            .iter()
+            .any(|value| !value.re.is_finite() || !value.im.is_finite())
+        {
+            return Err(SerialMfsError::GeneratedNonfinite);
+        }
+        let shape = (self.geometry.grid_shape[0], self.geometry.grid_shape[1]);
+        self.residual_grid = Some(Array2::zeros(shape));
+        self.residual_compensation = Some(Array2::zeros(shape));
+        Ok(())
+    }
+
+    fn push_with_residual(&mut self, sample: SerialMfsSample) -> Result<(), SerialMfsError> {
+        if sample.imaging_weight == 0.0 {
+            return Ok(());
+        }
+        let Some(taps) = self.gridder.taps(sample.uv_lambda()) else {
+            return Ok(());
+        };
+        let predicted = self.predict_one_with_taps(sample, taps)?;
+        let factor = sample.spectral_factor;
+        let weighted_visibility =
+            sample.visibility * sample.phase() * (sample.imaging_weight * factor);
+        self.gridder.grid_compensated(
+            &mut self.dirty_grid,
+            &mut self.dirty_compensation,
+            taps,
+            weighted_visibility,
+        );
+        let residual_visibility =
+            (sample.visibility - predicted) * sample.phase() * (sample.imaging_weight * factor);
+        self.gridder.grid_compensated(
+            self.residual_grid
+                .as_mut()
+                .expect("bound residual model owns its grid"),
+            self.residual_compensation
+                .as_mut()
+                .expect("bound residual model owns compensation"),
+            taps,
+            residual_visibility,
         );
         let psf_weight = sample.imaging_weight * factor * factor;
         self.gridder.grid_compensated(
@@ -996,6 +1076,14 @@ impl SerialMfsOperator {
         let Some(taps) = self.gridder.taps(sample.uv_lambda()) else {
             return Ok(Complex64::new(0.0, 0.0));
         };
+        self.predict_one_with_taps(sample, taps)
+    }
+
+    fn predict_one_with_taps(
+        &self,
+        sample: SerialMfsSample,
+        taps: SampleTaps,
+    ) -> Result<Complex64, SerialMfsError> {
         let predicted = self.gridder.degrid(&self.forward_grid, taps)
             * sample.phase().conj()
             * sample.spectral_factor;
@@ -1016,12 +1104,27 @@ impl SerialMfsOperator {
     }
 
     /// Finish the paired inverse transforms and return unnormalized primitives.
-    pub fn finish(mut self) -> Result<SerialMfsPrimitives, SerialMfsError> {
+    #[cfg(test)]
+    pub fn finish(self) -> Result<SerialMfsPrimitives, SerialMfsError> {
+        self.finish_bound(None)
+    }
+
+    fn finish_bound(
+        mut self,
+        residual_model: Option<ModelGenerationId>,
+    ) -> Result<SerialMfsPrimitives, SerialMfsError> {
         self.fft.transform(&mut self.dirty_grid, true);
         self.fft.transform(&mut self.psf_grid, true);
+        if let Some(residual) = self.residual_grid.as_mut() {
+            self.fft.transform(residual, true);
+        }
         let cells = self.geometry.image_shape[0] * self.geometry.image_shape[1];
         let mut dirty = Vec::with_capacity(cells);
         let mut psf = Vec::with_capacity(cells);
+        let mut residual = self
+            .residual_grid
+            .as_ref()
+            .map(|_| Vec::with_capacity(cells));
         for x in 0..self.geometry.image_shape[0] {
             for y in 0..self.geometry.image_shape[1] {
                 let correction = self.gridder.image_correction(x, y);
@@ -1037,11 +1140,20 @@ impl SerialMfsOperator {
                         self.geometry.image_blc[1] + y,
                     )] * correction,
                 );
+                if let (Some(grid), Some(values)) = (&self.residual_grid, residual.as_mut()) {
+                    values.push(
+                        grid[(
+                            self.geometry.image_blc[0] + x,
+                            self.geometry.image_blc[1] + y,
+                        )] * correction,
+                    );
+                }
             }
         }
         if dirty
             .iter()
             .chain(&psf)
+            .chain(residual.iter().flatten())
             .any(|value| !value.re.is_finite() || !value.im.is_finite())
             || !self.sum_weight.is_finite()
         {
@@ -1053,6 +1165,8 @@ impl SerialMfsOperator {
             psf: psf.into_boxed_slice(),
             sensitivity: vec![self.sum_weight; cells].into_boxed_slice(),
             sum_weight: self.sum_weight,
+            major_cycle_residual: residual.map(Vec::into_boxed_slice),
+            residual_model,
         })
     }
 }
@@ -1419,11 +1533,24 @@ pub enum SerialMfsError {
     /// A prediction model does not match the planned image shape.
     #[error("serial MFS model does not match the planned image shape")]
     ModelShape,
+    /// A different model was named after residual replay was prepared.
+    #[error("serial MFS residual belongs to another final model generation")]
+    ModelMismatch,
+    /// Residual replay was bound more than once or after samples were consumed.
+    #[error("serial MFS major-cycle model must be bound exactly once before replay")]
+    MajorCycleAlreadyBound,
+    /// A diagnostic prediction attempted to replace the bound final-model grid.
+    #[error("serial MFS prediction is unavailable after major-cycle model binding")]
+    PredictionAfterMajorCycleBinding,
+    /// T20 attempted to finalize T19 output that never accumulated an exact residual.
+    #[error("serial MFS output lacks an exhaustive paired-operator residual")]
+    MissingMajorCycleResidual,
 }
 
 #[cfg(test)]
 mod tests {
     use casa_imaging_model::FiniteValuePolicy;
+    use ndarray::Array2;
     use num_complex::Complex64;
 
     use super::{
@@ -1443,12 +1570,12 @@ mod tests {
     fn workload() -> SerialMfsWorkload {
         SerialMfsWorkload {
             grid_shape: [10, 10],
-            grid_complex_values: 400,
+            grid_complex_values: 600,
             convolution_f64_values: 727,
             fft_resident_complex_values: 7_690,
             fft_planning_words: 320,
             forward_complex_values: 106,
-            primitive_complex_values: 128,
+            primitive_complex_values: 192,
             primitive_f64_values: 64,
             max_replay_block_samples: 3,
         }
@@ -1600,12 +1727,12 @@ mod tests {
     #[test]
     fn workload_reports_every_runtime_projected_buffer_once() {
         let workload = workload();
-        assert_eq!(workload.grid_complex_values(), 4 * 10 * 10);
+        assert_eq!(workload.grid_complex_values(), 6 * 10 * 10);
         assert_eq!(workload.convolution_f64_values(), 101 * 7 + 20);
         assert!(workload.fft_resident_complex_values() >= 4 * 10);
         assert_eq!(workload.fft_planning_words(), 16 * 20);
         assert_eq!(workload.forward_complex_values(), 10 * 10 + 2 * 3);
-        assert_eq!(workload.primitive_complex_values(), 2 * 8 * 8);
+        assert_eq!(workload.primitive_complex_values(), 3 * 8 * 8);
         assert_eq!(workload.primitive_f64_values(), 8 * 8);
     }
 
@@ -1637,59 +1764,57 @@ mod tests {
         );
     }
 
-    /// Drive one adjoint pass and finish it into unnormalized primitives.
-    fn dirty_psf_primitives() -> crate::SerialMfsPrimitives {
-        let mut state = operator();
-        for sample in samples(&[[1.0, 0.0], [2.0, -1.0], [0.5, 0.25]]) {
-            state.push(sample).expect("adjoint push");
-        }
-        state.finish().expect("primitives")
-    }
-
     #[test]
     fn empty_model_residual_reproduces_the_dirty_plane_bit_exactly() {
-        let mut primitives = dirty_psf_primitives();
-        let content_before = primitives.normal_state_content_identity();
-        let model = vec![Complex64::default(); primitives.dirty().len()];
-        primitives
-            .apply_major_cycle_residual(&model)
-            .expect("empty-model composition");
+        let values = samples(&[[1.0, 0.0], [2.0, -1.0], [0.5, 0.25]]);
+        let mut state = operator();
+        let model = vec![Complex64::default(); checked_cells(geometry().image_shape).unwrap()];
+        state.prepare_prediction_grid(&model).expect("empty model");
+        let shape = (geometry().grid_shape[0], geometry().grid_shape[1]);
+        state.residual_grid = Some(Array2::zeros(shape));
+        state.residual_compensation = Some(Array2::zeros(shape));
+        for sample in values {
+            state.push_with_residual(sample).expect("paired residual");
+        }
+        let primitives = state.finish_bound(None).expect("primitives");
         assert_eq!(
-            primitives.normal_state_content_identity(),
-            content_before,
-            "an empty model must not perturb one bit of the data-side plane"
+            primitives.major_cycle_residual.as_deref(),
+            Some(primitives.dirty()),
+            "an empty model must reproduce the data-side adjoint bit exactly"
         );
     }
 
     #[test]
-    fn residual_subtracts_the_model_convolved_with_the_exact_psf_kernel() {
-        let mut primitives = dirty_psf_primitives();
-        let [width, height] = primitives.shape();
-        let cells = width * height;
-        let dirty: Vec<Complex64> = primitives.dirty().to_vec();
-        let psf: Vec<Complex64> = primitives.psf().to_vec();
+    fn residual_matches_explicit_paired_forward_then_weighted_adjoint() {
+        let values = samples(&[[1.0, 0.0], [2.0, -1.0], [0.5, 0.25]]);
+        let mut model = vec![Complex64::default(); checked_cells(geometry().image_shape).unwrap()];
+        model[3 * geometry().image_shape[1] + 5] = Complex64::new(1.0, 0.0);
 
-        // One positive unit point source away from the phase centre.
-        let source_flat = 3 * height + 5;
-        let mut model = vec![Complex64::default(); cells];
-        model[source_flat] = Complex64::new(1.0, 0.0);
-        primitives
-            .apply_major_cycle_residual(&model)
-            .expect("point-source composition");
-
-        // g(p) = b(p) - x(q) * psf((p - q) mod shape), elementwise exact.
-        let residual = primitives.dirty();
-        assert_eq!(residual.len(), cells);
-        for px in 0..width {
-            for py in 0..height {
-                let index = px * height + py;
-                let kernel_index = ((px + width - 3) % width) * height + (py + height - 5) % height;
-                let expected = dirty[index] - psf[kernel_index];
-                assert!(
-                    (residual[index] - expected).norm() <= 4.0 * f64::EPSILON,
-                    "residual[{index}] deviated from the declared composition"
-                );
-            }
+        let predicted = operator()
+            .predict(&model, &values)
+            .expect("paired forward prediction");
+        let mut explicit = operator();
+        for (mut sample, prediction) in values.iter().copied().zip(predicted.iter().copied()) {
+            sample.visibility -= prediction;
+            explicit.push(sample).expect("explicit residual adjoint");
         }
+        let expected = explicit.finish().expect("explicit normal residual");
+
+        let mut fused = operator();
+        fused
+            .prepare_prediction_grid(&model)
+            .expect("prepare model");
+        let shape = (geometry().grid_shape[0], geometry().grid_shape[1]);
+        fused.residual_grid = Some(Array2::zeros(shape));
+        fused.residual_compensation = Some(Array2::zeros(shape));
+        for sample in values {
+            fused.push_with_residual(sample).expect("fused residual");
+        }
+        let actual = fused.finish_bound(None).expect("fused normal residual");
+        assert_eq!(
+            actual.major_cycle_residual.as_deref(),
+            Some(expected.dirty()),
+            "T20 must equal the declared paired A*W(d-Ax) evaluation"
+        );
     }
 }

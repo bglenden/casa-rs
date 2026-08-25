@@ -35,9 +35,10 @@ use casa_imaging_model::{
 };
 use casa_imaging_reconstruction::{
     ExecutableModelProblem, FinalModelCompletionId, MajorCycleError, MajorCycleOwner,
-    ModelLifecycle, ModelLifecycleError, SerialMfsError, SerialMfsSpecification,
-    WeightingAlgorithmState, WeightingError, WeightingExecutionLimits, WeightingPlan,
-    WeightingReplayChunk, WeightingReplaySummary, begin_weighting_generation, plan_weighting,
+    MajorCyclePreparation, ModelDelta, ModelGeneration, ModelLifecycle, ModelLifecycleError,
+    SerialMfsError, SerialMfsSpecification, WeightingAlgorithmState, WeightingError,
+    WeightingExecutionLimits, WeightingPlan, WeightingReplayChunk, WeightingReplaySummary,
+    begin_weighting_generation, plan_weighting,
     runtime_adapter::{CompleteDataOwnerResult, prepare_serial_mfs_operator, serial_mfs_workload},
 };
 
@@ -424,7 +425,10 @@ fn replay(
 ///
 /// The returned value keeps primitives and completion inseparably paired; the
 /// only way to split them is to hand the whole result to the Major-Cycle owner.
-fn run_t19_complete_data(problem: &casa_imaging_model::CompiledProblem) -> CompleteDataOwnerResult {
+fn run_t19_complete_data(
+    problem: &casa_imaging_model::CompiledProblem,
+    preparation: Option<&MajorCyclePreparation>,
+) -> CompleteDataOwnerResult {
     let plan = plan_weighting(
         problem,
         WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
@@ -444,12 +448,65 @@ fn run_t19_complete_data(problem: &casa_imaging_model::CompiledProblem) -> Compl
     let mut state = prepared
         .begin(problem, &generation)
         .expect("begin complete-data owner");
+    if let Some(preparation) = preparation {
+        state
+            .bind_major_cycle_model(preparation.final_model())
+            .expect("bind exact final model before replay");
+    }
     for block in &blocks {
         state.consume_block(block).expect("consume weighted block");
     }
     state
         .complete(&summary, selected_generation)
         .expect("complete T19 evidence")
+}
+
+fn prepare_reconciliation(
+    problem: &casa_imaging_model::CompiledProblem,
+    lifecycle: &ModelLifecycle,
+    named: ModelGeneration,
+    delta: Option<ModelDelta>,
+) -> (CompleteDataOwnerResult, MajorCyclePreparation) {
+    let preparation =
+        MajorCyclePreparation::prepare(lifecycle, named, delta).expect("prepare final model");
+    let evidence = run_t19_complete_data(problem, Some(&preparation));
+    (evidence, preparation)
+}
+
+#[test]
+fn bound_major_cycle_model_cannot_be_replaced_by_diagnostic_prediction() {
+    let problem = t19_compatible_problem(37);
+    let lifecycle = bind_lifecycle(&problem, attempt(38));
+    let named = lifecycle.initial_empty().expect("empty named generation");
+    let preparation =
+        MajorCyclePreparation::prepare(&lifecycle, named, None).expect("prepare final model");
+    let plan = plan_weighting(
+        &problem,
+        WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
+    )
+    .expect("weighting plan");
+    let samples = fixture_samples(&problem);
+    let generation = freeze_weighting_generation(&problem, &plan, &samples)
+        .expect("freeze weighting generation");
+    let (blocks, _) = replay(&generation, &problem, &plan, &samples);
+    let specification = SerialMfsSpecification::new(&problem).expect("serial MFS specification");
+    let workload = serial_mfs_workload(&specification, plan.limits().max_block_samples())
+        .expect("serial MFS workload");
+    let prepared = prepare_serial_mfs_operator(specification, workload).expect("prepare operator");
+    let mut state = prepared
+        .begin(&problem, &generation)
+        .expect("begin complete-data owner");
+    state
+        .bind_major_cycle_model(preparation.final_model())
+        .expect("bind final model");
+    let arbitrary_model = vec![num_complex::Complex64::new(1.0, 0.0); 8 * 8];
+
+    assert_eq!(
+        state
+            .predict_block(&arbitrary_model, &blocks[0])
+            .expect_err("prediction must not overwrite the final-model grid"),
+        SerialMfsError::PredictionAfterMajorCycleBinding
+    );
 }
 
 fn bind_lifecycle(
@@ -488,23 +545,24 @@ fn schema_versions_record_the_t20_completion_records() {
 #[test]
 fn reconciliation_applies_one_pending_delta_through_the_model_owner() {
     let problem = t19_compatible_problem(11);
-    let evidence = run_t19_complete_data(&problem);
-    // The data-side dirty plane before any model-dependent reconciliation.
-    let data_side_content = evidence.primitives().normal_state_content_identity();
-    let sample_count = evidence.completion().sample_count();
-    let block_count = evidence.completion().block_count();
-    let weighting_generation = evidence.completion().weighting_generation();
     let mut lifecycle = bind_lifecycle(&problem, attempt(21));
     let named = lifecycle.initial_empty().expect("empty named generation");
     let delta = lifecycle
         .compile_delta(&named, [ModelDeltaTerm::new(cell(1), delta_value(-2.5))])
         .expect("pending Högbom-style delta");
     let delta_id = delta.delta_id();
+    let (evidence, preparation) = prepare_reconciliation(&problem, &lifecycle, named, Some(delta));
+    // The data-side dirty plane remains T19 evidence beside the exact residual.
+    let data_side_content = evidence.primitives().normal_state_content_identity();
+    let sample_count = evidence.completion().sample_count();
+    let block_count = evidence.completion().block_count();
+    let weighting_generation = evidence.completion().weighting_generation();
 
-    let owner = MajorCycleOwner::from_complete_data(evidence).expect("T20 owner from T19");
+    let owner =
+        MajorCycleOwner::from_complete_data(evidence, preparation).expect("T20 owner from T19");
     assert_eq!(owner.weighting_generation(), weighting_generation);
     let joined = owner
-        .reconcile(&mut lifecycle, named, Some(delta))
+        .reconcile(&mut lifecycle)
         .expect("atomic Major-Cycle reconciliation");
 
     // One inseparable result carrying two distinct opaque typed records plus
@@ -556,15 +614,17 @@ fn reconciliation_applies_one_pending_delta_through_the_model_owner() {
 #[test]
 fn reconciliation_without_a_pending_delta_confirms_the_named_generation_final() {
     let problem = t19_compatible_problem(12);
-    let evidence = run_t19_complete_data(&problem);
-    let data_side_content = evidence.primitives().normal_state_content_identity();
     let mut lifecycle = bind_lifecycle(&problem, attempt(22));
     let named = lifecycle.initial_empty().expect("empty named generation");
     let input_id = named.generation_id();
+    let (evidence, preparation) = prepare_reconciliation(&problem, &lifecycle, named, None);
+    let data_side_content = evidence.primitives().normal_state_content_identity();
+    let data_side_dirty = evidence.primitives().dirty().to_vec();
 
-    let owner = MajorCycleOwner::from_complete_data(evidence).expect("T20 owner from T19");
+    let owner =
+        MajorCycleOwner::from_complete_data(evidence, preparation).expect("T20 owner from T19");
     let joined = owner
-        .reconcile(&mut lifecycle, named, None)
+        .reconcile(&mut lifecycle)
         .expect("confirm-only reconciliation");
 
     assert_eq!(joined.model_completion().delta(), None);
@@ -574,23 +634,27 @@ fn reconciliation_without_a_pending_delta_confirms_the_named_generation_final() 
     assert_eq!(joined.normal_state().final_model_generation(), input_id);
     // An empty final model reconciles to the exact T19 dirty plane bit-for-bit.
     assert_eq!(joined.normal_state().content_identity(), data_side_content);
+    assert_eq!(joined.normal_state().residual(), data_side_dirty);
+    assert_eq!(joined.normal_state().normal_approximation().len(), 8 * 8);
+    assert_eq!(joined.normal_state().sensitivity().len(), 8 * 8);
+    assert!(joined.normal_state().sum_weight() > 0.0);
 }
 
 #[test]
 fn residual_content_depends_on_the_exact_final_model() {
     let problem = t19_compatible_problem(27);
     // The same T19 evidence reconciled against two different final models.
-    let empty_evidence = run_t19_complete_data(&problem);
     let mut empty_lifecycle = bind_lifecycle(&problem, attempt(28));
     let empty_named = empty_lifecycle
         .initial_empty()
         .expect("empty named generation");
-    let empty_join = MajorCycleOwner::from_complete_data(empty_evidence)
+    let (empty_evidence, empty_preparation) =
+        prepare_reconciliation(&problem, &empty_lifecycle, empty_named, None);
+    let empty_join = MajorCycleOwner::from_complete_data(empty_evidence, empty_preparation)
         .expect("owner from intact T19 pairing")
-        .reconcile(&mut empty_lifecycle, empty_named, None)
+        .reconcile(&mut empty_lifecycle)
         .expect("empty-model reconciliation");
 
-    let delta_evidence = run_t19_complete_data(&problem);
     let mut delta_lifecycle = bind_lifecycle(&problem, attempt(29));
     let delta_named = delta_lifecycle
         .initial_empty()
@@ -601,15 +665,22 @@ fn residual_content_depends_on_the_exact_final_model() {
             [ModelDeltaTerm::new(cell(3), delta_value(1.75))],
         )
         .expect("pending delta");
-    let delta_join = MajorCycleOwner::from_complete_data(delta_evidence)
+    let (delta_evidence, delta_preparation) =
+        prepare_reconciliation(&problem, &delta_lifecycle, delta_named, Some(delta));
+    let delta_join = MajorCycleOwner::from_complete_data(delta_evidence, delta_preparation)
         .expect("owner from intact T19 pairing")
-        .reconcile(&mut delta_lifecycle, delta_named, Some(delta))
+        .reconcile(&mut delta_lifecycle)
         .expect("delta reconciliation");
 
     assert_ne!(
         empty_join.normal_state().content_identity(),
         delta_join.normal_state().content_identity(),
         "a nonzero final model must change the authoritative residual content"
+    );
+    assert_ne!(
+        empty_join.normal_state().residual(),
+        delta_join.normal_state().residual(),
+        "the retained authoritative residual must depend on the final model"
     );
     assert_ne!(empty_join.completion_id(), delta_join.completion_id());
     assert_ne!(
@@ -624,20 +695,22 @@ fn completion_ids_stay_stable_across_owner_allocations() {
     // Two independent reconciliation passes over identical evidence, each with
     // its own process-local lifecycle allocation but the same stable
     // problem/attempt/epoch binding.
-    let first_evidence = run_t19_complete_data(&problem);
-    let second_evidence = run_t19_complete_data(&problem);
     let mut first = bind_lifecycle(&problem, attempt(31));
     let mut second = bind_lifecycle(&problem, attempt(31));
     let first_named = first.initial_empty().expect("first named generation");
     let second_named = second.initial_empty().expect("second named generation");
+    let (first_evidence, first_preparation) =
+        prepare_reconciliation(&problem, &first, first_named, None);
+    let (second_evidence, second_preparation) =
+        prepare_reconciliation(&problem, &second, second_named, None);
 
-    let first_join = MajorCycleOwner::from_complete_data(first_evidence)
+    let first_join = MajorCycleOwner::from_complete_data(first_evidence, first_preparation)
         .expect("first owner")
-        .reconcile(&mut first, first_named, None)
+        .reconcile(&mut first)
         .expect("first reconciliation");
-    let second_join = MajorCycleOwner::from_complete_data(second_evidence)
+    let second_join = MajorCycleOwner::from_complete_data(second_evidence, second_preparation)
         .expect("second owner")
-        .reconcile(&mut second, second_named, None)
+        .reconcile(&mut second)
         .expect("second reconciliation");
 
     assert_eq!(
@@ -661,9 +734,10 @@ fn observation_generation_lineage_is_bound_into_the_normal_state() {
         let expected = replay_selected_generation(problem, &fixture_samples(problem));
         let mut lifecycle = bind_lifecycle(problem, attempt(attempt_byte));
         let named = lifecycle.initial_empty().expect("named generation");
-        let join = MajorCycleOwner::from_complete_data(run_t19_complete_data(problem))
+        let (evidence, preparation) = prepare_reconciliation(problem, &lifecycle, named, None);
+        let join = MajorCycleOwner::from_complete_data(evidence, preparation)
             .expect("owner from intact T19 pairing")
-            .reconcile(&mut lifecycle, named, None)
+            .reconcile(&mut lifecycle)
             .expect("reconciliation");
         assert_eq!(
             join.normal_state().selected_generation(),
@@ -690,9 +764,13 @@ fn reconciliation_fails_atomically_and_leaves_both_authorities_intact() {
     let foreign_named = foreign_problem_lifecycle
         .initial_empty()
         .expect("foreign empty generation");
-    let stale_problem = MajorCycleOwner::from_complete_data(run_t19_complete_data(&problem))
+    let foreign_preparation =
+        MajorCyclePreparation::prepare(&foreign_problem_lifecycle, foreign_named, None)
+            .expect("prepare foreign problem model");
+    let foreign_evidence = run_t19_complete_data(&problem, Some(&foreign_preparation));
+    let stale_problem = MajorCycleOwner::from_complete_data(foreign_evidence, foreign_preparation)
         .expect("T20 owner from T19")
-        .reconcile(&mut foreign_problem_lifecycle, foreign_named, None)
+        .reconcile(&mut foreign_problem_lifecycle)
         .expect_err("stale model evidence must fail closed");
     assert!(matches!(stale_problem, MajorCycleError::StaleModelEvidence));
 
@@ -703,10 +781,8 @@ fn reconciliation_fails_atomically_and_leaves_both_authorities_intact() {
     let foreign_generation = other_owner_same_problem
         .initial_empty()
         .expect("same-problem foreign generation");
-    let foreign = MajorCycleOwner::from_complete_data(run_t19_complete_data(&problem))
-        .expect("T20 owner from T19")
-        .reconcile(&mut lifecycle, foreign_generation, None)
-        .expect_err("foreign generation must fail closed");
+    let foreign = MajorCyclePreparation::prepare(&lifecycle, foreign_generation, None)
+        .expect_err("foreign generation must fail before replay");
     assert!(matches!(
         foreign,
         MajorCycleError::Model(ModelLifecycleError::ForeignModelLifecycle)
@@ -732,10 +808,8 @@ fn reconciliation_fails_atomically_and_leaves_both_authorities_intact() {
         .expect("delta against the alternative base");
     let named = lifecycle.initial_empty().expect("fresh named generation");
     assert_ne!(alternative_base.generation_id(), named.generation_id());
-    let misbound = MajorCycleOwner::from_complete_data(run_t19_complete_data(&problem))
-        .expect("T20 owner from T19")
-        .reconcile(&mut lifecycle, named, Some(misbound_delta))
-        .expect_err("misbound delta must fail atomically");
+    let misbound = MajorCyclePreparation::prepare(&lifecycle, named, Some(misbound_delta))
+        .expect_err("misbound delta must fail before replay");
     assert!(matches!(
         misbound,
         MajorCycleError::Model(ModelLifecycleError::DeltaBaseMismatch)
@@ -746,9 +820,10 @@ fn reconciliation_fails_atomically_and_leaves_both_authorities_intact() {
     let delta = lifecycle
         .compile_delta(&named, [ModelDeltaTerm::new(cell(2), delta_value(1.0))])
         .expect("correctly bound delta");
-    let joined = MajorCycleOwner::from_complete_data(run_t19_complete_data(&problem))
+    let (evidence, preparation) = prepare_reconciliation(&problem, &lifecycle, named, Some(delta));
+    let joined = MajorCycleOwner::from_complete_data(evidence, preparation)
         .expect("T20 owner from T19")
-        .reconcile(&mut lifecycle, named, Some(delta))
+        .reconcile(&mut lifecycle)
         .expect("reconciliation succeeds after atomic failures");
     assert_eq!(
         joined.model_completion().attempt(),
@@ -784,7 +859,7 @@ fn incomplete_or_foreign_operator_evidence_cannot_become_a_major_cycle_owner() {
     assert!(matches!(foreign, SerialMfsError::ProblemMismatch));
 
     // Exhaustive coverage is required before any owner can exist.
-    let evidence = run_t19_complete_data(&problem);
+    let evidence = run_t19_complete_data(&problem, None);
     let completion = evidence.completion();
     assert!(completion.sample_count() > 0 && completion.block_count() > 0);
     assert_eq!(completion.problem_id(), problem.problem_id());

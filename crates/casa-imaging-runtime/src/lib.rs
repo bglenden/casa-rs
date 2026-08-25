@@ -28,7 +28,7 @@ pub use execution_bindings::{
     WorkMeasurements, plan, run,
 };
 
-pub use casa_imaging_reconstruction::ContinuumPrimitiveCatalog;
+pub use casa_imaging_reconstruction::{ContinuumPrimitiveCatalog, MajorCyclePreparation};
 pub use complete_data_operator::{
     CompleteDataOperatorError, CompleteDataOperatorResult, CompleteDataPlanError,
     CompleteDataPlanFragment, CompleteDataPreparedState, CompleteDataResidency,

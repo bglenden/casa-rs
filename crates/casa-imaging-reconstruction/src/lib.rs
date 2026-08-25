@@ -50,7 +50,8 @@ pub mod runtime_adapter {
 }
 
 pub use major_cycle::{
-    FinalNormalState, MajorCycleCompletion, MajorCycleError, MajorCycleOwner, NormalStateCatalog,
+    FinalNormalState, MajorCycleCompletion, MajorCycleError, MajorCycleOwner,
+    MajorCyclePreparation, NormalStateCatalog,
 };
 pub use weighting::{
     WeightingAlgorithmState, WeightingError, WeightingExecutionLimits, WeightingGenerationId,
@@ -524,6 +525,43 @@ pub struct FinalModelUpdate {
     completion: FinalModelCompletion,
 }
 
+/// Validated final-model candidate whose one-shot completion authority has not
+/// yet been consumed.
+///
+/// A Major Cycle prepares this value before its exhaustive operator replay and
+/// commits it only after every fallible scientific and resource-bound step has
+/// succeeded. The value has no public constructor and remains bound to one
+/// lifecycle owner.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct PreparedFinalModel {
+    generation: ModelGeneration,
+    authority: LogicalIdentity,
+    seal: AuthoritySeal,
+    base: ModelGenerationId,
+    delta: Option<ModelDeltaId>,
+}
+
+impl PreparedFinalModel {
+    /// Borrow the validated candidate generation for paired-operator work.
+    #[must_use]
+    pub const fn generation(&self) -> &ModelGeneration {
+        &self.generation
+    }
+
+    /// Return the named input generation.
+    #[must_use]
+    pub const fn base(&self) -> ModelGenerationId {
+        self.base
+    }
+
+    /// Return the candidate final generation.
+    #[must_use]
+    pub const fn generation_id(&self) -> ModelGenerationId {
+        self.generation.generation_id
+    }
+}
+
 impl FinalModelUpdate {
     /// Borrow the next authoritative generation.
     #[must_use]
@@ -750,7 +788,12 @@ impl ModelLifecycle {
     ) -> Result<ModelDelta, ModelLifecycleError> {
         self.ensure_open()?;
         self.validate_base(base)?;
-        let mut canonical = Vec::new();
+        let capacity = self
+            .contract
+            .bounds()
+            .max_delta_terms()
+            .min(self.contract.target().sample_count());
+        let mut canonical = Vec::with_capacity(capacity);
         let mut prior = None;
         for term in terms {
             if canonical.len() == self.contract.bounds().max_delta_terms() {
@@ -821,42 +864,88 @@ impl ModelLifecycle {
         self.validate_base(generation)
     }
 
-    /// Confirm one validated named generation as the final model without a
-    /// pending Model Delta and mint distinct opaque completion evidence.
-    pub fn confirm_final_model(
-        &mut self,
+    /// Prepare one final-model candidate without consuming final-completion
+    /// authority.
+    ///
+    /// This is the first phase of the Major-Cycle transaction. All model and
+    /// delta validation and arithmetic happen here, while the lifecycle remains
+    /// open if later complete-data reconciliation fails.
+    pub fn prepare_final_model(
+        &self,
         named: ModelGeneration,
+        delta: Option<ModelDelta>,
+    ) -> Result<PreparedFinalModel, ModelLifecycleError> {
+        self.ensure_open()?;
+        let base = named.generation_id;
+        let (generation, delta) = match delta {
+            Some(delta) => {
+                let delta_id = delta.delta_id;
+                (self.apply_delta_inner(named, delta)?, Some(delta_id))
+            }
+            None => {
+                self.validate_named_generation(&named)?;
+                (named, None)
+            }
+        };
+        Ok(PreparedFinalModel {
+            generation,
+            authority: self.authority,
+            seal: self.seal,
+            base,
+            delta,
+        })
+    }
+
+    /// Commit a successfully reconciled final-model candidate and mint its
+    /// distinct completion evidence.
+    pub fn commit_final_model(
+        &mut self,
+        prepared: PreparedFinalModel,
     ) -> Result<FinalModelUpdate, ModelLifecycleError> {
-        self.validate_named_generation(&named)?;
-        let final_authority = self
-            .final_authority
-            .take()
-            .ok_or(ModelLifecycleError::FinalModelAlreadyCompleted)?;
-        let generation_id = named.generation_id;
+        self.ensure_open()?;
+        if prepared.authority != self.authority || prepared.seal != self.seal {
+            return Err(ModelLifecycleError::ForeignModelLifecycle);
+        }
+        self.validate_named_generation(&prepared.generation)?;
+        let generation_id = prepared.generation.generation_id;
         let completion_id = final_completion_id(
             self.authority,
             self.problem,
             self.attempt,
             self.epoch,
-            generation_id,
-            None,
+            prepared.base,
+            prepared.delta,
             generation_id,
         );
+        let final_authority = self
+            .final_authority
+            .take()
+            .expect("open lifecycle retains final authority");
         let completion = FinalModelCompletion {
             completion_id,
             seal: final_authority.0,
             problem: self.problem,
             attempt: self.attempt,
             epoch: self.epoch,
-            base: generation_id,
-            delta: None,
+            base: prepared.base,
+            delta: prepared.delta,
             generation: generation_id,
         };
         debug_assert_eq!(completion.seal, self.seal);
         Ok(FinalModelUpdate {
-            generation: named,
+            generation: prepared.generation,
             completion,
         })
+    }
+
+    /// Confirm one validated named generation as the final model without a
+    /// pending Model Delta and mint distinct opaque completion evidence.
+    pub fn confirm_final_model(
+        &mut self,
+        named: ModelGeneration,
+    ) -> Result<FinalModelUpdate, ModelLifecycleError> {
+        let prepared = self.prepare_final_model(named, None)?;
+        self.commit_final_model(prepared)
     }
 
     /// Perform the affine final-model update and mint distinct opaque completion evidence.
@@ -868,38 +957,8 @@ impl ModelLifecycle {
         base: ModelGeneration,
         delta: ModelDelta,
     ) -> Result<FinalModelUpdate, ModelLifecycleError> {
-        self.validate_delta_update(&base, &delta)?;
-        let final_authority = self
-            .final_authority
-            .take()
-            .ok_or(ModelLifecycleError::FinalModelAlreadyCompleted)?;
-        let base_id = base.generation_id;
-        let delta_id = delta.delta_id;
-        let generation = self.apply_delta_inner(base, delta)?;
-        let completion_id = final_completion_id(
-            self.authority,
-            self.problem,
-            self.attempt,
-            self.epoch,
-            base_id,
-            Some(delta_id),
-            generation.generation_id,
-        );
-        let completion = FinalModelCompletion {
-            completion_id,
-            seal: final_authority.0,
-            problem: self.problem,
-            attempt: self.attempt,
-            epoch: self.epoch,
-            base: base_id,
-            delta: Some(delta_id),
-            generation: generation.generation_id,
-        };
-        debug_assert_eq!(completion.seal, self.seal);
-        Ok(FinalModelUpdate {
-            generation,
-            completion,
-        })
+        let prepared = self.prepare_final_model(base, Some(delta))?;
+        self.commit_final_model(prepared)
     }
 
     fn validate_delta_update(
