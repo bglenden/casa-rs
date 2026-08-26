@@ -4,7 +4,7 @@
 
 use std::{collections::BTreeSet, error::Error, fmt};
 
-use casa_imaging_model::{MeasurementSetIdentity, ProductGraphId, ProductNodeId};
+use casa_imaging_model::{ProductGraphId, ProductNodeId};
 
 use crate::{AllocationId, ArtifactIdentity, IoBufferKind, WorkDependency, WorkNodeId};
 
@@ -50,8 +50,6 @@ pub enum PublicationParticipant {
         /// Graph-local node identity within that topology.
         node_id: ProductNodeId,
     },
-    /// The optional `MODEL_DATA` member for one MeasurementSet.
-    ModelData(MeasurementSetIdentity),
 }
 
 /// Adapter-derived hard resource bounds for one physical publication member.

@@ -305,8 +305,9 @@ impl CompleteDataPlanFragment {
     /// Add shared grids, FFT scratch, and primitive outputs to physical work.
     ///
     /// Composition also binds this fragment to the sealed observation
-    /// transaction's final-reconciliation node: afterwards, reconciliation may
-    /// execute only at that exact plan-authoritative Compute node.
+    /// transaction's post-replay reconciliation node: afterwards,
+    /// reconciliation may execute only at that exact plan-authoritative Compute
+    /// node.
     ///
     /// Returns the composed physical work together with this fragment bound to
     /// its authoritative reconciliation node.
@@ -314,7 +315,7 @@ impl CompleteDataPlanFragment {
         mut self,
         base: &PhysicalWorkBinding,
     ) -> Result<(PhysicalWorkBinding, Self), CompleteDataPlanError> {
-        let reconciliation = base.observation_transaction().final_reconciliation();
+        let reconciliation = base.observation_transaction().post_replay_reconciliation();
         if !base.execution_dag().nodes().contains_key(&self.replay_node) {
             return Err(CompleteDataPlanError::MissingReplayNode);
         }
@@ -1005,12 +1006,14 @@ impl SerialMfsOperatorState {
     pub fn consume_weighted_block(
         &mut self,
         block: &WeightedObservationBlock,
-    ) -> Result<(), CompleteDataOperatorError> {
+    ) -> Result<
+        &[casa_imaging_reconstruction::runtime_adapter::FinalVisibilitySample],
+        CompleteDataOperatorError,
+    > {
         if block.weighting_generation() != self.state.weighting_generation() {
             return Err(CompleteDataOperatorError::WeightingGeneration);
         }
-        self.state.consume_block(block.reconstruction_block())?;
-        Ok(())
+        Ok(self.state.consume_block(block.reconstruction_block())?)
     }
 
     /// Predict one bounded T18 block through the same plan-authorized A operator.

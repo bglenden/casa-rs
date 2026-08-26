@@ -33,6 +33,7 @@ fn selected_observation_sample_schema_carries_exact_science_and_provenance() {
         visibility: SelectedVisibilitySample::Complex32([1.25, -0.5]),
         prediction_target: SelectedPredictionTarget::ModelData,
         channel_flag: true,
+        parallel_hand_group_flag: true,
         row_flag: false,
         input_weight: 2.5,
         coordinates: SelectedSampleCoordinates {
@@ -65,7 +66,7 @@ fn selected_observation_sample_schema_carries_exact_science_and_provenance() {
         },
     };
 
-    assert_eq!(SelectedObservationSample::SCHEMA_VERSION, 2);
+    assert_eq!(SelectedObservationSample::SCHEMA_VERSION, 3);
     assert_eq!(sample.address.measurement_set, measurement_set);
     assert_eq!(sample.address.physical_row, 11);
     assert_eq!(sample.address.data_description_id, 2);
@@ -88,6 +89,7 @@ fn selected_observation_sample_schema_carries_exact_science_and_provenance() {
         SelectedPredictionTarget::ModelData
     );
     assert!(sample.channel_flag);
+    assert!(sample.parallel_hand_group_flag);
     assert!(!sample.row_flag);
     assert_eq!(sample.input_weight, 2.5_f32);
     assert_eq!(sample.coordinates.raw_uvw_m, [12.0, -4.0, 2.0]);

@@ -9,29 +9,31 @@ use std::{
 };
 
 use casa_coordinates::{
-    CoordinateSystem, DirectionCoordinate, Projection as CoordinateProjection, ProjectionType,
-    SpectralCoordinate, StokesCoordinate, StokesType,
+    CoordinateModel, CoordinateSystem, CoordinateType, DirectionCoordinate,
+    Projection as CoordinateProjection, ProjectionType, SpectralCoordinate, StokesCoordinate,
+    StokesType,
 };
+use casa_images::AnyPagedImage;
 use casa_imaging_model::{
     AxisOrder, CentreLaws, CorrelationProduct, CorrelationSelection, CorrelationType,
     DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame,
-    DopplerConvention, FacetLayout, FiniteValuePolicy, FrequencyFrame, ImageAxis, ImageDomainRole,
-    ImageDomainSpec, ImageShape, InstrumentResponse, LogicalIdentity, MeasurementEquationContract,
-    ModelBounds, ModelColumnWrite, ModelInnerProduct, ModelInputCommitment,
-    ModelLifecycleRequirements, ModelStateIdentity, NumericPrecision, NumericalStage,
-    NumericsContract, ObservationSelection, ObservationTransactionRequirements, PhaseCentreLaw,
-    PointingCentreLaw, PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy,
-    ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
-    ProductRequirements, ProductSupportComparison, ProductValidityPolicies, Projection,
-    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
-    ReductionPolicy, RestFrequency, RestoringBeamPolicy, ScientificContract, SelectedMainRow,
-    SelectedRows, SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling,
-    SpectralFrameAnchor, SpectralSampling, SpectralWcs, SpectralWindowSelection, StageErrorBudget,
-    TaylorSupportReference, TaylorValidityPolicy, UvwCoordinateLaw,
-    VisibilityColumn as OwnerVisibilityColumn, VisibilityInnerProduct,
+    DopplerConvention, Epoch, FacetLayout, FiniteValuePolicy, FrequencyFrame, ImageAxis,
+    ImageDomainRole, ImageDomainSpec, ImageShape, InstrumentResponse, ItrfPosition,
+    LogicalIdentity, MeasurementEquationContract, ModelBounds, ModelColumnWrite, ModelInnerProduct,
+    ModelInputCommitment, ModelLifecycleRequirements, ModelStateIdentity, NumericPrecision,
+    NumericalStage, NumericsContract, ObservationSelection, ObservationTransactionRequirements,
+    PhaseCentreLaw, PointingCentreLaw, PolarizationContract, PolarizationCoordinate,
+    PrimaryBeamValidityPolicy, ProblemSpecification, ProductBlankingPolicy, ProductKind,
+    ProductNormalization, ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
+    Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
+    ReconstructionControls, ReductionPolicy, RestFrequency, RestoringBeamPolicy,
+    ScientificContract, SelectedMainRow, SelectedRows, SkyDirection, SpectralContract,
+    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSampling, SpectralWcs,
+    SpectralWindowSelection, StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy,
+    TimeScale, UvwCoordinateLaw, VisibilityColumn as OwnerVisibilityColumn, VisibilityInnerProduct,
     WeightColumn as OwnerWeightColumn, WeightDensityScope, WeightingContract, WeightingScheme,
 };
-use casa_imaging_reconstruction::{MinorCycleStopReason, WeightingExecutionLimits};
+use casa_imaging_reconstruction::{ReconstructionMaskPlan, WeightingExecutionLimits};
 use casa_imaging_runtime::{
     BuildIdentity, ExecutionAttemptId, ExecutionReceiptStore, ImplementationRegistryId,
     PlannerCostModelProfileId, ProductionStorageProfile, ReceiptRetention, ResourceAuthority,
@@ -42,7 +44,7 @@ use casa_ms::{
     SelectedObservationResolutionRequest, SelectedObservationRow, VisibilityDataColumn,
     parse_spw_selector, resolve_channel_selector_selection,
 };
-use casa_types::measures::{direction::DirectionRef, frequency::FrequencyRef};
+use casa_types::measures::{direction::DirectionRef, epoch::EpochRef, frequency::FrequencyRef};
 use sha2::{Digest, Sha256};
 
 use crate::{
@@ -63,6 +65,8 @@ pub enum ContinuumAlgorithm {
     Multiscale {
         /// Canonical scale sizes in image pixels.
         scales_px: Vec<f64>,
+        /// CASA small-scale preference in `[0, 1]`.
+        small_scale_bias: f64,
     },
     /// Request multi-term multi-frequency synthesis.
     Mtmfs {
@@ -93,6 +97,51 @@ pub enum ContinuumBeamPolicy {
     Common,
 }
 
+/// Reconstruction-mask policy evaluated at the initial major-cycle boundary.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ContinuumMask {
+    /// Admit every valid model pixel.
+    FullPlane,
+    /// Admit the union of inclusive target-grid pixel boxes.
+    Boxes(Vec<ContinuumMaskBox>),
+    /// Reproject non-zero pixels from a CASA image mask onto the model grid.
+    Image(PathBuf),
+    /// Generate CASA auto-multithreshold support from the current Normal State.
+    AutoMultithresh(ContinuumAutoMaskControls),
+}
+
+/// Inclusive target-grid mask box accepted at the application boundary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ContinuumMaskBox {
+    /// Lower-left `[x, y]` pixel.
+    pub blc: [usize; 2],
+    /// Upper-right `[x, y]` pixel.
+    pub trc: [usize; 2],
+}
+
+/// Auto-multithreshold values transported by thin frontends.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ContinuumAutoMaskControls {
+    /// Sidelobe threshold multiplier.
+    pub sidelobe_factor: f64,
+    /// Robust-noise threshold multiplier.
+    pub noise_factor: f64,
+    /// Low-noise growth multiplier.
+    pub low_noise_factor: f64,
+    /// Negative-feature threshold multiplier.
+    pub negative_factor: f64,
+    /// Minimum component area as a beam fraction.
+    pub minimum_beam_fraction: f64,
+    /// Gaussian smoothing FWHM as a beam fraction.
+    pub smooth_factor: f64,
+    /// Smoothed-mask cutoff fraction.
+    pub cut_threshold: f64,
+    /// Four-connected growth bound.
+    pub grow_iterations: usize,
+    /// Percent-change channel-stop threshold; negative disables this stop.
+    pub minimum_percent_change: f64,
+}
+
 /// Application projection of the native minor-cycle terminal reason.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ContinuumStopReason {
@@ -102,6 +151,8 @@ pub enum ContinuumStopReason {
     IterationBound,
     /// The accepted model-update envelope required a fresh major cycle.
     StalenessBound,
+    /// The multiscale component sequence diverged after prior progress.
+    MultiscaleDivergence,
 }
 
 /// Canonical application input for one MeasurementSet-backed continuum run.
@@ -141,6 +192,20 @@ pub struct ContinuumImagingRequest {
     pub weighting: ContinuumWeighting,
     /// Minor-cycle iteration limit.
     pub iterations: usize,
+    /// Maximum component updates accepted in one minor cycle.
+    pub cycle_iterations: usize,
+    /// Maximum number of major cycles admitted by the controller contract.
+    pub maximum_major_cycles: usize,
+    /// Hard cumulative component-flux envelope accepted between reconciliations.
+    pub maximum_model_update_jy: f64,
+    /// Optional robust-RMS stopping multiplier.
+    pub noise_sigma: Option<f64>,
+    /// PSF-sidelobe multiplier used to derive each cycle threshold.
+    pub cycle_factor: f64,
+    /// Lower clamp for the PSF fraction in the cycle threshold.
+    pub minimum_psf_fraction: f64,
+    /// Upper clamp for the PSF fraction in the cycle threshold.
+    pub maximum_psf_fraction: f64,
     /// Minor-cycle gain.
     pub gain: f64,
     /// Absolute stopping threshold in Jy/beam.
@@ -149,6 +214,10 @@ pub struct ContinuumImagingRequest {
     pub psf_cutoff: f32,
     /// Restoring-beam policy.
     pub beam_policy: ContinuumBeamPolicy,
+    /// Model-update support policy.
+    pub mask: ContinuumMask,
+    /// Persist the exact final prediction into the MeasurementSet `MODEL_DATA` column.
+    pub save_model_column: bool,
     /// Capability constraints derived by the task surface. Unsupported
     /// capabilities are rejected by the installed implementation registry
     /// before physical execution.
@@ -163,6 +232,8 @@ pub struct ContinuumImagingResult {
     pub minor_iterations: usize,
     /// Scientific minor-cycle terminal reason, when a solve ran.
     pub minor_stop_reason: Option<ContinuumStopReason>,
+    /// Ordered owner diagnostics for every executed minor cycle.
+    pub minor_cycles: Vec<crate::NativeMinorCycleOutcome>,
     /// Exact compiler-planned conventional CASA member names.
     pub product_names: Vec<String>,
 }
@@ -173,7 +244,9 @@ pub fn execute_continuum(
 ) -> Result<ContinuumImagingResult, ApplicationDispatchError> {
     let prepared = prepare(request).map_err(ApplicationDispatchError::Preparation)?;
     let outcome = crate::execute(prepared)?;
-    let minor = outcome.output.minor_cycle;
+    let minor_cycles = outcome.output.minor_cycles.clone();
+    let minor = minor_cycles.last();
+    let minor_iterations = outcome.output.total_minor_iterations;
     let product_names = outcome
         .output
         .planned_products
@@ -182,12 +255,22 @@ pub fn execute_continuum(
         .map(|member| member.name().to_string())
         .collect();
     Ok(ContinuumImagingResult {
-        minor_iterations: minor.map_or(0, |value| value.iterations),
+        minor_iterations,
         minor_stop_reason: minor.map(|value| match value.stop_reason {
-            MinorCycleStopReason::ThresholdReached => ContinuumStopReason::ThresholdReached,
-            MinorCycleStopReason::IterationBound => ContinuumStopReason::IterationBound,
-            MinorCycleStopReason::StalenessBound => ContinuumStopReason::StalenessBound,
+            crate::NativeMinorCycleStopReason::ThresholdReached => {
+                ContinuumStopReason::ThresholdReached
+            }
+            crate::NativeMinorCycleStopReason::IterationBound => {
+                ContinuumStopReason::IterationBound
+            }
+            crate::NativeMinorCycleStopReason::StalenessBound => {
+                ContinuumStopReason::StalenessBound
+            }
+            crate::NativeMinorCycleStopReason::MultiscaleDivergence => {
+                ContinuumStopReason::MultiscaleDivergence
+            }
         }),
+        minor_cycles,
         product_names,
         outcome,
     })
@@ -214,6 +297,7 @@ fn prepare(
     let mut multiple_ddids = false;
     let mut selected_field = None;
     let mut multiple_fields = false;
+    let mut first_selected_time_mjd_seconds = None;
     ms.visit_selected_observation_rows(
         &row_selection,
         MsSelectionIoBudget {
@@ -227,6 +311,7 @@ fn prepare(
             selected_ddid.get_or_insert(row.data_description_id());
             multiple_fields |= selected_field.is_some_and(|value| value != row.field_id());
             selected_field.get_or_insert(row.field_id());
+            first_selected_time_mjd_seconds.get_or_insert(row.time_mjd_seconds());
             compact_rows.push(SelectedMainRow::new(
                 u64::try_from(row.physical_row()).expect("row bounded by MS row count"),
                 u32::try_from(row.data_description_id()).expect("validated nonnegative DDID"),
@@ -252,7 +337,7 @@ fn prepare(
         .iter()
         .map(|channel| frequencies[*channel])
         .collect::<Vec<_>>();
-    let reference_frequency =
+    let source_reference_frequency =
         selected_frequencies.iter().sum::<f64>() / selected_frequencies.len() as f64;
     let correlation_codes = polarization.corr_type(polarization_id)?;
     let correlations = correlation_codes
@@ -291,6 +376,33 @@ fn prepare(
     let frequency_reference =
         FrequencyRef::from_casacore_code(spectral_window.meas_freq_ref(spw_id)?)
             .unwrap_or(FrequencyRef::TOPO);
+    let source_frequency_frame = imaging_frequency_frame(frequency_reference)?;
+    let output_frequency_reference = FrequencyRef::LSRK;
+    let output_frequency_frame = FrequencyFrame::Lsrk;
+    let frame_engine = casa_ms::derived::engine::MsCalEngine::new(&ms)?;
+    let anchor_time_mjd_seconds =
+        first_selected_time_mjd_seconds.expect("nonempty selected row traversal");
+    let reference_frequency = casa_ms::convert_frequency_to_frame(
+        frequency_reference,
+        output_frequency_reference,
+        source_reference_frequency,
+        anchor_time_mjd_seconds,
+        field_id,
+        &frame_engine,
+    )?;
+    let spectral_anchor = if source_frequency_frame == output_frequency_frame {
+        SpectralFrameAnchor::NotApplicable
+    } else {
+        let [x_metres, y_metres, z_metres] = frame_engine.observatory_position().as_itrf();
+        SpectralFrameAnchor::Conversion {
+            epoch: Epoch::new(
+                anchor_time_mjd_seconds / 86_400.0,
+                imaging_time_scale(frame_engine.time_reference())?,
+            ),
+            direction: direction.reference_direction(),
+            observatory_position: ItrfPosition::new(x_metres, y_metres, z_metres),
+        }
+    };
     let geometry = casa_imaging_model::GeometryInput::new(
         vec![ImageDomainSpec::new(
             ImageDomainRole::Main,
@@ -311,9 +423,9 @@ fn prepare(
         ),
         UvwCoordinateLaw::PhaseTrackingCentre,
         SpectralCoordinateSpec::new(
-            FrequencyFrame::Topocentric,
-            FrequencyFrame::Topocentric,
-            SpectralFrameAnchor::NotApplicable,
+            source_frequency_frame,
+            output_frequency_frame,
+            spectral_anchor,
             SpectralWcs::Linear {
                 channels: 1,
                 reference_pixel: 0.0,
@@ -327,7 +439,7 @@ fn prepare(
     let coordinates = image_coordinates(
         &request,
         [right_ascension, declination],
-        frequency_reference,
+        output_frequency_reference,
         reference_frequency,
     );
     let native = production_storage_profile(&request, content_budget)
@@ -342,7 +454,7 @@ fn prepare(
             publication: ApplicationPublication {
                 controls: casa_imaging_products::ContinuumProductControls::new(request.psf_cutoff)
                     .expect("validated PSF cutoff"),
-                sink: CasaImageProductSink::new(request.image_name.clone(), coordinates),
+                sink: CasaImageProductSink::new(request.image_name.clone(), coordinates.clone()),
             },
         });
     let digest = request_digest(&request, b"selection");
@@ -351,16 +463,49 @@ fn prepare(
         geometry,
         model_lifecycle: ModelLifecycleRequirements::new(
             ModelBounds::new(
-                request.image_size.saturating_mul(request.image_size),
+                model_plane_samples(request.image_size),
                 1,
                 1,
-                request.iterations.max(1),
-                1.0e30,
-                1.0e30,
+                model_plane_samples(request.image_size),
+                request.maximum_model_update_jy * request.maximum_major_cycles.max(1) as f64,
+                request.maximum_model_update_jy,
             )?,
             NumericPrecision::F64,
             ModelInputCommitment::Empty,
         ),
+        mask: match request.mask {
+            ContinuumMask::FullPlane => ReconstructionMaskPlan::FullPlane {
+                coordinate: direction,
+            },
+            ContinuumMask::Boxes(boxes) => ReconstructionMaskPlan::Boxes {
+                coordinate: direction,
+                boxes: boxes
+                    .into_iter()
+                    .map(|region| casa_imaging_reconstruction::MaskBox::new(region.blc, region.trc))
+                    .collect::<Result<Vec<_>, _>>()?,
+            },
+            ContinuumMask::Image(path) => {
+                reproject_image_mask(&path, direction, request.image_size)?
+            }
+            ContinuumMask::AutoMultithresh(controls) => ReconstructionMaskPlan::AutoMultithresh {
+                coordinate: direction,
+                controls: casa_imaging_reconstruction::AutoMultithreshControls {
+                    sidelobe_factor: controls.sidelobe_factor,
+                    noise_factor: controls.noise_factor,
+                    low_noise_factor: controls.low_noise_factor,
+                    negative_factor: controls.negative_factor,
+                    minimum_beam_fraction: controls.minimum_beam_fraction,
+                    smooth_factor: controls.smooth_factor,
+                    cut_threshold: controls.cut_threshold,
+                    grow_iterations: controls.grow_iterations,
+                    minimum_percent_change: controls.minimum_percent_change,
+                },
+                completed_major_cycles: 0,
+                cycle_threshold_reached: false,
+                previous: None,
+                evolution_stopped: false,
+            },
+        },
         observation: SelectedObservationResolutionRequest::new(
             request.measurement_set.display().to_string(),
             LogicalIdentity::from_sha256(digest),
@@ -376,6 +521,7 @@ fn prepare(
             content_budget,
             casa_ms::open_measures_runtime()?,
         ),
+        write_model_column: request.save_model_column,
         task_requirements: request.task_requirements,
         native,
     })
@@ -387,11 +533,23 @@ fn validate_request(request: &ContinuumImagingRequest) -> Result<(), crate::Appl
         || request.cell_arcsec <= 0.0
         || !request.gain.is_finite()
         || !request.threshold_jy.is_finite()
+        || !request.maximum_model_update_jy.is_finite()
+        || request.maximum_model_update_jy <= 0.0
         || !request.psf_cutoff.is_finite()
         || request.psf_cutoff <= 0.0
+        || (request.algorithm != ContinuumAlgorithm::Dirty
+            && (request.cycle_iterations == 0 || request.maximum_major_cycles == 0))
+        || request
+            .noise_sigma
+            .is_some_and(|sigma| !sigma.is_finite() || sigma < 0.0)
     {
         return Err(boxed(
             "native continuum geometry and controls must be finite and positive",
+        ));
+    }
+    if request.save_model_column && request.algorithm == ContinuumAlgorithm::Dirty {
+        return Err(boxed(
+            "MODEL_DATA persistence requires a solved final model, not a dirty-only request",
         ));
     }
     Ok(())
@@ -441,6 +599,31 @@ fn data_description_binding(
         usize::try_from(polarization)
             .map_err(|_| boxed("selected DDID has a negative polarization id"))?,
     ))
+}
+
+fn imaging_frequency_frame(
+    reference: FrequencyRef,
+) -> Result<FrequencyFrame, crate::ApplicationError> {
+    match reference {
+        FrequencyRef::TOPO => Ok(FrequencyFrame::Topocentric),
+        FrequencyRef::BARY => Ok(FrequencyFrame::Barycentric),
+        FrequencyRef::LSRK => Ok(FrequencyFrame::Lsrk),
+        _ => Err(boxed(format!(
+            "native continuum does not support MeasurementSet frequency frame {reference}"
+        ))),
+    }
+}
+
+fn imaging_time_scale(reference: EpochRef) -> Result<TimeScale, crate::ApplicationError> {
+    match reference {
+        EpochRef::UTC => Ok(TimeScale::Utc),
+        EpochRef::TAI => Ok(TimeScale::Tai),
+        EpochRef::TT => Ok(TimeScale::Tt),
+        EpochRef::TDB => Ok(TimeScale::Tdb),
+        _ => Err(boxed(format!(
+            "native continuum does not support MeasurementSet epoch reference {reference}"
+        ))),
+    }
 }
 
 fn selected_channels(
@@ -518,6 +701,122 @@ fn image_reference_pixel(image_size: usize) -> f64 {
     image_size as f64 / 2.0
 }
 
+fn reproject_image_mask(
+    path: &Path,
+    target_spec: DirectionCoordinateSpec,
+    target_size: usize,
+) -> Result<ReconstructionMaskPlan, crate::ApplicationError> {
+    let image = AnyPagedImage::open(path)?;
+    let (source_shape, source_coordinates, source_support) = match image {
+        AnyPagedImage::Float32(image) => {
+            let shape = image.shape().to_vec();
+            let coordinates = image.coordinates().clone();
+            let mask = image.get_mask()?;
+            let values = image.get()?;
+            let support: Vec<bool> = values
+                .iter()
+                .enumerate()
+                .map(|(index, value)| {
+                    value.is_finite()
+                        && *value != 0.0
+                        && mask.as_ref().is_none_or(|mask| mask[index])
+                })
+                .collect();
+            (shape, coordinates, support)
+        }
+        AnyPagedImage::Float64(image) => {
+            let shape = image.shape().to_vec();
+            let coordinates = image.coordinates().clone();
+            let mask = image.get_mask()?;
+            let values = image.get()?;
+            let support: Vec<bool> = values
+                .iter()
+                .enumerate()
+                .map(|(index, value)| {
+                    value.is_finite()
+                        && *value != 0.0
+                        && mask.as_ref().is_none_or(|mask| mask[index])
+                })
+                .collect();
+            (shape, coordinates, support)
+        }
+        AnyPagedImage::Complex32(_) | AnyPagedImage::Complex64(_) => {
+            return Err(boxed("reconstruction masks require a real CASA image"));
+        }
+    };
+    if source_shape.len() < 2
+        || source_shape[2..].iter().any(|extent| *extent != 1)
+        || source_support.len() != source_shape[0] * source_shape[1]
+    {
+        return Err(boxed(
+            "reconstruction mask must contain one two-dimensional direction plane",
+        ));
+    }
+    let source_direction = direction_coordinate(&source_coordinates)?;
+    let source_spec = direction_model_spec(source_direction)?;
+    let support = casa_imaging_reconstruction::reproject_mask_support(
+        source_spec,
+        [source_shape[0], source_shape[1]],
+        &source_support,
+        target_spec,
+        [target_size, target_size],
+    )?;
+    Ok(ReconstructionMaskPlan::Reprojected {
+        coordinate: target_spec,
+        source_coordinate: source_spec,
+        source_shape: [source_shape[0], source_shape[1]],
+        support,
+    })
+}
+
+fn direction_coordinate(
+    coordinates: &CoordinateSystem,
+) -> Result<&CoordinateModel, crate::ApplicationError> {
+    let index = coordinates
+        .find_coordinate(CoordinateType::Direction)
+        .ok_or_else(|| boxed("mask image has no direction coordinate"))?;
+    Ok(coordinates.coordinate(index))
+}
+
+fn direction_model_spec(
+    coordinate: &CoordinateModel,
+) -> Result<DirectionCoordinateSpec, crate::ApplicationError> {
+    let CoordinateModel::Direction(direction) = coordinate else {
+        return Err(boxed("mask direction-coordinate lookup was inconsistent"));
+    };
+    if direction.projection().projection_type() != ProjectionType::SIN {
+        return Err(boxed(
+            "native mask reprojection currently requires SIN coordinates",
+        ));
+    }
+    let frame = match direction.direction_ref() {
+        DirectionRef::J2000 => DirectionFrame::J2000,
+        DirectionRef::B1950 => DirectionFrame::B1950,
+        DirectionRef::GALACTIC => DirectionFrame::Galactic,
+        DirectionRef::ICRS => DirectionFrame::Icrs,
+        _ => {
+            return Err(boxed(
+                "mask direction frame is not supported by native imaging",
+            ));
+        }
+    };
+    let reference = coordinate.reference_value();
+    let pixel = coordinate.reference_pixel();
+    let increment = coordinate.increment();
+    let pc = direction.pc_matrix();
+    Ok(DirectionCoordinateSpec::new(
+        Projection::Sin,
+        SkyDirection::new(frame, reference[0], reference[1]),
+        [pixel[0], pixel[1]],
+        [increment[0], increment[1]],
+        [[pc[[0, 0]], pc[[0, 1]]], [pc[[1, 0]], pc[[1, 1]]]],
+        [
+            direction.longpole().to_degrees(),
+            direction.latpole().to_degrees(),
+        ],
+    ))
+}
+
 fn specification(
     request: &ContinuumImagingRequest,
 ) -> Result<ProblemSpecification, crate::ApplicationError> {
@@ -534,10 +833,14 @@ fn specification(
             ReconstructionBasis::Constant,
             ReconstructionAlgorithm::Clark,
         ),
-        ContinuumAlgorithm::Multiscale { scales_px } => (
+        ContinuumAlgorithm::Multiscale {
+            scales_px,
+            small_scale_bias,
+        } => (
             ReconstructionBasis::Constant,
             ReconstructionAlgorithm::Multiscale {
                 scales_px: scales_px.clone(),
+                small_scale_bias: *small_scale_bias,
             },
         ),
         ContinuumAlgorithm::Mtmfs { terms } => (
@@ -579,8 +882,21 @@ fn specification(
             if algorithm == ReconstructionAlgorithm::Dirty {
                 ReconstructionControls::new(0, 1.0, 0.0)
             } else {
-                ReconstructionControls::new(request.iterations, request.gain, request.threshold_jy)
-                    .with_maximum_model_update(1.0e30)
+                let controls = ReconstructionControls::new(
+                    request.iterations,
+                    request.gain,
+                    request.threshold_jy,
+                )
+                .with_maximum_model_update(request.maximum_model_update_jy)
+                .with_cycle_limits(request.cycle_iterations, request.maximum_major_cycles)
+                .with_cycle_threshold(
+                    request.cycle_factor,
+                    request.minimum_psf_fraction,
+                    request.maximum_psf_fraction,
+                );
+                request
+                    .noise_sigma
+                    .map_or(controls, |sigma| controls.with_noise_sigma(sigma))
             },
             PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
         ),
@@ -592,6 +908,7 @@ fn specification(
                 ProductKind::Model,
                 ProductKind::RestoredImage,
                 ProductKind::SumWeights,
+                ProductKind::Mask,
             ],
             ProductNormalization::UnitResponse,
             match request.beam_policy {
@@ -612,7 +929,11 @@ fn specification(
                 )?,
             ),
         ),
-        ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
+        ObservationTransactionRequirements::new(if request.save_model_column {
+            ModelColumnWrite::SelectedRows
+        } else {
+            ModelColumnWrite::Disabled
+        }),
         NumericsContract::new(
             vec![NumericPrecision::F64],
             ReductionPolicy::Compensated,
@@ -824,6 +1145,10 @@ fn request_digest(request: &ContinuumImagingRequest, domain: &[u8]) -> [u8; 32] 
     hasher.finalize().into()
 }
 
+const fn model_plane_samples(image_size: usize) -> usize {
+    image_size.saturating_mul(image_size)
+}
+
 fn hash(value: &[u8]) -> [u8; 32] {
     Sha256::digest(value).into()
 }
@@ -839,11 +1164,16 @@ fn boxed(message: impl Into<String>) -> crate::ApplicationError {
 
 #[cfg(test)]
 mod tests {
-    use super::image_reference_pixel;
+    use super::{image_reference_pixel, model_plane_samples};
 
     #[test]
     fn casa_direction_reference_pixel_uses_half_the_image_extent() {
         assert_eq!(image_reference_pixel(16), 8.0);
         assert_eq!(image_reference_pixel(15), 7.5);
+    }
+
+    #[test]
+    fn model_delta_bound_covers_one_complete_multiscale_plane() {
+        assert_eq!(model_plane_samples(64), 4096);
     }
 }

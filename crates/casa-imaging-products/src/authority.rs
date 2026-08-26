@@ -31,10 +31,10 @@ use crate::source::{ContinuumProductInputs, ContinuumSourceCatalog};
 ///
 /// The identity binds every product algorithm's semantics; changing any
 /// algorithm changes every derived artifact identity and seal.
-pub const CONTINUUM_ALGORITHM_CATALOG_VERSION: u32 = 1;
+pub const CONTINUUM_ALGORITHM_CATALOG_VERSION: u32 = 2;
 
 /// Default main-lobe cutoff fraction for restoring-beam fitting.
-pub const DEFAULT_PSF_CUTOFF: f32 = 0.35;
+pub const DEFAULT_PSF_CUTOFF: f32 = casa_imaging_reconstruction::DEFAULT_PSF_FIT_CUTOFF;
 
 /// Explicit continuum production controls.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -235,6 +235,7 @@ impl ProductGenerationAuthority {
             psf_cutoff: controls.psf_cutoff(),
             members: members.into_boxed_slice(),
             final_model_generation: sources.final_model_generation(),
+            reconstruction_mask_generation: sources.reconstruction_mask_generation(),
         })
     }
 
@@ -449,6 +450,8 @@ pub struct PlannedContinuumGeneration {
     psf_cutoff: f32,
     members: Box<[PlannedMember]>,
     final_model_generation: casa_imaging_reconstruction::ModelGenerationId,
+    reconstruction_mask_generation:
+        Option<casa_imaging_reconstruction::ReconstructionMaskGenerationId>,
 }
 
 impl PlannedContinuumGeneration {
@@ -630,6 +633,13 @@ pub fn produce_continuum_members(
     if inputs.final_model().generation_id() != planned.final_model_generation {
         return Err(ProductsError::CommitmentMismatch);
     }
+    if inputs
+        .reconstruction_mask()
+        .map(casa_imaging_reconstruction::ReconstructionMask::generation_id)
+        != planned.reconstruction_mask_generation
+    {
+        return Err(ProductsError::CommitmentMismatch);
+    }
     let normal_state = inputs.normal_state();
     let sensitivity = normal_state.sum_weight();
     let plane_shape = normal_state.shape();
@@ -722,8 +732,12 @@ pub fn produce_continuum_members(
             ProductRole::CleanMask => normal_state
                 .sensitivity()
                 .iter()
-                .map(|value| {
-                    if *value > 0.0 && value.is_finite() {
+                .enumerate()
+                .map(|(index, value)| {
+                    let selected = inputs
+                        .reconstruction_mask()
+                        .is_none_or(|mask| mask.support()[index]);
+                    if selected && *value > 0.0 && value.is_finite() {
                         1.0_f32
                     } else {
                         0.0

@@ -133,11 +133,19 @@ Bulk samples remain bounded streams; snapshot does not mean materialization.
 
 Read and write sets are explicit. Execution detects disallowed mutation of
 selected data, flags, weights, or metadata before consuming mixed generations.
-Scientific products and optional model-column writes use staging and commit
-atomically only after final complete-data reconciliation and all required Product
-Contract nodes succeed. Cancellation, input mutation, numerical failure,
-resource failure, or output failure leaves neither partially published products
-nor a partially committed model column.
+Scientific products use their planned per-member publication protocol after
+final complete-data reconciliation. Optional `MODEL_DATA` follows ADR-0008 and
+is written in place during the single terminal replay under the standard
+incomplete marker. An explicit final-model preparation node first validates and
+freezes the exact candidate generation without traversing the MeasurementSet.
+The terminal replay then predicts, emits residual-product samples, and writes
+`MODEL_DATA` from that same immutable candidate in one selected-data pass. Its
+I/O completion precedes the post-replay Major-Cycle reconciliation that commits
+model-completion authority and normal-state evidence. Successful writeback
+advances its owner generation; interruption may leave partial derived values
+but remains detectable and fail-closed. Imaging does not add a staging column,
+backup generation, content digest, or rollback mechanism beyond CASA-compatible
+table behavior.
 
 ### Major and Minor Cycles
 
@@ -229,12 +237,13 @@ Neutral / tradeoffs:
 
 This decision is enforced by:
 - tests: weighted-adjoint and linearity laws, spectral identity/nonidentity
-  cases, cycle invariants, mutation/cancellation rollback, product-generation
+  cases, cycle invariants, detectable interrupted writes, product-generation
   consistency, differential evidence, and versioned Acceptance Contracts
 - lint/import/dependency rules: CI rejects forbidden frontend, backend,
   observation, reconstruction, and product dependencies
 - CI checks: the migration matrix and obligations remain executable; transferred
-  routes are unreachable; products/model-column writes are atomic
+  routes are unreachable; product members publish independently and interrupted
+  in-place model-column writes fail closed
 - review trigger: stop before adding a second public run interface, an alternate
   stage path, backend-owned science/product semantics, or unpaired sampling
 - none / guidance only:

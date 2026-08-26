@@ -268,6 +268,63 @@ fn retained_selected_samples_are_bounded_and_block_partition_invariant() {
 }
 
 #[test]
+fn selected_projection_preserves_cell_flags_and_derives_parallel_hand_group_flags() {
+    let directory = tempfile::tempdir().expect("temporary paired-flag fixture");
+    let path = directory.path().join("paired-flag.ms");
+    generate_fixture(&path);
+
+    let mut measurement_set = MeasurementSet::open(&path).expect("open paired-flag fixture");
+    let mut flags = match measurement_set
+        .main_table()
+        .cell_accessor(0, "FLAG")
+        .and_then(|cell| cell.array())
+        .expect("read FLAG cell")
+        .clone()
+    {
+        ArrayValue::Bool(flags) => flags,
+        other => panic!("FLAG must be Bool, found {:?}", other.primitive_type()),
+    };
+    *flags.iter_mut().next().expect("nonempty FLAG cell") = true;
+    measurement_set
+        .main_table_mut()
+        .cell_accessor_mut(0, "FLAG")
+        .expect("open FLAG cell for mutation")
+        .set(Value::Array(ArrayValue::Bool(flags)))
+        .expect("flag only the first parallel hand");
+    measurement_set.save().expect("persist paired-flag fixture");
+    drop(measurement_set);
+
+    let problem = compiled_problem(&path, 2);
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let bound = BoundObservationSource::open(
+        &problem,
+        source,
+        &source_state(source),
+        content_budget_for_rows(&problem, source, 1, 1),
+    )
+    .expect("bind paired-flag fixture");
+    let samples = bound
+        .selected_samples(&problem)
+        .expect("prepare paired-flag stream")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("read paired-flag stream");
+
+    assert!(samples[0].channel_flag, "the stored RR flag remains exact");
+    assert!(!samples[1].channel_flag, "the stored LL flag remains exact");
+    assert!(samples[0].parallel_hand_group_flag);
+    assert!(
+        samples[1].parallel_hand_group_flag,
+        "one flagged parallel hand excludes the complete Stokes-I group"
+    );
+    assert!(
+        samples[2..]
+            .iter()
+            .all(|sample| !sample.parallel_hand_group_flag),
+        "other row/channel groups remain usable"
+    );
+}
+
+#[test]
 fn sparse_manifest_reads_only_selected_physical_rows() {
     let directory = tempfile::tempdir().expect("temporary sparse selected-observation fixture");
     let path = directory.path().join("sparse.ms");
@@ -633,7 +690,14 @@ fn real_ms_cube_traversal_maps_contributions_into_the_transformed_output_frame()
             let actual = reported
                 .spectral_contributions()
                 .iter()
-                .map(|contribution| (contribution.output_channel(), contribution.factor()))
+                .map(|contribution| {
+                    assert_eq!(
+                        contribution.evaluation_frequency_hz().to_bits(),
+                        transformed_hz.to_bits(),
+                        "every output contribution must carry the owner-evaluated operator frequency"
+                    );
+                    (contribution.output_channel(), contribution.factor())
+                })
                 .collect::<Vec<_>>();
             assert_eq!(actual, expected);
             values.push((
@@ -1473,6 +1537,34 @@ fn post_compile_source_generation_changes_are_rejected_before_planning_or_stream
             "{changed} change returned {error:?}"
         );
     }
+}
+
+#[test]
+fn completed_model_data_write_does_not_stale_selected_observation_reads() {
+    let directory = tempfile::tempdir().expect("temporary model-generation fixture");
+    let path = directory.path().join("advanced-model-generation.ms");
+    generate_fixture(&path);
+    let problem = compiled_problem(&path, 2);
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let changed_generation = identity(204);
+    let current = ObservationSourceState::new(
+        source.identity(),
+        source.selection().rows().clone(),
+        SourceGenerations::new(
+            ConsistencyToken::new(changed_generation),
+            source.generations().columns().clone(),
+            source.generations().metadata_generations().to_vec(),
+            ModelColumnState::Present(changed_generation),
+        ),
+    );
+
+    BoundObservationSource::open(
+        &problem,
+        source,
+        &current,
+        content_budget_for_rows(&problem, source, 1, 1),
+    )
+    .expect("MODEL_DATA is a write precondition, not a selected-observation input");
 }
 
 #[test]

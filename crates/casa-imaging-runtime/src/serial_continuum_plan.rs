@@ -10,13 +10,15 @@ use std::{
 
 use casa_imaging_model::CompiledProblem;
 use casa_imaging_reconstruction::{WeightingExecutionLimits, WeightingPlan, plan_weighting};
-use casa_ms::SelectedObservationResidencyCertificate;
+use casa_ms::{ModelColumnStoragePlan, SelectedObservationResidencyCertificate};
 
+use crate::serial_continuum::{MODEL_COLUMN_WORKER_STACK_BYTES, ModelDataCellWrite};
 use crate::*;
 
 const READ_NODE: &str = "transaction-read";
 const CHECK_NODE: &str = "transaction-check";
-const RECONCILE_NODE: &str = "transaction-reconciliation";
+const FINAL_MODEL_PREPARATION_NODE: &str = "final-model-preparation";
+const POST_REPLAY_RECONCILIATION_NODE: &str = "post-replay-reconciliation";
 const COMMIT_NODE: &str = "transaction-commit";
 const MINOR_NODE: &str = "serial-continuum-minor-cycle";
 const SOURCE_READ_RATE_DEMAND: &str = "serial-continuum-source-read-rate";
@@ -34,6 +36,7 @@ pub struct SerialContinuumExecutionPolicy {
     stage_nanos: u64,
     minor_cycle_bytes: u64,
     confidence_parts_per_million: u32,
+    model_data: Option<ModelColumnStoragePlan>,
 }
 
 impl SerialContinuumExecutionPolicy {
@@ -56,7 +59,15 @@ impl SerialContinuumExecutionPolicy {
             stage_nanos,
             minor_cycle_bytes,
             confidence_parts_per_million,
+            model_data: None,
         }
+    }
+
+    /// Add the storage-owner plan for a terminal in-place MODEL_DATA write.
+    #[must_use]
+    pub const fn with_model_data(mut self, plan: ModelColumnStoragePlan) -> Self {
+        self.model_data = Some(plan);
+        self
     }
 }
 
@@ -120,6 +131,42 @@ impl SerialContinuumPlan {
         )
     }
 
+    /// Plan a reconciliating major pass followed by another bounded minor cycle.
+    pub fn continuing_major<R: ImplementationRegistry>(
+        problem: &CompiledProblem,
+        registry: &R,
+        policy: SerialContinuumExecutionPolicy,
+        input: &FinalMajorPhaseInput,
+        ordinal: u32,
+    ) -> Result<Self, SerialContinuumPlanError> {
+        Self::build(
+            problem,
+            registry,
+            policy,
+            ContinuumPassIdentity::new(ContinuumPassPhase::FinalMajor, ordinal),
+            true,
+            Some(input.identity()),
+        )
+    }
+
+    /// Plan the terminal reconciliation at an explicit multi-cycle ordinal.
+    pub fn final_major_at<R: ImplementationRegistry>(
+        problem: &CompiledProblem,
+        registry: &R,
+        policy: SerialContinuumExecutionPolicy,
+        input: &FinalMajorPhaseInput,
+        ordinal: u32,
+    ) -> Result<Self, SerialContinuumPlanError> {
+        Self::build(
+            problem,
+            registry,
+            policy,
+            ContinuumPassIdentity::new(ContinuumPassPhase::FinalMajor, ordinal),
+            false,
+            Some(input.identity()),
+        )
+    }
+
     fn build<R: ImplementationRegistry>(
         problem: &CompiledProblem,
         registry: &R,
@@ -145,10 +192,20 @@ impl SerialContinuumPlan {
         let complete_data = CompleteDataPlanFragment::new_with_preparation_node(
             problem,
             weighting.limits().max_block_samples(),
-            replay,
+            replay.clone(),
             pass_node("serial-mfs-fft-plan", pass),
         )?;
         let (mut physical, complete_data) = complete_data.compose(&physical)?;
+        if let Some(bounds) = policy.model_data {
+            let [_write] = problem
+                .observation_transaction()
+                .write_set()
+                .model_columns()
+            else {
+                return Err(SerialContinuumPlanError::ModelColumnCount);
+            };
+            physical = append_model_data_resources(registry, physical, &policy, &replay, bounds)?;
+        }
         let minor_cycle_node = include_minor.then(|| WorkNodeId::new(MINOR_NODE));
         if let Some(minor) = &minor_cycle_node {
             physical = append_minor(registry, physical, &policy, minor)?;
@@ -202,7 +259,8 @@ fn base_physical<R: ImplementationRegistry>(
 ) -> Result<(PhysicalWorkBinding, SelectedObservationSourceResources), SerialContinuumPlanError> {
     let check = pass_node(CHECK_NODE, pass);
     let read = pass_node(READ_NODE, pass);
-    let reconcile = pass_node(RECONCILE_NODE, pass);
+    let model_preparation = pass_node(FINAL_MODEL_PREPARATION_NODE, pass);
+    let reconcile = pass_node(POST_REPLAY_RECONCILIATION_NODE, pass);
     let commit = pass_node(COMMIT_NODE, pass);
     let source_bytes = u64::try_from(policy.selected_residency.aggregate_resident_bytes())
         .map_err(|_| SerialContinuumPlanError::Overflow)?;
@@ -314,6 +372,21 @@ fn base_physical<R: ImplementationRegistry>(
             implementation: policy.implementation.clone(),
             dependencies: BTreeSet::new(),
             claims: check_claims,
+            allocations: vec![],
+            fences: BTreeSet::new(),
+            quiescence_after: BTreeSet::new(),
+        },
+        WorkNode {
+            id: model_preparation.clone(),
+            kind: WorkKind::Compute,
+            domain: WorkDomain::Cpu,
+            implementation: policy.implementation.clone(),
+            dependencies: BTreeSet::from([WorkDependency::Work(check.clone())]),
+            claims: vec![ResourceClaim {
+                resource: LeaseResource::Workers,
+                amount: 1,
+                lifetime: ClaimLifetime::Work,
+            }],
             allocations: vec![],
             fences: BTreeSet::new(),
             quiescence_after: BTreeSet::new(),
@@ -540,7 +613,12 @@ fn base_physical<R: ImplementationRegistry>(
         ImplementationContractCatalog::from_registry(registry, [policy.implementation.clone()])?;
     let artifacts = phase_input
         .map(|identity| {
-            PlannedArtifact::new(identity, reconcile.clone(), ArtifactRole::Input, None)
+            PlannedArtifact::new(
+                identity,
+                model_preparation.clone(),
+                ArtifactRole::Input,
+                None,
+            )
         })
         .into_iter()
         .collect();
@@ -549,7 +627,8 @@ fn base_physical<R: ImplementationRegistry>(
         dag,
         prediction,
         artifacts,
-        ObservationTransactionWork::new_reconstruction(check, reconcile, None, commit),
+        ObservationTransactionWork::new_reconstruction(check, reconcile, commit)
+            .with_final_model_preparation(model_preparation),
         PublicationLayoutLedger::empty(),
     )?;
     Ok((
@@ -572,6 +651,305 @@ pub(crate) fn pass_node(base: &str, pass: ContinuumPassIdentity) -> WorkNodeId {
     WorkNodeId::new(format!("{base}-{phase}-{}", pass.ordinal()))
 }
 
+fn append_model_data_resources<R: ImplementationRegistry>(
+    registry: &R,
+    base: PhysicalWorkBinding,
+    policy: &SerialContinuumExecutionPolicy,
+    replay: &WorkNodeId,
+    storage_plan: ModelColumnStoragePlan,
+) -> Result<PhysicalWorkBinding, SerialContinuumPlanError> {
+    let commit = base.observation_transaction().commit().clone();
+    let allocation = AllocationId::new("serial-model-data-cell-buffer");
+    let slot = PhysicalSlotId::new("serial-model-data-cell-buffer-slot");
+    let block_allocation = AllocationId::new("serial-model-data-replay-copy");
+    let block_slot = PhysicalSlotId::new("serial-model-data-replay-copy-slot");
+    let storage_id = "serial-model-data-column".to_string();
+    let existing_rate = base
+        .execution_dag()
+        .resource_alternative()
+        .demand
+        .rates
+        .iter()
+        .find(|demand| &demand.resource == policy.storage_io.write_rate())
+        .map(|demand| demand.demand_id.clone());
+    let existing_queue = base
+        .execution_dag()
+        .resource_alternative()
+        .demand
+        .queues
+        .iter()
+        .find(|demand| &demand.resource == policy.storage_io.queue())
+        .map(|demand| demand.demand_id.clone());
+    let rate_id = existing_rate
+        .clone()
+        .unwrap_or_else(|| "serial-model-data-write-rate".to_string());
+    let queue_id = existing_queue
+        .clone()
+        .unwrap_or_else(|| "serial-model-data-queue".to_string());
+    let persistent_bytes = storage_plan.additional_persistent_bytes();
+    let write_bytes = storage_plan.write_bytes().max(1);
+    let cell_bytes = storage_plan.maximum_cell_bytes().max(1);
+    let block_copy_bytes = u64::try_from(policy.weighting_limits.max_block_samples())
+        .ok()
+        .and_then(|samples| {
+            samples.checked_mul(
+                u64::try_from(std::mem::size_of::<ModelDataCellWrite>())
+                    .expect("MODEL_DATA write tuple size fits u64"),
+            )
+        })
+        .ok_or(SerialContinuumPlanError::Overflow)?
+        .max(1);
+    let write_lifetime = ClaimLifetime::through_fence(FenceKind::Io);
+    let mut nodes = base
+        .execution_dag()
+        .nodes()
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    let replay_node = nodes
+        .iter_mut()
+        .find(|node| node.id == *replay)
+        .expect("complete-data replay node exists");
+    replay_node.kind = WorkKind::ObservationReadWriteback;
+    replay_node
+        .claims
+        .iter_mut()
+        .find(|claim| claim.resource == LeaseResource::Workers)
+        .expect("terminal replay has a worker claim")
+        .amount = 2;
+    replay_node.claims.extend([
+        ResourceClaim {
+            resource: LeaseResource::IoBuffer(IoBufferKind::Writeback),
+            amount: cell_bytes,
+            lifetime: write_lifetime.clone(),
+        },
+        ResourceClaim {
+            resource: LeaseResource::RuntimeOverhead(RuntimeOverheadKind::ThreadStack),
+            amount: MODEL_COLUMN_WORKER_STACK_BYTES as u64,
+            lifetime: write_lifetime.clone(),
+        },
+    ]);
+    if persistent_bytes > 0 {
+        replay_node.claims.push(ResourceClaim {
+            resource: LeaseResource::Storage {
+                demand_id: storage_id.clone(),
+                use_kind: StorageUseKind::FinalOutput,
+            },
+            amount: persistent_bytes,
+            lifetime: write_lifetime.clone(),
+        });
+    }
+    if existing_rate.is_none() {
+        replay_node.claims.push(ResourceClaim {
+            resource: LeaseResource::Rate {
+                demand_id: rate_id.clone(),
+            },
+            amount: 1,
+            lifetime: write_lifetime.clone(),
+        });
+    }
+    if existing_queue.is_none() {
+        replay_node.claims.push(ResourceClaim {
+            resource: LeaseResource::Queue {
+                demand_id: queue_id.clone(),
+            },
+            amount: 1,
+            lifetime: write_lifetime.clone(),
+        });
+    }
+    replay_node.allocations.push(AllocationUse {
+        allocation: allocation.clone(),
+        lifetime: write_lifetime.clone(),
+    });
+    replay_node.allocations.push(AllocationUse {
+        allocation: block_allocation.clone(),
+        lifetime: write_lifetime.clone(),
+    });
+    let compatibility = SlotCompatibility {
+        memory_domain: CapacityDomainId::new("host-memory"),
+        views: BTreeSet::from([CapacityViewId::new("host-memory")]),
+        alignment_bytes: 64,
+        storage_mode: StorageMode::Host,
+        layout: AllocationLayout::new("serial-model-data-cell-buffer"),
+        initialization: InitializationPolicy::OverwriteBeforeRead,
+        access: AllocationAccess::ReadWrite,
+    };
+    let mut alternative = base.execution_dag().resource_alternative().clone();
+    alternative.demand.memory.push(MemoryDemand {
+        allocation_id: "serial-model-data-cell-buffer".to_string(),
+        hard_bytes: cell_bytes,
+        preferred_bytes: cell_bytes,
+        views: vec![CapacityViewId::new("host-memory")],
+    });
+    alternative.demand.memory.push(MemoryDemand {
+        allocation_id: "serial-model-data-replay-copy".to_string(),
+        hard_bytes: block_copy_bytes,
+        preferred_bytes: block_copy_bytes,
+        views: vec![CapacityViewId::new("host-memory")],
+    });
+    alternative.demand.workers = CountDemand::new(2, 2);
+    alternative.scaling.minimum_workers = 2;
+    alternative.scaling.maximum_workers = 2;
+    alternative.demand.overhead.thread_stack_bytes = alternative
+        .demand
+        .overhead
+        .thread_stack_bytes
+        .checked_add(MODEL_COLUMN_WORKER_STACK_BYTES as u64)
+        .ok_or(SerialContinuumPlanError::Overflow)?;
+    if persistent_bytes > 0 {
+        alternative.demand.storage.push(StorageDemand {
+            demand_id: storage_id,
+            domain: policy.storage_io.domain().clone(),
+            temporary_bytes: 0,
+            staged_output_bytes: 0,
+            final_output_bytes: persistent_bytes,
+            persistent_cache_bytes: 0,
+            read_rate: CountDemand::zero(),
+            write_rate: CountDemand::zero(),
+            operations_rate: CountDemand::zero(),
+            queue_slots: CountDemand::zero(),
+        });
+    }
+    if existing_rate.is_none() {
+        alternative.demand.rates.push(RateDemand {
+            demand_id: rate_id,
+            resource: policy.storage_io.write_rate().clone(),
+            amount: CountDemand::new(1, 1),
+        });
+    }
+    if existing_queue.is_none() {
+        alternative.demand.queues.push(QueueDemand {
+            demand_id: queue_id,
+            resource: policy.storage_io.queue().clone(),
+            slots: CountDemand::new(1, 1),
+        });
+    }
+    alternative.demand.io_buffers.writeback_bytes = alternative
+        .demand
+        .io_buffers
+        .writeback_bytes
+        .max(cell_bytes);
+    let mut initial_knobs = base.execution_dag().initial_knobs().clone();
+    initial_knobs.workers = 2;
+    let dag = ExecutionDag::new(ExecutionDagSpecification {
+        required_resource_capabilities: base
+            .execution_dag()
+            .required_resource_capabilities()
+            .clone(),
+        resource_alternative: alternative,
+        nodes,
+        logical_allocations: base
+            .execution_dag()
+            .logical_allocations()
+            .values()
+            .cloned()
+            .chain([
+                LogicalAllocation {
+                    id: allocation,
+                    bytes: cell_bytes,
+                    purpose: AllocationPurpose::IoBuffer(IoBufferKind::Writeback),
+                    compatibility: compatibility.clone(),
+                    physical_slot: slot.clone(),
+                    lifetime: AllocationLifetime {
+                        acquire_at: replay.clone(),
+                        release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
+                            replay.clone(),
+                            FenceKind::Io,
+                        ))]),
+                    },
+                },
+                LogicalAllocation {
+                    id: block_allocation,
+                    bytes: block_copy_bytes,
+                    purpose: AllocationPurpose::Data,
+                    compatibility: compatibility.clone(),
+                    physical_slot: block_slot.clone(),
+                    lifetime: AllocationLifetime {
+                        acquire_at: replay.clone(),
+                        release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
+                            replay.clone(),
+                            FenceKind::Io,
+                        ))]),
+                    },
+                },
+            ])
+            .collect(),
+        physical_slots: base
+            .execution_dag()
+            .physical_slots()
+            .values()
+            .cloned()
+            .chain([
+                PhysicalSlot {
+                    id: slot,
+                    lease_resource: LeaseResource::Memory {
+                        allocation_id: "serial-model-data-cell-buffer".to_string(),
+                    },
+                    capacity_bytes: cell_bytes,
+                    compatibility: compatibility.clone(),
+                },
+                PhysicalSlot {
+                    id: block_slot,
+                    lease_resource: LeaseResource::Memory {
+                        allocation_id: "serial-model-data-replay-copy".to_string(),
+                    },
+                    capacity_bytes: block_copy_bytes,
+                    compatibility,
+                },
+            ])
+            .collect(),
+        initial_knobs,
+        adaptations: vec![],
+    })?;
+    let stages = base
+        .prediction()
+        .stages()
+        .values()
+        .cloned()
+        .map(|stage| {
+            if stage.node() == replay {
+                let mut io = stage.io().to_vec();
+                io.push(IoPrediction::new(IoBufferKind::Writeback, write_bytes, 1));
+                stage.with_io(io)
+            } else {
+                stage
+            }
+        })
+        .collect();
+    let prediction = PlanPrediction::new(
+        base.prediction().elapsed_nanos(),
+        base.prediction().confidence(),
+        base.prediction().uncertainty().to_vec(),
+        stages,
+    )?;
+    let catalog =
+        ImplementationContractCatalog::from_registry(registry, [policy.implementation.clone()])?;
+    let work = ObservationTransactionWork::new_reconstruction(
+        base.observation_transaction()
+            .initial_consistency_check()
+            .clone(),
+        base.observation_transaction()
+            .post_replay_reconciliation()
+            .clone(),
+        commit,
+    )
+    .with_final_model_preparation(
+        base.observation_transaction()
+            .final_model_preparation()
+            .expect("serial continuum plan has final-model preparation")
+            .clone(),
+    )
+    .with_model_column_writeback(replay.clone());
+    Ok(PhysicalWorkBinding::new_reconstruction(
+        catalog,
+        dag,
+        prediction,
+        base.artifacts().to_vec(),
+        work,
+        base.publication_layouts().clone(),
+    )?)
+}
+
 fn append_minor<R: ImplementationRegistry>(
     registry: &R,
     base: PhysicalWorkBinding,
@@ -580,7 +958,7 @@ fn append_minor<R: ImplementationRegistry>(
 ) -> Result<PhysicalWorkBinding, SerialContinuumPlanError> {
     let reconcile = base
         .observation_transaction()
-        .final_reconciliation()
+        .post_replay_reconciliation()
         .clone();
     let commit = base.observation_transaction().commit().clone();
     let allocation = AllocationId::new("serial-continuum-minor-cycle");
@@ -688,21 +1066,35 @@ fn append_minor<R: ImplementationRegistry>(
     )?;
     let catalog =
         ImplementationContractCatalog::from_registry(registry, [policy.implementation.clone()])?;
+    let mut work = ObservationTransactionWork::new_reconstruction(
+        base.observation_transaction()
+            .initial_consistency_check()
+            .clone(),
+        base.observation_transaction()
+            .post_replay_reconciliation()
+            .clone(),
+        commit,
+    );
+    if let Some(preparation) = base
+        .observation_transaction()
+        .final_model_preparation()
+        .cloned()
+    {
+        work = work.with_final_model_preparation(preparation);
+    }
+    if let Some(writeback) = base
+        .observation_transaction()
+        .model_column_writeback()
+        .cloned()
+    {
+        work = work.with_model_column_writeback(writeback);
+    }
     Ok(PhysicalWorkBinding::new_reconstruction(
         catalog,
         dag,
         prediction,
-        vec![],
-        ObservationTransactionWork::new_reconstruction(
-            base.observation_transaction()
-                .initial_consistency_check()
-                .clone(),
-            base.observation_transaction()
-                .final_reconciliation()
-                .clone(),
-            None,
-            commit,
-        ),
+        base.artifacts().to_vec(),
+        work,
         PublicationLayoutLedger::empty(),
     )?)
 }
@@ -710,6 +1102,8 @@ fn append_minor<R: ImplementationRegistry>(
 #[derive(Debug)]
 /// Failure to construct a complete serial continuum physical plan.
 pub enum SerialContinuumPlanError {
+    /// MODEL_DATA bounds were supplied without one exact model-column write.
+    ModelColumnCount,
     /// A byte, row, or elapsed-time projection overflowed its identity domain.
     Overflow,
     /// Scientific weighting planning rejected the compiled problem or limits.

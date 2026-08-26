@@ -1,0 +1,52 @@
+{
+  "schema": "casa-rs-direct-solver-oracle-expected-v1",
+  "fixture": {
+    "measurement_set": "crates/casa-ms/tests/fixtures/mssel_test_small.ms.tgz",
+    "selection": "field=1, spw=1",
+    "shape": [64, 64],
+    "cell_arcsec": 0.02,
+    "psf_peak_pixel": [32, 32],
+    "psf_peak": 1.0,
+    "maximum_psf_sidelobe": 0.3979041576385498,
+    "dirty_peak": 4.901917457580566,
+    "psf_sha256_f32le": "ddda8c7408da41ddf2842abca2dc9e2170465223fd5941392df4e0fe390c0e9d",
+    "dirty_sha256_f32le": "186dd4983c7cc9cfa6c305e8e523717bfe3ce7f320c03495cc256d2af0da95e6",
+    "true_model_sha256_f32le": "5cb4c479c1be6f030aed45838cfa88e06d319943685fe70ca89fdf39138b4037"
+  },
+  "controls": {
+    "niter": 8,
+    "cycle_niter": 8,
+    "gain": 0.2,
+    "threshold_jy": 0.0,
+    "cycle_factor": 1.0,
+    "minimum_psf_fraction": 0.05,
+    "maximum_psf_fraction": 0.8,
+    "multiscale_scales_px": [0, 7],
+    "multiscale_small_scale_bias": 0.0
+  },
+  "clark": {
+    "iterations": 8,
+    "stopcode": 1,
+    "cycle_threshold": 1.950493335723877,
+    "terminal_peak": 2.751471519470215,
+    "summary_model_flux": 5.703658103942871,
+    "model_nonzero_pixels": 7,
+    "model_sha256_f32le": "e011ba32345a48663a6088c5df5a42b94973973853153481031aa0e77aced584",
+    "residual_sha256_f32le": "dfcf550ebb97fbf86d96152ad8850b11e7b233e13a85aad35c5071afd7ca37c5"
+  },
+  "multiscale": {
+    "iterations": 8,
+    "stopcode": 1,
+    "cycle_threshold": 1.950493335723877,
+    "terminal_peak": 2.3656558990478516,
+    "summary_model_flux": 10.57313346862793,
+    "model_nonzero_pixels": 242,
+    "model_sha256_f32le": "a5eb9ab24bc28d7784ab67ff7cbef89eba0f51b024432dc80d5eb8a22e0e6ba4",
+    "residual_sha256_f32le": "ba57b6a5a44fae2f8a8110ad73c37262932a299333ffc49d65797ad9bf36ff02"
+  },
+  "provenance": {
+    "casa_version": "6.7.6.14",
+    "reproduced_bit_for_bit_twice": true,
+    "full_record_sha256": "6c4c49300280510031a0389e37c75f92f493d1dbc5cacc3417e1004ead0cce07"
+  }
+}

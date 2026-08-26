@@ -2,15 +2,20 @@
 
 //! Affine cross-plan state for serial CPU continuum reconstruction.
 
-use std::{io, sync::Mutex};
+use std::{
+    io,
+    path::PathBuf,
+    sync::{Arc, Mutex, mpsc::SyncSender},
+    thread::JoinHandle,
+};
 
 use casa_imaging_model::{
     CompiledProblem, LogicalIdentity, ModelDeltaTerm, ModelExecutionAttemptId, ModelInputCommitment,
 };
 use casa_imaging_reconstruction::{
-    CleanWindow, ExecutableModelProblem, FinalModelCompletion, FinalModelContinuation,
-    FinalNormalState, HogbomControls, MajorCyclePreparation, MinorCycleError, MinorCycleEvidence,
-    ModelDeltaId, ModelLifecycle, hogbom_minor_cycle,
+    ExecutableModelProblem, FinalModelCompletion, FinalModelContinuation, FinalNormalState,
+    MajorCyclePreparation, MinorCycleError, MinorCycleEvidence, MinorCycleProgram, ModelDeltaId,
+    ModelLifecycle, ReconstructionMaskPlan, run_minor_cycle,
 };
 
 use crate::{
@@ -19,12 +24,399 @@ use crate::{
     ImplementationRegistry, ImplementationRegistryId, IoMeasurement, LeaseResource,
     MajorCycleOperatorResult, MajorCycleOperatorState, ObservationReadCompletionContext,
     ResourceMeasurement, SelectedObservationSourceResources, SerialMfsOperatorState,
-    WeightingExecutionState, WeightingPlanFragment, WorkExecutionContext, WorkImplementation,
-    WorkImplementationId, WorkKind, WorkMeasurements,
+    WeightingExecutionState, WeightingPlanFragment, WeightingReplayCompletion, WorkDependency,
+    WorkExecutionContext, WorkImplementation, WorkImplementationId, WorkKind, WorkMeasurements,
+    WorkNodeId,
 };
 use casa_imaging_reconstruction::WeightingPlan;
-use casa_ms::{BoundSelectedObservation, SelectedObservationCompletion};
+use casa_ms::{BoundSelectedObservation, ModelDataWrite, SelectedObservationCompletion};
 use sha2::{Digest, Sha256};
+
+pub(crate) const MODEL_COLUMN_WORKER_STACK_BYTES: usize = 2 * 1024 * 1024;
+
+/// Bounded consumer of final-model predictions produced inside the paired
+/// final-major replay. Implementations may write selected `MODEL_DATA` cells
+/// in place or retain residual-visibility products, but receive no publication
+/// authority from this interface.
+pub trait FinalVisibilitySink: Send {
+    /// Bind the exact final model before any replay sample is consumed.
+    fn bind(
+        &mut self,
+        problem: casa_imaging_model::CompiledProblemId,
+        final_model: casa_imaging_reconstruction::ModelGenerationId,
+    ) -> io::Result<()>;
+
+    /// Start the one scheduled terminal replay.
+    fn begin_replay(&mut self) -> io::Result<()>;
+
+    /// Consume one bounded canonical selected-visibility block.
+    fn consume(
+        &mut self,
+        samples: &[casa_imaging_reconstruction::runtime_adapter::FinalVisibilitySample],
+    ) -> io::Result<()>;
+
+    /// Close the stream against the terminal selected/weighting replay proof.
+    fn finish(&mut self, replay: &WeightingReplayCompletion) -> io::Result<()>;
+}
+
+/// Shared handle for final-visibility product completion and optional in-place
+/// `MODEL_DATA` replay.
+#[derive(Clone)]
+pub struct FinalVisibilityReplay {
+    state: Arc<Mutex<FinalVisibilityReplayState>>,
+    model_column: Option<Arc<ModelColumnWriteBinding>>,
+}
+
+struct ModelColumnWriteBinding {
+    path: PathBuf,
+    expected: casa_imaging_model::ObservationSourceState,
+    selection: Arc<casa_imaging_model::ObservationSelection>,
+    state: Mutex<ModelColumnWriteState>,
+}
+
+enum ModelColumnWriteState {
+    Idle,
+    Writing(ModelColumnWorker),
+    Complete,
+}
+
+enum FinalVisibilityReplayState {
+    Unbound,
+    Bound(casa_imaging_products::VisibilityProductAuthority),
+    Finished(casa_imaging_products::VisibilityProductCompletion),
+}
+
+impl FinalVisibilityReplay {
+    /// Create an empty product stream and its runtime sink capability.
+    #[must_use]
+    pub fn new() -> (Self, Box<dyn FinalVisibilitySink>) {
+        let state = Arc::new(Mutex::new(FinalVisibilityReplayState::Unbound));
+        (
+            Self {
+                state: Arc::clone(&state),
+                model_column: None,
+            },
+            Box::new(FinalVisibilityReplay {
+                state,
+                model_column: None,
+            }),
+        )
+    }
+
+    /// Create a product stream paired with one storage-owner MODEL_DATA writeback.
+    pub fn with_model_column(
+        path: PathBuf,
+        expected: casa_imaging_model::ObservationSourceState,
+        selection: Arc<casa_imaging_model::ObservationSelection>,
+    ) -> io::Result<(Self, Box<dyn FinalVisibilitySink>)> {
+        let state = Arc::new(Mutex::new(FinalVisibilityReplayState::Unbound));
+        let model_column = Arc::new(ModelColumnWriteBinding {
+            path,
+            expected,
+            selection,
+            state: Mutex::new(ModelColumnWriteState::Idle),
+        });
+        Ok((
+            Self {
+                state: Arc::clone(&state),
+                model_column: Some(model_column.clone()),
+            },
+            Box::new(FinalVisibilityReplay {
+                state,
+                model_column: Some(model_column),
+            }),
+        ))
+    }
+
+    /// Return the closed product completion after terminal replay.
+    pub fn completion(&self) -> io::Result<casa_imaging_products::VisibilityProductCompletion> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| io::Error::other("final-visibility replay poisoned"))?;
+        match &*state {
+            FinalVisibilityReplayState::Finished(completion) => Ok(*completion),
+            _ => Err(io::Error::other("final-visibility replay is incomplete")),
+        }
+    }
+
+    /// Return whether this handle owns a bounded in-place `MODEL_DATA` write.
+    #[must_use]
+    pub const fn has_model_column(&self) -> bool {
+        self.model_column.is_some()
+    }
+}
+
+impl FinalVisibilitySink for FinalVisibilityReplay {
+    fn bind(
+        &mut self,
+        problem: casa_imaging_model::CompiledProblemId,
+        final_model: casa_imaging_reconstruction::ModelGenerationId,
+    ) -> io::Result<()> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| io::Error::other("final-visibility replay poisoned"))?;
+        match &*state {
+            FinalVisibilityReplayState::Unbound => {
+                *state = FinalVisibilityReplayState::Bound(
+                    casa_imaging_products::VisibilityProductAuthority::new(problem, final_model),
+                );
+                Ok(())
+            }
+            FinalVisibilityReplayState::Bound(_) => Ok(()),
+            FinalVisibilityReplayState::Finished(completion)
+                if completion.problem_id() == problem
+                    && completion.final_model() == final_model =>
+            {
+                Ok(())
+            }
+            FinalVisibilityReplayState::Finished(_) => Err(io::Error::other(
+                "visibility products belong to another final model",
+            )),
+        }
+    }
+
+    fn begin_replay(&mut self) -> io::Result<()> {
+        let Some(column) = &self.model_column else {
+            return Ok(());
+        };
+        let mut state = column
+            .state
+            .lock()
+            .map_err(|_| io::Error::other("MODEL_DATA write state poisoned"))?;
+        match &*state {
+            ModelColumnWriteState::Idle => {
+                *state = ModelColumnWriteState::Writing(ModelColumnWorker::spawn(
+                    column.path.clone(),
+                    column.expected.clone(),
+                    Arc::clone(&column.selection),
+                )?);
+                Ok(())
+            }
+            ModelColumnWriteState::Writing(_) => Ok(()),
+            ModelColumnWriteState::Complete => {
+                Err(io::Error::other("MODEL_DATA write already finished"))
+            }
+        }
+    }
+
+    fn consume(
+        &mut self,
+        samples: &[casa_imaging_reconstruction::runtime_adapter::FinalVisibilitySample],
+    ) -> io::Result<()> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| io::Error::other("final-visibility replay poisoned"))?;
+        let FinalVisibilityReplayState::Bound(authority) = &mut *state else {
+            return Err(io::Error::other("final-visibility replay is not bound"));
+        };
+        authority.consume(samples).map_err(io::Error::other)?;
+        if let Some(column) = &self.model_column {
+            let state = column
+                .state
+                .lock()
+                .map_err(|_| io::Error::other("MODEL_DATA write state poisoned"))?;
+            let ModelColumnWriteState::Writing(worker) = &*state else {
+                return Err(io::Error::other("MODEL_DATA writer was not plan-prepared"));
+            };
+            worker.write(samples)?;
+        }
+        Ok(())
+    }
+
+    fn finish(&mut self, replay: &WeightingReplayCompletion) -> io::Result<()> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| io::Error::other("final-visibility replay poisoned"))?;
+        let authority = match std::mem::replace(&mut *state, FinalVisibilityReplayState::Unbound) {
+            FinalVisibilityReplayState::Bound(authority) => authority,
+            other => {
+                *state = other;
+                return Err(io::Error::other("final-visibility replay is not bound"));
+            }
+        };
+        let completion =
+            authority.finish(replay.selected_generation(), replay.weighting_generation());
+        if let Some(model_column) = &self.model_column {
+            let mut write_state = model_column
+                .state
+                .lock()
+                .map_err(|_| io::Error::other("MODEL_DATA write state poisoned"))?;
+            let worker = match std::mem::replace(&mut *write_state, ModelColumnWriteState::Idle) {
+                ModelColumnWriteState::Writing(worker) => worker,
+                other => {
+                    *write_state = other;
+                    return Err(io::Error::other(
+                        "MODEL_DATA writer was not active at replay completion",
+                    ));
+                }
+            };
+            drop(write_state);
+            worker.finish(
+                completion.sample_count(),
+                completion.model_product().identity(),
+            )?;
+            *model_column
+                .state
+                .lock()
+                .map_err(|_| io::Error::other("MODEL_DATA write state poisoned"))? =
+                ModelColumnWriteState::Complete;
+        }
+        *state = FinalVisibilityReplayState::Finished(completion);
+        Ok(())
+    }
+}
+
+struct ModelColumnWorker {
+    sender: SyncSender<ModelColumnCommand>,
+    join: JoinHandle<io::Result<u64>>,
+}
+
+pub(crate) struct ModelDataCellWrite {
+    physical_row: u64,
+    channel_index: u32,
+    correlation_index: u32,
+    value: num_complex::Complex32,
+}
+
+enum ModelColumnCommand {
+    Write {
+        values: Vec<ModelDataCellWrite>,
+        reply: SyncSender<Result<(), String>>,
+    },
+    Finish {
+        expected_samples: u64,
+        generation: LogicalIdentity,
+    },
+}
+
+impl ModelColumnWorker {
+    fn spawn(
+        path: PathBuf,
+        expected: casa_imaging_model::ObservationSourceState,
+        selection: Arc<casa_imaging_model::ObservationSelection>,
+    ) -> io::Result<Self> {
+        // A rendezvous channel keeps exactly one copied replay block resident:
+        // the scheduler-accounted producer cannot queue a second block while
+        // the storage worker owns the first.
+        let (sender, receiver) = std::sync::mpsc::sync_channel(0);
+        let (ready_sender, ready_receiver) = std::sync::mpsc::sync_channel(0);
+        let join = std::thread::Builder::new()
+            .name("model-data-write".to_string())
+            .stack_size(MODEL_COLUMN_WORKER_STACK_BYTES)
+            .spawn(move || {
+                let mut writer = match ModelDataWrite::begin(path, &expected, &selection) {
+                        Ok(writer) => {
+                            let _ = ready_sender.send(Ok(()));
+                            writer
+                        }
+                        Err(error) => {
+                            let message = error.to_string();
+                            let _ = ready_sender.send(Err(message.clone()));
+                            return Err(io::Error::other(message));
+                        }
+                    };
+                let mut written_samples = 0_u64;
+                let completed_samples = loop {
+                    let command = receiver
+                        .recv()
+                        .map_err(|_| io::Error::other("MODEL_DATA write controller stopped"))?;
+                    match command {
+                        ModelColumnCommand::Write { values, reply } => {
+                            let result = (|| {
+                                written_samples =
+                                    written_samples.checked_add(values.len() as u64).ok_or_else(
+                                        || io::Error::other("MODEL_DATA sample count overflowed"),
+                                    )?;
+                                for cell in values {
+                                    writer
+                                        .write(
+                                            cell.physical_row,
+                                            cell.channel_index,
+                                            cell.correlation_index,
+                                            cell.value,
+                                        )
+                                        .map_err(io::Error::other)?;
+                                }
+                                Ok::<(), io::Error>(())
+                            })();
+                            match result {
+                                Ok(()) => {
+                                    let _ = reply.send(Ok(()));
+                                }
+                                Err(error) => {
+                                    let message = error.to_string();
+                                    let _ = reply.send(Err(message.clone()));
+                                    return Err(io::Error::other(message));
+                                }
+                            }
+                        }
+                        ModelColumnCommand::Finish {
+                            expected_samples,
+                            generation,
+                        } => {
+                            if written_samples != expected_samples {
+                                return Err(io::Error::other(format!(
+                                    "MODEL_DATA wrote {written_samples} samples, expected {expected_samples}"
+                                )));
+                            }
+                            writer.complete(generation).map_err(io::Error::other)?;
+                            break written_samples;
+                        }
+                    }
+                };
+                Ok(completed_samples)
+            })
+            .map_err(io::Error::other)?;
+        ready_receiver
+            .recv()
+            .map_err(|_| io::Error::other("MODEL_DATA worker stopped during startup"))?
+            .map_err(io::Error::other)?;
+        Ok(Self { sender, join })
+    }
+
+    fn write(
+        &self,
+        samples: &[casa_imaging_reconstruction::runtime_adapter::FinalVisibilitySample],
+    ) -> io::Result<()> {
+        let values = samples
+            .iter()
+            .map(|sample| {
+                let address = sample.address();
+                let predicted = sample.predicted();
+                ModelDataCellWrite {
+                    physical_row: address.physical_row,
+                    channel_index: address.channel_index,
+                    correlation_index: address.correlation_index,
+                    value: num_complex::Complex32::new(predicted.re as f32, predicted.im as f32),
+                }
+            })
+            .collect();
+        let (reply, response) = std::sync::mpsc::sync_channel(0);
+        self.sender
+            .send(ModelColumnCommand::Write { values, reply })
+            .map_err(|_| io::Error::other("MODEL_DATA writer stopped"))?;
+        response
+            .recv()
+            .map_err(|_| io::Error::other("MODEL_DATA writer stopped"))?
+            .map_err(io::Error::other)
+    }
+
+    fn finish(self, expected_samples: u64, generation: LogicalIdentity) -> io::Result<u64> {
+        self.sender
+            .send(ModelColumnCommand::Finish {
+                expected_samples,
+                generation,
+            })
+            .map_err(|_| io::Error::other("MODEL_DATA writer stopped"))?;
+        self.join
+            .join()
+            .map_err(|_| io::Error::other("MODEL_DATA writer panicked"))?
+    }
+}
 
 /// Runtime-owned immutable registry for one serial CPU implementation bundle.
 pub struct SerialContinuumRegistry<I> {
@@ -96,6 +488,7 @@ pub struct SerialContinuumExecutor {
     pass: ContinuumPassIdentity,
     complete_data: CompleteDataPlanFragment,
     minor_cycle: Option<SerialMinorCycleExecution>,
+    final_visibility_sink: Option<Mutex<Box<dyn FinalVisibilitySink>>>,
     phase_input_artifact: Option<(crate::ArtifactIdentity, u64)>,
     state: Mutex<SerialContinuumExecutorState>,
 }
@@ -110,9 +503,60 @@ struct SerialContinuumExecutorState {
     operator: Option<SerialMfsOperatorState>,
     complete_data: Option<CompleteDataOperatorResult>,
     lifecycle: Option<ModelLifecycle>,
-    preparation: Option<MajorCyclePreparation>,
+    prepared_model: Option<PreparedFinalModel>,
     result: Option<MajorCycleOperatorResult>,
     minor_completion: Option<MinorCyclePhaseCompletion>,
+}
+
+/// One immutable final-model candidate bound to the exact plan node, attempt,
+/// and lease epoch that prepared it.
+struct PreparedFinalModel {
+    owner_node: WorkNodeId,
+    attempt: crate::ExecutionAttemptId,
+    lease_epoch: u64,
+    preparation: MajorCyclePreparation,
+}
+
+impl PreparedFinalModel {
+    fn new(context: WorkExecutionContext<'_>, preparation: MajorCyclePreparation) -> Self {
+        Self {
+            owner_node: context.node().id.clone(),
+            attempt: context.attempt_id(),
+            lease_epoch: context.lease_epoch(),
+            preparation,
+        }
+    }
+
+    fn for_replay(
+        &self,
+        context: WorkExecutionContext<'_>,
+    ) -> Result<&MajorCyclePreparation, io::Error> {
+        let direct_predecessor = context
+            .node()
+            .dependencies
+            .contains(&WorkDependency::Work(self.owner_node.clone()));
+        if !direct_predecessor
+            || context.attempt_id() != self.attempt
+            || context.lease_epoch() != self.lease_epoch
+        {
+            return Err(io::Error::other(
+                "terminal replay is not bound to its final-model preparation capability",
+            ));
+        }
+        Ok(&self.preparation)
+    }
+
+    fn into_reconciliation(
+        self,
+        context: WorkExecutionContext<'_>,
+    ) -> Result<MajorCyclePreparation, io::Error> {
+        if context.attempt_id() != self.attempt || context.lease_epoch() != self.lease_epoch {
+            return Err(io::Error::other(
+                "post-replay reconciliation changed final-model preparation authority",
+            ));
+        }
+        Ok(self.preparation)
+    }
 }
 
 /// Closed model input admitted by one ordinary serial continuum pass.
@@ -166,8 +610,8 @@ impl FinalMajorPhaseInput {
 
 struct SerialMinorCycleExecution {
     node: crate::WorkNodeId,
-    window: CleanWindow,
-    controls: HogbomControls,
+    mask: ReconstructionMaskPlan,
+    program: MinorCycleProgram,
 }
 
 impl SerialContinuumExecutor {
@@ -202,6 +646,7 @@ impl SerialContinuumExecutor {
             pass,
             complete_data,
             minor_cycle: None,
+            final_visibility_sink: None,
             phase_input_artifact,
             state: Mutex::new(SerialContinuumExecutorState {
                 executable: Some(executable),
@@ -213,7 +658,7 @@ impl SerialContinuumExecutor {
                 operator: None,
                 complete_data: None,
                 lifecycle: None,
-                preparation: None,
+                prepared_model: None,
                 result: None,
                 minor_completion: None,
             }),
@@ -225,14 +670,21 @@ impl SerialContinuumExecutor {
     pub fn with_minor_cycle(
         mut self,
         node: crate::WorkNodeId,
-        window: CleanWindow,
-        controls: HogbomControls,
+        mask: ReconstructionMaskPlan,
+        program: MinorCycleProgram,
     ) -> Self {
         self.minor_cycle = Some(SerialMinorCycleExecution {
             node,
-            window,
-            controls,
+            mask,
+            program,
         });
+        self
+    }
+
+    /// Attach bounded final-prediction replay output to a final-major pass.
+    #[must_use]
+    pub fn with_final_visibility_sink(mut self, sink: Box<dyn FinalVisibilitySink>) -> Self {
+        self.final_visibility_sink = Some(Mutex::new(sink));
         self
     }
 
@@ -258,12 +710,14 @@ impl SerialContinuumExecutor {
         self.state.lock().ok()?.minor_completion.take()
     }
 
-    fn initialize_model(
+    fn prepare_final_model(
         state: &mut SerialContinuumExecutorState,
         context: WorkExecutionContext<'_>,
     ) -> Result<(), io::Error> {
-        if state.lifecycle.is_some() {
-            return Ok(());
+        if state.lifecycle.is_some() || state.prepared_model.is_some() {
+            return Err(io::Error::other(
+                "final-model preparation executed more than once",
+            ));
         }
         let executable = state
             .executable
@@ -310,9 +764,9 @@ impl SerialContinuumExecutor {
             ),
             Some(_) | None => None,
         };
-        state.preparation = Some(
-            MajorCyclePreparation::prepare(&lifecycle, named, delta).map_err(io::Error::other)?,
-        );
+        let preparation =
+            MajorCyclePreparation::prepare(&lifecycle, named, delta).map_err(io::Error::other)?;
+        state.prepared_model = Some(PreparedFinalModel::new(context, preparation));
         state.lifecycle = Some(lifecycle);
         Ok(())
     }
@@ -331,8 +785,21 @@ impl WorkImplementation for SerialContinuumExecutor {
             .state
             .lock()
             .map_err(|_| io::Error::other("serial continuum state poisoned"))?;
-        Self::initialize_model(&mut state, context)?;
-        if context.node().id == *self.complete_data.preparation_node() {
+        let final_model_preparation =
+            crate::serial_continuum_plan::pass_node("final-model-preparation", self.pass);
+        if context.node().id == final_model_preparation {
+            Self::prepare_final_model(&mut state, context)?;
+            if let (Some(sink), Some(prepared_model)) =
+                (&self.final_visibility_sink, state.prepared_model.as_ref())
+            {
+                sink.lock()
+                    .map_err(|_| io::Error::other("final visibility sink poisoned"))?
+                    .bind(
+                        self.problem.problem_id(),
+                        prepared_model.preparation.final_model().generation_id(),
+                    )?;
+            }
+        } else if context.node().id == *self.complete_data.preparation_node() {
             state.prepared = Some(
                 self.complete_data
                     .prepare(context)
@@ -357,6 +824,11 @@ impl WorkImplementation for SerialContinuumExecutor {
                 .traverse_generation(context, &fragment, &self.problem)
                 .map_err(io::Error::other)?;
         } else if context.node().id == *fragment.replay_node() {
+            if let Some(sink) = &self.final_visibility_sink {
+                sink.lock()
+                    .map_err(|_| io::Error::other("final visibility sink poisoned"))?
+                    .begin_replay()?;
+            }
             let prepared = state
                 .prepared
                 .take()
@@ -368,9 +840,10 @@ impl WorkImplementation for SerialContinuumExecutor {
             operator
                 .bind_major_cycle_model(
                     state
-                        .preparation
+                        .prepared_model
                         .as_ref()
-                        .ok_or_else(|| io::Error::other("major-cycle preparation missing"))?,
+                        .ok_or_else(|| io::Error::other("final-model preparation missing"))?
+                        .for_replay(context)?,
                 )
                 .map_err(io::Error::other)?;
             state.operator = Some(operator);
@@ -381,11 +854,19 @@ impl WorkImplementation for SerialContinuumExecutor {
             } = &mut *state;
             weighting
                 .traverse_replay(context, &fragment, &self.problem, |block| {
-                    operator
+                    let predicted = operator
                         .as_mut()
                         .ok_or_else(|| io::Error::other("complete-data operator missing"))?
                         .consume_weighted_block(block)
-                        .map_err(io::Error::other)
+                        .map_err(io::Error::other)?;
+                    if !predicted.is_empty()
+                        && let Some(sink) = &self.final_visibility_sink
+                    {
+                        sink.lock()
+                            .map_err(|_| io::Error::other("final visibility sink poisoned"))?
+                            .consume(predicted)?;
+                    }
+                    Ok::<(), io::Error>(())
                 })
                 .map_err(io::Error::other)?;
         } else if self
@@ -398,9 +879,10 @@ impl WorkImplementation for SerialContinuumExecutor {
                 .take()
                 .ok_or_else(|| io::Error::other("complete-data evidence missing"))?;
             let preparation = state
-                .preparation
+                .prepared_model
                 .take()
-                .ok_or_else(|| io::Error::other("major-cycle preparation missing"))?;
+                .ok_or_else(|| io::Error::other("final-model preparation missing"))?
+                .into_reconciliation(context)?;
             let owner =
                 MajorCycleOperatorState::begin(complete, preparation).map_err(io::Error::other)?;
             let mut lifecycle = state
@@ -429,7 +911,7 @@ impl WorkImplementation for SerialContinuumExecutor {
                 .ok_or_else(|| io::Error::other("model lifecycle missing"))?;
             state.minor_completion = Some(
                 InitialMajorPhaseCompletion::new(result)
-                    .run_minor_cycle(lifecycle, minor.window, minor.controls)
+                    .run_minor_cycle(lifecycle, &minor.mask, minor.program.clone())
                     .map_err(io::Error::other)?,
             );
         } else if context.node().id == *fragment.release_node() {
@@ -455,17 +937,13 @@ impl WorkImplementation for SerialContinuumExecutor {
             .claims
             .iter()
             .filter_map(|claim| match claim.resource {
-                LeaseResource::IoBuffer(kind) => Some(IoMeasurement::new(kind, claim.amount, 1)),
+                LeaseResource::IoBuffer(kind) => Some(IoMeasurement::unobserved(kind)),
                 _ => None,
             })
             .collect();
         let artifacts = self
             .phase_input_artifact
-            .filter(|_| {
-                self.complete_data
-                    .reconciliation_node()
-                    .is_some_and(|node| context.node().id == *node)
-            })
+            .filter(|_| context.node().id == final_model_preparation)
             .map(|(identity, bytes)| {
                 crate::ArtifactMeasurement::new(
                     identity,
@@ -524,6 +1002,11 @@ impl WorkImplementation for SerialContinuumExecutor {
                 .weighting
                 .replay_completion()
                 .ok_or_else(|| io::Error::other("replay completion missing"))?;
+            if let Some(sink) = &self.final_visibility_sink {
+                sink.lock()
+                    .map_err(|_| io::Error::other("final visibility sink poisoned"))?
+                    .finish(replay)?;
+            }
             state.complete_data = Some(operator.complete(replay).map_err(io::Error::other)?);
             return Ok(predecessor);
         }
@@ -560,24 +1043,27 @@ impl InitialMajorPhaseCompletion {
     pub fn run_minor_cycle(
         self,
         lifecycle: &ModelLifecycle,
-        window: CleanWindow,
-        controls: HogbomControls,
+        mask_plan: &ReconstructionMaskPlan,
+        program: MinorCycleProgram,
     ) -> Result<MinorCyclePhaseCompletion, MinorCycleError> {
         let completion = self.result.into_completion();
         let (normal_state, continuation) = completion.into_continuation();
-        let minor = hogbom_minor_cycle(
+        let (mask, auto_mask) = mask_plan.materialize(continuation.generation(), &normal_state)?;
+        let minor = run_minor_cycle(
             lifecycle,
             continuation.generation(),
             &normal_state,
-            window,
-            controls,
+            &mask,
+            program,
         )?;
         let (delta, evidence) = minor.into_parts();
         Ok(MinorCyclePhaseCompletion {
             normal_state,
             continuation,
+            mask,
             delta,
             evidence,
+            auto_mask,
         })
     }
 }
@@ -586,8 +1072,10 @@ impl InitialMajorPhaseCompletion {
 pub struct MinorCyclePhaseCompletion {
     normal_state: FinalNormalState,
     continuation: FinalModelContinuation,
+    mask: casa_imaging_reconstruction::ReconstructionMask,
     delta: Option<casa_imaging_reconstruction::ModelDelta>,
     evidence: MinorCycleEvidence,
+    auto_mask: Option<casa_imaging_reconstruction::AutoMultithreshEvidence>,
 }
 
 impl MinorCyclePhaseCompletion {
@@ -595,6 +1083,20 @@ impl MinorCyclePhaseCompletion {
     #[must_use]
     pub const fn evidence(&self) -> &MinorCycleEvidence {
         &self.evidence
+    }
+
+    /// Return auto-multithreshold diagnostics when that mask mode was selected.
+    #[must_use]
+    pub const fn auto_mask_evidence(
+        &self,
+    ) -> Option<casa_imaging_reconstruction::AutoMultithreshEvidence> {
+        self.auto_mask
+    }
+
+    /// Return the immutable mask generation used for component placement.
+    #[must_use]
+    pub const fn mask(&self) -> &casa_imaging_reconstruction::ReconstructionMask {
+        &self.mask
     }
 
     /// Consume the accepted model update into mandatory final-major preparation.

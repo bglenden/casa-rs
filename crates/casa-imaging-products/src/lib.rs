@@ -28,6 +28,7 @@ mod error;
 mod projection;
 mod restore;
 mod source;
+mod visibility;
 
 pub use authority::{
     CONTINUUM_ALGORITHM_CATALOG_VERSION, ContinuumCommitmentId, ContinuumCompletionsId,
@@ -41,12 +42,16 @@ pub use error::ProductsError;
 pub use projection::{PublicationMemberProjection, PublicationProjection};
 pub use restore::{fft_convolve, gaussian_beam_image, normalize_plane};
 pub use source::{ContinuumProductInputs, ContinuumSourceCatalog};
+pub use visibility::{
+    ModelVisibilityProductId, ResidualVisibilityProductId, VisibilityProductAuthority,
+    VisibilityProductCompletion, VisibilityProductError,
+};
 
 #[cfg(test)]
 mod tests {
     #[test]
     fn algorithm_catalog_version_is_pinned() {
-        assert_eq!(super::CONTINUUM_ALGORITHM_CATALOG_VERSION, 1);
+        assert_eq!(super::CONTINUUM_ALGORITHM_CATALOG_VERSION, 2);
         assert_eq!(super::DEFAULT_PSF_CUTOFF, 0.35);
     }
 }

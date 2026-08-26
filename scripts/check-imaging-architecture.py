@@ -51,15 +51,15 @@ ACCEPTED_ISSUE_OUTCOMES_SHA256 = (
     "1d2a77232fdc25a50053097b644b64cbdf0d21e1970590ec4180de6dce29738d"
 )
 ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256 = (
-    "778bcf42be2ff392cc86c9ca3eb67dc0591c11a24496881841b980c80f1fdbaf"
+    "2a926a786ddbad1e99dfd7cf73b8fb02547e34159ec07952f106d284dc6e2c35"
 )
 ACCEPTED_MATRIX_ROWS_SHA256 = (
-    "ff9da0dda6cf3ee2e2fcc8a184c7184d750f28f49a60bbf7fd8fbc5875b2dcdf"
+    "180c750802a15d82266f4333d65ec4afbdc97d1fd2bfec5f6bfd2ef749300c9e"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "f6b746eeb5ae84d8a77a91ec91ea65cbdce7d50a969b3acc0c2437c5d71ccdad"
+    "778f7da5bd6096c576b53301fe25f75272ca931b4efcd723c74a82c0ae7f1dbe"
 )
-ACCEPTED_MATRIX_CONTRACT_REVISION = 37
+ACCEPTED_MATRIX_CONTRACT_REVISION = 45
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "scientific-products-v1",
@@ -160,15 +160,15 @@ ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "observation-transaction-v1",
         "thresholds",
-    ): "c7df2947ccba63a095abca5b99890c57ed633d2fb739739732fb620fff28757f",
+    ): "68712d1f4ef427a03775f10d0d864daa9ff49ee44a81a39eb7edf33f5eb0f2d4",
     (
         "observation-transaction-v1",
         "laws",
-    ): "be111815bc7667c2534f031f5e1dca586ab7cf12b624fddbd61f1040044d18c8",
+    ): "a40814e45997e423400d832bed908ad4240aab607f27ad3fd2884710bb74ac53",
     (
         "observation-transaction-v1",
         "resource_gates",
-    ): "62ef188eff7d529d52a0dcc401094c82b78133c273b12d2d644afa24b0572523",
+    ): "fb8095e5e44341c3dc1ab06aa8a26cd259905f8f3485d4ca88253af1459da70a",
     (
         "resource-authority-foundation-v1",
         "thresholds",
@@ -1809,7 +1809,11 @@ def validate_t18_global_weighting_sources(
     selected_sample_fields = rust_struct_fields(
         sample_model, "SelectedObservationSample", sample_model_path
     )
-    if contribution_fields != {"output_channel": "u32", "factor": "f32"} or (
+    if contribution_fields != {
+        "output_channel": "u32",
+        "factor": "f32",
+        "evaluation_frequency_hz": "f64",
+    } or (
         contribution_set_fields
         != {"entries": "[Option<SelectedSpectralContribution>;2]"}
     ):
@@ -1818,7 +1822,7 @@ def validate_t18_global_weighting_sources(
         )
     if (
         "spectral_contributions" in selected_sample_fields
-        or "pub const SCHEMA_VERSION: u32 = 2;" not in sample_model
+        or "pub const SCHEMA_VERSION: u32 = 3;" not in sample_model
     ):
         raise ArchitectureError(
             "T18 spectral contributions must remain outside the persisted selected-sample schema"
@@ -1852,7 +1856,10 @@ def validate_t18_global_weighting_sources(
     interpolation = rust_function_body(
         traversal_sample, "interpolation_contributions", traversal_sample_path
     )
-    compact_interpolation = re.sub(r"\s+", "", interpolation)
+    evaluation = rust_function_body(
+        traversal_sample, "evaluated_frequency_hz", traversal_sample_path
+    )
+    compact_evaluation = re.sub(r"\s+", "", evaluation)
     explicit_output_frame = rust_function_body(
         spectral_engine, "spectral_frame_explicit", spectral_engine_path
     )
@@ -1863,15 +1870,16 @@ def validate_t18_global_weighting_sources(
     )
     if not all(token in derivation for token in required_derivation) or (
         "source_frequency_output_contributions(" not in traversal_sample
-        or "convert_frequency_to_frame_with_frames(" not in interpolation
-        or "spectral.anchor()" not in interpolation
-        or "spectral_frame_observatory(" not in interpolation
-        or "spectral_frame_explicit(" not in interpolation
-        or "sample.coordinates.time.mjd_days()" not in interpolation
-        or "sample.metadata.field_id" not in interpolation
-        or "source_frame" not in interpolation
-        or "output_frame" not in interpolation
-        or "Some(&source_frame),Some(&output_frame)" not in compact_interpolation
+        or "evaluation_frequency_hz" not in interpolation
+        or "convert_frequency_to_frame_with_frames(" not in evaluation
+        or "spectral.anchor()" not in evaluation
+        or "spectral_frame_observatory(" not in evaluation
+        or "spectral_frame_explicit(" not in evaluation
+        or "sample.coordinates.time.mjd_days()" not in evaluation
+        or "sample.metadata.field_id" not in evaluation
+        or "source_frame" not in evaluation
+        or "output_frame" not in evaluation
+        or "Some(&source_frame),Some(&output_frame)" not in compact_evaluation
         or not all(
             token in explicit_output_frame
             for token in ("with_epoch(", "with_position(", "with_direction(", "with_measures(")
@@ -2317,7 +2325,7 @@ def validate_t17_ms_selection_transfer(rows: list[dict[str, Any]]) -> None:
         )
     required_baselines = {
         "repo://crates/casa-imaging-model/src/selected_observation_sample.rs",
-        "repo://resources/imaging-architecture/baselines/selected-observation-generation-v3.txt",
+        "repo://resources/imaging-architecture/baselines/selected-observation-generation-v4.txt",
     }
     if not required_baselines.issubset(set(row.get("baseline_manifests", []))):
         raise ArchitectureError(
@@ -2850,7 +2858,7 @@ def validate_t17_runtime_completion_source(source: str, path: Path) -> None:
 
     run_body = re.sub(r"\s+", "", rust_function_body(source, "run_inner", path))
     required_runtime_structure = {
-        "letsynchronous_observation_read=work.node().kind==WorkKind::ObservationRead&&work.node().fences.is_empty();",
+        "letsynchronous_observation_read=work.node().kind.reads_observation()&&work.node().fences.is_empty();",
         "Ok(_)ifsynchronous_observation_read=>",
         "ifsettled==&work.node().fences{Some(ObservationReadCompletionContext{",
         "iffence_transition_succeeded&&letSome(completion)=observation_completion{",

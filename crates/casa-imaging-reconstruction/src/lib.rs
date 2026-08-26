@@ -29,7 +29,9 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 mod major_cycle;
+mod mask;
 mod minor_cycle;
+mod psf_beam;
 mod serial_mfs;
 mod weighting;
 
@@ -45,8 +47,8 @@ pub use serial_mfs::{
 pub mod runtime_adapter {
     pub use crate::serial_mfs::{
         CompleteDataOwnerCompletion, CompleteDataOwnerResult, CompleteDataOwnerState,
-        PreparedSerialMfsOperator, SerialMfsWorkload, prepare_serial_mfs_operator,
-        serial_mfs_workload,
+        FinalVisibilitySample, PreparedSerialMfsOperator, SerialMfsWorkload,
+        prepare_serial_mfs_operator, serial_mfs_workload,
     };
 }
 
@@ -54,10 +56,19 @@ pub use major_cycle::{
     FinalNormalState, MajorCycleCompletion, MajorCycleError, MajorCycleOwner,
     MajorCyclePreparation, NormalStateCatalog,
 };
+pub use mask::{
+    AutoMultithreshControls, AutoMultithreshEvidence, MaskBox, MaskError, ReconstructionMask,
+    ReconstructionMaskGenerationId, ReconstructionMaskPlan, auto_multithresh,
+    reproject_mask_support,
+};
 pub use minor_cycle::{
-    CleanWindow, ComponentDivergence, HogbomComponent, HogbomControls, HogbomMinorCycle,
-    MinorCycleError, MinorCycleEvidence, MinorCycleEvidenceId, MinorCycleStopReason,
-    hogbom_minor_cycle,
+    ClarkApproximation, ComponentDivergence, MinorCycleComponent, MinorCycleError,
+    MinorCycleEvidence, MinorCycleEvidenceId, MinorCycleModelPlane, MinorCycleProgram,
+    MinorCycleResult, MinorCycleStopReason, run_minor_cycle,
+};
+pub use psf_beam::{
+    DEFAULT_PSF_FIT_CUTOFF, PsfBeamFitError, RestoringBeam, fit_restoring_beam,
+    fitted_psf_sidelobe_fraction,
 };
 pub use weighting::{
     WeightingAlgorithmState, WeightingError, WeightingExecutionLimits, WeightingGenerationId,

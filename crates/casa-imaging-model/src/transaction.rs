@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! MeasurementSet access and atomic-side-effect contracts for imaging.
+//! MeasurementSet access and bounded-side-effect contracts for imaging.
 
 use std::{fmt, sync::Arc};
 
@@ -50,7 +50,7 @@ pub enum ModelColumnWrite {
     SelectedRows,
 }
 
-/// Snapshot-captured `MODEL_DATA` state that an atomic replacement must match.
+/// Snapshot-captured `MODEL_DATA` state that an in-place write must match.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelColumnPrecondition {
     /// The column did not exist when the observation snapshot was captured.
@@ -160,7 +160,7 @@ impl ObservationReadSet {
     }
 }
 
-/// Exact selected `MODEL_DATA` cells staged for one MeasurementSet.
+/// Exact selected `MODEL_DATA` cells written in place for one MeasurementSet.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModelColumnWriteAccess {
     measurement_set: MeasurementSetIdentity,
@@ -215,7 +215,7 @@ pub struct ObservationWriteSet {
 }
 
 impl ObservationWriteSet {
-    /// Return staged `MODEL_DATA` writes in canonical MeasurementSet order.
+    /// Return in-place `MODEL_DATA` writes in canonical MeasurementSet order.
     #[must_use]
     pub fn model_columns(&self) -> &[ModelColumnWriteAccess] {
         &self.model_columns

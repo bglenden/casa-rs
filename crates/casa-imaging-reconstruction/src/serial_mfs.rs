@@ -5,10 +5,10 @@
 use std::{fmt, sync::Arc};
 
 use casa_imaging_model::{
-    CompiledGeometryId, CompiledProblem, CompiledProblemId, CorrelationType, FiniteValuePolicy,
-    InstrumentResponse, LogicalIdentity, NumericPrecision, NumericsContractId,
-    PolarizationCoordinate, Projection, ReconstructionBasis, ReductionPolicy,
-    SelectedObservationGenerationId, SelectedVisibilitySample, WeightingCommitmentId,
+    CompiledGeometryId, CompiledProblem, CompiledProblemId, FiniteValuePolicy, InstrumentResponse,
+    LogicalIdentity, NumericPrecision, NumericsContractId, PolarizationCoordinate, Projection,
+    ReconstructionBasis, ReductionPolicy, SelectedObservationGenerationId, SelectedSampleAddress,
+    SelectedVisibilitySample, WeightingCommitmentId,
 };
 use ndarray::{Array2, Axis};
 use num_complex::Complex64;
@@ -143,11 +143,37 @@ impl SerialMfsSpecification {
         let domain = &problem.geometry().domains()[0];
         let image_shape = domain.shape().pixels();
         let direction = domain.direction();
-        let supported_reference_pixel = [image_shape[0] as f64 / 2.0, image_shape[1] as f64 / 2.0];
+        let grid_shape = [
+            casa_composite_padded_len(image_shape[0], 1.2),
+            casa_composite_padded_len(image_shape[1], 1.2),
+        ];
+        let reference_pixel = direction.reference_pixel();
         if direction.projection() != Projection::Sin
             || direction.pc() != [[1.0, 0.0], [0.0, 1.0]]
-            || direction.reference_pixel() != supported_reference_pixel
             || direction.pole_deg() != [180.0, 0.0]
+            || reference_pixel
+                .iter()
+                .any(|value| !value.is_finite() || *value < 0.0 || value.fract() != 0.0)
+        {
+            return Err(SerialMfsError::UnsupportedGeometry);
+        }
+        let reference_pixel = [reference_pixel[0] as usize, reference_pixel[1] as usize];
+        let image_blc = [
+            grid_shape[0]
+                .checked_div(2)
+                .and_then(|centre| centre.checked_sub(reference_pixel[0]))
+                .ok_or(SerialMfsError::UnsupportedGeometry)?,
+            grid_shape[1]
+                .checked_div(2)
+                .and_then(|centre| centre.checked_sub(reference_pixel[1]))
+                .ok_or(SerialMfsError::UnsupportedGeometry)?,
+        ];
+        if image_blc[0]
+            .checked_add(image_shape[0])
+            .is_none_or(|end| end > grid_shape[0])
+            || image_blc[1]
+                .checked_add(image_shape[1])
+                .is_none_or(|end| end > grid_shape[1])
         {
             return Err(SerialMfsError::UnsupportedGeometry);
         }
@@ -163,14 +189,6 @@ impl SerialMfsSpecification {
         {
             return Err(SerialMfsError::UnsupportedNumerics);
         }
-        let grid_shape = [
-            casa_composite_padded_len(image_shape[0], 1.2),
-            casa_composite_padded_len(image_shape[1], 1.2),
-        ];
-        let image_blc = [
-            grid_shape[0] / 2 - supported_reference_pixel[0] as usize,
-            grid_shape[1] / 2 - supported_reference_pixel[1] as usize,
-        ];
         Ok(Self {
             problem: problem.problem_id(),
             geometry: problem.geometry().geometry_id(),
@@ -597,6 +615,46 @@ impl CompleteDataOwnerResult {
     }
 }
 
+/// One selected visibility predicted by the exact paired forward operator.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FinalVisibilitySample {
+    address: SelectedSampleAddress,
+    observed: Complex64,
+    predicted: Complex64,
+    residual: Complex64,
+}
+
+fn casa_persistent_complex(value: Complex64) -> Complex64 {
+    Complex64::new(f64::from(value.re as f32), f64::from(value.im as f32))
+}
+
+impl FinalVisibilitySample {
+    /// Return the exact selected row/channel/correlation address.
+    #[must_use]
+    pub const fn address(self) -> SelectedSampleAddress {
+        self.address
+    }
+
+    /// Return the unweighted selected observed visibility.
+    #[must_use]
+    pub const fn observed(self) -> Complex64 {
+        self.observed
+    }
+
+    /// Return the paired-operator model visibility.
+    #[must_use]
+    pub const fn predicted(self) -> Complex64 {
+        self.predicted
+    }
+
+    /// Return `observed - predicted` for the same selected address.
+    #[must_use]
+    pub const fn residual(self) -> Complex64 {
+        self.residual
+    }
+}
+
 /// Reconstruction owner for one complete, ordered weighted replay.
 #[doc(hidden)]
 #[derive(Debug)]
@@ -611,6 +669,7 @@ pub struct CompleteDataOwnerState {
     coverage: CoverageEncoder,
     finite_values: FiniteValuePolicy,
     residual_model: Option<ModelGenerationId>,
+    predicted_selected: Vec<FinalVisibilitySample>,
     operator: SerialMfsOperator,
 }
 
@@ -635,6 +694,7 @@ impl CompleteDataOwnerState {
             coverage: CoverageEncoder::new(weighting.generation_id()),
             finite_values: specification.finite_values,
             residual_model: None,
+            predicted_selected: Vec::with_capacity(prepared.workload.max_replay_block_samples),
             operator: SerialMfsOperator::new(specification, prepared.workload, prepared.fft),
         })
     }
@@ -660,15 +720,19 @@ impl CompleteDataOwnerState {
     }
 
     /// Consume one reconstruction-owned T18 block in canonical replay order.
-    pub fn consume_block(&mut self, block: &WeightingReplayChunk) -> Result<(), SerialMfsError> {
+    pub fn consume_block(
+        &mut self,
+        block: &WeightingReplayChunk,
+    ) -> Result<&[FinalVisibilitySample], SerialMfsError> {
         if block.sequence() != self.next_block_sequence {
             return Err(SerialMfsError::BlockSequence);
         }
+        self.predicted_selected.clear();
         for weighted in block.samples() {
             self.coverage.push(weighted);
             let selected = weighted.selected();
             if self.accept_input(selected)?
-                && stokes_i_parallel_hand(selected.address.correlation_type)
+                && selected.address.correlation_type.contributes_to_stokes_i()
             {
                 let visibility = match selected.visibility {
                     SelectedVisibilitySample::Float32(value) => [f64::from(value), 0.0],
@@ -676,21 +740,36 @@ impl CompleteDataOwnerState {
                         [f64::from(real), f64::from(imaginary)]
                     }
                 };
+                let mut predicted_visibility = Complex64::default();
                 for spectral in weighted.spectral_values() {
                     let contribution = spectral.contribution();
                     let sample = SerialMfsSample::new(
                         selected.coordinates.transformed_uvw_m,
-                        selected.address.frequency_centre_hz,
+                        contribution.evaluation_frequency_hz(),
                         selected.coordinates.phase_shift_m,
                         visibility,
                         spectral.imaging_weight(),
                         f64::from(contribution.factor()),
                     )?;
                     if self.residual_model.is_some() {
-                        self.operator.push_with_residual(sample)?;
+                        predicted_visibility += self.operator.push_with_residual(sample)?;
                     } else {
                         self.operator.push(sample)?;
                     }
+                }
+                if self.residual_model.is_some() {
+                    let observed = Complex64::new(visibility[0], visibility[1]);
+                    // MODEL_DATA is a CASA Complex column. Quantize exactly
+                    // once at this product/persistence boundary so the paired
+                    // residual product and the persisted prediction describe
+                    // the same sample; operator accumulation above remains f64.
+                    let predicted = casa_persistent_complex(predicted_visibility);
+                    self.predicted_selected.push(FinalVisibilitySample {
+                        address: selected.address,
+                        observed,
+                        predicted,
+                        residual: observed - predicted,
+                    });
                 }
             }
         }
@@ -705,7 +784,7 @@ impl CompleteDataOwnerState {
             .next_block_sequence
             .checked_add(1)
             .ok_or(SerialMfsError::CoverageOverflow)?;
-        Ok(())
+        Ok(&self.predicted_selected)
     }
 
     /// Apply the paired forward operator to one opaque bounded T18 replay block.
@@ -725,7 +804,7 @@ impl CompleteDataOwnerState {
         for weighted in block.samples() {
             let selected = weighted.selected();
             if !self.accept_input(selected)?
-                || !stokes_i_parallel_hand(selected.address.correlation_type)
+                || !selected.address.correlation_type.contributes_to_stokes_i()
             {
                 continue;
             }
@@ -733,7 +812,7 @@ impl CompleteDataOwnerState {
                 let contribution = spectral.contribution();
                 let sample = SerialMfsSample::new(
                     selected.coordinates.transformed_uvw_m,
-                    selected.address.frequency_centre_hz,
+                    contribution.evaluation_frequency_hz(),
                     selected.coordinates.phase_shift_m,
                     [0.0, 0.0],
                     spectral.imaging_weight(),
@@ -805,7 +884,7 @@ impl CompleteDataOwnerState {
             };
         apply_input_policy(
             nonfinite,
-            sample.row_flag || sample.channel_flag,
+            sample.row_flag || sample.parallel_hand_group_flag,
             self.finite_values,
         )
     }
@@ -828,17 +907,6 @@ fn apply_input_policy(
     policy: FiniteValuePolicy,
 ) -> Result<bool, SerialMfsError> {
     Ok(apply_finite_value_policy(nonfinite_input, policy)? && !declared_flag)
-}
-
-fn stokes_i_parallel_hand(correlation: CorrelationType) -> bool {
-    matches!(
-        correlation,
-        CorrelationType::StokesI
-            | CorrelationType::LinearXx
-            | CorrelationType::LinearYy
-            | CorrelationType::CircularRr
-            | CorrelationType::CircularLl
-    )
 }
 
 /// Reconstruction-owned serial CPU operator accumulator.
@@ -964,6 +1032,8 @@ impl SerialMfsOperator {
             if sample.support() == ModelSupport::Invalid {
                 continue;
             }
+            // ModelSourceShape is canonically x-fastest (`y * width + x`),
+            // unlike the x-major normal-state plane buffers.
             let y = flat / width;
             let x = flat % width;
             let correction = self.gridder.image_correction(x, y);
@@ -986,14 +1056,14 @@ impl SerialMfsOperator {
         Ok(())
     }
 
-    fn push_with_residual(&mut self, sample: SerialMfsSample) -> Result<(), SerialMfsError> {
+    fn push_with_residual(&mut self, sample: SerialMfsSample) -> Result<Complex64, SerialMfsError> {
+        let predicted = self.predict_one(sample)?;
         if sample.imaging_weight == 0.0 {
-            return Ok(());
+            return Ok(predicted);
         }
         let Some(taps) = self.gridder.taps(sample.uv_lambda()) else {
-            return Ok(());
+            return Ok(predicted);
         };
-        let predicted = self.predict_one_with_taps(sample, taps)?;
         let factor = sample.spectral_factor;
         let weighted_visibility =
             sample.visibility * sample.phase() * (sample.imaging_weight * factor);
@@ -1026,7 +1096,7 @@ impl SerialMfsOperator {
         let updated = self.sum_weight + corrected;
         self.sum_weight_compensation = (updated - self.sum_weight) - corrected;
         self.sum_weight = updated;
-        Ok(())
+        Ok(predicted)
     }
 
     /// Predict unweighted selected visibilities with the paired forward operator.
@@ -1552,7 +1622,8 @@ mod tests {
 
     use super::{
         PreparedFft, SerialMfsError, SerialMfsGeometry, SerialMfsOperator, SerialMfsSample,
-        SerialMfsWorkload, apply_finite_value_policy, apply_input_policy, checked_cells,
+        SerialMfsWorkload, apply_finite_value_policy, apply_input_policy, casa_persistent_complex,
+        checked_cells,
     };
 
     fn geometry() -> SerialMfsGeometry {
@@ -1638,6 +1709,49 @@ mod tests {
         let right = inner(&model, dirty.dirty());
         assert!((left - right).norm() <= 1.0e-9 * left.norm().max(right.norm()).max(1.0));
         assert_eq!(visibility.len(), prediction.len());
+    }
+
+    #[test]
+    fn evaluated_spectral_frame_is_shared_by_forward_and_adjoint() {
+        let cells = checked_cells(geometry().image_shape).expect("shape");
+        let mut model = vec![Complex64::default(); cells];
+        model[2 * geometry().image_shape[1] + 5] = Complex64::new(0.75, -0.2);
+        let sample_at = |frequency_hz| {
+            SerialMfsSample::new(
+                [18.0, -7.0, 0.0],
+                frequency_hz,
+                0.37,
+                [0.4, -0.7],
+                1.25,
+                0.8,
+            )
+            .expect("valid frame-evaluated sample")
+        };
+        let native = sample_at(1.0e9);
+        let shifted = sample_at(1.006e9);
+        let native_prediction = operator()
+            .predict(&model, &[native])
+            .expect("native-frame prediction")[0];
+        let shifted_prediction = operator()
+            .predict(&model, &[shifted])
+            .expect("shifted-frame prediction")[0];
+        assert_ne!(
+            native_prediction, shifted_prediction,
+            "the evaluated operator frequency must affect A"
+        );
+
+        for (sample, prediction) in [(native, native_prediction), (shifted, shifted_prediction)] {
+            let weighted_visibility = sample.visibility * sample.imaging_weight;
+            let mut adjoint = operator();
+            adjoint.push(sample).expect("adjoint sample");
+            let dirty = adjoint.finish().expect("finite primitives");
+            let left = prediction.conj() * weighted_visibility;
+            let right = inner(&model, dirty.dirty());
+            assert!(
+                (left - right).norm() <= 1.0e-9 * left.norm().max(right.norm()).max(1.0),
+                "A and A* must use the same owner-evaluated frequency"
+            );
+        }
     }
 
     #[test]
@@ -1812,6 +1926,28 @@ mod tests {
             actual.major_cycle_residual.as_deref(),
             Some(expected.dirty()),
             "T20 must equal the declared paired A*W(d-Ax) evaluation"
+        );
+    }
+
+    #[test]
+    fn final_visibility_publication_uses_the_exact_casa_complex32_value() {
+        let native = Complex64::new(1.0 + f64::from(f32::EPSILON) / 3.0, -0.1_f64);
+        let published = casa_persistent_complex(native);
+        let observed = Complex64::new(4.0, -2.0);
+
+        assert_eq!(published.re, f64::from(native.re as f32));
+        assert_eq!(published.im, f64::from(native.im as f32));
+        assert_ne!(
+            published, native,
+            "fixture must exercise f64 to f32 quantization"
+        );
+        assert_eq!(
+            observed - published,
+            Complex64::new(
+                f64::from(observed.re as f32) - f64::from(native.re as f32),
+                f64::from(observed.im as f32) - f64::from(native.im as f32),
+            ),
+            "published residual is derived from the exact persisted prediction"
         );
     }
 }

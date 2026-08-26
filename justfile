@@ -43,6 +43,10 @@ test:
 release-cpp-interop:
     bash scripts/test-release-cpp-interop.sh
 
+# Focused T24-T30 CASA/Rust solver, mask, product, and MODEL_DATA correctness gate.
+imaging-solver-crosscheck input_ms output_dir:
+    python tools/science/casa_rust_solver_crosscheck.py "{{input_ms}}" "{{output_dir}}"
+
 release-perf:
     bash scripts/test-release-perf.sh
 

@@ -16,8 +16,9 @@ coordinates, measures, and related workflows.
 |---|---|---|
 | core codecs (`casa-values`, `casa-aipsio`) | Internal generic value model and AipsIO-style framing used by higher layers | Rust ecosystem crates only |
 | foundation crates (`casa-types`, `casa-measures-data`, `casa-measures-tools`) | Public scalar/quanta/measures algorithms and contracts plus explicit runtime-data validation, loading, installation, and maintenance | core codecs; `casa-measures-data` also uses canonical `casa-tables` accessors |
+| shared numerics (`casa-numerics`) | Domain-neutral numerical algorithms reused by observation, calibration, and imaging owners | Rust numerical ecosystem crates only |
 | persistent storage (`casa-tables`) | CASA table persistence, codecs, data managers/storage backends, schema/mutation APIs, and TaQL engine | core codecs, foundation crates |
-| native imaging contracts (`casa-imaging-model`, `casa-imaging-reconstruction`, `casa-imaging-products`, `casa-imaging-runtime`) | Dependency-free logical schemas and commitments; authoritative model-state ingest, reprojection, delta, and completion algorithms; continuum product algorithms and the Product Generation Authority with planned generations, artifact identities, seals, and independently atomic member publication; process-level resource topology, policies, demand envelopes, arbitration, and leases | `casa-imaging-model` has no workspace dependencies; `casa-imaging-reconstruction` depends only on the model; `casa-imaging-products` depends on the model and reconstruction; `casa-imaging-runtime` depends on the model and the reconstruction-owned executable-problem brand at its execution boundary and composes product authority at its publication boundary |
+| native imaging contracts (`casa-imaging-model`, `casa-imaging-reconstruction`, `casa-imaging-products`, `casa-imaging-runtime`) | Dependency-free logical schemas and commitments; authoritative model-state ingest, reprojection, delta, and completion algorithms; continuum product algorithms and the Product Generation Authority with planned generations, artifact identities, seals, and independently atomic member publication; process-level resource topology, policies, demand envelopes, arbitration, and leases | `casa-imaging-model` has no workspace dependencies; `casa-imaging-reconstruction` depends only on the model and domain-neutral numerics; `casa-imaging-products` depends on the model and reconstruction; `casa-imaging-runtime` depends on the model and the reconstruction-owned executable-problem brand at its execution boundary and composes product authority at its publication boundary |
 | imaging application composition (`casa-imaging-application`) | Sole production composition seam across MeasurementSet authority, reconstruction, products, resources, execution, typed installed-implementation availability, and CASA product publication | Native imaging owners only; unavailable requests invoke no execution implementation |
 | domain libraries (`casa-ms`, `casa-simulation-synthesis`, `casa-lattices`, `casa-coordinates`, `casa-images`, `casa-calibration`, `casa-vla`) | Higher-level astronomy data models and algorithms built on table/image persistence; simulation synthesis owns only the serial model predictor and Airy voltage pattern used by MeasurementSet simulation | foundation crates, `casa-tables`, selected peer domain crates where documented |
 | boundary contracts (`casa-provider-contracts`, `casars-imagebrowser-protocol`, `casars-tablebrowser-protocol`) | The generic provider envelope, canonical parameter and application catalogs, task/session surface definitions, and protocol surfaces between providers, apps, and Python/runtime layers | domain libraries and foundation crates; must not become a second source of truth |
@@ -39,7 +40,8 @@ Native imaging follows its stricter accepted direction:
 `casa-imaging-model` owns the dependency-free science, reconstruction, and
 product schemas and commitments introduced by ADR-0009.
 `casa-imaging-reconstruction` owns model-state algorithms and opaque
-reconstruction completions and depends only inward on the model.
+reconstruction completions and depends only inward on the model and the
+domain-neutral `casa-numerics` algorithms.
 `casa-imaging-runtime` owns execution-resource contracts introduced by ADR-0010
 and depends inward on the model plus reconstruction's opaque executable-problem
 brand. That reconstruction edge is limited to admitting owner-prepared model
@@ -267,7 +269,7 @@ generation computed from the actual canonical sample stream. Incremental
 inspection state and generation encoding never cross its public boundary. The storage
 completion binds logical snapshot identity, provenance, physical access,
 content generation, and retained-access traversal. After synchronous work
-completion and every declared fence, if any, of the owning ObservationRead node
+completion and every declared fence, if any, of the owning typed observation-read node
 settles, the runtime supplies a fresh, affine authority that binds that opaque
 storage completion to the execution attempt, owning node, exact settled fence
 set, and live lease epoch. A physical I/O fence alone cannot mint this proof.
@@ -324,26 +326,36 @@ column generation, metadata generation, and consistency token. Optional
 `MODEL_DATA` writes carry exact selected-cell scope plus an absent-or-generation
 precondition captured independently of whether `MODEL_DATA` was read. Every
 `PhysicalWorkBinding` passed to the sole `plan` entrypoint must type every
-MeasurementSet source operation as `ObservationRead` and declare final
-complete-data reconciliation, private per-product and model-column staging
-events, and the sole Publication node. `plan` mechanically derives every
+MeasurementSet source operation as `ObservationRead`; a terminal replay that
+also writes bounded predictions in place to `MODEL_DATA` is
+typed `ObservationReadWriteback`. Each transaction declares final
+complete-data reconciliation, private per-product staging events, and the
+applicable product Publication nodes. `plan`
+mechanically derives every
 observation-read terminal event and binds the declaration against the exact
 `CompiledProblem`; the crate-private binder rejects untyped lock-bearing I/O,
 product keys that differ from `ProductRequirements`, missing completion
-fences, any post-commit work, or any bypass publication. The sealed plan retains the
+fences, any post-commit work, or any bypass publication. Conventional image
+members and `MODEL_DATA` are separate side effects: failure of one never rolls
+back or hides a result already completed by the other. The sealed plan retains the
 compiled-problem, logical-transaction, and physical-work identities, and its
 versioned identity includes the complete transaction declaration. The initial
 consistency check precedes every observation read; every read precedes
-reconciliation; and the terminal commit waits for every other node's complete
-work or fence event. Controller polling ends when Publication launches.
-Initial-check, observation-read, and commit nodes reserve one table lock
+reconciliation; and each terminal commit waits for every node and fence in its
+own transaction. Controller polling ends when that transaction's Publication launches.
+Initial-check, observation-read, and writeback nodes reserve one table lock
 per source; every read revalidates under those locks. Staging storage,
 writeback/publication buffers, and commit fences are ordinary Resource Authority
-claims. The Publication adapter revalidates under all source locks and either
-activates every staged product and model-column generation together or leaves
-the prior generation solely visible. Mutation, cancellation, admission,
-numerical/output failure, or a failed staging fence therefore cannot expose a
-mixed generation.
+claims. Product Publication activates exactly one conventional product member.
+`MODEL_DATA` instead follows ADR-0008: the terminal replay writes selected cells
+in place under the retained lock and a small incomplete-write marker, then
+updates the owner generation and removes the marker only after a successful
+flush. Interruption may leave partial derived values, as in CASA, but the marker
+makes that state fail closed until explicit recovery or recomputation. No
+backup column, full-column staging copy, content digest, rollback, snapshot, or
+copy-on-write generation is part of this path. Users may retain or delete
+conventional products independently; `MODEL_DATA` remains a distinct
+MeasurementSet side effect.
 
 The Observation Transaction contract and binder do not themselves change
 `casa-ms`, casacore metadata, or persistent bytes. A storage adapter that
@@ -373,8 +385,10 @@ work-scoped capabilities are never replayed after synchronous completion. No
 whole-plan executor or public scheduler can bypass the compile/plan/run seam.
 The transaction's initial consistency node alone receives the expected
 observation transaction, typed observation reads receive its exact read set,
-the private writeback node receives its exact write set, and only the atomic
-publication node receives publication authority.
+and the private writeback node receives its exact write set. The terminal
+combined replay performs any requested bounded `MODEL_DATA` mutation directly;
+there is no later model-column publication plan. Conventional product
+publication remains independently planned and receipted.
 Controllers can observe only plan-listed transitions eligible at the current
 global cut. Cancellation, rejected directives, and adapter errors drain every
 launched fence before `run` returns; mapped pages and storage-manager state also

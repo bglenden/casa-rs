@@ -1029,6 +1029,17 @@ pub enum CorrelationType {
     PolarizationAngle,
 }
 
+impl CorrelationType {
+    /// Return whether this stored correlation participates directly in a Stokes-I solve.
+    #[must_use]
+    pub const fn contributes_to_stokes_i(self) -> bool {
+        matches!(
+            self,
+            Self::StokesI | Self::CircularRr | Self::CircularLl | Self::LinearXx | Self::LinearYy
+        )
+    }
+}
+
 /// One selected correlation array coordinate and its MeasurementSet meaning.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CorrelationProduct {

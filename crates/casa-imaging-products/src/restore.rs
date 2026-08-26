@@ -19,9 +19,11 @@ const FWHM_TO_SIGMA: f64 = 1.0 / 2.354_820_045_030_949_3;
 
 /// Normalize one unnormalized plane to its compiled product normalization.
 ///
-/// `UnitResponse` keeps the plane as-is. `FlatNoise` divides by the scalar
-/// sensitivity (sum weight); when no usable sensitivity exists every pixel
-/// blanks to NaN. `FlatSky` is not produced by this catalog version.
+/// `UnitResponse` and the currently supported scalar-response `FlatNoise`
+/// path divide by the scalar sensitivity (sum weight). `UnitResponse` does
+/// not apply direction-dependent sensitivity division. When no usable scalar
+/// sensitivity exists every pixel blanks to NaN. `FlatSky` is not produced by
+/// this catalog version.
 ///
 /// # Errors
 ///
@@ -32,8 +34,7 @@ pub fn normalize_plane(
     sensitivity: f64,
 ) -> Result<Vec<f32>, ProductsError> {
     match normalization {
-        ProductNormalization::UnitResponse => Ok(values.to_vec()),
-        ProductNormalization::FlatNoise => {
+        ProductNormalization::UnitResponse | ProductNormalization::FlatNoise => {
             if !(sensitivity.is_finite() && sensitivity > 0.0) {
                 return Ok(vec![f32::NAN; values.len()]);
             }

@@ -108,6 +108,12 @@ digest_identity!(
 );
 
 impl ArtifactIdentity {
+    /// Bind an artifact to an owner-minted logical content identity.
+    #[must_use]
+    pub const fn from_logical_identity(identity: casa_imaging_model::LogicalIdentity) -> Self {
+        Self(identity.as_bytes())
+    }
+
     pub(crate) const fn from_owner_digest(digest: [u8; 32]) -> Self {
         Self(digest)
     }
@@ -511,6 +517,7 @@ pub struct IoMeasurement {
     kind: IoBufferKind,
     bytes: u64,
     operations: u64,
+    observed: bool,
 }
 
 impl IoMeasurement {
@@ -521,6 +528,21 @@ impl IoMeasurement {
             kind,
             bytes,
             operations,
+            observed: true,
+        }
+    }
+
+    /// Record that this adapter cannot observe transferred bytes or
+    /// operations for the planned category. The prediction and capacity claim
+    /// remain receipted, while actual counters stay absent instead of being
+    /// fabricated from those bounds.
+    #[must_use]
+    pub const fn unobserved(kind: IoBufferKind) -> Self {
+        Self {
+            kind,
+            bytes: 0,
+            operations: 0,
+            observed: false,
         }
     }
 
@@ -540,6 +562,17 @@ impl IoMeasurement {
     #[must_use]
     pub const fn operations(self) -> u64 {
         self.operations
+    }
+
+    /// Return owner-observed counters, or `None` when the underlying adapter
+    /// exposes no trustworthy transfer accounting.
+    #[must_use]
+    pub const fn actual(self) -> Option<(u64, u64)> {
+        if self.observed {
+            Some((self.bytes, self.operations))
+        } else {
+            None
+        }
     }
 }
 
@@ -1538,11 +1571,10 @@ impl PhysicalWorkBinding {
             .publication_layouts
             .entries()
             .iter()
-            .filter_map(|layout| match layout.participant() {
+            .map(|layout| match layout.participant() {
                 crate::PublicationParticipant::Product { graph_id, node_id } => {
-                    Some((graph_id, node_id, layout.artifact()))
+                    (graph_id, node_id, layout.artifact())
                 }
-                crate::PublicationParticipant::ModelData(_) => None,
             })
             .collect::<Vec<_>>();
         if product_layouts.len() != product_publication.entries().len() {
@@ -3326,7 +3358,7 @@ pub trait WorkImplementation {
         Ok(None)
     }
 
-    /// Atomically activate all staged products and optional model-column output.
+    /// Atomically activate the members of this transaction's publication scope.
     ///
     /// The runtime invokes this exactly once, only after every fence and fallible
     /// scheduler transition has settled successfully, while the transaction
@@ -3783,19 +3815,19 @@ fn work_execution_context<'a>(
         product_publication: None,
         completed_observation_reads,
     };
-    if work.node().kind == WorkKind::ObservationRead {
+    if work.node().kind == WorkKind::ObservationReadWriteback {
+        common(
+            None,
+            Some(problem.observation_transaction().read_set()),
+            Some(problem.observation_transaction().write_set()),
+            None,
+            None,
+        )
+    } else if work.node().kind == WorkKind::ObservationRead {
         common(
             None,
             Some(problem.observation_transaction().read_set()),
             None,
-            None,
-            None,
-        )
-    } else if transaction_work.model_column_staging() == Some(&work.node().id) {
-        common(
-            None,
-            None,
-            Some(problem.observation_transaction().write_set()),
             None,
             None,
         )
@@ -4148,9 +4180,9 @@ where
                                     defer_receipt_error(&mut scheduler, &mut pending, error);
                                     controller_stopped = true;
                                 }
-                                let synchronous_observation_read = work.node().kind
-                                    == WorkKind::ObservationRead
-                                    && work.node().fences.is_empty();
+                                let synchronous_observation_read =
+                                    work.node().kind.reads_observation()
+                                        && work.node().fences.is_empty();
                                 let work_lease_epoch = context.lease_epoch();
                                 launched.insert(node_id.clone(), work);
                                 match scheduler.finish_work(node_id.clone(), WorkResult::Succeeded)
@@ -4404,7 +4436,7 @@ where
                         ));
                     }
                 } else {
-                    let observation_completion = if work.node().kind == WorkKind::ObservationRead {
+                    let observation_completion = if work.node().kind.reads_observation() {
                         let settled = settled_observation_fences
                             .entry(work.node().id.clone())
                             .or_default();
@@ -4813,10 +4845,6 @@ fn execution_plan_id(plan: &ExecutionPlan) -> ExecutionPlanId {
                 encoder.digest(graph_id.as_bytes());
                 encoder.usize(node_id.ordinal());
             }
-            crate::PublicationParticipant::ModelData(measurement_set) => {
-                encoder.u8(1);
-                encoder.digest(measurement_set.identity().as_bytes());
-            }
         }
         encoder.digest(layout.artifact().as_bytes());
         encoder.digest(layout.layout_id().as_bytes());
@@ -4860,9 +4888,16 @@ fn encode_observation_transaction(
     let work = transaction.work();
     encoder.string(work.initial_consistency_check().as_str());
     encode_dependencies(encoder, work.observation_reads());
-    encoder.string(work.final_reconciliation().as_str());
+    match work.final_model_preparation() {
+        Some(node) => {
+            encoder.u8(1);
+            encoder.string(node.as_str());
+        }
+        None => encoder.u8(0),
+    }
+    encoder.string(work.post_replay_reconciliation().as_str());
     encode_dependencies(encoder, work.product_staging());
-    match work.model_column_staging() {
+    match work.model_column_writeback() {
         Some(node) => {
             encoder.u8(1);
             encoder.string(node.as_str());

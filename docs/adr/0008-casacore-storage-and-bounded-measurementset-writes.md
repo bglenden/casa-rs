@@ -4,6 +4,8 @@ Status: accepted
 
 Date: 2026-07-18
 
+Reaffirmed: 2026-08-26
+
 ## Context
 
 CASA interoperability depends on the casacore table data model and persisted
@@ -49,6 +51,20 @@ not presented as complete.
 The persistence layer does not provide rollback, snapshot generations,
 journaling, or copy-on-write recovery. Such a feature requires a new concrete
 product requirement and a separate architecture decision.
+
+This applies explicitly to imaging `MODEL_DATA`. Prediction writes selected
+cells in place under the exact source-scoped table lock and incomplete-write
+marker. The writer retains at most one array cell, persists that cell through
+the selected-row/selected-column table seam, and discards its cache entry before
+accepting another row; it does not materialize MAIN rows or the full column.
+Unrelated MeasurementSets may therefore progress concurrently while two live
+writers for the same source remain mutually exclusive. Successful completion
+flushes the column, advances its owner generation, and removes the marker. An
+interrupted write may leave partial derived values and must be recovered or
+recomputed explicitly. Full-column staging copies, backup columns, content
+digests, and rollback are prohibited unless a later concrete requirement
+demonstrates that CASA-compatible in-place behavior is inadequate and
+separately accounts for the I/O and storage cost.
 
 ## Consequences
 

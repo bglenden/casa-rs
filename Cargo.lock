@@ -537,6 +537,7 @@ version = "0.27.0"
 dependencies = [
  "casa-logging",
  "casa-ms",
+ "casa-numerics",
  "casa-provider-contracts",
  "casa-tables",
  "casa-task-runtime",
@@ -627,6 +628,7 @@ name = "casa-imaging-reconstruction"
 version = "0.27.0"
 dependencies = [
  "casa-imaging-model",
+ "casa-numerics",
  "ndarray",
  "num-complex",
  "rustfft",
@@ -715,6 +717,7 @@ dependencies = [
  "casa-imaging-model",
  "casa-logging",
  "casa-measures-data",
+ "casa-numerics",
  "casa-provider-contracts",
  "casa-simulation-synthesis",
  "casa-tables",
@@ -726,7 +729,6 @@ dependencies = [
  "image 0.25.10",
  "libc",
  "libm",
- "nalgebra",
  "ndarray",
  "num-complex",
  "plotters",
@@ -758,6 +760,13 @@ dependencies = [
  "toml 0.8.23",
  "ureq",
  "uuid",
+]
+
+[[package]]
+name = "casa-numerics"
+version = "0.27.0"
+dependencies = [
+ "nalgebra",
 ]
 
 [[package]]

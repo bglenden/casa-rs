@@ -53,7 +53,7 @@ use crate::{
 };
 
 const RECEIPT_SCHEMA: &str = "casa-rs-imaging-execution-receipt";
-const RECEIPT_SCHEMA_VERSION: u32 = 16;
+const RECEIPT_SCHEMA_VERSION: u32 = 17;
 const COMPILED_PROBLEM_EVIDENCE_VERSION: u32 = 9;
 const RECEIPT_SUFFIX: &str = ".receipt.json";
 const RECEIPT_STAGING_PREFIX: &str = ".casa-rs-receipt-staging-";
@@ -272,8 +272,6 @@ pub enum ReceiptPublicationParticipant {
         /// Zero-based identity within the compiler-owned Product Graph.
         node_ordinal: usize,
     },
-    /// The optional `MODEL_DATA` member for one MeasurementSet.
-    ModelData(MeasurementSetIdentity),
 }
 
 /// Closed audit projection of the compiler-owned Product Graph.
@@ -1317,7 +1315,12 @@ impl ExecutionReceiptStore {
         } else {
             actual_bytes.max(worst_case_receipt_bytes(body)?)
         };
-        self.make_room(body, reserved_bytes)?;
+        // `begin` reserves the non-terminal receipt's worst-case terminal size.
+        // Later revisions remain inside that reservation, so repeating the
+        // directory-wide retention admission would add no safety.
+        if is_new {
+            self.make_room(body, reserved_bytes)?;
+        }
         let path = self.receipt_path(body.attempt());
         if is_new {
             atomic_create(&path, &bytes)
@@ -1439,13 +1442,16 @@ impl ExecutionReceiptStore {
         if count > self.state.retention.max_receipts || bytes > self.state.retention.max_bytes {
             return Err(ReceiptError::RetentionExceeded);
         }
+        let pruned = !prune.is_empty();
         for path in prune {
             fs::remove_file(path).map_err(|source| ReceiptError::Io {
                 action: "prune retained execution receipt",
                 source,
             })?;
         }
-        sync_directory(&self.root)?;
+        if pruned {
+            sync_directory(&self.root)?;
+        }
         Ok(())
     }
 }
@@ -2421,9 +2427,6 @@ enum PublicationParticipantProjection {
         graph_identity: String,
         node_ordinal: usize,
     },
-    ModelData {
-        measurement_set_identity: String,
-    },
 }
 
 impl PublicationParticipantProjection {
@@ -2432,9 +2435,6 @@ impl PublicationParticipantProjection {
             PublicationParticipant::Product { graph_id, node_id } => Self::Product {
                 graph_identity: hex(&graph_id.as_bytes()),
                 node_ordinal: node_id.ordinal(),
-            },
-            PublicationParticipant::ModelData(measurement_set) => Self::ModelData {
-                measurement_set_identity: measurement_set.to_string(),
             },
         }
     }
@@ -2448,11 +2448,6 @@ impl PublicationParticipantProjection {
                 graph_identity: parse_digest(graph_identity),
                 node_ordinal: *node_ordinal,
             },
-            Self::ModelData {
-                measurement_set_identity,
-            } => ReceiptPublicationParticipant::ModelData(MeasurementSetIdentity::new(
-                LogicalIdentity::from_sha256(parse_digest(measurement_set_identity)),
-            )),
         }
     }
 }
@@ -3987,8 +3982,10 @@ impl<'store> ReceiptRecorder<'store> {
                         kind: "I/O measurement",
                     },
                 )?;
-                io.actual_bytes = Some(measurement.bytes());
-                io.actual_operations = Some(measurement.operations());
+                if let Some((bytes, operations)) = measurement.actual() {
+                    io.actual_bytes = Some(bytes);
+                    io.actual_operations = Some(operations);
+                }
             }
         }
         for measurement in measurements.artifacts() {
@@ -4698,21 +4695,15 @@ fn validate_plan_projection(
             PublicationParticipantProjection::Product {
                 graph_identity,
                 node_ordinal,
-            } => {
-                format!("product:{graph_identity}:{node_ordinal}")
-            }
-            PublicationParticipantProjection::ModelData {
-                measurement_set_identity,
-            } => format!("model_data:{measurement_set_identity}"),
+            } => format!("product:{graph_identity}:{node_ordinal}"),
         })
         .collect::<BTreeSet<_>>();
     require_integrity(participants.len() == plan.publication_layouts.len())?;
     let product_participants = plan
         .publication_layouts
         .iter()
-        .filter_map(|layout| match &layout.participant {
-            PublicationParticipantProjection::Product { node_ordinal, .. } => Some(*node_ordinal),
-            PublicationParticipantProjection::ModelData { .. } => None,
+        .map(|layout| match &layout.participant {
+            PublicationParticipantProjection::Product { node_ordinal, .. } => *node_ordinal,
         })
         .collect::<Vec<_>>();
     match plan.observation_transaction_publication_scope {
@@ -4734,9 +4725,6 @@ fn validate_plan_projection(
                     && graph_identity == &plan.product_graph_identity
                     && publication_members.binary_search(node_ordinal).is_ok()
             }
-            PublicationParticipantProjection::ModelData {
-                measurement_set_identity,
-            } => is_digest(measurement_set_identity),
         };
         require_integrity(
             participant_is_valid
@@ -5122,6 +5110,7 @@ fn work_kind_is_valid(value: &str) -> bool {
             | "prefetch"
             | "io"
             | "observation_read"
+            | "observation_read_writeback"
             | "serialization"
             | "writeback"
             | "publication"
@@ -5144,6 +5133,7 @@ fn parse_work_kind(value: &str) -> Option<WorkKind> {
         "prefetch" => WorkKind::Prefetch,
         "io" => WorkKind::Io,
         "observation_read" => WorkKind::ObservationRead,
+        "observation_read_writeback" => WorkKind::ObservationReadWriteback,
         "serialization" => WorkKind::Serialization,
         "writeback" => WorkKind::Writeback,
         "publication" => WorkKind::Publication,
@@ -5684,7 +5674,11 @@ fn project_reconstruction(fields: &mut BTreeMap<String, String>, problem: &Compi
         "reconstruction.algorithm.kind",
         reconstruction_algorithm(algorithm),
     );
-    if let ReconstructionAlgorithm::Multiscale { scales_px } = algorithm {
+    if let ReconstructionAlgorithm::Multiscale {
+        scales_px,
+        small_scale_bias,
+    } = algorithm
+    {
         for (index, scale) in scales_px.iter().enumerate() {
             evidence_field(
                 fields,
@@ -5692,6 +5686,11 @@ fn project_reconstruction(fields: &mut BTreeMap<String, String>, problem: &Compi
                 stable_float(*scale),
             );
         }
+        evidence_field(
+            fields,
+            "reconstruction.algorithm.small_scale_bias",
+            stable_float(*small_scale_bias),
+        );
     }
     let controls = reconstruction.controls();
     evidence_field(
@@ -5715,6 +5714,40 @@ fn project_reconstruction(fields: &mut BTreeMap<String, String>, problem: &Compi
             "reconstruction.controls.maximum_model_update",
             stable_float(bound),
         );
+    }
+    if let Some(limit) = controls.cycle_iteration_limit() {
+        evidence_field(
+            fields,
+            "reconstruction.controls.cycle_iteration_limit",
+            limit,
+        );
+    }
+    if let Some(limit) = controls.maximum_major_cycles() {
+        evidence_field(
+            fields,
+            "reconstruction.controls.maximum_major_cycles",
+            limit,
+        );
+    }
+    if let Some(sigma) = controls.noise_sigma() {
+        evidence_field(
+            fields,
+            "reconstruction.controls.noise_sigma",
+            stable_float(sigma),
+        );
+    }
+    for (name, value) in [
+        ("cycle_factor", controls.cycle_factor()),
+        ("minimum_psf_fraction", controls.minimum_psf_fraction()),
+        ("maximum_psf_fraction", controls.maximum_psf_fraction()),
+    ] {
+        if let Some(value) = value {
+            evidence_field(
+                fields,
+                format!("reconstruction.controls.{name}"),
+                stable_float(value),
+            );
+        }
     }
     for (index, coordinate) in reconstruction
         .polarization()
@@ -7639,6 +7672,7 @@ fn work_kind(kind: WorkKind) -> &'static str {
         WorkKind::Prefetch => "prefetch",
         WorkKind::Io => "io",
         WorkKind::ObservationRead => "observation_read",
+        WorkKind::ObservationReadWriteback => "observation_read_writeback",
         WorkKind::Serialization => "serialization",
         WorkKind::Writeback => "writeback",
         WorkKind::Publication => "publication",

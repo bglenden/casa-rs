@@ -152,14 +152,6 @@ pub fn validate_installed_implementation(
     if !matches!(problem.inputs().model(), ModelStateIdentity::Empty) {
         unsupported.push(UnsupportedRequirement::EmptyInitialModel);
     }
-    if !problem
-        .observation_transaction()
-        .write_set()
-        .model_columns()
-        .is_empty()
-    {
-        unsupported.push(UnsupportedRequirement::NoModelColumnWrite);
-    }
     if problem
         .science()
         .measurement_equation()
@@ -181,7 +173,11 @@ pub fn validate_installed_implementation(
 const fn supports_task(requirement: TaskRequirement) -> bool {
     matches!(
         requirement,
-        TaskRequirement::SerialCpu | TaskRequirement::RustFft
+        TaskRequirement::Automasking
+            | TaskRequirement::MaskProduct
+            | TaskRequirement::ModelColumnWrite
+            | TaskRequirement::SerialCpu
+            | TaskRequirement::RustFft
     )
 }
 
@@ -189,9 +185,12 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
     matches!(
         capability,
         RequiredCapability::Polarization(PolarizationCoordinate::StokesI)
+            | RequiredCapability::SpectralFrameTransform
             | RequiredCapability::ConstantBasis
             | RequiredCapability::DirtyReconstruction
             | RequiredCapability::HogbomReconstruction
+            | RequiredCapability::ClarkReconstruction
+            | RequiredCapability::MultiscaleReconstruction
             | RequiredCapability::NaturalWeighting
             | RequiredCapability::UniformWeighting
             | RequiredCapability::BriggsWeighting
@@ -204,5 +203,6 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
             | RequiredCapability::Product(ProductKind::Model)
             | RequiredCapability::Product(ProductKind::RestoredImage)
             | RequiredCapability::Product(ProductKind::SumWeights)
+            | RequiredCapability::Product(ProductKind::Mask)
     )
 }

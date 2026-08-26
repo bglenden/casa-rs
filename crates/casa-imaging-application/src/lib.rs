@@ -17,8 +17,9 @@ pub use availability::{
 };
 pub use casa_product_sink::CasaImageProductSink;
 pub use continuum_request::{
-    ContinuumAlgorithm, ContinuumBeamPolicy, ContinuumImagingRequest, ContinuumImagingResult,
-    ContinuumStopReason, ContinuumWeighting, execute_continuum,
+    ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumBeamPolicy, ContinuumImagingRequest,
+    ContinuumImagingResult, ContinuumMask, ContinuumMaskBox, ContinuumStopReason,
+    ContinuumWeighting, execute_continuum,
 };
 
 use std::{error::Error, fmt, io};
@@ -31,27 +32,29 @@ use casa_imaging_model::{
 use casa_imaging_products::{
     ContinuumProductControls, ContinuumProductInputs, ContinuumSourceCatalog,
     PlannedContinuumGeneration, ProductGenerationAuthority, SealedContinuumGeneration,
-    produce_continuum_members,
+    VisibilityProductCompletion, produce_continuum_members,
 };
 use casa_imaging_reconstruction::{
-    CleanWindow, ExecutableModelProblem, HogbomControls, MajorCycleCompletion,
-    MinorCycleStopReason, WeightingExecutionLimits,
+    ExecutableModelProblem, MajorCycleCompletion, MinorCycleProgram, MinorCycleStopReason,
+    ReconstructionMaskPlan, WeightingExecutionLimits,
 };
 use casa_imaging_runtime::{
     AttemptBoundObservationCompletion, BuildIdentity, ExecutionAttemptId, ExecutionProvenance,
-    ExecutionReceipt, ExecutionReceiptStore, FenceKind, ImplementationContractMetadata,
-    ImplementationRegistry, ImplementationRegistryId, ObservationReadCompletionContext,
-    PlannerCostModelProfileBootstrap, PlanningBindings, ResourceAuthority, ResourcePolicy,
-    RunBindings, RunToCompletion, SerialContinuumExecutionPolicy, SerialContinuumExecutor,
-    SerialContinuumPassInput, SerialContinuumPlan, SerialContinuumRegistry,
-    SerialProductPublicationExecutor, SerialProductPublicationPlan, SerialProductPublicationPolicy,
-    SerialProductPublicationRegistry, SerialProductPublicationSink, StorageIoResourceBinding,
-    WorkExecutionContext, WorkImplementation, WorkImplementationId, WorkMeasurements, plan, run,
+    ExecutionReceipt, ExecutionReceiptStore, FenceKind, FinalVisibilityReplay,
+    ImplementationContractMetadata, ImplementationRegistry, ImplementationRegistryId,
+    ObservationReadCompletionContext, PlannerCostModelProfileBootstrap, PlanningBindings,
+    ResourceAuthority, ResourcePolicy, RunBindings, RunToCompletion,
+    SerialContinuumExecutionPolicy, SerialContinuumExecutor, SerialContinuumPassInput,
+    SerialContinuumPlan, SerialContinuumRegistry, SerialProductPublicationExecutor,
+    SerialProductPublicationPlan, SerialProductPublicationPolicy, SerialProductPublicationRegistry,
+    SerialProductPublicationSink, StorageIoResourceBinding, WorkExecutionContext,
+    WorkImplementation, WorkImplementationId, WorkMeasurements, plan, run,
 };
 use casa_ms::{
     ResolvedSelectedObservationAccess, SelectedObservationResolutionRequest,
     resolve_selected_observation,
 };
+use sha2::{Digest, Sha256};
 
 /// Boxed application failure accepted by the native application composition.
 pub type ApplicationError = Box<dyn Error + Send + Sync>;
@@ -96,8 +99,12 @@ pub struct ApplicationRequest<S> {
     pub geometry: GeometryInput,
     /// Initial-model lifecycle contract.
     pub model_lifecycle: ModelLifecycleRequirements,
+    /// Deferred reconstruction-mask owner input.
+    pub mask: ReconstructionMaskPlan,
     /// Storage-owner request for the single selected MeasurementSet.
     pub observation: SelectedObservationResolutionRequest,
+    /// Whether final paired-operator predictions are committed to `MODEL_DATA`.
+    pub write_model_column: bool,
     /// Task-surface constraints that cannot be inferred from the compiled
     /// backend-independent problem.
     pub task_requirements: Vec<TaskRequirement>,
@@ -128,10 +135,18 @@ pub struct NativeApplicationOutcome {
     pub initial_receipt: ExecutionReceipt,
     /// Mandatory post-minor final-major receipt for Högbom imaging.
     pub final_major_receipt: Option<ExecutionReceipt>,
-    /// T21 solve evidence captured before its affine final-major handoff.
-    pub minor_cycle: Option<NativeMinorCycleOutcome>,
+    /// Ordered solve evidence captured before each affine major-cycle handoff.
+    pub minor_cycles: Vec<NativeMinorCycleOutcome>,
+    /// Number of executed major passes, including the initial pass.
+    pub major_cycle_count: usize,
+    /// Total accepted component updates across all minor cycles.
+    pub total_minor_iterations: usize,
+    /// Final model/residual visibility product identities and provenance.
+    pub visibility_products: Option<VisibilityProductCompletion>,
     /// Atomic product-publication receipt.
     pub publication_receipt: ExecutionReceipt,
+    /// Final-major receipt containing the bounded in-place `MODEL_DATA` write, when requested.
+    pub model_data_receipt: Option<ExecutionReceipt>,
     /// Final authoritative complete-data and model state.
     pub scientific: MajorCycleCompletion,
     /// Planned product generation used before member production.
@@ -141,14 +156,91 @@ pub struct NativeApplicationOutcome {
 }
 
 /// Stable application projection of the T21 owner evidence.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct NativeMinorCycleOutcome {
+    /// One-based minor-cycle ordinal within this reconstruction.
+    pub cycle: usize,
     /// Number of accepted component updates.
     pub iterations: usize,
+    /// Cumulative absolute component flux accepted in this cycle.
+    pub total_flux: f64,
     /// Final normalized residual peak.
     pub final_peak_flux: f64,
+    /// Robust RMS used for `nsigma` stopping, when enabled.
+    pub noise_rms: Option<f64>,
+    /// Effective absolute/noise/cycle threshold used by the owner.
+    pub effective_threshold: f64,
+    /// PSF-derived cycle threshold, when enabled.
+    pub cycle_threshold: Option<f64>,
     /// Scientific terminal reason.
-    pub stop_reason: MinorCycleStopReason,
+    pub stop_reason: NativeMinorCycleStopReason,
+    /// Number of exact Clark residual refreshes.
+    pub clark_refreshes: usize,
+    /// Bounded leading component sequence for CASA/Rust first-divergence diagnostics.
+    pub recorded_components: Vec<casa_imaging_reconstruction::MinorCycleComponent>,
+    /// Exact x-major reconstruction support used for component placement.
+    pub mask_support: Vec<bool>,
+    /// Immutable mask generation used for this cycle.
+    pub mask_generation: casa_imaging_reconstruction::ReconstructionMaskGenerationId,
+    /// Exact model generation constrained by this mask.
+    pub mask_model_generation: casa_imaging_reconstruction::ModelGenerationId,
+    /// Current Normal State consumed to generate an automatic mask.
+    pub mask_normal_state: Option<casa_imaging_reconstruction::FinalNormalStateCompletionId>,
+    /// Auto-multithreshold diagnostics, when that mask mode generated support.
+    pub auto_mask: Option<casa_imaging_reconstruction::AutoMultithreshEvidence>,
+}
+
+/// Stable application spelling of the scientific minor-cycle terminal reason.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NativeMinorCycleStopReason {
+    /// The normalized residual peak fell below the requested threshold.
+    ThresholdReached,
+    /// The bounded minor-cycle iteration budget was exhausted.
+    IterationBound,
+    /// The next update would exceed the frozen-approximation envelope.
+    StalenessBound,
+    /// The multiscale residual trajectory diverged after accepted progress.
+    MultiscaleDivergence,
+}
+
+impl From<MinorCycleStopReason> for NativeMinorCycleStopReason {
+    fn from(value: MinorCycleStopReason) -> Self {
+        match value {
+            MinorCycleStopReason::ThresholdReached => Self::ThresholdReached,
+            MinorCycleStopReason::IterationBound => Self::IterationBound,
+            MinorCycleStopReason::StalenessBound => Self::StalenessBound,
+            MinorCycleStopReason::MultiscaleDivergence => Self::MultiscaleDivergence,
+        }
+    }
+}
+
+impl NativeMinorCycleOutcome {
+    /// Return the first exact component mismatch against a CASA/parity baseline.
+    #[must_use]
+    pub fn first_component_divergence(
+        &self,
+        baseline: &[casa_imaging_reconstruction::MinorCycleComponent],
+    ) -> Option<(
+        usize,
+        Option<casa_imaging_reconstruction::MinorCycleComponent>,
+        Option<casa_imaging_reconstruction::MinorCycleComponent>,
+    )> {
+        let shared = baseline.len().min(self.recorded_components.len());
+        for (index, (expected, actual)) in
+            baseline.iter().zip(&self.recorded_components).enumerate()
+        {
+            if expected != actual {
+                return Some((index, Some(*expected), Some(*actual)));
+            }
+        }
+        (baseline.len() != self.recorded_components.len()).then(|| {
+            (
+                shared,
+                baseline.get(shared).copied(),
+                self.recorded_components.get(shared).copied(),
+            )
+        })
+    }
 }
 
 /// Whole-run result from the sole installed implementation.
@@ -183,6 +275,8 @@ where
     let input = NativeInput {
         observation: request.observation,
         initial_access: access,
+        write_model_column: request.write_model_column,
+        mask: request.mask,
         native: request.native,
     };
     let output = run_native(&problem, input).map_err(ApplicationDispatchError::Native)?;
@@ -194,6 +288,8 @@ where
 struct NativeInput<S> {
     observation: SelectedObservationResolutionRequest,
     initial_access: ResolvedSelectedObservationAccess,
+    write_model_column: bool,
+    mask: ReconstructionMaskPlan,
     native: Result<ApplicationNative<S>, ApplicationError>,
 }
 
@@ -219,10 +315,12 @@ where
         ReconstructionAlgorithm::Dirty => {
             SerialContinuumPlan::dirty(problem, &planning_registry, policy)?
         }
-        ReconstructionAlgorithm::Hogbom => {
+        ReconstructionAlgorithm::Hogbom
+        | ReconstructionAlgorithm::Clark
+        | ReconstructionAlgorithm::Multiscale { .. } => {
             SerialContinuumPlan::initial(problem, &planning_registry, policy)?
         }
-        _ => unreachable!("native validation admits only dirty or Högbom"),
+        _ => unreachable!("native validation admits only continuum minor-cycle solvers"),
     };
     let minor_node = planned.minor_cycle_node().cloned();
     let (physical, weighting, complete, resources, pass, _) = planned.into_parts();
@@ -238,14 +336,16 @@ where
         ExecutableModelProblem::from_compiled(problem.clone())?,
         SerialContinuumPassInput::Initial,
     );
-    if matches!(algorithm, ReconstructionAlgorithm::Hogbom) {
-        let controls = HogbomControls::from_compiled(problem.reconstruction().controls())?;
-        let domain = &problem.geometry().domains()[0];
-        let [width, height] = domain.shape().pixels();
+    if !matches!(algorithm, ReconstructionAlgorithm::Dirty) {
+        let program = MinorCycleProgram::for_algorithm(
+            algorithm.clone(),
+            problem.reconstruction().controls(),
+        )?
+        .record_component_sequence(64)?;
         executor = executor.with_minor_cycle(
             minor_node.ok_or_else(|| boxed("initial plan omitted its minor-cycle node"))?,
-            CleanWindow::new([0, 0], [width - 1, height - 1])?,
-            controls,
+            input.mask.clone(),
+            program,
         );
     }
     let registry = SerialContinuumRegistry::new(
@@ -275,79 +375,198 @@ where
     )?;
     let initial_receipt = runtime.receipts.open(runtime.attempts[0])?;
 
-    let (scientific, final_major_receipt, minor_cycle) = match algorithm {
+    let (
+        scientific,
+        final_reconstruction_mask,
+        final_major_receipt,
+        minor_cycles,
+        major_cycle_count,
+        total_minor_iterations,
+        visibility_products,
+        visibility_replay,
+    ) = match algorithm {
         ReconstructionAlgorithm::Dirty => {
             let result = registry
                 .implementation()
                 .take_completion()
                 .ok_or_else(|| boxed("dirty execution omitted final major-cycle evidence"))?;
-            (result.into_completion(), None, None)
+            (
+                result.into_completion(),
+                None,
+                None,
+                Vec::new(),
+                1,
+                0,
+                None,
+                None,
+            )
         }
-        ReconstructionAlgorithm::Hogbom => {
-            let minor = registry
+        ReconstructionAlgorithm::Hogbom
+        | ReconstructionAlgorithm::Clark
+        | ReconstructionAlgorithm::Multiscale { .. } => {
+            let mut minor = registry
                 .implementation()
                 .take_minor_completion()
-                .ok_or_else(|| boxed("Högbom execution omitted minor-cycle evidence"))?;
-            let minor_cycle = Some(NativeMinorCycleOutcome {
-                iterations: minor.evidence().iterations(),
-                final_peak_flux: minor.evidence().final_peak_flux(),
-                stop_reason: minor.evidence().stop_reason(),
-            });
-            let final_input = minor.into_final_major_input();
-            let resolved = resolve_selected_observation(input.observation.clone())?;
-            let (_, access) = resolved.into_parts();
-            let access = access.with_minimum_content_budget(problem)?;
-            let final_residency = access.certify_residency(problem)?;
-            let final_planned = SerialContinuumPlan::final_major(
-                problem,
-                &planning_registry,
-                execution_policy(&runtime, final_residency),
-                &final_input,
-            )?;
-            let (physical, weighting, complete, resources, pass, _) = final_planned.into_parts();
-            let executor = SerialContinuumExecutor::new(
-                runtime.implementation.clone(),
-                problem.clone(),
-                weighting,
-                resources,
-                pass,
-                complete,
-                access.open(problem)?,
-                ExecutableModelProblem::from_compiled(problem.clone())?,
-                SerialContinuumPassInput::FinalMajor(final_input),
-            );
-            let registry = SerialContinuumRegistry::new(
-                runtime.registry,
-                runtime.implementation.clone(),
-                problem,
-                executor,
-            );
-            let final_plan = plan(
-                problem,
-                PlanningBindings::new(
+                .ok_or_else(|| boxed("minor-cycle execution omitted scientific evidence"))?;
+            let controls = problem.reconstruction().controls();
+            let maximum_cycles = controls.maximum_major_cycles().unwrap_or(1);
+            let mut cycle = 1_usize;
+            let mut total_iterations = 0_usize;
+            let mut mask_plan = input.mask.clone();
+            let mut minor_outcomes = Vec::new();
+            loop {
+                total_iterations = total_iterations
+                    .checked_add(minor.evidence().iterations())
+                    .ok_or_else(|| boxed("minor-cycle iteration count overflowed"))?;
+                let minor_outcome = NativeMinorCycleOutcome {
+                    cycle,
+                    iterations: minor.evidence().iterations(),
+                    total_flux: minor.evidence().total_flux(),
+                    final_peak_flux: minor.evidence().final_peak_flux(),
+                    noise_rms: minor.evidence().noise_rms(),
+                    effective_threshold: minor.evidence().effective_threshold(),
+                    cycle_threshold: minor.evidence().cycle_threshold(),
+                    stop_reason: minor.evidence().stop_reason().into(),
+                    clark_refreshes: minor.evidence().clark_refreshes(),
+                    recorded_components: minor
+                        .evidence()
+                        .recorded_component_sequence()
+                        .unwrap_or_default()
+                        .to_vec(),
+                    mask_support: minor.mask().support().to_vec(),
+                    mask_generation: minor.mask().generation_id(),
+                    mask_model_generation: minor.mask().model_generation(),
+                    mask_normal_state: minor.mask().normal_state_completion(),
+                    auto_mask: minor.auto_mask_evidence(),
+                };
+                let continue_cleaning = cycle < maximum_cycles
+                    && total_iterations < controls.max_minor_iterations()
+                    && minor.evidence().requests_reconciliation();
+                let next_mask = mask_plan.next_cycle(
+                    minor.mask(),
+                    cycle,
+                    minor.evidence().cycle_threshold_is_global(),
+                    minor_outcome
+                        .auto_mask
+                        .is_some_and(|evidence| evidence.channel_stopped),
+                );
+                let applied_mask = minor.mask().clone();
+                minor_outcomes.push(minor_outcome);
+                let final_input = minor.into_final_major_input();
+                let resolved = resolve_selected_observation(input.observation.clone())?;
+                let (_, access) = resolved.into_parts();
+                let access = access.with_minimum_content_budget(problem)?;
+                let final_residency = access.certify_residency(problem)?;
+                let source_state = access.source_state().clone();
+                let mut final_policy = execution_policy(&runtime, final_residency);
+                if !continue_cleaning && input.write_model_column {
+                    final_policy = final_policy.with_model_data(access.model_column_storage_plan());
+                }
+                let ordinal =
+                    u32::try_from(cycle).map_err(|_| boxed("major-cycle ordinal exceeds u32"))?;
+                let final_planned = if continue_cleaning {
+                    SerialContinuumPlan::continuing_major(
+                        problem,
+                        &planning_registry,
+                        final_policy,
+                        &final_input,
+                        ordinal,
+                    )?
+                } else {
+                    SerialContinuumPlan::final_major_at(
+                        problem,
+                        &planning_registry,
+                        final_policy,
+                        &final_input,
+                        ordinal,
+                    )?
+                };
+                let (physical, weighting, complete, resources, pass, minor_node) =
+                    final_planned.into_parts();
+                let mut executor = SerialContinuumExecutor::new(
+                    runtime.implementation.clone(),
+                    problem.clone(),
+                    weighting,
+                    resources,
+                    pass,
+                    complete,
+                    access.open(problem)?,
+                    ExecutableModelProblem::from_compiled(problem.clone())?,
+                    SerialContinuumPassInput::FinalMajor(final_input),
+                );
+                let mut terminal_replay = None;
+                if continue_cleaning {
+                    let remaining = controls
+                        .max_minor_iterations()
+                        .saturating_sub(total_iterations);
+                    let program = MinorCycleProgram::for_algorithm(algorithm.clone(), controls)?
+                        .record_component_sequence(64)?
+                        .limit_iterations(remaining)?;
+                    executor = executor.with_minor_cycle(
+                        minor_node.ok_or_else(|| boxed("continuing plan omitted minor node"))?,
+                        next_mask.clone(),
+                        program,
+                    );
+                } else {
+                    let (replay, sink) = if input.write_model_column {
+                        FinalVisibilityReplay::with_model_column(
+                            std::path::PathBuf::from(input.observation.locator()),
+                            source_state,
+                            input.observation.selection(),
+                        )?
+                    } else {
+                        FinalVisibilityReplay::new()
+                    };
+                    executor = executor.with_final_visibility_sink(sink);
+                    terminal_replay = Some(replay);
+                }
+                let registry = SerialContinuumRegistry::new(
                     runtime.registry,
-                    runtime.resource_policy.clone(),
-                    runtime.cost_model,
-                ),
-                &runtime.authority,
-                &registry,
-                &runtime.receipts,
-                move |_, _| Ok::<_, std::convert::Infallible>(vec![physical]),
-            )?;
-            run_phase(
-                problem,
-                &final_plan,
-                &registry,
-                &runtime,
-                runtime.attempts[1],
-            )?;
-            let completion = registry
-                .implementation()
-                .take_completion()
-                .ok_or_else(|| boxed("final-major execution omitted scientific evidence"))?
-                .into_completion();
-            let receipt = runtime.receipts.open(runtime.attempts[1])?;
-            (completion, Some(receipt), minor_cycle)
+                    runtime.implementation.clone(),
+                    problem,
+                    executor,
+                );
+                let final_plan = plan(
+                    problem,
+                    PlanningBindings::new(
+                        runtime.registry,
+                        runtime.resource_policy.clone(),
+                        runtime.cost_model,
+                    ),
+                    &runtime.authority,
+                    &registry,
+                    &runtime.receipts,
+                    move |_, _| Ok::<_, std::convert::Infallible>(vec![physical]),
+                )?;
+                let attempt = major_cycle_attempt(runtime.attempts[1], ordinal);
+                run_phase(problem, &final_plan, &registry, &runtime, attempt)?;
+                let receipt = runtime.receipts.open(attempt)?;
+                if continue_cleaning {
+                    minor = registry
+                        .implementation()
+                        .take_minor_completion()
+                        .ok_or_else(|| boxed("continuing major omitted minor evidence"))?;
+                    mask_plan = next_mask;
+                    cycle += 1;
+                    continue;
+                }
+                let completion = registry
+                    .implementation()
+                    .take_completion()
+                    .ok_or_else(|| boxed("final-major execution omitted scientific evidence"))?
+                    .into_completion();
+                let replay = terminal_replay.expect("terminal pass creates visibility replay");
+                break (
+                    completion,
+                    Some(applied_mask),
+                    Some(receipt),
+                    minor_outcomes,
+                    cycle + 1,
+                    total_iterations,
+                    Some(replay.completion()?),
+                    Some(replay),
+                );
+            }
         }
         _ => unreachable!("native validation admits only dirty or Högbom"),
     };
@@ -355,13 +574,18 @@ where
     publish_products(
         problem,
         scientific,
+        final_reconstruction_mask,
         input.observation,
         runtime,
         publication,
         PriorPhaseOutcome {
             initial_receipt,
             final_major_receipt,
-            minor_cycle,
+            minor_cycles,
+            major_cycle_count,
+            total_minor_iterations,
+            visibility_products,
+            visibility_replay,
         },
     )
 }
@@ -369,7 +593,11 @@ where
 struct PriorPhaseOutcome {
     initial_receipt: ExecutionReceipt,
     final_major_receipt: Option<ExecutionReceipt>,
-    minor_cycle: Option<NativeMinorCycleOutcome>,
+    minor_cycles: Vec<NativeMinorCycleOutcome>,
+    major_cycle_count: usize,
+    total_minor_iterations: usize,
+    visibility_products: Option<VisibilityProductCompletion>,
+    visibility_replay: Option<FinalVisibilityReplay>,
 }
 
 fn execution_policy(
@@ -415,9 +643,21 @@ fn run_phase(
     Ok(())
 }
 
+fn major_cycle_attempt(base: ExecutionAttemptId, ordinal: u32) -> ExecutionAttemptId {
+    if ordinal == 1 {
+        return base;
+    }
+    let mut hash = Sha256::new();
+    hash.update(b"casa-rs:imaging:major-cycle-attempt:v1");
+    hash.update(base.as_bytes());
+    hash.update(ordinal.to_le_bytes());
+    ExecutionAttemptId::from_sha256(hash.finalize().into())
+}
+
 fn publish_products<S>(
     problem: &CompiledProblem,
     scientific: MajorCycleCompletion,
+    reconstruction_mask: Option<casa_imaging_reconstruction::ReconstructionMask>,
     observation: SelectedObservationResolutionRequest,
     runtime: ApplicationRuntime,
     publication_config: ApplicationPublication<S>,
@@ -427,7 +667,11 @@ where
     S: SerialProductPublicationSink + Send + 'static,
     S::Error: Send + Sync,
 {
-    let sources = ContinuumSourceCatalog::from_major_cycle(problem, &scientific)?;
+    let sources = ContinuumSourceCatalog::from_major_cycle_with_mask(
+        problem,
+        &scientific,
+        reconstruction_mask.as_ref(),
+    )?;
     let authority = ProductGenerationAuthority::bind(problem);
     let planned_products = authority.plan(&sources, &publication_config.controls)?;
 
@@ -435,6 +679,12 @@ where
     let (_, access) = resolved.into_parts();
     let access = access.with_minimum_content_budget(problem)?;
     let residency = access.certify_residency(problem)?;
+    let model_data_receipt = prior
+        .visibility_replay
+        .as_ref()
+        .is_some_and(FinalVisibilityReplay::has_model_column)
+        .then(|| prior.final_major_receipt.clone())
+        .flatten();
     let planning_registry =
         PlanningRegistry::new(runtime.registry, runtime.implementation.clone(), problem);
     // The ordinary publication plan is deliberately constructed before member
@@ -452,7 +702,10 @@ where
             runtime.confidence_parts_per_million,
         ),
     )?;
-    let inputs = ContinuumProductInputs::from_major_cycle(problem, &scientific)?;
+    let mut inputs = ContinuumProductInputs::from_major_cycle(problem, &scientific)?;
+    if let Some(mask) = reconstruction_mask.as_ref() {
+        inputs = inputs.with_reconstruction_mask(mask)?;
+    }
     let produced = produce_continuum_members(&planned_products, &inputs)?;
     let sealed = authority.authorize(&planned_products, &produced)?;
     let (physical, publication) = publication_plan.into_parts();
@@ -508,8 +761,12 @@ where
     Ok(NativeApplicationOutcome {
         initial_receipt: prior.initial_receipt,
         final_major_receipt: prior.final_major_receipt,
-        minor_cycle: prior.minor_cycle,
+        minor_cycles: prior.minor_cycles,
+        major_cycle_count: prior.major_cycle_count,
+        total_minor_iterations: prior.total_minor_iterations,
+        visibility_products: prior.visibility_products,
         publication_receipt,
+        model_data_receipt,
         scientific,
         planned_products,
         products,

@@ -5,7 +5,8 @@ use std::sync::Arc;
 use std::thread;
 
 use casa_types::{
-    Array2, ArrayD, ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
+    Array2, ArrayD, ArrayValue, Complex32, PrimitiveType, RecordField, RecordValue, ScalarValue,
+    Value,
 };
 use ndarray::ShapeBuilder;
 
@@ -2371,6 +2372,86 @@ fn lazy_disk_open_mutates_and_partially_saves_without_materializing_rows() {
 
         std::fs::remove_dir_all(&root).expect("cleanup test dir");
     }
+}
+
+#[test]
+fn incremental_selected_array_cell_writes_retain_at_most_one_cell_and_no_rows() {
+    let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
+        "MODEL_DATA",
+        PrimitiveType::Complex32,
+        vec![2, 2],
+    )])
+    .expect("schema");
+    let mut table = Table::with_schema(schema);
+    for ordinal in 0..4 {
+        table
+            .add_row(RecordValue::new(vec![RecordField::new(
+                "MODEL_DATA",
+                Value::Array(ArrayValue::Complex32(
+                    ndarray::ArrayD::from_shape_vec(
+                        vec![2, 2],
+                        vec![Complex32::new(ordinal as f32, 0.0); 4],
+                    )
+                    .expect("2x2 cell"),
+                )),
+            )]))
+            .expect("append cell");
+    }
+    let root = unique_test_dir("bounded_selected_model_cells");
+    std::fs::create_dir_all(&root).expect("create test dir");
+    table
+        .save(TableOptions::new(&root).with_data_manager(DataManagerKind::TiledShapeStMan))
+        .expect("save tiled table");
+
+    let mut reopened = Table::open(TableOptions::new(&root)).expect("open lazy tiled table");
+    for row in 0..4 {
+        {
+            let mut prepared = reopened
+                .row_accessor_mut()
+                .prepare(&["MODEL_DATA"])
+                .expect("prepare one array column");
+            prepared.seek(row).expect("select row without loading it");
+            prepared
+                .set_value_at(
+                    0,
+                    Value::Array(ArrayValue::Complex32(
+                        ndarray::ArrayD::from_shape_vec(
+                            vec![2, 2],
+                            vec![Complex32::new(10.0 + row as f32, -1.0); 4],
+                        )
+                        .expect("replacement cell"),
+                    )),
+                )
+                .expect("write one lazy cell");
+        }
+        assert!(!reopened.inner.has_loaded_rows());
+        assert!(!reopened.inner.has_loaded_array_column("MODEL_DATA"));
+        assert_eq!(
+            reopened
+                .inner
+                .pending_array_cells("MODEL_DATA")
+                .expect("one pending cell")
+                .len(),
+            1
+        );
+        reopened
+            .prepare_write()
+            .save_selected_rows(&["MODEL_DATA"], &[row])
+            .expect("persist one row");
+        reopened.discard_persisted_cell_updates(&["MODEL_DATA"], &[row]);
+        assert!(!reopened.inner.has_pending_array_cells("MODEL_DATA"));
+        assert!(!reopened.inner.has_loaded_rows());
+    }
+
+    let verify = Table::open(TableOptions::new(&root)).expect("verify bounded writes");
+    assert!(!verify.inner.has_loaded_rows());
+    for row in 0..4 {
+        let ArrayValue::Complex32(values) = table_array(&verify, row, "MODEL_DATA").unwrap() else {
+            panic!("MODEL_DATA is complex")
+        };
+        assert_eq!(values[[0, 0]], Complex32::new(10.0 + row as f32, -1.0));
+    }
+    std::fs::remove_dir_all(&root).expect("cleanup test dir");
 }
 
 #[test]

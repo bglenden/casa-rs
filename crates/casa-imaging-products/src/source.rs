@@ -10,7 +10,8 @@
 use casa_imaging_model::{CompiledProblem, LogicalIdentity, ProductGraphId};
 use casa_imaging_reconstruction::{
     FinalNormalState, FinalNormalStateCompletionId, MajorCycleCompletion, MajorCycleCompletionId,
-    ModelGeneration, ModelGenerationId, NormalStateCatalog,
+    ModelGeneration, ModelGenerationId, NormalStateCatalog, ReconstructionMask,
+    ReconstructionMaskGenerationId,
 };
 
 use crate::digest::{COMMITMENT_DOMAIN, COMMITMENT_VERSION, Encoder};
@@ -37,6 +38,7 @@ pub struct ContinuumSourceCatalog {
     selected_generation: casa_imaging_model::SelectedObservationGenerationId,
     sample_count: u64,
     block_count: u64,
+    reconstruction_mask: Option<ReconstructionMaskGenerationId>,
 }
 
 impl ContinuumSourceCatalog {
@@ -50,6 +52,20 @@ impl ContinuumSourceCatalog {
     pub fn from_major_cycle(
         problem: &CompiledProblem,
         join: &MajorCycleCompletion,
+    ) -> Result<Self, ProductsError> {
+        Self::from_major_cycle_with_mask(problem, join, None)
+    }
+
+    /// Mint the catalog with the exact reconstruction mask used by the final
+    /// bounded solve.
+    ///
+    /// The mask is a distinct scientific source from Final Normal State
+    /// sensitivity/validity. Its immutable generation is therefore bound into
+    /// the product commitment rather than inferred by the product owner.
+    pub fn from_major_cycle_with_mask(
+        problem: &CompiledProblem,
+        join: &MajorCycleCompletion,
+        mask: Option<&ReconstructionMask>,
     ) -> Result<Self, ProductsError> {
         let normal_state = join.normal_state();
         if normal_state.problem_id() != problem.problem_id() {
@@ -66,6 +82,11 @@ impl ContinuumSourceCatalog {
         } else {
             return Err(ProductsError::UnsupportedProblem);
         }
+        if mask.is_some_and(|mask| {
+            mask.problem_id() != problem.problem_id() || mask.shape() != normal_state.shape()
+        }) {
+            return Err(ProductsError::SourceLineageMismatch);
+        }
         Ok(Self {
             graph_id: problem.product_graph().graph_id(),
             major_cycle_completion: join.completion_id(),
@@ -80,6 +101,7 @@ impl ContinuumSourceCatalog {
             selected_generation: normal_state.selected_generation(),
             sample_count: normal_state.sample_count(),
             block_count: normal_state.block_count(),
+            reconstruction_mask: mask.map(ReconstructionMask::generation_id),
             problem: problem.clone(),
         })
     }
@@ -128,7 +150,20 @@ impl ContinuumSourceCatalog {
         encoder.identity(self.selected_generation.as_bytes());
         encoder.u64(self.sample_count);
         encoder.u64(self.block_count);
+        match self.reconstruction_mask {
+            Some(generation) => {
+                encoder.u8(1);
+                encoder.identity(generation.as_bytes());
+            }
+            None => encoder.u8(0),
+        }
         encoder.finish()
+    }
+
+    /// Return the immutable CLEAN-mask generation committed by this lineage.
+    #[must_use]
+    pub const fn reconstruction_mask_generation(&self) -> Option<ReconstructionMaskGenerationId> {
+        self.reconstruction_mask
     }
 }
 
@@ -142,6 +177,7 @@ pub struct ContinuumProductInputs<'a> {
     problem: &'a CompiledProblem,
     normal_state: &'a FinalNormalState,
     final_model: &'a ModelGeneration,
+    reconstruction_mask: Option<&'a ReconstructionMask>,
 }
 
 impl<'a> ContinuumProductInputs<'a> {
@@ -161,7 +197,24 @@ impl<'a> ContinuumProductInputs<'a> {
             problem,
             normal_state: join.normal_state(),
             final_model: join.final_model(),
+            reconstruction_mask: None,
         })
+    }
+
+    /// Bind the exact reconstruction mask used by the final bounded solve.
+    ///
+    /// The mask must belong to this problem and model-grid shape.
+    pub fn with_reconstruction_mask(
+        mut self,
+        mask: &'a ReconstructionMask,
+    ) -> Result<Self, ProductsError> {
+        if mask.problem_id() != self.problem.problem_id()
+            || mask.shape() != self.normal_state.shape()
+        {
+            return Err(ProductsError::SourceLineageMismatch);
+        }
+        self.reconstruction_mask = Some(mask);
+        Ok(self)
     }
 
     /// Borrow the exact compiled problem behind these payloads.
@@ -188,5 +241,11 @@ impl<'a> ContinuumProductInputs<'a> {
     #[must_use]
     pub const fn final_model(&self) -> &ModelGeneration {
         self.final_model
+    }
+
+    /// Borrow the exact CLEAN mask, when a bounded solve supplied one.
+    #[must_use]
+    pub const fn reconstruction_mask(&self) -> Option<&ReconstructionMask> {
+        self.reconstruction_mask
     }
 }

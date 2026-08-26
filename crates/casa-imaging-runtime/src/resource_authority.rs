@@ -1388,6 +1388,11 @@ pub enum ResourceError {
         /// Amount remaining under the named hard ceiling.
         available: u64,
     },
+    /// Another live permit already owns the exact MeasurementSet lock.
+    MeasurementSetLockUnavailable {
+        /// Location-independent MeasurementSet identity already owned.
+        measurement_set: MeasurementSetIdentity,
+    },
     /// Observed external pressure strands active hard reservations.
     ///
     /// The authority retains the observation and advances its pressure epoch
@@ -1585,6 +1590,10 @@ impl fmt::Display for ResourceError {
                 formatter,
                 "lease resource {resource:?} requested {requested}, but only {available} remains"
             ),
+            Self::MeasurementSetLockUnavailable { measurement_set } => write!(
+                formatter,
+                "MeasurementSet {measurement_set:?} already has a live write-lock permit"
+            ),
             Self::PressureWouldInvalidateLeases {
                 resource,
                 reserved,
@@ -1621,6 +1630,7 @@ struct LeaseRecord {
 struct AuthorityState {
     pressure: ExternalPressure,
     leases: BTreeMap<u64, LeaseRecord>,
+    active_measurement_set_locks: BTreeMap<MeasurementSetIdentity, u64>,
     next_lease_id: u64,
     epoch: u64,
     pressure_epoch: u64,
@@ -1792,6 +1802,7 @@ impl ResourceAuthority {
                 state: Mutex::new(AuthorityState {
                     pressure: inventory.pressure,
                     leases: BTreeMap::new(),
+                    active_measurement_set_locks: BTreeMap::new(),
                     next_lease_id: 1,
                     epoch: 0,
                     pressure_epoch: 0,
@@ -2161,7 +2172,7 @@ impl ResourceLease {
             .state
             .lock()
             .map_err(|_| ResourceError::AuthorityPoisoned)?;
-        let record = state.leases.get_mut(&self.lease_id).ok_or_else(|| {
+        let record = state.leases.get(&self.lease_id).ok_or_else(|| {
             ResourceError::Invalid("cannot permit a released resource lease".to_string())
         })?;
         if record.release_requested {
@@ -2175,6 +2186,19 @@ impl ResourceLease {
             .get(&accounting_resource)
             .copied()
             .ok_or_else(|| ResourceError::UndeclaredLeaseResource(resource.clone()))?;
+        if let LeaseResource::MeasurementSetLock { measurement_set } = resource {
+            if amount != 1 {
+                return Err(ResourceError::Invalid(
+                    "an exact MeasurementSet lock permit must have amount one".to_string(),
+                ));
+            }
+            if state
+                .active_measurement_set_locks
+                .contains_key(&measurement_set)
+            {
+                return Err(ResourceError::MeasurementSetLockUnavailable { measurement_set });
+            }
+        }
         let consumed = record
             .consumed
             .get(&accounting_resource)
@@ -2188,12 +2212,21 @@ impl ResourceLease {
                 available,
             });
         }
+        let record = state
+            .leases
+            .get_mut(&self.lease_id)
+            .expect("validated live lease remains present under the authority lock");
         record.consumed.insert(
             accounting_resource.clone(),
             consumed
                 .checked_add(amount)
                 .ok_or(ResourceError::Overflow("lease consumption"))?,
         );
+        if let LeaseResource::MeasurementSetLock { measurement_set } = resource {
+            state
+                .active_measurement_set_locks
+                .insert(measurement_set, self.lease_id);
+        }
         Ok(ResourcePermit {
             inner: Arc::clone(&self.inner),
             lease_id: self.lease_id,
@@ -2395,6 +2428,7 @@ impl ResourcePermit {
         let released = release_permit(
             &self.inner,
             self.lease_id,
+            &self.resource,
             &self.accounting_resource,
             self.amount,
         )?;
@@ -2409,6 +2443,7 @@ impl Drop for ResourcePermit {
             let _ = release_permit(
                 &self.inner,
                 self.lease_id,
+                &self.resource,
                 &self.accounting_resource,
                 self.amount,
             );
@@ -2482,29 +2517,46 @@ fn release_permit(
     inner: &AuthorityInner,
     lease_id: u64,
     resource: &LeaseResource,
+    accounting_resource: &LeaseResource,
     amount: u64,
 ) -> Result<bool, ResourceError> {
     let mut state = inner
         .state
         .lock()
         .map_err(|_| ResourceError::AuthorityPoisoned)?;
-    let record = state.leases.get_mut(&lease_id).ok_or_else(|| {
-        ResourceError::Invalid("cannot release a permit for an absent lease".to_string())
-    })?;
-    let consumed =
-        record.consumed.get(resource).copied().ok_or_else(|| {
-            ResourceError::Invalid("lease permit consumption is absent".to_string())
-        })?;
-    let remaining = consumed.checked_sub(amount).ok_or_else(|| {
-        ResourceError::Invalid("lease permit consumption underflowed".to_string())
-    })?;
-    if remaining == 0 {
-        record.consumed.remove(resource);
-    } else {
-        record.consumed.insert(resource.clone(), remaining);
+    if let LeaseResource::MeasurementSetLock { measurement_set } = resource {
+        if state.active_measurement_set_locks.get(measurement_set) != Some(&lease_id) {
+            return Err(ResourceError::Invalid(
+                "exact MeasurementSet lock ownership is absent".to_string(),
+            ));
+        }
     }
-    let released =
-        record.release_requested && record.outstanding_fences == 0 && record.consumed.is_empty();
+    let released = {
+        let record = state.leases.get_mut(&lease_id).ok_or_else(|| {
+            ResourceError::Invalid("cannot release a permit for an absent lease".to_string())
+        })?;
+        let consumed = record
+            .consumed
+            .get(accounting_resource)
+            .copied()
+            .ok_or_else(|| {
+                ResourceError::Invalid("lease permit consumption is absent".to_string())
+            })?;
+        let remaining = consumed.checked_sub(amount).ok_or_else(|| {
+            ResourceError::Invalid("lease permit consumption underflowed".to_string())
+        })?;
+        if remaining == 0 {
+            record.consumed.remove(accounting_resource);
+        } else {
+            record
+                .consumed
+                .insert(accounting_resource.clone(), remaining);
+        }
+        record.release_requested && record.outstanding_fences == 0 && record.consumed.is_empty()
+    };
+    if let LeaseResource::MeasurementSetLock { measurement_set } = resource {
+        state.active_measurement_set_locks.remove(measurement_set);
+    }
     if released {
         state.leases.remove(&lease_id);
     }

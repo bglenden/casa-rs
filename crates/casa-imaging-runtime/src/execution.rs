@@ -95,18 +95,30 @@ pub enum WorkKind {
     Io,
     /// Read the exact compiled MeasurementSet source set under its named locks.
     ObservationRead,
+    /// Read the exact compiled MeasurementSet source set while writing bounded
+    /// selected column cells in place under the same transaction.
+    ObservationReadWriteback,
     /// Serialize a prepared or scientific artifact.
     Serialization,
     /// Complete a private staged storage writeback without publishing it.
     Writeback,
-    /// Revalidate and atomically publish completed products and optional
-    /// MeasurementSet side effects as one visible generation.
+    /// Revalidate and atomically publish the conventional-product members of
+    /// one transaction. `MODEL_DATA` is written in place by the terminal
+    /// [`Self::ObservationReadWriteback`] replay and is not a publication member.
     Publication,
     /// Explicitly unmap, evict, destroy, or otherwise release externally
     /// retained storage before its physical slot becomes reusable.
     Release,
     /// Perform resource-free dependency synchronization.
     Synchronization,
+}
+
+impl WorkKind {
+    /// Return whether this work owns a selected-observation read completion.
+    #[must_use]
+    pub const fn reads_observation(self) -> bool {
+        matches!(self, Self::ObservationRead | Self::ObservationReadWriteback)
+    }
 }
 
 /// Runtime domain in which one work node executes.
@@ -1485,7 +1497,10 @@ impl<'plan> ExecutionScheduler<'plan> {
                     lifetime: claim.lifetime.clone(),
                     permit,
                 }),
-                Err(ResourceError::LeaseLimitExceeded { .. }) => return Ok(None),
+                Err(
+                    ResourceError::LeaseLimitExceeded { .. }
+                    | ResourceError::MeasurementSetLockUnavailable { .. },
+                ) => return Ok(None),
                 Err(error) => return Err(error.into()),
             }
         }
@@ -1501,7 +1516,10 @@ impl<'plan> ExecutionScheduler<'plan> {
             let slot = &self.dag.physical_slots[&allocation.physical_slot];
             match lease.permit(slot.lease_resource.clone(), slot.capacity_bytes) {
                 Ok(permit) => allocations.push((allocation.clone(), permit)),
-                Err(ResourceError::LeaseLimitExceeded { .. }) => return Ok(None),
+                Err(
+                    ResourceError::LeaseLimitExceeded { .. }
+                    | ResourceError::MeasurementSetLockUnavailable { .. },
+                ) => return Ok(None),
                 Err(error) => return Err(error.into()),
             }
         }
@@ -2493,6 +2511,7 @@ fn encode_work_kind(encoder: &mut CanonicalEncoder, kind: WorkKind) {
         WorkKind::Synchronization => 14,
         WorkKind::Release => 15,
         WorkKind::ObservationRead => 16,
+        WorkKind::ObservationReadWriteback => 17,
     });
 }
 
@@ -2823,9 +2842,8 @@ fn validate_domain(node: &WorkNode) -> Result<(), ExecutionError> {
         (WorkDomain::Io, _) => BTreeSet::from([FenceKind::Io]),
         (WorkDomain::Cpu | WorkDomain::Control, _) => BTreeSet::new(),
     };
-    let synchronous_observation_read = node.domain == WorkDomain::Io
-        && node.kind == WorkKind::ObservationRead
-        && node.fences.is_empty();
+    let synchronous_observation_read =
+        node.domain == WorkDomain::Io && node.kind.reads_observation() && node.fences.is_empty();
     if node.fences != expected_fences && !synchronous_observation_read {
         return Err(ExecutionError::invalid_plan(format!(
             "work node {} must declare its exact asynchronous fence set {expected_fences:?}",
@@ -2971,7 +2989,7 @@ fn validate_kind(node: &WorkNode) -> Result<(), ExecutionError> {
         }
         WorkKind::Spill | WorkKind::Prefetch => require_io_domain(node),
         WorkKind::Io => require_io_domain(node),
-        WorkKind::ObservationRead => {
+        WorkKind::ObservationRead | WorkKind::ObservationReadWriteback => {
             require_io_domain(node)?;
             require_claim(
                 node,
@@ -3023,6 +3041,7 @@ pub(crate) fn io_buffer_kind_supports_work_kind(
                 WorkKind::Prefetch
                     | WorkKind::Cache
                     | WorkKind::ObservationRead
+                    | WorkKind::ObservationReadWriteback
                     | WorkKind::Release
             )
         }
@@ -3047,7 +3066,10 @@ pub(crate) fn io_buffer_kind_supports_work_kind(
             work_kind == WorkKind::Io
         }
         crate::IoBufferKind::Writeback => {
-            matches!(work_kind, WorkKind::Writeback | WorkKind::Cache)
+            matches!(
+                work_kind,
+                WorkKind::Writeback | WorkKind::ObservationReadWriteback | WorkKind::Cache
+            )
         }
         crate::IoBufferKind::Publication => work_kind == WorkKind::Publication,
         crate::IoBufferKind::MappedPageCache => {

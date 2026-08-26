@@ -21,8 +21,11 @@ use casa_imaging_model::{
     ObservationSourceProvenance, ObservationSourceState, ReferenceDataKind, SelectedColumns,
     SourceGenerations, VisibilityColumn, WeightColumn,
 };
-use casa_tables::{LockType, Table};
-use casa_types::{RecordValue, ScalarValue, Value, measures::MeasuresProvider};
+use casa_tables::{ColumnSchema, LockType, Table};
+use casa_types::{
+    ArrayValue, Complex32, PrimitiveType, RecordValue, ScalarValue, Value,
+    measures::MeasuresProvider,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -129,7 +132,7 @@ const REQUIRED_METADATA: [MetadataTableKind; 9] = [
 pub struct SelectedObservationResolutionRequest {
     locator: String,
     selection_request: LogicalIdentity,
-    selection: ObservationSelection,
+    selection: Arc<ObservationSelection>,
     visibility: VisibilityColumn,
     weights: WeightColumn,
     reference_data: Vec<(ReferenceDataKind, LogicalIdentity)>,
@@ -156,13 +159,238 @@ impl SelectedObservationResolutionRequest {
         Self {
             locator: locator.into(),
             selection_request,
-            selection,
+            selection: Arc::new(selection),
             visibility,
             weights,
             reference_data,
             model,
             content_budget,
             measures_provider,
+        }
+    }
+
+    /// Return the storage-owner locator used for each fresh resolution.
+    #[must_use]
+    pub fn locator(&self) -> &str {
+        &self.locator
+    }
+
+    /// Return shared exact row, channel, and correlation selection authority.
+    #[must_use]
+    pub fn selection(&self) -> Arc<ObservationSelection> {
+        Arc::clone(&self.selection)
+    }
+}
+
+/// Bounded in-place `MODEL_DATA` writer following ordinary casacore semantics.
+///
+/// The writer retains the MAIN write lock and the repository's standard
+/// incomplete-write marker. Successful completion flushes `MODEL_DATA`, updates
+/// its owner generation, and removes the marker. Failure may leave partially
+/// written derived values, but the retained marker makes that state fail closed
+/// until explicitly recovered or recomputed. No backup, staging column,
+/// rollback, snapshot, or content digest is created.
+#[cfg(unix)]
+pub struct ModelDataWrite {
+    measurement_set: Option<MeasurementSet>,
+    manifest: OwnerManifest,
+    incomplete_marker: Option<std::path::PathBuf>,
+    pending_cell: Option<PendingModelCell>,
+    completed: bool,
+}
+
+struct PendingModelCell {
+    row: usize,
+    values: ndarray::ArrayD<Complex32>,
+}
+
+/// Owner-derived storage plan for one bounded `MODEL_DATA` write.
+///
+/// The plan is derived from MAIN row/DDID coordinates and the standard
+/// DATA_DESCRIPTION, SPECTRAL_WINDOW, and POLARIZATION metadata. It never reads
+/// a visibility payload merely to discover a cell shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ModelColumnStoragePlan {
+    additional_persistent_bytes: u64,
+    write_bytes: u64,
+    maximum_cell_bytes: u64,
+}
+
+impl ModelColumnStoragePlan {
+    /// New persistent capacity required for this write.
+    ///
+    /// This is the complete logical column size when `MODEL_DATA` must be
+    /// created and zero-initialized, and zero for an in-place overwrite of an
+    /// existing column.
+    #[must_use]
+    pub const fn additional_persistent_bytes(self) -> u64 {
+        self.additional_persistent_bytes
+    }
+
+    /// Bytes written by the initial column creation and selected-cell update.
+    #[must_use]
+    pub const fn write_bytes(self) -> u64 {
+        self.write_bytes
+    }
+
+    /// Largest single-row cell copied or updated by the bounded writer.
+    #[must_use]
+    pub const fn maximum_cell_bytes(self) -> u64 {
+        self.maximum_cell_bytes
+    }
+}
+
+#[cfg(unix)]
+impl ModelDataWrite {
+    /// Acquire owner write authority and start a detectable in-place mutation.
+    pub fn begin(
+        path: impl AsRef<Path>,
+        expected: &ObservationSourceState,
+        selection: &ObservationSelection,
+    ) -> Result<Self, ObservationOwnerError> {
+        let path = path.as_ref();
+        let mut measurement_set = MeasurementSet::open_retained_read(path)?;
+        if !measurement_set.main_table_mut().lock(LockType::Write, 1)? {
+            return Err(ObservationOwnerError::WriteLockUnavailable);
+        }
+        let manifest = OwnerManifest::read(measurement_set.main_table().keywords())?;
+        manifest.validate_physical_state(&measurement_set)?;
+        validate_transaction_precondition(&manifest, &measurement_set, expected)?;
+        if selection.rows() != expected.selected_rows() {
+            return Err(ObservationOwnerError::TransactionPrecondition);
+        }
+        let has_model = {
+            let schema = measurement_set.main_table().schema().ok_or_else(|| {
+                MsError::InvalidInput("MeasurementSet MAIN has no schema".to_string())
+            })?;
+            schema.contains_column("MODEL_DATA")
+        };
+        let incomplete_marker = crate::write_session::begin_in_place_write(path)?;
+        if !has_model {
+            measurement_set.main_table_mut().add_column(
+                ColumnSchema::array_variable("MODEL_DATA", PrimitiveType::Complex32, Some(2)),
+                None,
+            )?;
+            measurement_set
+                .main_table_mut()
+                .prepare_write()
+                .add_tiled_column_clone("DATA", "MODEL_DATA", "TiledModelData")?;
+            let row_count = measurement_set.main_table().row_count();
+            for row in 0..row_count {
+                let data_description_id = main_data_description_id(&measurement_set, row)?;
+                let shape = model_cell_shape(&measurement_set, data_description_id)?;
+                persist_model_cell(
+                    measurement_set.main_table_mut(),
+                    row,
+                    ArrayValue::Complex32(ndarray::ArrayD::from_elem(
+                        ndarray::IxDyn(&shape),
+                        Complex32::new(0.0, 0.0),
+                    )),
+                )?;
+            }
+        }
+        Ok(Self {
+            measurement_set: Some(measurement_set),
+            manifest,
+            incomplete_marker,
+            pending_cell: None,
+            completed: false,
+        })
+    }
+
+    /// Write one selected prediction at its physical row/channel/correlation.
+    pub fn write(
+        &mut self,
+        row: u64,
+        channel: u32,
+        correlation: u32,
+        value: Complex32,
+    ) -> Result<(), ObservationOwnerError> {
+        let row = usize::try_from(row).map_err(|_| ObservationOwnerError::PredictionAddress)?;
+        if self.pending_cell.as_ref().map(|cell| cell.row) != Some(row) {
+            self.flush_pending_cell()?;
+            let measurement_set = self
+                .measurement_set
+                .as_ref()
+                .ok_or(ObservationOwnerError::TransactionClosed)?;
+            let current = measurement_set
+                .main_table()
+                .column_accessor("MODEL_DATA")?
+                .get(row)?
+                .cloned()
+                .ok_or(ObservationOwnerError::PredictionAddress)?;
+            let Value::Array(ArrayValue::Complex32(values)) = current else {
+                return Err(ObservationOwnerError::PredictionAddress);
+            };
+            self.pending_cell = Some(PendingModelCell { row, values });
+        }
+        let values = &mut self
+            .pending_cell
+            .as_mut()
+            .ok_or(ObservationOwnerError::TransactionClosed)?
+            .values;
+        let index = [correlation as usize, channel as usize];
+        let Some(cell) = values.get_mut(index) else {
+            return Err(ObservationOwnerError::PredictionAddress);
+        };
+        *cell = value;
+        Ok(())
+    }
+
+    /// Flush the in-place write, publish its generation, and clear the marker.
+    pub fn complete(mut self, generation: LogicalIdentity) -> Result<(), ObservationOwnerError> {
+        self.flush_pending_cell()?;
+        let measurement_set = self
+            .measurement_set
+            .as_mut()
+            .ok_or(ObservationOwnerError::TransactionClosed)?;
+        self.manifest.model_data = PersistedModelColumn::Present {
+            generation: encode_identity(generation),
+        };
+        let mut hasher = Sha256::new();
+        hasher.update(b"casa-rs-model-column-consistency-v1");
+        hasher.update(
+            parse_identity(&self.manifest.consistency_token, "consistency token")?.as_bytes(),
+        );
+        hasher.update(generation.as_bytes());
+        self.manifest.consistency_token =
+            encode_identity(LogicalIdentity::from_sha256(hasher.finalize().into()));
+        self.manifest.main_modify_counter = measurement_set
+            .main_table()
+            .locked_modify_counter()?
+            .wrapping_add(1);
+        write_owner_manifest(measurement_set.main_table_mut(), &self.manifest)?;
+        measurement_set.main_table_mut().unlock_metadata_only()?;
+        self.measurement_set = None;
+        crate::write_session::complete_in_place_write(self.incomplete_marker.take())?;
+        self.completed = true;
+        Ok(())
+    }
+
+    fn flush_pending_cell(&mut self) -> Result<(), ObservationOwnerError> {
+        let Some(cell) = self.pending_cell.take() else {
+            return Ok(());
+        };
+        let measurement_set = self
+            .measurement_set
+            .as_mut()
+            .ok_or(ObservationOwnerError::TransactionClosed)?;
+        persist_model_cell(
+            measurement_set.main_table_mut(),
+            cell.row,
+            ArrayValue::Complex32(cell.values),
+        )
+    }
+}
+
+#[cfg(unix)]
+impl Drop for ModelDataWrite {
+    fn drop(&mut self) {
+        if !self.completed {
+            if let Some(measurement_set) = self.measurement_set.as_mut() {
+                let _ = measurement_set.main_table_mut().unlock();
+            }
+            self.measurement_set = None;
         }
     }
 }
@@ -185,6 +413,7 @@ impl ResolvedSelectedObservation {
 pub struct ResolvedSelectedObservationAccess {
     binding: ObservationSourceBinding,
     measures: SelectedObservationMeasures,
+    model_column_storage: ModelColumnStoragePlan,
 }
 
 impl ResolvedSelectedObservationAccess {
@@ -198,6 +427,12 @@ impl ResolvedSelectedObservationAccess {
     #[must_use]
     pub const fn source_binding(&self) -> &ObservationSourceBinding {
         &self.binding
+    }
+
+    /// Return the payload-free storage plan captured by this owner resolution.
+    #[must_use]
+    pub const fn model_column_storage_plan(&self) -> ModelColumnStoragePlan {
+        self.model_column_storage
     }
 
     /// Replace the caller's upper-bound content budget with the smallest budget
@@ -294,7 +529,7 @@ pub fn initialize_measurement_set_owner_manifest(
         .get(OWNER_MANIFEST_KEYWORD)
         .is_some()
     {
-        measurement_set.main_table_mut().unlock()?;
+        measurement_set.main_table_mut().unlock_metadata_only()?;
         return Err(ObservationOwnerError::AlreadyInitialized);
     }
     let manifest = OwnerManifest::mint(&measurement_set)?;
@@ -303,7 +538,7 @@ pub fn initialize_measurement_set_owner_manifest(
         OWNER_MANIFEST_KEYWORD,
         Value::Scalar(ScalarValue::String(encoded)),
     );
-    measurement_set.main_table_mut().unlock()?;
+    measurement_set.main_table_mut().unlock_metadata_only()?;
     Ok(MeasurementSetIdentity::new(parse_identity(
         &manifest.measurement_set_identity,
         "MeasurementSet identity",
@@ -330,6 +565,8 @@ pub fn resolve_selected_observation(
     let manifest = OwnerManifest::read(measurement_set.main_table().keywords())?;
     manifest.validate_physical_state(&measurement_set)?;
     validate_physical_selection(&measurement_set, &request.selection)?;
+    let model_column_storage =
+        derive_model_column_storage_plan(&measurement_set, &request.selection)?;
     let generations =
         manifest.source_generations(&measurement_set, request.visibility, request.weights)?;
     let identity = MeasurementSetIdentity::new(parse_identity(
@@ -344,7 +581,7 @@ pub fn resolve_selected_observation(
     let source = ObservationSourceInput::new(
         identity,
         ObservationSourceProvenance::new(request.locator, request.selection_request),
-        request.selection,
+        Arc::unwrap_or_clone(request.selection),
         generations,
     );
     let measures = SelectedObservationMeasures::new(request.measures_provider)?;
@@ -354,7 +591,11 @@ pub fn resolve_selected_observation(
     let binding = ObservationSourceBinding::new(state, request.content_budget);
     Ok(ResolvedSelectedObservation {
         snapshot_input,
-        access: ResolvedSelectedObservationAccess { binding, measures },
+        access: ResolvedSelectedObservationAccess {
+            binding,
+            measures,
+            model_column_storage,
+        },
     })
 }
 
@@ -439,9 +680,18 @@ pub enum ObservationOwnerError {
     /// The MAIN write lock could not be acquired.
     #[error("could not acquire the MeasurementSet MAIN write lock")]
     WriteLockUnavailable,
+    /// Final prediction addressed a row/channel/correlation outside MODEL_DATA.
+    #[error("final prediction address is outside MODEL_DATA")]
+    PredictionAddress,
+    /// The bounded MODEL_DATA writer was already completed or released.
+    #[error("MODEL_DATA write is closed")]
+    TransactionClosed,
+    /// The retained owner generation no longer matches the planned write.
+    #[error("MODEL_DATA write precondition changed")]
+    TransactionPrecondition,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct OwnerManifest {
     schema_version: u32,
     measurement_set_identity: String,
@@ -453,7 +703,7 @@ struct OwnerManifest {
     model_data: PersistedModelColumn,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 enum PersistedModelColumn {
     Absent,
@@ -739,6 +989,163 @@ fn parse_identity(
     Ok(LogicalIdentity::from_sha256(bytes))
 }
 
+fn validate_transaction_precondition(
+    manifest: &OwnerManifest,
+    measurement_set: &MeasurementSet,
+    expected: &ObservationSourceState,
+) -> Result<(), ObservationOwnerError> {
+    let identity = parse_identity(
+        &manifest.measurement_set_identity,
+        "MeasurementSet identity",
+    )?;
+    let token = parse_identity(&manifest.consistency_token, "consistency token")?;
+    let physical_model = match &manifest.model_data {
+        PersistedModelColumn::Absent => ModelColumnState::Absent,
+        PersistedModelColumn::Present { generation } => {
+            ModelColumnState::Present(parse_identity(generation, "MODEL_DATA generation")?)
+        }
+    };
+    let expected_columns = expected.generations().columns();
+    let actual_generations = manifest.source_generations(
+        measurement_set,
+        expected_columns.visibility(),
+        expected_columns.weights(),
+    )?;
+    if expected.identity().identity() != identity
+        || expected.generations().consistency_token().identity() != token
+        || expected.generations().model_column() != physical_model
+        || expected.generations() != &actual_generations
+    {
+        return Err(ObservationOwnerError::TransactionPrecondition);
+    }
+    manifest.validate_physical_state(measurement_set)
+}
+
+fn main_data_description_id(
+    measurement_set: &MeasurementSet,
+    row: usize,
+) -> Result<usize, ObservationOwnerError> {
+    let value = measurement_set
+        .main_table()
+        .column_accessor("DATA_DESC_ID")?
+        .get(row)?
+        .ok_or(ObservationOwnerError::PredictionAddress)?;
+    let Value::Scalar(ScalarValue::Int32(data_description_id)) = value else {
+        return Err(ObservationOwnerError::PredictionAddress);
+    };
+    usize::try_from(*data_description_id).map_err(|_| ObservationOwnerError::PredictionAddress)
+}
+
+fn model_cell_shape(
+    measurement_set: &MeasurementSet,
+    data_description_id: usize,
+) -> Result<[usize; 2], ObservationOwnerError> {
+    let data_description = measurement_set.data_description()?;
+    let spectral_window_id =
+        usize::try_from(data_description.spectral_window_id(data_description_id)?)
+            .map_err(|_| ObservationOwnerError::PredictionAddress)?;
+    let polarization_id = usize::try_from(data_description.polarization_id(data_description_id)?)
+        .map_err(|_| ObservationOwnerError::PredictionAddress)?;
+    let channels = usize::try_from(
+        measurement_set
+            .spectral_window()?
+            .num_chan(spectral_window_id)?,
+    )
+    .map_err(|_| ObservationOwnerError::PredictionAddress)?;
+    let correlations = usize::try_from(measurement_set.polarization()?.num_corr(polarization_id)?)
+        .map_err(|_| ObservationOwnerError::PredictionAddress)?;
+    Ok([correlations, channels])
+}
+
+fn model_cell_bytes(
+    measurement_set: &MeasurementSet,
+    data_description_id: usize,
+) -> Result<u64, ObservationOwnerError> {
+    let [correlations, channels] = model_cell_shape(measurement_set, data_description_id)?;
+    u64::try_from(correlations)
+        .ok()
+        .and_then(|correlations| {
+            u64::try_from(channels)
+                .ok()
+                .and_then(|channels| correlations.checked_mul(channels))
+        })
+        .and_then(|samples| samples.checked_mul(std::mem::size_of::<Complex32>() as u64))
+        .ok_or(ObservationOwnerError::PredictionAddress)
+}
+
+fn derive_model_column_storage_plan(
+    measurement_set: &MeasurementSet,
+    selection: &ObservationSelection,
+) -> Result<ModelColumnStoragePlan, ObservationOwnerError> {
+    let has_model = measurement_set
+        .main_table()
+        .schema()
+        .is_some_and(|schema| schema.contains_column("MODEL_DATA"));
+    let mut selected_write_bytes = 0_u64;
+    let mut maximum_cell_bytes = 0_u64;
+    for selected_row in selection.rows().ordered_main_rows() {
+        let bytes = model_cell_bytes(
+            measurement_set,
+            usize::try_from(selected_row.data_description_id())
+                .map_err(|_| ObservationOwnerError::PredictionAddress)?,
+        )?;
+        selected_write_bytes = selected_write_bytes
+            .checked_add(bytes)
+            .ok_or(ObservationOwnerError::PredictionAddress)?;
+        maximum_cell_bytes = maximum_cell_bytes.max(bytes);
+    }
+    let mut additional_persistent_bytes = 0_u64;
+    if !has_model {
+        for row in 0..measurement_set.main_table().row_count() {
+            let bytes = model_cell_bytes(
+                measurement_set,
+                main_data_description_id(measurement_set, row)?,
+            )?;
+            additional_persistent_bytes = additional_persistent_bytes
+                .checked_add(bytes)
+                .ok_or(ObservationOwnerError::PredictionAddress)?;
+            maximum_cell_bytes = maximum_cell_bytes.max(bytes);
+        }
+    }
+    let write_bytes = additional_persistent_bytes
+        .checked_add(selected_write_bytes)
+        .ok_or(ObservationOwnerError::PredictionAddress)?;
+    Ok(ModelColumnStoragePlan {
+        additional_persistent_bytes,
+        write_bytes,
+        maximum_cell_bytes,
+    })
+}
+
+#[cfg(unix)]
+fn persist_model_cell(
+    table: &mut Table,
+    row: usize,
+    value: ArrayValue,
+) -> Result<(), ObservationOwnerError> {
+    {
+        let mut prepared = table.row_accessor_mut().prepare(&["MODEL_DATA"])?;
+        prepared.seek(row)?;
+        prepared.set_value_at(0, Value::Array(value))?;
+    }
+    table
+        .prepare_write()
+        .save_selected_rows(&["MODEL_DATA"], &[row])?;
+    table.discard_persisted_cell_updates(&["MODEL_DATA"], &[row]);
+    Ok(())
+}
+
+fn write_owner_manifest(
+    table: &mut Table,
+    manifest: &OwnerManifest,
+) -> Result<(), ObservationOwnerError> {
+    table.keywords_mut().upsert(
+        OWNER_MANIFEST_KEYWORD,
+        Value::Scalar(ScalarValue::String(serde_json::to_string(manifest)?)),
+    );
+    Ok(())
+}
+
 fn column_name(kind: MsColumnKind) -> &'static str {
     TRACKED_COLUMNS
         .iter()
@@ -969,12 +1376,30 @@ mod tests {
         let directory = tempfile::tempdir().expect("temporary directory");
         let path = directory.path().join("unmarked.ms");
         create_ms(&path, false);
+        let data_managers_before = MeasurementSet::open(&path)
+            .expect("open before initialization")
+            .main_table()
+            .data_manager_info()
+            .iter()
+            .filter(|manager| manager.columns.iter().any(|column| column == "DATA"))
+            .map(|manager| manager.dm_type.clone())
+            .collect::<Vec<_>>();
 
         assert!(matches!(
             resolve_selected_observation(request(&path)),
             Err(ObservationOwnerError::Uninitialized)
         ));
         initialize_measurement_set_owner_manifest(&path).expect("explicit migration");
+        let data_managers_after = MeasurementSet::open(&path)
+            .expect("open after initialization")
+            .main_table()
+            .data_manager_info()
+            .iter()
+            .filter(|manager| manager.columns.iter().any(|column| column == "DATA"))
+            .map(|manager| manager.dm_type.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(data_managers_after, data_managers_before);
+        assert_eq!(data_managers_after, vec!["TiledShapeStMan"]);
         resolve_selected_observation(request(&path)).expect("marked owner resolves");
     }
 
@@ -1100,6 +1525,114 @@ mod tests {
             panic!("MODEL_DATA must be marked present")
         };
         assert_ne!(model_generation.as_bytes(), [0; 32]);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn interrupted_model_column_write_fails_closed_without_rollback() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("model-abort.ms");
+        create_ms(&path, true);
+        initialize_measurement_set_owner_manifest(&path).expect("initialize owner manifest");
+        let before = resolve_selected_observation(request(&path)).expect("resolve owner");
+        let expected = before.access.source_state().clone();
+        let generation = expected.generations().model_column();
+
+        {
+            let mut writer =
+                ModelDataWrite::begin(&path, &expected, &one_row_selection()).expect("begin write");
+            writer
+                .write(0, 0, 0, Complex32::new(9.0, -2.0))
+                .expect("write prediction");
+        }
+
+        let raw = Table::open(TableOptions::new(&path)).expect("inspect marked MAIN directly");
+        let Value::Array(ArrayValue::Complex32(values)) = raw
+            .column_accessor("MODEL_DATA")
+            .expect("MODEL_DATA accessor")
+            .get(0)
+            .expect("read existing MODEL_DATA")
+            .expect("defined MODEL_DATA cell")
+        else {
+            panic!("MODEL_DATA is complex")
+        };
+        assert_eq!(
+            values[[0, 0]],
+            Complex32::new(1.0, 0.0),
+            "begin and an unflushed prediction must not persist a destructive zero pass"
+        );
+
+        let error = match MeasurementSet::open(&path) {
+            Ok(_) => panic!("incomplete write must fail closed"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("incomplete write marker"));
+        assert!(path.join(".casa-rs-write-incomplete").exists());
+        assert!(matches!(generation, ModelColumnState::Present(_)));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn model_column_storage_plan_reserves_capacity_only_for_creation() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("model-plan-create.ms");
+        create_ms(&path, false);
+        initialize_measurement_set_owner_manifest(&path).expect("initialize owner manifest");
+        let resolved = resolve_selected_observation(request(&path)).expect("resolve owner");
+        let plan = resolved.access.model_column_storage_plan();
+
+        assert_eq!(plan.additional_persistent_bytes(), 8);
+        assert_eq!(plan.write_bytes(), 16);
+        assert_eq!(plan.maximum_cell_bytes(), 8);
+
+        let existing_path = directory.path().join("model-plan-overwrite.ms");
+        create_ms(&existing_path, true);
+        initialize_measurement_set_owner_manifest(&existing_path)
+            .expect("initialize existing MODEL_DATA owner manifest");
+        let existing = resolve_selected_observation(request(&existing_path))
+            .expect("resolve existing MODEL_DATA owner");
+        let existing_plan = existing.access.model_column_storage_plan();
+
+        assert_eq!(existing_plan.additional_persistent_bytes(), 0);
+        assert_eq!(existing_plan.write_bytes(), 8);
+        assert_eq!(existing_plan.maximum_cell_bytes(), 8);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn completed_model_column_write_publishes_exact_prediction_and_generation() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("model-commit.ms");
+        create_ms(&path, false);
+        initialize_measurement_set_owner_manifest(&path).expect("initialize owner manifest");
+        let before = resolve_selected_observation(request(&path)).expect("resolve owner");
+        let expected = before.access.source_state().clone();
+        let generation = identity(73);
+
+        let mut writer =
+            ModelDataWrite::begin(&path, &expected, &one_row_selection()).expect("begin write");
+        writer
+            .write(0, 0, 0, Complex32::new(4.5, -1.25))
+            .expect("write prediction");
+        writer.complete(generation).expect("complete write");
+
+        let reopened = MeasurementSet::open(&path).expect("reopen committed MS");
+        let schema = reopened.main_table().schema().expect("MAIN schema");
+        assert!(schema.contains_column("MODEL_DATA"));
+        assert!(!path.join(".casa-rs-write-incomplete").exists());
+        let model_column = reopened
+            .data_column(crate::VisibilityDataColumn::ModelData)
+            .expect("MODEL_DATA column");
+        let ArrayValue::Complex32(values) = model_column.get(0).expect("MODEL_DATA cell") else {
+            panic!("MODEL_DATA is complex")
+        };
+        assert_eq!(values[[0, 0]], Complex32::new(4.5, -1.25));
+        drop(reopened);
+        let after = resolve_selected_observation(request(&path)).expect("resolve after commit");
+        assert_eq!(
+            after.access.source_state().generations().model_column(),
+            ModelColumnState::Present(generation)
+        );
     }
 
     #[test]

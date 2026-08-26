@@ -5,8 +5,9 @@
 use std::time::Instant;
 
 use casa_imaging_application::{
-    ContinuumAlgorithm, ContinuumBeamPolicy, ContinuumImagingRequest, ContinuumStopReason,
-    ContinuumWeighting, TaskRequirement, execute_continuum,
+    ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumBeamPolicy, ContinuumImagingRequest,
+    ContinuumMask, ContinuumMaskBox, ContinuumStopReason, ContinuumWeighting, TaskRequirement,
+    execute_continuum,
 };
 
 use super::{
@@ -15,30 +16,62 @@ use super::{
     SaveModelMode, SpectralMode, StandardMfsAccelerationPolicy, WTermMode, WeightingMode,
 };
 
+fn hex(bytes: [u8; 32]) -> String {
+    use std::fmt::Write;
+
+    let mut encoded = String::with_capacity(64);
+    for byte in bytes {
+        write!(&mut encoded, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    encoded
+}
+
 pub(super) fn execute(config: &CliConfig) -> Result<RunSummary, String> {
     let started = Instant::now();
     let result =
-        execute_continuum(application_request(config)).map_err(|error| error.to_string())?;
+        execute_continuum(application_request(config)?).map_err(|error| error.to_string())?;
+    let minor_cycles = result.minor_cycles.clone();
     let native = result.outcome.output;
+    let visibility_products = native.visibility_products.map(|completion| {
+        crate::task_contract::ImagerVisibilityProductDiagnostic {
+            problem_id: hex(completion.problem_id().as_bytes()),
+            final_model_generation: hex(completion.final_model().as_bytes()),
+            selected_generation: hex(completion.selected_generation().as_bytes()),
+            weighting_generation: hex(completion.weighting_generation().as_bytes()),
+            model_product: hex(completion.model_product().as_bytes()),
+            residual_product: hex(completion.residual_product().as_bytes()),
+            sample_count: completion.sample_count(),
+        }
+    });
     let clean_stop_reason = result.minor_stop_reason.map(|reason| match reason {
         ContinuumStopReason::ThresholdReached => CleanStopReason::GlobalThresholdReached,
         ContinuumStopReason::IterationBound => CleanStopReason::IterationLimitReached,
         ContinuumStopReason::StalenessBound => CleanStopReason::MajorCycleLimitReached,
+        ContinuumStopReason::MultiscaleDivergence => CleanStopReason::DivergenceDetected,
     });
     Ok(RunSummary {
         warnings: Vec::new(),
         gridded_samples: usize::try_from(native.scientific.normal_state().sample_count())
             .map_err(|_| "native selected-sample count exceeds usize".to_string())?,
-        major_cycles: usize::from(native.final_major_receipt.is_some()) + 1,
+        major_cycles: native.major_cycle_count,
         minor_iterations: result.minor_iterations,
         clean_stop_reason,
+        minor_cycles,
+        visibility_products,
         elapsed: started.elapsed(),
         output_products: result.product_names,
     })
 }
 
-fn application_request(config: &CliConfig) -> ContinuumImagingRequest {
-    ContinuumImagingRequest {
+fn application_request(config: &CliConfig) -> Result<ContinuumImagingRequest, String> {
+    let maximum_model_update_jy = if config.dirty_only || config.niter == 0 {
+        1.0
+    } else {
+        config
+            .maximum_model_update_jy
+            .ok_or_else(|| "native deconvolution requires --maximum-model-update-jy".to_string())?
+    };
+    Ok(ContinuumImagingRequest {
         measurement_set: config.ms.clone(),
         image_name: config.imagename.clone(),
         image_size: config.imsize,
@@ -67,6 +100,7 @@ fn application_request(config: &CliConfig) -> ContinuumImagingRequest {
                         .copied()
                         .map(f64::from)
                         .collect(),
+                    small_scale_bias: f64::from(config.small_scale_bias),
                 },
                 Deconvolver::Mtmfs => ContinuumAlgorithm::Mtmfs {
                     terms: config.nterms,
@@ -82,6 +116,13 @@ fn application_request(config: &CliConfig) -> ContinuumImagingRequest {
             }
         },
         iterations: config.niter,
+        cycle_iterations: config.minor_cycle_length.min(config.niter.max(1)),
+        maximum_major_cycles: config.nmajor.unwrap_or(1),
+        maximum_model_update_jy: f64::from(maximum_model_update_jy),
+        noise_sigma: (config.nsigma > 0.0).then_some(f64::from(config.nsigma)),
+        cycle_factor: f64::from(config.cyclefactor),
+        minimum_psf_fraction: f64::from(config.min_psf_fraction),
+        maximum_psf_fraction: f64::from(config.max_psf_fraction),
         gain: f64::from(config.gain),
         threshold_jy: f64::from(config.threshold_jy),
         psf_cutoff: config.psf_cutoff,
@@ -89,8 +130,36 @@ fn application_request(config: &CliConfig) -> ContinuumImagingRequest {
             RestoringBeamMode::PerPlane => ContinuumBeamPolicy::PerPlane,
             RestoringBeamMode::Common => ContinuumBeamPolicy::Common,
         },
+        mask: match (&config.mask_image, config.use_mask) {
+            (Some(path), CleanMaskMode::User) => ContinuumMask::Image(path.clone()),
+            (_, CleanMaskMode::AutoMultiThreshold) => {
+                ContinuumMask::AutoMultithresh(ContinuumAutoMaskControls {
+                    sidelobe_factor: f64::from(config.auto_mask.sidelobe_threshold),
+                    noise_factor: f64::from(config.auto_mask.noise_threshold),
+                    low_noise_factor: f64::from(config.auto_mask.low_noise_threshold),
+                    negative_factor: f64::from(config.auto_mask.negative_threshold),
+                    minimum_beam_fraction: f64::from(config.auto_mask.min_beam_frac),
+                    smooth_factor: f64::from(config.auto_mask.smooth_factor),
+                    cut_threshold: f64::from(config.auto_mask.cut_threshold),
+                    grow_iterations: config.auto_mask.grow_iterations,
+                    minimum_percent_change: f64::from(config.auto_mask.min_percent_change),
+                })
+            }
+            (None, CleanMaskMode::User) if config.mask_boxes.is_empty() => ContinuumMask::FullPlane,
+            (None, CleanMaskMode::User) => ContinuumMask::Boxes(
+                config
+                    .mask_boxes
+                    .iter()
+                    .map(|region| ContinuumMaskBox {
+                        blc: [region[0], region[1]],
+                        trc: [region[2], region[3]],
+                    })
+                    .collect(),
+            ),
+        },
+        save_model_column: config.save_model == SaveModelMode::ModelColumn,
         task_requirements: task_requirements(config),
-    }
+    })
 }
 
 fn task_requirements(config: &CliConfig) -> Vec<TaskRequirement> {
@@ -175,12 +244,6 @@ fn unsupported_native_controls(config: &CliConfig) -> bool {
             .as_deref()
             .is_some_and(|plane| !plane.eq_ignore_ascii_case("I"))
         || config.uv_taper.is_some()
-        || config.nmajor.is_some()
-        || config.nsigma != 0.0
-        || config.minor_cycle_length != 1000
-        || config.cyclefactor != 1.0
-        || config.min_psf_fraction != 0.05
-        || config.max_psf_fraction != 0.8
         || config.hogbom_iteration_mode != super::HogbomIterationMode::Strict
         || config.fullsummary
         || config.pbcor
@@ -204,15 +267,13 @@ fn unsupported_native_controls(config: &CliConfig) -> bool {
         || config.imaging_read_ahead_blocks.is_some()
         || config.imaging_fft_precision != ImagingFftPrecisionPolicy::Auto
         || config.write_preview_pngs
-        || config.niter > config.minor_cycle_length
-        || !matches!(config.deconvolver, Deconvolver::Hogbom)
 }
 
 #[cfg(test)]
 mod tests {
     use std::ffi::OsString;
 
-    use super::{CliConfig, TaskRequirement, backend_requirements};
+    use super::{CliConfig, TaskRequirement, backend_requirements, task_requirements};
 
     fn config(extra: &[&str]) -> CliConfig {
         let mut args = vec![
@@ -245,6 +306,19 @@ mod tests {
     #[test]
     fn default_backend_choices_select_the_installed_native_cpu_implementation() {
         assert!(backend_requirements(&config(&[])).is_empty());
+    }
+
+    #[test]
+    fn bounded_minor_cycles_are_a_supported_native_controller_control() {
+        let requirements = task_requirements(&config(&[
+            "--niter",
+            "12",
+            "--minor-cycle-length",
+            "6",
+            "--nmajor",
+            "3",
+        ]));
+        assert!(!requirements.contains(&TaskRequirement::UnsupportedControls));
     }
 
     #[test]

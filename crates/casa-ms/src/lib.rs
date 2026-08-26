@@ -48,7 +48,6 @@ pub mod derived;
 pub mod error;
 pub mod flagging;
 pub mod grouping;
-pub mod least_squares;
 pub(crate) mod listobs;
 mod metadata;
 pub mod ms;
@@ -111,6 +110,8 @@ pub use msexplore::{
     build_msexplore_plot_payload_from_path, export_msexplore_plot, preview_msexplore_flag_edit,
     preview_msexplore_flag_edit_for_request, render_msexplore_plot_image,
 };
+#[cfg(unix)]
+pub use observation_owner::{ModelColumnStoragePlan, ModelDataWrite};
 pub use observation_owner::{
     ObservationOwnerError, ResolvedSelectedObservation, ResolvedSelectedObservationAccess,
     SelectedObservationResolutionRequest, initialize_measurement_set_owner_manifest,

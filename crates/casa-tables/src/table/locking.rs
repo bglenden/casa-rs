@@ -215,6 +215,21 @@ impl Table {
     /// C++ equivalent: `Table::unlock()`.
     #[cfg(unix)]
     pub fn unlock(&mut self) -> Result<(), TableError> {
+        self.unlock_with_metadata_only_flush(false)
+    }
+
+    /// Releases the current lock after flushing only table metadata.
+    ///
+    /// This preserves the existing on-disk data-manager layout and must only
+    /// be used when the locked mutation changed table or column metadata, not
+    /// row values.
+    #[cfg(unix)]
+    pub fn unlock_metadata_only(&mut self) -> Result<(), TableError> {
+        self.unlock_with_metadata_only_flush(true)
+    }
+
+    #[cfg(unix)]
+    fn unlock_with_metadata_only_flush(&mut self, metadata_only: bool) -> Result<(), TableError> {
         // Memory tables have no lock to release.
         // C++ equivalent: MemoryTable::unlock() is a no-op.
         if self.kind == TableKind::Memory {
@@ -244,7 +259,11 @@ impl Table {
 
         // If write-locked, flush data to disk.
         if is_write_locked {
-            self.save(save_opts)?;
+            if metadata_only {
+                self.save_metadata_only(save_opts)?;
+            } else {
+                self.save(save_opts)?;
+            }
 
             // Gather sync info from immutable borrows.
             let nrrow = self.row_count() as u64;

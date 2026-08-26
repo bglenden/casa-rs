@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Bounded Högbom Minor Cycle over authoritative Normal State views.
+//! Bounded point and multiscale Minor Cycles over authoritative Normal State views.
 //!
 //! The Minor Cycle is a pure scientific operation: it consumes one immutable
 //! view of an authoritative Final Normal State (the T20 residual paired with
@@ -23,17 +23,17 @@ use std::{collections::BTreeMap, fmt};
 
 use casa_imaging_model::{
     CompiledProblemId, LogicalIdentity, ModelCell, ModelDeltaTerm, ModelExecutionAttemptId,
-    ModelSupport, ModelValue, ReconstructionControls,
+    ModelSupport, ModelValue, ReconstructionAlgorithm, ReconstructionControls,
 };
 use thiserror::Error;
 
 use crate::{
     Encoder, FinalNormalState, FinalNormalStateCompletionId, ModelDelta, ModelGeneration,
-    ModelGenerationId, ModelLifecycle, ModelLifecycleError,
+    ModelGenerationId, ModelLifecycle, ModelLifecycleError, ReconstructionMask,
 };
 
 const MINOR_CYCLE_EVIDENCE_DOMAIN: &[u8] = b"casa-rs-minor-cycle-evidence";
-const MINOR_CYCLE_EVIDENCE_VERSION: u32 = 1;
+const MINOR_CYCLE_EVIDENCE_VERSION: u32 = 3;
 
 macro_rules! minor_cycle_identity {
     ($name:ident, $version:ident, $summary:literal) => {
@@ -77,10 +77,10 @@ macro_rules! minor_cycle_identity {
 minor_cycle_identity!(
     MinorCycleEvidenceId,
     MINOR_CYCLE_EVIDENCE_VERSION,
-    "Stable identity of one bounded Högbom Minor-Cycle solve."
+    "Stable identity of one bounded Minor-Cycle solve."
 );
 
-/// Explicit Högbom Minor-Cycle controls.
+/// One reconstruction-owned minor-cycle program.
 ///
 /// Every control is explicit and validated; there are no defaults that could
 /// silently change deconvolution semantics. `maximum_model_update` is the
@@ -89,30 +89,135 @@ minor_cycle_identity!(
 /// and a candidate that would exceed the bound is rejected without touching
 /// the residual, the delta, recorded diagnostics, or evidence counters. The
 /// solve then stops and requests Major-Cycle reconciliation.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct HogbomControls {
+#[derive(Debug, Clone, PartialEq)]
+pub struct MinorCycleProgram {
+    algorithm: ReconstructionAlgorithm,
+    model_plane: MinorCycleModelPlane,
     gain: f64,
     threshold: f64,
+    noise_sigma: Option<f64>,
     max_iterations: usize,
     maximum_model_update: f64,
+    cycle_threshold: Option<CycleThresholdControls>,
     component_sequence_limit: Option<usize>,
 }
 
-impl HogbomControls {
+/// Typed model-space plane updated by one shared minor-cycle control loop.
+///
+/// The solver mathematics remain two-dimensional; this coordinate chooses
+/// which domain, spectral coefficient, and polarization plane receives the
+/// resulting sparse delta. Later composition tickets may construct their own
+/// normal-state planes and reuse this loop without duplicating its stopping,
+/// masking, or component-accounting behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MinorCycleModelPlane {
+    domain: usize,
+    coefficient: usize,
+    polarization: usize,
+}
+
+impl MinorCycleModelPlane {
+    /// The primary continuum Stokes-I constant-basis plane.
+    pub const PRIMARY: Self = Self::new(0, 0, 0);
+
+    /// Construct one typed model-plane coordinate.
+    #[must_use]
+    pub const fn new(domain: usize, coefficient: usize, polarization: usize) -> Self {
+        Self {
+            domain,
+            coefficient,
+            polarization,
+        }
+    }
+
+    /// Return the image-domain ordinal.
+    #[must_use]
+    pub const fn domain(self) -> usize {
+        self.domain
+    }
+
+    /// Return the spectral-basis coefficient ordinal.
+    #[must_use]
+    pub const fn coefficient(self) -> usize {
+        self.coefficient
+    }
+
+    /// Return the polarization-plane ordinal.
+    #[must_use]
+    pub const fn polarization(self) -> usize {
+        self.polarization
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct CycleThresholdControls {
+    factor: f64,
+    minimum_psf_fraction: f64,
+    maximum_psf_fraction: f64,
+}
+
+impl MinorCycleProgram {
     /// Derive the executable minor-cycle controls from the compiled contract.
     ///
     /// Unlike the general model constructor, this production seam requires an
     /// explicit staleness envelope and never invents an unbounded default.
-    pub fn from_compiled(controls: ReconstructionControls) -> Result<Self, MinorCycleError> {
+    pub fn for_algorithm(
+        mut algorithm: ReconstructionAlgorithm,
+        controls: ReconstructionControls,
+    ) -> Result<Self, MinorCycleError> {
+        if !matches!(
+            algorithm,
+            ReconstructionAlgorithm::Hogbom
+                | ReconstructionAlgorithm::Clark
+                | ReconstructionAlgorithm::Multiscale { .. }
+        ) {
+            return Err(MinorCycleError::UnsupportedAlgorithm);
+        }
+        if let ReconstructionAlgorithm::Multiscale { scales_px, .. } = &mut algorithm {
+            if scales_px.is_empty()
+                || scales_px
+                    .iter()
+                    .any(|scale| !scale.is_finite() || *scale < 0.0)
+            {
+                return Err(MinorCycleError::InvalidScale);
+            }
+            scales_px.sort_by(f64::total_cmp);
+            scales_px.dedup_by(|left, right| left.to_bits() == right.to_bits());
+        }
         let maximum_model_update = controls
             .maximum_model_update()
             .ok_or(MinorCycleError::MissingMaximumModelUpdate)?;
-        Self::new(
+        Self::new_for_algorithm(
+            algorithm,
             controls.gain(),
             controls.threshold_jy_per_beam(),
-            controls.max_minor_iterations(),
+            controls
+                .cycle_iteration_limit()
+                .unwrap_or(controls.max_minor_iterations())
+                .min(controls.max_minor_iterations()),
             maximum_model_update,
         )
+        .map(|mut program| {
+            program.noise_sigma = controls.noise_sigma();
+            program.cycle_threshold =
+                controls
+                    .cycle_factor()
+                    .map(|factor| CycleThresholdControls {
+                        factor,
+                        minimum_psf_fraction: controls
+                            .minimum_psf_fraction()
+                            .expect("compiled cycle threshold is complete"),
+                        maximum_psf_fraction: controls
+                            .maximum_psf_fraction()
+                            .expect("compiled cycle threshold is complete"),
+                    });
+            program
+        })
+    }
+
+    /// Derive the Högbom program used by the point-clean baseline.
+    pub fn from_compiled(controls: ReconstructionControls) -> Result<Self, MinorCycleError> {
+        Self::for_algorithm(ReconstructionAlgorithm::Hogbom, controls)
     }
 
     /// Construct validated controls.
@@ -123,6 +228,22 @@ impl HogbomControls {
     /// zero iteration bound, and a non-positive or non-finite maximum model
     /// update.
     pub fn new(
+        gain: f64,
+        threshold: f64,
+        max_iterations: usize,
+        maximum_model_update: f64,
+    ) -> Result<Self, MinorCycleError> {
+        Self::new_for_algorithm(
+            ReconstructionAlgorithm::Hogbom,
+            gain,
+            threshold,
+            max_iterations,
+            maximum_model_update,
+        )
+    }
+
+    fn new_for_algorithm(
+        algorithm: ReconstructionAlgorithm,
         gain: f64,
         threshold: f64,
         max_iterations: usize,
@@ -141,12 +262,35 @@ impl HogbomControls {
             return Err(MinorCycleError::InvalidMaximumModelUpdate);
         }
         Ok(Self {
+            algorithm,
+            model_plane: MinorCycleModelPlane::PRIMARY,
             gain,
             threshold,
+            noise_sigma: None,
             max_iterations,
             maximum_model_update,
+            cycle_threshold: None,
             component_sequence_limit: None,
         })
+    }
+
+    /// Return the selected reconstruction algorithm.
+    #[must_use]
+    pub const fn algorithm(&self) -> &ReconstructionAlgorithm {
+        &self.algorithm
+    }
+
+    /// Select the typed model plane updated by this shared solver loop.
+    #[must_use]
+    pub const fn on_model_plane(mut self, model_plane: MinorCycleModelPlane) -> Self {
+        self.model_plane = model_plane;
+        self
+    }
+
+    /// Return the selected typed model plane.
+    #[must_use]
+    pub const fn model_plane(&self) -> MinorCycleModelPlane {
+        self.model_plane
     }
 
     /// Record the first accepted components as diagnostic evidence.
@@ -177,6 +321,21 @@ impl HogbomControls {
         self.threshold
     }
 
+    /// Return the optional robust-RMS stopping multiplier.
+    #[must_use]
+    pub const fn noise_sigma(&self) -> Option<f64> {
+        self.noise_sigma
+    }
+
+    /// Tighten this cycle to the remaining total iteration budget.
+    pub fn limit_iterations(mut self, remaining: usize) -> Result<Self, MinorCycleError> {
+        self.max_iterations = self.max_iterations.min(remaining);
+        if self.max_iterations == 0 {
+            return Err(MinorCycleError::InvalidIterationBound);
+        }
+        Ok(self)
+    }
+
     /// Return the hard iteration bound.
     #[must_use]
     pub const fn max_iterations(&self) -> usize {
@@ -197,84 +356,15 @@ impl HogbomControls {
     }
 }
 
-/// Explicit valid-support window constraining component placement.
-///
-/// Bounds are inclusive pixel coordinates `[x, y]`. Only window cells whose
-/// named model-generation sample has valid support may host a component,
-/// because only the model owner accepts delta terms on valid support.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CleanWindow {
-    blc: [usize; 2],
-    trc: [usize; 2],
-}
-
-impl CleanWindow {
-    /// Construct an inclusive window with `blc <= trc` on both axes.
-    ///
-    /// # Errors
-    ///
-    /// Rejects an inverted window.
-    pub fn new(blc: [usize; 2], trc: [usize; 2]) -> Result<Self, MinorCycleError> {
-        if blc[0] > trc[0] || blc[1] > trc[1] {
-            return Err(MinorCycleError::InvertedWindow);
-        }
-        Ok(Self { blc, trc })
-    }
-
-    /// The CASA default inner-quarter window for one plane shape.
-    #[must_use]
-    pub fn inner_quarter(shape: [usize; 2]) -> Self {
-        let half = [shape[0] / 2, shape[1] / 2];
-        let quarter = [shape[0] / 4, shape[1] / 4];
-        let mut blc = quarter;
-        let mut trc = [
-            quarter[0].saturating_add(half[0]).saturating_sub(1),
-            quarter[1].saturating_add(half[1]).saturating_sub(1),
-        ];
-        for axis in 0..2 {
-            trc[axis] = trc[axis].min(shape[axis] - 1);
-            blc[axis] = blc[axis].min(trc[axis]);
-        }
-        Self { blc, trc }
-    }
-
-    /// The full plane for one shape.
-    #[must_use]
-    pub fn full_plane(shape: [usize; 2]) -> Self {
-        Self {
-            blc: [0, 0],
-            trc: [shape[0] - 1, shape[1] - 1],
-        }
-    }
-
-    /// Return the inclusive lower bound.
-    #[must_use]
-    pub const fn blc(&self) -> [usize; 2] {
-        self.blc
-    }
-
-    /// Return the inclusive upper bound.
-    #[must_use]
-    pub const fn trc(&self) -> [usize; 2] {
-        self.trc
-    }
-
-    fn contains(&self, pixel: [usize; 2]) -> bool {
-        pixel[0] >= self.blc[0]
-            && pixel[0] <= self.trc[0]
-            && pixel[1] >= self.blc[1]
-            && pixel[1] <= self.trc[1]
-    }
-}
-
 /// One accepted Högbom component in canonical typed model coordinates.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct HogbomComponent {
+pub struct MinorCycleComponent {
     cell: ModelCell,
     flux: f64,
+    scale_px: f64,
 }
 
-impl HogbomComponent {
+impl MinorCycleComponent {
     /// Return the component's typed model cell.
     #[must_use]
     pub const fn cell(&self) -> ModelCell {
@@ -287,8 +377,16 @@ impl HogbomComponent {
         self.flux
     }
 
+    /// Return the selected component scale in pixels (`0` for point CLEAN).
+    #[must_use]
+    pub const fn scale_px(&self) -> f64 {
+        self.scale_px
+    }
+
     fn same_value(&self, other: &Self) -> bool {
-        self.cell == other.cell && self.flux.to_bits() == other.flux.to_bits()
+        self.cell == other.cell
+            && self.flux.to_bits() == other.flux.to_bits()
+            && self.scale_px.to_bits() == other.scale_px.to_bits()
     }
 }
 
@@ -299,8 +397,8 @@ impl HogbomComponent {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ComponentDivergence {
     index: usize,
-    baseline: Option<HogbomComponent>,
-    candidate: Option<HogbomComponent>,
+    baseline: Option<MinorCycleComponent>,
+    candidate: Option<MinorCycleComponent>,
 }
 
 impl ComponentDivergence {
@@ -312,13 +410,13 @@ impl ComponentDivergence {
 
     /// Return the baseline entry, or `None` when the baseline ended here.
     #[must_use]
-    pub const fn baseline(&self) -> Option<HogbomComponent> {
+    pub const fn baseline(&self) -> Option<MinorCycleComponent> {
         self.baseline
     }
 
     /// Return the candidate entry, or `None` when the candidate ended here.
     #[must_use]
-    pub const fn candidate(&self) -> Option<HogbomComponent> {
+    pub const fn candidate(&self) -> Option<MinorCycleComponent> {
         self.candidate
     }
 }
@@ -337,6 +435,8 @@ pub enum MinorCycleStopReason {
     /// the frozen approximation beyond its validity envelope. The rejected
     /// candidate left no trace in the delta or evidence.
     StalenessBound,
+    /// A multiscale candidate grew by more than 50 percent after accepted progress.
+    MultiscaleDivergence,
 }
 
 /// Owner-minted evidence of one bounded Högbom solve.
@@ -358,8 +458,14 @@ pub struct MinorCycleEvidence {
     iterations: usize,
     total_flux: f64,
     final_peak_flux: f64,
+    noise_rms: Option<f64>,
+    global_threshold: f64,
+    effective_threshold: f64,
     stop_reason: MinorCycleStopReason,
-    recorded: Option<Box<[HogbomComponent]>>,
+    clark_approximation: Option<ClarkApproximation>,
+    clark_refreshes: usize,
+    recorded: Option<Box<[MinorCycleComponent]>>,
+    cycle_threshold: Option<f64>,
 }
 
 impl MinorCycleEvidence {
@@ -423,10 +529,48 @@ impl MinorCycleEvidence {
         self.final_peak_flux
     }
 
+    /// Return the robust RMS used by an `nsigma` stop.
+    #[must_use]
+    pub const fn noise_rms(&self) -> Option<f64> {
+        self.noise_rms
+    }
+
+    /// Return the actual threshold after combining absolute and `nsigma` controls.
+    #[must_use]
+    pub const fn effective_threshold(&self) -> f64 {
+        self.effective_threshold
+    }
+
+    /// Return the PSF-sidelobe-derived cycle threshold, when configured.
+    #[must_use]
+    pub const fn cycle_threshold(&self) -> Option<f64> {
+        self.cycle_threshold
+    }
+
+    /// Whether CASA's cycle threshold was no stronger than the global
+    /// absolute/noise threshold at this boundary.
+    #[must_use]
+    pub fn cycle_threshold_is_global(&self) -> bool {
+        self.cycle_threshold
+            .is_none_or(|threshold| threshold <= self.global_threshold)
+    }
+
     /// Return why the solve stopped.
     #[must_use]
     pub const fn stop_reason(&self) -> MinorCycleStopReason {
         self.stop_reason
+    }
+
+    /// Return Clark's derived PSF-patch approximation, when Clark ran.
+    #[must_use]
+    pub const fn clark_approximation(&self) -> Option<ClarkApproximation> {
+        self.clark_approximation
+    }
+
+    /// Return the number of exact full-residual refreshes between Clark subcycles.
+    #[must_use]
+    pub const fn clark_refreshes(&self) -> usize {
+        self.clark_refreshes
     }
 
     /// Whether the outcome explicitly requests Major-Cycle reconciliation.
@@ -443,7 +587,7 @@ impl MinorCycleEvidence {
 
     /// Return the optionally recorded leading component sequence.
     #[must_use]
-    pub fn recorded_component_sequence(&self) -> Option<&[HogbomComponent]> {
+    pub fn recorded_component_sequence(&self) -> Option<&[MinorCycleComponent]> {
         self.recorded.as_deref()
     }
 
@@ -479,14 +623,41 @@ impl MinorCycleEvidence {
     }
 }
 
+/// Scientific approximation used by one Clark active-set solve.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ClarkApproximation {
+    radius: [usize; 2],
+    maximum_exterior_sidelobe: f64,
+}
+
+struct ClarkWorkState {
+    cutoff: f64,
+    active: Vec<bool>,
+    refreshes: usize,
+}
+
+impl ClarkApproximation {
+    /// Return the symmetric PSF-patch radius in pixels.
+    #[must_use]
+    pub const fn radius(self) -> [usize; 2] {
+        self.radius
+    }
+
+    /// Return the largest absolute PSF value outside the patch.
+    #[must_use]
+    pub const fn maximum_exterior_sidelobe(self) -> f64 {
+        self.maximum_exterior_sidelobe
+    }
+}
+
 /// One bounded Högbom solve: the owner-minted Model Delta plus its evidence.
 #[derive(Debug)]
-pub struct HogbomMinorCycle {
+pub struct MinorCycleResult {
     delta: Option<ModelDelta>,
     evidence: MinorCycleEvidence,
 }
 
-impl HogbomMinorCycle {
+impl MinorCycleResult {
     /// Return the validated base-bound Model Delta, or `None` when no
     /// component was accepted (an already-converged view).
     #[must_use]
@@ -510,6 +681,12 @@ impl HogbomMinorCycle {
 /// Exact reason a bounded Högbom solve failed closed.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum MinorCycleError {
+    /// The selected reconstruction algorithm has no minor-cycle implementation.
+    #[error("reconstruction algorithm has no minor-cycle implementation")]
+    UnsupportedAlgorithm,
+    /// A multiscale program omitted scales or supplied a negative/non-finite scale.
+    #[error("multiscale CLEAN requires finite non-negative scales")]
+    InvalidScale,
     /// The compiled problem omitted the mandatory linear-view envelope.
     #[error("compiled Högbom controls require an explicit maximum model update")]
     MissingMaximumModelUpdate,
@@ -528,18 +705,17 @@ pub enum MinorCycleError {
     /// Component-sequence recording requested a zero capacity.
     #[error("component-sequence recording requires a non-zero limit")]
     InvalidRecordingLimit,
-    /// The window bounds were inverted.
-    #[error("clean window requires blc <= trc on both axes")]
-    InvertedWindow,
-    /// The window lay partly or wholly outside the normal-state plane.
-    #[error("clean window lies outside the normal-state plane")]
-    WindowOutsidePlane,
-    /// The window contained no valid model support at all.
-    #[error("clean window contains no valid model support")]
+    /// The reconstruction mask belongs to another problem, model, or normal state.
+    #[error("reconstruction mask lineage does not match the minor-cycle input")]
+    ForeignMask,
+    /// The reconstruction mask shape differs from the normal-state plane.
+    #[error("reconstruction mask shape differs from the normal-state plane")]
+    MaskShapeMismatch,
+    /// The reconstruction mask intersects no valid model support.
+    #[error("reconstruction mask contains no valid model support")]
     EmptyValidSupport,
-    /// The named generation does not match the single-plane constant-basis
-    /// normal-state geometry.
-    #[error("model generation does not match the normal-state plane")]
+    /// The selected model-space plane does not match the normal-state geometry.
+    #[error("selected model plane does not match the normal-state plane")]
     ModelShapeMismatch,
     /// The named generation is not the view's final model generation.
     #[error("named generation is not the normal state's final model generation")]
@@ -547,12 +723,18 @@ pub enum MinorCycleError {
     /// The normal approximation lacked a positive finite peak.
     #[error("normal-state approximation lacks a positive finite PSF peak")]
     InvalidPsfPeak,
+    /// The CASA-style fitted-Gaussian PSF sidelobe measurement failed.
+    #[error(transparent)]
+    PsfBeam(#[from] crate::PsfBeamFitError),
     /// Solver arithmetic produced a non-finite value.
     #[error("minor-cycle arithmetic generated a non-finite value")]
     GeneratedNonfinite,
     /// The model lifecycle owner rejected delta validation or minting.
     #[error(transparent)]
     Lifecycle(#[from] crate::ModelLifecycleError),
+    /// Reconstruction-mask materialization failed.
+    #[error(transparent)]
+    Mask(#[from] crate::MaskError),
 }
 
 impl From<casa_imaging_model::ModelContractError> for MinorCycleError {
@@ -572,36 +754,49 @@ impl From<casa_imaging_model::ModelContractError> for MinorCycleError {
 /// absolute residual over the valid-support window, normalize by the PSF
 /// peak, stop when below threshold, otherwise subtract `gain * strength`
 /// scaled by the PSF centered on the peak and accumulate the same flux at the
-/// peak cell. Scalar Stokes-I convention uses the real plane, matching the
-/// Float-image reference behavior.
+/// peak cell. The current normal-state scalar convention uses the real plane,
+/// matching the Float-image reference behavior; the typed model-plane
+/// coordinate determines where the resulting sparse delta is accumulated.
 ///
 /// # Errors
 ///
 /// Fails closed on mismatched lineage or geometry, invalid controls or
 /// windows, a degenerate PSF peak, non-finite arithmetic, and every model
 /// owner rejection (term bounds, value bounds, or foreign lineage).
-pub fn hogbom_minor_cycle(
+pub fn run_minor_cycle(
     lifecycle: &ModelLifecycle,
     base: &ModelGeneration,
     view: &FinalNormalState,
-    window: CleanWindow,
-    controls: HogbomControls,
-) -> Result<HogbomMinorCycle, MinorCycleError> {
+    mask: &ReconstructionMask,
+    controls: MinorCycleProgram,
+) -> Result<MinorCycleResult, MinorCycleError> {
     let shape = view.shape();
     let cells = shape[0] * shape[1];
-    if base.shape().domains().len() != 1
-        || base.shape().coefficients() != 1
-        || base.shape().polarizations() != 1
-        || base.shape().domains()[0].pixels() != shape
-        || base.samples().len() != cells
+    let model_plane = controls.model_plane();
+    if base
+        .shape()
+        .domains()
+        .get(model_plane.domain())
+        .is_none_or(|domain| domain.pixels() != shape)
+        || model_plane.coefficient() >= base.shape().coefficients()
+        || model_plane.polarization() >= base.shape().polarizations()
+        || base.samples().len() != base.shape().sample_count()
     {
         return Err(MinorCycleError::ModelShapeMismatch);
     }
     if base.generation_id() != view.final_model_generation() {
         return Err(MinorCycleError::ForeignNormalState);
     }
-    if window.trc()[0] >= shape[0] || window.trc()[1] >= shape[1] {
-        return Err(MinorCycleError::WindowOutsidePlane);
+    if mask.shape() != shape {
+        return Err(MinorCycleError::MaskShapeMismatch);
+    }
+    if mask.problem_id() != view.problem_id()
+        || mask.model_generation() != base.generation_id()
+        || mask
+            .normal_state_completion()
+            .is_some_and(|completion| completion != view.completion_id())
+    {
+        return Err(MinorCycleError::ForeignMask);
     }
 
     // The PSF peak normalization follows the reference cleaner: peaks are
@@ -614,6 +809,17 @@ pub fn hogbom_minor_cycle(
     }
     let psf_peak_pixel = plane_pixel(psf_peak_index, shape);
 
+    let clark = match controls.algorithm() {
+        ReconstructionAlgorithm::Hogbom => None,
+        ReconstructionAlgorithm::Clark => Some(derive_clark_approximation(
+            view.normal_approximation(),
+            shape,
+            psf_peak_pixel,
+        )?),
+        ReconstructionAlgorithm::Multiscale { .. } => None,
+        _ => return Err(MinorCycleError::UnsupportedAlgorithm),
+    };
+
     // Private working copy: authoritative state is never mutated.
     let mut residual = Vec::with_capacity(cells);
     for value in view.residual() {
@@ -623,6 +829,63 @@ pub fn hogbom_minor_cycle(
         }
         residual.push(real);
     }
+    let noise_rms = controls
+        .noise_sigma()
+        .map(|_| {
+            robust_masked_rms(&residual, shape, base, model_plane, mask).map(|rms| rms / psf_peak)
+        })
+        .transpose()?;
+    let global_threshold = noise_rms
+        .zip(controls.noise_sigma())
+        .map_or(controls.threshold(), |(rms, sigma)| {
+            controls.threshold().max(rms * sigma)
+        });
+    let initial_peak = residual
+        .iter()
+        .fold(0.0_f64, |peak, value| peak.max(value.abs()))
+        / psf_peak;
+    let cycle_threshold = if let Some(cycle) = controls.cycle_threshold {
+        let psf = view
+            .normal_approximation()
+            .iter()
+            .map(|value| value.re as f32)
+            .collect::<Vec<_>>();
+        let maximum_sidelobe = crate::fitted_psf_sidelobe_fraction(&psf, shape)?;
+        Some(
+            initial_peak
+                * (cycle.factor * maximum_sidelobe)
+                    .clamp(cycle.minimum_psf_fraction, cycle.maximum_psf_fraction),
+        )
+    } else {
+        None
+    };
+    let effective_threshold = cycle_threshold.map_or(global_threshold, |threshold| {
+        global_threshold.max(threshold)
+    });
+    let mut clark_state = clark.map(|approximation| {
+        let initial_peak = residual
+            .iter()
+            .fold(0.0_f64, |peak, value| peak.max(value.abs()))
+            / psf_peak;
+        let cutoff = (initial_peak * approximation.maximum_exterior_sidelobe / psf_peak / 3.0)
+            .max(effective_threshold);
+        let active = residual
+            .iter()
+            .map(|value| value.abs() / psf_peak >= cutoff)
+            .collect::<Vec<_>>();
+        ClarkWorkState {
+            cutoff,
+            active,
+            refreshes: 0,
+        }
+    });
+    let multiscale = match controls.algorithm() {
+        ReconstructionAlgorithm::Multiscale {
+            scales_px,
+            small_scale_bias,
+        } => Some(build_scale_kernels(scales_px, *small_scale_bias)),
+        _ => None,
+    };
 
     let mut terms = BTreeMap::<usize, f64>::new();
     let mut recorded = Vec::with_capacity(
@@ -633,31 +896,78 @@ pub fn hogbom_minor_cycle(
     );
     let mut iterations = 0_usize;
     let mut total_flux = 0.0_f64;
-    let mut final_peak_flux = 0.0_f64;
-    let mut stop_reason = None;
+    let mut initial_multiscale_component = None::<f64>;
+    let has_valid_support = (0..cells).any(|index| {
+        let pixel = plane_pixel(index, shape);
+        mask.contains(pixel) && valid_support(base, shape, model_plane, pixel)
+    });
+    let mut stop_reason = (!has_valid_support).then_some(MinorCycleStopReason::ThresholdReached);
+    let iteration_budget = if has_valid_support {
+        controls.max_iterations()
+    } else {
+        0
+    };
 
-    for _ in 0..controls.max_iterations() {
-        let Some(peak_index) = find_peak_abs(
-            &residual,
-            shape,
-            |value| *value,
-            |pixel| window.contains(pixel) && valid_support(base, shape, pixel),
-        ) else {
-            return Err(MinorCycleError::EmptyValidSupport);
+    for _ in 0..iteration_budget {
+        let (peak_index, strength, scale_index) = if let Some(kernels) = multiscale.as_ref() {
+            let candidate = select_multiscale_candidate(
+                &residual,
+                view.normal_approximation(),
+                shape,
+                psf_peak_pixel,
+                base,
+                model_plane,
+                mask,
+                kernels,
+            )
+            .ok_or(MinorCycleError::EmptyValidSupport)?;
+            (
+                candidate.index,
+                candidate.strength,
+                Some(candidate.scale_index),
+            )
+        } else {
+            let peak_index = find_peak_abs(
+                &residual,
+                shape,
+                |value| *value,
+                |pixel| {
+                    let index = pixel[0] * shape[1] + pixel[1];
+                    mask.contains(pixel)
+                        && valid_support(base, shape, model_plane, pixel)
+                        && clark_state.as_ref().is_none_or(|state| state.active[index])
+                },
+            )
+            .ok_or(MinorCycleError::EmptyValidSupport)?;
+            (peak_index, residual[peak_index] / psf_peak, None)
         };
         let peak_pixel = plane_pixel(peak_index, shape);
-        let strength = residual[peak_index] / psf_peak;
         if !strength.is_finite() {
             return Err(MinorCycleError::GeneratedNonfinite);
         }
-        final_peak_flux = strength.abs();
+        if scale_index.is_some() {
+            match initial_multiscale_component {
+                Some(initial) if multiscale_diverged(initial, strength, iterations) => {
+                    stop_reason = Some(MinorCycleStopReason::MultiscaleDivergence);
+                    break;
+                }
+                None => initial_multiscale_component = Some(strength.abs()),
+                Some(_) => {}
+            }
+        }
         // The casacore HOGBOM cleaner stops only when the normalized peak is
         // strictly below the threshold (`lattices/LatticeMath/
         // LatticeCleaner.tcc`, stopping rule 1: "stop if below threshold",
         // tested as `abs(itsStrengthOptimum) < threshold()`), so a peak
         // exactly at the threshold still cleans one component. A zero peak
         // has no flux to clean and converges trivially.
-        if strength == 0.0 || strength.abs() < controls.threshold() {
+        let threshold_reached = match controls.algorithm() {
+            ReconstructionAlgorithm::Clark => {
+                strength == 0.0 || strength.abs() <= effective_threshold
+            }
+            _ => strength == 0.0 || strength.abs() < effective_threshold,
+        };
+        if threshold_reached {
             stop_reason = Some(MinorCycleStopReason::ThresholdReached);
             break;
         }
@@ -675,26 +985,121 @@ pub fn hogbom_minor_cycle(
             stop_reason = Some(MinorCycleStopReason::StalenessBound);
             break;
         }
-        subtract_psf(
-            &mut residual,
-            view.normal_approximation(),
-            shape,
-            peak_pixel,
-            psf_peak_pixel,
-            flux,
-        )?;
+        match (clark, scale_index) {
+            (_, Some(scale_index)) => subtract_scaled_psf(
+                &mut residual,
+                view.normal_approximation(),
+                shape,
+                peak_pixel,
+                psf_peak_pixel,
+                &multiscale.as_ref().expect("scale candidate has kernels")[scale_index],
+                flux,
+            )?,
+            (Some(approximation), None) => subtract_psf_patch(
+                &mut residual,
+                view.normal_approximation(),
+                shape,
+                peak_pixel,
+                psf_peak_pixel,
+                approximation.radius,
+                flux,
+            )?,
+            (None, None) => subtract_psf(
+                &mut residual,
+                view.normal_approximation(),
+                shape,
+                peak_pixel,
+                psf_peak_pixel,
+                flux,
+            )?,
+        }
         iterations += 1;
         total_flux += flux.abs();
-        let cell =
-            model_cell(shape, peak_pixel).expect("a scanned peak pixel lies inside the plane");
-        *terms.entry(canonical_flat(base, cell)).or_insert(0.0) += flux;
+        let cell = model_cell(model_plane, shape, peak_pixel)
+            .expect("a scanned peak pixel lies inside the plane");
+        let scale_px = if let Some(scale_index) = scale_index {
+            add_scaled_terms(
+                &mut terms,
+                base,
+                model_plane,
+                shape,
+                peak_pixel,
+                &multiscale.as_ref().expect("scale candidate has kernels")[scale_index],
+                flux,
+            );
+            multiscale.as_ref().expect("scale candidate has kernels")[scale_index].scale_px
+        } else {
+            *terms.entry(canonical_flat(base, cell)).or_insert(0.0) += flux;
+            0.0
+        };
         if let Some(limit) = controls.component_sequence_limit()
             && recorded.len() < limit
         {
-            recorded.push(HogbomComponent { cell, flux });
+            recorded.push(MinorCycleComponent {
+                cell,
+                flux,
+                scale_px,
+            });
+        }
+        if let Some(state) = clark_state.as_mut() {
+            // SDAlgorithmClarkClean2 configures ClarkCleanLatModel with
+            // speedup=-1. Its uncertainty limit therefore closes the current
+            // patch subcycle after an accepted component and recomputes the
+            // exact residual before selecting the next active set. Preserve
+            // that behavior explicitly instead of allowing approximate patch
+            // errors to accumulate across the public cycle boundary.
+            refresh_point_residual(
+                &mut residual,
+                view.residual(),
+                view.normal_approximation(),
+                shape,
+                psf_peak_pixel,
+                base,
+                &terms,
+            )?;
+            state.refreshes += 1;
+            let global_peak = find_peak_abs(
+                &residual,
+                shape,
+                |value| *value,
+                |pixel| mask.contains(pixel) && valid_support(base, shape, model_plane, pixel),
+            )
+            .ok_or(MinorCycleError::EmptyValidSupport)?;
+            let global_strength = residual[global_peak].abs() / psf_peak;
+            let approximation = clark.expect("Clark state has approximation");
+            state.cutoff =
+                (global_strength * approximation.maximum_exterior_sidelobe / psf_peak / 3.0)
+                    .max(effective_threshold);
+            for (index, active) in state.active.iter_mut().enumerate() {
+                *active = residual[index].abs() / psf_peak >= state.cutoff;
+            }
         }
     }
     let stop_reason = stop_reason.unwrap_or(MinorCycleStopReason::IterationBound);
+    let clark_refreshes = clark_state.as_ref().map_or(0, |state| state.refreshes);
+    if multiscale.is_some() && !terms.is_empty() {
+        // MatrixCleaner uses finite subregions while selecting a bounded
+        // multiscale component sequence, then finalizes the cycle with its
+        // full-image FFT residual. Refresh that terminal evidence from the
+        // accepted model delta so the controller observes the same circular
+        // normal-operator boundary instead of the last finite work patch.
+        refresh_circular_residual(
+            &mut residual,
+            view.residual(),
+            view.normal_approximation(),
+            shape,
+            psf_peak_pixel,
+            base,
+            &terms,
+        )?;
+    }
+    let final_peak_flux = find_peak_abs(
+        &residual,
+        shape,
+        |value| *value,
+        |pixel| mask.contains(pixel) && valid_support(base, shape, model_plane, pixel),
+    )
+    .map_or(0.0, |index| residual[index].abs() / psf_peak);
 
     terms.retain(|_, flux| *flux != 0.0);
     let delta = if terms.is_empty() {
@@ -720,14 +1125,18 @@ pub fn hogbom_minor_cycle(
         base.generation_id(),
         view.completion_id(),
         view.content_identity(),
-        &window,
+        mask,
         &controls,
         iterations,
         total_flux,
         final_peak_flux,
+        noise_rms,
+        effective_threshold,
         stop_reason,
+        clark,
+        clark_refreshes,
     );
-    Ok(HogbomMinorCycle {
+    Ok(MinorCycleResult {
         delta,
         evidence: MinorCycleEvidence {
             evidence_id,
@@ -740,13 +1149,19 @@ pub fn hogbom_minor_cycle(
             iterations,
             total_flux,
             final_peak_flux,
+            noise_rms,
+            global_threshold,
+            effective_threshold,
+            cycle_threshold,
             stop_reason,
+            clark_approximation: clark,
+            clark_refreshes,
             recorded: (!recorded.is_empty()).then(|| recorded.into_boxed_slice()),
         },
     })
 }
 
-/// Canonical single-plane pixel of one plane-storage index.
+/// Canonical pixel of one two-dimensional plane-storage index.
 ///
 /// Normal-state planes are stored x-major (`finish_bound` pushes x outer, y
 /// inner), so index `p` maps to pixel `[p / H, p % H]`.
@@ -754,9 +1169,18 @@ fn plane_pixel(index: usize, shape: [usize; 2]) -> [usize; 2] {
     [index / shape[1], index % shape[1]]
 }
 
-fn model_cell(shape: [usize; 2], pixel: [usize; 2]) -> Option<ModelCell> {
+fn model_cell(
+    model_plane: MinorCycleModelPlane,
+    shape: [usize; 2],
+    pixel: [usize; 2],
+) -> Option<ModelCell> {
     if pixel[0] < shape[0] && pixel[1] < shape[1] {
-        Some(ModelCell::new(0, 0, 0, pixel))
+        Some(ModelCell::new(
+            model_plane.domain(),
+            model_plane.coefficient(),
+            model_plane.polarization(),
+            pixel,
+        ))
     } else {
         None
     }
@@ -768,8 +1192,13 @@ fn canonical_flat(base: &ModelGeneration, cell: ModelCell) -> usize {
         .expect("component pixels stay inside the base shape")
 }
 
-fn valid_support(base: &ModelGeneration, shape: [usize; 2], pixel: [usize; 2]) -> bool {
-    let Some(cell) = model_cell(shape, pixel) else {
+fn valid_support(
+    base: &ModelGeneration,
+    shape: [usize; 2],
+    model_plane: MinorCycleModelPlane,
+    pixel: [usize; 2],
+) -> bool {
+    let Some(cell) = model_cell(model_plane, shape, pixel) else {
         return false;
     };
     base.samples()[canonical_flat(base, cell)].support() == ModelSupport::Valid
@@ -825,6 +1254,431 @@ fn subtract_psf(
     Ok(())
 }
 
+/// Subtract one PSF component using the full-image circular FFT convention.
+fn subtract_psf_circular(
+    residual: &mut [f64],
+    psf: &[num_complex::Complex64],
+    shape: [usize; 2],
+    peak: [usize; 2],
+    psf_peak: [usize; 2],
+    flux: f64,
+) -> Result<(), MinorCycleError> {
+    for source_x in 0..shape[0] {
+        let target_x = (source_x + peak[0] + shape[0] - psf_peak[0]) % shape[0];
+        for source_y in 0..shape[1] {
+            let target_y = (source_y + peak[1] + shape[1] - psf_peak[1]) % shape[1];
+            let source = source_x * shape[1] + source_y;
+            let target = target_x * shape[1] + target_y;
+            let updated = residual[target] - flux * psf[source].re;
+            if !updated.is_finite() {
+                return Err(MinorCycleError::GeneratedNonfinite);
+            }
+            residual[target] = updated;
+        }
+    }
+    Ok(())
+}
+
+fn refresh_point_residual(
+    residual: &mut [f64],
+    original: &[num_complex::Complex64],
+    psf: &[num_complex::Complex64],
+    shape: [usize; 2],
+    psf_peak: [usize; 2],
+    base: &ModelGeneration,
+    terms: &BTreeMap<usize, f64>,
+) -> Result<(), MinorCycleError> {
+    for (target, source) in residual.iter_mut().zip(original) {
+        *target = source.re;
+    }
+    for (flat, flux) in terms {
+        let pixel = base
+            .shape()
+            .cell_at(*flat)
+            .ok_or(MinorCycleError::ModelShapeMismatch)?
+            .pixel();
+        subtract_psf(residual, psf, shape, pixel, psf_peak, *flux)?;
+    }
+    Ok(())
+}
+
+fn refresh_circular_residual(
+    residual: &mut [f64],
+    original: &[num_complex::Complex64],
+    psf: &[num_complex::Complex64],
+    shape: [usize; 2],
+    psf_peak: [usize; 2],
+    base: &ModelGeneration,
+    terms: &BTreeMap<usize, f64>,
+) -> Result<(), MinorCycleError> {
+    for (target, source) in residual.iter_mut().zip(original) {
+        *target = source.re;
+    }
+    for (flat, flux) in terms {
+        let pixel = base
+            .shape()
+            .cell_at(*flat)
+            .ok_or(MinorCycleError::ModelShapeMismatch)?
+            .pixel();
+        subtract_psf_circular(residual, psf, shape, pixel, psf_peak, *flux)?;
+    }
+    Ok(())
+}
+
+fn robust_masked_rms(
+    residual: &[f64],
+    shape: [usize; 2],
+    base: &ModelGeneration,
+    model_plane: MinorCycleModelPlane,
+    mask: &ReconstructionMask,
+) -> Result<f64, MinorCycleError> {
+    let mut values = residual
+        .iter()
+        .enumerate()
+        .filter_map(|(index, value)| {
+            let pixel = plane_pixel(index, shape);
+            (mask.contains(pixel) && valid_support(base, shape, model_plane, pixel))
+                .then_some(*value)
+        })
+        .collect::<Vec<_>>();
+    if values.is_empty() {
+        return Err(MinorCycleError::EmptyValidSupport);
+    }
+    values.sort_by(f64::total_cmp);
+    let median = values[values.len() / 2];
+    for value in &mut values {
+        *value = (*value - median).abs();
+    }
+    values.sort_by(f64::total_cmp);
+    Ok(1.482_602_218_505_602 * values[values.len() / 2])
+}
+
+#[derive(Debug)]
+struct ScaleKernel {
+    scale_px: f64,
+    samples: Vec<([isize; 2], f64)>,
+    bias: f64,
+    search_border: usize,
+}
+
+const CASA_SCALE_MASK_MINIMUM_OVERLAP: f64 = 0.9;
+
+#[derive(Debug, Clone, Copy)]
+struct MultiscaleCandidate {
+    index: usize,
+    scale_index: usize,
+    strength: f64,
+    score: f64,
+}
+
+fn build_scale_kernels(scales_px: &[f64], small_scale_bias: f64) -> Vec<ScaleKernel> {
+    let largest = scales_px.last().copied().unwrap_or(0.0);
+    scales_px
+        .iter()
+        .copied()
+        .map(|scale_px| {
+            let samples = if scale_px == 0.0 {
+                vec![([0, 0], 1.0)]
+            } else {
+                let radius = scale_px.ceil() as isize;
+                let mut samples = Vec::new();
+                let mut volume = 0.0;
+                for x in -radius..=radius {
+                    for y in -radius..=radius {
+                        let r2 = (x as f64 / scale_px).powi(2) + (y as f64 / scale_px).powi(2);
+                        if r2 < 1.0 {
+                            let value = (1.0 - r2) * multiscale_spheroidal(r2.sqrt());
+                            samples.push(([x, y], value));
+                            volume += value;
+                        }
+                    }
+                }
+                for (_, value) in &mut samples {
+                    *value /= volume;
+                }
+                samples
+            };
+            let bias = if largest == 0.0 {
+                1.0
+            } else {
+                1.0 - small_scale_bias * scale_px / largest
+            };
+            ScaleKernel {
+                scale_px,
+                samples,
+                bias,
+                // MatrixCleaner::makeScaleMasks excludes a 1.5-scale border
+                // before peak selection, even when the user mask is full.
+                search_border: (scale_px * 1.5) as usize,
+            }
+        })
+        .collect()
+}
+
+fn multiscale_spheroidal(nu: f64) -> f64 {
+    if nu <= 0.0 {
+        return 1.0;
+    }
+    if nu >= 1.0 {
+        return 0.0;
+    }
+    let (p, q, endpoint) = if nu < 0.75 {
+        (
+            [
+                0.082_033_43,
+                -0.364_470_5,
+                0.627_866,
+                -0.533_558_1,
+                0.231_275_6,
+            ],
+            [1.0, 0.821_201_8, 0.207_804_3],
+            0.75,
+        )
+    } else {
+        (
+            [
+                0.004_028_559,
+                -0.036_977_68,
+                0.102_133_2,
+                -0.120_143_6,
+                0.064_127_74,
+            ],
+            [1.0, 0.959_910_2, 0.291_872_4],
+            1.0,
+        )
+    };
+    let delta = nu.powi(2) - endpoint * endpoint;
+    let numerator = p
+        .iter()
+        .enumerate()
+        .map(|(power, coefficient)| coefficient * delta.powi(power as i32))
+        .sum::<f64>();
+    let denominator = q
+        .iter()
+        .enumerate()
+        .map(|(power, coefficient)| coefficient * delta.powi(power as i32))
+        .sum::<f64>();
+    numerator / denominator
+}
+
+#[allow(clippy::too_many_arguments)]
+fn select_multiscale_candidate(
+    residual: &[f64],
+    psf: &[num_complex::Complex64],
+    shape: [usize; 2],
+    psf_peak: [usize; 2],
+    base: &ModelGeneration,
+    model_plane: MinorCycleModelPlane,
+    mask: &ReconstructionMask,
+    kernels: &[ScaleKernel],
+) -> Option<MultiscaleCandidate> {
+    let mut best = None;
+    for (scale_index, kernel) in kernels.iter().enumerate() {
+        let normalization = multiscale_normalization(psf, shape, psf_peak, kernel);
+        if !normalization.is_finite() || normalization <= 0.0 {
+            continue;
+        }
+        for index in 0..residual.len() {
+            let pixel = plane_pixel(index, shape);
+            if !kernel_fits(base, model_plane, shape, pixel, mask, kernel) {
+                continue;
+            }
+            let dirty = kernel
+                .samples
+                .iter()
+                .map(|(offset, weight)| {
+                    let sample = offset_pixel(pixel, *offset, shape)
+                        .expect("kernel fit was checked before convolution");
+                    residual[sample[0] * shape[1] + sample[1]] * weight
+                })
+                .sum::<f64>();
+            let strength = dirty / normalization;
+            let candidate = MultiscaleCandidate {
+                index,
+                scale_index,
+                strength,
+                // MatrixCleaner ranks the scale-normalized dirty response by
+                // `bias * dirty * strength`; comparing absolute scores keeps
+                // signed component recovery separate from scale selection.
+                score: (dirty * strength * kernel.bias).abs(),
+            };
+            if best
+                .as_ref()
+                .is_none_or(|current: &MultiscaleCandidate| candidate.score > current.score)
+            {
+                best = Some(candidate);
+            }
+        }
+    }
+    best
+}
+
+fn multiscale_diverged(initial: f64, current: f64, iterations: usize) -> bool {
+    iterations > 0 && current.abs() > initial.abs() * 1.5
+}
+
+fn multiscale_normalization(
+    psf: &[num_complex::Complex64],
+    shape: [usize; 2],
+    peak: [usize; 2],
+    kernel: &ScaleKernel,
+) -> f64 {
+    kernel
+        .samples
+        .iter()
+        .flat_map(|(left_offset, left_weight)| {
+            kernel
+                .samples
+                .iter()
+                .filter_map(move |(right_offset, right_weight)| {
+                    let offset = [
+                        left_offset[0] - right_offset[0],
+                        left_offset[1] - right_offset[1],
+                    ];
+                    offset_pixel(peak, offset, shape).map(|pixel| {
+                        left_weight * right_weight * psf[pixel[0] * shape[1] + pixel[1]].re
+                    })
+                })
+        })
+        .sum()
+}
+
+fn kernel_fits(
+    base: &ModelGeneration,
+    model_plane: MinorCycleModelPlane,
+    shape: [usize; 2],
+    centre: [usize; 2],
+    mask: &ReconstructionMask,
+    kernel: &ScaleKernel,
+) -> bool {
+    if !within_multiscale_border(centre, shape, kernel.search_border) {
+        return false;
+    }
+    let overlap = kernel
+        .samples
+        .iter()
+        .filter_map(|(offset, weight)| {
+            offset_pixel(centre, *offset, shape)
+                .filter(|pixel| {
+                    mask.contains(*pixel) && valid_support(base, shape, model_plane, *pixel)
+                })
+                .map(|_| *weight)
+        })
+        .sum::<f64>();
+    overlap > CASA_SCALE_MASK_MINIMUM_OVERLAP
+}
+
+fn within_multiscale_border(centre: [usize; 2], shape: [usize; 2], border: usize) -> bool {
+    centre.into_iter().zip(shape).all(|(coordinate, extent)| {
+        coordinate > border && coordinate < extent.saturating_sub(border).saturating_sub(1)
+    })
+}
+
+fn offset_pixel(pixel: [usize; 2], offset: [isize; 2], shape: [usize; 2]) -> Option<[usize; 2]> {
+    let x = pixel[0].checked_add_signed(offset[0])?;
+    let y = pixel[1].checked_add_signed(offset[1])?;
+    (x < shape[0] && y < shape[1]).then_some([x, y])
+}
+
+fn add_scaled_terms(
+    terms: &mut BTreeMap<usize, f64>,
+    base: &ModelGeneration,
+    model_plane: MinorCycleModelPlane,
+    shape: [usize; 2],
+    centre: [usize; 2],
+    kernel: &ScaleKernel,
+    flux: f64,
+) {
+    for (offset, weight) in &kernel.samples {
+        let pixel =
+            offset_pixel(centre, *offset, shape).expect("selected scale fits model support");
+        let cell =
+            model_cell(model_plane, shape, pixel).expect("scale pixel lies inside the model plane");
+        *terms.entry(canonical_flat(base, cell)).or_insert(0.0) += flux * weight;
+    }
+}
+
+fn subtract_scaled_psf(
+    residual: &mut [f64],
+    psf: &[num_complex::Complex64],
+    shape: [usize; 2],
+    centre: [usize; 2],
+    psf_peak: [usize; 2],
+    kernel: &ScaleKernel,
+    flux: f64,
+) -> Result<(), MinorCycleError> {
+    for (offset, weight) in &kernel.samples {
+        let pixel =
+            offset_pixel(centre, *offset, shape).expect("selected scale fits model support");
+        subtract_psf(residual, psf, shape, pixel, psf_peak, flux * weight)?;
+    }
+    Ok(())
+}
+
+/// Derive CASA's Clark patch from the fitted restoring beam.
+///
+/// `SDAlgorithmClarkClean2` chooses at least four pixels, otherwise the
+/// ceiling of the fitted major/minor FWHM in pixels, then requests a
+/// `3*ncent+1` square capped by the PSF/model shape. The normal-state plane
+/// uses unit pixel coordinates here, so the shared CASA-style beam fitter can
+/// supply that same width without crossing the reconstruction-owner boundary.
+fn derive_clark_approximation(
+    psf: &[num_complex::Complex64],
+    shape: [usize; 2],
+    peak: [usize; 2],
+) -> Result<ClarkApproximation, crate::PsfBeamFitError> {
+    let real_psf = psf.iter().map(|value| value.re as f32).collect::<Vec<_>>();
+    let beam =
+        crate::fit_restoring_beam(&real_psf, shape, [1.0, 1.0], crate::DEFAULT_PSF_FIT_CUTOFF)?;
+    let central_width = 4_usize
+        .max(beam.major_fwhm_rad().ceil() as usize)
+        .max(beam.minor_fwhm_rad().ceil() as usize);
+    let requested = central_width.saturating_mul(3).saturating_add(1);
+    let radius = [requested.min(shape[0]) / 2, requested.min(shape[1]) / 2];
+    let maximum_exterior_sidelobe = psf
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| {
+            let pixel = plane_pixel(*index, shape);
+            pixel[0].abs_diff(peak[0]) > radius[0] || pixel[1].abs_diff(peak[1]) > radius[1]
+        })
+        .fold(0.0_f64, |maximum, (_, value)| maximum.max(value.re.abs()));
+    Ok(ClarkApproximation {
+        radius,
+        maximum_exterior_sidelobe,
+    })
+}
+
+fn subtract_psf_patch(
+    residual: &mut [f64],
+    psf: &[num_complex::Complex64],
+    shape: [usize; 2],
+    peak: [usize; 2],
+    psf_peak: [usize; 2],
+    radius: [usize; 2],
+    flux: f64,
+) -> Result<(), MinorCycleError> {
+    let x_range = overlap(peak[0], psf_peak[0], shape[0]);
+    let y_range = overlap(peak[1], psf_peak[1], shape[1]);
+    for y in y_range {
+        for x in x_range.clone() {
+            let source = [x + psf_peak[0] - peak[0], y + psf_peak[1] - peak[1]];
+            if source[0].abs_diff(psf_peak[0]) > radius[0]
+                || source[1].abs_diff(psf_peak[1]) > radius[1]
+            {
+                continue;
+            }
+            let target = x * shape[1] + y;
+            let updated = residual[target] - flux * psf[source[0] * shape[1] + source[1]].re;
+            if !updated.is_finite() {
+                return Err(MinorCycleError::GeneratedNonfinite);
+            }
+            residual[target] = updated;
+        }
+    }
+    Ok(())
+}
+
 /// Inclusive-clipped axis range where a PSF centered at `psf_peak` overlaps
 /// the plane when recentered on `peak`.
 fn overlap(peak: usize, psf_peak: usize, length: usize) -> std::ops::Range<usize> {
@@ -844,12 +1698,16 @@ fn minor_cycle_evidence_id(
     input_generation: ModelGenerationId,
     normal_state_completion: FinalNormalStateCompletionId,
     normal_state_content: LogicalIdentity,
-    window: &CleanWindow,
-    controls: &HogbomControls,
+    mask: &ReconstructionMask,
+    controls: &MinorCycleProgram,
     iterations: usize,
     total_flux: f64,
     final_peak_flux: f64,
+    noise_rms: Option<f64>,
+    effective_threshold: f64,
     stop_reason: MinorCycleStopReason,
+    clark: Option<ClarkApproximation>,
+    clark_refreshes: usize,
 ) -> MinorCycleEvidenceId {
     let mut encoder = Encoder::new(MINOR_CYCLE_EVIDENCE_DOMAIN, MINOR_CYCLE_EVIDENCE_VERSION);
     encoder.identity(authority.as_bytes());
@@ -858,14 +1716,46 @@ fn minor_cycle_evidence_id(
     encoder.identity(input_generation.as_bytes());
     encoder.identity(normal_state_completion.as_bytes());
     encoder.identity(normal_state_content.as_bytes());
-    encoder.usize(window.blc()[0]);
-    encoder.usize(window.blc()[1]);
-    encoder.usize(window.trc()[0]);
-    encoder.usize(window.trc()[1]);
+    encoder.identity(mask.generation_id().as_bytes());
+    encoder.usize(controls.model_plane().domain());
+    encoder.usize(controls.model_plane().coefficient());
+    encoder.usize(controls.model_plane().polarization());
+    match controls.algorithm() {
+        ReconstructionAlgorithm::Hogbom => encoder.u8(0),
+        ReconstructionAlgorithm::Clark => encoder.u8(1),
+        ReconstructionAlgorithm::Multiscale {
+            scales_px,
+            small_scale_bias,
+        } => {
+            encoder.u8(2);
+            encoder.usize(scales_px.len());
+            for scale in scales_px {
+                encoder.u64(crate::canonical_f64_bits(*scale));
+            }
+            encoder.u64(crate::canonical_f64_bits(*small_scale_bias));
+        }
+        _ => unreachable!("minor-cycle programs admit only implemented solvers"),
+    }
     encoder.u64(crate::canonical_f64_bits(controls.gain()));
     encoder.u64(crate::canonical_f64_bits(controls.threshold()));
+    match controls.noise_sigma() {
+        Some(sigma) => {
+            encoder.u8(1);
+            encoder.u64(crate::canonical_f64_bits(sigma));
+        }
+        None => encoder.u8(0),
+    }
     encoder.usize(controls.max_iterations());
     encoder.u64(crate::canonical_f64_bits(controls.maximum_model_update()));
+    match controls.cycle_threshold {
+        Some(cycle) => {
+            encoder.u8(1);
+            encoder.u64(crate::canonical_f64_bits(cycle.factor));
+            encoder.u64(crate::canonical_f64_bits(cycle.minimum_psf_fraction));
+            encoder.u64(crate::canonical_f64_bits(cycle.maximum_psf_fraction));
+        }
+        None => encoder.u8(0),
+    }
     match controls.component_sequence_limit() {
         None => encoder.u8(0),
         Some(limit) => {
@@ -876,11 +1766,32 @@ fn minor_cycle_evidence_id(
     encoder.usize(iterations);
     encoder.u64(crate::canonical_f64_bits(total_flux));
     encoder.u64(crate::canonical_f64_bits(final_peak_flux));
+    match noise_rms {
+        Some(rms) => {
+            encoder.u8(1);
+            encoder.u64(crate::canonical_f64_bits(rms));
+        }
+        None => encoder.u8(0),
+    }
+    encoder.u64(crate::canonical_f64_bits(effective_threshold));
     encoder.u8(match stop_reason {
         MinorCycleStopReason::ThresholdReached => 0,
         MinorCycleStopReason::IterationBound => 1,
         MinorCycleStopReason::StalenessBound => 2,
+        MinorCycleStopReason::MultiscaleDivergence => 3,
     });
+    match clark {
+        None => encoder.u8(0),
+        Some(approximation) => {
+            encoder.u8(1);
+            encoder.usize(approximation.radius[0]);
+            encoder.usize(approximation.radius[1]);
+            encoder.u64(crate::canonical_f64_bits(
+                approximation.maximum_exterior_sidelobe,
+            ));
+        }
+    }
+    encoder.usize(clark_refreshes);
     MinorCycleEvidenceId(LogicalIdentity::from_sha256(encoder.finish()))
 }
 
@@ -888,7 +1799,75 @@ fn minor_cycle_evidence_id(
 mod tests {
     use num_complex::Complex64;
 
-    use super::subtract_psf;
+    use super::{
+        MinorCycleModelPlane, build_scale_kernels, model_cell, multiscale_diverged, subtract_psf,
+        subtract_psf_circular, within_multiscale_border,
+    };
+
+    #[test]
+    fn model_plane_coordinates_are_preserved_in_component_cells() {
+        let cell = model_cell(MinorCycleModelPlane::new(2, 3, 1), [8, 8], [4, 5])
+            .expect("pixel lies in the selected model plane");
+
+        assert_eq!(cell.domain(), 2);
+        assert_eq!(cell.coefficient(), 3);
+        assert_eq!(cell.polarization(), 1);
+        assert_eq!(cell.pixel(), [4, 5]);
+    }
+
+    #[test]
+    fn multiscale_search_excludes_the_casa_one_and_a_half_scale_border() {
+        assert!(!within_multiscale_border([10, 20], [64, 64], 10));
+        assert!(within_multiscale_border([11, 20], [64, 64], 10));
+        assert!(within_multiscale_border([52, 20], [64, 64], 10));
+        assert!(!within_multiscale_border([53, 20], [64, 64], 10));
+    }
+
+    #[test]
+    fn multiscale_divergence_boundary_requires_prior_progress_and_exceeds_one_half() {
+        assert!(!multiscale_diverged(2.0, 4.0, 0));
+        assert!(!multiscale_diverged(2.0, 3.0, 1));
+        assert!(multiscale_diverged(2.0, 3.000_000_000_1, 1));
+    }
+
+    #[test]
+    fn clark_subcycle_refresh_recomputes_the_exact_full_residual() {
+        let shape = [3, 3];
+        let dirty = vec![Complex64::new(0.0, 0.0); 9];
+        let mut dirty = dirty;
+        dirty[0] = Complex64::new(3.0, 0.0);
+        let mut psf = vec![Complex64::new(0.0, 0.0); 9];
+        psf[4] = Complex64::new(1.0, 0.0);
+        psf[3] = Complex64::new(0.25, 0.0);
+        let mut refreshed = dirty.iter().map(|value| value.re).collect::<Vec<_>>();
+        subtract_psf(&mut refreshed, &psf, shape, [0, 0], [1, 1], 2.0)
+            .expect("first exact full subtraction");
+        subtract_psf(&mut refreshed, &psf, shape, [2, 2], [1, 1], -1.5)
+            .expect("second exact full subtraction");
+        assert_eq!(
+            refreshed,
+            vec![1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.375, 1.5]
+        );
+    }
+
+    #[test]
+    fn multiscale_kernels_are_compact_and_unit_normalized() {
+        let kernels = build_scale_kernels(&[0.0, 3.0], 0.6);
+        assert_eq!(kernels[0].samples.as_slice(), &[([0, 0], 1.0)]);
+        assert!(
+            (kernels[1]
+                .samples
+                .iter()
+                .map(|(_, value)| value)
+                .sum::<f64>()
+                - 1.0)
+                .abs()
+                < 1.0e-12
+        );
+        assert!(kernels[1].samples.iter().all(|(offset, _)| {
+            (offset[0] as f64 / 3.0).powi(2) + (offset[1] as f64 / 3.0).powi(2) < 1.0
+        }));
+    }
 
     #[test]
     fn shifted_psf_overlap_can_start_before_the_component_peak() {
@@ -901,6 +1880,22 @@ mod tests {
         assert_eq!(
             residual,
             vec![0.0, 0.0, 0.0, 0.0, -1.0, -1.0, 0.0, -1.0, -1.0]
+        );
+    }
+
+    #[test]
+    fn multiscale_terminal_refresh_uses_casa_circular_psf_convolution() {
+        let mut residual = vec![0.0; 9];
+        let psf = (1..=9)
+            .map(|value| Complex64::new(f64::from(value), 0.0))
+            .collect::<Vec<_>>();
+
+        subtract_psf_circular(&mut residual, &psf, [3, 3], [0, 0], [1, 1], 1.0)
+            .expect("finite circular subtraction");
+
+        assert_eq!(
+            residual,
+            vec![-5.0, -6.0, -4.0, -8.0, -9.0, -7.0, -2.0, -3.0, -1.0]
         );
     }
 }

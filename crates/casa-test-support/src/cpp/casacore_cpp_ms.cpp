@@ -5,6 +5,8 @@
 #include <casacore/casa/Arrays/Vector.h>
 #include <casacore/ms/MeasurementSets/MeasurementSet.h>
 #include <casacore/tables/DataMan/StManAipsIO.h>
+#include <casacore/tables/DataMan/TiledShapeStMan.h>
+#include <casacore/tables/Tables/ArrayColumn.h>
 #include <casacore/tables/Tables/TableAttr.h>
 #include <casacore/tables/Tables/TableRow.h>
 
@@ -768,9 +770,9 @@ void bench_open_main_rows_impl(const std::string& path,
     *out_digest = digest.hex();
 }
 
-casacore::Array<casacore::Complex> make_data_array(size_t row)
+casacore::Array<casacore::Complex> make_data_array(size_t row, casacore::uInt channels = kNumChan)
 {
-    casacore::IPosition shape(2, kNumCorr, kNumChan);
+    casacore::IPosition shape(2, kNumCorr, channels);
     casacore::Array<casacore::Complex> data(shape);
     const float offset = static_cast<float>(row * kNumCorr * kNumChan);
     size_t i = 0;
@@ -946,7 +948,10 @@ void populate_fixture_subtables(casacore::MeasurementSet& ms)
     }
 }
 
-void populate_fixture_rows(casacore::MeasurementSet& ms, size_t nrows)
+void populate_fixture_rows(
+    casacore::MeasurementSet& ms,
+    size_t nrows,
+    const std::vector<casacore::uInt>& channels_by_row = {})
 {
     ms.addRow(nrows);
 
@@ -973,10 +978,6 @@ void populate_fixture_rows(casacore::MeasurementSet& ms, size_t nrows)
     casacore::ArrayColumn<casacore::Float> weight(ms, "WEIGHT");
     casacore::ArrayColumn<casacore::Complex> data(ms, "DATA");
 
-    casacore::Matrix<casacore::Bool> flagVals(kNumCorr, kNumChan);
-    flagVals = false;
-    casacore::Array<casacore::Bool> flagCategoryVals(casacore::IPosition(3, 1, kNumCorr, kNumChan));
-    flagCategoryVals = false;
     casacore::Vector<casacore::Float> sigmaVals(kNumCorr);
     sigmaVals = 1.0f;
     casacore::Vector<casacore::Float> weightVals(kNumCorr);
@@ -985,6 +986,12 @@ void populate_fixture_rows(casacore::MeasurementSet& ms, size_t nrows)
     uvwVals = 0.0;
 
     for (size_t row = 0; row < nrows; ++row) {
+        const auto channels = channels_by_row.empty() ? kNumChan : channels_by_row.at(row);
+        casacore::Matrix<casacore::Bool> flagVals(kNumCorr, channels);
+        flagVals = false;
+        casacore::Array<casacore::Bool> flagCategoryVals(
+            casacore::IPosition(3, 1, kNumCorr, channels));
+        flagCategoryVals = false;
         antenna1.put(row, 0);
         antenna2.put(row, 1);
         arrayId.put(row, 0);
@@ -1006,7 +1013,7 @@ void populate_fixture_rows(casacore::MeasurementSet& ms, size_t nrows)
         timeCentroid.put(row, kBaseTimeSeconds + static_cast<double>(row));
         uvw.put(row, uvwVals);
         weight.put(row, weightVals);
-        data.put(row, make_data_array(row));
+        data.put(row, make_data_array(row, channels));
     }
 }
 
@@ -1024,6 +1031,117 @@ void write_fixture_impl(const std::string& path, size_t nrows)
     populate_fixture_subtables(ms);
     populate_fixture_rows(ms, nrows);
     ms.flush(true);
+}
+
+void add_second_spectral_window(casacore::MeasurementSet& ms)
+{
+    constexpr casacore::uInt channels = 8;
+    casacore::MSSpectralWindow spw = ms.spectralWindow();
+    spw.addRow(1);
+    const auto row = spw.nrow() - 1;
+    casacore::ScalarColumn<casacore::Int> numChan(spw, "NUM_CHAN");
+    casacore::ScalarColumn<casacore::String> name(spw, "NAME");
+    casacore::ScalarColumn<casacore::Double> refFrequency(spw, "REF_FREQUENCY");
+    casacore::ScalarColumn<casacore::Double> totalBandwidth(spw, "TOTAL_BANDWIDTH");
+    casacore::ArrayColumn<casacore::Double> chanFreq(spw, "CHAN_FREQ");
+    casacore::ArrayColumn<casacore::Double> chanWidth(spw, "CHAN_WIDTH");
+    casacore::ArrayColumn<casacore::Double> effectiveBw(spw, "EFFECTIVE_BW");
+    casacore::ArrayColumn<casacore::Double> resolution(spw, "RESOLUTION");
+    casacore::ScalarColumn<casacore::Int> measFreqRef(spw, "MEAS_FREQ_REF");
+    casacore::ScalarColumn<casacore::Int> netSideband(spw, "NET_SIDEBAND");
+    casacore::ScalarColumn<casacore::Int> freqGroup(spw, "FREQ_GROUP");
+    casacore::ScalarColumn<casacore::String> freqGroupName(spw, "FREQ_GROUP_NAME");
+    casacore::ScalarColumn<casacore::Int> ifConvChain(spw, "IF_CONV_CHAIN");
+    casacore::ScalarColumn<casacore::Bool> flagRow(spw, "FLAG_ROW");
+    casacore::Vector<casacore::Double> frequencies(channels);
+    casacore::Vector<casacore::Double> widths(channels);
+    for (casacore::uInt channel = 0; channel < channels; ++channel) {
+        frequencies(channel) = 1.2e9 + channel * 2.0e6;
+        widths(channel) = 2.0e6;
+    }
+    numChan.put(row, static_cast<casacore::Int>(channels));
+    name.put(row, "SPW1");
+    refFrequency.put(row, 1.2e9);
+    totalBandwidth.put(row, channels * 2.0e6);
+    chanFreq.put(row, frequencies);
+    chanWidth.put(row, widths);
+    effectiveBw.put(row, widths);
+    resolution.put(row, widths);
+    measFreqRef.put(row, 5);
+    netSideband.put(row, 1);
+    freqGroup.put(row, 0);
+    freqGroupName.put(row, "");
+    ifConvChain.put(row, 0);
+    flagRow.put(row, false);
+
+    casacore::MSDataDescription dd = ms.dataDescription();
+    dd.addRow(1);
+    const auto ddrow = dd.nrow() - 1;
+    casacore::ScalarColumn<casacore::Int> spectralWindowId(dd, "SPECTRAL_WINDOW_ID");
+    casacore::ScalarColumn<casacore::Int> polarizationId(dd, "POLARIZATION_ID");
+    casacore::ScalarColumn<casacore::Bool> ddFlagRow(dd, "FLAG_ROW");
+    spectralWindowId.put(ddrow, 1);
+    polarizationId.put(ddrow, 0);
+    ddFlagRow.put(ddrow, false);
+}
+
+void write_heterogeneous_tiled_shape_fixture_impl(const std::string& path)
+{
+    casacore::TableDesc td(casacore::MS::requiredTableDesc());
+    casacore::MS::addColumnToDesc(td, casacore::MS::DATA, 2);
+    casacore::SetupNewTable setup(path, td, casacore::Table::New);
+    casacore::StManAipsIO standard;
+    setup.bindAll(standard);
+    casacore::TiledShapeStMan tiled("TiledData", casacore::IPosition(2, kNumCorr, 8));
+    setup.bindColumn("DATA", tiled);
+    casacore::MeasurementSet ms(setup, 0);
+    ms.createDefaultSubtables(casacore::Table::New);
+    populate_fixture_subtables(ms);
+    add_second_spectral_window(ms);
+    populate_fixture_rows(ms, 2, {kNumChan, 8});
+
+    casacore::ScalarColumn<casacore::Int> dataDescId(ms, "DATA_DESC_ID");
+    dataDescId.put(1, 1);
+    ms.flush(true);
+}
+
+void verify_heterogeneous_model_clone_impl(const std::string& path)
+{
+    casacore::MeasurementSet ms(path, casacore::Table::Old);
+    const auto uses_manager = [&](const casacore::String& column,
+                                  const casacore::String& name) {
+        const casacore::Record managers = ms.dataManagerInfo();
+        for (casacore::uInt index = 0; index < managers.nfields(); ++index) {
+            const auto& manager = managers.subRecord(index);
+            if (manager.asString("TYPE") != "TiledShapeStMan" ||
+                manager.asString("NAME") != name) {
+                continue;
+            }
+            const auto columns = manager.asArrayString("COLUMNS");
+            for (const auto& candidate : columns) {
+                if (candidate == column) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+    if (!uses_manager("DATA", "TiledData") ||
+        !uses_manager("MODEL_DATA", "TiledModelData")) {
+        throw std::runtime_error("DATA/MODEL_DATA do not use the expected TiledShapeStMan instances");
+    }
+    casacore::ArrayColumn<casacore::Complex> data(ms, "DATA");
+    casacore::ArrayColumn<casacore::Complex> model(ms, "MODEL_DATA");
+    for (casacore::rownr_t row = 0; row < ms.nrow(); ++row) {
+        if (data.shape(row) != model.shape(row)) {
+            throw std::runtime_error("MODEL_DATA shape does not clone DATA at row " +
+                                     std::to_string(row));
+        }
+    }
+    if (model.shape(0) != casacore::IPosition(2, kNumCorr, kNumChan) ||
+        model.shape(1) != casacore::IPosition(2, kNumCorr, 8)) {
+        throw std::runtime_error("heterogeneous MODEL_DATA row shapes changed");
+    }
 }
 
 void verify_complex_sample(const casacore::Array<casacore::Complex>& data,
@@ -1157,6 +1275,48 @@ void bench_create_open_impl(const std::string& path,
     }
 }
 
+casacore::Complex read_model_data_sample_impl(
+    const char* path,
+    uint64_t row,
+    uint32_t correlation,
+    uint32_t channel)
+{
+    casacore::MeasurementSet ms(path, casacore::Table::Old);
+    if (row >= ms.nrow()) {
+        throw std::runtime_error("MODEL_DATA probe row is out of bounds");
+    }
+    casacore::ArrayColumn<casacore::Complex> model(ms, "MODEL_DATA");
+    casacore::Matrix<casacore::Complex> values;
+    model.get(static_cast<casacore::rownr_t>(row), values);
+    if (correlation >= values.nrow() || channel >= values.ncolumn()) {
+        throw std::runtime_error("MODEL_DATA probe sample is out of bounds");
+    }
+    return values(correlation, channel);
+}
+
+void write_model_data_sample_impl(
+    const char* path,
+    uint64_t row,
+    uint32_t correlation,
+    uint32_t channel,
+    float real,
+    float imaginary)
+{
+    casacore::MeasurementSet ms(path, casacore::Table::Update);
+    if (row >= ms.nrow()) {
+        throw std::runtime_error("MODEL_DATA probe row is out of bounds");
+    }
+    casacore::ArrayColumn<casacore::Complex> model(ms, "MODEL_DATA");
+    casacore::Matrix<casacore::Complex> values;
+    model.get(static_cast<casacore::rownr_t>(row), values);
+    if (correlation >= values.nrow() || channel >= values.ncolumn()) {
+        throw std::runtime_error("MODEL_DATA probe sample is out of bounds");
+    }
+    values(correlation, channel) = casacore::Complex(real, imaginary);
+    model.put(static_cast<casacore::rownr_t>(row), values);
+    ms.flush();
+}
+
 }  // namespace
 
 extern "C" {
@@ -1175,6 +1335,36 @@ int32_t cpp_ms_write_basic_fixture(const char* path, char** out_error)
     }
 }
 
+int32_t cpp_ms_write_heterogeneous_tiled_shape_fixture(const char* path, char** out_error)
+{
+    try {
+        write_heterogeneous_tiled_shape_fixture_impl(path);
+        return 0;
+    } catch (const std::exception& e) {
+        *out_error = make_error(e.what());
+        return -1;
+    } catch (...) {
+        *out_error = make_error(
+            "unknown exception in cpp_ms_write_heterogeneous_tiled_shape_fixture");
+        return -1;
+    }
+}
+
+int32_t cpp_ms_verify_heterogeneous_model_clone(const char* path, char** out_error)
+{
+    try {
+        verify_heterogeneous_model_clone_impl(path);
+        return 0;
+    } catch (const std::exception& e) {
+        *out_error = make_error(e.what());
+        return -1;
+    } catch (...) {
+        *out_error = make_error(
+            "unknown exception in cpp_ms_verify_heterogeneous_model_clone");
+        return -1;
+    }
+}
+
 int32_t cpp_ms_verify_basic_fixture(const char* path, char** out_error)
 {
     try {
@@ -1185,6 +1375,50 @@ int32_t cpp_ms_verify_basic_fixture(const char* path, char** out_error)
         return -1;
     } catch (...) {
         *out_error = make_error("unknown exception in cpp_ms_verify_basic_fixture");
+        return -1;
+    }
+}
+
+int32_t cpp_ms_read_model_data_sample(
+    const char* path,
+    uint64_t row,
+    uint32_t correlation,
+    uint32_t channel,
+    float* out_real,
+    float* out_imaginary,
+    char** out_error)
+{
+    try {
+        const auto value = read_model_data_sample_impl(path, row, correlation, channel);
+        *out_real = value.real();
+        *out_imaginary = value.imag();
+        return 0;
+    } catch (const std::exception& e) {
+        *out_error = make_error(e.what());
+        return -1;
+    } catch (...) {
+        *out_error = make_error("unknown exception in cpp_ms_read_model_data_sample");
+        return -1;
+    }
+}
+
+int32_t cpp_ms_write_model_data_sample(
+    const char* path,
+    uint64_t row,
+    uint32_t correlation,
+    uint32_t channel,
+    float real,
+    float imaginary,
+    char** out_error)
+{
+    try {
+        write_model_data_sample_impl(path, row, correlation, channel, real, imaginary);
+        return 0;
+    } catch (const std::exception& e) {
+        *out_error = make_error(e.what());
+        return -1;
+    } catch (...) {
+        *out_error = make_error("unknown exception in cpp_ms_write_model_data_sample");
         return -1;
     }
 }
