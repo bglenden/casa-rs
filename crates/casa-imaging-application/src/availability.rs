@@ -173,7 +173,11 @@ pub fn validate_installed_implementation(
 const fn supports_task(requirement: TaskRequirement) -> bool {
     matches!(
         requirement,
-        TaskRequirement::ModelColumnWrite | TaskRequirement::SerialCpu | TaskRequirement::RustFft
+        TaskRequirement::Automasking
+            | TaskRequirement::MaskProduct
+            | TaskRequirement::ModelColumnWrite
+            | TaskRequirement::SerialCpu
+            | TaskRequirement::RustFft
     )
 }
 

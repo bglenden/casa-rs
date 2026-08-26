@@ -57,10 +57,10 @@ pub use major_cycle::{
 };
 pub use mask::{
     AutoMultithreshControls, AutoMultithreshEvidence, MaskBox, MaskError, ReconstructionMask,
-    ReconstructionMaskGenerationId, auto_multithresh,
+    ReconstructionMaskGenerationId, ReconstructionMaskPlan, auto_multithresh,
 };
 pub use minor_cycle::{
-    ClarkApproximation, CleanWindow, ComponentDivergence, MinorCycleComponent, MinorCycleError,
+    ClarkApproximation, ComponentDivergence, MinorCycleComponent, MinorCycleError,
     MinorCycleEvidence, MinorCycleEvidenceId, MinorCycleProgram, MinorCycleResult,
     MinorCycleStopReason, run_minor_cycle,
 };

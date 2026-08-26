@@ -6,8 +6,8 @@ use std::{
 };
 
 use casa_imaging_application::{
-    ContinuumAlgorithm, ContinuumBeamPolicy, ContinuumImagingRequest, ContinuumStopReason,
-    ContinuumWeighting, execute_continuum,
+    ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumBeamPolicy, ContinuumImagingRequest,
+    ContinuumMask, ContinuumMaskBox, ContinuumStopReason, ContinuumWeighting, execute_continuum,
 };
 use casa_ms::{
     MeasurementSet, MeasurementSetBuilder, OptionalMainColumn, SubtableId, VisibilityDataColumn,
@@ -350,6 +350,7 @@ fn request(
         threshold_jy: 0.0,
         psf_cutoff: 0.2,
         beam_policy: ContinuumBeamPolicy::PerPlane,
+        mask: ContinuumMask::FullPlane,
         save_model_column: false,
         task_requirements: Vec::new(),
     }
@@ -475,4 +476,62 @@ fn application_commits_exact_final_prediction_to_model_data() {
     assert!(model[[0, 0]].re.is_finite());
     assert!(model[[0, 0]].im.is_finite());
     assert_ne!(model[[0, 0]], Complex32::new(0.0, 0.0));
+}
+
+#[test]
+fn application_materializes_static_and_auto_masks_at_the_normal_state_boundary() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+
+    let static_ms = tiny_measurement_set(root.path());
+    let mut static_request = request(
+        static_ms,
+        root.path().join("static-mask"),
+        ContinuumAlgorithm::Hogbom,
+    );
+    static_request.mask = ContinuumMask::Boxes(vec![ContinuumMaskBox {
+        blc: [0, 0],
+        trc: [15, 15],
+    }]);
+    let static_result = execute_continuum(static_request).expect("static-mask solve");
+    assert!(
+        static_result
+            .outcome
+            .output
+            .minor_cycle
+            .expect("minor-cycle evidence")
+            .auto_mask
+            .is_none()
+    );
+
+    let auto_root = root.path().join("auto-input");
+    std::fs::create_dir(&auto_root).expect("auto fixture directory");
+    let auto_ms = tiny_measurement_set(&auto_root);
+    let mut auto_request = request(
+        auto_ms,
+        root.path().join("auto-mask"),
+        ContinuumAlgorithm::Hogbom,
+    );
+    auto_request.mask = ContinuumMask::AutoMultithresh(ContinuumAutoMaskControls {
+        sidelobe_factor: 0.0,
+        noise_factor: 0.0,
+        low_noise_factor: 0.0,
+        negative_factor: 0.0,
+        minimum_beam_fraction: 0.0,
+        smooth_factor: 1.0,
+        cut_threshold: 0.01,
+        grow_iterations: 0,
+        minimum_percent_change: -1.0,
+    });
+    let auto_result = execute_continuum(auto_request).expect("auto-mask solve");
+    let evidence = auto_result
+        .outcome
+        .output
+        .minor_cycle
+        .expect("minor-cycle evidence")
+        .auto_mask
+        .expect("auto-mask evidence");
+    assert!(evidence.robust_rms.is_finite());
+    assert!(evidence.positive_threshold.is_finite());
 }

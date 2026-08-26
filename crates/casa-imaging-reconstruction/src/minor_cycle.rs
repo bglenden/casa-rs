@@ -29,7 +29,7 @@ use thiserror::Error;
 
 use crate::{
     Encoder, FinalNormalState, FinalNormalStateCompletionId, ModelDelta, ModelGeneration,
-    ModelGenerationId, ModelLifecycle, ModelLifecycleError,
+    ModelGenerationId, ModelLifecycle, ModelLifecycleError, ReconstructionMask,
 };
 
 const MINOR_CYCLE_EVIDENCE_DOMAIN: &[u8] = b"casa-rs-minor-cycle-evidence";
@@ -246,76 +246,6 @@ impl MinorCycleProgram {
     #[must_use]
     pub const fn component_sequence_limit(&self) -> Option<usize> {
         self.component_sequence_limit
-    }
-}
-
-/// Explicit valid-support window constraining component placement.
-///
-/// Bounds are inclusive pixel coordinates `[x, y]`. Only window cells whose
-/// named model-generation sample has valid support may host a component,
-/// because only the model owner accepts delta terms on valid support.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CleanWindow {
-    blc: [usize; 2],
-    trc: [usize; 2],
-}
-
-impl CleanWindow {
-    /// Construct an inclusive window with `blc <= trc` on both axes.
-    ///
-    /// # Errors
-    ///
-    /// Rejects an inverted window.
-    pub fn new(blc: [usize; 2], trc: [usize; 2]) -> Result<Self, MinorCycleError> {
-        if blc[0] > trc[0] || blc[1] > trc[1] {
-            return Err(MinorCycleError::InvertedWindow);
-        }
-        Ok(Self { blc, trc })
-    }
-
-    /// The CASA default inner-quarter window for one plane shape.
-    #[must_use]
-    pub fn inner_quarter(shape: [usize; 2]) -> Self {
-        let half = [shape[0] / 2, shape[1] / 2];
-        let quarter = [shape[0] / 4, shape[1] / 4];
-        let mut blc = quarter;
-        let mut trc = [
-            quarter[0].saturating_add(half[0]).saturating_sub(1),
-            quarter[1].saturating_add(half[1]).saturating_sub(1),
-        ];
-        for axis in 0..2 {
-            trc[axis] = trc[axis].min(shape[axis] - 1);
-            blc[axis] = blc[axis].min(trc[axis]);
-        }
-        Self { blc, trc }
-    }
-
-    /// The full plane for one shape.
-    #[must_use]
-    pub fn full_plane(shape: [usize; 2]) -> Self {
-        Self {
-            blc: [0, 0],
-            trc: [shape[0] - 1, shape[1] - 1],
-        }
-    }
-
-    /// Return the inclusive lower bound.
-    #[must_use]
-    pub const fn blc(&self) -> [usize; 2] {
-        self.blc
-    }
-
-    /// Return the inclusive upper bound.
-    #[must_use]
-    pub const fn trc(&self) -> [usize; 2] {
-        self.trc
-    }
-
-    fn contains(&self, pixel: [usize; 2]) -> bool {
-        pixel[0] >= self.blc[0]
-            && pixel[0] <= self.trc[0]
-            && pixel[1] >= self.blc[1]
-            && pixel[1] <= self.trc[1]
     }
 }
 
@@ -623,14 +553,14 @@ pub enum MinorCycleError {
     /// Component-sequence recording requested a zero capacity.
     #[error("component-sequence recording requires a non-zero limit")]
     InvalidRecordingLimit,
-    /// The window bounds were inverted.
-    #[error("clean window requires blc <= trc on both axes")]
-    InvertedWindow,
-    /// The window lay partly or wholly outside the normal-state plane.
-    #[error("clean window lies outside the normal-state plane")]
-    WindowOutsidePlane,
-    /// The window contained no valid model support at all.
-    #[error("clean window contains no valid model support")]
+    /// The reconstruction mask belongs to another problem, model, or normal state.
+    #[error("reconstruction mask lineage does not match the minor-cycle input")]
+    ForeignMask,
+    /// The reconstruction mask shape differs from the normal-state plane.
+    #[error("reconstruction mask shape differs from the normal-state plane")]
+    MaskShapeMismatch,
+    /// The reconstruction mask intersects no valid model support.
+    #[error("reconstruction mask contains no valid model support")]
     EmptyValidSupport,
     /// The named generation does not match the single-plane constant-basis
     /// normal-state geometry.
@@ -648,6 +578,9 @@ pub enum MinorCycleError {
     /// The model lifecycle owner rejected delta validation or minting.
     #[error(transparent)]
     Lifecycle(#[from] crate::ModelLifecycleError),
+    /// Reconstruction-mask materialization failed.
+    #[error(transparent)]
+    Mask(#[from] crate::MaskError),
 }
 
 impl From<casa_imaging_model::ModelContractError> for MinorCycleError {
@@ -679,7 +612,7 @@ pub fn run_minor_cycle(
     lifecycle: &ModelLifecycle,
     base: &ModelGeneration,
     view: &FinalNormalState,
-    window: CleanWindow,
+    mask: &ReconstructionMask,
     controls: MinorCycleProgram,
 ) -> Result<MinorCycleResult, MinorCycleError> {
     let shape = view.shape();
@@ -695,8 +628,16 @@ pub fn run_minor_cycle(
     if base.generation_id() != view.final_model_generation() {
         return Err(MinorCycleError::ForeignNormalState);
     }
-    if window.trc()[0] >= shape[0] || window.trc()[1] >= shape[1] {
-        return Err(MinorCycleError::WindowOutsidePlane);
+    if mask.shape() != shape {
+        return Err(MinorCycleError::MaskShapeMismatch);
+    }
+    if mask.problem_id() != view.problem_id()
+        || mask.model_generation() != base.generation_id()
+        || mask
+            .normal_state_completion()
+            .is_some_and(|completion| completion != view.completion_id())
+    {
+        return Err(MinorCycleError::ForeignMask);
     }
 
     // The PSF peak normalization follows the reference cleaner: peaks are
@@ -766,7 +707,7 @@ pub fn run_minor_cycle(
                 shape,
                 psf_peak_pixel,
                 base,
-                window,
+                mask,
                 kernels,
             )
             .ok_or(MinorCycleError::EmptyValidSupport)?;
@@ -782,7 +723,7 @@ pub fn run_minor_cycle(
                 |value| *value,
                 |pixel| {
                     let index = pixel[0] * shape[1] + pixel[1];
-                    window.contains(pixel)
+                    mask.contains(pixel)
                         && valid_support(base, shape, pixel)
                         && clark_active.as_ref().is_none_or(|active| active[index])
                 },
@@ -907,7 +848,7 @@ pub fn run_minor_cycle(
         base.generation_id(),
         view.completion_id(),
         view.content_identity(),
-        &window,
+        mask,
         &controls,
         iterations,
         total_flux,
@@ -1123,7 +1064,7 @@ fn select_multiscale_candidate(
     shape: [usize; 2],
     psf_peak: [usize; 2],
     base: &ModelGeneration,
-    window: CleanWindow,
+    mask: &ReconstructionMask,
     kernels: &[ScaleKernel],
 ) -> Option<MultiscaleCandidate> {
     let mut best = None;
@@ -1134,7 +1075,7 @@ fn select_multiscale_candidate(
         }
         for index in 0..residual.len() {
             let pixel = plane_pixel(index, shape);
-            if !kernel_fits(base, shape, pixel, window, kernel) {
+            if !kernel_fits(base, shape, pixel, mask, kernel) {
                 continue;
             }
             let dirty = kernel
@@ -1194,12 +1135,12 @@ fn kernel_fits(
     base: &ModelGeneration,
     shape: [usize; 2],
     centre: [usize; 2],
-    window: CleanWindow,
+    mask: &ReconstructionMask,
     kernel: &ScaleKernel,
 ) -> bool {
     kernel.samples.iter().all(|(offset, _)| {
         offset_pixel(centre, *offset, shape)
-            .is_some_and(|pixel| window.contains(pixel) && valid_support(base, shape, pixel))
+            .is_some_and(|pixel| mask.contains(pixel) && valid_support(base, shape, pixel))
     })
 }
 
@@ -1340,7 +1281,7 @@ fn minor_cycle_evidence_id(
     input_generation: ModelGenerationId,
     normal_state_completion: FinalNormalStateCompletionId,
     normal_state_content: LogicalIdentity,
-    window: &CleanWindow,
+    mask: &ReconstructionMask,
     controls: &MinorCycleProgram,
     iterations: usize,
     total_flux: f64,
@@ -1355,10 +1296,7 @@ fn minor_cycle_evidence_id(
     encoder.identity(input_generation.as_bytes());
     encoder.identity(normal_state_completion.as_bytes());
     encoder.identity(normal_state_content.as_bytes());
-    encoder.usize(window.blc()[0]);
-    encoder.usize(window.blc()[1]);
-    encoder.usize(window.trc()[0]);
-    encoder.usize(window.trc()[1]);
+    encoder.identity(mask.generation_id().as_bytes());
     match controls.algorithm() {
         ReconstructionAlgorithm::Hogbom => encoder.u8(0),
         ReconstructionAlgorithm::Clark => encoder.u8(1),

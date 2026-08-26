@@ -5,8 +5,9 @@
 use std::time::Instant;
 
 use casa_imaging_application::{
-    ContinuumAlgorithm, ContinuumBeamPolicy, ContinuumImagingRequest, ContinuumStopReason,
-    ContinuumWeighting, TaskRequirement, execute_continuum,
+    ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumBeamPolicy, ContinuumImagingRequest,
+    ContinuumMask, ContinuumMaskBox, ContinuumStopReason, ContinuumWeighting, TaskRequirement,
+    execute_continuum,
 };
 
 use super::{
@@ -89,6 +90,32 @@ fn application_request(config: &CliConfig) -> ContinuumImagingRequest {
             RestoringBeamMode::PerPlane => ContinuumBeamPolicy::PerPlane,
             RestoringBeamMode::Common => ContinuumBeamPolicy::Common,
         },
+        mask: match config.use_mask {
+            CleanMaskMode::AutoMultiThreshold => {
+                ContinuumMask::AutoMultithresh(ContinuumAutoMaskControls {
+                    sidelobe_factor: f64::from(config.auto_mask.sidelobe_threshold),
+                    noise_factor: f64::from(config.auto_mask.noise_threshold),
+                    low_noise_factor: f64::from(config.auto_mask.low_noise_threshold),
+                    negative_factor: f64::from(config.auto_mask.negative_threshold),
+                    minimum_beam_fraction: f64::from(config.auto_mask.min_beam_frac),
+                    smooth_factor: f64::from(config.auto_mask.smooth_factor),
+                    cut_threshold: f64::from(config.auto_mask.cut_threshold),
+                    grow_iterations: config.auto_mask.grow_iterations,
+                    minimum_percent_change: f64::from(config.auto_mask.min_percent_change),
+                })
+            }
+            CleanMaskMode::User if config.mask_boxes.is_empty() => ContinuumMask::FullPlane,
+            CleanMaskMode::User => ContinuumMask::Boxes(
+                config
+                    .mask_boxes
+                    .iter()
+                    .map(|region| ContinuumMaskBox {
+                        blc: [region[0], region[1]],
+                        trc: [region[2], region[3]],
+                    })
+                    .collect(),
+            ),
+        },
         save_model_column: config.save_model == SaveModelMode::ModelColumn,
         task_requirements: task_requirements(config),
     }
@@ -170,6 +197,7 @@ fn backend_requirements(config: &CliConfig) -> Vec<TaskRequirement> {
 
 fn unsupported_native_controls(config: &CliConfig) -> bool {
     config.phasecenter_field.is_some()
+        || config.mask_image.is_some()
         || config.phasecenter.is_some()
         || config
             .correlation

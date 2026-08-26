@@ -13,9 +13,9 @@ use casa_imaging_model::{
     CompiledProblem, LogicalIdentity, ModelDeltaTerm, ModelExecutionAttemptId, ModelInputCommitment,
 };
 use casa_imaging_reconstruction::{
-    CleanWindow, ExecutableModelProblem, FinalModelCompletion, FinalModelContinuation,
-    FinalNormalState, MajorCyclePreparation, MinorCycleError, MinorCycleEvidence,
-    MinorCycleProgram, ModelDeltaId, ModelLifecycle, run_minor_cycle,
+    ExecutableModelProblem, FinalModelCompletion, FinalModelContinuation, FinalNormalState,
+    MajorCyclePreparation, MinorCycleError, MinorCycleEvidence, MinorCycleProgram, ModelDeltaId,
+    ModelLifecycle, ReconstructionMaskPlan, run_minor_cycle,
 };
 
 use crate::{
@@ -425,7 +425,7 @@ impl FinalMajorPhaseInput {
 
 struct SerialMinorCycleExecution {
     node: crate::WorkNodeId,
-    window: CleanWindow,
+    mask: ReconstructionMaskPlan,
     program: MinorCycleProgram,
 }
 
@@ -485,12 +485,12 @@ impl SerialContinuumExecutor {
     pub fn with_minor_cycle(
         mut self,
         node: crate::WorkNodeId,
-        window: CleanWindow,
+        mask: ReconstructionMaskPlan,
         program: MinorCycleProgram,
     ) -> Self {
         self.minor_cycle = Some(SerialMinorCycleExecution {
             node,
-            window,
+            mask,
             program,
         });
         self
@@ -714,7 +714,7 @@ impl WorkImplementation for SerialContinuumExecutor {
                 .ok_or_else(|| io::Error::other("model lifecycle missing"))?;
             state.minor_completion = Some(
                 InitialMajorPhaseCompletion::new(result)
-                    .run_minor_cycle(lifecycle, minor.window, minor.program.clone())
+                    .run_minor_cycle(lifecycle, &minor.mask, minor.program.clone())
                     .map_err(io::Error::other)?,
             );
         } else if context.node().id == *fragment.release_node() {
@@ -850,16 +850,17 @@ impl InitialMajorPhaseCompletion {
     pub fn run_minor_cycle(
         self,
         lifecycle: &ModelLifecycle,
-        window: CleanWindow,
+        mask_plan: &ReconstructionMaskPlan,
         program: MinorCycleProgram,
     ) -> Result<MinorCyclePhaseCompletion, MinorCycleError> {
         let completion = self.result.into_completion();
         let (normal_state, continuation) = completion.into_continuation();
+        let (mask, auto_mask) = mask_plan.materialize(continuation.generation(), &normal_state)?;
         let minor = run_minor_cycle(
             lifecycle,
             continuation.generation(),
             &normal_state,
-            window,
+            &mask,
             program,
         )?;
         let (delta, evidence) = minor.into_parts();
@@ -868,6 +869,7 @@ impl InitialMajorPhaseCompletion {
             continuation,
             delta,
             evidence,
+            auto_mask,
         })
     }
 }
@@ -878,6 +880,7 @@ pub struct MinorCyclePhaseCompletion {
     continuation: FinalModelContinuation,
     delta: Option<casa_imaging_reconstruction::ModelDelta>,
     evidence: MinorCycleEvidence,
+    auto_mask: Option<casa_imaging_reconstruction::AutoMultithreshEvidence>,
 }
 
 impl MinorCyclePhaseCompletion {
@@ -885,6 +888,14 @@ impl MinorCyclePhaseCompletion {
     #[must_use]
     pub const fn evidence(&self) -> &MinorCycleEvidence {
         &self.evidence
+    }
+
+    /// Return auto-multithreshold diagnostics when that mask mode was selected.
+    #[must_use]
+    pub const fn auto_mask_evidence(
+        &self,
+    ) -> Option<casa_imaging_reconstruction::AutoMultithreshEvidence> {
+        self.auto_mask
     }
 
     /// Consume the accepted model update into mandatory final-major preparation.

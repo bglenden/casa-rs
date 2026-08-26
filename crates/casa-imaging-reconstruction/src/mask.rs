@@ -44,6 +44,132 @@ pub struct MaskBox {
     trc: [usize; 2],
 }
 
+/// Deferred static mask construction evaluated at an exact major-cycle boundary.
+#[derive(Debug, Clone)]
+pub enum ReconstructionMaskPlan {
+    /// Admit every model-support pixel.
+    FullPlane {
+        /// Target model direction coordinate.
+        coordinate: DirectionCoordinateSpec,
+    },
+    /// Admit the union of explicit target-grid boxes.
+    Boxes {
+        /// Target model direction coordinate.
+        coordinate: DirectionCoordinateSpec,
+        /// Inclusive target-grid regions.
+        boxes: Vec<MaskBox>,
+    },
+    /// Generate CASA auto-multithreshold support from the current Normal State.
+    AutoMultithresh {
+        /// Target model direction coordinate.
+        coordinate: DirectionCoordinateSpec,
+        /// Thresholding, pruning, smoothing, and growth controls.
+        controls: AutoMultithreshControls,
+        /// Number of completed major cycles before this boundary.
+        completed_major_cycles: usize,
+        /// Whether the previous cycle reached its stopping threshold.
+        cycle_threshold_reached: bool,
+        /// Prior immutable mask generation, when another cycle already ran.
+        previous: Option<Box<ReconstructionMask>>,
+    },
+}
+
+impl ReconstructionMaskPlan {
+    /// Materialize one immutable generation for the exact current model.
+    pub fn materialize(
+        &self,
+        base: &crate::ModelGeneration,
+        normal: &FinalNormalState,
+    ) -> Result<(ReconstructionMask, Option<AutoMultithreshEvidence>), MaskError> {
+        let problem = normal.problem_id();
+        let model_generation = base.generation_id();
+        let shape = normal.shape();
+        match self {
+            Self::FullPlane { coordinate } => Ok((
+                ReconstructionMask::full_plane(problem, model_generation, *coordinate, shape)?,
+                None,
+            )),
+            Self::Boxes { coordinate, boxes } => Ok((
+                ReconstructionMask::from_boxes(
+                    problem,
+                    model_generation,
+                    *coordinate,
+                    shape,
+                    boxes.iter().copied(),
+                )?,
+                None,
+            )),
+            Self::AutoMultithresh {
+                coordinate,
+                controls,
+                completed_major_cycles,
+                cycle_threshold_reached,
+                previous,
+            } => {
+                let valid_support = base
+                    .samples()
+                    .iter()
+                    .map(|sample| sample.support() == casa_imaging_model::ModelSupport::Valid)
+                    .collect::<Vec<_>>();
+                let beam_area_pixels = estimate_beam_area_pixels(normal)?;
+                let (mask, evidence) = auto_multithresh(
+                    problem,
+                    model_generation,
+                    *coordinate,
+                    normal,
+                    previous.as_deref(),
+                    &valid_support,
+                    *completed_major_cycles,
+                    *cycle_threshold_reached,
+                    beam_area_pixels,
+                    *controls,
+                )?;
+                Ok((mask, Some(evidence)))
+            }
+        }
+    }
+}
+
+fn estimate_beam_area_pixels(normal: &FinalNormalState) -> Result<f64, MaskError> {
+    let shape = normal.shape();
+    let psf = normal.normal_approximation();
+    let Some((peak_index, peak)) = psf
+        .iter()
+        .enumerate()
+        .map(|(index, value)| (index, value.re))
+        .max_by(|left, right| left.1.total_cmp(&right.1))
+    else {
+        return Err(MaskError::InvalidBeamArea);
+    };
+    if !peak.is_finite() || peak <= 0.0 {
+        return Err(MaskError::InvalidBeamArea);
+    }
+    let peak_pixel = [peak_index / shape[1], peak_index % shape[1]];
+    let half = peak * 0.5;
+    let width = |axis: usize| {
+        let mut low = peak_pixel[axis];
+        let mut high = peak_pixel[axis];
+        while low > 0 {
+            let mut pixel = peak_pixel;
+            pixel[axis] = low - 1;
+            if psf[pixel[0] * shape[1] + pixel[1]].re < half {
+                break;
+            }
+            low -= 1;
+        }
+        while high + 1 < shape[axis] {
+            let mut pixel = peak_pixel;
+            pixel[axis] = high + 1;
+            if psf[pixel[0] * shape[1] + pixel[1]].re < half {
+                break;
+            }
+            high += 1;
+        }
+        (high - low + 1) as f64
+    };
+    Ok(std::f64::consts::PI * width(0) * width(1) / (4.0 * std::f64::consts::LN_2))
+}
+
 impl MaskBox {
     /// Construct an inclusive non-inverted box.
     pub fn new(blc: [usize; 2], trc: [usize; 2]) -> Result<Self, MaskError> {
@@ -79,6 +205,26 @@ pub struct ReconstructionMask {
 }
 
 impl ReconstructionMask {
+    /// Mint the all-valid default support for one exact model grid.
+    pub fn full_plane(
+        problem: CompiledProblemId,
+        model_generation: ModelGenerationId,
+        coordinate: DirectionCoordinateSpec,
+        shape: [usize; 2],
+    ) -> Result<Self, MaskError> {
+        validate_shape(shape)?;
+        Self::mint(
+            problem,
+            model_generation,
+            None,
+            coordinate,
+            shape,
+            vec![true; shape[0] * shape[1]],
+            2,
+            &[],
+        )
+    }
+
     /// Compile target-grid pixel boxes into one static mask generation.
     pub fn from_boxes(
         problem: CompiledProblemId,
@@ -174,6 +320,12 @@ impl ReconstructionMask {
     #[must_use]
     pub const fn generation_id(&self) -> ReconstructionMaskGenerationId {
         self.generation
+    }
+
+    /// Return the compiled problem whose model grid this mask constrains.
+    #[must_use]
+    pub const fn problem_id(&self) -> CompiledProblemId {
+        self.problem
     }
 
     /// Return the exact model generation constrained by this mask.
@@ -411,7 +563,9 @@ pub fn auto_multithresh(
         100.0 * changed_pixels as f64 / previous_pixels as f64
     };
     let channel_stopped = support.iter().all(|value| !*value)
-        || (cycle_threshold_reached && percent_change <= controls.minimum_percent_change);
+        || (controls.minimum_percent_change >= 0.0
+            && cycle_threshold_reached
+            && percent_change <= controls.minimum_percent_change);
     let mut source = Encoder::new(b"casa-rs-auto-multithresh-evidence", 1);
     source.identity(normal.completion_id().as_bytes());
     source.u64(crate::canonical_f64_bits(positive_threshold));
@@ -444,6 +598,9 @@ pub fn auto_multithresh(
 /// Mask construction or lineage failure.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum MaskError {
+    /// The current PSF cannot define a finite positive beam area.
+    #[error("normal-state PSF cannot define a finite positive beam area")]
+    InvalidBeamArea,
     /// A pixel box is inverted.
     #[error("mask box requires blc <= trc")]
     InvertedBox,
@@ -496,10 +653,9 @@ fn validate_auto_controls(
         controls.minimum_percent_change,
         beam_area_pixels,
     ];
-    if values
-        .iter()
-        .any(|value| !value.is_finite() || *value < 0.0)
-        || controls.cut_threshold > 1.0
+    if values.iter().enumerate().any(|(index, value)| {
+        !value.is_finite() || (*value < 0.0 && index != 7) || (index == 7 && *value < -1.0)
+    }) || controls.cut_threshold > 1.0
         || beam_area_pixels == 0.0
     {
         Err(MaskError::InvalidAutoControls)

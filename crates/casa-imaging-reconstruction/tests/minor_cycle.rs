@@ -34,8 +34,8 @@ use casa_imaging_model::{
     compile, compile_observation,
 };
 use casa_imaging_reconstruction::{
-    AutoMultithreshControls, CleanWindow, ExecutableModelProblem, FinalModelCompletion,
-    FinalNormalState, MajorCycleOwner, MajorCyclePreparation, MaskBox, MinorCycleError,
+    AutoMultithreshControls, ExecutableModelProblem, FinalModelCompletion, FinalNormalState,
+    MajorCycleOwner, MajorCyclePreparation, MaskBox, MinorCycleError,
     MinorCycleProgram as HogbomControls, MinorCycleStopReason, ModelGeneration, ModelLifecycle,
     ModelLifecycleError, ReconstructionMask, SerialMfsSpecification, WeightingAlgorithmState,
     WeightingError, WeightingExecutionLimits, WeightingPlan, WeightingReplayChunk,
@@ -45,6 +45,43 @@ use casa_imaging_reconstruction::{
 };
 
 const SHAPE: [usize; 2] = [8, 8];
+
+fn mask_coordinate(shape: [usize; 2]) -> DirectionCoordinateSpec {
+    DirectionCoordinateSpec::new(
+        Projection::Sin,
+        SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
+        [shape[0] as f64 / 2.0, shape[1] as f64 / 2.0],
+        [-1.0e-6, 1.0e-6],
+        [[1.0, 0.0], [0.0, 1.0]],
+        [180.0, 0.0],
+    )
+}
+
+fn full_mask(normal: &FinalNormalState, model: &ModelGeneration) -> ReconstructionMask {
+    ReconstructionMask::full_plane(
+        normal.problem_id(),
+        model.generation_id(),
+        mask_coordinate(normal.shape()),
+        normal.shape(),
+    )
+    .expect("full reconstruction mask")
+}
+
+fn box_mask(
+    normal: &FinalNormalState,
+    model: &ModelGeneration,
+    blc: [usize; 2],
+    trc: [usize; 2],
+) -> ReconstructionMask {
+    ReconstructionMask::from_boxes(
+        normal.problem_id(),
+        model.generation_id(),
+        mask_coordinate(normal.shape()),
+        normal.shape(),
+        [MaskBox::new(blc, trc).expect("ordered mask box")],
+    )
+    .expect("nonempty reconstruction mask")
+}
 
 fn identity(seed: u8, scope: u8) -> LogicalIdentity {
     let mut bytes = [seed; 32];
@@ -498,36 +535,6 @@ fn residual_peak(normal_state_residual: &[num_complex::Complex64]) -> f64 {
         .fold(0.0_f64, f64::max)
 }
 
-mod window_geometry {
-    use super::*;
-
-    #[test]
-    fn inner_quarter_matches_the_reference_default_for_one_shape() {
-        let window = CleanWindow::inner_quarter([8, 8]);
-        assert_eq!(window.blc(), [2, 2]);
-        assert_eq!(window.trc(), [5, 5]);
-
-        // Tiny shapes clamp into the plane instead of underflowing.
-        let tiny = CleanWindow::inner_quarter([1, 1]);
-        assert_eq!((tiny.blc(), tiny.trc()), ([0, 0], [0, 0]));
-        let two = CleanWindow::inner_quarter([2, 2]);
-        assert_eq!(two.blc(), [0, 0]);
-        assert_eq!(two.trc(), [0, 0]);
-    }
-
-    #[test]
-    fn inverted_windows_fail_the_constructor() {
-        assert!(matches!(
-            CleanWindow::new([3, 0], [2, 7]),
-            Err(MinorCycleError::InvertedWindow)
-        ));
-        assert!(matches!(
-            CleanWindow::new([0, 4], [7, 3]),
-            Err(MinorCycleError::InvertedWindow)
-        ));
-    }
-}
-
 #[test]
 fn static_and_auto_masks_share_explicit_geometry_and_generation_lineage() {
     let round = first_confirm_round(185, 186);
@@ -719,7 +726,7 @@ fn minor_cycle_delta_composes_with_the_next_major_cycle_reconciliation() {
         &lifecycle,
         &round.final_model,
         &round.normal_state,
-        CleanWindow::full_plane(SHAPE),
+        &full_mask(&round.normal_state, &round.final_model),
         controls(),
     )
     .expect("bounded Högbom solve");
@@ -947,7 +954,7 @@ fn threshold_stop_converges_without_a_delta_or_a_reconciliation_request() {
         &lifecycle,
         &round.final_model,
         &round.normal_state,
-        CleanWindow::inner_quarter(SHAPE),
+        &box_mask(&round.normal_state, &round.final_model, [2, 2], [5, 5]),
         converging_controls.clone(),
     )
     .expect("bounded Högbom solve");
@@ -967,7 +974,7 @@ fn threshold_stop_converges_without_a_delta_or_a_reconciliation_request() {
         &other_lifecycle,
         &round.final_model,
         &round.normal_state,
-        CleanWindow::inner_quarter(SHAPE),
+        &box_mask(&round.normal_state, &round.final_model, [2, 2], [5, 5]),
         converging_controls,
     )
     .expect("repeat solve");
@@ -996,7 +1003,7 @@ fn iteration_bound_stops_with_an_explicit_reconciliation_request() {
         &lifecycle,
         &round.final_model,
         &round.normal_state,
-        CleanWindow::full_plane(SHAPE),
+        &full_mask(&round.normal_state, &round.final_model),
         bounded.clone(),
     )
     .expect("bounded Högbom solve");
@@ -1026,7 +1033,7 @@ fn staleness_bound_rejects_the_candidate_before_any_state_advances() {
         &lifecycle,
         &round.final_model,
         &round.normal_state,
-        CleanWindow::full_plane(SHAPE),
+        &full_mask(&round.normal_state, &round.final_model),
         tight,
     )
     .expect("bounded Högbom solve");
@@ -1062,7 +1069,7 @@ fn returned_deltas_never_exceed_the_accepted_view_envelope() {
         &lifecycle,
         &round.final_model,
         &round.normal_state,
-        CleanWindow::full_plane(SHAPE),
+        &full_mask(&round.normal_state, &round.final_model),
         bounded.clone(),
     )
     .expect("bounded Högbom solve");
@@ -1114,7 +1121,7 @@ fn threshold_boundary_follows_the_casa_hogbom_convention() {
             &lifecycle,
             &round.final_model,
             &round.normal_state,
-            CleanWindow::full_plane(SHAPE),
+            &full_mask(&round.normal_state, &round.final_model),
             HogbomControls::new(0.5, threshold, 64, 1.0e30).expect("valid controls"),
         )
         .expect("boundary solve")
@@ -1175,7 +1182,7 @@ fn clark_uses_a_derived_bounded_patch_and_stops_at_threshold_equality() {
         &lifecycle,
         &round.final_model,
         &round.normal_state,
-        CleanWindow::full_plane(SHAPE),
+        &full_mask(&round.normal_state, &round.final_model),
         program,
     )
     .expect("Clark threshold-boundary solve");
@@ -1208,7 +1215,7 @@ fn multiscale_zero_scale_matches_the_point_component_and_extended_scale_spreads_
         &point_lifecycle,
         &round.final_model,
         &round.normal_state,
-        CleanWindow::full_plane(SHAPE),
+        &full_mask(&round.normal_state, &round.final_model),
         HogbomControls::for_algorithm(ReconstructionAlgorithm::Clark, compiled)
             .expect("point program"),
     )
@@ -1217,7 +1224,7 @@ fn multiscale_zero_scale_matches_the_point_component_and_extended_scale_spreads_
         &scale_lifecycle,
         &round.final_model,
         &round.normal_state,
-        CleanWindow::full_plane(SHAPE),
+        &full_mask(&round.normal_state, &round.final_model),
         HogbomControls::for_algorithm(
             ReconstructionAlgorithm::Multiscale {
                 scales_px: vec![0.0],
@@ -1236,7 +1243,7 @@ fn multiscale_zero_scale_matches_the_point_component_and_extended_scale_spreads_
         &extended_lifecycle,
         &round.final_model,
         &round.normal_state,
-        CleanWindow::full_plane(SHAPE),
+        &full_mask(&round.normal_state, &round.final_model),
         HogbomControls::for_algorithm(
             ReconstructionAlgorithm::Multiscale {
                 scales_px: vec![3.0],
@@ -1315,7 +1322,7 @@ fn window_and_valid_support_constrain_component_placement() {
         &open,
         &final_model,
         &normal_state,
-        CleanWindow::full_plane(SHAPE),
+        &full_mask(&normal_state, &final_model),
         solving_controls.clone(),
     )
     .expect("bounded solve over seeded support");
@@ -1331,26 +1338,26 @@ fn window_and_valid_support_constrain_component_placement() {
         );
     }
 
-    // A window restricted to the invalid pixel has no valid support at all.
-    let invalid_only = CleanWindow::new([3, 3], [3, 3]).expect("single-cell window");
+    // A mask restricted to the invalid pixel has no valid support at all.
+    let invalid_only = box_mask(&normal_state, &final_model, [3, 3], [3, 3]);
     assert!(matches!(
         hogbom_minor_cycle(
             &open,
             &final_model,
             &normal_state,
-            invalid_only,
+            &invalid_only,
             HogbomControls::new(0.5, 0.0, 8, 1.0e30).expect("valid controls"),
         ),
         Err(MinorCycleError::EmptyValidSupport)
     ));
 
-    // Components respect the declared window bounds.
-    let quarter_window = CleanWindow::inner_quarter(SHAPE);
+    // Components respect the declared mask support.
+    let quarter_mask = box_mask(&normal_state, &final_model, [2, 2], [5, 5]);
     let quarter_outcome = hogbom_minor_cycle(
         &open,
         &final_model,
         &normal_state,
-        quarter_window,
+        &quarter_mask,
         solving_controls,
     )
     .expect("quarter-window solve");
@@ -1360,13 +1367,12 @@ fn window_and_valid_support_constrain_component_placement() {
         .expect("recording requested")
     {
         let pixel = component.cell().pixel();
-        assert!(pixel[0] >= quarter_window.blc()[0] && pixel[0] <= quarter_window.trc()[0]);
-        assert!(pixel[1] >= quarter_window.blc()[1] && pixel[1] <= quarter_window.trc()[1]);
+        assert!(quarter_mask.contains(pixel));
     }
 }
 
 #[test]
-fn mismatched_lineage_geometry_and_windows_fail_closed() {
+fn mismatched_lineage_geometry_and_masks_fail_closed() {
     let round = first_confirm_round(62, 63);
 
     // A generation minted by another lifecycle authority is foreign even with
@@ -1379,7 +1385,7 @@ fn mismatched_lineage_geometry_and_windows_fail_closed() {
             &other_lifecycle,
             &foreign_base,
             &round.normal_state,
-            CleanWindow::full_plane(SHAPE),
+            &full_mask(&round.normal_state, &round.final_model),
             controls(),
         ),
         Err(MinorCycleError::ForeignNormalState)
@@ -1396,7 +1402,7 @@ fn mismatched_lineage_geometry_and_windows_fail_closed() {
             &wide_lifecycle,
             &wide_base,
             &round.normal_state,
-            CleanWindow::full_plane(SHAPE),
+            &full_mask(&round.normal_state, &round.final_model),
             controls(),
         ),
         Err(MinorCycleError::ModelShapeMismatch)
@@ -1409,17 +1415,18 @@ fn mismatched_lineage_geometry_and_windows_fail_closed() {
     );
     let lifecycle = bind_lifecycle(&continuation, 67, 15);
 
-    // Windows must lie inside the plane.
+    // Static masks must lie inside the plane before solver admission.
     assert!(matches!(
-        hogbom_minor_cycle(
-            &lifecycle,
-            &round.final_model,
-            &round.normal_state,
-            CleanWindow::new([6, 6], [10, 10]).expect("ordered window"),
-            controls(),
+        ReconstructionMask::from_boxes(
+            round.normal_state.problem_id(),
+            round.final_model.generation_id(),
+            mask_coordinate(SHAPE),
+            SHAPE,
+            [MaskBox::new([6, 6], [10, 10]).expect("ordered box")],
         ),
-        Err(MinorCycleError::WindowOutsidePlane)
+        Err(casa_imaging_reconstruction::MaskError::OutsideTarget)
     ));
+    let _ = lifecycle;
 }
 
 #[test]
@@ -1436,7 +1443,7 @@ fn component_sequence_divergence_is_informational_only() {
         &first,
         &round.final_model,
         &round.normal_state,
-        CleanWindow::full_plane(SHAPE),
+        &full_mask(&round.normal_state, &round.final_model),
         controls(),
     )
     .expect("baseline solve");
@@ -1448,7 +1455,7 @@ fn component_sequence_divergence_is_informational_only() {
         &second,
         &round.final_model,
         &round.normal_state,
-        CleanWindow::full_plane(SHAPE),
+        &full_mask(&round.normal_state, &round.final_model),
         halved_gain,
     )
     .expect("candidate solve");
@@ -1477,7 +1484,7 @@ fn component_sequence_divergence_is_informational_only() {
         &third,
         &round.final_model,
         &round.normal_state,
-        CleanWindow::full_plane(SHAPE),
+        &full_mask(&round.normal_state, &round.final_model),
         shorter_controls,
     )
     .expect("short-recording solve");
@@ -1496,7 +1503,7 @@ fn component_sequence_divergence_is_informational_only() {
         &fourth,
         &round.final_model,
         &round.normal_state,
-        CleanWindow::full_plane(SHAPE),
+        &full_mask(&round.normal_state, &round.final_model),
         unrecorded_controls,
     )
     .expect("unrecorded solve");

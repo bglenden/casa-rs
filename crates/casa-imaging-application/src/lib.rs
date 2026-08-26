@@ -17,8 +17,9 @@ pub use availability::{
 };
 pub use casa_product_sink::CasaImageProductSink;
 pub use continuum_request::{
-    ContinuumAlgorithm, ContinuumBeamPolicy, ContinuumImagingRequest, ContinuumImagingResult,
-    ContinuumStopReason, ContinuumWeighting, execute_continuum,
+    ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumBeamPolicy, ContinuumImagingRequest,
+    ContinuumImagingResult, ContinuumMask, ContinuumMaskBox, ContinuumStopReason,
+    ContinuumWeighting, execute_continuum,
 };
 
 use std::{error::Error, fmt, io};
@@ -34,8 +35,8 @@ use casa_imaging_products::{
     VisibilityProductCompletion, produce_continuum_members,
 };
 use casa_imaging_reconstruction::{
-    CleanWindow, ExecutableModelProblem, MajorCycleCompletion, MinorCycleProgram,
-    MinorCycleStopReason, WeightingExecutionLimits,
+    ExecutableModelProblem, MajorCycleCompletion, MinorCycleProgram, MinorCycleStopReason,
+    ReconstructionMaskPlan, WeightingExecutionLimits,
 };
 use casa_imaging_runtime::{
     AttemptBoundObservationCompletion, BuildIdentity, ExecutionAttemptId, ExecutionProvenance,
@@ -97,6 +98,8 @@ pub struct ApplicationRequest<S> {
     pub geometry: GeometryInput,
     /// Initial-model lifecycle contract.
     pub model_lifecycle: ModelLifecycleRequirements,
+    /// Deferred reconstruction-mask owner input.
+    pub mask: ReconstructionMaskPlan,
     /// Storage-owner request for the single selected MeasurementSet.
     pub observation: SelectedObservationResolutionRequest,
     /// Whether final paired-operator predictions are committed to `MODEL_DATA`.
@@ -154,6 +157,8 @@ pub struct NativeMinorCycleOutcome {
     pub final_peak_flux: f64,
     /// Scientific terminal reason.
     pub stop_reason: MinorCycleStopReason,
+    /// Auto-multithreshold diagnostics, when that mask mode generated support.
+    pub auto_mask: Option<casa_imaging_reconstruction::AutoMultithreshEvidence>,
 }
 
 /// Whole-run result from the sole installed implementation.
@@ -189,6 +194,7 @@ where
         observation: request.observation,
         initial_access: access,
         write_model_column: request.write_model_column,
+        mask: request.mask,
         native: request.native,
     };
     let output = run_native(&problem, input).map_err(ApplicationDispatchError::Native)?;
@@ -201,6 +207,7 @@ struct NativeInput<S> {
     observation: SelectedObservationResolutionRequest,
     initial_access: ResolvedSelectedObservationAccess,
     write_model_column: bool,
+    mask: ReconstructionMaskPlan,
     native: Result<ApplicationNative<S>, ApplicationError>,
 }
 
@@ -252,11 +259,9 @@ where
             algorithm.clone(),
             problem.reconstruction().controls(),
         )?;
-        let domain = &problem.geometry().domains()[0];
-        let [width, height] = domain.shape().pixels();
         executor = executor.with_minor_cycle(
             minor_node.ok_or_else(|| boxed("initial plan omitted its minor-cycle node"))?,
-            CleanWindow::new([0, 0], [width - 1, height - 1])?,
+            input.mask.clone(),
             program,
         );
     }
@@ -307,6 +312,7 @@ where
                     iterations: minor.evidence().iterations(),
                     final_peak_flux: minor.evidence().final_peak_flux(),
                     stop_reason: minor.evidence().stop_reason(),
+                    auto_mask: minor.auto_mask_evidence(),
                 });
                 let final_input = minor.into_final_major_input();
                 let resolved = resolve_selected_observation(input.observation.clone())?;

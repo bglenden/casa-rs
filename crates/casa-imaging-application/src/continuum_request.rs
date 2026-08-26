@@ -31,7 +31,9 @@ use casa_imaging_model::{
     VisibilityColumn as OwnerVisibilityColumn, VisibilityInnerProduct,
     WeightColumn as OwnerWeightColumn, WeightDensityScope, WeightingContract, WeightingScheme,
 };
-use casa_imaging_reconstruction::{MinorCycleStopReason, WeightingExecutionLimits};
+use casa_imaging_reconstruction::{
+    MinorCycleStopReason, ReconstructionMaskPlan, WeightingExecutionLimits,
+};
 use casa_imaging_runtime::{
     BuildIdentity, ExecutionAttemptId, ExecutionReceiptStore, ImplementationRegistryId,
     PlannerCostModelProfileId, ProductionStorageProfile, ReceiptRetention, ResourceAuthority,
@@ -93,6 +95,49 @@ pub enum ContinuumBeamPolicy {
     Common,
 }
 
+/// Reconstruction-mask policy evaluated at the initial major-cycle boundary.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ContinuumMask {
+    /// Admit every valid model pixel.
+    FullPlane,
+    /// Admit the union of inclusive target-grid pixel boxes.
+    Boxes(Vec<ContinuumMaskBox>),
+    /// Generate CASA auto-multithreshold support from the current Normal State.
+    AutoMultithresh(ContinuumAutoMaskControls),
+}
+
+/// Inclusive target-grid mask box accepted at the application boundary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ContinuumMaskBox {
+    /// Lower-left `[x, y]` pixel.
+    pub blc: [usize; 2],
+    /// Upper-right `[x, y]` pixel.
+    pub trc: [usize; 2],
+}
+
+/// Auto-multithreshold values transported by thin frontends.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ContinuumAutoMaskControls {
+    /// Sidelobe threshold multiplier.
+    pub sidelobe_factor: f64,
+    /// Robust-noise threshold multiplier.
+    pub noise_factor: f64,
+    /// Low-noise growth multiplier.
+    pub low_noise_factor: f64,
+    /// Negative-feature threshold multiplier.
+    pub negative_factor: f64,
+    /// Minimum component area as a beam fraction.
+    pub minimum_beam_fraction: f64,
+    /// Gaussian smoothing FWHM as a beam fraction.
+    pub smooth_factor: f64,
+    /// Smoothed-mask cutoff fraction.
+    pub cut_threshold: f64,
+    /// Four-connected growth bound.
+    pub grow_iterations: usize,
+    /// Percent-change channel-stop threshold; negative disables this stop.
+    pub minimum_percent_change: f64,
+}
+
 /// Application projection of the native minor-cycle terminal reason.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ContinuumStopReason {
@@ -149,6 +194,8 @@ pub struct ContinuumImagingRequest {
     pub psf_cutoff: f32,
     /// Restoring-beam policy.
     pub beam_policy: ContinuumBeamPolicy,
+    /// Model-update support policy.
+    pub mask: ContinuumMask,
     /// Persist the exact final prediction into the MeasurementSet `MODEL_DATA` column.
     pub save_model_column: bool,
     /// Capability constraints derived by the task surface. Unsupported
@@ -363,6 +410,35 @@ fn prepare(
             NumericPrecision::F64,
             ModelInputCommitment::Empty,
         ),
+        mask: match request.mask {
+            ContinuumMask::FullPlane => ReconstructionMaskPlan::FullPlane {
+                coordinate: direction,
+            },
+            ContinuumMask::Boxes(boxes) => ReconstructionMaskPlan::Boxes {
+                coordinate: direction,
+                boxes: boxes
+                    .into_iter()
+                    .map(|region| casa_imaging_reconstruction::MaskBox::new(region.blc, region.trc))
+                    .collect::<Result<Vec<_>, _>>()?,
+            },
+            ContinuumMask::AutoMultithresh(controls) => ReconstructionMaskPlan::AutoMultithresh {
+                coordinate: direction,
+                controls: casa_imaging_reconstruction::AutoMultithreshControls {
+                    sidelobe_factor: controls.sidelobe_factor,
+                    noise_factor: controls.noise_factor,
+                    low_noise_factor: controls.low_noise_factor,
+                    negative_factor: controls.negative_factor,
+                    minimum_beam_fraction: controls.minimum_beam_fraction,
+                    smooth_factor: controls.smooth_factor,
+                    cut_threshold: controls.cut_threshold,
+                    grow_iterations: controls.grow_iterations,
+                    minimum_percent_change: controls.minimum_percent_change,
+                },
+                completed_major_cycles: 0,
+                cycle_threshold_reached: false,
+                previous: None,
+            },
+        },
         observation: SelectedObservationResolutionRequest::new(
             request.measurement_set.display().to_string(),
             LogicalIdentity::from_sha256(digest),
