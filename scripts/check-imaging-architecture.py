@@ -57,7 +57,7 @@ ACCEPTED_MATRIX_ROWS_SHA256 = (
     "0fdc583980ba1d7976ffa78e4803830d596c5803e209057f1840018c9947bf9a"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "07be012a2aeb9f69db17c438af7233d619dbb8ffbfda4ca805c017a27131e630"
+    "0f1336c17721fbcef8f5a72f14ea04d5868e8619e78997900c608f1dd5f13814"
 )
 ACCEPTED_MATRIX_CONTRACT_REVISION = 47
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
@@ -1844,7 +1844,7 @@ def validate_t18_global_weighting_sources(
     ):
         raise ArchitectureError("T18 traversal envelope construction must remain owner-only")
     derivation = rust_function_body(
-        traversal_sample, "derive_spectral_contributions", traversal_sample_path
+        traversal_sample, "derive_spectral_contributions_cached", traversal_sample_path
     )
     required_derivation = (
         "geometry_engine",
@@ -1858,7 +1858,7 @@ def validate_t18_global_weighting_sources(
         traversal_sample, "interpolation_contributions", traversal_sample_path
     )
     evaluation = rust_function_body(
-        traversal_sample, "evaluated_frequency_hz", traversal_sample_path
+        traversal_sample, "evaluated_frequency_hz_cached", traversal_sample_path
     )
     compact_evaluation = re.sub(r"\s+", "", evaluation)
     explicit_output_frame = rust_function_body(
@@ -1880,7 +1880,7 @@ def validate_t18_global_weighting_sources(
         or "sample.metadata.field_id" not in evaluation
         or "source_frame" not in evaluation
         or "output_frame" not in evaluation
-        or "Some(&source_frame),Some(&output_frame)" not in compact_evaluation
+        or "Some(source_frame),Some(output_frame)" not in compact_evaluation
         or not all(
             token in explicit_output_frame
             for token in ("with_epoch(", "with_position(", "with_direction(", "with_measures(")
@@ -1897,7 +1897,8 @@ def validate_t18_global_weighting_sources(
         bound_observation, "BoundSelectedObservation", "traverse", bound_observation_path
     )
     if (
-        "SelectedObservationTraversalSample::from_owner(" not in traversal
+        "SpectralContributionProjector::new()" not in traversal
+        or "spectral_projector.project(" not in traversal
         or "source.geometry_engine()" not in traversal
         or "consume_projected_validated_stream(" not in traversal
     ):
