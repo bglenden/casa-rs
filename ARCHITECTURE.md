@@ -384,11 +384,12 @@ retains only each failed physical-slot reservation fail-closed.
 Typed I/O-buffer ceilings bound concurrent logical activity while MemoryDemand
 and plan-owned physical slots are the sole physical-byte charge, allowing
 compatible buffers from disjoint processing segments to reuse storage.
-Every execution receipt also retains the router's exact migration-matrix schema,
-contract revision, overall disposition, and every canonical requirement row's
-owner, tickets, issue evidence, baselines, Acceptance Contract, transfer point,
-deletion condition, source evidence, and any active obligation. Stores opened
-on the same canonical receipt root share one process-wide mutation lock and
+Execution receipts retain the plan and outcome evidence defined by the runtime
+receipt schema; they do not embed the repository migration-matrix schema,
+contract revision, migration disposition, or row ledger. Installed-
+implementation availability is an application-owned pre-plan result, so a
+typed-unavailable request invokes no runtime and creates no execution receipt.
+Stores opened on the same canonical receipt root share one process-wide mutation lock and
 must agree on one registered retention policy, so pruning and persistence
 enforce one aggregate retention ceiling.
 Receipt schema 7 stores the Product Graph identity, schema, complete node
@@ -806,11 +807,12 @@ compatibility block facade or normal-path host full-grid upload is retained.
 - GitHub Project/issue adoption is now the planning source of truth, but older `docs/Planning/` material still exists and may need incremental retirement or summarization.
 - `just` provides a stable command vocabulary, but some contributors may still use the underlying `cargo` and `scripts/*` commands directly until it is installed locally.
 - Imaging capabilities whose authoritative tickets have not landed are
-  `TemporarilyUnavailable`; production never enters a displaced implementation.
-  `just arch-check` pins the router package, source, matrix binding, and unique
-  production-engine ownership; it also rejects unclassified workspace packages,
-  non-exact native dependency sets, forbidden Rust/Swift source imports, and
-  unapproved dependency exceptions.
+  `TemporarilyUnavailable`; `casa-imaging-application` returns typed installed-
+  implementation unavailability before planning, and production never enters a
+  displaced implementation. `just arch-check` validates the repository
+  migration ledger and rejects runtime migration-matrix interpretation; it also
+  rejects unclassified workspace packages, non-exact native dependency sets,
+  forbidden Rust/Swift source imports, and unapproved dependency exceptions.
 
 ## ADR index
 

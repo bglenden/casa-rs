@@ -776,6 +776,11 @@ fn filesystem_root(_path: &Path) -> Result<PathBuf, crate::ApplicationError> {
 }
 
 #[cfg(unix)]
+fn block_count_to_u64<T: Into<u64>>(blocks: T) -> u64 {
+    blocks.into()
+}
+
+#[cfg(unix)]
 fn filesystem_capacity(root: &Path) -> Result<(u64, u64), crate::ApplicationError> {
     use std::os::unix::ffi::OsStrExt;
     let root = CString::new(root.as_os_str().as_bytes())?;
@@ -788,8 +793,8 @@ fn filesystem_capacity(root: &Path) -> Result<(u64, u64), crate::ApplicationErro
     let statistics = unsafe { statistics.assume_init() };
     let block_size = statistics.f_frsize;
     Ok((
-        u64::from(statistics.f_blocks).saturating_mul(block_size),
-        u64::from(statistics.f_bavail).saturating_mul(block_size),
+        block_count_to_u64(statistics.f_blocks).saturating_mul(block_size),
+        block_count_to_u64(statistics.f_bavail).saturating_mul(block_size),
     ))
 }
 
