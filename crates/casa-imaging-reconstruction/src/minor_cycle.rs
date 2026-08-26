@@ -749,7 +749,7 @@ pub fn run_minor_cycle(
             view.normal_approximation(),
             shape,
             psf_peak_pixel,
-        )),
+        )?),
         ReconstructionAlgorithm::Multiscale { .. } => None,
         _ => return Err(MinorCycleError::UnsupportedAlgorithm),
     };
@@ -858,53 +858,19 @@ pub fn run_minor_cycle(
                 Some(candidate.scale_index),
             )
         } else {
-            loop {
-                let peak_index = find_peak_abs(
-                    &residual,
-                    shape,
-                    |value| *value,
-                    |pixel| {
-                        let index = pixel[0] * shape[1] + pixel[1];
-                        mask.contains(pixel)
-                            && valid_support(base, shape, pixel)
-                            && clark_state.as_ref().is_none_or(|state| state.active[index])
-                    },
-                )
-                .ok_or(MinorCycleError::EmptyValidSupport)?;
-                let strength = residual[peak_index] / psf_peak;
-                let needs_refresh = clark_state.as_ref().is_some_and(|state| {
-                    clark_requires_refresh(strength, effective_threshold, state.cutoff)
-                });
-                if !needs_refresh {
-                    break (peak_index, strength, None);
-                }
-                refresh_point_residual(
-                    &mut residual,
-                    view.residual(),
-                    view.normal_approximation(),
-                    shape,
-                    psf_peak_pixel,
-                    base,
-                    &terms,
-                )?;
-                let state = clark_state.as_mut().expect("Clark refresh has state");
-                state.refreshes += 1;
-                let global_peak = find_peak_abs(
-                    &residual,
-                    shape,
-                    |value| *value,
-                    |pixel| mask.contains(pixel) && valid_support(base, shape, pixel),
-                )
-                .ok_or(MinorCycleError::EmptyValidSupport)?;
-                let global_strength = residual[global_peak].abs() / psf_peak;
-                let approximation = clark.expect("Clark state has approximation");
-                state.cutoff =
-                    (global_strength * approximation.maximum_exterior_sidelobe / psf_peak / 3.0)
-                        .max(effective_threshold);
-                for (index, active) in state.active.iter_mut().enumerate() {
-                    *active = residual[index].abs() / psf_peak >= state.cutoff;
-                }
-            }
+            let peak_index = find_peak_abs(
+                &residual,
+                shape,
+                |value| *value,
+                |pixel| {
+                    let index = pixel[0] * shape[1] + pixel[1];
+                    mask.contains(pixel)
+                        && valid_support(base, shape, pixel)
+                        && clark_state.as_ref().is_none_or(|state| state.active[index])
+                },
+            )
+            .ok_or(MinorCycleError::EmptyValidSupport)?;
+            (peak_index, residual[peak_index] / psf_peak, None)
         };
         let peak_pixel = plane_pixel(peak_index, shape);
         if !strength.is_finite() {
@@ -1005,9 +971,58 @@ pub fn run_minor_cycle(
                 scale_px,
             });
         }
+        if let Some(state) = clark_state.as_mut() {
+            // SDAlgorithmClarkClean2 configures ClarkCleanLatModel with
+            // speedup=-1. Its uncertainty limit therefore closes the current
+            // patch subcycle after an accepted component and recomputes the
+            // exact residual before selecting the next active set. Preserve
+            // that behavior explicitly instead of allowing approximate patch
+            // errors to accumulate across the public cycle boundary.
+            refresh_point_residual(
+                &mut residual,
+                view.residual(),
+                view.normal_approximation(),
+                shape,
+                psf_peak_pixel,
+                base,
+                &terms,
+            )?;
+            state.refreshes += 1;
+            let global_peak = find_peak_abs(
+                &residual,
+                shape,
+                |value| *value,
+                |pixel| mask.contains(pixel) && valid_support(base, shape, pixel),
+            )
+            .ok_or(MinorCycleError::EmptyValidSupport)?;
+            let global_strength = residual[global_peak].abs() / psf_peak;
+            let approximation = clark.expect("Clark state has approximation");
+            state.cutoff =
+                (global_strength * approximation.maximum_exterior_sidelobe / psf_peak / 3.0)
+                    .max(effective_threshold);
+            for (index, active) in state.active.iter_mut().enumerate() {
+                *active = residual[index].abs() / psf_peak >= state.cutoff;
+            }
+        }
     }
     let stop_reason = stop_reason.unwrap_or(MinorCycleStopReason::IterationBound);
     let clark_refreshes = clark_state.as_ref().map_or(0, |state| state.refreshes);
+    if multiscale.is_some() && !terms.is_empty() {
+        // MatrixCleaner uses finite subregions while selecting a bounded
+        // multiscale component sequence, then finalizes the cycle with its
+        // full-image FFT residual. Refresh that terminal evidence from the
+        // accepted model delta so the controller observes the same circular
+        // normal-operator boundary instead of the last finite work patch.
+        refresh_circular_residual(
+            &mut residual,
+            view.residual(),
+            view.normal_approximation(),
+            shape,
+            psf_peak_pixel,
+            base,
+            &terms,
+        )?;
+    }
     let final_peak_flux = find_peak_abs(
         &residual,
         shape,
@@ -1155,6 +1170,31 @@ fn subtract_psf(
     Ok(())
 }
 
+/// Subtract one PSF component using the full-image circular FFT convention.
+fn subtract_psf_circular(
+    residual: &mut [f64],
+    psf: &[num_complex::Complex64],
+    shape: [usize; 2],
+    peak: [usize; 2],
+    psf_peak: [usize; 2],
+    flux: f64,
+) -> Result<(), MinorCycleError> {
+    for source_x in 0..shape[0] {
+        let target_x = (source_x + peak[0] + shape[0] - psf_peak[0]) % shape[0];
+        for source_y in 0..shape[1] {
+            let target_y = (source_y + peak[1] + shape[1] - psf_peak[1]) % shape[1];
+            let source = source_x * shape[1] + source_y;
+            let target = target_x * shape[1] + target_y;
+            let updated = residual[target] - flux * psf[source].re;
+            if !updated.is_finite() {
+                return Err(MinorCycleError::GeneratedNonfinite);
+            }
+            residual[target] = updated;
+        }
+    }
+    Ok(())
+}
+
 fn refresh_point_residual(
     residual: &mut [f64],
     original: &[num_complex::Complex64],
@@ -1178,8 +1218,27 @@ fn refresh_point_residual(
     Ok(())
 }
 
-fn clark_requires_refresh(strength: f64, threshold: f64, active_cutoff: f64) -> bool {
-    strength.abs() > threshold && strength.abs() <= active_cutoff
+fn refresh_circular_residual(
+    residual: &mut [f64],
+    original: &[num_complex::Complex64],
+    psf: &[num_complex::Complex64],
+    shape: [usize; 2],
+    psf_peak: [usize; 2],
+    base: &ModelGeneration,
+    terms: &BTreeMap<usize, f64>,
+) -> Result<(), MinorCycleError> {
+    for (target, source) in residual.iter_mut().zip(original) {
+        *target = source.re;
+    }
+    for (flat, flux) in terms {
+        let pixel = base
+            .shape()
+            .cell_at(*flat)
+            .ok_or(MinorCycleError::ModelShapeMismatch)?
+            .pixel();
+        subtract_psf_circular(residual, psf, shape, pixel, psf_peak, *flux)?;
+    }
+    Ok(())
 }
 
 fn robust_masked_rms(
@@ -1464,41 +1523,26 @@ fn subtract_scaled_psf(
     Ok(())
 }
 
-/// Derive the Clark patch from the central PSF lobe rather than a dataset-
-/// tuned pixel count. CASA expands the fitted central lobe to a three-lobe
-/// patch; the zero-crossing construction is the equivalent information
-/// available at this solver-owned plane boundary.
+/// Derive CASA's Clark patch from the fitted restoring beam.
+///
+/// `SDAlgorithmClarkClean2` chooses at least four pixels, otherwise the
+/// ceiling of the fitted major/minor FWHM in pixels, then requests a
+/// `3*ncent+1` square capped by the PSF/model shape. The normal-state plane
+/// uses unit pixel coordinates here, so the shared CASA-style beam fitter can
+/// supply that same width without crossing the reconstruction-owner boundary.
 fn derive_clark_approximation(
     psf: &[num_complex::Complex64],
     shape: [usize; 2],
     peak: [usize; 2],
-) -> ClarkApproximation {
-    let centre = psf[peak[0] * shape[1] + peak[1]].re.signum();
-    let first_crossing = |axis: usize| {
-        let limit = if axis == 0 { shape[0] } else { shape[1] };
-        (1..limit)
-            .find(|offset| {
-                let coordinate = peak[axis].saturating_add(*offset);
-                if coordinate >= limit {
-                    return true;
-                }
-                let pixel = if axis == 0 {
-                    [coordinate, peak[1]]
-                } else {
-                    [peak[0], coordinate]
-                };
-                psf[pixel[0] * shape[1] + pixel[1]].re.signum() != centre
-            })
-            .unwrap_or_else(|| limit.saturating_sub(1).max(1))
-    };
-    let radius = [
-        first_crossing(0)
-            .saturating_mul(3)
-            .min(shape[0].saturating_sub(1)),
-        first_crossing(1)
-            .saturating_mul(3)
-            .min(shape[1].saturating_sub(1)),
-    ];
+) -> Result<ClarkApproximation, crate::PsfBeamFitError> {
+    let real_psf = psf.iter().map(|value| value.re as f32).collect::<Vec<_>>();
+    let beam =
+        crate::fit_restoring_beam(&real_psf, shape, [1.0, 1.0], crate::DEFAULT_PSF_FIT_CUTOFF)?;
+    let central_width = 4_usize
+        .max(beam.major_fwhm_rad().ceil() as usize)
+        .max(beam.minor_fwhm_rad().ceil() as usize);
+    let requested = central_width.saturating_mul(3).saturating_add(1);
+    let radius = [requested.min(shape[0]) / 2, requested.min(shape[1]) / 2];
     let maximum_exterior_sidelobe = psf
         .iter()
         .enumerate()
@@ -1507,10 +1551,10 @@ fn derive_clark_approximation(
             pixel[0].abs_diff(peak[0]) > radius[0] || pixel[1].abs_diff(peak[1]) > radius[1]
         })
         .fold(0.0_f64, |maximum, (_, value)| maximum.max(value.re.abs()));
-    ClarkApproximation {
+    Ok(ClarkApproximation {
         radius,
         maximum_exterior_sidelobe,
-    }
+    })
 }
 
 fn subtract_psf_patch(
@@ -1661,7 +1705,7 @@ mod tests {
     use num_complex::Complex64;
 
     use super::{
-        build_scale_kernels, clark_requires_refresh, multiscale_diverged, subtract_psf,
+        build_scale_kernels, multiscale_diverged, subtract_psf, subtract_psf_circular,
         within_multiscale_border,
     };
 
@@ -1681,11 +1725,7 @@ mod tests {
     }
 
     #[test]
-    fn clark_cutoff_handoff_refreshes_the_exact_full_residual() {
-        assert!(!clark_requires_refresh(0.5, 0.5, 0.75));
-        assert!(clark_requires_refresh(0.6, 0.5, 0.75));
-        assert!(!clark_requires_refresh(0.8, 0.5, 0.75));
-
+    fn clark_subcycle_refresh_recomputes_the_exact_full_residual() {
         let shape = [3, 3];
         let dirty = vec![Complex64::new(0.0, 0.0); 9];
         let mut dirty = dirty;
@@ -1734,6 +1774,22 @@ mod tests {
         assert_eq!(
             residual,
             vec![0.0, 0.0, 0.0, 0.0, -1.0, -1.0, 0.0, -1.0, -1.0]
+        );
+    }
+
+    #[test]
+    fn multiscale_terminal_refresh_uses_casa_circular_psf_convolution() {
+        let mut residual = vec![0.0; 9];
+        let psf = (1..=9)
+            .map(|value| Complex64::new(f64::from(value), 0.0))
+            .collect::<Vec<_>>();
+
+        subtract_psf_circular(&mut residual, &psf, [3, 3], [0, 0], [1, 1], 1.0)
+            .expect("finite circular subtraction");
+
+        assert_eq!(
+            residual,
+            vec![-5.0, -6.0, -4.0, -8.0, -9.0, -7.0, -2.0, -3.0, -1.0]
         );
     }
 }

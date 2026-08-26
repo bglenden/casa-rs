@@ -185,6 +185,7 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
     matches!(
         capability,
         RequiredCapability::Polarization(PolarizationCoordinate::StokesI)
+            | RequiredCapability::SpectralFrameTransform
             | RequiredCapability::ConstantBasis
             | RequiredCapability::DirtyReconstruction
             | RequiredCapability::HogbomReconstruction

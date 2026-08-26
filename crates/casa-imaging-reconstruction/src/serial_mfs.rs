@@ -143,11 +143,37 @@ impl SerialMfsSpecification {
         let domain = &problem.geometry().domains()[0];
         let image_shape = domain.shape().pixels();
         let direction = domain.direction();
-        let supported_reference_pixel = [image_shape[0] as f64 / 2.0, image_shape[1] as f64 / 2.0];
+        let grid_shape = [
+            casa_composite_padded_len(image_shape[0], 1.2),
+            casa_composite_padded_len(image_shape[1], 1.2),
+        ];
+        let reference_pixel = direction.reference_pixel();
         if direction.projection() != Projection::Sin
             || direction.pc() != [[1.0, 0.0], [0.0, 1.0]]
-            || direction.reference_pixel() != supported_reference_pixel
             || direction.pole_deg() != [180.0, 0.0]
+            || reference_pixel
+                .iter()
+                .any(|value| !value.is_finite() || *value < 0.0 || value.fract() != 0.0)
+        {
+            return Err(SerialMfsError::UnsupportedGeometry);
+        }
+        let reference_pixel = [reference_pixel[0] as usize, reference_pixel[1] as usize];
+        let image_blc = [
+            grid_shape[0]
+                .checked_div(2)
+                .and_then(|centre| centre.checked_sub(reference_pixel[0]))
+                .ok_or(SerialMfsError::UnsupportedGeometry)?,
+            grid_shape[1]
+                .checked_div(2)
+                .and_then(|centre| centre.checked_sub(reference_pixel[1]))
+                .ok_or(SerialMfsError::UnsupportedGeometry)?,
+        ];
+        if image_blc[0]
+            .checked_add(image_shape[0])
+            .is_none_or(|end| end > grid_shape[0])
+            || image_blc[1]
+                .checked_add(image_shape[1])
+                .is_none_or(|end| end > grid_shape[1])
         {
             return Err(SerialMfsError::UnsupportedGeometry);
         }
@@ -163,14 +189,6 @@ impl SerialMfsSpecification {
         {
             return Err(SerialMfsError::UnsupportedNumerics);
         }
-        let grid_shape = [
-            casa_composite_padded_len(image_shape[0], 1.2),
-            casa_composite_padded_len(image_shape[1], 1.2),
-        ];
-        let image_blc = [
-            grid_shape[0] / 2 - supported_reference_pixel[0] as usize,
-            grid_shape[1] / 2 - supported_reference_pixel[1] as usize,
-        ];
         Ok(Self {
             problem: problem.problem_id(),
             geometry: problem.geometry().geometry_id(),
@@ -723,7 +741,7 @@ impl CompleteDataOwnerState {
                     let contribution = spectral.contribution();
                     let sample = SerialMfsSample::new(
                         selected.coordinates.transformed_uvw_m,
-                        selected.address.frequency_centre_hz,
+                        contribution.evaluation_frequency_hz(),
                         selected.coordinates.phase_shift_m,
                         visibility,
                         spectral.imaging_weight(),
@@ -785,7 +803,7 @@ impl CompleteDataOwnerState {
                 let contribution = spectral.contribution();
                 let sample = SerialMfsSample::new(
                     selected.coordinates.transformed_uvw_m,
-                    selected.address.frequency_centre_hz,
+                    contribution.evaluation_frequency_hz(),
                     selected.coordinates.phase_shift_m,
                     [0.0, 0.0],
                     spectral.imaging_weight(),
@@ -1005,6 +1023,8 @@ impl SerialMfsOperator {
             if sample.support() == ModelSupport::Invalid {
                 continue;
             }
+            // ModelSourceShape is canonically x-fastest (`y * width + x`),
+            // unlike the x-major normal-state plane buffers.
             let y = flat / width;
             let x = flat % width;
             let correction = self.gridder.image_correction(x, y);
@@ -1679,6 +1699,49 @@ mod tests {
         let right = inner(&model, dirty.dirty());
         assert!((left - right).norm() <= 1.0e-9 * left.norm().max(right.norm()).max(1.0));
         assert_eq!(visibility.len(), prediction.len());
+    }
+
+    #[test]
+    fn evaluated_spectral_frame_is_shared_by_forward_and_adjoint() {
+        let cells = checked_cells(geometry().image_shape).expect("shape");
+        let mut model = vec![Complex64::default(); cells];
+        model[2 * geometry().image_shape[1] + 5] = Complex64::new(0.75, -0.2);
+        let sample_at = |frequency_hz| {
+            SerialMfsSample::new(
+                [18.0, -7.0, 0.0],
+                frequency_hz,
+                0.37,
+                [0.4, -0.7],
+                1.25,
+                0.8,
+            )
+            .expect("valid frame-evaluated sample")
+        };
+        let native = sample_at(1.0e9);
+        let shifted = sample_at(1.006e9);
+        let native_prediction = operator()
+            .predict(&model, &[native])
+            .expect("native-frame prediction")[0];
+        let shifted_prediction = operator()
+            .predict(&model, &[shifted])
+            .expect("shifted-frame prediction")[0];
+        assert_ne!(
+            native_prediction, shifted_prediction,
+            "the evaluated operator frequency must affect A"
+        );
+
+        for (sample, prediction) in [(native, native_prediction), (shifted, shifted_prediction)] {
+            let weighted_visibility = sample.visibility * sample.imaging_weight;
+            let mut adjoint = operator();
+            adjoint.push(sample).expect("adjoint sample");
+            let dirty = adjoint.finish().expect("finite primitives");
+            let left = prediction.conj() * weighted_visibility;
+            let right = inner(&model, dirty.dirty());
+            assert!(
+                (left - right).norm() <= 1.0e-9 * left.norm().max(right.norm()).max(1.0),
+                "A and A* must use the same owner-evaluated frequency"
+            );
+        }
     }
 
     #[test]

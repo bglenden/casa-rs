@@ -588,6 +588,8 @@ pub struct AutoMultithreshControls {
 /// Inspectable evidence for one auto-multithreshold generation.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AutoMultithreshEvidence {
+    /// Prior immutable mask generation consumed by this update, when present.
+    pub previous_mask_generation: Option<ReconstructionMaskGenerationId>,
     /// Robust residual median.
     pub median: f64,
     /// MAD-derived robust RMS.
@@ -772,6 +774,7 @@ pub fn auto_multithresh(
     Ok((
         mask,
         AutoMultithreshEvidence {
+            previous_mask_generation: previous.map(ReconstructionMask::generation_id),
             median: residual_median,
             robust_rms,
             positive_threshold,

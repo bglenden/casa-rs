@@ -390,6 +390,31 @@ fn assert_standard_products(image_name: &Path, product_names: &[String]) {
     }
 }
 
+fn product_plane(image_name: &Path, suffix: &str) -> ArrayD<f32> {
+    PagedImage::<f32>::open(PathBuf::from(format!("{}{}", image_name.display(), suffix)))
+        .expect("open application product")
+        .get_slice(&[0, 0, 0, 0], &[16, 16, 1, 1])
+        .expect("read application product plane")
+}
+
+fn assert_model_residual_respect_mask(image_name: &Path, expected_mask_pixels: usize) {
+    let mask = product_plane(image_name, ".mask");
+    let model = product_plane(image_name, ".model");
+    let residual = product_plane(image_name, ".residual");
+    assert_eq!(
+        mask.iter().filter(|value| **value != 0.0).count(),
+        expected_mask_pixels
+    );
+    assert!(
+        model
+            .iter()
+            .zip(mask.iter())
+            .all(|(model, mask)| *mask != 0.0 || *model == 0.0),
+        "the model must remain zero outside the reconstruction mask"
+    );
+    assert!(residual.iter().all(|value| value.is_finite()));
+}
+
 #[test]
 fn application_executes_single_ddid_stokes_i_mfs_dirty_and_publishes_products() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
@@ -508,7 +533,10 @@ fn application_reconciles_between_bounded_minor_cycles() {
     imaging.iterations = 3;
     imaging.cycle_iterations = 1;
     imaging.maximum_major_cycles = 3;
-    imaging.gain = 0.1;
+    imaging.gain = 0.37;
+    imaging.threshold_jy = 1.0e-12;
+    imaging.noise_sigma = Some(1.0e-12);
+    imaging.cycle_factor = 1.4;
 
     let result = execute_continuum(imaging).expect("bounded multi-cycle execution");
 
@@ -618,6 +646,10 @@ fn application_commits_exact_final_prediction_to_model_data() {
     );
 
     let reopened = MeasurementSet::open(measurement_set).expect("reopen saved MODEL_DATA");
+    let schema = reopened.main_table().schema().expect("MAIN schema");
+    assert!(schema.contains_column("MODEL_DATA"));
+    assert!(!schema.contains_column("CASA_RS_MODEL_DATA_STAGING"));
+    assert!(!schema.contains_column("CASA_RS_MODEL_DATA_BACKUP"));
     let model_column = reopened
         .data_column(VisibilityDataColumn::ModelData)
         .expect("MODEL_DATA was committed");
@@ -636,11 +668,8 @@ fn application_materializes_static_and_auto_masks_at_the_normal_state_boundary()
     let root = tempfile::tempdir().expect("test root");
 
     let static_ms = tiny_measurement_set(root.path());
-    let mut static_request = request(
-        static_ms,
-        root.path().join("static-mask"),
-        ContinuumAlgorithm::Hogbom,
-    );
+    let static_image = root.path().join("static-mask");
+    let mut static_request = request(static_ms, static_image.clone(), ContinuumAlgorithm::Hogbom);
     static_request.mask = ContinuumMask::Boxes(vec![ContinuumMaskBox {
         blc: [4, 4],
         trc: [11, 11],
@@ -663,6 +692,7 @@ fn application_materializes_static_and_auto_masks_at_the_normal_state_boundary()
         .expect("read published reconstruction mask");
     assert_eq!(mask_pixels[[0, 0, 0, 0]], 0.0);
     assert_eq!(mask_pixels[[8, 8, 0, 0]], 1.0);
+    assert_model_residual_respect_mask(&static_image, 64);
 
     let image_root = root.path().join("image-mask-input");
     std::fs::create_dir(&image_root).expect("image-mask fixture directory");
@@ -687,14 +717,14 @@ fn application_materializes_static_and_auto_masks_at_the_normal_state_boundary()
         .put_slice(&pixels, &[0, 0])
         .expect("write mask pixels");
     image.save().expect("persist image mask");
-    let mut image_request = request(
-        image_ms,
-        root.path().join("image-mask"),
-        ContinuumAlgorithm::Hogbom,
-    );
+    let image_output = root.path().join("image-mask");
+    let mut image_request = request(image_ms, image_output.clone(), ContinuumAlgorithm::Hogbom);
     image_request.mask = ContinuumMask::Image(mask_path);
     let image_result = execute_continuum(image_request).expect("reprojected image-mask solve");
     assert!(!image_result.outcome.output.minor_cycles.is_empty());
+    let reprojected_mask = product_plane(&image_output, ".mask");
+    assert_eq!(reprojected_mask[[2, 3, 0, 0]], 1.0);
+    assert_model_residual_respect_mask(&image_output, 1);
 
     let auto_root = root.path().join("auto-input");
     std::fs::create_dir(&auto_root).expect("auto fixture directory");
@@ -720,14 +750,25 @@ fn application_materializes_static_and_auto_masks_at_the_normal_state_boundary()
     auto_request.maximum_major_cycles = 2;
     auto_request.gain = 0.1;
     let auto_result = execute_continuum(auto_request).expect("auto-mask solve");
-    let evidence = auto_result
-        .outcome
-        .output
-        .minor_cycles
-        .last()
-        .expect("minor-cycle evidence")
-        .auto_mask
-        .expect("auto-mask evidence");
+    let cycles = &auto_result.outcome.output.minor_cycles;
+    assert_eq!(cycles.len(), 2);
+    let first_evidence = cycles[0].auto_mask.expect("first auto-mask evidence");
+    assert_eq!(first_evidence.previous_mask_generation, None);
+    let evidence = cycles[1].auto_mask.expect("second auto-mask evidence");
+    assert_eq!(
+        evidence.previous_mask_generation,
+        Some(cycles[0].mask_generation),
+        "the next automatic mask must retain the exact prior generation"
+    );
+    assert!(cycles.iter().all(|cycle| cycle.mask_normal_state.is_some()));
+    assert_ne!(
+        cycles[0].mask_normal_state, cycles[1].mask_normal_state,
+        "each automatic-mask generation must consume the current reconciled Normal State"
+    );
+    assert_ne!(
+        cycles[0].mask_model_generation, cycles[1].mask_model_generation,
+        "each automatic mask must constrain the current model generation"
+    );
     assert!(evidence.robust_rms.is_finite());
     assert!(evidence.positive_threshold.is_finite());
     assert_eq!(auto_result.outcome.output.major_cycle_count, 3);

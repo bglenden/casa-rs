@@ -690,7 +690,14 @@ fn real_ms_cube_traversal_maps_contributions_into_the_transformed_output_frame()
             let actual = reported
                 .spectral_contributions()
                 .iter()
-                .map(|contribution| (contribution.output_channel(), contribution.factor()))
+                .map(|contribution| {
+                    assert_eq!(
+                        contribution.evaluation_frequency_hz().to_bits(),
+                        transformed_hz.to_bits(),
+                        "every output contribution must carry the owner-evaluated operator frequency"
+                    );
+                    (contribution.output_channel(), contribution.factor())
+                })
                 .collect::<Vec<_>>();
             assert_eq!(actual, expected);
             values.push((

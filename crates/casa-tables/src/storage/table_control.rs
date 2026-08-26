@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![allow(dead_code)]
 
-use std::path::Path;
+use std::{
+    fs,
+    path::Path,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 use casa_aipsio::{AipsIo, AipsOpenOption};
 use casa_types::{
@@ -964,6 +968,53 @@ pub(crate) fn write_table_dat(
     path: &Path,
     contents: &TableDatContents,
 ) -> Result<(), StorageError> {
+    write_table_dat_image(path, contents)
+}
+
+/// Publish the complete `MODEL_DATA` schema/keyword transition in one durable
+/// control-file replacement. The old `table.dat` remains authoritative until
+/// the synced same-directory image is atomically renamed over it; after a
+/// failure or process interruption, readers therefore observe either the old
+/// complete image or the new complete image, never an intermediate rename.
+pub(crate) fn write_model_data_transition(
+    path: &Path,
+    contents: &TableDatContents,
+) -> Result<(), StorageError> {
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            StorageError::FormatMismatch(format!(
+                "MODEL_DATA control path has no UTF-8 file name: {}",
+                path.display()
+            ))
+        })?;
+    let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let next = path.with_file_name(format!(
+        ".{file_name}.casa-rs-model-data-{}-{sequence}",
+        std::process::id()
+    ));
+    let result = (|| {
+        write_table_dat_image(&next, contents)?;
+        fs::File::open(&next)?.sync_all()?;
+        fs::rename(&next, path)?;
+        let parent = path.parent().ok_or_else(|| {
+            StorageError::FormatMismatch(format!(
+                "MODEL_DATA control path has no parent: {}",
+                path.display()
+            ))
+        })?;
+        fs::File::open(parent)?.sync_all()?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(next);
+    }
+    result
+}
+
+fn write_table_dat_image(path: &Path, contents: &TableDatContents) -> Result<(), StorageError> {
     let mut io = AipsIo::open(path, AipsOpenOption::New)?;
 
     // Write Table version 2 (nrrow as u32)

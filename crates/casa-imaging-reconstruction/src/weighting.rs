@@ -18,7 +18,7 @@ const GENERATION_VERSION: u32 = 1;
 const REPLAY_DOMAIN: &[u8] = b"casa-rs-weighting-replay";
 const REPLAY_VERSION: u32 = 1;
 const COVERAGE_DOMAIN: &[u8] = b"casa-rs-weighting-replay-coverage";
-const COVERAGE_VERSION: u32 = 1;
+const COVERAGE_VERSION: u32 = 2;
 const CONSERVATIVE_TREE_ENTRY_BYTES: usize = 64;
 const F32_EXPONENT_BINS: usize = 254;
 const F64_EXPONENT_BINS: usize = 2_046;
@@ -529,10 +529,12 @@ impl WeightingDensityPhase {
         {
             return Err(WeightingError::ProblemMismatch);
         }
-        extend_frequency_range(
-            &mut self.frequency_range_hz,
-            sample.address.frequency_centre_hz,
-        );
+        for contribution in contributions.iter() {
+            extend_frequency_range(
+                &mut self.frequency_range_hz,
+                contribution.evaluation_frequency_hz(),
+            );
+        }
         let input = input_weight(problem, &sample)?;
         if input > 0.0 && !matches!(problem.weighting().scheme(), WeightingScheme::Natural) {
             let partial_index = usize::try_from(
@@ -544,15 +546,18 @@ impl WeightingDensityPhase {
             match problem.weighting().density_scope() {
                 WeightDensityScope::NotApplicable => {}
                 WeightDensityScope::GlobalSelection => {
-                    let (_, uv) = weighting_coordinate(problem, self.grid, &sample, None)?;
-                    add_density_sample(
-                        problem,
-                        self.grid,
-                        &mut self.partials[partial_index],
-                        0,
-                        uv,
-                        input,
-                    )?;
+                    if let Some(contribution) = contributions.iter().next() {
+                        let (_, uv) =
+                            weighting_coordinate(problem, self.grid, &sample, Some(contribution))?;
+                        add_density_sample(
+                            problem,
+                            self.grid,
+                            &mut self.partials[partial_index],
+                            0,
+                            uv,
+                            input,
+                        )?;
+                    }
                 }
                 WeightDensityScope::PerOutputChannel => {
                     for contribution in contributions.iter() {
@@ -661,16 +666,18 @@ impl WeightingSumWeightPhase {
         }
         match problem.weighting().density_scope() {
             WeightDensityScope::NotApplicable | WeightDensityScope::GlobalSelection => {
-                let weight = weight_from_state(
-                    problem,
-                    self.grid,
-                    &self.density,
-                    &self.robust_f2,
-                    self.frequency_range_hz,
-                    &sample,
-                    None,
-                )?;
-                self.sum_weights[0].add(weight)?;
+                if let Some(contribution) = contributions.iter().next() {
+                    let weight = weight_from_state(
+                        problem,
+                        self.grid,
+                        &self.density,
+                        &self.robust_f2,
+                        self.frequency_range_hz,
+                        &sample,
+                        Some(contribution),
+                    )?;
+                    self.sum_weights[0].add(weight)?;
+                }
             }
             WeightDensityScope::PerOutputChannel => {
                 for contribution in contributions.iter() {
@@ -967,17 +974,12 @@ impl WeightingReplayPhase<'_> {
         for input in &self.input {
             let mut spectral_values = [None, None];
             for (slot, contribution) in input.contributions.iter().enumerate() {
-                let weight_contribution = matches!(
-                    self.problem.weighting().density_scope(),
-                    WeightDensityScope::PerOutputChannel
-                )
-                .then_some(contribution);
                 spectral_values[slot] = Some(WeightingSpectralValue {
                     contribution,
                     imaging_weight: self.generation.weight(
                         self.problem,
                         &input.sample,
-                        weight_contribution,
+                        Some(contribution),
                     )?,
                 });
             }
@@ -1240,17 +1242,16 @@ fn weighting_coordinate(
 ) -> Result<(usize, [f64; 2]), WeightingError> {
     match problem.weighting().density_scope() {
         WeightDensityScope::NotApplicable | WeightDensityScope::GlobalSelection => {
-            Ok((0, uv_lambda(sample, sample.address.frequency_centre_hz)))
+            let contribution = contribution.ok_or(WeightingError::OutputChannelMismatch)?;
+            Ok((0, uv_lambda(sample, contribution.evaluation_frequency_hz())))
         }
         WeightDensityScope::PerOutputChannel => {
             let contribution = contribution.ok_or(WeightingError::OutputChannelMismatch)?;
             let plane = contribution_plane(grid, contribution)?;
-            let frequency = problem
-                .geometry()
-                .spectral()
-                .channel_centre_hz(plane)
-                .ok_or(WeightingError::OutputChannelMismatch)?;
-            Ok((plane, uv_lambda(sample, frequency)))
+            Ok((
+                plane,
+                uv_lambda(sample, contribution.evaluation_frequency_hz()),
+            ))
         }
     }
 }
@@ -1544,6 +1545,13 @@ impl CoverageEncoder {
                 .update(value.contribution.output_channel().to_be_bytes());
             self.0
                 .update(value.contribution.factor().to_bits().to_be_bytes());
+            self.0.update(
+                value
+                    .contribution
+                    .evaluation_frequency_hz()
+                    .to_bits()
+                    .to_be_bytes(),
+            );
             self.0.update(value.imaging_weight.to_bits().to_be_bytes());
         }
         self.0.update([count]);

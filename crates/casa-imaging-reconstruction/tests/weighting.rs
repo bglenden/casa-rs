@@ -319,7 +319,11 @@ fn exact_samples(problem: &casa_imaging_model::CompiledProblem) -> Vec<SelectedO
 
 fn exact_contributions(sample: &SelectedObservationSample) -> SelectedSpectralContributions {
     SelectedSpectralContributions::new([
-        SelectedSpectralContribution::new(sample.address.channel_index, 1.0),
+        SelectedSpectralContribution::new(
+            sample.address.channel_index,
+            1.0,
+            sample.address.frequency_centre_hz,
+        ),
         None,
     ])
     .expect("one exact output contribution")
@@ -364,6 +368,33 @@ fn replay(
         blocks.push(block);
     }
     (blocks, completion)
+}
+
+fn replay_with_evaluation_frequency(
+    generation: &WeightingAlgorithmState,
+    problem: &casa_imaging_model::CompiledProblem,
+    plan: &casa_imaging_reconstruction::WeightingPlan,
+    samples: &[SelectedObservationSample],
+    evaluation_frequency_hz: f64,
+) -> WeightingReplaySummary {
+    let mut phase = generation
+        .begin_replay(problem, plan)
+        .expect("begin replay");
+    for sample in samples {
+        let contributions = SelectedSpectralContributions::new([
+            SelectedSpectralContribution::new(
+                sample.address.channel_index,
+                1.0,
+                evaluation_frequency_hz,
+            ),
+            None,
+        ])
+        .expect("one shifted-frame contribution");
+        phase
+            .consume(problem, *sample, contributions)
+            .expect("weight shifted-frame sample");
+    }
+    phase.finish().expect("finish shifted-frame replay").1
 }
 
 fn replay_weights(
@@ -532,6 +563,43 @@ fn partition_block_worker_and_repeated_replay_choices_are_invariant() {
 }
 
 #[test]
+fn replay_coverage_binds_the_owner_evaluated_operator_frequency() {
+    let problem = problem(
+        WeightingScheme::Natural,
+        WeightDensityScope::NotApplicable,
+        None,
+    );
+    let samples = exact_samples(&problem);
+    let plan = plan_weighting(
+        &problem,
+        WeightingExecutionLimits::new(2, 2).expect("limits"),
+    )
+    .expect("plan");
+    let generation =
+        freeze_weighting_generation(&problem, &plan, &samples).expect("weighting generation");
+    let native = replay_with_evaluation_frequency(
+        &generation,
+        &problem,
+        &plan,
+        &samples,
+        samples[0].address.frequency_centre_hz,
+    );
+    let shifted = replay_with_evaluation_frequency(
+        &generation,
+        &problem,
+        &plan,
+        &samples,
+        samples[0].address.frequency_centre_hz + 6.0e6,
+    );
+
+    assert_ne!(
+        native.coverage(),
+        shifted.coverage(),
+        "T18 coverage must make a spectral-frame substitution observable"
+    );
+}
+
+#[test]
 fn multi_source_multi_spw_per_channel_generation_never_uses_chunk_local_density() {
     let problem = problem(
         WeightingScheme::Briggs { robust: 0.0 },
@@ -569,8 +637,8 @@ fn linear_contribution_coefficients_drive_per_output_density_and_replay() {
     );
     let sample = exact_samples(&problem)[0];
     let contributions = SelectedSpectralContributions::new([
-        SelectedSpectralContribution::new(0, 0.25),
-        SelectedSpectralContribution::new(1, 0.75),
+        SelectedSpectralContribution::new(0, 0.25, sample.address.frequency_centre_hz),
+        SelectedSpectralContribution::new(1, 0.75, sample.address.frequency_centre_hz),
     ])
     .expect("two output contributions");
     let plan = plan_weighting(

@@ -359,7 +359,11 @@ fn exact_samples(problem: &casa_imaging_model::CompiledProblem) -> Vec<SelectedO
 
 fn exact_contributions(sample: &SelectedObservationSample) -> SelectedSpectralContributions {
     SelectedSpectralContributions::new([
-        SelectedSpectralContribution::new(sample.address.channel_index, 1.0),
+        SelectedSpectralContribution::new(
+            sample.address.channel_index,
+            1.0,
+            sample.address.frequency_centre_hz,
+        ),
         None,
     ])
     .expect("one exact output contribution")

@@ -17,20 +17,20 @@ use casa_images::AnyPagedImage;
 use casa_imaging_model::{
     AxisOrder, CentreLaws, CorrelationProduct, CorrelationSelection, CorrelationType,
     DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame,
-    DopplerConvention, FacetLayout, FiniteValuePolicy, FrequencyFrame, ImageAxis, ImageDomainRole,
-    ImageDomainSpec, ImageShape, InstrumentResponse, LogicalIdentity, MeasurementEquationContract,
-    ModelBounds, ModelColumnWrite, ModelInnerProduct, ModelInputCommitment,
-    ModelLifecycleRequirements, ModelStateIdentity, NumericPrecision, NumericalStage,
-    NumericsContract, ObservationSelection, ObservationTransactionRequirements, PhaseCentreLaw,
-    PointingCentreLaw, PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy,
-    ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
-    ProductRequirements, ProductSupportComparison, ProductValidityPolicies, Projection,
-    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
-    ReductionPolicy, RestFrequency, RestoringBeamPolicy, ScientificContract, SelectedMainRow,
-    SelectedRows, SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling,
-    SpectralFrameAnchor, SpectralSampling, SpectralWcs, SpectralWindowSelection, StageErrorBudget,
-    TaylorSupportReference, TaylorValidityPolicy, UvwCoordinateLaw,
-    VisibilityColumn as OwnerVisibilityColumn, VisibilityInnerProduct,
+    DopplerConvention, Epoch, FacetLayout, FiniteValuePolicy, FrequencyFrame, ImageAxis,
+    ImageDomainRole, ImageDomainSpec, ImageShape, InstrumentResponse, ItrfPosition,
+    LogicalIdentity, MeasurementEquationContract, ModelBounds, ModelColumnWrite, ModelInnerProduct,
+    ModelInputCommitment, ModelLifecycleRequirements, ModelStateIdentity, NumericPrecision,
+    NumericalStage, NumericsContract, ObservationSelection, ObservationTransactionRequirements,
+    PhaseCentreLaw, PointingCentreLaw, PolarizationContract, PolarizationCoordinate,
+    PrimaryBeamValidityPolicy, ProblemSpecification, ProductBlankingPolicy, ProductKind,
+    ProductNormalization, ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
+    Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
+    ReconstructionControls, ReductionPolicy, RestFrequency, RestoringBeamPolicy,
+    ScientificContract, SelectedMainRow, SelectedRows, SkyDirection, SpectralContract,
+    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSampling, SpectralWcs,
+    SpectralWindowSelection, StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy,
+    TimeScale, UvwCoordinateLaw, VisibilityColumn as OwnerVisibilityColumn, VisibilityInnerProduct,
     WeightColumn as OwnerWeightColumn, WeightDensityScope, WeightingContract, WeightingScheme,
 };
 use casa_imaging_reconstruction::{ReconstructionMaskPlan, WeightingExecutionLimits};
@@ -44,7 +44,7 @@ use casa_ms::{
     SelectedObservationResolutionRequest, SelectedObservationRow, VisibilityDataColumn,
     parse_spw_selector, resolve_channel_selector_selection,
 };
-use casa_types::measures::{direction::DirectionRef, frequency::FrequencyRef};
+use casa_types::measures::{direction::DirectionRef, epoch::EpochRef, frequency::FrequencyRef};
 use sha2::{Digest, Sha256};
 
 use crate::{
@@ -297,6 +297,7 @@ fn prepare(
     let mut multiple_ddids = false;
     let mut selected_field = None;
     let mut multiple_fields = false;
+    let mut first_selected_time_mjd_seconds = None;
     ms.visit_selected_observation_rows(
         &row_selection,
         MsSelectionIoBudget {
@@ -310,6 +311,7 @@ fn prepare(
             selected_ddid.get_or_insert(row.data_description_id());
             multiple_fields |= selected_field.is_some_and(|value| value != row.field_id());
             selected_field.get_or_insert(row.field_id());
+            first_selected_time_mjd_seconds.get_or_insert(row.time_mjd_seconds());
             compact_rows.push(SelectedMainRow::new(
                 u64::try_from(row.physical_row()).expect("row bounded by MS row count"),
                 u32::try_from(row.data_description_id()).expect("validated nonnegative DDID"),
@@ -335,7 +337,7 @@ fn prepare(
         .iter()
         .map(|channel| frequencies[*channel])
         .collect::<Vec<_>>();
-    let reference_frequency =
+    let source_reference_frequency =
         selected_frequencies.iter().sum::<f64>() / selected_frequencies.len() as f64;
     let correlation_codes = polarization.corr_type(polarization_id)?;
     let correlations = correlation_codes
@@ -374,6 +376,33 @@ fn prepare(
     let frequency_reference =
         FrequencyRef::from_casacore_code(spectral_window.meas_freq_ref(spw_id)?)
             .unwrap_or(FrequencyRef::TOPO);
+    let source_frequency_frame = imaging_frequency_frame(frequency_reference)?;
+    let output_frequency_reference = FrequencyRef::LSRK;
+    let output_frequency_frame = FrequencyFrame::Lsrk;
+    let frame_engine = casa_ms::derived::engine::MsCalEngine::new(&ms)?;
+    let anchor_time_mjd_seconds =
+        first_selected_time_mjd_seconds.expect("nonempty selected row traversal");
+    let reference_frequency = casa_ms::convert_frequency_to_frame(
+        frequency_reference,
+        output_frequency_reference,
+        source_reference_frequency,
+        anchor_time_mjd_seconds,
+        field_id,
+        &frame_engine,
+    )?;
+    let spectral_anchor = if source_frequency_frame == output_frequency_frame {
+        SpectralFrameAnchor::NotApplicable
+    } else {
+        let [x_metres, y_metres, z_metres] = frame_engine.observatory_position().as_itrf();
+        SpectralFrameAnchor::Conversion {
+            epoch: Epoch::new(
+                anchor_time_mjd_seconds / 86_400.0,
+                imaging_time_scale(frame_engine.time_reference())?,
+            ),
+            direction: direction.reference_direction(),
+            observatory_position: ItrfPosition::new(x_metres, y_metres, z_metres),
+        }
+    };
     let geometry = casa_imaging_model::GeometryInput::new(
         vec![ImageDomainSpec::new(
             ImageDomainRole::Main,
@@ -394,9 +423,9 @@ fn prepare(
         ),
         UvwCoordinateLaw::PhaseTrackingCentre,
         SpectralCoordinateSpec::new(
-            FrequencyFrame::Topocentric,
-            FrequencyFrame::Topocentric,
-            SpectralFrameAnchor::NotApplicable,
+            source_frequency_frame,
+            output_frequency_frame,
+            spectral_anchor,
             SpectralWcs::Linear {
                 channels: 1,
                 reference_pixel: 0.0,
@@ -410,7 +439,7 @@ fn prepare(
     let coordinates = image_coordinates(
         &request,
         [right_ascension, declination],
-        frequency_reference,
+        output_frequency_reference,
         reference_frequency,
     );
     let native = production_storage_profile(&request, content_budget)
@@ -570,6 +599,31 @@ fn data_description_binding(
         usize::try_from(polarization)
             .map_err(|_| boxed("selected DDID has a negative polarization id"))?,
     ))
+}
+
+fn imaging_frequency_frame(
+    reference: FrequencyRef,
+) -> Result<FrequencyFrame, crate::ApplicationError> {
+    match reference {
+        FrequencyRef::TOPO => Ok(FrequencyFrame::Topocentric),
+        FrequencyRef::BARY => Ok(FrequencyFrame::Barycentric),
+        FrequencyRef::LSRK => Ok(FrequencyFrame::Lsrk),
+        _ => Err(boxed(format!(
+            "native continuum does not support MeasurementSet frequency frame {reference}"
+        ))),
+    }
+}
+
+fn imaging_time_scale(reference: EpochRef) -> Result<TimeScale, crate::ApplicationError> {
+    match reference {
+        EpochRef::UTC => Ok(TimeScale::Utc),
+        EpochRef::TAI => Ok(TimeScale::Tai),
+        EpochRef::TT => Ok(TimeScale::Tt),
+        EpochRef::TDB => Ok(TimeScale::Tdb),
+        _ => Err(boxed(format!(
+            "native continuum does not support MeasurementSet epoch reference {reference}"
+        ))),
+    }
 }
 
 fn selected_channels(

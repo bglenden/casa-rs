@@ -1301,6 +1301,127 @@ impl Table {
         self.finish_write_operation(auto_unlock, result)
     }
 
+    /// Persist the complete private-staging to `MODEL_DATA` transition as one
+    /// control-file image. The caller must already have applied the matching
+    /// remove/rename and keyword changes to the locked in-memory table.
+    pub(crate) fn persist_model_data_transition_in_place(
+        &mut self,
+        staging: &str,
+        destination: &str,
+    ) -> Result<(), TableError> {
+        if self.kind != TableKind::Plain {
+            return Err(TableError::Storage(
+                "MODEL_DATA publication requires a plain disk-backed table".to_string(),
+            ));
+        }
+        let schema = self.inner.schema().ok_or_else(|| {
+            TableError::Schema("schema required for MODEL_DATA publication".into())
+        })?;
+        if schema.contains_column(staging) || !schema.contains_column(destination) {
+            return Err(TableError::Storage(format!(
+                "MODEL_DATA transition {staging:?} -> {destination:?} is not reflected in memory"
+            )));
+        }
+        let source_path = self
+            .source_path
+            .as_ref()
+            .ok_or_else(|| TableError::Storage("table has no source path".to_string()))?
+            .clone();
+        let auto_unlock = self.begin_write_operation("publish MODEL_DATA transition")?;
+        let result = (|| {
+            let control_path = source_path.join(crate::storage::TABLE_CONTROL_FILE);
+            let mut table_dat =
+                match crate::storage::table_control::read_table_dat_dispatch(&control_path)? {
+                    crate::storage::table_control::TableDatResult::Plain(table_dat) => table_dat,
+                    _ => {
+                        return Err(TableError::Storage(
+                            "MODEL_DATA publication only supports plain tables".to_string(),
+                        ));
+                    }
+                };
+
+            let staging_entry = table_dat
+                .column_set
+                .columns
+                .iter()
+                .find(|entry| entry.original_name == staging)
+                .cloned()
+                .ok_or_else(|| TableError::SchemaColumnUnknown {
+                    column: staging.to_string(),
+                })?;
+            if let Some(destination_entry) = table_dat
+                .column_set
+                .columns
+                .iter()
+                .find(|entry| entry.original_name == destination)
+                .cloned()
+            {
+                let users = table_dat
+                    .column_set
+                    .columns
+                    .iter()
+                    .filter(|entry| entry.dm_seq_nr == destination_entry.dm_seq_nr)
+                    .count();
+                if users != 1 {
+                    return Err(TableError::Storage(format!(
+                        "destination column {destination:?} shares data manager {}",
+                        destination_entry.dm_seq_nr
+                    )));
+                }
+                table_dat
+                    .table_desc
+                    .columns
+                    .retain(|descriptor| descriptor.col_name != destination);
+                table_dat
+                    .column_set
+                    .columns
+                    .retain(|entry| entry.original_name != destination);
+                table_dat
+                    .column_set
+                    .data_managers
+                    .retain(|manager| manager.seq_nr != destination_entry.dm_seq_nr);
+            }
+
+            let descriptor = table_dat
+                .table_desc
+                .columns
+                .iter_mut()
+                .find(|descriptor| descriptor.col_name == staging)
+                .ok_or_else(|| TableError::SchemaColumnUnknown {
+                    column: staging.to_string(),
+                })?;
+            descriptor.col_name = destination.to_string();
+            let entry = table_dat
+                .column_set
+                .columns
+                .iter_mut()
+                .find(|entry| entry.dm_seq_nr == staging_entry.dm_seq_nr)
+                .ok_or_else(|| TableError::SchemaColumnUnknown {
+                    column: staging.to_string(),
+                })?;
+            if entry.original_name != staging {
+                return Err(TableError::Storage(format!(
+                    "staging manager {} does not uniquely own {staging:?}",
+                    staging_entry.dm_seq_nr
+                )));
+            }
+            entry.original_name = destination.to_string();
+
+            table_dat.table_desc.table_keywords = self.inner.keywords().clone();
+            for descriptor in &mut table_dat.table_desc.columns {
+                descriptor.keywords = self
+                    .inner
+                    .column_keywords(&descriptor.col_name)
+                    .cloned()
+                    .unwrap_or_default();
+            }
+            crate::storage::table_control::write_model_data_transition(&control_path, &table_dat)?;
+            crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&source_path);
+            Ok(())
+        })();
+        self.finish_write_operation(auto_unlock, result)
+    }
+
     /// Persists a newly-added variable-shape array column as a standalone
     /// `TiledShapeStMan` data manager without rewriting existing managers.
     ///
@@ -1885,6 +2006,18 @@ impl TableWritePlan<'_> {
     #[doc(hidden)]
     pub fn persist_column_rename(&mut self, old: &str, new: &str) -> Result<(), TableError> {
         self.table.persist_renamed_column_in_place(old, new)
+    }
+
+    /// Atomically publish one private staging column as `MODEL_DATA` together
+    /// with the already-applied owner-keyword transition.
+    #[doc(hidden)]
+    pub fn publish_model_data_transition(
+        &mut self,
+        staging: &str,
+        destination: &str,
+    ) -> Result<(), TableError> {
+        self.table
+            .persist_model_data_transition_in_place(staging, destination)
     }
 
     /// Install a newly added variable-shape tiled column.

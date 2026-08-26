@@ -57,9 +57,9 @@ ACCEPTED_MATRIX_ROWS_SHA256 = (
     "fb60c0414158df194b2cbf4ae8bafca8f8837bca6f27605566f338289a44ca7c"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "bb01d511251e21a46d8590e79486d86731ef9d4a3b4f1697e402e0b8bfafcc32"
+    "515bfc01b448a8335fa4857a11fc851e6ce3d356c5d6fc034a5eb6aec2083aae"
 )
-ACCEPTED_MATRIX_CONTRACT_REVISION = 41
+ACCEPTED_MATRIX_CONTRACT_REVISION = 42
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "scientific-products-v1",
@@ -1809,7 +1809,11 @@ def validate_t18_global_weighting_sources(
     selected_sample_fields = rust_struct_fields(
         sample_model, "SelectedObservationSample", sample_model_path
     )
-    if contribution_fields != {"output_channel": "u32", "factor": "f32"} or (
+    if contribution_fields != {
+        "output_channel": "u32",
+        "factor": "f32",
+        "evaluation_frequency_hz": "f64",
+    } or (
         contribution_set_fields
         != {"entries": "[Option<SelectedSpectralContribution>;2]"}
     ):
@@ -1852,7 +1856,10 @@ def validate_t18_global_weighting_sources(
     interpolation = rust_function_body(
         traversal_sample, "interpolation_contributions", traversal_sample_path
     )
-    compact_interpolation = re.sub(r"\s+", "", interpolation)
+    evaluation = rust_function_body(
+        traversal_sample, "evaluated_frequency_hz", traversal_sample_path
+    )
+    compact_evaluation = re.sub(r"\s+", "", evaluation)
     explicit_output_frame = rust_function_body(
         spectral_engine, "spectral_frame_explicit", spectral_engine_path
     )
@@ -1863,15 +1870,16 @@ def validate_t18_global_weighting_sources(
     )
     if not all(token in derivation for token in required_derivation) or (
         "source_frequency_output_contributions(" not in traversal_sample
-        or "convert_frequency_to_frame_with_frames(" not in interpolation
-        or "spectral.anchor()" not in interpolation
-        or "spectral_frame_observatory(" not in interpolation
-        or "spectral_frame_explicit(" not in interpolation
-        or "sample.coordinates.time.mjd_days()" not in interpolation
-        or "sample.metadata.field_id" not in interpolation
-        or "source_frame" not in interpolation
-        or "output_frame" not in interpolation
-        or "Some(&source_frame),Some(&output_frame)" not in compact_interpolation
+        or "evaluation_frequency_hz" not in interpolation
+        or "convert_frequency_to_frame_with_frames(" not in evaluation
+        or "spectral.anchor()" not in evaluation
+        or "spectral_frame_observatory(" not in evaluation
+        or "spectral_frame_explicit(" not in evaluation
+        or "sample.coordinates.time.mjd_days()" not in evaluation
+        or "sample.metadata.field_id" not in evaluation
+        or "source_frame" not in evaluation
+        or "output_frame" not in evaluation
+        or "Some(&source_frame),Some(&output_frame)" not in compact_evaluation
         or not all(
             token in explicit_output_frame
             for token in ("with_epoch(", "with_position(", "with_direction(", "with_measures(")

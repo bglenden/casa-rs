@@ -444,6 +444,7 @@ pub struct SerialModelDataPublicationExecutor {
     artifact: ArtifactIdentity,
     bytes: u64,
     expected_samples: u64,
+    selected_generation: casa_imaging_model::SelectedObservationGenerationId,
     prepared: AtomicBool,
 }
 
@@ -464,6 +465,7 @@ impl SerialModelDataPublicationExecutor {
             ),
             bytes: bytes.max(1),
             expected_samples: completion.sample_count(),
+            selected_generation: completion.selected_generation(),
             prepared: AtomicBool::new(false),
         }
     }
@@ -476,7 +478,8 @@ impl WorkImplementation for SerialModelDataPublicationExecutor {
     }
     fn execute(&self, context: WorkExecutionContext<'_>) -> Result<WorkMeasurements, Self::Error> {
         if context.node().id.as_str() == STAGE {
-            self.staging.prepare_model_column(self.expected_samples)?;
+            self.staging
+                .prepare_model_column(self.expected_samples, self.selected_generation)?;
             self.prepared.store(true, Ordering::Release);
         }
         let artifacts = (context.node().id.as_str() == COMMIT)

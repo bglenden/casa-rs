@@ -28,7 +28,10 @@ use crate::{
     WorkExecutionContext, WorkImplementation, WorkImplementationId, WorkKind, WorkMeasurements,
 };
 use casa_imaging_reconstruction::WeightingPlan;
-use casa_ms::{BoundSelectedObservation, ModelColumnTransaction, SelectedObservationCompletion};
+use casa_ms::{
+    BoundSelectedObservation, DetachedModelColumnStaging, ModelColumnTransaction,
+    SelectedObservationCompletion,
+};
 use sha2::{Digest, Sha256};
 
 pub(crate) const MODEL_COLUMN_WORKER_STACK_BYTES: usize = 2 * 1024 * 1024;
@@ -74,13 +77,8 @@ struct ModelColumnStaging {
 enum ModelColumnStagingState {
     Idle,
     Replaying(ModelColumnWorker),
-    Staged(Box<StagedModelColumn>),
-}
-
-struct StagedModelColumn {
-    transaction: ModelColumnTransaction,
-    sample_count: u64,
-    prepared: bool,
+    Detached(Box<DetachedModelColumnStaging>),
+    Prepared(Box<ModelColumnTransaction>),
 }
 
 enum VisibilityProductStagingState {
@@ -150,7 +148,11 @@ impl VisibilityProductStaging {
     }
 
     /// Validate that private staging contains the terminal replay's exact sample set.
-    pub fn prepare_model_column(&self, expected_samples: u64) -> io::Result<()> {
+    pub fn prepare_model_column(
+        &self,
+        expected_samples: u64,
+        selected_generation: casa_imaging_model::SelectedObservationGenerationId,
+    ) -> io::Result<()> {
         let Some(staging) = &self.model_column else {
             return Err(io::Error::other("MODEL_DATA staging is not configured"));
         };
@@ -158,19 +160,27 @@ impl VisibilityProductStaging {
             .state
             .lock()
             .map_err(|_| io::Error::other("MODEL_DATA staging state poisoned"))?;
-        let ModelColumnStagingState::Staged(staged) = &mut *state else {
-            return Err(io::Error::other(
-                "MODEL_DATA staging worker did not finish inside terminal replay",
-            ));
+        let detached = match &*state {
+            ModelColumnStagingState::Detached(detached) => detached,
+            _ => {
+                return Err(io::Error::other(
+                    "MODEL_DATA staging worker did not detach inside terminal replay",
+                ));
+            }
         };
-        if staged.sample_count != expected_samples {
+        if detached.replay_sample_count() != expected_samples {
             return Err(io::Error::other(format!(
                 "MODEL_DATA staged {} samples, expected {expected_samples}",
-                staged.sample_count
+                detached.replay_sample_count()
             )));
         }
-        staged.transaction.prepare().map_err(io::Error::other)?;
-        staged.prepared = true;
+        if detached.selected_generation() != selected_generation {
+            return Err(io::Error::other(
+                "MODEL_DATA staging belongs to another selected-observation generation",
+            ));
+        }
+        let transaction = ModelColumnTransaction::reopen(detached).map_err(io::Error::other)?;
+        *state = ModelColumnStagingState::Prepared(Box::new(transaction));
         Ok(())
     }
 
@@ -184,8 +194,8 @@ impl VisibilityProductStaging {
             .state
             .lock()
             .map_err(|_| io::Error::other("MODEL_DATA staging state poisoned"))?;
-        let staged = match std::mem::replace(&mut *state, ModelColumnStagingState::Idle) {
-            ModelColumnStagingState::Staged(staged) if staged.prepared => *staged,
+        let transaction = match std::mem::replace(&mut *state, ModelColumnStagingState::Idle) {
+            ModelColumnStagingState::Prepared(transaction) => *transaction,
             other => {
                 *state = other;
                 return Err(io::Error::other(
@@ -194,8 +204,7 @@ impl VisibilityProductStaging {
             }
         };
         drop(state);
-        staged
-            .transaction
+        transaction
             .commit(completion.model_product().identity())
             .map_err(io::Error::other)
     }
@@ -249,9 +258,9 @@ impl FinalVisibilitySink for VisibilityProductStaging {
                 Ok(())
             }
             ModelColumnStagingState::Replaying(_) => Ok(()),
-            ModelColumnStagingState::Staged(_) => Err(io::Error::other(
-                "MODEL_DATA staging replay already finished",
-            )),
+            ModelColumnStagingState::Detached(_) | ModelColumnStagingState::Prepared(_) => Err(
+                io::Error::other("MODEL_DATA staging replay already finished"),
+            ),
         }
     }
 
@@ -309,12 +318,12 @@ impl FinalVisibilitySink for VisibilityProductStaging {
                 }
             };
             drop(staging_state);
-            let staged = worker.finish()?;
+            let detached = worker.finish(replay.selected_generation())?;
             *staging
                 .state
                 .lock()
                 .map_err(|_| io::Error::other("MODEL_DATA staging state poisoned"))? =
-                ModelColumnStagingState::Staged(Box::new(staged));
+                ModelColumnStagingState::Detached(Box::new(detached));
         }
         *state = VisibilityProductStagingState::Finished(
             authority.finish(replay.selected_generation(), replay.weighting_generation()),
@@ -325,7 +334,7 @@ impl FinalVisibilitySink for VisibilityProductStaging {
 
 struct ModelColumnWorker {
     sender: SyncSender<ModelColumnCommand>,
-    join: JoinHandle<io::Result<StagedModelColumn>>,
+    join: JoinHandle<io::Result<DetachedModelColumnStaging>>,
 }
 
 enum ModelColumnCommand {
@@ -333,7 +342,9 @@ enum ModelColumnCommand {
         values: Vec<(u64, u32, u32, num_complex::Complex32)>,
         reply: SyncSender<Result<(), String>>,
     },
-    Finish,
+    Finish {
+        selected_generation: casa_imaging_model::SelectedObservationGenerationId,
+    },
 }
 
 impl ModelColumnWorker {
@@ -364,7 +375,10 @@ impl ModelColumnWorker {
                         }
                     };
                 let mut staged_samples = 0_u64;
-                while let Ok(command) = receiver.recv() {
+                let selected_generation = loop {
+                    let command = receiver
+                        .recv()
+                        .map_err(|_| io::Error::other("MODEL_DATA staging controller stopped"))?;
                     match command {
                         ModelColumnCommand::Stage { values, reply } => {
                             let result = (|| {
@@ -390,14 +404,14 @@ impl ModelColumnWorker {
                                 }
                             }
                         }
-                        ModelColumnCommand::Finish => break,
+                        ModelColumnCommand::Finish {
+                            selected_generation,
+                        } => break selected_generation,
                     }
-                }
-                Ok(StagedModelColumn {
-                    transaction,
-                    sample_count: staged_samples,
-                    prepared: false,
-                })
+                };
+                transaction
+                    .detach(selected_generation, staged_samples)
+                    .map_err(io::Error::other)
             })
             .map_err(io::Error::other)?;
         ready_receiver
@@ -434,9 +448,14 @@ impl ModelColumnWorker {
             .map_err(io::Error::other)
     }
 
-    fn finish(self) -> io::Result<StagedModelColumn> {
+    fn finish(
+        self,
+        selected_generation: casa_imaging_model::SelectedObservationGenerationId,
+    ) -> io::Result<DetachedModelColumnStaging> {
         self.sender
-            .send(ModelColumnCommand::Finish)
+            .send(ModelColumnCommand::Finish {
+                selected_generation,
+            })
             .map_err(|_| io::Error::other("MODEL_DATA staging worker stopped"))?;
         self.join
             .join()

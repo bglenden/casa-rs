@@ -182,6 +182,12 @@ pub struct NativeMinorCycleOutcome {
     pub recorded_components: Vec<casa_imaging_reconstruction::MinorCycleComponent>,
     /// Exact x-major reconstruction support used for component placement.
     pub mask_support: Vec<bool>,
+    /// Immutable mask generation used for this cycle.
+    pub mask_generation: casa_imaging_reconstruction::ReconstructionMaskGenerationId,
+    /// Exact model generation constrained by this mask.
+    pub mask_model_generation: casa_imaging_reconstruction::ModelGenerationId,
+    /// Current Normal State consumed to generate an automatic mask.
+    pub mask_normal_state: Option<casa_imaging_reconstruction::FinalNormalStateCompletionId>,
     /// Auto-multithreshold diagnostics, when that mask mode generated support.
     pub auto_mask: Option<casa_imaging_reconstruction::AutoMultithreshEvidence>,
 }
@@ -430,6 +436,9 @@ where
                         .unwrap_or_default()
                         .to_vec(),
                     mask_support: minor.mask().support().to_vec(),
+                    mask_generation: minor.mask().generation_id(),
+                    mask_model_generation: minor.mask().model_generation(),
+                    mask_normal_state: minor.mask().normal_state_completion(),
                     auto_mask: minor.auto_mask_evidence(),
                 };
                 let continue_cleaning = cycle < maximum_cycles

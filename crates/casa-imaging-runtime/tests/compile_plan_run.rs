@@ -53,43 +53,44 @@ use casa_imaging_runtime::{
     AdaptationId, AdaptationTransition, AllocationAccess, AllocationId, AllocationLayout,
     AllocationLifetime, AllocationPurpose, AllocationUse, AlternativeId,
     AlternativeRejectionReason, ArtifactDisposition, ArtifactIdentity, ArtifactMeasurement,
-    ArtifactRole, AttemptBoundObservationCompletion, BindingKind, BuildIdentity, CacheDemand,
-    CacheIdentity, CapabilityPredicate, CapacityDomainId, CapacityViewId, ClaimLifetime,
-    CompiledProblemEvidence, CompleteDataOperatorResult, CompleteDataPlanFragment,
-    CompleteDataPreparedState, ContinuumPassIdentity, ContinuumPassPhase, CountDemand,
-    CpuClassCapacity, DemandAlternative, DemandEnvelope, ExecutionDag, ExecutionDagSpecification,
-    ExecutionError, ExecutionEvidenceError, ExecutionKnobs, ExecutionOutcome, ExecutionPlanId,
-    ExecutionProvenance, ExecutionReceipt, ExecutionReceiptBinding, ExecutionReceiptStore,
-    ExecutionStatus, ExternalPressure, FenceId, FenceKind, HostInventory,
-    ImplementationContractCatalog, ImplementationContractMetadata, ImplementationRegistry,
-    ImplementationRegistryId, InitializationPolicy, IoBufferDemand, IoBufferKind, IoMeasurement,
-    IoPrediction, LeaseResource, LogicalAllocation, MajorCycleOperatorResult,
-    MajorCycleOperatorState, MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand, MemoryView,
-    MemoryViewKind, ObservationReadCompletionContext, ObservationTransactionWork, PhysicalLayoutId,
-    PhysicalSlot, PhysicalSlotId, PhysicalWorkBinding, PhysicalWorkBindingError, PlanError,
-    PlanPrediction, PlannedArtifact, PlannerCostModelProfileBootstrap, PlannerCostModelProfileId,
-    PlanningBindings, PredictionConfidence, PredictionUncertainty, PreparedArtifactBudget,
+    ArtifactRole, AttemptBoundObservationCompletion, AuthorizedProductPublicationEntry,
+    BindingKind, BuildIdentity, CacheDemand, CacheIdentity, CapabilityPredicate, CapacityDomainId,
+    CapacityViewId, ClaimLifetime, CompiledProblemEvidence, CompleteDataOperatorResult,
+    CompleteDataPlanFragment, CompleteDataPreparedState, ContinuumPassIdentity, ContinuumPassPhase,
+    CountDemand, CpuClassCapacity, DemandAlternative, DemandEnvelope, ExecutionDag,
+    ExecutionDagSpecification, ExecutionError, ExecutionEvidenceError, ExecutionKnobs,
+    ExecutionOutcome, ExecutionPlanId, ExecutionProvenance, ExecutionReceipt,
+    ExecutionReceiptBinding, ExecutionReceiptStore, ExecutionStatus, ExternalPressure, FenceId,
+    FenceKind, HostInventory, ImplementationContractCatalog, ImplementationContractMetadata,
+    ImplementationRegistry, ImplementationRegistryId, InitializationPolicy, IoBufferDemand,
+    IoBufferKind, IoMeasurement, IoPrediction, LeaseResource, LogicalAllocation,
+    MajorCycleOperatorResult, MajorCycleOperatorState, MemoryCapacityDomain, MemoryCapacityKind,
+    MemoryDemand, MemoryView, MemoryViewKind, ObservationReadCompletionContext,
+    ObservationTransactionWork, PhysicalLayoutId, PhysicalSlot, PhysicalSlotId,
+    PhysicalWorkBinding, PhysicalWorkBindingError, PlanError, PlanPrediction, PlannedArtifact,
+    PlannerCostModelProfileBootstrap, PlannerCostModelProfileId, PlanningBindings,
+    PredictionConfidence, PredictionUncertainty, PreparedArtifactBudget,
     PreparedArtifactDescriptor, PreparedArtifactError, PreparedArtifactLoadSource,
     PreparedArtifactOperation, PreparedArtifactOrder, PreparedArtifactPlanFragment,
     PreparedArtifactPlaneDescriptor, PreparedArtifactPrecision, PreparedArtifactRegistration,
     PreparedArtifactRejection, PreparedArtifactReuseOutcome, PreparedArtifactSegmentDescriptor,
     PreparedArtifactSourceSegment, PreparedArtifactStore, PreparedArtifactUvAffine,
-    ProductPublicationPlan, ProductionStorageProfile, PublicationLayoutLedger,
-    PublicationMappedStaging, PublicationParticipant, PublicationPhysicalLayout,
-    PublicationResourceBounds, PublicationStaging, QueueDemand, QueueResource, QueueResourceId,
-    QuiescencePoint, RateDemand, RateResource, RateResourceId, RateUnit, ReceiptFailureKind,
-    ReceiptRetention, ReceiptStatus, RedactedPath, ResourceAuthority, ResourceClaim, ResourceError,
-    ResourceHeadroom, ResourceMeasurement, ResourceOverride, ResourcePolicy, ResourceTopology,
-    RunBindings, RunController, RunDirective, RunError, RunToCompletion, RuntimeOverheadDemand,
-    ScalingMetadata, SelectedObservationSourceResources, SerialContinuumExecutionPolicy,
-    SerialContinuumExecutor, SerialContinuumPassInput, SerialContinuumPlan,
-    SerialContinuumRegistry, SerialMfsOperatorState, SerialProductPublicationExecutor,
-    SerialProductPublicationPlan, SerialProductPublicationPolicy, SerialProductPublicationRegistry,
-    SerialProductPublicationSink, SlotCompatibility, StagePrediction, StorageDomain,
-    StorageDomainId, StorageIoResourceBinding, StorageMode, StorageUseKind,
-    WeightedObservationBlock, WeightingExecutionState, WeightingPlanFragment, WorkDependency,
-    WorkDomain, WorkExecutionContext, WorkImplementation, WorkImplementationId, WorkKind,
-    WorkMeasurements, WorkNode, WorkNodeId, plan as runtime_plan, run as runtime_run,
+    ProductMemberPublicationFailure, ProductPublicationPlan, ProductionStorageProfile,
+    PublicationLayoutLedger, PublicationMappedStaging, PublicationParticipant,
+    PublicationPhysicalLayout, PublicationResourceBounds, PublicationStaging, QueueDemand,
+    QueueResource, QueueResourceId, QuiescencePoint, RateDemand, RateResource, RateResourceId,
+    RateUnit, ReceiptFailureKind, ReceiptRetention, ReceiptStatus, RedactedPath, ResourceAuthority,
+    ResourceClaim, ResourceError, ResourceHeadroom, ResourceMeasurement, ResourceOverride,
+    ResourcePolicy, ResourceTopology, RunBindings, RunController, RunDirective, RunError,
+    RunToCompletion, RuntimeOverheadDemand, ScalingMetadata, SelectedObservationSourceResources,
+    SerialContinuumExecutionPolicy, SerialContinuumExecutor, SerialContinuumPassInput,
+    SerialContinuumPlan, SerialContinuumRegistry, SerialMfsOperatorState,
+    SerialProductPublicationExecutor, SerialProductPublicationPlan, SerialProductPublicationPolicy,
+    SerialProductPublicationRegistry, SerialProductPublicationSink, SlotCompatibility,
+    StagePrediction, StorageDomain, StorageDomainId, StorageIoResourceBinding, StorageMode,
+    StorageUseKind, WeightedObservationBlock, WeightingExecutionState, WeightingPlanFragment,
+    WorkDependency, WorkDomain, WorkExecutionContext, WorkImplementation, WorkImplementationId,
+    WorkKind, WorkMeasurements, WorkNode, WorkNodeId, plan as runtime_plan, run as runtime_run,
 };
 use casa_ms::{
     BoundSelectedObservation, ObservationSourceBinding, SelectedObservationCompletion,
@@ -919,7 +920,7 @@ fn sealed_measurement_executor(
                 ArtifactMeasurement::new(
                     entry.planned_identity(),
                     Some(entry.observed_identity()),
-                    ArtifactDisposition::Staged,
+                    ArtifactDisposition::PublicationPrepared,
                     entry.payload_bytes(),
                     None,
                 )
@@ -1904,6 +1905,35 @@ impl WorkImplementation for RecordingExecutor {
             }
         }
         Ok(())
+    }
+
+    fn publish_product_member(
+        &self,
+        context: WorkExecutionContext<'_>,
+        entry: AuthorizedProductPublicationEntry,
+    ) -> Option<Result<ArtifactMeasurement, ProductMemberPublicationFailure<Self::Error>>> {
+        self.major_cycle_problem.as_ref()?;
+        let authorized = context
+            .product_publication()
+            .is_some_and(|publication| publication.entries().contains(&entry));
+        let measurement = |disposition| {
+            ArtifactMeasurement::new(
+                entry.planned_identity(),
+                Some(entry.observed_identity()),
+                disposition,
+                entry.payload_bytes(),
+                None,
+            )
+            .expect("T20 publication fixture uses authorized artifact evidence")
+        };
+        Some(if authorized {
+            Ok(measurement(ArtifactDisposition::Published))
+        } else {
+            Err(ProductMemberPublicationFailure::new(
+                io::Error::other("T20 publication fixture lacks member authorization"),
+                measurement(ArtifactDisposition::PublicationFailed),
+            ))
+        })
     }
 }
 
@@ -9378,7 +9408,8 @@ fn t20_major_cycle_harness(
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let mut executor = recording_executor(6, None, None);
+    let (publication, projection) = sealed_publication_plan_for_problem(&problem);
+    let mut executor = sealed_measurement_executor(&publication, &projection);
     executor.id = pathlike_implementation.clone();
     executor.weighting_source_residency = Some(selected_content_residency(&problem));
     executor.weighting_plan = Some(weighting_plan);
@@ -9727,7 +9758,11 @@ fn exact_sample_contributions(
 ) -> casa_imaging_model::SelectedSpectralContributions {
     use casa_imaging_model::{SelectedSpectralContribution, SelectedSpectralContributions};
     SelectedSpectralContributions::new([
-        SelectedSpectralContribution::new(sample.address.channel_index, 1.0),
+        SelectedSpectralContribution::new(
+            sample.address.channel_index,
+            1.0,
+            sample.address.frequency_centre_hz,
+        ),
         None,
     ])
     .expect("single-channel contributions")

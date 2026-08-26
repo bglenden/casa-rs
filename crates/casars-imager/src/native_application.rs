@@ -267,14 +267,13 @@ fn unsupported_native_controls(config: &CliConfig) -> bool {
         || config.imaging_read_ahead_blocks.is_some()
         || config.imaging_fft_precision != ImagingFftPrecisionPolicy::Auto
         || config.write_preview_pngs
-        || config.niter > config.minor_cycle_length
 }
 
 #[cfg(test)]
 mod tests {
     use std::ffi::OsString;
 
-    use super::{CliConfig, TaskRequirement, backend_requirements};
+    use super::{CliConfig, TaskRequirement, backend_requirements, task_requirements};
 
     fn config(extra: &[&str]) -> CliConfig {
         let mut args = vec![
@@ -307,6 +306,19 @@ mod tests {
     #[test]
     fn default_backend_choices_select_the_installed_native_cpu_implementation() {
         assert!(backend_requirements(&config(&[])).is_empty());
+    }
+
+    #[test]
+    fn bounded_minor_cycles_are_a_supported_native_controller_control() {
+        let requirements = task_requirements(&config(&[
+            "--niter",
+            "12",
+            "--minor-cycle-length",
+            "6",
+            "--nmajor",
+            "3",
+        ]));
+        assert!(!requirements.contains(&TaskRequirement::UnsupportedControls));
     }
 
     #[test]

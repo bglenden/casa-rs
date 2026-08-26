@@ -147,16 +147,24 @@ pub struct SelectedSampleMetadata {
 pub struct SelectedSpectralContribution {
     output_channel: u32,
     factor: f32,
+    evaluation_frequency_hz: f64,
 }
 
 impl SelectedSpectralContribution {
-    /// Construct one finite, positive, normalized contribution.
+    /// Construct one finite, positive, normalized contribution at its
+    /// owner-evaluated frequency in the compiled output frame.
     #[must_use]
-    pub fn new(output_channel: u32, factor: f32) -> Option<Self> {
-        (factor.is_finite() && factor > 0.0 && factor <= 1.0).then_some(Self {
-            output_channel,
-            factor,
-        })
+    pub fn new(output_channel: u32, factor: f32, evaluation_frequency_hz: f64) -> Option<Self> {
+        (factor.is_finite()
+            && factor > 0.0
+            && factor <= 1.0
+            && evaluation_frequency_hz.is_finite()
+            && evaluation_frequency_hz > 0.0)
+            .then_some(Self {
+                output_channel,
+                factor,
+                evaluation_frequency_hz,
+            })
     }
 
     /// Return the zero-based compiled output-channel index.
@@ -169,6 +177,12 @@ impl SelectedSpectralContribution {
     #[must_use]
     pub const fn factor(self) -> f32 {
         self.factor
+    }
+
+    /// Return the source sample frequency evaluated in the compiled output frame.
+    #[must_use]
+    pub const fn evaluation_frequency_hz(self) -> f64 {
+        self.evaluation_frequency_hz
     }
 }
 
@@ -474,21 +488,23 @@ mod tests {
 
     #[test]
     fn spectral_contributions_are_bounded_values_outside_the_selected_sample_schema() {
-        let first = SelectedSpectralContribution::new(2, 0.25).expect("finite coefficient");
-        let second = SelectedSpectralContribution::new(3, 0.75).expect("finite coefficient");
+        let first = SelectedSpectralContribution::new(2, 0.25, 1.4e9).expect("finite coefficient");
+        let second = SelectedSpectralContribution::new(3, 0.75, 1.4e9).expect("finite coefficient");
         let contributions = SelectedSpectralContributions::new([Some(first), Some(second)])
             .expect("two distinct output contributions");
 
         assert_eq!(first.output_channel(), 2);
         assert_eq!(first.factor(), 0.25);
+        assert_eq!(first.evaluation_frequency_hz(), 1.4e9);
         assert_eq!(
             contributions.iter().collect::<Vec<_>>(),
             vec![first, second]
         );
         assert_eq!(SelectedSpectralContributions::empty().iter().count(), 0);
-        assert!(SelectedSpectralContribution::new(0, f32::NAN).is_none());
-        assert!(SelectedSpectralContribution::new(0, -0.5).is_none());
-        assert!(SelectedSpectralContribution::new(0, 1.5).is_none());
+        assert!(SelectedSpectralContribution::new(0, f32::NAN, 1.4e9).is_none());
+        assert!(SelectedSpectralContribution::new(0, -0.5, 1.4e9).is_none());
+        assert!(SelectedSpectralContribution::new(0, 1.5, 1.4e9).is_none());
+        assert!(SelectedSpectralContribution::new(0, 1.0, f64::NAN).is_none());
         assert!(SelectedSpectralContributions::new([None, Some(first)]).is_none());
         assert!(SelectedSpectralContributions::new([Some(first), Some(first)]).is_none());
         assert_eq!(SelectedObservationSample::SCHEMA_VERSION, 3);
