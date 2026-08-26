@@ -2289,6 +2289,74 @@ fn serial_continuum_dirty_plan_omits_minor_cycle_work() {
 }
 
 #[test]
+fn serial_continuum_initial_plan_bounds_selected_payload_traversals_by_weighting_scheme() {
+    let cases = [
+        (
+            WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
+            1,
+        ),
+        (
+            WeightingContract::new(
+                WeightingScheme::Uniform,
+                WeightDensityScope::GlobalSelection,
+            ),
+            2,
+        ),
+        (
+            WeightingContract::new(
+                WeightingScheme::Briggs { robust: 0.5 },
+                WeightDensityScope::GlobalSelection,
+            ),
+            2,
+        ),
+        (
+            WeightingContract::new(
+                WeightingScheme::BriggsBandwidthTaper { robust: -0.5 },
+                WeightDensityScope::GlobalSelection,
+            ),
+            2,
+        ),
+    ];
+    for (weighting, expected) in cases {
+        let problem = compile(request_with_geometry_references_and_weighting(
+            1,
+            geometry(255.0),
+            default_references(),
+            weighting,
+        ))
+        .expect("logical continuum compilation");
+        let registry = test_registry(&problem, 3, 6, None);
+        let plan = SerialContinuumPlan::dirty(
+            &problem,
+            &registry,
+            SerialContinuumExecutionPolicy::new(
+                implementation(6),
+                WeightingExecutionLimits::new(2, 3).expect("weighting limits"),
+                selected_content_residency(&problem),
+                serial_storage_io(),
+                1_000,
+                1_000,
+                900_000,
+            ),
+        )
+        .expect("streaming plan");
+        let payload_traversals = plan
+            .physical_work()
+            .execution_dag()
+            .nodes()
+            .values()
+            .filter(|node| node.kind == WorkKind::ObservationRead)
+            .count();
+        assert_eq!(
+            payload_traversals,
+            expected,
+            "{:?}",
+            problem.weighting().scheme()
+        );
+    }
+}
+
+#[test]
 fn serial_continuum_executes_initial_major_and_scheduler_minor_cycle() {
     let problem = compile(request_with_geometry(
         1,
@@ -2397,6 +2465,10 @@ fn serial_continuum_executes_initial_major_and_scheduler_minor_cycle() {
         .implementation()
         .take_minor_completion()
         .expect("minor completion");
+    let frozen_weighting = runtime_registry
+        .implementation()
+        .take_frozen_weighting()
+        .expect("initial major retains frozen weighting");
     assert_eq!(minor.evidence().problem_id(), problem.problem_id());
     let final_input = minor.into_final_major_input();
     let source_delta = final_input.source_delta();
@@ -2434,6 +2506,19 @@ fn serial_continuum_executes_initial_major_and_scheduler_minor_cycle() {
         .keys()
         .cloned()
         .collect::<BTreeSet<_>>();
+    assert_eq!(
+        final_physical
+            .execution_dag()
+            .nodes()
+            .values()
+            .filter(|node| matches!(
+                node.kind,
+                WorkKind::ObservationRead | WorkKind::ObservationReadWriteback
+            ))
+            .count(),
+        1,
+        "a later major cycle reuses frozen weighting and traverses selected payload once"
+    );
     let collisions = initial_nodes
         .intersection(&final_nodes)
         .cloned()
@@ -2452,7 +2537,8 @@ fn serial_continuum_executes_initial_major_and_scheduler_minor_cycle() {
         open_selected_observation(&problem, &residency).expect("final selected owner"),
         ExecutableModelProblem::from_compiled(problem.clone()).expect("final executable model"),
         SerialContinuumPassInput::FinalMajor(final_input),
-    );
+    )
+    .with_frozen_weighting(frozen_weighting);
     let final_registry =
         SerialContinuumRegistry::new(registry(73), implementation(73), &problem, final_executor);
     let final_plan = runtime_plan(

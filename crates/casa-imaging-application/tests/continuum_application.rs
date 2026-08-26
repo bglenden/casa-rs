@@ -598,7 +598,7 @@ fn application_commits_exact_final_prediction_to_model_data() {
         .output
         .model_data_receipt
         .as_ref()
-        .expect("MODEL_DATA write is receipted by the terminal replay");
+        .expect("MODEL_DATA write is receipted by the fused terminal pass");
     assert_eq!(
         model_receipt.observation_transaction_publication_scope(),
         casa_imaging_runtime::ObservationTransactionPublicationScope::ReconstructionOnly
@@ -609,7 +609,7 @@ fn application_commits_exact_final_prediction_to_model_data() {
         .output
         .final_major_receipt
         .as_ref()
-        .expect("save-model execution has a terminal replay receipt");
+        .expect("save-model execution has a fused terminal-pass receipt");
     assert_eq!(model_receipt, final_receipt);
     let plan_nodes = final_receipt.plan_node_identities();
     let preparation = plan_nodes
@@ -629,18 +629,20 @@ fn application_commits_exact_final_prediction_to_model_data() {
             .all(|node| !node.as_str().contains("stage-model")),
         "MODEL_DATA has no physical staging node"
     );
-    let replay = plan_nodes
+    let terminal_pass = plan_nodes
         .iter()
-        .find(|node| node.as_str().starts_with("weighting-replay-final-major"))
-        .expect("terminal replay is planned");
-    assert_ne!(preparation, replay);
+        .find(|node| node.as_str().starts_with("transaction-read-final-major"))
+        .expect("fused terminal observation pass is planned");
+    assert_ne!(preparation, terminal_pass);
     assert_eq!(
-        final_receipt.stage_predicted_io(replay, casa_imaging_runtime::IoBufferKind::Writeback),
+        final_receipt
+            .stage_predicted_io(terminal_pass, casa_imaging_runtime::IoBufferKind::Writeback,),
         Some((16, 1)),
         "first creation writes the zero-initialized column and selected prediction"
     );
     assert_eq!(
-        final_receipt.stage_actual_io(replay, casa_imaging_runtime::IoBufferKind::Writeback),
+        final_receipt
+            .stage_actual_io(terminal_pass, casa_imaging_runtime::IoBufferKind::Writeback,),
         None,
         "the table adapter exposes no trustworthy physical byte counter"
     );
@@ -650,11 +652,11 @@ fn application_commits_exact_final_prediction_to_model_data() {
         casa_imaging_runtime::RuntimeOverheadKind::ThreadStack,
     );
     assert_eq!(
-        final_receipt.planned_resource_amount(replay, &write_stack, &write_lifetime),
+        final_receipt.planned_resource_amount(terminal_pass, &write_stack, &write_lifetime),
         Some(2 * 1024 * 1024)
     );
     assert_eq!(
-        final_receipt.actual_resource_peak(replay, &write_stack, &write_lifetime),
+        final_receipt.actual_resource_peak(terminal_pass, &write_stack, &write_lifetime),
         Some(2 * 1024 * 1024)
     );
     let model_storage = casa_imaging_runtime::LeaseResource::Storage {
@@ -662,7 +664,7 @@ fn application_commits_exact_final_prediction_to_model_data() {
         use_kind: casa_imaging_runtime::StorageUseKind::FinalOutput,
     };
     assert_eq!(
-        final_receipt.planned_resource_amount(replay, &model_storage, &write_lifetime),
+        final_receipt.planned_resource_amount(terminal_pass, &model_storage, &write_lifetime),
         Some(8),
         "column creation reserves its new persistent capacity"
     );
@@ -695,15 +697,15 @@ fn application_commits_exact_final_prediction_to_model_data() {
         .model_data_receipt
         .as_ref()
         .expect("overwrite receipt");
-    let overwrite_replay = overwrite_receipt
+    let overwrite_terminal_pass = overwrite_receipt
         .plan_node_identities()
         .iter()
-        .find(|node| node.as_str().starts_with("weighting-replay-final-major"))
-        .expect("overwrite replay")
+        .find(|node| node.as_str().starts_with("transaction-read-final-major"))
+        .expect("overwrite fused terminal pass")
         .clone();
     assert_eq!(
         overwrite_receipt.stage_predicted_io(
-            &overwrite_replay,
+            &overwrite_terminal_pass,
             casa_imaging_runtime::IoBufferKind::Writeback,
         ),
         Some((8, 1)),
@@ -711,7 +713,7 @@ fn application_commits_exact_final_prediction_to_model_data() {
     );
     assert_eq!(
         overwrite_receipt.planned_resource_amount(
-            &overwrite_replay,
+            &overwrite_terminal_pass,
             &model_storage,
             &write_lifetime,
         ),

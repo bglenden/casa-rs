@@ -178,16 +178,28 @@ impl SerialContinuumPlan {
         let (base, source_resources) =
             base_physical(problem, registry, &policy, pass, phase_input)?;
         let weighting = plan_weighting(problem, policy.weighting_limits)?;
-        let fragment = WeightingPlanFragment::new_for_pass(
+        let weighting_mode = match pass.phase() {
+            ContinuumPassPhase::FinalMajor => WeightingStreamingMode::Reuse,
+            ContinuumPassPhase::InitialMajor => match problem.weighting().scheme() {
+                casa_imaging_model::WeightingScheme::Natural => {
+                    WeightingStreamingMode::NaturalInitial
+                }
+                casa_imaging_model::WeightingScheme::Uniform
+                | casa_imaging_model::WeightingScheme::Briggs { .. }
+                | casa_imaging_model::WeightingScheme::BriggsBandwidthTaper { .. } => {
+                    WeightingStreamingMode::DensityInitial
+                }
+            },
+        };
+        let fragment = WeightingPlanFragment::streaming_for_pass(
             &weighting,
             pass_node(READ_NODE, pass),
             source_resources.clone(),
             policy.implementation.clone(),
-            policy.implementation.clone(),
-            policy.implementation.clone(),
             pass,
+            weighting_mode,
         );
-        let replay = fragment.replay_node().clone();
+        let replay = fragment.streaming_node().clone();
         let physical = fragment.compose(&base)?;
         let complete_data = CompleteDataPlanFragment::new_with_preparation_node(
             problem,

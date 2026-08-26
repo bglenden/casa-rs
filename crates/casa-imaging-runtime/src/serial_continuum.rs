@@ -20,13 +20,13 @@ use casa_imaging_reconstruction::{
 
 use crate::{
     AttemptBoundObservationCompletion, CompleteDataOperatorResult, CompleteDataPlanFragment,
-    CompleteDataPreparedState, ContinuumPassIdentity, FenceKind, ImplementationContractMetadata,
-    ImplementationRegistry, ImplementationRegistryId, IoMeasurement, LeaseResource,
-    MajorCycleOperatorResult, MajorCycleOperatorState, ObservationReadCompletionContext,
-    ResourceMeasurement, SelectedObservationSourceResources, SerialMfsOperatorState,
-    WeightingExecutionState, WeightingPlanFragment, WeightingReplayCompletion, WorkDependency,
-    WorkExecutionContext, WorkImplementation, WorkImplementationId, WorkKind, WorkMeasurements,
-    WorkNodeId,
+    CompleteDataPreparedState, ContinuumPassIdentity, FenceKind, FrozenWeightingArtifact,
+    ImplementationContractMetadata, ImplementationRegistry, ImplementationRegistryId,
+    IoMeasurement, LeaseResource, MajorCycleOperatorResult, MajorCycleOperatorState,
+    ObservationReadCompletionContext, ResourceMeasurement, SelectedObservationSourceResources,
+    SerialMfsOperatorState, WeightingExecutionState, WeightingPlanFragment,
+    WeightingReplayCompletion, WorkDependency, WorkExecutionContext, WorkImplementation,
+    WorkImplementationId, WorkKind, WorkMeasurements, WorkNodeId,
 };
 use casa_imaging_reconstruction::WeightingPlan;
 use casa_ms::{BoundSelectedObservation, ModelDataWrite, SelectedObservationCompletion};
@@ -499,6 +499,7 @@ struct SerialContinuumExecutorState {
     selected: Option<BoundSelectedObservation>,
     selected_completion: Option<SelectedObservationCompletion>,
     weighting: WeightingExecutionState,
+    frozen_weighting: Option<FrozenWeightingArtifact>,
     prepared: Option<CompleteDataPreparedState>,
     operator: Option<SerialMfsOperatorState>,
     complete_data: Option<CompleteDataOperatorResult>,
@@ -654,6 +655,7 @@ impl SerialContinuumExecutor {
                 selected: Some(selected),
                 selected_completion: None,
                 weighting: WeightingExecutionState::new(),
+                frozen_weighting: None,
                 prepared: None,
                 operator: None,
                 complete_data: None,
@@ -688,15 +690,42 @@ impl SerialContinuumExecutor {
         self
     }
 
+    /// Attach immutable weighting produced by the initial major to a later pass.
+    #[must_use]
+    pub fn with_frozen_weighting(mut self, artifact: FrozenWeightingArtifact) -> Self {
+        self.state
+            .get_mut()
+            .expect("new serial continuum executor mutex is not poisoned")
+            .weighting = WeightingExecutionState::with_frozen_artifact(artifact);
+        self
+    }
+
+    /// Consume immutable weighting retained after a successful major pass.
+    pub fn take_frozen_weighting(&self) -> Option<FrozenWeightingArtifact> {
+        self.state.lock().ok()?.frozen_weighting.take()
+    }
+
     fn fragment(&self) -> WeightingPlanFragment<'_> {
-        WeightingPlanFragment::new_for_pass(
+        let mode = match self.pass.phase() {
+            crate::ContinuumPassPhase::FinalMajor => crate::WeightingStreamingMode::Reuse,
+            crate::ContinuumPassPhase::InitialMajor => match self.problem.weighting().scheme() {
+                casa_imaging_model::WeightingScheme::Natural => {
+                    crate::WeightingStreamingMode::NaturalInitial
+                }
+                casa_imaging_model::WeightingScheme::Uniform
+                | casa_imaging_model::WeightingScheme::Briggs { .. }
+                | casa_imaging_model::WeightingScheme::BriggsBandwidthTaper { .. } => {
+                    crate::WeightingStreamingMode::DensityInitial
+                }
+            },
+        };
+        WeightingPlanFragment::streaming_for_pass(
             &self.weighting_plan,
             crate::serial_continuum_plan::pass_node("transaction-read", self.pass),
             self.source_resources.clone(),
             self.id.clone(),
-            self.id.clone(),
-            self.id.clone(),
             self.pass,
+            mode,
         )
     }
 
@@ -770,6 +799,75 @@ impl SerialContinuumExecutor {
         state.lifecycle = Some(lifecycle);
         Ok(())
     }
+
+    fn run_stream(
+        &self,
+        state: &mut SerialContinuumExecutorState,
+        context: WorkExecutionContext<'_>,
+        fragment: &WeightingPlanFragment<'_>,
+        selected: Option<BoundSelectedObservation>,
+    ) -> Result<(), io::Error> {
+        if let Some(sink) = &self.final_visibility_sink {
+            sink.lock()
+                .map_err(|_| io::Error::other("final visibility sink poisoned"))?
+                .begin_replay()?;
+        }
+        let prepared = state
+            .prepared
+            .take()
+            .ok_or_else(|| io::Error::other("FFT preparation did not run"))?;
+        let mut operator = prepared
+            .begin_streaming(context, &self.problem, &self.complete_data)
+            .map_err(io::Error::other)?;
+        operator
+            .bind_major_cycle_model(
+                state
+                    .prepared_model
+                    .as_ref()
+                    .ok_or_else(|| io::Error::other("final-model preparation missing"))?
+                    .for_replay(context)?,
+            )
+            .map_err(io::Error::other)?;
+        state.operator = Some(operator);
+        let SerialContinuumExecutorState {
+            weighting,
+            operator,
+            ..
+        } = state;
+        let mut consume = |block: &casa_imaging_reconstruction::WeightingReplayChunk| {
+            let predicted = operator
+                .as_mut()
+                .ok_or_else(|| io::Error::other("complete-data operator missing"))?
+                .consume_streaming_block(block)
+                .map_err(io::Error::other)?;
+            if !predicted.is_empty()
+                && let Some(sink) = &self.final_visibility_sink
+            {
+                sink.lock()
+                    .map_err(|_| io::Error::other("final visibility sink poisoned"))?
+                    .consume(predicted)?;
+            }
+            Ok::<(), io::Error>(())
+        };
+        match fragment.streaming_mode() {
+            Some(crate::WeightingStreamingMode::NaturalInitial)
+            | Some(crate::WeightingStreamingMode::DensityInitial) => weighting
+                .traverse_initial_stream(context, fragment, &self.problem, selected, &mut consume)
+                .map_err(io::Error::other),
+            Some(crate::WeightingStreamingMode::Reuse) => weighting
+                .traverse_reuse_stream(
+                    context,
+                    fragment,
+                    selected.ok_or_else(|| {
+                        io::Error::other("later-major selected observation missing")
+                    })?,
+                    &self.problem,
+                    &mut consume,
+                )
+                .map_err(io::Error::other),
+            None => Err(io::Error::other("streaming weighting mode missing")),
+        }
+    }
 }
 
 impl WorkImplementation for SerialContinuumExecutor {
@@ -810,65 +908,27 @@ impl WorkImplementation for SerialContinuumExecutor {
                 .selected
                 .take()
                 .ok_or_else(|| io::Error::other("selected observation already consumed"))?;
-            state.selected_completion = Some(
-                state
-                    .weighting
-                    .traverse_and_retain_source(context, &fragment, selected, &self.problem, |_| {
-                        Ok::<_, io::Error>(())
-                    })
-                    .map_err(io::Error::other)?,
-            );
-        } else if context.node().id == *fragment.generation_node() {
-            state
-                .weighting
-                .traverse_generation(context, &fragment, &self.problem)
-                .map_err(io::Error::other)?;
-        } else if context.node().id == *fragment.replay_node() {
-            if let Some(sink) = &self.final_visibility_sink {
-                sink.lock()
-                    .map_err(|_| io::Error::other("final visibility sink poisoned"))?
-                    .begin_replay()?;
+            match fragment.streaming_mode() {
+                Some(crate::WeightingStreamingMode::NaturalInitial) => {
+                    self.run_stream(&mut state, context, &fragment, Some(selected))?;
+                }
+                Some(crate::WeightingStreamingMode::DensityInitial) => {
+                    state.selected_completion = Some(
+                        state
+                            .weighting
+                            .traverse_density_source(context, &fragment, selected, &self.problem)
+                            .map_err(io::Error::other)?,
+                    );
+                }
+                Some(crate::WeightingStreamingMode::Reuse) => {
+                    self.run_stream(&mut state, context, &fragment, Some(selected))?;
+                }
+                None => return Err(io::Error::other("streaming weighting mode missing")),
             }
-            let prepared = state
-                .prepared
-                .take()
-                .ok_or_else(|| io::Error::other("FFT preparation did not run"))?;
-            let mut operator = state
-                .weighting
-                .begin_complete_data(context, &self.complete_data, &self.problem, prepared)
-                .map_err(io::Error::other)?;
-            operator
-                .bind_major_cycle_model(
-                    state
-                        .prepared_model
-                        .as_ref()
-                        .ok_or_else(|| io::Error::other("final-model preparation missing"))?
-                        .for_replay(context)?,
-                )
-                .map_err(io::Error::other)?;
-            state.operator = Some(operator);
-            let SerialContinuumExecutorState {
-                weighting,
-                operator,
-                ..
-            } = &mut *state;
-            weighting
-                .traverse_replay(context, &fragment, &self.problem, |block| {
-                    let predicted = operator
-                        .as_mut()
-                        .ok_or_else(|| io::Error::other("complete-data operator missing"))?
-                        .consume_weighted_block(block)
-                        .map_err(io::Error::other)?;
-                    if !predicted.is_empty()
-                        && let Some(sink) = &self.final_visibility_sink
-                    {
-                        sink.lock()
-                            .map_err(|_| io::Error::other("final visibility sink poisoned"))?
-                            .consume(predicted)?;
-                    }
-                    Ok::<(), io::Error>(())
-                })
-                .map_err(io::Error::other)?;
+        } else if context.node().id == *fragment.generation_node()
+            && fragment.streaming_mode() == Some(crate::WeightingStreamingMode::DensityInitial)
+        {
+            self.run_stream(&mut state, context, &fragment, None)?;
         } else if self
             .complete_data
             .reconciliation_node()
@@ -983,13 +1043,7 @@ impl WorkImplementation for SerialContinuumExecutor {
             .state
             .lock()
             .map_err(|_| io::Error::other("serial continuum state poisoned"))?;
-        if completion.owner_node() == fragment.generation_node() {
-            return state
-                .weighting
-                .complete_generation(completion)
-                .map_err(io::Error::other);
-        }
-        if completion.owner_node() == fragment.replay_node() {
+        if completion.owner_node() == fragment.streaming_node() {
             let predecessor = state
                 .weighting
                 .complete_replay(completion)
@@ -998,6 +1052,7 @@ impl WorkImplementation for SerialContinuumExecutor {
                 .operator
                 .take()
                 .ok_or_else(|| io::Error::other("complete-data operator missing"))?;
+            let frozen_weighting = state.weighting.frozen_artifact();
             let replay = state
                 .weighting
                 .replay_completion()
@@ -1007,7 +1062,9 @@ impl WorkImplementation for SerialContinuumExecutor {
                     .map_err(|_| io::Error::other("final visibility sink poisoned"))?
                     .finish(replay)?;
             }
-            state.complete_data = Some(operator.complete(replay).map_err(io::Error::other)?);
+            let complete_data = operator.complete(replay).map_err(io::Error::other)?;
+            state.frozen_weighting = frozen_weighting;
+            state.complete_data = Some(complete_data);
             return Ok(predecessor);
         }
         let selected = state

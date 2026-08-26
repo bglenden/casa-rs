@@ -50,6 +50,7 @@ pub mod runtime_adapter {
         FinalVisibilitySample, PreparedSerialMfsOperator, SerialMfsWorkload,
         prepare_serial_mfs_operator, serial_mfs_workload,
     };
+    pub use crate::weighting::{FusedWeightingPhase, begin_natural_weighting_stream};
 }
 
 pub use major_cycle::{
@@ -71,9 +72,10 @@ pub use psf_beam::{
     fitted_psf_sidelobe_fraction,
 };
 pub use weighting::{
-    WeightingAlgorithmState, WeightingError, WeightingExecutionLimits, WeightingGenerationId,
-    WeightingPlan, WeightingReplayChunk, WeightingReplayCoverageId, WeightingReplayId,
-    WeightingReplaySummary, WeightingResidency, WeightingSampleValue, WeightingSpectralValue,
+    FusedWeightingPhase, WeightingAlgorithmState, WeightingDensityPhase, WeightingError,
+    WeightingExecutionLimits, WeightingGenerationId, WeightingPlan, WeightingReplayChunk,
+    WeightingReplayCoverageId, WeightingReplayId, WeightingReplaySummary, WeightingResidency,
+    WeightingSampleValue, WeightingSpectralValue, begin_natural_weighting_stream,
     begin_weighting_generation, plan_weighting,
 };
 

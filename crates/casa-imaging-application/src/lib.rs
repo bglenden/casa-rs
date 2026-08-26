@@ -404,6 +404,10 @@ where
         ReconstructionAlgorithm::Hogbom
         | ReconstructionAlgorithm::Clark
         | ReconstructionAlgorithm::Multiscale { .. } => {
+            let mut frozen_weighting = registry
+                .implementation()
+                .take_frozen_weighting()
+                .ok_or_else(|| boxed("initial major omitted frozen weighting"))?;
             let mut minor = registry
                 .implementation()
                 .take_minor_completion()
@@ -493,7 +497,8 @@ where
                     access.open(problem)?,
                     ExecutableModelProblem::from_compiled(problem.clone())?,
                     SerialContinuumPassInput::FinalMajor(final_input),
-                );
+                )
+                .with_frozen_weighting(frozen_weighting.clone());
                 let mut terminal_replay = None;
                 if continue_cleaning {
                     let remaining = controls
@@ -541,6 +546,10 @@ where
                 let attempt = major_cycle_attempt(runtime.attempts[1], ordinal);
                 run_phase(problem, &final_plan, &registry, &runtime, attempt)?;
                 let receipt = runtime.receipts.open(attempt)?;
+                frozen_weighting = registry
+                    .implementation()
+                    .take_frozen_weighting()
+                    .ok_or_else(|| boxed("later major omitted reusable frozen weighting"))?;
                 if continue_cleaning {
                     minor = registry
                         .implementation()

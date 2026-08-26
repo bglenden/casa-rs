@@ -811,6 +811,40 @@ impl CompleteDataPreparedState {
             },
         })
     }
+
+    pub(crate) fn begin_streaming(
+        self,
+        context: WorkExecutionContext<'_>,
+        problem: &CompiledProblem,
+        fragment: &CompleteDataPlanFragment,
+    ) -> Result<SerialMfsOperatorState, CompleteDataPlanError> {
+        if self.problem != problem.problem_id()
+            || self.attempt != context.attempt_id()
+            || self.preparation_node != fragment.preparation_node
+            || self.replay_node != fragment.replay_node
+            || self.reconciliation_node != fragment.reconciliation_node
+            || self.replay_node != context.node().id
+            || self.lease_epoch != context.lease_epoch()
+        {
+            return Err(CompleteDataPlanError::PlanMismatch);
+        }
+        let reconciliation_node = self
+            .reconciliation_node
+            .ok_or(CompleteDataPlanError::MissingReconciliationNode)?;
+        let state = self.owner.begin_streaming(problem).map_err(|error| {
+            CompleteDataPlanError::Operator(CompleteDataOperatorError::Owner(error))
+        })?;
+        Ok(SerialMfsOperatorState {
+            state,
+            binding: CompleteDataExecutionBinding {
+                problem: problem.problem_id(),
+                attempt: context.attempt_id(),
+                replay_node: context.node().id.clone(),
+                reconciliation_node,
+                lease_epoch: context.lease_epoch(),
+            },
+        })
+    }
 }
 
 /// Runtime attempt-bound envelope around one owner-minted T19 complete-data
@@ -1010,7 +1044,7 @@ impl SerialMfsOperatorState {
         &[casa_imaging_reconstruction::runtime_adapter::FinalVisibilitySample],
         CompleteDataOperatorError,
     > {
-        if block.weighting_generation() != self.state.weighting_generation() {
+        if Some(block.weighting_generation()) != self.state.weighting_generation() {
             return Err(CompleteDataOperatorError::WeightingGeneration);
         }
         Ok(self.state.consume_block(block.reconstruction_block())?)
@@ -1022,12 +1056,22 @@ impl SerialMfsOperatorState {
         model: &[num_complex::Complex64],
         block: &WeightedObservationBlock,
     ) -> Result<&[num_complex::Complex64], CompleteDataOperatorError> {
-        if block.weighting_generation() != self.state.weighting_generation() {
+        if Some(block.weighting_generation()) != self.state.weighting_generation() {
             return Err(CompleteDataOperatorError::WeightingGeneration);
         }
         Ok(self
             .state
             .predict_block(model, block.reconstruction_block())?)
+    }
+
+    pub(crate) fn consume_streaming_block(
+        &mut self,
+        block: &casa_imaging_reconstruction::WeightingReplayChunk,
+    ) -> Result<
+        &[casa_imaging_reconstruction::runtime_adapter::FinalVisibilitySample],
+        CompleteDataOperatorError,
+    > {
+        Ok(self.state.consume_block(block)?)
     }
 
     /// Consume terminal T18 proof and mint the runtime complete-data envelope.

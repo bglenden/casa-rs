@@ -389,6 +389,14 @@ impl PreparedSerialMfsOperator {
     ) -> Result<CompleteDataOwnerState, SerialMfsError> {
         CompleteDataOwnerState::new(problem, weighting, self)
     }
+
+    /// Begin before a fused weighting stream has minted its terminal generation.
+    pub fn begin_streaming(
+        self,
+        problem: &CompiledProblem,
+    ) -> Result<CompleteDataOwnerState, SerialMfsError> {
+        CompleteDataOwnerState::new_streaming(problem, self)
+    }
 }
 
 /// Prepare the reusable FFT implementation under runtime planning authority.
@@ -663,7 +671,7 @@ pub struct CompleteDataOwnerState {
     geometry: CompiledGeometryId,
     numerics: NumericsContractId,
     weighting_commitment: WeightingCommitmentId,
-    weighting_generation: WeightingGenerationId,
+    weighting_generation: Option<WeightingGenerationId>,
     next_block_sequence: u64,
     sample_count: u64,
     coverage: CoverageEncoder,
@@ -688,10 +696,34 @@ impl CompleteDataOwnerState {
             geometry: specification.geometry,
             numerics: specification.numerics,
             weighting_commitment: specification.weighting_commitment,
-            weighting_generation: weighting.generation_id(),
+            weighting_generation: Some(weighting.generation_id()),
             next_block_sequence: 0,
             sample_count: 0,
-            coverage: CoverageEncoder::new(weighting.generation_id()),
+            coverage: CoverageEncoder::new(),
+            finite_values: specification.finite_values,
+            residual_model: None,
+            predicted_selected: Vec::with_capacity(prepared.workload.max_replay_block_samples),
+            operator: SerialMfsOperator::new(specification, prepared.workload, prepared.fft),
+        })
+    }
+
+    fn new_streaming(
+        problem: &CompiledProblem,
+        prepared: PreparedSerialMfsOperator,
+    ) -> Result<Self, SerialMfsError> {
+        let specification = SerialMfsSpecification::new(problem)?;
+        if specification != prepared.specification {
+            return Err(SerialMfsError::ProblemMismatch);
+        }
+        Ok(Self {
+            problem: specification.problem,
+            geometry: specification.geometry,
+            numerics: specification.numerics,
+            weighting_commitment: specification.weighting_commitment,
+            weighting_generation: None,
+            next_block_sequence: 0,
+            sample_count: 0,
+            coverage: CoverageEncoder::new(),
             finite_values: specification.finite_values,
             residual_model: None,
             predicted_selected: Vec::with_capacity(prepared.workload.max_replay_block_samples),
@@ -715,7 +747,7 @@ impl CompleteDataOwnerState {
 
     /// Return the sole frozen T18 generation accepted by this owner.
     #[must_use]
-    pub const fn weighting_generation(&self) -> WeightingGenerationId {
+    pub const fn weighting_generation(&self) -> Option<WeightingGenerationId> {
         self.weighting_generation
     }
 
@@ -834,7 +866,10 @@ impl CompleteDataOwnerState {
         replay: &WeightingReplaySummary,
         selected_generation: SelectedObservationGenerationId,
     ) -> Result<CompleteDataOwnerResult, SerialMfsError> {
-        if self.weighting_generation != replay.weighting_generation() {
+        if self
+            .weighting_generation
+            .is_some_and(|generation| generation != replay.weighting_generation())
+        {
             return Err(SerialMfsError::WeightingGeneration);
         }
         if self.sample_count != replay.sample_count()
@@ -842,7 +877,9 @@ impl CompleteDataOwnerState {
         {
             return Err(SerialMfsError::IncompleteCoverage);
         }
-        let coverage = self.coverage.finish(self.sample_count);
+        let coverage = self
+            .coverage
+            .finish(replay.weighting_generation(), self.sample_count);
         if coverage != replay.coverage() {
             return Err(SerialMfsError::IncompleteCoverage);
         }

@@ -390,7 +390,7 @@ impl WeightingAlgorithmState {
             block,
             peak_weighted_capacity,
             block_sequence: 0,
-            coverage: CoverageEncoder::new(self.generation_id),
+            coverage: CoverageEncoder::new(),
             sample_count: 0,
             replay_sequence,
         })
@@ -503,6 +503,22 @@ pub fn begin_weighting_generation(
         ordinal: 0,
         frequency_range_hz: None,
     })
+}
+
+/// Begin the sole weighted payload pass for natural weighting.
+///
+/// Natural weighting has no density dependency, so this phase computes final
+/// weights, exact sum weights, weighted coverage, and bounded replay blocks in
+/// the same traversal.
+pub fn begin_natural_weighting_stream(
+    problem: &CompiledProblem,
+    plan: &WeightingPlan,
+) -> Result<FusedWeightingPhase, WeightingError> {
+    if !matches!(problem.weighting().scheme(), WeightingScheme::Natural) {
+        return Err(WeightingError::ProblemMismatch);
+    }
+    let density = begin_weighting_generation(problem, plan)?;
+    Ok(density.finish(problem)?.into_fused(false, plan))
 }
 
 /// Mutable reconstruction state for the bounded density callback pass.
@@ -633,6 +649,18 @@ impl WeightingDensityPhase {
             sum_sample_count: 0,
         })
     }
+
+    /// Finish the density prepass and begin the terminal weighted payload pass.
+    pub fn finish_into_stream(
+        self,
+        problem: &CompiledProblem,
+        plan: &WeightingPlan,
+    ) -> Result<FusedWeightingPhase, WeightingError> {
+        if matches!(problem.weighting().scheme(), WeightingScheme::Natural) {
+            return Err(WeightingError::ProblemMismatch);
+        }
+        Ok(self.finish(problem)?.into_fused(true, plan))
+    }
 }
 
 /// Mutable reconstruction state for the bounded global sum-weight callback pass.
@@ -664,34 +692,47 @@ impl WeightingSumWeightPhase {
         {
             return Err(WeightingError::ProblemMismatch);
         }
+        let _ = self.weighted_sample(problem, sample, contributions)?;
+        Ok(())
+    }
+
+    fn weighted_sample(
+        &mut self,
+        problem: &CompiledProblem,
+        sample: SelectedObservationSample,
+        contributions: SelectedSpectralContributions,
+    ) -> Result<WeightingSampleValue, WeightingError> {
+        if self.problem != problem.problem_id()
+            || self.commitment != problem.weighting().commitment_id()
+        {
+            return Err(WeightingError::ProblemMismatch);
+        }
+        let mut spectral_values = [None, None];
+        for (slot, contribution) in contributions.iter().enumerate() {
+            spectral_values[slot] = Some(WeightingSpectralValue {
+                contribution,
+                imaging_weight: weight_from_state(
+                    problem,
+                    self.grid,
+                    &self.density,
+                    &self.robust_f2,
+                    self.frequency_range_hz,
+                    &sample,
+                    Some(contribution),
+                )?,
+            });
+        }
         match problem.weighting().density_scope() {
             WeightDensityScope::NotApplicable | WeightDensityScope::GlobalSelection => {
-                if let Some(contribution) = contributions.iter().next() {
-                    let weight = weight_from_state(
-                        problem,
-                        self.grid,
-                        &self.density,
-                        &self.robust_f2,
-                        self.frequency_range_hz,
-                        &sample,
-                        Some(contribution),
-                    )?;
-                    self.sum_weights[0].add(weight)?;
+                if let Some(value) = spectral_values.iter().flatten().next() {
+                    self.sum_weights[0].add(value.imaging_weight)?;
                 }
             }
             WeightDensityScope::PerOutputChannel => {
-                for contribution in contributions.iter() {
-                    let plane = contribution_plane(self.grid, contribution)?;
-                    let weight = weight_from_state(
-                        problem,
-                        self.grid,
-                        &self.density,
-                        &self.robust_f2,
-                        self.frequency_range_hz,
-                        &sample,
-                        Some(contribution),
-                    )?;
-                    self.sum_weights[plane].add(weight * f64::from(contribution.factor()))?;
+                for value in spectral_values.iter().flatten() {
+                    let plane = contribution_plane(self.grid, value.contribution)?;
+                    self.sum_weights[plane]
+                        .add(value.imaging_weight * f64::from(value.contribution.factor()))?;
                 }
             }
         }
@@ -699,7 +740,22 @@ impl WeightingSumWeightPhase {
             .sum_sample_count
             .checked_add(1)
             .ok_or(WeightingError::SampleCountOverflow)?;
-        Ok(())
+        Ok(WeightingSampleValue {
+            sample,
+            spectral_values,
+        })
+    }
+
+    fn into_fused(self, density_prepass: bool, plan: &WeightingPlan) -> FusedWeightingPhase {
+        FusedWeightingPhase {
+            sum: self,
+            density_prepass,
+            block: Vec::with_capacity(plan.limits.max_block_samples),
+            max_block_samples: plan.limits.max_block_samples,
+            peak_weighted_capacity: plan.limits.max_block_samples,
+            block_sequence: 0,
+            coverage: CoverageEncoder::new(),
+        }
     }
 
     /// Finalize algorithmic state; this is not traversal-completion evidence.
@@ -771,6 +827,107 @@ impl WeightingSumWeightPhase {
                 peak_bytes,
             },
             next_replay: AtomicU64::new(0),
+        })
+    }
+}
+
+/// Terminal streaming phase that fuses exact sum-weight generation with the
+/// complete weighted replay consumed by the major-cycle operator.
+pub struct FusedWeightingPhase {
+    sum: WeightingSumWeightPhase,
+    density_prepass: bool,
+    block: Vec<WeightingSampleValue>,
+    max_block_samples: usize,
+    peak_weighted_capacity: usize,
+    block_sequence: u64,
+    coverage: CoverageEncoder,
+}
+
+impl FusedWeightingPhase {
+    /// Consume one selected payload sample and return a full bounded block.
+    pub fn consume(
+        &mut self,
+        problem: &CompiledProblem,
+        sample: SelectedObservationSample,
+        contributions: SelectedSpectralContributions,
+    ) -> Result<Option<WeightingReplayChunk>, WeightingError> {
+        let weighted = self.sum.weighted_sample(problem, sample, contributions)?;
+        self.coverage.push(&weighted);
+        self.block.push(weighted);
+        if self.block.len() == self.max_block_samples {
+            self.take_block().map(Some)
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Finish the fused stream and late-bind generation, coverage, and replay.
+    pub fn finish(
+        mut self,
+    ) -> Result<
+        (
+            Option<WeightingReplayChunk>,
+            WeightingAlgorithmState,
+            WeightingReplaySummary,
+        ),
+        WeightingError,
+    > {
+        let final_block = if self.block.is_empty() {
+            None
+        } else {
+            Some(self.take_block()?)
+        };
+        if !self.density_prepass {
+            self.sum.density_sample_count = self.sum.sum_sample_count;
+        }
+        let sample_count = self.sum.sum_sample_count;
+        let block_count = self.block_sequence;
+        let state = self.sum.finish()?;
+        state.next_replay.store(1, Ordering::Relaxed);
+        let coverage = self.coverage.finish(state.generation_id, sample_count);
+        let replay_id =
+            replay_identity(state.generation_id, coverage, sample_count, block_count, 0);
+        let weighted_block_bytes = self
+            .peak_weighted_capacity
+            .checked_mul(size_of::<WeightingSampleValue>())
+            .ok_or(WeightingError::ResidencyOverflow)?;
+        let peak_bytes = state
+            .generation_residency
+            .peak_bytes
+            .checked_add(weighted_block_bytes)
+            .ok_or(WeightingError::ResidencyOverflow)?;
+        let summary = WeightingReplaySummary {
+            replay_id,
+            generation: state.generation_id,
+            coverage,
+            sample_count,
+            block_count,
+            replay_sequence: 0,
+            residency: WeightingResidency {
+                density_grid_bytes: state.generation_residency.density_grid_bytes,
+                robust_factor_bytes: state.generation_residency.robust_factor_bytes,
+                sum_weight_bytes: state.generation_residency.sum_weight_bytes,
+                deterministic_partial_bytes: state.generation_residency.deterministic_partial_bytes,
+                reduction_scratch_bytes: state.generation_residency.reduction_scratch_bytes,
+                replay_read_bytes: 0,
+                weighted_block_bytes,
+                simultaneous_selected_weighted_bytes: weighted_block_bytes,
+                peak_bytes,
+            },
+        };
+        Ok((final_block, state, summary))
+    }
+
+    fn take_block(&mut self) -> Result<WeightingReplayChunk, WeightingError> {
+        let sequence = self.block_sequence;
+        self.block_sequence = self
+            .block_sequence
+            .checked_add(1)
+            .ok_or(WeightingError::BlockCountOverflow)?;
+        self.peak_weighted_capacity = self.peak_weighted_capacity.max(self.block.capacity());
+        Ok(WeightingReplayChunk {
+            sequence,
+            samples: std::mem::replace(&mut self.block, Vec::with_capacity(self.max_block_samples)),
         })
     }
 }
@@ -912,7 +1069,9 @@ impl WeightingReplayPhase<'_> {
         if self.sample_count != self.generation.sample_count {
             return Err(WeightingError::SelectedGenerationMismatch);
         }
-        let coverage = self.coverage.finish(self.sample_count);
+        let coverage = self
+            .coverage
+            .finish(self.generation.generation_id, self.sample_count);
         let replay_id = replay_identity(
             self.generation.generation_id,
             coverage,
@@ -1518,11 +1677,10 @@ fn hash_usize(hasher: &mut Sha256, value: usize) {
 pub(super) struct CoverageEncoder(Sha256);
 
 impl CoverageEncoder {
-    pub(super) fn new(generation: WeightingGenerationId) -> Self {
+    pub(super) fn new() -> Self {
         let mut hasher = Sha256::new();
         hasher.update(COVERAGE_DOMAIN);
-        hasher.update(COVERAGE_VERSION.to_be_bytes());
-        hasher.update(generation.as_bytes());
+        hasher.update((COVERAGE_VERSION + 1).to_be_bytes());
         Self(hasher)
     }
 
@@ -1557,9 +1715,19 @@ impl CoverageEncoder {
         self.0.update([count]);
     }
 
-    pub(super) fn finish(mut self, sample_count: u64) -> WeightingReplayCoverageId {
+    pub(super) fn finish(
+        mut self,
+        generation: WeightingGenerationId,
+        sample_count: u64,
+    ) -> WeightingReplayCoverageId {
         self.0.update(sample_count.to_be_bytes());
-        WeightingReplayCoverageId(LogicalIdentity::from_sha256(self.0.finalize().into()))
+        let content = self.0.finalize();
+        let mut hasher = Sha256::new();
+        hasher.update(COVERAGE_DOMAIN);
+        hasher.update((COVERAGE_VERSION + 1).to_be_bytes());
+        hasher.update(generation.as_bytes());
+        hasher.update(content);
+        WeightingReplayCoverageId(LogicalIdentity::from_sha256(hasher.finalize().into()))
     }
 }
 
