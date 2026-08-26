@@ -19,7 +19,7 @@ use casa_imaging_model::{
     MetadataGeneration, MetadataTableKind, ModelColumnState, ModelStateIdentity, MsColumnKind,
     ObservationSelection, ObservationSnapshotInput, ObservationSourceInput,
     ObservationSourceProvenance, ObservationSourceState, ReferenceDataKind, SelectedColumns,
-    SelectedObservationGenerationId, SourceGenerations, VisibilityColumn, WeightColumn,
+    SourceGenerations, VisibilityColumn, WeightColumn,
 };
 use casa_tables::{ColumnSchema, LockType, Table};
 use casa_types::{
@@ -43,10 +43,7 @@ const OWNER_MANIFEST_KEYWORD: &str = "CASA_RS_IMAGING_OWNER_MANIFEST";
 const OWNER_MANIFEST_SCHEMA_VERSION: u32 = 1;
 const OWNER_IDENTITY_DOMAIN: &[u8] = b"casa-rs-ms-owner-manifest-v1";
 static OWNER_INITIALIZATION_MUTEX: Mutex<()> = Mutex::new(());
-static MODEL_COLUMN_TRANSACTION_ACTIVE: (Mutex<bool>, Condvar) =
-    (Mutex::new(false), Condvar::new());
-const MODEL_STAGING_COLUMN: &str = "CASA_RS_MODEL_DATA_STAGING";
-const MODEL_BACKUP_COLUMN: &str = "CASA_RS_MODEL_DATA_BACKUP";
+static MODEL_COLUMN_WRITE_ACTIVE: (Mutex<bool>, Condvar) = (Mutex::new(false), Condvar::new());
 
 const TRACKED_COLUMNS: &[(MsColumnKind, &str)] = &[
     (MsColumnKind::Data, "DATA"),
@@ -186,90 +183,30 @@ impl SelectedObservationResolutionRequest {
     }
 }
 
-/// Locked MODEL_DATA replacement staged separately from prediction science.
+/// Bounded in-place `MODEL_DATA` writer following ordinary casacore semantics.
 ///
-/// Staging never mutates `MODEL_DATA`. Commit swaps the complete staged column
-/// under the retained MAIN write lock and publishes the new owner-manifest
-/// generation in the same unlock. Dropping an uncommitted transaction removes
-/// staging and preserves the prior MODEL_DATA generation.
+/// The writer retains the MAIN write lock and the repository's standard
+/// incomplete-write marker. Successful completion flushes `MODEL_DATA`, updates
+/// its owner generation, and removes the marker. Failure may leave partially
+/// written derived values, but the retained marker makes that state fail closed
+/// until explicitly recovered or recomputed. No backup, staging column,
+/// rollback, snapshot, or content digest is created.
 #[cfg(unix)]
-pub struct ModelColumnTransaction {
-    path: std::path::PathBuf,
+pub struct ModelDataWrite {
     measurement_set: Option<MeasurementSet>,
     manifest: OwnerManifest,
-    expected: ObservationSourceState,
-    selection: Arc<ObservationSelection>,
-    prepared: bool,
-    committed: bool,
+    incomplete_marker: Option<std::path::PathBuf>,
+    completed: bool,
     _process_lease: ModelColumnProcessLease,
 }
 
-/// Resource-free authority to reopen one exact, durable private MODEL_DATA generation.
-///
-/// The token owns no table handle, lock, thread, or process lease. It binds the
-/// storage-owner identity and generations, exact selected coordinates, terminal
-/// selected-observation generation, and a digest of the persisted selected
-/// staging cells. Publication must reacquire the owner and revalidate every
-/// binding before the atomic metadata cutover.
-#[cfg(unix)]
-pub struct DetachedModelColumnStaging {
-    path: std::path::PathBuf,
-    expected: ObservationSourceState,
-    selection: Arc<ObservationSelection>,
-    selected_generation: SelectedObservationGenerationId,
-    staging_digest: LogicalIdentity,
-    replay_sample_count: u64,
-    selected_cell_count: u64,
-}
-
-#[cfg(unix)]
-impl DetachedModelColumnStaging {
-    /// Return the MeasurementSet logical identity bound at staging time.
-    #[must_use]
-    pub const fn measurement_set(&self) -> MeasurementSetIdentity {
-        self.expected.identity()
-    }
-
-    /// Return the complete source generations that must still be current.
-    #[must_use]
-    pub const fn source_generations(&self) -> &SourceGenerations {
-        self.expected.generations()
-    }
-
-    /// Return the exact selected coordinates whose staged cells were digested.
-    #[must_use]
-    pub fn selection(&self) -> &ObservationSelection {
-        &self.selection
-    }
-
-    /// Return the terminal selected-observation generation bound to staging.
-    #[must_use]
-    pub const fn selected_generation(&self) -> SelectedObservationGenerationId {
-        self.selected_generation
-    }
-
-    /// Return the exhaustive replay sample count written by the staging worker.
-    #[must_use]
-    pub const fn replay_sample_count(&self) -> u64 {
-        self.replay_sample_count
-    }
-
-    /// Return the digest of exact selected addresses and persisted Complex32 values.
-    #[must_use]
-    pub const fn staging_digest(&self) -> LogicalIdentity {
-        self.staging_digest
-    }
-}
-
 /// Process-wide exclusion is represented by an owned lease rather than a
-/// thread-bound mutex guard. A live storage transaction can therefore move
-/// between worker and scheduler threads. Detaching consumes the transaction
-/// and releases this lease before a later plan reacquires it.
+/// thread-bound mutex guard so one bounded writer can move with its worker.
 struct ModelColumnProcessLease;
 
 impl ModelColumnProcessLease {
     fn acquire() -> Result<Self, ObservationOwnerError> {
-        let (active, available) = &MODEL_COLUMN_TRANSACTION_ACTIVE;
+        let (active, available) = &MODEL_COLUMN_WRITE_ACTIVE;
         let mut active = active
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -285,7 +222,7 @@ impl ModelColumnProcessLease {
 
 impl Drop for ModelColumnProcessLease {
     fn drop(&mut self) {
-        let (active, available) = &MODEL_COLUMN_TRANSACTION_ACTIVE;
+        let (active, available) = &MODEL_COLUMN_WRITE_ACTIVE;
         let mut active = active
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -294,7 +231,7 @@ impl Drop for ModelColumnProcessLease {
     }
 }
 
-/// Exact physical bounds of a complete private `MODEL_DATA` replacement.
+/// Exact physical bounds of one bounded `MODEL_DATA` write.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ModelColumnStorageBounds {
     column_bytes: u64,
@@ -315,7 +252,7 @@ impl ModelColumnStorageBounds {
     }
 }
 
-/// Probe exact full-column storage bounds while validating the owner precondition.
+/// Probe physical write bounds while validating the owner precondition.
 #[cfg(unix)]
 pub fn model_column_storage_bounds(
     path: impl AsRef<Path>,
@@ -346,16 +283,16 @@ pub fn model_column_storage_bounds(
 }
 
 #[cfg(unix)]
-impl ModelColumnTransaction {
-    /// Acquire the owner write capability and build a complete staging column.
+impl ModelDataWrite {
+    /// Acquire owner write authority and start a detectable in-place mutation.
     pub fn begin(
         path: impl AsRef<Path>,
         expected: &ObservationSourceState,
         selection: &ObservationSelection,
     ) -> Result<Self, ObservationOwnerError> {
-        let path = path.as_ref().to_path_buf();
+        let path = path.as_ref();
         let process_lease = ModelColumnProcessLease::acquire()?;
-        let mut measurement_set = MeasurementSet::open_retained_read(&path)?;
+        let mut measurement_set = MeasurementSet::open_retained_read(path)?;
         if !measurement_set.main_table_mut().lock(LockType::Write, 1)? {
             return Err(ObservationOwnerError::WriteLockUnavailable);
         }
@@ -365,71 +302,47 @@ impl ModelColumnTransaction {
         if selection.rows() != expected.selected_rows() {
             return Err(ObservationOwnerError::TransactionPrecondition);
         }
-        let (has_model, has_staging, has_backup) = {
+        let has_model = {
             let schema = measurement_set.main_table().schema().ok_or_else(|| {
                 MsError::InvalidInput("MeasurementSet MAIN has no schema".to_string())
             })?;
-            (
-                schema.contains_column("MODEL_DATA"),
-                schema.contains_column(MODEL_STAGING_COLUMN),
-                schema.contains_column(MODEL_BACKUP_COLUMN),
-            )
+            schema.contains_column("MODEL_DATA")
         };
-        if has_backup && has_model && !has_staging {
-            measurement_set
-                .main_table_mut()
-                .remove_column(MODEL_BACKUP_COLUMN)?;
+        let incomplete_marker = crate::write_session::begin_in_place_write(path)?;
+        if !has_model {
+            measurement_set.main_table_mut().add_column(
+                ColumnSchema::array_variable("MODEL_DATA", PrimitiveType::Complex32, Some(2)),
+                None,
+            )?;
             measurement_set
                 .main_table_mut()
                 .prepare_write()
-                .retire_removed_single_column(MODEL_BACKUP_COLUMN)?;
-        } else if has_staging || has_backup {
-            measurement_set.main_table_mut().unlock()?;
-            return Err(ObservationOwnerError::StagingColumnExists);
-        }
-        measurement_set.main_table_mut().add_column(
-            ColumnSchema::array_variable(MODEL_STAGING_COLUMN, PrimitiveType::Complex32, Some(2)),
-            None,
-        )?;
-        let source_column = if has_model { "MODEL_DATA" } else { "DATA" };
-        measurement_set
-            .main_table_mut()
-            .prepare_write()
-            .add_tiled_column_clone(source_column, MODEL_STAGING_COLUMN, "TiledModelStaging")?;
-        let row_count = measurement_set.main_table().row_count();
-        for row in 0..row_count {
-            let source = if has_model {
-                measurement_set
-                    .data_column(crate::VisibilityDataColumn::ModelData)?
-                    .get(row)?
-                    .clone()
-            } else {
-                zero_model_cell(
+                .add_tiled_column_clone("DATA", "MODEL_DATA", "TiledModelData")?;
+            let row_count = measurement_set.main_table().row_count();
+            for row in 0..row_count {
+                let source = zero_model_cell(
                     measurement_set
                         .data_column(crate::VisibilityDataColumn::Data)?
                         .get(row)?,
-                )?
-            };
-            measurement_set
-                .main_table_mut()
-                .row_accessor_mut()
-                .set_cell(row, MODEL_STAGING_COLUMN, Value::Array(source))?;
+                )?;
+                measurement_set
+                    .main_table_mut()
+                    .row_accessor_mut()
+                    .set_cell(row, "MODEL_DATA", Value::Array(source))?;
+            }
         }
         zero_selected_model_cells(&mut measurement_set, selection)?;
         Ok(Self {
-            path,
             measurement_set: Some(measurement_set),
             manifest,
-            expected: expected.clone(),
-            selection: Arc::new(selection.clone()),
-            prepared: false,
-            committed: false,
+            incomplete_marker,
+            completed: false,
             _process_lease: process_lease,
         })
     }
 
-    /// Stage one selected prediction at its physical row/channel/correlation.
-    pub fn stage(
+    /// Write one selected prediction at its physical row/channel/correlation.
+    pub fn write(
         &mut self,
         row: u64,
         channel: u32,
@@ -443,7 +356,7 @@ impl ModelColumnTransaction {
             .ok_or(ObservationOwnerError::TransactionClosed)?;
         let current = measurement_set
             .main_table()
-            .column_accessor(MODEL_STAGING_COLUMN)?
+            .column_accessor("MODEL_DATA")?
             .get(row)?
             .cloned()
             .ok_or(ObservationOwnerError::PredictionAddress)?;
@@ -460,164 +373,22 @@ impl ModelColumnTransaction {
             .row_accessor_mut()
             .set_cell(
                 row,
-                MODEL_STAGING_COLUMN,
+                "MODEL_DATA",
                 Value::Array(ArrayValue::Complex32(values)),
             )?;
-        self.prepared = false;
         Ok(())
     }
 
-    /// Flush the complete private replacement while retaining commit authority.
-    ///
-    /// This makes staged bytes durable and independently verifiable before the
-    /// later atomic column-name/manifest commit. It does not mutate the public
-    /// `MODEL_DATA` generation.
-    pub fn prepare(&mut self) -> Result<(), ObservationOwnerError> {
-        if self.prepared {
-            return Ok(());
-        }
-        self.measurement_set
+    /// Flush the in-place write, publish its generation, and clear the marker.
+    pub fn complete(mut self, generation: LogicalIdentity) -> Result<(), ObservationOwnerError> {
+        let measurement_set = self
+            .measurement_set
             .as_mut()
-            .ok_or(ObservationOwnerError::TransactionClosed)?
+            .ok_or(ObservationOwnerError::TransactionClosed)?;
+        measurement_set
             .main_table_mut()
             .prepare_write()
-            .save_selected_columns(&[MODEL_STAGING_COLUMN])?;
-        self.prepared = true;
-        Ok(())
-    }
-
-    /// Close terminal replay as durable, resource-free private staging.
-    ///
-    /// The returned token retains no live table, lock, thread, or process
-    /// lease. The selected-cell digest is recomputed from the persisted column
-    /// under the retained write lock rather than trusting caller-supplied
-    /// prediction bytes.
-    pub fn detach(
-        mut self,
-        selected_generation: SelectedObservationGenerationId,
-        replay_sample_count: u64,
-    ) -> Result<DetachedModelColumnStaging, ObservationOwnerError> {
-        self.prepare()?;
-        let measurement_set = self
-            .measurement_set
-            .as_mut()
-            .ok_or(ObservationOwnerError::TransactionClosed)?;
-        let (staging_digest, selected_cell_count) =
-            digest_selected_model_cells(measurement_set, &self.selection)?;
-        self.manifest.main_modify_counter = measurement_set
-            .main_table()
-            .locked_modify_counter()?
-            .wrapping_add(1);
-        write_owner_manifest(measurement_set.main_table_mut(), &self.manifest)?;
-        measurement_set.main_table_mut().unlock_metadata_only()?;
-        self.measurement_set = None;
-        self.committed = true;
-        Ok(DetachedModelColumnStaging {
-            path: self.path.clone(),
-            expected: self.expected.clone(),
-            selection: Arc::clone(&self.selection),
-            selected_generation,
-            staging_digest,
-            replay_sample_count,
-            selected_cell_count,
-        })
-    }
-
-    /// Reacquire and revalidate one detached private staging generation.
-    ///
-    /// This is the sole transition from a resource-free cross-plan token back
-    /// to live storage authority. Any owner-generation, selection, staging
-    /// address, value, or count change fails before publication authority is
-    /// returned.
-    pub fn reopen(detached: &DetachedModelColumnStaging) -> Result<Self, ObservationOwnerError> {
-        let process_lease = ModelColumnProcessLease::acquire()?;
-        let mut measurement_set = MeasurementSet::open_retained_read(&detached.path)?;
-        if !measurement_set.main_table_mut().lock(LockType::Write, 1)? {
-            return Err(ObservationOwnerError::WriteLockUnavailable);
-        }
-        let validation = (|| {
-            let manifest = OwnerManifest::read(measurement_set.main_table().keywords())?;
-            manifest.validate_physical_state(&measurement_set)?;
-            validate_transaction_precondition(&manifest, &measurement_set, &detached.expected)?;
-            if detached.selection.rows() != detached.expected.selected_rows() {
-                return Err(ObservationOwnerError::TransactionPrecondition);
-            }
-            let schema = measurement_set.main_table().schema().ok_or_else(|| {
-                MsError::InvalidInput("MeasurementSet MAIN has no schema".to_string())
-            })?;
-            if !schema.contains_column(MODEL_STAGING_COLUMN)
-                || schema.contains_column(MODEL_BACKUP_COLUMN)
-            {
-                return Err(ObservationOwnerError::StagingColumnExists);
-            }
-            let (staging_digest, selected_cell_count) =
-                digest_selected_model_cells(&measurement_set, &detached.selection)?;
-            if staging_digest != detached.staging_digest
-                || selected_cell_count != detached.selected_cell_count
-            {
-                return Err(ObservationOwnerError::StagingContentChanged);
-            }
-            Ok(manifest)
-        })();
-        let manifest = match validation {
-            Ok(manifest) => manifest,
-            Err(error) => {
-                measurement_set.main_table_mut().unlock_unchanged()?;
-                return Err(error);
-            }
-        };
-        Ok(Self {
-            path: detached.path.clone(),
-            measurement_set: Some(measurement_set),
-            manifest,
-            expected: detached.expected.clone(),
-            selection: Arc::clone(&detached.selection),
-            prepared: true,
-            committed: false,
-            _process_lease: process_lease,
-        })
-    }
-
-    /// Atomically publish staging as MODEL_DATA and ratchet owner generations.
-    pub fn commit(mut self, generation: LogicalIdentity) -> Result<(), ObservationOwnerError> {
-        self.prepare()?;
-        let original_manifest = self.manifest.clone();
-        let result = self.commit_locked(generation);
-        if let Err(error) = result {
-            let rollback = self.rollback_locked(&original_manifest);
-            return match rollback {
-                Ok(()) => Err(error),
-                Err(rollback) => Err(ObservationOwnerError::CommitRollback {
-                    commit: error.to_string(),
-                    rollback: rollback.to_string(),
-                }),
-            };
-        }
-        let had_model = result.expect("successful MODEL_DATA commit returned its prior state");
-        self.committed = true;
-        self.measurement_set = None;
-        if had_model {
-            cleanup_model_backup(&self.path)?;
-        }
-        Ok(())
-    }
-
-    fn commit_locked(
-        &mut self,
-        generation: LogicalIdentity,
-    ) -> Result<bool, ObservationOwnerError> {
-        let measurement_set = self
-            .measurement_set
-            .as_mut()
-            .ok_or(ObservationOwnerError::TransactionClosed)?;
-        let had_model = measurement_set
-            .main_table()
-            .schema()
-            .is_some_and(|schema| schema.contains_column("MODEL_DATA"));
-        if had_model {
-            rename_main_column(measurement_set, "MODEL_DATA", MODEL_BACKUP_COLUMN)?;
-        }
-        rename_main_column(measurement_set, MODEL_STAGING_COLUMN, "MODEL_DATA")?;
+            .save_selected_columns(&["MODEL_DATA"])?;
         self.manifest.model_data = PersistedModelColumn::Present {
             generation: encode_identity(generation),
         };
@@ -635,116 +406,21 @@ impl ModelColumnTransaction {
             .wrapping_add(1);
         write_owner_manifest(measurement_set.main_table_mut(), &self.manifest)?;
         measurement_set.main_table_mut().unlock_metadata_only()?;
-        Ok(had_model)
-    }
-
-    fn rollback_locked(&mut self, manifest: &OwnerManifest) -> Result<(), ObservationOwnerError> {
-        let measurement_set = self
-            .measurement_set
-            .as_mut()
-            .ok_or(ObservationOwnerError::TransactionClosed)?;
-        let schema = measurement_set.main_table().schema().ok_or_else(|| {
-            MsError::InvalidInput("MeasurementSet MAIN has no schema".to_string())
-        })?;
-        let has_model = schema.contains_column("MODEL_DATA");
-        let has_staging = schema.contains_column(MODEL_STAGING_COLUMN);
-        let has_backup = schema.contains_column(MODEL_BACKUP_COLUMN);
-        if has_backup {
-            if has_model {
-                measurement_set
-                    .main_table_mut()
-                    .remove_column("MODEL_DATA")?;
-                measurement_set
-                    .main_table_mut()
-                    .prepare_write()
-                    .retire_removed_single_column("MODEL_DATA")?;
-            }
-            rename_main_column(measurement_set, MODEL_BACKUP_COLUMN, "MODEL_DATA")?;
-        } else if has_staging {
-            measurement_set
-                .main_table_mut()
-                .remove_column(MODEL_STAGING_COLUMN)?;
-            measurement_set
-                .main_table_mut()
-                .prepare_write()
-                .retire_removed_single_column(MODEL_STAGING_COLUMN)?;
-        }
-        write_owner_manifest(measurement_set.main_table_mut(), manifest)?;
-        measurement_set.main_table_mut().unlock_metadata_only()?;
         self.measurement_set = None;
-        Ok(())
-    }
-
-    fn abort(&mut self) -> Result<(), ObservationOwnerError> {
-        let Some(measurement_set) = self.measurement_set.as_mut() else {
-            return Ok(());
-        };
-        if measurement_set
-            .main_table()
-            .schema()
-            .is_some_and(|schema| schema.contains_column(MODEL_STAGING_COLUMN))
-        {
-            measurement_set
-                .main_table_mut()
-                .remove_column(MODEL_STAGING_COLUMN)?;
-            measurement_set
-                .main_table_mut()
-                .prepare_write()
-                .retire_removed_single_column(MODEL_STAGING_COLUMN)?;
-        }
-        self.manifest.main_modify_counter = measurement_set
-            .main_table()
-            .locked_modify_counter()?
-            .wrapping_add(1);
-        write_owner_manifest(measurement_set.main_table_mut(), &self.manifest)?;
-        measurement_set.main_table_mut().unlock_metadata_only()?;
-        self.measurement_set = None;
+        crate::write_session::complete_in_place_write(self.incomplete_marker.take())?;
+        self.completed = true;
         Ok(())
     }
 }
 
 #[cfg(unix)]
-fn rename_main_column(
-    measurement_set: &mut MeasurementSet,
-    old: &str,
-    new: &str,
-) -> Result<(), ObservationOwnerError> {
-    measurement_set.main_table_mut().rename_column(old, new)?;
-    measurement_set
-        .main_table_mut()
-        .prepare_write()
-        .persist_column_rename(old, new)?;
-    Ok(())
-}
-
-#[cfg(unix)]
-fn cleanup_model_backup(path: &Path) -> Result<(), ObservationOwnerError> {
-    let mut measurement_set = MeasurementSet::open_retained_read(path)?;
-    if !measurement_set.main_table_mut().lock(LockType::Write, 1)? {
-        return Err(ObservationOwnerError::WriteLockUnavailable);
-    }
-    if measurement_set
-        .main_table()
-        .schema()
-        .is_some_and(|schema| schema.contains_column(MODEL_BACKUP_COLUMN))
-    {
-        measurement_set
-            .main_table_mut()
-            .remove_column(MODEL_BACKUP_COLUMN)?;
-        measurement_set
-            .main_table_mut()
-            .prepare_write()
-            .retire_removed_single_column(MODEL_BACKUP_COLUMN)?;
-    }
-    measurement_set.main_table_mut().unlock_metadata_only()?;
-    Ok(())
-}
-
-#[cfg(unix)]
-impl Drop for ModelColumnTransaction {
+impl Drop for ModelDataWrite {
     fn drop(&mut self) {
-        if !self.committed {
-            let _ = self.abort();
+        if !self.completed {
+            if let Some(measurement_set) = self.measurement_set.as_mut() {
+                let _ = measurement_set.main_table_mut().unlock();
+            }
+            self.measurement_set = None;
         }
     }
 }
@@ -955,14 +631,6 @@ pub enum ObservationOwnerError {
     /// The persisted manifest could not be encoded or decoded.
     #[error(transparent)]
     Encoding(#[from] serde_json::Error),
-    /// A failed commit could not restore the prior schema and manifest cleanly.
-    #[error("MODEL_DATA commit failed ({commit}); rollback also failed ({rollback})")]
-    CommitRollback {
-        /// Original commit failure.
-        commit: String,
-        /// Rollback failure while the write lock was retained.
-        rollback: String,
-    },
     /// Measures acquisition or bounded-state preparation failed.
     #[error(transparent)]
     Measures(#[from] SelectedObservationMeasuresError),
@@ -1029,21 +697,15 @@ pub enum ObservationOwnerError {
     /// The MAIN write lock could not be acquired.
     #[error("could not acquire the MeasurementSet MAIN write lock")]
     WriteLockUnavailable,
-    /// A prior incomplete staging/backup column requires explicit recovery.
-    #[error("MeasurementSet contains a stale MODEL_DATA staging column")]
-    StagingColumnExists,
-    /// Final prediction addressed a row/channel/correlation outside the staged column.
-    #[error("final prediction address is outside MODEL_DATA staging")]
+    /// Final prediction addressed a row/channel/correlation outside MODEL_DATA.
+    #[error("final prediction address is outside MODEL_DATA")]
     PredictionAddress,
-    /// MODEL_DATA staging was already committed or aborted.
-    #[error("MODEL_DATA transaction is closed")]
+    /// The bounded MODEL_DATA writer was already completed or released.
+    #[error("MODEL_DATA write is closed")]
     TransactionClosed,
-    /// The retained owner generation no longer matches the planned transaction.
-    #[error("MODEL_DATA transaction precondition changed")]
+    /// The retained owner generation no longer matches the planned write.
+    #[error("MODEL_DATA write precondition changed")]
     TransactionPrecondition,
-    /// Detached private staging no longer contains the exact persisted cells.
-    #[error("detached MODEL_DATA staging content changed before publication")]
-    StagingContentChanged,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1423,7 +1085,7 @@ fn zero_selected_model_cells(
         }
         let current = measurement_set
             .main_table()
-            .column_accessor(MODEL_STAGING_COLUMN)?
+            .column_accessor("MODEL_DATA")?
             .get(row)?
             .cloned()
             .ok_or(ObservationOwnerError::PredictionAddress)?;
@@ -1444,76 +1106,11 @@ fn zero_selected_model_cells(
             .row_accessor_mut()
             .set_cell(
                 row,
-                MODEL_STAGING_COLUMN,
+                "MODEL_DATA",
                 Value::Array(ArrayValue::Complex32(values)),
             )?;
     }
     Ok(())
-}
-
-#[cfg(unix)]
-fn digest_selected_model_cells(
-    measurement_set: &MeasurementSet,
-    selection: &ObservationSelection,
-) -> Result<(LogicalIdentity, u64), ObservationOwnerError> {
-    let mut hasher = Sha256::new();
-    hasher.update(b"casa-rs-detached-model-data-staging-v1");
-    hasher.update(selection.rows().sequence_id().as_bytes());
-    let mut count = 0_u64;
-    let column = measurement_set
-        .main_table()
-        .column_accessor(MODEL_STAGING_COLUMN)?;
-    for selected_row in selection.rows().ordered_main_rows() {
-        let description = selection
-            .data_descriptions()
-            .iter()
-            .find(|description| {
-                description.data_description_id() == selected_row.data_description_id()
-            })
-            .ok_or(ObservationOwnerError::PredictionAddress)?;
-        let channels = selection
-            .spectral_windows()
-            .iter()
-            .find(|spectral| spectral.spectral_window_id() == description.spectral_window_id())
-            .ok_or(ObservationOwnerError::PredictionAddress)?;
-        let correlations = selection
-            .correlations()
-            .iter()
-            .find(|correlation| correlation.polarization_id() == description.polarization_id())
-            .ok_or(ObservationOwnerError::PredictionAddress)?;
-        let row = usize::try_from(selected_row.physical_row())
-            .map_err(|_| ObservationOwnerError::PredictionAddress)?;
-        let value = column
-            .get(row)?
-            .ok_or(ObservationOwnerError::PredictionAddress)?;
-        let Value::Array(ArrayValue::Complex32(values)) = value else {
-            return Err(ObservationOwnerError::PredictionAddress);
-        };
-        for channel in channels.channel_indices() {
-            for product in correlations.products() {
-                let correlation = product.correlation_index();
-                let Some(value) = values.get([correlation as usize, *channel as usize]) else {
-                    return Err(ObservationOwnerError::PredictionAddress);
-                };
-                hasher.update(selected_row.physical_row().to_le_bytes());
-                hasher.update(selected_row.data_description_id().to_le_bytes());
-                hasher.update(description.spectral_window_id().to_le_bytes());
-                hasher.update(description.polarization_id().to_le_bytes());
-                hasher.update(channel.to_le_bytes());
-                hasher.update(correlation.to_le_bytes());
-                hasher.update(value.re.to_bits().to_le_bytes());
-                hasher.update(value.im.to_bits().to_le_bytes());
-                count = count
-                    .checked_add(1)
-                    .ok_or(ObservationOwnerError::PredictionAddress)?;
-            }
-        }
-    }
-    hasher.update(count.to_le_bytes());
-    Ok((
-        LogicalIdentity::from_sha256(hasher.finalize().into()),
-        count,
-    ))
 }
 
 fn write_owner_manifest(
@@ -1545,31 +1142,13 @@ fn metadata_subtable(kind: MetadataTableKind) -> SubtableId {
 mod tests {
     use super::*;
     use crate::{
-        MeasurementSetBuilder, OptionalMainColumn, SyntheticObservationRequest,
-        SyntheticPolarizationBasis, SyntheticPolarizationSetup, SyntheticSpectralSetup,
-        SyntheticWorkerPolicy, column_def::ColumnDef, generate_synthetic_observation_ms, schema,
-        test_helpers::default_value_for_def, tutorial_vla_a_antennas,
+        MeasurementSetBuilder, OptionalMainColumn, column_def::ColumnDef, schema,
+        test_helpers::default_value_for_def,
     };
     use casa_imaging_model::{
-        AntennaSelection, AxisOrder, CentreLaws, CorrelationProduct, CorrelationSelection,
-        CorrelationType, DataDescriptionSelection, DeclaredInnerProducts, DelayCentreLaw,
-        DirectionCoordinateSpec, DirectionFrame, FacetLayout, FiniteValuePolicy, FrequencyFrame,
-        GeometryInput, IdSelection, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
-        ImagingRequest, InstrumentResponse, IntentSelection, MeasurementEquationContract,
-        ModelBounds, ModelColumnWrite, ModelInnerProduct, ModelInputCommitment,
-        ModelLifecycleRequirements, NumericPrecision, NumericalStage, NumericsContract,
-        ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw,
-        PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy,
-        ProblemInputIdentities, ProblemSpecification, ProductBlankingPolicy, ProductKind,
-        ProductNormalization, ProductRequirements, ProductSupportComparison,
-        ProductValidityPolicies, Projection, ReconstructionAlgorithm, ReconstructionBasis,
-        ReconstructionContract, ReconstructionControls, ReductionPolicy, RestFrequency,
-        RestoringBeamPolicy, RowSelection, ScientificContract, SelectedMainRow, SelectedRows,
-        SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling,
-        SpectralFrameAnchor, SpectralSampling, SpectralWcs, SpectralWindowSelection,
-        StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy, TimeSelection, UvSelection,
-        UvwCoordinateLaw, VisibilityInnerProduct, WeightDensityScope, WeightingContract,
-        WeightingScheme, compile, compile_observation,
+        AntennaSelection, CorrelationProduct, CorrelationSelection, CorrelationType,
+        DataDescriptionSelection, IdSelection, IntentSelection, RowSelection, SelectedMainRow,
+        SelectedRows, SpectralWindowSelection, TimeSelection, UvSelection, compile_observation,
     };
     use casa_tables::{LockMode, LockOptions, TableOptions};
     use casa_types::{ArrayValue, Complex32, RecordField};
@@ -1613,130 +1192,6 @@ mod tests {
             ModelStateIdentity::Empty,
             SelectedObservationContentBudget::new(1 << 20, 1, 4),
             casa_test_support::deterministic_measures_provider_for_identity([90; 32]),
-        )
-    }
-
-    fn selected_generation(path: &Path) -> SelectedObservationGenerationId {
-        let resolved = resolve_selected_observation(request(path)).expect("resolve selected owner");
-        let (snapshot_input, access) = resolved.into_parts();
-        let snapshot = compile_observation(snapshot_input).expect("compile owner snapshot");
-        let problem = compile(ImagingRequest::new(
-            test_specification(),
-            test_geometry(),
-            ProblemInputIdentities::new(snapshot),
-            ModelLifecycleRequirements::new(
-                ModelBounds::new(
-                    10_000_000, 10_000_000, 10_000_000, 10_000_000, 1.0e30, 1.0e30,
-                )
-                .expect("valid model bounds"),
-                NumericPrecision::F32,
-                ModelInputCommitment::Empty,
-            ),
-        ))
-        .expect("compile selected-observation problem");
-        let mut observation = access
-            .with_minimum_content_budget(&problem)
-            .expect("derive minimum content budget")
-            .open(&problem)
-            .expect("open selected observation");
-        observation
-            .traverse(&problem, |_| Ok::<_, std::convert::Infallible>(()))
-            .expect("traverse selected observation")
-            .generation_id()
-    }
-
-    fn test_specification() -> ProblemSpecification {
-        ProblemSpecification::new(
-            ScientificContract::new(
-                SpectralContract::new(SpectralSampling::Identity, SpectralCoupling::Independent),
-                MeasurementEquationContract::new(
-                    InstrumentResponse::Scalar,
-                    DeclaredInnerProducts::new(
-                        ModelInnerProduct::HermitianEuclidean,
-                        VisibilityInnerProduct::HermitianEuclidean,
-                    ),
-                ),
-            ),
-            ReconstructionContract::new(
-                ReconstructionBasis::Constant,
-                ReconstructionAlgorithm::Hogbom,
-                ReconstructionControls::new(1, 0.1, 0.0),
-                PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
-            ),
-            WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
-            ProductRequirements::new(
-                vec![ProductKind::Psf],
-                ProductNormalization::UnitResponse,
-                RestoringBeamPolicy::None,
-                ProductValidityPolicies::new(
-                    PrimaryBeamValidityPolicy::new(
-                        0.2,
-                        ProductSupportComparison::StrictlyGreater,
-                        ProductBlankingPolicy::ZeroAndFalseMask,
-                    )
-                    .expect("valid PB policy"),
-                    TaylorValidityPolicy::new(
-                        TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
-                        0.1,
-                        ProductSupportComparison::StrictlyGreater,
-                        ProductBlankingPolicy::ZeroAndFalseMask,
-                    )
-                    .expect("valid Taylor policy"),
-                ),
-            ),
-            ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
-            NumericsContract::new(
-                vec![NumericPrecision::F32],
-                ReductionPolicy::Compensated,
-                FiniteValuePolicy::FlagInputRejectGenerated,
-                NumericalStage::ALL
-                    .into_iter()
-                    .map(|stage| (stage, StageErrorBudget::new(1.0e-7, 1.0e-3)))
-                    .collect(),
-            ),
-        )
-    }
-
-    fn test_geometry() -> GeometryInput {
-        GeometryInput::new(
-            vec![ImageDomainSpec::new(
-                ImageDomainRole::Main,
-                ImageShape::new(8, 8),
-                DirectionCoordinateSpec::new(
-                    Projection::Sin,
-                    SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
-                    [3.0, 3.0],
-                    [-4.848_136_811_095_36e-6, 4.848_136_811_095_36e-6],
-                    [[1.0, 0.0], [0.0, 1.0]],
-                    [180.0, 0.0],
-                ),
-                FacetLayout::Single,
-                AxisOrder::new([
-                    ImageAxis::DirectionLongitude,
-                    ImageAxis::DirectionLatitude,
-                    ImageAxis::Polarization,
-                    ImageAxis::Spectral,
-                ]),
-            )],
-            CentreLaws::new(
-                PhaseCentreLaw::Observation,
-                DelayCentreLaw::PhaseTrackingCentre,
-                PointingCentreLaw::PhaseTrackingCentre,
-            ),
-            UvwCoordinateLaw::PhaseTrackingCentre,
-            SpectralCoordinateSpec::new(
-                FrequencyFrame::Topocentric,
-                FrequencyFrame::Topocentric,
-                SpectralFrameAnchor::NotApplicable,
-                SpectralWcs::Linear {
-                    channels: 1,
-                    reference_pixel: 0.0,
-                    reference_frequency_hz: 1.0e9,
-                    increment_hz: 1.0e6,
-                },
-                RestFrequency::NotApplicable,
-                casa_imaging_model::DopplerConvention::NotApplicable,
-            ),
         )
     }
 
@@ -1858,29 +1313,6 @@ mod tests {
             .add_row(RecordValue::new(main))
             .expect("add MAIN row");
         measurement_set.save().expect("save test MeasurementSet");
-    }
-
-    fn create_traversable_ms(path: &Path) {
-        let mut antennas = tutorial_vla_a_antennas();
-        antennas.truncate(2);
-        let mut request = SyntheticObservationRequest::vla_ppdisk("unused.fits", path, antennas);
-        request.predict_model = false;
-        request.allow_below_elevation_limit = true;
-        request.duration_seconds = 1.0;
-        request.integration_seconds = 1.0;
-        request.spectral_setup = SyntheticSpectralSetup {
-            name: "one-channel".to_string(),
-            start_frequency_hz: 1.0e9,
-            channel_width_hz: 1.0e6,
-            channel_count: 1,
-        };
-        request.polarization_setup =
-            SyntheticPolarizationSetup::new(SyntheticPolarizationBasis::Circular, 1)
-                .expect("one circular correlation");
-        request.worker_policy = SyntheticWorkerPolicy::Fixed;
-        request.row_workers = Some(1);
-        request.channel_workers = Some(1);
-        generate_synthetic_observation_ms(&request).expect("generate traversable MS");
     }
 
     fn row(definitions: &[ColumnDef], overrides: &[(&str, Value)]) -> RecordValue {
@@ -2075,7 +1507,7 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
-    fn model_column_transaction_abort_preserves_prior_column_and_generation() {
+    fn interrupted_model_column_write_fails_closed_without_rollback() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let path = directory.path().join("model-abort.ms");
         create_ms(&path, true);
@@ -2085,35 +1517,20 @@ mod tests {
         let generation = expected.generations().model_column();
 
         {
-            let mut transaction =
-                ModelColumnTransaction::begin(&path, &expected, &one_row_selection())
-                    .expect("begin transaction");
-            transaction
-                .stage(0, 0, 0, Complex32::new(9.0, -2.0))
-                .expect("stage prediction");
+            let mut writer =
+                ModelDataWrite::begin(&path, &expected, &one_row_selection()).expect("begin write");
+            writer
+                .write(0, 0, 0, Complex32::new(9.0, -2.0))
+                .expect("write prediction");
         }
 
-        let reopened = MeasurementSet::open(&path).expect("reopen aborted MS");
-        assert!(
-            !reopened
-                .main_table()
-                .schema()
-                .expect("MAIN schema")
-                .contains_column(MODEL_STAGING_COLUMN)
-        );
-        let model_column = reopened
-            .data_column(crate::VisibilityDataColumn::ModelData)
-            .expect("MODEL_DATA column");
-        let ArrayValue::Complex32(values) = model_column.get(0).expect("MODEL_DATA cell") else {
-            panic!("MODEL_DATA is complex")
+        let error = match MeasurementSet::open(&path) {
+            Ok(_) => panic!("incomplete write must fail closed"),
+            Err(error) => error,
         };
-        assert_eq!(values[[0, 0]], Complex32::new(1.0, 0.0));
-        drop(reopened);
-        let after = resolve_selected_observation(request(&path)).expect("resolve after abort");
-        assert_eq!(
-            after.access.source_state().generations().model_column(),
-            generation
-        );
+        assert!(error.to_string().contains("incomplete write marker"));
+        assert!(path.join(".casa-rs-write-incomplete").exists());
+        assert!(matches!(generation, ModelColumnState::Present(_)));
     }
 
     #[test]
@@ -2133,65 +1550,7 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
-    fn detached_model_column_rejects_tampered_token_and_reopens_without_retained_resources() {
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let path = directory.path().join("model-detached.ms");
-        create_traversable_ms(&path);
-        initialize_measurement_set_owner_manifest(&path).expect("initialize owner manifest");
-        let before = resolve_selected_observation(request(&path)).expect("resolve owner");
-        let expected = before.access.source_state().clone();
-        let generation = selected_generation(&path);
-
-        let mut transaction = ModelColumnTransaction::begin(&path, &expected, &one_row_selection())
-            .expect("begin transaction");
-        transaction
-            .stage(0, 0, 0, Complex32::new(4.5, -1.25))
-            .expect("stage prediction");
-        let mut detached = transaction.detach(generation, 1).expect("detach staging");
-
-        let reopened_while_detached = MeasurementSet::open(&path)
-            .expect("detached token retains neither table handle nor write lock");
-        assert!(
-            reopened_while_detached
-                .main_table()
-                .schema()
-                .expect("MAIN schema")
-                .contains_column(MODEL_STAGING_COLUMN)
-        );
-        drop(reopened_while_detached);
-
-        let digest = detached.staging_digest;
-        detached.staging_digest = identity(0xee);
-        assert!(matches!(
-            ModelColumnTransaction::reopen(&detached),
-            Err(ObservationOwnerError::StagingContentChanged)
-        ));
-
-        detached.staging_digest = digest;
-        let reopened = ModelColumnTransaction::reopen(&detached)
-            .expect("digest rejection released the table lock and process lease");
-        drop(reopened);
-
-        let after_abort = MeasurementSet::open(&path).expect("reopen after detached abort");
-        assert!(
-            !after_abort
-                .main_table()
-                .schema()
-                .expect("MAIN schema")
-                .contains_column(MODEL_STAGING_COLUMN)
-        );
-        assert!(
-            !after_abort
-                .main_table()
-                .schema()
-                .expect("MAIN schema")
-                .contains_column("MODEL_DATA")
-        );
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn model_column_transaction_commit_publishes_exact_prediction_and_generation() {
+    fn completed_model_column_write_publishes_exact_prediction_and_generation() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let path = directory.path().join("model-commit.ms");
         create_ms(&path, false);
@@ -2200,18 +1559,17 @@ mod tests {
         let expected = before.access.source_state().clone();
         let generation = identity(73);
 
-        let mut transaction = ModelColumnTransaction::begin(&path, &expected, &one_row_selection())
-            .expect("begin transaction");
-        transaction
-            .stage(0, 0, 0, Complex32::new(4.5, -1.25))
-            .expect("stage prediction");
-        transaction.commit(generation).expect("commit transaction");
+        let mut writer =
+            ModelDataWrite::begin(&path, &expected, &one_row_selection()).expect("begin write");
+        writer
+            .write(0, 0, 0, Complex32::new(4.5, -1.25))
+            .expect("write prediction");
+        writer.complete(generation).expect("complete write");
 
         let reopened = MeasurementSet::open(&path).expect("reopen committed MS");
         let schema = reopened.main_table().schema().expect("MAIN schema");
         assert!(schema.contains_column("MODEL_DATA"));
-        assert!(!schema.contains_column(MODEL_STAGING_COLUMN));
-        assert!(!schema.contains_column(MODEL_BACKUP_COLUMN));
+        assert!(!path.join(".casa-rs-write-incomplete").exists());
         let model_column = reopened
             .data_column(crate::VisibilityDataColumn::ModelData)
             .expect("MODEL_DATA column");

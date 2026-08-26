@@ -325,32 +325,35 @@ column generation, metadata generation, and consistency token. Optional
 precondition captured independently of whether `MODEL_DATA` was read. Every
 `PhysicalWorkBinding` passed to the sole `plan` entrypoint must type every
 MeasurementSet source operation as `ObservationRead`; a terminal replay that
-also writes bounded predictions into a private `MODEL_DATA` replacement is
+also writes bounded predictions in place to `MODEL_DATA` is
 typed `ObservationReadWriteback`. Each transaction declares final
-complete-data reconciliation, private per-product and model-column staging
-events, and the applicable independently atomic Publication nodes. `plan`
+complete-data reconciliation, private per-product staging events, and the
+applicable product Publication nodes. `plan`
 mechanically derives every
 observation-read terminal event and binds the declaration against the exact
 `CompiledProblem`; the crate-private binder rejects untyped lock-bearing I/O,
 product keys that differ from `ProductRequirements`, missing completion
 fences, any post-commit work, or any bypass publication. Conventional image
-members and `MODEL_DATA` are separate transactions: failure of one never rolls
-back or hides a generation already published by the other. The sealed plan retains the
+members and `MODEL_DATA` are separate side effects: failure of one never rolls
+back or hides a result already completed by the other. The sealed plan retains the
 compiled-problem, logical-transaction, and physical-work identities, and its
 versioned identity includes the complete transaction declaration. The initial
 consistency check precedes every observation read; every read precedes
 reconciliation; and each terminal commit waits for every node and fence in its
 own transaction. Controller polling ends when that transaction's Publication launches.
-Initial-check, observation-read, and commit nodes reserve one table lock
+Initial-check, observation-read, and writeback nodes reserve one table lock
 per source; every read revalidates under those locks. Staging storage,
 writeback/publication buffers, and commit fences are ordinary Resource Authority
-claims. A Publication adapter revalidates under its source locks and activates
-exactly one conventional product member or one complete model-column
-generation, leaving the prior generation of that same member solely visible on
-failure. Mutation, cancellation, admission, numerical/output failure, or a
-failed staging fence therefore cannot expose a partial member or partial
-`MODEL_DATA` column. Users may retain or delete conventional products
-independently; `MODEL_DATA` remains a distinct MeasurementSet transaction.
+claims. Product Publication activates exactly one conventional product member.
+`MODEL_DATA` instead follows ADR-0008: the terminal replay writes selected cells
+in place under the retained lock and a small incomplete-write marker, then
+updates the owner generation and removes the marker only after a successful
+flush. Interruption may leave partial derived values, as in CASA, but the marker
+makes that state fail closed until explicit recovery or recomputation. No
+backup column, full-column staging copy, content digest, rollback, snapshot, or
+copy-on-write generation is part of this path. Users may retain or delete
+conventional products independently; `MODEL_DATA` remains a distinct
+MeasurementSet side effect.
 
 The Observation Transaction contract and binder do not themselves change
 `casa-ms`, casacore metadata, or persistent bytes. A storage adapter that
@@ -380,11 +383,10 @@ work-scoped capabilities are never replayed after synchronous completion. No
 whole-plan executor or public scheduler can bypass the compile/plan/run seam.
 The transaction's initial consistency node alone receives the expected
 observation transaction, typed observation reads receive its exact read set,
-the private writeback node receives its exact write set, and only the atomic
-publication node receives publication authority. The terminal combined replay
-may build private `MODEL_DATA` staging; a later, separately planned flush and
-Publication transaction validates and atomically activates that prepared
-column after conventional product publication.
+and the private writeback node receives its exact write set. The terminal
+combined replay performs any requested bounded `MODEL_DATA` mutation directly;
+there is no later model-column publication plan. Conventional product
+publication remains independently planned and receipted.
 Controllers can observe only plan-listed transitions eligible at the current
 global cut. Cancellation, rejected directives, and adapter errors drain every
 launched fence before `run` returns; mapped pages and storage-manager state also

@@ -113,8 +113,7 @@ pub use msexplore::{
 };
 #[cfg(unix)]
 pub use observation_owner::{
-    DetachedModelColumnStaging, ModelColumnStorageBounds, ModelColumnTransaction,
-    model_column_storage_bounds,
+    ModelColumnStorageBounds, ModelDataWrite, model_column_storage_bounds,
 };
 pub use observation_owner::{
     ObservationOwnerError, ResolvedSelectedObservation, ResolvedSelectedObservationAccess,

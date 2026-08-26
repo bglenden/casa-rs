@@ -29,7 +29,7 @@ use casa_ms::SubTable;
 use casa_ms::builder::MeasurementSetBuilder;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::{
-    ModelColumnTransaction, SelectedObservationContentBudget, SelectedObservationResolutionRequest,
+    ModelDataWrite, SelectedObservationContentBudget, SelectedObservationResolutionRequest,
     initialize_measurement_set_owner_manifest, resolve_selected_observation,
 };
 use casa_tables::{ColumnType, Table};
@@ -1067,16 +1067,14 @@ fn committed_model_data_generation_matches_cpp_manifest() {
     );
     let resolved = resolve_selected_observation(request).expect("resolve owner state");
     let (_, access) = resolved.into_parts();
-    let mut transaction =
-        ModelColumnTransaction::begin(&ms_path, access.source_state(), &model_selection)
-            .expect("begin MODEL_DATA transaction");
-    transaction
-        .stage(0, 0, 0, casa_types::Complex32::new(4.5, -1.25))
-        .expect("stage prediction");
-    transaction.prepare().expect("flush private generation");
-    transaction
-        .commit(LogicalIdentity::from_sha256([73; 32]))
-        .expect("commit MODEL_DATA generation");
+    let mut writer = ModelDataWrite::begin(&ms_path, access.source_state(), &model_selection)
+        .expect("begin MODEL_DATA write");
+    writer
+        .write(0, 0, 0, casa_types::Complex32::new(4.5, -1.25))
+        .expect("write prediction");
+    writer
+        .complete(LogicalIdentity::from_sha256([73; 32]))
+        .expect("complete MODEL_DATA write");
 
     let reopened = MeasurementSet::open(&ms_path).expect("reopen committed MS in Rust");
     let rust_manifest = digest_measurement_set_manifest(&reopened);

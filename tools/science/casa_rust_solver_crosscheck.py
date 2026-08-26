@@ -601,7 +601,8 @@ def casa_case(
             imsize=list(shape), cell=["0.02arcsec", "0.02arcsec"], phasecenter=1,
             specmode="mfs", gridder="standard", stokes="I", weighting="natural",
             deconvolver=case["solver"], scales=case.get("scales", []),
-            scalebias=0.0, niter=case["cycle_iterations"], cycleniter=1,
+            scalebias=0.0, niter=case["cycle_iterations"],
+            cycleniter=case["cycle_iterations"],
             loopgain=case.get("gain", 0.2),
             threshold=f"{case.get('threshold_jy', 0.0)}Jy",
             nsigma=case.get("nsigma", 0.0), cyclefactor=case.get("cyclefactor", 1.0),
@@ -630,25 +631,27 @@ def casa_case(
             initial = solver.initminorcycle()
             controller.mergeinitrecord(initial, 0)
             controls = controller.getminorcyclecontrols()
-            component_trace = []
-            selected_peak = float(initial["peakresidual"])
-            execution = None
-            for index in range(case["cycle_iterations"]):
-                execution = solver.executeminorcycle(iterbotrecord=controls)
-                peaks = execution["summaryminor"][1]
-                fluxes = execution["summaryminor"][2]
-                if len(peaks) != index + 1 or len(fluxes) != index + 1:
-                    raise AssertionError(
-                        f"first divergence: CASA {case['name']} one-component trace "
-                        f"length at {index}: peaks={len(peaks)}, flux={len(fluxes)}"
-                    )
-                component_trace.append({
+            execution = solver.executeminorcycle(iterbotrecord=controls)
+            peaks = execution["summaryminor"][1]
+            fluxes = execution["summaryminor"][2]
+            if len(peaks) != case["cycle_iterations"] or len(fluxes) != len(peaks):
+                raise AssertionError(
+                    f"first divergence: CASA {case['name']} component trace "
+                    f"length: peaks={len(peaks)}, flux={len(fluxes)}"
+                )
+            selected_peaks = [float(initial["peakresidual"])] + [
+                float(peak) for peak in peaks[:-1]
+            ]
+            component_trace = [
+                {
                     "selected_peak": selected_peak,
-                    "terminal_peak": float(peaks[-1]),
-                    "cumulative_model_flux": float(fluxes[-1]),
-                })
-                selected_peak = float(peaks[-1])
-            assert execution is not None
+                    "terminal_peak": float(terminal_peak),
+                    "cumulative_model_flux": float(cumulative_flux),
+                }
+                for selected_peak, terminal_peak, cumulative_flux in zip(
+                    selected_peaks, peaks, fluxes
+                )
+            ]
             controller.mergeexecrecord(execution, 0)
             stopcode = controller.cleanComplete()
             summary = controller.getiterationsummary()
@@ -1002,15 +1005,16 @@ def main() -> None:
         {
             "name": "controls-box", "solver": "clark", "mask": "box",
             "casa_usemask": "user", "box": [7, 9, 54, 51],
-            "iterations": 7, "cycle_iterations": 3, "nmajor": 3,
+            "iterations": 7, "cycle_iterations": 1, "nmajor": 3,
             "gain": 0.17, "threshold_jy": 1.0e-6, "cyclefactor": 1.4,
-            "minor_reference": False, "require_multiple_major": True,
+            "minor_reference": True, "direct_controls_oracle": True,
         },
         {
             "name": "controls-image", "solver": "clark", "mask": "image",
-            "casa_usemask": "user", "iterations": 8, "cycle_iterations": 3,
+            "casa_usemask": "user", "iterations": 8, "cycle_iterations": 1,
             "nmajor": 3, "gain": 0.13, "threshold_jy": 2.0e-6,
-            "nsigma": 2.5, "cyclefactor": 1.7, "minor_reference": False,
+            "nsigma": 2.5, "cyclefactor": 1.7, "minor_reference": True,
+            "direct_controls_oracle": True,
         },
     ]
     if len(sys.argv) == 4:
@@ -1070,8 +1074,11 @@ def main() -> None:
             shutil.copytree(seed_ms, casa_minor_ms)
             shutil.copytree(seed_ms, rust_minor_ms)
         shutil.copytree(seed_ms, rust_ms)
+        direct_controls_oracle = case.get("direct_controls_oracle", False)
         casa_summary = (
-            None if transitive_automask else casa_full_case(casa_ms, casa_prefix, case)
+            None
+            if transitive_automask or direct_controls_oracle
+            else casa_full_case(casa_ms, casa_prefix, case)
         )
         casa_minor_summary = (
             casa_case(casa_minor_ms, seed_prefix, casa_minor_prefix, case)
@@ -1090,15 +1097,17 @@ def main() -> None:
                 save_model=False,
                 initialize_owner=False,
             ))
-        rust_stdout = rust_case(
-            rust_ms,
-            rust_prefix,
-            case,
-            iterations=case["iterations"],
-            save_model=True,
-            initialize_owner=False,
-        )
-        rust_summary = json.loads(rust_stdout)
+        rust_summary = None
+        if not direct_controls_oracle:
+            rust_stdout = rust_case(
+                rust_ms,
+                rust_prefix,
+                case,
+                iterations=case["iterations"],
+                save_model=True,
+                initialize_owner=False,
+            )
+            rust_summary = json.loads(rust_stdout)
         if casa_summary is not None:
             (root / "casa-summary.json").write_text(
                 json.dumps(casa_summary, indent=2, sort_keys=True) + "\n"
@@ -1110,9 +1119,10 @@ def main() -> None:
             (root / "rust-minor-summary.json").write_text(
                 json.dumps(rust_minor_summary, indent=2, sort_keys=True) + "\n"
             )
-        (root / "rust-summary.json").write_text(
-            json.dumps(rust_summary, indent=2, sort_keys=True) + "\n"
-        )
+        if rust_summary is not None:
+            (root / "rust-summary.json").write_text(
+                json.dumps(rust_summary, indent=2, sort_keys=True) + "\n"
+            )
         if transitive_automask:
             rust_run = rust_summary["run"]
             rust_mask = plane(pathlib.Path(f"{rust_prefix}.mask")) != 0
@@ -1142,6 +1152,61 @@ def main() -> None:
                 "mask_pixels": int(np.count_nonzero(rust_mask)),
                 "rust_summary": rust_summary,
                 "transitive_artifact": transitive_artifact,
+            }
+            continue
+        if direct_controls_oracle:
+            assert casa_minor_summary is not None
+            assert rust_minor_summary is not None
+            rust_minor_run = rust_minor_summary["run"]
+            if len(rust_minor_run["minor_cycles"]) != 1:
+                raise AssertionError(
+                    f"first divergence: {case['name']} Rust direct reference "
+                    f"ran {len(rust_minor_run['minor_cycles'])} minor cycles"
+                )
+            rust_minor_model = plane(pathlib.Path(f"{rust_minor_prefix}.model"))
+            casa_minor_model = plane(pathlib.Path(f"{casa_minor_prefix}.model"))
+            rust_minor_residual = residual_after_model(
+                plane(pathlib.Path(f"{seed_prefix}.residual")),
+                plane(pathlib.Path(f"{seed_prefix}.psf")),
+                rust_minor_model,
+            )
+            casa_minor_residual = plane(pathlib.Path(f"{casa_minor_prefix}.residual"))
+            direct_model_metric = normalized_rms(rust_minor_model, casa_minor_model)
+            direct_residual_metric = normalized_rms(
+                rust_minor_residual, casa_minor_residual
+            )
+            if direct_model_metric > TOLERANCE or direct_residual_metric > TOLERANCE:
+                raise AssertionError(
+                    f"first divergence: {case['name']} direct masked controls: "
+                    f"model normalized RMS={direct_model_metric:.17g}, "
+                    f"residual normalized RMS={direct_residual_metric:.17g}"
+                )
+            compare_minor_reference(
+                case, casa_minor_summary, rust_minor_run["minor_cycles"][0]
+            )
+            casa_mask = plane(pathlib.Path(f"{casa_minor_prefix}.mask")) != 0
+            rust_mask = plane(pathlib.Path(f"{rust_minor_prefix}.mask")) != 0
+            if not np.array_equal(casa_mask, rust_mask):
+                mismatch = int(np.count_nonzero(casa_mask != rust_mask))
+                raise AssertionError(
+                    f"{case['name']} direct mask differs at {mismatch} pixels"
+                )
+            validate_runtime_mask_evidence(case, rust_minor_run, rust_mask)
+            evidence["cases"][case["name"]] = {
+                "oracle": "CASA synthesisdeconvolver direct masked-controls oracle",
+                "controls": {
+                    "gain": case.get("gain", 0.2),
+                    "threshold_jy": case.get("threshold_jy", 0.0),
+                    "nsigma": case.get("nsigma", 0.0),
+                    "niter": case["cycle_iterations"],
+                    "cyclefactor": case.get("cyclefactor", 1.0),
+                    "mask": case["mask"],
+                },
+                "mask_pixels": int(np.count_nonzero(rust_mask)),
+                "model_normalized_rms": direct_model_metric,
+                "residual_normalized_rms": direct_residual_metric,
+                "casa_summary": casa_minor_summary,
+                "rust_summary": rust_minor_summary,
             }
             continue
         assert casa_summary is not None

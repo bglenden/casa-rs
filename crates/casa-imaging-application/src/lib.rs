@@ -45,8 +45,6 @@ use casa_imaging_runtime::{
     PlannerCostModelProfileBootstrap, PlanningBindings, ResourceAuthority, ResourcePolicy,
     RunBindings, RunToCompletion, SerialContinuumExecutionPolicy, SerialContinuumExecutor,
     SerialContinuumPassInput, SerialContinuumPlan, SerialContinuumRegistry,
-    SerialModelDataPublicationExecutor, SerialModelDataPublicationPlan,
-    SerialModelDataPublicationPolicy, SerialModelDataPublicationRegistry,
     SerialProductPublicationExecutor, SerialProductPublicationPlan, SerialProductPublicationPolicy,
     SerialProductPublicationRegistry, SerialProductPublicationSink, StorageIoResourceBinding,
     VisibilityProductStaging, WorkExecutionContext, WorkImplementation, WorkImplementationId,
@@ -147,7 +145,7 @@ pub struct NativeApplicationOutcome {
     pub visibility_products: Option<VisibilityProductCompletion>,
     /// Atomic product-publication receipt.
     pub publication_receipt: ExecutionReceipt,
-    /// Independently atomic `MODEL_DATA` transaction receipt, when requested.
+    /// Final-major receipt containing the bounded in-place `MODEL_DATA` write, when requested.
     pub model_data_receipt: Option<ExecutionReceipt>,
     /// Final authoritative complete-data and model state.
     pub scientific: MajorCycleCompletion,
@@ -680,17 +678,16 @@ where
     let authority = ProductGenerationAuthority::bind(problem);
     let planned_products = authority.plan(&sources, &publication_config.controls)?;
 
-    let observation_locator = observation.locator().to_owned();
     let resolved = resolve_selected_observation(observation)?;
     let (_, access) = resolved.into_parts();
     let access = access.with_minimum_content_budget(problem)?;
     let residency = access.certify_residency(problem)?;
-    let model_data_bounds = prior
+    let model_data_receipt = prior
         .visibility_staging
         .as_ref()
         .is_some_and(VisibilityProductStaging::has_model_column)
-        .then(|| model_column_storage_bounds(&observation_locator, access.source_state()))
-        .transpose()?;
+        .then(|| prior.final_major_receipt.clone())
+        .flatten();
     let planning_registry =
         PlanningRegistry::new(runtime.registry, runtime.implementation.clone(), problem);
     // The ordinary publication plan is deliberately constructed before member
@@ -708,29 +705,6 @@ where
             runtime.confidence_parts_per_million,
         ),
     )?;
-    let model_data_plan = match (
-        prior.visibility_staging.as_ref(),
-        prior.visibility_products,
-        model_data_bounds,
-    ) {
-        (Some(staging), Some(completion), Some(bounds)) if staging.has_model_column() => Some(
-            SerialModelDataPublicationPlan::new(
-                problem,
-                completion,
-                &planning_registry,
-                SerialModelDataPublicationPolicy::new(
-                    runtime.implementation.clone(),
-                    runtime.storage_io.clone(),
-                    bounds.column_bytes(),
-                    bounds.maximum_cell_bytes(),
-                    runtime.stage_nanos,
-                    runtime.confidence_parts_per_million,
-                ),
-            )?
-            .into_physical_work(),
-        ),
-        _ => None,
-    };
     let mut inputs = ContinuumProductInputs::from_major_cycle(problem, &scientific)?;
     if let Some(mask) = reconstruction_mask.as_ref() {
         inputs = inputs.with_reconstruction_mask(mask)?;
@@ -787,59 +761,6 @@ where
         .implementation()
         .take_sealed_generation()
         .ok_or_else(|| boxed("publication execution omitted its sealed product generation"))?;
-    let model_data_receipt = match (model_data_plan, prior.visibility_staging, model_data_bounds) {
-        (Some(physical), Some(staging), Some(bounds)) => {
-            let completion = prior
-                .visibility_products
-                .expect("planned MODEL_DATA publication has visibility evidence");
-            let executor = SerialModelDataPublicationExecutor::new(
-                runtime.implementation.clone(),
-                staging,
-                completion,
-                bounds.column_bytes(),
-            );
-            let registry = SerialModelDataPublicationRegistry::new(
-                runtime.registry,
-                runtime.implementation.clone(),
-                problem,
-                executor,
-            );
-            let execution_plan = plan(
-                problem,
-                PlanningBindings::new(
-                    runtime.registry,
-                    runtime.resource_policy.clone(),
-                    runtime.cost_model,
-                ),
-                &runtime.authority,
-                &registry,
-                &runtime.receipts,
-                move |_, _| Ok::<_, std::convert::Infallible>(vec![physical]),
-            )?;
-            let attempt = model_data_attempt(runtime.attempts[2]);
-            let executable = ExecutableModelProblem::from_compiled(problem.clone())?;
-            let current = RunBindings::new(
-                problem.inputs().clone(),
-                &runtime.resource_policy,
-                runtime.cost_model.profile_id(),
-            );
-            let mut controller = RunToCompletion;
-            run(
-                &executable,
-                &execution_plan,
-                &current,
-                &registry,
-                &runtime.authority,
-                &mut controller,
-                runtime
-                    .receipts
-                    .bind(ExecutionProvenance::new(attempt, runtime.build)),
-            )?;
-            Some(runtime.receipts.open(attempt)?)
-        }
-        (None, _, None) | (None, None, _) => None,
-        _ => unreachable!("MODEL_DATA plan requires staged storage and exact bounds"),
-    };
     Ok(NativeApplicationOutcome {
         initial_receipt: prior.initial_receipt,
         final_major_receipt: prior.final_major_receipt,
@@ -853,13 +774,6 @@ where
         planned_products,
         products,
     })
-}
-
-fn model_data_attempt(base: ExecutionAttemptId) -> ExecutionAttemptId {
-    let mut hash = Sha256::new();
-    hash.update(b"casa-rs:imaging:model-data-publication-attempt:v1");
-    hash.update(base.as_bytes());
-    ExecutionAttemptId::from_sha256(hash.finalize().into())
 }
 
 struct PlanningRegistry {

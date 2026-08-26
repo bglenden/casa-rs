@@ -291,9 +291,6 @@ pub(crate) fn bind_observation_transaction(
             crate::PublicationParticipant::Product { .. } => None,
         })
         .collect::<BTreeSet<_>>();
-    // Multi-phase application plans may defer MODEL_DATA to a dedicated
-    // post-product transaction. Once a physical phase declares any model
-    // staging, it must cover the complete compiled write set exactly.
     if (!declared_model_data.is_empty() || work.model_column_staging.is_some())
         && declared_model_data != expected_model_data
     {

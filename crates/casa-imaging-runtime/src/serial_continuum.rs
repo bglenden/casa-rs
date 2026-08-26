@@ -28,10 +28,7 @@ use crate::{
     WorkExecutionContext, WorkImplementation, WorkImplementationId, WorkKind, WorkMeasurements,
 };
 use casa_imaging_reconstruction::WeightingPlan;
-use casa_ms::{
-    BoundSelectedObservation, DetachedModelColumnStaging, ModelColumnTransaction,
-    SelectedObservationCompletion,
-};
+use casa_ms::{BoundSelectedObservation, ModelDataWrite, SelectedObservationCompletion};
 use sha2::{Digest, Sha256};
 
 pub(crate) const MODEL_COLUMN_WORKER_STACK_BYTES: usize = 2 * 1024 * 1024;
@@ -64,21 +61,20 @@ pub trait FinalVisibilitySink: Send {
 #[derive(Clone)]
 pub struct VisibilityProductStaging {
     state: Arc<Mutex<VisibilityProductStagingState>>,
-    model_column: Option<Arc<ModelColumnStaging>>,
+    model_column: Option<Arc<ModelColumnWriteBinding>>,
 }
 
-struct ModelColumnStaging {
+struct ModelColumnWriteBinding {
     path: PathBuf,
     expected: casa_imaging_model::ObservationSourceState,
     selection: Arc<casa_imaging_model::ObservationSelection>,
-    state: Mutex<ModelColumnStagingState>,
+    state: Mutex<ModelColumnWriteState>,
 }
 
-enum ModelColumnStagingState {
+enum ModelColumnWriteState {
     Idle,
-    Replaying(ModelColumnWorker),
-    Detached(Box<DetachedModelColumnStaging>),
-    Prepared(Box<ModelColumnTransaction>),
+    Writing(ModelColumnWorker),
+    Complete,
 }
 
 enum VisibilityProductStagingState {
@@ -111,11 +107,11 @@ impl VisibilityProductStaging {
         selection: Arc<casa_imaging_model::ObservationSelection>,
     ) -> io::Result<(Self, Box<dyn FinalVisibilitySink>)> {
         let state = Arc::new(Mutex::new(VisibilityProductStagingState::Unbound));
-        let model_column = Arc::new(ModelColumnStaging {
+        let model_column = Arc::new(ModelColumnWriteBinding {
             path,
             expected,
             selection,
-            state: Mutex::new(ModelColumnStagingState::Idle),
+            state: Mutex::new(ModelColumnWriteState::Idle),
         });
         Ok((
             Self {
@@ -141,72 +137,10 @@ impl VisibilityProductStaging {
         }
     }
 
-    /// Return whether this staging handle owns a private `MODEL_DATA` transaction.
+    /// Return whether this handle owns a bounded in-place `MODEL_DATA` write.
     #[must_use]
     pub const fn has_model_column(&self) -> bool {
         self.model_column.is_some()
-    }
-
-    /// Validate that private staging contains the terminal replay's exact sample set.
-    pub fn prepare_model_column(
-        &self,
-        expected_samples: u64,
-        selected_generation: casa_imaging_model::SelectedObservationGenerationId,
-    ) -> io::Result<()> {
-        let Some(staging) = &self.model_column else {
-            return Err(io::Error::other("MODEL_DATA staging is not configured"));
-        };
-        let mut state = staging
-            .state
-            .lock()
-            .map_err(|_| io::Error::other("MODEL_DATA staging state poisoned"))?;
-        let detached = match &*state {
-            ModelColumnStagingState::Detached(detached) => detached,
-            _ => {
-                return Err(io::Error::other(
-                    "MODEL_DATA staging worker did not detach inside terminal replay",
-                ));
-            }
-        };
-        if detached.replay_sample_count() != expected_samples {
-            return Err(io::Error::other(format!(
-                "MODEL_DATA staged {} samples, expected {expected_samples}",
-                detached.replay_sample_count()
-            )));
-        }
-        if detached.selected_generation() != selected_generation {
-            return Err(io::Error::other(
-                "MODEL_DATA staging belongs to another selected-observation generation",
-            ));
-        }
-        let transaction = ModelColumnTransaction::reopen(detached).map_err(io::Error::other)?;
-        *state = ModelColumnStagingState::Prepared(Box::new(transaction));
-        Ok(())
-    }
-
-    /// Publish staged MODEL_DATA after all conventional products are visible.
-    pub fn commit_model_column(&self) -> io::Result<()> {
-        let completion = self.completion()?;
-        let Some(staging) = &self.model_column else {
-            return Ok(());
-        };
-        let mut state = staging
-            .state
-            .lock()
-            .map_err(|_| io::Error::other("MODEL_DATA staging state poisoned"))?;
-        let transaction = match std::mem::replace(&mut *state, ModelColumnStagingState::Idle) {
-            ModelColumnStagingState::Prepared(transaction) => *transaction,
-            other => {
-                *state = other;
-                return Err(io::Error::other(
-                    "MODEL_DATA transaction was not prepared for publication",
-                ));
-            }
-        };
-        drop(state);
-        transaction
-            .commit(completion.model_product().identity())
-            .map_err(io::Error::other)
     }
 }
 
@@ -247,20 +181,20 @@ impl FinalVisibilitySink for VisibilityProductStaging {
         let mut state = staging
             .state
             .lock()
-            .map_err(|_| io::Error::other("MODEL_DATA staging state poisoned"))?;
+            .map_err(|_| io::Error::other("MODEL_DATA write state poisoned"))?;
         match &*state {
-            ModelColumnStagingState::Idle => {
-                *state = ModelColumnStagingState::Replaying(ModelColumnWorker::spawn(
+            ModelColumnWriteState::Idle => {
+                *state = ModelColumnWriteState::Writing(ModelColumnWorker::spawn(
                     staging.path.clone(),
                     staging.expected.clone(),
                     Arc::clone(&staging.selection),
                 )?);
                 Ok(())
             }
-            ModelColumnStagingState::Replaying(_) => Ok(()),
-            ModelColumnStagingState::Detached(_) | ModelColumnStagingState::Prepared(_) => Err(
-                io::Error::other("MODEL_DATA staging replay already finished"),
-            ),
+            ModelColumnWriteState::Writing(_) => Ok(()),
+            ModelColumnWriteState::Complete => {
+                Err(io::Error::other("MODEL_DATA write already finished"))
+            }
         }
     }
 
@@ -280,9 +214,9 @@ impl FinalVisibilitySink for VisibilityProductStaging {
             let state = staging
                 .state
                 .lock()
-                .map_err(|_| io::Error::other("MODEL_DATA staging state poisoned"))?;
-            let ModelColumnStagingState::Replaying(worker) = &*state else {
-                return Err(io::Error::other("MODEL_DATA staging was not plan-prepared"));
+                .map_err(|_| io::Error::other("MODEL_DATA write state poisoned"))?;
+            let ModelColumnWriteState::Writing(worker) = &*state else {
+                return Err(io::Error::other("MODEL_DATA writer was not plan-prepared"));
             };
             worker.stage(samples)?;
         }
@@ -302,39 +236,41 @@ impl FinalVisibilitySink for VisibilityProductStaging {
                 return Err(io::Error::other("visibility product staging is not bound"));
             }
         };
-        if let Some(staging) = &self.model_column {
-            let mut staging_state = staging
+        let completion =
+            authority.finish(replay.selected_generation(), replay.weighting_generation());
+        if let Some(model_column) = &self.model_column {
+            let mut write_state = model_column
                 .state
                 .lock()
-                .map_err(|_| io::Error::other("MODEL_DATA staging state poisoned"))?;
-            let worker = match std::mem::replace(&mut *staging_state, ModelColumnStagingState::Idle)
-            {
-                ModelColumnStagingState::Replaying(worker) => worker,
+                .map_err(|_| io::Error::other("MODEL_DATA write state poisoned"))?;
+            let worker = match std::mem::replace(&mut *write_state, ModelColumnWriteState::Idle) {
+                ModelColumnWriteState::Writing(worker) => worker,
                 other => {
-                    *staging_state = other;
+                    *write_state = other;
                     return Err(io::Error::other(
-                        "MODEL_DATA staging worker was not active at replay completion",
+                        "MODEL_DATA writer was not active at replay completion",
                     ));
                 }
             };
-            drop(staging_state);
-            let detached = worker.finish(replay.selected_generation())?;
-            *staging
+            drop(write_state);
+            worker.finish(
+                completion.sample_count(),
+                completion.model_product().identity(),
+            )?;
+            *model_column
                 .state
                 .lock()
-                .map_err(|_| io::Error::other("MODEL_DATA staging state poisoned"))? =
-                ModelColumnStagingState::Detached(Box::new(detached));
+                .map_err(|_| io::Error::other("MODEL_DATA write state poisoned"))? =
+                ModelColumnWriteState::Complete;
         }
-        *state = VisibilityProductStagingState::Finished(
-            authority.finish(replay.selected_generation(), replay.weighting_generation()),
-        );
+        *state = VisibilityProductStagingState::Finished(completion);
         Ok(())
     }
 }
 
 struct ModelColumnWorker {
     sender: SyncSender<ModelColumnCommand>,
-    join: JoinHandle<io::Result<DetachedModelColumnStaging>>,
+    join: JoinHandle<io::Result<u64>>,
 }
 
 enum ModelColumnCommand {
@@ -343,7 +279,8 @@ enum ModelColumnCommand {
         reply: SyncSender<Result<(), String>>,
     },
     Finish {
-        selected_generation: casa_imaging_model::SelectedObservationGenerationId,
+        expected_samples: u64,
+        generation: LogicalIdentity,
     },
 }
 
@@ -359,14 +296,13 @@ impl ModelColumnWorker {
         let (sender, receiver) = std::sync::mpsc::sync_channel(0);
         let (ready_sender, ready_receiver) = std::sync::mpsc::sync_channel(0);
         let join = std::thread::Builder::new()
-            .name("model-data-staging".to_string())
+            .name("model-data-write".to_string())
             .stack_size(MODEL_COLUMN_WORKER_STACK_BYTES)
             .spawn(move || {
-                let mut transaction =
-                    match ModelColumnTransaction::begin(path, &expected, &selection) {
-                        Ok(transaction) => {
+                let mut writer = match ModelDataWrite::begin(path, &expected, &selection) {
+                        Ok(writer) => {
                             let _ = ready_sender.send(Ok(()));
-                            transaction
+                            writer
                         }
                         Err(error) => {
                             let message = error.to_string();
@@ -374,21 +310,21 @@ impl ModelColumnWorker {
                             return Err(io::Error::other(message));
                         }
                     };
-                let mut staged_samples = 0_u64;
-                let selected_generation = loop {
+                let mut written_samples = 0_u64;
+                let completed_samples = loop {
                     let command = receiver
                         .recv()
-                        .map_err(|_| io::Error::other("MODEL_DATA staging controller stopped"))?;
+                        .map_err(|_| io::Error::other("MODEL_DATA write controller stopped"))?;
                     match command {
                         ModelColumnCommand::Stage { values, reply } => {
                             let result = (|| {
-                                staged_samples =
-                                    staged_samples.checked_add(values.len() as u64).ok_or_else(
+                                written_samples =
+                                    written_samples.checked_add(values.len() as u64).ok_or_else(
                                         || io::Error::other("MODEL_DATA sample count overflowed"),
                                     )?;
                                 for (row, channel, correlation, value) in values {
-                                    transaction
-                                        .stage(row, channel, correlation, value)
+                                    writer
+                                        .write(row, channel, correlation, value)
                                         .map_err(io::Error::other)?;
                                 }
                                 Ok::<(), io::Error>(())
@@ -405,13 +341,20 @@ impl ModelColumnWorker {
                             }
                         }
                         ModelColumnCommand::Finish {
-                            selected_generation,
-                        } => break selected_generation,
+                            expected_samples,
+                            generation,
+                        } => {
+                            if written_samples != expected_samples {
+                                return Err(io::Error::other(format!(
+                                    "MODEL_DATA wrote {written_samples} samples, expected {expected_samples}"
+                                )));
+                            }
+                            writer.complete(generation).map_err(io::Error::other)?;
+                            break written_samples;
+                        }
                     }
                 };
-                transaction
-                    .detach(selected_generation, staged_samples)
-                    .map_err(io::Error::other)
+                Ok(completed_samples)
             })
             .map_err(io::Error::other)?;
         ready_receiver
@@ -441,25 +384,23 @@ impl ModelColumnWorker {
         let (reply, response) = std::sync::mpsc::sync_channel(0);
         self.sender
             .send(ModelColumnCommand::Stage { values, reply })
-            .map_err(|_| io::Error::other("MODEL_DATA staging worker stopped"))?;
+            .map_err(|_| io::Error::other("MODEL_DATA writer stopped"))?;
         response
             .recv()
-            .map_err(|_| io::Error::other("MODEL_DATA staging worker stopped"))?
+            .map_err(|_| io::Error::other("MODEL_DATA writer stopped"))?
             .map_err(io::Error::other)
     }
 
-    fn finish(
-        self,
-        selected_generation: casa_imaging_model::SelectedObservationGenerationId,
-    ) -> io::Result<DetachedModelColumnStaging> {
+    fn finish(self, expected_samples: u64, generation: LogicalIdentity) -> io::Result<u64> {
         self.sender
             .send(ModelColumnCommand::Finish {
-                selected_generation,
+                expected_samples,
+                generation,
             })
-            .map_err(|_| io::Error::other("MODEL_DATA staging worker stopped"))?;
+            .map_err(|_| io::Error::other("MODEL_DATA writer stopped"))?;
         self.join
             .join()
-            .map_err(|_| io::Error::other("MODEL_DATA staging worker panicked"))?
+            .map_err(|_| io::Error::other("MODEL_DATA writer panicked"))?
     }
 }
 

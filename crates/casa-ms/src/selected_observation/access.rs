@@ -1331,7 +1331,18 @@ fn validate_current_state(
     if current.selected_rows() != expected.selection().rows() {
         return Err(BoundObservationSourceError::StaleSelectedRows);
     }
-    if current.generations() != expected.generations() {
+    let expected_generations = expected.generations();
+    let current_generations = current.generations();
+    let model_changed = current_generations.model_column() != expected_generations.model_column();
+    let consistency_changed =
+        current_generations.consistency_token() != expected_generations.consistency_token();
+    // MODEL_DATA is a write precondition, not a selected-observation read.
+    // Its owner update may complete between scientific traversal and product
+    // publication without invalidating the DATA/FLAG/WEIGHT/metadata snapshot.
+    if current_generations.columns() != expected_generations.columns()
+        || current_generations.metadata_generations() != expected_generations.metadata_generations()
+        || model_changed != consistency_changed
+    {
         return Err(BoundObservationSourceError::StaleSourceGenerations);
     }
     Ok(())

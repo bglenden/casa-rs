@@ -215,7 +215,7 @@ impl Table {
     /// C++ equivalent: `Table::unlock()`.
     #[cfg(unix)]
     pub fn unlock(&mut self) -> Result<(), TableError> {
-        self.unlock_with_flush(Some(false))
+        self.unlock_with_metadata_only_flush(false)
     }
 
     /// Releases the current lock after flushing only table metadata.
@@ -225,65 +225,11 @@ impl Table {
     /// row values.
     #[cfg(unix)]
     pub fn unlock_metadata_only(&mut self) -> Result<(), TableError> {
-        self.unlock_with_flush(Some(true))
-    }
-
-    /// Release a write lock after a specialized operation has already
-    /// durably published the complete metadata image.
-    ///
-    /// This updates lock-file synchronization state but deliberately performs
-    /// no second table save, which could otherwise split an atomic metadata
-    /// transition into multiple control-file writes.
-    #[cfg(unix)]
-    #[doc(hidden)]
-    pub fn unlock_after_metadata_commit(&mut self) -> Result<(), TableError> {
-        self.unlock_with_flush(None)
-    }
-
-    /// Release a write lock after a read-only validation attempt.
-    ///
-    /// No table state may have changed while this lock was held. Unlike the
-    /// ordinary write unlock, this path neither saves the table nor advances
-    /// the casacore modification counter. It exists for fail-closed validators
-    /// that must serialize against writers before returning a rejection.
-    #[cfg(unix)]
-    #[doc(hidden)]
-    pub fn unlock_unchanged(&mut self) -> Result<(), TableError> {
-        if self.kind == TableKind::Memory {
-            return Ok(());
-        }
-        let state = self
-            .lock_state
-            .as_mut()
-            .ok_or_else(|| TableError::NotLocked {
-                operation: "unlock_unchanged".into(),
-            })?;
-        if matches!(
-            state.options.mode,
-            LockMode::PermanentLocking | LockMode::PermanentLockingWait
-        ) {
-            return Ok(());
-        }
-        if !state.lock_file.has_lock(LockType::Write) {
-            return Err(TableError::NotLocked {
-                operation: "unlock_unchanged".into(),
-            });
-        }
-        state
-            .lock_file
-            .release()
-            .map_err(|error| TableError::LockIo {
-                path: state.path.display().to_string(),
-                message: error.to_string(),
-            })?;
-        if let Some(sync) = &self.external_sync {
-            sync.release();
-        }
-        Ok(())
+        self.unlock_with_metadata_only_flush(true)
     }
 
     #[cfg(unix)]
-    fn unlock_with_flush(&mut self, flush: Option<bool>) -> Result<(), TableError> {
+    fn unlock_with_metadata_only_flush(&mut self, metadata_only: bool) -> Result<(), TableError> {
         // Memory tables have no lock to release.
         // C++ equivalent: MemoryTable::unlock() is a no-op.
         if self.kind == TableKind::Memory {
@@ -313,12 +259,10 @@ impl Table {
 
         // If write-locked, flush data to disk.
         if is_write_locked {
-            if let Some(metadata_only) = flush {
-                if metadata_only {
-                    self.save_metadata_only(save_opts)?;
-                } else {
-                    self.save(save_opts)?;
-                }
+            if metadata_only {
+                self.save_metadata_only(save_opts)?;
+            } else {
+                self.save(save_opts)?;
             }
 
             // Gather sync info from immutable borrows.

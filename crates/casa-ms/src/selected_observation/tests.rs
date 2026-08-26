@@ -1540,6 +1540,34 @@ fn post_compile_source_generation_changes_are_rejected_before_planning_or_stream
 }
 
 #[test]
+fn completed_model_data_write_does_not_stale_selected_observation_reads() {
+    let directory = tempfile::tempdir().expect("temporary model-generation fixture");
+    let path = directory.path().join("advanced-model-generation.ms");
+    generate_fixture(&path);
+    let problem = compiled_problem(&path, 2);
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let changed_generation = identity(204);
+    let current = ObservationSourceState::new(
+        source.identity(),
+        source.selection().rows().clone(),
+        SourceGenerations::new(
+            ConsistencyToken::new(changed_generation),
+            source.generations().columns().clone(),
+            source.generations().metadata_generations().to_vec(),
+            ModelColumnState::Present(changed_generation),
+        ),
+    );
+
+    BoundObservationSource::open(
+        &problem,
+        source,
+        &current,
+        content_budget_for_rows(&problem, source, 1, 1),
+    )
+    .expect("MODEL_DATA is a write precondition, not a selected-observation input");
+}
+
+#[test]
 fn post_compile_flag_storage_mutation_with_fresh_generation_is_rejected() {
     let directory = tempfile::tempdir().expect("temporary mutated-FLAG fixture");
     let path = directory.path().join("mutated-flag.ms");

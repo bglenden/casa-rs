@@ -15,7 +15,6 @@ mod receipt;
 mod resource_authority;
 mod serial_continuum;
 mod serial_continuum_plan;
-mod serial_model_data_publication;
 mod serial_product_publication;
 mod weighting;
 
@@ -103,11 +102,6 @@ pub use serial_continuum::{
 };
 pub use serial_continuum_plan::{
     SerialContinuumExecutionPolicy, SerialContinuumPlan, SerialContinuumPlanError,
-};
-pub use serial_model_data_publication::{
-    SerialModelDataPublicationExecutor, SerialModelDataPublicationPlan,
-    SerialModelDataPublicationPlanError, SerialModelDataPublicationPolicy,
-    SerialModelDataPublicationRegistry,
 };
 pub use serial_product_publication::{
     MemberPromotionFailure, MemberPromotionFailureKind, SerialProductPublicationExecutionError,

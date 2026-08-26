@@ -670,12 +670,12 @@ fn append_model_data_resources<R: ImplementationRegistry>(
         .and_then(|samples| {
             samples.checked_mul(
                 u64::try_from(std::mem::size_of::<(u64, u32, u32, num_complex::Complex32)>())
-                    .expect("MODEL_DATA staging tuple size fits u64"),
+                    .expect("MODEL_DATA write tuple size fits u64"),
             )
         })
         .ok_or(SerialContinuumPlanError::Overflow)?
         .max(1);
-    let staging_lifetime = ClaimLifetime::through_fence(FenceKind::Io);
+    let write_lifetime = ClaimLifetime::through_fence(FenceKind::Io);
     let mut nodes = base
         .execution_dag()
         .nodes()
@@ -697,20 +697,20 @@ fn append_model_data_resources<R: ImplementationRegistry>(
         ResourceClaim {
             resource: LeaseResource::Storage {
                 demand_id: storage_id.clone(),
-                use_kind: StorageUseKind::StagedOutput,
+                use_kind: StorageUseKind::FinalOutput,
             },
             amount: bytes,
-            lifetime: staging_lifetime.clone(),
+            lifetime: write_lifetime.clone(),
         },
         ResourceClaim {
             resource: LeaseResource::IoBuffer(IoBufferKind::Writeback),
             amount: cell_bytes,
-            lifetime: staging_lifetime.clone(),
+            lifetime: write_lifetime.clone(),
         },
         ResourceClaim {
             resource: LeaseResource::RuntimeOverhead(RuntimeOverheadKind::ThreadStack),
             amount: MODEL_COLUMN_WORKER_STACK_BYTES as u64,
-            lifetime: staging_lifetime.clone(),
+            lifetime: write_lifetime.clone(),
         },
     ]);
     if existing_rate.is_none() {
@@ -719,7 +719,7 @@ fn append_model_data_resources<R: ImplementationRegistry>(
                 demand_id: rate_id.clone(),
             },
             amount: 1,
-            lifetime: staging_lifetime.clone(),
+            lifetime: write_lifetime.clone(),
         });
     }
     if existing_queue.is_none() {
@@ -728,16 +728,16 @@ fn append_model_data_resources<R: ImplementationRegistry>(
                 demand_id: queue_id.clone(),
             },
             amount: 1,
-            lifetime: staging_lifetime.clone(),
+            lifetime: write_lifetime.clone(),
         });
     }
     replay_node.allocations.push(AllocationUse {
         allocation: allocation.clone(),
-        lifetime: staging_lifetime.clone(),
+        lifetime: write_lifetime.clone(),
     });
     replay_node.allocations.push(AllocationUse {
         allocation: block_allocation.clone(),
-        lifetime: staging_lifetime.clone(),
+        lifetime: write_lifetime.clone(),
     });
     let compatibility = SlotCompatibility {
         memory_domain: CapacityDomainId::new("host-memory"),
@@ -774,8 +774,8 @@ fn append_model_data_resources<R: ImplementationRegistry>(
         demand_id: storage_id,
         domain: policy.storage_io.domain().clone(),
         temporary_bytes: 0,
-        staged_output_bytes: bytes,
-        final_output_bytes: 0,
+        staged_output_bytes: 0,
+        final_output_bytes: bytes,
         persistent_cache_bytes: 0,
         read_rate: CountDemand::zero(),
         write_rate: CountDemand::zero(),

@@ -595,18 +595,19 @@ fn application_commits_exact_final_prediction_to_model_data() {
         .output
         .model_data_receipt
         .as_ref()
-        .expect("MODEL_DATA commit is independently receipted");
+        .expect("MODEL_DATA write is receipted by the terminal replay");
     assert_eq!(
         model_receipt.observation_transaction_publication_scope(),
-        casa_imaging_runtime::ObservationTransactionPublicationScope::ModelDataPublication
+        casa_imaging_runtime::ObservationTransactionPublicationScope::ReconstructionOnly
     );
-    assert_eq!(model_receipt.publication_layout_count(), 1);
+    assert_eq!(model_receipt.publication_layout_count(), 0);
     let final_receipt = result
         .outcome
         .output
         .final_major_receipt
         .as_ref()
         .expect("save-model execution has a terminal replay receipt");
+    assert_eq!(model_receipt, final_receipt);
     let replay = final_receipt
         .plan_node_identities()
         .into_iter()
@@ -621,35 +622,23 @@ fn application_commits_exact_final_prediction_to_model_data() {
         None,
         "the table adapter exposes no trustworthy physical byte counter"
     );
-    let staging_lifetime =
+    let write_lifetime =
         casa_imaging_runtime::ClaimLifetime::through_fence(casa_imaging_runtime::FenceKind::Io);
-    let staging_stack = casa_imaging_runtime::LeaseResource::RuntimeOverhead(
+    let write_stack = casa_imaging_runtime::LeaseResource::RuntimeOverhead(
         casa_imaging_runtime::RuntimeOverheadKind::ThreadStack,
     );
     assert_eq!(
-        final_receipt.planned_resource_amount(&replay, &staging_stack, &staging_lifetime),
+        final_receipt.planned_resource_amount(&replay, &write_stack, &write_lifetime),
         Some(2 * 1024 * 1024)
     );
     assert_eq!(
-        final_receipt.actual_resource_peak(&replay, &staging_stack, &staging_lifetime),
+        final_receipt.actual_resource_peak(&replay, &write_stack, &write_lifetime),
         Some(2 * 1024 * 1024)
-    );
-    let adoption = model_receipt
-        .plan_node_identities()
-        .into_iter()
-        .find(|node| node.as_str() == "model-data-publication-flush")
-        .expect("prepared MODEL_DATA staging is durably flushed before commit");
-    assert_eq!(
-        model_receipt.stage_actual_io(&adoption, casa_imaging_runtime::IoBufferKind::Writeback),
-        None,
-        "flush capacity must not be copied into actual transfer evidence"
     );
 
     let reopened = MeasurementSet::open(measurement_set).expect("reopen saved MODEL_DATA");
     let schema = reopened.main_table().schema().expect("MAIN schema");
     assert!(schema.contains_column("MODEL_DATA"));
-    assert!(!schema.contains_column("CASA_RS_MODEL_DATA_STAGING"));
-    assert!(!schema.contains_column("CASA_RS_MODEL_DATA_BACKUP"));
     let model_column = reopened
         .data_column(VisibilityDataColumn::ModelData)
         .expect("MODEL_DATA was committed");

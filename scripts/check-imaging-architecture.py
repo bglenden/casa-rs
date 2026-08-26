@@ -51,15 +51,15 @@ ACCEPTED_ISSUE_OUTCOMES_SHA256 = (
     "1d2a77232fdc25a50053097b644b64cbdf0d21e1970590ec4180de6dce29738d"
 )
 ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256 = (
-    "778bcf42be2ff392cc86c9ca3eb67dc0591c11a24496881841b980c80f1fdbaf"
+    "fe3df4f0e0575ab11a6ba82c179b99ee4ea13ce32e150387a3b225c42ae4b772"
 )
 ACCEPTED_MATRIX_ROWS_SHA256 = (
-    "fb60c0414158df194b2cbf4ae8bafca8f8837bca6f27605566f338289a44ca7c"
+    "180c750802a15d82266f4333d65ec4afbdc97d1fd2bfec5f6bfd2ef749300c9e"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "515bfc01b448a8335fa4857a11fc851e6ce3d356c5d6fc034a5eb6aec2083aae"
+    "be149d4b63a8d459df45453af3e58cfc9c01f5bf8d389fffeb54ccac4e2c9173"
 )
-ACCEPTED_MATRIX_CONTRACT_REVISION = 42
+ACCEPTED_MATRIX_CONTRACT_REVISION = 43
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "scientific-products-v1",
@@ -160,15 +160,15 @@ ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "observation-transaction-v1",
         "thresholds",
-    ): "c7df2947ccba63a095abca5b99890c57ed633d2fb739739732fb620fff28757f",
+    ): "68712d1f4ef427a03775f10d0d864daa9ff49ee44a81a39eb7edf33f5eb0f2d4",
     (
         "observation-transaction-v1",
         "laws",
-    ): "be111815bc7667c2534f031f5e1dca586ab7cf12b624fddbd61f1040044d18c8",
+    ): "6393766975473804abac9ecf23bb600e46dc23183bc00086b5c59b7f56f5e654",
     (
         "observation-transaction-v1",
         "resource_gates",
-    ): "62ef188eff7d529d52a0dcc401094c82b78133c273b12d2d644afa24b0572523",
+    ): "fb8095e5e44341c3dc1ab06aa8a26cd259905f8f3485d4ca88253af1459da70a",
     (
         "resource-authority-foundation-v1",
         "thresholds",
