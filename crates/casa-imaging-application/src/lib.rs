@@ -584,7 +584,6 @@ where
         problem,
         scientific,
         final_reconstruction_mask,
-        input.observation,
         runtime,
         publication,
         PriorPhaseOutcome {
@@ -667,7 +666,6 @@ fn publish_products<S>(
     problem: &CompiledProblem,
     scientific: MajorCycleCompletion,
     reconstruction_mask: Option<casa_imaging_reconstruction::ReconstructionMask>,
-    observation: SelectedObservationResolutionRequest,
     runtime: ApplicationRuntime,
     publication_config: ApplicationPublication<S>,
     prior: PriorPhaseOutcome,
@@ -684,10 +682,6 @@ where
     let authority = ProductGenerationAuthority::bind(problem);
     let planned_products = authority.plan(&sources, &publication_config.controls)?;
 
-    let resolved = resolve_selected_observation(observation)?;
-    let (_, access) = resolved.into_parts();
-    let access = access.with_minimum_content_budget(problem)?;
-    let residency = access.certify_residency(problem)?;
     let model_data_receipt = prior
         .visibility_replay
         .as_ref()
@@ -705,7 +699,6 @@ where
         &planning_registry,
         SerialProductPublicationPolicy::new(
             runtime.implementation.clone(),
-            residency,
             runtime.storage_io.clone(),
             runtime.stage_nanos,
             runtime.confidence_parts_per_million,
@@ -720,10 +713,8 @@ where
     let (physical, publication) = publication_plan.into_parts();
     let executor = SerialProductPublicationExecutor::new(
         runtime.implementation.clone(),
-        problem.clone(),
         publication,
         sealed,
-        access.open(problem)?,
         publication_config.sink,
     )?;
     let registry = SerialProductPublicationRegistry::new(

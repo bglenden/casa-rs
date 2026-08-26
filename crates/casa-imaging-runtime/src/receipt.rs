@@ -53,7 +53,7 @@ use crate::{
 };
 
 const RECEIPT_SCHEMA: &str = "casa-rs-imaging-execution-receipt";
-const RECEIPT_SCHEMA_VERSION: u32 = 17;
+const RECEIPT_SCHEMA_VERSION: u32 = 18;
 const COMPILED_PROBLEM_EVIDENCE_VERSION: u32 = 9;
 const RECEIPT_SUFFIX: &str = ".receipt.json";
 const RECEIPT_STAGING_PREFIX: &str = ".casa-rs-receipt-staging-";
@@ -2394,6 +2394,7 @@ impl PlanProjection {
 enum ObservationTransactionPublicationScopeProjection {
     ReconstructionOnly,
     ProductPublication,
+    SealedProductPublication,
 }
 
 impl ObservationTransactionPublicationScopeProjection {
@@ -2405,6 +2406,9 @@ impl ObservationTransactionPublicationScopeProjection {
             crate::ObservationTransactionPublicationScope::ProductPublication => {
                 Self::ProductPublication
             }
+            crate::ObservationTransactionPublicationScope::SealedProductPublication => {
+                Self::SealedProductPublication
+            }
         }
     }
 
@@ -2415,6 +2419,9 @@ impl ObservationTransactionPublicationScopeProjection {
             }
             Self::ProductPublication => {
                 crate::ObservationTransactionPublicationScope::ProductPublication
+            }
+            Self::SealedProductPublication => {
+                crate::ObservationTransactionPublicationScope::SealedProductPublication
             }
         }
     }
@@ -4710,7 +4717,8 @@ fn validate_plan_projection(
         ObservationTransactionPublicationScopeProjection::ReconstructionOnly => {
             require_integrity(product_participants.is_empty())?;
         }
-        ObservationTransactionPublicationScopeProjection::ProductPublication => {
+        ObservationTransactionPublicationScopeProjection::ProductPublication
+        | ObservationTransactionPublicationScopeProjection::SealedProductPublication => {
             require_integrity(product_participants.as_slice() == publication_members)?;
         }
     }

@@ -1538,9 +1538,11 @@ impl PhysicalWorkBinding {
         publication_layouts: PublicationLayoutLedger,
         product_publication: &crate::ProductPublicationPlan,
     ) -> Result<Self, PhysicalWorkBindingError> {
-        if observation_transaction.publication_scope()
-            != crate::ObservationTransactionPublicationScope::ProductPublication
-        {
+        if !matches!(
+            observation_transaction.publication_scope(),
+            crate::ObservationTransactionPublicationScope::ProductPublication
+                | crate::ObservationTransactionPublicationScope::SealedProductPublication
+        ) {
             return invalid_product_publication(
                 "native product publication requires ProductPublication transaction scope",
             );
@@ -4880,6 +4882,7 @@ fn encode_observation_transaction(
     encoder.u8(match transaction.work().publication_scope() {
         crate::ObservationTransactionPublicationScope::ReconstructionOnly => 0,
         crate::ObservationTransactionPublicationScope::ProductPublication => 1,
+        crate::ObservationTransactionPublicationScope::SealedProductPublication => 2,
     });
     encoder.digest(transaction.problem_id().as_bytes());
     encoder.digest(transaction.product_graph_id().as_bytes());
@@ -4895,7 +4898,13 @@ fn encode_observation_transaction(
         }
         None => encoder.u8(0),
     }
-    encoder.string(work.post_replay_reconciliation().as_str());
+    match work.optional_post_replay_reconciliation() {
+        Some(node) => {
+            encoder.u8(1);
+            encoder.string(node.as_str());
+        }
+        None => encoder.u8(0),
+    }
     encode_dependencies(encoder, work.product_staging());
     match work.model_column_writeback() {
         Some(node) => {

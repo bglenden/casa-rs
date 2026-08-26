@@ -31,6 +31,8 @@ pub enum ObservationTransactionPublicationScope {
     ReconstructionOnly,
     /// Stage and atomically publish every required Product Graph member.
     ProductPublication,
+    /// Publish already sealed conventional products without observation I/O.
+    SealedProductPublication,
 }
 
 /// Exact execution-DAG events that implement one observation transaction.
@@ -40,7 +42,7 @@ pub struct ObservationTransactionWork {
     initial_consistency_check: WorkNodeId,
     observation_reads: BTreeSet<WorkDependency>,
     final_model_preparation: Option<WorkNodeId>,
-    post_replay_reconciliation: WorkNodeId,
+    post_replay_reconciliation: Option<WorkNodeId>,
     product_staging: BTreeSet<WorkDependency>,
     model_column_writeback: Option<WorkNodeId>,
     commit: WorkNodeId,
@@ -62,7 +64,7 @@ impl ObservationTransactionWork {
             initial_consistency_check,
             observation_reads: BTreeSet::new(),
             final_model_preparation: None,
-            post_replay_reconciliation,
+            post_replay_reconciliation: Some(post_replay_reconciliation),
             product_staging: BTreeSet::new(),
             model_column_writeback: None,
             commit,
@@ -81,7 +83,25 @@ impl ObservationTransactionWork {
             initial_consistency_check,
             observation_reads: BTreeSet::new(),
             final_model_preparation: None,
-            post_replay_reconciliation,
+            post_replay_reconciliation: Some(post_replay_reconciliation),
+            product_staging: BTreeSet::new(),
+            model_column_writeback: None,
+            commit,
+        }
+    }
+
+    /// Name a publication-only transaction over already sealed products.
+    #[must_use]
+    pub const fn new_sealed_product_publication(
+        publication_check: WorkNodeId,
+        commit: WorkNodeId,
+    ) -> Self {
+        Self {
+            publication_scope: ObservationTransactionPublicationScope::SealedProductPublication,
+            initial_consistency_check: publication_check,
+            observation_reads: BTreeSet::new(),
+            final_model_preparation: None,
+            post_replay_reconciliation: None,
             product_staging: BTreeSet::new(),
             model_column_writeback: None,
             commit,
@@ -129,8 +149,14 @@ impl ObservationTransactionWork {
 
     /// Return the mandatory post-replay Major-Cycle reconciliation node.
     #[must_use]
-    pub const fn post_replay_reconciliation(&self) -> &WorkNodeId {
-        &self.post_replay_reconciliation
+    pub fn post_replay_reconciliation(&self) -> &WorkNodeId {
+        self.post_replay_reconciliation
+            .as_ref()
+            .expect("reconstruction transaction has a reconciliation node")
+    }
+
+    pub(crate) const fn optional_post_replay_reconciliation(&self) -> Option<&WorkNodeId> {
+        self.post_replay_reconciliation.as_ref()
     }
 
     /// Return exact completion events for every privately staged required product.
@@ -267,6 +293,13 @@ pub(crate) fn bind_observation_transaction(
                 ));
             }
         }
+        ObservationTransactionPublicationScope::SealedProductPublication => {
+            if declared_products != expected_products {
+                return invalid(format!(
+                    "sealed publication product nodes {declared_products:?} do not match graph members {expected_products:?}"
+                ));
+            }
+        }
     }
     let output_artifacts = artifacts
         .iter()
@@ -317,6 +350,11 @@ pub(crate) fn bind_observation_transaction(
                 return invalid("product publication layout is empty");
             }
         }
+        ObservationTransactionPublicationScope::SealedProductPublication => {
+            if work.product_staging.is_empty() {
+                return invalid("sealed product publication layout is empty");
+            }
+        }
     }
     let phase_model_columns = if work.model_column_writeback.is_some() {
         contract.write_set().model_columns().len()
@@ -329,7 +367,9 @@ pub(crate) fn bind_observation_transaction(
         dag.nodes(),
         &work,
     )?;
-    validate_measurement_set_lock_identities(&measurement_sets, dag.nodes(), &work)?;
+    if work.publication_scope != ObservationTransactionPublicationScope::SealedProductPublication {
+        validate_measurement_set_lock_identities(&measurement_sets, dag.nodes(), &work)?;
+    }
     Ok(BoundObservationTransaction {
         problem_id: problem.problem_id(),
         product_graph_id: product_graph.graph_id(),
@@ -345,6 +385,9 @@ fn validate_transaction_nodes(
     nodes: &BTreeMap<WorkNodeId, WorkNode>,
     work: &ObservationTransactionWork,
 ) -> Result<BTreeSet<WorkDependency>, ObservationTransactionPlanError> {
+    if work.publication_scope == ObservationTransactionPublicationScope::SealedProductPublication {
+        return validate_product_publication_nodes(nodes, work);
+    }
     if let Some(node) = nodes
         .values()
         .find(|node| node.kind == WorkKind::Publication && node.id != work.commit)
@@ -385,7 +428,9 @@ fn validate_transaction_nodes(
         require_precedes(
             nodes,
             completion,
-            &work.post_replay_reconciliation,
+            work.post_replay_reconciliation
+                .as_ref()
+                .expect("reconstruction transaction has reconciliation"),
             "observation read",
         )?;
         require_precedes(nodes, completion, &work.commit, "observation read")?;
@@ -405,7 +450,9 @@ fn validate_transaction_nodes(
 
     let reconciliation = require_node(
         nodes,
-        &work.post_replay_reconciliation,
+        work.post_replay_reconciliation
+            .as_ref()
+            .expect("reconstruction transaction has reconciliation"),
         "post-replay reconciliation",
     )?;
     require_kind(
@@ -507,7 +554,9 @@ fn validate_transaction_nodes(
         require_precedes(
             nodes,
             completion,
-            &work.post_replay_reconciliation,
+            work.post_replay_reconciliation
+                .as_ref()
+                .expect("reconstruction transaction has reconciliation"),
             "initial consistency",
         )?;
     }
@@ -523,7 +572,9 @@ fn validate_transaction_nodes(
             require_precedes(
                 nodes,
                 &completion,
-                &work.post_replay_reconciliation,
+                work.post_replay_reconciliation
+                    .as_ref()
+                    .expect("reconstruction transaction has reconciliation"),
                 "terminal MODEL_DATA replay",
             )?;
             require_precedes(nodes, &completion, &work.commit, "MODEL_DATA writeback")?;
@@ -540,6 +591,96 @@ fn validate_transaction_nodes(
         }
     }
     Ok(observation_reads)
+}
+
+fn validate_product_publication_nodes(
+    nodes: &BTreeMap<WorkNodeId, WorkNode>,
+    work: &ObservationTransactionWork,
+) -> Result<BTreeSet<WorkDependency>, ObservationTransactionPlanError> {
+    if work.post_replay_reconciliation.is_some()
+        || work.final_model_preparation.is_some()
+        || work.model_column_writeback.is_some()
+    {
+        return invalid(
+            "conventional product publication declares reconstruction or MODEL_DATA work",
+        );
+    }
+    if let Some(node) = nodes.values().find(|node| {
+        node.kind.reads_observation()
+            || node
+                .claims
+                .iter()
+                .any(|claim| matches!(claim.resource, LeaseResource::MeasurementSetLock { .. }))
+    }) {
+        return invalid(format!(
+            "conventional product publication node {} reads or locks a MeasurementSet",
+            node.id.as_str()
+        ));
+    }
+
+    let initial = require_node(nodes, &work.initial_consistency_check, "publication check")?;
+    require_kind(initial, WorkKind::DataCensus, "publication check")?;
+    require_exact_lock_count(initial, 0, "publication check")?;
+    let initial_completions = completion_events(initial);
+
+    let mut staged_nodes = Vec::new();
+    for producer in
+        require_exact_completion_events(nodes, &work.product_staging, "product staging")?
+    {
+        require_kind(producer, WorkKind::Serialization, "product staging")?;
+        require_claim(
+            producer,
+            is_staged_output,
+            "staged-output storage",
+            "product staging",
+        )?;
+        for completion in &initial_completions {
+            require_precedes(nodes, completion, &producer.id, "publication check")?;
+        }
+        staged_nodes.push(producer);
+    }
+
+    let commit = require_node(nodes, &work.commit, "atomic member commit")?;
+    require_kind(commit, WorkKind::Publication, "atomic member commit")?;
+    require_claim(
+        commit,
+        is_staged_output,
+        "staged-output storage",
+        "atomic member commit",
+    )?;
+    require_claim(
+        commit,
+        is_publication_buffer,
+        "publication buffer",
+        "atomic member commit",
+    )?;
+    require_exact_lock_count(commit, 0, "atomic member commit")?;
+    if !commit.fences.contains(&FenceKind::Publication) {
+        return invalid("atomic member commit omits its publication fence");
+    }
+    for staged in staged_nodes {
+        if !shares_staging_demand(staged, commit) {
+            return invalid(format!(
+                "staging node {} and atomic member commit {} do not share staged output",
+                staged.id.as_str(),
+                commit.id.as_str()
+            ));
+        }
+    }
+    for product in &work.product_staging {
+        require_precedes(nodes, product, &work.commit, "product staging")?;
+    }
+    for node in nodes.values().filter(|node| node.id != work.commit) {
+        for completion in completion_events(node) {
+            require_precedes(
+                nodes,
+                &completion,
+                &work.commit,
+                "atomic member commit terminal ordering",
+            )?;
+        }
+    }
+    Ok(BTreeSet::new())
 }
 
 fn derive_observation_reads(
@@ -1391,15 +1532,23 @@ mod tests {
         let (nodes, work) = transaction_nodes();
         validate_transaction_nodes(1, 1, &nodes, &work).expect("complete transaction resources");
 
+        let mut existing_model_column = nodes.clone();
+        existing_model_column
+            .get_mut(&WorkNodeId::new("terminal-model-replay"))
+            .expect("MODEL_DATA replay")
+            .claims
+            .retain(|claim| {
+                claim.resource
+                    != (LeaseResource::Storage {
+                        demand_id: "model-column".to_string(),
+                        use_kind: StorageUseKind::FinalOutput,
+                    })
+            });
+        validate_transaction_nodes(1, 1, &existing_model_column, &work)
+            .expect("overwriting existing MODEL_DATA requires no new capacity");
+
         for (node_id, resource) in [
             ("check-initial", measurement_set_lock(1)),
-            (
-                "terminal-model-replay",
-                LeaseResource::Storage {
-                    demand_id: "model-column".to_string(),
-                    use_kind: StorageUseKind::FinalOutput,
-                },
-            ),
             (
                 "terminal-model-replay",
                 LeaseResource::IoBuffer(IoBufferKind::Writeback),
@@ -1415,7 +1564,10 @@ mod tests {
                 .expect("fixture node")
                 .claims
                 .retain(|claim| claim.resource != resource);
-            assert!(validate_transaction_nodes(1, 1, &incomplete, &work).is_err());
+            assert!(
+                validate_transaction_nodes(1, 1, &incomplete, &work).is_err(),
+                "removing {resource:?} from {node_id} must fail"
+            );
         }
 
         let mut no_commit_fence = nodes;
@@ -1550,7 +1702,10 @@ mod tests {
 
         let mut read_only = ObservationTransactionWork::new_product_publication(
             writable.initial_consistency_check.clone(),
-            writable.post_replay_reconciliation.clone(),
+            writable
+                .post_replay_reconciliation
+                .clone()
+                .expect("writable transaction has reconciliation"),
             writable.commit.clone(),
         );
         read_only.product_staging = writable.product_staging.clone();
