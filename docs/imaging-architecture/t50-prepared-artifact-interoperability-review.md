@@ -13,8 +13,8 @@ CASA-visible format. This review covers the existing CASA AWProject cache
 reader, casacore-compatible MeasurementSet and image persistence, provider
 contracts, and the proposed private cache.
 
-The existing `casa-imaging::AwConvolutionFunctionCache` is the CASA
-interoperability owner. It opens an existing directory of paired CASA PagedImage
+At the reviewed T50 base, `casa-imaging::AwConvolutionFunctionCache` was the CASA
+interoperability owner. It opened an existing directory of paired CASA PagedImage
 tables named `CFS_*.im` and `WTCFS_*.im`, validates the complete
 frequency-by-W-by-Mueller-by-parallactic-angle inventory, and loads pixels
 read-only. A pair is asymmetric: imaging and weight planes may have different
@@ -22,6 +22,12 @@ pixel shapes, support extents, and affine UU/VV coordinate definitions while
 covering the same UV world window. The current adapter validates those named
 roles, their shared scientific key, sampling, metadata, and finite complex
 pixels. A generic byte reader is therefore not a CASA-cache validator.
+
+Post-T23/#574, that displaced reader has been deleted with the old imaging
+package. No production AWProject cache reader remains. A later AWProject ticket
+must introduce its CASA-compatible reader at the final prepared-artifact owner
+before claiming the corresponding capability Native; it may not recover the
+deleted package or add a fallback route.
 
 ## Decision
 

@@ -11,8 +11,8 @@ use casa_coordinates::fits::{FitsHeader, from_fits_header};
 use casa_coordinates::{
     Coordinate, CoordinateSystem, CoordinateType, DirectionCoordinate, Projection, ProjectionType,
 };
-use casa_imaging::{
-    ImageGeometry, PrimaryBeamModel, PrimaryBeamVoltagePattern, StandardMfsModelPredictor,
+use casa_simulation_synthesis::{
+    AiryPrimaryBeam, AiryVoltagePattern, ImageGeometry, StandardMfsModelPredictor,
 };
 use casa_tables::ColumnOverrides;
 use casa_types::measures::MeasuresProvider;
@@ -2983,7 +2983,7 @@ fn apply_simulator_primary_beam_power(
         return pixels;
     }
     let primary_beam_evaluator = (!primary_beam.use_casa_vla_q_table).then(|| {
-        PrimaryBeamVoltagePattern::new(PrimaryBeamModel::Airy {
+        AiryVoltagePattern::new(AiryPrimaryBeam {
             dish_diameter_m: primary_beam.dish_diameter_m,
             blockage_diameter_m: primary_beam.blockage_diameter_m,
         })
@@ -3013,7 +3013,7 @@ fn apply_simulator_primary_beam_power(
 
 fn synthetic_primary_beam_voltage_pattern(
     primary_beam: SyntheticPrimaryBeam,
-    primary_beam_evaluator: Option<&PrimaryBeamVoltagePattern>,
+    primary_beam_evaluator: Option<&AiryVoltagePattern>,
     l_rad: f64,
     m_rad: f64,
     frequency_hz: f64,
@@ -3506,7 +3506,7 @@ fn analytic_primary_beam_taper_for_direction(
     let l_from_pointing = l_rad - pointing_offset_rad[0];
     let m_from_pointing = m_rad - pointing_offset_rad[1];
     let primary_beam_evaluator = (!primary_beam.use_casa_vla_q_table).then(|| {
-        PrimaryBeamVoltagePattern::new(PrimaryBeamModel::Airy {
+        AiryVoltagePattern::new(AiryPrimaryBeam {
             dish_diameter_m: primary_beam.dish_diameter_m,
             blockage_diameter_m: primary_beam.blockage_diameter_m,
         })

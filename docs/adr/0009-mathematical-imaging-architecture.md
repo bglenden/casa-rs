@@ -36,10 +36,14 @@ scientific state rather than solvers or execution implementations. Backends
 implement declarative work-node and operator interfaces and do not own modes,
 coordinates, weighting, normalization, or products.
 
-There is one production engine behind the migration router. Capabilities whose
-owners have not landed are unavailable rather than delegated to an alternate
-implementation. CI enforces the permitted crate/module graph and rejects
-forbidden edges.
+There is one production engine behind the application-owned typed
+installed-implementation availability boundary. `casa-imaging-application`
+checks compiled and task-only requirements against the implementation installed
+in the build before planning. Capabilities whose owners have not landed are
+returned typed unavailable rather than delegated to an alternate
+implementation. The repository migration matrix is planning and acceptance
+evidence only; production neither embeds nor interprets it. CI enforces the
+permitted crate/module graph and rejects forbidden edges.
 
 ### Compile, plan, and run boundary
 
@@ -166,24 +170,27 @@ PB-corrected products.
 
 ### Migration
 
-The authoritative migration matrix classifies each request capability as Native
-or TemporarilyUnavailable. Routing occurs once before planning and is recorded
-in the request disposition and receipt. An unavailable request invokes no
-engine. A compile, plan, or execution failure is terminal, and execution never
-delegates a stage to an alternate implementation.
+The repository migration matrix classifies each request capability as Native or
+TemporarilyUnavailable for planning and acceptance. It is enforced by CI but is
+not runtime policy: production code does not embed or interpret it, and requests
+and execution receipts do not carry its rows or disposition. The application
+checks the compiled problem and task-only requirements once against typed
+installed-implementation availability before planning. An unavailable request
+invokes no engine. A compile, availability, plan, or execution failure is
+terminal, and execution never delegates a stage to an alternate implementation.
 
-Migration Obligations are typed and executable. Each records the capability key,
-current owner, reason, authoritative issue/evidence, Acceptance Contract,
-destination ticket, transfer milestone, and deletion condition. A capability
-transfers only when its native Acceptance Contract passes and the same merge
-makes the displaced route unreachable. Useful algorithms move directly to their
-authoritative owner; otherwise the displaced implementation is deleted. A
-test-only differential harness may read frozen evidence but is not production
-routing.
+Migration Obligations are repository-enforced records. Each records the
+capability key, current owner, reason, authoritative issue/evidence, Acceptance
+Contract, destination ticket, transfer milestone, and deletion condition. A
+capability transfers only when its native Acceptance Contract passes and the
+same merge makes the displaced route unreachable. Useful algorithms move
+directly to their authoritative owner; otherwise the displaced implementation
+is deleted. A test-only differential harness may read frozen evidence but is
+not production routing.
 
-Before transfer, the capability is unavailable in production; implementation
-work lands only in its accepted destination owner. After transfer it lands only
-in the native owner. Dual production ownership and
+Before transfer, the application boundary returns typed unavailable for the
+capability; implementation work lands only in its accepted destination owner.
+After transfer it lands only in the native owner. Dual production ownership and
 dual patching are prohibited.
 
 ## Consequences

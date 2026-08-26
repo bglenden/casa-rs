@@ -39,18 +39,16 @@ redefine an accepted production surface.
 Every baseline locator resolves to repository content and is paired with a
 pinned SHA-256 digest in `baseline_manifest_digests`. Mutable issue URLs are
 not baseline evidence; issue-backed rows use exact committed snapshots with
-the issue title, body, URL, and source update timestamp. A baseline replacement
-therefore requires an explicit matrix revision and accepted digest update.
+the issue title, body, URL, and source update timestamp. Baseline and contract
+revisions are mechanical integrity updates reviewed with the owning change.
 
-`casa-imaging-router` compiles each `ImagingRequest`, derives the required rows
-from the resulting immutable `CompiledProblem`, and records the matrix schema,
-contract revision, disposition, and complete evidence for each row. A Native
-decision invokes the sole sealed production engine; `TemporarilyUnavailable`
-invokes no engine. Enum-to-row bindings come
-directly from the matrix inventories already checked against their Rust enums;
-invokes no engine, and compile, matrix, planning, or execution failures are
-terminal. Production code has no differential, fallback, or stage-mixing entry
-point.
+The migration matrix is a repository planning and acceptance record. Production
+code neither embeds nor interprets it. `casa-imaging-application` compiles each
+`ImagingRequest`, checks the resulting immutable `CompiledProblem` and task-only
+requirements against the implementation installed in the build, and either
+invokes that sole implementation or returns a typed unavailable result before
+planning. Compile, admission, planning, and execution failures are terminal;
+there is no differential, fallback, or stage-mixing entry point.
 
 ## Acceptance contracts
 
@@ -113,19 +111,15 @@ lifecycle. T22 then consumes the typed weighting, normal-state, and model
 completions. No earlier ticket may invent those future records or expose a raw
 construction path to avoid the ordering.
 
-The architecture checker validates schema, the independently pinned logical
-graph, canonical inventories, complete Acceptance Contracts, complete binding
-row ledger, structured issue outcomes, content-pinned evidence locators,
-Migration Obligations, and source evidence. It binds the seventeen variant maps
-to their Rust enums, classifies every Cargo workspace package, requires native
-dependency sets to match exactly, pins `casa-imaging-router` as the sole owner
-of `ImagingRouter` and the sole production engine port, requires its direct
-matrix embedding, scans native science/runtime/router and Rust/Swift frontend
-roots for forbidden backend/device imports, and rejects unapproved dependency
-exceptions. Its mutation tests prove coordinated inventory and issue deletion, row
-reclassification, router relocation or duplication, matrix detachment,
-contract or graph weakening, unmapped packages, and forbidden logical,
-package, module, and Swift edges fail closed.
+The architecture checker validates schema, the readable logical dependency
+graph, complete Acceptance Contracts, complete row ledger, structured issue
+outcomes, content-pinned evidence locators, Migration Obligations, and source
+evidence. It classifies every Cargo workspace package, requires native
+dependency sets to match exactly, rejects runtime migration-matrix references,
+scans native and frontend roots for forbidden execution/device imports, and
+keeps the T15 walking skeleton private without redirected source. Focused
+mutation tests prove these structural checks and the scientific error ceiling
+fail closed; they do not freeze exact test contents or deleted symbol inventories.
 
 `capability.compiled-problem` is Native only for its backend-independent
 logical contract and stable identity; later observation and geometry tickets

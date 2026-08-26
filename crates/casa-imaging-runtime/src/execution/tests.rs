@@ -523,40 +523,7 @@ fn execution_provenance(
     attempt: crate::ExecutionAttemptId,
     build: crate::BuildIdentity,
 ) -> crate::ExecutionProvenance {
-    crate::ExecutionProvenance::new(
-        attempt,
-        build,
-        crate::ExecutionRouteEvidence::new(
-            1,
-            1,
-            crate::ExecutionRouteDisposition::Native,
-            vec![
-                crate::ExecutionRouteRequirement::new(
-                    "capability.compiled-problem",
-                    crate::ExecutionRouteRequirementKind::Capability,
-                    crate::ExecutionRouteDisposition::Native,
-                    crate::ExecutionRouteRequirementEvidence {
-                        current_owner: "crates/casa-imaging-model".to_string(),
-                        destination_tickets: vec!["T05/#491".to_string()],
-                        evidence_issues: vec![486, 491],
-                        baseline_manifests: vec![
-                            "repo://crates/casa-imaging-model/src/lib.rs".to_string(),
-                        ],
-                        acceptance_contract: "compiled-problem-foundation-v1".to_string(),
-                        transfer_point: "immutable backend-independent logical problem and stable identity landed in Wave 1".to_string(),
-                        deletion_condition: "not applicable; canonical logical-problem owner".to_string(),
-                        source_evidence: vec![
-                            "crates/casa-imaging-model/src/lib.rs::CompiledProblem".to_string(),
-                        ],
-                        obligation_ticket: None,
-                        obligation_reason: None,
-                    },
-                )
-                .expect("canonical route row"),
-            ],
-        )
-        .expect("canonical native route"),
-    )
+    crate::ExecutionProvenance::new(attempt, build)
 }
 
 fn physical_work_binding(dag: ExecutionDag) -> PhysicalWorkBinding {

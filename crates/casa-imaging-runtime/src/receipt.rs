@@ -53,7 +53,7 @@ use crate::{
 };
 
 const RECEIPT_SCHEMA: &str = "casa-rs-imaging-execution-receipt";
-const RECEIPT_SCHEMA_VERSION: u32 = 15;
+const RECEIPT_SCHEMA_VERSION: u32 = 16;
 const COMPILED_PROBLEM_EVIDENCE_VERSION: u32 = 9;
 const RECEIPT_SUFFIX: &str = ".receipt.json";
 const RECEIPT_STAGING_PREFIX: &str = ".casa-rs-receipt-staging-";
@@ -105,250 +105,18 @@ receipt_identity!(
     "Stable content identity of the executable build used for an attempt."
 );
 
-/// Whole-run owner selected by the authoritative pre-plan migration router.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ExecutionRouteDisposition {
-    /// Every required migration row is native.
-    Native,
-    /// At least one required row has no production implementation.
-    TemporarilyUnavailable,
-}
-
-/// Kind of authoritative migration-matrix row retained by a receipt.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ExecutionRouteRequirementKind {
-    /// Scientific or operational capability.
-    Capability,
-    /// Published scientific product.
-    Product,
-    /// Reconstruction solver.
-    Solver,
-    /// User-facing request projection.
-    Frontend,
-    /// Physical implementation family.
-    Backend,
-}
-
-/// One exact migration row and its disposition at routing time.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ExecutionRouteRequirement {
-    id: String,
-    kind: ExecutionRouteRequirementKind,
-    disposition: ExecutionRouteDisposition,
-    evidence: ExecutionRouteRequirementEvidence,
-}
-
-/// Lossless authoritative migration evidence carried by one routed row.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ExecutionRouteRequirementEvidence {
-    /// Sole current implementation owner.
-    pub current_owner: String,
-    /// Accepted transfer tickets.
-    pub destination_tickets: Vec<String>,
-    /// Authoritative issue evidence.
-    pub evidence_issues: Vec<u64>,
-    /// Content-pinned baseline manifests.
-    pub baseline_manifests: Vec<String>,
-    /// Versioned Acceptance Contract identifier.
-    pub acceptance_contract: String,
-    /// Exact transfer milestone.
-    pub transfer_point: String,
-    /// Same-merge deletion or quarantine condition.
-    pub deletion_condition: String,
-    /// Repository source locators supporting the current status.
-    pub source_evidence: Vec<String>,
-    /// Owning transfer ticket for a non-native row.
-    pub obligation_ticket: Option<String>,
-    /// Reason a non-native row remains open.
-    pub obligation_reason: Option<String>,
-}
-
-impl ExecutionRouteRequirement {
-    /// Create one stable route row projection.
-    pub fn new(
-        id: impl Into<String>,
-        kind: ExecutionRouteRequirementKind,
-        disposition: ExecutionRouteDisposition,
-        evidence: ExecutionRouteRequirementEvidence,
-    ) -> Result<Self, ReceiptError> {
-        let id = id.into();
-        if id.is_empty()
-            || !id.bytes().all(|byte| {
-                byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'-')
-            })
-        {
-            return Err(ReceiptError::InvalidRouteEvidence);
-        }
-        let required_text = [
-            evidence.current_owner.as_str(),
-            evidence.acceptance_contract.as_str(),
-            evidence.transfer_point.as_str(),
-            evidence.deletion_condition.as_str(),
-        ];
-        let has_complete_evidence = required_text.iter().all(|value| !value.trim().is_empty())
-            && !evidence.destination_tickets.is_empty()
-            && evidence
-                .destination_tickets
-                .iter()
-                .all(|value| !value.trim().is_empty())
-            && !evidence.evidence_issues.is_empty()
-            && evidence.evidence_issues.iter().all(|issue| *issue > 0)
-            && !evidence.baseline_manifests.is_empty()
-            && evidence
-                .baseline_manifests
-                .iter()
-                .all(|value| !value.trim().is_empty())
-            && !evidence.source_evidence.is_empty()
-            && evidence
-                .source_evidence
-                .iter()
-                .all(|value| !value.trim().is_empty());
-        let obligation_is_valid = match (
-            disposition,
-            evidence.obligation_ticket.as_deref(),
-            evidence.obligation_reason.as_deref(),
-        ) {
-            (ExecutionRouteDisposition::Native, None, None) => true,
-            (ExecutionRouteDisposition::TemporarilyUnavailable, Some(ticket), Some(reason)) => {
-                !ticket.trim().is_empty() && !reason.trim().is_empty()
-            }
-            _ => false,
-        };
-        if !has_complete_evidence || !obligation_is_valid {
-            return Err(ReceiptError::InvalidRouteEvidence);
-        }
-        Ok(Self {
-            id,
-            kind,
-            disposition,
-            evidence,
-        })
-    }
-
-    /// Return the canonical migration-row identity.
-    #[must_use]
-    pub fn id(&self) -> &str {
-        &self.id
-    }
-
-    /// Return the migration-row kind.
-    #[must_use]
-    pub const fn kind(&self) -> ExecutionRouteRequirementKind {
-        self.kind
-    }
-
-    /// Return the row's routed disposition.
-    #[must_use]
-    pub const fn disposition(&self) -> ExecutionRouteDisposition {
-        self.disposition
-    }
-
-    /// Return the full authoritative migration evidence without truncation.
-    #[must_use]
-    pub const fn evidence(&self) -> &ExecutionRouteRequirementEvidence {
-        &self.evidence
-    }
-}
-
-/// Exact pre-plan routing evidence bound into every execution receipt.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ExecutionRouteEvidence {
-    matrix_schema_version: u32,
-    matrix_contract_revision: u32,
-    disposition: ExecutionRouteDisposition,
-    requirements: Vec<ExecutionRouteRequirement>,
-}
-
-impl ExecutionRouteEvidence {
-    /// Bind one canonical migration-matrix decision and its complete row evidence.
-    pub fn new(
-        matrix_schema_version: u32,
-        matrix_contract_revision: u32,
-        disposition: ExecutionRouteDisposition,
-        requirements: Vec<ExecutionRouteRequirement>,
-    ) -> Result<Self, ReceiptError> {
-        if matrix_schema_version == 0 || matrix_contract_revision == 0 || requirements.is_empty() {
-            return Err(ReceiptError::InvalidRouteEvidence);
-        }
-        if requirements
-            .windows(2)
-            .any(|rows| rows[0].id() >= rows[1].id())
-        {
-            return Err(ReceiptError::InvalidRouteEvidence);
-        }
-        if disposition != route_disposition_from_requirements(&requirements) {
-            return Err(ReceiptError::InvalidRouteEvidence);
-        }
-        Ok(Self {
-            matrix_schema_version,
-            matrix_contract_revision,
-            disposition,
-            requirements,
-        })
-    }
-
-    /// Return the migration-matrix schema version.
-    #[must_use]
-    pub const fn matrix_schema_version(&self) -> u32 {
-        self.matrix_schema_version
-    }
-
-    /// Return the migration-matrix contract revision.
-    #[must_use]
-    pub const fn matrix_contract_revision(&self) -> u32 {
-        self.matrix_contract_revision
-    }
-
-    /// Return the selected whole-run owner.
-    #[must_use]
-    pub const fn disposition(&self) -> ExecutionRouteDisposition {
-        self.disposition
-    }
-
-    /// Return every canonical route requirement.
-    #[must_use]
-    pub fn requirements(&self) -> &[ExecutionRouteRequirement] {
-        &self.requirements
-    }
-}
-
-fn route_disposition_from_requirements(
-    requirements: &[ExecutionRouteRequirement],
-) -> ExecutionRouteDisposition {
-    requirements.iter().fold(
-        ExecutionRouteDisposition::Native,
-        |disposition, requirement| match (disposition, requirement.disposition()) {
-            (_, ExecutionRouteDisposition::TemporarilyUnavailable)
-            | (
-                ExecutionRouteDisposition::TemporarilyUnavailable,
-                ExecutionRouteDisposition::Native,
-            ) => ExecutionRouteDisposition::TemporarilyUnavailable,
-            (current, ExecutionRouteDisposition::Native) => current,
-        },
-    )
-}
-
 /// Provenance supplied at the sole execution seam.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExecutionProvenance {
     attempt: ExecutionAttemptId,
     build: BuildIdentity,
-    route: ExecutionRouteEvidence,
 }
 
 impl ExecutionProvenance {
     /// Bind one unique attempt to the exact executable build.
     #[must_use]
-    pub const fn new(
-        attempt: ExecutionAttemptId,
-        build: BuildIdentity,
-        route: ExecutionRouteEvidence,
-    ) -> Self {
-        Self {
-            attempt,
-            build,
-            route,
-        }
+    pub const fn new(attempt: ExecutionAttemptId, build: BuildIdentity) -> Self {
+        Self { attempt, build }
     }
 
     /// Return the attempt identity used to reopen its receipt.
@@ -361,12 +129,6 @@ impl ExecutionProvenance {
     #[must_use]
     pub const fn build_identity(&self) -> BuildIdentity {
         self.build
-    }
-
-    /// Return the exact pre-plan routing evidence for this attempt.
-    #[must_use]
-    pub const fn route(&self) -> &ExecutionRouteEvidence {
-        &self.route
     }
 }
 
@@ -662,64 +424,6 @@ impl ExecutionReceipt {
     #[must_use]
     pub fn build_identity(&self) -> BuildIdentity {
         BuildIdentity::from_sha256(parse_digest(&self.body.build_identity))
-    }
-
-    /// Return the migration-matrix schema version used to route this attempt.
-    #[must_use]
-    pub const fn route_matrix_schema_version(&self) -> u32 {
-        self.body.route.matrix_schema_version
-    }
-
-    /// Return the migration-matrix contract revision used to route this attempt.
-    #[must_use]
-    pub const fn route_matrix_contract_revision(&self) -> u32 {
-        self.body.route.matrix_contract_revision
-    }
-
-    /// Return the stable routed whole-run disposition.
-    #[must_use]
-    pub fn route_disposition(&self) -> &str {
-        &self.body.route.disposition
-    }
-
-    /// Return the canonical routed row identities in receipt order.
-    #[must_use]
-    pub fn route_requirement_identities(&self) -> Vec<&str> {
-        self.body
-            .route
-            .requirements
-            .iter()
-            .map(|requirement| requirement.id.as_str())
-            .collect()
-    }
-
-    /// Reconstruct one complete typed authoritative routed row.
-    #[must_use]
-    pub fn route_requirement(&self, id: &str) -> Option<ExecutionRouteRequirement> {
-        let requirement = self
-            .body
-            .route
-            .requirements
-            .iter()
-            .find(|requirement| requirement.id == id)?;
-        ExecutionRouteRequirement::new(
-            requirement.id.clone(),
-            execution_route_requirement_kind(&requirement.kind)?,
-            execution_route_disposition(&requirement.disposition)?,
-            ExecutionRouteRequirementEvidence {
-                current_owner: requirement.current_owner.clone(),
-                destination_tickets: requirement.destination_tickets.clone(),
-                evidence_issues: requirement.evidence_issues.clone(),
-                baseline_manifests: requirement.baseline_manifests.clone(),
-                acceptance_contract: requirement.acceptance_contract.clone(),
-                transfer_point: requirement.transfer_point.clone(),
-                deletion_condition: requirement.deletion_condition.clone(),
-                source_evidence: requirement.source_evidence.clone(),
-                obligation_ticket: requirement.obligation_ticket.clone(),
-                obligation_reason: requirement.obligation_reason.clone(),
-            },
-        )
-        .ok()
     }
 
     /// Return the typed terminal or active status.
@@ -1763,7 +1467,6 @@ struct ReceiptSchema {
 struct ReceiptBody {
     attempt_identity: String,
     build_identity: String,
-    route: RouteProjection,
     revision: u64,
     started_unix_millis: u64,
     finished_unix_millis: Option<u64>,
@@ -1779,11 +1482,9 @@ impl ReceiptBody {
         problem: &CompiledProblem,
         plan: &ExecutionPlan,
     ) -> Result<Self, ReceiptError> {
-        let route = RouteProjection::new(provenance.route());
         Ok(Self {
             attempt_identity: provenance.attempt.to_string(),
             build_identity: provenance.build.to_string(),
-            route,
             revision: 1,
             started_unix_millis: now_millis(),
             finished_unix_millis: None,
@@ -1844,60 +1545,6 @@ impl ReceiptBody {
         }
         body
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct RouteProjection {
-    matrix_schema_version: u32,
-    matrix_contract_revision: u32,
-    disposition: String,
-    requirements: Vec<RouteRequirementProjection>,
-}
-
-impl RouteProjection {
-    fn new(route: &ExecutionRouteEvidence) -> Self {
-        Self {
-            matrix_schema_version: route.matrix_schema_version(),
-            matrix_contract_revision: route.matrix_contract_revision(),
-            disposition: route_disposition(route.disposition()).to_string(),
-            requirements: route
-                .requirements()
-                .iter()
-                .map(|requirement| RouteRequirementProjection {
-                    id: requirement.id().to_string(),
-                    kind: route_requirement_kind(requirement.kind()).to_string(),
-                    disposition: route_disposition(requirement.disposition()).to_string(),
-                    current_owner: requirement.evidence().current_owner.clone(),
-                    destination_tickets: requirement.evidence().destination_tickets.clone(),
-                    evidence_issues: requirement.evidence().evidence_issues.clone(),
-                    baseline_manifests: requirement.evidence().baseline_manifests.clone(),
-                    acceptance_contract: requirement.evidence().acceptance_contract.clone(),
-                    transfer_point: requirement.evidence().transfer_point.clone(),
-                    deletion_condition: requirement.evidence().deletion_condition.clone(),
-                    source_evidence: requirement.evidence().source_evidence.clone(),
-                    obligation_ticket: requirement.evidence().obligation_ticket.clone(),
-                    obligation_reason: requirement.evidence().obligation_reason.clone(),
-                })
-                .collect(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct RouteRequirementProjection {
-    id: String,
-    kind: String,
-    disposition: String,
-    current_owner: String,
-    destination_tickets: Vec<String>,
-    evidence_issues: Vec<u64>,
-    baseline_manifests: Vec<String>,
-    acceptance_contract: String,
-    transfer_point: String,
-    deletion_condition: String,
-    source_evidence: Vec<String>,
-    obligation_ticket: Option<String>,
-    obligation_reason: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -4471,7 +4118,6 @@ pub enum ReceiptError {
     /// The configured root is not a directory.
     InvalidStore,
     /// Routing evidence was empty, unordered, or not canonical.
-    InvalidRouteEvidence,
     /// An attempt identity already owns a receipt.
     AttemptAlreadyExists,
     /// The reopened file did not match the requested attempt.
@@ -4518,9 +4164,6 @@ impl fmt::Display for ReceiptError {
                 "receipt store root already has different process-wide retention ceilings",
             ),
             Self::InvalidStore => formatter.write_str("receipt store root is not a directory"),
-            Self::InvalidRouteEvidence => {
-                formatter.write_str("execution route evidence is not canonical")
-            }
             Self::AttemptAlreadyExists => {
                 formatter.write_str("execution attempt already has a receipt")
             }
@@ -4620,8 +4263,6 @@ fn validate_body(body: &ReceiptBody) -> Result<(), ReceiptError> {
     ))?;
     validate_problem_evidence(&body.problem)?;
     require_integrity(body.problem.product_graph.identity == body.plan.product_graph_identity)?;
-    validate_route_projection(&body.route)?;
-
     require_integrity(body.revision > 0)?;
     require_integrity(!matches!(
         body.status,
@@ -4793,70 +4434,6 @@ fn validate_body(body: &ReceiptBody) -> Result<(), ReceiptError> {
         body.status != ReceiptStatus::Infeasible
     })?;
     Ok(())
-}
-
-fn validate_route_projection(route: &RouteProjection) -> Result<(), ReceiptError> {
-    require_integrity(
-        route.matrix_schema_version > 0
-            && route.matrix_contract_revision > 0
-            && route_disposition_is_valid(&route.disposition)
-            && !route.requirements.is_empty(),
-    )?;
-    let mut previous = None;
-    let mut derived = "native";
-    for requirement in &route.requirements {
-        require_integrity(
-            !requirement.id.is_empty()
-                && requirement.id.bytes().all(|byte| {
-                    byte.is_ascii_lowercase()
-                        || byte.is_ascii_digit()
-                        || matches!(byte, b'.' | b'-')
-                })
-                && route_requirement_kind_is_valid(&requirement.kind)
-                && route_disposition_is_valid(&requirement.disposition)
-                && !requirement.current_owner.trim().is_empty()
-                && !requirement.destination_tickets.is_empty()
-                && requirement
-                    .destination_tickets
-                    .iter()
-                    .all(|value| !value.trim().is_empty())
-                && !requirement.evidence_issues.is_empty()
-                && requirement.evidence_issues.iter().all(|issue| *issue > 0)
-                && !requirement.baseline_manifests.is_empty()
-                && requirement
-                    .baseline_manifests
-                    .iter()
-                    .all(|value| !value.trim().is_empty())
-                && !requirement.acceptance_contract.trim().is_empty()
-                && !requirement.transfer_point.trim().is_empty()
-                && !requirement.deletion_condition.trim().is_empty()
-                && !requirement.source_evidence.is_empty()
-                && requirement
-                    .source_evidence
-                    .iter()
-                    .all(|value| !value.trim().is_empty())
-                && match (
-                    requirement.disposition.as_str(),
-                    requirement.obligation_ticket.as_deref(),
-                    requirement.obligation_reason.as_deref(),
-                ) {
-                    ("native", None, None) => true,
-                    ("temporarily_unavailable", Some(ticket), Some(reason)) => {
-                        !ticket.trim().is_empty() && !reason.trim().is_empty()
-                    }
-                    _ => false,
-                }
-                && previous.is_none_or(|id| id < requirement.id.as_str()),
-        )?;
-        previous = Some(requirement.id.as_str());
-        derived = match (derived, requirement.disposition.as_str()) {
-            (_, "temporarily_unavailable") => "temporarily_unavailable",
-            ("temporarily_unavailable", _) => "temporarily_unavailable",
-            (current, "native") => current,
-            _ => return Err(ReceiptError::IntegrityMismatch),
-        };
-    }
-    require_integrity(route.disposition == derived)
 }
 
 fn validate_problem_evidence(problem: &ProblemProjection) -> Result<(), ReceiptError> {
@@ -8048,53 +7625,6 @@ fn reference_kind(kind: ReferenceDataKind) -> &'static str {
     }
 }
 
-const fn route_disposition(disposition: ExecutionRouteDisposition) -> &'static str {
-    match disposition {
-        ExecutionRouteDisposition::Native => "native",
-        ExecutionRouteDisposition::TemporarilyUnavailable => "temporarily_unavailable",
-    }
-}
-
-const fn route_requirement_kind(kind: ExecutionRouteRequirementKind) -> &'static str {
-    match kind {
-        ExecutionRouteRequirementKind::Capability => "capability",
-        ExecutionRouteRequirementKind::Product => "product",
-        ExecutionRouteRequirementKind::Solver => "solver",
-        ExecutionRouteRequirementKind::Frontend => "frontend",
-        ExecutionRouteRequirementKind::Backend => "backend",
-    }
-}
-
-fn execution_route_disposition(value: &str) -> Option<ExecutionRouteDisposition> {
-    match value {
-        "native" => Some(ExecutionRouteDisposition::Native),
-        "temporarily_unavailable" => Some(ExecutionRouteDisposition::TemporarilyUnavailable),
-        _ => None,
-    }
-}
-
-fn execution_route_requirement_kind(value: &str) -> Option<ExecutionRouteRequirementKind> {
-    match value {
-        "capability" => Some(ExecutionRouteRequirementKind::Capability),
-        "product" => Some(ExecutionRouteRequirementKind::Product),
-        "solver" => Some(ExecutionRouteRequirementKind::Solver),
-        "frontend" => Some(ExecutionRouteRequirementKind::Frontend),
-        "backend" => Some(ExecutionRouteRequirementKind::Backend),
-        _ => None,
-    }
-}
-
-fn route_disposition_is_valid(value: &str) -> bool {
-    matches!(value, "native" | "temporarily_unavailable")
-}
-
-fn route_requirement_kind_is_valid(value: &str) -> bool {
-    matches!(
-        value,
-        "capability" | "product" | "solver" | "frontend" | "backend"
-    )
-}
-
 fn work_kind(kind: WorkKind) -> &'static str {
     match kind {
         WorkKind::DataCensus => "data_census",
@@ -8419,10 +7949,8 @@ mod tests {
     use std::sync::Arc;
 
     use super::{
-        ExecutionReceiptStore, ExecutionRouteDisposition, ExecutionRouteEvidence,
-        ExecutionRouteRequirement, ExecutionRouteRequirementEvidence,
-        ExecutionRouteRequirementKind, ReceiptError, ReceiptRetention,
-        maximum_json_serialized_text, prepared_publication_bytes, stable_float, staged_receipt,
+        ExecutionReceiptStore, ReceiptError, ReceiptRetention, maximum_json_serialized_text,
+        prepared_publication_bytes, stable_float, staged_receipt,
     };
 
     #[test]
@@ -8508,32 +8036,5 @@ mod tests {
                 .expect("checked joint reservation")
                 > ceiling_between_max_and_sum
         );
-    }
-
-    #[test]
-    fn route_evidence_rejects_a_disposition_that_disagrees_with_its_rows() {
-        let row = ExecutionRouteRequirement::new(
-            "capability.compiled-problem",
-            ExecutionRouteRequirementKind::Capability,
-            ExecutionRouteDisposition::TemporarilyUnavailable,
-            ExecutionRouteRequirementEvidence {
-                current_owner: "untransferred-imaging".to_string(),
-                destination_tickets: vec!["T06".to_string()],
-                evidence_issues: vec![492],
-                baseline_manifests: vec!["tests/fixtures/imaging/manifest.json".to_string()],
-                acceptance_contract: "compiled-problem-v1".to_string(),
-                transfer_point: "T06 acceptance".to_string(),
-                deletion_condition: "untransferred compiler removed".to_string(),
-                source_evidence: vec!["crates/casa-imaging/src/lib.rs".to_string()],
-                obligation_ticket: Some("T06".to_string()),
-                obligation_reason: Some("transfer remains incomplete".to_string()),
-            },
-        )
-        .expect("canonical route row");
-
-        assert!(matches!(
-            ExecutionRouteEvidence::new(1, 5, ExecutionRouteDisposition::Native, vec![row]),
-            Err(ReceiptError::InvalidRouteEvidence)
-        ));
     }
 }

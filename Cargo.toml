@@ -25,9 +25,8 @@ members = [
     "crates/casa-imaging-reconstruction",
     "crates/casa-imaging-products",
     "crates/casa-imaging-application",
-    "crates/casa-imaging-router",
     "crates/casa-imaging-runtime",
-    "crates/casa-imaging",
+    "crates/casa-simulation-synthesis",
     "crates/casa-measures-data",
     "crates/casa-test-support",
     "crates/casa-ms",
@@ -68,7 +67,7 @@ opt-level = 2
 opt-level = 2
 [profile.test.package.casa-ms]
 opt-level = 2
-[profile.test.package.casa-imaging]
+[profile.test.package.casa-simulation-synthesis]
 opt-level = 2
 [profile.test.package.casa-test-support]
 opt-level = 2

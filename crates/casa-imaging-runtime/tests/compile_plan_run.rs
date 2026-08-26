@@ -60,17 +60,15 @@ use casa_imaging_runtime::{
     CpuClassCapacity, DemandAlternative, DemandEnvelope, ExecutionDag, ExecutionDagSpecification,
     ExecutionError, ExecutionEvidenceError, ExecutionKnobs, ExecutionOutcome, ExecutionPlanId,
     ExecutionProvenance, ExecutionReceipt, ExecutionReceiptBinding, ExecutionReceiptStore,
-    ExecutionRouteDisposition, ExecutionRouteEvidence, ExecutionRouteRequirement,
-    ExecutionRouteRequirementKind, ExecutionStatus, ExternalPressure, FenceId, FenceKind,
-    HostInventory, ImplementationContractCatalog, ImplementationContractMetadata,
-    ImplementationRegistry, ImplementationRegistryId, InitializationPolicy, IoBufferDemand,
-    IoBufferKind, IoMeasurement, IoPrediction, LeaseResource, LogicalAllocation,
-    MajorCycleOperatorResult, MajorCycleOperatorState, MemoryCapacityDomain, MemoryCapacityKind,
-    MemoryDemand, MemoryView, MemoryViewKind, ObservationReadCompletionContext,
-    ObservationTransactionWork, PhysicalLayoutId, PhysicalSlot, PhysicalSlotId,
-    PhysicalWorkBinding, PhysicalWorkBindingError, PlanError, PlanPrediction, PlannedArtifact,
-    PlannerCostModelProfileBootstrap, PlannerCostModelProfileId, PlanningBindings,
-    PredictionConfidence, PredictionUncertainty, PreparedArtifactBudget,
+    ExecutionStatus, ExternalPressure, FenceId, FenceKind, HostInventory,
+    ImplementationContractCatalog, ImplementationContractMetadata, ImplementationRegistry,
+    ImplementationRegistryId, InitializationPolicy, IoBufferDemand, IoBufferKind, IoMeasurement,
+    IoPrediction, LeaseResource, LogicalAllocation, MajorCycleOperatorResult,
+    MajorCycleOperatorState, MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand, MemoryView,
+    MemoryViewKind, ObservationReadCompletionContext, ObservationTransactionWork, PhysicalLayoutId,
+    PhysicalSlot, PhysicalSlotId, PhysicalWorkBinding, PhysicalWorkBindingError, PlanError,
+    PlanPrediction, PlannedArtifact, PlannerCostModelProfileBootstrap, PlannerCostModelProfileId,
+    PlanningBindings, PredictionConfidence, PredictionUncertainty, PreparedArtifactBudget,
     PreparedArtifactDescriptor, PreparedArtifactError, PreparedArtifactLoadSource,
     PreparedArtifactOperation, PreparedArtifactOrder, PreparedArtifactPlanFragment,
     PreparedArtifactPlaneDescriptor, PreparedArtifactPrecision, PreparedArtifactRegistration,
@@ -4746,40 +4744,7 @@ fn execution_provenance(
     attempt: casa_imaging_runtime::ExecutionAttemptId,
     build: BuildIdentity,
 ) -> ExecutionProvenance {
-    ExecutionProvenance::new(
-        attempt,
-        build,
-        ExecutionRouteEvidence::new(
-            1,
-            1,
-            ExecutionRouteDisposition::Native,
-            vec![
-                ExecutionRouteRequirement::new(
-                    "capability.compiled-problem",
-                    ExecutionRouteRequirementKind::Capability,
-                    ExecutionRouteDisposition::Native,
-                    casa_imaging_runtime::ExecutionRouteRequirementEvidence {
-                        current_owner: "crates/casa-imaging-model".to_string(),
-                        destination_tickets: vec!["T05/#491".to_string()],
-                        evidence_issues: vec![486, 491],
-                        baseline_manifests: vec![
-                            "repo://crates/casa-imaging-model/src/lib.rs".to_string(),
-                        ],
-                        acceptance_contract: "compiled-problem-foundation-v1".to_string(),
-                        transfer_point: "immutable backend-independent logical problem and stable identity landed in Wave 1".to_string(),
-                        deletion_condition: "not applicable; canonical logical-problem owner".to_string(),
-                        source_evidence: vec![
-                            "crates/casa-imaging-model/src/lib.rs::CompiledProblem".to_string(),
-                        ],
-                        obligation_ticket: None,
-                        obligation_reason: None,
-                    },
-                )
-                .expect("canonical route row"),
-            ],
-        )
-        .expect("canonical native route"),
-    )
+    ExecutionProvenance::new(attempt, build)
 }
 
 fn native_product_physical_work(
@@ -6254,7 +6219,7 @@ fn receipt_finalize_failure_after_publish_returns_success_and_reopens_prepared_e
     assert_eq!(outcome, ExecutionOutcome::Succeeded);
     assert!(publication_launched.load(Ordering::SeqCst));
     assert_eq!(visible_generation.load(Ordering::SeqCst), 1);
-    assert_eq!(receipt.schema_version(), 15);
+    assert_eq!(receipt.schema_version(), 16);
     assert_eq!(receipt.status(), ReceiptStatus::PublicationPrepared);
     for layout in execution_plan.publication_layouts().entries() {
         assert_eq!(
@@ -8220,41 +8185,7 @@ fn run_persists_a_reopenable_receipt_with_exact_identities_and_every_plan_node()
         .expect("reopen durable receipt");
 
     assert_eq!(outcome, ExecutionOutcome::Succeeded);
-    assert_eq!(receipt.schema_version(), 15);
-    assert_eq!(receipt.route_matrix_schema_version(), 1);
-    assert_eq!(receipt.route_matrix_contract_revision(), 1);
-    assert_eq!(receipt.route_disposition(), "native");
-    assert_eq!(
-        receipt.route_requirement_identities(),
-        vec!["capability.compiled-problem"]
-    );
-    assert_eq!(
-        receipt
-            .route_requirement("capability.compiled-problem")
-            .expect("lossless routed row"),
-        ExecutionRouteRequirement::new(
-            "capability.compiled-problem",
-            ExecutionRouteRequirementKind::Capability,
-            ExecutionRouteDisposition::Native,
-            casa_imaging_runtime::ExecutionRouteRequirementEvidence {
-                current_owner: "crates/casa-imaging-model".to_string(),
-                destination_tickets: vec!["T05/#491".to_string()],
-                evidence_issues: vec![486, 491],
-                baseline_manifests: vec![
-                    "repo://crates/casa-imaging-model/src/lib.rs".to_string(),
-                ],
-                acceptance_contract: "compiled-problem-foundation-v1".to_string(),
-                transfer_point: "immutable backend-independent logical problem and stable identity landed in Wave 1".to_string(),
-                deletion_condition: "not applicable; canonical logical-problem owner".to_string(),
-                source_evidence: vec![
-                    "crates/casa-imaging-model/src/lib.rs::CompiledProblem".to_string(),
-                ],
-                obligation_ticket: None,
-                obligation_reason: None,
-            },
-        )
-        .expect("authoritative routed row")
-    );
+    assert_eq!(receipt.schema_version(), 16);
     assert_eq!(receipt.status(), ReceiptStatus::Completed);
     assert_eq!(receipt.plan_identity(), execution_plan.plan_id().as_bytes());
     assert_eq!(receipt.problem_identity(), problem.problem_id().as_bytes());

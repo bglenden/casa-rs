@@ -10,12 +10,6 @@ use std::ops::Range;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use casa_imaging::{
-    GeometryRoutePlan, GridderRoutePlan, ImagingSourceBlockView, ModelRoutePlan,
-    PolarizationRoutePlan, SpectralRoutePlan, VisibilityBlockView, VisibilityComplexSamplesRef,
-    VisibilityFloatSamplesRef, VisibilitySourcePartition, VisibilitySourcePartitionId,
-    VisibilitySourceShape, WeightingRoutePlan,
-};
 use casa_tables::{RequiredScalarColumnValues, SelectedArray1DCells, SelectedArray2DCells, Table};
 #[cfg(test)]
 use casa_types::ScalarValue;
@@ -228,21 +222,6 @@ impl SourcePartition {
             },
         }
     }
-
-    /// Convert this MeasurementSet partition into the imaging source contract.
-    pub fn to_visibility_source_partition(&self) -> VisibilitySourcePartition {
-        VisibilitySourcePartition {
-            id: VisibilitySourcePartitionId(self.id.0),
-            ms_id: self.ms_id,
-            data_desc_id: self.data_desc_id,
-            spectral_window_id: self.spw_id,
-            polarization_id: self.polarization_id,
-            shape: VisibilitySourceShape {
-                channel_count: self.shape.channel_count,
-                correlation_count: self.shape.corr_count,
-            },
-        }
-    }
 }
 
 /// Physical read plan for one homogeneous visibility block.
@@ -341,65 +320,6 @@ impl VisibilityBuffer {
     /// Number of selected rows currently represented.
     pub fn row_count(&self) -> usize {
         self.row_indices.len()
-    }
-
-    /// Borrow this buffer as a validated neutral imaging visibility block.
-    pub fn as_visibility_block_view(&self) -> MsResult<VisibilityBlockView<'_>> {
-        let partition = self.source_partition.as_ref().ok_or_else(|| {
-            MsError::InvalidInput("visibility buffer requires a source partition".to_string())
-        })?;
-        let view = VisibilityBlockView {
-            partition: partition.to_visibility_source_partition(),
-            row_indices: &self.row_indices,
-            channel_start: self.channel_start,
-            channel_count: self.channel_count,
-            data: self
-                .data
-                .as_ref()
-                .map(VisibilityComplexSamples::as_visibility_ref),
-            flags: self.flags.as_deref(),
-            weights: self
-                .weights
-                .as_ref()
-                .map(VisibilityFloatSamples::as_visibility_ref),
-            weight_spectrum: self
-                .weight_spectrum
-                .as_ref()
-                .map(VisibilityFloatSamples::as_visibility_ref),
-            uvw_m: self.uvw.as_deref(),
-            flag_row: self.flag_row.as_deref(),
-            antenna1: self.antenna1.as_deref(),
-            antenna2: self.antenna2.as_deref(),
-            field_ids: self.field_ids.as_deref(),
-            time: self.time.as_deref(),
-        };
-        view.validate()
-            .map_err(|error| MsError::InvalidInput(error.to_string()))?;
-        Ok(view)
-    }
-
-    /// Borrow this buffer with imaging route plans attached.
-    pub fn as_imaging_source_block_view<'a>(
-        &'a self,
-        spectral: &'a SpectralRoutePlan,
-        polarization: &'a PolarizationRoutePlan,
-        geometry: &'a GeometryRoutePlan,
-        weighting: &'a WeightingRoutePlan,
-        gridder: &'a GridderRoutePlan,
-        model: Option<&'a ModelRoutePlan>,
-    ) -> MsResult<ImagingSourceBlockView<'a>> {
-        let view = ImagingSourceBlockView {
-            source: self.as_visibility_block_view()?,
-            spectral,
-            polarization,
-            geometry,
-            weighting,
-            gridder,
-            model,
-        };
-        view.validate()
-            .map_err(|error| MsError::InvalidInput(error.to_string()))?;
-        Ok(view)
     }
 
     fn clear_for_request(&mut self, request: &VisibilityBufferRequest) {
@@ -505,14 +425,6 @@ impl VisibilityComplexSamples {
         self.len() == 0
     }
 
-    /// Borrow samples through the neutral imaging visibility-block contract.
-    pub fn as_visibility_ref(&self) -> VisibilityComplexSamplesRef<'_> {
-        match self {
-            Self::Complex32(values) => VisibilityComplexSamplesRef::Complex32(values),
-            Self::Complex64(values) => VisibilityComplexSamplesRef::Complex64(values),
-        }
-    }
-
     fn capacity(&self) -> usize {
         match self {
             Self::Complex32(values) => values.capacity(),
@@ -549,14 +461,6 @@ impl VisibilityFloatSamples {
     /// Returns `true` when no real samples are stored.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
-    }
-
-    /// Borrow samples through the neutral imaging visibility-block contract.
-    pub fn as_visibility_ref(&self) -> VisibilityFloatSamplesRef<'_> {
-        match self {
-            Self::Float32(values) => VisibilityFloatSamplesRef::Float32(values),
-            Self::Float64(values) => VisibilityFloatSamplesRef::Float64(values),
-        }
     }
 
     fn capacity(&self) -> usize {
@@ -2181,53 +2085,6 @@ mod tests {
         assert_eq!(buffer.observation_ids.as_deref(), Some(&[16, 6][..]));
         assert_eq!(buffer.scan_numbers.as_deref(), Some(&[17, 7][..]));
         assert_eq!(buffer.state_ids.as_deref(), Some(&[18, 8][..]));
-
-        let view = buffer.as_visibility_block_view().unwrap();
-        assert_eq!(view.partition.id, VisibilitySourcePartitionId(0));
-        assert_eq!(view.partition.shape.channel_count, 4);
-        assert_eq!(view.partition.shape.correlation_count, 2);
-        assert_eq!(view.row_indices, &[1, 0]);
-        assert_eq!(view.channel_range(), 1..3);
-        let Some(VisibilityComplexSamplesRef::Complex32(view_data)) = view.data else {
-            panic!("expected Complex32 view data");
-        };
-        assert_eq!(view_data.len(), data.len());
-        assert_eq!(
-            view_data[view.channel_row_corr_index(1, 1, 1)],
-            Complex32::new(21.0, -21.0)
-        );
-        let Some(VisibilityFloatSamplesRef::Float32(view_weights)) = view.weights else {
-            panic!("expected Float32 view weights");
-        };
-        assert_eq!(view_weights, &[11.0, 12.0, 1.0, 2.0]);
-        let spectral = SpectralRoutePlan::identity_for_block(view);
-        let polarization = PolarizationRoutePlan {
-            output_stokes: casa_imaging::PlaneStokes::I,
-        };
-        let geometry = GeometryRoutePlan {
-            geometry: casa_imaging::ImageGeometry {
-                image_shape: [64, 64],
-                cell_size_rad: [1.0e-6, 1.0e-6],
-            },
-        };
-        let weighting = WeightingRoutePlan {
-            weighting: casa_imaging::WeightingMode::Natural,
-        };
-        let gridder = GridderRoutePlan {
-            gridder_mode: casa_imaging::GridderMode::Standard,
-        };
-        let imaging_view = buffer
-            .as_imaging_source_block_view(
-                &spectral,
-                &polarization,
-                &geometry,
-                &weighting,
-                &gridder,
-                None,
-            )
-            .unwrap();
-        assert_eq!(imaging_view.spectral.channel_route_count(), 2);
-        assert_eq!(imaging_view.source.channel_range(), 1..3);
 
         let second_report = ms.fill_visibility_buffer(&request, &mut buffer).unwrap();
         assert!(second_report.allocation.reused_buffers > 0);
