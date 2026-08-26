@@ -152,58 +152,58 @@
 <a href=#152 id=152 data-nosnippet>152</a>    <span class="kw">if </span>!<span class="macro">matches!</span>(problem.inputs().model(), ModelStateIdentity::Empty) {
 <a href=#153 id=153 data-nosnippet>153</a>        unsupported.push(UnsupportedRequirement::EmptyInitialModel);
 <a href=#154 id=154 data-nosnippet>154</a>    }
-<a href=#155 id=155 data-nosnippet>155</a>    <span class="kw">if </span>!problem
-<a href=#156 id=156 data-nosnippet>156</a>        .observation_transaction()
-<a href=#157 id=157 data-nosnippet>157</a>        .write_set()
-<a href=#158 id=158 data-nosnippet>158</a>        .model_columns()
-<a href=#159 id=159 data-nosnippet>159</a>        .is_empty()
+<a href=#155 id=155 data-nosnippet>155</a>    <span class="kw">if </span>problem
+<a href=#156 id=156 data-nosnippet>156</a>        .science()
+<a href=#157 id=157 data-nosnippet>157</a>        .measurement_equation()
+<a href=#158 id=158 data-nosnippet>158</a>        .instrument_response()
+<a href=#159 id=159 data-nosnippet>159</a>        != InstrumentResponse::Scalar
 <a href=#160 id=160 data-nosnippet>160</a>    {
-<a href=#161 id=161 data-nosnippet>161</a>        unsupported.push(UnsupportedRequirement::NoModelColumnWrite);
+<a href=#161 id=161 data-nosnippet>161</a>        unsupported.push(UnsupportedRequirement::ScalarInstrumentResponse);
 <a href=#162 id=162 data-nosnippet>162</a>    }
-<a href=#163 id=163 data-nosnippet>163</a>    <span class="kw">if </span>problem
-<a href=#164 id=164 data-nosnippet>164</a>        .science()
-<a href=#165 id=165 data-nosnippet>165</a>        .measurement_equation()
-<a href=#166 id=166 data-nosnippet>166</a>        .instrument_response()
-<a href=#167 id=167 data-nosnippet>167</a>        != InstrumentResponse::Scalar
-<a href=#168 id=168 data-nosnippet>168</a>    {
-<a href=#169 id=169 data-nosnippet>169</a>        unsupported.push(UnsupportedRequirement::ScalarInstrumentResponse);
+<a href=#163 id=163 data-nosnippet>163</a>
+<a href=#164 id=164 data-nosnippet>164</a>    unsupported.sort_unstable();
+<a href=#165 id=165 data-nosnippet>165</a>    unsupported.dedup();
+<a href=#166 id=166 data-nosnippet>166</a>    <span class="kw">if </span>unsupported.is_empty() {
+<a href=#167 id=167 data-nosnippet>167</a>        <span class="prelude-val">Ok</span>(())
+<a href=#168 id=168 data-nosnippet>168</a>    } <span class="kw">else </span>{
+<a href=#169 id=169 data-nosnippet>169</a>        <span class="prelude-val">Err</span>(ImplementationUnavailable { unsupported })
 <a href=#170 id=170 data-nosnippet>170</a>    }
-<a href=#171 id=171 data-nosnippet>171</a>
-<a href=#172 id=172 data-nosnippet>172</a>    unsupported.sort_unstable();
-<a href=#173 id=173 data-nosnippet>173</a>    unsupported.dedup();
-<a href=#174 id=174 data-nosnippet>174</a>    <span class="kw">if </span>unsupported.is_empty() {
-<a href=#175 id=175 data-nosnippet>175</a>        <span class="prelude-val">Ok</span>(())
-<a href=#176 id=176 data-nosnippet>176</a>    } <span class="kw">else </span>{
-<a href=#177 id=177 data-nosnippet>177</a>        <span class="prelude-val">Err</span>(ImplementationUnavailable { unsupported })
-<a href=#178 id=178 data-nosnippet>178</a>    }
-<a href=#179 id=179 data-nosnippet>179</a>}
-<a href=#180 id=180 data-nosnippet>180</a>
-<a href=#181 id=181 data-nosnippet>181</a><span class="kw">const fn </span>supports_task(requirement: TaskRequirement) -&gt; bool {
-<a href=#182 id=182 data-nosnippet>182</a>    <span class="macro">matches!</span>(
-<a href=#183 id=183 data-nosnippet>183</a>        requirement,
-<a href=#184 id=184 data-nosnippet>184</a>        TaskRequirement::SerialCpu | TaskRequirement::RustFft
-<a href=#185 id=185 data-nosnippet>185</a>    )
-<a href=#186 id=186 data-nosnippet>186</a>}
-<a href=#187 id=187 data-nosnippet>187</a>
-<a href=#188 id=188 data-nosnippet>188</a><span class="kw">const fn </span>supports_capability(capability: RequiredCapability) -&gt; bool {
-<a href=#189 id=189 data-nosnippet>189</a>    <span class="macro">matches!</span>(
-<a href=#190 id=190 data-nosnippet>190</a>        capability,
-<a href=#191 id=191 data-nosnippet>191</a>        RequiredCapability::Polarization(PolarizationCoordinate::StokesI)
-<a href=#192 id=192 data-nosnippet>192</a>            | RequiredCapability::ConstantBasis
-<a href=#193 id=193 data-nosnippet>193</a>            | RequiredCapability::DirtyReconstruction
-<a href=#194 id=194 data-nosnippet>194</a>            | RequiredCapability::HogbomReconstruction
-<a href=#195 id=195 data-nosnippet>195</a>            | RequiredCapability::NaturalWeighting
-<a href=#196 id=196 data-nosnippet>196</a>            | RequiredCapability::UniformWeighting
-<a href=#197 id=197 data-nosnippet>197</a>            | RequiredCapability::BriggsWeighting
-<a href=#198 id=198 data-nosnippet>198</a>            | RequiredCapability::BriggsBandwidthTaperWeighting
-<a href=#199 id=199 data-nosnippet>199</a>            | RequiredCapability::UnitResponseNormalization
-<a href=#200 id=200 data-nosnippet>200</a>            | RequiredCapability::FlatNoiseNormalization
-<a href=#201 id=201 data-nosnippet>201</a>            | RequiredCapability::FlatSkyNormalization
-<a href=#202 id=202 data-nosnippet>202</a>            | RequiredCapability::Product(ProductKind::Psf)
-<a href=#203 id=203 data-nosnippet>203</a>            | RequiredCapability::Product(ProductKind::Residual)
-<a href=#204 id=204 data-nosnippet>204</a>            | RequiredCapability::Product(ProductKind::Model)
-<a href=#205 id=205 data-nosnippet>205</a>            | RequiredCapability::Product(ProductKind::RestoredImage)
-<a href=#206 id=206 data-nosnippet>206</a>            | RequiredCapability::Product(ProductKind::SumWeights)
+<a href=#171 id=171 data-nosnippet>171</a>}
+<a href=#172 id=172 data-nosnippet>172</a>
+<a href=#173 id=173 data-nosnippet>173</a><span class="kw">const fn </span>supports_task(requirement: TaskRequirement) -&gt; bool {
+<a href=#174 id=174 data-nosnippet>174</a>    <span class="macro">matches!</span>(
+<a href=#175 id=175 data-nosnippet>175</a>        requirement,
+<a href=#176 id=176 data-nosnippet>176</a>        TaskRequirement::Automasking
+<a href=#177 id=177 data-nosnippet>177</a>            | TaskRequirement::MaskProduct
+<a href=#178 id=178 data-nosnippet>178</a>            | TaskRequirement::ModelColumnWrite
+<a href=#179 id=179 data-nosnippet>179</a>            | TaskRequirement::SerialCpu
+<a href=#180 id=180 data-nosnippet>180</a>            | TaskRequirement::RustFft
+<a href=#181 id=181 data-nosnippet>181</a>    )
+<a href=#182 id=182 data-nosnippet>182</a>}
+<a href=#183 id=183 data-nosnippet>183</a>
+<a href=#184 id=184 data-nosnippet>184</a><span class="kw">const fn </span>supports_capability(capability: RequiredCapability) -&gt; bool {
+<a href=#185 id=185 data-nosnippet>185</a>    <span class="macro">matches!</span>(
+<a href=#186 id=186 data-nosnippet>186</a>        capability,
+<a href=#187 id=187 data-nosnippet>187</a>        RequiredCapability::Polarization(PolarizationCoordinate::StokesI)
+<a href=#188 id=188 data-nosnippet>188</a>            | RequiredCapability::SpectralFrameTransform
+<a href=#189 id=189 data-nosnippet>189</a>            | RequiredCapability::ConstantBasis
+<a href=#190 id=190 data-nosnippet>190</a>            | RequiredCapability::DirtyReconstruction
+<a href=#191 id=191 data-nosnippet>191</a>            | RequiredCapability::HogbomReconstruction
+<a href=#192 id=192 data-nosnippet>192</a>            | RequiredCapability::ClarkReconstruction
+<a href=#193 id=193 data-nosnippet>193</a>            | RequiredCapability::MultiscaleReconstruction
+<a href=#194 id=194 data-nosnippet>194</a>            | RequiredCapability::NaturalWeighting
+<a href=#195 id=195 data-nosnippet>195</a>            | RequiredCapability::UniformWeighting
+<a href=#196 id=196 data-nosnippet>196</a>            | RequiredCapability::BriggsWeighting
+<a href=#197 id=197 data-nosnippet>197</a>            | RequiredCapability::BriggsBandwidthTaperWeighting
+<a href=#198 id=198 data-nosnippet>198</a>            | RequiredCapability::UnitResponseNormalization
+<a href=#199 id=199 data-nosnippet>199</a>            | RequiredCapability::FlatNoiseNormalization
+<a href=#200 id=200 data-nosnippet>200</a>            | RequiredCapability::FlatSkyNormalization
+<a href=#201 id=201 data-nosnippet>201</a>            | RequiredCapability::Product(ProductKind::Psf)
+<a href=#202 id=202 data-nosnippet>202</a>            | RequiredCapability::Product(ProductKind::Residual)
+<a href=#203 id=203 data-nosnippet>203</a>            | RequiredCapability::Product(ProductKind::Model)
+<a href=#204 id=204 data-nosnippet>204</a>            | RequiredCapability::Product(ProductKind::RestoredImage)
+<a href=#205 id=205 data-nosnippet>205</a>            | RequiredCapability::Product(ProductKind::SumWeights)
+<a href=#206 id=206 data-nosnippet>206</a>            | RequiredCapability::Product(ProductKind::Mask)
 <a href=#207 id=207 data-nosnippet>207</a>    )
 <a href=#208 id=208 data-nosnippet>208</a>}
 </code></pre></div></section></main></body></html>

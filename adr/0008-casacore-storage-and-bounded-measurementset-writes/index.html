@@ -763,6 +763,7 @@
 <h1 id="adr-0008-casacore-storage-and-bounded-measurementset-writes">ADR-0008: Casacore storage and bounded MeasurementSet writes<a class="headerlink" href="#adr-0008-casacore-storage-and-bounded-measurementset-writes" title="Permanent link">&para;</a></h1>
 <p>Status: accepted</p>
 <p>Date: 2026-07-18</p>
+<p>Reaffirmed: 2026-08-26</p>
 <h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
 <p>CASA interoperability depends on the casacore table data model and persisted
 data-manager metadata, not on a casa-rs-specific row layout. MeasurementSets
@@ -800,6 +801,19 @@ not presented as complete.</p>
 <p>The persistence layer does not provide rollback, snapshot generations,
 journaling, or copy-on-write recovery. Such a feature requires a new concrete
 product requirement and a separate architecture decision.</p>
+<p>This applies explicitly to imaging <code>MODEL_DATA</code>. Prediction writes selected
+cells in place under the exact source-scoped table lock and incomplete-write
+marker. The writer retains at most one array cell, persists that cell through
+the selected-row/selected-column table seam, and discards its cache entry before
+accepting another row; it does not materialize MAIN rows or the full column.
+Unrelated MeasurementSets may therefore progress concurrently while two live
+writers for the same source remain mutually exclusive. Successful completion
+flushes the column, advances its owner generation, and removes the marker. An
+interrupted write may leave partial derived values and must be recovered or
+recomputed explicitly. Full-column staging copies, backup columns, content
+digests, and rollback are prohibited unless a later concrete requirement
+demonstrates that CASA-compatible in-place behavior is inadequate and
+separately accounts for the I/O and storage cost.</p>
 <h2 id="consequences">Consequences<a class="headerlink" href="#consequences" title="Permanent link">&para;</a></h2>
 <ul>
 <li>CASA-generated MeasurementSets need not follow casa-rs creation conventions

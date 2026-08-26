@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["solve_weighted_least_squares"]};
