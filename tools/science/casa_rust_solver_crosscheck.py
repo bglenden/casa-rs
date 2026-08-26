@@ -82,7 +82,7 @@ def casa_case(ms_path: pathlib.Path, prefix: pathlib.Path, case: dict) -> None:
         imsize=[64, 64], cell="0.02arcsec", phasecenter=1, specmode="mfs",
         gridder="standard", stokes="I", weighting="natural",
         deconvolver=case["solver"], scales=[0, 7] if case["solver"] == "multiscale" else [],
-        scalebias=0.0, niter=8, cycleniter=8, nmajor=1, loopgain=0.2,
+        scalebias=0.0, niter=8, cycleniter=8, nmajor=1, gain=0.2,
         threshold="0Jy", cyclefactor=1.0, minpsffraction=0.05,
         maxpsffraction=0.8, usemask=case["mask"], restoration=True,
         pbcor=False, savemodel="modelcolumn", interactive=False, verbose=False,
