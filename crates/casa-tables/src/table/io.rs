@@ -102,6 +102,7 @@ impl Table {
                 snapshot.column_keywords,
                 snapshot.schema,
                 options.path.clone(),
+                snapshot.retained_read_metadata,
             ),
             source_path: Some(options.path.clone()),
             kind: TableKind::Plain,
@@ -293,6 +294,7 @@ impl Table {
             virtual_columns: self.virtual_columns.clone(),
             virtual_bindings: self.virtual_bindings.clone(),
             dm_info: self.dm_info.clone(),
+            retained_read_metadata: None,
         };
         let storage = CompositeStorage;
         storage.save_metadata_only(&options.path, &snapshot)?;
@@ -1601,6 +1603,7 @@ impl Table {
             virtual_columns: std::collections::HashSet::new(),
             virtual_bindings: Vec::new(),
             dm_info: vec![],
+            retained_read_metadata: None,
         };
         let storage = CompositeStorage;
         storage.save(

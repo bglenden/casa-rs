@@ -2559,7 +2559,19 @@ fn lazy_disk_open_reads_selected_tiled_array_channel_ranges_without_full_column(
     let reopened = Table::open(TableOptions::new(&root)).expect("open lazy table");
     assert!(!reopened.inner.has_loaded_rows());
     assert!(!reopened.inner.has_loaded_array_column("data"));
-    assert!(!reopened.inner.has_cached_control_metadata());
+    assert!(reopened.inner.has_cached_control_metadata());
+    assert_eq!(reopened.inner.cached_tiled_header_count(), 1);
+    let control_metadata_bytes = reopened.inner.cached_control_metadata_heap_bytes();
+    let tiled_header_bytes = reopened.inner.cached_tiled_header_heap_bytes();
+    assert!(control_metadata_bytes > 0);
+    assert!(tiled_header_bytes > 0);
+    let retained_metadata_bytes = reopened
+        .retained_read_metadata_bytes()
+        .expect("fresh lazy table has fully modeled retained metadata");
+    assert!(
+        retained_metadata_bytes >= control_metadata_bytes + tiled_header_bytes,
+        "table metadata charge must include parsed control and tiled-manager metadata"
+    );
     let tile_cache_budget = crate::table_cache_budget_bytes();
 
     let typed = reopened
@@ -2581,6 +2593,7 @@ fn lazy_disk_open_reads_selected_tiled_array_channel_ranges_without_full_column(
         ]
     );
     assert!(reopened.inner.has_cached_control_metadata());
+    assert_eq!(reopened.inner.cached_tiled_header_count(), 1);
     let repeated = reopened
         .column_accessor("data")
         .expect("data accessor")
@@ -2591,6 +2604,12 @@ fn lazy_disk_open_reads_selected_tiled_array_channel_ranges_without_full_column(
         panic!("expected Float32 typed selected cells");
     };
     assert_eq!(repeated.values(), typed.values());
+    assert_eq!(reopened.inner.cached_tiled_header_count(), 1);
+    assert_eq!(
+        reopened.retained_read_metadata_bytes(),
+        Some(retained_metadata_bytes),
+        "typed reads must not grow retained table metadata after admission"
+    );
     assert_eq!(crate::table_cache_budget_bytes(), tile_cache_budget);
     assert!(
         !reopened.inner.has_loaded_rows(),

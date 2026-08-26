@@ -9,8 +9,8 @@ use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
 use crate::schema::{ColumnType, TableSchema};
 use crate::storage::{
-    CompositeStorage, RequiredScalarColumnData, StorageProfiler, TABLE_CONTROL_FILE,
-    TableDatContents, TableDatResult, read_table_dat_dispatch,
+    CompositeStorage, RequiredScalarColumnData, RetainedTableReadMetadata, StorageProfiler,
+    TABLE_CONTROL_FILE, TableDatContents, TableDatResult, read_table_dat_dispatch,
 };
 use crate::table::{SelectedArray1DCells, SelectedArray2DCells, TableError};
 
@@ -21,12 +21,12 @@ type RequiredScalarColumnValueMap = HashMap<String, RequiredScalarColumnData>;
 struct LazyRowsSource {
     path: PathBuf,
     row_count_hint: usize,
-    table_dat: OnceLock<TableDatResult>,
+    read_metadata: OnceLock<RetainedTableReadMetadata>,
 }
 
 impl LazyRowsSource {
-    fn plain_table_dat(&self) -> Result<&TableDatContents, TableError> {
-        if self.table_dat.get().is_none() {
+    fn read_metadata(&self) -> Result<&RetainedTableReadMetadata, TableError> {
+        if self.read_metadata.get().is_none() {
             let control_path = self.path.join(TABLE_CONTROL_FILE);
             let parsed = read_table_dat_dispatch(&control_path).map_err(|error| {
                 TableError::Storage(format!(
@@ -34,21 +34,32 @@ impl LazyRowsSource {
                     self.path.display()
                 ))
             })?;
-            let _ = self.table_dat.set(parsed);
+            let table_dat = match parsed {
+                TableDatResult::Plain(table_dat) => table_dat,
+                TableDatResult::Ref(_) | TableDatResult::Concat(_) => {
+                    return Err(TableError::Storage(format!(
+                        "typed selected reads require a plain table at {}",
+                        self.path.display()
+                    )));
+                }
+            };
+            let read_metadata =
+                RetainedTableReadMetadata::open(&self.path, table_dat).map_err(|error| {
+                    TableError::Storage(format!(
+                        "failed to initialize retained read metadata for table {}: {error}",
+                        self.path.display()
+                    ))
+                })?;
+            let _ = self.read_metadata.set(read_metadata);
         }
-        match self
-            .table_dat
+        Ok(self
+            .read_metadata
             .get()
-            .expect("table control metadata initialized before shared access")
-        {
-            TableDatResult::Plain(table_dat) => Ok(table_dat),
-            TableDatResult::Ref(_) | TableDatResult::Concat(_) => {
-                Err(TableError::Storage(format!(
-                    "typed selected reads require a plain table at {}",
-                    self.path.display()
-                )))
-            }
-        }
+            .expect("table read metadata initialized before shared access"))
+    }
+
+    fn plain_table_dat(&self) -> Result<&TableDatContents, TableError> {
+        Ok(&self.read_metadata()?.table_dat)
     }
 }
 
@@ -278,6 +289,7 @@ impl TableImpl {
 
         let lazy_rows = self.lazy_rows.as_ref()?;
         let mut bytes = path_heap_bytes(&lazy_rows.path)
+            .checked_add(lazy_rows.read_metadata.get()?.retained_heap_bytes()?)?
             .checked_add(string_keyed_map_heap_bytes(&self.loaded_scalar_columns)?)?
             .checked_add(string_keyed_map_heap_bytes(&self.loaded_array_columns)?)?
             .checked_add(string_keyed_map_heap_bytes(&self.buffered_array_cells)?)?
@@ -381,7 +393,14 @@ impl TableImpl {
         column_keywords: HashMap<String, RecordValue>,
         schema: Option<TableSchema>,
         path: PathBuf,
+        retained_read_metadata: Option<RetainedTableReadMetadata>,
     ) -> Self {
+        let read_metadata = OnceLock::new();
+        if let Some(retained_read_metadata) = retained_read_metadata {
+            read_metadata
+                .set(retained_read_metadata)
+                .expect("initialize retained table read metadata");
+        }
         Self {
             loaded_rows: OnceLock::new(),
             loaded_scalar_columns: lazy_scalar_column_store(schema.as_ref()),
@@ -392,7 +411,7 @@ impl TableImpl {
             lazy_rows: Some(LazyRowsSource {
                 path,
                 row_count_hint: row_count,
-                table_dat: OnceLock::new(),
+                read_metadata,
             }),
             persisted_row_count: row_count,
             keywords,
@@ -542,10 +561,12 @@ impl TableImpl {
             source.path.display()
         ));
         let storage = CompositeStorage;
+        let read_metadata = source.read_metadata()?;
         let values = storage
             .load_array_column_rows_2d_channel_range_typed_from_plain(
                 &source.path,
-                source.plain_table_dat()?,
+                &read_metadata.table_dat,
+                &read_metadata.tiled,
                 column,
                 row_indices,
                 channel_start,
@@ -583,10 +604,12 @@ impl TableImpl {
             source.path.display()
         ));
         let storage = CompositeStorage;
+        let read_metadata = source.read_metadata()?;
         let values = storage
             .load_array_column_rows_1d_typed_from_plain(
                 &source.path,
-                source.plain_table_dat()?,
+                &read_metadata.table_dat,
+                &read_metadata.tiled,
                 column,
                 row_indices,
             )
@@ -1673,7 +1696,33 @@ impl TableImpl {
     pub(crate) fn has_cached_control_metadata(&self) -> bool {
         self.lazy_rows
             .as_ref()
-            .is_some_and(|source| source.table_dat.get().is_some())
+            .is_some_and(|source| source.read_metadata.get().is_some())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cached_tiled_header_count(&self) -> usize {
+        self.lazy_rows
+            .as_ref()
+            .and_then(|source| source.read_metadata.get())
+            .map_or(0, |metadata| metadata.tiled.cached_header_count())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cached_control_metadata_heap_bytes(&self) -> usize {
+        self.lazy_rows
+            .as_ref()
+            .and_then(|source| source.read_metadata.get())
+            .and_then(|metadata| metadata.table_dat.retained_heap_bytes())
+            .unwrap_or(0)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cached_tiled_header_heap_bytes(&self) -> usize {
+        self.lazy_rows
+            .as_ref()
+            .and_then(|source| source.read_metadata.get())
+            .and_then(|metadata| metadata.tiled.retained_heap_bytes())
+            .unwrap_or(0)
     }
 
     #[cfg(test)]
