@@ -10,7 +10,7 @@ use casa_imaging_application::{
     ContinuumWeighting, execute_continuum,
 };
 use casa_ms::{
-    MeasurementSet, MeasurementSetBuilder, OptionalMainColumn, SubtableId,
+    MeasurementSet, MeasurementSetBuilder, OptionalMainColumn, SubtableId, VisibilityDataColumn,
     column_def::{ColumnDef, ColumnKind},
     initialize_measurement_set_owner_manifest, schema,
 };
@@ -350,6 +350,7 @@ fn request(
         threshold_jy: 0.0,
         psf_cutoff: 0.2,
         beam_policy: ContinuumBeamPolicy::PerPlane,
+        save_model_column: false,
         task_requirements: Vec::new(),
     }
 }
@@ -440,4 +441,38 @@ fn application_executes_single_ddid_stokes_i_mfs_hogbom_with_one_iteration() {
         "model and residual visibility products have distinct meanings"
     );
     assert_standard_products(&image_name, &result.product_names);
+}
+
+#[test]
+fn application_commits_exact_final_prediction_to_model_data() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = tiny_measurement_set(root.path());
+    let image_name = root.path().join("savemodel");
+    let mut imaging = request(
+        measurement_set.clone(),
+        image_name,
+        ContinuumAlgorithm::Hogbom,
+    );
+    imaging.save_model_column = true;
+
+    let result = execute_continuum(imaging).expect("native save-model application execution");
+    let visibility = result
+        .outcome
+        .output
+        .visibility_products
+        .expect("final visibility completion");
+    assert_eq!(visibility.sample_count(), 1);
+
+    let reopened = MeasurementSet::open(measurement_set).expect("reopen saved MODEL_DATA");
+    let model_column = reopened
+        .data_column(VisibilityDataColumn::ModelData)
+        .expect("MODEL_DATA was committed");
+    let ArrayValue::Complex32(model) = model_column.get(0).expect("MODEL_DATA row") else {
+        panic!("MODEL_DATA row is complex")
+    };
+    assert!(model[[0, 0]].re.is_finite());
+    assert!(model[[0, 0]].im.is_finite());
+    assert_ne!(model[[0, 0]], Complex32::new(0.0, 0.0));
 }

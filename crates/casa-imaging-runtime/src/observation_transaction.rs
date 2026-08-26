@@ -264,7 +264,12 @@ pub(crate) fn bind_observation_transaction(
             crate::PublicationParticipant::Product { .. } => None,
         })
         .collect::<BTreeSet<_>>();
-    if declared_model_data != expected_model_data {
+    // Multi-phase application plans may defer MODEL_DATA to a dedicated
+    // post-product transaction. Once a physical phase declares any model
+    // staging, it must cover the complete compiled write set exactly.
+    if (!declared_model_data.is_empty() || work.model_column_staging.is_some())
+        && declared_model_data != expected_model_data
+    {
         return invalid(format!(
             "publication MODEL_DATA sources {declared_model_data:?} do not match transaction writes {expected_model_data:?}"
         ));
@@ -408,7 +413,7 @@ fn validate_transaction_nodes(
     match (model_column_sources, &work.model_column_staging) {
         (0, None) => {}
         (0, Some(_)) => return invalid("read-only transaction declares model-column staging"),
-        (_, None) => return invalid("model-column transaction omits private staging"),
+        (_, None) => {}
         (_, Some(model_id)) => {
             let model = require_node(nodes, model_id, "model-column staging")?;
             require_kind(model, WorkKind::Writeback, "model-column staging")?;

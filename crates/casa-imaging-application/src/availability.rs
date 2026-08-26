@@ -152,14 +152,6 @@ pub fn validate_installed_implementation(
     if !matches!(problem.inputs().model(), ModelStateIdentity::Empty) {
         unsupported.push(UnsupportedRequirement::EmptyInitialModel);
     }
-    if !problem
-        .observation_transaction()
-        .write_set()
-        .model_columns()
-        .is_empty()
-    {
-        unsupported.push(UnsupportedRequirement::NoModelColumnWrite);
-    }
     if problem
         .science()
         .measurement_equation()
@@ -181,7 +173,7 @@ pub fn validate_installed_implementation(
 const fn supports_task(requirement: TaskRequirement) -> bool {
     matches!(
         requirement,
-        TaskRequirement::SerialCpu | TaskRequirement::RustFft
+        TaskRequirement::ModelColumnWrite | TaskRequirement::SerialCpu | TaskRequirement::RustFft
     )
 }
 

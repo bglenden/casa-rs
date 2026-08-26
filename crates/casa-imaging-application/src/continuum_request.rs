@@ -149,6 +149,8 @@ pub struct ContinuumImagingRequest {
     pub psf_cutoff: f32,
     /// Restoring-beam policy.
     pub beam_policy: ContinuumBeamPolicy,
+    /// Persist the exact final prediction into the MeasurementSet `MODEL_DATA` column.
+    pub save_model_column: bool,
     /// Capability constraints derived by the task surface. Unsupported
     /// capabilities are rejected by the installed implementation registry
     /// before physical execution.
@@ -376,6 +378,7 @@ fn prepare(
             content_budget,
             casa_ms::open_measures_runtime()?,
         ),
+        write_model_column: request.save_model_column,
         task_requirements: request.task_requirements,
         native,
     })
@@ -392,6 +395,11 @@ fn validate_request(request: &ContinuumImagingRequest) -> Result<(), crate::Appl
     {
         return Err(boxed(
             "native continuum geometry and controls must be finite and positive",
+        ));
+    }
+    if request.save_model_column && request.algorithm == ContinuumAlgorithm::Dirty {
+        return Err(boxed(
+            "MODEL_DATA persistence requires a solved final model, not a dirty-only request",
         ));
     }
     Ok(())
@@ -612,7 +620,11 @@ fn specification(
                 )?,
             ),
         ),
-        ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
+        ObservationTransactionRequirements::new(if request.save_model_column {
+            ModelColumnWrite::SelectedRows
+        } else {
+            ModelColumnWrite::Disabled
+        }),
         NumericsContract::new(
             vec![NumericPrecision::F64],
             ReductionPolicy::Compensated,

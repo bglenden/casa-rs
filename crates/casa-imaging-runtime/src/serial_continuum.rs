@@ -4,7 +4,9 @@
 
 use std::{
     io,
-    sync::{Arc, Mutex},
+    path::PathBuf,
+    sync::{Arc, Mutex, mpsc::SyncSender},
+    thread::JoinHandle,
 };
 
 use casa_imaging_model::{
@@ -26,7 +28,7 @@ use crate::{
     WorkExecutionContext, WorkImplementation, WorkImplementationId, WorkKind, WorkMeasurements,
 };
 use casa_imaging_reconstruction::WeightingPlan;
-use casa_ms::{BoundSelectedObservation, SelectedObservationCompletion};
+use casa_ms::{BoundSelectedObservation, ModelColumnTransaction, SelectedObservationCompletion};
 use sha2::{Digest, Sha256};
 
 /// Bounded consumer of final-model predictions produced inside the paired
@@ -54,6 +56,7 @@ pub trait FinalVisibilitySink: Send {
 #[derive(Clone)]
 pub struct VisibilityProductStaging {
     state: Arc<Mutex<VisibilityProductStagingState>>,
+    model_column: Option<ModelColumnWorker>,
 }
 
 enum VisibilityProductStagingState {
@@ -70,9 +73,32 @@ impl VisibilityProductStaging {
         (
             Self {
                 state: Arc::clone(&state),
+                model_column: None,
             },
-            Box::new(VisibilityProductStaging { state }),
+            Box::new(VisibilityProductStaging {
+                state,
+                model_column: None,
+            }),
         )
+    }
+
+    /// Create product staging paired with one storage-owner MODEL_DATA transaction.
+    pub fn with_model_column(
+        path: PathBuf,
+        expected: casa_imaging_model::ObservationSourceState,
+    ) -> io::Result<(Self, Box<dyn FinalVisibilitySink>)> {
+        let state = Arc::new(Mutex::new(VisibilityProductStagingState::Unbound));
+        let model_column = ModelColumnWorker::spawn(path, expected)?;
+        Ok((
+            Self {
+                state: Arc::clone(&state),
+                model_column: Some(model_column.clone()),
+            },
+            Box::new(VisibilityProductStaging {
+                state,
+                model_column: Some(model_column),
+            }),
+        ))
     }
 
     /// Return the closed product completion after terminal replay.
@@ -85,6 +111,15 @@ impl VisibilityProductStaging {
             VisibilityProductStagingState::Finished(completion) => Ok(*completion),
             _ => Err(io::Error::other("visibility product staging is incomplete")),
         }
+    }
+
+    /// Publish staged MODEL_DATA after all conventional products are visible.
+    pub fn commit_model_column(&self) -> io::Result<()> {
+        let completion = self.completion()?;
+        let Some(worker) = &self.model_column else {
+            return Ok(());
+        };
+        worker.commit(completion.model_product().identity())
     }
 }
 
@@ -129,7 +164,11 @@ impl FinalVisibilitySink for VisibilityProductStaging {
         let VisibilityProductStagingState::Bound(authority) = &mut *state else {
             return Err(io::Error::other("visibility product staging is not bound"));
         };
-        authority.consume(samples).map_err(io::Error::other)
+        authority.consume(samples).map_err(io::Error::other)?;
+        if let Some(worker) = &self.model_column {
+            worker.stage(samples)?;
+        }
+        Ok(())
     }
 
     fn finish(&mut self, replay: &WeightingReplayCompletion) -> io::Result<()> {
@@ -149,6 +188,99 @@ impl FinalVisibilitySink for VisibilityProductStaging {
             authority.finish(replay.selected_generation(), replay.weighting_generation()),
         );
         Ok(())
+    }
+}
+
+#[derive(Clone)]
+struct ModelColumnWorker {
+    sender: SyncSender<ModelColumnCommand>,
+    join: Arc<Mutex<Option<JoinHandle<io::Result<()>>>>>,
+}
+
+enum ModelColumnCommand {
+    Stage(Vec<(u64, u32, u32, num_complex::Complex32)>),
+    Commit(LogicalIdentity),
+}
+
+impl ModelColumnWorker {
+    fn spawn(
+        path: PathBuf,
+        expected: casa_imaging_model::ObservationSourceState,
+    ) -> io::Result<Self> {
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let (ready_sender, ready_receiver) = std::sync::mpsc::sync_channel(0);
+        let join = std::thread::spawn(move || {
+            let mut transaction = match ModelColumnTransaction::begin(path, &expected) {
+                Ok(transaction) => {
+                    let _ = ready_sender.send(Ok(()));
+                    transaction
+                }
+                Err(error) => {
+                    let message = error.to_string();
+                    let _ = ready_sender.send(Err(message.clone()));
+                    return Err(io::Error::other(message));
+                }
+            };
+            while let Ok(command) = receiver.recv() {
+                match command {
+                    ModelColumnCommand::Stage(samples) => {
+                        for (row, channel, correlation, value) in samples {
+                            transaction
+                                .stage(row, channel, correlation, value)
+                                .map_err(io::Error::other)?;
+                        }
+                    }
+                    ModelColumnCommand::Commit(generation) => {
+                        return transaction.commit(generation).map_err(io::Error::other);
+                    }
+                }
+            }
+            Ok(())
+        });
+        ready_receiver
+            .recv()
+            .map_err(|_| io::Error::other("MODEL_DATA worker stopped during startup"))?
+            .map_err(io::Error::other)?;
+        Ok(Self {
+            sender,
+            join: Arc::new(Mutex::new(Some(join))),
+        })
+    }
+
+    fn stage(
+        &self,
+        samples: &[casa_imaging_reconstruction::runtime_adapter::FinalVisibilitySample],
+    ) -> io::Result<()> {
+        let values = samples
+            .iter()
+            .map(|sample| {
+                let address = sample.address();
+                let predicted = sample.predicted();
+                (
+                    address.physical_row,
+                    address.channel_index,
+                    address.correlation_index,
+                    num_complex::Complex32::new(predicted.re as f32, predicted.im as f32),
+                )
+            })
+            .collect();
+        self.sender
+            .send(ModelColumnCommand::Stage(values))
+            .map_err(|_| io::Error::other("MODEL_DATA staging worker stopped"))
+    }
+
+    fn commit(&self, generation: LogicalIdentity) -> io::Result<()> {
+        self.sender
+            .send(ModelColumnCommand::Commit(generation))
+            .map_err(|_| io::Error::other("MODEL_DATA staging worker stopped"))?;
+        let join = self
+            .join
+            .lock()
+            .map_err(|_| io::Error::other("MODEL_DATA worker join poisoned"))?
+            .take()
+            .ok_or_else(|| io::Error::other("MODEL_DATA transaction already closed"))?;
+        join.join()
+            .map_err(|_| io::Error::other("MODEL_DATA staging worker panicked"))?
     }
 }
 

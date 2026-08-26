@@ -99,6 +99,8 @@ pub struct ApplicationRequest<S> {
     pub model_lifecycle: ModelLifecycleRequirements,
     /// Storage-owner request for the single selected MeasurementSet.
     pub observation: SelectedObservationResolutionRequest,
+    /// Whether final paired-operator predictions are committed to `MODEL_DATA`.
+    pub write_model_column: bool,
     /// Task-surface constraints that cannot be inferred from the compiled
     /// backend-independent problem.
     pub task_requirements: Vec<TaskRequirement>,
@@ -186,6 +188,7 @@ where
     let input = NativeInput {
         observation: request.observation,
         initial_access: access,
+        write_model_column: request.write_model_column,
         native: request.native,
     };
     let output = run_native(&problem, input).map_err(ApplicationDispatchError::Native)?;
@@ -197,6 +200,7 @@ where
 struct NativeInput<S> {
     observation: SelectedObservationResolutionRequest,
     initial_access: ResolvedSelectedObservationAccess,
+    write_model_column: bool,
     native: Result<ApplicationNative<S>, ApplicationError>,
 }
 
@@ -283,91 +287,101 @@ where
     )?;
     let initial_receipt = runtime.receipts.open(runtime.attempts[0])?;
 
-    let (scientific, final_major_receipt, minor_cycle, visibility_products) = match algorithm {
-        ReconstructionAlgorithm::Dirty => {
-            let result = registry
-                .implementation()
-                .take_completion()
-                .ok_or_else(|| boxed("dirty execution omitted final major-cycle evidence"))?;
-            (result.into_completion(), None, None, None)
-        }
-        ReconstructionAlgorithm::Hogbom
-        | ReconstructionAlgorithm::Clark
-        | ReconstructionAlgorithm::Multiscale { .. } => {
-            let minor = registry
-                .implementation()
-                .take_minor_completion()
-                .ok_or_else(|| boxed("minor-cycle execution omitted scientific evidence"))?;
-            let minor_cycle = Some(NativeMinorCycleOutcome {
-                iterations: minor.evidence().iterations(),
-                final_peak_flux: minor.evidence().final_peak_flux(),
-                stop_reason: minor.evidence().stop_reason(),
-            });
-            let final_input = minor.into_final_major_input();
-            let resolved = resolve_selected_observation(input.observation.clone())?;
-            let (_, access) = resolved.into_parts();
-            let access = access.with_minimum_content_budget(problem)?;
-            let final_residency = access.certify_residency(problem)?;
-            let final_planned = SerialContinuumPlan::final_major(
-                problem,
-                &planning_registry,
-                execution_policy(&runtime, final_residency),
-                &final_input,
-            )?;
-            let (physical, weighting, complete, resources, pass, _) = final_planned.into_parts();
-            let (visibility_staging, visibility_sink) = VisibilityProductStaging::new();
-            let executor = SerialContinuumExecutor::new(
-                runtime.implementation.clone(),
-                problem.clone(),
-                weighting,
-                resources,
-                pass,
-                complete,
-                access.open(problem)?,
-                ExecutableModelProblem::from_compiled(problem.clone())?,
-                SerialContinuumPassInput::FinalMajor(final_input),
-            )
-            .with_final_visibility_sink(visibility_sink);
-            let registry = SerialContinuumRegistry::new(
-                runtime.registry,
-                runtime.implementation.clone(),
-                problem,
-                executor,
-            );
-            let final_plan = plan(
-                problem,
-                PlanningBindings::new(
+    let (scientific, final_major_receipt, minor_cycle, visibility_products, visibility_staging) =
+        match algorithm {
+            ReconstructionAlgorithm::Dirty => {
+                let result = registry
+                    .implementation()
+                    .take_completion()
+                    .ok_or_else(|| boxed("dirty execution omitted final major-cycle evidence"))?;
+                (result.into_completion(), None, None, None, None)
+            }
+            ReconstructionAlgorithm::Hogbom
+            | ReconstructionAlgorithm::Clark
+            | ReconstructionAlgorithm::Multiscale { .. } => {
+                let minor = registry
+                    .implementation()
+                    .take_minor_completion()
+                    .ok_or_else(|| boxed("minor-cycle execution omitted scientific evidence"))?;
+                let minor_cycle = Some(NativeMinorCycleOutcome {
+                    iterations: minor.evidence().iterations(),
+                    final_peak_flux: minor.evidence().final_peak_flux(),
+                    stop_reason: minor.evidence().stop_reason(),
+                });
+                let final_input = minor.into_final_major_input();
+                let resolved = resolve_selected_observation(input.observation.clone())?;
+                let (_, access) = resolved.into_parts();
+                let access = access.with_minimum_content_budget(problem)?;
+                let final_residency = access.certify_residency(problem)?;
+                let final_planned = SerialContinuumPlan::final_major(
+                    problem,
+                    &planning_registry,
+                    execution_policy(&runtime, final_residency),
+                    &final_input,
+                )?;
+                let (physical, weighting, complete, resources, pass, _) =
+                    final_planned.into_parts();
+                let (visibility_staging, visibility_sink) = if input.write_model_column {
+                    VisibilityProductStaging::with_model_column(
+                        std::path::PathBuf::from(input.observation.locator()),
+                        access.source_state().clone(),
+                    )?
+                } else {
+                    VisibilityProductStaging::new()
+                };
+                let executor = SerialContinuumExecutor::new(
+                    runtime.implementation.clone(),
+                    problem.clone(),
+                    weighting,
+                    resources,
+                    pass,
+                    complete,
+                    access.open(problem)?,
+                    ExecutableModelProblem::from_compiled(problem.clone())?,
+                    SerialContinuumPassInput::FinalMajor(final_input),
+                )
+                .with_final_visibility_sink(visibility_sink);
+                let registry = SerialContinuumRegistry::new(
                     runtime.registry,
-                    runtime.resource_policy.clone(),
-                    runtime.cost_model,
-                ),
-                &runtime.authority,
-                &registry,
-                &runtime.receipts,
-                move |_, _| Ok::<_, std::convert::Infallible>(vec![physical]),
-            )?;
-            run_phase(
-                problem,
-                &final_plan,
-                &registry,
-                &runtime,
-                runtime.attempts[1],
-            )?;
-            let completion = registry
-                .implementation()
-                .take_completion()
-                .ok_or_else(|| boxed("final-major execution omitted scientific evidence"))?
-                .into_completion();
-            let receipt = runtime.receipts.open(runtime.attempts[1])?;
-            (
-                completion,
-                Some(receipt),
-                minor_cycle,
-                Some(visibility_staging.completion()?),
-            )
-        }
-        _ => unreachable!("native validation admits only dirty or Högbom"),
-    };
+                    runtime.implementation.clone(),
+                    problem,
+                    executor,
+                );
+                let final_plan = plan(
+                    problem,
+                    PlanningBindings::new(
+                        runtime.registry,
+                        runtime.resource_policy.clone(),
+                        runtime.cost_model,
+                    ),
+                    &runtime.authority,
+                    &registry,
+                    &runtime.receipts,
+                    move |_, _| Ok::<_, std::convert::Infallible>(vec![physical]),
+                )?;
+                run_phase(
+                    problem,
+                    &final_plan,
+                    &registry,
+                    &runtime,
+                    runtime.attempts[1],
+                )?;
+                let completion = registry
+                    .implementation()
+                    .take_completion()
+                    .ok_or_else(|| boxed("final-major execution omitted scientific evidence"))?
+                    .into_completion();
+                let receipt = runtime.receipts.open(runtime.attempts[1])?;
+                (
+                    completion,
+                    Some(receipt),
+                    minor_cycle,
+                    Some(visibility_staging.completion()?),
+                    Some(visibility_staging),
+                )
+            }
+            _ => unreachable!("native validation admits only dirty or Högbom"),
+        };
 
     publish_products(
         problem,
@@ -380,6 +394,7 @@ where
             final_major_receipt,
             minor_cycle,
             visibility_products,
+            visibility_staging,
         },
     )
 }
@@ -389,6 +404,7 @@ struct PriorPhaseOutcome {
     final_major_receipt: Option<ExecutionReceipt>,
     minor_cycle: Option<NativeMinorCycleOutcome>,
     visibility_products: Option<VisibilityProductCompletion>,
+    visibility_staging: Option<VisibilityProductStaging>,
 }
 
 fn execution_policy(
@@ -524,6 +540,9 @@ where
         .implementation()
         .take_sealed_generation()
         .ok_or_else(|| boxed("publication execution omitted its sealed product generation"))?;
+    if let Some(staging) = &prior.visibility_staging {
+        staging.commit_model_column()?;
+    }
     Ok(NativeApplicationOutcome {
         initial_receipt: prior.initial_receipt,
         final_major_receipt: prior.final_major_receipt,

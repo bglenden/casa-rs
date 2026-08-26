@@ -89,6 +89,7 @@ fn application_request(config: &CliConfig) -> ContinuumImagingRequest {
             RestoringBeamMode::PerPlane => ContinuumBeamPolicy::PerPlane,
             RestoringBeamMode::Common => ContinuumBeamPolicy::Common,
         },
+        save_model_column: config.save_model == SaveModelMode::ModelColumn,
         task_requirements: task_requirements(config),
     }
 }

@@ -626,14 +626,14 @@ fn smooth_and_cut(
 }
 
 fn grow_cross(
-    mask: &mut Vec<bool>,
+    mask: &mut [bool],
     shape: [usize; 2],
     residual: &[f64],
     low_threshold: f64,
     iterations: usize,
 ) {
     for _ in 0..iterations {
-        let previous = mask.clone();
+        let previous = mask.to_owned();
         for index in 0..previous.len() {
             if previous[index] {
                 continue;

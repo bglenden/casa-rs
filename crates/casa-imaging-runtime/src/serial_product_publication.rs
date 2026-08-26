@@ -146,14 +146,6 @@ impl SerialProductPublicationPlan {
         registry: &R,
         policy: SerialProductPublicationPolicy,
     ) -> Result<Self, SerialProductPublicationPlanError> {
-        if !problem
-            .observation_transaction()
-            .write_set()
-            .model_columns()
-            .is_empty()
-        {
-            return Err(SerialProductPublicationPlanError::ModelColumnWrite);
-        }
         let publication = ProductPublicationPlan::bind(problem, planned)?;
         let physical = build_physical(problem, registry, &policy, &publication)?;
         Ok(Self {
@@ -673,8 +665,6 @@ fn layout_id(artifact: ArtifactIdentity) -> PhysicalLayoutId {
 pub enum SerialProductPublicationPlanError {
     /// A resource or payload calculation overflowed.
     Overflow,
-    /// Product publication cannot also own MODEL_DATA staging.
-    ModelColumnWrite,
     /// Planned product authority rejected the generation.
     Publication(ProductPublicationError),
     /// Execution DAG validation failed.
