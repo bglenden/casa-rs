@@ -198,6 +198,8 @@ pub struct ContinuumImagingRequest {
     pub cycle_iterations: usize,
     /// Maximum number of major cycles admitted by the controller contract.
     pub maximum_major_cycles: usize,
+    /// Hard cumulative component-flux envelope accepted between reconciliations.
+    pub maximum_model_update_jy: f64,
     /// Optional robust-RMS stopping multiplier.
     pub noise_sigma: Option<f64>,
     /// PSF-sidelobe multiplier used to derive each cycle threshold.
@@ -242,7 +244,7 @@ pub fn execute_continuum(
 ) -> Result<ContinuumImagingResult, ApplicationDispatchError> {
     let prepared = prepare(request).map_err(ApplicationDispatchError::Preparation)?;
     let outcome = crate::execute(prepared)?;
-    let minor = outcome.output.minor_cycle;
+    let minor = outcome.output.minor_cycle.clone();
     let minor_iterations = outcome.output.total_minor_iterations;
     let product_names = outcome
         .output
@@ -426,8 +428,8 @@ fn prepare(
                 1,
                 1,
                 request.iterations.max(1),
-                1.0e30,
-                1.0e30,
+                request.maximum_model_update_jy * request.maximum_major_cycles.max(1) as f64,
+                request.maximum_model_update_jy,
             )?,
             NumericPrecision::F64,
             ModelInputCommitment::Empty,
@@ -492,6 +494,8 @@ fn validate_request(request: &ContinuumImagingRequest) -> Result<(), crate::Appl
         || request.cell_arcsec <= 0.0
         || !request.gain.is_finite()
         || !request.threshold_jy.is_finite()
+        || !request.maximum_model_update_jy.is_finite()
+        || request.maximum_model_update_jy <= 0.0
         || !request.psf_cutoff.is_finite()
         || request.psf_cutoff <= 0.0
         || (request.algorithm != ContinuumAlgorithm::Dirty
@@ -819,7 +823,7 @@ fn specification(
                     request.gain,
                     request.threshold_jy,
                 )
-                .with_maximum_model_update(1.0e30)
+                .with_maximum_model_update(request.maximum_model_update_jy)
                 .with_cycle_limits(request.cycle_iterations, request.maximum_major_cycles)
                 .with_cycle_threshold(
                     request.cycle_factor,

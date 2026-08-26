@@ -350,6 +350,7 @@ fn request(
         iterations: 1,
         cycle_iterations: 1,
         maximum_major_cycles: 1,
+        maximum_model_update_jy: 100.0,
         noise_sigma: None,
         cycle_factor: 1.0,
         minimum_psf_fraction: 0.05,
@@ -429,6 +430,17 @@ fn application_executes_single_ddid_stokes_i_mfs_hogbom_with_one_iteration() {
         result.minor_stop_reason,
         Some(ContinuumStopReason::IterationBound)
     );
+    assert_eq!(
+        result
+            .outcome
+            .output
+            .minor_cycle
+            .as_ref()
+            .expect("minor diagnostic")
+            .recorded_components
+            .len(),
+        1
+    );
     let visibility = result
         .outcome
         .output
@@ -450,6 +462,35 @@ fn application_executes_single_ddid_stokes_i_mfs_hogbom_with_one_iteration() {
         "model and residual visibility products have distinct meanings"
     );
     assert_standard_products(&image_name, &result.product_names);
+}
+
+#[test]
+fn application_enforces_requested_model_update_envelope_before_mutation() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = tiny_measurement_set(root.path());
+    let image_name = root.path().join("model-envelope");
+    let mut imaging = request(measurement_set, image_name, ContinuumAlgorithm::Clark);
+    imaging.maximum_model_update_jy = f64::EPSILON;
+
+    let result = execute_continuum(imaging).expect("bounded Clark execution");
+
+    assert_eq!(result.minor_iterations, 0);
+    assert_eq!(
+        result.minor_stop_reason,
+        Some(ContinuumStopReason::StalenessBound)
+    );
+    assert!(
+        result
+            .outcome
+            .output
+            .minor_cycle
+            .as_ref()
+            .expect("minor diagnostic")
+            .recorded_components
+            .is_empty()
+    );
 }
 
 #[test]
@@ -532,11 +573,24 @@ fn application_commits_exact_final_prediction_to_model_data() {
         final_receipt.stage_actual_io(&replay, casa_imaging_runtime::IoBufferKind::Writeback),
         Some((8, 1))
     );
+    let staging_lifetime =
+        casa_imaging_runtime::ClaimLifetime::through_fence(casa_imaging_runtime::FenceKind::Io);
+    let staging_stack = casa_imaging_runtime::LeaseResource::RuntimeOverhead(
+        casa_imaging_runtime::RuntimeOverheadKind::ThreadStack,
+    );
+    assert_eq!(
+        final_receipt.planned_resource_amount(&replay, &staging_stack, &staging_lifetime),
+        Some(2 * 1024 * 1024)
+    );
+    assert_eq!(
+        final_receipt.actual_resource_peak(&replay, &staging_stack, &staging_lifetime),
+        Some(2 * 1024 * 1024)
+    );
     let adoption = model_receipt
         .plan_node_identities()
         .into_iter()
-        .find(|node| node.as_str() == "model-data-publication-stage")
-        .expect("prepared MODEL_DATA staging is validated before commit");
+        .find(|node| node.as_str() == "model-data-publication-flush")
+        .expect("prepared MODEL_DATA staging is durably flushed before commit");
     assert_eq!(
         model_receipt.stage_actual_io(&adoption, casa_imaging_runtime::IoBufferKind::Writeback),
         Some((8, 1))

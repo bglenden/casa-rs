@@ -351,6 +351,20 @@ impl ModelColumnTransaction {
         Ok(())
     }
 
+    /// Flush the complete private replacement while retaining commit authority.
+    ///
+    /// This makes staged bytes durable and independently verifiable before the
+    /// later atomic column-name/manifest commit. It does not mutate the public
+    /// `MODEL_DATA` generation.
+    pub fn prepare(&mut self) -> Result<(), ObservationOwnerError> {
+        self.measurement_set
+            .as_ref()
+            .ok_or(ObservationOwnerError::TransactionClosed)?
+            .main_table()
+            .flush()?;
+        Ok(())
+    }
+
     /// Atomically publish staging as MODEL_DATA and ratchet owner generations.
     pub fn commit(mut self, generation: LogicalIdentity) -> Result<(), ObservationOwnerError> {
         let original_manifest = self.manifest.clone();

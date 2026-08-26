@@ -15,7 +15,7 @@ use crate::*;
 
 const CHECK: &str = "model-data-publication-check";
 const RECONCILE: &str = "model-data-publication-reconciliation";
-const STAGE: &str = "model-data-publication-stage";
+const STAGE: &str = "model-data-publication-flush";
 const COMMIT: &str = "model-data-publication-commit";
 
 /// Deployment-owned bounds for one private column replacement.
@@ -57,7 +57,7 @@ pub struct SerialModelDataPublicationPlan {
 }
 
 impl SerialModelDataPublicationPlan {
-    /// Plan the exact lock, private storage, writeback buffer, and commit fence.
+    /// Plan the exact lock, private-generation flush, storage, and commit fence.
     pub fn new<R: ImplementationRegistry>(
         problem: &CompiledProblem,
         completion: VisibilityProductCompletion,
@@ -437,7 +437,7 @@ fn build_physical<R: ImplementationRegistry>(
     )?)
 }
 
-/// Executor that publishes the already private column only at the plan's commit fence.
+/// Executor that flushes the private column and publishes only at the commit fence.
 pub struct SerialModelDataPublicationExecutor {
     id: WorkImplementationId,
     staging: VisibilityProductStaging,

@@ -18,10 +18,20 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 
+use casa_imaging_model::{
+    AntennaSelection, CorrelationProduct, CorrelationSelection, CorrelationType,
+    DataDescriptionSelection, IdSelection, IntentSelection, LogicalIdentity, ModelStateIdentity,
+    ObservationSelection, RowSelection, SelectedMainRow, SelectedRows, SpectralWindowSelection,
+    TimeSelection, UvSelection, VisibilityColumn, WeightColumn,
+};
 use casa_ms::OptionalMainColumn;
 use casa_ms::SubTable;
 use casa_ms::builder::MeasurementSetBuilder;
 use casa_ms::ms::MeasurementSet;
+use casa_ms::{
+    ModelColumnTransaction, SelectedObservationContentBudget, SelectedObservationResolutionRequest,
+    initialize_measurement_set_owner_manifest, resolve_selected_observation,
+};
 use casa_tables::{ColumnType, Table};
 use casa_test_support::casacore_oracle_available;
 use casa_test_support::ms_interop::MeasurementSetOracle;
@@ -993,6 +1003,81 @@ fn ms_full_manifest_matches_cpp_for_basic_fixture() {
 
     let ms = MeasurementSet::open(&ms_path).unwrap();
     let rust_manifest = digest_measurement_set_manifest(&ms);
+    let cpp_manifest = MeasurementSetOracle::digest_manifest(&ms_path).unwrap();
+    assert_eq!(rust_manifest, cpp_manifest);
+}
+
+#[test]
+fn committed_model_data_generation_matches_cpp_manifest() {
+    if !casacore_oracle_available() {
+        eprintln!(
+            "skipping committed_model_data_generation_matches_cpp_manifest: C++ casacore not available"
+        );
+        return;
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let ms_path = dir.path().join("model_data_commit.ms");
+    let builder = MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data);
+    let mut ms = MeasurementSet::create(&ms_path, builder).unwrap();
+    populate_subtables(&mut ms);
+    populate_main_rows(&mut ms, 6);
+    ms.save().unwrap();
+    initialize_measurement_set_owner_manifest(&ms_path).expect("initialize owner manifest");
+
+    let selection = ObservationSelection::new(
+        SelectedRows::from_ordered_main_rows(
+            6,
+            (0_u32..6).map(|row| SelectedMainRow::new(u64::from(row), 0)),
+        )
+        .unwrap(),
+        RowSelection::new(
+            IdSelection::All,
+            TimeSelection::All,
+            UvSelection::All,
+            AntennaSelection::All,
+            IdSelection::All,
+            IdSelection::All,
+            IntentSelection::All,
+            IdSelection::All,
+        ),
+        vec![DataDescriptionSelection::new(0, 0, 0)],
+        vec![SpectralWindowSelection::new(0, (0..16).collect())],
+        vec![CorrelationSelection::new(
+            0,
+            vec![
+                CorrelationProduct::new(0, CorrelationType::CircularRr),
+                CorrelationProduct::new(1, CorrelationType::CircularRl),
+                CorrelationProduct::new(2, CorrelationType::CircularLr),
+                CorrelationProduct::new(3, CorrelationType::CircularLl),
+            ],
+        )],
+    );
+    let request = SelectedObservationResolutionRequest::new(
+        ms_path.display().to_string(),
+        LogicalIdentity::from_sha256([2; 32]),
+        selection,
+        VisibilityColumn::Data,
+        WeightColumn::Weight,
+        Vec::new(),
+        ModelStateIdentity::Empty,
+        SelectedObservationContentBudget::new(1 << 20, 6, 64),
+        casa_test_support::deterministic_measures_provider_for_identity([90; 32]),
+    );
+    let resolved = resolve_selected_observation(request).expect("resolve owner state");
+    let (_, access) = resolved.into_parts();
+    let mut transaction = ModelColumnTransaction::begin(&ms_path, access.source_state())
+        .expect("begin MODEL_DATA transaction");
+    transaction
+        .stage(0, 0, 0, casa_types::Complex32::new(4.5, -1.25))
+        .expect("stage prediction");
+    transaction.prepare().expect("flush private generation");
+    transaction
+        .commit(LogicalIdentity::from_sha256([73; 32]))
+        .expect("commit MODEL_DATA generation");
+
+    let reopened = MeasurementSet::open(&ms_path).expect("reopen committed MS in Rust");
+    let rust_manifest = digest_measurement_set_manifest(&reopened);
     let cpp_manifest = MeasurementSetOracle::digest_manifest(&ms_path).unwrap();
     assert_eq!(rust_manifest, cpp_manifest);
 }

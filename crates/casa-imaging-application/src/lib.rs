@@ -158,7 +158,7 @@ pub struct NativeApplicationOutcome {
 }
 
 /// Stable application projection of the T21 owner evidence.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct NativeMinorCycleOutcome {
     /// Number of accepted component updates.
     pub iterations: usize,
@@ -166,8 +166,39 @@ pub struct NativeMinorCycleOutcome {
     pub final_peak_flux: f64,
     /// Scientific terminal reason.
     pub stop_reason: MinorCycleStopReason,
+    /// Bounded leading component sequence for CASA/Rust first-divergence diagnostics.
+    pub recorded_components: Vec<casa_imaging_reconstruction::MinorCycleComponent>,
     /// Auto-multithreshold diagnostics, when that mask mode generated support.
     pub auto_mask: Option<casa_imaging_reconstruction::AutoMultithreshEvidence>,
+}
+
+impl NativeMinorCycleOutcome {
+    /// Return the first exact component mismatch against a CASA/parity baseline.
+    #[must_use]
+    pub fn first_component_divergence(
+        &self,
+        baseline: &[casa_imaging_reconstruction::MinorCycleComponent],
+    ) -> Option<(
+        usize,
+        Option<casa_imaging_reconstruction::MinorCycleComponent>,
+        Option<casa_imaging_reconstruction::MinorCycleComponent>,
+    )> {
+        let shared = baseline.len().min(self.recorded_components.len());
+        for (index, (expected, actual)) in
+            baseline.iter().zip(&self.recorded_components).enumerate()
+        {
+            if expected != actual {
+                return Some((index, Some(*expected), Some(*actual)));
+            }
+        }
+        (baseline.len() != self.recorded_components.len()).then(|| {
+            (
+                shared,
+                baseline.get(shared).copied(),
+                self.recorded_components.get(shared).copied(),
+            )
+        })
+    }
 }
 
 /// Whole-run result from the sole installed implementation.
@@ -267,7 +298,8 @@ where
         let program = MinorCycleProgram::for_algorithm(
             algorithm.clone(),
             problem.reconstruction().controls(),
-        )?;
+        )?
+        .record_component_sequence(64)?;
         executor = executor.with_minor_cycle(
             minor_node.ok_or_else(|| boxed("initial plan omitted its minor-cycle node"))?,
             input.mask.clone(),
@@ -338,6 +370,11 @@ where
                     iterations: minor.evidence().iterations(),
                     final_peak_flux: minor.evidence().final_peak_flux(),
                     stop_reason: minor.evidence().stop_reason(),
+                    recorded_components: minor
+                        .evidence()
+                        .recorded_component_sequence()
+                        .unwrap_or_default()
+                        .to_vec(),
                     auto_mask: minor.auto_mask_evidence(),
                 };
                 let continue_cleaning = cycle < maximum_cycles
@@ -403,6 +440,7 @@ where
                         .max_minor_iterations()
                         .saturating_sub(total_iterations);
                     let program = MinorCycleProgram::for_algorithm(algorithm.clone(), controls)?
+                        .record_component_sequence(64)?
                         .limit_iterations(remaining)?;
                     executor = executor.with_minor_cycle(
                         minor_node.ok_or_else(|| boxed("continuing plan omitted minor node"))?,

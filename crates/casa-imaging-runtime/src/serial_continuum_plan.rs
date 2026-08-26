@@ -12,6 +12,7 @@ use casa_imaging_model::CompiledProblem;
 use casa_imaging_reconstruction::{WeightingExecutionLimits, WeightingPlan, plan_weighting};
 use casa_ms::{ModelColumnStorageBounds, SelectedObservationResidencyCertificate};
 
+use crate::serial_continuum::MODEL_COLUMN_WORKER_STACK_BYTES;
 use crate::*;
 
 const READ_NODE: &str = "transaction-read";
@@ -637,6 +638,8 @@ fn append_model_data_resources<R: ImplementationRegistry>(
     let commit = base.observation_transaction().commit().clone();
     let allocation = AllocationId::new("serial-model-data-cell-buffer");
     let slot = PhysicalSlotId::new("serial-model-data-cell-buffer-slot");
+    let block_allocation = AllocationId::new("serial-model-data-replay-copy");
+    let block_slot = PhysicalSlotId::new("serial-model-data-replay-copy-slot");
     let storage_id = "serial-model-data-column".to_string();
     let existing_rate = base
         .execution_dag()
@@ -662,6 +665,16 @@ fn append_model_data_resources<R: ImplementationRegistry>(
         .unwrap_or_else(|| "serial-model-data-queue".to_string());
     let bytes = bounds.column_bytes().max(1);
     let cell_bytes = bounds.maximum_cell_bytes().max(1);
+    let block_copy_bytes = u64::try_from(policy.weighting_limits.max_block_samples())
+        .ok()
+        .and_then(|samples| {
+            samples.checked_mul(
+                u64::try_from(std::mem::size_of::<(u64, u32, u32, num_complex::Complex32)>())
+                    .expect("MODEL_DATA staging tuple size fits u64"),
+            )
+        })
+        .ok_or(SerialContinuumPlanError::Overflow)?
+        .max(1);
     let staging_lifetime = ClaimLifetime::through_fence(FenceKind::Io);
     let mut nodes = base
         .execution_dag()
@@ -674,6 +687,12 @@ fn append_model_data_resources<R: ImplementationRegistry>(
         .find(|node| node.id == *replay)
         .expect("complete-data replay node exists");
     replay_node.kind = WorkKind::ObservationReadWriteback;
+    replay_node
+        .claims
+        .iter_mut()
+        .find(|claim| claim.resource == LeaseResource::Workers)
+        .expect("terminal replay has a worker claim")
+        .amount = 2;
     replay_node.claims.extend([
         ResourceClaim {
             resource: LeaseResource::Storage {
@@ -686,6 +705,11 @@ fn append_model_data_resources<R: ImplementationRegistry>(
         ResourceClaim {
             resource: LeaseResource::IoBuffer(IoBufferKind::Writeback),
             amount: cell_bytes,
+            lifetime: staging_lifetime.clone(),
+        },
+        ResourceClaim {
+            resource: LeaseResource::RuntimeOverhead(RuntimeOverheadKind::ThreadStack),
+            amount: MODEL_COLUMN_WORKER_STACK_BYTES as u64,
             lifetime: staging_lifetime.clone(),
         },
     ]);
@@ -711,6 +735,10 @@ fn append_model_data_resources<R: ImplementationRegistry>(
         allocation: allocation.clone(),
         lifetime: staging_lifetime.clone(),
     });
+    replay_node.allocations.push(AllocationUse {
+        allocation: block_allocation.clone(),
+        lifetime: staging_lifetime.clone(),
+    });
     let compatibility = SlotCompatibility {
         memory_domain: CapacityDomainId::new("host-memory"),
         views: BTreeSet::from([CapacityViewId::new("host-memory")]),
@@ -727,6 +755,21 @@ fn append_model_data_resources<R: ImplementationRegistry>(
         preferred_bytes: cell_bytes,
         views: vec![CapacityViewId::new("host-memory")],
     });
+    alternative.demand.memory.push(MemoryDemand {
+        allocation_id: "serial-model-data-replay-copy".to_string(),
+        hard_bytes: block_copy_bytes,
+        preferred_bytes: block_copy_bytes,
+        views: vec![CapacityViewId::new("host-memory")],
+    });
+    alternative.demand.workers = CountDemand::new(2, 2);
+    alternative.scaling.minimum_workers = 2;
+    alternative.scaling.maximum_workers = 2;
+    alternative.demand.overhead.thread_stack_bytes = alternative
+        .demand
+        .overhead
+        .thread_stack_bytes
+        .checked_add(MODEL_COLUMN_WORKER_STACK_BYTES as u64)
+        .ok_or(SerialContinuumPlanError::Overflow)?;
     alternative.demand.storage.push(StorageDemand {
         demand_id: storage_id,
         domain: policy.storage_io.domain().clone(),
@@ -758,6 +801,8 @@ fn append_model_data_resources<R: ImplementationRegistry>(
         .io_buffers
         .writeback_bytes
         .max(cell_bytes);
+    let mut initial_knobs = base.execution_dag().initial_knobs().clone();
+    initial_knobs.workers = 2;
     let dag = ExecutionDag::new(ExecutionDagSpecification {
         required_resource_capabilities: base
             .execution_dag()
@@ -770,36 +815,62 @@ fn append_model_data_resources<R: ImplementationRegistry>(
             .logical_allocations()
             .values()
             .cloned()
-            .chain([LogicalAllocation {
-                id: allocation,
-                bytes: cell_bytes,
-                purpose: AllocationPurpose::IoBuffer(IoBufferKind::Writeback),
-                compatibility: compatibility.clone(),
-                physical_slot: slot.clone(),
-                lifetime: AllocationLifetime {
-                    acquire_at: replay.clone(),
-                    release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
-                        replay.clone(),
-                        FenceKind::Io,
-                    ))]),
+            .chain([
+                LogicalAllocation {
+                    id: allocation,
+                    bytes: cell_bytes,
+                    purpose: AllocationPurpose::IoBuffer(IoBufferKind::Writeback),
+                    compatibility: compatibility.clone(),
+                    physical_slot: slot.clone(),
+                    lifetime: AllocationLifetime {
+                        acquire_at: replay.clone(),
+                        release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
+                            replay.clone(),
+                            FenceKind::Io,
+                        ))]),
+                    },
                 },
-            }])
+                LogicalAllocation {
+                    id: block_allocation,
+                    bytes: block_copy_bytes,
+                    purpose: AllocationPurpose::Data,
+                    compatibility: compatibility.clone(),
+                    physical_slot: block_slot.clone(),
+                    lifetime: AllocationLifetime {
+                        acquire_at: replay.clone(),
+                        release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
+                            replay.clone(),
+                            FenceKind::Io,
+                        ))]),
+                    },
+                },
+            ])
             .collect(),
         physical_slots: base
             .execution_dag()
             .physical_slots()
             .values()
             .cloned()
-            .chain([PhysicalSlot {
-                id: slot,
-                lease_resource: LeaseResource::Memory {
-                    allocation_id: "serial-model-data-cell-buffer".to_string(),
+            .chain([
+                PhysicalSlot {
+                    id: slot,
+                    lease_resource: LeaseResource::Memory {
+                        allocation_id: "serial-model-data-cell-buffer".to_string(),
+                    },
+                    capacity_bytes: cell_bytes,
+                    compatibility: compatibility.clone(),
                 },
-                capacity_bytes: cell_bytes,
-                compatibility,
-            }])
+                PhysicalSlot {
+                    id: block_slot,
+                    lease_resource: LeaseResource::Memory {
+                        allocation_id: "serial-model-data-replay-copy".to_string(),
+                    },
+                    capacity_bytes: block_copy_bytes,
+                    compatibility,
+                },
+            ])
             .collect(),
-        initial_knobs: base.execution_dag().initial_knobs().clone(),
+        initial_knobs,
         adaptations: vec![],
     })?;
     let stages = base

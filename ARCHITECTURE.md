@@ -267,7 +267,7 @@ generation computed from the actual canonical sample stream. Incremental
 inspection state and generation encoding never cross its public boundary. The storage
 completion binds logical snapshot identity, provenance, physical access,
 content generation, and retained-access traversal. After synchronous work
-completion and every declared fence, if any, of the owning ObservationRead node
+completion and every declared fence, if any, of the owning typed observation-read node
 settles, the runtime supplies a fresh, affine authority that binds that opaque
 storage completion to the execution attempt, owning node, exact settled fence
 set, and live lease epoch. A physical I/O fence alone cannot mint this proof.
@@ -324,7 +324,9 @@ column generation, metadata generation, and consistency token. Optional
 `MODEL_DATA` writes carry exact selected-cell scope plus an absent-or-generation
 precondition captured independently of whether `MODEL_DATA` was read. Every
 `PhysicalWorkBinding` passed to the sole `plan` entrypoint must type every
-MeasurementSet source operation as `ObservationRead` and declare final
+MeasurementSet source operation as `ObservationRead`; a terminal replay that
+also writes bounded predictions into a private `MODEL_DATA` replacement is
+typed `ObservationReadWriteback`. Each transaction declares final
 complete-data reconciliation, private per-product and model-column staging
 events, and the applicable independently atomic Publication nodes. `plan`
 mechanically derives every
@@ -379,7 +381,10 @@ whole-plan executor or public scheduler can bypass the compile/plan/run seam.
 The transaction's initial consistency node alone receives the expected
 observation transaction, typed observation reads receive its exact read set,
 the private writeback node receives its exact write set, and only the atomic
-publication node receives publication authority.
+publication node receives publication authority. The terminal combined replay
+may build private `MODEL_DATA` staging; a later, separately planned flush and
+Publication transaction validates and atomically activates that prepared
+column after conventional product publication.
 Controllers can observe only plan-listed transitions eligible at the current
 global cut. Cancellation, rejected directives, and adapter errors drain every
 launched fence before `run` returns; mapped pages and storage-manager state also

@@ -31,6 +31,8 @@ use casa_imaging_reconstruction::WeightingPlan;
 use casa_ms::{BoundSelectedObservation, ModelColumnTransaction, SelectedObservationCompletion};
 use sha2::{Digest, Sha256};
 
+pub(crate) const MODEL_COLUMN_WORKER_STACK_BYTES: usize = 2 * 1024 * 1024;
+
 /// Bounded consumer of final-model predictions produced inside the paired
 /// final-major replay. Implementations may stage MODEL_DATA or residual-
 /// visibility products, but receive no commit authority from this interface.
@@ -275,9 +277,15 @@ impl ModelColumnWorker {
         path: PathBuf,
         expected: casa_imaging_model::ObservationSourceState,
     ) -> io::Result<Self> {
-        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        // A rendezvous channel keeps exactly one copied replay block resident:
+        // the scheduler-accounted producer cannot queue a second block while
+        // the storage worker owns the first.
+        let (sender, receiver) = std::sync::mpsc::sync_channel(0);
         let (ready_sender, ready_receiver) = std::sync::mpsc::sync_channel(0);
-        let join = std::thread::spawn(move || {
+        let join = std::thread::Builder::new()
+            .name("model-data-staging".to_string())
+            .stack_size(MODEL_COLUMN_WORKER_STACK_BYTES)
+            .spawn(move || {
             let mut transaction = match ModelColumnTransaction::begin(path, &expected) {
                 Ok(transaction) => {
                     let _ = ready_sender.send(Ok(()));
@@ -308,13 +316,15 @@ impl ModelColumnWorker {
                         expected_samples,
                         reply,
                     } => {
-                        let result = (staged_samples == expected_samples)
-                            .then_some(())
-                            .ok_or_else(|| {
+                        let result = if staged_samples == expected_samples {
+                            transaction.prepare().map_err(io::Error::other)
+                        } else {
+                            Err(
                                 io::Error::other(format!(
                                     "MODEL_DATA staged {staged_samples} samples, expected {expected_samples}"
-                                ))
-                            });
+                                )),
+                            )
+                        };
                         let _ = reply.send(result);
                     }
                     ModelColumnCommand::Commit(generation) => {
@@ -323,7 +333,8 @@ impl ModelColumnWorker {
                 }
             }
             Ok(())
-        });
+            })
+            .map_err(io::Error::other)?;
         ready_receiver
             .recv()
             .map_err(|_| io::Error::other("MODEL_DATA worker stopped during startup"))?

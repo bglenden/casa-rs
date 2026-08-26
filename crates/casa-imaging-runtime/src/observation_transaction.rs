@@ -151,7 +151,8 @@ impl ObservationTransactionWork {
     /// The node holds every MeasurementSet lock while it rechecks the exact
     /// read/write preconditions. Successful completion of its publication
     /// fence establishes readiness only; the runtime's final publish call
-    /// atomically activates all staged products and model-column generations.
+    /// atomically activates the conventional-product members or the one
+    /// model-column generation selected by this transaction's scope.
     #[must_use]
     pub const fn commit(&self) -> &WorkNodeId {
         &self.commit

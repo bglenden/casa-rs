@@ -19,7 +19,7 @@ use super::{
 pub(super) fn execute(config: &CliConfig) -> Result<RunSummary, String> {
     let started = Instant::now();
     let result =
-        execute_continuum(application_request(config)).map_err(|error| error.to_string())?;
+        execute_continuum(application_request(config)?).map_err(|error| error.to_string())?;
     let native = result.outcome.output;
     let clean_stop_reason = result.minor_stop_reason.map(|reason| match reason {
         ContinuumStopReason::ThresholdReached => CleanStopReason::GlobalThresholdReached,
@@ -39,8 +39,15 @@ pub(super) fn execute(config: &CliConfig) -> Result<RunSummary, String> {
     })
 }
 
-fn application_request(config: &CliConfig) -> ContinuumImagingRequest {
-    ContinuumImagingRequest {
+fn application_request(config: &CliConfig) -> Result<ContinuumImagingRequest, String> {
+    let maximum_model_update_jy = if config.dirty_only || config.niter == 0 {
+        1.0
+    } else {
+        config
+            .maximum_model_update_jy
+            .ok_or_else(|| "native deconvolution requires --maximum-model-update-jy".to_string())?
+    };
+    Ok(ContinuumImagingRequest {
         measurement_set: config.ms.clone(),
         image_name: config.imagename.clone(),
         image_size: config.imsize,
@@ -87,6 +94,7 @@ fn application_request(config: &CliConfig) -> ContinuumImagingRequest {
         iterations: config.niter,
         cycle_iterations: config.minor_cycle_length.min(config.niter.max(1)),
         maximum_major_cycles: config.nmajor.unwrap_or(1),
+        maximum_model_update_jy: f64::from(maximum_model_update_jy),
         noise_sigma: (config.nsigma > 0.0).then_some(f64::from(config.nsigma)),
         cycle_factor: f64::from(config.cyclefactor),
         minimum_psf_fraction: f64::from(config.min_psf_fraction),
@@ -127,7 +135,7 @@ fn application_request(config: &CliConfig) -> ContinuumImagingRequest {
         },
         save_model_column: config.save_model == SaveModelMode::ModelColumn,
         task_requirements: task_requirements(config),
-    }
+    })
 }
 
 fn task_requirements(config: &CliConfig) -> Vec<TaskRequirement> {

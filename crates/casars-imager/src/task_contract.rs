@@ -1960,6 +1960,9 @@ pub struct ImagerRunTaskRequest {
     /// CASA-style major-cycle limit. `None` corresponds to CASA `nmajor=-1`.
     #[serde(default)]
     pub nmajor: Option<usize>,
+    /// Hard cumulative component-flux envelope between major reconciliations.
+    #[serde(default)]
+    pub maximum_model_update_jy: Option<f32>,
     /// Include long-form CASA-compatible `summaryminor` fields.
     #[serde(default)]
     pub fullsummary: bool,
@@ -2146,6 +2149,7 @@ impl ImagerRunTaskRequest {
             small_scale_bias: config.small_scale_bias,
             niter: config.niter,
             nmajor: config.nmajor,
+            maximum_model_update_jy: config.maximum_model_update_jy,
             fullsummary: config.fullsummary,
             gain: config.gain,
             threshold_jy: config.threshold_jy,
@@ -2315,6 +2319,7 @@ impl ImagerRunTaskRequest {
             small_scale_bias: self.small_scale_bias,
             niter: self.niter,
             nmajor: self.nmajor,
+            maximum_model_update_jy: self.maximum_model_update_jy,
             fullsummary: self.fullsummary,
             gain: self.gain,
             threshold_jy: self.threshold_jy,
@@ -3198,6 +3203,7 @@ mod tests {
             small_scale_bias: 0.0,
             niter: 0,
             nmajor: None,
+            maximum_model_update_jy: None,
             fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
@@ -3292,6 +3298,7 @@ mod tests {
             small_scale_bias: 0.0,
             niter: 0,
             nmajor: None,
+            maximum_model_update_jy: None,
             fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
@@ -3562,6 +3569,7 @@ mod tests {
             small_scale_bias: 0.0,
             niter: 0,
             nmajor: None,
+            maximum_model_update_jy: None,
             fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
@@ -3724,6 +3732,7 @@ mod tests {
             small_scale_bias: 0.0,
             niter: 1,
             nmajor: None,
+            maximum_model_update_jy: Some(100.0),
             fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
@@ -4299,6 +4308,7 @@ mod tests {
             small_scale_bias: 0.0,
             niter: 0,
             nmajor: None,
+            maximum_model_update_jy: None,
             fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,

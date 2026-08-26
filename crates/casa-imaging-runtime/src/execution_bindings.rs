@@ -3359,7 +3359,7 @@ pub trait WorkImplementation {
         Ok(None)
     }
 
-    /// Atomically activate all staged products and optional model-column output.
+    /// Atomically activate the members of this transaction's publication scope.
     ///
     /// The runtime invokes this exactly once, only after every fence and fallible
     /// scheduler transition has settled successfully, while the transaction

@@ -102,8 +102,8 @@ pub enum WorkKind {
     Serialization,
     /// Complete a private staged storage writeback without publishing it.
     Writeback,
-    /// Revalidate and atomically publish completed products and optional
-    /// MeasurementSet side effects as one visible generation.
+    /// Revalidate and atomically publish the members of one transaction.
+    /// Conventional products and `MODEL_DATA` use independent transactions.
     Publication,
     /// Explicitly unmap, evict, destroy, or otherwise release externally
     /// retained storage before its physical slot becomes reusable.

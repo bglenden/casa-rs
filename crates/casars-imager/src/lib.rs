@@ -300,6 +300,8 @@ pub struct CliConfig {
     pub niter: usize,
     /// Major-cycle limit.
     pub nmajor: Option<usize>,
+    /// Required cumulative model-update envelope for an active solver.
+    pub maximum_model_update_jy: Option<f32>,
     /// Long-form minor summary toggle.
     pub fullsummary: bool,
     /// Minor-cycle gain.
@@ -479,6 +481,9 @@ impl CliConfig {
                         0.. => Some(limit as usize),
                         _ => return Err("--nmajor expects -1 or a non-negative value".to_string()),
                     };
+                }
+                "--maximum-model-update-jy" => {
+                    config.maximum_model_update_jy = Some(parse(value(1)?, flag)?)
                 }
                 "--fullsummary" => {
                     config.fullsummary = true;
@@ -711,6 +716,7 @@ impl CliConfig {
             small_scale_bias: 0.0,
             niter: 0,
             nmajor: None,
+            maximum_model_update_jy: None,
             fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
