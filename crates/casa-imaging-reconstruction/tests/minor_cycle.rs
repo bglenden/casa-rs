@@ -616,6 +616,15 @@ fn controls_are_validated_explicitly() {
     )
     .expect("explicit compiled staleness envelope");
     assert_eq!(compiled.maximum_model_update(), 2.5);
+    let compiled = HogbomControls::from_compiled(
+        ReconstructionControls::new(100, 0.5, 0.0)
+            .with_maximum_model_update(2.5)
+            .with_cycle_limits(7, 3)
+            .with_noise_sigma(4.5),
+    )
+    .expect("cycle and nsigma controls");
+    assert_eq!(compiled.max_iterations(), 7);
+    assert_eq!(compiled.noise_sigma(), Some(4.5));
     assert!(matches!(
         HogbomControls::new(0.0, 1.0, 8, 1.0),
         Err(MinorCycleError::InvalidGain)
@@ -987,6 +996,35 @@ fn threshold_stop_converges_without_a_delta_or_a_reconciliation_request() {
 }
 
 #[test]
+fn nsigma_and_cycle_iteration_limits_are_solver_evidence_not_frontend_policy() {
+    let round = first_confirm_round(170, 171);
+    let continuation = problem_with_model(
+        172,
+        ModelStateIdentity::Generation(round.final_model.generation_id().identity()),
+    );
+    let lifecycle = bind_lifecycle(&continuation, 173, 17);
+    let program = HogbomControls::from_compiled(
+        ReconstructionControls::new(64, 0.5, 0.0)
+            .with_maximum_model_update(1.0e30)
+            .with_cycle_limits(2, 4)
+            .with_noise_sigma(1.0),
+    )
+    .expect("compiled cycle controls");
+    let result = hogbom_minor_cycle(
+        &lifecycle,
+        &round.final_model,
+        &round.normal_state,
+        &full_mask(&round.normal_state, &round.final_model),
+        program,
+    )
+    .expect("nsigma solve");
+    assert!(result.evidence().iterations() <= 2);
+    let rms = result.evidence().noise_rms().expect("nsigma records RMS");
+    assert!(rms.is_finite() && rms >= 0.0);
+    assert_eq!(result.evidence().effective_threshold(), rms);
+}
+
+#[test]
 fn iteration_bound_stops_with_an_explicit_reconciliation_request() {
     let round = first_confirm_round(49, 50);
     let continuation = problem_with_model(
@@ -1228,6 +1266,7 @@ fn multiscale_zero_scale_matches_the_point_component_and_extended_scale_spreads_
         HogbomControls::for_algorithm(
             ReconstructionAlgorithm::Multiscale {
                 scales_px: vec![0.0],
+                small_scale_bias: 0.6,
             },
             compiled,
         )
@@ -1247,6 +1286,7 @@ fn multiscale_zero_scale_matches_the_point_component_and_extended_scale_spreads_
         HogbomControls::for_algorithm(
             ReconstructionAlgorithm::Multiscale {
                 scales_px: vec![3.0],
+                small_scale_bias: 0.6,
             },
             compiled,
         )

@@ -94,6 +94,7 @@ pub struct MinorCycleProgram {
     algorithm: ReconstructionAlgorithm,
     gain: f64,
     threshold: f64,
+    noise_sigma: Option<f64>,
     max_iterations: usize,
     maximum_model_update: f64,
     component_sequence_limit: Option<usize>,
@@ -116,7 +117,7 @@ impl MinorCycleProgram {
         ) {
             return Err(MinorCycleError::UnsupportedAlgorithm);
         }
-        if let ReconstructionAlgorithm::Multiscale { scales_px } = &mut algorithm {
+        if let ReconstructionAlgorithm::Multiscale { scales_px, .. } = &mut algorithm {
             if scales_px.is_empty()
                 || scales_px
                     .iter()
@@ -134,9 +135,16 @@ impl MinorCycleProgram {
             algorithm,
             controls.gain(),
             controls.threshold_jy_per_beam(),
-            controls.max_minor_iterations(),
+            controls
+                .cycle_iteration_limit()
+                .unwrap_or(controls.max_minor_iterations())
+                .min(controls.max_minor_iterations()),
             maximum_model_update,
         )
+        .map(|mut program| {
+            program.noise_sigma = controls.noise_sigma();
+            program
+        })
     }
 
     /// Derive the Högbom program used by the point-clean baseline.
@@ -189,6 +197,7 @@ impl MinorCycleProgram {
             algorithm,
             gain,
             threshold,
+            noise_sigma: None,
             max_iterations,
             maximum_model_update,
             component_sequence_limit: None,
@@ -227,6 +236,12 @@ impl MinorCycleProgram {
     #[must_use]
     pub const fn threshold(&self) -> f64 {
         self.threshold
+    }
+
+    /// Return the optional robust-RMS stopping multiplier.
+    #[must_use]
+    pub const fn noise_sigma(&self) -> Option<f64> {
+        self.noise_sigma
     }
 
     /// Return the hard iteration bound.
@@ -349,8 +364,11 @@ pub struct MinorCycleEvidence {
     iterations: usize,
     total_flux: f64,
     final_peak_flux: f64,
+    noise_rms: Option<f64>,
+    effective_threshold: f64,
     stop_reason: MinorCycleStopReason,
     clark_approximation: Option<ClarkApproximation>,
+    clark_refreshes: usize,
     recorded: Option<Box<[MinorCycleComponent]>>,
 }
 
@@ -415,6 +433,18 @@ impl MinorCycleEvidence {
         self.final_peak_flux
     }
 
+    /// Return the robust RMS used by an `nsigma` stop.
+    #[must_use]
+    pub const fn noise_rms(&self) -> Option<f64> {
+        self.noise_rms
+    }
+
+    /// Return the actual threshold after combining absolute and `nsigma` controls.
+    #[must_use]
+    pub const fn effective_threshold(&self) -> f64 {
+        self.effective_threshold
+    }
+
     /// Return why the solve stopped.
     #[must_use]
     pub const fn stop_reason(&self) -> MinorCycleStopReason {
@@ -425,6 +455,12 @@ impl MinorCycleEvidence {
     #[must_use]
     pub const fn clark_approximation(&self) -> Option<ClarkApproximation> {
         self.clark_approximation
+    }
+
+    /// Return the number of exact full-residual refreshes between Clark subcycles.
+    #[must_use]
+    pub const fn clark_refreshes(&self) -> usize {
+        self.clark_refreshes
     }
 
     /// Whether the outcome explicitly requests Major-Cycle reconciliation.
@@ -482,6 +518,12 @@ impl MinorCycleEvidence {
 pub struct ClarkApproximation {
     radius: [usize; 2],
     maximum_exterior_sidelobe: f64,
+}
+
+struct ClarkWorkState {
+    cutoff: f64,
+    active: Vec<bool>,
+    refreshes: usize,
 }
 
 impl ClarkApproximation {
@@ -670,20 +712,37 @@ pub fn run_minor_cycle(
         }
         residual.push(real);
     }
-    let clark_active = clark.map(|approximation| {
+    let noise_rms = controls
+        .noise_sigma()
+        .map(|_| robust_masked_rms(&residual, shape, base, mask))
+        .transpose()?;
+    let effective_threshold = noise_rms
+        .zip(controls.noise_sigma())
+        .map_or(controls.threshold(), |(rms, sigma)| {
+            controls.threshold().max(rms * sigma)
+        });
+    let mut clark_state = clark.map(|approximation| {
         let initial_peak = residual
             .iter()
             .fold(0.0_f64, |peak, value| peak.max(value.abs()))
             / psf_peak;
         let cutoff = (initial_peak * approximation.maximum_exterior_sidelobe / psf_peak / 3.0)
-            .max(controls.threshold());
-        residual
+            .max(effective_threshold);
+        let active = residual
             .iter()
             .map(|value| value.abs() / psf_peak >= cutoff)
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>();
+        ClarkWorkState {
+            cutoff,
+            active,
+            refreshes: 0,
+        }
     });
     let multiscale = match controls.algorithm() {
-        ReconstructionAlgorithm::Multiscale { scales_px } => Some(build_scale_kernels(scales_px)),
+        ReconstructionAlgorithm::Multiscale {
+            scales_px,
+            small_scale_bias,
+        } => Some(build_scale_kernels(scales_px, *small_scale_bias)),
         _ => None,
     };
 
@@ -717,19 +776,53 @@ pub fn run_minor_cycle(
                 Some(candidate.scale_index),
             )
         } else {
-            let peak_index = find_peak_abs(
-                &residual,
-                shape,
-                |value| *value,
-                |pixel| {
-                    let index = pixel[0] * shape[1] + pixel[1];
-                    mask.contains(pixel)
-                        && valid_support(base, shape, pixel)
-                        && clark_active.as_ref().is_none_or(|active| active[index])
-                },
-            )
-            .ok_or(MinorCycleError::EmptyValidSupport)?;
-            (peak_index, residual[peak_index] / psf_peak, None)
+            loop {
+                let peak_index = find_peak_abs(
+                    &residual,
+                    shape,
+                    |value| *value,
+                    |pixel| {
+                        let index = pixel[0] * shape[1] + pixel[1];
+                        mask.contains(pixel)
+                            && valid_support(base, shape, pixel)
+                            && clark_state.as_ref().is_none_or(|state| state.active[index])
+                    },
+                )
+                .ok_or(MinorCycleError::EmptyValidSupport)?;
+                let strength = residual[peak_index] / psf_peak;
+                let needs_refresh = clark_state.as_ref().is_some_and(|state| {
+                    strength.abs() > effective_threshold && strength.abs() <= state.cutoff
+                });
+                if !needs_refresh {
+                    break (peak_index, strength, None);
+                }
+                refresh_point_residual(
+                    &mut residual,
+                    view.residual(),
+                    view.normal_approximation(),
+                    shape,
+                    psf_peak_pixel,
+                    base,
+                    &terms,
+                )?;
+                let state = clark_state.as_mut().expect("Clark refresh has state");
+                state.refreshes += 1;
+                let global_peak = find_peak_abs(
+                    &residual,
+                    shape,
+                    |value| *value,
+                    |pixel| mask.contains(pixel) && valid_support(base, shape, pixel),
+                )
+                .ok_or(MinorCycleError::EmptyValidSupport)?;
+                let global_strength = residual[global_peak].abs() / psf_peak;
+                let approximation = clark.expect("Clark state has approximation");
+                state.cutoff =
+                    (global_strength * approximation.maximum_exterior_sidelobe / psf_peak / 3.0)
+                        .max(effective_threshold);
+                for (index, active) in state.active.iter_mut().enumerate() {
+                    *active = residual[index].abs() / psf_peak >= state.cutoff;
+                }
+            }
         };
         let peak_pixel = plane_pixel(peak_index, shape);
         if !strength.is_finite() {
@@ -744,9 +837,9 @@ pub fn run_minor_cycle(
         // has no flux to clean and converges trivially.
         let threshold_reached = match controls.algorithm() {
             ReconstructionAlgorithm::Clark => {
-                strength == 0.0 || strength.abs() <= controls.threshold()
+                strength == 0.0 || strength.abs() <= effective_threshold
             }
-            _ => strength == 0.0 || strength.abs() < controls.threshold(),
+            _ => strength == 0.0 || strength.abs() < effective_threshold,
         };
         if threshold_reached {
             stop_reason = Some(MinorCycleStopReason::ThresholdReached);
@@ -823,6 +916,7 @@ pub fn run_minor_cycle(
         }
     }
     let stop_reason = stop_reason.unwrap_or(MinorCycleStopReason::IterationBound);
+    let clark_refreshes = clark_state.as_ref().map_or(0, |state| state.refreshes);
 
     terms.retain(|_, flux| *flux != 0.0);
     let delta = if terms.is_empty() {
@@ -853,8 +947,11 @@ pub fn run_minor_cycle(
         iterations,
         total_flux,
         final_peak_flux,
+        noise_rms,
+        effective_threshold,
         stop_reason,
         clark,
+        clark_refreshes,
     );
     Ok(MinorCycleResult {
         delta,
@@ -869,8 +966,11 @@ pub fn run_minor_cycle(
             iterations,
             total_flux,
             final_peak_flux,
+            noise_rms,
+            effective_threshold,
             stop_reason,
             clark_approximation: clark,
+            clark_refreshes,
             recorded: (!recorded.is_empty()).then(|| recorded.into_boxed_slice()),
         },
     })
@@ -955,6 +1055,55 @@ fn subtract_psf(
     Ok(())
 }
 
+fn refresh_point_residual(
+    residual: &mut [f64],
+    original: &[num_complex::Complex64],
+    psf: &[num_complex::Complex64],
+    shape: [usize; 2],
+    psf_peak: [usize; 2],
+    base: &ModelGeneration,
+    terms: &BTreeMap<usize, f64>,
+) -> Result<(), MinorCycleError> {
+    for (target, source) in residual.iter_mut().zip(original) {
+        *target = source.re;
+    }
+    for (flat, flux) in terms {
+        let pixel = base
+            .shape()
+            .cell_at(*flat)
+            .ok_or(MinorCycleError::ModelShapeMismatch)?
+            .pixel();
+        subtract_psf(residual, psf, shape, pixel, psf_peak, *flux)?;
+    }
+    Ok(())
+}
+
+fn robust_masked_rms(
+    residual: &[f64],
+    shape: [usize; 2],
+    base: &ModelGeneration,
+    mask: &ReconstructionMask,
+) -> Result<f64, MinorCycleError> {
+    let mut values = residual
+        .iter()
+        .enumerate()
+        .filter_map(|(index, value)| {
+            let pixel = plane_pixel(index, shape);
+            (mask.contains(pixel) && valid_support(base, shape, pixel)).then_some(*value)
+        })
+        .collect::<Vec<_>>();
+    if values.is_empty() {
+        return Err(MinorCycleError::EmptyValidSupport);
+    }
+    values.sort_by(f64::total_cmp);
+    let median = values[values.len() / 2];
+    for value in &mut values {
+        *value = (*value - median).abs();
+    }
+    values.sort_by(f64::total_cmp);
+    Ok(1.482_602_218_505_602 * values[values.len() / 2])
+}
+
 #[derive(Debug)]
 struct ScaleKernel {
     scale_px: f64,
@@ -970,7 +1119,7 @@ struct MultiscaleCandidate {
     score: f64,
 }
 
-fn build_scale_kernels(scales_px: &[f64]) -> Vec<ScaleKernel> {
+fn build_scale_kernels(scales_px: &[f64], small_scale_bias: f64) -> Vec<ScaleKernel> {
     let largest = scales_px.last().copied().unwrap_or(0.0);
     scales_px
         .iter()
@@ -1000,7 +1149,7 @@ fn build_scale_kernels(scales_px: &[f64]) -> Vec<ScaleKernel> {
             let bias = if largest == 0.0 {
                 1.0
             } else {
-                1.0 - 0.6 * scale_px / largest
+                1.0 - small_scale_bias * scale_px / largest
             };
             ScaleKernel {
                 scale_px,
@@ -1286,8 +1435,11 @@ fn minor_cycle_evidence_id(
     iterations: usize,
     total_flux: f64,
     final_peak_flux: f64,
+    noise_rms: Option<f64>,
+    effective_threshold: f64,
     stop_reason: MinorCycleStopReason,
     clark: Option<ClarkApproximation>,
+    clark_refreshes: usize,
 ) -> MinorCycleEvidenceId {
     let mut encoder = Encoder::new(MINOR_CYCLE_EVIDENCE_DOMAIN, MINOR_CYCLE_EVIDENCE_VERSION);
     encoder.identity(authority.as_bytes());
@@ -1300,17 +1452,28 @@ fn minor_cycle_evidence_id(
     match controls.algorithm() {
         ReconstructionAlgorithm::Hogbom => encoder.u8(0),
         ReconstructionAlgorithm::Clark => encoder.u8(1),
-        ReconstructionAlgorithm::Multiscale { scales_px } => {
+        ReconstructionAlgorithm::Multiscale {
+            scales_px,
+            small_scale_bias,
+        } => {
             encoder.u8(2);
             encoder.usize(scales_px.len());
             for scale in scales_px {
                 encoder.u64(crate::canonical_f64_bits(*scale));
             }
+            encoder.u64(crate::canonical_f64_bits(*small_scale_bias));
         }
         _ => unreachable!("minor-cycle programs admit only implemented solvers"),
     }
     encoder.u64(crate::canonical_f64_bits(controls.gain()));
     encoder.u64(crate::canonical_f64_bits(controls.threshold()));
+    match controls.noise_sigma() {
+        Some(sigma) => {
+            encoder.u8(1);
+            encoder.u64(crate::canonical_f64_bits(sigma));
+        }
+        None => encoder.u8(0),
+    }
     encoder.usize(controls.max_iterations());
     encoder.u64(crate::canonical_f64_bits(controls.maximum_model_update()));
     match controls.component_sequence_limit() {
@@ -1323,6 +1486,14 @@ fn minor_cycle_evidence_id(
     encoder.usize(iterations);
     encoder.u64(crate::canonical_f64_bits(total_flux));
     encoder.u64(crate::canonical_f64_bits(final_peak_flux));
+    match noise_rms {
+        Some(rms) => {
+            encoder.u8(1);
+            encoder.u64(crate::canonical_f64_bits(rms));
+        }
+        None => encoder.u8(0),
+    }
+    encoder.u64(crate::canonical_f64_bits(effective_threshold));
     encoder.u8(match stop_reason {
         MinorCycleStopReason::ThresholdReached => 0,
         MinorCycleStopReason::IterationBound => 1,
@@ -1339,6 +1510,7 @@ fn minor_cycle_evidence_id(
             ));
         }
     }
+    encoder.usize(clark_refreshes);
     MinorCycleEvidenceId(LogicalIdentity::from_sha256(encoder.finish()))
 }
 
@@ -1350,7 +1522,7 @@ mod tests {
 
     #[test]
     fn multiscale_kernels_are_compact_and_unit_normalized() {
-        let kernels = build_scale_kernels(&[0.0, 3.0]);
+        let kernels = build_scale_kernels(&[0.0, 3.0], 0.6);
         assert_eq!(kernels[0].samples.as_slice(), &[([0, 0], 1.0)]);
         assert!(
             (kernels[1]

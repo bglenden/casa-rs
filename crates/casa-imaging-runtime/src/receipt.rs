@@ -5684,7 +5684,11 @@ fn project_reconstruction(fields: &mut BTreeMap<String, String>, problem: &Compi
         "reconstruction.algorithm.kind",
         reconstruction_algorithm(algorithm),
     );
-    if let ReconstructionAlgorithm::Multiscale { scales_px } = algorithm {
+    if let ReconstructionAlgorithm::Multiscale {
+        scales_px,
+        small_scale_bias,
+    } = algorithm
+    {
         for (index, scale) in scales_px.iter().enumerate() {
             evidence_field(
                 fields,
@@ -5692,6 +5696,11 @@ fn project_reconstruction(fields: &mut BTreeMap<String, String>, problem: &Compi
                 stable_float(*scale),
             );
         }
+        evidence_field(
+            fields,
+            "reconstruction.algorithm.small_scale_bias",
+            stable_float(*small_scale_bias),
+        );
     }
     let controls = reconstruction.controls();
     evidence_field(
@@ -5714,6 +5723,27 @@ fn project_reconstruction(fields: &mut BTreeMap<String, String>, problem: &Compi
             fields,
             "reconstruction.controls.maximum_model_update",
             stable_float(bound),
+        );
+    }
+    if let Some(limit) = controls.cycle_iteration_limit() {
+        evidence_field(
+            fields,
+            "reconstruction.controls.cycle_iteration_limit",
+            limit,
+        );
+    }
+    if let Some(limit) = controls.maximum_major_cycles() {
+        evidence_field(
+            fields,
+            "reconstruction.controls.maximum_major_cycles",
+            limit,
+        );
+    }
+    if let Some(sigma) = controls.noise_sigma() {
+        evidence_field(
+            fields,
+            "reconstruction.controls.noise_sigma",
+            stable_float(sigma),
         );
     }
     for (index, coordinate) in reconstruction

@@ -1018,7 +1018,10 @@ fn multiscale_order_and_duplicate_scales_do_not_change_scientific_identity() {
             science(),
             ReconstructionContract::new(
                 ReconstructionBasis::Constant,
-                ReconstructionAlgorithm::Multiscale { scales_px },
+                ReconstructionAlgorithm::Multiscale {
+                    scales_px,
+                    small_scale_bias: 0.6,
+                },
                 ReconstructionControls::new(100, 0.1, 0.0),
                 PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
             ),

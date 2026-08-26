@@ -65,6 +65,8 @@ pub enum ContinuumAlgorithm {
     Multiscale {
         /// Canonical scale sizes in image pixels.
         scales_px: Vec<f64>,
+        /// CASA small-scale preference in `[0, 1]`.
+        small_scale_bias: f64,
     },
     /// Request multi-term multi-frequency synthesis.
     Mtmfs {
@@ -186,6 +188,12 @@ pub struct ContinuumImagingRequest {
     pub weighting: ContinuumWeighting,
     /// Minor-cycle iteration limit.
     pub iterations: usize,
+    /// Maximum component updates accepted in one minor cycle.
+    pub cycle_iterations: usize,
+    /// Maximum number of major cycles admitted by the controller contract.
+    pub maximum_major_cycles: usize,
+    /// Optional robust-RMS stopping multiplier.
+    pub noise_sigma: Option<f64>,
     /// Minor-cycle gain.
     pub gain: f64,
     /// Absolute stopping threshold in Jy/beam.
@@ -468,6 +476,11 @@ fn validate_request(request: &ContinuumImagingRequest) -> Result<(), crate::Appl
         || !request.threshold_jy.is_finite()
         || !request.psf_cutoff.is_finite()
         || request.psf_cutoff <= 0.0
+        || (request.algorithm != ContinuumAlgorithm::Dirty
+            && (request.cycle_iterations == 0 || request.maximum_major_cycles == 0))
+        || request
+            .noise_sigma
+            .is_some_and(|sigma| !sigma.is_finite() || sigma < 0.0)
     {
         return Err(boxed(
             "native continuum geometry and controls must be finite and positive",
@@ -618,10 +631,14 @@ fn specification(
             ReconstructionBasis::Constant,
             ReconstructionAlgorithm::Clark,
         ),
-        ContinuumAlgorithm::Multiscale { scales_px } => (
+        ContinuumAlgorithm::Multiscale {
+            scales_px,
+            small_scale_bias,
+        } => (
             ReconstructionBasis::Constant,
             ReconstructionAlgorithm::Multiscale {
                 scales_px: scales_px.clone(),
+                small_scale_bias: *small_scale_bias,
             },
         ),
         ContinuumAlgorithm::Mtmfs { terms } => (
@@ -663,8 +680,16 @@ fn specification(
             if algorithm == ReconstructionAlgorithm::Dirty {
                 ReconstructionControls::new(0, 1.0, 0.0)
             } else {
-                ReconstructionControls::new(request.iterations, request.gain, request.threshold_jy)
-                    .with_maximum_model_update(1.0e30)
+                let controls = ReconstructionControls::new(
+                    request.iterations,
+                    request.gain,
+                    request.threshold_jy,
+                )
+                .with_maximum_model_update(1.0e30)
+                .with_cycle_limits(request.cycle_iterations, request.maximum_major_cycles);
+                request
+                    .noise_sigma
+                    .map_or(controls, |sigma| controls.with_noise_sigma(sigma))
             },
             PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
         ),

@@ -68,6 +68,7 @@ fn application_request(config: &CliConfig) -> ContinuumImagingRequest {
                         .copied()
                         .map(f64::from)
                         .collect(),
+                    small_scale_bias: f64::from(config.small_scale_bias),
                 },
                 Deconvolver::Mtmfs => ContinuumAlgorithm::Mtmfs {
                     terms: config.nterms,
@@ -83,6 +84,9 @@ fn application_request(config: &CliConfig) -> ContinuumImagingRequest {
             }
         },
         iterations: config.niter,
+        cycle_iterations: config.minor_cycle_length.min(config.niter.max(1)),
+        maximum_major_cycles: config.nmajor.unwrap_or(1),
+        noise_sigma: (config.nsigma > 0.0).then_some(f64::from(config.nsigma)),
         gain: f64::from(config.gain),
         threshold_jy: f64::from(config.threshold_jy),
         psf_cutoff: config.psf_cutoff,
@@ -205,8 +209,6 @@ fn unsupported_native_controls(config: &CliConfig) -> bool {
             .is_some_and(|plane| !plane.eq_ignore_ascii_case("I"))
         || config.uv_taper.is_some()
         || config.nmajor.is_some()
-        || config.nsigma != 0.0
-        || config.minor_cycle_length != 1000
         || config.cyclefactor != 1.0
         || config.min_psf_fraction != 0.05
         || config.max_psf_fraction != 0.8

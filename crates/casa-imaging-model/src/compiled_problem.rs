@@ -397,6 +397,8 @@ pub enum ReconstructionAlgorithm {
     Multiscale {
         /// Canonical requested scale sizes.
         scales_px: Vec<f64>,
+        /// CASA small-scale preference in `[0, 1]`.
+        small_scale_bias: f64,
     },
     /// Multi-term multi-frequency synthesis minor cycle.
     Mtmfs,
@@ -409,6 +411,9 @@ pub struct ReconstructionControls {
     gain: f64,
     threshold_jy_per_beam: f64,
     maximum_model_update: Option<f64>,
+    cycle_iteration_limit: Option<usize>,
+    maximum_major_cycles: Option<usize>,
+    noise_sigma: Option<f64>,
 }
 
 impl ReconstructionControls {
@@ -420,6 +425,9 @@ impl ReconstructionControls {
             gain,
             threshold_jy_per_beam,
             maximum_model_update: None,
+            cycle_iteration_limit: None,
+            maximum_major_cycles: None,
+            noise_sigma: None,
         }
     }
 
@@ -427,6 +435,25 @@ impl ReconstructionControls {
     #[must_use]
     pub const fn with_maximum_model_update(mut self, maximum_model_update: f64) -> Self {
         self.maximum_model_update = Some(maximum_model_update);
+        self
+    }
+
+    /// Bind the per-cycle iteration bound and total major-cycle bound.
+    #[must_use]
+    pub const fn with_cycle_limits(
+        mut self,
+        cycle_iteration_limit: usize,
+        maximum_major_cycles: usize,
+    ) -> Self {
+        self.cycle_iteration_limit = Some(cycle_iteration_limit);
+        self.maximum_major_cycles = Some(maximum_major_cycles);
+        self
+    }
+
+    /// Bind an RMS-multiple stopping threshold in addition to the absolute threshold.
+    #[must_use]
+    pub const fn with_noise_sigma(mut self, noise_sigma: f64) -> Self {
+        self.noise_sigma = Some(noise_sigma);
         self
     }
 
@@ -452,6 +479,24 @@ impl ReconstructionControls {
     #[must_use]
     pub const fn maximum_model_update(self) -> Option<f64> {
         self.maximum_model_update
+    }
+
+    /// Return the explicit per-cycle iteration bound.
+    #[must_use]
+    pub const fn cycle_iteration_limit(self) -> Option<usize> {
+        self.cycle_iteration_limit
+    }
+
+    /// Return the explicit total major-cycle bound.
+    #[must_use]
+    pub const fn maximum_major_cycles(self) -> Option<usize> {
+        self.maximum_major_cycles
+    }
+
+    /// Return the optional robust-RMS threshold multiplier.
+    #[must_use]
+    pub const fn noise_sigma(self) -> Option<f64> {
+        self.noise_sigma
     }
 }
 
@@ -507,7 +552,7 @@ impl ReconstructionContract {
 
     fn canonicalize(mut self) -> Result<Self, CompileProblemError> {
         self.polarization = self.polarization.canonicalize()?;
-        if let ReconstructionAlgorithm::Multiscale { scales_px } = &mut self.algorithm {
+        if let ReconstructionAlgorithm::Multiscale { scales_px, .. } = &mut self.algorithm {
             for scale in scales_px.iter_mut() {
                 if *scale == 0.0 {
                     *scale = 0.0;
@@ -1681,7 +1726,22 @@ fn validate_reconstruction(
             reason: "maximum model update must be finite and positive when supplied",
         });
     }
-    if let ReconstructionAlgorithm::Multiscale { scales_px } = &contract.algorithm {
+    if contract.controls.cycle_iteration_limit == Some(0)
+        || contract.controls.maximum_major_cycles == Some(0)
+        || contract
+            .controls
+            .noise_sigma
+            .is_some_and(|sigma| !sigma.is_finite() || sigma < 0.0)
+    {
+        return Err(CompileProblemError::InvalidCapabilityCombination {
+            reason: "cycle limits must be positive and nsigma must be finite and non-negative",
+        });
+    }
+    if let ReconstructionAlgorithm::Multiscale {
+        scales_px,
+        small_scale_bias,
+    } = &contract.algorithm
+    {
         if scales_px.is_empty()
             || scales_px
                 .iter()
@@ -1689,6 +1749,11 @@ fn validate_reconstruction(
         {
             return Err(CompileProblemError::InvalidCapabilityCombination {
                 reason: "multiscale reconstruction requires finite non-negative explicit scales",
+            });
+        }
+        if !small_scale_bias.is_finite() || !(0.0..=1.0).contains(small_scale_bias) {
+            return Err(CompileProblemError::InvalidCapabilityCombination {
+                reason: "multiscale small-scale bias must be finite and in [0, 1]",
             });
         }
     }
@@ -2076,12 +2141,16 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
         ReconstructionAlgorithm::Dirty => encoder.u8(0),
         ReconstructionAlgorithm::Hogbom => encoder.u8(1),
         ReconstructionAlgorithm::Clark => encoder.u8(2),
-        ReconstructionAlgorithm::Multiscale { scales_px } => {
+        ReconstructionAlgorithm::Multiscale {
+            scales_px,
+            small_scale_bias,
+        } => {
             encoder.u8(3);
             encoder.usize(scales_px.len());
             for scale in scales_px {
                 encoder.f64(*scale);
             }
+            encoder.f64(*small_scale_bias);
         }
         ReconstructionAlgorithm::Mtmfs => encoder.u8(4),
     }
@@ -2092,6 +2161,25 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
         Some(bound) => {
             encoder.u8(1);
             encoder.f64(bound);
+        }
+        None => encoder.u8(0),
+    }
+    for value in [
+        reconstruction.controls.cycle_iteration_limit,
+        reconstruction.controls.maximum_major_cycles,
+    ] {
+        match value {
+            Some(value) => {
+                encoder.u8(1);
+                encoder.usize(value);
+            }
+            None => encoder.u8(0),
+        }
+    }
+    match reconstruction.controls.noise_sigma {
+        Some(value) => {
+            encoder.u8(1);
+            encoder.f64(value);
         }
         None => encoder.u8(0),
     }
