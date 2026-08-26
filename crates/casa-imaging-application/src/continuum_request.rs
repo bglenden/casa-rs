@@ -153,6 +153,8 @@ pub enum ContinuumStopReason {
     IterationBound,
     /// The accepted model-update envelope required a fresh major cycle.
     StalenessBound,
+    /// The multiscale component sequence diverged after prior progress.
+    MultiscaleDivergence,
 }
 
 /// Canonical application input for one MeasurementSet-backed continuum run.
@@ -255,6 +257,7 @@ pub fn execute_continuum(
             MinorCycleStopReason::ThresholdReached => ContinuumStopReason::ThresholdReached,
             MinorCycleStopReason::IterationBound => ContinuumStopReason::IterationBound,
             MinorCycleStopReason::StalenessBound => ContinuumStopReason::StalenessBound,
+            MinorCycleStopReason::MultiscaleDivergence => ContinuumStopReason::MultiscaleDivergence,
         }),
         product_names,
         outcome,

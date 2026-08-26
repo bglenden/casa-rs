@@ -25,6 +25,7 @@ pub(super) fn execute(config: &CliConfig) -> Result<RunSummary, String> {
         ContinuumStopReason::ThresholdReached => CleanStopReason::GlobalThresholdReached,
         ContinuumStopReason::IterationBound => CleanStopReason::IterationLimitReached,
         ContinuumStopReason::StalenessBound => CleanStopReason::MajorCycleLimitReached,
+        ContinuumStopReason::MultiscaleDivergence => CleanStopReason::DivergenceDetected,
     });
     Ok(RunSummary {
         warnings: Vec::new(),

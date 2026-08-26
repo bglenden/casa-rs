@@ -373,6 +373,8 @@ pub enum MinorCycleStopReason {
     /// the frozen approximation beyond its validity envelope. The rejected
     /// candidate left no trace in the delta or evidence.
     StalenessBound,
+    /// A multiscale candidate grew by more than 50 percent after accepted progress.
+    MultiscaleDivergence,
 }
 
 /// Owner-minted evidence of one bounded Högbom solve.
@@ -821,6 +823,7 @@ pub fn run_minor_cycle(
     let mut iterations = 0_usize;
     let mut total_flux = 0.0_f64;
     let mut final_peak_flux = 0.0_f64;
+    let mut initial_multiscale_component = None::<f64>;
     let has_valid_support = (0..cells).any(|index| {
         let pixel = plane_pixel(index, shape);
         mask.contains(pixel) && valid_support(base, shape, pixel)
@@ -865,7 +868,7 @@ pub fn run_minor_cycle(
                 .ok_or(MinorCycleError::EmptyValidSupport)?;
                 let strength = residual[peak_index] / psf_peak;
                 let needs_refresh = clark_state.as_ref().is_some_and(|state| {
-                    strength.abs() > effective_threshold && strength.abs() <= state.cutoff
+                    clark_requires_refresh(strength, effective_threshold, state.cutoff)
                 });
                 if !needs_refresh {
                     break (peak_index, strength, None);
@@ -901,6 +904,16 @@ pub fn run_minor_cycle(
         let peak_pixel = plane_pixel(peak_index, shape);
         if !strength.is_finite() {
             return Err(MinorCycleError::GeneratedNonfinite);
+        }
+        if scale_index.is_some() {
+            match initial_multiscale_component {
+                Some(initial) if multiscale_diverged(initial, strength, iterations) => {
+                    stop_reason = Some(MinorCycleStopReason::MultiscaleDivergence);
+                    break;
+                }
+                None => initial_multiscale_component = Some(strength.abs()),
+                Some(_) => {}
+            }
         }
         final_peak_flux = strength.abs();
         // The casacore HOGBOM cleaner stops only when the normalized peak is
@@ -1154,6 +1167,10 @@ fn refresh_point_residual(
     Ok(())
 }
 
+fn clark_requires_refresh(strength: f64, threshold: f64, active_cutoff: f64) -> bool {
+    strength.abs() > threshold && strength.abs() <= active_cutoff
+}
+
 fn robust_masked_rms(
     residual: &[f64],
     shape: [usize; 2],
@@ -1317,7 +1334,10 @@ fn select_multiscale_candidate(
                 index,
                 scale_index,
                 strength,
-                score: strength.abs() * kernel.bias,
+                // MatrixCleaner ranks the scale-normalized dirty response by
+                // `bias * dirty * strength`; comparing absolute scores keeps
+                // signed component recovery separate from scale selection.
+                score: (dirty * strength * kernel.bias).abs(),
             };
             if best
                 .as_ref()
@@ -1328,6 +1348,10 @@ fn select_multiscale_candidate(
         }
     }
     best
+}
+
+fn multiscale_diverged(initial: f64, current: f64, iterations: usize) -> bool {
+    iterations > 0 && current.abs() > initial.abs() * 1.5
 }
 
 fn multiscale_normalization(
@@ -1583,6 +1607,7 @@ fn minor_cycle_evidence_id(
         MinorCycleStopReason::ThresholdReached => 0,
         MinorCycleStopReason::IterationBound => 1,
         MinorCycleStopReason::StalenessBound => 2,
+        MinorCycleStopReason::MultiscaleDivergence => 3,
     });
     match clark {
         None => encoder.u8(0),
@@ -1603,7 +1628,38 @@ fn minor_cycle_evidence_id(
 mod tests {
     use num_complex::Complex64;
 
-    use super::{build_scale_kernels, subtract_psf};
+    use super::{build_scale_kernels, clark_requires_refresh, multiscale_diverged, subtract_psf};
+
+    #[test]
+    fn multiscale_divergence_boundary_requires_prior_progress_and_exceeds_one_half() {
+        assert!(!multiscale_diverged(2.0, 4.0, 0));
+        assert!(!multiscale_diverged(2.0, 3.0, 1));
+        assert!(multiscale_diverged(2.0, 3.000_000_000_1, 1));
+    }
+
+    #[test]
+    fn clark_cutoff_handoff_refreshes_the_exact_full_residual() {
+        assert!(!clark_requires_refresh(0.5, 0.5, 0.75));
+        assert!(clark_requires_refresh(0.6, 0.5, 0.75));
+        assert!(!clark_requires_refresh(0.8, 0.5, 0.75));
+
+        let shape = [3, 3];
+        let dirty = vec![Complex64::new(0.0, 0.0); 9];
+        let mut dirty = dirty;
+        dirty[0] = Complex64::new(3.0, 0.0);
+        let mut psf = vec![Complex64::new(0.0, 0.0); 9];
+        psf[4] = Complex64::new(1.0, 0.0);
+        psf[3] = Complex64::new(0.25, 0.0);
+        let mut refreshed = dirty.iter().map(|value| value.re).collect::<Vec<_>>();
+        subtract_psf(&mut refreshed, &psf, shape, [0, 0], [1, 1], 2.0)
+            .expect("first exact full subtraction");
+        subtract_psf(&mut refreshed, &psf, shape, [2, 2], [1, 1], -1.5)
+            .expect("second exact full subtraction");
+        assert_eq!(
+            refreshed,
+            vec![1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.375, 1.5]
+        );
+    }
 
     #[test]
     fn multiscale_kernels_are_compact_and_unit_normalized() {

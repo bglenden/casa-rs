@@ -748,6 +748,7 @@ fn minor_cycle_delta_composes_with_the_next_major_cycle_reconciliation() {
             evidence.stop_reason(),
             MinorCycleStopReason::IterationBound
                 | MinorCycleStopReason::StalenessBound
+                | MinorCycleStopReason::MultiscaleDivergence
                 | MinorCycleStopReason::ThresholdReached
         ),
         "the solve stops explicitly"
