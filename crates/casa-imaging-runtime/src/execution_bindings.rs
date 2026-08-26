@@ -108,6 +108,12 @@ digest_identity!(
 );
 
 impl ArtifactIdentity {
+    /// Bind an artifact to an owner-minted logical content identity.
+    #[must_use]
+    pub const fn from_logical_identity(identity: casa_imaging_model::LogicalIdentity) -> Self {
+        Self(identity.as_bytes())
+    }
+
     pub(crate) const fn from_owner_digest(digest: [u8; 32]) -> Self {
         Self(digest)
     }
@@ -1523,6 +1529,33 @@ impl PhysicalWorkBinding {
         )?;
         binding.validate_product_publication(product_publication)?;
         Ok(binding)
+    }
+
+    /// Bind an independently atomic MeasurementSet `MODEL_DATA` publication.
+    pub fn new_with_model_data_publication(
+        catalog: ImplementationContractCatalog,
+        execution_dag: ExecutionDag,
+        prediction: PlanPrediction,
+        artifacts: Vec<PlannedArtifact>,
+        observation_transaction: ObservationTransactionWork,
+        publication_layouts: PublicationLayoutLedger,
+    ) -> Result<Self, PhysicalWorkBindingError> {
+        if observation_transaction.publication_scope()
+            != crate::ObservationTransactionPublicationScope::ModelDataPublication
+        {
+            return invalid_product_publication(
+                "MODEL_DATA publication requires ModelDataPublication transaction scope",
+            );
+        }
+        Self::with_implementation_contract(
+            ImplementationContractCommitment::from_catalog(&catalog, &execution_dag)?,
+            execution_dag,
+            prediction,
+            artifacts,
+            observation_transaction,
+            publication_layouts,
+            ProductPublicationAuthority::None,
+        )
     }
 
     fn validate_product_publication(
@@ -4852,6 +4885,7 @@ fn encode_observation_transaction(
     encoder.u8(match transaction.work().publication_scope() {
         crate::ObservationTransactionPublicationScope::ReconstructionOnly => 0,
         crate::ObservationTransactionPublicationScope::ProductPublication => 1,
+        crate::ObservationTransactionPublicationScope::ModelDataPublication => 2,
     });
     encoder.digest(transaction.problem_id().as_bytes());
     encoder.digest(transaction.product_graph_id().as_bytes());

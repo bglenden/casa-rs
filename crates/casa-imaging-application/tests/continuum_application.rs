@@ -502,6 +502,17 @@ fn application_commits_exact_final_prediction_to_model_data() {
         .visibility_products
         .expect("final visibility completion");
     assert_eq!(visibility.sample_count(), 1);
+    let model_receipt = result
+        .outcome
+        .output
+        .model_data_receipt
+        .as_ref()
+        .expect("MODEL_DATA commit is independently receipted");
+    assert_eq!(
+        model_receipt.observation_transaction_publication_scope(),
+        casa_imaging_runtime::ObservationTransactionPublicationScope::ModelDataPublication
+    );
+    assert_eq!(model_receipt.publication_layout_count(), 1);
 
     let reopened = MeasurementSet::open(measurement_set).expect("reopen saved MODEL_DATA");
     let model_column = reopened

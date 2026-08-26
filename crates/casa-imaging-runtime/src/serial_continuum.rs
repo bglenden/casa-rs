@@ -113,6 +113,12 @@ impl VisibilityProductStaging {
         }
     }
 
+    /// Return whether this staging handle owns a private `MODEL_DATA` transaction.
+    #[must_use]
+    pub const fn has_model_column(&self) -> bool {
+        self.model_column.is_some()
+    }
+
     /// Publish staged MODEL_DATA after all conventional products are visible.
     pub fn commit_model_column(&self) -> io::Result<()> {
         let completion = self.completion()?;

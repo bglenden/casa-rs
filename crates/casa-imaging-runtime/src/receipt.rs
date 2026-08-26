@@ -2388,6 +2388,7 @@ impl PlanProjection {
 enum ObservationTransactionPublicationScopeProjection {
     ReconstructionOnly,
     ProductPublication,
+    ModelDataPublication,
 }
 
 impl ObservationTransactionPublicationScopeProjection {
@@ -2399,6 +2400,9 @@ impl ObservationTransactionPublicationScopeProjection {
             crate::ObservationTransactionPublicationScope::ProductPublication => {
                 Self::ProductPublication
             }
+            crate::ObservationTransactionPublicationScope::ModelDataPublication => {
+                Self::ModelDataPublication
+            }
         }
     }
 
@@ -2409,6 +2413,9 @@ impl ObservationTransactionPublicationScopeProjection {
             }
             Self::ProductPublication => {
                 crate::ObservationTransactionPublicationScope::ProductPublication
+            }
+            Self::ModelDataPublication => {
+                crate::ObservationTransactionPublicationScope::ModelDataPublication
             }
         }
     }
@@ -4721,6 +4728,19 @@ fn validate_plan_projection(
         }
         ObservationTransactionPublicationScopeProjection::ProductPublication => {
             require_integrity(product_participants.as_slice() == publication_members)?;
+        }
+        ObservationTransactionPublicationScopeProjection::ModelDataPublication => {
+            let model_data_participants = plan
+                .publication_layouts
+                .iter()
+                .filter(|layout| {
+                    matches!(
+                        layout.participant,
+                        PublicationParticipantProjection::ModelData { .. }
+                    )
+                })
+                .count();
+            require_integrity(product_participants.is_empty() && model_data_participants == 1)?;
         }
     }
     for layout in &plan.publication_layouts {

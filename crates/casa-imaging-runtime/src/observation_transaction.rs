@@ -30,6 +30,8 @@ pub enum ObservationTransactionPublicationScope {
     ReconstructionOnly,
     /// Stage and atomically publish every required Product Graph member.
     ProductPublication,
+    /// Atomically replace only the requested MeasurementSet `MODEL_DATA` generation.
+    ModelDataPublication,
 }
 
 /// Exact execution-DAG events that implement one observation transaction.
@@ -82,6 +84,25 @@ impl ObservationTransactionWork {
             final_reconciliation,
             product_staging: BTreeSet::new(),
             model_column_staging,
+            commit,
+        }
+    }
+
+    /// Name every checkpoint for one independently atomic `MODEL_DATA` replacement.
+    #[must_use]
+    pub const fn new_model_data_publication(
+        initial_consistency_check: WorkNodeId,
+        final_reconciliation: WorkNodeId,
+        model_column_staging: WorkNodeId,
+        commit: WorkNodeId,
+    ) -> Self {
+        Self {
+            publication_scope: ObservationTransactionPublicationScope::ModelDataPublication,
+            initial_consistency_check,
+            observation_reads: BTreeSet::new(),
+            final_reconciliation,
+            product_staging: BTreeSet::new(),
+            model_column_staging: Some(model_column_staging),
             commit,
         }
     }
@@ -249,6 +270,11 @@ pub(crate) fn bind_observation_transaction(
                 ));
             }
         }
+        ObservationTransactionPublicationScope::ModelDataPublication => {
+            if !declared_products.is_empty() {
+                return invalid("MODEL_DATA transaction declares conventional products");
+            }
+        }
     }
     let expected_model_data = contract
         .write_set()
@@ -323,10 +349,21 @@ pub(crate) fn bind_observation_transaction(
                 return invalid("product publication layout is empty");
             }
         }
+        ObservationTransactionPublicationScope::ModelDataPublication => {
+            if !work.product_staging.is_empty() || work.model_column_staging.is_none() {
+                return invalid("MODEL_DATA publication requires exactly model-column staging");
+            }
+        }
     }
+    let phase_model_columns =
+        if work.publication_scope == ObservationTransactionPublicationScope::ModelDataPublication {
+            contract.write_set().model_columns().len()
+        } else {
+            0
+        };
     work.observation_reads = validate_transaction_nodes(
         contract.read_set().sources().len(),
-        contract.write_set().model_columns().len(),
+        phase_model_columns,
         dag.nodes(),
         &work,
     )?;
@@ -366,7 +403,9 @@ fn validate_transaction_nodes(
     let initial_completions = completion_events(initial);
 
     let observation_reads = derive_observation_reads(nodes, initial, &work.commit)?;
-    if observation_reads.is_empty() {
+    if observation_reads.is_empty()
+        && work.publication_scope != ObservationTransactionPublicationScope::ModelDataPublication
+    {
         return invalid("observation read event set is empty");
     }
     let read_nodes =
@@ -413,7 +452,7 @@ fn validate_transaction_nodes(
     match (model_column_sources, &work.model_column_staging) {
         (0, None) => {}
         (0, Some(_)) => return invalid("read-only transaction declares model-column staging"),
-        (_, None) => {}
+        (_, None) => return invalid("write transaction omits model-column staging"),
         (_, Some(model_id)) => {
             let model = require_node(nodes, model_id, "model-column staging")?;
             require_kind(model, WorkKind::Writeback, "model-column staging")?;
