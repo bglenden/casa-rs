@@ -1329,6 +1329,16 @@ impl ExecutionReceiptStore {
         }
     }
 
+    fn persist_checkpoint(&self, body: &ReceiptBody) -> Result<(), ReceiptError> {
+        let _mutation = self
+            .state
+            .mutation
+            .lock()
+            .map_err(|_| ReceiptError::InvalidStore)?;
+        let bytes = encode_document(body)?;
+        atomic_write_checkpoint(&self.receipt_path(body.attempt()), &bytes)
+    }
+
     fn prepare_publication<'store>(
         &'store self,
         prepared: &ReceiptBody,
@@ -3929,7 +3939,7 @@ impl<'store> ReceiptRecorder<'store> {
 
     fn checkpoint(&mut self) -> Result<(), ReceiptError> {
         self.body.revision = self.body.revision.saturating_add(1);
-        self.store.persist(&self.body, false)
+        self.store.persist_checkpoint(&self.body)
     }
 
     fn finish_node(
@@ -5451,6 +5461,33 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), ReceiptError> {
         source: error.error,
     })?;
     sync_directory(parent)
+}
+
+/// Publish an observable in-progress checkpoint without forcing it through
+/// stable storage. The initial, terminal, and publication-prepared receipts
+/// retain the durable write path; node/fence progress is telemetry and is
+/// superseded by the terminal receipt in the ordinary successful case.
+fn atomic_write_checkpoint(path: &Path, bytes: &[u8]) -> Result<(), ReceiptError> {
+    let parent = path.parent().ok_or(ReceiptError::InvalidStore)?;
+    let mut temporary = tempfile::Builder::new()
+        .prefix(RECEIPT_STAGING_PREFIX)
+        .suffix(RECEIPT_STAGING_SUFFIX)
+        .tempfile_in(parent)
+        .map_err(|source| ReceiptError::Io {
+            action: "create receipt checkpoint staging file",
+            source,
+        })?;
+    temporary
+        .write_all(bytes)
+        .map_err(|source| ReceiptError::Io {
+            action: "write receipt checkpoint staging file",
+            source,
+        })?;
+    temporary.persist(path).map_err(|error| ReceiptError::Io {
+        action: "publish execution receipt checkpoint",
+        source: error.error,
+    })?;
+    Ok(())
 }
 
 fn atomic_create(path: &Path, bytes: &[u8]) -> Result<(), ReceiptError> {

@@ -4111,23 +4111,13 @@ fn detect_performance_cpu_cores() -> Option<u64> {
 
 #[cfg(target_os = "macos")]
 fn detect_unified_metal_device() -> bool {
-    let hardware_support = Command::new("/usr/sbin/system_profiler")
-        .args(["SPDisplaysDataType", "-json"])
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .is_some_and(|output| String::from_utf8_lossy(&output.stdout).contains("spdisplays_metal"));
     let (process_access, has_unified_memory) = detect_process_metal_access();
-    metal_inventory_available(hardware_support, process_access, has_unified_memory)
+    metal_inventory_available(process_access, has_unified_memory)
 }
 
 #[cfg(any(target_os = "macos", test))]
-fn metal_inventory_available(
-    hardware_support: bool,
-    process_access: bool,
-    has_unified_memory: bool,
-) -> bool {
-    hardware_support && process_access && has_unified_memory
+fn metal_inventory_available(process_access: bool, has_unified_memory: bool) -> bool {
+    process_access && has_unified_memory
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
