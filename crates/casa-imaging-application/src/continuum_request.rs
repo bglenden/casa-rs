@@ -851,6 +851,7 @@ fn specification(
                 ProductKind::Model,
                 ProductKind::RestoredImage,
                 ProductKind::SumWeights,
+                ProductKind::Mask,
             ],
             ProductNormalization::UnitResponse,
             match request.beam_policy {

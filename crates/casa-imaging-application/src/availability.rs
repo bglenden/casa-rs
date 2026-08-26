@@ -202,5 +202,6 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
             | RequiredCapability::Product(ProductKind::Model)
             | RequiredCapability::Product(ProductKind::RestoredImage)
             | RequiredCapability::Product(ProductKind::SumWeights)
+            | RequiredCapability::Product(ProductKind::Mask)
     )
 }

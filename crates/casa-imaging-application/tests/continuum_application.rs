@@ -21,7 +21,7 @@ use casa_types::{
 };
 use ndarray::ArrayD;
 
-const PRODUCT_SUFFIXES: [&str; 5] = [".psf", ".residual", ".model", ".image", ".sumwt"];
+const PRODUCT_SUFFIXES: [&str; 6] = [".psf", ".residual", ".model", ".image", ".sumwt", ".mask"];
 
 static EXECUTION_LOCK: Mutex<()> = Mutex::new(());
 
@@ -539,8 +539,8 @@ fn application_materializes_static_and_auto_masks_at_the_normal_state_boundary()
         ContinuumAlgorithm::Hogbom,
     );
     static_request.mask = ContinuumMask::Boxes(vec![ContinuumMaskBox {
-        blc: [0, 0],
-        trc: [15, 15],
+        blc: [4, 4],
+        trc: [11, 11],
     }]);
     let static_result = execute_continuum(static_request).expect("static-mask solve");
     assert!(
@@ -552,6 +552,13 @@ fn application_materializes_static_and_auto_masks_at_the_normal_state_boundary()
             .auto_mask
             .is_none()
     );
+    let published_mask = PagedImage::<f32>::open(root.path().join("static-mask.mask"))
+        .expect("open published reconstruction mask");
+    let mask_pixels = published_mask
+        .get_slice(&[0, 0, 0, 0], &[16, 16, 1, 1])
+        .expect("read published reconstruction mask");
+    assert_eq!(mask_pixels[[0, 0, 0, 0]], 0.0);
+    assert_eq!(mask_pixels[[8, 8, 0, 0]], 1.0);
 
     let image_root = root.path().join("image-mask-input");
     std::fs::create_dir(&image_root).expect("image-mask fixture directory");

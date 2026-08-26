@@ -303,6 +303,7 @@ where
 
     let (
         scientific,
+        final_reconstruction_mask,
         final_major_receipt,
         minor_cycle,
         major_cycle_count,
@@ -315,7 +316,7 @@ where
                 .implementation()
                 .take_completion()
                 .ok_or_else(|| boxed("dirty execution omitted final major-cycle evidence"))?;
-            (result.into_completion(), None, None, 1, 0, None, None)
+            (result.into_completion(), None, None, None, 1, 0, None, None)
         }
         ReconstructionAlgorithm::Hogbom
         | ReconstructionAlgorithm::Clark
@@ -350,6 +351,7 @@ where
                         .auto_mask
                         .is_some_and(|evidence| evidence.channel_stopped),
                 );
+                let applied_mask = minor.mask().clone();
                 let final_input = minor.into_final_major_input();
                 let resolved = resolve_selected_observation(input.observation.clone())?;
                 let (_, access) = resolved.into_parts();
@@ -450,6 +452,7 @@ where
                 let staging = terminal_staging.expect("terminal pass creates staging");
                 break (
                     completion,
+                    Some(applied_mask),
                     Some(receipt),
                     Some(minor_outcome),
                     cycle + 1,
@@ -465,6 +468,7 @@ where
     publish_products(
         problem,
         scientific,
+        final_reconstruction_mask,
         input.observation,
         runtime,
         publication,
@@ -547,6 +551,7 @@ fn major_cycle_attempt(base: ExecutionAttemptId, ordinal: u32) -> ExecutionAttem
 fn publish_products<S>(
     problem: &CompiledProblem,
     scientific: MajorCycleCompletion,
+    reconstruction_mask: Option<casa_imaging_reconstruction::ReconstructionMask>,
     observation: SelectedObservationResolutionRequest,
     runtime: ApplicationRuntime,
     publication_config: ApplicationPublication<S>,
@@ -556,7 +561,11 @@ where
     S: SerialProductPublicationSink + Send + 'static,
     S::Error: Send + Sync,
 {
-    let sources = ContinuumSourceCatalog::from_major_cycle(problem, &scientific)?;
+    let sources = ContinuumSourceCatalog::from_major_cycle_with_mask(
+        problem,
+        &scientific,
+        reconstruction_mask.as_ref(),
+    )?;
     let authority = ProductGenerationAuthority::bind(problem);
     let planned_products = authority.plan(&sources, &publication_config.controls)?;
 
@@ -600,7 +609,10 @@ where
         ),
         _ => None,
     };
-    let inputs = ContinuumProductInputs::from_major_cycle(problem, &scientific)?;
+    let mut inputs = ContinuumProductInputs::from_major_cycle(problem, &scientific)?;
+    if let Some(mask) = reconstruction_mask.as_ref() {
+        inputs = inputs.with_reconstruction_mask(mask)?;
+    }
     let produced = produce_continuum_members(&planned_products, &inputs)?;
     let sealed = authority.authorize(&planned_products, &produced)?;
     let (physical, publication) = publication_plan.into_parts();

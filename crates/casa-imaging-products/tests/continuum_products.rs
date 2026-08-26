@@ -38,10 +38,10 @@ use casa_imaging_products::{
     fit_restoring_beam, gaussian_beam_image, normalize_plane, produce_continuum_members,
 };
 use casa_imaging_reconstruction::{
-    ExecutableModelProblem, MajorCycleCompletion, MajorCycleOwner, MajorCyclePreparation,
-    ModelGenerationId, ModelLifecycle, SerialMfsSpecification, WeightingAlgorithmState,
-    WeightingError, WeightingExecutionLimits, WeightingPlan, WeightingReplayChunk,
-    WeightingReplaySummary, begin_weighting_generation, plan_weighting,
+    ExecutableModelProblem, MajorCycleCompletion, MajorCycleOwner, MajorCyclePreparation, MaskBox,
+    ModelGenerationId, ModelLifecycle, ReconstructionMask, SerialMfsSpecification,
+    WeightingAlgorithmState, WeightingError, WeightingExecutionLimits, WeightingPlan,
+    WeightingReplayChunk, WeightingReplaySummary, begin_weighting_generation, plan_weighting,
     runtime_adapter::{CompleteDataOwnerResult, prepare_serial_mfs_operator, serial_mfs_workload},
 };
 
@@ -191,7 +191,7 @@ fn continuum_problem_with_policy_and_response(
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
         SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
-        [((SHAPE[0] - 1) / 2) as f64, ((SHAPE[1] - 1) / 2) as f64],
+        [(SHAPE[0] / 2) as f64, (SHAPE[1] / 2) as f64],
         [-1.0e-6, 1.0e-6],
         [[1.0, 0.0], [0.0, 1.0]],
         [180.0, 0.0],
@@ -845,6 +845,62 @@ fn weight_products_plan_and_produce_the_exact_normal_state_sensitivity_plane() {
         .map(|value| *value as f32)
         .collect();
     assert_eq!(weight.payload(), expected);
+}
+
+#[test]
+fn clean_mask_product_is_the_committed_reconstruction_mask_intersected_with_validity() {
+    let problem = continuum_problem(117, &CONTINUUM_PRODUCTS);
+    let round = run_continuum_round(&problem, 118);
+    let normal = round.join.normal_state();
+    let direction = problem.geometry().domains()[0].direction();
+    let mask = ReconstructionMask::from_boxes(
+        problem.problem_id(),
+        normal.input_model_generation(),
+        direction,
+        SHAPE,
+        [MaskBox::new([2, 3], [4, 5]).expect("mask box")],
+    )
+    .expect("reconstruction mask");
+    let catalog =
+        ContinuumSourceCatalog::from_major_cycle_with_mask(&problem, &round.join, Some(&mask))
+            .expect("mask-bound source catalog");
+    let authority = ProductGenerationAuthority::bind(&problem);
+    let planned = authority
+        .plan(&catalog, &ContinuumProductControls::default())
+        .expect("mask-bound plan");
+
+    let unbound_inputs =
+        casa_imaging_products::ContinuumProductInputs::from_major_cycle(&problem, &round.join)
+            .expect("unbound inputs");
+    assert!(matches!(
+        produce_continuum_members(&planned, &unbound_inputs),
+        Err(ProductsError::CommitmentMismatch)
+    ));
+
+    let inputs = unbound_inputs
+        .with_reconstruction_mask(&mask)
+        .expect("mask-bound inputs");
+    let produced = produce_continuum_members(&planned, &inputs).expect("produced");
+    let sealed = authority.authorize(&planned, &produced).expect("sealed");
+    let published_mask = sealed
+        .members()
+        .iter()
+        .find(|member| member.name().starts_with(".mask"))
+        .expect("mask member");
+    let expected = normal
+        .sensitivity()
+        .iter()
+        .enumerate()
+        .map(|(index, sensitivity)| {
+            let selected = mask.support()[index];
+            if selected && sensitivity.is_finite() && *sensitivity > 0.0 {
+                1.0
+            } else {
+                0.0
+            }
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(published_mask.payload(), expected);
 }
 
 #[allow(dead_code)]
