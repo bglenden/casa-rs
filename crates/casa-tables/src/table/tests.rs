@@ -2559,6 +2559,8 @@ fn lazy_disk_open_reads_selected_tiled_array_channel_ranges_without_full_column(
     let reopened = Table::open(TableOptions::new(&root)).expect("open lazy table");
     assert!(!reopened.inner.has_loaded_rows());
     assert!(!reopened.inner.has_loaded_array_column("data"));
+    assert!(!reopened.inner.has_cached_control_metadata());
+    let tile_cache_budget = crate::table_cache_budget_bytes();
 
     let typed = reopened
         .column_accessor("data")
@@ -2578,6 +2580,18 @@ fn lazy_disk_open_reads_selected_tiled_array_channel_ranges_without_full_column(
             710.0, 711.0, 210.0, 211.0, 720.0, 721.0, 220.0, 221.0, 730.0, 731.0, 230.0, 231.0,
         ]
     );
+    assert!(reopened.inner.has_cached_control_metadata());
+    let repeated = reopened
+        .column_accessor("data")
+        .expect("data accessor")
+        .array_cells_2d_channel_range_typed_uncached(&[7, 2], 1, 3)
+        .expect("repeat typed selected channel ranges")
+        .expect("defined selected cells");
+    let SelectedArray2DCells::Float32(repeated) = repeated else {
+        panic!("expected Float32 typed selected cells");
+    };
+    assert_eq!(repeated.values(), typed.values());
+    assert_eq!(crate::table_cache_budget_bytes(), tile_cache_budget);
     assert!(
         !reopened.inner.has_loaded_rows(),
         "selected channel-range reads should not force row materialization"

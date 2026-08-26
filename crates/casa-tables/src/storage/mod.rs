@@ -63,13 +63,12 @@ use self::stman_aipsio::{
     read_stman_array_column_rows, read_stman_file, read_stman_scalar_column,
     read_stman_scalar_column_rows, write_stman_file,
 };
-pub(crate) use self::table_control::RefTableDatContents;
+pub(crate) use self::table_control::{
+    RefTableDatContents, TableDatContents, TableDatResult, read_table_dat_dispatch,
+};
 use self::virtual_engine::{VirtualContext, is_virtual_engine, lookup_engine};
 
-use self::table_control::{
-    TableDatContents, TableDatResult, read_table_dat_dispatch, write_concat_table_dat,
-    write_ref_table_dat, write_table_dat,
-};
+use self::table_control::{write_concat_table_dat, write_ref_table_dat, write_table_dat};
 
 pub(crate) const TABLE_CONTROL_FILE: &str = "table.dat";
 pub(crate) const TABLE_DATA_FILE_PREFIX: &str = "table.f";
@@ -1492,6 +1491,23 @@ impl CompositeStorage {
             });
         };
 
+        self.load_named_required_scalar_column_rows_from_plain(
+            table_path,
+            &table_dat,
+            columns,
+            selected_rows,
+            row_hint,
+        )
+    }
+
+    pub(crate) fn load_named_required_scalar_column_rows_from_plain(
+        &self,
+        table_path: &Path,
+        table_dat: &TableDatContents,
+        columns: &HashSet<&str>,
+        selected_rows: &[usize],
+        row_hint: Option<u64>,
+    ) -> Result<RequiredScalarColumnSnapshot, StorageError> {
         if table_dat
             .column_set
             .data_managers
@@ -1503,7 +1519,7 @@ impl CompositeStorage {
                 .map(|column| {
                     self.load_plain_scalar_column_rows(
                         table_path,
-                        &table_dat,
+                        table_dat,
                         column,
                         selected_rows,
                         row_hint,
@@ -1572,7 +1588,7 @@ impl CompositeStorage {
             }
             let values = self.load_plain_scalar_column_rows(
                 table_path,
-                &table_dat,
+                table_dat,
                 column,
                 selected_rows,
                 row_hint,
@@ -1672,23 +1688,39 @@ impl CompositeStorage {
         }
 
         match read_table_dat_dispatch(&control_path)? {
-            TableDatResult::Plain(table_dat) => {
-                let request = SelectedArray2DChannelRead {
+            TableDatResult::Plain(table_dat) => self
+                .load_array_column_rows_2d_channel_range_typed_from_plain(
+                    table_path,
+                    &table_dat,
                     column,
                     selected_rows,
                     channel_start,
                     channel_count,
-                };
-                self.load_plain_array_column_rows_2d_channel_range_typed(
-                    table_path, &table_dat, request,
-                )
-            }
+                ),
             TableDatResult::Ref(_) | TableDatResult::Concat(_) => {
                 Err(StorageError::FormatMismatch(format!(
                     "typed selected 2-D channel reads require a plain table for column '{column}'"
                 )))
             }
         }
+    }
+
+    pub(crate) fn load_array_column_rows_2d_channel_range_typed_from_plain(
+        &self,
+        table_path: &Path,
+        table_dat: &TableDatContents,
+        column: &str,
+        selected_rows: &[usize],
+        channel_start: usize,
+        channel_count: usize,
+    ) -> Result<Option<SelectedArray2DCells>, StorageError> {
+        let request = SelectedArray2DChannelRead {
+            column,
+            selected_rows,
+            channel_start,
+            channel_count,
+        };
+        self.load_plain_array_column_rows_2d_channel_range_typed(table_path, table_dat, request)
     }
 
     pub(crate) fn load_array_column_rows_1d_typed_with_row_hint(
@@ -1713,19 +1745,32 @@ impl CompositeStorage {
         }
 
         match read_table_dat_dispatch(&control_path)? {
-            TableDatResult::Plain(table_dat) => {
-                let request = SelectedArray1DRead {
-                    column,
-                    selected_rows,
-                };
-                self.load_plain_array_column_rows_1d_typed(table_path, &table_dat, request)
-            }
+            TableDatResult::Plain(table_dat) => self.load_array_column_rows_1d_typed_from_plain(
+                table_path,
+                &table_dat,
+                column,
+                selected_rows,
+            ),
             TableDatResult::Ref(_) | TableDatResult::Concat(_) => {
                 Err(StorageError::FormatMismatch(format!(
                     "typed selected 1-D reads require a plain table for column '{column}'"
                 )))
             }
         }
+    }
+
+    pub(crate) fn load_array_column_rows_1d_typed_from_plain(
+        &self,
+        table_path: &Path,
+        table_dat: &TableDatContents,
+        column: &str,
+        selected_rows: &[usize],
+    ) -> Result<SelectedArray1DCells, StorageError> {
+        let request = SelectedArray1DRead {
+            column,
+            selected_rows,
+        };
+        self.load_plain_array_column_rows_1d_typed(table_path, table_dat, request)
     }
 
     /// Load a PlainTable from table.dat contents and data files.
