@@ -444,7 +444,7 @@ fn prepare(
                     .collect::<Result<Vec<_>, _>>()?,
             },
             ContinuumMask::Image(path) => {
-                reproject_image_mask(&path, &coordinates, direction, request.image_size)?
+                reproject_image_mask(&path, direction, request.image_size)?
             }
             ContinuumMask::AutoMultithresh(controls) => ReconstructionMaskPlan::AutoMultithresh {
                 coordinate: direction,
@@ -635,7 +635,6 @@ fn image_reference_pixel(image_size: usize) -> f64 {
 
 fn reproject_image_mask(
     path: &Path,
-    target_coordinates: &CoordinateSystem,
     target_spec: DirectionCoordinateSpec,
     target_size: usize,
 ) -> Result<ReconstructionMaskPlan, crate::ApplicationError> {
@@ -686,29 +685,19 @@ fn reproject_image_mask(
         ));
     }
     let source_direction = direction_coordinate(&source_coordinates)?;
-    let target_direction = direction_coordinate(target_coordinates)?;
-    let mut support = vec![false; target_size * target_size];
-    for x in 0..target_size {
-        for y in 0..target_size {
-            let world = target_direction.to_world(&[x as f64, y as f64])?;
-            let source = source_direction.to_pixel(&world)?;
-            let sx = source[0].round();
-            let sy = source[1].round();
-            if sx >= 0.0
-                && sy >= 0.0
-                && sx < source_shape[0] as f64
-                && sy < source_shape[1] as f64
-                && source_support[sx as usize * source_shape[1] + sy as usize]
-            {
-                support[x * target_size + y] = true;
-            }
-        }
-    }
+    let source_spec = direction_model_spec(source_direction)?;
+    let support = casa_imaging_reconstruction::reproject_mask_support(
+        source_spec,
+        [source_shape[0], source_shape[1]],
+        &source_support,
+        target_spec,
+        [target_size, target_size],
+    )?;
     Ok(ReconstructionMaskPlan::Reprojected {
         coordinate: target_spec,
-        source_coordinate: direction_model_spec(source_direction)?,
+        source_coordinate: source_spec,
         source_shape: [source_shape[0], source_shape[1]],
-        support: support.into_boxed_slice(),
+        support,
     })
 }
 

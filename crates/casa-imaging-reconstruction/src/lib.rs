@@ -58,6 +58,7 @@ pub use major_cycle::{
 pub use mask::{
     AutoMultithreshControls, AutoMultithreshEvidence, MaskBox, MaskError, ReconstructionMask,
     ReconstructionMaskGenerationId, ReconstructionMaskPlan, auto_multithresh,
+    reproject_mask_support,
 };
 pub use minor_cycle::{
     ClarkApproximation, ComponentDivergence, MinorCycleComponent, MinorCycleError,

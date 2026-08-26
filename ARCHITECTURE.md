@@ -326,24 +326,29 @@ precondition captured independently of whether `MODEL_DATA` was read. Every
 `PhysicalWorkBinding` passed to the sole `plan` entrypoint must type every
 MeasurementSet source operation as `ObservationRead` and declare final
 complete-data reconciliation, private per-product and model-column staging
-events, and the sole Publication node. `plan` mechanically derives every
+events, and the applicable independently atomic Publication nodes. `plan`
+mechanically derives every
 observation-read terminal event and binds the declaration against the exact
 `CompiledProblem`; the crate-private binder rejects untyped lock-bearing I/O,
 product keys that differ from `ProductRequirements`, missing completion
-fences, any post-commit work, or any bypass publication. The sealed plan retains the
+fences, any post-commit work, or any bypass publication. Conventional image
+members and `MODEL_DATA` are separate transactions: failure of one never rolls
+back or hides a generation already published by the other. The sealed plan retains the
 compiled-problem, logical-transaction, and physical-work identities, and its
 versioned identity includes the complete transaction declaration. The initial
 consistency check precedes every observation read; every read precedes
-reconciliation; and the terminal commit waits for every other node's complete
-work or fence event. Controller polling ends when Publication launches.
+reconciliation; and each terminal commit waits for every node and fence in its
+own transaction. Controller polling ends when that transaction's Publication launches.
 Initial-check, observation-read, and commit nodes reserve one table lock
 per source; every read revalidates under those locks. Staging storage,
 writeback/publication buffers, and commit fences are ordinary Resource Authority
-claims. The Publication adapter revalidates under all source locks and either
-activates every staged product and model-column generation together or leaves
-the prior generation solely visible. Mutation, cancellation, admission,
-numerical/output failure, or a failed staging fence therefore cannot expose a
-mixed generation.
+claims. A Publication adapter revalidates under its source locks and activates
+exactly one conventional product member or one complete model-column
+generation, leaving the prior generation of that same member solely visible on
+failure. Mutation, cancellation, admission, numerical/output failure, or a
+failed staging fence therefore cannot expose a partial member or partial
+`MODEL_DATA` column. Users may retain or delete conventional products
+independently; `MODEL_DATA` remains a distinct MeasurementSet transaction.
 
 The Observation Transaction contract and binder do not themselves change
 `casa-ms`, casacore metadata, or persistent bytes. A storage adapter that

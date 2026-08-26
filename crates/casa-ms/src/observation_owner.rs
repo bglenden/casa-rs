@@ -193,6 +193,57 @@ pub struct ModelColumnTransaction {
     _process_guard: std::sync::MutexGuard<'static, ()>,
 }
 
+/// Exact physical bounds of a complete private `MODEL_DATA` replacement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ModelColumnStorageBounds {
+    column_bytes: u64,
+    maximum_cell_bytes: u64,
+}
+
+impl ModelColumnStorageBounds {
+    /// Bytes occupied by all complex samples in the complete destination column.
+    #[must_use]
+    pub const fn column_bytes(self) -> u64 {
+        self.column_bytes
+    }
+
+    /// Largest single-row cell copied or updated by the bounded writer.
+    #[must_use]
+    pub const fn maximum_cell_bytes(self) -> u64 {
+        self.maximum_cell_bytes
+    }
+}
+
+/// Probe exact full-column storage bounds while validating the owner precondition.
+#[cfg(unix)]
+pub fn model_column_storage_bounds(
+    path: impl AsRef<Path>,
+    expected: &ObservationSourceState,
+) -> Result<ModelColumnStorageBounds, ObservationOwnerError> {
+    let measurement_set = MeasurementSet::open_retained_read(path)?;
+    let manifest = OwnerManifest::read(measurement_set.main_table().keywords())?;
+    manifest.validate_physical_state(&measurement_set)?;
+    validate_transaction_precondition(&manifest, &measurement_set, expected)?;
+    let data = measurement_set.data_column(crate::VisibilityDataColumn::Data)?;
+    let mut column_bytes = 0_u64;
+    let mut maximum_cell_bytes = 0_u64;
+    for row in 0..measurement_set.main_table().row_count() {
+        let samples = u64::try_from(data.get(row)?.len())
+            .map_err(|_| ObservationOwnerError::PredictionAddress)?;
+        let bytes = samples
+            .checked_mul(std::mem::size_of::<Complex32>() as u64)
+            .ok_or(ObservationOwnerError::PredictionAddress)?;
+        column_bytes = column_bytes
+            .checked_add(bytes)
+            .ok_or(ObservationOwnerError::PredictionAddress)?;
+        maximum_cell_bytes = maximum_cell_bytes.max(bytes);
+    }
+    Ok(ModelColumnStorageBounds {
+        column_bytes,
+        maximum_cell_bytes,
+    })
+}
+
 #[cfg(unix)]
 impl ModelColumnTransaction {
     /// Acquire the owner write capability and build a complete staging column.
@@ -295,6 +346,24 @@ impl ModelColumnTransaction {
 
     /// Atomically publish staging as MODEL_DATA and ratchet owner generations.
     pub fn commit(mut self, generation: LogicalIdentity) -> Result<(), ObservationOwnerError> {
+        let original_manifest = self.manifest.clone();
+        let result = self.commit_locked(generation);
+        if let Err(error) = result {
+            let rollback = self.rollback_locked(&original_manifest);
+            return match rollback {
+                Ok(()) => Err(error),
+                Err(rollback) => Err(ObservationOwnerError::CommitRollback {
+                    commit: error.to_string(),
+                    rollback: rollback.to_string(),
+                }),
+            };
+        }
+        self.committed = true;
+        self.measurement_set = None;
+        Ok(())
+    }
+
+    fn commit_locked(&mut self, generation: LogicalIdentity) -> Result<(), ObservationOwnerError> {
         let measurement_set = self
             .measurement_set
             .as_mut()
@@ -311,11 +380,6 @@ impl ModelColumnTransaction {
         measurement_set
             .main_table_mut()
             .rename_column(MODEL_STAGING_COLUMN, "MODEL_DATA")?;
-        if had_model {
-            measurement_set
-                .main_table_mut()
-                .remove_column(MODEL_BACKUP_COLUMN)?;
-        }
         self.manifest.model_data = PersistedModelColumn::Present {
             generation: encode_identity(generation),
         };
@@ -332,8 +396,43 @@ impl ModelColumnTransaction {
             .locked_modify_counter()?
             .wrapping_add(1);
         write_owner_manifest(measurement_set.main_table_mut(), &self.manifest)?;
+        if had_model {
+            measurement_set
+                .main_table_mut()
+                .remove_column(MODEL_BACKUP_COLUMN)?;
+        }
         measurement_set.main_table_mut().unlock()?;
-        self.committed = true;
+        Ok(())
+    }
+
+    fn rollback_locked(&mut self, manifest: &OwnerManifest) -> Result<(), ObservationOwnerError> {
+        let measurement_set = self
+            .measurement_set
+            .as_mut()
+            .ok_or(ObservationOwnerError::TransactionClosed)?;
+        let schema = measurement_set
+            .main_table()
+            .schema()
+            .ok_or_else(|| MsError::InvalidInput("MeasurementSet MAIN has no schema".to_string()))?;
+        let has_model = schema.contains_column("MODEL_DATA");
+        let has_staging = schema.contains_column(MODEL_STAGING_COLUMN);
+        let has_backup = schema.contains_column(MODEL_BACKUP_COLUMN);
+        if has_backup {
+            if has_model {
+                measurement_set
+                    .main_table_mut()
+                    .remove_column("MODEL_DATA")?;
+            }
+            measurement_set
+                .main_table_mut()
+                .rename_column(MODEL_BACKUP_COLUMN, "MODEL_DATA")?;
+        } else if has_staging {
+            measurement_set
+                .main_table_mut()
+                .remove_column(MODEL_STAGING_COLUMN)?;
+        }
+        write_owner_manifest(measurement_set.main_table_mut(), manifest)?;
+        measurement_set.main_table_mut().unlock()?;
         self.measurement_set = None;
         Ok(())
     }
@@ -577,6 +676,14 @@ pub enum ObservationOwnerError {
     /// The persisted manifest could not be encoded or decoded.
     #[error(transparent)]
     Encoding(#[from] serde_json::Error),
+    /// A failed commit could not restore the prior schema and manifest cleanly.
+    #[error("MODEL_DATA commit failed ({commit}); rollback also failed ({rollback})")]
+    CommitRollback {
+        /// Original commit failure.
+        commit: String,
+        /// Rollback failure while the write lock was retained.
+        rollback: String,
+    },
     /// Measures acquisition or bounded-state preparation failed.
     #[error(transparent)]
     Measures(#[from] SelectedObservationMeasuresError),
@@ -657,7 +764,7 @@ pub enum ObservationOwnerError {
     TransactionPrecondition,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct OwnerManifest {
     schema_version: u32,
     measurement_set_identity: String,
@@ -669,7 +776,7 @@ struct OwnerManifest {
     model_data: PersistedModelColumn,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 enum PersistedModelColumn {
     Absent,
@@ -1404,6 +1511,21 @@ mod tests {
             after.access.source_state().generations().model_column(),
             generation
         );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn model_column_storage_bounds_cover_the_complete_destination_column() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("model-bounds.ms");
+        create_ms(&path, false);
+        initialize_measurement_set_owner_manifest(&path).expect("initialize owner manifest");
+        let resolved = resolve_selected_observation(request(&path)).expect("resolve owner");
+        let bounds = model_column_storage_bounds(&path, resolved.access.source_state())
+            .expect("probe complete column bounds");
+
+        assert_eq!(bounds.column_bytes(), 8);
+        assert_eq!(bounds.maximum_cell_bytes(), 8);
     }
 
     #[test]

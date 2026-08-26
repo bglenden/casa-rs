@@ -14,6 +14,127 @@ use thiserror::Error;
 
 use crate::{Encoder, FinalNormalState, FinalNormalStateCompletionId, ModelGenerationId};
 
+/// Reproject decoded source support onto the target direction grid.
+///
+/// Storage/application code supplies only decoded samples and coordinates;
+/// reconstruction owns traversal, mapping, sampling, and uncovered support.
+pub fn reproject_mask_support(
+    source_coordinate: DirectionCoordinateSpec,
+    source_shape: [usize; 2],
+    source_support: &[bool],
+    target_coordinate: DirectionCoordinateSpec,
+    target_shape: [usize; 2],
+) -> Result<Box<[bool]>, MaskError> {
+    validate_shape(source_shape)?;
+    validate_shape(target_shape)?;
+    if source_support.len() != source_shape[0] * source_shape[1] {
+        return Err(MaskError::ShapeMismatch);
+    }
+    let mut target_support = vec![false; target_shape[0] * target_shape[1]];
+    for x in 0..target_shape[0] {
+        for y in 0..target_shape[1] {
+            let world = direction_pixel_to_world(target_coordinate, [x as f64, y as f64])?;
+            let source = direction_world_to_pixel(source_coordinate, world)?;
+            let sx = source[0].round();
+            let sy = source[1].round();
+            if sx >= 0.0
+                && sy >= 0.0
+                && sx < source_shape[0] as f64
+                && sy < source_shape[1] as f64
+                && source_support[sx as usize * source_shape[1] + sy as usize]
+            {
+                target_support[x * target_shape[1] + y] = true;
+            }
+        }
+    }
+    Ok(target_support.into_boxed_slice())
+}
+
+fn direction_pixel_to_world(
+    coordinate: DirectionCoordinateSpec,
+    pixel: [f64; 2],
+) -> Result<[f64; 2], MaskError> {
+    if coordinate.projection() != casa_imaging_model::Projection::Sin {
+        return Err(MaskError::UnsupportedReprojection);
+    }
+    let offset = [
+        pixel[0] - coordinate.reference_pixel()[0],
+        pixel[1] - coordinate.reference_pixel()[1],
+    ];
+    let pc = coordinate.pc();
+    let increment = coordinate.increment_rad();
+    let x = increment[0] * (pc[0][0] * offset[0] + pc[0][1] * offset[1]);
+    let y = increment[1] * (pc[1][0] * offset[0] + pc[1][1] * offset[1]);
+    let radius_squared = x * x + y * y;
+    if radius_squared > 1.0 + 1.0e-12 {
+        return Err(MaskError::UnsupportedReprojection);
+    }
+    let phi = if radius_squared == 0.0 {
+        0.0
+    } else {
+        x.atan2(-y)
+    };
+    let theta = (1.0 - radius_squared.min(1.0)).max(0.0).sqrt().asin();
+    let reference = coordinate.reference_direction();
+    let alpha_p = reference.longitude_rad();
+    let delta_p = reference.latitude_rad();
+    let phi_p = coordinate.pole_deg()[0].to_radians();
+    let dphi = phi - phi_p;
+    let sin_lat = theta.sin() * delta_p.sin()
+        + theta.cos() * delta_p.cos() * dphi.cos();
+    let latitude = sin_lat.clamp(-1.0, 1.0).asin();
+    let longitude = alpha_p
+        + (-theta.cos() * dphi.sin()).atan2(
+            theta.sin() * delta_p.cos() - theta.cos() * delta_p.sin() * dphi.cos(),
+        );
+    Ok([longitude, latitude])
+}
+
+fn direction_world_to_pixel(
+    coordinate: DirectionCoordinateSpec,
+    world: [f64; 2],
+) -> Result<[f64; 2], MaskError> {
+    if coordinate.projection() != casa_imaging_model::Projection::Sin {
+        return Err(MaskError::UnsupportedReprojection);
+    }
+    let reference = coordinate.reference_direction();
+    let alpha_p = reference.longitude_rad();
+    let delta_p = reference.latitude_rad();
+    let phi_p = coordinate.pole_deg()[0].to_radians();
+    let delta_alpha = world[0] - alpha_p;
+    let sin_theta = world[1].sin() * delta_p.sin()
+        + world[1].cos() * delta_p.cos() * delta_alpha.cos();
+    let theta = sin_theta.clamp(-1.0, 1.0).asin();
+    let phi = phi_p
+        + (-world[1].cos() * delta_alpha.sin()).atan2(
+            world[1].sin() * delta_p.cos()
+                - world[1].cos() * delta_p.sin() * delta_alpha.cos(),
+        );
+    let x = theta.cos() * phi.sin();
+    let y = -theta.cos() * phi.cos();
+    let increment = coordinate.increment_rad();
+    let intermediate = [x / increment[0], y / increment[1]];
+    let pc = coordinate.pc();
+    let determinant = pc[0][0] * pc[1][1] - pc[0][1] * pc[1][0];
+    if !determinant.is_finite() || determinant.abs() < 1.0e-15 {
+        return Err(MaskError::UnsupportedReprojection);
+    }
+    let offset = [
+        (pc[1][1] * intermediate[0] - pc[0][1] * intermediate[1]) / determinant,
+        (-pc[1][0] * intermediate[0] + pc[0][0] * intermediate[1]) / determinant,
+    ];
+    let reference_pixel = coordinate.reference_pixel();
+    let pixel = [
+        reference_pixel[0] + offset[0],
+        reference_pixel[1] + offset[1],
+    ];
+    if pixel.iter().all(|value| value.is_finite()) {
+        Ok(pixel)
+    } else {
+        Err(MaskError::UnsupportedReprojection)
+    }
+}
+
 const MASK_DOMAIN: &[u8] = b"casa-rs-reconstruction-mask";
 const MASK_VERSION: u32 = 1;
 
@@ -659,6 +780,9 @@ pub fn auto_multithresh(
 /// Mask construction or lineage failure.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum MaskError {
+    /// Source and target direction grids cannot be mapped by the accepted law.
+    #[error("mask direction grids require a supported exact reprojection")]
+    UnsupportedReprojection,
     /// The current PSF cannot define a finite positive beam area.
     #[error("normal-state PSF cannot define a finite positive beam area")]
     InvalidBeamArea,
@@ -885,5 +1009,52 @@ fn encode_coordinate(encoder: &mut Encoder, coordinate: DirectionCoordinateSpec)
     }
     for value in coordinate.pc().into_iter().flatten() {
         encoder.u64(crate::canonical_f64_bits(value));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use casa_imaging_model::{DirectionFrame, Projection, SkyDirection};
+
+    fn coordinate(reference_pixel: [f64; 2]) -> DirectionCoordinateSpec {
+        DirectionCoordinateSpec::new(
+            Projection::Sin,
+            SkyDirection::new(DirectionFrame::J2000, 1.0, 0.5),
+            reference_pixel,
+            [-1.0e-4, 1.0e-4],
+            [[1.0, 0.0], [0.0, 1.0]],
+            [180.0, 90.0],
+        )
+    }
+
+    #[test]
+    fn aligned_mask_reprojection_preserves_exact_support() {
+        let support = [false, true, false, true, true, false, false, false, true];
+        let projected = reproject_mask_support(
+            coordinate([1.0, 1.0]),
+            [3, 3],
+            &support,
+            coordinate([1.0, 1.0]),
+            [3, 3],
+        )
+        .expect("aligned reprojection");
+        assert_eq!(projected.as_ref(), support);
+    }
+
+    #[test]
+    fn reprojection_uses_the_target_and_source_reference_pixels() {
+        let mut support = [false; 9];
+        support[4] = true;
+        let projected = reproject_mask_support(
+            coordinate([1.0, 1.0]),
+            [3, 3],
+            &support,
+            coordinate([2.0, 1.0]),
+            [4, 3],
+        )
+        .expect("shifted reference-pixel reprojection");
+        assert!(projected[2 * 3 + 1]);
+        assert_eq!(projected.iter().filter(|value| **value).count(), 1);
     }
 }
