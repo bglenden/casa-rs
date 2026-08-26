@@ -414,6 +414,9 @@ pub struct ReconstructionControls {
     cycle_iteration_limit: Option<usize>,
     maximum_major_cycles: Option<usize>,
     noise_sigma: Option<f64>,
+    cycle_factor: Option<f64>,
+    minimum_psf_fraction: Option<f64>,
+    maximum_psf_fraction: Option<f64>,
 }
 
 impl ReconstructionControls {
@@ -428,6 +431,9 @@ impl ReconstructionControls {
             cycle_iteration_limit: None,
             maximum_major_cycles: None,
             noise_sigma: None,
+            cycle_factor: None,
+            minimum_psf_fraction: None,
+            maximum_psf_fraction: None,
         }
     }
 
@@ -454,6 +460,20 @@ impl ReconstructionControls {
     #[must_use]
     pub const fn with_noise_sigma(mut self, noise_sigma: f64) -> Self {
         self.noise_sigma = Some(noise_sigma);
+        self
+    }
+
+    /// Bind CASA's PSF-sidelobe-based per-cycle stopping threshold law.
+    #[must_use]
+    pub const fn with_cycle_threshold(
+        mut self,
+        cycle_factor: f64,
+        minimum_psf_fraction: f64,
+        maximum_psf_fraction: f64,
+    ) -> Self {
+        self.cycle_factor = Some(cycle_factor);
+        self.minimum_psf_fraction = Some(minimum_psf_fraction);
+        self.maximum_psf_fraction = Some(maximum_psf_fraction);
         self
     }
 
@@ -497,6 +517,24 @@ impl ReconstructionControls {
     #[must_use]
     pub const fn noise_sigma(self) -> Option<f64> {
         self.noise_sigma
+    }
+
+    /// Return the optional CASA cycle-factor multiplier.
+    #[must_use]
+    pub const fn cycle_factor(self) -> Option<f64> {
+        self.cycle_factor
+    }
+
+    /// Return the optional lower PSF-fraction clamp.
+    #[must_use]
+    pub const fn minimum_psf_fraction(self) -> Option<f64> {
+        self.minimum_psf_fraction
+    }
+
+    /// Return the optional upper PSF-fraction clamp.
+    #[must_use]
+    pub const fn maximum_psf_fraction(self) -> Option<f64> {
+        self.maximum_psf_fraction
     }
 }
 
@@ -1737,6 +1775,31 @@ fn validate_reconstruction(
             reason: "cycle limits must be positive and nsigma must be finite and non-negative",
         });
     }
+    let cycle_threshold_values = [
+        contract.controls.cycle_factor,
+        contract.controls.minimum_psf_fraction,
+        contract.controls.maximum_psf_fraction,
+    ];
+    if cycle_threshold_values.iter().any(Option::is_some)
+        && (cycle_threshold_values.iter().any(Option::is_none)
+            || contract
+                .controls
+                .cycle_factor
+                .is_some_and(|value| !value.is_finite() || value <= 0.0)
+            || contract
+                .controls
+                .minimum_psf_fraction
+                .is_some_and(|value| !value.is_finite() || value < 0.0)
+            || contract
+                .controls
+                .maximum_psf_fraction
+                .is_some_and(|value| !value.is_finite() || value <= 0.0)
+            || contract.controls.minimum_psf_fraction > contract.controls.maximum_psf_fraction)
+    {
+        return Err(CompileProblemError::InvalidCapabilityCombination {
+            reason: "cycle threshold requires a positive factor and ordered finite PSF fractions",
+        });
+    }
     if let ReconstructionAlgorithm::Multiscale {
         scales_px,
         small_scale_bias,
@@ -2182,6 +2245,19 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
             encoder.f64(value);
         }
         None => encoder.u8(0),
+    }
+    for value in [
+        reconstruction.controls.cycle_factor,
+        reconstruction.controls.minimum_psf_fraction,
+        reconstruction.controls.maximum_psf_fraction,
+    ] {
+        match value {
+            Some(value) => {
+                encoder.u8(1);
+                encoder.f64(value);
+            }
+            None => encoder.u8(0),
+        }
     }
     encoder.usize(reconstruction.polarization.coordinates.len());
     for coordinate in &reconstruction.polarization.coordinates {

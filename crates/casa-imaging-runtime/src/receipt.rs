@@ -5746,6 +5746,19 @@ fn project_reconstruction(fields: &mut BTreeMap<String, String>, problem: &Compi
             stable_float(sigma),
         );
     }
+    for (name, value) in [
+        ("cycle_factor", controls.cycle_factor()),
+        ("minimum_psf_fraction", controls.minimum_psf_fraction()),
+        ("maximum_psf_fraction", controls.maximum_psf_fraction()),
+    ] {
+        if let Some(value) = value {
+            evidence_field(
+                fields,
+                format!("reconstruction.controls.{name}"),
+                stable_float(value),
+            );
+        }
+    }
     for (index, coordinate) in reconstruction
         .polarization()
         .coordinates()

@@ -341,10 +341,10 @@ where
                 let next_mask = mask_plan.next_cycle(
                     minor.mask(),
                     cycle,
-                    matches!(
-                        minor.evidence().stop_reason(),
-                        MinorCycleStopReason::ThresholdReached
-                    ),
+                    minor.evidence().cycle_threshold_is_global(),
+                    minor_outcome
+                        .auto_mask
+                        .is_some_and(|evidence| evidence.channel_stopped),
                 );
                 let final_input = minor.into_final_major_input();
                 let resolved = resolve_selected_observation(input.observation.clone())?;

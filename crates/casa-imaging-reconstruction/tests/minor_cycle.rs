@@ -554,22 +554,6 @@ fn static_and_auto_masks_share_explicit_geometry_and_generation_lineage() {
     assert!(static_mask.contains([3, 3]));
     assert!(!static_mask.contains([1, 1]));
 
-    let shifted = ReconstructionMask::reproject_nearest(
-        problem.problem_id(),
-        round.final_model.generation_id(),
-        coordinate,
-        SHAPE,
-        static_mask.support(),
-        coordinate.with_reference_pixel([
-            coordinate.reference_pixel()[0] + 1.0,
-            coordinate.reference_pixel()[1],
-        ]),
-        SHAPE,
-    )
-    .expect("nearest-neighbour mask reprojection");
-    assert!(shifted.contains([4, 3]));
-    assert!(!shifted.contains([2, 3]));
-
     let valid = vec![true; SHAPE[0] * SHAPE[1]];
     let (automatic, evidence) = auto_multithresh(
         problem.problem_id(),
@@ -579,6 +563,7 @@ fn static_and_auto_masks_share_explicit_geometry_and_generation_lineage() {
         Some(&static_mask),
         &valid,
         1,
+        false,
         false,
         4.0,
         AutoMultithreshControls {
@@ -1007,7 +992,8 @@ fn nsigma_and_cycle_iteration_limits_are_solver_evidence_not_frontend_policy() {
         ReconstructionControls::new(64, 0.5, 0.0)
             .with_maximum_model_update(1.0e30)
             .with_cycle_limits(2, 4)
-            .with_noise_sigma(1.0),
+            .with_noise_sigma(1.0)
+            .with_cycle_threshold(1.0, 0.05, 0.8),
     )
     .expect("compiled cycle controls");
     let result = hogbom_minor_cycle(
@@ -1021,7 +1007,15 @@ fn nsigma_and_cycle_iteration_limits_are_solver_evidence_not_frontend_policy() {
     assert!(result.evidence().iterations() <= 2);
     let rms = result.evidence().noise_rms().expect("nsigma records RMS");
     assert!(rms.is_finite() && rms >= 0.0);
-    assert_eq!(result.evidence().effective_threshold(), rms);
+    let cycle_threshold = result
+        .evidence()
+        .cycle_threshold()
+        .expect("cycle threshold is recorded");
+    assert!(cycle_threshold.is_finite() && cycle_threshold >= 0.0);
+    assert_eq!(
+        result.evidence().effective_threshold(),
+        rms.max(cycle_threshold)
+    );
 }
 
 #[test]
@@ -1380,16 +1374,19 @@ fn window_and_valid_support_constrain_component_placement() {
 
     // A mask restricted to the invalid pixel has no valid support at all.
     let invalid_only = box_mask(&normal_state, &final_model, [3, 3], [3, 3]);
-    assert!(matches!(
-        hogbom_minor_cycle(
-            &open,
-            &final_model,
-            &normal_state,
-            &invalid_only,
-            HogbomControls::new(0.5, 0.0, 8, 1.0e30).expect("valid controls"),
-        ),
-        Err(MinorCycleError::EmptyValidSupport)
-    ));
+    let empty_support = hogbom_minor_cycle(
+        &open,
+        &final_model,
+        &normal_state,
+        &invalid_only,
+        HogbomControls::new(0.5, 0.0, 8, 1.0e30).expect("valid controls"),
+    )
+    .expect("an empty effective mask is a converged channel, not a solver failure");
+    assert_eq!(empty_support.evidence().iterations(), 0);
+    assert_eq!(
+        empty_support.evidence().stop_reason(),
+        MinorCycleStopReason::ThresholdReached
+    );
 
     // Components respect the declared mask support.
     let quarter_mask = box_mask(&normal_state, &final_model, [2, 2], [5, 5]);

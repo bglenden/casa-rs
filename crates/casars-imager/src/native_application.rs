@@ -87,6 +87,9 @@ fn application_request(config: &CliConfig) -> ContinuumImagingRequest {
         cycle_iterations: config.minor_cycle_length.min(config.niter.max(1)),
         maximum_major_cycles: config.nmajor.unwrap_or(1),
         noise_sigma: (config.nsigma > 0.0).then_some(f64::from(config.nsigma)),
+        cycle_factor: f64::from(config.cyclefactor),
+        minimum_psf_fraction: f64::from(config.min_psf_fraction),
+        maximum_psf_fraction: f64::from(config.max_psf_fraction),
         gain: f64::from(config.gain),
         threshold_jy: f64::from(config.threshold_jy),
         psf_cutoff: config.psf_cutoff,
@@ -94,8 +97,9 @@ fn application_request(config: &CliConfig) -> ContinuumImagingRequest {
             RestoringBeamMode::PerPlane => ContinuumBeamPolicy::PerPlane,
             RestoringBeamMode::Common => ContinuumBeamPolicy::Common,
         },
-        mask: match config.use_mask {
-            CleanMaskMode::AutoMultiThreshold => {
+        mask: match (&config.mask_image, config.use_mask) {
+            (Some(path), CleanMaskMode::User) => ContinuumMask::Image(path.clone()),
+            (_, CleanMaskMode::AutoMultiThreshold) => {
                 ContinuumMask::AutoMultithresh(ContinuumAutoMaskControls {
                     sidelobe_factor: f64::from(config.auto_mask.sidelobe_threshold),
                     noise_factor: f64::from(config.auto_mask.noise_threshold),
@@ -108,8 +112,8 @@ fn application_request(config: &CliConfig) -> ContinuumImagingRequest {
                     minimum_percent_change: f64::from(config.auto_mask.min_percent_change),
                 })
             }
-            CleanMaskMode::User if config.mask_boxes.is_empty() => ContinuumMask::FullPlane,
-            CleanMaskMode::User => ContinuumMask::Boxes(
+            (None, CleanMaskMode::User) if config.mask_boxes.is_empty() => ContinuumMask::FullPlane,
+            (None, CleanMaskMode::User) => ContinuumMask::Boxes(
                 config
                     .mask_boxes
                     .iter()
@@ -201,16 +205,12 @@ fn backend_requirements(config: &CliConfig) -> Vec<TaskRequirement> {
 
 fn unsupported_native_controls(config: &CliConfig) -> bool {
     config.phasecenter_field.is_some()
-        || config.mask_image.is_some()
         || config.phasecenter.is_some()
         || config
             .correlation
             .as_deref()
             .is_some_and(|plane| !plane.eq_ignore_ascii_case("I"))
         || config.uv_taper.is_some()
-        || config.cyclefactor != 1.0
-        || config.min_psf_fraction != 0.05
-        || config.max_psf_fraction != 0.8
         || config.hogbom_iteration_mode != super::HogbomIterationMode::Strict
         || config.fullsummary
         || config.pbcor

@@ -97,7 +97,15 @@ pub struct MinorCycleProgram {
     noise_sigma: Option<f64>,
     max_iterations: usize,
     maximum_model_update: f64,
+    cycle_threshold: Option<CycleThresholdControls>,
     component_sequence_limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct CycleThresholdControls {
+    factor: f64,
+    minimum_psf_fraction: f64,
+    maximum_psf_fraction: f64,
 }
 
 impl MinorCycleProgram {
@@ -143,6 +151,18 @@ impl MinorCycleProgram {
         )
         .map(|mut program| {
             program.noise_sigma = controls.noise_sigma();
+            program.cycle_threshold =
+                controls
+                    .cycle_factor()
+                    .map(|factor| CycleThresholdControls {
+                        factor,
+                        minimum_psf_fraction: controls
+                            .minimum_psf_fraction()
+                            .expect("compiled cycle threshold is complete"),
+                        maximum_psf_fraction: controls
+                            .maximum_psf_fraction()
+                            .expect("compiled cycle threshold is complete"),
+                    });
             program
         })
     }
@@ -200,6 +220,7 @@ impl MinorCycleProgram {
             noise_sigma: None,
             max_iterations,
             maximum_model_update,
+            cycle_threshold: None,
             component_sequence_limit: None,
         })
     }
@@ -374,11 +395,13 @@ pub struct MinorCycleEvidence {
     total_flux: f64,
     final_peak_flux: f64,
     noise_rms: Option<f64>,
+    global_threshold: f64,
     effective_threshold: f64,
     stop_reason: MinorCycleStopReason,
     clark_approximation: Option<ClarkApproximation>,
     clark_refreshes: usize,
     recorded: Option<Box<[MinorCycleComponent]>>,
+    cycle_threshold: Option<f64>,
 }
 
 impl MinorCycleEvidence {
@@ -452,6 +475,20 @@ impl MinorCycleEvidence {
     #[must_use]
     pub const fn effective_threshold(&self) -> f64 {
         self.effective_threshold
+    }
+
+    /// Return the PSF-sidelobe-derived cycle threshold, when configured.
+    #[must_use]
+    pub const fn cycle_threshold(&self) -> Option<f64> {
+        self.cycle_threshold
+    }
+
+    /// Whether CASA's cycle threshold was no stronger than the global
+    /// absolute/noise threshold at this boundary.
+    #[must_use]
+    pub fn cycle_threshold_is_global(&self) -> bool {
+        self.cycle_threshold
+            .is_none_or(|threshold| threshold <= self.global_threshold)
     }
 
     /// Return why the solve stopped.
@@ -725,11 +762,30 @@ pub fn run_minor_cycle(
         .noise_sigma()
         .map(|_| robust_masked_rms(&residual, shape, base, mask))
         .transpose()?;
-    let effective_threshold = noise_rms
+    let global_threshold = noise_rms
         .zip(controls.noise_sigma())
         .map_or(controls.threshold(), |(rms, sigma)| {
             controls.threshold().max(rms * sigma)
         });
+    let initial_peak = residual
+        .iter()
+        .fold(0.0_f64, |peak, value| peak.max(value.abs()))
+        / psf_peak;
+    let maximum_sidelobe = view
+        .normal_approximation()
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| *index != psf_peak_index)
+        .fold(0.0_f64, |peak, (_, value)| peak.max(value.re.abs()))
+        / psf_peak;
+    let cycle_threshold = controls.cycle_threshold.map(|cycle| {
+        initial_peak
+            * (cycle.factor * maximum_sidelobe)
+                .clamp(cycle.minimum_psf_fraction, cycle.maximum_psf_fraction)
+    });
+    let effective_threshold = cycle_threshold.map_or(global_threshold, |threshold| {
+        global_threshold.max(threshold)
+    });
     let mut clark_state = clark.map(|approximation| {
         let initial_peak = residual
             .iter()
@@ -765,9 +821,18 @@ pub fn run_minor_cycle(
     let mut iterations = 0_usize;
     let mut total_flux = 0.0_f64;
     let mut final_peak_flux = 0.0_f64;
-    let mut stop_reason = None;
+    let has_valid_support = (0..cells).any(|index| {
+        let pixel = plane_pixel(index, shape);
+        mask.contains(pixel) && valid_support(base, shape, pixel)
+    });
+    let mut stop_reason = (!has_valid_support).then_some(MinorCycleStopReason::ThresholdReached);
+    let iteration_budget = if has_valid_support {
+        controls.max_iterations()
+    } else {
+        0
+    };
 
-    for _ in 0..controls.max_iterations() {
+    for _ in 0..iteration_budget {
         let (peak_index, strength, scale_index) = if let Some(kernels) = multiscale.as_ref() {
             let candidate = select_multiscale_candidate(
                 &residual,
@@ -976,7 +1041,9 @@ pub fn run_minor_cycle(
             total_flux,
             final_peak_flux,
             noise_rms,
+            global_threshold,
             effective_threshold,
+            cycle_threshold,
             stop_reason,
             clark_approximation: clark,
             clark_refreshes,
@@ -1485,6 +1552,15 @@ fn minor_cycle_evidence_id(
     }
     encoder.usize(controls.max_iterations());
     encoder.u64(crate::canonical_f64_bits(controls.maximum_model_update()));
+    match controls.cycle_threshold {
+        Some(cycle) => {
+            encoder.u8(1);
+            encoder.u64(crate::canonical_f64_bits(cycle.factor));
+            encoder.u64(crate::canonical_f64_bits(cycle.minimum_psf_fraction));
+            encoder.u64(crate::canonical_f64_bits(cycle.maximum_psf_fraction));
+        }
+        None => encoder.u8(0),
+    }
     match controls.component_sequence_limit() {
         None => encoder.u8(0),
         Some(limit) => {

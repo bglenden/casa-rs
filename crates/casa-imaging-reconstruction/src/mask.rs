@@ -59,6 +59,17 @@ pub enum ReconstructionMaskPlan {
         /// Inclusive target-grid regions.
         boxes: Vec<MaskBox>,
     },
+    /// Admit exact target-grid support reprojected from a named source WCS.
+    Reprojected {
+        /// Target model direction coordinate.
+        coordinate: DirectionCoordinateSpec,
+        /// Source mask direction coordinate retained as lineage evidence.
+        source_coordinate: DirectionCoordinateSpec,
+        /// Source mask direction-plane shape.
+        source_shape: [usize; 2],
+        /// Canonical target-grid support produced by exact WCS reprojection.
+        support: Box<[bool]>,
+    },
     /// Generate CASA auto-multithreshold support from the current Normal State.
     AutoMultithresh {
         /// Target model direction coordinate.
@@ -71,6 +82,8 @@ pub enum ReconstructionMaskPlan {
         cycle_threshold_reached: bool,
         /// Prior immutable mask generation, when another cycle already ran.
         previous: Option<Box<ReconstructionMask>>,
+        /// Whether CASA's channel-stop rule froze further mask evolution.
+        evolution_stopped: bool,
     },
 }
 
@@ -82,6 +95,7 @@ impl ReconstructionMaskPlan {
         current: &ReconstructionMask,
         completed_major_cycles: usize,
         cycle_threshold_reached: bool,
+        evolution_stopped: bool,
     ) -> Self {
         match self {
             Self::AutoMultithresh {
@@ -94,6 +108,7 @@ impl ReconstructionMaskPlan {
                 completed_major_cycles,
                 cycle_threshold_reached,
                 previous: Some(Box::new(current.clone())),
+                evolution_stopped,
             },
             other => other.clone(),
         }
@@ -123,12 +138,30 @@ impl ReconstructionMaskPlan {
                 )?,
                 None,
             )),
+            Self::Reprojected {
+                coordinate,
+                source_coordinate,
+                source_shape,
+                support,
+            } => Ok((
+                ReconstructionMask::from_reprojected_support(
+                    problem,
+                    model_generation,
+                    *coordinate,
+                    shape,
+                    support,
+                    *source_coordinate,
+                    *source_shape,
+                )?,
+                None,
+            )),
             Self::AutoMultithresh {
                 coordinate,
                 controls,
                 completed_major_cycles,
                 cycle_threshold_reached,
                 previous,
+                evolution_stopped,
             } => {
                 let valid_support = base
                     .samples()
@@ -145,6 +178,7 @@ impl ReconstructionMaskPlan {
                     &valid_support,
                     *completed_major_cycles,
                     *cycle_threshold_reached,
+                    *evolution_stopped,
                     beam_area_pixels,
                     *controls,
                 )?;
@@ -269,6 +303,9 @@ impl ReconstructionMask {
                 }
             }
         }
+        if !support.iter().any(|value| *value) {
+            return Err(MaskError::EmptyMask);
+        }
         Self::mint(
             problem,
             model_generation,
@@ -281,60 +318,36 @@ impl ReconstructionMask {
         )
     }
 
-    /// Reproject a same-frame direction mask with nearest-neighbour mask
-    /// semantics. Geometry is explicit on both sides; a frame change fails
-    /// closed instead of silently treating pixels as aligned.
+    /// Mint exact target-grid support already reprojected by the geometry owner.
     #[allow(clippy::too_many_arguments)]
-    pub fn reproject_nearest(
+    pub fn from_reprojected_support(
         problem: CompiledProblemId,
         model_generation: ModelGenerationId,
-        source_coordinate: DirectionCoordinateSpec,
-        source_shape: [usize; 2],
-        source_support: &[bool],
         target_coordinate: DirectionCoordinateSpec,
         target_shape: [usize; 2],
+        support: &[bool],
+        source_coordinate: DirectionCoordinateSpec,
+        source_shape: [usize; 2],
     ) -> Result<Self, MaskError> {
-        validate_shape(source_shape)?;
         validate_shape(target_shape)?;
-        if source_support.len() != source_shape[0] * source_shape[1] {
+        validate_shape(source_shape)?;
+        if support.len() != target_shape[0] * target_shape[1] {
             return Err(MaskError::ShapeMismatch);
         }
-        if source_coordinate.reference_direction().frame()
-            != target_coordinate.reference_direction().frame()
-        {
-            return Err(MaskError::FrameConversionUnavailable);
+        if !support.iter().any(|value| *value) {
+            return Err(MaskError::EmptyMask);
         }
-        let mut support = vec![false; target_shape[0] * target_shape[1]];
-        for x in 0..target_shape[0] {
-            for y in 0..target_shape[1] {
-                let world = linear_world(target_coordinate, [x as f64, y as f64]);
-                let source = linear_pixel(source_coordinate, world)?;
-                let sx = source[0].round();
-                let sy = source[1].round();
-                if sx >= 0.0
-                    && sy >= 0.0
-                    && sx < source_shape[0] as f64
-                    && sy < source_shape[1] as f64
-                    && source_support[sx as usize * source_shape[1] + sy as usize]
-                {
-                    support[x * target_shape[1] + y] = true;
-                }
-            }
-        }
-        let mut source_identity = Encoder::new(b"casa-rs-mask-source", 1);
+        let mut source_identity = Encoder::new(b"casa-rs-reprojected-mask-source", 1);
         source_identity.usize(source_shape[0]);
         source_identity.usize(source_shape[1]);
         encode_coordinate(&mut source_identity, source_coordinate);
-        for value in source_support {
-            source_identity.u8(u8::from(*value));
-        }
         Self::mint(
             problem,
             model_generation,
             None,
             target_coordinate,
             target_shape,
-            support,
+            support.to_vec(),
             1,
             &source_identity.finish(),
         )
@@ -401,9 +414,6 @@ impl ReconstructionMask {
         source_kind: u8,
         source_identity: &[u8],
     ) -> Result<Self, MaskError> {
-        if !support.iter().any(|value| *value) {
-            return Err(MaskError::EmptyMask);
-        }
         let generation = mask_identity(
             problem,
             model_generation,
@@ -479,6 +489,7 @@ pub fn auto_multithresh(
     valid_support: &[bool],
     completed_major_cycles: usize,
     cycle_threshold_reached: bool,
+    evolution_stopped: bool,
     beam_area_pixels: f64,
     controls: AutoMultithreshControls,
 ) -> Result<(ReconstructionMask, AutoMultithreshEvidence), MaskError> {
@@ -486,10 +497,7 @@ pub fn auto_multithresh(
     let shape = normal.shape();
     if valid_support.len() != shape[0] * shape[1]
         || previous.is_some_and(|mask| {
-            mask.problem != problem
-                || mask.model_generation != model_generation
-                || mask.shape != shape
-                || mask.coordinate != coordinate
+            mask.problem != problem || mask.shape != shape || mask.coordinate != coordinate
         })
     {
         return Err(MaskError::ShapeMismatch);
@@ -548,26 +556,31 @@ pub fn auto_multithresh(
                     || negative_threshold.is_some_and(|threshold| *value <= threshold))
         })
         .collect::<Vec<_>>();
-    prune_regions(
-        &mut detected,
-        shape,
-        (controls.minimum_beam_fraction * beam_area_pixels).ceil() as usize,
-    );
-    detected = smooth_and_cut(
-        &detected,
-        shape,
-        controls.smooth_factor,
-        beam_area_pixels,
-        controls.cut_threshold,
-    );
-    if completed_major_cycles > 0 {
-        grow_cross(
+    if evolution_stopped {
+        detected.fill(false);
+    }
+    if !evolution_stopped {
+        prune_regions(
             &mut detected,
             shape,
-            &residual,
-            low_noise_threshold,
-            controls.grow_iterations,
+            (controls.minimum_beam_fraction * beam_area_pixels).ceil() as usize,
         );
+        detected = smooth_and_cut(
+            &detected,
+            shape,
+            controls.smooth_factor,
+            beam_area_pixels,
+            controls.cut_threshold,
+        );
+        if completed_major_cycles > 0 {
+            grow_cross(
+                &mut detected,
+                shape,
+                &residual,
+                low_noise_threshold,
+                controls.grow_iterations,
+            );
+        }
     }
     let mut support =
         previous.map_or_else(|| vec![false; detected.len()], |mask| mask.support.to_vec());
@@ -586,7 +599,8 @@ pub fn auto_multithresh(
     } else {
         100.0 * changed_pixels as f64 / previous_pixels as f64
     };
-    let channel_stopped = support.iter().all(|value| !*value)
+    let channel_stopped = evolution_stopped
+        || support.iter().all(|value| !*value)
         || (controls.minimum_percent_change >= 0.0
             && cycle_threshold_reached
             && percent_change <= controls.minimum_percent_change);
@@ -595,6 +609,29 @@ pub fn auto_multithresh(
     source.u64(crate::canonical_f64_bits(positive_threshold));
     source.u64(crate::canonical_f64_bits(low_noise_threshold));
     source.usize(completed_major_cycles);
+    source.u8(u8::from(cycle_threshold_reached));
+    source.u8(u8::from(evolution_stopped));
+    match previous {
+        Some(previous) => {
+            source.u8(1);
+            source.identity(previous.generation_id().as_bytes());
+        }
+        None => source.u8(0),
+    }
+    for value in [
+        controls.sidelobe_factor,
+        controls.noise_factor,
+        controls.low_noise_factor,
+        controls.negative_factor,
+        controls.minimum_beam_fraction,
+        controls.smooth_factor,
+        controls.cut_threshold,
+        controls.minimum_percent_change,
+        beam_area_pixels,
+    ] {
+        source.u64(crate::canonical_f64_bits(value));
+    }
+    source.usize(controls.grow_iterations);
     let mask = ReconstructionMask::mint(
         problem,
         model_generation,
@@ -637,12 +674,6 @@ pub enum MaskError {
     /// Shape is empty or overflows addressable storage.
     #[error("mask shape must be finite and non-empty")]
     InvalidShape,
-    /// No celestial-frame conversion was authorized.
-    #[error("mask reprojection requires an explicit celestial-frame conversion")]
-    FrameConversionUnavailable,
-    /// Direction WCS is singular.
-    #[error("mask direction coordinate is singular")]
-    SingularCoordinate,
     /// Empty reconstruction masks fail visibly; no full-image fallback exists.
     #[error("reconstruction mask is empty")]
     EmptyMask,
@@ -686,43 +717,6 @@ fn validate_auto_controls(
     } else {
         Ok(())
     }
-}
-
-fn linear_world(coordinate: DirectionCoordinateSpec, pixel: [f64; 2]) -> [f64; 2] {
-    let delta = [
-        (pixel[0] - coordinate.reference_pixel()[0]) * coordinate.increment_rad()[0],
-        (pixel[1] - coordinate.reference_pixel()[1]) * coordinate.increment_rad()[1],
-    ];
-    let pc = coordinate.pc();
-    let reference = coordinate.reference_direction();
-    [
-        reference.longitude_rad() + pc[0][0] * delta[0] + pc[0][1] * delta[1],
-        reference.latitude_rad() + pc[1][0] * delta[0] + pc[1][1] * delta[1],
-    ]
-}
-
-fn linear_pixel(
-    coordinate: DirectionCoordinateSpec,
-    world: [f64; 2],
-) -> Result<[f64; 2], MaskError> {
-    let reference = coordinate.reference_direction();
-    let delta = [
-        world[0] - reference.longitude_rad(),
-        world[1] - reference.latitude_rad(),
-    ];
-    let pc = coordinate.pc();
-    let determinant = pc[0][0] * pc[1][1] - pc[0][1] * pc[1][0];
-    if determinant == 0.0 || !determinant.is_finite() {
-        return Err(MaskError::SingularCoordinate);
-    }
-    let plane = [
-        (pc[1][1] * delta[0] - pc[0][1] * delta[1]) / determinant,
-        (-pc[1][0] * delta[0] + pc[0][0] * delta[1]) / determinant,
-    ];
-    Ok([
-        coordinate.reference_pixel()[0] + plane[0] / coordinate.increment_rad()[0],
-        coordinate.reference_pixel()[1] + plane[1] / coordinate.increment_rad()[1],
-    ])
 }
 
 fn median(values: &[f64]) -> f64 {

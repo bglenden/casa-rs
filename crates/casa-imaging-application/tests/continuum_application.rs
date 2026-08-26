@@ -5,6 +5,8 @@ use std::{
     sync::Mutex,
 };
 
+use casa_coordinates::{CoordinateSystem, DirectionCoordinate, Projection, ProjectionType};
+use casa_images::PagedImage;
 use casa_imaging_application::{
     ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumBeamPolicy, ContinuumImagingRequest,
     ContinuumMask, ContinuumMaskBox, ContinuumStopReason, ContinuumWeighting, execute_continuum,
@@ -349,6 +351,9 @@ fn request(
         cycle_iterations: 1,
         maximum_major_cycles: 1,
         noise_sigma: None,
+        cycle_factor: 1.0,
+        minimum_psf_fraction: 0.05,
+        maximum_psf_fraction: 0.8,
         gain: 1.0,
         threshold_jy: 0.0,
         psf_cutoff: 0.2,
@@ -537,6 +542,38 @@ fn application_materializes_static_and_auto_masks_at_the_normal_state_boundary()
             .is_none()
     );
 
+    let image_root = root.path().join("image-mask-input");
+    std::fs::create_dir(&image_root).expect("image-mask fixture directory");
+    let image_ms = tiny_measurement_set(&image_root);
+    let mask_path = root.path().join("shifted.mask");
+    let mut coordinates = CoordinateSystem::new();
+    coordinates.add_coordinate(DirectionCoordinate::new(
+        casa_types::measures::direction::DirectionRef::J2000,
+        Projection::new(ProjectionType::SIN),
+        [1.0, 0.5],
+        [
+            -std::f64::consts::PI / (180.0 * 3600.0),
+            std::f64::consts::PI / (180.0 * 3600.0),
+        ],
+        [9.0, 8.0],
+    ));
+    let mut image = PagedImage::<f32>::create(vec![16, 16], coordinates, &mask_path)
+        .expect("create shifted CASA image mask");
+    let mut pixels = ArrayD::from_elem(ndarray::IxDyn(&[16, 16]), 0.0_f32);
+    pixels[[3, 3]] = 1.0;
+    image
+        .put_slice(&pixels, &[0, 0])
+        .expect("write mask pixels");
+    image.save().expect("persist image mask");
+    let mut image_request = request(
+        image_ms,
+        root.path().join("image-mask"),
+        ContinuumAlgorithm::Hogbom,
+    );
+    image_request.mask = ContinuumMask::Image(mask_path);
+    let image_result = execute_continuum(image_request).expect("reprojected image-mask solve");
+    assert!(image_result.outcome.output.minor_cycle.is_some());
+
     let auto_root = root.path().join("auto-input");
     std::fs::create_dir(&auto_root).expect("auto fixture directory");
     let auto_ms = tiny_measurement_set(&auto_root);
@@ -556,6 +593,10 @@ fn application_materializes_static_and_auto_masks_at_the_normal_state_boundary()
         grow_iterations: 0,
         minimum_percent_change: -1.0,
     });
+    auto_request.iterations = 2;
+    auto_request.cycle_iterations = 1;
+    auto_request.maximum_major_cycles = 2;
+    auto_request.gain = 0.1;
     let auto_result = execute_continuum(auto_request).expect("auto-mask solve");
     let evidence = auto_result
         .outcome
@@ -566,4 +607,6 @@ fn application_materializes_static_and_auto_masks_at_the_normal_state_boundary()
         .expect("auto-mask evidence");
     assert!(evidence.robust_rms.is_finite());
     assert!(evidence.positive_threshold.is_finite());
+    assert_eq!(auto_result.outcome.output.major_cycle_count, 3);
+    assert_eq!(auto_result.minor_iterations, 2);
 }

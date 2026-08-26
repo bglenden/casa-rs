@@ -9,9 +9,11 @@ use std::{
 };
 
 use casa_coordinates::{
-    CoordinateSystem, DirectionCoordinate, Projection as CoordinateProjection, ProjectionType,
-    SpectralCoordinate, StokesCoordinate, StokesType,
+    CoordinateModel, CoordinateSystem, CoordinateType, DirectionCoordinate,
+    Projection as CoordinateProjection, ProjectionType, SpectralCoordinate, StokesCoordinate,
+    StokesType,
 };
+use casa_images::AnyPagedImage;
 use casa_imaging_model::{
     AxisOrder, CentreLaws, CorrelationProduct, CorrelationSelection, CorrelationType,
     DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame,
@@ -104,6 +106,8 @@ pub enum ContinuumMask {
     FullPlane,
     /// Admit the union of inclusive target-grid pixel boxes.
     Boxes(Vec<ContinuumMaskBox>),
+    /// Reproject non-zero pixels from a CASA image mask onto the model grid.
+    Image(PathBuf),
     /// Generate CASA auto-multithreshold support from the current Normal State.
     AutoMultithresh(ContinuumAutoMaskControls),
 }
@@ -194,6 +198,12 @@ pub struct ContinuumImagingRequest {
     pub maximum_major_cycles: usize,
     /// Optional robust-RMS stopping multiplier.
     pub noise_sigma: Option<f64>,
+    /// PSF-sidelobe multiplier used to derive each cycle threshold.
+    pub cycle_factor: f64,
+    /// Lower clamp for the PSF fraction in the cycle threshold.
+    pub minimum_psf_fraction: f64,
+    /// Upper clamp for the PSF fraction in the cycle threshold.
+    pub maximum_psf_fraction: f64,
     /// Minor-cycle gain.
     pub gain: f64,
     /// Absolute stopping threshold in Jy/beam.
@@ -400,7 +410,7 @@ fn prepare(
             publication: ApplicationPublication {
                 controls: casa_imaging_products::ContinuumProductControls::new(request.psf_cutoff)
                     .expect("validated PSF cutoff"),
-                sink: CasaImageProductSink::new(request.image_name.clone(), coordinates),
+                sink: CasaImageProductSink::new(request.image_name.clone(), coordinates.clone()),
             },
         });
     let digest = request_digest(&request, b"selection");
@@ -430,6 +440,9 @@ fn prepare(
                     .map(|region| casa_imaging_reconstruction::MaskBox::new(region.blc, region.trc))
                     .collect::<Result<Vec<_>, _>>()?,
             },
+            ContinuumMask::Image(path) => {
+                reproject_image_mask(&path, &coordinates, direction, request.image_size)?
+            }
             ContinuumMask::AutoMultithresh(controls) => ReconstructionMaskPlan::AutoMultithresh {
                 coordinate: direction,
                 controls: casa_imaging_reconstruction::AutoMultithreshControls {
@@ -446,6 +459,7 @@ fn prepare(
                 completed_major_cycles: 0,
                 cycle_threshold_reached: false,
                 previous: None,
+                evolution_stopped: false,
             },
         },
         observation: SelectedObservationResolutionRequest::new(
@@ -616,6 +630,133 @@ fn image_reference_pixel(image_size: usize) -> f64 {
     image_size as f64 / 2.0
 }
 
+fn reproject_image_mask(
+    path: &Path,
+    target_coordinates: &CoordinateSystem,
+    target_spec: DirectionCoordinateSpec,
+    target_size: usize,
+) -> Result<ReconstructionMaskPlan, crate::ApplicationError> {
+    let image = AnyPagedImage::open(path)?;
+    let (source_shape, source_coordinates, source_support) = match image {
+        AnyPagedImage::Float32(image) => {
+            let shape = image.shape().to_vec();
+            let coordinates = image.coordinates().clone();
+            let mask = image.get_mask()?;
+            let values = image.get()?;
+            let support: Vec<bool> = values
+                .iter()
+                .enumerate()
+                .map(|(index, value)| {
+                    value.is_finite()
+                        && *value != 0.0
+                        && mask.as_ref().is_none_or(|mask| mask[index])
+                })
+                .collect();
+            (shape, coordinates, support)
+        }
+        AnyPagedImage::Float64(image) => {
+            let shape = image.shape().to_vec();
+            let coordinates = image.coordinates().clone();
+            let mask = image.get_mask()?;
+            let values = image.get()?;
+            let support: Vec<bool> = values
+                .iter()
+                .enumerate()
+                .map(|(index, value)| {
+                    value.is_finite()
+                        && *value != 0.0
+                        && mask.as_ref().is_none_or(|mask| mask[index])
+                })
+                .collect();
+            (shape, coordinates, support)
+        }
+        AnyPagedImage::Complex32(_) | AnyPagedImage::Complex64(_) => {
+            return Err(boxed("reconstruction masks require a real CASA image"));
+        }
+    };
+    if source_shape.len() < 2
+        || source_shape[2..].iter().any(|extent| *extent != 1)
+        || source_support.len() != source_shape[0] * source_shape[1]
+    {
+        return Err(boxed(
+            "reconstruction mask must contain one two-dimensional direction plane",
+        ));
+    }
+    let source_direction = direction_coordinate(&source_coordinates)?;
+    let target_direction = direction_coordinate(target_coordinates)?;
+    let mut support = vec![false; target_size * target_size];
+    for x in 0..target_size {
+        for y in 0..target_size {
+            let world = target_direction.to_world(&[x as f64, y as f64])?;
+            let source = source_direction.to_pixel(&world)?;
+            let sx = source[0].round();
+            let sy = source[1].round();
+            if sx >= 0.0
+                && sy >= 0.0
+                && sx < source_shape[0] as f64
+                && sy < source_shape[1] as f64
+                && source_support[sx as usize * source_shape[1] + sy as usize]
+            {
+                support[x * target_size + y] = true;
+            }
+        }
+    }
+    Ok(ReconstructionMaskPlan::Reprojected {
+        coordinate: target_spec,
+        source_coordinate: direction_model_spec(source_direction)?,
+        source_shape: [source_shape[0], source_shape[1]],
+        support: support.into_boxed_slice(),
+    })
+}
+
+fn direction_coordinate(
+    coordinates: &CoordinateSystem,
+) -> Result<&CoordinateModel, crate::ApplicationError> {
+    let index = coordinates
+        .find_coordinate(CoordinateType::Direction)
+        .ok_or_else(|| boxed("mask image has no direction coordinate"))?;
+    Ok(coordinates.coordinate(index))
+}
+
+fn direction_model_spec(
+    coordinate: &CoordinateModel,
+) -> Result<DirectionCoordinateSpec, crate::ApplicationError> {
+    let CoordinateModel::Direction(direction) = coordinate else {
+        return Err(boxed("mask direction-coordinate lookup was inconsistent"));
+    };
+    if direction.projection().projection_type() != ProjectionType::SIN {
+        return Err(boxed(
+            "native mask reprojection currently requires SIN coordinates",
+        ));
+    }
+    let frame = match direction.direction_ref() {
+        DirectionRef::J2000 => DirectionFrame::J2000,
+        DirectionRef::B1950 => DirectionFrame::B1950,
+        DirectionRef::GALACTIC => DirectionFrame::Galactic,
+        DirectionRef::ICRS => DirectionFrame::Icrs,
+        _ => {
+            return Err(boxed(
+                "mask direction frame is not supported by native imaging",
+            ));
+        }
+    };
+    let reference = coordinate.reference_value();
+    let pixel = coordinate.reference_pixel();
+    let increment = coordinate.increment();
+    let pc = direction.pc_matrix();
+    Ok(DirectionCoordinateSpec::new(
+        Projection::Sin,
+        SkyDirection::new(frame, reference[0], reference[1]),
+        [pixel[0], pixel[1]],
+        [increment[0], increment[1]],
+        [[pc[[0, 0]], pc[[0, 1]]], [pc[[1, 0]], pc[[1, 1]]]],
+        [
+            direction.longpole().to_degrees(),
+            direction.latpole().to_degrees(),
+        ],
+    ))
+}
+
 fn specification(
     request: &ContinuumImagingRequest,
 ) -> Result<ProblemSpecification, crate::ApplicationError> {
@@ -687,7 +828,12 @@ fn specification(
                     request.threshold_jy,
                 )
                 .with_maximum_model_update(1.0e30)
-                .with_cycle_limits(request.cycle_iterations, request.maximum_major_cycles);
+                .with_cycle_limits(request.cycle_iterations, request.maximum_major_cycles)
+                .with_cycle_threshold(
+                    request.cycle_factor,
+                    request.minimum_psf_fraction,
+                    request.maximum_psf_fraction,
+                );
                 request
                     .noise_sigma
                     .map_or(controls, |sigma| controls.with_noise_sigma(sigma))
