@@ -509,7 +509,7 @@ impl WorkImplementation for SerialModelDataPublicationExecutor {
             .claims
             .iter()
             .filter_map(|claim| match claim.resource {
-                LeaseResource::IoBuffer(kind) => Some(IoMeasurement::new(kind, claim.amount, 1)),
+                LeaseResource::IoBuffer(kind) => Some(IoMeasurement::unobserved(kind)),
                 _ => None,
             })
             .collect();

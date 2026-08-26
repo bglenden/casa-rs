@@ -662,6 +662,9 @@ pub enum MinorCycleError {
     /// The normal approximation lacked a positive finite peak.
     #[error("normal-state approximation lacks a positive finite PSF peak")]
     InvalidPsfPeak,
+    /// The CASA-style fitted-Gaussian PSF sidelobe measurement failed.
+    #[error(transparent)]
+    PsfBeam(#[from] crate::PsfBeamFitError),
     /// Solver arithmetic produced a non-finite value.
     #[error("minor-cycle arithmetic generated a non-finite value")]
     GeneratedNonfinite,
@@ -762,7 +765,7 @@ pub fn run_minor_cycle(
     }
     let noise_rms = controls
         .noise_sigma()
-        .map(|_| robust_masked_rms(&residual, shape, base, mask))
+        .map(|_| robust_masked_rms(&residual, shape, base, mask).map(|rms| rms / psf_peak))
         .transpose()?;
     let global_threshold = noise_rms
         .zip(controls.noise_sigma())
@@ -773,18 +776,21 @@ pub fn run_minor_cycle(
         .iter()
         .fold(0.0_f64, |peak, value| peak.max(value.abs()))
         / psf_peak;
-    let maximum_sidelobe = view
-        .normal_approximation()
-        .iter()
-        .enumerate()
-        .filter(|(index, _)| *index != psf_peak_index)
-        .fold(0.0_f64, |peak, (_, value)| peak.max(value.re.abs()))
-        / psf_peak;
-    let cycle_threshold = controls.cycle_threshold.map(|cycle| {
-        initial_peak
-            * (cycle.factor * maximum_sidelobe)
-                .clamp(cycle.minimum_psf_fraction, cycle.maximum_psf_fraction)
-    });
+    let cycle_threshold = if let Some(cycle) = controls.cycle_threshold {
+        let psf = view
+            .normal_approximation()
+            .iter()
+            .map(|value| value.re as f32)
+            .collect::<Vec<_>>();
+        let maximum_sidelobe = crate::fitted_psf_sidelobe_fraction(&psf, shape)?;
+        Some(
+            initial_peak
+                * (cycle.factor * maximum_sidelobe)
+                    .clamp(cycle.minimum_psf_fraction, cycle.maximum_psf_fraction),
+        )
+    } else {
+        None
+    };
     let effective_threshold = cycle_threshold.map_or(global_threshold, |threshold| {
         global_threshold.max(threshold)
     });
@@ -822,7 +828,6 @@ pub fn run_minor_cycle(
     );
     let mut iterations = 0_usize;
     let mut total_flux = 0.0_f64;
-    let mut final_peak_flux = 0.0_f64;
     let mut initial_multiscale_component = None::<f64>;
     let has_valid_support = (0..cells).any(|index| {
         let pixel = plane_pixel(index, shape);
@@ -915,7 +920,6 @@ pub fn run_minor_cycle(
                 Some(_) => {}
             }
         }
-        final_peak_flux = strength.abs();
         // The casacore HOGBOM cleaner stops only when the normalized peak is
         // strictly below the threshold (`lattices/LatticeMath/
         // LatticeCleaner.tcc`, stopping rule 1: "stop if below threshold",
@@ -1004,6 +1008,13 @@ pub fn run_minor_cycle(
     }
     let stop_reason = stop_reason.unwrap_or(MinorCycleStopReason::IterationBound);
     let clark_refreshes = clark_state.as_ref().map_or(0, |state| state.refreshes);
+    let final_peak_flux = find_peak_abs(
+        &residual,
+        shape,
+        |value| *value,
+        |pixel| mask.contains(pixel) && valid_support(base, shape, pixel),
+    )
+    .map_or(0.0, |index| residual[index].abs() / psf_peak);
 
     terms.retain(|_, flux| *flux != 0.0);
     let delta = if terms.is_empty() {
@@ -1202,7 +1213,10 @@ struct ScaleKernel {
     scale_px: f64,
     samples: Vec<([isize; 2], f64)>,
     bias: f64,
+    search_border: usize,
 }
+
+const CASA_SCALE_MASK_MINIMUM_OVERLAP: f64 = 0.9;
 
 #[derive(Debug, Clone, Copy)]
 struct MultiscaleCandidate {
@@ -1248,6 +1262,9 @@ fn build_scale_kernels(scales_px: &[f64], small_scale_bias: f64) -> Vec<ScaleKer
                 scale_px,
                 samples,
                 bias,
+                // MatrixCleaner::makeScaleMasks excludes a 1.5-scale border
+                // before peak selection, even when the user mask is full.
+                search_border: (scale_px * 1.5) as usize,
             }
         })
         .collect()
@@ -1387,9 +1404,24 @@ fn kernel_fits(
     mask: &ReconstructionMask,
     kernel: &ScaleKernel,
 ) -> bool {
-    kernel.samples.iter().all(|(offset, _)| {
-        offset_pixel(centre, *offset, shape)
-            .is_some_and(|pixel| mask.contains(pixel) && valid_support(base, shape, pixel))
+    if !within_multiscale_border(centre, shape, kernel.search_border) {
+        return false;
+    }
+    let overlap = kernel
+        .samples
+        .iter()
+        .filter_map(|(offset, weight)| {
+            offset_pixel(centre, *offset, shape)
+                .filter(|pixel| mask.contains(*pixel) && valid_support(base, shape, *pixel))
+                .map(|_| *weight)
+        })
+        .sum::<f64>();
+    overlap > CASA_SCALE_MASK_MINIMUM_OVERLAP
+}
+
+fn within_multiscale_border(centre: [usize; 2], shape: [usize; 2], border: usize) -> bool {
+    centre.into_iter().zip(shape).all(|(coordinate, extent)| {
+        coordinate > border && coordinate < extent.saturating_sub(border).saturating_sub(1)
     })
 }
 
@@ -1628,7 +1660,18 @@ fn minor_cycle_evidence_id(
 mod tests {
     use num_complex::Complex64;
 
-    use super::{build_scale_kernels, clark_requires_refresh, multiscale_diverged, subtract_psf};
+    use super::{
+        build_scale_kernels, clark_requires_refresh, multiscale_diverged, subtract_psf,
+        within_multiscale_border,
+    };
+
+    #[test]
+    fn multiscale_search_excludes_the_casa_one_and_a_half_scale_border() {
+        assert!(!within_multiscale_border([10, 20], [64, 64], 10));
+        assert!(within_multiscale_border([11, 20], [64, 64], 10));
+        assert!(within_multiscale_border([52, 20], [64, 64], 10));
+        assert!(!within_multiscale_border([53, 20], [64, 64], 10));
+    }
 
     #[test]
     fn multiscale_divergence_boundary_requires_prior_progress_and_exceeds_one_half() {

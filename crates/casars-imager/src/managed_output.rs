@@ -7,8 +7,9 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::task_contract::{
-    ImagerArtifactKind, ImagerDeconvolver, ImagerHogbomIterationMode, ImagerRestoringBeamMode,
-    ImagerRunTaskResult, ImagerSaveModel, ImagerSpectralMode, ImagerWTermMode, ImagerWeighting,
+    ImagerArtifactKind, ImagerDeconvolver, ImagerHogbomIterationMode, ImagerMinorCycleDiagnostic,
+    ImagerRestoringBeamMode, ImagerRunTaskResult, ImagerSaveModel, ImagerSpectralMode,
+    ImagerVisibilityProductDiagnostic, ImagerWTermMode, ImagerWeighting,
 };
 use crate::{
     CliConfig, RunSummary, canonical_deconvolver_name, canonical_hogbom_iteration_mode_name,
@@ -87,6 +88,10 @@ pub struct ManagedImagingRun {
     pub minor_iterations: usize,
     /// Final CLEAN stop reason when deconvolution ran.
     pub clean_stop_reason: Option<String>,
+    /// Ordered owner-calculated solver diagnostics.
+    pub minor_cycles: Vec<ImagerMinorCycleDiagnostic>,
+    /// Final paired-operator visibility identities and provenance, when produced.
+    pub visibility_products: Option<ImagerVisibilityProductDiagnostic>,
     /// Measured end-to-end application wall time.
     pub elapsed_ns: u64,
 }
@@ -155,6 +160,8 @@ impl ManagedImagingOutput {
                 clean_stop_reason: summary
                     .clean_stop_reason
                     .map(|reason| format!("{reason:?}")),
+                minor_cycles: crate::task_contract::project_minor_cycles(&summary.minor_cycles),
+                visibility_products: summary.visibility_products.clone(),
                 elapsed_ns: summary.elapsed.as_nanos() as u64,
             },
             artifacts: imaging_artifacts(config, &summary.output_products),
@@ -233,6 +240,8 @@ impl ManagedImagingOutput {
                     .run
                     .clean_stop_reason
                     .map(|reason| format!("{reason:?}")),
+                minor_cycles: result.run.minor_cycles.clone(),
+                visibility_products: result.run.visibility_products.clone(),
                 elapsed_ns: result.run.elapsed_ns,
             },
             artifacts: result
@@ -460,6 +469,8 @@ mod tests {
             major_cycles: 3,
             minor_iterations: 9,
             clean_stop_reason: Some(CleanStopReason::CycleThresholdReached),
+            minor_cycles: Vec::new(),
+            visibility_products: None,
             elapsed: Duration::from_nanos(37),
             output_products: vec![
                 ".psf".to_string(),
@@ -652,6 +663,8 @@ mod tests {
                 nmajordone: 6,
                 stopcode: 10,
                 clean_stop_reason: Some(ImagerCleanStopReason::DivergenceDetected),
+                minor_cycles: Vec::new(),
+                visibility_products: None,
                 elapsed_ns: 22,
             },
             artifacts: vec![ImagerArtifact {

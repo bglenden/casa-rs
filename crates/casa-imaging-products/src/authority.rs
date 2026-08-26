@@ -34,7 +34,7 @@ use crate::source::{ContinuumProductInputs, ContinuumSourceCatalog};
 pub const CONTINUUM_ALGORITHM_CATALOG_VERSION: u32 = 2;
 
 /// Default main-lobe cutoff fraction for restoring-beam fitting.
-pub const DEFAULT_PSF_CUTOFF: f32 = 0.35;
+pub const DEFAULT_PSF_CUTOFF: f32 = casa_imaging_reconstruction::DEFAULT_PSF_FIT_CUTOFF;
 
 /// Explicit continuum production controls.
 #[derive(Debug, Clone, Copy, PartialEq)]

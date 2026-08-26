@@ -292,11 +292,39 @@ impl Iterator for BoundObservationSamples<'_> {
                         self.finished = true;
                         return Some(Err(BoundObservationSourceError::StoredSampleShapeMismatch));
                     };
+                    let parallel_hand_group_flag =
+                        if product.correlation_type().contributes_to_stokes_i() {
+                            let mut flagged = false;
+                            for peer in
+                                coordinates.products.iter().copied().filter(|peer| {
+                                    peer.correlation_type().contributes_to_stokes_i()
+                                })
+                            {
+                                let peer_offset = usize::try_from(peer.correlation_index()).ok();
+                                let peer_stored = match (channel_offset, peer_offset) {
+                                    (Some(channel), Some(correlation)) => {
+                                        block.buffer.sample(channel, self.row_offset, correlation)
+                                    }
+                                    _ => None,
+                                };
+                                let Some(peer_stored) = peer_stored else {
+                                    self.finished = true;
+                                    return Some(Err(
+                                        BoundObservationSourceError::StoredSampleShapeMismatch,
+                                    ));
+                                };
+                                flagged |= peer_stored.channel_flag();
+                            }
+                            flagged
+                        } else {
+                            stored.channel_flag()
+                        };
                     let sample = self.project_sample(
                         coordinates,
                         coordinates.channels[self.channel_ordinal],
                         product,
                         stored,
+                        parallel_hand_group_flag,
                         block.row_geometry[self.row_offset],
                     );
                     self.advance(coordinates.channels.len(), coordinates.products.len());
@@ -406,6 +434,7 @@ impl BoundObservationSamples<'_> {
         channel: SelectedChannel,
         product: CorrelationProduct,
         stored: SelectedStoredSample,
+        parallel_hand_group_flag: bool,
         geometry: EvaluatedRowGeometry,
     ) -> Result<SelectedObservationSample, BoundObservationSourceError> {
         let time_scale = time_scale(self.source.geometry_engine.time_reference().as_str())?;
@@ -448,6 +477,7 @@ impl BoundObservationSamples<'_> {
             visibility,
             prediction_target,
             channel_flag: stored.channel_flag(),
+            parallel_hand_group_flag,
             row_flag: stored.row_flag(),
             input_weight: stored.input_weight(),
             coordinates: SelectedSampleCoordinates {

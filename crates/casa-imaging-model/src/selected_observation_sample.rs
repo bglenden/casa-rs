@@ -14,7 +14,7 @@ use crate::{
 };
 
 const SELECTED_OBSERVATION_GENERATION_DOMAIN: &[u8] = b"casa-rs-selected-observation-generation";
-const SELECTED_OBSERVATION_GENERATION_VERSION: u32 = 3;
+const SELECTED_OBSERVATION_GENERATION_VERSION: u32 = 4;
 
 /// Reported source position and spectral/polarization coordinate of one sample.
 ///
@@ -226,6 +226,12 @@ pub struct SelectedObservationSample {
     pub prediction_target: SelectedPredictionTarget,
     /// Selected channel/correlation `FLAG` value.
     pub channel_flag: bool,
+    /// CASA imaging flag for the complete selected parallel-hand group at this row/channel.
+    ///
+    /// Stokes-I imaging rejects both parallel hands when either selected hand is flagged. This
+    /// derived value preserves that operator input without replacing the exact per-cell
+    /// [`Self::channel_flag`] report.
+    pub parallel_hand_group_flag: bool,
     /// MAIN `FLAG_ROW` value.
     pub row_flag: bool,
     /// Selected `WEIGHT` or `WEIGHT_SPECTRUM` value in MS `Float` storage precision.
@@ -238,7 +244,7 @@ pub struct SelectedObservationSample {
 
 impl SelectedObservationSample {
     /// Closed schema version of the selected-sample value record.
-    pub const SCHEMA_VERSION: u32 = 2;
+    pub const SCHEMA_VERSION: u32 = 3;
 }
 
 /// Content digest of one ordered selected-observation sample sequence.
@@ -359,6 +365,7 @@ fn encode_sample(encoder: &mut CanonicalEncoder, sample: &SelectedObservationSam
         }
     }
     encoder.u8(u8::from(sample.channel_flag));
+    encoder.u8(u8::from(sample.parallel_hand_group_flag));
     encoder.u8(u8::from(sample.row_flag));
     encoder.f32(sample.input_weight);
 
@@ -421,10 +428,10 @@ mod tests {
 
     const GENERATION_FIXTURE: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../resources/imaging-architecture/baselines/selected-observation-generation-v3.txt"
+        "/../../resources/imaging-architecture/baselines/selected-observation-generation-v4.txt"
     ));
 
-    const ENCODED_FIELDS: [&str; 37] = [
+    const ENCODED_FIELDS: [&str; 38] = [
         "data_description_id:i32",
         "spectral_window_id:u32",
         "channel_index:u32",
@@ -438,6 +445,7 @@ mod tests {
         "correlation_type:tag-u8",
         "visibility:tag-u8-then-float32-f32-or-complex32-real-f32-imaginary-f32",
         "channel_flag:u8",
+        "parallel_hand_group_flag:u8",
         "row_flag:u8",
         "input_weight:f32",
         "raw_uvw_m:f64-x-y-z",
@@ -483,7 +491,7 @@ mod tests {
         assert!(SelectedSpectralContribution::new(0, 1.5).is_none());
         assert!(SelectedSpectralContributions::new([None, Some(first)]).is_none());
         assert!(SelectedSpectralContributions::new([Some(first), Some(first)]).is_none());
-        assert_eq!(SelectedObservationSample::SCHEMA_VERSION, 2);
+        assert_eq!(SelectedObservationSample::SCHEMA_VERSION, 3);
 
         let samples = generation_fixture_samples();
         assert_eq!(
@@ -506,7 +514,7 @@ mod tests {
             generation(&[&[second, first]]),
             "logical sample order participates in content identity"
         );
-        assert_eq!(SelectedObservationGenerationId::SCHEMA_VERSION, 3);
+        assert_eq!(SelectedObservationGenerationId::SCHEMA_VERSION, 4);
 
         let mutations: &[SampleMutation] = &[
             ("data description", |s| s.address.data_description_id += 1),
@@ -531,6 +539,9 @@ mod tests {
                 s.visibility = SelectedVisibilitySample::Complex32([1.5, -0.5])
             }),
             ("channel flag", |s| s.channel_flag = !s.channel_flag),
+            ("parallel-hand group flag", |s| {
+                s.parallel_hand_group_flag = !s.parallel_hand_group_flag
+            }),
             ("row flag", |s| s.row_flag = !s.row_flag),
             ("input weight", |s| s.input_weight += 1.0),
             ("raw uvw", |s| s.coordinates.raw_uvw_m[0] += 1.0),
@@ -642,10 +653,10 @@ mod tests {
         assert_eq!(
             one_block.as_bytes(),
             [
-                111, 78, 34, 234, 95, 3, 110, 60, 100, 134, 163, 250, 60, 188, 188, 99, 243, 55,
-                187, 44, 16, 228, 36, 201, 206, 87, 191, 133, 190, 63, 139, 105,
+                94, 163, 119, 28, 151, 12, 53, 64, 196, 4, 192, 4, 254, 120, 214, 116, 76, 89, 227,
+                128, 71, 11, 144, 158, 216, 193, 210, 121, 192, 35, 160, 205,
             ],
-            "schema-3 golden ratchet"
+            "schema-4 golden ratchet"
         );
     }
 
@@ -655,7 +666,7 @@ mod tests {
             fixture_value("identity_domain"),
             "casa-rs-selected-observation-generation"
         );
-        assert_eq!(fixture_value("generation_schema_version"), "3");
+        assert_eq!(fixture_value("generation_schema_version"), "4");
         assert_eq!(fixture_value("sample_marker"), "0xa5");
         assert_eq!(fixture_value("terminal_marker"), "0xff");
         assert_eq!(fixture_value("terminal_sample_count"), "u64-le");
@@ -727,6 +738,7 @@ mod tests {
             visibility: SelectedVisibilitySample::Complex32([1.25, -0.5]),
             prediction_target: SelectedPredictionTarget::ModelData,
             channel_flag: true,
+            parallel_hand_group_flag: true,
             row_flag: false,
             input_weight: 2.5,
             coordinates: SelectedSampleCoordinates {

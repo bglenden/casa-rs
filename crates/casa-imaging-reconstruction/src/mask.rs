@@ -286,7 +286,6 @@ impl ReconstructionMaskPlan {
                     .iter()
                     .map(|sample| sample.support() == casa_imaging_model::ModelSupport::Valid)
                     .collect::<Vec<_>>();
-                let beam_area_pixels = estimate_beam_area_pixels(normal)?;
                 let (mask, evidence) = auto_multithresh(
                     problem,
                     model_generation,
@@ -297,7 +296,6 @@ impl ReconstructionMaskPlan {
                     *completed_major_cycles,
                     *cycle_threshold_reached,
                     *evolution_stopped,
-                    beam_area_pixels,
                     *controls,
                 )?;
                 Ok((mask, Some(evidence)))
@@ -306,44 +304,54 @@ impl ReconstructionMaskPlan {
     }
 }
 
-fn estimate_beam_area_pixels(normal: &FinalNormalState) -> Result<f64, MaskError> {
+#[derive(Debug, Clone, Copy)]
+struct AutoMaskBeam {
+    major_fwhm_pixels: f64,
+    minor_fwhm_pixels: f64,
+    position_angle_rad: f64,
+    area_pixels: f64,
+    sidelobe_fraction: f64,
+}
+
+fn fit_auto_mask_beam(normal: &FinalNormalState) -> Result<AutoMaskBeam, MaskError> {
     let shape = normal.shape();
-    let psf = normal.normal_approximation();
-    let Some((peak_index, peak)) = psf
+    let psf = normal
+        .normal_approximation()
         .iter()
-        .enumerate()
-        .map(|(index, value)| (index, value.re))
-        .max_by(|left, right| left.1.total_cmp(&right.1))
-    else {
-        return Err(MaskError::InvalidBeamArea);
-    };
-    if !peak.is_finite() || peak <= 0.0 {
-        return Err(MaskError::InvalidBeamArea);
+        .map(|sample| sample.re as f32)
+        .collect::<Vec<_>>();
+    let fitted = crate::fit_restoring_beam(&psf, shape, [1.0, 1.0], crate::DEFAULT_PSF_FIT_CUTOFF)
+        .map_err(|_| MaskError::InvalidBeamArea)?;
+    let major_fwhm_pixels = fitted.major_fwhm_rad();
+    let minor_fwhm_pixels = fitted.minor_fwhm_rad();
+    let area_pixels = std::f64::consts::PI * major_fwhm_pixels * minor_fwhm_pixels
+        / (4.0 * std::f64::consts::LN_2);
+    let sidelobe_fraction =
+        crate::psf_beam::fitted_psf_sidelobe_fraction_with_beam(&psf, shape, fitted)
+            .map_err(|_| MaskError::InvalidBeamArea)?;
+    if [
+        major_fwhm_pixels,
+        minor_fwhm_pixels,
+        area_pixels,
+        sidelobe_fraction,
+    ]
+    .into_iter()
+    .all(|value| value.is_finite() && value >= 0.0)
+        && major_fwhm_pixels > 0.0
+        && minor_fwhm_pixels > 0.0
+        && area_pixels > 0.0
+        && fitted.position_angle_rad().is_finite()
+    {
+        Ok(AutoMaskBeam {
+            major_fwhm_pixels,
+            minor_fwhm_pixels,
+            position_angle_rad: fitted.position_angle_rad(),
+            area_pixels,
+            sidelobe_fraction,
+        })
+    } else {
+        Err(MaskError::InvalidBeamArea)
     }
-    let peak_pixel = [peak_index / shape[1], peak_index % shape[1]];
-    let half = peak * 0.5;
-    let width = |axis: usize| {
-        let mut low = peak_pixel[axis];
-        let mut high = peak_pixel[axis];
-        while low > 0 {
-            let mut pixel = peak_pixel;
-            pixel[axis] = low - 1;
-            if psf[pixel[0] * shape[1] + pixel[1]].re < half {
-                break;
-            }
-            low -= 1;
-        }
-        while high + 1 < shape[axis] {
-            let mut pixel = peak_pixel;
-            pixel[axis] = high + 1;
-            if psf[pixel[0] * shape[1] + pixel[1]].re < half {
-                break;
-            }
-            high += 1;
-        }
-        (high - low + 1) as f64
-    };
-    Ok(std::f64::consts::PI * width(0) * width(1) / (4.0 * std::f64::consts::LN_2))
 }
 
 impl MaskBox {
@@ -608,10 +616,10 @@ pub fn auto_multithresh(
     completed_major_cycles: usize,
     cycle_threshold_reached: bool,
     evolution_stopped: bool,
-    beam_area_pixels: f64,
     controls: AutoMultithreshControls,
 ) -> Result<(ReconstructionMask, AutoMultithreshEvidence), MaskError> {
-    validate_auto_controls(controls, beam_area_pixels)?;
+    let beam = fit_auto_mask_beam(normal)?;
+    validate_auto_controls(controls, beam.area_pixels)?;
     let shape = normal.shape();
     if valid_support.len() != shape[0] * shape[1]
         || previous.is_some_and(|mask| {
@@ -620,10 +628,22 @@ pub fn auto_multithresh(
     {
         return Err(MaskError::ShapeMismatch);
     }
+    // `FinalNormalState` retains the unnormalised normal-equation planes. CASA
+    // derives automask thresholds from the displayed residual in model units,
+    // so remove the accumulated normalisation exactly as the minor-cycle
+    // solver does before applying Jy-valued controls.
+    let psf_peak = normal
+        .normal_approximation()
+        .iter()
+        .map(|value| value.re)
+        .fold(f64::NEG_INFINITY, f64::max);
+    if !psf_peak.is_finite() || psf_peak <= 0.0 {
+        return Err(MaskError::InvalidBeamArea);
+    }
     let residual = normal
         .residual()
         .iter()
-        .map(|value| value.re)
+        .map(|value| value.re / psf_peak)
         .collect::<Vec<_>>();
     if residual.iter().any(|value| !value.is_finite()) {
         return Err(MaskError::NonfiniteResidual);
@@ -638,22 +658,7 @@ pub fn auto_multithresh(
         .iter()
         .map(|value| (value - residual_median).abs())
         .fold(0.0_f64, f64::max);
-    let psf_peak = normal
-        .normal_approximation()
-        .iter()
-        .map(|value| value.re.abs())
-        .fold(0.0_f64, f64::max);
-    let sidelobe = normal
-        .normal_approximation()
-        .iter()
-        .map(|value| value.re.abs())
-        .filter(|value| value.to_bits() != psf_peak.to_bits())
-        .fold(0.0_f64, f64::max);
-    let sidelobe_level = if psf_peak > 0.0 {
-        sidelobe / psf_peak
-    } else {
-        0.0
-    };
+    let sidelobe_level = beam.sidelobe_fraction;
     let positive_offset = (controls.sidelobe_factor * sidelobe_level * absolute_peak)
         .max(controls.noise_factor * robust_rms);
     let low_offset = (controls.sidelobe_factor * sidelobe_level * absolute_peak)
@@ -681,13 +686,13 @@ pub fn auto_multithresh(
         prune_regions(
             &mut detected,
             shape,
-            (controls.minimum_beam_fraction * beam_area_pixels).ceil() as usize,
+            (controls.minimum_beam_fraction * beam.area_pixels).ceil() as usize,
         );
         detected = smooth_and_cut(
             &detected,
             shape,
             controls.smooth_factor,
-            beam_area_pixels,
+            beam,
             controls.cut_threshold,
         );
         if completed_major_cycles > 0 {
@@ -745,7 +750,11 @@ pub fn auto_multithresh(
         controls.smooth_factor,
         controls.cut_threshold,
         controls.minimum_percent_change,
-        beam_area_pixels,
+        beam.major_fwhm_pixels,
+        beam.minor_fwhm_pixels,
+        beam.position_angle_rad,
+        beam.area_pixels,
+        beam.sidelobe_fraction,
     ] {
         source.u64(crate::canonical_f64_bits(value));
     }
@@ -888,15 +897,19 @@ fn smooth_and_cut(
     mask: &[bool],
     shape: [usize; 2],
     smooth_factor: f64,
-    beam_area_pixels: f64,
+    beam: AutoMaskBeam,
     cut: f64,
 ) -> Vec<bool> {
     if smooth_factor == 0.0 || mask.iter().all(|value| !*value) {
         return mask.to_vec();
     }
-    let beam_fwhm = (4.0 * std::f64::consts::LN_2 * beam_area_pixels / std::f64::consts::PI).sqrt();
-    let sigma = smooth_factor * beam_fwhm / (2.0 * (2.0 * std::f64::consts::LN_2).sqrt());
-    let radius = (3.0 * sigma).ceil() as isize;
+    let sigma_major = smooth_factor * beam.major_fwhm_pixels / 2.354_820_045_030_949_3;
+    let sigma_minor = smooth_factor * beam.minor_fwhm_pixels / 2.354_820_045_030_949_3;
+    // Image2DConvolver::_shapeOfKernel uses a square +/-5-sigma Gaussian
+    // kernel (`_sizeOfGaussian(width, 5.0)`) and then forces an odd shape.
+    let radius = (5.0 * sigma_major + 0.5) as isize + 1;
+    let cos_pa = beam.position_angle_rad.cos();
+    let sin_pa = beam.position_angle_rad.sin();
     let mut smoothed = vec![0.0; mask.len()];
     for x in 0..shape[0] {
         for y in 0..shape[1] {
@@ -906,7 +919,12 @@ fn smooth_and_cut(
                     if let Some(pixel) = offset_mask_pixel([x, y], [dx, dy], shape)
                         && mask[pixel[0] * shape[1] + pixel[1]]
                     {
-                        value += (-((dx * dx + dy * dy) as f64) / (2.0 * sigma * sigma)).exp();
+                        let dx = dx as f64;
+                        let dy = dy as f64;
+                        let u = dx * cos_pa + dy * sin_pa;
+                        let v = -dx * sin_pa + dy * cos_pa;
+                        value +=
+                            (-0.5 * ((u / sigma_minor).powi(2) + (v / sigma_major).powi(2))).exp();
                     }
                 }
             }

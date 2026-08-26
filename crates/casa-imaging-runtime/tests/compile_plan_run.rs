@@ -2294,6 +2294,17 @@ fn serial_continuum_executes_initial_major_and_scheduler_minor_cycle() {
     )
     .expect("initial ordinary run");
     let receipt = receipts.open(attempt).expect("initial receipt");
+    for (node_id, node) in execution_plan.execution_dag().nodes() {
+        for claim in &node.claims {
+            if let LeaseResource::IoBuffer(kind) = &claim.resource {
+                assert_eq!(
+                    receipt.stage_actual_io(node_id, *kind),
+                    None,
+                    "capacity claim for {node_id:?} must not become fabricated actual I/O"
+                );
+            }
+        }
+    }
     assert_eq!(
         receipt.observation_transaction_publication_scope(),
         casa_imaging_runtime::ObservationTransactionPublicationScope::ReconstructionOnly
@@ -9631,7 +9642,7 @@ fn sealed_products_request(observation: u8) -> ImagingRequest {
     ImagingRequest::new(
         specification,
         geometry_with_shape_and_increment(
-            [3.0, 3.0],
+            [4.0, 4.0],
             ImageShape::new(SEALED_PRODUCTS_SHAPE[0], SEALED_PRODUCTS_SHAPE[1]),
             [-1.0e-6, 1.0e-6],
         ),
@@ -9674,6 +9685,7 @@ fn sealed_products_samples(
             visibility: SelectedVisibilitySample::Complex32([3.0 + source_index as f32, 2.0]),
             prediction_target: casa_imaging_model::SelectedPredictionTarget::NotRequested,
             channel_flag: false,
+            parallel_hand_group_flag: false,
             row_flag: false,
             input_weight: 1.5,
             coordinates: SelectedSampleCoordinates {
@@ -10052,6 +10064,17 @@ fn serial_product_publication_stages_privately_then_publishes_once() {
     let receipt = receipts.open(attempt).expect("publication receipt");
     assert_eq!(receipt.status(), ReceiptStatus::Completed);
     assert_eq!(receipt.publication_layout_count(), expected_members);
+    for (node_id, node) in execution_plan.execution_dag().nodes() {
+        for claim in &node.claims {
+            if let LeaseResource::IoBuffer(kind) = &claim.resource {
+                assert_eq!(
+                    receipt.stage_actual_io(node_id, *kind),
+                    None,
+                    "capacity claim for {node_id:?} must not become fabricated actual I/O"
+                );
+            }
+        }
+    }
 }
 
 #[test]

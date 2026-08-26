@@ -776,6 +776,10 @@ pub struct RunSummary {
     pub minor_iterations: usize,
     /// Minor-cycle stop reason.
     pub clean_stop_reason: Option<CleanStopReason>,
+    /// Ordered owner-calculated minor-cycle diagnostics.
+    pub minor_cycles: Vec<casa_imaging_application::NativeMinorCycleOutcome>,
+    /// Final paired-operator visibility identities and provenance, when produced.
+    pub visibility_products: Option<task_contract::ImagerVisibilityProductDiagnostic>,
     /// Measured wall-clock time for the application call and result projection.
     pub elapsed: Duration,
     /// Exact application-planned conventional CASA product suffixes.

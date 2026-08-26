@@ -280,6 +280,7 @@ fn exact_samples(problem: &casa_imaging_model::CompiledProblem) -> Vec<SelectedO
                 ]),
                 prediction_target: SelectedPredictionTarget::NotRequested,
                 channel_flag: false,
+                parallel_hand_group_flag: false,
                 row_flag: false,
                 input_weight: 1.0 + (source_index * 2 + row_index) as f32,
                 coordinates: SelectedSampleCoordinates {

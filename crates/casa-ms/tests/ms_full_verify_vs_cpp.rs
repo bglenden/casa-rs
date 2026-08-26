@@ -1053,6 +1053,7 @@ fn committed_model_data_generation_matches_cpp_manifest() {
             ],
         )],
     );
+    let model_selection = selection.clone();
     let request = SelectedObservationResolutionRequest::new(
         ms_path.display().to_string(),
         LogicalIdentity::from_sha256([2; 32]),
@@ -1066,8 +1067,9 @@ fn committed_model_data_generation_matches_cpp_manifest() {
     );
     let resolved = resolve_selected_observation(request).expect("resolve owner state");
     let (_, access) = resolved.into_parts();
-    let mut transaction = ModelColumnTransaction::begin(&ms_path, access.source_state())
-        .expect("begin MODEL_DATA transaction");
+    let mut transaction =
+        ModelColumnTransaction::begin(&ms_path, access.source_state(), &model_selection)
+            .expect("begin MODEL_DATA transaction");
     transaction
         .stage(0, 0, 0, casa_types::Complex32::new(4.5, -1.25))
         .expect("stage prediction");

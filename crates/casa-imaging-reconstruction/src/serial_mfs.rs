@@ -5,11 +5,10 @@
 use std::{fmt, sync::Arc};
 
 use casa_imaging_model::{
-    CompiledGeometryId, CompiledProblem, CompiledProblemId, CorrelationType, FiniteValuePolicy,
-    InstrumentResponse, LogicalIdentity, NumericPrecision, NumericsContractId,
-    PolarizationCoordinate, Projection, ReconstructionBasis, ReductionPolicy,
-    SelectedObservationGenerationId, SelectedSampleAddress, SelectedVisibilitySample,
-    WeightingCommitmentId,
+    CompiledGeometryId, CompiledProblem, CompiledProblemId, FiniteValuePolicy, InstrumentResponse,
+    LogicalIdentity, NumericPrecision, NumericsContractId, PolarizationCoordinate, Projection,
+    ReconstructionBasis, ReductionPolicy, SelectedObservationGenerationId, SelectedSampleAddress,
+    SelectedVisibilitySample, WeightingCommitmentId,
 };
 use ndarray::{Array2, Axis};
 use num_complex::Complex64;
@@ -711,7 +710,7 @@ impl CompleteDataOwnerState {
             self.coverage.push(weighted);
             let selected = weighted.selected();
             if self.accept_input(selected)?
-                && stokes_i_parallel_hand(selected.address.correlation_type)
+                && selected.address.correlation_type.contributes_to_stokes_i()
             {
                 let visibility = match selected.visibility {
                     SelectedVisibilitySample::Float32(value) => [f64::from(value), 0.0],
@@ -778,7 +777,7 @@ impl CompleteDataOwnerState {
         for weighted in block.samples() {
             let selected = weighted.selected();
             if !self.accept_input(selected)?
-                || !stokes_i_parallel_hand(selected.address.correlation_type)
+                || !selected.address.correlation_type.contributes_to_stokes_i()
             {
                 continue;
             }
@@ -858,7 +857,7 @@ impl CompleteDataOwnerState {
             };
         apply_input_policy(
             nonfinite,
-            sample.row_flag || sample.channel_flag,
+            sample.row_flag || sample.parallel_hand_group_flag,
             self.finite_values,
         )
     }
@@ -881,17 +880,6 @@ fn apply_input_policy(
     policy: FiniteValuePolicy,
 ) -> Result<bool, SerialMfsError> {
     Ok(apply_finite_value_policy(nonfinite_input, policy)? && !declared_flag)
-}
-
-fn stokes_i_parallel_hand(correlation: CorrelationType) -> bool {
-    matches!(
-        correlation,
-        CorrelationType::StokesI
-            | CorrelationType::LinearXx
-            | CorrelationType::LinearYy
-            | CorrelationType::CircularRr
-            | CorrelationType::CircularLl
-    )
 }
 
 /// Reconstruction-owned serial CPU operator accumulator.

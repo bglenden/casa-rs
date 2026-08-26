@@ -517,6 +517,7 @@ pub struct IoMeasurement {
     kind: IoBufferKind,
     bytes: u64,
     operations: u64,
+    observed: bool,
 }
 
 impl IoMeasurement {
@@ -527,6 +528,21 @@ impl IoMeasurement {
             kind,
             bytes,
             operations,
+            observed: true,
+        }
+    }
+
+    /// Record that this adapter cannot observe transferred bytes or
+    /// operations for the planned category. The prediction and capacity claim
+    /// remain receipted, while actual counters stay absent instead of being
+    /// fabricated from those bounds.
+    #[must_use]
+    pub const fn unobserved(kind: IoBufferKind) -> Self {
+        Self {
+            kind,
+            bytes: 0,
+            operations: 0,
+            observed: false,
         }
     }
 
@@ -546,6 +562,17 @@ impl IoMeasurement {
     #[must_use]
     pub const fn operations(self) -> u64 {
         self.operations
+    }
+
+    /// Return owner-observed counters, or `None` when the underlying adapter
+    /// exposes no trustworthy transfer accounting.
+    #[must_use]
+    pub const fn actual(self) -> Option<(u64, u64)> {
+        if self.observed {
+            Some((self.bytes, self.operations))
+        } else {
+            None
+        }
     }
 }
 

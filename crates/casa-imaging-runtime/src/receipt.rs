@@ -3994,8 +3994,10 @@ impl<'store> ReceiptRecorder<'store> {
                         kind: "I/O measurement",
                     },
                 )?;
-                io.actual_bytes = Some(measurement.bytes());
-                io.actual_operations = Some(measurement.operations());
+                if let Some((bytes, operations)) = measurement.actual() {
+                    io.actual_bytes = Some(bytes);
+                    io.actual_operations = Some(operations);
+                }
             }
         }
         for measurement in measurements.artifacts() {

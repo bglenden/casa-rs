@@ -54,12 +54,12 @@ ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256 = (
     "778bcf42be2ff392cc86c9ca3eb67dc0591c11a24496881841b980c80f1fdbaf"
 )
 ACCEPTED_MATRIX_ROWS_SHA256 = (
-    "38489dfeae9843fb67837630268c7690cc7340e69a045e3d747da200bc9dcea4"
+    "fb60c0414158df194b2cbf4ae8bafca8f8837bca6f27605566f338289a44ca7c"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "c914c9a06e533ec9704169b21bfacba68dc536e5dc964325393848707b5cd13c"
+    "bb01d511251e21a46d8590e79486d86731ef9d4a3b4f1697e402e0b8bfafcc32"
 )
-ACCEPTED_MATRIX_CONTRACT_REVISION = 40
+ACCEPTED_MATRIX_CONTRACT_REVISION = 41
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "scientific-products-v1",
@@ -1818,7 +1818,7 @@ def validate_t18_global_weighting_sources(
         )
     if (
         "spectral_contributions" in selected_sample_fields
-        or "pub const SCHEMA_VERSION: u32 = 2;" not in sample_model
+        or "pub const SCHEMA_VERSION: u32 = 3;" not in sample_model
     ):
         raise ArchitectureError(
             "T18 spectral contributions must remain outside the persisted selected-sample schema"
@@ -2317,7 +2317,7 @@ def validate_t17_ms_selection_transfer(rows: list[dict[str, Any]]) -> None:
         )
     required_baselines = {
         "repo://crates/casa-imaging-model/src/selected_observation_sample.rs",
-        "repo://resources/imaging-architecture/baselines/selected-observation-generation-v3.txt",
+        "repo://resources/imaging-architecture/baselines/selected-observation-generation-v4.txt",
     }
     if not required_baselines.issubset(set(row.get("baseline_manifests", []))):
         raise ArchitectureError(

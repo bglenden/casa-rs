@@ -368,6 +368,7 @@ fn fixture_samples(
                 ]),
                 prediction_target: SelectedPredictionTarget::NotRequested,
                 channel_flag: false,
+                parallel_hand_group_flag: false,
                 row_flag: false,
                 input_weight: 1.0 + (source_index * 2 + row_index) as f32,
                 coordinates: SelectedSampleCoordinates {
@@ -565,7 +566,6 @@ fn static_and_auto_masks_share_explicit_geometry_and_generation_lineage() {
         1,
         false,
         false,
-        4.0,
         AutoMultithreshControls {
             sidelobe_factor: 3.0,
             noise_factor: 5.0,
@@ -1280,7 +1280,9 @@ fn multiscale_zero_scale_matches_the_point_component_and_extended_scale_spreads_
         &full_mask(&round.normal_state, &round.final_model),
         HogbomControls::for_algorithm(
             ReconstructionAlgorithm::Multiscale {
-                scales_px: vec![3.0],
+                // The 8x8 fixture can contain a 1.5-pixel scale inside CASA's
+                // mandatory floor(1.5*scale) search border.
+                scales_px: vec![1.5],
                 small_scale_bias: 0.6,
             },
             compiled,

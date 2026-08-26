@@ -1143,6 +1143,164 @@ impl Table {
         self.finish_write_operation(auto_unlock, result)
     }
 
+    /// Retires the on-disk descriptor for one already-removed column whose
+    /// data manager owns no other column.
+    ///
+    /// Payload files are deliberately left orphaned. A later clone reuses the
+    /// now-free sequence number, while a failed metadata write leaves the old
+    /// descriptor and payload together rather than deleting recoverable data.
+    pub(crate) fn persist_removed_single_column_in_place(
+        &mut self,
+        column: &str,
+    ) -> Result<(), TableError> {
+        if self.kind != TableKind::Plain {
+            return Err(TableError::Storage(
+                "retiring a column in place requires a plain disk-backed table".to_string(),
+            ));
+        }
+        if self
+            .inner
+            .schema()
+            .is_some_and(|schema| schema.contains_column(column))
+        {
+            return Err(TableError::Storage(format!(
+                "column \"{column}\" must be removed from the schema before retirement"
+            )));
+        }
+        let source_path = self
+            .source_path
+            .as_ref()
+            .ok_or_else(|| TableError::Storage("table has no source path".to_string()))?
+            .clone();
+        let auto_unlock = self.begin_write_operation("retire removed single column")?;
+        let result = (|| {
+            let control_path = source_path.join(crate::storage::TABLE_CONTROL_FILE);
+            let mut table_dat =
+                match crate::storage::table_control::read_table_dat_dispatch(&control_path)? {
+                    crate::storage::table_control::TableDatResult::Plain(table_dat) => table_dat,
+                    _ => {
+                        return Err(TableError::Storage(
+                            "retiring a column in place only supports plain tables".to_string(),
+                        ));
+                    }
+                };
+            let entry = table_dat
+                .column_set
+                .columns
+                .iter()
+                .find(|entry| entry.original_name == column)
+                .cloned()
+                .ok_or_else(|| TableError::SchemaColumnUnknown {
+                    column: column.to_string(),
+                })?;
+            let manager_columns = table_dat
+                .column_set
+                .columns
+                .iter()
+                .filter(|candidate| candidate.dm_seq_nr == entry.dm_seq_nr)
+                .count();
+            if manager_columns != 1 {
+                return Err(TableError::Storage(format!(
+                    "column \"{column}\" shares data manager {} with {manager_columns} columns",
+                    entry.dm_seq_nr
+                )));
+            }
+            table_dat
+                .table_desc
+                .columns
+                .retain(|descriptor| descriptor.col_name != column);
+            table_dat
+                .column_set
+                .columns
+                .retain(|candidate| candidate.original_name != column);
+            table_dat
+                .column_set
+                .data_managers
+                .retain(|manager| manager.seq_nr != entry.dm_seq_nr);
+            crate::storage::table_control::write_table_dat(&control_path, &table_dat)?;
+            crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&source_path);
+            Ok(())
+        })();
+        self.finish_write_operation(auto_unlock, result)
+    }
+
+    /// Persists one schema rename without rewriting its data manager payload.
+    pub(crate) fn persist_renamed_column_in_place(
+        &mut self,
+        old: &str,
+        new: &str,
+    ) -> Result<(), TableError> {
+        if self.kind != TableKind::Plain {
+            return Err(TableError::Storage(
+                "renaming a column in place requires a plain disk-backed table".to_string(),
+            ));
+        }
+        let schema = self
+            .inner
+            .schema()
+            .ok_or_else(|| TableError::Schema("schema required for column rename".to_string()))?;
+        if schema.contains_column(old) || !schema.contains_column(new) {
+            return Err(TableError::Storage(format!(
+                "column rename {old:?} -> {new:?} is not reflected in the in-memory schema"
+            )));
+        }
+        let source_path = self
+            .source_path
+            .as_ref()
+            .ok_or_else(|| TableError::Storage("table has no source path".to_string()))?
+            .clone();
+        let auto_unlock = self.begin_write_operation("persist renamed column")?;
+        let result = (|| {
+            let control_path = source_path.join(crate::storage::TABLE_CONTROL_FILE);
+            let mut table_dat =
+                match crate::storage::table_control::read_table_dat_dispatch(&control_path)? {
+                    crate::storage::table_control::TableDatResult::Plain(table_dat) => table_dat,
+                    _ => {
+                        return Err(TableError::Storage(
+                            "renaming a column in place only supports plain tables".to_string(),
+                        ));
+                    }
+                };
+            if table_dat
+                .table_desc
+                .columns
+                .iter()
+                .any(|descriptor| descriptor.col_name == new)
+                || table_dat
+                    .column_set
+                    .columns
+                    .iter()
+                    .any(|entry| entry.original_name == new)
+            {
+                return Err(TableError::Storage(format!(
+                    "column \"{new}\" already exists on disk"
+                )));
+            }
+            let descriptor = table_dat
+                .table_desc
+                .columns
+                .iter_mut()
+                .find(|descriptor| descriptor.col_name == old)
+                .ok_or_else(|| TableError::SchemaColumnUnknown {
+                    column: old.to_string(),
+                })?;
+            descriptor.col_name = new.to_string();
+            let entry = table_dat
+                .column_set
+                .columns
+                .iter_mut()
+                .find(|entry| entry.original_name == old)
+                .ok_or_else(|| TableError::SchemaColumnUnknown {
+                    column: old.to_string(),
+                })?;
+            entry.original_name = new.to_string();
+            crate::storage::table_control::write_table_dat(&control_path, &table_dat)?;
+            crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&source_path);
+            Ok(())
+        })();
+        self.finish_write_operation(auto_unlock, result)
+    }
+
     /// Persists a newly-added variable-shape array column as a standalone
     /// `TiledShapeStMan` data manager without rewriting existing managers.
     ///
@@ -1715,6 +1873,18 @@ impl TableWritePlan<'_> {
             target_column,
             target_data_manager_name,
         )
+    }
+
+    /// Retire one removed column backed by its own data manager.
+    #[doc(hidden)]
+    pub fn retire_removed_single_column(&mut self, column: &str) -> Result<(), TableError> {
+        self.table.persist_removed_single_column_in_place(column)
+    }
+
+    /// Persist one already-applied column rename without rewriting row data.
+    #[doc(hidden)]
+    pub fn persist_column_rename(&mut self, old: &str, new: &str) -> Result<(), TableError> {
+        self.table.persist_renamed_column_in_place(old, new)
     }
 
     /// Install a newly added variable-shape tiled column.

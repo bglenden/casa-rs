@@ -2463,6 +2463,143 @@ impl From<CleanStopReason> for ImagerCleanStopReason {
     }
 }
 
+/// Stable terminal reasons for one bounded owner minor cycle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ImagerMinorCycleStopReason {
+    /// The requested threshold was reached.
+    ThresholdReached,
+    /// The minor-cycle iteration bound was reached.
+    IterationBound,
+    /// The frozen-approximation update envelope was reached.
+    StalenessBound,
+    /// The multiscale trajectory diverged after accepted progress.
+    MultiscaleDivergence,
+}
+
+/// One accepted component in machine-readable solver diagnostics.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerMinorCycleComponent {
+    /// Image-domain ordinal.
+    pub domain: usize,
+    /// Spectral-basis coefficient ordinal.
+    pub coefficient: usize,
+    /// Polarization-coordinate ordinal.
+    pub polarization: usize,
+    /// X pixel coordinate.
+    pub x: usize,
+    /// Y pixel coordinate.
+    pub y: usize,
+    /// Signed component flux in model units.
+    pub flux: f64,
+    /// Component scale in pixels (`0` for point CLEAN).
+    pub scale_px: f64,
+}
+
+/// Machine-readable evidence from one auto-multithreshold update.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerAutoMaskDiagnostic {
+    /// Robust residual median.
+    pub median: f64,
+    /// MAD-derived robust RMS.
+    pub robust_rms: f64,
+    /// Positive detection threshold.
+    pub positive_threshold: f64,
+    /// Low-noise growth threshold.
+    pub low_noise_threshold: f64,
+    /// Optional negative detection threshold.
+    pub negative_threshold: Option<f64>,
+    /// Number of support pixels changed in this cycle.
+    pub changed_pixels: usize,
+    /// Whether subsequent cycles keep this support fixed.
+    pub channel_stopped: bool,
+}
+
+/// Owner-calculated evidence for one bounded minor cycle.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerMinorCycleDiagnostic {
+    /// One-based cycle ordinal.
+    pub cycle: usize,
+    /// Accepted component count.
+    pub iterations: usize,
+    /// Cumulative absolute component flux accepted in this cycle.
+    pub total_flux: f64,
+    /// Final normalized residual peak.
+    pub final_peak_flux: f64,
+    /// Robust RMS used for `nsigma` stopping, when enabled.
+    pub noise_rms: Option<f64>,
+    /// Effective owner threshold.
+    pub effective_threshold: f64,
+    /// PSF-derived cycle threshold, when enabled.
+    pub cycle_threshold: Option<f64>,
+    /// Scientific terminal reason.
+    pub stop_reason: ImagerMinorCycleStopReason,
+    /// Exact Clark residual refresh count.
+    pub clark_refreshes: usize,
+    /// Bounded leading component sequence.
+    pub components: Vec<ImagerMinorCycleComponent>,
+    /// Exact x-major reconstruction support.
+    pub mask_support: Vec<bool>,
+    /// Auto-mask evidence, when auto masking was active.
+    pub auto_mask: Option<ImagerAutoMaskDiagnostic>,
+}
+
+fn project_minor_cycle(
+    cycle: &casa_imaging_application::NativeMinorCycleOutcome,
+) -> ImagerMinorCycleDiagnostic {
+    use casa_imaging_application::NativeMinorCycleStopReason as NativeStop;
+
+    ImagerMinorCycleDiagnostic {
+        cycle: cycle.cycle,
+        iterations: cycle.iterations,
+        total_flux: cycle.total_flux,
+        final_peak_flux: cycle.final_peak_flux,
+        noise_rms: cycle.noise_rms,
+        effective_threshold: cycle.effective_threshold,
+        cycle_threshold: cycle.cycle_threshold,
+        stop_reason: match cycle.stop_reason {
+            NativeStop::ThresholdReached => ImagerMinorCycleStopReason::ThresholdReached,
+            NativeStop::IterationBound => ImagerMinorCycleStopReason::IterationBound,
+            NativeStop::StalenessBound => ImagerMinorCycleStopReason::StalenessBound,
+            NativeStop::MultiscaleDivergence => ImagerMinorCycleStopReason::MultiscaleDivergence,
+        },
+        clark_refreshes: cycle.clark_refreshes,
+        components: cycle
+            .recorded_components
+            .iter()
+            .map(|component| {
+                let cell = component.cell();
+                let [x, y] = cell.pixel();
+                ImagerMinorCycleComponent {
+                    domain: cell.domain(),
+                    coefficient: cell.coefficient(),
+                    polarization: cell.polarization(),
+                    x,
+                    y,
+                    flux: component.flux(),
+                    scale_px: component.scale_px(),
+                }
+            })
+            .collect(),
+        mask_support: cycle.mask_support.clone(),
+        auto_mask: cycle.auto_mask.map(|evidence| ImagerAutoMaskDiagnostic {
+            median: evidence.median,
+            robust_rms: evidence.robust_rms,
+            positive_threshold: evidence.positive_threshold,
+            low_noise_threshold: evidence.low_noise_threshold,
+            negative_threshold: evidence.negative_threshold,
+            changed_pixels: evidence.changed_pixels,
+            channel_stopped: evidence.channel_stopped,
+        }),
+    }
+}
+
+pub(crate) fn project_minor_cycles(
+    cycles: &[casa_imaging_application::NativeMinorCycleOutcome],
+) -> Vec<ImagerMinorCycleDiagnostic> {
+    cycles.iter().map(project_minor_cycle).collect()
+}
+
 /// Stable run metrics emitted after one successful imaging run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ImagerRunReport {
@@ -2482,8 +2619,31 @@ pub struct ImagerRunReport {
     pub stopcode: i32,
     /// Final CLEAN stop reason when deconvolution ran.
     pub clean_stop_reason: Option<ImagerCleanStopReason>,
+    /// Ordered owner-calculated solver diagnostics.
+    pub minor_cycles: Vec<ImagerMinorCycleDiagnostic>,
+    /// Final paired-operator visibility identities and provenance, when produced.
+    pub visibility_products: Option<ImagerVisibilityProductDiagnostic>,
     /// Measured end-to-end application wall time.
     pub elapsed_ns: u64,
+}
+
+/// Machine-readable projection of the final visibility-product authority.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerVisibilityProductDiagnostic {
+    /// Compiled imaging-problem identity.
+    pub problem_id: String,
+    /// Exact final model generation used for prediction.
+    pub final_model_generation: String,
+    /// Exact selected-observation generation traversed by the final replay.
+    pub selected_generation: String,
+    /// Exact weighting generation paired with the final replay.
+    pub weighting_generation: String,
+    /// Content identity of the model-visibility stream.
+    pub model_product: String,
+    /// Content identity of the observed-minus-model visibility stream.
+    pub residual_product: String,
+    /// Number of canonically selected visibility samples.
+    pub sample_count: u64,
 }
 
 /// Stable artifact kind identifiers for written image products.
@@ -2574,6 +2734,8 @@ impl ImagerRunTaskResult {
                 nmajordone: summary.major_cycles,
                 stopcode: casa_stop_code(summary.clean_stop_reason),
                 clean_stop_reason: summary.clean_stop_reason.map(Into::into),
+                minor_cycles: project_minor_cycles(&summary.minor_cycles),
+                visibility_products: summary.visibility_products.clone(),
                 elapsed_ns: summary.elapsed.as_nanos() as u64,
             },
             artifacts: build_artifacts_for_products(&request, &summary.output_products),

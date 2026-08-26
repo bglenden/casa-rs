@@ -33,9 +33,7 @@ use casa_imaging_model::{
     VisibilityColumn as OwnerVisibilityColumn, VisibilityInnerProduct,
     WeightColumn as OwnerWeightColumn, WeightDensityScope, WeightingContract, WeightingScheme,
 };
-use casa_imaging_reconstruction::{
-    MinorCycleStopReason, ReconstructionMaskPlan, WeightingExecutionLimits,
-};
+use casa_imaging_reconstruction::{ReconstructionMaskPlan, WeightingExecutionLimits};
 use casa_imaging_runtime::{
     BuildIdentity, ExecutionAttemptId, ExecutionReceiptStore, ImplementationRegistryId,
     PlannerCostModelProfileId, ProductionStorageProfile, ReceiptRetention, ResourceAuthority,
@@ -234,6 +232,8 @@ pub struct ContinuumImagingResult {
     pub minor_iterations: usize,
     /// Scientific minor-cycle terminal reason, when a solve ran.
     pub minor_stop_reason: Option<ContinuumStopReason>,
+    /// Ordered owner diagnostics for every executed minor cycle.
+    pub minor_cycles: Vec<crate::NativeMinorCycleOutcome>,
     /// Exact compiler-planned conventional CASA member names.
     pub product_names: Vec<String>,
 }
@@ -244,7 +244,8 @@ pub fn execute_continuum(
 ) -> Result<ContinuumImagingResult, ApplicationDispatchError> {
     let prepared = prepare(request).map_err(ApplicationDispatchError::Preparation)?;
     let outcome = crate::execute(prepared)?;
-    let minor = outcome.output.minor_cycle.clone();
+    let minor_cycles = outcome.output.minor_cycles.clone();
+    let minor = minor_cycles.last();
     let minor_iterations = outcome.output.total_minor_iterations;
     let product_names = outcome
         .output
@@ -256,11 +257,20 @@ pub fn execute_continuum(
     Ok(ContinuumImagingResult {
         minor_iterations,
         minor_stop_reason: minor.map(|value| match value.stop_reason {
-            MinorCycleStopReason::ThresholdReached => ContinuumStopReason::ThresholdReached,
-            MinorCycleStopReason::IterationBound => ContinuumStopReason::IterationBound,
-            MinorCycleStopReason::StalenessBound => ContinuumStopReason::StalenessBound,
-            MinorCycleStopReason::MultiscaleDivergence => ContinuumStopReason::MultiscaleDivergence,
+            crate::NativeMinorCycleStopReason::ThresholdReached => {
+                ContinuumStopReason::ThresholdReached
+            }
+            crate::NativeMinorCycleStopReason::IterationBound => {
+                ContinuumStopReason::IterationBound
+            }
+            crate::NativeMinorCycleStopReason::StalenessBound => {
+                ContinuumStopReason::StalenessBound
+            }
+            crate::NativeMinorCycleStopReason::MultiscaleDivergence => {
+                ContinuumStopReason::MultiscaleDivergence
+            }
         }),
+        minor_cycles,
         product_names,
         outcome,
     })
@@ -424,10 +434,10 @@ fn prepare(
         geometry,
         model_lifecycle: ModelLifecycleRequirements::new(
             ModelBounds::new(
-                request.image_size.saturating_mul(request.image_size),
+                model_plane_samples(request.image_size),
                 1,
                 1,
-                request.iterations.max(1),
+                model_plane_samples(request.image_size),
                 request.maximum_model_update_jy * request.maximum_major_cycles.max(1) as f64,
                 request.maximum_model_update_jy,
             )?,
@@ -1081,6 +1091,10 @@ fn request_digest(request: &ContinuumImagingRequest, domain: &[u8]) -> [u8; 32] 
     hasher.finalize().into()
 }
 
+const fn model_plane_samples(image_size: usize) -> usize {
+    image_size.saturating_mul(image_size)
+}
+
 fn hash(value: &[u8]) -> [u8; 32] {
     Sha256::digest(value).into()
 }
@@ -1096,11 +1110,16 @@ fn boxed(message: impl Into<String>) -> crate::ApplicationError {
 
 #[cfg(test)]
 mod tests {
-    use super::image_reference_pixel;
+    use super::{image_reference_pixel, model_plane_samples};
 
     #[test]
     fn casa_direction_reference_pixel_uses_half_the_image_extent() {
         assert_eq!(image_reference_pixel(16), 8.0);
         assert_eq!(image_reference_pixel(15), 7.5);
+    }
+
+    #[test]
+    fn model_delta_bound_covers_one_complete_multiscale_plane() {
+        assert_eq!(model_plane_samples(64), 4096);
     }
 }

@@ -137,8 +137,8 @@ pub struct NativeApplicationOutcome {
     pub initial_receipt: ExecutionReceipt,
     /// Mandatory post-minor final-major receipt for Högbom imaging.
     pub final_major_receipt: Option<ExecutionReceipt>,
-    /// T21 solve evidence captured before its affine final-major handoff.
-    pub minor_cycle: Option<NativeMinorCycleOutcome>,
+    /// Ordered solve evidence captured before each affine major-cycle handoff.
+    pub minor_cycles: Vec<NativeMinorCycleOutcome>,
     /// Number of executed major passes, including the initial pass.
     pub major_cycle_count: usize,
     /// Total accepted component updates across all minor cycles.
@@ -160,16 +160,54 @@ pub struct NativeApplicationOutcome {
 /// Stable application projection of the T21 owner evidence.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NativeMinorCycleOutcome {
+    /// One-based minor-cycle ordinal within this reconstruction.
+    pub cycle: usize,
     /// Number of accepted component updates.
     pub iterations: usize,
+    /// Cumulative absolute component flux accepted in this cycle.
+    pub total_flux: f64,
     /// Final normalized residual peak.
     pub final_peak_flux: f64,
+    /// Robust RMS used for `nsigma` stopping, when enabled.
+    pub noise_rms: Option<f64>,
+    /// Effective absolute/noise/cycle threshold used by the owner.
+    pub effective_threshold: f64,
+    /// PSF-derived cycle threshold, when enabled.
+    pub cycle_threshold: Option<f64>,
     /// Scientific terminal reason.
-    pub stop_reason: MinorCycleStopReason,
+    pub stop_reason: NativeMinorCycleStopReason,
+    /// Number of exact Clark residual refreshes.
+    pub clark_refreshes: usize,
     /// Bounded leading component sequence for CASA/Rust first-divergence diagnostics.
     pub recorded_components: Vec<casa_imaging_reconstruction::MinorCycleComponent>,
+    /// Exact x-major reconstruction support used for component placement.
+    pub mask_support: Vec<bool>,
     /// Auto-multithreshold diagnostics, when that mask mode generated support.
     pub auto_mask: Option<casa_imaging_reconstruction::AutoMultithreshEvidence>,
+}
+
+/// Stable application spelling of the scientific minor-cycle terminal reason.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NativeMinorCycleStopReason {
+    /// The normalized residual peak fell below the requested threshold.
+    ThresholdReached,
+    /// The bounded minor-cycle iteration budget was exhausted.
+    IterationBound,
+    /// The next update would exceed the frozen-approximation envelope.
+    StalenessBound,
+    /// The multiscale residual trajectory diverged after accepted progress.
+    MultiscaleDivergence,
+}
+
+impl From<MinorCycleStopReason> for NativeMinorCycleStopReason {
+    fn from(value: MinorCycleStopReason) -> Self {
+        match value {
+            MinorCycleStopReason::ThresholdReached => Self::ThresholdReached,
+            MinorCycleStopReason::IterationBound => Self::IterationBound,
+            MinorCycleStopReason::StalenessBound => Self::StalenessBound,
+            MinorCycleStopReason::MultiscaleDivergence => Self::MultiscaleDivergence,
+        }
+    }
 }
 
 impl NativeMinorCycleOutcome {
@@ -337,7 +375,7 @@ where
         scientific,
         final_reconstruction_mask,
         final_major_receipt,
-        minor_cycle,
+        minor_cycles,
         major_cycle_count,
         total_minor_iterations,
         visibility_products,
@@ -348,7 +386,16 @@ where
                 .implementation()
                 .take_completion()
                 .ok_or_else(|| boxed("dirty execution omitted final major-cycle evidence"))?;
-            (result.into_completion(), None, None, None, 1, 0, None, None)
+            (
+                result.into_completion(),
+                None,
+                None,
+                Vec::new(),
+                1,
+                0,
+                None,
+                None,
+            )
         }
         ReconstructionAlgorithm::Hogbom
         | ReconstructionAlgorithm::Clark
@@ -362,19 +409,27 @@ where
             let mut cycle = 1_usize;
             let mut total_iterations = 0_usize;
             let mut mask_plan = input.mask.clone();
+            let mut minor_outcomes = Vec::new();
             loop {
                 total_iterations = total_iterations
                     .checked_add(minor.evidence().iterations())
                     .ok_or_else(|| boxed("minor-cycle iteration count overflowed"))?;
                 let minor_outcome = NativeMinorCycleOutcome {
+                    cycle,
                     iterations: minor.evidence().iterations(),
+                    total_flux: minor.evidence().total_flux(),
                     final_peak_flux: minor.evidence().final_peak_flux(),
-                    stop_reason: minor.evidence().stop_reason(),
+                    noise_rms: minor.evidence().noise_rms(),
+                    effective_threshold: minor.evidence().effective_threshold(),
+                    cycle_threshold: minor.evidence().cycle_threshold(),
+                    stop_reason: minor.evidence().stop_reason().into(),
+                    clark_refreshes: minor.evidence().clark_refreshes(),
                     recorded_components: minor
                         .evidence()
                         .recorded_component_sequence()
                         .unwrap_or_default()
                         .to_vec(),
+                    mask_support: minor.mask().support().to_vec(),
                     auto_mask: minor.auto_mask_evidence(),
                 };
                 let continue_cleaning = cycle < maximum_cycles
@@ -389,6 +444,7 @@ where
                         .is_some_and(|evidence| evidence.channel_stopped),
                 );
                 let applied_mask = minor.mask().clone();
+                minor_outcomes.push(minor_outcome);
                 let final_input = minor.into_final_major_input();
                 let resolved = resolve_selected_observation(input.observation.clone())?;
                 let (_, access) = resolved.into_parts();
@@ -452,6 +508,7 @@ where
                         VisibilityProductStaging::with_model_column(
                             std::path::PathBuf::from(input.observation.locator()),
                             source_state,
+                            input.observation.selection(),
                         )?
                     } else {
                         VisibilityProductStaging::new()
@@ -499,7 +556,7 @@ where
                     completion,
                     Some(applied_mask),
                     Some(receipt),
-                    Some(minor_outcome),
+                    minor_outcomes,
                     cycle + 1,
                     total_iterations,
                     Some(staging.completion()?),
@@ -520,7 +577,7 @@ where
         PriorPhaseOutcome {
             initial_receipt,
             final_major_receipt,
-            minor_cycle,
+            minor_cycles,
             major_cycle_count,
             total_minor_iterations,
             visibility_products,
@@ -532,7 +589,7 @@ where
 struct PriorPhaseOutcome {
     initial_receipt: ExecutionReceipt,
     final_major_receipt: Option<ExecutionReceipt>,
-    minor_cycle: Option<NativeMinorCycleOutcome>,
+    minor_cycles: Vec<NativeMinorCycleOutcome>,
     major_cycle_count: usize,
     total_minor_iterations: usize,
     visibility_products: Option<VisibilityProductCompletion>,
@@ -777,7 +834,7 @@ where
     Ok(NativeApplicationOutcome {
         initial_receipt: prior.initial_receipt,
         final_major_receipt: prior.final_major_receipt,
-        minor_cycle: prior.minor_cycle,
+        minor_cycles: prior.minor_cycles,
         major_cycle_count: prior.major_cycle_count,
         total_minor_iterations: prior.total_minor_iterations,
         visibility_products: prior.visibility_products,

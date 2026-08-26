@@ -324,6 +324,7 @@ fn fixture_samples_with_flux(
                 ]),
                 prediction_target: SelectedPredictionTarget::NotRequested,
                 channel_flag: false,
+                parallel_hand_group_flag: false,
                 row_flag: false,
                 input_weight: 1.0 + (source_index * 2 + row_index) as f32,
                 coordinates: SelectedSampleCoordinates {
@@ -619,20 +620,20 @@ fn produce_then_authorize_seals_the_exact_member_set_once() {
     let beam = sealed.restoring_beam().expect("fitted restoring beam");
     assert!(beam.major_fwhm_rad() >= beam.minor_fwhm_rad());
     assert!(beam.major_fwhm_rad() > 0.0);
-    // The PSF product reproduces the authoritative unit-response PSF plane
-    // exactly (no sensitivity division under UnitResponse).
+    // Unit-response normalization divides the unnormalized PSF by the exact
+    // scalar sensitivity without applying direction-dependent correction.
     let psf_payload = sealed.members()[0].payload();
+    let sensitivity = round.join.normal_state().sum_weight();
     let expected_psf = round
         .join
         .normal_state()
         .normal_approximation()
         .iter()
-        .map(|value| value.re as f32)
+        .map(|value| value.re as f32 / sensitivity as f32)
         .collect::<Vec<_>>();
     assert_eq!(psf_payload, expected_psf);
 
     // The sumwt member carries the exact scalar sensitivity.
-    let sensitivity = round.join.normal_state().sum_weight();
     let sumwt_index = planned
         .members()
         .iter()
@@ -709,7 +710,7 @@ fn flat_noise_normalization_divides_by_the_exact_sensitivity() {
     let values = [2.0_f32, -4.0, 6.0];
     assert_eq!(
         normalize_plane(&values, ProductNormalization::UnitResponse, 8.0).expect("unit response"),
-        values.to_vec()
+        [0.25, -0.5, 0.75]
     );
     assert_eq!(
         normalize_plane(&values, ProductNormalization::FlatNoise, 8.0).expect("flat noise"),

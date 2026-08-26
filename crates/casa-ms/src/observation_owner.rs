@@ -11,7 +11,7 @@
 use std::{
     collections::BTreeMap,
     path::Path,
-    sync::{Arc, Mutex},
+    sync::{Arc, Condvar, Mutex},
 };
 
 use casa_imaging_model::{
@@ -43,7 +43,8 @@ const OWNER_MANIFEST_KEYWORD: &str = "CASA_RS_IMAGING_OWNER_MANIFEST";
 const OWNER_MANIFEST_SCHEMA_VERSION: u32 = 1;
 const OWNER_IDENTITY_DOMAIN: &[u8] = b"casa-rs-ms-owner-manifest-v1";
 static OWNER_INITIALIZATION_MUTEX: Mutex<()> = Mutex::new(());
-static MODEL_COLUMN_TRANSACTION_MUTEX: Mutex<()> = Mutex::new(());
+static MODEL_COLUMN_TRANSACTION_ACTIVE: (Mutex<bool>, Condvar) =
+    (Mutex::new(false), Condvar::new());
 const MODEL_STAGING_COLUMN: &str = "CASA_RS_MODEL_DATA_STAGING";
 const MODEL_BACKUP_COLUMN: &str = "CASA_RS_MODEL_DATA_BACKUP";
 
@@ -135,7 +136,7 @@ const REQUIRED_METADATA: [MetadataTableKind; 9] = [
 pub struct SelectedObservationResolutionRequest {
     locator: String,
     selection_request: LogicalIdentity,
-    selection: ObservationSelection,
+    selection: Arc<ObservationSelection>,
     visibility: VisibilityColumn,
     weights: WeightColumn,
     reference_data: Vec<(ReferenceDataKind, LogicalIdentity)>,
@@ -162,7 +163,7 @@ impl SelectedObservationResolutionRequest {
         Self {
             locator: locator.into(),
             selection_request,
-            selection,
+            selection: Arc::new(selection),
             visibility,
             weights,
             reference_data,
@@ -177,6 +178,12 @@ impl SelectedObservationResolutionRequest {
     pub fn locator(&self) -> &str {
         &self.locator
     }
+
+    /// Return shared exact row, channel, and correlation selection authority.
+    #[must_use]
+    pub fn selection(&self) -> Arc<ObservationSelection> {
+        Arc::clone(&self.selection)
+    }
 }
 
 /// Locked MODEL_DATA replacement staged separately from prediction science.
@@ -190,8 +197,42 @@ pub struct ModelColumnTransaction {
     path: std::path::PathBuf,
     measurement_set: Option<MeasurementSet>,
     manifest: OwnerManifest,
+    prepared: bool,
     committed: bool,
-    _process_guard: std::sync::MutexGuard<'static, ()>,
+    _process_lease: ModelColumnProcessLease,
+}
+
+/// Process-wide exclusion is represented by an owned lease rather than a
+/// thread-bound mutex guard. The storage transaction may therefore return
+/// from its bounded staging worker to the scheduler thread before the later
+/// prepare/commit plan, while still excluding a second in-process writer.
+struct ModelColumnProcessLease;
+
+impl ModelColumnProcessLease {
+    fn acquire() -> Result<Self, ObservationOwnerError> {
+        let (active, available) = &MODEL_COLUMN_TRANSACTION_ACTIVE;
+        let mut active = active
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        while *active {
+            active = available
+                .wait(active)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+        *active = true;
+        Ok(Self)
+    }
+}
+
+impl Drop for ModelColumnProcessLease {
+    fn drop(&mut self) {
+        let (active, available) = &MODEL_COLUMN_TRANSACTION_ACTIVE;
+        let mut active = active
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *active = false;
+        available.notify_one();
+    }
 }
 
 /// Exact physical bounds of a complete private `MODEL_DATA` replacement.
@@ -251,11 +292,10 @@ impl ModelColumnTransaction {
     pub fn begin(
         path: impl AsRef<Path>,
         expected: &ObservationSourceState,
+        selection: &ObservationSelection,
     ) -> Result<Self, ObservationOwnerError> {
         let path = path.as_ref().to_path_buf();
-        let process_guard = MODEL_COLUMN_TRANSACTION_MUTEX
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let process_lease = ModelColumnProcessLease::acquire()?;
         let mut measurement_set = MeasurementSet::open_retained_read(&path)?;
         if !measurement_set.main_table_mut().lock(LockType::Write, 1)? {
             return Err(ObservationOwnerError::WriteLockUnavailable);
@@ -263,6 +303,9 @@ impl ModelColumnTransaction {
         let manifest = OwnerManifest::read(measurement_set.main_table().keywords())?;
         manifest.validate_physical_state(&measurement_set)?;
         validate_transaction_precondition(&manifest, &measurement_set, expected)?;
+        if selection.rows() != expected.selected_rows() {
+            return Err(ObservationOwnerError::TransactionPrecondition);
+        }
         let (has_model, has_staging, has_backup) = {
             let schema = measurement_set.main_table().schema().ok_or_else(|| {
                 MsError::InvalidInput("MeasurementSet MAIN has no schema".to_string())
@@ -277,6 +320,10 @@ impl ModelColumnTransaction {
             measurement_set
                 .main_table_mut()
                 .remove_column(MODEL_BACKUP_COLUMN)?;
+            measurement_set
+                .main_table_mut()
+                .prepare_write()
+                .retire_removed_single_column(MODEL_BACKUP_COLUMN)?;
         } else if has_staging || has_backup {
             measurement_set.main_table_mut().unlock()?;
             return Err(ObservationOwnerError::StagingColumnExists);
@@ -285,6 +332,11 @@ impl ModelColumnTransaction {
             ColumnSchema::array_variable(MODEL_STAGING_COLUMN, PrimitiveType::Complex32, Some(2)),
             None,
         )?;
+        let source_column = if has_model { "MODEL_DATA" } else { "DATA" };
+        measurement_set
+            .main_table_mut()
+            .prepare_write()
+            .add_tiled_column_clone(source_column, MODEL_STAGING_COLUMN, "TiledModelStaging")?;
         let row_count = measurement_set.main_table().row_count();
         for row in 0..row_count {
             let source = if has_model {
@@ -304,12 +356,14 @@ impl ModelColumnTransaction {
                 .row_accessor_mut()
                 .set_cell(row, MODEL_STAGING_COLUMN, Value::Array(source))?;
         }
+        zero_selected_model_cells(&mut measurement_set, selection)?;
         Ok(Self {
             path,
             measurement_set: Some(measurement_set),
             manifest,
+            prepared: false,
             committed: false,
-            _process_guard: process_guard,
+            _process_lease: process_lease,
         })
     }
 
@@ -348,6 +402,7 @@ impl ModelColumnTransaction {
                 MODEL_STAGING_COLUMN,
                 Value::Array(ArrayValue::Complex32(values)),
             )?;
+        self.prepared = false;
         Ok(())
     }
 
@@ -357,16 +412,22 @@ impl ModelColumnTransaction {
     /// later atomic column-name/manifest commit. It does not mutate the public
     /// `MODEL_DATA` generation.
     pub fn prepare(&mut self) -> Result<(), ObservationOwnerError> {
+        if self.prepared {
+            return Ok(());
+        }
         self.measurement_set
-            .as_ref()
+            .as_mut()
             .ok_or(ObservationOwnerError::TransactionClosed)?
-            .main_table()
-            .flush()?;
+            .main_table_mut()
+            .prepare_write()
+            .save_selected_columns(&[MODEL_STAGING_COLUMN])?;
+        self.prepared = true;
         Ok(())
     }
 
     /// Atomically publish staging as MODEL_DATA and ratchet owner generations.
     pub fn commit(mut self, generation: LogicalIdentity) -> Result<(), ObservationOwnerError> {
+        self.prepare()?;
         let original_manifest = self.manifest.clone();
         let result = self.commit_locked(generation);
         if let Err(error) = result {
@@ -383,7 +444,7 @@ impl ModelColumnTransaction {
         self.committed = true;
         self.measurement_set = None;
         if had_model {
-            let _ = cleanup_model_backup(&self.path);
+            cleanup_model_backup(&self.path)?;
         }
         Ok(())
     }
@@ -401,13 +462,9 @@ impl ModelColumnTransaction {
             .schema()
             .is_some_and(|schema| schema.contains_column("MODEL_DATA"));
         if had_model {
-            measurement_set
-                .main_table_mut()
-                .rename_column("MODEL_DATA", MODEL_BACKUP_COLUMN)?;
+            rename_main_column(measurement_set, "MODEL_DATA", MODEL_BACKUP_COLUMN)?;
         }
-        measurement_set
-            .main_table_mut()
-            .rename_column(MODEL_STAGING_COLUMN, "MODEL_DATA")?;
+        rename_main_column(measurement_set, MODEL_STAGING_COLUMN, "MODEL_DATA")?;
         self.manifest.model_data = PersistedModelColumn::Present {
             generation: encode_identity(generation),
         };
@@ -424,7 +481,7 @@ impl ModelColumnTransaction {
             .locked_modify_counter()?
             .wrapping_add(1);
         write_owner_manifest(measurement_set.main_table_mut(), &self.manifest)?;
-        measurement_set.main_table_mut().unlock()?;
+        measurement_set.main_table_mut().unlock_metadata_only()?;
         Ok(had_model)
     }
 
@@ -444,17 +501,23 @@ impl ModelColumnTransaction {
                 measurement_set
                     .main_table_mut()
                     .remove_column("MODEL_DATA")?;
+                measurement_set
+                    .main_table_mut()
+                    .prepare_write()
+                    .retire_removed_single_column("MODEL_DATA")?;
             }
-            measurement_set
-                .main_table_mut()
-                .rename_column(MODEL_BACKUP_COLUMN, "MODEL_DATA")?;
+            rename_main_column(measurement_set, MODEL_BACKUP_COLUMN, "MODEL_DATA")?;
         } else if has_staging {
             measurement_set
                 .main_table_mut()
                 .remove_column(MODEL_STAGING_COLUMN)?;
+            measurement_set
+                .main_table_mut()
+                .prepare_write()
+                .retire_removed_single_column(MODEL_STAGING_COLUMN)?;
         }
         write_owner_manifest(measurement_set.main_table_mut(), manifest)?;
-        measurement_set.main_table_mut().unlock()?;
+        measurement_set.main_table_mut().unlock_metadata_only()?;
         self.measurement_set = None;
         Ok(())
     }
@@ -471,16 +534,34 @@ impl ModelColumnTransaction {
             measurement_set
                 .main_table_mut()
                 .remove_column(MODEL_STAGING_COLUMN)?;
+            measurement_set
+                .main_table_mut()
+                .prepare_write()
+                .retire_removed_single_column(MODEL_STAGING_COLUMN)?;
         }
         self.manifest.main_modify_counter = measurement_set
             .main_table()
             .locked_modify_counter()?
             .wrapping_add(1);
         write_owner_manifest(measurement_set.main_table_mut(), &self.manifest)?;
-        measurement_set.main_table_mut().unlock()?;
+        measurement_set.main_table_mut().unlock_metadata_only()?;
         self.measurement_set = None;
         Ok(())
     }
+}
+
+#[cfg(unix)]
+fn rename_main_column(
+    measurement_set: &mut MeasurementSet,
+    old: &str,
+    new: &str,
+) -> Result<(), ObservationOwnerError> {
+    measurement_set.main_table_mut().rename_column(old, new)?;
+    measurement_set
+        .main_table_mut()
+        .prepare_write()
+        .persist_column_rename(old, new)?;
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -497,8 +578,12 @@ fn cleanup_model_backup(path: &Path) -> Result<(), ObservationOwnerError> {
         measurement_set
             .main_table_mut()
             .remove_column(MODEL_BACKUP_COLUMN)?;
+        measurement_set
+            .main_table_mut()
+            .prepare_write()
+            .retire_removed_single_column(MODEL_BACKUP_COLUMN)?;
     }
-    measurement_set.main_table_mut().unlock()?;
+    measurement_set.main_table_mut().unlock_metadata_only()?;
     Ok(())
 }
 
@@ -638,7 +723,7 @@ pub fn initialize_measurement_set_owner_manifest(
         .get(OWNER_MANIFEST_KEYWORD)
         .is_some()
     {
-        measurement_set.main_table_mut().unlock()?;
+        measurement_set.main_table_mut().unlock_metadata_only()?;
         return Err(ObservationOwnerError::AlreadyInitialized);
     }
     let manifest = OwnerManifest::mint(&measurement_set)?;
@@ -647,7 +732,7 @@ pub fn initialize_measurement_set_owner_manifest(
         OWNER_MANIFEST_KEYWORD,
         Value::Scalar(ScalarValue::String(encoded)),
     );
-    measurement_set.main_table_mut().unlock()?;
+    measurement_set.main_table_mut().unlock_metadata_only()?;
     Ok(MeasurementSetIdentity::new(parse_identity(
         &manifest.measurement_set_identity,
         "MeasurementSet identity",
@@ -688,7 +773,7 @@ pub fn resolve_selected_observation(
     let source = ObservationSourceInput::new(
         identity,
         ObservationSourceProvenance::new(request.locator, request.selection_request),
-        request.selection,
+        Arc::unwrap_or_clone(request.selection),
         generations,
     );
     let measures = SelectedObservationMeasures::new(request.measures_provider)?;
@@ -1138,6 +1223,71 @@ fn zero_model_cell(source: &ArrayValue) -> Result<ArrayValue, ObservationOwnerEr
     )))
 }
 
+#[cfg(unix)]
+fn zero_selected_model_cells(
+    measurement_set: &mut MeasurementSet,
+    selection: &ObservationSelection,
+) -> Result<(), ObservationOwnerError> {
+    for selected_row in selection.rows().ordered_main_rows() {
+        let description = selection
+            .data_descriptions()
+            .iter()
+            .find(|description| {
+                description.data_description_id() == selected_row.data_description_id()
+            })
+            .ok_or(ObservationOwnerError::PredictionAddress)?;
+        let channels = selection
+            .spectral_windows()
+            .iter()
+            .find(|spectral| spectral.spectral_window_id() == description.spectral_window_id())
+            .ok_or(ObservationOwnerError::PredictionAddress)?;
+        let correlations = selection
+            .correlations()
+            .iter()
+            .find(|correlation| correlation.polarization_id() == description.polarization_id())
+            .ok_or(ObservationOwnerError::PredictionAddress)?;
+        let row = usize::try_from(selected_row.physical_row())
+            .map_err(|_| ObservationOwnerError::PredictionAddress)?;
+        let row_flag = measurement_set
+            .main_table()
+            .column_accessor("FLAG_ROW")?
+            .get(row)?
+            .ok_or(ObservationOwnerError::PredictionAddress)?;
+        match row_flag {
+            Value::Scalar(ScalarValue::Bool(true)) => continue,
+            Value::Scalar(ScalarValue::Bool(false)) => {}
+            _ => return Err(ObservationOwnerError::PredictionAddress),
+        }
+        let current = measurement_set
+            .main_table()
+            .column_accessor(MODEL_STAGING_COLUMN)?
+            .get(row)?
+            .cloned()
+            .ok_or(ObservationOwnerError::PredictionAddress)?;
+        let Value::Array(ArrayValue::Complex32(mut values)) = current else {
+            return Err(ObservationOwnerError::PredictionAddress);
+        };
+        for channel in channels.channel_indices() {
+            for product in correlations.products() {
+                let index = [product.correlation_index() as usize, *channel as usize];
+                let Some(value) = values.get_mut(index) else {
+                    return Err(ObservationOwnerError::PredictionAddress);
+                };
+                *value = Complex32::new(0.0, 0.0);
+            }
+        }
+        measurement_set
+            .main_table_mut()
+            .row_accessor_mut()
+            .set_cell(
+                row,
+                MODEL_STAGING_COLUMN,
+                Value::Array(ArrayValue::Complex32(values)),
+            )?;
+    }
+    Ok(())
+}
+
 fn write_owner_manifest(
     table: &mut Table,
     manifest: &OwnerManifest,
@@ -1379,12 +1529,30 @@ mod tests {
         let directory = tempfile::tempdir().expect("temporary directory");
         let path = directory.path().join("unmarked.ms");
         create_ms(&path, false);
+        let data_managers_before = MeasurementSet::open(&path)
+            .expect("open before initialization")
+            .main_table()
+            .data_manager_info()
+            .iter()
+            .filter(|manager| manager.columns.iter().any(|column| column == "DATA"))
+            .map(|manager| manager.dm_type.clone())
+            .collect::<Vec<_>>();
 
         assert!(matches!(
             resolve_selected_observation(request(&path)),
             Err(ObservationOwnerError::Uninitialized)
         ));
         initialize_measurement_set_owner_manifest(&path).expect("explicit migration");
+        let data_managers_after = MeasurementSet::open(&path)
+            .expect("open after initialization")
+            .main_table()
+            .data_manager_info()
+            .iter()
+            .filter(|manager| manager.columns.iter().any(|column| column == "DATA"))
+            .map(|manager| manager.dm_type.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(data_managers_after, data_managers_before);
+        assert_eq!(data_managers_after, vec!["TiledShapeStMan"]);
         resolve_selected_observation(request(&path)).expect("marked owner resolves");
     }
 
@@ -1525,7 +1693,8 @@ mod tests {
 
         {
             let mut transaction =
-                ModelColumnTransaction::begin(&path, &expected).expect("begin transaction");
+                ModelColumnTransaction::begin(&path, &expected, &one_row_selection())
+                    .expect("begin transaction");
             transaction
                 .stage(0, 0, 0, Complex32::new(9.0, -2.0))
                 .expect("stage prediction");
@@ -1580,8 +1749,8 @@ mod tests {
         let expected = before.access.source_state().clone();
         let generation = identity(73);
 
-        let mut transaction =
-            ModelColumnTransaction::begin(&path, &expected).expect("begin transaction");
+        let mut transaction = ModelColumnTransaction::begin(&path, &expected, &one_row_selection())
+            .expect("begin transaction");
         transaction
             .stage(0, 0, 0, Complex32::new(4.5, -1.25))
             .expect("stage prediction");

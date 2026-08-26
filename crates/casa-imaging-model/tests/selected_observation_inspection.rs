@@ -321,6 +321,7 @@ fn sample(
         ]),
         prediction_target: SelectedPredictionTarget::ModelData,
         channel_flag: false,
+        parallel_hand_group_flag: false,
         row_flag: false,
         input_weight: 2.0,
         coordinates: SelectedSampleCoordinates {

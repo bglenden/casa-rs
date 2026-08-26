@@ -272,9 +272,14 @@ fn fixture_samples(
     problem: &casa_imaging_model::CompiledProblem,
 ) -> Vec<SelectedObservationSample> {
     let mut samples = exact_samples(problem);
-    let flavour = f64::from(u32::from(problem.problem_id().as_bytes()[0] % 8));
+    let flavour = f32::from(
+        problem.selected_observation().read_set().sources()[0]
+            .measurement_set()
+            .identity()
+            .as_bytes()[1],
+    );
     for sample in &mut samples {
-        sample.input_weight = (sample.input_weight as f64 * (1.0 + flavour * 0.125)) as f32;
+        sample.input_weight *= 1.0 + flavour / 256.0;
     }
     samples
 }
@@ -315,6 +320,7 @@ fn exact_samples(problem: &casa_imaging_model::CompiledProblem) -> Vec<SelectedO
                 ]),
                 prediction_target: SelectedPredictionTarget::NotRequested,
                 channel_flag: false,
+                parallel_hand_group_flag: false,
                 row_flag: false,
                 input_weight: 1.0 + (source_index * 2 + row_index) as f32,
                 coordinates: SelectedSampleCoordinates {

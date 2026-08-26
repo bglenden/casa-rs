@@ -434,8 +434,8 @@ fn application_executes_single_ddid_stokes_i_mfs_hogbom_with_one_iteration() {
         result
             .outcome
             .output
-            .minor_cycle
-            .as_ref()
+            .minor_cycles
+            .last()
             .expect("minor diagnostic")
             .recorded_components
             .len(),
@@ -485,8 +485,8 @@ fn application_enforces_requested_model_update_envelope_before_mutation() {
         result
             .outcome
             .output
-            .minor_cycle
-            .as_ref()
+            .minor_cycles
+            .last()
             .expect("minor diagnostic")
             .recorded_components
             .is_empty()
@@ -515,6 +515,25 @@ fn application_reconciles_between_bounded_minor_cycles() {
     assert_eq!(result.minor_iterations, 3);
     assert_eq!(result.outcome.output.total_minor_iterations, 3);
     assert_eq!(result.outcome.output.major_cycle_count, 4);
+    assert_eq!(result.outcome.output.minor_cycles.len(), 3);
+    assert_eq!(
+        result
+            .outcome
+            .output
+            .minor_cycles
+            .iter()
+            .map(|cycle| cycle.cycle)
+            .collect::<Vec<_>>(),
+        vec![1, 2, 3]
+    );
+    assert!(
+        result
+            .outcome
+            .output
+            .minor_cycles
+            .iter()
+            .all(|cycle| cycle.iterations == 1)
+    );
     assert_eq!(
         result.minor_stop_reason,
         Some(ContinuumStopReason::IterationBound)
@@ -571,7 +590,8 @@ fn application_commits_exact_final_prediction_to_model_data() {
     );
     assert_eq!(
         final_receipt.stage_actual_io(&replay, casa_imaging_runtime::IoBufferKind::Writeback),
-        Some((8, 1))
+        None,
+        "the table adapter exposes no trustworthy physical byte counter"
     );
     let staging_lifetime =
         casa_imaging_runtime::ClaimLifetime::through_fence(casa_imaging_runtime::FenceKind::Io);
@@ -593,7 +613,8 @@ fn application_commits_exact_final_prediction_to_model_data() {
         .expect("prepared MODEL_DATA staging is durably flushed before commit");
     assert_eq!(
         model_receipt.stage_actual_io(&adoption, casa_imaging_runtime::IoBufferKind::Writeback),
-        Some((8, 1))
+        None,
+        "flush capacity must not be copied into actual transfer evidence"
     );
 
     let reopened = MeasurementSet::open(measurement_set).expect("reopen saved MODEL_DATA");
@@ -629,7 +650,8 @@ fn application_materializes_static_and_auto_masks_at_the_normal_state_boundary()
         static_result
             .outcome
             .output
-            .minor_cycle
+            .minor_cycles
+            .last()
             .expect("minor-cycle evidence")
             .auto_mask
             .is_none()
@@ -672,7 +694,7 @@ fn application_materializes_static_and_auto_masks_at_the_normal_state_boundary()
     );
     image_request.mask = ContinuumMask::Image(mask_path);
     let image_result = execute_continuum(image_request).expect("reprojected image-mask solve");
-    assert!(image_result.outcome.output.minor_cycle.is_some());
+    assert!(!image_result.outcome.output.minor_cycles.is_empty());
 
     let auto_root = root.path().join("auto-input");
     std::fs::create_dir(&auto_root).expect("auto fixture directory");
@@ -701,7 +723,8 @@ fn application_materializes_static_and_auto_masks_at_the_normal_state_boundary()
     let evidence = auto_result
         .outcome
         .output
-        .minor_cycle
+        .minor_cycles
+        .last()
         .expect("minor-cycle evidence")
         .auto_mask
         .expect("auto-mask evidence");

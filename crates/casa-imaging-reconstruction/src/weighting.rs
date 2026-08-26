@@ -1278,7 +1278,7 @@ fn input_weight(
     problem: &CompiledProblem,
     sample: &SelectedObservationSample,
 ) -> Result<f64, WeightingError> {
-    if sample.channel_flag || sample.row_flag {
+    if sample.parallel_hand_group_flag || sample.row_flag {
         return Ok(0.0);
     }
     let weight = f64::from(sample.input_weight);

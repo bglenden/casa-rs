@@ -16,11 +16,33 @@ use super::{
     SaveModelMode, SpectralMode, StandardMfsAccelerationPolicy, WTermMode, WeightingMode,
 };
 
+fn hex(bytes: [u8; 32]) -> String {
+    use std::fmt::Write;
+
+    let mut encoded = String::with_capacity(64);
+    for byte in bytes {
+        write!(&mut encoded, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    encoded
+}
+
 pub(super) fn execute(config: &CliConfig) -> Result<RunSummary, String> {
     let started = Instant::now();
     let result =
         execute_continuum(application_request(config)?).map_err(|error| error.to_string())?;
+    let minor_cycles = result.minor_cycles.clone();
     let native = result.outcome.output;
+    let visibility_products = native.visibility_products.map(|completion| {
+        crate::task_contract::ImagerVisibilityProductDiagnostic {
+            problem_id: hex(completion.problem_id().as_bytes()),
+            final_model_generation: hex(completion.final_model().as_bytes()),
+            selected_generation: hex(completion.selected_generation().as_bytes()),
+            weighting_generation: hex(completion.weighting_generation().as_bytes()),
+            model_product: hex(completion.model_product().as_bytes()),
+            residual_product: hex(completion.residual_product().as_bytes()),
+            sample_count: completion.sample_count(),
+        }
+    });
     let clean_stop_reason = result.minor_stop_reason.map(|reason| match reason {
         ContinuumStopReason::ThresholdReached => CleanStopReason::GlobalThresholdReached,
         ContinuumStopReason::IterationBound => CleanStopReason::IterationLimitReached,
@@ -34,6 +56,8 @@ pub(super) fn execute(config: &CliConfig) -> Result<RunSummary, String> {
         major_cycles: native.major_cycle_count,
         minor_iterations: result.minor_iterations,
         clean_stop_reason,
+        minor_cycles,
+        visibility_products,
         elapsed: started.elapsed(),
         output_products: result.product_names,
     })
