@@ -55,9 +55,9 @@ pub use major_cycle::{
     MajorCyclePreparation, NormalStateCatalog,
 };
 pub use minor_cycle::{
-    CleanWindow, ComponentDivergence, HogbomComponent, HogbomControls, HogbomMinorCycle,
-    MinorCycleError, MinorCycleEvidence, MinorCycleEvidenceId, MinorCycleStopReason,
-    hogbom_minor_cycle,
+    ClarkApproximation, CleanWindow, ComponentDivergence, MinorCycleComponent, MinorCycleError,
+    MinorCycleEvidence, MinorCycleEvidenceId, MinorCycleProgram, MinorCycleResult,
+    MinorCycleStopReason, run_minor_cycle,
 };
 pub use weighting::{
     WeightingAlgorithmState, WeightingError, WeightingExecutionLimits, WeightingGenerationId,

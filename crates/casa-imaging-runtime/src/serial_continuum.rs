@@ -9,8 +9,8 @@ use casa_imaging_model::{
 };
 use casa_imaging_reconstruction::{
     CleanWindow, ExecutableModelProblem, FinalModelCompletion, FinalModelContinuation,
-    FinalNormalState, HogbomControls, MajorCyclePreparation, MinorCycleError, MinorCycleEvidence,
-    ModelDeltaId, ModelLifecycle, hogbom_minor_cycle,
+    FinalNormalState, MajorCyclePreparation, MinorCycleError, MinorCycleEvidence,
+    MinorCycleProgram, ModelDeltaId, ModelLifecycle, run_minor_cycle,
 };
 
 use crate::{
@@ -167,7 +167,7 @@ impl FinalMajorPhaseInput {
 struct SerialMinorCycleExecution {
     node: crate::WorkNodeId,
     window: CleanWindow,
-    controls: HogbomControls,
+    program: MinorCycleProgram,
 }
 
 impl SerialContinuumExecutor {
@@ -226,12 +226,12 @@ impl SerialContinuumExecutor {
         mut self,
         node: crate::WorkNodeId,
         window: CleanWindow,
-        controls: HogbomControls,
+        program: MinorCycleProgram,
     ) -> Self {
         self.minor_cycle = Some(SerialMinorCycleExecution {
             node,
             window,
-            controls,
+            program,
         });
         self
     }
@@ -429,7 +429,7 @@ impl WorkImplementation for SerialContinuumExecutor {
                 .ok_or_else(|| io::Error::other("model lifecycle missing"))?;
             state.minor_completion = Some(
                 InitialMajorPhaseCompletion::new(result)
-                    .run_minor_cycle(lifecycle, minor.window, minor.controls)
+                    .run_minor_cycle(lifecycle, minor.window, minor.program.clone())
                     .map_err(io::Error::other)?,
             );
         } else if context.node().id == *fragment.release_node() {
@@ -561,16 +561,16 @@ impl InitialMajorPhaseCompletion {
         self,
         lifecycle: &ModelLifecycle,
         window: CleanWindow,
-        controls: HogbomControls,
+        program: MinorCycleProgram,
     ) -> Result<MinorCyclePhaseCompletion, MinorCycleError> {
         let completion = self.result.into_completion();
         let (normal_state, continuation) = completion.into_continuation();
-        let minor = hogbom_minor_cycle(
+        let minor = run_minor_cycle(
             lifecycle,
             continuation.generation(),
             &normal_state,
             window,
-            controls,
+            program,
         )?;
         let (delta, evidence) = minor.into_parts();
         Ok(MinorCyclePhaseCompletion {

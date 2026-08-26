@@ -2245,7 +2245,7 @@ fn serial_continuum_executes_initial_major_and_scheduler_minor_cycle() {
     .with_minor_cycle(
         minor_node.clone(),
         casa_imaging_reconstruction::CleanWindow::new([0, 0], [7, 7]).expect("window"),
-        casa_imaging_reconstruction::HogbomControls::new(0.1, 0.0, 2, 1.0e6).expect("controls"),
+        casa_imaging_reconstruction::MinorCycleProgram::new(0.1, 0.0, 2, 1.0e6).expect("controls"),
     );
     let runtime_registry =
         SerialContinuumRegistry::new(registry(73), implementation(73), &problem, executor);

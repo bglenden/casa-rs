@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Bounded Högbom Minor Cycle over authoritative Normal State views.
+//! Bounded point and multiscale Minor Cycles over authoritative Normal State views.
 //!
 //! The Minor Cycle is a pure scientific operation: it consumes one immutable
 //! view of an authoritative Final Normal State (the T20 residual paired with
@@ -23,7 +23,7 @@ use std::{collections::BTreeMap, fmt};
 
 use casa_imaging_model::{
     CompiledProblemId, LogicalIdentity, ModelCell, ModelDeltaTerm, ModelExecutionAttemptId,
-    ModelSupport, ModelValue, ReconstructionControls,
+    ModelSupport, ModelValue, ReconstructionAlgorithm, ReconstructionControls,
 };
 use thiserror::Error;
 
@@ -77,10 +77,10 @@ macro_rules! minor_cycle_identity {
 minor_cycle_identity!(
     MinorCycleEvidenceId,
     MINOR_CYCLE_EVIDENCE_VERSION,
-    "Stable identity of one bounded Högbom Minor-Cycle solve."
+    "Stable identity of one bounded Minor-Cycle solve."
 );
 
-/// Explicit Högbom Minor-Cycle controls.
+/// One reconstruction-owned minor-cycle program.
 ///
 /// Every control is explicit and validated; there are no defaults that could
 /// silently change deconvolution semantics. `maximum_model_update` is the
@@ -89,8 +89,9 @@ minor_cycle_identity!(
 /// and a candidate that would exceed the bound is rejected without touching
 /// the residual, the delta, recorded diagnostics, or evidence counters. The
 /// solve then stops and requests Major-Cycle reconciliation.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct HogbomControls {
+#[derive(Debug, Clone, PartialEq)]
+pub struct MinorCycleProgram {
+    algorithm: ReconstructionAlgorithm,
     gain: f64,
     threshold: f64,
     max_iterations: usize,
@@ -98,21 +99,38 @@ pub struct HogbomControls {
     component_sequence_limit: Option<usize>,
 }
 
-impl HogbomControls {
+impl MinorCycleProgram {
     /// Derive the executable minor-cycle controls from the compiled contract.
     ///
     /// Unlike the general model constructor, this production seam requires an
     /// explicit staleness envelope and never invents an unbounded default.
-    pub fn from_compiled(controls: ReconstructionControls) -> Result<Self, MinorCycleError> {
+    pub fn for_algorithm(
+        algorithm: ReconstructionAlgorithm,
+        controls: ReconstructionControls,
+    ) -> Result<Self, MinorCycleError> {
+        if !matches!(
+            algorithm,
+            ReconstructionAlgorithm::Hogbom
+                | ReconstructionAlgorithm::Clark
+                | ReconstructionAlgorithm::Multiscale { .. }
+        ) {
+            return Err(MinorCycleError::UnsupportedAlgorithm);
+        }
         let maximum_model_update = controls
             .maximum_model_update()
             .ok_or(MinorCycleError::MissingMaximumModelUpdate)?;
-        Self::new(
+        Self::new_for_algorithm(
+            algorithm,
             controls.gain(),
             controls.threshold_jy_per_beam(),
             controls.max_minor_iterations(),
             maximum_model_update,
         )
+    }
+
+    /// Derive the Högbom program used by the point-clean baseline.
+    pub fn from_compiled(controls: ReconstructionControls) -> Result<Self, MinorCycleError> {
+        Self::for_algorithm(ReconstructionAlgorithm::Hogbom, controls)
     }
 
     /// Construct validated controls.
@@ -123,6 +141,22 @@ impl HogbomControls {
     /// zero iteration bound, and a non-positive or non-finite maximum model
     /// update.
     pub fn new(
+        gain: f64,
+        threshold: f64,
+        max_iterations: usize,
+        maximum_model_update: f64,
+    ) -> Result<Self, MinorCycleError> {
+        Self::new_for_algorithm(
+            ReconstructionAlgorithm::Hogbom,
+            gain,
+            threshold,
+            max_iterations,
+            maximum_model_update,
+        )
+    }
+
+    fn new_for_algorithm(
+        algorithm: ReconstructionAlgorithm,
         gain: f64,
         threshold: f64,
         max_iterations: usize,
@@ -141,12 +175,19 @@ impl HogbomControls {
             return Err(MinorCycleError::InvalidMaximumModelUpdate);
         }
         Ok(Self {
+            algorithm,
             gain,
             threshold,
             max_iterations,
             maximum_model_update,
             component_sequence_limit: None,
         })
+    }
+
+    /// Return the selected reconstruction algorithm.
+    #[must_use]
+    pub const fn algorithm(&self) -> &ReconstructionAlgorithm {
+        &self.algorithm
     }
 
     /// Record the first accepted components as diagnostic evidence.
@@ -269,12 +310,12 @@ impl CleanWindow {
 
 /// One accepted Högbom component in canonical typed model coordinates.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct HogbomComponent {
+pub struct MinorCycleComponent {
     cell: ModelCell,
     flux: f64,
 }
 
-impl HogbomComponent {
+impl MinorCycleComponent {
     /// Return the component's typed model cell.
     #[must_use]
     pub const fn cell(&self) -> ModelCell {
@@ -299,8 +340,8 @@ impl HogbomComponent {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ComponentDivergence {
     index: usize,
-    baseline: Option<HogbomComponent>,
-    candidate: Option<HogbomComponent>,
+    baseline: Option<MinorCycleComponent>,
+    candidate: Option<MinorCycleComponent>,
 }
 
 impl ComponentDivergence {
@@ -312,13 +353,13 @@ impl ComponentDivergence {
 
     /// Return the baseline entry, or `None` when the baseline ended here.
     #[must_use]
-    pub const fn baseline(&self) -> Option<HogbomComponent> {
+    pub const fn baseline(&self) -> Option<MinorCycleComponent> {
         self.baseline
     }
 
     /// Return the candidate entry, or `None` when the candidate ended here.
     #[must_use]
-    pub const fn candidate(&self) -> Option<HogbomComponent> {
+    pub const fn candidate(&self) -> Option<MinorCycleComponent> {
         self.candidate
     }
 }
@@ -359,7 +400,8 @@ pub struct MinorCycleEvidence {
     total_flux: f64,
     final_peak_flux: f64,
     stop_reason: MinorCycleStopReason,
-    recorded: Option<Box<[HogbomComponent]>>,
+    clark_approximation: Option<ClarkApproximation>,
+    recorded: Option<Box<[MinorCycleComponent]>>,
 }
 
 impl MinorCycleEvidence {
@@ -429,6 +471,12 @@ impl MinorCycleEvidence {
         self.stop_reason
     }
 
+    /// Return Clark's derived PSF-patch approximation, when Clark ran.
+    #[must_use]
+    pub const fn clark_approximation(&self) -> Option<ClarkApproximation> {
+        self.clark_approximation
+    }
+
     /// Whether the outcome explicitly requests Major-Cycle reconciliation.
     ///
     /// A threshold stop needs no reconciliation only when it accepted no
@@ -443,7 +491,7 @@ impl MinorCycleEvidence {
 
     /// Return the optionally recorded leading component sequence.
     #[must_use]
-    pub fn recorded_component_sequence(&self) -> Option<&[HogbomComponent]> {
+    pub fn recorded_component_sequence(&self) -> Option<&[MinorCycleComponent]> {
         self.recorded.as_deref()
     }
 
@@ -479,14 +527,35 @@ impl MinorCycleEvidence {
     }
 }
 
+/// Scientific approximation used by one Clark active-set solve.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ClarkApproximation {
+    radius: [usize; 2],
+    maximum_exterior_sidelobe: f64,
+}
+
+impl ClarkApproximation {
+    /// Return the symmetric PSF-patch radius in pixels.
+    #[must_use]
+    pub const fn radius(self) -> [usize; 2] {
+        self.radius
+    }
+
+    /// Return the largest absolute PSF value outside the patch.
+    #[must_use]
+    pub const fn maximum_exterior_sidelobe(self) -> f64 {
+        self.maximum_exterior_sidelobe
+    }
+}
+
 /// One bounded Högbom solve: the owner-minted Model Delta plus its evidence.
 #[derive(Debug)]
-pub struct HogbomMinorCycle {
+pub struct MinorCycleResult {
     delta: Option<ModelDelta>,
     evidence: MinorCycleEvidence,
 }
 
-impl HogbomMinorCycle {
+impl MinorCycleResult {
     /// Return the validated base-bound Model Delta, or `None` when no
     /// component was accepted (an already-converged view).
     #[must_use]
@@ -510,6 +579,9 @@ impl HogbomMinorCycle {
 /// Exact reason a bounded Högbom solve failed closed.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum MinorCycleError {
+    /// The selected reconstruction algorithm has no minor-cycle implementation.
+    #[error("reconstruction algorithm has no minor-cycle implementation")]
+    UnsupportedAlgorithm,
     /// The compiled problem omitted the mandatory linear-view envelope.
     #[error("compiled Högbom controls require an explicit maximum model update")]
     MissingMaximumModelUpdate,
@@ -580,13 +652,13 @@ impl From<casa_imaging_model::ModelContractError> for MinorCycleError {
 /// Fails closed on mismatched lineage or geometry, invalid controls or
 /// windows, a degenerate PSF peak, non-finite arithmetic, and every model
 /// owner rejection (term bounds, value bounds, or foreign lineage).
-pub fn hogbom_minor_cycle(
+pub fn run_minor_cycle(
     lifecycle: &ModelLifecycle,
     base: &ModelGeneration,
     view: &FinalNormalState,
     window: CleanWindow,
-    controls: HogbomControls,
-) -> Result<HogbomMinorCycle, MinorCycleError> {
+    controls: MinorCycleProgram,
+) -> Result<MinorCycleResult, MinorCycleError> {
     let shape = view.shape();
     let cells = shape[0] * shape[1];
     if base.shape().domains().len() != 1
@@ -614,6 +686,17 @@ pub fn hogbom_minor_cycle(
     }
     let psf_peak_pixel = plane_pixel(psf_peak_index, shape);
 
+    let clark = match controls.algorithm() {
+        ReconstructionAlgorithm::Hogbom => None,
+        ReconstructionAlgorithm::Clark => Some(derive_clark_approximation(
+            view.normal_approximation(),
+            shape,
+            psf_peak_pixel,
+        )),
+        ReconstructionAlgorithm::Multiscale { .. } => None,
+        _ => return Err(MinorCycleError::UnsupportedAlgorithm),
+    };
+
     // Private working copy: authoritative state is never mutated.
     let mut residual = Vec::with_capacity(cells);
     for value in view.residual() {
@@ -623,6 +706,18 @@ pub fn hogbom_minor_cycle(
         }
         residual.push(real);
     }
+    let clark_active = clark.map(|approximation| {
+        let initial_peak = residual
+            .iter()
+            .fold(0.0_f64, |peak, value| peak.max(value.abs()))
+            / psf_peak;
+        let cutoff = (initial_peak * approximation.maximum_exterior_sidelobe / psf_peak / 3.0)
+            .max(controls.threshold());
+        residual
+            .iter()
+            .map(|value| value.abs() / psf_peak >= cutoff)
+            .collect::<Vec<_>>()
+    });
 
     let mut terms = BTreeMap::<usize, f64>::new();
     let mut recorded = Vec::with_capacity(
@@ -641,7 +736,12 @@ pub fn hogbom_minor_cycle(
             &residual,
             shape,
             |value| *value,
-            |pixel| window.contains(pixel) && valid_support(base, shape, pixel),
+            |pixel| {
+                let index = pixel[0] * shape[1] + pixel[1];
+                window.contains(pixel)
+                    && valid_support(base, shape, pixel)
+                    && clark_active.as_ref().is_none_or(|active| active[index])
+            },
         ) else {
             return Err(MinorCycleError::EmptyValidSupport);
         };
@@ -657,7 +757,13 @@ pub fn hogbom_minor_cycle(
         // tested as `abs(itsStrengthOptimum) < threshold()`), so a peak
         // exactly at the threshold still cleans one component. A zero peak
         // has no flux to clean and converges trivially.
-        if strength == 0.0 || strength.abs() < controls.threshold() {
+        let threshold_reached = match controls.algorithm() {
+            ReconstructionAlgorithm::Clark => {
+                strength == 0.0 || strength.abs() <= controls.threshold()
+            }
+            _ => strength == 0.0 || strength.abs() < controls.threshold(),
+        };
+        if threshold_reached {
             stop_reason = Some(MinorCycleStopReason::ThresholdReached);
             break;
         }
@@ -675,14 +781,25 @@ pub fn hogbom_minor_cycle(
             stop_reason = Some(MinorCycleStopReason::StalenessBound);
             break;
         }
-        subtract_psf(
-            &mut residual,
-            view.normal_approximation(),
-            shape,
-            peak_pixel,
-            psf_peak_pixel,
-            flux,
-        )?;
+        match clark {
+            Some(approximation) => subtract_psf_patch(
+                &mut residual,
+                view.normal_approximation(),
+                shape,
+                peak_pixel,
+                psf_peak_pixel,
+                approximation.radius,
+                flux,
+            )?,
+            None => subtract_psf(
+                &mut residual,
+                view.normal_approximation(),
+                shape,
+                peak_pixel,
+                psf_peak_pixel,
+                flux,
+            )?,
+        }
         iterations += 1;
         total_flux += flux.abs();
         let cell =
@@ -691,7 +808,7 @@ pub fn hogbom_minor_cycle(
         if let Some(limit) = controls.component_sequence_limit()
             && recorded.len() < limit
         {
-            recorded.push(HogbomComponent { cell, flux });
+            recorded.push(MinorCycleComponent { cell, flux });
         }
     }
     let stop_reason = stop_reason.unwrap_or(MinorCycleStopReason::IterationBound);
@@ -726,8 +843,9 @@ pub fn hogbom_minor_cycle(
         total_flux,
         final_peak_flux,
         stop_reason,
+        clark,
     );
-    Ok(HogbomMinorCycle {
+    Ok(MinorCycleResult {
         delta,
         evidence: MinorCycleEvidence {
             evidence_id,
@@ -741,6 +859,7 @@ pub fn hogbom_minor_cycle(
             total_flux,
             final_peak_flux,
             stop_reason,
+            clark_approximation: clark,
             recorded: (!recorded.is_empty()).then(|| recorded.into_boxed_slice()),
         },
     })
@@ -825,6 +944,85 @@ fn subtract_psf(
     Ok(())
 }
 
+/// Derive the Clark patch from the central PSF lobe rather than a dataset-
+/// tuned pixel count. CASA expands the fitted central lobe to a three-lobe
+/// patch; the zero-crossing construction is the equivalent information
+/// available at this solver-owned plane boundary.
+fn derive_clark_approximation(
+    psf: &[num_complex::Complex64],
+    shape: [usize; 2],
+    peak: [usize; 2],
+) -> ClarkApproximation {
+    let centre = psf[peak[0] * shape[1] + peak[1]].re.signum();
+    let first_crossing = |axis: usize| {
+        let limit = if axis == 0 { shape[0] } else { shape[1] };
+        (1..limit)
+            .find(|offset| {
+                let coordinate = peak[axis].saturating_add(*offset);
+                if coordinate >= limit {
+                    return true;
+                }
+                let pixel = if axis == 0 {
+                    [coordinate, peak[1]]
+                } else {
+                    [peak[0], coordinate]
+                };
+                psf[pixel[0] * shape[1] + pixel[1]].re.signum() != centre
+            })
+            .unwrap_or_else(|| limit.saturating_sub(1).max(1))
+    };
+    let radius = [
+        first_crossing(0)
+            .saturating_mul(3)
+            .min(shape[0].saturating_sub(1)),
+        first_crossing(1)
+            .saturating_mul(3)
+            .min(shape[1].saturating_sub(1)),
+    ];
+    let maximum_exterior_sidelobe = psf
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| {
+            let pixel = plane_pixel(*index, shape);
+            pixel[0].abs_diff(peak[0]) > radius[0] || pixel[1].abs_diff(peak[1]) > radius[1]
+        })
+        .fold(0.0_f64, |maximum, (_, value)| maximum.max(value.re.abs()));
+    ClarkApproximation {
+        radius,
+        maximum_exterior_sidelobe,
+    }
+}
+
+fn subtract_psf_patch(
+    residual: &mut [f64],
+    psf: &[num_complex::Complex64],
+    shape: [usize; 2],
+    peak: [usize; 2],
+    psf_peak: [usize; 2],
+    radius: [usize; 2],
+    flux: f64,
+) -> Result<(), MinorCycleError> {
+    let x_range = overlap(peak[0], psf_peak[0], shape[0]);
+    let y_range = overlap(peak[1], psf_peak[1], shape[1]);
+    for y in y_range {
+        for x in x_range.clone() {
+            let source = [x + psf_peak[0] - peak[0], y + psf_peak[1] - peak[1]];
+            if source[0].abs_diff(psf_peak[0]) > radius[0]
+                || source[1].abs_diff(psf_peak[1]) > radius[1]
+            {
+                continue;
+            }
+            let target = x * shape[1] + y;
+            let updated = residual[target] - flux * psf[source[0] * shape[1] + source[1]].re;
+            if !updated.is_finite() {
+                return Err(MinorCycleError::GeneratedNonfinite);
+            }
+            residual[target] = updated;
+        }
+    }
+    Ok(())
+}
+
 /// Inclusive-clipped axis range where a PSF centered at `psf_peak` overlaps
 /// the plane when recentered on `peak`.
 fn overlap(peak: usize, psf_peak: usize, length: usize) -> std::ops::Range<usize> {
@@ -845,11 +1043,12 @@ fn minor_cycle_evidence_id(
     normal_state_completion: FinalNormalStateCompletionId,
     normal_state_content: LogicalIdentity,
     window: &CleanWindow,
-    controls: &HogbomControls,
+    controls: &MinorCycleProgram,
     iterations: usize,
     total_flux: f64,
     final_peak_flux: f64,
     stop_reason: MinorCycleStopReason,
+    clark: Option<ClarkApproximation>,
 ) -> MinorCycleEvidenceId {
     let mut encoder = Encoder::new(MINOR_CYCLE_EVIDENCE_DOMAIN, MINOR_CYCLE_EVIDENCE_VERSION);
     encoder.identity(authority.as_bytes());
@@ -862,6 +1061,18 @@ fn minor_cycle_evidence_id(
     encoder.usize(window.blc()[1]);
     encoder.usize(window.trc()[0]);
     encoder.usize(window.trc()[1]);
+    match controls.algorithm() {
+        ReconstructionAlgorithm::Hogbom => encoder.u8(0),
+        ReconstructionAlgorithm::Clark => encoder.u8(1),
+        ReconstructionAlgorithm::Multiscale { scales_px } => {
+            encoder.u8(2);
+            encoder.usize(scales_px.len());
+            for scale in scales_px {
+                encoder.u64(crate::canonical_f64_bits(*scale));
+            }
+        }
+        _ => unreachable!("minor-cycle programs admit only implemented solvers"),
+    }
     encoder.u64(crate::canonical_f64_bits(controls.gain()));
     encoder.u64(crate::canonical_f64_bits(controls.threshold()));
     encoder.usize(controls.max_iterations());
@@ -881,6 +1092,17 @@ fn minor_cycle_evidence_id(
         MinorCycleStopReason::IterationBound => 1,
         MinorCycleStopReason::StalenessBound => 2,
     });
+    match clark {
+        None => encoder.u8(0),
+        Some(approximation) => {
+            encoder.u8(1);
+            encoder.usize(approximation.radius[0]);
+            encoder.usize(approximation.radius[1]);
+            encoder.u64(crate::canonical_f64_bits(
+                approximation.maximum_exterior_sidelobe,
+            ));
+        }
+    }
     MinorCycleEvidenceId(LogicalIdentity::from_sha256(encoder.finish()))
 }
 

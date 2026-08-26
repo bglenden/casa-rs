@@ -34,12 +34,12 @@ use casa_imaging_model::{
     compile, compile_observation,
 };
 use casa_imaging_reconstruction::{
-    CleanWindow, ExecutableModelProblem, FinalModelCompletion, FinalNormalState, HogbomControls,
-    MajorCycleOwner, MajorCyclePreparation, MinorCycleError, MinorCycleStopReason, ModelGeneration,
-    ModelLifecycle, ModelLifecycleError, SerialMfsSpecification, WeightingAlgorithmState,
-    WeightingError, WeightingExecutionLimits, WeightingPlan, WeightingReplayChunk,
-    WeightingReplaySummary, begin_weighting_generation, hogbom_minor_cycle, model_support_identity,
-    plan_weighting,
+    CleanWindow, ExecutableModelProblem, FinalModelCompletion, FinalNormalState, MajorCycleOwner,
+    MajorCyclePreparation, MinorCycleError, MinorCycleProgram as HogbomControls,
+    MinorCycleStopReason, ModelGeneration, ModelLifecycle, ModelLifecycleError,
+    SerialMfsSpecification, WeightingAlgorithmState, WeightingError, WeightingExecutionLimits,
+    WeightingPlan, WeightingReplayChunk, WeightingReplaySummary, begin_weighting_generation,
+    model_support_identity, plan_weighting, run_minor_cycle as hogbom_minor_cycle,
     runtime_adapter::{CompleteDataOwnerResult, prepare_serial_mfs_operator, serial_mfs_workload},
 };
 
@@ -877,7 +877,7 @@ fn threshold_stop_converges_without_a_delta_or_a_reconciliation_request() {
         &round.final_model,
         &round.normal_state,
         CleanWindow::inner_quarter(SHAPE),
-        converging_controls,
+        converging_controls.clone(),
     )
     .expect("bounded Högbom solve");
     let evidence = outcome.evidence();
@@ -926,7 +926,7 @@ fn iteration_bound_stops_with_an_explicit_reconciliation_request() {
         &round.final_model,
         &round.normal_state,
         CleanWindow::full_plane(SHAPE),
-        bounded,
+        bounded.clone(),
     )
     .expect("bounded Högbom solve");
     let evidence = outcome.evidence();
@@ -992,7 +992,7 @@ fn returned_deltas_never_exceed_the_accepted_view_envelope() {
         &round.final_model,
         &round.normal_state,
         CleanWindow::full_plane(SHAPE),
-        bounded,
+        bounded.clone(),
     )
     .expect("bounded Högbom solve");
     let evidence = outcome.evidence();
@@ -1080,6 +1080,49 @@ fn threshold_boundary_follows_the_casa_hogbom_convention() {
 }
 
 #[test]
+fn clark_uses_a_derived_bounded_patch_and_stops_at_threshold_equality() {
+    let round = first_confirm_round(165, 166);
+    let continuation = problem_with_model(
+        167,
+        ModelStateIdentity::Generation(round.final_model.generation_id().identity()),
+    );
+    let lifecycle = bind_lifecycle(&continuation, 168, 13);
+    let psf_peak = round
+        .normal_state
+        .normal_approximation()
+        .iter()
+        .map(|value| value.re.abs())
+        .fold(0.0_f64, f64::max);
+    let strength = residual_peak(round.normal_state.residual()) / psf_peak;
+    let program = casa_imaging_reconstruction::MinorCycleProgram::for_algorithm(
+        ReconstructionAlgorithm::Clark,
+        ReconstructionControls::new(8, 0.5, strength).with_maximum_model_update(1.0e30),
+    )
+    .expect("Clark program");
+
+    let result = hogbom_minor_cycle(
+        &lifecycle,
+        &round.final_model,
+        &round.normal_state,
+        CleanWindow::full_plane(SHAPE),
+        program,
+    )
+    .expect("Clark threshold-boundary solve");
+
+    assert_eq!(result.evidence().iterations(), 0);
+    assert_eq!(
+        result.evidence().stop_reason(),
+        MinorCycleStopReason::ThresholdReached
+    );
+    let approximation = result
+        .evidence()
+        .clark_approximation()
+        .expect("Clark records its approximation");
+    assert!(approximation.radius().into_iter().all(|radius| radius > 0));
+    assert!(approximation.maximum_exterior_sidelobe().is_finite());
+}
+
+#[test]
 fn window_and_valid_support_constrain_component_placement() {
     // An aligned seed marks one pixel invalid; the solver must skip it.
     let seed = identity(57, 90);
@@ -1143,7 +1186,7 @@ fn window_and_valid_support_constrain_component_placement() {
         &final_model,
         &normal_state,
         CleanWindow::full_plane(SHAPE),
-        solving_controls,
+        solving_controls.clone(),
     )
     .expect("bounded solve over seeded support");
     for component in outcome

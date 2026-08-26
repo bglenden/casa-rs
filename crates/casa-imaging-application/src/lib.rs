@@ -34,7 +34,7 @@ use casa_imaging_products::{
     produce_continuum_members,
 };
 use casa_imaging_reconstruction::{
-    CleanWindow, ExecutableModelProblem, HogbomControls, MajorCycleCompletion,
+    CleanWindow, ExecutableModelProblem, MajorCycleCompletion, MinorCycleProgram,
     MinorCycleStopReason, WeightingExecutionLimits,
 };
 use casa_imaging_runtime::{
@@ -219,10 +219,12 @@ where
         ReconstructionAlgorithm::Dirty => {
             SerialContinuumPlan::dirty(problem, &planning_registry, policy)?
         }
-        ReconstructionAlgorithm::Hogbom => {
+        ReconstructionAlgorithm::Hogbom
+        | ReconstructionAlgorithm::Clark
+        | ReconstructionAlgorithm::Multiscale { .. } => {
             SerialContinuumPlan::initial(problem, &planning_registry, policy)?
         }
-        _ => unreachable!("native validation admits only dirty or Högbom"),
+        _ => unreachable!("native validation admits only continuum minor-cycle solvers"),
     };
     let minor_node = planned.minor_cycle_node().cloned();
     let (physical, weighting, complete, resources, pass, _) = planned.into_parts();
@@ -238,14 +240,17 @@ where
         ExecutableModelProblem::from_compiled(problem.clone())?,
         SerialContinuumPassInput::Initial,
     );
-    if matches!(algorithm, ReconstructionAlgorithm::Hogbom) {
-        let controls = HogbomControls::from_compiled(problem.reconstruction().controls())?;
+    if !matches!(algorithm, ReconstructionAlgorithm::Dirty) {
+        let program = MinorCycleProgram::for_algorithm(
+            algorithm.clone(),
+            problem.reconstruction().controls(),
+        )?;
         let domain = &problem.geometry().domains()[0];
         let [width, height] = domain.shape().pixels();
         executor = executor.with_minor_cycle(
             minor_node.ok_or_else(|| boxed("initial plan omitted its minor-cycle node"))?,
             CleanWindow::new([0, 0], [width - 1, height - 1])?,
-            controls,
+            program,
         );
     }
     let registry = SerialContinuumRegistry::new(
@@ -283,11 +288,13 @@ where
                 .ok_or_else(|| boxed("dirty execution omitted final major-cycle evidence"))?;
             (result.into_completion(), None, None)
         }
-        ReconstructionAlgorithm::Hogbom => {
+        ReconstructionAlgorithm::Hogbom
+        | ReconstructionAlgorithm::Clark
+        | ReconstructionAlgorithm::Multiscale { .. } => {
             let minor = registry
                 .implementation()
                 .take_minor_completion()
-                .ok_or_else(|| boxed("Högbom execution omitted minor-cycle evidence"))?;
+                .ok_or_else(|| boxed("minor-cycle execution omitted scientific evidence"))?;
             let minor_cycle = Some(NativeMinorCycleOutcome {
                 iterations: minor.evidence().iterations(),
                 final_peak_flux: minor.evidence().final_peak_flux(),
