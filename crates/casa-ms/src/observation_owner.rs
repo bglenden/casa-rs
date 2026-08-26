@@ -288,8 +288,6 @@ impl ModelDataWrite {
                     )),
                 )?;
             }
-        } else {
-            zero_selected_model_cells(&mut measurement_set, selection)?;
         }
         Ok(Self {
             measurement_set: Some(measurement_set),
@@ -1137,68 +1135,6 @@ fn persist_model_cell(
     Ok(())
 }
 
-#[cfg(unix)]
-fn zero_selected_model_cells(
-    measurement_set: &mut MeasurementSet,
-    selection: &ObservationSelection,
-) -> Result<(), ObservationOwnerError> {
-    for selected_row in selection.rows().ordered_main_rows() {
-        let description = selection
-            .data_descriptions()
-            .iter()
-            .find(|description| {
-                description.data_description_id() == selected_row.data_description_id()
-            })
-            .ok_or(ObservationOwnerError::PredictionAddress)?;
-        let channels = selection
-            .spectral_windows()
-            .iter()
-            .find(|spectral| spectral.spectral_window_id() == description.spectral_window_id())
-            .ok_or(ObservationOwnerError::PredictionAddress)?;
-        let correlations = selection
-            .correlations()
-            .iter()
-            .find(|correlation| correlation.polarization_id() == description.polarization_id())
-            .ok_or(ObservationOwnerError::PredictionAddress)?;
-        let row = usize::try_from(selected_row.physical_row())
-            .map_err(|_| ObservationOwnerError::PredictionAddress)?;
-        let row_flag = measurement_set
-            .main_table()
-            .column_accessor("FLAG_ROW")?
-            .get(row)?
-            .ok_or(ObservationOwnerError::PredictionAddress)?;
-        match row_flag {
-            Value::Scalar(ScalarValue::Bool(true)) => continue,
-            Value::Scalar(ScalarValue::Bool(false)) => {}
-            _ => return Err(ObservationOwnerError::PredictionAddress),
-        }
-        let current = measurement_set
-            .main_table()
-            .column_accessor("MODEL_DATA")?
-            .get(row)?
-            .cloned()
-            .ok_or(ObservationOwnerError::PredictionAddress)?;
-        let Value::Array(ArrayValue::Complex32(mut values)) = current else {
-            return Err(ObservationOwnerError::PredictionAddress);
-        };
-        for channel in channels.channel_indices() {
-            for product in correlations.products() {
-                let index = [product.correlation_index() as usize, *channel as usize];
-                let Some(value) = values.get_mut(index) else {
-                    return Err(ObservationOwnerError::PredictionAddress);
-                };
-                *value = Complex32::new(0.0, 0.0);
-            }
-        }
-        persist_model_cell(
-            measurement_set.main_table_mut(),
-            row,
-            ArrayValue::Complex32(values),
-        )?;
-    }
-    Ok(())
-}
-
 fn write_owner_manifest(
     table: &mut Table,
     manifest: &OwnerManifest,
@@ -1609,6 +1545,22 @@ mod tests {
                 .write(0, 0, 0, Complex32::new(9.0, -2.0))
                 .expect("write prediction");
         }
+
+        let raw = Table::open(TableOptions::new(&path)).expect("inspect marked MAIN directly");
+        let Value::Array(ArrayValue::Complex32(values)) = raw
+            .column_accessor("MODEL_DATA")
+            .expect("MODEL_DATA accessor")
+            .get(0)
+            .expect("read existing MODEL_DATA")
+            .expect("defined MODEL_DATA cell")
+        else {
+            panic!("MODEL_DATA is complex")
+        };
+        assert_eq!(
+            values[[0, 0]],
+            Complex32::new(1.0, 0.0),
+            "begin and an unflushed prediction must not persist a destructive zero pass"
+        );
 
         let error = match MeasurementSet::open(&path) {
             Ok(_) => panic!("incomplete write must fail closed"),

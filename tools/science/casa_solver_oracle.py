@@ -23,7 +23,14 @@ from casatasks import tclean
 from casatasks.private.imagerhelpers.input_parameters import ImagerParameters
 from casatools import iterbotsink, synthesisdeconvolver
 
-from casa_solver_support import copy_seed, normalize, read_plane, write_plane
+from casa_solver_support import (
+    controlled_point_extended_fixture,
+    copy_seed,
+    materialize_solver_seed,
+    normalize,
+    read_plane,
+    write_plane,
+)
 
 
 def plane_summary(values: np.ndarray) -> dict:
@@ -71,40 +78,6 @@ def verify_expected(evidence: dict, expected_path: pathlib.Path) -> None:
             raise AssertionError(f"{solver} scale support changed")
 
 
-def seed_psf(ms_path: pathlib.Path, output: pathlib.Path) -> pathlib.Path:
-    prefix = output / "seed"
-    tclean(
-        vis=str(ms_path),
-        field="1",
-        spw="1",
-        imagename=str(prefix),
-        imsize=[64, 64],
-        cell="0.02arcsec",
-        phasecenter=1,
-        specmode="mfs",
-        gridder="standard",
-        stokes="I",
-        weighting="natural",
-        deconvolver="clark",
-        # One throwaway iteration asks CASA to materialize the complete image
-        # store (including model and mask); the controlled solve below replaces
-        # both model and residual before any measured result is recorded.
-        niter=1,
-        cycleniter=1,
-        gain=0.1,
-        threshold="0Jy",
-        usemask="user",
-        restoration=False,
-        pbcor=False,
-        savemodel="none",
-        calcpsf=True,
-        calcres=True,
-        interactive=False,
-        verbose=False,
-    )
-    return prefix
-
-
 def solve(
     ms_path: pathlib.Path,
     seed: pathlib.Path,
@@ -128,6 +101,7 @@ def solve(
         cell=["0.02arcsec", "0.02arcsec"],
         phasecenter=1,
         specmode="mfs",
+        datacolumn="data",
         gridder="standard",
         stokes="I",
         weighting="natural",
@@ -184,17 +158,13 @@ def main() -> None:
     ms_path = pathlib.Path(sys.argv[1]).resolve()
     output = pathlib.Path(sys.argv[2]).resolve()
     output.mkdir(parents=True, exist_ok=True)
-    seed = seed_psf(ms_path, output)
+    seed = materialize_solver_seed(tclean, ms_path, output / "seed")
     psf = read_plane(pathlib.Path(f"{seed}.psf"))
     center = tuple(extent // 2 for extent in psf.shape)
     if tuple(np.unravel_index(int(np.argmax(psf)), psf.shape)) != center or psf[center] != 1.0:
         raise RuntimeError("measured PSF is not centered and normalized")
 
-    axis0, axis1 = np.indices(psf.shape)
-    sky = np.zeros(psf.shape, dtype=np.float64)
-    sky[22, 21] = 4.0
-    sky += 0.2 * np.exp(-((axis1 - 43.0) ** 2 + (axis0 - 42.0) ** 2) / 32.0)
-    dirty = np.fft.ifft2(np.fft.fft2(sky) * np.fft.fft2(np.fft.ifftshift(psf))).real
+    sky, dirty = controlled_point_extended_fixture(psf)
     evidence = {
         "schema": "casa-rs-direct-solver-oracle-v1",
         "measurement_set": str(ms_path),

@@ -25,7 +25,9 @@ import sys
 import numpy as np
 
 from casa_solver_support import (
+    controlled_point_extended_fixture,
     copy_seed,
+    materialize_solver_seed,
     normalize,
     read_plane as plane,
     read_validity,
@@ -113,10 +115,11 @@ def load_casa() -> None:
     imports out of the orchestration parent prevents it from contending with
     the child when auto-multithresh queries the configured memory allowance.
     """
-    global clearcal, tclean, ImagerParameters
+    global clearcal, ft, tclean, ImagerParameters
     global image, iterbotsink, synthesisdeconvolver, table
 
     from casatasks import clearcal as casa_clearcal
+    from casatasks import ft as casa_ft
     from casatasks import tclean as casa_tclean
     from casatasks.private.imagerhelpers.input_parameters import (
         ImagerParameters as CasaImagerParameters,
@@ -127,6 +130,7 @@ def load_casa() -> None:
     from casatools import table as casa_table
 
     clearcal = casa_clearcal
+    ft = casa_ft
     tclean = casa_tclean
     ImagerParameters = CasaImagerParameters
     image = casa_image
@@ -166,6 +170,43 @@ def mask_topology_digest(mask: np.ndarray) -> str:
     """Hash canonical x-major mask support independently of image storage."""
     support = np.ascontiguousarray(np.asarray(mask, dtype=np.uint8))
     return hashlib.sha256(support.tobytes(order="C")).hexdigest()
+
+
+def controlled_source_identity(rows: list[np.ndarray]) -> str:
+    """Bind every row shape and Complex32 DATA sample of the controlled MS."""
+    digest = hashlib.sha256(b"casa-rs-controlled-point-extended-source-v1\0")
+    digest.update(struct.pack("<Q", len(rows)))
+    for row in rows:
+        values = np.ascontiguousarray(np.asarray(row, dtype="<c8"))
+        digest.update(struct.pack("<I", values.ndim))
+        for extent in values.shape:
+            digest.update(struct.pack("<Q", extent))
+        digest.update(values.tobytes(order="C"))
+    return digest.hexdigest()
+
+
+def assert_controlled_source_clones(
+    expected_identity: str,
+    casa_rows: list[np.ndarray],
+    rust_rows: list[np.ndarray],
+) -> str:
+    """Fail before imaging unless CASA and Rust received the exact source."""
+    if len(casa_rows) != len(rust_rows):
+        raise AssertionError(
+            "controlled source row count differs: "
+            f"CASA={len(casa_rows)}, Rust={len(rust_rows)}"
+        )
+    for row, (casa_values, rust_values) in enumerate(zip(casa_rows, rust_rows)):
+        if not np.array_equal(casa_values, rust_values):
+            raise AssertionError(f"controlled source DATA differs at row {row}")
+    casa_identity = controlled_source_identity(casa_rows)
+    rust_identity = controlled_source_identity(rust_rows)
+    if casa_identity != expected_identity or rust_identity != expected_identity:
+        raise AssertionError(
+            "controlled point+extended source identity changed: "
+            f"expected={expected_identity}, CASA={casa_identity}, Rust={rust_identity}"
+        )
+    return expected_identity
 
 
 def frozen_automask_topology() -> tuple[np.ndarray, dict]:
@@ -289,6 +330,45 @@ def table_column_values(path: pathlib.Path, column: str) -> list:
         return values
     finally:
         tool.close()
+
+
+def install_controlled_point_extended_source(
+    ms_path: pathlib.Path, geometry_prefix: pathlib.Path
+) -> tuple[np.ndarray, str]:
+    """Predict the shared point+extended sky into DATA before owner binding."""
+    seed = materialize_solver_seed(tclean, ms_path, geometry_prefix)
+    sky, _ = controlled_point_extended_fixture(
+        plane(pathlib.Path(f"{seed}.psf"))
+    )
+    model_path = pathlib.Path(f"{seed}.model")
+    write_plane(model_path, sky)
+    ft(
+        vis=str(ms_path),
+        field="1",
+        spw="1",
+        model=str(model_path),
+        usescratch=True,
+        incremental=False,
+    )
+
+    tool = table()
+    tool.open(str(ms_path), nomodify=False)
+    try:
+        columns = set(tool.colnames())
+        for row in range(tool.nrows()):
+            predicted = np.array(tool.getcell("MODEL_DATA", row), copy=True)
+            tool.putcell("DATA", row, predicted)
+            if "CORRECTED_DATA" in columns:
+                tool.putcell("CORRECTED_DATA", row, predicted)
+        tool.flush()
+    finally:
+        tool.close()
+
+    # MODEL_DATA is derived state, not the controlled observed source. Reset
+    # it before owner initialization while retaining the predicted DATA.
+    clearcal(vis=str(ms_path), addmodel=True)
+    rows = table_column_values(ms_path, "DATA")
+    return sky, controlled_source_identity(rows)
 
 
 def assert_identical_column(
@@ -730,7 +810,8 @@ def casa_case(
         parameters = ImagerParameters(
             msname=str(ms_path), field="1", spw="1", imagename=str(bound_prefix),
             imsize=list(shape), cell=["0.02arcsec", "0.02arcsec"], phasecenter=1,
-            specmode="mfs", gridder="standard", stokes="I", weighting="natural",
+            specmode="mfs", datacolumn="data", gridder="standard", stokes="I",
+            weighting="natural",
             deconvolver=case["solver"],
             scales=case.get("scales", []),
             scalebias=0.0, niter=iteration_bound, cycleniter=iteration_bound,
@@ -845,7 +926,8 @@ def casa_case(
         parameters = ImagerParameters(
             msname=str(ms_path), field="1", spw="1", imagename=str(prefix),
             imsize=list(shape), cell=["0.02arcsec", "0.02arcsec"], phasecenter=1,
-            specmode="mfs", gridder="standard", stokes="I", weighting="natural",
+            specmode="mfs", datacolumn="data", gridder="standard", stokes="I",
+            weighting="natural",
             deconvolver=case["solver"], scales=case.get("scales", []),
             scalebias=0.0, niter=case["cycle_iterations"],
             cycleniter=case["cycle_iterations"],
@@ -935,7 +1017,8 @@ def casa_full_case(
     result = tclean(
         vis=str(ms_path), imagename=str(prefix), field="1", spw="1",
         imsize=[64, 64], cell=["0.02arcsec", "0.02arcsec"], phasecenter=1,
-        specmode="mfs", gridder="standard", stokes="I", weighting="natural",
+        specmode="mfs", datacolumn="data", gridder="standard", stokes="I",
+        weighting="natural",
         deconvolver=case["solver"], scales=case.get("scales", []),
         smallscalebias=0.0, niter=case["iterations"],
         cycleniter=case["cycle_iterations"], nmajor=case["nmajor"],
@@ -1020,6 +1103,35 @@ def make_box_mask(
     write_plane(output, support)
 
 
+def compare_per_scale_recovered_flux(
+    case_name: str,
+    scales: list[int],
+    rust_components: list[dict],
+    casa_trace: list[dict],
+) -> dict[str, float]:
+    """Compare the complete cumulative flux trajectory for every scale."""
+    expected_scales = {int(scale) for scale in scales}
+    recovered = {str(scale): 0.0 for scale in scales}
+    for index, (component, casa_component) in enumerate(
+        zip(rust_components, casa_trace)
+    ):
+        rust_scale = int(component["scale_px"])
+        casa_scale = int(casa_component["scale_px"])
+        if rust_scale not in expected_scales or rust_scale != casa_scale:
+            raise AssertionError(
+                f"first divergence: {case_name} component {index} scale: "
+                f"Rust={rust_scale}, CASA={casa_scale}, declared={sorted(expected_scales)}"
+            )
+        scale_key = str(rust_scale)
+        recovered[scale_key] += component["flux"]
+        assert_close(
+            f"{case_name} scale {scale_key} recovered flux",
+            recovered[scale_key],
+            casa_component["per_scale_recovered_flux"][scale_key],
+        )
+    return recovered
+
+
 def compare_minor_reference(case: dict, casa_summary: dict, rust_cycle: dict) -> None:
     """Compare one bounded first minor-cycle trajectory component by component."""
     casa_cycle = casa_summary["summary"]
@@ -1042,9 +1154,6 @@ def compare_minor_reference(case: dict, casa_summary: dict, rust_cycle: dict) ->
         )
     gain = case.get("gain", 0.2)
     cumulative_flux = 0.0
-    rust_per_scale_flux = {
-        str(scale): 0.0 for scale in case.get("scales", [])
-    }
     for index, (component, casa_component) in enumerate(zip(components, casa_trace)):
         selected_strength = (
             casa_component["selected_component_strength"]
@@ -1062,19 +1171,10 @@ def compare_minor_reference(case: dict, casa_summary: dict, rust_cycle: dict) ->
             cumulative_flux,
             casa_component["cumulative_model_flux"],
         )
-        if case["solver"] == "multiscale":
-            if component["scale_px"] != casa_component["scale_px"]:
-                raise AssertionError(
-                    f"first divergence: {case['name']} component {index} scale: "
-                    f"Rust={component['scale_px']}, CASA={casa_component['scale_px']}"
-                )
-            scale_key = str(int(component["scale_px"]))
-            rust_per_scale_flux[scale_key] += component["flux"]
-            assert_close(
-                f"{case['name']} scale {scale_key} recovered flux",
-                rust_per_scale_flux[scale_key],
-                casa_component["per_scale_recovered_flux"][scale_key],
-            )
+    if case["solver"] == "multiscale":
+        compare_per_scale_recovered_flux(
+            case["name"], case["scales"], components, casa_trace
+        )
     assert_close(
         f"{case['name']} terminal peak",
         rust_cycle["final_peak_flux"],
@@ -1192,6 +1292,7 @@ def main() -> None:
             "nmajor": 2,
             "minor_reference": True,
             "scales": [0, 7],
+            "controlled_source": "point+extended",
         },
         {
             "name": "automask",
@@ -1251,9 +1352,36 @@ def main() -> None:
         # choose different first-creation values for excluded cells, which
         # obscures the required exclusion proof.
         clearcal(vis=str(seed_ms), addmodel=True)
+        controlled_sky = None
+        controlled_source = None
+        if case.get("controlled_source") == "point+extended":
+            controlled_sky, controlled_source = install_controlled_point_extended_source(
+                seed_ms, root / "controlled-source"
+            )
         seed_case = dict(case)
         seed_case.update({"mask": "user", "casa_usemask": "user"})
         rust_case(seed_ms, seed_prefix, seed_case, iterations=0, save_model=False)
+        controlled_source_evidence = None
+        if controlled_sky is not None:
+            canonical_sky, controlled_dirty = controlled_point_extended_fixture(
+                plane(pathlib.Path(f"{seed_prefix}.psf"))
+            )
+            if not np.array_equal(controlled_sky, canonical_sky):
+                raise AssertionError("controlled point+extended sky construction changed")
+            rust_dirty = plane(pathlib.Path(f"{seed_prefix}.residual"))
+            dirty_metric = normalized_rms(rust_dirty, controlled_dirty)
+            if dirty_metric > TOLERANCE:
+                raise AssertionError(
+                    "first divergence: Rust dirty plane does not image the controlled "
+                    f"point+extended source: normalized RMS={dirty_metric:.17g}"
+                )
+            # CASA's direct minor-cycle oracle and Rust's canonical imaging
+            # route now start from the same controlled normal-state plane.
+            write_plane(pathlib.Path(f"{seed_prefix}.residual"), controlled_dirty)
+            write_plane(
+                pathlib.Path(f"{seed_prefix}.model"),
+                np.zeros(controlled_dirty.shape),
+            )
         if case["mask"] == "image":
             mask_image = root / "reprojected-source.mask"
             make_reprojected_mask(pathlib.Path(f"{seed_prefix}.mask"), mask_image)
@@ -1275,6 +1403,24 @@ def main() -> None:
             shutil.copytree(seed_ms, casa_minor_ms)
             shutil.copytree(seed_ms, rust_minor_ms)
         shutil.copytree(seed_ms, rust_ms)
+        if controlled_source is not None:
+            assert_controlled_source_clones(
+                controlled_source,
+                table_column_values(casa_ms, "DATA"),
+                table_column_values(rust_ms, "DATA"),
+            )
+            if case["minor_reference"]:
+                assert_controlled_source_clones(
+                    controlled_source,
+                    table_column_values(casa_minor_ms, "DATA"),
+                    table_column_values(rust_minor_ms, "DATA"),
+                )
+            controlled_source_evidence = {
+                "kind": "point+extended",
+                "shape": [64, 64],
+                "data_identity": controlled_source,
+                "rust_dirty_normalized_rms": dirty_metric,
+            }
         direct_controls_oracle = case.get("direct_controls_oracle", False)
         casa_summary = (
             None if direct_controls_oracle else casa_full_case(casa_ms, casa_prefix, case)
@@ -1511,6 +1657,8 @@ def main() -> None:
             "rust_minor_summary": rust_minor_summary,
             "rust_summary": rust_summary,
         }
+        if controlled_source_evidence is not None:
+            case_evidence["controlled_source"] = controlled_source_evidence
         if automask_oracle is not None:
             case_evidence["frozen_automask_oracle"] = automask_oracle
             case_evidence["product_validity"] = compare_product_validity(
