@@ -11,8 +11,8 @@
 <a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>casa_coordinates::{
 <a href=#12 id=12 data-nosnippet>12</a>    Coordinate, CoordinateSystem, CoordinateType, DirectionCoordinate, Projection, ProjectionType,
 <a href=#13 id=13 data-nosnippet>13</a>};
-<a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span>casa_imaging::{
-<a href=#15 id=15 data-nosnippet>15</a>    ImageGeometry, PrimaryBeamModel, PrimaryBeamVoltagePattern, StandardMfsModelPredictor,
+<a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span>casa_simulation_synthesis::{
+<a href=#15 id=15 data-nosnippet>15</a>    AiryPrimaryBeam, AiryVoltagePattern, ImageGeometry, StandardMfsModelPredictor,
 <a href=#16 id=16 data-nosnippet>16</a>};
 <a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span>casa_tables::ColumnOverrides;
 <a href=#18 id=18 data-nosnippet>18</a><span class="kw">use </span>casa_types::measures::MeasuresProvider;
@@ -2983,7 +2983,7 @@
 <a href=#2983 id=2983 data-nosnippet>2983</a>        <span class="kw">return </span>pixels;
 <a href=#2984 id=2984 data-nosnippet>2984</a>    }
 <a href=#2985 id=2985 data-nosnippet>2985</a>    <span class="kw">let </span>primary_beam_evaluator = (!primary_beam.use_casa_vla_q_table).then(|| {
-<a href=#2986 id=2986 data-nosnippet>2986</a>        PrimaryBeamVoltagePattern::new(PrimaryBeamModel::Airy {
+<a href=#2986 id=2986 data-nosnippet>2986</a>        AiryVoltagePattern::new(AiryPrimaryBeam {
 <a href=#2987 id=2987 data-nosnippet>2987</a>            dish_diameter_m: primary_beam.dish_diameter_m,
 <a href=#2988 id=2988 data-nosnippet>2988</a>            blockage_diameter_m: primary_beam.blockage_diameter_m,
 <a href=#2989 id=2989 data-nosnippet>2989</a>        })
@@ -3013,7 +3013,7 @@
 <a href=#3013 id=3013 data-nosnippet>3013</a>
 <a href=#3014 id=3014 data-nosnippet>3014</a><span class="kw">fn </span>synthetic_primary_beam_voltage_pattern(
 <a href=#3015 id=3015 data-nosnippet>3015</a>    primary_beam: SyntheticPrimaryBeam,
-<a href=#3016 id=3016 data-nosnippet>3016</a>    primary_beam_evaluator: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>PrimaryBeamVoltagePattern&gt;,
+<a href=#3016 id=3016 data-nosnippet>3016</a>    primary_beam_evaluator: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>AiryVoltagePattern&gt;,
 <a href=#3017 id=3017 data-nosnippet>3017</a>    l_rad: f64,
 <a href=#3018 id=3018 data-nosnippet>3018</a>    m_rad: f64,
 <a href=#3019 id=3019 data-nosnippet>3019</a>    frequency_hz: f64,
@@ -3506,7 +3506,7 @@
 <a href=#3506 id=3506 data-nosnippet>3506</a>    <span class="kw">let </span>l_from_pointing = l_rad - pointing_offset_rad[<span class="number">0</span>];
 <a href=#3507 id=3507 data-nosnippet>3507</a>    <span class="kw">let </span>m_from_pointing = m_rad - pointing_offset_rad[<span class="number">1</span>];
 <a href=#3508 id=3508 data-nosnippet>3508</a>    <span class="kw">let </span>primary_beam_evaluator = (!primary_beam.use_casa_vla_q_table).then(|| {
-<a href=#3509 id=3509 data-nosnippet>3509</a>        PrimaryBeamVoltagePattern::new(PrimaryBeamModel::Airy {
+<a href=#3509 id=3509 data-nosnippet>3509</a>        AiryVoltagePattern::new(AiryPrimaryBeam {
 <a href=#3510 id=3510 data-nosnippet>3510</a>            dish_diameter_m: primary_beam.dish_diameter_m,
 <a href=#3511 id=3511 data-nosnippet>3511</a>            blockage_diameter_m: primary_beam.blockage_diameter_m,
 <a href=#3512 id=3512 data-nosnippet>3512</a>        })

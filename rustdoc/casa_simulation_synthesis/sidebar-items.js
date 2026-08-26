@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["SynthesisError"],"struct":["AiryPrimaryBeam","AiryVoltagePattern","ImageGeometry","StandardMfsModelPredictor"]};

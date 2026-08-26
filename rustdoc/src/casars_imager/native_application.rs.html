@@ -6,7 +6,7 @@
 <a href=#6 id=6 data-nosnippet>6</a>
 <a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>casa_imaging_application::{
 <a href=#8 id=8 data-nosnippet>8</a>    ContinuumAlgorithm, ContinuumBeamPolicy, ContinuumImagingRequest, ContinuumStopReason,
-<a href=#9 id=9 data-nosnippet>9</a>    ContinuumWeighting, TaskRouteRequirement, execute_continuum,
+<a href=#9 id=9 data-nosnippet>9</a>    ContinuumWeighting, TaskRequirement, execute_continuum,
 <a href=#10 id=10 data-nosnippet>10</a>};
 <a href=#11 id=11 data-nosnippet>11</a>
 <a href=#12 id=12 data-nosnippet>12</a><span class="kw">use super</span>::{
@@ -89,175 +89,170 @@
 <a href=#89 id=89 data-nosnippet>89</a>            RestoringBeamMode::PerPlane =&gt; ContinuumBeamPolicy::PerPlane,
 <a href=#90 id=90 data-nosnippet>90</a>            RestoringBeamMode::Common =&gt; ContinuumBeamPolicy::Common,
 <a href=#91 id=91 data-nosnippet>91</a>        },
-<a href=#92 id=92 data-nosnippet>92</a>        route_requirements: task_route_requirements(config),
+<a href=#92 id=92 data-nosnippet>92</a>        task_requirements: task_requirements(config),
 <a href=#93 id=93 data-nosnippet>93</a>    }
 <a href=#94 id=94 data-nosnippet>94</a>}
 <a href=#95 id=95 data-nosnippet>95</a>
-<a href=#96 id=96 data-nosnippet>96</a><span class="kw">fn </span>task_route_requirements(config: <span class="kw-2">&amp;</span>CliConfig) -&gt; Vec&lt;TaskRouteRequirement&gt; {
+<a href=#96 id=96 data-nosnippet>96</a><span class="kw">fn </span>task_requirements(config: <span class="kw-2">&amp;</span>CliConfig) -&gt; Vec&lt;TaskRequirement&gt; {
 <a href=#97 id=97 data-nosnippet>97</a>    <span class="kw">let </span><span class="kw-2">mut </span>requirements = <span class="macro">vec!</span>[<span class="kw">match </span>config.spectral_mode {
-<a href=#98 id=98 data-nosnippet>98</a>        SpectralMode::Mfs =&gt; TaskRouteRequirement::SerialCpu,
-<a href=#99 id=99 data-nosnippet>99</a>        SpectralMode::Cube =&gt; TaskRouteRequirement::SpectralCube,
-<a href=#100 id=100 data-nosnippet>100</a>        SpectralMode::Cubedata =&gt; TaskRouteRequirement::SpectralCubedata,
+<a href=#98 id=98 data-nosnippet>98</a>        SpectralMode::Mfs =&gt; TaskRequirement::SerialCpu,
+<a href=#99 id=99 data-nosnippet>99</a>        SpectralMode::Cube =&gt; TaskRequirement::SpectralCube,
+<a href=#100 id=100 data-nosnippet>100</a>        SpectralMode::Cubedata =&gt; TaskRequirement::SpectralCubedata,
 <a href=#101 id=101 data-nosnippet>101</a>    }];
 <a href=#102 id=102 data-nosnippet>102</a>    <span class="kw">if </span>config.aw_project.is_some() {
-<a href=#103 id=103 data-nosnippet>103</a>        requirements.push(TaskRouteRequirement::AwProjection);
+<a href=#103 id=103 data-nosnippet>103</a>        requirements.push(TaskRequirement::AwProjection);
 <a href=#104 id=104 data-nosnippet>104</a>    } <span class="kw">else if </span>config.w_term_mode == WTermMode::WProject {
-<a href=#105 id=105 data-nosnippet>105</a>        requirements.push(TaskRouteRequirement::WProjection);
+<a href=#105 id=105 data-nosnippet>105</a>        requirements.push(TaskRequirement::WProjection);
 <a href=#106 id=106 data-nosnippet>106</a>    } <span class="kw">else if </span>config.use_pointing &amp;&amp; !config.force_standard_gridder {
-<a href=#107 id=107 data-nosnippet>107</a>        requirements.push(TaskRouteRequirement::MosaicGridder);
+<a href=#107 id=107 data-nosnippet>107</a>        requirements.push(TaskRequirement::MosaicGridder);
 <a href=#108 id=108 data-nosnippet>108</a>    }
 <a href=#109 id=109 data-nosnippet>109</a>    <span class="kw">if </span>config.outlier_file.is_some() {
-<a href=#110 id=110 data-nosnippet>110</a>        requirements.push(TaskRouteRequirement::FacetsOutliers);
+<a href=#110 id=110 data-nosnippet>110</a>        requirements.push(TaskRequirement::FacetsOutliers);
 <a href=#111 id=111 data-nosnippet>111</a>    }
 <a href=#112 id=112 data-nosnippet>112</a>    <span class="kw">if </span>config.use_mask == CleanMaskMode::AutoMultiThreshold {
-<a href=#113 id=113 data-nosnippet>113</a>        requirements.push(TaskRouteRequirement::Automasking);
+<a href=#113 id=113 data-nosnippet>113</a>        requirements.push(TaskRequirement::Automasking);
 <a href=#114 id=114 data-nosnippet>114</a>    }
 <a href=#115 id=115 data-nosnippet>115</a>    <span class="kw">if </span>config.use_mask == CleanMaskMode::AutoMultiThreshold
 <a href=#116 id=116 data-nosnippet>116</a>        || !config.mask_boxes.is_empty()
 <a href=#117 id=117 data-nosnippet>117</a>        || config.mask_image.is_some()
 <a href=#118 id=118 data-nosnippet>118</a>    {
-<a href=#119 id=119 data-nosnippet>119</a>        requirements.push(TaskRouteRequirement::MaskProduct);
+<a href=#119 id=119 data-nosnippet>119</a>        requirements.push(TaskRequirement::MaskProduct);
 <a href=#120 id=120 data-nosnippet>120</a>    }
 <a href=#121 id=121 data-nosnippet>121</a>    <span class="kw">if </span>config.start_model.is_some() {
-<a href=#122 id=122 data-nosnippet>122</a>        requirements.push(TaskRouteRequirement::StartModel);
+<a href=#122 id=122 data-nosnippet>122</a>        requirements.push(TaskRequirement::StartModel);
 <a href=#123 id=123 data-nosnippet>123</a>    }
 <a href=#124 id=124 data-nosnippet>124</a>    <span class="kw">if </span>config.save_model != SaveModelMode::None {
-<a href=#125 id=125 data-nosnippet>125</a>        requirements.push(TaskRouteRequirement::ModelColumnWrite);
+<a href=#125 id=125 data-nosnippet>125</a>        requirements.push(TaskRequirement::ModelColumnWrite);
 <a href=#126 id=126 data-nosnippet>126</a>    }
 <a href=#127 id=127 data-nosnippet>127</a>    requirements.extend(backend_requirements(config));
 <a href=#128 id=128 data-nosnippet>128</a>    <span class="kw">if </span>unsupported_native_controls(config) {
-<a href=#129 id=129 data-nosnippet>129</a>        requirements.push(TaskRouteRequirement::NativeV1UnsupportedControls);
+<a href=#129 id=129 data-nosnippet>129</a>        requirements.push(TaskRequirement::UnsupportedControls);
 <a href=#130 id=130 data-nosnippet>130</a>    }
 <a href=#131 id=131 data-nosnippet>131</a>    requirements
 <a href=#132 id=132 data-nosnippet>132</a>}
 <a href=#133 id=133 data-nosnippet>133</a>
-<a href=#134 id=134 data-nosnippet>134</a><span class="kw">fn </span>backend_requirements(config: <span class="kw-2">&amp;</span>CliConfig) -&gt; Vec&lt;TaskRouteRequirement&gt; {
+<a href=#134 id=134 data-nosnippet>134</a><span class="kw">fn </span>backend_requirements(config: <span class="kw-2">&amp;</span>CliConfig) -&gt; Vec&lt;TaskRequirement&gt; {
 <a href=#135 id=135 data-nosnippet>135</a>    <span class="kw">let </span><span class="kw-2">mut </span>requirements = Vec::new();
 <a href=#136 id=136 data-nosnippet>136</a>    <span class="kw">match </span>config.standard_mfs_acceleration {
 <a href=#137 id=137 data-nosnippet>137</a>        StandardMfsAccelerationPolicy::Auto =&gt; {
-<a href=#138 id=138 data-nosnippet>138</a>            requirements.push(TaskRouteRequirement::ExecutionAuto);
+<a href=#138 id=138 data-nosnippet>138</a>            requirements.push(TaskRequirement::ExecutionAuto);
 <a href=#139 id=139 data-nosnippet>139</a>        }
 <a href=#140 id=140 data-nosnippet>140</a>        StandardMfsAccelerationPolicy::Cpu =&gt; {}
 <a href=#141 id=141 data-nosnippet>141</a>        StandardMfsAccelerationPolicy::MultiCpu =&gt; {
-<a href=#142 id=142 data-nosnippet>142</a>            requirements.push(TaskRouteRequirement::FixedTileCpu);
+<a href=#142 id=142 data-nosnippet>142</a>            requirements.push(TaskRequirement::FixedTileCpu);
 <a href=#143 id=143 data-nosnippet>143</a>        }
 <a href=#144 id=144 data-nosnippet>144</a>        StandardMfsAccelerationPolicy::Metal =&gt; {
-<a href=#145 id=145 data-nosnippet>145</a>            requirements.push(TaskRouteRequirement::MetalRowRunGroupedGridder);
+<a href=#145 id=145 data-nosnippet>145</a>            requirements.push(TaskRequirement::MetalRowRunGroupedGridder);
 <a href=#146 id=146 data-nosnippet>146</a>        }
 <a href=#147 id=147 data-nosnippet>147</a>    }
 <a href=#148 id=148 data-nosnippet>148</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(backend) = config.standard_mfs_backend.as_deref() {
 <a href=#149 id=149 data-nosnippet>149</a>        requirements.push(<span class="kw">match </span>backend {
-<a href=#150 id=150 data-nosnippet>150</a>            <span class="string">"cpu" </span>| <span class="string">"serial" </span>| <span class="string">"serial-cpu" </span>=&gt; TaskRouteRequirement::SerialCpu,
-<a href=#151 id=151 data-nosnippet>151</a>            <span class="string">"fixed-tile" </span>| <span class="string">"fixed-tile-cpu" </span>=&gt; TaskRouteRequirement::FixedTileCpu,
-<a href=#152 id=152 data-nosnippet>152</a>            <span class="string">"metal" </span>| <span class="string">"metal-gridder" </span>=&gt; TaskRouteRequirement::MetalGridder,
-<a href=#153 id=153 data-nosnippet>153</a>            <span class="string">"metal-row-run" </span>| <span class="string">"metal-row-run-gridder" </span>=&gt; TaskRouteRequirement::MetalRowRunGridder,
+<a href=#150 id=150 data-nosnippet>150</a>            <span class="string">"cpu" </span>| <span class="string">"serial" </span>| <span class="string">"serial-cpu" </span>=&gt; TaskRequirement::SerialCpu,
+<a href=#151 id=151 data-nosnippet>151</a>            <span class="string">"fixed-tile" </span>| <span class="string">"fixed-tile-cpu" </span>=&gt; TaskRequirement::FixedTileCpu,
+<a href=#152 id=152 data-nosnippet>152</a>            <span class="string">"metal" </span>| <span class="string">"metal-gridder" </span>=&gt; TaskRequirement::MetalGridder,
+<a href=#153 id=153 data-nosnippet>153</a>            <span class="string">"metal-row-run" </span>| <span class="string">"metal-row-run-gridder" </span>=&gt; TaskRequirement::MetalRowRunGridder,
 <a href=#154 id=154 data-nosnippet>154</a>            <span class="string">"metal-row-run-grouped" </span>| <span class="string">"metal-row-run-grouped-gridder" </span>=&gt; {
-<a href=#155 id=155 data-nosnippet>155</a>                TaskRouteRequirement::MetalRowRunGroupedGridder
+<a href=#155 id=155 data-nosnippet>155</a>                TaskRequirement::MetalRowRunGroupedGridder
 <a href=#156 id=156 data-nosnippet>156</a>            }
-<a href=#157 id=157 data-nosnippet>157</a>            <span class="kw">_ </span>=&gt; TaskRouteRequirement::NativeV1UnsupportedControls,
+<a href=#157 id=157 data-nosnippet>157</a>            <span class="kw">_ </span>=&gt; TaskRequirement::UnsupportedControls,
 <a href=#158 id=158 data-nosnippet>158</a>        });
 <a href=#159 id=159 data-nosnippet>159</a>    }
 <a href=#160 id=160 data-nosnippet>160</a>    <span class="kw">match </span>config.imaging_fft_backend {
 <a href=#161 id=161 data-nosnippet>161</a>        ImagingFftBackendPolicy::RustFft =&gt; {}
-<a href=#162 id=162 data-nosnippet>162</a>        ImagingFftBackendPolicy::Auto =&gt; requirements.push(TaskRouteRequirement::FftAuto),
-<a href=#163 id=163 data-nosnippet>163</a>        ImagingFftBackendPolicy::Accelerate =&gt; requirements.push(TaskRouteRequirement::Accelerate),
-<a href=#164 id=164 data-nosnippet>164</a>        ImagingFftBackendPolicy::MetalMpsGraph =&gt; {
-<a href=#165 id=165 data-nosnippet>165</a>            requirements.push(TaskRouteRequirement::MetalMpsGraph)
-<a href=#166 id=166 data-nosnippet>166</a>        }
-<a href=#167 id=167 data-nosnippet>167</a>        ImagingFftBackendPolicy::Fftw =&gt; requirements.push(TaskRouteRequirement::Fftw),
-<a href=#168 id=168 data-nosnippet>168</a>    }
-<a href=#169 id=169 data-nosnippet>169</a>    requirements
-<a href=#170 id=170 data-nosnippet>170</a>}
-<a href=#171 id=171 data-nosnippet>171</a>
-<a href=#172 id=172 data-nosnippet>172</a><span class="kw">fn </span>unsupported_native_controls(config: <span class="kw-2">&amp;</span>CliConfig) -&gt; bool {
-<a href=#173 id=173 data-nosnippet>173</a>    config.phasecenter_field.is_some()
-<a href=#174 id=174 data-nosnippet>174</a>        || config.phasecenter.is_some()
-<a href=#175 id=175 data-nosnippet>175</a>        || config
-<a href=#176 id=176 data-nosnippet>176</a>            .correlation
-<a href=#177 id=177 data-nosnippet>177</a>            .as_deref()
-<a href=#178 id=178 data-nosnippet>178</a>            .is_some_and(|plane| !plane.eq_ignore_ascii_case(<span class="string">"I"</span>))
-<a href=#179 id=179 data-nosnippet>179</a>        || config.uv_taper.is_some()
-<a href=#180 id=180 data-nosnippet>180</a>        || config.nmajor.is_some()
-<a href=#181 id=181 data-nosnippet>181</a>        || config.nsigma != <span class="number">0.0
-<a href=#182 id=182 data-nosnippet>182</a>        </span>|| config.minor_cycle_length != <span class="number">1000
-<a href=#183 id=183 data-nosnippet>183</a>        </span>|| config.cyclefactor != <span class="number">1.0
-<a href=#184 id=184 data-nosnippet>184</a>        </span>|| config.min_psf_fraction != <span class="number">0.05
-<a href=#185 id=185 data-nosnippet>185</a>        </span>|| config.max_psf_fraction != <span class="number">0.8
-<a href=#186 id=186 data-nosnippet>186</a>        </span>|| config.hogbom_iteration_mode != <span class="kw">super</span>::HogbomIterationMode::Strict
-<a href=#187 id=187 data-nosnippet>187</a>        || config.fullsummary
-<a href=#188 id=188 data-nosnippet>188</a>        || config.pbcor
-<a href=#189 id=189 data-nosnippet>189</a>        || config.write_pb
-<a href=#190 id=190 data-nosnippet>190</a>        || config.chanchunks.is_some()
-<a href=#191 id=191 data-nosnippet>191</a>        || config.per_channel_weight_density
-<a href=#192 id=192 data-nosnippet>192</a>        || config.w_project_planes.is_some()
-<a href=#193 id=193 data-nosnippet>193</a>        || config.standard_mfs_grid_threads.is_some()
-<a href=#194 id=194 data-nosnippet>194</a>        || config.standard_mfs_tile_anchor.is_some()
-<a href=#195 id=195 data-nosnippet>195</a>        || config.standard_mfs_residual_backend.is_some()
-<a href=#196 id=196 data-nosnippet>196</a>        || config.standard_mfs_initial_dirty_backend.is_some()
-<a href=#197 id=197 data-nosnippet>197</a>        || config.standard_mfs_metal_minor_cycle_chunk.is_some()
-<a href=#198 id=198 data-nosnippet>198</a>        || config.standard_mfs_metal_grouped_input_cache.is_some()
-<a href=#199 id=199 data-nosnippet>199</a>        || config.standard_mfs_memory_target_mb.is_some()
-<a href=#200 id=200 data-nosnippet>200</a>        || config.standard_mfs_prepare_buffer_mb.is_some()
-<a href=#201 id=201 data-nosnippet>201</a>        || config.imaging_memory_target_mb.is_some()
-<a href=#202 id=202 data-nosnippet>202</a>        || config.imaging_memory_pressure_policy != ImagingMemoryPressurePolicy::Auto
-<a href=#203 id=203 data-nosnippet>203</a>        || config.imaging_prepare_buffer_mb.is_some()
-<a href=#204 id=204 data-nosnippet>204</a>        || config.imaging_row_block_rows.is_some()
-<a href=#205 id=205 data-nosnippet>205</a>        || config.imaging_prepare_workers.is_some()
-<a href=#206 id=206 data-nosnippet>206</a>        || config.imaging_read_ahead_blocks.is_some()
-<a href=#207 id=207 data-nosnippet>207</a>        || config.imaging_fft_precision != ImagingFftPrecisionPolicy::Auto
-<a href=#208 id=208 data-nosnippet>208</a>        || config.write_preview_pngs
-<a href=#209 id=209 data-nosnippet>209</a>        || config.niter &gt; config.minor_cycle_length
-<a href=#210 id=210 data-nosnippet>210</a>        || !<span class="macro">matches!</span>(config.deconvolver, Deconvolver::Hogbom)
-<a href=#211 id=211 data-nosnippet>211</a>}
-<a href=#212 id=212 data-nosnippet>212</a>
-<a href=#213 id=213 data-nosnippet>213</a><span class="attr">#[cfg(test)]
-<a href=#214 id=214 data-nosnippet>214</a></span><span class="kw">mod </span>tests {
-<a href=#215 id=215 data-nosnippet>215</a>    <span class="kw">use </span>std::ffi::OsString;
+<a href=#162 id=162 data-nosnippet>162</a>        ImagingFftBackendPolicy::Auto =&gt; requirements.push(TaskRequirement::FftAuto),
+<a href=#163 id=163 data-nosnippet>163</a>        ImagingFftBackendPolicy::Accelerate =&gt; requirements.push(TaskRequirement::Accelerate),
+<a href=#164 id=164 data-nosnippet>164</a>        ImagingFftBackendPolicy::MetalMpsGraph =&gt; requirements.push(TaskRequirement::MetalMpsGraph),
+<a href=#165 id=165 data-nosnippet>165</a>        ImagingFftBackendPolicy::Fftw =&gt; requirements.push(TaskRequirement::Fftw),
+<a href=#166 id=166 data-nosnippet>166</a>    }
+<a href=#167 id=167 data-nosnippet>167</a>    requirements
+<a href=#168 id=168 data-nosnippet>168</a>}
+<a href=#169 id=169 data-nosnippet>169</a>
+<a href=#170 id=170 data-nosnippet>170</a><span class="kw">fn </span>unsupported_native_controls(config: <span class="kw-2">&amp;</span>CliConfig) -&gt; bool {
+<a href=#171 id=171 data-nosnippet>171</a>    config.phasecenter_field.is_some()
+<a href=#172 id=172 data-nosnippet>172</a>        || config.phasecenter.is_some()
+<a href=#173 id=173 data-nosnippet>173</a>        || config
+<a href=#174 id=174 data-nosnippet>174</a>            .correlation
+<a href=#175 id=175 data-nosnippet>175</a>            .as_deref()
+<a href=#176 id=176 data-nosnippet>176</a>            .is_some_and(|plane| !plane.eq_ignore_ascii_case(<span class="string">"I"</span>))
+<a href=#177 id=177 data-nosnippet>177</a>        || config.uv_taper.is_some()
+<a href=#178 id=178 data-nosnippet>178</a>        || config.nmajor.is_some()
+<a href=#179 id=179 data-nosnippet>179</a>        || config.nsigma != <span class="number">0.0
+<a href=#180 id=180 data-nosnippet>180</a>        </span>|| config.minor_cycle_length != <span class="number">1000
+<a href=#181 id=181 data-nosnippet>181</a>        </span>|| config.cyclefactor != <span class="number">1.0
+<a href=#182 id=182 data-nosnippet>182</a>        </span>|| config.min_psf_fraction != <span class="number">0.05
+<a href=#183 id=183 data-nosnippet>183</a>        </span>|| config.max_psf_fraction != <span class="number">0.8
+<a href=#184 id=184 data-nosnippet>184</a>        </span>|| config.hogbom_iteration_mode != <span class="kw">super</span>::HogbomIterationMode::Strict
+<a href=#185 id=185 data-nosnippet>185</a>        || config.fullsummary
+<a href=#186 id=186 data-nosnippet>186</a>        || config.pbcor
+<a href=#187 id=187 data-nosnippet>187</a>        || config.write_pb
+<a href=#188 id=188 data-nosnippet>188</a>        || config.chanchunks.is_some()
+<a href=#189 id=189 data-nosnippet>189</a>        || config.per_channel_weight_density
+<a href=#190 id=190 data-nosnippet>190</a>        || config.w_project_planes.is_some()
+<a href=#191 id=191 data-nosnippet>191</a>        || config.standard_mfs_grid_threads.is_some()
+<a href=#192 id=192 data-nosnippet>192</a>        || config.standard_mfs_tile_anchor.is_some()
+<a href=#193 id=193 data-nosnippet>193</a>        || config.standard_mfs_residual_backend.is_some()
+<a href=#194 id=194 data-nosnippet>194</a>        || config.standard_mfs_initial_dirty_backend.is_some()
+<a href=#195 id=195 data-nosnippet>195</a>        || config.standard_mfs_metal_minor_cycle_chunk.is_some()
+<a href=#196 id=196 data-nosnippet>196</a>        || config.standard_mfs_metal_grouped_input_cache.is_some()
+<a href=#197 id=197 data-nosnippet>197</a>        || config.standard_mfs_memory_target_mb.is_some()
+<a href=#198 id=198 data-nosnippet>198</a>        || config.standard_mfs_prepare_buffer_mb.is_some()
+<a href=#199 id=199 data-nosnippet>199</a>        || config.imaging_memory_target_mb.is_some()
+<a href=#200 id=200 data-nosnippet>200</a>        || config.imaging_memory_pressure_policy != ImagingMemoryPressurePolicy::Auto
+<a href=#201 id=201 data-nosnippet>201</a>        || config.imaging_prepare_buffer_mb.is_some()
+<a href=#202 id=202 data-nosnippet>202</a>        || config.imaging_row_block_rows.is_some()
+<a href=#203 id=203 data-nosnippet>203</a>        || config.imaging_prepare_workers.is_some()
+<a href=#204 id=204 data-nosnippet>204</a>        || config.imaging_read_ahead_blocks.is_some()
+<a href=#205 id=205 data-nosnippet>205</a>        || config.imaging_fft_precision != ImagingFftPrecisionPolicy::Auto
+<a href=#206 id=206 data-nosnippet>206</a>        || config.write_preview_pngs
+<a href=#207 id=207 data-nosnippet>207</a>        || config.niter &gt; config.minor_cycle_length
+<a href=#208 id=208 data-nosnippet>208</a>        || !<span class="macro">matches!</span>(config.deconvolver, Deconvolver::Hogbom)
+<a href=#209 id=209 data-nosnippet>209</a>}
+<a href=#210 id=210 data-nosnippet>210</a>
+<a href=#211 id=211 data-nosnippet>211</a><span class="attr">#[cfg(test)]
+<a href=#212 id=212 data-nosnippet>212</a></span><span class="kw">mod </span>tests {
+<a href=#213 id=213 data-nosnippet>213</a>    <span class="kw">use </span>std::ffi::OsString;
+<a href=#214 id=214 data-nosnippet>214</a>
+<a href=#215 id=215 data-nosnippet>215</a>    <span class="kw">use super</span>::{CliConfig, TaskRequirement, backend_requirements};
 <a href=#216 id=216 data-nosnippet>216</a>
-<a href=#217 id=217 data-nosnippet>217</a>    <span class="kw">use super</span>::{CliConfig, TaskRouteRequirement, backend_requirements};
-<a href=#218 id=218 data-nosnippet>218</a>
-<a href=#219 id=219 data-nosnippet>219</a>    <span class="kw">fn </span>config(extra: <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>str]) -&gt; CliConfig {
-<a href=#220 id=220 data-nosnippet>220</a>        <span class="kw">let </span><span class="kw-2">mut </span>args = <span class="macro">vec!</span>[
-<a href=#221 id=221 data-nosnippet>221</a>            <span class="string">"--ms"</span>,
-<a href=#222 id=222 data-nosnippet>222</a>            <span class="string">"fixture.ms"</span>,
-<a href=#223 id=223 data-nosnippet>223</a>            <span class="string">"--imagename"</span>,
-<a href=#224 id=224 data-nosnippet>224</a>            <span class="string">"image"</span>,
-<a href=#225 id=225 data-nosnippet>225</a>            <span class="string">"--imsize"</span>,
-<a href=#226 id=226 data-nosnippet>226</a>            <span class="string">"16"</span>,
-<a href=#227 id=227 data-nosnippet>227</a>            <span class="string">"--cell-arcsec"</span>,
-<a href=#228 id=228 data-nosnippet>228</a>            <span class="string">"1"</span>,
-<a href=#229 id=229 data-nosnippet>229</a>        ];
-<a href=#230 id=230 data-nosnippet>230</a>        args.extend_from_slice(extra);
-<a href=#231 id=231 data-nosnippet>231</a>        CliConfig::parse(args.into_iter().map(OsString::from)).expect(<span class="string">"test config"</span>)
-<a href=#232 id=232 data-nosnippet>232</a>    }
-<a href=#233 id=233 data-nosnippet>233</a>
-<a href=#234 id=234 data-nosnippet>234</a>    <span class="attr">#[test]
-<a href=#235 id=235 data-nosnippet>235</a>    </span><span class="kw">fn </span>automatic_backend_choices_remain_explicit_route_requirements() {
-<a href=#236 id=236 data-nosnippet>236</a>        <span class="macro">assert_eq!</span>(
-<a href=#237 id=237 data-nosnippet>237</a>            backend_requirements(<span class="kw-2">&amp;</span>config(<span class="kw-2">&amp;</span>[
-<a href=#238 id=238 data-nosnippet>238</a>                <span class="string">"--standard-mfs-acceleration"</span>,
+<a href=#217 id=217 data-nosnippet>217</a>    <span class="kw">fn </span>config(extra: <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>str]) -&gt; CliConfig {
+<a href=#218 id=218 data-nosnippet>218</a>        <span class="kw">let </span><span class="kw-2">mut </span>args = <span class="macro">vec!</span>[
+<a href=#219 id=219 data-nosnippet>219</a>            <span class="string">"--ms"</span>,
+<a href=#220 id=220 data-nosnippet>220</a>            <span class="string">"fixture.ms"</span>,
+<a href=#221 id=221 data-nosnippet>221</a>            <span class="string">"--imagename"</span>,
+<a href=#222 id=222 data-nosnippet>222</a>            <span class="string">"image"</span>,
+<a href=#223 id=223 data-nosnippet>223</a>            <span class="string">"--imsize"</span>,
+<a href=#224 id=224 data-nosnippet>224</a>            <span class="string">"16"</span>,
+<a href=#225 id=225 data-nosnippet>225</a>            <span class="string">"--cell-arcsec"</span>,
+<a href=#226 id=226 data-nosnippet>226</a>            <span class="string">"1"</span>,
+<a href=#227 id=227 data-nosnippet>227</a>        ];
+<a href=#228 id=228 data-nosnippet>228</a>        args.extend_from_slice(extra);
+<a href=#229 id=229 data-nosnippet>229</a>        CliConfig::parse(args.into_iter().map(OsString::from)).expect(<span class="string">"test config"</span>)
+<a href=#230 id=230 data-nosnippet>230</a>    }
+<a href=#231 id=231 data-nosnippet>231</a>
+<a href=#232 id=232 data-nosnippet>232</a>    <span class="attr">#[test]
+<a href=#233 id=233 data-nosnippet>233</a>    </span><span class="kw">fn </span>automatic_backend_choices_remain_explicit_task_requirements() {
+<a href=#234 id=234 data-nosnippet>234</a>        <span class="macro">assert_eq!</span>(
+<a href=#235 id=235 data-nosnippet>235</a>            backend_requirements(<span class="kw-2">&amp;</span>config(<span class="kw-2">&amp;</span>[
+<a href=#236 id=236 data-nosnippet>236</a>                <span class="string">"--standard-mfs-acceleration"</span>,
+<a href=#237 id=237 data-nosnippet>237</a>                <span class="string">"auto"</span>,
+<a href=#238 id=238 data-nosnippet>238</a>                <span class="string">"--imaging-fft-backend"</span>,
 <a href=#239 id=239 data-nosnippet>239</a>                <span class="string">"auto"</span>,
-<a href=#240 id=240 data-nosnippet>240</a>                <span class="string">"--imaging-fft-backend"</span>,
-<a href=#241 id=241 data-nosnippet>241</a>                <span class="string">"auto"</span>,
-<a href=#242 id=242 data-nosnippet>242</a>            ])),
-<a href=#243 id=243 data-nosnippet>243</a>            <span class="macro">vec!</span>[
-<a href=#244 id=244 data-nosnippet>244</a>                TaskRouteRequirement::ExecutionAuto,
-<a href=#245 id=245 data-nosnippet>245</a>                TaskRouteRequirement::FftAuto,
-<a href=#246 id=246 data-nosnippet>246</a>            ]
-<a href=#247 id=247 data-nosnippet>247</a>        );
+<a href=#240 id=240 data-nosnippet>240</a>            ])),
+<a href=#241 id=241 data-nosnippet>241</a>            <span class="macro">vec!</span>[TaskRequirement::ExecutionAuto, TaskRequirement::FftAuto,]
+<a href=#242 id=242 data-nosnippet>242</a>        );
+<a href=#243 id=243 data-nosnippet>243</a>    }
+<a href=#244 id=244 data-nosnippet>244</a>
+<a href=#245 id=245 data-nosnippet>245</a>    <span class="attr">#[test]
+<a href=#246 id=246 data-nosnippet>246</a>    </span><span class="kw">fn </span>default_backend_choices_select_the_installed_native_cpu_implementation() {
+<a href=#247 id=247 data-nosnippet>247</a>        <span class="macro">assert!</span>(backend_requirements(<span class="kw-2">&amp;</span>config(<span class="kw-2">&amp;</span>[])).is_empty());
 <a href=#248 id=248 data-nosnippet>248</a>    }
 <a href=#249 id=249 data-nosnippet>249</a>
 <a href=#250 id=250 data-nosnippet>250</a>    <span class="attr">#[test]
-<a href=#251 id=251 data-nosnippet>251</a>    </span><span class="kw">fn </span>default_backend_choices_select_the_available_native_cpu_route() {
-<a href=#252 id=252 data-nosnippet>252</a>        <span class="macro">assert!</span>(backend_requirements(<span class="kw-2">&amp;</span>config(<span class="kw-2">&amp;</span>[])).is_empty());
-<a href=#253 id=253 data-nosnippet>253</a>    }
-<a href=#254 id=254 data-nosnippet>254</a>
-<a href=#255 id=255 data-nosnippet>255</a>    <span class="attr">#[test]
-<a href=#256 id=256 data-nosnippet>256</a>    </span><span class="kw">fn </span>metal_acceleration_uses_the_matrix_grouped_row_run_capability() {
-<a href=#257 id=257 data-nosnippet>257</a>        <span class="macro">assert_eq!</span>(
-<a href=#258 id=258 data-nosnippet>258</a>            backend_requirements(<span class="kw-2">&amp;</span>config(<span class="kw-2">&amp;</span>[<span class="string">"--standard-mfs-acceleration"</span>, <span class="string">"metal"</span>])),
-<a href=#259 id=259 data-nosnippet>259</a>            <span class="macro">vec!</span>[TaskRouteRequirement::MetalRowRunGroupedGridder]
-<a href=#260 id=260 data-nosnippet>260</a>        );
-<a href=#261 id=261 data-nosnippet>261</a>    }
-<a href=#262 id=262 data-nosnippet>262</a>}
+<a href=#251 id=251 data-nosnippet>251</a>    </span><span class="kw">fn </span>metal_acceleration_requires_the_uninstalled_grouped_row_run_implementation() {
+<a href=#252 id=252 data-nosnippet>252</a>        <span class="macro">assert_eq!</span>(
+<a href=#253 id=253 data-nosnippet>253</a>            backend_requirements(<span class="kw-2">&amp;</span>config(<span class="kw-2">&amp;</span>[<span class="string">"--standard-mfs-acceleration"</span>, <span class="string">"metal"</span>])),
+<a href=#254 id=254 data-nosnippet>254</a>            <span class="macro">vec!</span>[TaskRequirement::MetalRowRunGroupedGridder]
+<a href=#255 id=255 data-nosnippet>255</a>        );
+<a href=#256 id=256 data-nosnippet>256</a>    }
+<a href=#257 id=257 data-nosnippet>257</a>}
 </code></pre></div></section></main></body></html>

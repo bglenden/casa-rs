@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["DispatchError","MigrationRowKind","RequestDisposition","TaskRouteRequirement"],"struct":["DispatchOutcome","ImagingRouter","MigrationObligation","NativeEnginePort","RouteRecord","RouteRequirement"]};
