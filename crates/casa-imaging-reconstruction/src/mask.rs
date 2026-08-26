@@ -80,13 +80,11 @@ fn direction_pixel_to_world(
     let delta_p = reference.latitude_rad();
     let phi_p = coordinate.pole_deg()[0].to_radians();
     let dphi = phi - phi_p;
-    let sin_lat = theta.sin() * delta_p.sin()
-        + theta.cos() * delta_p.cos() * dphi.cos();
+    let sin_lat = theta.sin() * delta_p.sin() + theta.cos() * delta_p.cos() * dphi.cos();
     let latitude = sin_lat.clamp(-1.0, 1.0).asin();
     let longitude = alpha_p
-        + (-theta.cos() * dphi.sin()).atan2(
-            theta.sin() * delta_p.cos() - theta.cos() * delta_p.sin() * dphi.cos(),
-        );
+        + (-theta.cos() * dphi.sin())
+            .atan2(theta.sin() * delta_p.cos() - theta.cos() * delta_p.sin() * dphi.cos());
     Ok([longitude, latitude])
 }
 
@@ -102,13 +100,12 @@ fn direction_world_to_pixel(
     let delta_p = reference.latitude_rad();
     let phi_p = coordinate.pole_deg()[0].to_radians();
     let delta_alpha = world[0] - alpha_p;
-    let sin_theta = world[1].sin() * delta_p.sin()
-        + world[1].cos() * delta_p.cos() * delta_alpha.cos();
+    let sin_theta =
+        world[1].sin() * delta_p.sin() + world[1].cos() * delta_p.cos() * delta_alpha.cos();
     let theta = sin_theta.clamp(-1.0, 1.0).asin();
     let phi = phi_p
         + (-world[1].cos() * delta_alpha.sin()).atan2(
-            world[1].sin() * delta_p.cos()
-                - world[1].cos() * delta_p.sin() * delta_alpha.cos(),
+            world[1].sin() * delta_p.cos() - world[1].cos() * delta_p.sin() * delta_alpha.cos(),
         );
     let x = theta.cos() * phi.sin();
     let y = -theta.cos() * phi.cos();

@@ -53,7 +53,7 @@ use crate::{
 };
 
 const RECEIPT_SCHEMA: &str = "casa-rs-imaging-execution-receipt";
-const RECEIPT_SCHEMA_VERSION: u32 = 16;
+const RECEIPT_SCHEMA_VERSION: u32 = 17;
 const COMPILED_PROBLEM_EVIDENCE_VERSION: u32 = 9;
 const RECEIPT_SUFFIX: &str = ".receipt.json";
 const RECEIPT_STAGING_PREFIX: &str = ".casa-rs-receipt-staging-";
@@ -5142,6 +5142,7 @@ fn work_kind_is_valid(value: &str) -> bool {
             | "prefetch"
             | "io"
             | "observation_read"
+            | "observation_read_writeback"
             | "serialization"
             | "writeback"
             | "publication"
@@ -5164,6 +5165,7 @@ fn parse_work_kind(value: &str) -> Option<WorkKind> {
         "prefetch" => WorkKind::Prefetch,
         "io" => WorkKind::Io,
         "observation_read" => WorkKind::ObservationRead,
+        "observation_read_writeback" => WorkKind::ObservationReadWriteback,
         "serialization" => WorkKind::Serialization,
         "writeback" => WorkKind::Writeback,
         "publication" => WorkKind::Publication,
@@ -7702,6 +7704,7 @@ fn work_kind(kind: WorkKind) -> &'static str {
         WorkKind::Prefetch => "prefetch",
         WorkKind::Io => "io",
         WorkKind::ObservationRead => "observation_read",
+        WorkKind::ObservationReadWriteback => "observation_read_writeback",
         WorkKind::Serialization => "serialization",
         WorkKind::Writeback => "writeback",
         WorkKind::Publication => "publication",

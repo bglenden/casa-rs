@@ -57,9 +57,9 @@ ACCEPTED_MATRIX_ROWS_SHA256 = (
     "38489dfeae9843fb67837630268c7690cc7340e69a045e3d747da200bc9dcea4"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "c7b43bacd48c362ff4ae03026a846a2f2d17fac5ffeb828dfe1652bb687a5a44"
+    "cb22426ece8e2ecdedd7d9b701c4bddbe2ee50700f4c0af9963ab5cea3826c65"
 )
-ACCEPTED_MATRIX_CONTRACT_REVISION = 38
+ACCEPTED_MATRIX_CONTRACT_REVISION = 39
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "scientific-products-v1",
@@ -2850,7 +2850,7 @@ def validate_t17_runtime_completion_source(source: str, path: Path) -> None:
 
     run_body = re.sub(r"\s+", "", rust_function_body(source, "run_inner", path))
     required_runtime_structure = {
-        "letsynchronous_observation_read=work.node().kind==WorkKind::ObservationRead&&work.node().fences.is_empty();",
+        "letsynchronous_observation_read=work.node().kind.reads_observation()&&work.node().fences.is_empty();",
         "Ok(_)ifsynchronous_observation_read=>",
         "ifsettled==&work.node().fences{Some(ObservationReadCompletionContext{",
         "iffence_transition_succeeded&&letSome(completion)=observation_completion{",

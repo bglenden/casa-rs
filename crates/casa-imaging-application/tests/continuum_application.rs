@@ -513,6 +513,34 @@ fn application_commits_exact_final_prediction_to_model_data() {
         casa_imaging_runtime::ObservationTransactionPublicationScope::ModelDataPublication
     );
     assert_eq!(model_receipt.publication_layout_count(), 1);
+    let final_receipt = result
+        .outcome
+        .output
+        .final_major_receipt
+        .as_ref()
+        .expect("save-model execution has a terminal replay receipt");
+    let replay = final_receipt
+        .plan_node_identities()
+        .into_iter()
+        .find(|node| node.as_str().starts_with("weighting-replay-final-major"))
+        .expect("terminal replay is planned");
+    assert_eq!(
+        final_receipt.stage_predicted_io(&replay, casa_imaging_runtime::IoBufferKind::Writeback),
+        Some((8, 1))
+    );
+    assert_eq!(
+        final_receipt.stage_actual_io(&replay, casa_imaging_runtime::IoBufferKind::Writeback),
+        Some((8, 1))
+    );
+    let adoption = model_receipt
+        .plan_node_identities()
+        .into_iter()
+        .find(|node| node.as_str() == "model-data-publication-stage")
+        .expect("prepared MODEL_DATA staging is validated before commit");
+    assert_eq!(
+        model_receipt.stage_actual_io(&adoption, casa_imaging_runtime::IoBufferKind::Writeback),
+        Some((8, 1))
+    );
 
     let reopened = MeasurementSet::open(measurement_set).expect("reopen saved MODEL_DATA");
     let model_column = reopened

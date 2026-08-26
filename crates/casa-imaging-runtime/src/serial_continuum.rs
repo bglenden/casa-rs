@@ -42,6 +42,9 @@ pub trait FinalVisibilitySink: Send {
         final_model: casa_imaging_reconstruction::ModelGenerationId,
     ) -> io::Result<()>;
 
+    /// Start any private staging owned by the scheduled terminal replay.
+    fn begin_staging(&mut self) -> io::Result<()>;
+
     /// Consume one bounded canonical selected-visibility block.
     fn consume(
         &mut self,
@@ -56,7 +59,13 @@ pub trait FinalVisibilitySink: Send {
 #[derive(Clone)]
 pub struct VisibilityProductStaging {
     state: Arc<Mutex<VisibilityProductStagingState>>,
-    model_column: Option<ModelColumnWorker>,
+    model_column: Option<Arc<ModelColumnStaging>>,
+}
+
+struct ModelColumnStaging {
+    path: PathBuf,
+    expected: casa_imaging_model::ObservationSourceState,
+    worker: Mutex<Option<ModelColumnWorker>>,
 }
 
 enum VisibilityProductStagingState {
@@ -88,7 +97,11 @@ impl VisibilityProductStaging {
         expected: casa_imaging_model::ObservationSourceState,
     ) -> io::Result<(Self, Box<dyn FinalVisibilitySink>)> {
         let state = Arc::new(Mutex::new(VisibilityProductStagingState::Unbound));
-        let model_column = ModelColumnWorker::spawn(path, expected)?;
+        let model_column = Arc::new(ModelColumnStaging {
+            path,
+            expected,
+            worker: Mutex::new(None),
+        });
         Ok((
             Self {
                 state: Arc::clone(&state),
@@ -119,12 +132,33 @@ impl VisibilityProductStaging {
         self.model_column.is_some()
     }
 
+    /// Validate that private staging contains the terminal replay's exact sample set.
+    pub fn prepare_model_column(&self, expected_samples: u64) -> io::Result<()> {
+        let Some(staging) = &self.model_column else {
+            return Err(io::Error::other("MODEL_DATA staging is not configured"));
+        };
+        let worker = staging
+            .worker
+            .lock()
+            .map_err(|_| io::Error::other("MODEL_DATA staging state poisoned"))?;
+        worker
+            .as_ref()
+            .ok_or_else(|| io::Error::other("MODEL_DATA staging worker did not run"))?
+            .prepare(expected_samples)
+    }
+
     /// Publish staged MODEL_DATA after all conventional products are visible.
     pub fn commit_model_column(&self) -> io::Result<()> {
         let completion = self.completion()?;
-        let Some(worker) = &self.model_column else {
+        let Some(staging) = &self.model_column else {
             return Ok(());
         };
+        let worker = staging
+            .worker
+            .lock()
+            .map_err(|_| io::Error::other("MODEL_DATA staging state poisoned"))?
+            .take()
+            .ok_or_else(|| io::Error::other("MODEL_DATA transaction was not staged"))?;
         worker.commit(completion.model_product().identity())
     }
 }
@@ -159,6 +193,23 @@ impl FinalVisibilitySink for VisibilityProductStaging {
         }
     }
 
+    fn begin_staging(&mut self) -> io::Result<()> {
+        let Some(staging) = &self.model_column else {
+            return Ok(());
+        };
+        let mut worker = staging
+            .worker
+            .lock()
+            .map_err(|_| io::Error::other("MODEL_DATA staging state poisoned"))?;
+        if worker.is_none() {
+            *worker = Some(ModelColumnWorker::spawn(
+                staging.path.clone(),
+                staging.expected.clone(),
+            )?);
+        }
+        Ok(())
+    }
+
     fn consume(
         &mut self,
         samples: &[casa_imaging_reconstruction::runtime_adapter::FinalVisibilitySample],
@@ -171,8 +222,15 @@ impl FinalVisibilitySink for VisibilityProductStaging {
             return Err(io::Error::other("visibility product staging is not bound"));
         };
         authority.consume(samples).map_err(io::Error::other)?;
-        if let Some(worker) = &self.model_column {
-            worker.stage(samples)?;
+        if let Some(staging) = &self.model_column {
+            let worker = staging
+                .worker
+                .lock()
+                .map_err(|_| io::Error::other("MODEL_DATA staging state poisoned"))?;
+            worker
+                .as_ref()
+                .ok_or_else(|| io::Error::other("MODEL_DATA staging was not plan-prepared"))?
+                .stage(samples)?;
         }
         Ok(())
     }
@@ -205,6 +263,10 @@ struct ModelColumnWorker {
 
 enum ModelColumnCommand {
     Stage(Vec<(u64, u32, u32, num_complex::Complex32)>),
+    Prepare {
+        expected_samples: u64,
+        reply: SyncSender<io::Result<()>>,
+    },
     Commit(LogicalIdentity),
 }
 
@@ -227,14 +289,33 @@ impl ModelColumnWorker {
                     return Err(io::Error::other(message));
                 }
             };
+            let mut staged_samples = 0_u64;
             while let Ok(command) = receiver.recv() {
                 match command {
                     ModelColumnCommand::Stage(samples) => {
+                        staged_samples = staged_samples
+                            .checked_add(samples.len() as u64)
+                            .ok_or_else(|| {
+                                io::Error::other("MODEL_DATA sample count overflowed")
+                            })?;
                         for (row, channel, correlation, value) in samples {
                             transaction
                                 .stage(row, channel, correlation, value)
                                 .map_err(io::Error::other)?;
                         }
+                    }
+                    ModelColumnCommand::Prepare {
+                        expected_samples,
+                        reply,
+                    } => {
+                        let result = (staged_samples == expected_samples)
+                            .then_some(())
+                            .ok_or_else(|| {
+                                io::Error::other(format!(
+                                    "MODEL_DATA staged {staged_samples} samples, expected {expected_samples}"
+                                ))
+                            });
+                        let _ = reply.send(result);
                     }
                     ModelColumnCommand::Commit(generation) => {
                         return transaction.commit(generation).map_err(io::Error::other);
@@ -287,6 +368,19 @@ impl ModelColumnWorker {
             .ok_or_else(|| io::Error::other("MODEL_DATA transaction already closed"))?;
         join.join()
             .map_err(|_| io::Error::other("MODEL_DATA staging worker panicked"))?
+    }
+
+    fn prepare(&self, expected_samples: u64) -> io::Result<()> {
+        let (reply, response) = std::sync::mpsc::sync_channel(0);
+        self.sender
+            .send(ModelColumnCommand::Prepare {
+                expected_samples,
+                reply,
+            })
+            .map_err(|_| io::Error::other("MODEL_DATA staging worker stopped"))?;
+        response
+            .recv()
+            .map_err(|_| io::Error::other("MODEL_DATA staging worker stopped"))?
     }
 }
 
@@ -640,6 +734,11 @@ impl WorkImplementation for SerialContinuumExecutor {
                 .traverse_generation(context, &fragment, &self.problem)
                 .map_err(io::Error::other)?;
         } else if context.node().id == *fragment.replay_node() {
+            if let Some(sink) = &self.final_visibility_sink {
+                sink.lock()
+                    .map_err(|_| io::Error::other("final visibility sink poisoned"))?
+                    .begin_staging()?;
+            }
             let prepared = state
                 .prepared
                 .take()

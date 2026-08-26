@@ -54,7 +54,7 @@ use casa_imaging_runtime::{
 };
 use casa_ms::{
     ResolvedSelectedObservationAccess, SelectedObservationResolutionRequest,
-    resolve_selected_observation,
+    model_column_storage_bounds, resolve_selected_observation,
 };
 use sha2::{Digest, Sha256};
 
@@ -358,13 +358,20 @@ where
                 let access = access.with_minimum_content_budget(problem)?;
                 let final_residency = access.certify_residency(problem)?;
                 let source_state = access.source_state().clone();
+                let mut final_policy = execution_policy(&runtime, final_residency);
+                if !continue_cleaning && input.write_model_column {
+                    final_policy = final_policy.with_model_data(model_column_storage_bounds(
+                        input.observation.locator(),
+                        &source_state,
+                    )?);
+                }
                 let ordinal =
                     u32::try_from(cycle).map_err(|_| boxed("major-cycle ordinal exceeds u32"))?;
                 let final_planned = if continue_cleaning {
                     SerialContinuumPlan::continuing_major(
                         problem,
                         &planning_registry,
-                        execution_policy(&runtime, final_residency),
+                        final_policy,
                         &final_input,
                         ordinal,
                     )?
@@ -372,7 +379,7 @@ where
                     SerialContinuumPlan::final_major_at(
                         problem,
                         &planning_registry,
-                        execution_policy(&runtime, final_residency),
+                        final_policy,
                         &final_input,
                         ordinal,
                     )?
@@ -569,11 +576,17 @@ where
     let authority = ProductGenerationAuthority::bind(problem);
     let planned_products = authority.plan(&sources, &publication_config.controls)?;
 
+    let observation_locator = observation.locator().to_owned();
     let resolved = resolve_selected_observation(observation)?;
     let (_, access) = resolved.into_parts();
     let access = access.with_minimum_content_budget(problem)?;
     let residency = access.certify_residency(problem)?;
-    let model_data_bytes = u64::try_from(residency.aggregate_resident_bytes())?;
+    let model_data_bounds = prior
+        .visibility_staging
+        .as_ref()
+        .is_some_and(VisibilityProductStaging::has_model_column)
+        .then(|| model_column_storage_bounds(&observation_locator, access.source_state()))
+        .transpose()?;
     let planning_registry =
         PlanningRegistry::new(runtime.registry, runtime.implementation.clone(), problem);
     // The ordinary publication plan is deliberately constructed before member
@@ -591,8 +604,12 @@ where
             runtime.confidence_parts_per_million,
         ),
     )?;
-    let model_data_plan = match (prior.visibility_staging.as_ref(), prior.visibility_products) {
-        (Some(staging), Some(completion)) if staging.has_model_column() => Some(
+    let model_data_plan = match (
+        prior.visibility_staging.as_ref(),
+        prior.visibility_products,
+        model_data_bounds,
+    ) {
+        (Some(staging), Some(completion), Some(bounds)) if staging.has_model_column() => Some(
             SerialModelDataPublicationPlan::new(
                 problem,
                 completion,
@@ -600,7 +617,8 @@ where
                 SerialModelDataPublicationPolicy::new(
                     runtime.implementation.clone(),
                     runtime.storage_io.clone(),
-                    model_data_bytes,
+                    bounds.column_bytes(),
+                    bounds.maximum_cell_bytes(),
                     runtime.stage_nanos,
                     runtime.confidence_parts_per_million,
                 ),
@@ -665,8 +683,8 @@ where
         .implementation()
         .take_sealed_generation()
         .ok_or_else(|| boxed("publication execution omitted its sealed product generation"))?;
-    let model_data_receipt = match (model_data_plan, prior.visibility_staging) {
-        (Some(physical), Some(staging)) => {
+    let model_data_receipt = match (model_data_plan, prior.visibility_staging, model_data_bounds) {
+        (Some(physical), Some(staging), Some(bounds)) => {
             let completion = prior
                 .visibility_products
                 .expect("planned MODEL_DATA publication has visibility evidence");
@@ -674,7 +692,7 @@ where
                 runtime.implementation.clone(),
                 staging,
                 completion,
-                model_data_bytes,
+                bounds.column_bytes(),
             );
             let registry = SerialModelDataPublicationRegistry::new(
                 runtime.registry,
@@ -715,8 +733,8 @@ where
             )?;
             Some(runtime.receipts.open(attempt)?)
         }
-        (None, _) => None,
-        (Some(_), None) => unreachable!("MODEL_DATA plan requires staged storage"),
+        (None, _, None) | (None, None, _) => None,
+        _ => unreachable!("MODEL_DATA plan requires staged storage and exact bounds"),
     };
     Ok(NativeApplicationOutcome {
         initial_receipt: prior.initial_receipt,

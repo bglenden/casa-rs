@@ -419,10 +419,9 @@ impl ModelColumnTransaction {
             .measurement_set
             .as_mut()
             .ok_or(ObservationOwnerError::TransactionClosed)?;
-        let schema = measurement_set
-            .main_table()
-            .schema()
-            .ok_or_else(|| MsError::InvalidInput("MeasurementSet MAIN has no schema".to_string()))?;
+        let schema = measurement_set.main_table().schema().ok_or_else(|| {
+            MsError::InvalidInput("MeasurementSet MAIN has no schema".to_string())
+        })?;
         let has_model = schema.contains_column("MODEL_DATA");
         let has_staging = schema.contains_column(MODEL_STAGING_COLUMN);
         let has_backup = schema.contains_column(MODEL_BACKUP_COLUMN);

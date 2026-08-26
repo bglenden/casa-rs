@@ -792,7 +792,7 @@ impl WeightingExecutionState {
         if !matches!(self.phase, WeightingExecutionPhase::Empty)
             || self.retained_observation.is_some()
             || context.node().id != fragment.source_read
-            || context.node().kind != WorkKind::ObservationRead
+            || !context.node().kind.reads_observation()
         {
             return Err(WeightingSourceTraversalError::Evidence(
                 WeightingEvidenceError,
@@ -1339,8 +1339,13 @@ fn validate_work_authority(
                 None,
             ),
         };
+    let kind_matches = if expected_kind == WorkKind::ObservationRead {
+        context.node().kind.reads_observation()
+    } else {
+        context.node().kind == expected_kind
+    };
     if &context.node().id != expected_node
-        || context.node().kind != expected_kind
+        || !kind_matches
         || context.node().domain != expected_domain
         || context.resources().len() != context.node().claims.len()
         || context.allocations().len() != context.node().allocations.len()

@@ -50,7 +50,7 @@ impl ObservationTransactionWork {
     /// Name every checkpoint for a reconstruction-only transaction.
     ///
     /// Observation-read completions are derived from every typed
-    /// [`WorkKind::ObservationRead`] node during the mandatory plan seal.
+    /// [`WorkKind::reads_observation`] node during the mandatory plan seal.
     #[must_use]
     pub const fn new_reconstruction(
         initial_consistency_check: WorkNodeId,
@@ -402,7 +402,12 @@ fn validate_transaction_nodes(
     require_exact_lock_count(initial, read_sources, "initial consistency")?;
     let initial_completions = completion_events(initial);
 
-    let observation_reads = derive_observation_reads(nodes, initial, &work.commit)?;
+    let observation_reads = derive_observation_reads(
+        nodes,
+        initial,
+        &work.commit,
+        work.model_column_staging.as_ref(),
+    )?;
     if observation_reads.is_empty()
         && work.publication_scope != ObservationTransactionPublicationScope::ModelDataPublication
     {
@@ -549,6 +554,7 @@ fn derive_observation_reads(
     nodes: &BTreeMap<WorkNodeId, WorkNode>,
     initial: &WorkNode,
     commit: &WorkNodeId,
+    model_column_staging: Option<&WorkNodeId>,
 ) -> Result<BTreeSet<WorkDependency>, ObservationTransactionPlanError> {
     let mut completions = BTreeSet::new();
     for node in nodes.values() {
@@ -556,11 +562,12 @@ fn derive_observation_reads(
             .claims
             .iter()
             .any(|claim| matches!(claim.resource, LeaseResource::MeasurementSetLock { .. }));
-        if node.kind == WorkKind::ObservationRead {
+        if node.kind.reads_observation() {
             completions.extend(completion_events(node));
         } else if holds_measurement_set_lock
             && node.id != initial.id
             && &node.id != commit
+            && model_column_staging != Some(&node.id)
             && !(node.kind == WorkKind::Release
                 && node.claims.iter().all(|claim| {
                     !matches!(claim.resource, LeaseResource::MeasurementSetLock { .. })
@@ -888,6 +895,7 @@ mod tests {
         let domain = match kind {
             WorkKind::Io
             | WorkKind::ObservationRead
+            | WorkKind::ObservationReadWriteback
             | WorkKind::Writeback
             | WorkKind::Publication => WorkDomain::Io,
             _ => WorkDomain::Cpu,

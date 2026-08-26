@@ -5,6 +5,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt, io,
+    sync::atomic::{AtomicBool, Ordering},
 };
 
 use casa_imaging_model::{CompiledProblem, MeasurementSetIdentity};
@@ -23,6 +24,7 @@ pub struct SerialModelDataPublicationPolicy {
     implementation: WorkImplementationId,
     storage_io: StorageIoResourceBinding,
     staged_bytes: u64,
+    validation_buffer_bytes: u64,
     stage_nanos: u64,
     confidence_parts_per_million: u32,
 }
@@ -34,6 +36,7 @@ impl SerialModelDataPublicationPolicy {
         implementation: WorkImplementationId,
         storage_io: StorageIoResourceBinding,
         staged_bytes: u64,
+        validation_buffer_bytes: u64,
         stage_nanos: u64,
         confidence_parts_per_million: u32,
     ) -> Self {
@@ -41,6 +44,7 @@ impl SerialModelDataPublicationPolicy {
             implementation,
             storage_io,
             staged_bytes: staged_bytes.max(1),
+            validation_buffer_bytes: validation_buffer_bytes.max(1),
             stage_nanos,
             confidence_parts_per_million,
         }
@@ -101,6 +105,7 @@ fn build_physical<R: ImplementationRegistry>(
     let write_rate_demand = "model-data-write-rate".to_string();
     let queue_demand = "model-data-storage-queue".to_string();
     let bytes = policy.staged_bytes;
+    let validation_bytes = policy.validation_buffer_bytes;
     let lock = |lifetime| ResourceClaim {
         resource: LeaseResource::MeasurementSetLock { measurement_set },
         amount: 1,
@@ -174,9 +179,10 @@ fn build_physical<R: ImplementationRegistry>(
                 },
                 ResourceClaim {
                     resource: LeaseResource::IoBuffer(IoBufferKind::Writeback),
-                    amount: bytes,
+                    amount: validation_bytes,
                     lifetime: writeback_lifetime.clone(),
                 },
+                lock(writeback_lifetime.clone()),
             ],
             allocations: vec![AllocationUse {
                 allocation: writer_allocation.clone(),
@@ -254,7 +260,7 @@ fn build_physical<R: ImplementationRegistry>(
     let allocations = vec![
         LogicalAllocation {
             id: writer_allocation.clone(),
-            bytes,
+            bytes: validation_bytes,
             purpose: AllocationPurpose::IoBuffer(IoBufferKind::Writeback),
             compatibility: writer_compat.clone(),
             physical_slot: writer_slot.clone(),
@@ -287,7 +293,7 @@ fn build_physical<R: ImplementationRegistry>(
             lease_resource: LeaseResource::Memory {
                 allocation_id: "model-data-writeback".to_string(),
             },
-            capacity_bytes: bytes,
+            capacity_bytes: validation_bytes,
             compatibility: writer_compat,
         },
         PhysicalSlot {
@@ -307,8 +313,8 @@ fn build_physical<R: ImplementationRegistry>(
             memory: vec![
                 MemoryDemand {
                     allocation_id: "model-data-writeback".to_string(),
-                    hard_bytes: bytes,
-                    preferred_bytes: bytes,
+                    hard_bytes: validation_bytes,
+                    preferred_bytes: validation_bytes,
                     views: vec![CapacityViewId::new("host-memory")],
                 },
                 MemoryDemand {
@@ -348,7 +354,7 @@ fn build_physical<R: ImplementationRegistry>(
             transfers: vec![],
             accelerators: vec![],
             io_buffers: IoBufferDemand {
-                writeback_bytes: bytes,
+                writeback_bytes: validation_bytes,
                 publication_bytes: 1,
                 ..IoBufferDemand::zero()
             },
@@ -380,7 +386,11 @@ fn build_physical<R: ImplementationRegistry>(
         .map(|node| {
             let prediction = StagePrediction::new(node.clone(), policy.stage_nanos);
             if node == &stage {
-                prediction.with_io(vec![IoPrediction::new(IoBufferKind::Writeback, bytes, 1)])
+                prediction.with_io(vec![IoPrediction::new(
+                    IoBufferKind::Writeback,
+                    validation_bytes,
+                    1,
+                )])
             } else if node == &commit {
                 prediction.with_io(vec![IoPrediction::new(IoBufferKind::Publication, 1, 1)])
             } else {
@@ -408,7 +418,7 @@ fn build_physical<R: ImplementationRegistry>(
             IoBufferKind::Writeback,
             writer_allocation,
         )?,
-        PublicationResourceBounds::new(bytes, bytes, bytes, 0)?,
+        PublicationResourceBounds::new(bytes, bytes, validation_bytes, 0)?,
     )])?;
     let catalog =
         ImplementationContractCatalog::from_registry(registry, [policy.implementation.clone()])?;
@@ -433,6 +443,8 @@ pub struct SerialModelDataPublicationExecutor {
     staging: VisibilityProductStaging,
     artifact: ArtifactIdentity,
     bytes: u64,
+    expected_samples: u64,
+    prepared: AtomicBool,
 }
 
 impl SerialModelDataPublicationExecutor {
@@ -451,6 +463,8 @@ impl SerialModelDataPublicationExecutor {
                 completion.model_product().identity(),
             ),
             bytes: bytes.max(1),
+            expected_samples: completion.sample_count(),
+            prepared: AtomicBool::new(false),
         }
     }
 }
@@ -461,6 +475,10 @@ impl WorkImplementation for SerialModelDataPublicationExecutor {
         &self.id
     }
     fn execute(&self, context: WorkExecutionContext<'_>) -> Result<WorkMeasurements, Self::Error> {
+        if context.node().id.as_str() == STAGE {
+            self.staging.prepare_model_column(self.expected_samples)?;
+            self.prepared.store(true, Ordering::Release);
+        }
         let artifacts = (context.node().id.as_str() == COMMIT)
             .then(|| {
                 ArtifactMeasurement::new(
@@ -501,6 +519,11 @@ impl WorkImplementation for SerialModelDataPublicationExecutor {
         if context.node().id.as_str() != COMMIT {
             return Err(io::Error::other(
                 "MODEL_DATA publication invoked outside its commit node",
+            ));
+        }
+        if !self.prepared.load(Ordering::Acquire) {
+            return Err(io::Error::other(
+                "MODEL_DATA publication ran before staged-state validation",
             ));
         }
         self.staging.commit_model_column()

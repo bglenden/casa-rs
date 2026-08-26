@@ -3816,7 +3816,15 @@ fn work_execution_context<'a>(
         product_publication: None,
         completed_observation_reads,
     };
-    if work.node().kind == WorkKind::ObservationRead {
+    if work.node().kind == WorkKind::ObservationReadWriteback {
+        common(
+            None,
+            Some(problem.observation_transaction().read_set()),
+            Some(problem.observation_transaction().write_set()),
+            None,
+            None,
+        )
+    } else if work.node().kind == WorkKind::ObservationRead {
         common(
             None,
             Some(problem.observation_transaction().read_set()),
@@ -4181,9 +4189,9 @@ where
                                     defer_receipt_error(&mut scheduler, &mut pending, error);
                                     controller_stopped = true;
                                 }
-                                let synchronous_observation_read = work.node().kind
-                                    == WorkKind::ObservationRead
-                                    && work.node().fences.is_empty();
+                                let synchronous_observation_read =
+                                    work.node().kind.reads_observation()
+                                        && work.node().fences.is_empty();
                                 let work_lease_epoch = context.lease_epoch();
                                 launched.insert(node_id.clone(), work);
                                 match scheduler.finish_work(node_id.clone(), WorkResult::Succeeded)
@@ -4437,7 +4445,7 @@ where
                         ));
                     }
                 } else {
-                    let observation_completion = if work.node().kind == WorkKind::ObservationRead {
+                    let observation_completion = if work.node().kind.reads_observation() {
                         let settled = settled_observation_fences
                             .entry(work.node().id.clone())
                             .or_default();

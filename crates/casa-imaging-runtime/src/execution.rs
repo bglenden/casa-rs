@@ -95,6 +95,9 @@ pub enum WorkKind {
     Io,
     /// Read the exact compiled MeasurementSet source set under its named locks.
     ObservationRead,
+    /// Read the exact compiled MeasurementSet source set while privately
+    /// staging a MeasurementSet column writeback under the same transaction.
+    ObservationReadWriteback,
     /// Serialize a prepared or scientific artifact.
     Serialization,
     /// Complete a private staged storage writeback without publishing it.
@@ -107,6 +110,14 @@ pub enum WorkKind {
     Release,
     /// Perform resource-free dependency synchronization.
     Synchronization,
+}
+
+impl WorkKind {
+    /// Return whether this work owns a selected-observation read completion.
+    #[must_use]
+    pub const fn reads_observation(self) -> bool {
+        matches!(self, Self::ObservationRead | Self::ObservationReadWriteback)
+    }
 }
 
 /// Runtime domain in which one work node executes.
@@ -2493,6 +2504,7 @@ fn encode_work_kind(encoder: &mut CanonicalEncoder, kind: WorkKind) {
         WorkKind::Synchronization => 14,
         WorkKind::Release => 15,
         WorkKind::ObservationRead => 16,
+        WorkKind::ObservationReadWriteback => 17,
     });
 }
 
@@ -2823,9 +2835,8 @@ fn validate_domain(node: &WorkNode) -> Result<(), ExecutionError> {
         (WorkDomain::Io, _) => BTreeSet::from([FenceKind::Io]),
         (WorkDomain::Cpu | WorkDomain::Control, _) => BTreeSet::new(),
     };
-    let synchronous_observation_read = node.domain == WorkDomain::Io
-        && node.kind == WorkKind::ObservationRead
-        && node.fences.is_empty();
+    let synchronous_observation_read =
+        node.domain == WorkDomain::Io && node.kind.reads_observation() && node.fences.is_empty();
     if node.fences != expected_fences && !synchronous_observation_read {
         return Err(ExecutionError::invalid_plan(format!(
             "work node {} must declare its exact asynchronous fence set {expected_fences:?}",
@@ -2971,7 +2982,7 @@ fn validate_kind(node: &WorkNode) -> Result<(), ExecutionError> {
         }
         WorkKind::Spill | WorkKind::Prefetch => require_io_domain(node),
         WorkKind::Io => require_io_domain(node),
-        WorkKind::ObservationRead => {
+        WorkKind::ObservationRead | WorkKind::ObservationReadWriteback => {
             require_io_domain(node)?;
             require_claim(
                 node,
@@ -3023,6 +3034,7 @@ pub(crate) fn io_buffer_kind_supports_work_kind(
                 WorkKind::Prefetch
                     | WorkKind::Cache
                     | WorkKind::ObservationRead
+                    | WorkKind::ObservationReadWriteback
                     | WorkKind::Release
             )
         }
@@ -3047,7 +3059,10 @@ pub(crate) fn io_buffer_kind_supports_work_kind(
             work_kind == WorkKind::Io
         }
         crate::IoBufferKind::Writeback => {
-            matches!(work_kind, WorkKind::Writeback | WorkKind::Cache)
+            matches!(
+                work_kind,
+                WorkKind::Writeback | WorkKind::ObservationReadWriteback | WorkKind::Cache
+            )
         }
         crate::IoBufferKind::Publication => work_kind == WorkKind::Publication,
         crate::IoBufferKind::MappedPageCache => {
