@@ -11,7 +11,7 @@
 use std::{
     collections::BTreeMap,
     path::Path,
-    sync::{Arc, Condvar, Mutex},
+    sync::{Arc, Mutex},
 };
 
 use casa_imaging_model::{
@@ -43,7 +43,6 @@ const OWNER_MANIFEST_KEYWORD: &str = "CASA_RS_IMAGING_OWNER_MANIFEST";
 const OWNER_MANIFEST_SCHEMA_VERSION: u32 = 1;
 const OWNER_IDENTITY_DOMAIN: &[u8] = b"casa-rs-ms-owner-manifest-v1";
 static OWNER_INITIALIZATION_MUTEX: Mutex<()> = Mutex::new(());
-static MODEL_COLUMN_WRITE_ACTIVE: (Mutex<bool>, Condvar) = (Mutex::new(false), Condvar::new());
 
 const TRACKED_COLUMNS: &[(MsColumnKind, &str)] = &[
     (MsColumnKind::Data, "DATA"),
@@ -196,39 +195,13 @@ pub struct ModelDataWrite {
     measurement_set: Option<MeasurementSet>,
     manifest: OwnerManifest,
     incomplete_marker: Option<std::path::PathBuf>,
+    pending_cell: Option<PendingModelCell>,
     completed: bool,
-    _process_lease: ModelColumnProcessLease,
 }
 
-/// Process-wide exclusion is represented by an owned lease rather than a
-/// thread-bound mutex guard so one bounded writer can move with its worker.
-struct ModelColumnProcessLease;
-
-impl ModelColumnProcessLease {
-    fn acquire() -> Result<Self, ObservationOwnerError> {
-        let (active, available) = &MODEL_COLUMN_WRITE_ACTIVE;
-        let mut active = active
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        while *active {
-            active = available
-                .wait(active)
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-        }
-        *active = true;
-        Ok(Self)
-    }
-}
-
-impl Drop for ModelColumnProcessLease {
-    fn drop(&mut self) {
-        let (active, available) = &MODEL_COLUMN_WRITE_ACTIVE;
-        let mut active = active
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        *active = false;
-        available.notify_one();
-    }
+struct PendingModelCell {
+    row: usize,
+    values: ndarray::ArrayD<Complex32>,
 }
 
 /// Exact physical bounds of one bounded `MODEL_DATA` write.
@@ -291,7 +264,6 @@ impl ModelDataWrite {
         selection: &ObservationSelection,
     ) -> Result<Self, ObservationOwnerError> {
         let path = path.as_ref();
-        let process_lease = ModelColumnProcessLease::acquire()?;
         let mut measurement_set = MeasurementSet::open_retained_read(path)?;
         if !measurement_set.main_table_mut().lock(LockType::Write, 1)? {
             return Err(ObservationOwnerError::WriteLockUnavailable);
@@ -325,19 +297,17 @@ impl ModelDataWrite {
                         .data_column(crate::VisibilityDataColumn::Data)?
                         .get(row)?,
                 )?;
-                measurement_set
-                    .main_table_mut()
-                    .row_accessor_mut()
-                    .set_cell(row, "MODEL_DATA", Value::Array(source))?;
+                persist_model_cell(measurement_set.main_table_mut(), row, source)?;
             }
+        } else {
+            zero_selected_model_cells(&mut measurement_set, selection)?;
         }
-        zero_selected_model_cells(&mut measurement_set, selection)?;
         Ok(Self {
             measurement_set: Some(measurement_set),
             manifest,
             incomplete_marker,
+            pending_cell: None,
             completed: false,
-            _process_lease: process_lease,
         })
     }
 
@@ -350,45 +320,43 @@ impl ModelDataWrite {
         value: Complex32,
     ) -> Result<(), ObservationOwnerError> {
         let row = usize::try_from(row).map_err(|_| ObservationOwnerError::PredictionAddress)?;
-        let measurement_set = self
-            .measurement_set
+        if self.pending_cell.as_ref().map(|cell| cell.row) != Some(row) {
+            self.flush_pending_cell()?;
+            let measurement_set = self
+                .measurement_set
+                .as_ref()
+                .ok_or(ObservationOwnerError::TransactionClosed)?;
+            let current = measurement_set
+                .main_table()
+                .column_accessor("MODEL_DATA")?
+                .get(row)?
+                .cloned()
+                .ok_or(ObservationOwnerError::PredictionAddress)?;
+            let Value::Array(ArrayValue::Complex32(values)) = current else {
+                return Err(ObservationOwnerError::PredictionAddress);
+            };
+            self.pending_cell = Some(PendingModelCell { row, values });
+        }
+        let values = &mut self
+            .pending_cell
             .as_mut()
-            .ok_or(ObservationOwnerError::TransactionClosed)?;
-        let current = measurement_set
-            .main_table()
-            .column_accessor("MODEL_DATA")?
-            .get(row)?
-            .cloned()
-            .ok_or(ObservationOwnerError::PredictionAddress)?;
-        let Value::Array(ArrayValue::Complex32(mut values)) = current else {
-            return Err(ObservationOwnerError::PredictionAddress);
-        };
+            .ok_or(ObservationOwnerError::TransactionClosed)?
+            .values;
         let index = [correlation as usize, channel as usize];
         let Some(cell) = values.get_mut(index) else {
             return Err(ObservationOwnerError::PredictionAddress);
         };
         *cell = value;
-        measurement_set
-            .main_table_mut()
-            .row_accessor_mut()
-            .set_cell(
-                row,
-                "MODEL_DATA",
-                Value::Array(ArrayValue::Complex32(values)),
-            )?;
         Ok(())
     }
 
     /// Flush the in-place write, publish its generation, and clear the marker.
     pub fn complete(mut self, generation: LogicalIdentity) -> Result<(), ObservationOwnerError> {
+        self.flush_pending_cell()?;
         let measurement_set = self
             .measurement_set
             .as_mut()
             .ok_or(ObservationOwnerError::TransactionClosed)?;
-        measurement_set
-            .main_table_mut()
-            .prepare_write()
-            .save_selected_columns(&["MODEL_DATA"])?;
         self.manifest.model_data = PersistedModelColumn::Present {
             generation: encode_identity(generation),
         };
@@ -410,6 +378,21 @@ impl ModelDataWrite {
         crate::write_session::complete_in_place_write(self.incomplete_marker.take())?;
         self.completed = true;
         Ok(())
+    }
+
+    fn flush_pending_cell(&mut self) -> Result<(), ObservationOwnerError> {
+        let Some(cell) = self.pending_cell.take() else {
+            return Ok(());
+        };
+        let measurement_set = self
+            .measurement_set
+            .as_mut()
+            .ok_or(ObservationOwnerError::TransactionClosed)?;
+        persist_model_cell(
+            measurement_set.main_table_mut(),
+            cell.row,
+            ArrayValue::Complex32(cell.values),
+        )
     }
 }
 
@@ -1049,6 +1032,24 @@ fn zero_model_cell(source: &ArrayValue) -> Result<ArrayValue, ObservationOwnerEr
 }
 
 #[cfg(unix)]
+fn persist_model_cell(
+    table: &mut Table,
+    row: usize,
+    value: ArrayValue,
+) -> Result<(), ObservationOwnerError> {
+    {
+        let mut prepared = table.row_accessor_mut().prepare(&["MODEL_DATA"])?;
+        prepared.seek(row)?;
+        prepared.set_value_at(0, Value::Array(value))?;
+    }
+    table
+        .prepare_write()
+        .save_selected_rows(&["MODEL_DATA"], &[row])?;
+    table.discard_persisted_cell_updates(&["MODEL_DATA"], &[row]);
+    Ok(())
+}
+
+#[cfg(unix)]
 fn zero_selected_model_cells(
     measurement_set: &mut MeasurementSet,
     selection: &ObservationSelection,
@@ -1101,14 +1102,11 @@ fn zero_selected_model_cells(
                 *value = Complex32::new(0.0, 0.0);
             }
         }
-        measurement_set
-            .main_table_mut()
-            .row_accessor_mut()
-            .set_cell(
-                row,
-                "MODEL_DATA",
-                Value::Array(ArrayValue::Complex32(values)),
-            )?;
+        persist_model_cell(
+            measurement_set.main_table_mut(),
+            row,
+            ArrayValue::Complex32(values),
+        )?;
     }
     Ok(())
 }

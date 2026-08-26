@@ -305,8 +305,9 @@ impl CompleteDataPlanFragment {
     /// Add shared grids, FFT scratch, and primitive outputs to physical work.
     ///
     /// Composition also binds this fragment to the sealed observation
-    /// transaction's final-reconciliation node: afterwards, reconciliation may
-    /// execute only at that exact plan-authoritative Compute node.
+    /// transaction's post-replay reconciliation node: afterwards,
+    /// reconciliation may execute only at that exact plan-authoritative Compute
+    /// node.
     ///
     /// Returns the composed physical work together with this fragment bound to
     /// its authoritative reconciliation node.
@@ -314,7 +315,7 @@ impl CompleteDataPlanFragment {
         mut self,
         base: &PhysicalWorkBinding,
     ) -> Result<(PhysicalWorkBinding, Self), CompleteDataPlanError> {
-        let reconciliation = base.observation_transaction().final_reconciliation();
+        let reconciliation = base.observation_transaction().post_replay_reconciliation();
         if !base.execution_dag().nodes().contains_key(&self.replay_node) {
             return Err(CompleteDataPlanError::MissingReplayNode);
         }

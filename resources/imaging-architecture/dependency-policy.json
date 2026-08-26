@@ -77,6 +77,7 @@
   "casa-ms": "surface",
   "casa-simulation-synthesis": "native",
   "casa-notebook": "support",
+  "casa-numerics": "support",
   "casa-provider-contracts": "surface",
   "casa-tables": "support",
   "casa-task-runtime": "support",
@@ -105,7 +106,8 @@
   ],
   "casa-imaging-model": [],
   "casa-imaging-reconstruction": [
-   "casa-imaging-model"
+   "casa-imaging-model",
+   "casa-numerics"
   ],
   "casa-imaging-products": [
    "casa-imaging-model",

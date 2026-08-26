@@ -16,43 +16,14 @@ from __future__ import annotations
 import hashlib
 import json
 import pathlib
-import shutil
 import sys
 
 import numpy as np
 from casatasks import tclean
 from casatasks.private.imagerhelpers.input_parameters import ImagerParameters
-from casatools import image, iterbotsink, synthesisdeconvolver
+from casatools import iterbotsink, synthesisdeconvolver
 
-
-def read_plane(path: pathlib.Path) -> np.ndarray:
-    tool = image()
-    tool.open(str(path))
-    try:
-        return np.asarray(tool.getchunk()).squeeze().astype(np.float64)
-    finally:
-        tool.close()
-
-
-def write_plane(path: pathlib.Path, values: np.ndarray) -> None:
-    tool = image()
-    tool.open(str(path))
-    try:
-        tool.putchunk(np.asarray(values, dtype=np.float32)[:, :, None, None])
-    finally:
-        tool.close()
-
-
-def normalize(value):
-    if isinstance(value, dict):
-        return {str(key): normalize(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [normalize(item) for item in value]
-    if isinstance(value, np.ndarray):
-        return value.tolist()
-    if isinstance(value, np.generic):
-        return value.item()
-    return value
+from casa_solver_support import copy_seed, normalize, read_plane, write_plane
 
 
 def plane_summary(values: np.ndarray) -> dict:
@@ -134,15 +105,6 @@ def seed_psf(ms_path: pathlib.Path, output: pathlib.Path) -> pathlib.Path:
     return prefix
 
 
-def copy_seed(seed: pathlib.Path, target: pathlib.Path) -> None:
-    for suffix in ("psf", "residual", "model", "sumwt", "pb", "mask"):
-        source = pathlib.Path(f"{seed}.{suffix}")
-        destination = pathlib.Path(f"{target}.{suffix}")
-        if destination.exists():
-            shutil.rmtree(destination)
-        shutil.copytree(source, destination)
-
-
 def solve(
     ms_path: pathlib.Path,
     seed: pathlib.Path,
@@ -152,7 +114,7 @@ def solve(
     scales: list[int] | None = None,
 ) -> dict:
     prefix = output / deconvolver
-    copy_seed(seed, prefix)
+    copy_seed(seed, prefix, ("psf", "residual", "model", "sumwt", "pb", "mask"))
     write_plane(pathlib.Path(f"{prefix}.model"), np.zeros(dirty.shape))
     write_plane(pathlib.Path(f"{prefix}.residual"), dirty)
     write_plane(pathlib.Path(f"{prefix}.mask"), np.ones(dirty.shape))

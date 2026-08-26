@@ -17,7 +17,8 @@ use crate::*;
 
 const READ_NODE: &str = "transaction-read";
 const CHECK_NODE: &str = "transaction-check";
-const RECONCILE_NODE: &str = "transaction-reconciliation";
+const FINAL_MODEL_PREPARATION_NODE: &str = "final-model-preparation";
+const POST_REPLAY_RECONCILIATION_NODE: &str = "post-replay-reconciliation";
 const COMMIT_NODE: &str = "transaction-commit";
 const MINOR_NODE: &str = "serial-continuum-minor-cycle";
 const SOURCE_READ_RATE_DEMAND: &str = "serial-continuum-source-read-rate";
@@ -258,7 +259,8 @@ fn base_physical<R: ImplementationRegistry>(
 ) -> Result<(PhysicalWorkBinding, SelectedObservationSourceResources), SerialContinuumPlanError> {
     let check = pass_node(CHECK_NODE, pass);
     let read = pass_node(READ_NODE, pass);
-    let reconcile = pass_node(RECONCILE_NODE, pass);
+    let model_preparation = pass_node(FINAL_MODEL_PREPARATION_NODE, pass);
+    let reconcile = pass_node(POST_REPLAY_RECONCILIATION_NODE, pass);
     let commit = pass_node(COMMIT_NODE, pass);
     let source_bytes = u64::try_from(policy.selected_residency.aggregate_resident_bytes())
         .map_err(|_| SerialContinuumPlanError::Overflow)?;
@@ -370,6 +372,21 @@ fn base_physical<R: ImplementationRegistry>(
             implementation: policy.implementation.clone(),
             dependencies: BTreeSet::new(),
             claims: check_claims,
+            allocations: vec![],
+            fences: BTreeSet::new(),
+            quiescence_after: BTreeSet::new(),
+        },
+        WorkNode {
+            id: model_preparation.clone(),
+            kind: WorkKind::Compute,
+            domain: WorkDomain::Cpu,
+            implementation: policy.implementation.clone(),
+            dependencies: BTreeSet::from([WorkDependency::Work(check.clone())]),
+            claims: vec![ResourceClaim {
+                resource: LeaseResource::Workers,
+                amount: 1,
+                lifetime: ClaimLifetime::Work,
+            }],
             allocations: vec![],
             fences: BTreeSet::new(),
             quiescence_after: BTreeSet::new(),
@@ -596,7 +613,12 @@ fn base_physical<R: ImplementationRegistry>(
         ImplementationContractCatalog::from_registry(registry, [policy.implementation.clone()])?;
     let artifacts = phase_input
         .map(|identity| {
-            PlannedArtifact::new(identity, reconcile.clone(), ArtifactRole::Input, None)
+            PlannedArtifact::new(
+                identity,
+                model_preparation.clone(),
+                ArtifactRole::Input,
+                None,
+            )
         })
         .into_iter()
         .collect();
@@ -605,7 +627,8 @@ fn base_physical<R: ImplementationRegistry>(
         dag,
         prediction,
         artifacts,
-        ObservationTransactionWork::new_reconstruction(check, reconcile, None, commit),
+        ObservationTransactionWork::new_reconstruction(check, reconcile, commit)
+            .with_final_model_preparation(model_preparation),
         PublicationLayoutLedger::empty(),
     )?;
     Ok((
@@ -896,21 +919,28 @@ fn append_model_data_resources<R: ImplementationRegistry>(
     )?;
     let catalog =
         ImplementationContractCatalog::from_registry(registry, [policy.implementation.clone()])?;
+    let work = ObservationTransactionWork::new_reconstruction(
+        base.observation_transaction()
+            .initial_consistency_check()
+            .clone(),
+        base.observation_transaction()
+            .post_replay_reconciliation()
+            .clone(),
+        commit,
+    )
+    .with_final_model_preparation(
+        base.observation_transaction()
+            .final_model_preparation()
+            .expect("serial continuum plan has final-model preparation")
+            .clone(),
+    )
+    .with_model_column_writeback(replay.clone());
     Ok(PhysicalWorkBinding::new_reconstruction(
         catalog,
         dag,
         prediction,
         base.artifacts().to_vec(),
-        ObservationTransactionWork::new_reconstruction(
-            base.observation_transaction()
-                .initial_consistency_check()
-                .clone(),
-            base.observation_transaction()
-                .final_reconciliation()
-                .clone(),
-            None,
-            commit,
-        ),
+        work,
         base.publication_layouts().clone(),
     )?)
 }
@@ -923,7 +953,7 @@ fn append_minor<R: ImplementationRegistry>(
 ) -> Result<PhysicalWorkBinding, SerialContinuumPlanError> {
     let reconcile = base
         .observation_transaction()
-        .final_reconciliation()
+        .post_replay_reconciliation()
         .clone();
     let commit = base.observation_transaction().commit().clone();
     let allocation = AllocationId::new("serial-continuum-minor-cycle");
@@ -1031,21 +1061,35 @@ fn append_minor<R: ImplementationRegistry>(
     )?;
     let catalog =
         ImplementationContractCatalog::from_registry(registry, [policy.implementation.clone()])?;
+    let mut work = ObservationTransactionWork::new_reconstruction(
+        base.observation_transaction()
+            .initial_consistency_check()
+            .clone(),
+        base.observation_transaction()
+            .post_replay_reconciliation()
+            .clone(),
+        commit,
+    );
+    if let Some(preparation) = base
+        .observation_transaction()
+        .final_model_preparation()
+        .cloned()
+    {
+        work = work.with_final_model_preparation(preparation);
+    }
+    if let Some(writeback) = base
+        .observation_transaction()
+        .model_column_writeback()
+        .cloned()
+    {
+        work = work.with_model_column_writeback(writeback);
+    }
     Ok(PhysicalWorkBinding::new_reconstruction(
         catalog,
         dag,
         prediction,
         base.artifacts().to_vec(),
-        ObservationTransactionWork::new_reconstruction(
-            base.observation_transaction()
-                .initial_consistency_check()
-                .clone(),
-            base.observation_transaction()
-                .final_reconciliation()
-                .clone(),
-            None,
-            commit,
-        ),
+        work,
         PublicationLayoutLedger::empty(),
     )?)
 }

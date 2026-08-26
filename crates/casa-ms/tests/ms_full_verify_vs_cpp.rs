@@ -983,6 +983,26 @@ fn digest_measurement_set_manifest(ms: &MeasurementSet) -> String {
     out
 }
 
+fn rust_model_data_sample(
+    path: &Path,
+    row: usize,
+    correlation: usize,
+    channel: usize,
+) -> casa_types::Complex32 {
+    let measurement_set = MeasurementSet::open(path).expect("open MODEL_DATA probe in Rust");
+    let value = measurement_set
+        .main_table()
+        .column_accessor("MODEL_DATA")
+        .expect("MODEL_DATA accessor")
+        .get(row)
+        .expect("read MODEL_DATA cell")
+        .expect("defined MODEL_DATA cell");
+    let Value::Array(ArrayValue::Complex32(values)) = value else {
+        panic!("MODEL_DATA is not Complex32")
+    };
+    values[[correlation, channel]]
+}
+
 #[test]
 fn ms_full_manifest_matches_cpp_for_basic_fixture() {
     if !casacore_oracle_available() {
@@ -1008,10 +1028,10 @@ fn ms_full_manifest_matches_cpp_for_basic_fixture() {
 }
 
 #[test]
-fn committed_model_data_generation_matches_cpp_manifest() {
+fn model_data_write_read_interoperability_matrix() {
     if !casacore_oracle_available() {
         eprintln!(
-            "skipping committed_model_data_generation_matches_cpp_manifest: C++ casacore not available"
+            "skipping model_data_write_read_interoperability_matrix: C++ casacore not available"
         );
         return;
     }
@@ -1069,8 +1089,9 @@ fn committed_model_data_generation_matches_cpp_manifest() {
     let (_, access) = resolved.into_parts();
     let mut writer = ModelDataWrite::begin(&ms_path, access.source_state(), &model_selection)
         .expect("begin MODEL_DATA write");
+    let rust_written = casa_types::Complex32::new(4.5, -1.25);
     writer
-        .write(0, 0, 0, casa_types::Complex32::new(4.5, -1.25))
+        .write(0, 0, 0, rust_written)
         .expect("write prediction");
     writer
         .complete(LogicalIdentity::from_sha256([73; 32]))
@@ -1080,6 +1101,31 @@ fn committed_model_data_generation_matches_cpp_manifest() {
     let rust_manifest = digest_measurement_set_manifest(&reopened);
     let cpp_manifest = MeasurementSetOracle::digest_manifest(&ms_path).unwrap();
     assert_eq!(rust_manifest, cpp_manifest);
+    assert_eq!(rust_model_data_sample(&ms_path, 0, 0, 0), rust_written); // Rust write, Rust read.
+    assert_eq!(
+        MeasurementSetOracle::read_model_data_sample(&ms_path, 0, 0, 0)
+            .expect("Rust write, C++ read"),
+        rust_written
+    );
+
+    let cpp_path = dir.path().join("cpp_model_data_write.ms");
+    let builder = MeasurementSetBuilder::new()
+        .with_main_column(OptionalMainColumn::Data)
+        .with_main_column(OptionalMainColumn::ModelData);
+    let mut cpp_written_ms = MeasurementSet::create(&cpp_path, builder).unwrap();
+    populate_subtables(&mut cpp_written_ms);
+    populate_main_rows(&mut cpp_written_ms, 6);
+    cpp_written_ms.save().unwrap();
+    drop(cpp_written_ms);
+    let cpp_written = casa_types::Complex32::new(-7.25, 3.5);
+    MeasurementSetOracle::write_model_data_sample(&cpp_path, 1, 0, 0, cpp_written)
+        .expect("C++ MODEL_DATA write");
+    assert_eq!(rust_model_data_sample(&cpp_path, 1, 0, 0), cpp_written); // C++ write, Rust read.
+    assert_eq!(
+        MeasurementSetOracle::read_model_data_sample(&cpp_path, 1, 0, 0)
+            .expect("C++ write, C++ read"),
+        cpp_written
+    );
 }
 
 /// Run a whole-MS Rust↔C++ parity check against an external MeasurementSet.

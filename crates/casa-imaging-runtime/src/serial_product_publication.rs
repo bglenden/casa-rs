@@ -598,7 +598,7 @@ fn build_physical<R: ImplementationRegistry>(
         dag,
         prediction,
         artifacts,
-        ObservationTransactionWork::new_product_publication(check, reconcile, None, commit),
+        ObservationTransactionWork::new_product_publication(check, reconcile, commit),
         layouts,
         publication,
     )?)

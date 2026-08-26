@@ -1558,33 +1558,6 @@ impl PhysicalWorkBinding {
         Ok(binding)
     }
 
-    /// Bind an independently atomic MeasurementSet `MODEL_DATA` publication.
-    pub fn new_with_model_data_publication(
-        catalog: ImplementationContractCatalog,
-        execution_dag: ExecutionDag,
-        prediction: PlanPrediction,
-        artifacts: Vec<PlannedArtifact>,
-        observation_transaction: ObservationTransactionWork,
-        publication_layouts: PublicationLayoutLedger,
-    ) -> Result<Self, PhysicalWorkBindingError> {
-        if observation_transaction.publication_scope()
-            != crate::ObservationTransactionPublicationScope::ModelDataPublication
-        {
-            return invalid_product_publication(
-                "MODEL_DATA publication requires ModelDataPublication transaction scope",
-            );
-        }
-        Self::with_implementation_contract(
-            ImplementationContractCommitment::from_catalog(&catalog, &execution_dag)?,
-            execution_dag,
-            prediction,
-            artifacts,
-            observation_transaction,
-            publication_layouts,
-            ProductPublicationAuthority::None,
-        )
-    }
-
     fn validate_product_publication(
         &self,
         product_publication: &crate::ProductPublicationPlan,
@@ -1598,11 +1571,10 @@ impl PhysicalWorkBinding {
             .publication_layouts
             .entries()
             .iter()
-            .filter_map(|layout| match layout.participant() {
+            .map(|layout| match layout.participant() {
                 crate::PublicationParticipant::Product { graph_id, node_id } => {
-                    Some((graph_id, node_id, layout.artifact()))
+                    (graph_id, node_id, layout.artifact())
                 }
-                crate::PublicationParticipant::ModelData(_) => None,
             })
             .collect::<Vec<_>>();
         if product_layouts.len() != product_publication.entries().len() {
@@ -3859,14 +3831,6 @@ fn work_execution_context<'a>(
             None,
             None,
         )
-    } else if transaction_work.model_column_staging() == Some(&work.node().id) {
-        common(
-            None,
-            None,
-            Some(problem.observation_transaction().write_set()),
-            None,
-            None,
-        )
     } else if transaction_work.commit() == &work.node().id {
         common(
             None,
@@ -4881,10 +4845,6 @@ fn execution_plan_id(plan: &ExecutionPlan) -> ExecutionPlanId {
                 encoder.digest(graph_id.as_bytes());
                 encoder.usize(node_id.ordinal());
             }
-            crate::PublicationParticipant::ModelData(measurement_set) => {
-                encoder.u8(1);
-                encoder.digest(measurement_set.identity().as_bytes());
-            }
         }
         encoder.digest(layout.artifact().as_bytes());
         encoder.digest(layout.layout_id().as_bytes());
@@ -4920,7 +4880,6 @@ fn encode_observation_transaction(
     encoder.u8(match transaction.work().publication_scope() {
         crate::ObservationTransactionPublicationScope::ReconstructionOnly => 0,
         crate::ObservationTransactionPublicationScope::ProductPublication => 1,
-        crate::ObservationTransactionPublicationScope::ModelDataPublication => 2,
     });
     encoder.digest(transaction.problem_id().as_bytes());
     encoder.digest(transaction.product_graph_id().as_bytes());
@@ -4929,9 +4888,16 @@ fn encode_observation_transaction(
     let work = transaction.work();
     encoder.string(work.initial_consistency_check().as_str());
     encode_dependencies(encoder, work.observation_reads());
-    encoder.string(work.final_reconciliation().as_str());
+    match work.final_model_preparation() {
+        Some(node) => {
+            encoder.u8(1);
+            encoder.string(node.as_str());
+        }
+        None => encoder.u8(0),
+    }
+    encoder.string(work.post_replay_reconciliation().as_str());
     encode_dependencies(encoder, work.product_staging());
-    match work.model_column_staging() {
+    match work.model_column_writeback() {
         Some(node) => {
             encoder.u8(1);
             encoder.string(node.as_str());

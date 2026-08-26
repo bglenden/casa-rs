@@ -25,7 +25,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use thiserror::Error;
 
-use crate::least_squares::solve_weighted_least_squares;
 use crate::ms::MeasurementSet;
 use crate::schema::main_table::VisibilityDataColumn;
 use crate::selection::syntax::{ChannelSelection, parse_spw_selector};
@@ -37,6 +36,7 @@ use crate::{
     MeasurementSetWriteSession, MsError, MsReadPlan, MsSelectionIoBudget,
     maximum_visibility_cell_elements,
 };
+use casa_numerics::solve_weighted_least_squares;
 
 const FLAG_COLUMN: &str = "FLAG";
 const FLAG_ROW_COLUMN: &str = "FLAG_ROW";

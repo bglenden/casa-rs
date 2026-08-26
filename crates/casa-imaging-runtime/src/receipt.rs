@@ -272,8 +272,6 @@ pub enum ReceiptPublicationParticipant {
         /// Zero-based identity within the compiler-owned Product Graph.
         node_ordinal: usize,
     },
-    /// The optional `MODEL_DATA` member for one MeasurementSet.
-    ModelData(MeasurementSetIdentity),
 }
 
 /// Closed audit projection of the compiler-owned Product Graph.
@@ -2396,7 +2394,6 @@ impl PlanProjection {
 enum ObservationTransactionPublicationScopeProjection {
     ReconstructionOnly,
     ProductPublication,
-    ModelDataPublication,
 }
 
 impl ObservationTransactionPublicationScopeProjection {
@@ -2407,9 +2404,6 @@ impl ObservationTransactionPublicationScopeProjection {
             }
             crate::ObservationTransactionPublicationScope::ProductPublication => {
                 Self::ProductPublication
-            }
-            crate::ObservationTransactionPublicationScope::ModelDataPublication => {
-                Self::ModelDataPublication
             }
         }
     }
@@ -2422,9 +2416,6 @@ impl ObservationTransactionPublicationScopeProjection {
             Self::ProductPublication => {
                 crate::ObservationTransactionPublicationScope::ProductPublication
             }
-            Self::ModelDataPublication => {
-                crate::ObservationTransactionPublicationScope::ModelDataPublication
-            }
         }
     }
 }
@@ -2436,9 +2427,6 @@ enum PublicationParticipantProjection {
         graph_identity: String,
         node_ordinal: usize,
     },
-    ModelData {
-        measurement_set_identity: String,
-    },
 }
 
 impl PublicationParticipantProjection {
@@ -2447,9 +2435,6 @@ impl PublicationParticipantProjection {
             PublicationParticipant::Product { graph_id, node_id } => Self::Product {
                 graph_identity: hex(&graph_id.as_bytes()),
                 node_ordinal: node_id.ordinal(),
-            },
-            PublicationParticipant::ModelData(measurement_set) => Self::ModelData {
-                measurement_set_identity: measurement_set.to_string(),
             },
         }
     }
@@ -2463,11 +2448,6 @@ impl PublicationParticipantProjection {
                 graph_identity: parse_digest(graph_identity),
                 node_ordinal: *node_ordinal,
             },
-            Self::ModelData {
-                measurement_set_identity,
-            } => ReceiptPublicationParticipant::ModelData(MeasurementSetIdentity::new(
-                LogicalIdentity::from_sha256(parse_digest(measurement_set_identity)),
-            )),
         }
     }
 }
@@ -4715,21 +4695,15 @@ fn validate_plan_projection(
             PublicationParticipantProjection::Product {
                 graph_identity,
                 node_ordinal,
-            } => {
-                format!("product:{graph_identity}:{node_ordinal}")
-            }
-            PublicationParticipantProjection::ModelData {
-                measurement_set_identity,
-            } => format!("model_data:{measurement_set_identity}"),
+            } => format!("product:{graph_identity}:{node_ordinal}"),
         })
         .collect::<BTreeSet<_>>();
     require_integrity(participants.len() == plan.publication_layouts.len())?;
     let product_participants = plan
         .publication_layouts
         .iter()
-        .filter_map(|layout| match &layout.participant {
-            PublicationParticipantProjection::Product { node_ordinal, .. } => Some(*node_ordinal),
-            PublicationParticipantProjection::ModelData { .. } => None,
+        .map(|layout| match &layout.participant {
+            PublicationParticipantProjection::Product { node_ordinal, .. } => *node_ordinal,
         })
         .collect::<Vec<_>>();
     match plan.observation_transaction_publication_scope {
@@ -4738,19 +4712,6 @@ fn validate_plan_projection(
         }
         ObservationTransactionPublicationScopeProjection::ProductPublication => {
             require_integrity(product_participants.as_slice() == publication_members)?;
-        }
-        ObservationTransactionPublicationScopeProjection::ModelDataPublication => {
-            let model_data_participants = plan
-                .publication_layouts
-                .iter()
-                .filter(|layout| {
-                    matches!(
-                        layout.participant,
-                        PublicationParticipantProjection::ModelData { .. }
-                    )
-                })
-                .count();
-            require_integrity(product_participants.is_empty() && model_data_participants == 1)?;
         }
     }
     for layout in &plan.publication_layouts {
@@ -4764,9 +4725,6 @@ fn validate_plan_projection(
                     && graph_identity == &plan.product_graph_identity
                     && publication_members.binary_search(node_ordinal).is_ok()
             }
-            PublicationParticipantProjection::ModelData {
-                measurement_set_identity,
-            } => is_digest(measurement_set_identity),
         };
         require_integrity(
             participant_is_valid

@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::session::resolve_calibration_selection;
-use casa_ms::least_squares::solve_weighted_least_squares;
+use casa_numerics::solve_weighted_least_squares;
 
 /// Input visibility column used for continuum subtraction.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

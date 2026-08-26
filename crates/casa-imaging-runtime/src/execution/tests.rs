@@ -545,7 +545,7 @@ fn physical_work_binding_with_problem(
 ) -> PhysicalWorkBinding {
     let initial = WorkNodeId::new("transaction-check");
     let read = WorkNodeId::new("transaction-read");
-    let reconciliation = WorkNodeId::new("transaction-reconciliation");
+    let reconciliation = WorkNodeId::new("post-replay-reconciliation");
     let stage = WorkNodeId::new("transaction-stage-products");
     let commit = WorkNodeId::new("transaction-commit");
     let implementation = WorkImplementationId::new("cpu-reference");
@@ -886,7 +886,7 @@ fn physical_work_binding_with_problem(
         dag,
         prediction,
         artifacts,
-        ObservationTransactionWork::new_reconstruction(initial, reconciliation, None, commit),
+        ObservationTransactionWork::new_reconstruction(initial, reconciliation, commit),
         layouts,
     )
     .expect("bound physical work")
@@ -921,7 +921,7 @@ fn publication_layout_ledger_names_every_atomic_member_and_staging_event() {
     let allocation = AllocationId::new("product-writer");
     let bounds =
         crate::PublicationResourceBounds::new(128, 96, 32, 0).expect("nonzero publication bounds");
-    let mut layouts = problem
+    let layouts = problem
         .product_graph()
         .publication()
         .members()
@@ -946,24 +946,6 @@ fn publication_layout_ledger_names_every_atomic_member_and_staging_event() {
             )
         })
         .collect::<Vec<_>>();
-    let measurement_set = casa_imaging_model::MeasurementSetIdentity::new(identity(1));
-    layouts.push(crate::PublicationPhysicalLayout::new(
-        crate::PublicationParticipant::ModelData(measurement_set),
-        crate::ArtifactIdentity::from_sha256([99; 32]),
-        crate::PhysicalLayoutId::from_sha256([100; 32]),
-        crate::PublicationStaging::new(
-            WorkNodeId::new("stage-model-column"),
-            WorkDependency::Fence(FenceId::new(
-                WorkNodeId::new("stage-model-column"),
-                FenceKind::Writeback,
-            )),
-            IoBufferKind::Writeback,
-            AllocationId::new("model-writer"),
-        )
-        .expect("MODEL_DATA staging"),
-        bounds,
-    ));
-
     let ledger = crate::PublicationLayoutLedger::new(layouts).expect("complete atomic ledger");
     assert_eq!(
         ledger
@@ -976,24 +958,9 @@ fn publication_layout_ledger_names_every_atomic_member_and_staging_event() {
             .count(),
         problem.product_graph().publication().members().len()
     );
-    assert_eq!(ledger.staged_storage_bytes(), 128 * 4);
-    assert_eq!(ledger.final_storage_bytes(), 96 * 4);
-    assert_eq!(ledger.writer_buffer_bytes(), 32 * 4);
-    assert_eq!(
-        ledger
-            .entries()
-            .iter()
-            .find(|entry| {
-                entry.participant() == crate::PublicationParticipant::ModelData(measurement_set)
-            })
-            .expect("MODEL_DATA participant")
-            .staging()
-            .terminal(),
-        &WorkDependency::Fence(FenceId::new(
-            WorkNodeId::new("stage-model-column"),
-            FenceKind::Writeback,
-        ))
-    );
+    assert_eq!(ledger.staged_storage_bytes(), 128 * 3);
+    assert_eq!(ledger.final_storage_bytes(), 96 * 3);
+    assert_eq!(ledger.writer_buffer_bytes(), 32 * 3);
 }
 
 #[test]

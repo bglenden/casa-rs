@@ -17,10 +17,13 @@ import json
 import os
 import pathlib
 import shutil
+import struct
 import subprocess
 import sys
 
 import numpy as np
+
+from casa_solver_support import copy_seed, normalize, read_plane as plane, write_plane
 
 
 TOLERANCE = 1.0e-3
@@ -33,6 +36,67 @@ RUST_STOP_CODES = {
     "MajorCycleLimitReached": 9,
     "DivergenceDetected": 10,
 }
+
+
+def visibility_product_identities(
+    diagnostic: dict,
+    measurement_set_identity: str,
+    samples: list[dict],
+) -> tuple[str, str]:
+    """Reconstruct the Rust authority IDs from its emitted sample stream.
+
+    `samples` uses the exact CASA-persistent Complex32 prediction widened to
+    f64 and its paired observed-minus-persisted residual. A matching digest
+    proves the values compared below are the values consumed by the Rust
+    product authority, not an unrelated post-run table calculation.
+    """
+
+    def start(domain: bytes):
+        digest = hashlib.sha256()
+        digest.update(domain)
+        digest.update(struct.pack("<I", 1))
+        digest.update(bytes.fromhex(diagnostic["problem_id"]))
+        digest.update(bytes.fromhex(diagnostic["final_model_generation"]))
+        return digest
+
+    model = start(b"casa-rs-final-model-visibility-product")
+    residual = start(b"casa-rs-final-residual-visibility-product")
+    source = bytes.fromhex(measurement_set_identity)
+    for sample in sorted(
+        samples,
+        key=lambda item: (item["row"], item["channel"], item["correlation"]),
+    ):
+        address = b"".join((
+            source,
+            struct.pack("<Q", sample["row"]),
+            struct.pack("<i", sample["data_description_id"]),
+            struct.pack("<I", sample["spectral_window_id"]),
+            struct.pack("<I", sample["channel"]),
+            struct.pack("<d", sample["frequency_centre_hz"]),
+            struct.pack("<d", sample["frequency_lower_hz"]),
+            struct.pack("<d", sample["frequency_upper_hz"]),
+            struct.pack("<d", sample["channel_width_hz"]),
+            struct.pack("<B", sample["frequency_frame_tag"]),
+            struct.pack("<I", sample["polarization_id"]),
+            struct.pack("<I", sample["correlation"]),
+            struct.pack("<B", sample["correlation_type"] - 1),
+        ))
+        model.update(address)
+        residual.update(address)
+        prediction = sample["prediction"]
+        emitted_residual = sample["residual"]
+        model.update(struct.pack("<dd", prediction.real, prediction.imag))
+        residual.update(
+            struct.pack("<dd", emitted_residual.real, emitted_residual.imag)
+        )
+    suffix = b"".join((
+        bytes.fromhex(diagnostic["selected_generation"]),
+        bytes.fromhex(diagnostic["weighting_generation"]),
+        struct.pack("<Q", len(samples)),
+    ))
+    model.update(suffix)
+    residual.update(suffix)
+    return model.hexdigest(), residual.hexdigest()
 
 
 def load_casa() -> None:
@@ -64,41 +128,19 @@ def load_casa() -> None:
     table = casa_table
 
 
-def json_value(value):
-    if isinstance(value, dict):
-        return {str(key): json_value(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [json_value(item) for item in value]
-    if isinstance(value, np.ndarray):
-        return value.tolist()
-    if isinstance(value, np.generic):
-        return value.item()
-    return value
-
-
-def plane(path: pathlib.Path) -> np.ndarray:
-    tool = image()
-    tool.open(str(path))
-    try:
-        return np.asarray(tool.getchunk()).squeeze().astype(np.float64)
-    finally:
-        tool.close()
-
-
-def write_plane(path: pathlib.Path, values: np.ndarray) -> None:
-    tool = image()
-    tool.open(str(path))
-    try:
-        tool.putchunk(np.asarray(values, dtype=np.float32)[:, :, None, None])
-    finally:
-        tool.close()
-
-
 def normalized_rms(actual: np.ndarray, expected: np.ndarray) -> float:
     scale = max(
         float(np.sqrt(np.mean(np.abs(expected) ** 2))), np.finfo(float).tiny
     )
     return float(np.sqrt(np.mean(np.abs(actual - expected) ** 2)) / scale)
+
+
+def normalized_sample_errors(actual: np.ndarray, expected: np.ndarray) -> np.ndarray:
+    """Return every complex-sample error under the run's RMS normalization."""
+    scale = max(
+        float(np.sqrt(np.mean(np.abs(expected) ** 2))), np.finfo(float).tiny
+    )
+    return np.abs(actual - expected) / scale
 
 
 def peak_normalized_rms(actual: np.ndarray, expected: np.ndarray) -> float:
@@ -173,10 +215,38 @@ def casa_predict_fixed_model(
     )
 
 
+def table_column_values(path: pathlib.Path, column: str) -> list:
+    """Read one small metadata column into detached Python/numpy values."""
+    tool = table()
+    tool.open(str(path))
+    try:
+        values = []
+        for row in range(tool.nrows()):
+            value = tool.getcell(column, row)
+            values.append(np.array(value, copy=True) if isinstance(value, np.ndarray) else value)
+        return values
+    finally:
+        tool.close()
+
+
+def assert_identical_column(
+    label: str, casa_values: list, rust_values: list
+) -> None:
+    if len(casa_values) != len(rust_values):
+        raise AssertionError(
+            f"first divergence: {label} row count: "
+            f"Rust={len(rust_values)}, CASA={len(casa_values)}"
+        )
+    for row, (casa_value, rust_value) in enumerate(zip(casa_values, rust_values)):
+        if not np.array_equal(casa_value, rust_value):
+            raise AssertionError(f"first divergence: {label} differs at row {row}")
+
+
 def visibility_census_and_parity(
     casa_ms: pathlib.Path,
     rust_ms: pathlib.Path,
     diagnostic: dict,
+    rust_run: dict,
 ) -> dict:
     """Compare paired products at every MS cell and explain exclusions."""
     casa = table()
@@ -190,33 +260,42 @@ def visibility_census_and_parity(
                 f"CASA={casa.nrows()}"
             )
 
-        description = table()
-        description.open(str(casa_ms / "DATA_DESCRIPTION"))
-        try:
-            spw_by_description = [
-                int(description.getcell("SPECTRAL_WINDOW_ID", row))
-                for row in range(description.nrows())
-            ]
-        finally:
-            description.close()
+        metadata_columns = {
+            "DATA_DESCRIPTION": ("SPECTRAL_WINDOW_ID", "POLARIZATION_ID"),
+            "POLARIZATION": ("CORR_TYPE",),
+            "SPECTRAL_WINDOW": ("CHAN_FREQ", "CHAN_WIDTH", "MEAS_FREQ_REF"),
+        }
+        metadata = {}
+        for subtable, columns in metadata_columns.items():
+            for column in columns:
+                casa_values = table_column_values(casa_ms / subtable, column)
+                rust_values = table_column_values(rust_ms / subtable, column)
+                assert_identical_column(
+                    f"{subtable}.{column}", casa_values, rust_values
+                )
+                metadata[(subtable, column)] = rust_values
+        spw_by_description = [
+            int(value)
+            for value in metadata[("DATA_DESCRIPTION", "SPECTRAL_WINDOW_ID")]
+        ]
+        polarization_by_description = [
+            int(value)
+            for value in metadata[("DATA_DESCRIPTION", "POLARIZATION_ID")]
+        ]
+        correlations_by_polarization = [
+            [int(value) for value in values]
+            for values in metadata[("POLARIZATION", "CORR_TYPE")]
+        ]
+        channel_frequencies = metadata[("SPECTRAL_WINDOW", "CHAN_FREQ")]
+        channel_widths = metadata[("SPECTRAL_WINDOW", "CHAN_WIDTH")]
+        frequency_frames = metadata[("SPECTRAL_WINDOW", "MEAS_FREQ_REF")]
+        frequency_frame_tags = {5: 0, 3: 1, 1: 2}
 
-        polarization = table()
-        polarization.open(str(casa_ms / "POLARIZATION"))
-        try:
-            correlations_by_polarization = [
-                [int(value) for value in polarization.getcell("CORR_TYPE", row)]
-                for row in range(polarization.nrows())
-            ]
-        finally:
-            polarization.close()
-        description.open(str(casa_ms / "DATA_DESCRIPTION"))
-        try:
-            polarization_by_description = [
-                int(description.getcell("POLARIZATION_ID", row))
-                for row in range(description.nrows())
-            ]
-        finally:
-            description.close()
+        owner_keyword = rust.getkeyword("CASA_RS_IMAGING_OWNER_MANIFEST")
+        owner = json.loads(owner_keyword)
+        measurement_set_identity = owner["measurement_set_identity"]
+        if len(measurement_set_identity) != 64:
+            raise AssertionError("first divergence: invalid MeasurementSet owner identity")
 
         parallel_hands = {1, 5, 8, 9, 12}
         census = {
@@ -231,14 +310,24 @@ def visibility_census_and_parity(
         selected_casa_residual = []
         selected_rust_residual = []
         selected_addresses = []
+        emitted_samples = []
         excluded_nonzero = 0
 
         for row in range(casa.nrows()):
             field = int(casa.getcell("FIELD_ID", row))
             description_id = int(casa.getcell("DATA_DESC_ID", row))
+            rust_field = int(rust.getcell("FIELD_ID", row))
+            rust_description_id = int(rust.getcell("DATA_DESC_ID", row))
+            if (rust_field, rust_description_id) != (field, description_id):
+                raise AssertionError(
+                    "first divergence: selected row coordinates "
+                    f"row={row}: Rust={(rust_field, rust_description_id)}, "
+                    f"CASA={(field, description_id)}"
+                )
             spw = spw_by_description[description_id]
+            polarization_id = polarization_by_description[description_id]
             correlations = correlations_by_polarization[
-                polarization_by_description[description_id]
+                polarization_id
             ]
             parallel_indices = [
                 index
@@ -250,9 +339,13 @@ def visibility_census_and_parity(
             casa_model = np.asarray(casa.getcell("MODEL_DATA", row))
             rust_model = np.asarray(rust.getcell("MODEL_DATA", row))
             flags = np.asarray(casa.getcell("FLAG", row), dtype=bool)
+            rust_flags = np.asarray(rust.getcell("FLAG", row), dtype=bool)
             row_flag = bool(casa.getcell("FLAG_ROW", row))
+            rust_row_flag = bool(rust.getcell("FLAG_ROW", row))
             if not np.array_equal(casa_data, rust_data):
                 raise AssertionError(f"first divergence: input DATA differs at row {row}")
+            if not np.array_equal(flags, rust_flags) or row_flag != rust_row_flag:
+                raise AssertionError(f"first divergence: input FLAG differs at row {row}")
             if casa_model.shape != rust_model.shape or casa_model.shape != casa_data.shape:
                 raise AssertionError(
                     f"first divergence: visibility shape at row {row}: "
@@ -290,12 +383,41 @@ def visibility_census_and_parity(
                         selected_addresses.append((row, channel, correlation, correlation_type))
                         selected_casa_model.append(casa_prediction)
                         selected_rust_model.append(rust_prediction)
-                        selected_casa_residual.append(
-                            casa_data[correlation, channel] - casa_prediction
+                        casa_residual = (
+                            complex(casa_data[correlation, channel])
+                            - complex(casa_prediction)
                         )
-                        selected_rust_residual.append(
-                            rust_data[correlation, channel] - rust_prediction
+                        rust_residual_candidate = (
+                            complex(rust_data[correlation, channel])
+                            - complex(rust_prediction)
                         )
+                        selected_casa_residual.append(casa_residual)
+                        selected_rust_residual.append(rust_residual_candidate)
+                        centre = float(channel_frequencies[spw][channel])
+                        width = float(channel_widths[spw][channel])
+                        first_edge = centre - 0.5 * width
+                        second_edge = centre + 0.5 * width
+                        frame = int(frequency_frames[spw])
+                        if frame not in frequency_frame_tags:
+                            raise AssertionError(
+                                f"first divergence: unsupported MEAS_FREQ_REF {frame}"
+                            )
+                        emitted_samples.append({
+                            "row": row,
+                            "data_description_id": description_id,
+                            "spectral_window_id": spw,
+                            "channel": channel,
+                            "frequency_centre_hz": centre,
+                            "frequency_lower_hz": min(first_edge, second_edge),
+                            "frequency_upper_hz": max(first_edge, second_edge),
+                            "channel_width_hz": width,
+                            "frequency_frame_tag": frequency_frame_tags[frame],
+                            "polarization_id": polarization_id,
+                            "correlation": correlation,
+                            "correlation_type": correlation_type,
+                            "prediction": complex(rust_prediction),
+                            "residual": rust_residual_candidate,
+                        })
                     else:
                         if casa_prediction != 0 or rust_prediction != 0:
                             excluded_nonzero += 1
@@ -328,6 +450,38 @@ def visibility_census_and_parity(
                 )
         if diagnostic["model_product"] == diagnostic["residual_product"]:
             raise AssertionError("first divergence: model/residual product identities alias")
+        model_product, residual_product = visibility_product_identities(
+            diagnostic, measurement_set_identity, emitted_samples
+        )
+        if model_product != diagnostic["model_product"]:
+            raise AssertionError(
+                "first divergence: Rust-emitted model samples do not reconstruct "
+                f"model_product: samples={model_product}, "
+                f"run={diagnostic['model_product']}"
+            )
+        if residual_product != diagnostic["residual_product"]:
+            raise AssertionError(
+                "first divergence: Rust-emitted residual samples do not reconstruct "
+                f"residual_product: samples={residual_product}, "
+                f"run={diagnostic['residual_product']}"
+            )
+        # The residual candidates above are now authenticated as the exact
+        # Rust-emitted residual stream: the authoritative product digest binds
+        # every address, value, lineage identity, and terminal sample count.
+        model_generation = owner.get("model_data", {})
+        if model_generation != {
+            "state": "present",
+            "generation": diagnostic["model_product"],
+        }:
+            raise AssertionError(
+                "first divergence: persisted MODEL_DATA generation does not equal "
+                f"the run's authoritative model product: {model_generation!r}"
+            )
+        if diagnostic["sample_count"] > int(rust_run["gridded_samples"]):
+            raise AssertionError(
+                "first divergence: visibility-product samples exceed the run's "
+                "authoritative selected replay census"
+            )
 
         casa_model_values = np.asarray(selected_casa_model)
         rust_model_values = np.asarray(selected_rust_model)
@@ -337,25 +491,51 @@ def visibility_census_and_parity(
         # phase errors and conjugation mistakes are scientific differences.
         model_metric = normalized_rms(rust_model_values, casa_model_values)
         residual_metric = normalized_rms(rust_residual_values, casa_residual_values)
-        if model_metric > TOLERANCE or residual_metric > TOLERANCE:
-            difference = np.abs(rust_model_values - casa_model_values)
-            sample = int(np.argmax(difference))
+        model_sample_errors = normalized_sample_errors(
+            rust_model_values, casa_model_values
+        )
+        residual_sample_errors = normalized_sample_errors(
+            rust_residual_values, casa_residual_values
+        )
+        model_max_error = float(np.max(model_sample_errors, initial=0.0))
+        residual_max_error = float(np.max(residual_sample_errors, initial=0.0))
+        if model_max_error > TOLERANCE or residual_max_error > TOLERANCE:
+            model_sample = int(np.argmax(model_sample_errors))
+            residual_sample = int(np.argmax(residual_sample_errors))
+            sample = (
+                model_sample
+                if model_max_error >= residual_max_error
+                else residual_sample
+            )
             row, channel, correlation, correlation_type = selected_addresses[sample]
             raise AssertionError(
-                "first divergence: selected MODEL_DATA "
+                "first divergence: selected predicted/residual visibility "
                 f"sample={sample} row={row} channel={channel} "
                 f"correlation={correlation} correlation_type={correlation_type}: "
-                f"Rust={rust_model_values[sample]!r}, "
-                f"CASA={casa_model_values[sample]!r}, "
+                f"Rust model={rust_model_values[sample]!r}, "
+                f"CASA model={casa_model_values[sample]!r}, "
+                f"Rust residual={rust_residual_values[sample]!r}, "
+                f"CASA residual={casa_residual_values[sample]!r}, "
                 f"model normalized RMS={model_metric:.17g}, "
-                f"residual normalized RMS={residual_metric:.17g}"
+                f"residual normalized RMS={residual_metric:.17g}, "
+                f"model max sample error={model_max_error:.17g}, "
+                f"residual max sample error={residual_max_error:.17g}"
             )
         return {
             "census": census,
             "excluded_nonzero_predictions": excluded_nonzero,
             "model_normalized_rms": model_metric,
             "residual_normalized_rms": residual_metric,
-            "provenance": diagnostic,
+            "model_max_normalized_sample_error": model_max_error,
+            "residual_max_normalized_sample_error": residual_max_error,
+            "provenance": {
+                **diagnostic,
+                "measurement_set_identity": measurement_set_identity,
+                "persisted_model_generation": model_generation["generation"],
+                "model_product_reconstructed": model_product,
+                "residual_product_reconstructed": residual_product,
+                "authoritative_replay_samples": int(rust_run["gridded_samples"]),
+            },
             "operator_contract": {
                 "field": "1",
                 "spw": "1",
@@ -460,15 +640,6 @@ def rust_case(
         "CASA_RS_IMAGING_SPILL_WRITE_BYTES_PER_SECOND": "1000000000",
     })
     return run(command, environment=environment).stdout
-
-
-def copy_seed(seed: pathlib.Path, target: pathlib.Path) -> None:
-    for suffix in ("psf", "residual", "model", "sumwt", "mask"):
-        source = pathlib.Path(f"{seed}.{suffix}")
-        destination = pathlib.Path(f"{target}.{suffix}")
-        if destination.exists():
-            shutil.rmtree(destination)
-        shutil.copytree(source, destination)
 
 
 def casa_case(
@@ -665,7 +836,7 @@ def casa_case(
             "global_stopcode": stopcode,
             "summary": summary,
         }
-    return json_value({
+    return normalize({
         "initial": final["initial"],
         "controls": final["controls"],
         "execution": final["execution"],
@@ -708,7 +879,7 @@ def casa_full_case(
         raise AssertionError(
             f"first divergence: CASA {case['name']} omitted full controller summary"
         )
-    return json_value(result)
+    return normalize(result)
 
 
 def make_reprojected_mask(reference: pathlib.Path, output: pathlib.Path) -> None:
@@ -1363,7 +1534,7 @@ def main() -> None:
             shutil.copytree(pathlib.Path(f"{rust_prefix}.model"), fixed_model)
             casa_predict_fixed_model(casa_ms, root / "casa-predict", fixed_model)
             case_evidence["visibility_products"] = visibility_census_and_parity(
-                casa_ms, rust_ms, diagnostic
+                casa_ms, rust_ms, diagnostic, rust_run
             )
         evidence["cases"][case["name"]] = case_evidence
     (output / "evidence.json").write_text(json.dumps(evidence, indent=2, sort_keys=True))

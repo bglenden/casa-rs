@@ -5,6 +5,7 @@
 #include <casacore/casa/Arrays/Vector.h>
 #include <casacore/ms/MeasurementSets/MeasurementSet.h>
 #include <casacore/tables/DataMan/StManAipsIO.h>
+#include <casacore/tables/Tables/ArrayColumn.h>
 #include <casacore/tables/Tables/TableAttr.h>
 #include <casacore/tables/Tables/TableRow.h>
 
@@ -1157,6 +1158,48 @@ void bench_create_open_impl(const std::string& path,
     }
 }
 
+casacore::Complex read_model_data_sample_impl(
+    const char* path,
+    uint64_t row,
+    uint32_t correlation,
+    uint32_t channel)
+{
+    casacore::MeasurementSet ms(path, casacore::Table::Old);
+    if (row >= ms.nrow()) {
+        throw std::runtime_error("MODEL_DATA probe row is out of bounds");
+    }
+    casacore::ArrayColumn<casacore::Complex> model(ms, "MODEL_DATA");
+    casacore::Matrix<casacore::Complex> values;
+    model.get(static_cast<casacore::rownr_t>(row), values);
+    if (correlation >= values.nrow() || channel >= values.ncolumn()) {
+        throw std::runtime_error("MODEL_DATA probe sample is out of bounds");
+    }
+    return values(correlation, channel);
+}
+
+void write_model_data_sample_impl(
+    const char* path,
+    uint64_t row,
+    uint32_t correlation,
+    uint32_t channel,
+    float real,
+    float imaginary)
+{
+    casacore::MeasurementSet ms(path, casacore::Table::Update);
+    if (row >= ms.nrow()) {
+        throw std::runtime_error("MODEL_DATA probe row is out of bounds");
+    }
+    casacore::ArrayColumn<casacore::Complex> model(ms, "MODEL_DATA");
+    casacore::Matrix<casacore::Complex> values;
+    model.get(static_cast<casacore::rownr_t>(row), values);
+    if (correlation >= values.nrow() || channel >= values.ncolumn()) {
+        throw std::runtime_error("MODEL_DATA probe sample is out of bounds");
+    }
+    values(correlation, channel) = casacore::Complex(real, imaginary);
+    model.put(static_cast<casacore::rownr_t>(row), values);
+    ms.flush();
+}
+
 }  // namespace
 
 extern "C" {
@@ -1185,6 +1228,50 @@ int32_t cpp_ms_verify_basic_fixture(const char* path, char** out_error)
         return -1;
     } catch (...) {
         *out_error = make_error("unknown exception in cpp_ms_verify_basic_fixture");
+        return -1;
+    }
+}
+
+int32_t cpp_ms_read_model_data_sample(
+    const char* path,
+    uint64_t row,
+    uint32_t correlation,
+    uint32_t channel,
+    float* out_real,
+    float* out_imaginary,
+    char** out_error)
+{
+    try {
+        const auto value = read_model_data_sample_impl(path, row, correlation, channel);
+        *out_real = value.real();
+        *out_imaginary = value.imag();
+        return 0;
+    } catch (const std::exception& e) {
+        *out_error = make_error(e.what());
+        return -1;
+    } catch (...) {
+        *out_error = make_error("unknown exception in cpp_ms_read_model_data_sample");
+        return -1;
+    }
+}
+
+int32_t cpp_ms_write_model_data_sample(
+    const char* path,
+    uint64_t row,
+    uint32_t correlation,
+    uint32_t channel,
+    float real,
+    float imaginary,
+    char** out_error)
+{
+    try {
+        write_model_data_sample_impl(path, row, correlation, channel, real, imaginary);
+        return 0;
+    } catch (const std::exception& e) {
+        *out_error = make_error(e.what());
+        return -1;
+    } catch (...) {
+        *out_error = make_error("unknown exception in cpp_ms_write_model_data_sample");
         return -1;
     }
 }

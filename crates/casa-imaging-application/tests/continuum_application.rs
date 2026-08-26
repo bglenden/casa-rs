@@ -471,16 +471,19 @@ fn application_executes_single_ddid_stokes_i_mfs_hogbom_with_one_iteration() {
         .output
         .visibility_products
         .expect("final major replay closes visibility products");
+    let normal = result.outcome.output.scientific.normal_state();
     assert_eq!(visibility.sample_count(), 1);
+    assert_eq!(visibility.problem_id(), normal.problem_id());
     assert_eq!(
-        visibility.final_model(),
-        result
-            .outcome
-            .output
-            .scientific
-            .final_model()
-            .generation_id()
+        visibility.selected_generation(),
+        normal.selected_generation()
     );
+    assert_eq!(
+        visibility.weighting_generation(),
+        normal.weighting_generation()
+    );
+    assert_eq!(visibility.sample_count(), normal.sample_count());
+    assert_eq!(visibility.final_model(), normal.final_model_generation());
     assert_ne!(
         visibility.model_product().as_bytes(),
         visibility.residual_product().as_bytes(),
@@ -608,17 +611,35 @@ fn application_commits_exact_final_prediction_to_model_data() {
         .as_ref()
         .expect("save-model execution has a terminal replay receipt");
     assert_eq!(model_receipt, final_receipt);
-    let replay = final_receipt
-        .plan_node_identities()
-        .into_iter()
+    let plan_nodes = final_receipt.plan_node_identities();
+    let preparation = plan_nodes
+        .iter()
+        .find(|node| {
+            node.as_str()
+                .starts_with("final-model-preparation-final-major")
+        })
+        .expect("final-model preparation is planned");
+    assert!(plan_nodes.iter().any(|node| {
+        node.as_str()
+            .starts_with("post-replay-reconciliation-final-major")
+    }));
+    assert!(
+        plan_nodes
+            .iter()
+            .all(|node| !node.as_str().contains("stage-model")),
+        "MODEL_DATA has no physical staging node"
+    );
+    let replay = plan_nodes
+        .iter()
         .find(|node| node.as_str().starts_with("weighting-replay-final-major"))
         .expect("terminal replay is planned");
+    assert_ne!(preparation, replay);
     assert_eq!(
-        final_receipt.stage_predicted_io(&replay, casa_imaging_runtime::IoBufferKind::Writeback),
+        final_receipt.stage_predicted_io(replay, casa_imaging_runtime::IoBufferKind::Writeback),
         Some((8, 1))
     );
     assert_eq!(
-        final_receipt.stage_actual_io(&replay, casa_imaging_runtime::IoBufferKind::Writeback),
+        final_receipt.stage_actual_io(replay, casa_imaging_runtime::IoBufferKind::Writeback),
         None,
         "the table adapter exposes no trustworthy physical byte counter"
     );
@@ -628,11 +649,11 @@ fn application_commits_exact_final_prediction_to_model_data() {
         casa_imaging_runtime::RuntimeOverheadKind::ThreadStack,
     );
     assert_eq!(
-        final_receipt.planned_resource_amount(&replay, &write_stack, &write_lifetime),
+        final_receipt.planned_resource_amount(replay, &write_stack, &write_lifetime),
         Some(2 * 1024 * 1024)
     );
     assert_eq!(
-        final_receipt.actual_resource_peak(&replay, &write_stack, &write_lifetime),
+        final_receipt.actual_resource_peak(replay, &write_stack, &write_lifetime),
         Some(2 * 1024 * 1024)
     );
 

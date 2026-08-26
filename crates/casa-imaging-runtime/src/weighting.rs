@@ -208,7 +208,11 @@ impl<'a> WeightingPlanFragment<'a> {
                 self.source_read.clone(),
             ));
         }
-        let reconciliation_id = base.observation_transaction().final_reconciliation();
+        let reconciliation_id = base.observation_transaction().post_replay_reconciliation();
+        let model_preparation_id = base
+            .observation_transaction()
+            .final_model_preparation()
+            .cloned();
         let commit_id = base.observation_transaction().commit();
         let reconciliation = base
             .execution_dag()
@@ -259,10 +263,17 @@ impl<'a> WeightingPlanFragment<'a> {
             kind: WorkKind::ObservationRead,
             domain: WorkDomain::Io,
             implementation: self.replay_implementation.clone(),
-            dependencies: BTreeSet::from([WorkDependency::Fence(FenceId::new(
+            dependencies: std::iter::once(WorkDependency::Fence(FenceId::new(
                 self.ids.generation_node.clone(),
                 FenceKind::Io,
-            ))]),
+            )))
+            .chain(
+                model_preparation_id
+                    .iter()
+                    .cloned()
+                    .map(WorkDependency::Work),
+            )
+            .collect(),
             claims: read_claims.clone(),
             allocations: read_allocations
                 .into_iter()

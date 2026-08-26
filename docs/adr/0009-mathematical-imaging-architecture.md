@@ -135,11 +135,17 @@ Read and write sets are explicit. Execution detects disallowed mutation of
 selected data, flags, weights, or metadata before consuming mixed generations.
 Scientific products use their planned per-member publication protocol after
 final complete-data reconciliation. Optional `MODEL_DATA` follows ADR-0008 and
-is written in place during the terminal replay under the standard incomplete
-marker. Successful completion advances its owner generation; interruption may
-leave partial derived values but remains detectable and fail-closed. Imaging
-does not add a staging column, backup generation, content digest, or rollback
-mechanism beyond CASA-compatible table behavior.
+is written in place during the single terminal replay under the standard
+incomplete marker. An explicit final-model preparation node first validates and
+freezes the exact candidate generation without traversing the MeasurementSet.
+The terminal replay then predicts, emits residual-product samples, and writes
+`MODEL_DATA` from that same immutable candidate in one selected-data pass. Its
+I/O completion precedes the post-replay Major-Cycle reconciliation that commits
+model-completion authority and normal-state evidence. Successful writeback
+advances its owner generation; interruption may leave partial derived values
+but remains detectable and fail-closed. Imaging does not add a staging column,
+backup generation, content digest, or rollback mechanism beyond CASA-compatible
+table behavior.
 
 ### Major and Minor Cycles
 

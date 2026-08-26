@@ -48,7 +48,6 @@ pub mod derived;
 pub mod error;
 pub mod flagging;
 pub mod grouping;
-pub mod least_squares;
 pub(crate) mod listobs;
 mod metadata;
 pub mod ms;

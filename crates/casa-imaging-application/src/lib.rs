@@ -40,15 +40,15 @@ use casa_imaging_reconstruction::{
 };
 use casa_imaging_runtime::{
     AttemptBoundObservationCompletion, BuildIdentity, ExecutionAttemptId, ExecutionProvenance,
-    ExecutionReceipt, ExecutionReceiptStore, FenceKind, ImplementationContractMetadata,
-    ImplementationRegistry, ImplementationRegistryId, ObservationReadCompletionContext,
-    PlannerCostModelProfileBootstrap, PlanningBindings, ResourceAuthority, ResourcePolicy,
-    RunBindings, RunToCompletion, SerialContinuumExecutionPolicy, SerialContinuumExecutor,
-    SerialContinuumPassInput, SerialContinuumPlan, SerialContinuumRegistry,
-    SerialProductPublicationExecutor, SerialProductPublicationPlan, SerialProductPublicationPolicy,
-    SerialProductPublicationRegistry, SerialProductPublicationSink, StorageIoResourceBinding,
-    VisibilityProductStaging, WorkExecutionContext, WorkImplementation, WorkImplementationId,
-    WorkMeasurements, plan, run,
+    ExecutionReceipt, ExecutionReceiptStore, FenceKind, FinalVisibilityReplay,
+    ImplementationContractMetadata, ImplementationRegistry, ImplementationRegistryId,
+    ObservationReadCompletionContext, PlannerCostModelProfileBootstrap, PlanningBindings,
+    ResourceAuthority, ResourcePolicy, RunBindings, RunToCompletion,
+    SerialContinuumExecutionPolicy, SerialContinuumExecutor, SerialContinuumPassInput,
+    SerialContinuumPlan, SerialContinuumRegistry, SerialProductPublicationExecutor,
+    SerialProductPublicationPlan, SerialProductPublicationPolicy, SerialProductPublicationRegistry,
+    SerialProductPublicationSink, StorageIoResourceBinding, WorkExecutionContext,
+    WorkImplementation, WorkImplementationId, WorkMeasurements, plan, run,
 };
 use casa_ms::{
     ResolvedSelectedObservationAccess, SelectedObservationResolutionRequest,
@@ -383,7 +383,7 @@ where
         major_cycle_count,
         total_minor_iterations,
         visibility_products,
-        visibility_staging,
+        visibility_replay,
     ) = match algorithm {
         ReconstructionAlgorithm::Dirty => {
             let result = registry
@@ -497,7 +497,7 @@ where
                     ExecutableModelProblem::from_compiled(problem.clone())?,
                     SerialContinuumPassInput::FinalMajor(final_input),
                 );
-                let mut terminal_staging = None;
+                let mut terminal_replay = None;
                 if continue_cleaning {
                     let remaining = controls
                         .max_minor_iterations()
@@ -511,17 +511,17 @@ where
                         program,
                     );
                 } else {
-                    let (staging, sink) = if input.write_model_column {
-                        VisibilityProductStaging::with_model_column(
+                    let (replay, sink) = if input.write_model_column {
+                        FinalVisibilityReplay::with_model_column(
                             std::path::PathBuf::from(input.observation.locator()),
                             source_state,
                             input.observation.selection(),
                         )?
                     } else {
-                        VisibilityProductStaging::new()
+                        FinalVisibilityReplay::new()
                     };
                     executor = executor.with_final_visibility_sink(sink);
-                    terminal_staging = Some(staging);
+                    terminal_replay = Some(replay);
                 }
                 let registry = SerialContinuumRegistry::new(
                     runtime.registry,
@@ -558,7 +558,7 @@ where
                     .take_completion()
                     .ok_or_else(|| boxed("final-major execution omitted scientific evidence"))?
                     .into_completion();
-                let staging = terminal_staging.expect("terminal pass creates staging");
+                let replay = terminal_replay.expect("terminal pass creates visibility replay");
                 break (
                     completion,
                     Some(applied_mask),
@@ -566,8 +566,8 @@ where
                     minor_outcomes,
                     cycle + 1,
                     total_iterations,
-                    Some(staging.completion()?),
-                    Some(staging),
+                    Some(replay.completion()?),
+                    Some(replay),
                 );
             }
         }
@@ -588,7 +588,7 @@ where
             major_cycle_count,
             total_minor_iterations,
             visibility_products,
-            visibility_staging,
+            visibility_replay,
         },
     )
 }
@@ -600,7 +600,7 @@ struct PriorPhaseOutcome {
     major_cycle_count: usize,
     total_minor_iterations: usize,
     visibility_products: Option<VisibilityProductCompletion>,
-    visibility_staging: Option<VisibilityProductStaging>,
+    visibility_replay: Option<FinalVisibilityReplay>,
 }
 
 fn execution_policy(
@@ -683,9 +683,9 @@ where
     let access = access.with_minimum_content_budget(problem)?;
     let residency = access.certify_residency(problem)?;
     let model_data_receipt = prior
-        .visibility_staging
+        .visibility_replay
         .as_ref()
-        .is_some_and(VisibilityProductStaging::has_model_column)
+        .is_some_and(FinalVisibilityReplay::has_model_column)
         .then(|| prior.final_major_receipt.clone())
         .flatten();
     let planning_registry =

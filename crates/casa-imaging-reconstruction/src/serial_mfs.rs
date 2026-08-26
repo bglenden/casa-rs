@@ -625,6 +625,10 @@ pub struct FinalVisibilitySample {
     residual: Complex64,
 }
 
+fn casa_persistent_complex(value: Complex64) -> Complex64 {
+    Complex64::new(f64::from(value.re as f32), f64::from(value.im as f32))
+}
+
 impl FinalVisibilitySample {
     /// Return the exact selected row/channel/correlation address.
     #[must_use]
@@ -755,11 +759,16 @@ impl CompleteDataOwnerState {
                 }
                 if self.residual_model.is_some() {
                     let observed = Complex64::new(visibility[0], visibility[1]);
+                    // MODEL_DATA is a CASA Complex column. Quantize exactly
+                    // once at this product/persistence boundary so the paired
+                    // residual product and the persisted prediction describe
+                    // the same sample; operator accumulation above remains f64.
+                    let predicted = casa_persistent_complex(predicted_visibility);
                     self.predicted_selected.push(FinalVisibilitySample {
                         address: selected.address,
                         observed,
-                        predicted: predicted_visibility,
-                        residual: observed - predicted_visibility,
+                        predicted,
+                        residual: observed - predicted,
                     });
                 }
             }
@@ -1613,7 +1622,8 @@ mod tests {
 
     use super::{
         PreparedFft, SerialMfsError, SerialMfsGeometry, SerialMfsOperator, SerialMfsSample,
-        SerialMfsWorkload, apply_finite_value_policy, apply_input_policy, checked_cells,
+        SerialMfsWorkload, apply_finite_value_policy, apply_input_policy, casa_persistent_complex,
+        checked_cells,
     };
 
     fn geometry() -> SerialMfsGeometry {
@@ -1916,6 +1926,28 @@ mod tests {
             actual.major_cycle_residual.as_deref(),
             Some(expected.dirty()),
             "T20 must equal the declared paired A*W(d-Ax) evaluation"
+        );
+    }
+
+    #[test]
+    fn final_visibility_publication_uses_the_exact_casa_complex32_value() {
+        let native = Complex64::new(1.0 + f64::from(f32::EPSILON) / 3.0, -0.1_f64);
+        let published = casa_persistent_complex(native);
+        let observed = Complex64::new(4.0, -2.0);
+
+        assert_eq!(published.re, f64::from(native.re as f32));
+        assert_eq!(published.im, f64::from(native.im as f32));
+        assert_ne!(
+            published, native,
+            "fixture must exercise f64 to f32 quantization"
+        );
+        assert_eq!(
+            observed - published,
+            Complex64::new(
+                f64::from(observed.re as f32) - f64::from(native.re as f32),
+                f64::from(observed.im as f32) - f64::from(native.im as f32),
+            ),
+            "published residual is derived from the exact persisted prediction"
         );
     }
 }

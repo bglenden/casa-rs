@@ -10,6 +10,7 @@
 //! casacore `LSQFit` LDLT order. Fitted values pass through casacore's
 //! Float rounding before becoming beam metadata.
 
+use casa_numerics::solve_symmetric_ldlt_casacore;
 use ndarray::Array2;
 
 use thiserror::Error;
@@ -834,50 +835,6 @@ fn casa_wrap_beam_position_angle(mut angle: f64) -> f64 {
         }
     }
     angle
-}
-
-/// Solve a symmetric system with casacore `LSQFit` ordering.
-///
-/// The input matrix must contain the symmetric system in its upper triangle.
-/// This deliberately preserves casacore's LDLᵀ factorization and arithmetic
-/// order so algorithms whose serialized results depend on exact rounding can
-/// share one implementation.
-pub(crate) fn solve_symmetric_ldlt_casacore<const N: usize>(
-    mut normal: [[f64; N]; N],
-    known: [f64; N],
-) -> Option<[f64; N]> {
-    for row in 0..N {
-        let (prior_rows, current_and_after) = normal.split_at_mut(row);
-        let current_row = &mut current_and_after[0];
-        let original_diagonal = current_row[row];
-        let mut diagonal = original_diagonal;
-        for (prior, prior_row) in prior_rows.iter().enumerate() {
-            diagonal -= prior_row[row] * prior_row[row] / prior_row[prior];
-        }
-        if !diagonal.is_finite() || diagonal * diagonal / original_diagonal <= 1.0e-12 {
-            return None;
-        }
-        current_row[row] = diagonal;
-        for column in row + 1..N {
-            for (prior, prior_row) in prior_rows.iter().enumerate() {
-                current_row[column] -= prior_row[row] * prior_row[column] / prior_row[prior];
-            }
-        }
-    }
-    let mut solution = [0.0; N];
-    for row in 0..N {
-        solution[row] = known[row];
-        for prior in 0..row {
-            solution[row] -= normal[prior][row] * solution[prior] / normal[prior][prior];
-        }
-    }
-    for row in (0..N).rev() {
-        for later in row + 1..N {
-            solution[row] -= normal[row][later] * solution[later];
-        }
-        solution[row] /= normal[row][row];
-    }
-    Some(solution)
 }
 
 #[cfg(test)]

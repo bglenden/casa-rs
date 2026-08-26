@@ -107,6 +107,105 @@ fn inventory_with_views(memory_views: Vec<MemoryView>) -> HostInventory {
     }
 }
 
+fn lock_only_demand() -> DemandEnvelope {
+    DemandEnvelope {
+        host_memory_view: CapacityViewId::new("host-memory"),
+        memory: Vec::new(),
+        workers: CountDemand::new(1, 1),
+        overhead: RuntimeOverheadDemand::zero(),
+        storage: Vec::new(),
+        rates: Vec::new(),
+        caches: CacheDemand::zero(),
+        locks: CountDemand::new(1, 1),
+        file_descriptors: CountDemand::zero(),
+        queues: Vec::new(),
+        transfers: Vec::new(),
+        accelerators: Vec::new(),
+        io_buffers: IoBufferDemand::zero(),
+    }
+}
+
+#[test]
+fn exact_measurement_set_lock_conflicts_are_source_scoped() {
+    let authority = ResourceAuthority::with_inventory(inventory_with_views(vec![MemoryView {
+        id: CapacityViewId::new("host-memory"),
+        domain: CapacityDomainId::new("unified-memory"),
+        kind: MemoryViewKind::Host,
+    }]))
+    .expect("valid lock inventory");
+    let first = authority
+        .acquire(
+            ResourcePolicy::Exclusive,
+            single_alternative(lock_only_demand()),
+        )
+        .expect("first source writer is admitted");
+    let second = authority
+        .acquire(
+            ResourcePolicy::Exclusive,
+            single_alternative(lock_only_demand()),
+        )
+        .expect("second source writer is admitted");
+    let source_a =
+        MeasurementSetIdentity::new(casa_imaging_model::LogicalIdentity::from_sha256([31; 32]));
+    let source_b =
+        MeasurementSetIdentity::new(casa_imaging_model::LogicalIdentity::from_sha256([32; 32]));
+
+    let source_a_permit = first
+        .permit(
+            LeaseResource::MeasurementSetLock {
+                measurement_set: source_a,
+            },
+            1,
+        )
+        .expect("first writer owns source A");
+    assert_eq!(
+        first
+            .permit(
+                LeaseResource::MeasurementSetLock {
+                    measurement_set: source_a,
+                },
+                1,
+            )
+            .expect_err("source identity remains typed before aggregate lock capacity"),
+        ResourceError::MeasurementSetLockUnavailable {
+            measurement_set: source_a
+        }
+    );
+    assert_eq!(
+        second
+            .permit(
+                LeaseResource::MeasurementSetLock {
+                    measurement_set: source_a,
+                },
+                1,
+            )
+            .expect_err("source A conflicts while its permit is live"),
+        ResourceError::MeasurementSetLockUnavailable {
+            measurement_set: source_a
+        }
+    );
+    let source_b_permit = second
+        .permit(
+            LeaseResource::MeasurementSetLock {
+                measurement_set: source_b,
+            },
+            1,
+        )
+        .expect("unrelated source B writes concurrently");
+
+    source_a_permit.release().expect("release source A");
+    let replacement = first
+        .permit(
+            LeaseResource::MeasurementSetLock {
+                measurement_set: source_a,
+            },
+            1,
+        )
+        .expect("source A can be reacquired after release");
+    drop(replacement);
+    drop(source_b_permit);
+}
+
 #[test]
 fn unknown_cpu_class_is_preserved_without_logical_thread_fallback() {
     let host = CapacityViewId::new("host-memory");
