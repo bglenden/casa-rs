@@ -231,6 +231,7 @@ pub fn execute_continuum(
     let prepared = prepare(request).map_err(ApplicationDispatchError::Preparation)?;
     let outcome = crate::execute(prepared)?;
     let minor = outcome.output.minor_cycle;
+    let minor_iterations = outcome.output.total_minor_iterations;
     let product_names = outcome
         .output
         .planned_products
@@ -239,7 +240,7 @@ pub fn execute_continuum(
         .map(|member| member.name().to_string())
         .collect();
     Ok(ContinuumImagingResult {
-        minor_iterations: minor.map_or(0, |value| value.iterations),
+        minor_iterations,
         minor_stop_reason: minor.map(|value| match value.stop_reason {
             MinorCycleStopReason::ThresholdReached => ContinuumStopReason::ThresholdReached,
             MinorCycleStopReason::IterationBound => ContinuumStopReason::IterationBound,

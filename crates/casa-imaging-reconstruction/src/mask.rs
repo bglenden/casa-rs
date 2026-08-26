@@ -75,6 +75,30 @@ pub enum ReconstructionMaskPlan {
 }
 
 impl ReconstructionMaskPlan {
+    /// Advance live automasking to the next major-cycle boundary.
+    #[must_use]
+    pub fn next_cycle(
+        &self,
+        current: &ReconstructionMask,
+        completed_major_cycles: usize,
+        cycle_threshold_reached: bool,
+    ) -> Self {
+        match self {
+            Self::AutoMultithresh {
+                coordinate,
+                controls,
+                ..
+            } => Self::AutoMultithresh {
+                coordinate: *coordinate,
+                controls: *controls,
+                completed_major_cycles,
+                cycle_threshold_reached,
+                previous: Some(Box::new(current.clone())),
+            },
+            other => other.clone(),
+        }
+    }
+
     /// Materialize one immutable generation for the exact current model.
     pub fn materialize(
         &self,

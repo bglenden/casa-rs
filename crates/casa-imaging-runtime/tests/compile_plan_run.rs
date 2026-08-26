@@ -2142,7 +2142,11 @@ fn continuum_pass_identity_names_distinct_weighting_work() {
 
 #[test]
 fn serial_continuum_initial_plan_contains_resource_accounted_minor_cycle() {
-    let problem = compile(request(1)).expect("logical continuum compilation");
+    let problem = compile(request_with_geometry(
+        1,
+        geometry_with_shape([256.0, 256.0], ImageShape::new(512, 512)),
+    ))
+    .expect("logical continuum compilation");
     let registry = test_registry(&problem, 3, 6, None);
     let policy = SerialContinuumExecutionPolicy::new(
         implementation(6),
@@ -2174,7 +2178,11 @@ fn serial_continuum_initial_plan_contains_resource_accounted_minor_cycle() {
 
 #[test]
 fn serial_continuum_dirty_plan_omits_minor_cycle_work() {
-    let problem = compile(request(1)).expect("logical continuum compilation");
+    let problem = compile(request_with_geometry(
+        1,
+        geometry_with_shape([256.0, 256.0], ImageShape::new(512, 512)),
+    ))
+    .expect("logical continuum compilation");
     let registry = test_registry(&problem, 3, 6, None);
     let plan = SerialContinuumPlan::dirty(
         &problem,
@@ -2205,7 +2213,7 @@ fn serial_continuum_dirty_plan_omits_minor_cycle_work() {
 fn serial_continuum_executes_initial_major_and_scheduler_minor_cycle() {
     let problem = compile(request_with_geometry(
         1,
-        geometry_with_shape_and_increment([3.0, 3.0], ImageShape::new(8, 8), [-1.0e-6, 1.0e-6]),
+        geometry_with_shape_and_increment([4.0, 4.0], ImageShape::new(8, 8), [-1.0e-6, 1.0e-6]),
     ))
     .expect("logical continuum compilation");
     let residency = selected_content_residency(&problem);

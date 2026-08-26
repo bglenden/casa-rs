@@ -244,6 +244,15 @@ impl MinorCycleProgram {
         self.noise_sigma
     }
 
+    /// Tighten this cycle to the remaining total iteration budget.
+    pub fn limit_iterations(mut self, remaining: usize) -> Result<Self, MinorCycleError> {
+        self.max_iterations = self.max_iterations.min(remaining);
+        if self.max_iterations == 0 {
+            return Err(MinorCycleError::InvalidIterationBound);
+        }
+        Ok(self)
+    }
+
     /// Return the hard iteration bound.
     #[must_use]
     pub const fn max_iterations(&self) -> usize {

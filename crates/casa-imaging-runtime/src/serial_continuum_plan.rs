@@ -120,6 +120,42 @@ impl SerialContinuumPlan {
         )
     }
 
+    /// Plan a reconciliating major pass followed by another bounded minor cycle.
+    pub fn continuing_major<R: ImplementationRegistry>(
+        problem: &CompiledProblem,
+        registry: &R,
+        policy: SerialContinuumExecutionPolicy,
+        input: &FinalMajorPhaseInput,
+        ordinal: u32,
+    ) -> Result<Self, SerialContinuumPlanError> {
+        Self::build(
+            problem,
+            registry,
+            policy,
+            ContinuumPassIdentity::new(ContinuumPassPhase::FinalMajor, ordinal),
+            true,
+            Some(input.identity()),
+        )
+    }
+
+    /// Plan the terminal reconciliation at an explicit multi-cycle ordinal.
+    pub fn final_major_at<R: ImplementationRegistry>(
+        problem: &CompiledProblem,
+        registry: &R,
+        policy: SerialContinuumExecutionPolicy,
+        input: &FinalMajorPhaseInput,
+        ordinal: u32,
+    ) -> Result<Self, SerialContinuumPlanError> {
+        Self::build(
+            problem,
+            registry,
+            policy,
+            ContinuumPassIdentity::new(ContinuumPassPhase::FinalMajor, ordinal),
+            false,
+            Some(input.identity()),
+        )
+    }
+
     fn build<R: ImplementationRegistry>(
         problem: &CompiledProblem,
         registry: &R,
@@ -692,7 +728,7 @@ fn append_minor<R: ImplementationRegistry>(
         catalog,
         dag,
         prediction,
-        vec![],
+        base.artifacts().to_vec(),
         ObservationTransactionWork::new_reconstruction(
             base.observation_transaction()
                 .initial_consistency_check()

@@ -867,6 +867,7 @@ impl InitialMajorPhaseCompletion {
         Ok(MinorCyclePhaseCompletion {
             normal_state,
             continuation,
+            mask,
             delta,
             evidence,
             auto_mask,
@@ -878,6 +879,7 @@ impl InitialMajorPhaseCompletion {
 pub struct MinorCyclePhaseCompletion {
     normal_state: FinalNormalState,
     continuation: FinalModelContinuation,
+    mask: casa_imaging_reconstruction::ReconstructionMask,
     delta: Option<casa_imaging_reconstruction::ModelDelta>,
     evidence: MinorCycleEvidence,
     auto_mask: Option<casa_imaging_reconstruction::AutoMultithreshEvidence>,
@@ -896,6 +898,12 @@ impl MinorCyclePhaseCompletion {
         &self,
     ) -> Option<casa_imaging_reconstruction::AutoMultithreshEvidence> {
         self.auto_mask
+    }
+
+    /// Return the immutable mask generation used for component placement.
+    #[must_use]
+    pub const fn mask(&self) -> &casa_imaging_reconstruction::ReconstructionMask {
+        &self.mask
     }
 
     /// Consume the accepted model update into mandatory final-major preparation.

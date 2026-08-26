@@ -30,7 +30,7 @@ pub(super) fn execute(config: &CliConfig) -> Result<RunSummary, String> {
         warnings: Vec::new(),
         gridded_samples: usize::try_from(native.scientific.normal_state().sample_count())
             .map_err(|_| "native selected-sample count exceeds usize".to_string())?,
-        major_cycles: usize::from(native.final_major_receipt.is_some()) + 1,
+        major_cycles: native.major_cycle_count,
         minor_iterations: result.minor_iterations,
         clean_stop_reason,
         elapsed: started.elapsed(),
@@ -208,7 +208,6 @@ fn unsupported_native_controls(config: &CliConfig) -> bool {
             .as_deref()
             .is_some_and(|plane| !plane.eq_ignore_ascii_case("I"))
         || config.uv_taper.is_some()
-        || config.nmajor.is_some()
         || config.cyclefactor != 1.0
         || config.min_psf_fraction != 0.05
         || config.max_psf_fraction != 0.8

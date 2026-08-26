@@ -448,6 +448,35 @@ fn application_executes_single_ddid_stokes_i_mfs_hogbom_with_one_iteration() {
 }
 
 #[test]
+fn application_reconciles_between_bounded_minor_cycles() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = tiny_measurement_set(root.path());
+    let image_name = root.path().join("bounded-cycles");
+    let mut imaging = request(
+        measurement_set,
+        image_name.clone(),
+        ContinuumAlgorithm::Hogbom,
+    );
+    imaging.iterations = 3;
+    imaging.cycle_iterations = 1;
+    imaging.maximum_major_cycles = 3;
+    imaging.gain = 0.1;
+
+    let result = execute_continuum(imaging).expect("bounded multi-cycle execution");
+
+    assert_eq!(result.minor_iterations, 3);
+    assert_eq!(result.outcome.output.total_minor_iterations, 3);
+    assert_eq!(result.outcome.output.major_cycle_count, 4);
+    assert_eq!(
+        result.minor_stop_reason,
+        Some(ContinuumStopReason::IterationBound)
+    );
+    assert_standard_products(&image_name, &result.product_names);
+}
+
+#[test]
 fn application_commits_exact_final_prediction_to_model_data() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     set_production_io_environment();
