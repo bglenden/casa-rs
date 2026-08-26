@@ -2,7 +2,10 @@
 
 //! Affine cross-plan state for serial CPU continuum reconstruction.
 
-use std::{io, sync::Mutex};
+use std::{
+    io,
+    sync::{Arc, Mutex},
+};
 
 use casa_imaging_model::{
     CompiledProblem, LogicalIdentity, ModelDeltaTerm, ModelExecutionAttemptId, ModelInputCommitment,
@@ -19,12 +22,135 @@ use crate::{
     ImplementationRegistry, ImplementationRegistryId, IoMeasurement, LeaseResource,
     MajorCycleOperatorResult, MajorCycleOperatorState, ObservationReadCompletionContext,
     ResourceMeasurement, SelectedObservationSourceResources, SerialMfsOperatorState,
-    WeightingExecutionState, WeightingPlanFragment, WorkExecutionContext, WorkImplementation,
-    WorkImplementationId, WorkKind, WorkMeasurements,
+    WeightingExecutionState, WeightingPlanFragment, WeightingReplayCompletion,
+    WorkExecutionContext, WorkImplementation, WorkImplementationId, WorkKind, WorkMeasurements,
 };
 use casa_imaging_reconstruction::WeightingPlan;
 use casa_ms::{BoundSelectedObservation, SelectedObservationCompletion};
 use sha2::{Digest, Sha256};
+
+/// Bounded consumer of final-model predictions produced inside the paired
+/// final-major replay. Implementations may stage MODEL_DATA or residual-
+/// visibility products, but receive no commit authority from this interface.
+pub trait FinalVisibilitySink: Send {
+    /// Bind the exact final model before any replay sample is consumed.
+    fn bind(
+        &mut self,
+        problem: casa_imaging_model::CompiledProblemId,
+        final_model: casa_imaging_reconstruction::ModelGenerationId,
+    ) -> io::Result<()>;
+
+    /// Consume one bounded canonical selected-visibility block.
+    fn consume(
+        &mut self,
+        samples: &[casa_imaging_reconstruction::runtime_adapter::FinalVisibilitySample],
+    ) -> io::Result<()>;
+
+    /// Close staging against the terminal selected/weighting replay proof.
+    fn finish(&mut self, replay: &WeightingReplayCompletion) -> io::Result<()>;
+}
+
+/// Shared handle for the product-owned final-visibility staging completion.
+#[derive(Clone)]
+pub struct VisibilityProductStaging {
+    state: Arc<Mutex<VisibilityProductStagingState>>,
+}
+
+enum VisibilityProductStagingState {
+    Unbound,
+    Bound(casa_imaging_products::VisibilityProductAuthority),
+    Finished(casa_imaging_products::VisibilityProductCompletion),
+}
+
+impl VisibilityProductStaging {
+    /// Create empty staging and its runtime sink capability.
+    #[must_use]
+    pub fn new() -> (Self, Box<dyn FinalVisibilitySink>) {
+        let state = Arc::new(Mutex::new(VisibilityProductStagingState::Unbound));
+        (
+            Self {
+                state: Arc::clone(&state),
+            },
+            Box::new(VisibilityProductStaging { state }),
+        )
+    }
+
+    /// Return the closed product completion after terminal replay.
+    pub fn completion(&self) -> io::Result<casa_imaging_products::VisibilityProductCompletion> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| io::Error::other("visibility product staging poisoned"))?;
+        match &*state {
+            VisibilityProductStagingState::Finished(completion) => Ok(*completion),
+            _ => Err(io::Error::other("visibility product staging is incomplete")),
+        }
+    }
+}
+
+impl FinalVisibilitySink for VisibilityProductStaging {
+    fn bind(
+        &mut self,
+        problem: casa_imaging_model::CompiledProblemId,
+        final_model: casa_imaging_reconstruction::ModelGenerationId,
+    ) -> io::Result<()> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| io::Error::other("visibility product staging poisoned"))?;
+        match &*state {
+            VisibilityProductStagingState::Unbound => {
+                *state = VisibilityProductStagingState::Bound(
+                    casa_imaging_products::VisibilityProductAuthority::new(problem, final_model),
+                );
+                Ok(())
+            }
+            VisibilityProductStagingState::Bound(_) => Ok(()),
+            VisibilityProductStagingState::Finished(completion)
+                if completion.problem_id() == problem
+                    && completion.final_model() == final_model =>
+            {
+                Ok(())
+            }
+            VisibilityProductStagingState::Finished(_) => Err(io::Error::other(
+                "visibility products belong to another final model",
+            )),
+        }
+    }
+
+    fn consume(
+        &mut self,
+        samples: &[casa_imaging_reconstruction::runtime_adapter::FinalVisibilitySample],
+    ) -> io::Result<()> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| io::Error::other("visibility product staging poisoned"))?;
+        let VisibilityProductStagingState::Bound(authority) = &mut *state else {
+            return Err(io::Error::other("visibility product staging is not bound"));
+        };
+        authority.consume(samples).map_err(io::Error::other)
+    }
+
+    fn finish(&mut self, replay: &WeightingReplayCompletion) -> io::Result<()> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| io::Error::other("visibility product staging poisoned"))?;
+        let authority = match std::mem::replace(&mut *state, VisibilityProductStagingState::Unbound)
+        {
+            VisibilityProductStagingState::Bound(authority) => authority,
+            other => {
+                *state = other;
+                return Err(io::Error::other("visibility product staging is not bound"));
+            }
+        };
+        *state = VisibilityProductStagingState::Finished(
+            authority.finish(replay.selected_generation(), replay.weighting_generation()),
+        );
+        Ok(())
+    }
+}
 
 /// Runtime-owned immutable registry for one serial CPU implementation bundle.
 pub struct SerialContinuumRegistry<I> {
@@ -96,6 +222,7 @@ pub struct SerialContinuumExecutor {
     pass: ContinuumPassIdentity,
     complete_data: CompleteDataPlanFragment,
     minor_cycle: Option<SerialMinorCycleExecution>,
+    final_visibility_sink: Option<Mutex<Box<dyn FinalVisibilitySink>>>,
     phase_input_artifact: Option<(crate::ArtifactIdentity, u64)>,
     state: Mutex<SerialContinuumExecutorState>,
 }
@@ -202,6 +329,7 @@ impl SerialContinuumExecutor {
             pass,
             complete_data,
             minor_cycle: None,
+            final_visibility_sink: None,
             phase_input_artifact,
             state: Mutex::new(SerialContinuumExecutorState {
                 executable: Some(executable),
@@ -233,6 +361,13 @@ impl SerialContinuumExecutor {
             window,
             program,
         });
+        self
+    }
+
+    /// Attach bounded final-prediction staging to a final-major pass.
+    #[must_use]
+    pub fn with_final_visibility_sink(mut self, sink: Box<dyn FinalVisibilitySink>) -> Self {
+        self.final_visibility_sink = Some(Mutex::new(sink));
         self
     }
 
@@ -332,6 +467,16 @@ impl WorkImplementation for SerialContinuumExecutor {
             .lock()
             .map_err(|_| io::Error::other("serial continuum state poisoned"))?;
         Self::initialize_model(&mut state, context)?;
+        if let (Some(sink), Some(preparation)) =
+            (&self.final_visibility_sink, state.preparation.as_ref())
+        {
+            sink.lock()
+                .map_err(|_| io::Error::other("final visibility sink poisoned"))?
+                .bind(
+                    self.problem.problem_id(),
+                    preparation.final_model().generation_id(),
+                )?;
+        }
         if context.node().id == *self.complete_data.preparation_node() {
             state.prepared = Some(
                 self.complete_data
@@ -381,11 +526,19 @@ impl WorkImplementation for SerialContinuumExecutor {
             } = &mut *state;
             weighting
                 .traverse_replay(context, &fragment, &self.problem, |block| {
-                    operator
+                    let predicted = operator
                         .as_mut()
                         .ok_or_else(|| io::Error::other("complete-data operator missing"))?
                         .consume_weighted_block(block)
-                        .map_err(io::Error::other)
+                        .map_err(io::Error::other)?;
+                    if !predicted.is_empty()
+                        && let Some(sink) = &self.final_visibility_sink
+                    {
+                        sink.lock()
+                            .map_err(|_| io::Error::other("final visibility sink poisoned"))?
+                            .consume(predicted)?;
+                    }
+                    Ok::<(), io::Error>(())
                 })
                 .map_err(io::Error::other)?;
         } else if self
@@ -524,6 +677,11 @@ impl WorkImplementation for SerialContinuumExecutor {
                 .weighting
                 .replay_completion()
                 .ok_or_else(|| io::Error::other("replay completion missing"))?;
+            if let Some(sink) = &self.final_visibility_sink {
+                sink.lock()
+                    .map_err(|_| io::Error::other("final visibility sink poisoned"))?
+                    .finish(replay)?;
+            }
             state.complete_data = Some(operator.complete(replay).map_err(io::Error::other)?);
             return Ok(predecessor);
         }

@@ -31,7 +31,7 @@ use casa_imaging_model::{
 use casa_imaging_products::{
     ContinuumProductControls, ContinuumProductInputs, ContinuumSourceCatalog,
     PlannedContinuumGeneration, ProductGenerationAuthority, SealedContinuumGeneration,
-    produce_continuum_members,
+    VisibilityProductCompletion, produce_continuum_members,
 };
 use casa_imaging_reconstruction::{
     CleanWindow, ExecutableModelProblem, MajorCycleCompletion, MinorCycleProgram,
@@ -46,7 +46,8 @@ use casa_imaging_runtime::{
     SerialContinuumPassInput, SerialContinuumPlan, SerialContinuumRegistry,
     SerialProductPublicationExecutor, SerialProductPublicationPlan, SerialProductPublicationPolicy,
     SerialProductPublicationRegistry, SerialProductPublicationSink, StorageIoResourceBinding,
-    WorkExecutionContext, WorkImplementation, WorkImplementationId, WorkMeasurements, plan, run,
+    VisibilityProductStaging, WorkExecutionContext, WorkImplementation, WorkImplementationId,
+    WorkMeasurements, plan, run,
 };
 use casa_ms::{
     ResolvedSelectedObservationAccess, SelectedObservationResolutionRequest,
@@ -130,6 +131,8 @@ pub struct NativeApplicationOutcome {
     pub final_major_receipt: Option<ExecutionReceipt>,
     /// T21 solve evidence captured before its affine final-major handoff.
     pub minor_cycle: Option<NativeMinorCycleOutcome>,
+    /// Final model/residual visibility product identities and provenance.
+    pub visibility_products: Option<VisibilityProductCompletion>,
     /// Atomic product-publication receipt.
     pub publication_receipt: ExecutionReceipt,
     /// Final authoritative complete-data and model state.
@@ -280,13 +283,13 @@ where
     )?;
     let initial_receipt = runtime.receipts.open(runtime.attempts[0])?;
 
-    let (scientific, final_major_receipt, minor_cycle) = match algorithm {
+    let (scientific, final_major_receipt, minor_cycle, visibility_products) = match algorithm {
         ReconstructionAlgorithm::Dirty => {
             let result = registry
                 .implementation()
                 .take_completion()
                 .ok_or_else(|| boxed("dirty execution omitted final major-cycle evidence"))?;
-            (result.into_completion(), None, None)
+            (result.into_completion(), None, None, None)
         }
         ReconstructionAlgorithm::Hogbom
         | ReconstructionAlgorithm::Clark
@@ -312,6 +315,7 @@ where
                 &final_input,
             )?;
             let (physical, weighting, complete, resources, pass, _) = final_planned.into_parts();
+            let (visibility_staging, visibility_sink) = VisibilityProductStaging::new();
             let executor = SerialContinuumExecutor::new(
                 runtime.implementation.clone(),
                 problem.clone(),
@@ -322,7 +326,8 @@ where
                 access.open(problem)?,
                 ExecutableModelProblem::from_compiled(problem.clone())?,
                 SerialContinuumPassInput::FinalMajor(final_input),
-            );
+            )
+            .with_final_visibility_sink(visibility_sink);
             let registry = SerialContinuumRegistry::new(
                 runtime.registry,
                 runtime.implementation.clone(),
@@ -354,7 +359,12 @@ where
                 .ok_or_else(|| boxed("final-major execution omitted scientific evidence"))?
                 .into_completion();
             let receipt = runtime.receipts.open(runtime.attempts[1])?;
-            (completion, Some(receipt), minor_cycle)
+            (
+                completion,
+                Some(receipt),
+                minor_cycle,
+                Some(visibility_staging.completion()?),
+            )
         }
         _ => unreachable!("native validation admits only dirty or Högbom"),
     };
@@ -369,6 +379,7 @@ where
             initial_receipt,
             final_major_receipt,
             minor_cycle,
+            visibility_products,
         },
     )
 }
@@ -377,6 +388,7 @@ struct PriorPhaseOutcome {
     initial_receipt: ExecutionReceipt,
     final_major_receipt: Option<ExecutionReceipt>,
     minor_cycle: Option<NativeMinorCycleOutcome>,
+    visibility_products: Option<VisibilityProductCompletion>,
 }
 
 fn execution_policy(
@@ -516,6 +528,7 @@ where
         initial_receipt: prior.initial_receipt,
         final_major_receipt: prior.final_major_receipt,
         minor_cycle: prior.minor_cycle,
+        visibility_products: prior.visibility_products,
         publication_receipt,
         scientific,
         planned_products,

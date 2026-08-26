@@ -419,5 +419,25 @@ fn application_executes_single_ddid_stokes_i_mfs_hogbom_with_one_iteration() {
         result.minor_stop_reason,
         Some(ContinuumStopReason::IterationBound)
     );
+    let visibility = result
+        .outcome
+        .output
+        .visibility_products
+        .expect("final major replay closes visibility products");
+    assert_eq!(visibility.sample_count(), 1);
+    assert_eq!(
+        visibility.final_model(),
+        result
+            .outcome
+            .output
+            .scientific
+            .final_model()
+            .generation_id()
+    );
+    assert_ne!(
+        visibility.model_product().as_bytes(),
+        visibility.residual_product().as_bytes(),
+        "model and residual visibility products have distinct meanings"
+    );
     assert_standard_products(&image_name, &result.product_names);
 }

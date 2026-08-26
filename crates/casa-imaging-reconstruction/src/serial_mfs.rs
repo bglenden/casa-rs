@@ -8,7 +8,8 @@ use casa_imaging_model::{
     CompiledGeometryId, CompiledProblem, CompiledProblemId, CorrelationType, FiniteValuePolicy,
     InstrumentResponse, LogicalIdentity, NumericPrecision, NumericsContractId,
     PolarizationCoordinate, Projection, ReconstructionBasis, ReductionPolicy,
-    SelectedObservationGenerationId, SelectedVisibilitySample, WeightingCommitmentId,
+    SelectedObservationGenerationId, SelectedSampleAddress, SelectedVisibilitySample,
+    WeightingCommitmentId,
 };
 use ndarray::{Array2, Axis};
 use num_complex::Complex64;
@@ -597,6 +598,42 @@ impl CompleteDataOwnerResult {
     }
 }
 
+/// One selected visibility predicted by the exact paired forward operator.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FinalVisibilitySample {
+    address: SelectedSampleAddress,
+    observed: Complex64,
+    predicted: Complex64,
+    residual: Complex64,
+}
+
+impl FinalVisibilitySample {
+    /// Return the exact selected row/channel/correlation address.
+    #[must_use]
+    pub const fn address(self) -> SelectedSampleAddress {
+        self.address
+    }
+
+    /// Return the unweighted selected observed visibility.
+    #[must_use]
+    pub const fn observed(self) -> Complex64 {
+        self.observed
+    }
+
+    /// Return the paired-operator model visibility.
+    #[must_use]
+    pub const fn predicted(self) -> Complex64 {
+        self.predicted
+    }
+
+    /// Return `observed - predicted` for the same selected address.
+    #[must_use]
+    pub const fn residual(self) -> Complex64 {
+        self.residual
+    }
+}
+
 /// Reconstruction owner for one complete, ordered weighted replay.
 #[doc(hidden)]
 #[derive(Debug)]
@@ -611,6 +648,7 @@ pub struct CompleteDataOwnerState {
     coverage: CoverageEncoder,
     finite_values: FiniteValuePolicy,
     residual_model: Option<ModelGenerationId>,
+    predicted_selected: Vec<FinalVisibilitySample>,
     operator: SerialMfsOperator,
 }
 
@@ -635,6 +673,7 @@ impl CompleteDataOwnerState {
             coverage: CoverageEncoder::new(weighting.generation_id()),
             finite_values: specification.finite_values,
             residual_model: None,
+            predicted_selected: Vec::with_capacity(prepared.workload.max_replay_block_samples),
             operator: SerialMfsOperator::new(specification, prepared.workload, prepared.fft),
         })
     }
@@ -660,10 +699,14 @@ impl CompleteDataOwnerState {
     }
 
     /// Consume one reconstruction-owned T18 block in canonical replay order.
-    pub fn consume_block(&mut self, block: &WeightingReplayChunk) -> Result<(), SerialMfsError> {
+    pub fn consume_block(
+        &mut self,
+        block: &WeightingReplayChunk,
+    ) -> Result<&[FinalVisibilitySample], SerialMfsError> {
         if block.sequence() != self.next_block_sequence {
             return Err(SerialMfsError::BlockSequence);
         }
+        self.predicted_selected.clear();
         for weighted in block.samples() {
             self.coverage.push(weighted);
             let selected = weighted.selected();
@@ -676,6 +719,7 @@ impl CompleteDataOwnerState {
                         [f64::from(real), f64::from(imaginary)]
                     }
                 };
+                let mut predicted_visibility = Complex64::default();
                 for spectral in weighted.spectral_values() {
                     let contribution = spectral.contribution();
                     let sample = SerialMfsSample::new(
@@ -687,10 +731,19 @@ impl CompleteDataOwnerState {
                         f64::from(contribution.factor()),
                     )?;
                     if self.residual_model.is_some() {
-                        self.operator.push_with_residual(sample)?;
+                        predicted_visibility += self.operator.push_with_residual(sample)?;
                     } else {
                         self.operator.push(sample)?;
                     }
+                }
+                if self.residual_model.is_some() {
+                    let observed = Complex64::new(visibility[0], visibility[1]);
+                    self.predicted_selected.push(FinalVisibilitySample {
+                        address: selected.address,
+                        observed,
+                        predicted: predicted_visibility,
+                        residual: observed - predicted_visibility,
+                    });
                 }
             }
         }
@@ -705,7 +758,7 @@ impl CompleteDataOwnerState {
             .next_block_sequence
             .checked_add(1)
             .ok_or(SerialMfsError::CoverageOverflow)?;
-        Ok(())
+        Ok(&self.predicted_selected)
     }
 
     /// Apply the paired forward operator to one opaque bounded T18 replay block.
@@ -986,14 +1039,14 @@ impl SerialMfsOperator {
         Ok(())
     }
 
-    fn push_with_residual(&mut self, sample: SerialMfsSample) -> Result<(), SerialMfsError> {
+    fn push_with_residual(&mut self, sample: SerialMfsSample) -> Result<Complex64, SerialMfsError> {
+        let predicted = self.predict_one(sample)?;
         if sample.imaging_weight == 0.0 {
-            return Ok(());
+            return Ok(predicted);
         }
         let Some(taps) = self.gridder.taps(sample.uv_lambda()) else {
-            return Ok(());
+            return Ok(predicted);
         };
-        let predicted = self.predict_one_with_taps(sample, taps)?;
         let factor = sample.spectral_factor;
         let weighted_visibility =
             sample.visibility * sample.phase() * (sample.imaging_weight * factor);
@@ -1026,7 +1079,7 @@ impl SerialMfsOperator {
         let updated = self.sum_weight + corrected;
         self.sum_weight_compensation = (updated - self.sum_weight) - corrected;
         self.sum_weight = updated;
-        Ok(())
+        Ok(predicted)
     }
 
     /// Predict unweighted selected visibilities with the paired forward operator.

@@ -46,8 +46,8 @@ pub use serial_mfs::{
 pub mod runtime_adapter {
     pub use crate::serial_mfs::{
         CompleteDataOwnerCompletion, CompleteDataOwnerResult, CompleteDataOwnerState,
-        PreparedSerialMfsOperator, SerialMfsWorkload, prepare_serial_mfs_operator,
-        serial_mfs_workload,
+        FinalVisibilitySample, PreparedSerialMfsOperator, SerialMfsWorkload,
+        prepare_serial_mfs_operator, serial_mfs_workload,
     };
 }
 

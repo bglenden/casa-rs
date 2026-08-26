@@ -1005,12 +1005,14 @@ impl SerialMfsOperatorState {
     pub fn consume_weighted_block(
         &mut self,
         block: &WeightedObservationBlock,
-    ) -> Result<(), CompleteDataOperatorError> {
+    ) -> Result<
+        &[casa_imaging_reconstruction::runtime_adapter::FinalVisibilitySample],
+        CompleteDataOperatorError,
+    > {
         if block.weighting_generation() != self.state.weighting_generation() {
             return Err(CompleteDataOperatorError::WeightingGeneration);
         }
-        self.state.consume_block(block.reconstruction_block())?;
-        Ok(())
+        Ok(self.state.consume_block(block.reconstruction_block())?)
     }
 
     /// Predict one bounded T18 block through the same plan-authorized A operator.

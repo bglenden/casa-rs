@@ -96,9 +96,9 @@ pub use resource_authority::{
     TransferLink, TransferLinkId,
 };
 pub use serial_continuum::{
-    FinalMajorPhaseInput, InitialMajorPhaseCompletion, MinorCyclePhaseCompletion,
-    MinorCyclePhaseEvidence, SerialContinuumExecutor, SerialContinuumPassInput,
-    SerialContinuumRegistry,
+    FinalMajorPhaseInput, FinalVisibilitySink, InitialMajorPhaseCompletion,
+    MinorCyclePhaseCompletion, MinorCyclePhaseEvidence, SerialContinuumExecutor,
+    SerialContinuumPassInput, SerialContinuumRegistry, VisibilityProductStaging,
 };
 pub use serial_continuum_plan::{
     SerialContinuumExecutionPolicy, SerialContinuumPlan, SerialContinuumPlanError,
