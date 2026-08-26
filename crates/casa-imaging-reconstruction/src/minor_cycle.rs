@@ -33,7 +33,7 @@ use crate::{
 };
 
 const MINOR_CYCLE_EVIDENCE_DOMAIN: &[u8] = b"casa-rs-minor-cycle-evidence";
-const MINOR_CYCLE_EVIDENCE_VERSION: u32 = 2;
+const MINOR_CYCLE_EVIDENCE_VERSION: u32 = 3;
 
 macro_rules! minor_cycle_identity {
     ($name:ident, $version:ident, $summary:literal) => {
@@ -92,6 +92,7 @@ minor_cycle_identity!(
 #[derive(Debug, Clone, PartialEq)]
 pub struct MinorCycleProgram {
     algorithm: ReconstructionAlgorithm,
+    model_plane: MinorCycleModelPlane,
     gain: f64,
     threshold: f64,
     noise_sigma: Option<f64>,
@@ -99,6 +100,53 @@ pub struct MinorCycleProgram {
     maximum_model_update: f64,
     cycle_threshold: Option<CycleThresholdControls>,
     component_sequence_limit: Option<usize>,
+}
+
+/// Typed model-space plane updated by one shared minor-cycle control loop.
+///
+/// The solver mathematics remain two-dimensional; this coordinate chooses
+/// which domain, spectral coefficient, and polarization plane receives the
+/// resulting sparse delta. Later composition tickets may construct their own
+/// normal-state planes and reuse this loop without duplicating its stopping,
+/// masking, or component-accounting behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MinorCycleModelPlane {
+    domain: usize,
+    coefficient: usize,
+    polarization: usize,
+}
+
+impl MinorCycleModelPlane {
+    /// The primary continuum Stokes-I constant-basis plane.
+    pub const PRIMARY: Self = Self::new(0, 0, 0);
+
+    /// Construct one typed model-plane coordinate.
+    #[must_use]
+    pub const fn new(domain: usize, coefficient: usize, polarization: usize) -> Self {
+        Self {
+            domain,
+            coefficient,
+            polarization,
+        }
+    }
+
+    /// Return the image-domain ordinal.
+    #[must_use]
+    pub const fn domain(self) -> usize {
+        self.domain
+    }
+
+    /// Return the spectral-basis coefficient ordinal.
+    #[must_use]
+    pub const fn coefficient(self) -> usize {
+        self.coefficient
+    }
+
+    /// Return the polarization-plane ordinal.
+    #[must_use]
+    pub const fn polarization(self) -> usize {
+        self.polarization
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -215,6 +263,7 @@ impl MinorCycleProgram {
         }
         Ok(Self {
             algorithm,
+            model_plane: MinorCycleModelPlane::PRIMARY,
             gain,
             threshold,
             noise_sigma: None,
@@ -229,6 +278,19 @@ impl MinorCycleProgram {
     #[must_use]
     pub const fn algorithm(&self) -> &ReconstructionAlgorithm {
         &self.algorithm
+    }
+
+    /// Select the typed model plane updated by this shared solver loop.
+    #[must_use]
+    pub const fn on_model_plane(mut self, model_plane: MinorCycleModelPlane) -> Self {
+        self.model_plane = model_plane;
+        self
+    }
+
+    /// Return the selected typed model plane.
+    #[must_use]
+    pub const fn model_plane(&self) -> MinorCycleModelPlane {
+        self.model_plane
     }
 
     /// Record the first accepted components as diagnostic evidence.
@@ -652,9 +714,8 @@ pub enum MinorCycleError {
     /// The reconstruction mask intersects no valid model support.
     #[error("reconstruction mask contains no valid model support")]
     EmptyValidSupport,
-    /// The named generation does not match the single-plane constant-basis
-    /// normal-state geometry.
-    #[error("model generation does not match the normal-state plane")]
+    /// The selected model-space plane does not match the normal-state geometry.
+    #[error("selected model plane does not match the normal-state plane")]
     ModelShapeMismatch,
     /// The named generation is not the view's final model generation.
     #[error("named generation is not the normal state's final model generation")]
@@ -693,8 +754,9 @@ impl From<casa_imaging_model::ModelContractError> for MinorCycleError {
 /// absolute residual over the valid-support window, normalize by the PSF
 /// peak, stop when below threshold, otherwise subtract `gain * strength`
 /// scaled by the PSF centered on the peak and accumulate the same flux at the
-/// peak cell. Scalar Stokes-I convention uses the real plane, matching the
-/// Float-image reference behavior.
+/// peak cell. The current normal-state scalar convention uses the real plane,
+/// matching the Float-image reference behavior; the typed model-plane
+/// coordinate determines where the resulting sparse delta is accumulated.
 ///
 /// # Errors
 ///
@@ -710,11 +772,15 @@ pub fn run_minor_cycle(
 ) -> Result<MinorCycleResult, MinorCycleError> {
     let shape = view.shape();
     let cells = shape[0] * shape[1];
-    if base.shape().domains().len() != 1
-        || base.shape().coefficients() != 1
-        || base.shape().polarizations() != 1
-        || base.shape().domains()[0].pixels() != shape
-        || base.samples().len() != cells
+    let model_plane = controls.model_plane();
+    if base
+        .shape()
+        .domains()
+        .get(model_plane.domain())
+        .is_none_or(|domain| domain.pixels() != shape)
+        || model_plane.coefficient() >= base.shape().coefficients()
+        || model_plane.polarization() >= base.shape().polarizations()
+        || base.samples().len() != base.shape().sample_count()
     {
         return Err(MinorCycleError::ModelShapeMismatch);
     }
@@ -765,7 +831,9 @@ pub fn run_minor_cycle(
     }
     let noise_rms = controls
         .noise_sigma()
-        .map(|_| robust_masked_rms(&residual, shape, base, mask).map(|rms| rms / psf_peak))
+        .map(|_| {
+            robust_masked_rms(&residual, shape, base, model_plane, mask).map(|rms| rms / psf_peak)
+        })
         .transpose()?;
     let global_threshold = noise_rms
         .zip(controls.noise_sigma())
@@ -831,7 +899,7 @@ pub fn run_minor_cycle(
     let mut initial_multiscale_component = None::<f64>;
     let has_valid_support = (0..cells).any(|index| {
         let pixel = plane_pixel(index, shape);
-        mask.contains(pixel) && valid_support(base, shape, pixel)
+        mask.contains(pixel) && valid_support(base, shape, model_plane, pixel)
     });
     let mut stop_reason = (!has_valid_support).then_some(MinorCycleStopReason::ThresholdReached);
     let iteration_budget = if has_valid_support {
@@ -848,6 +916,7 @@ pub fn run_minor_cycle(
                 shape,
                 psf_peak_pixel,
                 base,
+                model_plane,
                 mask,
                 kernels,
             )
@@ -865,7 +934,7 @@ pub fn run_minor_cycle(
                 |pixel| {
                     let index = pixel[0] * shape[1] + pixel[1];
                     mask.contains(pixel)
-                        && valid_support(base, shape, pixel)
+                        && valid_support(base, shape, model_plane, pixel)
                         && clark_state.as_ref().is_none_or(|state| state.active[index])
                 },
             )
@@ -946,12 +1015,13 @@ pub fn run_minor_cycle(
         }
         iterations += 1;
         total_flux += flux.abs();
-        let cell =
-            model_cell(shape, peak_pixel).expect("a scanned peak pixel lies inside the plane");
+        let cell = model_cell(model_plane, shape, peak_pixel)
+            .expect("a scanned peak pixel lies inside the plane");
         let scale_px = if let Some(scale_index) = scale_index {
             add_scaled_terms(
                 &mut terms,
                 base,
+                model_plane,
                 shape,
                 peak_pixel,
                 &multiscale.as_ref().expect("scale candidate has kernels")[scale_index],
@@ -992,7 +1062,7 @@ pub fn run_minor_cycle(
                 &residual,
                 shape,
                 |value| *value,
-                |pixel| mask.contains(pixel) && valid_support(base, shape, pixel),
+                |pixel| mask.contains(pixel) && valid_support(base, shape, model_plane, pixel),
             )
             .ok_or(MinorCycleError::EmptyValidSupport)?;
             let global_strength = residual[global_peak].abs() / psf_peak;
@@ -1027,7 +1097,7 @@ pub fn run_minor_cycle(
         &residual,
         shape,
         |value| *value,
-        |pixel| mask.contains(pixel) && valid_support(base, shape, pixel),
+        |pixel| mask.contains(pixel) && valid_support(base, shape, model_plane, pixel),
     )
     .map_or(0.0, |index| residual[index].abs() / psf_peak);
 
@@ -1091,7 +1161,7 @@ pub fn run_minor_cycle(
     })
 }
 
-/// Canonical single-plane pixel of one plane-storage index.
+/// Canonical pixel of one two-dimensional plane-storage index.
 ///
 /// Normal-state planes are stored x-major (`finish_bound` pushes x outer, y
 /// inner), so index `p` maps to pixel `[p / H, p % H]`.
@@ -1099,9 +1169,18 @@ fn plane_pixel(index: usize, shape: [usize; 2]) -> [usize; 2] {
     [index / shape[1], index % shape[1]]
 }
 
-fn model_cell(shape: [usize; 2], pixel: [usize; 2]) -> Option<ModelCell> {
+fn model_cell(
+    model_plane: MinorCycleModelPlane,
+    shape: [usize; 2],
+    pixel: [usize; 2],
+) -> Option<ModelCell> {
     if pixel[0] < shape[0] && pixel[1] < shape[1] {
-        Some(ModelCell::new(0, 0, 0, pixel))
+        Some(ModelCell::new(
+            model_plane.domain(),
+            model_plane.coefficient(),
+            model_plane.polarization(),
+            pixel,
+        ))
     } else {
         None
     }
@@ -1113,8 +1192,13 @@ fn canonical_flat(base: &ModelGeneration, cell: ModelCell) -> usize {
         .expect("component pixels stay inside the base shape")
 }
 
-fn valid_support(base: &ModelGeneration, shape: [usize; 2], pixel: [usize; 2]) -> bool {
-    let Some(cell) = model_cell(shape, pixel) else {
+fn valid_support(
+    base: &ModelGeneration,
+    shape: [usize; 2],
+    model_plane: MinorCycleModelPlane,
+    pixel: [usize; 2],
+) -> bool {
+    let Some(cell) = model_cell(model_plane, shape, pixel) else {
         return false;
     };
     base.samples()[canonical_flat(base, cell)].support() == ModelSupport::Valid
@@ -1245,6 +1329,7 @@ fn robust_masked_rms(
     residual: &[f64],
     shape: [usize; 2],
     base: &ModelGeneration,
+    model_plane: MinorCycleModelPlane,
     mask: &ReconstructionMask,
 ) -> Result<f64, MinorCycleError> {
     let mut values = residual
@@ -1252,7 +1337,8 @@ fn robust_masked_rms(
         .enumerate()
         .filter_map(|(index, value)| {
             let pixel = plane_pixel(index, shape);
-            (mask.contains(pixel) && valid_support(base, shape, pixel)).then_some(*value)
+            (mask.contains(pixel) && valid_support(base, shape, model_plane, pixel))
+                .then_some(*value)
         })
         .collect::<Vec<_>>();
     if values.is_empty() {
@@ -1382,6 +1468,7 @@ fn select_multiscale_candidate(
     shape: [usize; 2],
     psf_peak: [usize; 2],
     base: &ModelGeneration,
+    model_plane: MinorCycleModelPlane,
     mask: &ReconstructionMask,
     kernels: &[ScaleKernel],
 ) -> Option<MultiscaleCandidate> {
@@ -1393,7 +1480,7 @@ fn select_multiscale_candidate(
         }
         for index in 0..residual.len() {
             let pixel = plane_pixel(index, shape);
-            if !kernel_fits(base, shape, pixel, mask, kernel) {
+            if !kernel_fits(base, model_plane, shape, pixel, mask, kernel) {
                 continue;
             }
             let dirty = kernel
@@ -1458,6 +1545,7 @@ fn multiscale_normalization(
 
 fn kernel_fits(
     base: &ModelGeneration,
+    model_plane: MinorCycleModelPlane,
     shape: [usize; 2],
     centre: [usize; 2],
     mask: &ReconstructionMask,
@@ -1471,7 +1559,9 @@ fn kernel_fits(
         .iter()
         .filter_map(|(offset, weight)| {
             offset_pixel(centre, *offset, shape)
-                .filter(|pixel| mask.contains(*pixel) && valid_support(base, shape, *pixel))
+                .filter(|pixel| {
+                    mask.contains(*pixel) && valid_support(base, shape, model_plane, *pixel)
+                })
                 .map(|_| *weight)
         })
         .sum::<f64>();
@@ -1493,6 +1583,7 @@ fn offset_pixel(pixel: [usize; 2], offset: [isize; 2], shape: [usize; 2]) -> Opt
 fn add_scaled_terms(
     terms: &mut BTreeMap<usize, f64>,
     base: &ModelGeneration,
+    model_plane: MinorCycleModelPlane,
     shape: [usize; 2],
     centre: [usize; 2],
     kernel: &ScaleKernel,
@@ -1501,7 +1592,8 @@ fn add_scaled_terms(
     for (offset, weight) in &kernel.samples {
         let pixel =
             offset_pixel(centre, *offset, shape).expect("selected scale fits model support");
-        let cell = model_cell(shape, pixel).expect("scale pixel lies inside the model plane");
+        let cell =
+            model_cell(model_plane, shape, pixel).expect("scale pixel lies inside the model plane");
         *terms.entry(canonical_flat(base, cell)).or_insert(0.0) += flux * weight;
     }
 }
@@ -1625,6 +1717,9 @@ fn minor_cycle_evidence_id(
     encoder.identity(normal_state_completion.as_bytes());
     encoder.identity(normal_state_content.as_bytes());
     encoder.identity(mask.generation_id().as_bytes());
+    encoder.usize(controls.model_plane().domain());
+    encoder.usize(controls.model_plane().coefficient());
+    encoder.usize(controls.model_plane().polarization());
     match controls.algorithm() {
         ReconstructionAlgorithm::Hogbom => encoder.u8(0),
         ReconstructionAlgorithm::Clark => encoder.u8(1),
@@ -1705,9 +1800,20 @@ mod tests {
     use num_complex::Complex64;
 
     use super::{
-        build_scale_kernels, multiscale_diverged, subtract_psf, subtract_psf_circular,
-        within_multiscale_border,
+        MinorCycleModelPlane, build_scale_kernels, model_cell, multiscale_diverged, subtract_psf,
+        subtract_psf_circular, within_multiscale_border,
     };
+
+    #[test]
+    fn model_plane_coordinates_are_preserved_in_component_cells() {
+        let cell = model_cell(MinorCycleModelPlane::new(2, 3, 1), [8, 8], [4, 5])
+            .expect("pixel lies in the selected model plane");
+
+        assert_eq!(cell.domain(), 2);
+        assert_eq!(cell.coefficient(), 3);
+        assert_eq!(cell.polarization(), 1);
+        assert_eq!(cell.pixel(), [4, 5]);
+    }
 
     #[test]
     fn multiscale_search_excludes_the_casa_one_and_a_half_scale_border() {

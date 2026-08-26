@@ -41,6 +41,16 @@ unsafe extern "C" {
         path: *const std::ffi::c_char,
         out_error: *mut *mut std::ffi::c_char,
     ) -> i32;
+    #[link_name = "cpp_ms_write_heterogeneous_tiled_shape_fixture"]
+    fn ffi_cpp_ms_write_heterogeneous_tiled_shape_fixture(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    #[link_name = "cpp_ms_verify_heterogeneous_model_clone"]
+    fn ffi_cpp_ms_verify_heterogeneous_model_clone(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
     #[link_name = "cpp_ms_verify_basic_fixture"]
     fn ffi_cpp_ms_verify_basic_fixture(
         path: *const std::ffi::c_char,
@@ -128,6 +138,45 @@ impl MeasurementSetOracle {
             unsafe {
                 CasacoreOracleRuntime::cpp_status(
                     "measurement_set.write_basic_fixture",
+                    rc,
+                    error,
+                    cpp_table_free_error,
+                )?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Write a C++-created two-shape DATA fixture using `TiledShapeStMan`.
+    pub fn write_heterogeneous_tiled_shape_fixture(path: &Path) -> Result<(), OracleError> {
+        oracle_operation!("measurement_set.write_heterogeneous_tiled_shape_fixture", {
+            let c_path = CasacoreOracleRuntime::c_path("MeasurementSet path", path)?;
+            let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+            let rc = unsafe {
+                ffi_cpp_ms_write_heterogeneous_tiled_shape_fixture(c_path.as_ptr(), &mut error)
+            };
+            unsafe {
+                CasacoreOracleRuntime::cpp_status(
+                    "measurement_set.write_heterogeneous_tiled_shape_fixture",
+                    rc,
+                    error,
+                    cpp_table_free_error,
+                )?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Verify C++ storage-manager and row-shape interop after Rust clones MODEL_DATA.
+    pub fn verify_heterogeneous_model_clone(path: &Path) -> Result<(), OracleError> {
+        oracle_operation!("measurement_set.verify_heterogeneous_model_clone", {
+            let c_path = CasacoreOracleRuntime::c_path("MeasurementSet path", path)?;
+            let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+            let rc =
+                unsafe { ffi_cpp_ms_verify_heterogeneous_model_clone(c_path.as_ptr(), &mut error) };
+            unsafe {
+                CasacoreOracleRuntime::cpp_status(
+                    "measurement_set.verify_heterogeneous_model_clone",
                     rc,
                     error,
                     cpp_table_free_error,

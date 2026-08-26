@@ -275,9 +275,16 @@ struct ModelColumnWorker {
     join: JoinHandle<io::Result<u64>>,
 }
 
+pub(crate) struct ModelDataCellWrite {
+    physical_row: u64,
+    channel_index: u32,
+    correlation_index: u32,
+    value: num_complex::Complex32,
+}
+
 enum ModelColumnCommand {
     Write {
-        values: Vec<(u64, u32, u32, num_complex::Complex32)>,
+        values: Vec<ModelDataCellWrite>,
         reply: SyncSender<Result<(), String>>,
     },
     Finish {
@@ -324,9 +331,14 @@ impl ModelColumnWorker {
                                     written_samples.checked_add(values.len() as u64).ok_or_else(
                                         || io::Error::other("MODEL_DATA sample count overflowed"),
                                     )?;
-                                for (row, channel, correlation, value) in values {
+                                for cell in values {
                                     writer
-                                        .write(row, channel, correlation, value)
+                                        .write(
+                                            cell.physical_row,
+                                            cell.channel_index,
+                                            cell.correlation_index,
+                                            cell.value,
+                                        )
                                         .map_err(io::Error::other)?;
                                 }
                                 Ok::<(), io::Error>(())
@@ -375,12 +387,12 @@ impl ModelColumnWorker {
             .map(|sample| {
                 let address = sample.address();
                 let predicted = sample.predicted();
-                (
-                    address.physical_row,
-                    address.channel_index,
-                    address.correlation_index,
-                    num_complex::Complex32::new(predicted.re as f32, predicted.im as f32),
-                )
+                ModelDataCellWrite {
+                    physical_row: address.physical_row,
+                    channel_index: address.channel_index,
+                    correlation_index: address.correlation_index,
+                    value: num_complex::Complex32::new(predicted.re as f32, predicted.im as f32),
+                }
             })
             .collect();
         let (reply, response) = std::sync::mpsc::sync_channel(0);

@@ -10,9 +10,9 @@ use std::{
 
 use casa_imaging_model::CompiledProblem;
 use casa_imaging_reconstruction::{WeightingExecutionLimits, WeightingPlan, plan_weighting};
-use casa_ms::{ModelColumnStorageBounds, SelectedObservationResidencyCertificate};
+use casa_ms::{ModelColumnStoragePlan, SelectedObservationResidencyCertificate};
 
-use crate::serial_continuum::MODEL_COLUMN_WORKER_STACK_BYTES;
+use crate::serial_continuum::{MODEL_COLUMN_WORKER_STACK_BYTES, ModelDataCellWrite};
 use crate::*;
 
 const READ_NODE: &str = "transaction-read";
@@ -36,7 +36,7 @@ pub struct SerialContinuumExecutionPolicy {
     stage_nanos: u64,
     minor_cycle_bytes: u64,
     confidence_parts_per_million: u32,
-    model_data: Option<ModelColumnStorageBounds>,
+    model_data: Option<ModelColumnStoragePlan>,
 }
 
 impl SerialContinuumExecutionPolicy {
@@ -63,10 +63,10 @@ impl SerialContinuumExecutionPolicy {
         }
     }
 
-    /// Reserve the complete storage-owner MODEL_DATA replacement on a terminal pass.
+    /// Add the storage-owner plan for a terminal in-place MODEL_DATA write.
     #[must_use]
-    pub const fn with_model_data(mut self, bounds: ModelColumnStorageBounds) -> Self {
-        self.model_data = Some(bounds);
+    pub const fn with_model_data(mut self, plan: ModelColumnStoragePlan) -> Self {
+        self.model_data = Some(plan);
         self
     }
 }
@@ -656,7 +656,7 @@ fn append_model_data_resources<R: ImplementationRegistry>(
     base: PhysicalWorkBinding,
     policy: &SerialContinuumExecutionPolicy,
     replay: &WorkNodeId,
-    bounds: ModelColumnStorageBounds,
+    storage_plan: ModelColumnStoragePlan,
 ) -> Result<PhysicalWorkBinding, SerialContinuumPlanError> {
     let commit = base.observation_transaction().commit().clone();
     let allocation = AllocationId::new("serial-model-data-cell-buffer");
@@ -686,13 +686,14 @@ fn append_model_data_resources<R: ImplementationRegistry>(
     let queue_id = existing_queue
         .clone()
         .unwrap_or_else(|| "serial-model-data-queue".to_string());
-    let bytes = bounds.column_bytes().max(1);
-    let cell_bytes = bounds.maximum_cell_bytes().max(1);
+    let persistent_bytes = storage_plan.additional_persistent_bytes();
+    let write_bytes = storage_plan.write_bytes().max(1);
+    let cell_bytes = storage_plan.maximum_cell_bytes().max(1);
     let block_copy_bytes = u64::try_from(policy.weighting_limits.max_block_samples())
         .ok()
         .and_then(|samples| {
             samples.checked_mul(
-                u64::try_from(std::mem::size_of::<(u64, u32, u32, num_complex::Complex32)>())
+                u64::try_from(std::mem::size_of::<ModelDataCellWrite>())
                     .expect("MODEL_DATA write tuple size fits u64"),
             )
         })
@@ -718,14 +719,6 @@ fn append_model_data_resources<R: ImplementationRegistry>(
         .amount = 2;
     replay_node.claims.extend([
         ResourceClaim {
-            resource: LeaseResource::Storage {
-                demand_id: storage_id.clone(),
-                use_kind: StorageUseKind::FinalOutput,
-            },
-            amount: bytes,
-            lifetime: write_lifetime.clone(),
-        },
-        ResourceClaim {
             resource: LeaseResource::IoBuffer(IoBufferKind::Writeback),
             amount: cell_bytes,
             lifetime: write_lifetime.clone(),
@@ -736,6 +729,16 @@ fn append_model_data_resources<R: ImplementationRegistry>(
             lifetime: write_lifetime.clone(),
         },
     ]);
+    if persistent_bytes > 0 {
+        replay_node.claims.push(ResourceClaim {
+            resource: LeaseResource::Storage {
+                demand_id: storage_id.clone(),
+                use_kind: StorageUseKind::FinalOutput,
+            },
+            amount: persistent_bytes,
+            lifetime: write_lifetime.clone(),
+        });
+    }
     if existing_rate.is_none() {
         replay_node.claims.push(ResourceClaim {
             resource: LeaseResource::Rate {
@@ -793,18 +796,20 @@ fn append_model_data_resources<R: ImplementationRegistry>(
         .thread_stack_bytes
         .checked_add(MODEL_COLUMN_WORKER_STACK_BYTES as u64)
         .ok_or(SerialContinuumPlanError::Overflow)?;
-    alternative.demand.storage.push(StorageDemand {
-        demand_id: storage_id,
-        domain: policy.storage_io.domain().clone(),
-        temporary_bytes: 0,
-        staged_output_bytes: 0,
-        final_output_bytes: bytes,
-        persistent_cache_bytes: 0,
-        read_rate: CountDemand::zero(),
-        write_rate: CountDemand::zero(),
-        operations_rate: CountDemand::zero(),
-        queue_slots: CountDemand::zero(),
-    });
+    if persistent_bytes > 0 {
+        alternative.demand.storage.push(StorageDemand {
+            demand_id: storage_id,
+            domain: policy.storage_io.domain().clone(),
+            temporary_bytes: 0,
+            staged_output_bytes: 0,
+            final_output_bytes: persistent_bytes,
+            persistent_cache_bytes: 0,
+            read_rate: CountDemand::zero(),
+            write_rate: CountDemand::zero(),
+            operations_rate: CountDemand::zero(),
+            queue_slots: CountDemand::zero(),
+        });
+    }
     if existing_rate.is_none() {
         alternative.demand.rates.push(RateDemand {
             demand_id: rate_id,
@@ -904,7 +909,7 @@ fn append_model_data_resources<R: ImplementationRegistry>(
         .map(|stage| {
             if stage.node() == replay {
                 let mut io = stage.io().to_vec();
-                io.push(IoPrediction::new(IoBufferKind::Writeback, bytes, 1));
+                io.push(IoPrediction::new(IoBufferKind::Writeback, write_bytes, 1));
                 stage.with_io(io)
             } else {
                 stage

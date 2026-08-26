@@ -449,12 +449,11 @@ fn validate_transaction_nodes(
                 WorkKind::ObservationReadWriteback,
                 "MODEL_DATA writeback",
             )?;
-            require_claim(
-                model,
-                is_final_output,
-                "final-output storage",
-                "MODEL_DATA writeback",
-            )?;
+            // An existing MODEL_DATA column is overwritten in place and
+            // requires no new persistent capacity. Creation plans carry a
+            // FinalOutput claim, but the transaction law requires only the
+            // bounded write buffer and terminal I/O fence common to both
+            // physical operations.
             require_claim(
                 model,
                 is_writeback_buffer,
@@ -800,16 +799,6 @@ fn is_staged_output(resource: &LeaseResource) -> bool {
         resource,
         LeaseResource::Storage {
             use_kind: StorageUseKind::StagedOutput,
-            ..
-        }
-    )
-}
-
-fn is_final_output(resource: &LeaseResource) -> bool {
-    matches!(
-        resource,
-        LeaseResource::Storage {
-            use_kind: StorageUseKind::FinalOutput,
             ..
         }
     )

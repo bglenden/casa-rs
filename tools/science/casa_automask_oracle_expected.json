@@ -1,0 +1,23 @@
+{
+  "schema": "casa-rs-automask-topology-oracle-v1",
+  "provenance": {
+    "casa_version": "6.7.6.14",
+    "source_evidence_schema": "casa-rs-solver-crosscheck-v1",
+    "case": "automask",
+    "controls": {
+      "gain": 0.2,
+      "niter": 4,
+      "cycleniter": 2,
+      "nmajor": 2,
+      "sidelobethreshold": 0.5,
+      "noisethreshold": 1.0,
+      "lownoisethreshold": 1.0,
+      "minbeamfrac": 0.0,
+      "growiterations": 1
+    }
+  },
+  "shape": [64, 64],
+  "support_pixels": 3490,
+  "support_sha256_u8_x_major": "c37e08ca7c518f0f138ef5cbcf2ea3acaa798644ea920bd031930d46d76e8f31",
+  "support_packbits_little_base64": "+P//x//////+///z//////////3//////////v//////////////////////////////////////////////////////////////////////////////////////////////////////+///////P//9//////8ff/7//////w8/////////B4////////8Dx////////wHx////////APj//////38A/P//////PwD+/+////8fAP//8////w8A///4////BwD/P/z///+DAf8P/v////MB/wP//////wH/gP//////AB/A/////38AB+D/////PwAA8P////8/AAD4/////x8AAPz/////D4AA/v////8H4AD//////wPwAP//////AfiA//////8A/sD/////fwD/wP////8/gP/A/////x/g/8D/////D/D/4P////8D+P/w/////wH+//j/////AP///P///3+A////////P8D///////8f4P///////w/4////////B/z///////8D/v///////wD///////9/gP///////z/A////////H/D///////8P+P///////wf8////////Af7///////8A////////f4D///////8/wP///////w/g////////B/D///////8D+P////8="
+}

@@ -204,18 +204,33 @@ struct PendingModelCell {
     values: ndarray::ArrayD<Complex32>,
 }
 
-/// Exact physical bounds of one bounded `MODEL_DATA` write.
+/// Owner-derived storage plan for one bounded `MODEL_DATA` write.
+///
+/// The plan is derived from MAIN row/DDID coordinates and the standard
+/// DATA_DESCRIPTION, SPECTRAL_WINDOW, and POLARIZATION metadata. It never reads
+/// a visibility payload merely to discover a cell shape.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ModelColumnStorageBounds {
-    column_bytes: u64,
+pub struct ModelColumnStoragePlan {
+    additional_persistent_bytes: u64,
+    write_bytes: u64,
     maximum_cell_bytes: u64,
 }
 
-impl ModelColumnStorageBounds {
-    /// Bytes occupied by all complex samples in the complete destination column.
+impl ModelColumnStoragePlan {
+    /// New persistent capacity required for this write.
+    ///
+    /// This is the complete logical column size when `MODEL_DATA` must be
+    /// created and zero-initialized, and zero for an in-place overwrite of an
+    /// existing column.
     #[must_use]
-    pub const fn column_bytes(self) -> u64 {
-        self.column_bytes
+    pub const fn additional_persistent_bytes(self) -> u64 {
+        self.additional_persistent_bytes
+    }
+
+    /// Bytes written by the initial column creation and selected-cell update.
+    #[must_use]
+    pub const fn write_bytes(self) -> u64 {
+        self.write_bytes
     }
 
     /// Largest single-row cell copied or updated by the bounded writer.
@@ -223,36 +238,6 @@ impl ModelColumnStorageBounds {
     pub const fn maximum_cell_bytes(self) -> u64 {
         self.maximum_cell_bytes
     }
-}
-
-/// Probe physical write bounds while validating the owner precondition.
-#[cfg(unix)]
-pub fn model_column_storage_bounds(
-    path: impl AsRef<Path>,
-    expected: &ObservationSourceState,
-) -> Result<ModelColumnStorageBounds, ObservationOwnerError> {
-    let measurement_set = MeasurementSet::open_retained_read(path)?;
-    let manifest = OwnerManifest::read(measurement_set.main_table().keywords())?;
-    manifest.validate_physical_state(&measurement_set)?;
-    validate_transaction_precondition(&manifest, &measurement_set, expected)?;
-    let data = measurement_set.data_column(crate::VisibilityDataColumn::Data)?;
-    let mut column_bytes = 0_u64;
-    let mut maximum_cell_bytes = 0_u64;
-    for row in 0..measurement_set.main_table().row_count() {
-        let samples = u64::try_from(data.get(row)?.len())
-            .map_err(|_| ObservationOwnerError::PredictionAddress)?;
-        let bytes = samples
-            .checked_mul(std::mem::size_of::<Complex32>() as u64)
-            .ok_or(ObservationOwnerError::PredictionAddress)?;
-        column_bytes = column_bytes
-            .checked_add(bytes)
-            .ok_or(ObservationOwnerError::PredictionAddress)?;
-        maximum_cell_bytes = maximum_cell_bytes.max(bytes);
-    }
-    Ok(ModelColumnStorageBounds {
-        column_bytes,
-        maximum_cell_bytes,
-    })
 }
 
 #[cfg(unix)]
@@ -292,12 +277,16 @@ impl ModelDataWrite {
                 .add_tiled_column_clone("DATA", "MODEL_DATA", "TiledModelData")?;
             let row_count = measurement_set.main_table().row_count();
             for row in 0..row_count {
-                let source = zero_model_cell(
-                    measurement_set
-                        .data_column(crate::VisibilityDataColumn::Data)?
-                        .get(row)?,
+                let data_description_id = main_data_description_id(&measurement_set, row)?;
+                let shape = model_cell_shape(&measurement_set, data_description_id)?;
+                persist_model_cell(
+                    measurement_set.main_table_mut(),
+                    row,
+                    ArrayValue::Complex32(ndarray::ArrayD::from_elem(
+                        ndarray::IxDyn(&shape),
+                        Complex32::new(0.0, 0.0),
+                    )),
                 )?;
-                persist_model_cell(measurement_set.main_table_mut(), row, source)?;
             }
         } else {
             zero_selected_model_cells(&mut measurement_set, selection)?;
@@ -426,6 +415,7 @@ impl ResolvedSelectedObservation {
 pub struct ResolvedSelectedObservationAccess {
     binding: ObservationSourceBinding,
     measures: SelectedObservationMeasures,
+    model_column_storage: ModelColumnStoragePlan,
 }
 
 impl ResolvedSelectedObservationAccess {
@@ -439,6 +429,12 @@ impl ResolvedSelectedObservationAccess {
     #[must_use]
     pub const fn source_binding(&self) -> &ObservationSourceBinding {
         &self.binding
+    }
+
+    /// Return the payload-free storage plan captured by this owner resolution.
+    #[must_use]
+    pub const fn model_column_storage_plan(&self) -> ModelColumnStoragePlan {
+        self.model_column_storage
     }
 
     /// Replace the caller's upper-bound content budget with the smallest budget
@@ -571,6 +567,8 @@ pub fn resolve_selected_observation(
     let manifest = OwnerManifest::read(measurement_set.main_table().keywords())?;
     manifest.validate_physical_state(&measurement_set)?;
     validate_physical_selection(&measurement_set, &request.selection)?;
+    let model_column_storage =
+        derive_model_column_storage_plan(&measurement_set, &request.selection)?;
     let generations =
         manifest.source_generations(&measurement_set, request.visibility, request.weights)?;
     let identity = MeasurementSetIdentity::new(parse_identity(
@@ -595,7 +593,11 @@ pub fn resolve_selected_observation(
     let binding = ObservationSourceBinding::new(state, request.content_budget);
     Ok(ResolvedSelectedObservation {
         snapshot_input,
-        access: ResolvedSelectedObservationAccess { binding, measures },
+        access: ResolvedSelectedObservationAccess {
+            binding,
+            measures,
+            model_column_storage,
+        },
     })
 }
 
@@ -1021,14 +1023,100 @@ fn validate_transaction_precondition(
     manifest.validate_physical_state(measurement_set)
 }
 
-fn zero_model_cell(source: &ArrayValue) -> Result<ArrayValue, ObservationOwnerError> {
-    let ArrayValue::Complex32(values) = source else {
+fn main_data_description_id(
+    measurement_set: &MeasurementSet,
+    row: usize,
+) -> Result<usize, ObservationOwnerError> {
+    let value = measurement_set
+        .main_table()
+        .column_accessor("DATA_DESC_ID")?
+        .get(row)?
+        .ok_or(ObservationOwnerError::PredictionAddress)?;
+    let Value::Scalar(ScalarValue::Int32(data_description_id)) = value else {
         return Err(ObservationOwnerError::PredictionAddress);
     };
-    Ok(ArrayValue::Complex32(ndarray::ArrayD::from_elem(
-        values.raw_dim(),
-        Complex32::new(0.0, 0.0),
-    )))
+    usize::try_from(*data_description_id).map_err(|_| ObservationOwnerError::PredictionAddress)
+}
+
+fn model_cell_shape(
+    measurement_set: &MeasurementSet,
+    data_description_id: usize,
+) -> Result<[usize; 2], ObservationOwnerError> {
+    let data_description = measurement_set.data_description()?;
+    let spectral_window_id =
+        usize::try_from(data_description.spectral_window_id(data_description_id)?)
+            .map_err(|_| ObservationOwnerError::PredictionAddress)?;
+    let polarization_id = usize::try_from(data_description.polarization_id(data_description_id)?)
+        .map_err(|_| ObservationOwnerError::PredictionAddress)?;
+    let channels = usize::try_from(
+        measurement_set
+            .spectral_window()?
+            .num_chan(spectral_window_id)?,
+    )
+    .map_err(|_| ObservationOwnerError::PredictionAddress)?;
+    let correlations = usize::try_from(measurement_set.polarization()?.num_corr(polarization_id)?)
+        .map_err(|_| ObservationOwnerError::PredictionAddress)?;
+    Ok([correlations, channels])
+}
+
+fn model_cell_bytes(
+    measurement_set: &MeasurementSet,
+    data_description_id: usize,
+) -> Result<u64, ObservationOwnerError> {
+    let [correlations, channels] = model_cell_shape(measurement_set, data_description_id)?;
+    u64::try_from(correlations)
+        .ok()
+        .and_then(|correlations| {
+            u64::try_from(channels)
+                .ok()
+                .and_then(|channels| correlations.checked_mul(channels))
+        })
+        .and_then(|samples| samples.checked_mul(std::mem::size_of::<Complex32>() as u64))
+        .ok_or(ObservationOwnerError::PredictionAddress)
+}
+
+fn derive_model_column_storage_plan(
+    measurement_set: &MeasurementSet,
+    selection: &ObservationSelection,
+) -> Result<ModelColumnStoragePlan, ObservationOwnerError> {
+    let has_model = measurement_set
+        .main_table()
+        .schema()
+        .is_some_and(|schema| schema.contains_column("MODEL_DATA"));
+    let mut selected_write_bytes = 0_u64;
+    let mut maximum_cell_bytes = 0_u64;
+    for selected_row in selection.rows().ordered_main_rows() {
+        let bytes = model_cell_bytes(
+            measurement_set,
+            usize::try_from(selected_row.data_description_id())
+                .map_err(|_| ObservationOwnerError::PredictionAddress)?,
+        )?;
+        selected_write_bytes = selected_write_bytes
+            .checked_add(bytes)
+            .ok_or(ObservationOwnerError::PredictionAddress)?;
+        maximum_cell_bytes = maximum_cell_bytes.max(bytes);
+    }
+    let mut additional_persistent_bytes = 0_u64;
+    if !has_model {
+        for row in 0..measurement_set.main_table().row_count() {
+            let bytes = model_cell_bytes(
+                measurement_set,
+                main_data_description_id(measurement_set, row)?,
+            )?;
+            additional_persistent_bytes = additional_persistent_bytes
+                .checked_add(bytes)
+                .ok_or(ObservationOwnerError::PredictionAddress)?;
+            maximum_cell_bytes = maximum_cell_bytes.max(bytes);
+        }
+    }
+    let write_bytes = additional_persistent_bytes
+        .checked_add(selected_write_bytes)
+        .ok_or(ObservationOwnerError::PredictionAddress)?;
+    Ok(ModelColumnStoragePlan {
+        additional_persistent_bytes,
+        write_bytes,
+        maximum_cell_bytes,
+    })
 }
 
 #[cfg(unix)]
@@ -1533,17 +1621,29 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
-    fn model_column_storage_bounds_cover_the_complete_destination_column() {
+    fn model_column_storage_plan_reserves_capacity_only_for_creation() {
         let directory = tempfile::tempdir().expect("temporary directory");
-        let path = directory.path().join("model-bounds.ms");
+        let path = directory.path().join("model-plan-create.ms");
         create_ms(&path, false);
         initialize_measurement_set_owner_manifest(&path).expect("initialize owner manifest");
         let resolved = resolve_selected_observation(request(&path)).expect("resolve owner");
-        let bounds = model_column_storage_bounds(&path, resolved.access.source_state())
-            .expect("probe complete column bounds");
+        let plan = resolved.access.model_column_storage_plan();
 
-        assert_eq!(bounds.column_bytes(), 8);
-        assert_eq!(bounds.maximum_cell_bytes(), 8);
+        assert_eq!(plan.additional_persistent_bytes(), 8);
+        assert_eq!(plan.write_bytes(), 16);
+        assert_eq!(plan.maximum_cell_bytes(), 8);
+
+        let existing_path = directory.path().join("model-plan-overwrite.ms");
+        create_ms(&existing_path, true);
+        initialize_measurement_set_owner_manifest(&existing_path)
+            .expect("initialize existing MODEL_DATA owner manifest");
+        let existing = resolve_selected_observation(request(&existing_path))
+            .expect("resolve existing MODEL_DATA owner");
+        let existing_plan = existing.access.model_column_storage_plan();
+
+        assert_eq!(existing_plan.additional_persistent_bytes(), 0);
+        assert_eq!(existing_plan.write_bytes(), 8);
+        assert_eq!(existing_plan.maximum_cell_bytes(), 8);
     }
 
     #[test]

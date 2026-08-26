@@ -636,7 +636,8 @@ fn application_commits_exact_final_prediction_to_model_data() {
     assert_ne!(preparation, replay);
     assert_eq!(
         final_receipt.stage_predicted_io(replay, casa_imaging_runtime::IoBufferKind::Writeback),
-        Some((8, 1))
+        Some((16, 1)),
+        "first creation writes the zero-initialized column and selected prediction"
     );
     assert_eq!(
         final_receipt.stage_actual_io(replay, casa_imaging_runtime::IoBufferKind::Writeback),
@@ -656,8 +657,17 @@ fn application_commits_exact_final_prediction_to_model_data() {
         final_receipt.actual_resource_peak(replay, &write_stack, &write_lifetime),
         Some(2 * 1024 * 1024)
     );
+    let model_storage = casa_imaging_runtime::LeaseResource::Storage {
+        demand_id: "serial-model-data-column".to_string(),
+        use_kind: casa_imaging_runtime::StorageUseKind::FinalOutput,
+    };
+    assert_eq!(
+        final_receipt.planned_resource_amount(replay, &model_storage, &write_lifetime),
+        Some(8),
+        "column creation reserves its new persistent capacity"
+    );
 
-    let reopened = MeasurementSet::open(measurement_set).expect("reopen saved MODEL_DATA");
+    let reopened = MeasurementSet::open(&measurement_set).expect("reopen saved MODEL_DATA");
     let schema = reopened.main_table().schema().expect("MAIN schema");
     assert!(schema.contains_column("MODEL_DATA"));
     let model_column = reopened
@@ -669,6 +679,45 @@ fn application_commits_exact_final_prediction_to_model_data() {
     assert!(model[[0, 0]].re.is_finite());
     assert!(model[[0, 0]].im.is_finite());
     assert_ne!(model[[0, 0]], Complex32::new(0.0, 0.0));
+    drop(reopened);
+
+    let mut overwrite = request(
+        measurement_set,
+        root.path().join("savemodel-overwrite"),
+        ContinuumAlgorithm::Hogbom,
+    );
+    overwrite.save_model_column = true;
+    let overwrite_result =
+        execute_continuum(overwrite).expect("native in-place MODEL_DATA overwrite");
+    let overwrite_receipt = overwrite_result
+        .outcome
+        .output
+        .model_data_receipt
+        .as_ref()
+        .expect("overwrite receipt");
+    let overwrite_replay = overwrite_receipt
+        .plan_node_identities()
+        .iter()
+        .find(|node| node.as_str().starts_with("weighting-replay-final-major"))
+        .expect("overwrite replay")
+        .clone();
+    assert_eq!(
+        overwrite_receipt.stage_predicted_io(
+            &overwrite_replay,
+            casa_imaging_runtime::IoBufferKind::Writeback,
+        ),
+        Some((8, 1)),
+        "overwrite predicts only the selected in-place cell write"
+    );
+    assert_eq!(
+        overwrite_receipt.planned_resource_amount(
+            &overwrite_replay,
+            &model_storage,
+            &write_lifetime,
+        ),
+        None,
+        "existing MODEL_DATA reserves no new full-column persistent capacity"
+    );
 }
 
 #[test]

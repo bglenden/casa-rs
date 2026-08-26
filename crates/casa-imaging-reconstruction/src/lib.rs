@@ -63,8 +63,8 @@ pub use mask::{
 };
 pub use minor_cycle::{
     ClarkApproximation, ComponentDivergence, MinorCycleComponent, MinorCycleError,
-    MinorCycleEvidence, MinorCycleEvidenceId, MinorCycleProgram, MinorCycleResult,
-    MinorCycleStopReason, run_minor_cycle,
+    MinorCycleEvidence, MinorCycleEvidenceId, MinorCycleModelPlane, MinorCycleProgram,
+    MinorCycleResult, MinorCycleStopReason, run_minor_cycle,
 };
 pub use psf_beam::{
     DEFAULT_PSF_FIT_CUTOFF, PsfBeamFitError, RestoringBeam, fit_restoring_beam,

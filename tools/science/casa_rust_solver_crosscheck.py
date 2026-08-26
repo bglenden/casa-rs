@@ -12,6 +12,7 @@ residual visibilities samplewise with the same selection and flag census.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -23,7 +24,13 @@ import sys
 
 import numpy as np
 
-from casa_solver_support import copy_seed, normalize, read_plane as plane, write_plane
+from casa_solver_support import (
+    copy_seed,
+    normalize,
+    read_plane as plane,
+    read_validity,
+    write_plane,
+)
 
 
 TOLERANCE = 1.0e-3
@@ -159,6 +166,61 @@ def mask_topology_digest(mask: np.ndarray) -> str:
     """Hash canonical x-major mask support independently of image storage."""
     support = np.ascontiguousarray(np.asarray(mask, dtype=np.uint8))
     return hashlib.sha256(support.tobytes(order="C")).hexdigest()
+
+
+def frozen_automask_topology() -> tuple[np.ndarray, dict]:
+    """Load and verify the checked-in CASA 6.7.6.14 topology oracle."""
+    path = pathlib.Path(__file__).with_name("casa_automask_oracle_expected.json")
+    expected = json.loads(path.read_text())
+    if expected.get("schema") != "casa-rs-automask-topology-oracle-v1":
+        raise AssertionError("T27 frozen automask oracle uses an unknown schema")
+    shape = tuple(int(value) for value in expected["shape"])
+    packed = np.frombuffer(
+        base64.b64decode(expected["support_packbits_little_base64"]),
+        dtype=np.uint8,
+    )
+    support = np.unpackbits(packed, bitorder="little", count=np.prod(shape)).reshape(shape)
+    support = support.astype(bool)
+    if int(np.count_nonzero(support)) != expected["support_pixels"]:
+        raise AssertionError("T27 frozen automask pixel count is corrupt")
+    if mask_topology_digest(support) != expected["support_sha256_u8_x_major"]:
+        raise AssertionError("T27 frozen automask topology digest is corrupt")
+    return support, expected
+
+
+def compare_product_validity(
+    casa_prefix: pathlib.Path, rust_prefix: pathlib.Path
+) -> dict:
+    """Compare image validity separately from CLEAN-mask support values."""
+    evidence = {}
+    for suffix in ("psf", "model", "residual", "mask"):
+        casa_path = pathlib.Path(f"{casa_prefix}.{suffix}")
+        rust_path = pathlib.Path(f"{rust_prefix}.{suffix}")
+        if casa_path.exists() != rust_path.exists():
+            raise AssertionError(
+                f"first divergence: {suffix} product existence differs: "
+                f"Rust={rust_path.exists()}, CASA={casa_path.exists()}"
+            )
+        if not casa_path.exists():
+            continue
+        casa_valid = read_validity(casa_path)
+        rust_valid = read_validity(rust_path)
+        if casa_valid.shape != rust_valid.shape or not np.array_equal(
+            casa_valid, rust_valid
+        ):
+            mismatch = (
+                -1
+                if casa_valid.shape != rust_valid.shape
+                else int(np.count_nonzero(casa_valid != rust_valid))
+            )
+            raise AssertionError(
+                f"first divergence: {suffix} product validity differs at {mismatch} pixels"
+            )
+        evidence[suffix] = {
+            "valid_pixels": int(np.count_nonzero(rust_valid)),
+            "validity_sha256_u8_x_major": mask_topology_digest(rust_valid),
+        }
+    return evidence
 
 
 def residual_after_model(
@@ -728,6 +790,8 @@ def casa_case(
         final = None
         selected_peak = None
         cumulative_flux = 0.0
+        previous_model = None
+        per_scale_recovered_flux = {str(scale): 0.0 for scale in case["scales"]}
         for iteration_bound in range(1, case["cycle_iterations"] + 1):
             bound_prefix = (
                 prefix
@@ -744,19 +808,30 @@ def casa_case(
                     f"length at bound {iteration_bound}: peaks={len(peaks)}"
                 )
             terminal_peak = float(peaks[-1])
-            next_cumulative_flux = float(
-                np.sum(plane(pathlib.Path(f"{bound_prefix}.model")))
+            model = plane(pathlib.Path(f"{bound_prefix}.model"))
+            if previous_model is None:
+                previous_model = np.zeros(model.shape, dtype=np.float64)
+            component_model = model - previous_model
+            component_flux = float(np.sum(component_model))
+            support_pixels = int(
+                np.count_nonzero(np.abs(component_model) > np.finfo(np.float32).eps)
             )
+            scale_px = 0 if support_pixels == 1 else max(case["scales"])
+            per_scale_recovered_flux[str(scale_px)] += component_flux
+            next_cumulative_flux = float(np.sum(model))
             component_trace.append({
                 "selected_peak": selected_peak,
                 "selected_component_strength": abs(
-                    (next_cumulative_flux - cumulative_flux)
-                    / case.get("gain", 0.2)
+                    component_flux / case.get("gain", 0.2)
                 ),
+                "component_flux": component_flux,
+                "scale_px": scale_px,
+                "per_scale_recovered_flux": dict(per_scale_recovered_flux),
                 "terminal_peak": terminal_peak,
                 "cumulative_model_flux": next_cumulative_flux,
             })
             cumulative_flux = next_cumulative_flux
+            previous_model = model
             selected_peak = terminal_peak
             final = bounded
         assert final is not None
@@ -967,6 +1042,9 @@ def compare_minor_reference(case: dict, casa_summary: dict, rust_cycle: dict) ->
         )
     gain = case.get("gain", 0.2)
     cumulative_flux = 0.0
+    rust_per_scale_flux = {
+        str(scale): 0.0 for scale in case.get("scales", [])
+    }
     for index, (component, casa_component) in enumerate(zip(components, casa_trace)):
         selected_strength = (
             casa_component["selected_component_strength"]
@@ -984,16 +1062,24 @@ def compare_minor_reference(case: dict, casa_summary: dict, rust_cycle: dict) ->
             cumulative_flux,
             casa_component["cumulative_model_flux"],
         )
+        if case["solver"] == "multiscale":
+            if component["scale_px"] != casa_component["scale_px"]:
+                raise AssertionError(
+                    f"first divergence: {case['name']} component {index} scale: "
+                    f"Rust={component['scale_px']}, CASA={casa_component['scale_px']}"
+                )
+            scale_key = str(int(component["scale_px"]))
+            rust_per_scale_flux[scale_key] += component["flux"]
+            assert_close(
+                f"{case['name']} scale {scale_key} recovered flux",
+                rust_per_scale_flux[scale_key],
+                casa_component["per_scale_recovered_flux"][scale_key],
+            )
     assert_close(
         f"{case['name']} terminal peak",
         rust_cycle["final_peak_flux"],
         casa_trace[-1]["terminal_peak"],
     )
-    if case["solver"] == "multiscale" and components[0]["scale_px"] != case["scales"][0]:
-        raise AssertionError(
-            f"first divergence: {case['name']} selected scale: "
-            f"Rust={components[0]['scale_px']}, expected={case['scales'][0]}"
-        )
     assert_close(
         f"{case['name']} cycle threshold",
         rust_cycle["cycle_threshold"],
@@ -1048,54 +1134,6 @@ def validate_runtime_mask_evidence(
             f"first divergence: {case['name']} runtime mask evidence differs "
             f"from its published mask at {mismatch} pixels"
         )
-
-
-def validate_transitive_automask_artifact(
-    baseline_path: pathlib.Path, current_mask: np.ndarray
-) -> dict:
-    """Prove current Rust topology equals a recorded CASA-matched artifact."""
-    baseline_path = baseline_path.resolve()
-    evidence_path = baseline_path.parent.parent / "evidence.json"
-    if not baseline_path.exists() or not evidence_path.exists():
-        raise AssertionError(
-            "T27 transitive proof requires both the baseline Rust mask and its "
-            f"recorded CASA evidence: {baseline_path}, {evidence_path}"
-        )
-    baseline_evidence = json.loads(evidence_path.read_text())
-    if baseline_evidence.get("schema") != "casa-rs-solver-crosscheck-v1":
-        raise AssertionError("T27 baseline uses an unknown evidence schema")
-    baseline_case = baseline_evidence.get("cases", {}).get("automask")
-    if (
-        not isinstance(baseline_case, dict)
-        or baseline_case.get("casa_summary") is None
-        or baseline_case.get("rust_summary") is None
-        or baseline_case.get("model_normalized_rms", float("inf")) > TOLERANCE
-    ):
-        raise AssertionError("T27 baseline does not record a passing CASA/Rust artifact")
-    baseline_mask = plane(baseline_path) != 0
-    baseline_pixels = int(np.count_nonzero(baseline_mask))
-    if baseline_case.get("mask_pixels") != baseline_pixels:
-        raise AssertionError("T27 baseline evidence does not bind its mask pixel count")
-    if baseline_mask.shape != current_mask.shape or not np.array_equal(
-        baseline_mask, current_mask
-    ):
-        mismatch = (
-            -1
-            if baseline_mask.shape != current_mask.shape
-            else int(np.count_nonzero(baseline_mask != current_mask))
-        )
-        raise AssertionError(
-            "first divergence: current Rust automask differs from the previously "
-            f"CASA-matched Rust artifact at {mismatch} pixels"
-        )
-    digest = mask_topology_digest(current_mask)
-    return {
-        "baseline_evidence": str(evidence_path.resolve()),
-        "baseline_mask": str(baseline_path),
-        "baseline_mask_topology_sha256": digest,
-        "current_mask_topology_sha256": digest,
-        "bit_identical": True,
-    }
 
 
 def main() -> None:
@@ -1153,7 +1191,7 @@ def main() -> None:
             "cycle_iterations": 3,
             "nmajor": 2,
             "minor_reference": True,
-            "scales": [7],
+            "scales": [0, 7],
         },
         {
             "name": "automask",
@@ -1195,13 +1233,6 @@ def main() -> None:
             raise SystemExit(f"unknown cross-check case: {requested}")
     evidence = {"schema": "casa-rs-solver-crosscheck-v1", "cases": {}}
     for case in cases:
-        baseline_mask_path = (
-            pathlib.Path(os.environ["CASA_RS_T27_BASELINE_MASK"])
-            if case["name"] == "automask"
-            and os.environ.get("CASA_RS_T27_BASELINE_MASK")
-            else None
-        )
-        transitive_automask = baseline_mask_path is not None
         root = output / case["name"]
         casa_ms = root / "casa.ms"
         casa_minor_ms = root / "casa-minor.ms"
@@ -1239,25 +1270,22 @@ def main() -> None:
             make_box_mask(pathlib.Path(f"{seed_prefix}.mask"), mask_image, case["box"])
             case["casa_mask_image"] = mask_image
             case["materialized_mask"] = mask_image
-        if not transitive_automask:
-            shutil.copytree(seed_ms, casa_ms)
-        if case["minor_reference"] and not transitive_automask:
+        shutil.copytree(seed_ms, casa_ms)
+        if case["minor_reference"]:
             shutil.copytree(seed_ms, casa_minor_ms)
             shutil.copytree(seed_ms, rust_minor_ms)
         shutil.copytree(seed_ms, rust_ms)
         direct_controls_oracle = case.get("direct_controls_oracle", False)
         casa_summary = (
-            None
-            if transitive_automask or direct_controls_oracle
-            else casa_full_case(casa_ms, casa_prefix, case)
+            None if direct_controls_oracle else casa_full_case(casa_ms, casa_prefix, case)
         )
         casa_minor_summary = (
             casa_case(casa_minor_ms, seed_prefix, casa_minor_prefix, case)
-            if case["minor_reference"] and not transitive_automask
+            if case["minor_reference"]
             else None
         )
         rust_minor_summary = None
-        if case["minor_reference"] and not transitive_automask:
+        if case["minor_reference"]:
             minor_case = dict(case)
             minor_case["nmajor"] = 1
             rust_minor_summary = json.loads(rust_case(
@@ -1294,37 +1322,6 @@ def main() -> None:
             (root / "rust-summary.json").write_text(
                 json.dumps(rust_summary, indent=2, sort_keys=True) + "\n"
             )
-        if transitive_automask:
-            rust_run = rust_summary["run"]
-            rust_mask = plane(pathlib.Path(f"{rust_prefix}.mask")) != 0
-            validate_runtime_mask_evidence(case, rust_run, rust_mask)
-            first_cycle_mask = np.asarray(
-                rust_run["minor_cycles"][0]["mask_support"], dtype=bool
-            ).reshape(rust_mask.shape)
-            transitive_artifact = validate_transitive_automask_artifact(
-                baseline_mask_path, first_cycle_mask
-            )
-            transitive_artifact.update({
-                "comparison_cycle": 1,
-                "final_current_mask_topology_sha256": mask_topology_digest(rust_mask),
-                "final_current_mask_pixels": int(np.count_nonzero(rust_mask)),
-            })
-            evidence["cases"][case["name"]] = {
-                "controls": {
-                    "gain": case.get("gain", 0.2),
-                    "threshold_jy": case.get("threshold_jy", 0.0),
-                    "nsigma": case.get("nsigma", 0.0),
-                    "niter": case["iterations"],
-                    "cycleniter": case["cycle_iterations"],
-                    "nmajor": case["nmajor"],
-                    "cyclefactor": case.get("cyclefactor", 1.0),
-                    "mask": case["mask"],
-                },
-                "mask_pixels": int(np.count_nonzero(rust_mask)),
-                "rust_summary": rust_summary,
-                "transitive_artifact": transitive_artifact,
-            }
-            continue
         if direct_controls_oracle:
             assert casa_minor_summary is not None
             assert rust_minor_summary is not None
@@ -1465,36 +1462,34 @@ def main() -> None:
         if not np.array_equal(casa_mask, rust_mask):
             mismatch = int(np.count_nonzero(casa_mask != rust_mask))
             raise AssertionError(f"{case['name']} mask differs at {mismatch} pixels")
-        transitive_artifact = None
+        automask_oracle = None
         if case["name"] == "automask":
-            current_digest = mask_topology_digest(rust_mask)
-            transitive_artifact = {
-                "current_mask_topology_sha256": current_digest,
-            }
-            baseline_path = os.environ.get("CASA_RS_T27_BASELINE_MASK")
-            if baseline_path:
-                baseline_mask = plane(pathlib.Path(baseline_path)) != 0
-                if baseline_mask.shape != rust_mask.shape or not np.array_equal(
-                    baseline_mask, rust_mask
-                ):
-                    mismatch = (
-                        -1
-                        if baseline_mask.shape != rust_mask.shape
-                        else int(np.count_nonzero(baseline_mask != rust_mask))
-                    )
-                    raise AssertionError(
-                        "first divergence: current Rust automask differs from the "
-                        f"previously CASA-matched Rust artifact at {mismatch} pixels"
-                    )
-                transitive_artifact.update(
-                    {
-                        "baseline_mask": str(pathlib.Path(baseline_path).resolve()),
-                        "baseline_mask_topology_sha256": mask_topology_digest(
-                            baseline_mask
-                        ),
-                        "bit_identical": True,
-                    }
+            frozen_mask, frozen_evidence = frozen_automask_topology()
+            first_cycle_mask = np.asarray(
+                rust_run["minor_cycles"][0]["mask_support"], dtype=bool
+            ).reshape(rust_mask.shape)
+            if frozen_mask.shape != first_cycle_mask.shape or not np.array_equal(
+                frozen_mask, first_cycle_mask
+            ):
+                mismatch = (
+                    -1
+                    if frozen_mask.shape != first_cycle_mask.shape
+                    else int(np.count_nonzero(frozen_mask != first_cycle_mask))
                 )
+                raise AssertionError(
+                    "first divergence: current first-cycle Rust automask differs "
+                    f"from the checked-in CASA-matched topology at {mismatch} pixels"
+                )
+            automask_oracle = {
+                "oracle_schema": frozen_evidence["schema"],
+                "oracle_casa_version": frozen_evidence["provenance"]["casa_version"],
+                "comparison_cycle": 1,
+                "support_pixels": frozen_evidence["support_pixels"],
+                "support_sha256_u8_x_major": frozen_evidence[
+                    "support_sha256_u8_x_major"
+                ],
+                "bit_identical": True,
+            }
         validate_runtime_mask_evidence(case, rust_run, rust_mask)
         case_evidence = {
             "controls": {
@@ -1516,8 +1511,11 @@ def main() -> None:
             "rust_minor_summary": rust_minor_summary,
             "rust_summary": rust_summary,
         }
-        if transitive_artifact is not None:
-            case_evidence["transitive_artifact"] = transitive_artifact
+        if automask_oracle is not None:
+            case_evidence["frozen_automask_oracle"] = automask_oracle
+            case_evidence["product_validity"] = compare_product_validity(
+                casa_prefix, rust_prefix
+            )
         if casa_minor_summary is not None:
             case_evidence["direct_minor"] = {
                 "model_normalized_rms": direct_model_metric,

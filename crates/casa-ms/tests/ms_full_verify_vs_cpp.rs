@@ -1128,6 +1128,100 @@ fn model_data_write_read_interoperability_matrix() {
     );
 }
 
+#[test]
+fn model_data_clone_preserves_cpp_heterogeneous_tiled_shape_storage() {
+    if !casacore_oracle_available() {
+        eprintln!(
+            "skipping model_data_clone_preserves_cpp_heterogeneous_tiled_shape_storage: C++ casacore not available"
+        );
+        return;
+    }
+
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let path = directory.path().join("cpp-heterogeneous-tiled-shape.ms");
+    MeasurementSetOracle::write_heterogeneous_tiled_shape_fixture(&path)
+        .expect("C++ creates heterogeneous TiledShapeStMan fixture");
+    initialize_measurement_set_owner_manifest(&path).expect("initialize owner manifest");
+    let selection = ObservationSelection::new(
+        SelectedRows::from_ordered_main_rows(
+            2,
+            [SelectedMainRow::new(0, 0), SelectedMainRow::new(1, 1)],
+        )
+        .expect("two heterogeneous rows"),
+        RowSelection::new(
+            IdSelection::All,
+            TimeSelection::All,
+            UvSelection::All,
+            AntennaSelection::All,
+            IdSelection::All,
+            IdSelection::All,
+            IntentSelection::All,
+            IdSelection::All,
+        ),
+        vec![
+            DataDescriptionSelection::new(0, 0, 0),
+            DataDescriptionSelection::new(1, 1, 0),
+        ],
+        vec![
+            SpectralWindowSelection::new(0, (0..16).collect()),
+            SpectralWindowSelection::new(1, (0..8).collect()),
+        ],
+        vec![CorrelationSelection::new(
+            0,
+            vec![
+                CorrelationProduct::new(0, CorrelationType::CircularRr),
+                CorrelationProduct::new(1, CorrelationType::CircularRl),
+                CorrelationProduct::new(2, CorrelationType::CircularLr),
+                CorrelationProduct::new(3, CorrelationType::CircularLl),
+            ],
+        )],
+    );
+    let request = SelectedObservationResolutionRequest::new(
+        path.display().to_string(),
+        LogicalIdentity::from_sha256([82; 32]),
+        selection.clone(),
+        VisibilityColumn::Data,
+        WeightColumn::Weight,
+        Vec::new(),
+        ModelStateIdentity::Empty,
+        SelectedObservationContentBudget::new(1 << 20, 2, 64),
+        casa_test_support::deterministic_measures_provider_for_identity([91; 32]),
+    );
+    let resolved = resolve_selected_observation(request).expect("resolve C++ fixture");
+    let (_, access) = resolved.into_parts();
+    let storage = access.model_column_storage_plan();
+    assert_eq!(storage.additional_persistent_bytes(), 768);
+    assert_eq!(storage.maximum_cell_bytes(), 512);
+
+    let mut writer = ModelDataWrite::begin(&path, access.source_state(), &selection)
+        .expect("clone and initialize MODEL_DATA");
+    let rust_first = casa_types::Complex32::new(4.25, -0.75);
+    let rust_second = casa_types::Complex32::new(-3.0, 2.5);
+    writer.write(0, 15, 3, rust_first).expect("write 4x16 cell");
+    writer.write(1, 7, 2, rust_second).expect("write 4x8 cell");
+    writer
+        .complete(LogicalIdentity::from_sha256([83; 32]))
+        .expect("complete Rust write");
+
+    MeasurementSetOracle::verify_heterogeneous_model_clone(&path)
+        .expect("C++ verifies cloned TiledShapeStMan and heterogeneous row shapes");
+    assert_eq!(rust_model_data_sample(&path, 0, 3, 15), rust_first);
+    assert_eq!(
+        MeasurementSetOracle::read_model_data_sample(&path, 0, 3, 15)
+            .expect("Rust write, C++ read"),
+        rust_first
+    );
+
+    let cpp_written = casa_types::Complex32::new(9.5, 1.25);
+    MeasurementSetOracle::write_model_data_sample(&path, 1, 1, 6, cpp_written)
+        .expect("C++ writes heterogeneous MODEL_DATA cell");
+    assert_eq!(rust_model_data_sample(&path, 1, 1, 6), cpp_written);
+    assert_eq!(
+        MeasurementSetOracle::read_model_data_sample(&path, 1, 1, 6).expect("C++ write, C++ read"),
+        cpp_written
+    );
+}
+
 /// Run a whole-MS Rust↔C++ parity check against an external MeasurementSet.
 ///
 /// Set `CASA_RS_VERIFY_MS_PATH` to the MS root directory. This is intended

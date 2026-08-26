@@ -111,9 +111,7 @@ pub use msexplore::{
     preview_msexplore_flag_edit_for_request, render_msexplore_plot_image,
 };
 #[cfg(unix)]
-pub use observation_owner::{
-    ModelColumnStorageBounds, ModelDataWrite, model_column_storage_bounds,
-};
+pub use observation_owner::{ModelColumnStoragePlan, ModelDataWrite};
 pub use observation_owner::{
     ObservationOwnerError, ResolvedSelectedObservation, ResolvedSelectedObservationAccess,
     SelectedObservationResolutionRequest, initialize_measurement_set_owner_manifest,

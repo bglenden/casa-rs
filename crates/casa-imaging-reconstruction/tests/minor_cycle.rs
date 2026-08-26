@@ -35,7 +35,7 @@ use casa_imaging_model::{
 };
 use casa_imaging_reconstruction::{
     AutoMultithreshControls, ExecutableModelProblem, FinalModelCompletion, FinalNormalState,
-    MajorCycleOwner, MajorCyclePreparation, MaskBox, MinorCycleError,
+    MajorCycleOwner, MajorCyclePreparation, MaskBox, MinorCycleError, MinorCycleModelPlane,
     MinorCycleProgram as HogbomControls, MinorCycleStopReason, ModelGeneration, ModelLifecycle,
     ModelLifecycleError, ReconstructionMask, SerialMfsSpecification, WeightingAlgorithmState,
     WeightingError, WeightingExecutionLimits, WeightingPlan, WeightingReplayChunk,
@@ -654,6 +654,18 @@ fn controls_are_validated_explicitly() {
             valid.component_sequence_limit()
         ),
         (0.1, 0.5, 7, 3.25, None)
+    );
+    let reused_plane = valid
+        .on_model_plane(MinorCycleModelPlane::new(2, 3, 1))
+        .model_plane();
+    assert_eq!(
+        (
+            reused_plane.domain(),
+            reused_plane.coefficient(),
+            reused_plane.polarization(),
+        ),
+        (2, 3, 1),
+        "the shared loop carries typed domain/coefficient/polarization coordinates"
     );
 }
 

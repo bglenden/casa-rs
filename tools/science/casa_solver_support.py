@@ -23,6 +23,18 @@ def read_plane(path: pathlib.Path) -> np.ndarray:
         tool.close()
 
 
+def read_validity(path: pathlib.Path) -> np.ndarray:
+    """Read one CASA image's pixel-validity mask independently of its values."""
+    from casatools import image
+
+    tool = image()
+    tool.open(str(path))
+    try:
+        return np.asarray(tool.getchunk(getmask=True)).squeeze().astype(bool)
+    finally:
+        tool.close()
+
+
 def write_plane(path: pathlib.Path, values: np.ndarray) -> None:
     """Write one float32 plane to an existing CASA image."""
     from casatools import image

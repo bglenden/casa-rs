@@ -52,7 +52,7 @@ use casa_imaging_runtime::{
 };
 use casa_ms::{
     ResolvedSelectedObservationAccess, SelectedObservationResolutionRequest,
-    model_column_storage_bounds, resolve_selected_observation,
+    resolve_selected_observation,
 };
 use sha2::{Digest, Sha256};
 
@@ -460,10 +460,7 @@ where
                 let source_state = access.source_state().clone();
                 let mut final_policy = execution_policy(&runtime, final_residency);
                 if !continue_cleaning && input.write_model_column {
-                    final_policy = final_policy.with_model_data(model_column_storage_bounds(
-                        input.observation.locator(),
-                        &source_state,
-                    )?);
+                    final_policy = final_policy.with_model_data(access.model_column_storage_plan());
                 }
                 let ordinal =
                     u32::try_from(cycle).map_err(|_| boxed("major-cycle ordinal exceeds u32"))?;
