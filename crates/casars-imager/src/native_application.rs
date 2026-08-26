@@ -205,7 +205,6 @@ fn unsupported_native_controls(config: &CliConfig) -> bool {
         || config.imaging_fft_precision != ImagingFftPrecisionPolicy::Auto
         || config.write_preview_pngs
         || config.niter > config.minor_cycle_length
-        || !matches!(config.deconvolver, Deconvolver::Hogbom)
 }
 
 #[cfg(test)]

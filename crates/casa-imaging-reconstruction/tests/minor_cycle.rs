@@ -1123,6 +1123,65 @@ fn clark_uses_a_derived_bounded_patch_and_stops_at_threshold_equality() {
 }
 
 #[test]
+fn multiscale_zero_scale_matches_the_point_component_and_extended_scale_spreads_support() {
+    let round = first_confirm_round(175, 176);
+    let continuation = problem_with_model(
+        177,
+        ModelStateIdentity::Generation(round.final_model.generation_id().identity()),
+    );
+    let point_lifecycle = bind_lifecycle(&continuation, 178, 14);
+    let scale_lifecycle = bind_lifecycle(&continuation, 178, 14);
+    let extended_lifecycle = bind_lifecycle(&continuation, 178, 14);
+    let compiled = ReconstructionControls::new(1, 0.5, 0.0).with_maximum_model_update(1.0e30);
+    let point = hogbom_minor_cycle(
+        &point_lifecycle,
+        &round.final_model,
+        &round.normal_state,
+        CleanWindow::full_plane(SHAPE),
+        HogbomControls::for_algorithm(ReconstructionAlgorithm::Clark, compiled)
+            .expect("point program"),
+    )
+    .expect("point solve");
+    let zero_scale = hogbom_minor_cycle(
+        &scale_lifecycle,
+        &round.final_model,
+        &round.normal_state,
+        CleanWindow::full_plane(SHAPE),
+        HogbomControls::for_algorithm(
+            ReconstructionAlgorithm::Multiscale {
+                scales_px: vec![0.0],
+            },
+            compiled,
+        )
+        .expect("zero-scale program"),
+    )
+    .expect("zero-scale solve");
+    assert_eq!(
+        point.delta().expect("point delta").terms(),
+        zero_scale.delta().expect("zero-scale delta").terms()
+    );
+
+    let extended = hogbom_minor_cycle(
+        &extended_lifecycle,
+        &round.final_model,
+        &round.normal_state,
+        CleanWindow::full_plane(SHAPE),
+        HogbomControls::for_algorithm(
+            ReconstructionAlgorithm::Multiscale {
+                scales_px: vec![3.0],
+            },
+            compiled,
+        )
+        .expect("extended-scale program"),
+    )
+    .expect("extended-scale solve");
+    assert!(
+        extended.delta().expect("extended delta").terms().len() > 1,
+        "a nonzero scale must distribute model flux over its compact kernel"
+    );
+}
+
+#[test]
 fn window_and_valid_support_constrain_component_placement() {
     // An aligned seed marks one pixel invalid; the solver must skip it.
     let seed = identity(57, 90);

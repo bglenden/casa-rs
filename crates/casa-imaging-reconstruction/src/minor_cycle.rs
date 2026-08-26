@@ -105,7 +105,7 @@ impl MinorCycleProgram {
     /// Unlike the general model constructor, this production seam requires an
     /// explicit staleness envelope and never invents an unbounded default.
     pub fn for_algorithm(
-        algorithm: ReconstructionAlgorithm,
+        mut algorithm: ReconstructionAlgorithm,
         controls: ReconstructionControls,
     ) -> Result<Self, MinorCycleError> {
         if !matches!(
@@ -115,6 +115,17 @@ impl MinorCycleProgram {
                 | ReconstructionAlgorithm::Multiscale { .. }
         ) {
             return Err(MinorCycleError::UnsupportedAlgorithm);
+        }
+        if let ReconstructionAlgorithm::Multiscale { scales_px } = &mut algorithm {
+            if scales_px.is_empty()
+                || scales_px
+                    .iter()
+                    .any(|scale| !scale.is_finite() || *scale < 0.0)
+            {
+                return Err(MinorCycleError::InvalidScale);
+            }
+            scales_px.sort_by(f64::total_cmp);
+            scales_px.dedup_by(|left, right| left.to_bits() == right.to_bits());
         }
         let maximum_model_update = controls
             .maximum_model_update()
@@ -313,6 +324,7 @@ impl CleanWindow {
 pub struct MinorCycleComponent {
     cell: ModelCell,
     flux: f64,
+    scale_px: f64,
 }
 
 impl MinorCycleComponent {
@@ -328,8 +340,16 @@ impl MinorCycleComponent {
         self.flux
     }
 
+    /// Return the selected component scale in pixels (`0` for point CLEAN).
+    #[must_use]
+    pub const fn scale_px(&self) -> f64 {
+        self.scale_px
+    }
+
     fn same_value(&self, other: &Self) -> bool {
-        self.cell == other.cell && self.flux.to_bits() == other.flux.to_bits()
+        self.cell == other.cell
+            && self.flux.to_bits() == other.flux.to_bits()
+            && self.scale_px.to_bits() == other.scale_px.to_bits()
     }
 }
 
@@ -582,6 +602,9 @@ pub enum MinorCycleError {
     /// The selected reconstruction algorithm has no minor-cycle implementation.
     #[error("reconstruction algorithm has no minor-cycle implementation")]
     UnsupportedAlgorithm,
+    /// A multiscale program omitted scales or supplied a negative/non-finite scale.
+    #[error("multiscale CLEAN requires finite non-negative scales")]
+    InvalidScale,
     /// The compiled problem omitted the mandatory linear-view envelope.
     #[error("compiled Högbom controls require an explicit maximum model update")]
     MissingMaximumModelUpdate,
@@ -718,6 +741,10 @@ pub fn run_minor_cycle(
             .map(|value| value.abs() / psf_peak >= cutoff)
             .collect::<Vec<_>>()
     });
+    let multiscale = match controls.algorithm() {
+        ReconstructionAlgorithm::Multiscale { scales_px } => Some(build_scale_kernels(scales_px)),
+        _ => None,
+    };
 
     let mut terms = BTreeMap::<usize, f64>::new();
     let mut recorded = Vec::with_capacity(
@@ -732,21 +759,38 @@ pub fn run_minor_cycle(
     let mut stop_reason = None;
 
     for _ in 0..controls.max_iterations() {
-        let Some(peak_index) = find_peak_abs(
-            &residual,
-            shape,
-            |value| *value,
-            |pixel| {
-                let index = pixel[0] * shape[1] + pixel[1];
-                window.contains(pixel)
-                    && valid_support(base, shape, pixel)
-                    && clark_active.as_ref().is_none_or(|active| active[index])
-            },
-        ) else {
-            return Err(MinorCycleError::EmptyValidSupport);
+        let (peak_index, strength, scale_index) = if let Some(kernels) = multiscale.as_ref() {
+            let candidate = select_multiscale_candidate(
+                &residual,
+                view.normal_approximation(),
+                shape,
+                psf_peak_pixel,
+                base,
+                window,
+                kernels,
+            )
+            .ok_or(MinorCycleError::EmptyValidSupport)?;
+            (
+                candidate.index,
+                candidate.strength,
+                Some(candidate.scale_index),
+            )
+        } else {
+            let peak_index = find_peak_abs(
+                &residual,
+                shape,
+                |value| *value,
+                |pixel| {
+                    let index = pixel[0] * shape[1] + pixel[1];
+                    window.contains(pixel)
+                        && valid_support(base, shape, pixel)
+                        && clark_active.as_ref().is_none_or(|active| active[index])
+                },
+            )
+            .ok_or(MinorCycleError::EmptyValidSupport)?;
+            (peak_index, residual[peak_index] / psf_peak, None)
         };
         let peak_pixel = plane_pixel(peak_index, shape);
-        let strength = residual[peak_index] / psf_peak;
         if !strength.is_finite() {
             return Err(MinorCycleError::GeneratedNonfinite);
         }
@@ -781,8 +825,17 @@ pub fn run_minor_cycle(
             stop_reason = Some(MinorCycleStopReason::StalenessBound);
             break;
         }
-        match clark {
-            Some(approximation) => subtract_psf_patch(
+        match (clark, scale_index) {
+            (_, Some(scale_index)) => subtract_scaled_psf(
+                &mut residual,
+                view.normal_approximation(),
+                shape,
+                peak_pixel,
+                psf_peak_pixel,
+                &multiscale.as_ref().expect("scale candidate has kernels")[scale_index],
+                flux,
+            )?,
+            (Some(approximation), None) => subtract_psf_patch(
                 &mut residual,
                 view.normal_approximation(),
                 shape,
@@ -791,7 +844,7 @@ pub fn run_minor_cycle(
                 approximation.radius,
                 flux,
             )?,
-            None => subtract_psf(
+            (None, None) => subtract_psf(
                 &mut residual,
                 view.normal_approximation(),
                 shape,
@@ -804,11 +857,28 @@ pub fn run_minor_cycle(
         total_flux += flux.abs();
         let cell =
             model_cell(shape, peak_pixel).expect("a scanned peak pixel lies inside the plane");
-        *terms.entry(canonical_flat(base, cell)).or_insert(0.0) += flux;
+        let scale_px = if let Some(scale_index) = scale_index {
+            add_scaled_terms(
+                &mut terms,
+                base,
+                shape,
+                peak_pixel,
+                &multiscale.as_ref().expect("scale candidate has kernels")[scale_index],
+                flux,
+            );
+            multiscale.as_ref().expect("scale candidate has kernels")[scale_index].scale_px
+        } else {
+            *terms.entry(canonical_flat(base, cell)).or_insert(0.0) += flux;
+            0.0
+        };
         if let Some(limit) = controls.component_sequence_limit()
             && recorded.len() < limit
         {
-            recorded.push(MinorCycleComponent { cell, flux });
+            recorded.push(MinorCycleComponent {
+                cell,
+                flux,
+                scale_px,
+            });
         }
     }
     let stop_reason = stop_reason.unwrap_or(MinorCycleStopReason::IterationBound);
@@ -940,6 +1010,234 @@ fn subtract_psf(
             }
             residual[target] = updated;
         }
+    }
+    Ok(())
+}
+
+#[derive(Debug)]
+struct ScaleKernel {
+    scale_px: f64,
+    samples: Vec<([isize; 2], f64)>,
+    bias: f64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct MultiscaleCandidate {
+    index: usize,
+    scale_index: usize,
+    strength: f64,
+    score: f64,
+}
+
+fn build_scale_kernels(scales_px: &[f64]) -> Vec<ScaleKernel> {
+    let largest = scales_px.last().copied().unwrap_or(0.0);
+    scales_px
+        .iter()
+        .copied()
+        .map(|scale_px| {
+            let samples = if scale_px == 0.0 {
+                vec![([0, 0], 1.0)]
+            } else {
+                let radius = scale_px.ceil() as isize;
+                let mut samples = Vec::new();
+                let mut volume = 0.0;
+                for x in -radius..=radius {
+                    for y in -radius..=radius {
+                        let r2 = (x as f64 / scale_px).powi(2) + (y as f64 / scale_px).powi(2);
+                        if r2 < 1.0 {
+                            let value = (1.0 - r2) * multiscale_spheroidal(r2.sqrt());
+                            samples.push(([x, y], value));
+                            volume += value;
+                        }
+                    }
+                }
+                for (_, value) in &mut samples {
+                    *value /= volume;
+                }
+                samples
+            };
+            let bias = if largest == 0.0 {
+                1.0
+            } else {
+                1.0 - 0.6 * scale_px / largest
+            };
+            ScaleKernel {
+                scale_px,
+                samples,
+                bias,
+            }
+        })
+        .collect()
+}
+
+fn multiscale_spheroidal(nu: f64) -> f64 {
+    if nu <= 0.0 {
+        return 1.0;
+    }
+    if nu >= 1.0 {
+        return 0.0;
+    }
+    let (p, q, endpoint) = if nu < 0.75 {
+        (
+            [
+                0.082_033_43,
+                -0.364_470_5,
+                0.627_866,
+                -0.533_558_1,
+                0.231_275_6,
+            ],
+            [1.0, 0.821_201_8, 0.207_804_3],
+            0.75,
+        )
+    } else {
+        (
+            [
+                0.004_028_559,
+                -0.036_977_68,
+                0.102_133_2,
+                -0.120_143_6,
+                0.064_127_74,
+            ],
+            [1.0, 0.959_910_2, 0.291_872_4],
+            1.0,
+        )
+    };
+    let delta = nu.powi(2) - endpoint * endpoint;
+    let numerator = p
+        .iter()
+        .enumerate()
+        .map(|(power, coefficient)| coefficient * delta.powi(power as i32))
+        .sum::<f64>();
+    let denominator = q
+        .iter()
+        .enumerate()
+        .map(|(power, coefficient)| coefficient * delta.powi(power as i32))
+        .sum::<f64>();
+    numerator / denominator
+}
+
+#[allow(clippy::too_many_arguments)]
+fn select_multiscale_candidate(
+    residual: &[f64],
+    psf: &[num_complex::Complex64],
+    shape: [usize; 2],
+    psf_peak: [usize; 2],
+    base: &ModelGeneration,
+    window: CleanWindow,
+    kernels: &[ScaleKernel],
+) -> Option<MultiscaleCandidate> {
+    let mut best = None;
+    for (scale_index, kernel) in kernels.iter().enumerate() {
+        let normalization = multiscale_normalization(psf, shape, psf_peak, kernel);
+        if !normalization.is_finite() || normalization <= 0.0 {
+            continue;
+        }
+        for index in 0..residual.len() {
+            let pixel = plane_pixel(index, shape);
+            if !kernel_fits(base, shape, pixel, window, kernel) {
+                continue;
+            }
+            let dirty = kernel
+                .samples
+                .iter()
+                .map(|(offset, weight)| {
+                    let sample = offset_pixel(pixel, *offset, shape)
+                        .expect("kernel fit was checked before convolution");
+                    residual[sample[0] * shape[1] + sample[1]] * weight
+                })
+                .sum::<f64>();
+            let strength = dirty / normalization;
+            let candidate = MultiscaleCandidate {
+                index,
+                scale_index,
+                strength,
+                score: strength.abs() * kernel.bias,
+            };
+            if best
+                .as_ref()
+                .is_none_or(|current: &MultiscaleCandidate| candidate.score > current.score)
+            {
+                best = Some(candidate);
+            }
+        }
+    }
+    best
+}
+
+fn multiscale_normalization(
+    psf: &[num_complex::Complex64],
+    shape: [usize; 2],
+    peak: [usize; 2],
+    kernel: &ScaleKernel,
+) -> f64 {
+    kernel
+        .samples
+        .iter()
+        .flat_map(|(left_offset, left_weight)| {
+            kernel
+                .samples
+                .iter()
+                .filter_map(move |(right_offset, right_weight)| {
+                    let offset = [
+                        left_offset[0] - right_offset[0],
+                        left_offset[1] - right_offset[1],
+                    ];
+                    offset_pixel(peak, offset, shape).map(|pixel| {
+                        left_weight * right_weight * psf[pixel[0] * shape[1] + pixel[1]].re
+                    })
+                })
+        })
+        .sum()
+}
+
+fn kernel_fits(
+    base: &ModelGeneration,
+    shape: [usize; 2],
+    centre: [usize; 2],
+    window: CleanWindow,
+    kernel: &ScaleKernel,
+) -> bool {
+    kernel.samples.iter().all(|(offset, _)| {
+        offset_pixel(centre, *offset, shape)
+            .is_some_and(|pixel| window.contains(pixel) && valid_support(base, shape, pixel))
+    })
+}
+
+fn offset_pixel(pixel: [usize; 2], offset: [isize; 2], shape: [usize; 2]) -> Option<[usize; 2]> {
+    let x = pixel[0].checked_add_signed(offset[0])?;
+    let y = pixel[1].checked_add_signed(offset[1])?;
+    (x < shape[0] && y < shape[1]).then_some([x, y])
+}
+
+fn add_scaled_terms(
+    terms: &mut BTreeMap<usize, f64>,
+    base: &ModelGeneration,
+    shape: [usize; 2],
+    centre: [usize; 2],
+    kernel: &ScaleKernel,
+    flux: f64,
+) {
+    for (offset, weight) in &kernel.samples {
+        let pixel =
+            offset_pixel(centre, *offset, shape).expect("selected scale fits model support");
+        let cell = model_cell(shape, pixel).expect("scale pixel lies inside the model plane");
+        *terms.entry(canonical_flat(base, cell)).or_insert(0.0) += flux * weight;
+    }
+}
+
+fn subtract_scaled_psf(
+    residual: &mut [f64],
+    psf: &[num_complex::Complex64],
+    shape: [usize; 2],
+    centre: [usize; 2],
+    psf_peak: [usize; 2],
+    kernel: &ScaleKernel,
+    flux: f64,
+) -> Result<(), MinorCycleError> {
+    for (offset, weight) in &kernel.samples {
+        let pixel =
+            offset_pixel(centre, *offset, shape).expect("selected scale fits model support");
+        subtract_psf(residual, psf, shape, pixel, psf_peak, flux * weight)?;
     }
     Ok(())
 }
@@ -1110,7 +1408,26 @@ fn minor_cycle_evidence_id(
 mod tests {
     use num_complex::Complex64;
 
-    use super::subtract_psf;
+    use super::{build_scale_kernels, subtract_psf};
+
+    #[test]
+    fn multiscale_kernels_are_compact_and_unit_normalized() {
+        let kernels = build_scale_kernels(&[0.0, 3.0]);
+        assert_eq!(kernels[0].samples.as_slice(), &[([0, 0], 1.0)]);
+        assert!(
+            (kernels[1]
+                .samples
+                .iter()
+                .map(|(_, value)| value)
+                .sum::<f64>()
+                - 1.0)
+                .abs()
+                < 1.0e-12
+        );
+        assert!(kernels[1].samples.iter().all(|(offset, _)| {
+            (offset[0] as f64 / 3.0).powi(2) + (offset[1] as f64 / 3.0).powi(2) < 1.0
+        }));
+    }
 
     #[test]
     fn shifted_psf_overlap_can_start_before_the_component_peak() {

@@ -192,6 +192,8 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
             | RequiredCapability::ConstantBasis
             | RequiredCapability::DirtyReconstruction
             | RequiredCapability::HogbomReconstruction
+            | RequiredCapability::ClarkReconstruction
+            | RequiredCapability::MultiscaleReconstruction
             | RequiredCapability::NaturalWeighting
             | RequiredCapability::UniformWeighting
             | RequiredCapability::BriggsWeighting
