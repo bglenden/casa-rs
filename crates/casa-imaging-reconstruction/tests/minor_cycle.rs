@@ -34,12 +34,13 @@ use casa_imaging_model::{
     compile, compile_observation,
 };
 use casa_imaging_reconstruction::{
-    CleanWindow, ExecutableModelProblem, FinalModelCompletion, FinalNormalState, MajorCycleOwner,
-    MajorCyclePreparation, MinorCycleError, MinorCycleProgram as HogbomControls,
-    MinorCycleStopReason, ModelGeneration, ModelLifecycle, ModelLifecycleError,
-    SerialMfsSpecification, WeightingAlgorithmState, WeightingError, WeightingExecutionLimits,
-    WeightingPlan, WeightingReplayChunk, WeightingReplaySummary, begin_weighting_generation,
-    model_support_identity, plan_weighting, run_minor_cycle as hogbom_minor_cycle,
+    AutoMultithreshControls, CleanWindow, ExecutableModelProblem, FinalModelCompletion,
+    FinalNormalState, MajorCycleOwner, MajorCyclePreparation, MaskBox, MinorCycleError,
+    MinorCycleProgram as HogbomControls, MinorCycleStopReason, ModelGeneration, ModelLifecycle,
+    ModelLifecycleError, ReconstructionMask, SerialMfsSpecification, WeightingAlgorithmState,
+    WeightingError, WeightingExecutionLimits, WeightingPlan, WeightingReplayChunk,
+    WeightingReplaySummary, auto_multithresh, begin_weighting_generation, model_support_identity,
+    plan_weighting, run_minor_cycle as hogbom_minor_cycle,
     runtime_adapter::{CompleteDataOwnerResult, prepare_serial_mfs_operator, serial_mfs_workload},
 };
 
@@ -525,6 +526,76 @@ mod window_geometry {
             Err(MinorCycleError::InvertedWindow)
         ));
     }
+}
+
+#[test]
+fn static_and_auto_masks_share_explicit_geometry_and_generation_lineage() {
+    let round = first_confirm_round(185, 186);
+    let problem = problem_with_model(
+        187,
+        ModelStateIdentity::Generation(round.final_model.generation_id().identity()),
+    );
+    let coordinate = problem.geometry().domains()[0].direction();
+    let static_mask = ReconstructionMask::from_boxes(
+        problem.problem_id(),
+        round.final_model.generation_id(),
+        coordinate,
+        SHAPE,
+        [MaskBox::new([2, 2], [4, 4]).expect("box")],
+    )
+    .expect("static mask");
+    assert!(static_mask.contains([3, 3]));
+    assert!(!static_mask.contains([1, 1]));
+
+    let shifted = ReconstructionMask::reproject_nearest(
+        problem.problem_id(),
+        round.final_model.generation_id(),
+        coordinate,
+        SHAPE,
+        static_mask.support(),
+        coordinate.with_reference_pixel([
+            coordinate.reference_pixel()[0] + 1.0,
+            coordinate.reference_pixel()[1],
+        ]),
+        SHAPE,
+    )
+    .expect("nearest-neighbour mask reprojection");
+    assert!(shifted.contains([4, 3]));
+    assert!(!shifted.contains([2, 3]));
+
+    let valid = vec![true; SHAPE[0] * SHAPE[1]];
+    let (automatic, evidence) = auto_multithresh(
+        problem.problem_id(),
+        round.final_model.generation_id(),
+        coordinate,
+        &round.normal_state,
+        Some(&static_mask),
+        &valid,
+        1,
+        false,
+        4.0,
+        AutoMultithreshControls {
+            sidelobe_factor: 3.0,
+            noise_factor: 5.0,
+            low_noise_factor: 1.5,
+            negative_factor: 0.0,
+            minimum_beam_fraction: 0.0,
+            smooth_factor: 0.0,
+            cut_threshold: 0.01,
+            grow_iterations: 1,
+            minimum_percent_change: 0.0,
+        },
+    )
+    .expect("generation-bound auto mask");
+    assert_eq!(
+        automatic.normal_state_completion(),
+        Some(round.normal_state.completion_id())
+    );
+    assert!(
+        automatic.contains([3, 3]),
+        "auto masks retain prior support"
+    );
+    assert!(evidence.positive_threshold.is_finite());
 }
 
 #[test]

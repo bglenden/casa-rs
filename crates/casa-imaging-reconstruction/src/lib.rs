@@ -29,6 +29,7 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 mod major_cycle;
+mod mask;
 mod minor_cycle;
 mod serial_mfs;
 mod weighting;
@@ -53,6 +54,10 @@ pub mod runtime_adapter {
 pub use major_cycle::{
     FinalNormalState, MajorCycleCompletion, MajorCycleError, MajorCycleOwner,
     MajorCyclePreparation, NormalStateCatalog,
+};
+pub use mask::{
+    AutoMultithreshControls, AutoMultithreshEvidence, MaskBox, MaskError, ReconstructionMask,
+    ReconstructionMaskGenerationId, auto_multithresh,
 };
 pub use minor_cycle::{
     ClarkApproximation, CleanWindow, ComponentDivergence, MinorCycleComponent, MinorCycleError,
