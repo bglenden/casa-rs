@@ -187,6 +187,7 @@ impl SelectedObservationResolutionRequest {
 /// staging and preserves the prior MODEL_DATA generation.
 #[cfg(unix)]
 pub struct ModelColumnTransaction {
+    path: std::path::PathBuf,
     measurement_set: Option<MeasurementSet>,
     manifest: OwnerManifest,
     committed: bool,
@@ -251,10 +252,11 @@ impl ModelColumnTransaction {
         path: impl AsRef<Path>,
         expected: &ObservationSourceState,
     ) -> Result<Self, ObservationOwnerError> {
+        let path = path.as_ref().to_path_buf();
         let process_guard = MODEL_COLUMN_TRANSACTION_MUTEX
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut measurement_set = MeasurementSet::open_retained_read(path)?;
+        let mut measurement_set = MeasurementSet::open_retained_read(&path)?;
         if !measurement_set.main_table_mut().lock(LockType::Write, 1)? {
             return Err(ObservationOwnerError::WriteLockUnavailable);
         }
@@ -271,7 +273,11 @@ impl ModelColumnTransaction {
                 schema.contains_column(MODEL_BACKUP_COLUMN),
             )
         };
-        if has_staging || has_backup {
+        if has_backup && has_model && !has_staging {
+            measurement_set
+                .main_table_mut()
+                .remove_column(MODEL_BACKUP_COLUMN)?;
+        } else if has_staging || has_backup {
             measurement_set.main_table_mut().unlock()?;
             return Err(ObservationOwnerError::StagingColumnExists);
         }
@@ -299,6 +305,7 @@ impl ModelColumnTransaction {
                 .set_cell(row, MODEL_STAGING_COLUMN, Value::Array(source))?;
         }
         Ok(Self {
+            path,
             measurement_set: Some(measurement_set),
             manifest,
             committed: false,
@@ -358,12 +365,19 @@ impl ModelColumnTransaction {
                 }),
             };
         }
+        let had_model = result.expect("successful MODEL_DATA commit returned its prior state");
         self.committed = true;
         self.measurement_set = None;
+        if had_model {
+            let _ = cleanup_model_backup(&self.path);
+        }
         Ok(())
     }
 
-    fn commit_locked(&mut self, generation: LogicalIdentity) -> Result<(), ObservationOwnerError> {
+    fn commit_locked(
+        &mut self,
+        generation: LogicalIdentity,
+    ) -> Result<bool, ObservationOwnerError> {
         let measurement_set = self
             .measurement_set
             .as_mut()
@@ -396,13 +410,8 @@ impl ModelColumnTransaction {
             .locked_modify_counter()?
             .wrapping_add(1);
         write_owner_manifest(measurement_set.main_table_mut(), &self.manifest)?;
-        if had_model {
-            measurement_set
-                .main_table_mut()
-                .remove_column(MODEL_BACKUP_COLUMN)?;
-        }
         measurement_set.main_table_mut().unlock()?;
-        Ok(())
+        Ok(had_model)
     }
 
     fn rollback_locked(&mut self, manifest: &OwnerManifest) -> Result<(), ObservationOwnerError> {
@@ -459,6 +468,25 @@ impl ModelColumnTransaction {
         self.measurement_set = None;
         Ok(())
     }
+}
+
+#[cfg(unix)]
+fn cleanup_model_backup(path: &Path) -> Result<(), ObservationOwnerError> {
+    let mut measurement_set = MeasurementSet::open_retained_read(path)?;
+    if !measurement_set.main_table_mut().lock(LockType::Write, 1)? {
+        return Err(ObservationOwnerError::WriteLockUnavailable);
+    }
+    if measurement_set
+        .main_table()
+        .schema()
+        .is_some_and(|schema| schema.contains_column(MODEL_BACKUP_COLUMN))
+    {
+        measurement_set
+            .main_table_mut()
+            .remove_column(MODEL_BACKUP_COLUMN)?;
+    }
+    measurement_set.main_table_mut().unlock()?;
+    Ok(())
 }
 
 #[cfg(unix)]
