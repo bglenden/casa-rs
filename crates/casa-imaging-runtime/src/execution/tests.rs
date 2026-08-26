@@ -879,8 +879,7 @@ fn physical_work_binding_with_problem(
         stages,
     )
     .expect("complete test prediction");
-    let layouts = crate::PublicationLayoutLedger::new(Vec::new())
-        .expect("reconstruction-only publication layout ledger");
+    let layouts = crate::PublicationLayoutLedger::empty();
     let catalog = implementation_catalog(problem, &dag);
     PhysicalWorkBinding::new_reconstruction(
         catalog,
@@ -4330,8 +4329,8 @@ fn receipt_store_checkpoints_atomically_rejects_corruption_and_enforces_retentio
 
     let mut foreign_node: serde_json::Value =
         serde_json::from_slice(&original).expect("receipt JSON");
-    foreign_node["receipt"]["plan"]["publication_layouts"][0]["participant"]["node_ordinal"] =
-        serde_json::Value::from(999_u64);
+    foreign_node["receipt"]["plan"]["nodes"][0]["kind"] =
+        serde_json::Value::from("foreign-work-kind");
     let payload = serde_json::to_vec(&foreign_node["receipt"]).expect("receipt payload");
     foreign_node["payload_sha256"] = serde_json::Value::from(
         Sha256::digest(payload)
@@ -4421,12 +4420,60 @@ fn receipt_store_checkpoints_atomically_rejects_corruption_and_enforces_retentio
 }
 
 #[test]
-fn reopened_receipt_carries_exact_publication_layout_evidence() {
+fn active_receipt_revisions_use_the_reservation_admitted_at_begin() {
     let problem = compiled_problem();
     let dag = ExecutionDag::new(plan_spec(vec![cpu_node("work", BTreeSet::new())]))
         .expect("valid physical work");
     let plan = bound_plan(dag);
-    let expected = &plan.publication_layouts().entries()[0];
+    let provenance = |attempt| {
+        execution_provenance(
+            crate::ExecutionAttemptId::from_sha256([attempt; 32]),
+            crate::BuildIdentity::from_sha256([93; 32]),
+        )
+    };
+    let directory = tempfile::tempdir().expect("receipt directory");
+    let store = crate::ExecutionReceiptStore::new(
+        directory.path(),
+        crate::ReceiptRetention::new(3, 1_048_576).expect("retention"),
+    )
+    .expect("receipt store");
+
+    let retained = provenance(91);
+    drop(
+        store
+            .begin(retained.clone(), &problem, &plan)
+            .expect("begin retained receipt"),
+    );
+    let active = provenance(92);
+    let mut recorder = store
+        .begin(active.clone(), &problem, &plan)
+        .expect("begin reserves active receipt capacity");
+
+    let retained_path = directory
+        .path()
+        .join(format!("{}.receipt.json", retained.attempt_id()));
+    std::fs::write(&retained_path, b"corrupted after active admission")
+        .expect("corrupt unrelated retained history");
+
+    let work = WorkNodeId::new("work");
+    recorder
+        .work_started(&work)
+        .expect("active revision remains inside its admitted reservation");
+    assert_eq!(
+        store
+            .open(active.attempt_id())
+            .expect("reopen active checkpoint")
+            .node_status(&work),
+        Some(crate::ReceiptStatus::Running)
+    );
+}
+
+#[test]
+fn reopened_reconstruction_receipt_has_no_publication_layout_evidence() {
+    let problem = compiled_problem();
+    let dag = ExecutionDag::new(plan_spec(vec![cpu_node("work", BTreeSet::new())]))
+        .expect("valid physical work");
+    let plan = bound_plan(dag);
     let directory = tempfile::tempdir().expect("receipt directory");
     let store = crate::ExecutionReceiptStore::new(
         directory.path(),
@@ -4442,47 +4489,7 @@ fn reopened_receipt_carries_exact_publication_layout_evidence() {
         .expect("begin receipt");
     let reopened = store.open(provenance.attempt_id()).expect("reopen receipt");
 
-    assert_eq!(reopened.publication_layout_count(), 3);
-    assert_eq!(
-        reopened.publication_participant(expected.artifact()),
-        Some(match expected.participant() {
-            crate::PublicationParticipant::Product { graph_id, node_id } => {
-                crate::ReceiptPublicationParticipant::Product {
-                    graph_identity: graph_id.as_bytes(),
-                    node_ordinal: node_id.ordinal(),
-                }
-            }
-            crate::PublicationParticipant::ModelData(measurement_set) => {
-                crate::ReceiptPublicationParticipant::ModelData(measurement_set)
-            }
-        })
-    );
-    assert_eq!(
-        reopened.publication_layout_identity(expected.artifact()),
-        Some(expected.layout_id())
-    );
-    assert_eq!(
-        reopened.publication_producer(expected.artifact()).as_ref(),
-        Some(expected.staging().producer())
-    );
-    assert_eq!(
-        reopened.publication_terminal(expected.artifact()).as_ref(),
-        Some(expected.staging().terminal())
-    );
-    assert_eq!(
-        reopened.publication_writer_buffer_kind(expected.artifact()),
-        Some(expected.staging().writer_buffer_kind())
-    );
-    assert_eq!(
-        reopened
-            .publication_writer_allocation(expected.artifact())
-            .as_ref(),
-        Some(expected.staging().writer_allocation())
-    );
-    assert_eq!(
-        reopened.publication_resource_bounds(expected.artifact()),
-        Some(expected.resource_bounds())
-    );
+    assert_eq!(reopened.publication_layout_count(), 0);
     drop(recorder);
 }
 

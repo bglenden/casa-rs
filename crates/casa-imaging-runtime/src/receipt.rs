@@ -1317,7 +1317,12 @@ impl ExecutionReceiptStore {
         } else {
             actual_bytes.max(worst_case_receipt_bytes(body)?)
         };
-        self.make_room(body, reserved_bytes)?;
+        // `begin` reserves the non-terminal receipt's worst-case terminal size.
+        // Later revisions remain inside that reservation, so repeating the
+        // directory-wide retention admission would add no safety.
+        if is_new {
+            self.make_room(body, reserved_bytes)?;
+        }
         let path = self.receipt_path(body.attempt());
         if is_new {
             atomic_create(&path, &bytes)
@@ -1439,13 +1444,16 @@ impl ExecutionReceiptStore {
         if count > self.state.retention.max_receipts || bytes > self.state.retention.max_bytes {
             return Err(ReceiptError::RetentionExceeded);
         }
+        let pruned = !prune.is_empty();
         for path in prune {
             fs::remove_file(path).map_err(|source| ReceiptError::Io {
                 action: "prune retained execution receipt",
                 source,
             })?;
         }
-        sync_directory(&self.root)?;
+        if pruned {
+            sync_directory(&self.root)?;
+        }
         Ok(())
     }
 }

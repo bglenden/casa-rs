@@ -10026,6 +10026,7 @@ fn serial_product_publication_stages_privately_then_publishes_once() {
         .expect("member authorization")
         .entries()[0];
     let (physical, publication) = planned_runtime.into_parts();
+    let expected_layouts = physical.publication_layouts().entries().to_vec();
     let executor = SerialProductPublicationExecutor::new(
         implementation(77),
         problem.clone(),
@@ -10099,6 +10100,48 @@ fn serial_product_publication_stages_privately_then_publishes_once() {
     let receipt = receipts.open(attempt).expect("publication receipt");
     assert_eq!(receipt.status(), ReceiptStatus::Completed);
     assert_eq!(receipt.publication_layout_count(), expected_members);
+    for expected in &expected_layouts {
+        assert_eq!(
+            receipt.publication_participant(expected.artifact()),
+            Some(match expected.participant() {
+                casa_imaging_runtime::PublicationParticipant::Product { graph_id, node_id } => {
+                    casa_imaging_runtime::ReceiptPublicationParticipant::Product {
+                        graph_identity: graph_id.as_bytes(),
+                        node_ordinal: node_id.ordinal(),
+                    }
+                }
+                casa_imaging_runtime::PublicationParticipant::ModelData(measurement_set) => {
+                    casa_imaging_runtime::ReceiptPublicationParticipant::ModelData(measurement_set)
+                }
+            })
+        );
+        assert_eq!(
+            receipt.publication_layout_identity(expected.artifact()),
+            Some(expected.layout_id())
+        );
+        assert_eq!(
+            receipt.publication_producer(expected.artifact()).as_ref(),
+            Some(expected.staging().producer())
+        );
+        assert_eq!(
+            receipt.publication_terminal(expected.artifact()).as_ref(),
+            Some(expected.staging().terminal())
+        );
+        assert_eq!(
+            receipt.publication_writer_buffer_kind(expected.artifact()),
+            Some(expected.staging().writer_buffer_kind())
+        );
+        assert_eq!(
+            receipt
+                .publication_writer_allocation(expected.artifact())
+                .as_ref(),
+            Some(expected.staging().writer_allocation())
+        );
+        assert_eq!(
+            receipt.publication_resource_bounds(expected.artifact()),
+            Some(expected.resource_bounds())
+        );
+    }
     for (node_id, node) in execution_plan.execution_dag().nodes() {
         for claim in &node.claims {
             if let LeaseResource::IoBuffer(kind) = &claim.resource {

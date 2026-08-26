@@ -421,7 +421,7 @@ def rust_case(
     nsigma = case.get("nsigma", 0.0)
     cyclefactor = case.get("cyclefactor", 1.0)
     command = [
-        "cargo", "run", "--quiet", "-p", "casars-imager", "--",
+        "cargo", "run", "--release", "--quiet", "-p", "casars-imager", "--",
         "--ms", str(ms_path), "--imagename", str(prefix),
         "--imsize", "64", "--cell-arcsec", "0.02", "--field", "1",
         "--spw", "1", "--deconvolver", case["solver"], "--niter", str(iterations),
