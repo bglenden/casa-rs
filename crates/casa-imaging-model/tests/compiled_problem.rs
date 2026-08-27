@@ -559,7 +559,7 @@ fn model_column_side_effects_are_compiled_into_problem_identity() {
         writable
             .observation_transaction()
             .write_set()
-            .model_columns()
+            .visibility_columns()
             .len(),
         1
     );

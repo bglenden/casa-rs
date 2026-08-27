@@ -52,7 +52,7 @@ use casa_imaging_runtime::{
 };
 use casa_ms::{
     ResolvedSelectedObservationAccess, SelectedObservationResolutionRequest,
-    resolve_selected_observation,
+    SelectedVisibilityWriteTargets, resolve_selected_observation,
 };
 use sha2::{Digest, Sha256};
 
@@ -105,6 +105,8 @@ pub struct ApplicationRequest<S> {
     pub observation: SelectedObservationResolutionRequest,
     /// Whether final paired-operator predictions are committed to `MODEL_DATA`.
     pub write_model_column: bool,
+    /// Whether transformed output-role observations overwrite existing `CORRECTED_DATA`.
+    pub write_corrected_data: bool,
     /// Task-surface constraints that cannot be inferred from the compiled
     /// backend-independent problem.
     pub task_requirements: Vec<TaskRequirement>,
@@ -145,8 +147,8 @@ pub struct NativeApplicationOutcome {
     pub visibility_products: Option<VisibilityProductCompletion>,
     /// Atomic product-publication receipt.
     pub publication_receipt: ExecutionReceipt,
-    /// Final-major receipt containing the bounded in-place `MODEL_DATA` write, when requested.
-    pub model_data_receipt: Option<ExecutionReceipt>,
+    /// Terminal-pass receipt containing the bounded selected-visibility write, when requested.
+    pub visibility_write_receipt: Option<ExecutionReceipt>,
     /// Final authoritative complete-data and model state.
     pub scientific: MajorCycleCompletion,
     /// Planned product generation used before member production.
@@ -276,6 +278,7 @@ where
         observation: request.observation,
         initial_access: access,
         write_model_column: request.write_model_column,
+        write_corrected_data: request.write_corrected_data,
         mask: request.mask,
         native: request.native,
     };
@@ -289,6 +292,7 @@ struct NativeInput<S> {
     observation: SelectedObservationResolutionRequest,
     initial_access: ResolvedSelectedObservationAccess,
     write_model_column: bool,
+    write_corrected_data: bool,
     mask: ReconstructionMaskPlan,
     native: Result<ApplicationNative<S>, ApplicationError>,
 }
@@ -308,9 +312,17 @@ where
     let algorithm = problem.reconstruction().algorithm().clone();
     let initial_access = input.initial_access.with_minimum_content_budget(problem)?;
     let residency = initial_access.certify_residency(problem)?;
+    let write_targets =
+        SelectedVisibilityWriteTargets::new(input.write_model_column, input.write_corrected_data);
+    let initial_write = matches!(algorithm, ReconstructionAlgorithm::Dirty)
+        && (write_targets.model_data() || write_targets.corrected_data());
     let planning_registry =
         PlanningRegistry::new(runtime.registry, runtime.implementation.clone(), problem);
-    let policy = execution_policy(&runtime, residency.clone());
+    let mut policy = execution_policy(&runtime, residency.clone());
+    if initial_write {
+        policy = policy
+            .with_visibility_write(initial_access.selected_visibility_storage_plan(write_targets)?);
+    }
     let planned = match algorithm {
         ReconstructionAlgorithm::Dirty => {
             SpectralCyclePlan::dirty(problem, &planning_registry, policy)?
@@ -333,6 +345,7 @@ where
             )
         })
         .transpose()?;
+    let initial_source_state = initial_access.source_state().clone();
     let selected = initial_access.open(problem)?;
     let mut executor = SpectralCycleExecutor::new(
         runtime.implementation.clone(),
@@ -359,6 +372,17 @@ where
             input.mask.clone(),
             program,
         );
+    }
+    let mut initial_terminal_replay = None;
+    if initial_write {
+        let (replay, sink) = FinalVisibilityReplay::with_visibility_write(
+            std::path::PathBuf::from(input.observation.locator()),
+            initial_source_state,
+            visibility_write_selection(problem, input.observation.selection())?,
+            write_targets,
+        )?;
+        executor = executor.with_final_visibility_sink(sink);
+        initial_terminal_replay = Some(replay);
     }
     let registry = SpectralCycleRegistry::new(
         runtime.registry,
@@ -402,6 +426,10 @@ where
                 .implementation()
                 .take_completion()
                 .ok_or_else(|| boxed("dirty execution omitted final major-cycle evidence"))?;
+            let visibility_products = initial_terminal_replay
+                .as_ref()
+                .map(FinalVisibilityReplay::completion)
+                .transpose()?;
             (
                 result.into_completion(),
                 None,
@@ -409,8 +437,8 @@ where
                 Vec::new(),
                 1,
                 0,
-                None,
-                None,
+                visibility_products,
+                initial_terminal_replay,
             )
         }
         ReconstructionAlgorithm::Hogbom
@@ -471,8 +499,12 @@ where
                 let final_residency = access.certify_residency(problem)?;
                 let source_state = access.source_state().clone();
                 let mut final_policy = execution_policy(&runtime, final_residency);
-                if !continue_cleaning && input.write_model_column {
-                    final_policy = final_policy.with_model_data(access.model_column_storage_plan());
+                if !continue_cleaning
+                    && (write_targets.model_data() || write_targets.corrected_data())
+                {
+                    final_policy = final_policy.with_visibility_write(
+                        access.selected_visibility_storage_plan(write_targets)?,
+                    );
                 }
                 let ordinal =
                     u32::try_from(cycle).map_err(|_| boxed("major-cycle ordinal exceeds u32"))?;
@@ -521,15 +553,17 @@ where
                         program,
                     );
                 } else {
-                    let (replay, sink) = if input.write_model_column {
-                        FinalVisibilityReplay::with_model_column(
-                            std::path::PathBuf::from(input.observation.locator()),
-                            source_state,
-                            model_data_selection(problem, input.observation.selection())?,
-                        )?
-                    } else {
-                        FinalVisibilityReplay::new()
-                    };
+                    let (replay, sink) =
+                        if write_targets.model_data() || write_targets.corrected_data() {
+                            FinalVisibilityReplay::with_visibility_write(
+                                std::path::PathBuf::from(input.observation.locator()),
+                                source_state,
+                                visibility_write_selection(problem, input.observation.selection())?,
+                                write_targets,
+                            )?
+                        } else {
+                            FinalVisibilityReplay::new()
+                        };
                     executor = executor.with_final_visibility_sink(sink);
                     terminal_replay = Some(replay);
                 }
@@ -606,7 +640,7 @@ where
     )
 }
 
-fn model_data_selection(
+fn visibility_write_selection(
     problem: &CompiledProblem,
     selected: Arc<ObservationSelection>,
 ) -> Result<Arc<ObservationSelection>, ApplicationError> {
@@ -632,7 +666,7 @@ fn model_data_selection(
                 .collect::<Vec<_>>();
             if output_channels.is_empty() {
                 return Err(boxed(
-                    "continuum transform selected no MODEL_DATA output channels",
+                    "continuum transform selected no visibility-write output channels",
                 ));
             }
             Ok(SpectralWindowSelection::new(
@@ -734,12 +768,16 @@ where
     let authority = ProductGenerationAuthority::bind(problem);
     let planned_products = authority.plan(&sources, &publication_config.controls)?;
 
-    let model_data_receipt = prior
+    let visibility_write_receipt = prior
         .visibility_replay
         .as_ref()
-        .is_some_and(FinalVisibilityReplay::has_model_column)
-        .then(|| prior.final_major_receipt.clone())
-        .flatten();
+        .is_some_and(FinalVisibilityReplay::has_visibility_write)
+        .then(|| {
+            prior
+                .final_major_receipt
+                .clone()
+                .unwrap_or_else(|| prior.initial_receipt.clone())
+        });
     let planning_registry =
         PlanningRegistry::new(runtime.registry, runtime.implementation.clone(), problem);
     // The ordinary publication plan is deliberately constructed before member
@@ -818,7 +856,7 @@ where
         total_minor_iterations: prior.total_minor_iterations,
         visibility_products: prior.visibility_products,
         publication_receipt,
-        model_data_receipt,
+        visibility_write_receipt,
         scientific,
         planned_products,
         products,

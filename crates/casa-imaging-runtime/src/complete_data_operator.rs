@@ -1109,6 +1109,11 @@ struct CompleteDataExecutionBinding {
 }
 
 impl SpectralOperatorState {
+    /// Request final selected visibility samples from this bounded replay.
+    pub(crate) fn enable_final_visibility_samples(&mut self) {
+        self.state.enable_final_visibility_samples();
+    }
+
     /// Bind one validated final model before consuming the exhaustive replay.
     pub fn bind_major_cycle_model(
         &mut self,

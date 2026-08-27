@@ -10090,7 +10090,7 @@ fn sealed_products_samples(
         let prediction_target = if problem
             .observation_transaction()
             .write_set()
-            .model_columns()
+            .visibility_columns()
             .iter()
             .any(|write| write.measurement_set() == source.measurement_set())
         {

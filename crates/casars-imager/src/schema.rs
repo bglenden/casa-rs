@@ -65,6 +65,28 @@ mod tests {
         };
         assert!(choices.contains(&"modelcolumn".to_string()));
 
+        let save_continuum_residual = schema
+            .arguments
+            .iter()
+            .find(|argument| argument.id == "save_continuum_residual")
+            .expect("save_continuum_residual argument");
+        assert_eq!(save_continuum_residual.default.as_deref(), Some("false"));
+        assert!(matches!(
+            save_continuum_residual.value_kind,
+            UiValueKind::Bool
+        ));
+        let UiArgumentParser::Toggle { true_flags, .. } = &save_continuum_residual.parser else {
+            panic!("save_continuum_residual should use a toggle parser");
+        };
+        assert!(true_flags.contains(&"--save-continuum-residual".to_string()));
+        assert!(
+            save_continuum_residual
+                .help
+                .contains("existing CORRECTED_DATA")
+        );
+        assert!(save_continuum_residual.help.contains("in place"));
+        assert!(schema.render_help().contains("--save-continuum-residual"));
+
         let startmodel = schema
             .arguments
             .iter()

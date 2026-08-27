@@ -6,6 +6,7 @@ use std::fmt;
 
 use thiserror::Error;
 
+use crate::MsColumnKind;
 use crate::{
     compiled_problem::{CanonicalEncoder, SpectralSamplingLaw, encode_spectral_sampling_law},
     geometry::CompiledGeometryId,
@@ -335,16 +336,15 @@ impl<'a> SelectedObservationInspection<'a> {
             prior.finish()?;
             self.source_index = next_index;
         }
-        let expected_prediction_target = if self
-            .write_set
-            .model_columns()
-            .iter()
-            .any(|write| write.measurement_set() == self.source.expected.measurement_set())
-        {
-            SelectedPredictionTarget::ModelData
-        } else {
-            SelectedPredictionTarget::NotRequested
-        };
+        let expected_prediction_target =
+            if self.write_set.visibility_columns().iter().any(|write| {
+                write.column() == MsColumnKind::ModelData
+                    && write.measurement_set() == self.source.expected.measurement_set()
+            }) {
+                SelectedPredictionTarget::ModelData
+            } else {
+                SelectedPredictionTarget::NotRequested
+            };
         self.source.push(sample, expected_prediction_target)?;
         self.generation.push(sample);
         Ok(())

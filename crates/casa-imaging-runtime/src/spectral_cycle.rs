@@ -30,14 +30,17 @@ use crate::{
     WorkImplementationId, WorkKind, WorkMeasurements, WorkNodeId,
 };
 use casa_imaging_reconstruction::WeightingPlan;
-use casa_ms::{BoundSelectedObservation, ModelDataWrite, SelectedObservationCompletion};
+use casa_ms::{
+    BoundSelectedObservation, SelectedObservationCompletion, SelectedVisibilityWrite,
+    SelectedVisibilityWriteGenerations, SelectedVisibilityWriteTargets,
+};
 use sha2::{Digest, Sha256};
 
-pub(crate) const MODEL_COLUMN_WORKER_STACK_BYTES: usize = 2 * 1024 * 1024;
+pub(crate) const VISIBILITY_WRITE_WORKER_STACK_BYTES: usize = 2 * 1024 * 1024;
 
-/// Bounded consumer of final-model predictions produced inside the paired
-/// final-major replay. Implementations may write selected `MODEL_DATA` cells
-/// in place or retain residual-visibility products, but receive no publication
+/// Bounded consumer of final visibility samples produced inside the paired
+/// terminal replay. Implementations may write selected visibility columns in
+/// place or retain residual-visibility products, but receive no publication
 /// authority from this interface.
 pub trait FinalVisibilitySink: Send {
     /// Bind the exact final model before any replay sample is consumed.
@@ -61,23 +64,24 @@ pub trait FinalVisibilitySink: Send {
 }
 
 /// Shared handle for final-visibility product completion and optional in-place
-/// `MODEL_DATA` replay.
+/// selected-visibility writeback.
 #[derive(Clone)]
 pub struct FinalVisibilityReplay {
     state: Arc<Mutex<FinalVisibilityReplayState>>,
-    model_column: Option<Arc<ModelColumnWriteBinding>>,
+    visibility_write: Option<Arc<VisibilityWriteBinding>>,
 }
 
-struct ModelColumnWriteBinding {
+struct VisibilityWriteBinding {
     path: PathBuf,
     expected: casa_imaging_model::ObservationSourceState,
     selection: Arc<casa_imaging_model::ObservationSelection>,
-    state: Mutex<ModelColumnWriteState>,
+    targets: SelectedVisibilityWriteTargets,
+    state: Mutex<VisibilityWriteState>,
 }
 
-enum ModelColumnWriteState {
+enum VisibilityWriteState {
     Idle,
-    Writing(ModelColumnWorker),
+    Writing(VisibilityWriteWorker),
     Complete,
 }
 
@@ -95,36 +99,38 @@ impl FinalVisibilityReplay {
         (
             Self {
                 state: Arc::clone(&state),
-                model_column: None,
+                visibility_write: None,
             },
             Box::new(FinalVisibilityReplay {
                 state,
-                model_column: None,
+                visibility_write: None,
             }),
         )
     }
 
-    /// Create a product stream paired with one storage-owner MODEL_DATA writeback.
-    pub fn with_model_column(
+    /// Create a product stream paired with one storage-owner visibility writeback.
+    pub fn with_visibility_write(
         path: PathBuf,
         expected: casa_imaging_model::ObservationSourceState,
         selection: Arc<casa_imaging_model::ObservationSelection>,
+        targets: SelectedVisibilityWriteTargets,
     ) -> io::Result<(Self, Box<dyn FinalVisibilitySink>)> {
         let state = Arc::new(Mutex::new(FinalVisibilityReplayState::Unbound));
-        let model_column = Arc::new(ModelColumnWriteBinding {
+        let visibility_write = Arc::new(VisibilityWriteBinding {
             path,
             expected,
             selection,
-            state: Mutex::new(ModelColumnWriteState::Idle),
+            targets,
+            state: Mutex::new(VisibilityWriteState::Idle),
         });
         Ok((
             Self {
                 state: Arc::clone(&state),
-                model_column: Some(model_column.clone()),
+                visibility_write: Some(visibility_write.clone()),
             },
             Box::new(FinalVisibilityReplay {
                 state,
-                model_column: Some(model_column),
+                visibility_write: Some(visibility_write),
             }),
         ))
     }
@@ -141,10 +147,26 @@ impl FinalVisibilityReplay {
         }
     }
 
-    /// Return whether this handle owns a bounded in-place `MODEL_DATA` write.
+    /// Return whether this handle writes `MODEL_DATA`.
     #[must_use]
-    pub const fn has_model_column(&self) -> bool {
-        self.model_column.is_some()
+    pub fn has_model_column(&self) -> bool {
+        self.visibility_write
+            .as_ref()
+            .is_some_and(|write| write.targets.model_data())
+    }
+
+    /// Return whether this handle writes transformed observations to `CORRECTED_DATA`.
+    #[must_use]
+    pub fn has_corrected_data(&self) -> bool {
+        self.visibility_write
+            .as_ref()
+            .is_some_and(|write| write.targets.corrected_data())
+    }
+
+    /// Return whether this handle owns any selected visibility writeback.
+    #[must_use]
+    pub fn has_visibility_write(&self) -> bool {
+        self.visibility_write.is_some()
     }
 }
 
@@ -179,25 +201,26 @@ impl FinalVisibilitySink for FinalVisibilityReplay {
     }
 
     fn begin_replay(&mut self) -> io::Result<()> {
-        let Some(column) = &self.model_column else {
+        let Some(write) = &self.visibility_write else {
             return Ok(());
         };
-        let mut state = column
+        let mut state = write
             .state
             .lock()
-            .map_err(|_| io::Error::other("MODEL_DATA write state poisoned"))?;
+            .map_err(|_| io::Error::other("visibility write state poisoned"))?;
         match &*state {
-            ModelColumnWriteState::Idle => {
-                *state = ModelColumnWriteState::Writing(ModelColumnWorker::spawn(
-                    column.path.clone(),
-                    column.expected.clone(),
-                    Arc::clone(&column.selection),
+            VisibilityWriteState::Idle => {
+                *state = VisibilityWriteState::Writing(VisibilityWriteWorker::spawn(
+                    write.path.clone(),
+                    write.expected.clone(),
+                    Arc::clone(&write.selection),
+                    write.targets,
                 )?);
                 Ok(())
             }
-            ModelColumnWriteState::Writing(_) => Ok(()),
-            ModelColumnWriteState::Complete => {
-                Err(io::Error::other("MODEL_DATA write already finished"))
+            VisibilityWriteState::Writing(_) => Ok(()),
+            VisibilityWriteState::Complete => {
+                Err(io::Error::other("visibility write already finished"))
             }
         }
     }
@@ -214,13 +237,13 @@ impl FinalVisibilitySink for FinalVisibilityReplay {
             return Err(io::Error::other("final-visibility replay is not bound"));
         };
         authority.consume(samples).map_err(io::Error::other)?;
-        if let Some(column) = &self.model_column {
-            let state = column
+        if let Some(write) = &self.visibility_write {
+            let state = write
                 .state
                 .lock()
-                .map_err(|_| io::Error::other("MODEL_DATA write state poisoned"))?;
-            let ModelColumnWriteState::Writing(worker) = &*state else {
-                return Err(io::Error::other("MODEL_DATA writer was not plan-prepared"));
+                .map_err(|_| io::Error::other("visibility write state poisoned"))?;
+            let VisibilityWriteState::Writing(worker) = &*state else {
+                return Err(io::Error::other("visibility writer was not plan-prepared"));
             };
             worker.write(samples)?;
         }
@@ -256,47 +279,68 @@ impl FinalVisibilitySink for FinalVisibilityReplay {
                 replay.spectral_support_sample_count(),
             )));
         }
-        if let Some(model_column) = &self.model_column {
-            let mut write_state = model_column
+        if let Some(write) = &self.visibility_write {
+            let mut write_state = write
                 .state
                 .lock()
-                .map_err(|_| io::Error::other("MODEL_DATA write state poisoned"))?;
-            let worker = match std::mem::replace(&mut *write_state, ModelColumnWriteState::Idle) {
-                ModelColumnWriteState::Writing(worker) => worker,
+                .map_err(|_| io::Error::other("visibility write state poisoned"))?;
+            let worker = match std::mem::replace(&mut *write_state, VisibilityWriteState::Idle) {
+                VisibilityWriteState::Writing(worker) => worker,
                 other => {
                     *write_state = other;
                     return Err(io::Error::other(
-                        "MODEL_DATA writer was not active at replay completion",
+                        "visibility writer was not active at replay completion",
                     ));
                 }
             };
             drop(write_state);
+            let corrected_data = write
+                .targets
+                .corrected_data()
+                .then(|| {
+                    replay
+                        .continuum_transform()
+                        .map(|transform| {
+                            LogicalIdentity::from_sha256(transform.generation_id().as_bytes())
+                        })
+                        .ok_or_else(|| {
+                            io::Error::other("CORRECTED_DATA write lacks continuum generation")
+                        })
+                })
+                .transpose()?;
             worker.finish(
                 completion.sample_count(),
-                completion.model_product().identity(),
+                SelectedVisibilityWriteGenerations {
+                    model_data: write
+                        .targets
+                        .model_data()
+                        .then_some(completion.model_product().identity()),
+                    corrected_data,
+                },
             )?;
-            *model_column
+            *write
                 .state
                 .lock()
-                .map_err(|_| io::Error::other("MODEL_DATA write state poisoned"))? =
-                ModelColumnWriteState::Complete;
+                .map_err(|_| io::Error::other("visibility write state poisoned"))? =
+                VisibilityWriteState::Complete;
         }
         *state = FinalVisibilityReplayState::Finished(completion);
         Ok(())
     }
 }
 
-struct ModelColumnWorker {
-    sender: SyncSender<ModelColumnCommand>,
+struct VisibilityWriteWorker {
+    sender: SyncSender<VisibilityWriteCommand>,
     join: JoinHandle<io::Result<u64>>,
 }
 
-pub(crate) struct ModelDataCellWrite {
+pub(crate) struct SelectedVisibilityCellWrite {
     address: casa_imaging_model::SelectedSampleAddress,
-    value: num_complex::Complex32,
+    predicted: num_complex::Complex32,
+    observed: num_complex::Complex32,
 }
 
-struct SelectedModelDataCoverage {
+struct SelectedVisibilityCoverage {
     selection: Arc<casa_imaging_model::ObservationSelection>,
     row: usize,
     channel: usize,
@@ -304,7 +348,7 @@ struct SelectedModelDataCoverage {
     written: u64,
 }
 
-struct ExpectedModelDataAddress {
+struct ExpectedVisibilityAddress {
     physical_row: u64,
     data_description_id: u32,
     spectral_window_id: u32,
@@ -313,7 +357,7 @@ struct ExpectedModelDataAddress {
     correlation_index: u32,
 }
 
-impl SelectedModelDataCoverage {
+impl SelectedVisibilityCoverage {
     fn new(selection: Arc<casa_imaging_model::ObservationSelection>) -> Self {
         Self {
             selection,
@@ -327,7 +371,7 @@ impl SelectedModelDataCoverage {
     fn push(&mut self, address: casa_imaging_model::SelectedSampleAddress) -> io::Result<()> {
         let Some(expected) = self.expected()? else {
             return Err(io::Error::other(
-                "MODEL_DATA replay exceeded the exact selected write set",
+                "visibility replay exceeded the exact selected write set",
             ));
         };
         if address.physical_row != expected.physical_row
@@ -338,7 +382,7 @@ impl SelectedModelDataCoverage {
             || address.correlation_index != expected.correlation_index
         {
             return Err(io::Error::other(format!(
-                "MODEL_DATA replay address ({}, {}, {}) did not match selected address ({}, {}, {})",
+                "visibility replay address ({}, {}, {}) did not match selected address ({}, {}, {})",
                 address.physical_row,
                 address.channel_index,
                 address.correlation_index,
@@ -350,7 +394,7 @@ impl SelectedModelDataCoverage {
         self.written = self
             .written
             .checked_add(1)
-            .ok_or_else(|| io::Error::other("MODEL_DATA sample count overflowed"))?;
+            .ok_or_else(|| io::Error::other("visibility write sample count overflowed"))?;
         self.advance()?;
         Ok(())
     }
@@ -358,14 +402,14 @@ impl SelectedModelDataCoverage {
     fn finish(&self, expected_samples: u64) -> io::Result<()> {
         if self.written != expected_samples || self.expected()?.is_some() {
             return Err(io::Error::other(format!(
-                "MODEL_DATA wrote {} samples without exhausting the exact selected write set of {expected_samples}",
+                "visibility writer wrote {} samples without exhausting the exact selected write set of {expected_samples}",
                 self.written
             )));
         }
         Ok(())
     }
 
-    fn expected(&self) -> io::Result<Option<ExpectedModelDataAddress>> {
+    fn expected(&self) -> io::Result<Option<ExpectedVisibilityAddress>> {
         let Some(row) = self.selection.rows().ordered_main_rows().get(self.row) else {
             return Ok(None);
         };
@@ -374,7 +418,7 @@ impl SelectedModelDataCoverage {
             .data_descriptions()
             .iter()
             .find(|selection| selection.data_description_id() == row.data_description_id())
-            .ok_or_else(|| io::Error::other("selected MODEL_DATA DDID is absent"))?;
+            .ok_or_else(|| io::Error::other("selected visibility DDID is absent"))?;
         let spectral_window = self
             .selection
             .spectral_windows()
@@ -382,22 +426,22 @@ impl SelectedModelDataCoverage {
             .find(|selection| {
                 selection.spectral_window_id() == data_description.spectral_window_id()
             })
-            .ok_or_else(|| io::Error::other("selected MODEL_DATA SPW is absent"))?;
+            .ok_or_else(|| io::Error::other("selected visibility SPW is absent"))?;
         let correlations = self
             .selection
             .correlations()
             .iter()
             .find(|selection| selection.polarization_id() == data_description.polarization_id())
-            .ok_or_else(|| io::Error::other("selected MODEL_DATA polarization is absent"))?;
+            .ok_or_else(|| io::Error::other("selected visibility polarization is absent"))?;
         let channel = spectral_window
             .channel_indices()
             .get(self.channel)
-            .ok_or_else(|| io::Error::other("selected MODEL_DATA channel is absent"))?;
+            .ok_or_else(|| io::Error::other("selected visibility channel is absent"))?;
         let correlation = correlations
             .products()
             .get(self.correlation)
-            .ok_or_else(|| io::Error::other("selected MODEL_DATA correlation is absent"))?;
-        Ok(Some(ExpectedModelDataAddress {
+            .ok_or_else(|| io::Error::other("selected visibility correlation is absent"))?;
+        Ok(Some(ExpectedVisibilityAddress {
             physical_row: row.physical_row(),
             data_description_id: data_description.data_description_id(),
             spectral_window_id: data_description.spectral_window_id(),
@@ -413,13 +457,13 @@ impl SelectedModelDataCoverage {
             .rows()
             .ordered_main_rows()
             .get(self.row)
-            .ok_or_else(|| io::Error::other("selected MODEL_DATA row is absent"))?;
+            .ok_or_else(|| io::Error::other("selected visibility row is absent"))?;
         let data_description = self
             .selection
             .data_descriptions()
             .iter()
             .find(|selection| selection.data_description_id() == row.data_description_id())
-            .ok_or_else(|| io::Error::other("selected MODEL_DATA DDID is absent"))?;
+            .ok_or_else(|| io::Error::other("selected visibility DDID is absent"))?;
         let spectral_window = self
             .selection
             .spectral_windows()
@@ -427,13 +471,13 @@ impl SelectedModelDataCoverage {
             .find(|selection| {
                 selection.spectral_window_id() == data_description.spectral_window_id()
             })
-            .ok_or_else(|| io::Error::other("selected MODEL_DATA SPW is absent"))?;
+            .ok_or_else(|| io::Error::other("selected visibility SPW is absent"))?;
         let correlations = self
             .selection
             .correlations()
             .iter()
             .find(|selection| selection.polarization_id() == data_description.polarization_id())
-            .ok_or_else(|| io::Error::other("selected MODEL_DATA polarization is absent"))?;
+            .ok_or_else(|| io::Error::other("selected visibility polarization is absent"))?;
         self.correlation += 1;
         if self.correlation == correlations.products().len() {
             self.correlation = 0;
@@ -447,22 +491,23 @@ impl SelectedModelDataCoverage {
     }
 }
 
-enum ModelColumnCommand {
+enum VisibilityWriteCommand {
     Write {
-        values: Vec<ModelDataCellWrite>,
+        values: Vec<SelectedVisibilityCellWrite>,
         reply: SyncSender<Result<(), String>>,
     },
     Finish {
         expected_samples: u64,
-        generation: LogicalIdentity,
+        generations: SelectedVisibilityWriteGenerations,
     },
 }
 
-impl ModelColumnWorker {
+impl VisibilityWriteWorker {
     fn spawn(
         path: PathBuf,
         expected: casa_imaging_model::ObservationSourceState,
         selection: Arc<casa_imaging_model::ObservationSelection>,
+        targets: SelectedVisibilityWriteTargets,
     ) -> io::Result<Self> {
         // A rendezvous channel keeps exactly one copied replay block resident:
         // the scheduler-accounted producer cannot queue a second block while
@@ -470,44 +515,59 @@ impl ModelColumnWorker {
         let (sender, receiver) = std::sync::mpsc::sync_channel(0);
         let (ready_sender, ready_receiver) = std::sync::mpsc::sync_channel(0);
         let join = std::thread::Builder::new()
-            .name("model-data-write".to_string())
-            .stack_size(MODEL_COLUMN_WORKER_STACK_BYTES)
+            .name("selected-visibility-write".to_string())
+            .stack_size(VISIBILITY_WRITE_WORKER_STACK_BYTES)
             .spawn(move || {
-                let mut coverage = SelectedModelDataCoverage::new(Arc::clone(&selection));
-                let mut writer = match ModelDataWrite::begin(path, &expected, &selection) {
-                    Ok(writer) => {
-                        let _ = ready_sender.send(Ok(()));
-                        writer
-                    }
-                    Err(error) => {
-                        let message = error.to_string();
-                        let _ = ready_sender.send(Err(message.clone()));
-                        return Err(io::Error::other(message));
-                    }
-                };
+                let mut coverage = SelectedVisibilityCoverage::new(Arc::clone(&selection));
+                let mut writer =
+                    match SelectedVisibilityWrite::begin(path, &expected, &selection, targets) {
+                        Ok(writer) => {
+                            let _ = ready_sender.send(Ok(()));
+                            writer
+                        }
+                        Err(error) => {
+                            let message = error.to_string();
+                            let _ = ready_sender.send(Err(message.clone()));
+                            return Err(io::Error::other(message));
+                        }
+                    };
                 let mut written_samples = 0_u64;
                 let completed_samples = loop {
                     let command = receiver
                         .recv()
-                        .map_err(|_| io::Error::other("MODEL_DATA write controller stopped"))?;
+                        .map_err(|_| io::Error::other("visibility write controller stopped"))?;
                     match command {
-                        ModelColumnCommand::Write { values, reply } => {
+                        VisibilityWriteCommand::Write { values, reply } => {
                             let result = (|| {
                                 written_samples = written_samples
                                     .checked_add(values.len() as u64)
                                     .ok_or_else(|| {
-                                        io::Error::other("MODEL_DATA sample count overflowed")
+                                        io::Error::other("visibility write sample count overflowed")
                                     })?;
                                 for cell in values {
                                     coverage.push(cell.address)?;
-                                    writer
-                                        .write(
-                                            cell.address.physical_row,
-                                            cell.address.channel_index,
-                                            cell.address.correlation_index,
-                                            cell.value,
-                                        )
-                                        .map_err(io::Error::other)?;
+                                    if targets.model_data() {
+                                        writer
+                                            .write(
+                                                casa_imaging_model::MsColumnKind::ModelData,
+                                                cell.address.physical_row,
+                                                cell.address.channel_index,
+                                                cell.address.correlation_index,
+                                                cell.predicted,
+                                            )
+                                            .map_err(io::Error::other)?;
+                                    }
+                                    if targets.corrected_data() {
+                                        writer
+                                            .write(
+                                                casa_imaging_model::MsColumnKind::CorrectedData,
+                                                cell.address.physical_row,
+                                                cell.address.channel_index,
+                                                cell.address.correlation_index,
+                                                cell.observed,
+                                            )
+                                            .map_err(io::Error::other)?;
+                                    }
                                 }
                                 Ok::<(), io::Error>(())
                             })();
@@ -522,12 +582,12 @@ impl ModelColumnWorker {
                                 }
                             }
                         }
-                        ModelColumnCommand::Finish {
+                        VisibilityWriteCommand::Finish {
                             expected_samples,
-                            generation,
+                            generations,
                         } => {
                             coverage.finish(expected_samples)?;
-                            writer.complete(generation).map_err(io::Error::other)?;
+                            writer.complete(generations).map_err(io::Error::other)?;
                             break written_samples;
                         }
                     }
@@ -537,7 +597,7 @@ impl ModelColumnWorker {
             .map_err(io::Error::other)?;
         ready_receiver
             .recv()
-            .map_err(|_| io::Error::other("MODEL_DATA worker stopped during startup"))?
+            .map_err(|_| io::Error::other("visibility writer stopped during startup"))?
             .map_err(io::Error::other)?;
         Ok(Self { sender, join })
     }
@@ -551,32 +611,41 @@ impl ModelColumnWorker {
             .map(|sample| {
                 let address = sample.address();
                 let predicted = sample.predicted();
-                ModelDataCellWrite {
+                let observed = sample.observed();
+                SelectedVisibilityCellWrite {
                     address,
-                    value: num_complex::Complex32::new(predicted.re as f32, predicted.im as f32),
+                    predicted: num_complex::Complex32::new(
+                        predicted.re as f32,
+                        predicted.im as f32,
+                    ),
+                    observed: num_complex::Complex32::new(observed.re as f32, observed.im as f32),
                 }
             })
             .collect();
         let (reply, response) = std::sync::mpsc::sync_channel(0);
         self.sender
-            .send(ModelColumnCommand::Write { values, reply })
-            .map_err(|_| io::Error::other("MODEL_DATA writer stopped"))?;
+            .send(VisibilityWriteCommand::Write { values, reply })
+            .map_err(|_| io::Error::other("visibility writer stopped"))?;
         response
             .recv()
-            .map_err(|_| io::Error::other("MODEL_DATA writer stopped"))?
+            .map_err(|_| io::Error::other("visibility writer stopped"))?
             .map_err(io::Error::other)
     }
 
-    fn finish(self, expected_samples: u64, generation: LogicalIdentity) -> io::Result<u64> {
+    fn finish(
+        self,
+        expected_samples: u64,
+        generations: SelectedVisibilityWriteGenerations,
+    ) -> io::Result<u64> {
         self.sender
-            .send(ModelColumnCommand::Finish {
+            .send(VisibilityWriteCommand::Finish {
                 expected_samples,
-                generation,
+                generations,
             })
-            .map_err(|_| io::Error::other("MODEL_DATA writer stopped"))?;
+            .map_err(|_| io::Error::other("visibility writer stopped"))?;
         self.join
             .join()
-            .map_err(|_| io::Error::other("MODEL_DATA writer panicked"))?
+            .map_err(|_| io::Error::other("visibility writer panicked"))?
     }
 }
 
@@ -1005,6 +1074,9 @@ impl SpectralCycleExecutor {
         let mut operator = prepared
             .begin_streaming(context, &self.problem, &self.complete_data)
             .map_err(io::Error::other)?;
+        if self.final_visibility_sink.is_some() {
+            operator.enable_final_visibility_samples();
+        }
         operator
             .bind_major_cycle_model(
                 state

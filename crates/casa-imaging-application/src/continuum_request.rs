@@ -251,6 +251,8 @@ pub struct ContinuumImagingRequest {
     pub mask: ContinuumMask,
     /// Persist the exact final prediction into the MeasurementSet `MODEL_DATA` column.
     pub save_model_column: bool,
+    /// Persist continuum-subtracted output-role observations into existing `CORRECTED_DATA`.
+    pub save_continuum_residual: bool,
     /// Capability constraints derived by the task surface. Unsupported
     /// capabilities are rejected by the installed implementation registry
     /// before physical execution.
@@ -746,6 +748,7 @@ fn prepare(
             casa_ms::open_measures_runtime()?,
         ),
         write_model_column: request.save_model_column,
+        write_corrected_data: request.save_continuum_residual,
         task_requirements: request.task_requirements,
         native,
     })
@@ -774,6 +777,11 @@ fn validate_request(request: &ContinuumImagingRequest) -> Result<(), crate::Appl
     if request.save_model_column && request.algorithm == ContinuumAlgorithm::Dirty {
         return Err(boxed(
             "MODEL_DATA persistence requires a solved final model, not a dirty-only request",
+        ));
+    }
+    if request.save_continuum_residual && request.continuum_subtraction.is_none() {
+        return Err(boxed(
+            "CORRECTED_DATA residual persistence requires continuum subtraction",
         ));
     }
     if request.continuum_subtraction.is_some()
@@ -1260,6 +1268,11 @@ fn specification(
             ModelColumnWrite::SelectedRows
         } else {
             ModelColumnWrite::Disabled
+        })
+        .with_corrected_data_write(if request.save_continuum_residual {
+            casa_imaging_model::CorrectedDataWrite::SelectedOutputRows
+        } else {
+            casa_imaging_model::CorrectedDataWrite::Disabled
         }),
         NumericsContract::new(
             vec![NumericPrecision::F64],

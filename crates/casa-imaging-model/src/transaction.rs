@@ -8,11 +8,12 @@ use crate::compiled_problem::CanonicalEncoder;
 use crate::{
     ColumnGeneration, ConsistencyToken, LogicalIdentity, MeasurementSetIdentity,
     MetadataGeneration, ModelColumnState, MsColumnKind, ObservationSelection, ObservationSnapshot,
-    ObservationSnapshotId, SelectedColumns,
+    ObservationSnapshotId, SelectedColumns, SequentialContinuumTransform, SpectralWindowSelection,
 };
+use thiserror::Error;
 
 const OBSERVATION_TRANSACTION_IDENTITY_DOMAIN: &[u8] = b"casa-rs-observation-transaction";
-const OBSERVATION_TRANSACTION_IDENTITY_VERSION: u32 = 2;
+const OBSERVATION_TRANSACTION_IDENTITY_VERSION: u32 = 3;
 
 /// Stable compiler-derived identity of one snapshot-bound access contract.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -50,18 +51,27 @@ pub enum ModelColumnWrite {
     SelectedRows,
 }
 
-/// Snapshot-captured `MODEL_DATA` state that an in-place write must match.
+/// Whether a compiled imaging run persists transformed observations to `CORRECTED_DATA`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ModelColumnPrecondition {
+pub enum CorrectedDataWrite {
+    /// Leave `CORRECTED_DATA` unchanged.
+    Disabled,
+    /// Replace only output-role selected cells in an existing owner-tracked column.
+    SelectedOutputRows,
+}
+
+/// Snapshot-captured destination state that an in-place visibility write must match.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelectedVisibilityColumnPrecondition {
     /// The column did not exist when the observation snapshot was captured.
     Absent,
     /// The column existed with this exact storage-owner generation.
     Generation(LogicalIdentity),
 }
 
-/// Physical coverage required to implement one logical `MODEL_DATA` write.
+/// Physical coverage required to implement one logical selected-visibility write.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ModelColumnWriteDisposition {
+pub enum SelectedVisibilityWriteDisposition {
     /// Replace only the selected cells in an existing column generation.
     ReplaceSelectedCells,
     /// Create the column and initialize every source row before selected replacement.
@@ -84,19 +94,36 @@ pub enum ModelColumnInitialization {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ObservationTransactionRequirements {
     model_column_write: ModelColumnWrite,
+    corrected_data_write: CorrectedDataWrite,
 }
 
 impl ObservationTransactionRequirements {
     /// Construct the complete MeasurementSet side-effect requirement.
     #[must_use]
     pub const fn new(model_column_write: ModelColumnWrite) -> Self {
-        Self { model_column_write }
+        Self {
+            model_column_write,
+            corrected_data_write: CorrectedDataWrite::Disabled,
+        }
     }
 
     /// Return the requested `MODEL_DATA` behavior.
     #[must_use]
     pub const fn model_column_write(self) -> ModelColumnWrite {
         self.model_column_write
+    }
+
+    /// Add optional in-place persistence of transformed output-role observations.
+    #[must_use]
+    pub const fn with_corrected_data_write(mut self, write: CorrectedDataWrite) -> Self {
+        self.corrected_data_write = write;
+        self
+    }
+
+    /// Return the requested `CORRECTED_DATA` behavior.
+    #[must_use]
+    pub const fn corrected_data_write(self) -> CorrectedDataWrite {
+        self.corrected_data_write
     }
 }
 
@@ -160,17 +187,18 @@ impl ObservationReadSet {
     }
 }
 
-/// Exact selected `MODEL_DATA` cells written in place for one MeasurementSet.
+/// Exact selected visibility-column cells written in place for one MeasurementSet.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ModelColumnWriteAccess {
+pub struct SelectedVisibilityWriteAccess {
     measurement_set: MeasurementSetIdentity,
+    column: MsColumnKind,
     selection: Arc<ObservationSelection>,
     expected_consistency_token: ConsistencyToken,
-    precondition: ModelColumnPrecondition,
-    disposition: ModelColumnWriteDisposition,
+    precondition: SelectedVisibilityColumnPrecondition,
+    disposition: SelectedVisibilityWriteDisposition,
 }
 
-impl ModelColumnWriteAccess {
+impl SelectedVisibilityWriteAccess {
     /// Return the location-independent source identity.
     #[must_use]
     pub const fn measurement_set(&self) -> MeasurementSetIdentity {
@@ -183,10 +211,10 @@ impl ModelColumnWriteAccess {
         &self.selection
     }
 
-    /// Return the only MAIN column this access may replace.
+    /// Return the exact MAIN visibility column this access may replace.
     #[must_use]
     pub const fn column(&self) -> MsColumnKind {
-        MsColumnKind::ModelData
+        self.column
     }
 
     /// Return the source consistency token that must still hold at commit.
@@ -195,15 +223,15 @@ impl ModelColumnWriteAccess {
         self.expected_consistency_token
     }
 
-    /// Return the exact prior `MODEL_DATA` state required at commit.
+    /// Return the exact prior destination state required at commit.
     #[must_use]
-    pub const fn precondition(&self) -> ModelColumnPrecondition {
+    pub const fn precondition(&self) -> SelectedVisibilityColumnPrecondition {
         self.precondition
     }
 
     /// Return whether this write updates an existing column or creates it fully initialized.
     #[must_use]
-    pub const fn disposition(&self) -> ModelColumnWriteDisposition {
+    pub const fn disposition(&self) -> SelectedVisibilityWriteDisposition {
         self.disposition
     }
 }
@@ -211,14 +239,14 @@ impl ModelColumnWriteAccess {
 /// Canonical MeasurementSet write set for one imaging run.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ObservationWriteSet {
-    model_columns: Vec<ModelColumnWriteAccess>,
+    visibility_columns: Vec<SelectedVisibilityWriteAccess>,
 }
 
 impl ObservationWriteSet {
-    /// Return in-place `MODEL_DATA` writes in canonical MeasurementSet order.
+    /// Return in-place selected visibility writes in canonical source/column order.
     #[must_use]
-    pub fn model_columns(&self) -> &[ModelColumnWriteAccess] {
-        &self.model_columns
+    pub fn visibility_columns(&self) -> &[SelectedVisibilityWriteAccess] {
+        &self.visibility_columns
     }
 }
 
@@ -261,11 +289,11 @@ impl ObservationTransactionContract {
 ///
 /// The read set is derived rather than caller-supplied, so execution cannot
 /// omit a generation that participated in snapshot identity.
-#[must_use]
 pub fn compile_observation_transaction(
     snapshot: &ObservationSnapshot,
     requirements: ObservationTransactionRequirements,
-) -> ObservationTransactionContract {
+    visibility_transform: Option<&SequentialContinuumTransform>,
+) -> Result<ObservationTransactionContract, ObservationTransactionCompileError> {
     let read_set = ObservationReadSet {
         sources: snapshot
             .sources()
@@ -277,7 +305,7 @@ pub fn compile_observation_transaction(
             })
             .collect(),
     };
-    let model_columns = match requirements.model_column_write {
+    let mut visibility_columns = match requirements.model_column_write {
         ModelColumnWrite::Disabled => Vec::new(),
         ModelColumnWrite::SelectedRows => snapshot
             .sources()
@@ -285,18 +313,19 @@ pub fn compile_observation_transaction(
             .map(|source| {
                 let precondition = source.generations().model_column().into();
                 let disposition = match precondition {
-                    ModelColumnPrecondition::Absent => {
-                        ModelColumnWriteDisposition::CreateAndInitializeAllRows {
+                    SelectedVisibilityColumnPrecondition::Absent => {
+                        SelectedVisibilityWriteDisposition::CreateAndInitializeAllRows {
                             row_count: source.selection().rows().source_row_count(),
                             initialization: ModelColumnInitialization::Zero,
                         }
                     }
-                    ModelColumnPrecondition::Generation(_) => {
-                        ModelColumnWriteDisposition::ReplaceSelectedCells
+                    SelectedVisibilityColumnPrecondition::Generation(_) => {
+                        SelectedVisibilityWriteDisposition::ReplaceSelectedCells
                     }
                 };
-                ModelColumnWriteAccess {
+                SelectedVisibilityWriteAccess {
                     measurement_set: source.identity(),
+                    column: MsColumnKind::ModelData,
                     selection: source.selection_arc(),
                     expected_consistency_token: source.generations().consistency_token(),
                     precondition,
@@ -305,21 +334,91 @@ pub fn compile_observation_transaction(
             })
             .collect(),
     };
-    ObservationTransactionContract {
+    if requirements.corrected_data_write == CorrectedDataWrite::SelectedOutputRows {
+        let transform = visibility_transform
+            .ok_or(ObservationTransactionCompileError::CorrectedDataRequiresContinuumTransform)?;
+        for source in snapshot.sources() {
+            let generation = source.generations().corrected_data_column();
+            let crate::CorrectedDataColumnState::Present(generation) = generation else {
+                return Err(ObservationTransactionCompileError::MissingCorrectedDataDestination);
+            };
+            visibility_columns.push(SelectedVisibilityWriteAccess {
+                measurement_set: source.identity(),
+                column: MsColumnKind::CorrectedData,
+                selection: Arc::new(output_role_selection(source.selection(), transform)?),
+                expected_consistency_token: source.generations().consistency_token(),
+                precondition: SelectedVisibilityColumnPrecondition::Generation(generation),
+                disposition: SelectedVisibilityWriteDisposition::ReplaceSelectedCells,
+            });
+        }
+    }
+    visibility_columns.sort_unstable_by_key(|access| (access.measurement_set, access.column));
+    Ok(ObservationTransactionContract {
         transaction_id: canonical_transaction_id(snapshot.snapshot_id(), requirements),
         observation_snapshot_id: snapshot.snapshot_id(),
         read_set,
-        write_set: ObservationWriteSet { model_columns },
-    }
+        write_set: ObservationWriteSet { visibility_columns },
+    })
 }
 
-impl From<ModelColumnState> for ModelColumnPrecondition {
+impl From<ModelColumnState> for SelectedVisibilityColumnPrecondition {
     fn from(state: ModelColumnState) -> Self {
         match state {
             ModelColumnState::Absent => Self::Absent,
             ModelColumnState::Present(generation) => Self::Generation(generation),
         }
     }
+}
+
+fn output_role_selection(
+    selected: &ObservationSelection,
+    transform: &SequentialContinuumTransform,
+) -> Result<ObservationSelection, ObservationTransactionCompileError> {
+    let spectral_windows = selected
+        .spectral_windows()
+        .iter()
+        .map(|selection| {
+            let output_channels = selection
+                .channel_indices()
+                .iter()
+                .copied()
+                .filter(|channel| {
+                    transform.rules().iter().any(|rule| {
+                        rule.spectral_window_id() == selection.spectral_window_id()
+                            && rule
+                                .channel_use(*channel)
+                                .is_some_and(|role| role.contributes_to_output())
+                    })
+                })
+                .collect::<Vec<_>>();
+            (!output_channels.is_empty())
+                .then(|| {
+                    SpectralWindowSelection::new(selection.spectral_window_id(), output_channels)
+                })
+                .ok_or(ObservationTransactionCompileError::EmptyOutputRoleSelection)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(ObservationSelection::new(
+        selected.rows().clone(),
+        selected.rows_filter().clone(),
+        selected.data_descriptions().to_vec(),
+        spectral_windows,
+        selected.correlations().to_vec(),
+    ))
+}
+
+/// Failure to compile a requested MeasurementSet side effect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum ObservationTransactionCompileError {
+    /// Residual persistence is meaningful only for a compiled continuum transform.
+    #[error("CORRECTED_DATA residual persistence requires continuum subtraction")]
+    CorrectedDataRequiresContinuumTransform,
+    /// The destination must already exist and be owner tracked.
+    #[error("CORRECTED_DATA residual persistence requires an existing owner-tracked destination")]
+    MissingCorrectedDataDestination,
+    /// The transform must expose at least one output-role channel for each selected SPW.
+    #[error("continuum transform selected no CORRECTED_DATA output-role channels")]
+    EmptyOutputRoleSelection,
 }
 
 fn canonical_transaction_id(
@@ -333,6 +432,10 @@ fn canonical_transaction_id(
     encoder.u8(match requirements.model_column_write {
         ModelColumnWrite::Disabled => 0,
         ModelColumnWrite::SelectedRows => 1,
+    });
+    encoder.u8(match requirements.corrected_data_write {
+        CorrectedDataWrite::Disabled => 0,
+        CorrectedDataWrite::SelectedOutputRows => 1,
     });
     ObservationTransactionId(LogicalIdentity::from_sha256(encoder.finish()))
 }

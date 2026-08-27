@@ -29,7 +29,8 @@ use casa_ms::SubTable;
 use casa_ms::builder::MeasurementSetBuilder;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::{
-    ModelDataWrite, SelectedObservationContentBudget, SelectedObservationResolutionRequest,
+    SelectedObservationContentBudget, SelectedObservationResolutionRequest,
+    SelectedVisibilityWrite, SelectedVisibilityWriteGenerations, SelectedVisibilityWriteTargets,
     initialize_measurement_set_owner_manifest, resolve_selected_observation,
 };
 use casa_tables::{ColumnType, Table};
@@ -1087,14 +1088,22 @@ fn model_data_write_read_interoperability_matrix() {
     );
     let resolved = resolve_selected_observation(request).expect("resolve owner state");
     let (_, access) = resolved.into_parts();
-    let mut writer = ModelDataWrite::begin(&ms_path, access.source_state(), &model_selection)
-        .expect("begin MODEL_DATA write");
+    let mut writer = SelectedVisibilityWrite::begin(
+        &ms_path,
+        access.source_state(),
+        &model_selection,
+        SelectedVisibilityWriteTargets::new(true, false),
+    )
+    .expect("begin MODEL_DATA write");
     let rust_written = casa_types::Complex32::new(4.5, -1.25);
     writer
-        .write(0, 0, 0, rust_written)
+        .write(MsColumnKind::ModelData, 0, 0, 0, rust_written)
         .expect("write prediction");
     writer
-        .complete(LogicalIdentity::from_sha256([73; 32]))
+        .complete(SelectedVisibilityWriteGenerations {
+            model_data: Some(LogicalIdentity::from_sha256([73; 32])),
+            corrected_data: None,
+        })
         .expect("complete MODEL_DATA write");
 
     let reopened = MeasurementSet::open(&ms_path).expect("reopen committed MS in Rust");
@@ -1189,18 +1198,32 @@ fn model_data_clone_preserves_cpp_heterogeneous_tiled_shape_storage() {
     );
     let resolved = resolve_selected_observation(request).expect("resolve C++ fixture");
     let (_, access) = resolved.into_parts();
-    let storage = access.model_column_storage_plan();
+    let storage = access
+        .selected_visibility_storage_plan(SelectedVisibilityWriteTargets::new(true, false))
+        .expect("MODEL_DATA storage plan");
     assert_eq!(storage.additional_persistent_bytes(), 768);
     assert_eq!(storage.maximum_cell_bytes(), 512);
 
-    let mut writer = ModelDataWrite::begin(&path, access.source_state(), &selection)
-        .expect("clone and initialize MODEL_DATA");
+    let mut writer = SelectedVisibilityWrite::begin(
+        &path,
+        access.source_state(),
+        &selection,
+        SelectedVisibilityWriteTargets::new(true, false),
+    )
+    .expect("clone and initialize MODEL_DATA");
     let rust_first = casa_types::Complex32::new(4.25, -0.75);
     let rust_second = casa_types::Complex32::new(-3.0, 2.5);
-    writer.write(0, 15, 3, rust_first).expect("write 4x16 cell");
-    writer.write(1, 7, 2, rust_second).expect("write 4x8 cell");
     writer
-        .complete(LogicalIdentity::from_sha256([83; 32]))
+        .write(MsColumnKind::ModelData, 0, 15, 3, rust_first)
+        .expect("write 4x16 cell");
+    writer
+        .write(MsColumnKind::ModelData, 1, 7, 2, rust_second)
+        .expect("write 4x8 cell");
+    writer
+        .complete(SelectedVisibilityWriteGenerations {
+            model_data: Some(LogicalIdentity::from_sha256([83; 32])),
+            corrected_data: None,
+        })
         .expect("complete Rust write");
 
     MeasurementSetOracle::verify_heterogeneous_model_clone(&path)

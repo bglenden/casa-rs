@@ -6838,6 +6838,28 @@
       "persistence_class": "profile"
     },
     {
+      "id": "parameter.save_continuum_residual",
+      "semantic_revision": 1,
+      "casa_name": "save_continuum_residual",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Overwrite output-role selected cells in an existing CORRECTED_DATA column in place",
+        "details": "Default false. Requires continuum subtraction; fit-only and nonselected cells, flags, and weights remain unchanged.",
+        "examples": [
+          "false"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
       "id": "parameter.savemodel",
       "semantic_revision": 1,
       "casa_name": "savemodel",

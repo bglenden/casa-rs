@@ -61,16 +61,17 @@ pub use model_state::{
 
 pub use observation::{
     AntennaBaseline, AntennaSelection, ColumnGeneration, CompileObservationError, ConsistencyToken,
-    CorrelationProduct, CorrelationSelection, CorrelationType, DataDescriptionSelection,
-    FlagPolicy, IdSelection, IntentSelection, MeasurementSetIdentity, MetadataGeneration,
-    MetadataTableKind, ModelColumnState, MsColumnKind, ObservationConsistencyError,
-    ObservationProvenanceId, ObservationSelection, ObservationSnapshot, ObservationSnapshotId,
-    ObservationSnapshotInput, ObservationSource, ObservationSourceInput,
-    ObservationSourceProvenance, ObservationSourceState, ObservationState, ResolvedIntent,
-    RowSelection, SelectedColumns, SelectedMainRow, SelectedRowManifestValidationError,
-    SelectedRowSequenceError, SelectedRowSequenceId, SelectedRows, SelectionBound,
-    SourceGenerations, SpectralWindowSelection, TimeRange, TimeSelection, UvDistanceRange,
-    UvDistanceUnit, UvSelection, VisibilityColumn, WeightColumn, compile_observation,
+    CorrectedDataColumnState, CorrelationProduct, CorrelationSelection, CorrelationType,
+    DataDescriptionSelection, FlagPolicy, IdSelection, IntentSelection, MeasurementSetIdentity,
+    MetadataGeneration, MetadataTableKind, ModelColumnState, MsColumnKind,
+    ObservationConsistencyError, ObservationProvenanceId, ObservationSelection,
+    ObservationSnapshot, ObservationSnapshotId, ObservationSnapshotInput, ObservationSource,
+    ObservationSourceInput, ObservationSourceProvenance, ObservationSourceState, ObservationState,
+    ResolvedIntent, RowSelection, SelectedColumns, SelectedMainRow,
+    SelectedRowManifestValidationError, SelectedRowSequenceError, SelectedRowSequenceId,
+    SelectedRows, SelectionBound, SourceGenerations, SpectralWindowSelection, TimeRange,
+    TimeSelection, UvDistanceRange, UvDistanceUnit, UvSelection, VisibilityColumn, WeightColumn,
+    compile_observation,
 };
 
 pub use prepared_artifact::{
@@ -99,10 +100,11 @@ pub use product_graph::{
 };
 
 pub use transaction::{
-    MeasurementSetReadAccess, ModelColumnInitialization, ModelColumnPrecondition, ModelColumnWrite,
-    ModelColumnWriteAccess, ModelColumnWriteDisposition, ObservationReadSet,
-    ObservationTransactionContract, ObservationTransactionId, ObservationTransactionRequirements,
-    ObservationWriteSet,
+    CorrectedDataWrite, MeasurementSetReadAccess, ModelColumnInitialization, ModelColumnWrite,
+    ObservationReadSet, ObservationTransactionCompileError, ObservationTransactionContract,
+    ObservationTransactionId, ObservationTransactionRequirements, ObservationWriteSet,
+    SelectedVisibilityColumnPrecondition, SelectedVisibilityWriteAccess,
+    SelectedVisibilityWriteDisposition,
 };
 
 pub use visibility_transform::{

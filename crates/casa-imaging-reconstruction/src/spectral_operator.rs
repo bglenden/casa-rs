@@ -879,6 +879,7 @@ pub struct CompleteDataOwnerState {
     coverage: CoverageEncoder,
     finite_values: FiniteValuePolicy,
     residual_model: Option<ModelGenerationId>,
+    emit_final_visibilities: bool,
     predicted_selected: Vec<FinalVisibilitySample>,
     operator: SpectralSlabOperator,
 }
@@ -904,6 +905,7 @@ impl CompleteDataOwnerState {
             coverage: CoverageEncoder::new(),
             finite_values: specification.finite_values,
             residual_model: None,
+            emit_final_visibilities: false,
             predicted_selected: Vec::with_capacity(prepared.workload.max_replay_block_samples),
             operator: SpectralSlabOperator::new(specification, prepared.workload, prepared.fft),
         })
@@ -928,6 +930,7 @@ impl CompleteDataOwnerState {
             coverage: CoverageEncoder::new(),
             finite_values: specification.finite_values,
             residual_model: None,
+            emit_final_visibilities: false,
             predicted_selected: Vec::with_capacity(prepared.workload.max_replay_block_samples),
             operator: SpectralSlabOperator::new(specification, prepared.workload, prepared.fft),
         })
@@ -951,6 +954,11 @@ impl CompleteDataOwnerState {
     #[must_use]
     pub const fn weighting_generation(&self) -> Option<WeightingGenerationId> {
         self.weighting_generation
+    }
+
+    /// Request bounded final-visibility samples even when no residual model is bound.
+    pub fn enable_final_visibility_samples(&mut self) {
+        self.emit_final_visibilities = true;
     }
 
     /// Consume one reconstruction-owned T18 block in canonical replay order.
@@ -1010,7 +1018,7 @@ impl CompleteDataOwnerState {
                     }
                 }
             }
-            if self.residual_model.is_some()
+            if (self.residual_model.is_some() || self.emit_final_visibilities)
                 && has_spectral_support
                 && (touches_core || self.operator.slab.total_channels() == 1)
             {

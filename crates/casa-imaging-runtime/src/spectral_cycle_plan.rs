@@ -10,9 +10,9 @@ use std::{
 
 use casa_imaging_model::CompiledProblem;
 use casa_imaging_reconstruction::{WeightingExecutionLimits, WeightingPlan, plan_weighting};
-use casa_ms::{ModelColumnStoragePlan, SelectedObservationResidencyCertificate};
+use casa_ms::{SelectedObservationResidencyCertificate, SelectedVisibilityStoragePlan};
 
-use crate::spectral_cycle::{MODEL_COLUMN_WORKER_STACK_BYTES, ModelDataCellWrite};
+use crate::spectral_cycle::{SelectedVisibilityCellWrite, VISIBILITY_WRITE_WORKER_STACK_BYTES};
 use crate::*;
 
 const READ_NODE: &str = "transaction-read";
@@ -36,7 +36,7 @@ pub struct SpectralCycleExecutionPolicy {
     stage_nanos: u64,
     minor_cycle_bytes: u64,
     confidence_parts_per_million: u32,
-    model_data: Option<ModelColumnStoragePlan>,
+    visibility_write: Option<SelectedVisibilityStoragePlan>,
 }
 
 impl SpectralCycleExecutionPolicy {
@@ -59,14 +59,14 @@ impl SpectralCycleExecutionPolicy {
             stage_nanos,
             minor_cycle_bytes,
             confidence_parts_per_million,
-            model_data: None,
+            visibility_write: None,
         }
     }
 
-    /// Add the storage-owner plan for a terminal in-place MODEL_DATA write.
+    /// Add the storage-owner plan for a terminal in-place visibility write.
     #[must_use]
-    pub const fn with_model_data(mut self, plan: ModelColumnStoragePlan) -> Self {
-        self.model_data = Some(plan);
+    pub const fn with_visibility_write(mut self, plan: SelectedVisibilityStoragePlan) -> Self {
+        self.visibility_write = Some(plan);
         self
     }
 }
@@ -212,15 +212,17 @@ impl SpectralCyclePlan {
             pass_node("spectral-operator-fft-plan", pass),
         )?;
         let (mut physical, complete_data) = complete_data.compose(&physical)?;
-        if let Some(bounds) = policy.model_data {
-            let [_write] = problem
+        if let Some(bounds) = policy.visibility_write {
+            if problem
                 .observation_transaction()
                 .write_set()
-                .model_columns()
-            else {
-                return Err(SpectralCyclePlanError::ModelColumnCount);
-            };
-            physical = append_model_data_resources(registry, physical, &policy, &replay, bounds)?;
+                .visibility_columns()
+                .is_empty()
+            {
+                return Err(SpectralCyclePlanError::VisibilityWriteCount);
+            }
+            physical =
+                append_visibility_write_resources(registry, physical, &policy, &replay, bounds)?;
         }
         let minor_cycle_node = include_minor.then(|| WorkNodeId::new(MINOR_NODE));
         if let Some(minor) = &minor_cycle_node {
@@ -667,19 +669,19 @@ pub(crate) fn pass_node(base: &str, pass: SpectralPassIdentity) -> WorkNodeId {
     WorkNodeId::new(format!("{base}-{phase}-{}", pass.ordinal()))
 }
 
-fn append_model_data_resources<R: ImplementationRegistry>(
+fn append_visibility_write_resources<R: ImplementationRegistry>(
     registry: &R,
     base: PhysicalWorkBinding,
     policy: &SpectralCycleExecutionPolicy,
     replay: &WorkNodeId,
-    storage_plan: ModelColumnStoragePlan,
+    storage_plan: SelectedVisibilityStoragePlan,
 ) -> Result<PhysicalWorkBinding, SpectralCyclePlanError> {
     let commit = base.observation_transaction().commit().clone();
-    let allocation = AllocationId::new("serial-model-data-cell-buffer");
-    let slot = PhysicalSlotId::new("serial-model-data-cell-buffer-slot");
-    let block_allocation = AllocationId::new("serial-model-data-replay-copy");
-    let block_slot = PhysicalSlotId::new("serial-model-data-replay-copy-slot");
-    let storage_id = "serial-model-data-column".to_string();
+    let allocation = AllocationId::new("serial-visibility-write-cell-buffer");
+    let slot = PhysicalSlotId::new("serial-visibility-write-cell-buffer-slot");
+    let block_allocation = AllocationId::new("serial-visibility-write-replay-copy");
+    let block_slot = PhysicalSlotId::new("serial-visibility-write-replay-copy-slot");
+    let storage_id = "serial-visibility-write-column".to_string();
     let existing_rate = base
         .execution_dag()
         .resource_alternative()
@@ -698,10 +700,10 @@ fn append_model_data_resources<R: ImplementationRegistry>(
         .map(|demand| demand.demand_id.clone());
     let rate_id = existing_rate
         .clone()
-        .unwrap_or_else(|| "serial-model-data-write-rate".to_string());
+        .unwrap_or_else(|| "serial-visibility-write-rate".to_string());
     let queue_id = existing_queue
         .clone()
-        .unwrap_or_else(|| "serial-model-data-queue".to_string());
+        .unwrap_or_else(|| "serial-visibility-write-queue".to_string());
     let persistent_bytes = storage_plan.additional_persistent_bytes();
     let write_bytes = storage_plan.write_bytes().max(1);
     let cell_bytes = storage_plan.maximum_cell_bytes().max(1);
@@ -709,8 +711,8 @@ fn append_model_data_resources<R: ImplementationRegistry>(
         .ok()
         .and_then(|samples| {
             samples.checked_mul(
-                u64::try_from(std::mem::size_of::<ModelDataCellWrite>())
-                    .expect("MODEL_DATA write tuple size fits u64"),
+                u64::try_from(std::mem::size_of::<SelectedVisibilityCellWrite>())
+                    .expect("visibility write tuple size fits u64"),
             )
         })
         .ok_or(SpectralCyclePlanError::Overflow)?
@@ -741,7 +743,7 @@ fn append_model_data_resources<R: ImplementationRegistry>(
         },
         ResourceClaim {
             resource: LeaseResource::RuntimeOverhead(RuntimeOverheadKind::ThreadStack),
-            amount: MODEL_COLUMN_WORKER_STACK_BYTES as u64,
+            amount: VISIBILITY_WRITE_WORKER_STACK_BYTES as u64,
             lifetime: write_lifetime.clone(),
         },
     ]);
@@ -786,19 +788,19 @@ fn append_model_data_resources<R: ImplementationRegistry>(
         views: BTreeSet::from([CapacityViewId::new("host-memory")]),
         alignment_bytes: 64,
         storage_mode: StorageMode::Host,
-        layout: AllocationLayout::new("serial-model-data-cell-buffer"),
+        layout: AllocationLayout::new("serial-visibility-write-cell-buffer"),
         initialization: InitializationPolicy::OverwriteBeforeRead,
         access: AllocationAccess::ReadWrite,
     };
     let mut alternative = base.execution_dag().resource_alternative().clone();
     alternative.demand.memory.push(MemoryDemand {
-        allocation_id: "serial-model-data-cell-buffer".to_string(),
+        allocation_id: "serial-visibility-write-cell-buffer".to_string(),
         hard_bytes: cell_bytes,
         preferred_bytes: cell_bytes,
         views: vec![CapacityViewId::new("host-memory")],
     });
     alternative.demand.memory.push(MemoryDemand {
-        allocation_id: "serial-model-data-replay-copy".to_string(),
+        allocation_id: "serial-visibility-write-replay-copy".to_string(),
         hard_bytes: block_copy_bytes,
         preferred_bytes: block_copy_bytes,
         views: vec![CapacityViewId::new("host-memory")],
@@ -810,7 +812,7 @@ fn append_model_data_resources<R: ImplementationRegistry>(
         .demand
         .overhead
         .thread_stack_bytes
-        .checked_add(MODEL_COLUMN_WORKER_STACK_BYTES as u64)
+        .checked_add(VISIBILITY_WRITE_WORKER_STACK_BYTES as u64)
         .ok_or(SpectralCyclePlanError::Overflow)?;
     if persistent_bytes > 0 {
         alternative.demand.storage.push(StorageDemand {
@@ -899,7 +901,7 @@ fn append_model_data_resources<R: ImplementationRegistry>(
                 PhysicalSlot {
                     id: slot,
                     lease_resource: LeaseResource::Memory {
-                        allocation_id: "serial-model-data-cell-buffer".to_string(),
+                        allocation_id: "serial-visibility-write-cell-buffer".to_string(),
                     },
                     capacity_bytes: cell_bytes,
                     compatibility: compatibility.clone(),
@@ -907,7 +909,7 @@ fn append_model_data_resources<R: ImplementationRegistry>(
                 PhysicalSlot {
                     id: block_slot,
                     lease_resource: LeaseResource::Memory {
-                        allocation_id: "serial-model-data-replay-copy".to_string(),
+                        allocation_id: "serial-visibility-write-replay-copy".to_string(),
                     },
                     capacity_bytes: block_copy_bytes,
                     compatibility,
@@ -956,7 +958,7 @@ fn append_model_data_resources<R: ImplementationRegistry>(
             .expect("spectral cycle plan has final-model preparation")
             .clone(),
     )
-    .with_model_column_writeback(replay.clone());
+    .with_visibility_writeback(replay.clone());
     Ok(PhysicalWorkBinding::new_reconstruction(
         catalog,
         dag,
@@ -1103,10 +1105,10 @@ fn append_minor<R: ImplementationRegistry>(
     }
     if let Some(writeback) = base
         .observation_transaction()
-        .model_column_writeback()
+        .visibility_writeback()
         .cloned()
     {
-        work = work.with_model_column_writeback(writeback);
+        work = work.with_visibility_writeback(writeback);
     }
     Ok(PhysicalWorkBinding::new_reconstruction(
         catalog,
@@ -1121,8 +1123,8 @@ fn append_minor<R: ImplementationRegistry>(
 #[derive(Debug)]
 /// Failure to construct a complete spectral cycle physical plan.
 pub enum SpectralCyclePlanError {
-    /// MODEL_DATA bounds were supplied without one exact model-column write.
-    ModelColumnCount,
+    /// Visibility-write bounds were supplied without a logical destination.
+    VisibilityWriteCount,
     /// A byte, row, or elapsed-time projection overflowed its identity domain.
     Overflow,
     /// Scientific weighting planning rejected the compiled problem or limits.

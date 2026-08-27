@@ -26,8 +26,8 @@ use crate::selected_observation_sample::{
     SelectedObservationGenerationId, SelectedObservationSample,
 };
 use crate::transaction::{
-    ObservationTransactionContract, ObservationTransactionRequirements,
-    compile_observation_transaction,
+    ObservationTransactionCompileError, ObservationTransactionContract,
+    ObservationTransactionRequirements, compile_observation_transaction,
 };
 
 const COMPILED_PROBLEM_IDENTITY_DOMAIN: &[u8] = b"casa-rs-compiled-problem";
@@ -1644,6 +1644,9 @@ pub enum CompileProblemError {
     /// The requested model lifecycle is incomplete or conflicts with the problem.
     #[error(transparent)]
     ModelLifecycle(#[from] ModelContractError),
+    /// The requested MeasurementSet write contract is invalid for this snapshot.
+    #[error(transparent)]
+    ObservationTransaction(#[from] ObservationTransactionCompileError),
     /// Reconstruction and capability requirements contradict each other.
     #[error("invalid capability combination: {reason}")]
     InvalidCapabilityCombination {
@@ -1714,7 +1717,8 @@ pub fn compile(request: ImagingRequest) -> Result<CompiledProblem, CompileProble
     let observation_transaction = compile_observation_transaction(
         inputs.observation_snapshot(),
         specification.observation_transaction,
-    );
+        visibility_transform.as_ref(),
+    )?;
     let numerics = specification.numerics.canonicalize()?;
     let numerics_id = canonical_numerics_id(&numerics);
     validate_science(&science, &inputs)?;

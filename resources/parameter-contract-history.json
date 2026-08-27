@@ -1577,6 +1577,11 @@
       "fingerprint": "b7f3637f27eedfbde3a972e6d8bdd4f2717f915e088e84828b6a62454e6093a7"
     },
     {
+      "id": "parameter.save_continuum_residual",
+      "semantic_revision": 1,
+      "fingerprint": "225612082b50ad7fea0f385bb21cd94c7e10dd401310a1df5eb5b33a7c2b75f4"
+    },
+    {
       "id": "parameter.savemodel",
       "semantic_revision": 1,
       "fingerprint": "0ef73578b7920d27d82566611cab6d65f09fcf15d33b49a006510f4a42ab1c0b"
@@ -2367,6 +2372,11 @@
       "id": "imager",
       "contract_version": 9,
       "fingerprint": "72f083f9db60770ab8b702aee9adad1f8b3f6c9eac8e1494d332a36b712d6985"
+    },
+    {
+      "id": "imager",
+      "contract_version": 10,
+      "fingerprint": "bf013a341a65bd699a95b5bd58addae88f7e1f8c4c99923e8036e55533c12ad3"
     },
     {
       "id": "imcollapse",

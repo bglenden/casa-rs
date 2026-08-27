@@ -30,7 +30,7 @@ use crate::{
 /// Stable protocol name advertised by `casars-imager --protocol-info`.
 pub const IMAGER_TASK_PROTOCOL_NAME: &str = "casa_imager_task";
 /// Stable protocol version advertised by `casars-imager --protocol-info`.
-pub const IMAGER_TASK_PROTOCOL_VERSION: u32 = 5;
+pub const IMAGER_TASK_PROTOCOL_VERSION: u32 = 6;
 /// Version of the newline-delimited imager progress-event payload.
 pub const IMAGER_PROGRESS_EVENT_SCHEMA_VERSION: u32 = 1;
 /// Version of the authoritative observability snapshot embedded in progress events.
@@ -1919,6 +1919,9 @@ pub struct ImagerRunTaskRequest {
     /// Model persistence mode.
     #[serde(default)]
     pub save_model: ImagerSaveModel,
+    /// Persist continuum-subtracted output-role visibilities into existing CORRECTED_DATA.
+    #[serde(default)]
+    pub save_continuum_residual: bool,
     /// Optional CASA image used to seed the initial model product.
     #[serde(default)]
     pub start_model: Option<PathBuf>,
@@ -2140,6 +2143,7 @@ impl ImagerRunTaskRequest {
             continuum_fit_order: config.continuum_fit_order,
             data_column: config.datacolumn.clone(),
             save_model: config.save_model.into(),
+            save_continuum_residual: config.save_continuum_residual,
             start_model: config.start_model.clone(),
             outlier_file: config.outlier_file.clone(),
             correlation: config
@@ -2313,6 +2317,7 @@ impl ImagerRunTaskRequest {
             continuum_fit_order: self.continuum_fit_order,
             datacolumn: self.data_column.clone(),
             save_model: self.save_model.into(),
+            save_continuum_residual: self.save_continuum_residual,
             start_model: self.start_model.clone(),
             outlier_file: self.outlier_file.clone(),
             correlation: self
@@ -3042,6 +3047,11 @@ mod tests {
         let progress_event_schema =
             serde_json::to_value(&bundle.domain_schemas.additional.progress_event_schema).unwrap();
         assert!(request_schema.to_string().contains("ImagerTaskRequest"));
+        assert_eq!(
+            request_schema["definitions"]["ImagerRunTaskRequest"]["properties"]["save_continuum_residual"]
+                ["default"],
+            false
+        );
         assert!(result_schema.to_string().contains("ImagerTaskResult"));
         assert!(
             progress_event_schema
@@ -3050,6 +3060,12 @@ mod tests {
         );
         let form = casa_provider_contracts::project_ui_form(&bundle.parameter_surfaces[0]);
         assert_eq!(form["command_id"], "imager");
+        let arguments = form["arguments"].as_array().expect("UI arguments");
+        let save_continuum_residual = arguments
+            .iter()
+            .find(|argument| argument["id"] == "save_continuum_residual")
+            .expect("save_continuum_residual UI argument");
+        assert_eq!(save_continuum_residual["default"], "false");
     }
 
     #[test]
@@ -3083,6 +3099,7 @@ mod tests {
             OsString::from("CORRECTED_DATA"),
             OsString::from("--savemodel"),
             OsString::from("modelcolumn"),
+            OsString::from("--save-continuum-residual"),
             OsString::from("--corr"),
             OsString::from("XX"),
             OsString::from("--specmode"),
@@ -3182,6 +3199,7 @@ mod tests {
         assert_eq!(restored.continuum_fit_order, 1);
         assert_eq!(restored.datacolumn.as_deref(), Some("CORRECTED_DATA"));
         assert_eq!(restored.save_model, SaveModelMode::ModelColumn);
+        assert!(restored.save_continuum_residual);
         assert_eq!(restored.correlation.as_deref(), Some("XX"));
         assert_eq!(restored.spectral_mode, SpectralMode::Cube);
         assert_eq!(restored.weighting, WeightingMode::Briggs { robust: -1.0 });
@@ -3371,6 +3389,7 @@ mod tests {
             continuum_fit_order: 0,
             data_column: None,
             save_model: ImagerSaveModel::None,
+            save_continuum_residual: false,
             start_model: None,
             outlier_file: None,
             correlation: None,
@@ -3468,6 +3487,7 @@ mod tests {
             continuum_fit_order: 0,
             data_column: None,
             save_model: ImagerSaveModel::None,
+            save_continuum_residual: false,
             start_model: None,
             outlier_file: None,
             correlation: None,
@@ -3741,6 +3761,7 @@ mod tests {
             continuum_fit_order: 0,
             data_column: None,
             save_model: ImagerSaveModel::None,
+            save_continuum_residual: false,
             start_model: None,
             outlier_file: None,
             correlation: None,
@@ -3906,6 +3927,7 @@ mod tests {
             continuum_fit_order: 0,
             data_column: None,
             save_model: ImagerSaveModel::None,
+            save_continuum_residual: false,
             start_model: None,
             outlier_file: None,
             correlation: Some(ImagerPlaneSelection::CorrXX),
@@ -4484,6 +4506,7 @@ mod tests {
             continuum_fit_order: 0,
             data_column: None,
             save_model: ImagerSaveModel::None,
+            save_continuum_residual: false,
             start_model: Some(PathBuf::from("seed.model")),
             outlier_file: Some(PathBuf::from("outliers.txt")),
             correlation: None,

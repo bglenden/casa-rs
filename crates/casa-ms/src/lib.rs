@@ -110,12 +110,15 @@ pub use msexplore::{
     build_msexplore_plot_payload_from_path, export_msexplore_plot, preview_msexplore_flag_edit,
     preview_msexplore_flag_edit_for_request, render_msexplore_plot_image,
 };
-#[cfg(unix)]
-pub use observation_owner::{ModelColumnStoragePlan, ModelDataWrite};
 pub use observation_owner::{
     ObservationOwnerError, ResolvedSelectedObservation, ResolvedSelectedObservationAccess,
     SelectedObservationResolutionRequest, initialize_measurement_set_owner_manifest,
     resolve_selected_observation,
+};
+#[cfg(unix)]
+pub use observation_owner::{
+    SelectedVisibilityStoragePlan, SelectedVisibilityWrite, SelectedVisibilityWriteGenerations,
+    SelectedVisibilityWriteTargets,
 };
 pub use plot::{
     ListObsPlotExportFormat as MeasurementSetPlotExportFormat,

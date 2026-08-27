@@ -272,6 +272,8 @@ pub struct CliConfig {
     pub datacolumn: Option<String>,
     /// Model persistence mode.
     pub save_model: SaveModelMode,
+    /// Overwrite selected output-role `CORRECTED_DATA` cells with continuum residuals.
+    pub save_continuum_residual: bool,
     /// Initial model path.
     pub start_model: Option<PathBuf>,
     /// Outlier definition path.
@@ -440,6 +442,10 @@ impl CliConfig {
                 "--fitorder" => config.continuum_fit_order = parse(value(1)?, flag)?,
                 "--datacolumn" => config.datacolumn = Some(value(1)?.to_string()),
                 "--savemodel" => config.save_model = parse_save_model(value(1)?)?,
+                "--save-continuum-residual" => {
+                    config.save_continuum_residual = true;
+                    consumed = 1;
+                }
                 "--startmodel" => config.start_model = Some(PathBuf::from(value(1)?)),
                 "--outlierfile" => config.outlier_file = Some(PathBuf::from(value(1)?)),
                 "--corr" | "--stokes" => config.correlation = Some(value(1)?.to_string()),
@@ -713,6 +719,7 @@ impl CliConfig {
             continuum_fit_order: 0,
             datacolumn: None,
             save_model: SaveModelMode::None,
+            save_continuum_residual: false,
             start_model: None,
             outlier_file: None,
             correlation: None,

@@ -196,6 +196,7 @@ fn application_request(config: &CliConfig) -> Result<ContinuumImagingRequest, St
             ),
         },
         save_model_column: config.save_model == SaveModelMode::ModelColumn,
+        save_continuum_residual: config.save_continuum_residual,
         task_requirements: task_requirements(config),
     })
 }

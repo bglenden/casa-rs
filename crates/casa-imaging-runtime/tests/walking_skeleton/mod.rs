@@ -123,7 +123,7 @@ fn private_synthetic_request_crosses_the_complete_compile_plan_run_seam() {
             .problem
             .observation_transaction()
             .write_set()
-            .model_columns()
+            .visibility_columns()
             .is_empty(),
         "the product-only fixture must not declare an unexecuted MODEL_DATA write"
     );
@@ -170,7 +170,7 @@ fn private_synthetic_request_crosses_the_complete_compile_plan_run_seam() {
 
     let transaction = skeleton.plan.observation_transaction().work();
     assert!(transaction.final_model_preparation().is_none());
-    assert!(transaction.model_column_writeback().is_none());
+    assert!(transaction.visibility_writeback().is_none());
     let dag = skeleton.plan.execution_dag();
     let dag_nodes = dag.nodes().keys().collect::<BTreeSet<_>>();
     for required in [

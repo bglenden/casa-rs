@@ -7936,7 +7936,7 @@
     {
       "kind": "task",
       "id": "imager",
-      "contract_version": 9,
+      "contract_version": 10,
       "display_name": "Imager",
       "category": "Imaging",
       "summary": "Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet",
@@ -7983,12 +7983,25 @@
         {
           "class": "input_mutation",
           "when": {
-            "kind": "equals",
-            "parameter": "savemodel",
-            "value": {
-              "kind": "string",
-              "value": "modelcolumn"
-            }
+            "kind": "any",
+            "predicates": [
+              {
+                "kind": "equals",
+                "parameter": "savemodel",
+                "value": {
+                  "kind": "string",
+                  "value": "modelcolumn"
+                }
+              },
+              {
+                "kind": "equals",
+                "parameter": "save_continuum_residual",
+                "value": {
+                  "kind": "bool",
+                  "value": true
+                }
+              }
+            ]
           }
         }
       ],
@@ -12579,6 +12592,56 @@
           },
           "aliases": [],
           "reviewed_homonym": null
+        },
+        {
+          "name": "save_continuum_residual",
+          "concept": {
+            "id": "parameter.save_continuum_residual",
+            "semantic_revision": 1
+          },
+          "order": 93,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": "Requires continuum subtraction; fit-only and nonselected cells, flags, and weights remain unchanged.",
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--save-continuum-residual"
+              ],
+              "false_flags": [],
+              "metavar": null
+            },
+            "provider": {
+              "field": "save_continuum_residual",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "save_continuum_residual",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Save Continuum Residual",
+              "group": "Continuum Subtraction",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
         }
       ],
       "migrations": [
@@ -12638,6 +12701,12 @@
         {
           "from_contract": 8,
           "to_contract": 9,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 9,
+          "to_contract": 10,
           "steps": [],
           "changed_defaults": []
         }
