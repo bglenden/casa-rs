@@ -56,7 +56,7 @@ fn compiled_spectral_contributions(
 
 /// Scientific phase occupied by one ordinary continuum reconstruction plan.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum ContinuumPassPhase {
+pub enum SpectralPassPhase {
     /// Normal state used to drive a minor cycle.
     InitialMajor,
     /// Mandatory reconciliation of the accepted final model.
@@ -65,21 +65,21 @@ pub enum ContinuumPassPhase {
 
 /// Stable phase and ordinal namespace for one continuum pass.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ContinuumPassIdentity {
-    phase: ContinuumPassPhase,
+pub struct SpectralPassIdentity {
+    phase: SpectralPassPhase,
     ordinal: u32,
 }
 
-impl ContinuumPassIdentity {
+impl SpectralPassIdentity {
     /// Construct one explicit pass namespace.
     #[must_use]
-    pub const fn new(phase: ContinuumPassPhase, ordinal: u32) -> Self {
+    pub const fn new(phase: SpectralPassPhase, ordinal: u32) -> Self {
         Self { phase, ordinal }
     }
 
     /// Return the semantic phase namespace.
     #[must_use]
-    pub const fn phase(self) -> ContinuumPassPhase {
+    pub const fn phase(self) -> SpectralPassPhase {
         self.phase
     }
 
@@ -91,8 +91,8 @@ impl ContinuumPassIdentity {
 
     fn suffix(self) -> String {
         let phase = match self.phase {
-            ContinuumPassPhase::InitialMajor => "initial-major",
-            ContinuumPassPhase::FinalMajor => "final-major",
+            SpectralPassPhase::InitialMajor => "initial-major",
+            SpectralPassPhase::FinalMajor => "final-major",
         };
         format!("{phase}-{}", self.ordinal)
     }
@@ -170,7 +170,7 @@ impl<'a> WeightingPlanFragment<'a> {
             generation_implementation,
             replay_implementation,
             release_implementation,
-            ContinuumPassIdentity::new(ContinuumPassPhase::InitialMajor, 0),
+            SpectralPassIdentity::new(SpectralPassPhase::InitialMajor, 0),
         )
     }
 
@@ -183,7 +183,7 @@ impl<'a> WeightingPlanFragment<'a> {
         generation_implementation: WorkImplementationId,
         replay_implementation: WorkImplementationId,
         release_implementation: WorkImplementationId,
-        pass: ContinuumPassIdentity,
+        pass: SpectralPassIdentity,
     ) -> Self {
         Self {
             plan,
@@ -204,7 +204,7 @@ impl<'a> WeightingPlanFragment<'a> {
         source_read: WorkNodeId,
         source_resources: SelectedObservationSourceResources,
         implementation: WorkImplementationId,
-        pass: ContinuumPassIdentity,
+        pass: SpectralPassIdentity,
         mode: WeightingStreamingMode,
     ) -> Self {
         Self {
@@ -1010,7 +1010,7 @@ impl WeightingExecutionState {
         fragment: &crate::CompleteDataPlanFragment,
         problem: &CompiledProblem,
         prepared: crate::CompleteDataPreparedState,
-    ) -> Result<crate::SerialMfsOperatorState, crate::CompleteDataPlanError> {
+    ) -> Result<crate::SpectralOperatorState, crate::CompleteDataPlanError> {
         let WeightingExecutionPhase::Frozen(frozen) = &self.phase else {
             return Err(crate::CompleteDataPlanError::MissingFrozenWeighting);
         };
@@ -1560,7 +1560,7 @@ struct WeightingPlanIds {
 }
 
 impl WeightingPlanIds {
-    fn new(plan: &WeightingPlan, pass: ContinuumPassIdentity) -> Self {
+    fn new(plan: &WeightingPlan, pass: SpectralPassIdentity) -> Self {
         let suffix = format!("{}-{}", pass.suffix(), plan.commitment_id());
         Self {
             generation_node: WorkNodeId::new(format!("weighting-generation-{suffix}")),

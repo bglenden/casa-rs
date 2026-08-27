@@ -21,12 +21,13 @@ use casa_imaging_model::{
 };
 
 use crate::{
-    ContinuumPrimitiveCatalog, Encoder, FINAL_NORMAL_STATE_DOMAIN, FINAL_NORMAL_STATE_VERSION,
-    FinalModelCompletion, FinalModelCompletionId, FinalModelContinuation,
-    FinalNormalStateCompletionId, MAJOR_CYCLE_DOMAIN, MAJOR_CYCLE_VERSION, MajorCycleCompletionId,
-    ModelDelta, ModelGeneration, ModelGenerationId, ModelLifecycle, ModelLifecycleError,
-    PreparedFinalModel, SerialMfsError, SerialMfsPrimitives, WeightingGenerationId,
-    WeightingReplayCoverageId, WeightingReplayId, runtime_adapter::CompleteDataOwnerResult,
+    Encoder, FINAL_NORMAL_STATE_DOMAIN, FINAL_NORMAL_STATE_VERSION, FinalModelCompletion,
+    FinalModelCompletionId, FinalModelContinuation, FinalNormalStateCompletionId,
+    MAJOR_CYCLE_DOMAIN, MAJOR_CYCLE_VERSION, MajorCycleCompletionId, ModelDelta, ModelGeneration,
+    ModelGenerationId, ModelLifecycle, ModelLifecycleError, PreparedFinalModel,
+    SpectralOperatorError, SpectralOperatorPrimitives, SpectralPrimitiveCatalog,
+    WeightingGenerationId, WeightingReplayCoverageId, WeightingReplayId,
+    runtime_adapter::CompleteDataOwnerResult,
 };
 
 /// Versioned Normal State Generation catalog minted by a Major Cycle.
@@ -34,7 +35,7 @@ use crate::{
 pub enum NormalStateCatalog {
     /// Unnormalized single-field Stokes-I constant-basis MFS normal state
     /// whose residual follows the exact paired `A* W (d - A x)` composition.
-    UnnormalizedNterms1V1,
+    UnnormalizedPlaneV1,
 }
 
 /// Reconstruction-owned proof that the final Normal State generation exists.
@@ -68,7 +69,7 @@ pub struct FinalNormalState {
     input_model_generation: ModelGenerationId,
     final_model_generation: ModelGenerationId,
     selected_generation: SelectedObservationGenerationId,
-    primitives: SerialMfsPrimitives,
+    primitives: SpectralOperatorPrimitives,
 }
 
 impl FinalNormalState {
@@ -191,7 +192,7 @@ impl FinalNormalState {
 
     /// Return the exact accumulated sum weight.
     #[must_use]
-    pub const fn sum_weight(&self) -> f64 {
+    pub fn sum_weight(&self) -> f64 {
         self.primitives.sum_weight()
     }
 }
@@ -322,11 +323,11 @@ pub struct MajorCycleOwner {
     weighting_generation: WeightingGenerationId,
     replay: WeightingReplayId,
     coverage: WeightingReplayCoverageId,
-    catalog: ContinuumPrimitiveCatalog,
+    catalog: SpectralPrimitiveCatalog,
     selected_generation: SelectedObservationGenerationId,
     sample_count: u64,
     block_count: u64,
-    primitives: SerialMfsPrimitives,
+    primitives: SpectralOperatorPrimitives,
     preparation: MajorCyclePreparation,
 }
 
@@ -345,6 +346,10 @@ impl MajorCycleOwner {
     ) -> Result<Self, MajorCycleError> {
         if result.completion().sample_count() == 0 || result.completion().block_count() == 0 {
             return Err(MajorCycleError::IncompleteCoverage);
+        }
+        if result.completion().primitive_catalog() != SpectralPrimitiveCatalog::UnnormalizedPlaneV1
+        {
+            return Err(MajorCycleError::UnsupportedNormalStateCatalog);
         }
         let (primitives, completion) = result.into_parts();
         let primitives = primitives
@@ -442,8 +447,11 @@ impl MajorCycleOwner {
             replay: self.replay,
             coverage: self.coverage,
             catalog: match self.catalog {
-                ContinuumPrimitiveCatalog::UnnormalizedNterms1V1 => {
-                    NormalStateCatalog::UnnormalizedNterms1V1
+                SpectralPrimitiveCatalog::UnnormalizedPlaneV1 => {
+                    NormalStateCatalog::UnnormalizedPlaneV1
+                }
+                SpectralPrimitiveCatalog::UnnormalizedChannelSlabV1 => {
+                    unreachable!("cube normal state is rejected before the T38 cycle owner")
                 }
             },
             content,
@@ -524,10 +532,12 @@ pub enum MajorCycleError {
     StaleModelEvidence,
     /// The T19 evidence did not prove exhaustive weighted coverage.
     IncompleteCoverage,
+    /// T38 has not yet transferred channel-local cycle ownership.
+    UnsupportedNormalStateCatalog,
     /// The model owner rejected the named generation or pending delta.
     Model(ModelLifecycleError),
     /// Reconciling the final model produced or consumed invalid numbers.
-    Residual(SerialMfsError),
+    Residual(SpectralOperatorError),
 }
 
 impl fmt::Display for MajorCycleError {
@@ -538,6 +548,9 @@ impl fmt::Display for MajorCycleError {
             }
             Self::IncompleteCoverage => {
                 formatter.write_str("complete-data evidence lacks exhaustive coverage")
+            }
+            Self::UnsupportedNormalStateCatalog => {
+                formatter.write_str("channel-local normal state requires the cube cycle owner")
             }
             Self::Model(error) => error.fmt(formatter),
             Self::Residual(error) => error.fmt(formatter),

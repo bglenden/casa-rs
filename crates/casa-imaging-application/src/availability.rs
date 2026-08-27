@@ -53,7 +53,7 @@ pub enum TaskRequirement {
     Fftw,
     /// Metal MPSGraph FFT override.
     MetalMpsGraph,
-    /// Task controls outside the installed serial-continuum contract.
+    /// Task controls outside the installed spectral-cycle contract.
     UnsupportedControls,
 }
 

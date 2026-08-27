@@ -32,12 +32,13 @@ mod major_cycle;
 mod mask;
 mod minor_cycle;
 mod psf_beam;
-mod serial_mfs;
+mod spectral_operator;
 mod spectral_sampling;
 mod weighting;
 
-pub use serial_mfs::{
-    ContinuumPrimitiveCatalog, SerialMfsError, SerialMfsPrimitives, SerialMfsSpecification,
+pub use spectral_operator::{
+    SpectralChannelValidity, SpectralOperatorError, SpectralOperatorPrimitives,
+    SpectralOperatorSpecification, SpectralPrimitiveCatalog, SpectralSlabPlan,
 };
 
 /// Internal composition surface used by `casa-imaging-runtime`.
@@ -46,10 +47,10 @@ pub use serial_mfs::{
 /// visibility. Application code should use the runtime's plan-bound T19 API.
 #[doc(hidden)]
 pub mod runtime_adapter {
-    pub use crate::serial_mfs::{
+    pub use crate::spectral_operator::{
         CompleteDataOwnerCompletion, CompleteDataOwnerResult, CompleteDataOwnerState,
-        FinalVisibilitySample, PreparedSerialMfsOperator, SerialMfsWorkload,
-        prepare_serial_mfs_operator, serial_mfs_workload,
+        FinalVisibilitySample, PreparedSpectralOperator, SpectralOperatorWorkload,
+        SpectralSlabPlan, prepare_spectral_operator, spectral_operator_workload,
     };
     pub use crate::weighting::{FusedWeightingPhase, begin_natural_weighting_stream};
 }

@@ -76,7 +76,7 @@ impl ContinuumSourceCatalog {
         }
         if matches!(
             normal_state.catalog(),
-            NormalStateCatalog::UnnormalizedNterms1V1
+            NormalStateCatalog::UnnormalizedPlaneV1
         ) {
             // The only supported continuum catalog.
         } else {
@@ -140,7 +140,7 @@ impl ContinuumSourceCatalog {
         encoder.identity(self.normal_state_completion.as_bytes());
         encoder.identity(self.normal_state_content.as_bytes());
         encoder.u8(match self.normal_state_catalog {
-            NormalStateCatalog::UnnormalizedNterms1V1 => 0,
+            NormalStateCatalog::UnnormalizedPlaneV1 => 0,
         });
         encoder.identity(self.input_model_generation.as_bytes());
         encoder.identity(self.final_model_generation.as_bytes());

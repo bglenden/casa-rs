@@ -20,11 +20,11 @@ use casa_imaging_reconstruction::{
 
 use crate::{
     AttemptBoundObservationCompletion, CompleteDataOperatorResult, CompleteDataPlanFragment,
-    CompleteDataPreparedState, ContinuumPassIdentity, FenceKind, FrozenWeightingArtifact,
-    ImplementationContractMetadata, ImplementationRegistry, ImplementationRegistryId,
-    IoMeasurement, LeaseResource, MajorCycleOperatorResult, MajorCycleOperatorState,
-    ObservationReadCompletionContext, ResourceMeasurement, SelectedObservationSourceResources,
-    SerialMfsOperatorState, WeightingExecutionState, WeightingPlanFragment,
+    CompleteDataPreparedState, FenceKind, FrozenWeightingArtifact, ImplementationContractMetadata,
+    ImplementationRegistry, ImplementationRegistryId, IoMeasurement, LeaseResource,
+    MajorCycleOperatorResult, MajorCycleOperatorState, ObservationReadCompletionContext,
+    ResourceMeasurement, SelectedObservationSourceResources, SpectralOperatorState,
+    SpectralPassIdentity, WeightingExecutionState, WeightingPlanFragment,
     WeightingReplayCompletion, WorkDependency, WorkExecutionContext, WorkImplementation,
     WorkImplementationId, WorkKind, WorkMeasurements, WorkNodeId,
 };
@@ -565,14 +565,14 @@ impl ModelColumnWorker {
 }
 
 /// Runtime-owned immutable registry for one serial CPU implementation bundle.
-pub struct SerialContinuumRegistry<I> {
+pub struct SpectralCycleRegistry<I> {
     id: ImplementationRegistryId,
     implementation_id: WorkImplementationId,
     metadata: ImplementationContractMetadata,
     implementation: I,
 }
 
-impl<I> SerialContinuumRegistry<I> {
+impl<I> SpectralCycleRegistry<I> {
     /// Bind one implementation and its exact compiled science contract.
     #[must_use]
     pub fn new(
@@ -606,7 +606,7 @@ impl<I> SerialContinuumRegistry<I> {
     }
 }
 
-impl<I: WorkImplementation> ImplementationRegistry for SerialContinuumRegistry<I> {
+impl<I: WorkImplementation> ImplementationRegistry for SpectralCycleRegistry<I> {
     type Implementation = I;
 
     fn registry_id(&self) -> ImplementationRegistryId {
@@ -626,29 +626,29 @@ impl<I: WorkImplementation> ImplementationRegistry for SerialContinuumRegistry<I
 }
 
 /// Runtime-owned serial CPU implementation of one ordinary major-cycle plan.
-pub struct SerialContinuumExecutor {
+pub struct SpectralCycleExecutor {
     id: WorkImplementationId,
     problem: CompiledProblem,
     weighting_plan: WeightingPlan,
     source_resources: SelectedObservationSourceResources,
-    pass: ContinuumPassIdentity,
+    pass: SpectralPassIdentity,
     complete_data: CompleteDataPlanFragment,
     minor_cycle: Option<SerialMinorCycleExecution>,
     final_visibility_sink: Option<Mutex<Box<dyn FinalVisibilitySink>>>,
     phase_input_artifact: Option<(crate::ArtifactIdentity, u64)>,
-    state: Mutex<SerialContinuumExecutorState>,
+    state: Mutex<SpectralCycleExecutorState>,
 }
 
-struct SerialContinuumExecutorState {
+struct SpectralCycleExecutorState {
     executable: Option<ExecutableModelProblem>,
-    pass_input: Option<SerialContinuumPassInput>,
+    pass_input: Option<SpectralCyclePassInput>,
     selected: Option<BoundSelectedObservation>,
     selected_completion: Option<SelectedObservationCompletion>,
     weighting: WeightingExecutionState,
     pending_frozen_reservation: Option<Arc<crate::FrozenWeightingReservation>>,
     frozen_weighting: Option<FrozenWeightingArtifact>,
     prepared: Option<CompleteDataPreparedState>,
-    operator: Option<SerialMfsOperatorState>,
+    operator: Option<SpectralOperatorState>,
     complete_data: Option<CompleteDataOperatorResult>,
     lifecycle: Option<ModelLifecycle>,
     prepared_model: Option<PreparedFinalModel>,
@@ -707,8 +707,8 @@ impl PreparedFinalModel {
     }
 }
 
-/// Closed model input admitted by one ordinary serial continuum pass.
-pub enum SerialContinuumPassInput {
+/// Closed model input admitted by one ordinary spectral cycle pass.
+pub enum SpectralCyclePassInput {
     /// Derive the exact initial generation from the compiled input commitment.
     Initial,
     /// Rebind one accepted T21 update into the final-major execution authority.
@@ -727,7 +727,7 @@ impl FinalMajorPhaseInput {
     #[must_use]
     pub fn identity(&self) -> crate::ArtifactIdentity {
         let mut hash = Sha256::new();
-        hash.update(b"casa-rs-serial-continuum-final-major-input-v1");
+        hash.update(b"casa-rs-spectral-cycle-final-major-input-v1");
         hash.update(self.evidence.minor_cycle.evidence_id().as_bytes());
         match self.source_delta {
             Some(delta) => {
@@ -762,7 +762,7 @@ struct SerialMinorCycleExecution {
     program: MinorCycleProgram,
 }
 
-impl SerialContinuumExecutor {
+impl SpectralCycleExecutor {
     /// Bind exact selected-observation and model owners to a composed pass.
     #[allow(clippy::too_many_arguments)]
     #[must_use]
@@ -771,15 +771,15 @@ impl SerialContinuumExecutor {
         problem: CompiledProblem,
         weighting_plan: WeightingPlan,
         source_resources: SelectedObservationSourceResources,
-        pass: ContinuumPassIdentity,
+        pass: SpectralPassIdentity,
         complete_data: CompleteDataPlanFragment,
         selected: BoundSelectedObservation,
         executable: ExecutableModelProblem,
-        pass_input: SerialContinuumPassInput,
+        pass_input: SpectralCyclePassInput,
     ) -> Self {
         let phase_input_artifact = match &pass_input {
-            SerialContinuumPassInput::Initial => None,
-            SerialContinuumPassInput::FinalMajor(input) => Some((
+            SpectralCyclePassInput::Initial => None,
+            SpectralCyclePassInput::FinalMajor(input) => Some((
                 input.identity(),
                 u64::try_from(input.terms.len())
                     .unwrap_or(u64::MAX)
@@ -796,7 +796,7 @@ impl SerialContinuumExecutor {
             minor_cycle: None,
             final_visibility_sink: None,
             phase_input_artifact,
-            state: Mutex::new(SerialContinuumExecutorState {
+            state: Mutex::new(SpectralCycleExecutorState {
                 executable: Some(executable),
                 pass_input: Some(pass_input),
                 selected: Some(selected),
@@ -843,7 +843,7 @@ impl SerialContinuumExecutor {
     pub fn with_frozen_weighting(mut self, artifact: FrozenWeightingArtifact) -> Self {
         self.state
             .get_mut()
-            .expect("new serial continuum executor mutex is not poisoned")
+            .expect("new spectral cycle executor mutex is not poisoned")
             .weighting = WeightingExecutionState::with_frozen_artifact(artifact);
         self
     }
@@ -856,7 +856,7 @@ impl SerialContinuumExecutor {
     ) -> Self {
         self.state
             .get_mut()
-            .expect("new serial continuum executor mutex is not poisoned")
+            .expect("new spectral cycle executor mutex is not poisoned")
             .pending_frozen_reservation = Some(Arc::new(reservation));
         self
     }
@@ -868,8 +868,8 @@ impl SerialContinuumExecutor {
 
     fn fragment(&self) -> WeightingPlanFragment<'_> {
         let mode = match self.pass.phase() {
-            crate::ContinuumPassPhase::FinalMajor => crate::WeightingStreamingMode::Reuse,
-            crate::ContinuumPassPhase::InitialMajor => match self.problem.weighting().scheme() {
+            crate::SpectralPassPhase::FinalMajor => crate::WeightingStreamingMode::Reuse,
+            crate::SpectralPassPhase::InitialMajor => match self.problem.weighting().scheme() {
                 casa_imaging_model::WeightingScheme::Natural => {
                     crate::WeightingStreamingMode::NaturalInitial
                 }
@@ -882,7 +882,7 @@ impl SerialContinuumExecutor {
         };
         WeightingPlanFragment::streaming_for_pass(
             &self.weighting_plan,
-            crate::serial_continuum_plan::pass_node("transaction-read", self.pass),
+            crate::spectral_cycle_plan::pass_node("transaction-read", self.pass),
             self.source_resources.clone(),
             self.id.clone(),
             self.pass,
@@ -901,7 +901,7 @@ impl SerialContinuumExecutor {
     }
 
     fn prepare_final_model(
-        state: &mut SerialContinuumExecutorState,
+        state: &mut SpectralCycleExecutorState,
         context: WorkExecutionContext<'_>,
     ) -> Result<(), io::Error> {
         if state.lifecycle.is_some() || state.prepared_model.is_some() {
@@ -916,13 +916,13 @@ impl SerialContinuumExecutor {
         let input = state
             .pass_input
             .take()
-            .ok_or_else(|| io::Error::other("serial continuum pass input missing"))?;
+            .ok_or_else(|| io::Error::other("spectral cycle pass input missing"))?;
         let attempt = ModelExecutionAttemptId::new(LogicalIdentity::from_sha256(
             context.attempt_id().as_bytes(),
         ));
         let epoch = context.lease_epoch();
         let (lifecycle, named, terms) = match input {
-            SerialContinuumPassInput::Initial => {
+            SpectralCyclePassInput::Initial => {
                 let mut lifecycle =
                     ModelLifecycle::bind(executable, attempt, epoch).map_err(io::Error::other)?;
                 let named = match lifecycle.contract().input() {
@@ -931,14 +931,14 @@ impl SerialContinuumExecutor {
                     ModelInputCommitment::AlignedSeed { .. }
                     | ModelInputCommitment::Generation(_) => {
                         return Err(io::Error::other(
-                            "serial continuum execution requires an owner-prepared direct model input",
+                            "spectral cycle execution requires an owner-prepared direct model input",
                         ));
                     }
                 }
                 .map_err(io::Error::other)?;
                 (lifecycle, named, None)
             }
-            SerialContinuumPassInput::FinalMajor(input) => {
+            SpectralCyclePassInput::FinalMajor(input) => {
                 let (terms, continuation) = input.into_execution_parts();
                 let (lifecycle, named) =
                     ModelLifecycle::continue_from(executable, attempt, epoch, continuation)
@@ -963,7 +963,7 @@ impl SerialContinuumExecutor {
 
     fn run_stream(
         &self,
-        state: &mut SerialContinuumExecutorState,
+        state: &mut SpectralCycleExecutorState,
         context: WorkExecutionContext<'_>,
         fragment: &WeightingPlanFragment<'_>,
         selected: Option<BoundSelectedObservation>,
@@ -990,7 +990,7 @@ impl SerialContinuumExecutor {
             )
             .map_err(io::Error::other)?;
         state.operator = Some(operator);
-        let SerialContinuumExecutorState {
+        let SpectralCycleExecutorState {
             weighting,
             operator,
             ..
@@ -1031,7 +1031,7 @@ impl SerialContinuumExecutor {
     }
 }
 
-impl WorkImplementation for SerialContinuumExecutor {
+impl WorkImplementation for SpectralCycleExecutor {
     type Error = io::Error;
 
     fn implementation_id(&self) -> &WorkImplementationId {
@@ -1043,9 +1043,9 @@ impl WorkImplementation for SerialContinuumExecutor {
         let mut state = self
             .state
             .lock()
-            .map_err(|_| io::Error::other("serial continuum state poisoned"))?;
+            .map_err(|_| io::Error::other("spectral cycle state poisoned"))?;
         let final_model_preparation =
-            crate::serial_continuum_plan::pass_node("final-model-preparation", self.pass);
+            crate::spectral_cycle_plan::pass_node("final-model-preparation", self.pass);
         if context.node().id == final_model_preparation {
             Self::prepare_final_model(&mut state, context)?;
             if let (Some(sink), Some(prepared_model)) =
@@ -1203,7 +1203,7 @@ impl WorkImplementation for SerialContinuumExecutor {
         let mut state = self
             .state
             .lock()
-            .map_err(|_| io::Error::other("serial continuum state poisoned"))?;
+            .map_err(|_| io::Error::other("spectral cycle state poisoned"))?;
         if completion.owner_node() == fragment.streaming_node() {
             let predecessor = state
                 .weighting
@@ -1244,7 +1244,7 @@ impl WorkImplementation for SerialContinuumExecutor {
     fn publish(&self, context: WorkExecutionContext<'_>) -> Result<(), Self::Error> {
         if context.node().kind != WorkKind::Publication || context.publication().is_none() {
             return Err(io::Error::other(
-                "serial continuum commit lacks transaction authority",
+                "spectral cycle commit lacks transaction authority",
             ));
         }
         Ok(())

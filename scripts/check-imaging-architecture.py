@@ -54,12 +54,12 @@ ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256 = (
     "daafa560c0e941fb3f2cea5c02a46de8a3363c2dd327cb839ef8ab2111f09835"
 )
 ACCEPTED_MATRIX_ROWS_SHA256 = (
-    "114f4fe757c38fe1e15123165f322658f61233d6ed9dfd650cbdfaed0c7cdfbf"
+    "3298859de95c76e00a9525c899253defcc20d6c7e53f57d53fdd1c37d31deced"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "50c87c14e297acdd1dce99c4dd266b14407601c80bd5963d17f8af0bbf98327e"
+    "ac41b88193c70f99acb650d05cdd4b4ea698c63f165ed30f01e45a780874bab4"
 )
-ACCEPTED_MATRIX_CONTRACT_REVISION = 48
+ACCEPTED_MATRIX_CONTRACT_REVISION = 49
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "scientific-products-v1",
@@ -1340,6 +1340,75 @@ def validate_migration_matrix(
     if enforce_accepted_scope:
         validate_t28_model_lifecycle_transfer(rows)
         validate_t18_global_weighting_transfer(rows)
+        validate_t37_spectral_operator_transfer(rows)
+
+
+def validate_t37_spectral_operator_transfer(rows: list[dict[str, Any]]) -> None:
+    """Keep the T37 matrix ownership aligned with the spectral operator cutover."""
+    rows_by_id = {row.get("id"): row for row in rows}
+    required_statuses = {
+        "capability.spectral-cube": "TemporarilyUnavailable",
+        "capability.spectral-cubedata": "TemporarilyUnavailable",
+        "capability.standard-gridder": "Native",
+    }
+    required_evidence = {
+        "capability.spectral-cube": {
+            "crates/casa-imaging-reconstruction/src/spectral_operator.rs::pub struct SpectralOperatorSpecification",
+            "crates/casa-imaging-runtime/src/complete_data_operator.rs::pub struct SpectralOperatorState",
+        },
+        "capability.spectral-cubedata": {
+            "crates/casa-imaging-reconstruction/src/spectral_operator.rs::pub struct SpectralOperatorSpecification",
+            "crates/casa-imaging-runtime/src/complete_data_operator.rs::pub struct SpectralOperatorState",
+        },
+        "capability.standard-gridder": {
+            "crates/casa-imaging-reconstruction/src/spectral_operator.rs::pub struct CompleteDataOwnerState",
+            "crates/casa-imaging-runtime/src/complete_data_operator.rs::pub struct SpectralOperatorState",
+        },
+    }
+    for identifier, status in required_statuses.items():
+        row = rows_by_id.get(identifier)
+        if row is None or row.get("status") != status:
+            raise ArchitectureError(
+                f"T37 matrix row {identifier} must remain {status}"
+            )
+        if not required_evidence[identifier].issubset(
+            set(row.get("source_evidence", []))
+        ):
+            raise ArchitectureError(
+                f"T37 matrix row {identifier} lacks spectral-operator ownership evidence"
+            )
+
+    matrix_text = json.dumps(rows, sort_keys=True)
+    if re.search(r"serial[_-](?:mfs|continuum)", matrix_text, re.IGNORECASE):
+        raise ArchitectureError(
+            "T37 matrix retains a displaced serial_mfs or serial_continuum owner"
+        )
+
+    deleted_paths = (
+        "crates/casa-imaging-reconstruction/src/serial_mfs.rs",
+        "crates/casa-imaging-runtime/src/serial_continuum.rs",
+        "crates/casa-imaging-runtime/src/serial_continuum_plan.rs",
+    )
+    for relative in deleted_paths:
+        if (REPO_ROOT / relative).exists():
+            raise ArchitectureError(f"T37 displaced source still exists: {relative}")
+
+    source_paths = (
+        REPO_ROOT / "crates/casa-imaging-reconstruction/src/spectral_operator.rs",
+        REPO_ROOT / "crates/casa-imaging-runtime/src/complete_data_operator.rs",
+        REPO_ROOT / "crates/casa-imaging-runtime/src/spectral_cycle.rs",
+    )
+    for path in source_paths:
+        try:
+            source = path.read_text(encoding="utf-8")
+        except OSError as error:
+            raise ArchitectureError(
+                f"cannot inspect T37 spectral owner {display_path(path)}: {error}"
+            ) from error
+        if re.search(r"\b(?:SerialMfs|SerialContinuum)\b|serial_(?:mfs|continuum)", source):
+            raise ArchitectureError(
+                f"T37 spectral owner retains a displaced serial symbol: {display_path(path)}"
+            )
 
 
 def validate_t28_model_lifecycle_transfer(rows: list[dict[str, Any]]) -> None:

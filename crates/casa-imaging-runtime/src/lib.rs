@@ -13,9 +13,9 @@ pub mod product_publication;
 mod publication_layout;
 mod receipt;
 mod resource_authority;
-mod serial_continuum;
-mod serial_continuum_plan;
 mod serial_product_publication;
+mod spectral_cycle;
+mod spectral_cycle_plan;
 mod weighting;
 
 pub use execution_bindings::{
@@ -32,11 +32,11 @@ pub use execution_bindings::{
     WorkImplementation, WorkMeasurements, plan, run,
 };
 
-pub use casa_imaging_reconstruction::{ContinuumPrimitiveCatalog, MajorCyclePreparation};
+pub use casa_imaging_reconstruction::{MajorCyclePreparation, SpectralPrimitiveCatalog};
 pub use complete_data_operator::{
     CompleteDataOperatorError, CompleteDataOperatorResult, CompleteDataPlanError,
     CompleteDataPlanFragment, CompleteDataPreparedState, CompleteDataResidency,
-    SerialMfsOperatorState,
+    SpectralOperatorState,
 };
 pub use cost_model::{
     PlannerCostModelProfileBootstrap, PlannerCostModelProfileRecord, ProfileEvidenceEntry,
@@ -95,26 +95,26 @@ pub use resource_authority::{
     StorageDomain, StorageDomainId, StorageIoResourceBinding, StorageUseKind, TransferDemand,
     TransferLink, TransferLinkId,
 };
-pub use serial_continuum::{
-    FinalMajorPhaseInput, FinalVisibilityReplay, FinalVisibilitySink, InitialMajorPhaseCompletion,
-    MinorCyclePhaseCompletion, MinorCyclePhaseEvidence, SerialContinuumExecutor,
-    SerialContinuumPassInput, SerialContinuumRegistry,
-};
-pub use serial_continuum_plan::{
-    SerialContinuumExecutionPolicy, SerialContinuumPlan, SerialContinuumPlanError,
-};
 pub use serial_product_publication::{
     MemberPromotionFailure, MemberPromotionFailureKind, SerialProductPublicationExecutionError,
     SerialProductPublicationExecutor, SerialProductPublicationPlan,
     SerialProductPublicationPlanError, SerialProductPublicationPolicy,
     SerialProductPublicationRegistry, SerialProductPublicationSink,
 };
+pub use spectral_cycle::{
+    FinalMajorPhaseInput, FinalVisibilityReplay, FinalVisibilitySink, InitialMajorPhaseCompletion,
+    MinorCyclePhaseCompletion, MinorCyclePhaseEvidence, SpectralCycleExecutor,
+    SpectralCyclePassInput, SpectralCycleRegistry,
+};
+pub use spectral_cycle_plan::{
+    SpectralCycleExecutionPolicy, SpectralCyclePlan, SpectralCyclePlanError,
+};
 pub use weighting::{
-    ContinuumPassIdentity, ContinuumPassPhase, FrozenWeightingArtifact, FrozenWeightingReservation,
-    ReplayCallbackError, SelectedObservationSourceResources, WeightedObservationBlock,
-    WeightedObservationSample, WeightedSpectralValue, WeightingEvidenceError,
-    WeightingExecutionState, WeightingGenerationCompletionError, WeightingGenerationError,
-    WeightingPlanFragment, WeightingPlanFragmentError, WeightingReplayCompletion,
-    WeightingReplayCompletionError, WeightingReplayError, WeightingSourceTraversalError,
-    WeightingStreamingMode,
+    FrozenWeightingArtifact, FrozenWeightingReservation, ReplayCallbackError,
+    SelectedObservationSourceResources, SpectralPassIdentity, SpectralPassPhase,
+    WeightedObservationBlock, WeightedObservationSample, WeightedSpectralValue,
+    WeightingEvidenceError, WeightingExecutionState, WeightingGenerationCompletionError,
+    WeightingGenerationError, WeightingPlanFragment, WeightingPlanFragmentError,
+    WeightingReplayCompletion, WeightingReplayCompletionError, WeightingReplayError,
+    WeightingSourceTraversalError, WeightingStreamingMode,
 };

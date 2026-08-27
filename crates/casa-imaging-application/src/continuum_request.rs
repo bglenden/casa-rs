@@ -1049,8 +1049,8 @@ fn runtime(
         .unwrap_or_else(|| Path::new("."))
         .join(".casa-rs-imaging-receipts");
     Ok(ApplicationRuntime {
-        registry: ImplementationRegistryId::from_sha256(hash(b"serial-continuum-registry")),
-        implementation: WorkImplementationId::new("serial-continuum-cpu-v1"),
+        registry: ImplementationRegistryId::from_sha256(hash(b"spectral-cycle-registry")),
+        implementation: WorkImplementationId::new("spectral-cycle-cpu-v1"),
         weighting_limits: WeightingExecutionLimits::new(4096, 1)?,
         stage_nanos: 1_000_000,
         minor_cycle_bytes: u64::try_from(
@@ -1063,7 +1063,7 @@ fn runtime(
         storage_io: profile.io_resources(),
         confidence_parts_per_million: 900_000,
         resource_policy: ResourcePolicy::Balanced,
-        cost_model: PlannerCostModelProfileId::from_sha256(hash(b"serial-continuum-cost-v1"))
+        cost_model: PlannerCostModelProfileId::from_sha256(hash(b"spectral-cycle-cost-v1"))
             .bootstrap(),
         authority: ResourceAuthority::production_with_storage_profile(profile)?.clone(),
         receipts: ExecutionReceiptStore::new(receipts, ReceiptRetention::new(128, 64 << 20)?)?,

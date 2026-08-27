@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Production planning for ordinary serial continuum reconstruction passes.
+//! Production planning for ordinary spectral cycle reconstruction passes.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -12,7 +12,7 @@ use casa_imaging_model::CompiledProblem;
 use casa_imaging_reconstruction::{WeightingExecutionLimits, WeightingPlan, plan_weighting};
 use casa_ms::{ModelColumnStoragePlan, SelectedObservationResidencyCertificate};
 
-use crate::serial_continuum::{MODEL_COLUMN_WORKER_STACK_BYTES, ModelDataCellWrite};
+use crate::spectral_cycle::{MODEL_COLUMN_WORKER_STACK_BYTES, ModelDataCellWrite};
 use crate::*;
 
 const READ_NODE: &str = "transaction-read";
@@ -20,15 +20,15 @@ const CHECK_NODE: &str = "transaction-check";
 const FINAL_MODEL_PREPARATION_NODE: &str = "final-model-preparation";
 const POST_REPLAY_RECONCILIATION_NODE: &str = "post-replay-reconciliation";
 const COMMIT_NODE: &str = "transaction-commit";
-const MINOR_NODE: &str = "serial-continuum-minor-cycle";
-const SOURCE_READ_RATE_DEMAND: &str = "serial-continuum-source-read-rate";
-const OUTPUT_WRITE_RATE_DEMAND: &str = "serial-continuum-output-write-rate";
-const IO_QUEUE_DEMAND: &str = "serial-continuum-storage-queue";
-const OUTPUT_STORAGE_DEMAND: &str = "serial-continuum-private-commit";
+const MINOR_NODE: &str = "spectral-cycle-minor-cycle";
+const SOURCE_READ_RATE_DEMAND: &str = "spectral-cycle-source-read-rate";
+const OUTPUT_WRITE_RATE_DEMAND: &str = "spectral-cycle-output-write-rate";
+const IO_QUEUE_DEMAND: &str = "spectral-cycle-storage-queue";
+const OUTPUT_STORAGE_DEMAND: &str = "spectral-cycle-private-commit";
 
-/// Explicit non-scientific limits for one serial continuum physical plan.
+/// Explicit non-scientific limits for one spectral cycle physical plan.
 #[derive(Clone)]
-pub struct SerialContinuumExecutionPolicy {
+pub struct SpectralCycleExecutionPolicy {
     implementation: WorkImplementationId,
     weighting_limits: WeightingExecutionLimits,
     selected_residency: SelectedObservationResidencyCertificate,
@@ -39,7 +39,7 @@ pub struct SerialContinuumExecutionPolicy {
     model_data: Option<ModelColumnStoragePlan>,
 }
 
-impl SerialContinuumExecutionPolicy {
+impl SpectralCycleExecutionPolicy {
     /// Construct explicit execution limits; no machine estimate is inferred.
     #[must_use]
     pub fn new(
@@ -72,27 +72,27 @@ impl SerialContinuumExecutionPolicy {
 }
 
 /// One fully composed ordinary reconstruction physical plan.
-pub struct SerialContinuumPlan {
+pub struct SpectralCyclePlan {
     physical: PhysicalWorkBinding,
     weighting: WeightingPlan,
     complete_data: CompleteDataPlanFragment,
     source_resources: SelectedObservationSourceResources,
-    pass: ContinuumPassIdentity,
+    pass: SpectralPassIdentity,
     minor_cycle_node: Option<WorkNodeId>,
 }
 
-impl SerialContinuumPlan {
+impl SpectralCyclePlan {
     /// Plan one complete-data dirty pass without minor-cycle work.
     pub fn dirty<R: ImplementationRegistry>(
         problem: &CompiledProblem,
         registry: &R,
-        policy: SerialContinuumExecutionPolicy,
-    ) -> Result<Self, SerialContinuumPlanError> {
+        policy: SpectralCycleExecutionPolicy,
+    ) -> Result<Self, SpectralCyclePlanError> {
         Self::build(
             problem,
             registry,
             policy,
-            ContinuumPassIdentity::new(ContinuumPassPhase::InitialMajor, 0),
+            SpectralPassIdentity::new(SpectralPassPhase::InitialMajor, 0),
             false,
             None,
         )
@@ -102,13 +102,13 @@ impl SerialContinuumPlan {
     pub fn initial<R: ImplementationRegistry>(
         problem: &CompiledProblem,
         registry: &R,
-        policy: SerialContinuumExecutionPolicy,
-    ) -> Result<Self, SerialContinuumPlanError> {
+        policy: SpectralCycleExecutionPolicy,
+    ) -> Result<Self, SpectralCyclePlanError> {
         Self::build(
             problem,
             registry,
             policy,
-            ContinuumPassIdentity::new(ContinuumPassPhase::InitialMajor, 0),
+            SpectralPassIdentity::new(SpectralPassPhase::InitialMajor, 0),
             true,
             None,
         )
@@ -118,14 +118,14 @@ impl SerialContinuumPlan {
     pub fn final_major<R: ImplementationRegistry>(
         problem: &CompiledProblem,
         registry: &R,
-        policy: SerialContinuumExecutionPolicy,
+        policy: SpectralCycleExecutionPolicy,
         input: &FinalMajorPhaseInput,
-    ) -> Result<Self, SerialContinuumPlanError> {
+    ) -> Result<Self, SpectralCyclePlanError> {
         Self::build(
             problem,
             registry,
             policy,
-            ContinuumPassIdentity::new(ContinuumPassPhase::FinalMajor, 1),
+            SpectralPassIdentity::new(SpectralPassPhase::FinalMajor, 1),
             false,
             Some(input.identity()),
         )
@@ -135,15 +135,15 @@ impl SerialContinuumPlan {
     pub fn continuing_major<R: ImplementationRegistry>(
         problem: &CompiledProblem,
         registry: &R,
-        policy: SerialContinuumExecutionPolicy,
+        policy: SpectralCycleExecutionPolicy,
         input: &FinalMajorPhaseInput,
         ordinal: u32,
-    ) -> Result<Self, SerialContinuumPlanError> {
+    ) -> Result<Self, SpectralCyclePlanError> {
         Self::build(
             problem,
             registry,
             policy,
-            ContinuumPassIdentity::new(ContinuumPassPhase::FinalMajor, ordinal),
+            SpectralPassIdentity::new(SpectralPassPhase::FinalMajor, ordinal),
             true,
             Some(input.identity()),
         )
@@ -153,15 +153,15 @@ impl SerialContinuumPlan {
     pub fn final_major_at<R: ImplementationRegistry>(
         problem: &CompiledProblem,
         registry: &R,
-        policy: SerialContinuumExecutionPolicy,
+        policy: SpectralCycleExecutionPolicy,
         input: &FinalMajorPhaseInput,
         ordinal: u32,
-    ) -> Result<Self, SerialContinuumPlanError> {
+    ) -> Result<Self, SpectralCyclePlanError> {
         Self::build(
             problem,
             registry,
             policy,
-            ContinuumPassIdentity::new(ContinuumPassPhase::FinalMajor, ordinal),
+            SpectralPassIdentity::new(SpectralPassPhase::FinalMajor, ordinal),
             false,
             Some(input.identity()),
         )
@@ -170,17 +170,17 @@ impl SerialContinuumPlan {
     fn build<R: ImplementationRegistry>(
         problem: &CompiledProblem,
         registry: &R,
-        policy: SerialContinuumExecutionPolicy,
-        pass: ContinuumPassIdentity,
+        policy: SpectralCycleExecutionPolicy,
+        pass: SpectralPassIdentity,
         include_minor: bool,
         phase_input: Option<ArtifactIdentity>,
-    ) -> Result<Self, SerialContinuumPlanError> {
+    ) -> Result<Self, SpectralCyclePlanError> {
         let (base, source_resources) =
             base_physical(problem, registry, &policy, pass, phase_input)?;
         let weighting = plan_weighting(problem, policy.weighting_limits)?;
         let weighting_mode = match pass.phase() {
-            ContinuumPassPhase::FinalMajor => WeightingStreamingMode::Reuse,
-            ContinuumPassPhase::InitialMajor => match problem.weighting().scheme() {
+            SpectralPassPhase::FinalMajor => WeightingStreamingMode::Reuse,
+            SpectralPassPhase::InitialMajor => match problem.weighting().scheme() {
                 casa_imaging_model::WeightingScheme::Natural => {
                     WeightingStreamingMode::NaturalInitial
                 }
@@ -205,7 +205,7 @@ impl SerialContinuumPlan {
             problem,
             weighting.limits().max_block_samples(),
             replay.clone(),
-            pass_node("serial-mfs-fft-plan", pass),
+            pass_node("spectral-operator-fft-plan", pass),
         )?;
         let (mut physical, complete_data) = complete_data.compose(&physical)?;
         if let Some(bounds) = policy.model_data {
@@ -214,7 +214,7 @@ impl SerialContinuumPlan {
                 .write_set()
                 .model_columns()
             else {
-                return Err(SerialContinuumPlanError::ModelColumnCount);
+                return Err(SpectralCyclePlanError::ModelColumnCount);
             };
             physical = append_model_data_resources(registry, physical, &policy, &replay, bounds)?;
         }
@@ -248,7 +248,7 @@ impl SerialContinuumPlan {
         WeightingPlan,
         CompleteDataPlanFragment,
         SelectedObservationSourceResources,
-        ContinuumPassIdentity,
+        SpectralPassIdentity,
         Option<WorkNodeId>,
     ) {
         (
@@ -265,31 +265,31 @@ impl SerialContinuumPlan {
 fn base_physical<R: ImplementationRegistry>(
     problem: &CompiledProblem,
     registry: &R,
-    policy: &SerialContinuumExecutionPolicy,
-    pass: ContinuumPassIdentity,
+    policy: &SpectralCycleExecutionPolicy,
+    pass: SpectralPassIdentity,
     phase_input: Option<ArtifactIdentity>,
-) -> Result<(PhysicalWorkBinding, SelectedObservationSourceResources), SerialContinuumPlanError> {
+) -> Result<(PhysicalWorkBinding, SelectedObservationSourceResources), SpectralCyclePlanError> {
     let check = pass_node(CHECK_NODE, pass);
     let read = pass_node(READ_NODE, pass);
     let model_preparation = pass_node(FINAL_MODEL_PREPARATION_NODE, pass);
     let reconcile = pass_node(POST_REPLAY_RECONCILIATION_NODE, pass);
     let commit = pass_node(COMMIT_NODE, pass);
     let source_bytes = u64::try_from(policy.selected_residency.aggregate_resident_bytes())
-        .map_err(|_| SerialContinuumPlanError::Overflow)?;
+        .map_err(|_| SpectralCyclePlanError::Overflow)?;
     let blocks = u64::try_from(policy.selected_residency.peak_live_blocks())
-        .map_err(|_| SerialContinuumPlanError::Overflow)?;
+        .map_err(|_| SpectralCyclePlanError::Overflow)?;
     let sources = problem.observation_transaction().read_set().sources();
     let source_count =
-        u64::try_from(sources.len()).map_err(|_| SerialContinuumPlanError::Overflow)?;
+        u64::try_from(sources.len()).map_err(|_| SpectralCyclePlanError::Overflow)?;
     let locks = sources
         .iter()
         .map(|source| source.measurement_set())
         .collect::<BTreeSet<_>>();
-    let lock_count = u64::try_from(locks.len()).map_err(|_| SerialContinuumPlanError::Overflow)?;
-    let source_allocation = AllocationId::new("serial-continuum-selected-source");
-    let source_slot = PhysicalSlotId::new("serial-continuum-selected-source-slot");
-    let commit_allocation = AllocationId::new("serial-continuum-commit-buffer");
-    let commit_slot = PhysicalSlotId::new("serial-continuum-commit-slot");
+    let lock_count = u64::try_from(locks.len()).map_err(|_| SpectralCyclePlanError::Overflow)?;
+    let source_allocation = AllocationId::new("spectral-cycle-selected-source");
+    let source_slot = PhysicalSlotId::new("spectral-cycle-selected-source-slot");
+    let commit_allocation = AllocationId::new("spectral-cycle-commit-buffer");
+    let commit_slot = PhysicalSlotId::new("spectral-cycle-commit-slot");
     let queue_id = IO_QUEUE_DEMAND.to_string();
     let source_rate_id = SOURCE_READ_RATE_DEMAND.to_string();
     let output_rate_id = OUTPUT_WRITE_RATE_DEMAND.to_string();
@@ -459,8 +459,8 @@ fn base_physical<R: ImplementationRegistry>(
         initialization: InitializationPolicy::OverwriteBeforeRead,
         access: AllocationAccess::ReadWrite,
     };
-    let source_compat = compatibility("serial-continuum-selected-source");
-    let commit_compat = compatibility("serial-continuum-commit-buffer");
+    let source_compat = compatibility("spectral-cycle-selected-source");
+    let commit_compat = compatibility("spectral-cycle-commit-buffer");
     let allocations = vec![
         LogicalAllocation {
             id: source_allocation.clone(),
@@ -495,7 +495,7 @@ fn base_physical<R: ImplementationRegistry>(
         PhysicalSlot {
             id: source_slot,
             lease_resource: LeaseResource::Memory {
-                allocation_id: "serial-continuum-selected-source".to_string(),
+                allocation_id: "spectral-cycle-selected-source".to_string(),
             },
             capacity_bytes: source_bytes,
             compatibility: source_compat,
@@ -503,26 +503,26 @@ fn base_physical<R: ImplementationRegistry>(
         PhysicalSlot {
             id: commit_slot,
             lease_resource: LeaseResource::Memory {
-                allocation_id: "serial-continuum-commit-buffer".to_string(),
+                allocation_id: "spectral-cycle-commit-buffer".to_string(),
             },
             capacity_bytes: 1,
             compatibility: commit_compat,
         },
     ];
     let alternative = DemandAlternative {
-        id: AlternativeId::new("serial-continuum-cpu"),
+        id: AlternativeId::new("spectral-cycle-cpu"),
         capabilities: CapabilityPredicate::default(),
         demand: DemandEnvelope {
             host_memory_view: CapacityViewId::new("host-memory"),
             memory: vec![
                 MemoryDemand {
-                    allocation_id: "serial-continuum-selected-source".to_string(),
+                    allocation_id: "spectral-cycle-selected-source".to_string(),
                     hard_bytes: source_bytes,
                     preferred_bytes: source_bytes,
                     views: vec![CapacityViewId::new("host-memory")],
                 },
                 MemoryDemand {
-                    allocation_id: "serial-continuum-commit-buffer".to_string(),
+                    allocation_id: "spectral-cycle-commit-buffer".to_string(),
                     hard_bytes: 1,
                     preferred_bytes: 1,
                     views: vec![CapacityViewId::new("host-memory")],
@@ -616,7 +616,7 @@ fn base_physical<R: ImplementationRegistry>(
         policy
             .stage_nanos
             .checked_mul(predictions.len() as u64)
-            .ok_or(SerialContinuumPlanError::Overflow)?,
+            .ok_or(SpectralCyclePlanError::Overflow)?,
         PredictionConfidence::new(policy.confidence_parts_per_million)?,
         vec![],
         predictions,
@@ -655,10 +655,10 @@ fn base_physical<R: ImplementationRegistry>(
     ))
 }
 
-pub(crate) fn pass_node(base: &str, pass: ContinuumPassIdentity) -> WorkNodeId {
+pub(crate) fn pass_node(base: &str, pass: SpectralPassIdentity) -> WorkNodeId {
     let phase = match pass.phase() {
-        ContinuumPassPhase::InitialMajor => "initial-major",
-        ContinuumPassPhase::FinalMajor => "final-major",
+        SpectralPassPhase::InitialMajor => "initial-major",
+        SpectralPassPhase::FinalMajor => "final-major",
     };
     WorkNodeId::new(format!("{base}-{phase}-{}", pass.ordinal()))
 }
@@ -666,10 +666,10 @@ pub(crate) fn pass_node(base: &str, pass: ContinuumPassIdentity) -> WorkNodeId {
 fn append_model_data_resources<R: ImplementationRegistry>(
     registry: &R,
     base: PhysicalWorkBinding,
-    policy: &SerialContinuumExecutionPolicy,
+    policy: &SpectralCycleExecutionPolicy,
     replay: &WorkNodeId,
     storage_plan: ModelColumnStoragePlan,
-) -> Result<PhysicalWorkBinding, SerialContinuumPlanError> {
+) -> Result<PhysicalWorkBinding, SpectralCyclePlanError> {
     let commit = base.observation_transaction().commit().clone();
     let allocation = AllocationId::new("serial-model-data-cell-buffer");
     let slot = PhysicalSlotId::new("serial-model-data-cell-buffer-slot");
@@ -709,7 +709,7 @@ fn append_model_data_resources<R: ImplementationRegistry>(
                     .expect("MODEL_DATA write tuple size fits u64"),
             )
         })
-        .ok_or(SerialContinuumPlanError::Overflow)?
+        .ok_or(SpectralCyclePlanError::Overflow)?
         .max(1);
     let write_lifetime = ClaimLifetime::through_fence(FenceKind::Io);
     let mut nodes = base
@@ -807,7 +807,7 @@ fn append_model_data_resources<R: ImplementationRegistry>(
         .overhead
         .thread_stack_bytes
         .checked_add(MODEL_COLUMN_WORKER_STACK_BYTES as u64)
-        .ok_or(SerialContinuumPlanError::Overflow)?;
+        .ok_or(SpectralCyclePlanError::Overflow)?;
     if persistent_bytes > 0 {
         alternative.demand.storage.push(StorageDemand {
             demand_id: storage_id,
@@ -942,14 +942,14 @@ fn append_model_data_resources<R: ImplementationRegistry>(
             .clone(),
         base.observation_transaction()
             .post_replay_reconciliation()
-            .expect("serial continuum plan has post-replay reconciliation")
+            .expect("spectral cycle plan has post-replay reconciliation")
             .clone(),
         commit,
     )
     .with_final_model_preparation(
         base.observation_transaction()
             .final_model_preparation()
-            .expect("serial continuum plan has final-model preparation")
+            .expect("spectral cycle plan has final-model preparation")
             .clone(),
     )
     .with_model_column_writeback(replay.clone());
@@ -966,23 +966,23 @@ fn append_model_data_resources<R: ImplementationRegistry>(
 fn append_minor<R: ImplementationRegistry>(
     registry: &R,
     base: PhysicalWorkBinding,
-    policy: &SerialContinuumExecutionPolicy,
+    policy: &SpectralCycleExecutionPolicy,
     minor: &WorkNodeId,
-) -> Result<PhysicalWorkBinding, SerialContinuumPlanError> {
+) -> Result<PhysicalWorkBinding, SpectralCyclePlanError> {
     let reconcile = base
         .observation_transaction()
         .post_replay_reconciliation()
-        .expect("serial continuum plan has post-replay reconciliation")
+        .expect("spectral cycle plan has post-replay reconciliation")
         .clone();
     let commit = base.observation_transaction().commit().clone();
-    let allocation = AllocationId::new("serial-continuum-minor-cycle");
-    let slot = PhysicalSlotId::new("serial-continuum-minor-cycle-slot");
+    let allocation = AllocationId::new("spectral-cycle-minor-cycle");
+    let slot = PhysicalSlotId::new("spectral-cycle-minor-cycle-slot");
     let compatibility = SlotCompatibility {
         memory_domain: CapacityDomainId::new("host-memory"),
         views: BTreeSet::from([CapacityViewId::new("host-memory")]),
         alignment_bytes: 64,
         storage_mode: StorageMode::Host,
-        layout: AllocationLayout::new("serial-continuum-minor-cycle"),
+        layout: AllocationLayout::new("spectral-cycle-minor-cycle"),
         initialization: InitializationPolicy::OverwriteBeforeRead,
         access: AllocationAccess::ReadWrite,
     };
@@ -1018,7 +1018,7 @@ fn append_minor<R: ImplementationRegistry>(
     });
     let mut alternative = base.execution_dag().resource_alternative().clone();
     alternative.demand.memory.push(MemoryDemand {
-        allocation_id: "serial-continuum-minor-cycle".to_string(),
+        allocation_id: "spectral-cycle-minor-cycle".to_string(),
         hard_bytes: policy.minor_cycle_bytes,
         preferred_bytes: policy.minor_cycle_bytes,
         views: vec![CapacityViewId::new("host-memory")],
@@ -1055,7 +1055,7 @@ fn append_minor<R: ImplementationRegistry>(
             .chain([PhysicalSlot {
                 id: slot,
                 lease_resource: LeaseResource::Memory {
-                    allocation_id: "serial-continuum-minor-cycle".to_string(),
+                    allocation_id: "spectral-cycle-minor-cycle".to_string(),
                 },
                 capacity_bytes: policy.minor_cycle_bytes,
                 compatibility,
@@ -1068,7 +1068,7 @@ fn append_minor<R: ImplementationRegistry>(
         base.prediction()
             .elapsed_nanos()
             .checked_add(policy.stage_nanos)
-            .ok_or(SerialContinuumPlanError::Overflow)?,
+            .ok_or(SpectralCyclePlanError::Overflow)?,
         base.prediction().confidence(),
         base.prediction().uncertainty().to_vec(),
         base.prediction()
@@ -1086,7 +1086,7 @@ fn append_minor<R: ImplementationRegistry>(
             .clone(),
         base.observation_transaction()
             .post_replay_reconciliation()
-            .expect("serial continuum plan has post-replay reconciliation")
+            .expect("spectral cycle plan has post-replay reconciliation")
             .clone(),
         commit,
     );
@@ -1115,8 +1115,8 @@ fn append_minor<R: ImplementationRegistry>(
 }
 
 #[derive(Debug)]
-/// Failure to construct a complete serial continuum physical plan.
-pub enum SerialContinuumPlanError {
+/// Failure to construct a complete spectral cycle physical plan.
+pub enum SpectralCyclePlanError {
     /// MODEL_DATA bounds were supplied without one exact model-column write.
     ModelColumnCount,
     /// A byte, row, or elapsed-time projection overflowed its identity domain.
@@ -1132,33 +1132,33 @@ pub enum SerialContinuumPlanError {
     /// Physical work, prediction, or transaction binding failed.
     Physical(PhysicalWorkBindingError),
 }
-impl fmt::Display for SerialContinuumPlanError {
+impl fmt::Display for SpectralCyclePlanError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "serial continuum planning failed: {self:?}")
+        write!(f, "spectral cycle planning failed: {self:?}")
     }
 }
-impl Error for SerialContinuumPlanError {}
-impl From<casa_imaging_reconstruction::WeightingError> for SerialContinuumPlanError {
+impl Error for SpectralCyclePlanError {}
+impl From<casa_imaging_reconstruction::WeightingError> for SpectralCyclePlanError {
     fn from(v: casa_imaging_reconstruction::WeightingError) -> Self {
         Self::Weighting(v)
     }
 }
-impl From<WeightingPlanFragmentError> for SerialContinuumPlanError {
+impl From<WeightingPlanFragmentError> for SpectralCyclePlanError {
     fn from(v: WeightingPlanFragmentError) -> Self {
         Self::WeightingFragment(v)
     }
 }
-impl From<CompleteDataPlanError> for SerialContinuumPlanError {
+impl From<CompleteDataPlanError> for SpectralCyclePlanError {
     fn from(v: CompleteDataPlanError) -> Self {
         Self::Complete(v)
     }
 }
-impl From<ExecutionError> for SerialContinuumPlanError {
+impl From<ExecutionError> for SpectralCyclePlanError {
     fn from(v: ExecutionError) -> Self {
         Self::Execution(v)
     }
 }
-impl From<PhysicalWorkBindingError> for SerialContinuumPlanError {
+impl From<PhysicalWorkBindingError> for SpectralCyclePlanError {
     fn from(v: PhysicalWorkBindingError) -> Self {
         Self::Physical(v)
     }

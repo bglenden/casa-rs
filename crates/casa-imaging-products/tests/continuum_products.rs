@@ -39,10 +39,12 @@ use casa_imaging_products::{
 };
 use casa_imaging_reconstruction::{
     ExecutableModelProblem, MajorCycleCompletion, MajorCycleOwner, MajorCyclePreparation, MaskBox,
-    ModelGenerationId, ModelLifecycle, ReconstructionMask, SerialMfsSpecification,
+    ModelGenerationId, ModelLifecycle, ReconstructionMask, SpectralOperatorSpecification,
     WeightingAlgorithmState, WeightingError, WeightingExecutionLimits, WeightingPlan,
     WeightingReplayChunk, WeightingReplaySummary, begin_weighting_generation, plan_weighting,
-    runtime_adapter::{CompleteDataOwnerResult, prepare_serial_mfs_operator, serial_mfs_workload},
+    runtime_adapter::{
+        CompleteDataOwnerResult, prepare_spectral_operator, spectral_operator_workload,
+    },
 };
 
 const SHAPE: [usize; 2] = [8, 8];
@@ -448,10 +450,11 @@ fn run_round_with_samples(
     let (blocks, summary) = replay(&generation, problem, &plan, &samples);
     assert!(!blocks.is_empty(), "replay must emit bounded blocks");
 
-    let specification = SerialMfsSpecification::new(problem).expect("serial MFS specification");
-    let workload =
-        serial_mfs_workload(&specification, plan.limits().max_block_samples()).expect("workload");
-    let prepared = prepare_serial_mfs_operator(specification, workload).expect("prepare operator");
+    let specification =
+        SpectralOperatorSpecification::new(problem).expect("spectral operator specification");
+    let workload = spectral_operator_workload(&specification, plan.limits().max_block_samples())
+        .expect("workload");
+    let prepared = prepare_spectral_operator(specification, workload).expect("prepare operator");
     let mut state = prepared
         .begin(problem, &generation)
         .expect("begin complete-data owner");

@@ -36,10 +36,12 @@ use casa_imaging_model::{
 use casa_imaging_reconstruction::{
     ExecutableModelProblem, FinalModelCompletionId, MajorCycleError, MajorCycleOwner,
     MajorCyclePreparation, ModelDelta, ModelGeneration, ModelLifecycle, ModelLifecycleError,
-    SerialMfsError, SerialMfsSpecification, WeightingAlgorithmState, WeightingError,
+    SpectralOperatorError, SpectralOperatorSpecification, WeightingAlgorithmState, WeightingError,
     WeightingExecutionLimits, WeightingPlan, WeightingReplayChunk, WeightingReplaySummary,
     begin_weighting_generation, plan_weighting,
-    runtime_adapter::{CompleteDataOwnerResult, prepare_serial_mfs_operator, serial_mfs_workload},
+    runtime_adapter::{
+        CompleteDataOwnerResult, prepare_spectral_operator, spectral_operator_workload,
+    },
 };
 
 fn identity(seed: u8, scope: u8) -> LogicalIdentity {
@@ -451,10 +453,11 @@ fn run_t19_complete_data(
     let (blocks, summary) = replay(&generation, problem, &plan, &samples);
     assert!(!blocks.is_empty(), "replay must emit bounded blocks");
 
-    let specification = SerialMfsSpecification::new(problem).expect("serial MFS specification");
-    let workload =
-        serial_mfs_workload(&specification, plan.limits().max_block_samples()).expect("workload");
-    let prepared = prepare_serial_mfs_operator(specification, workload).expect("prepare operator");
+    let specification =
+        SpectralOperatorSpecification::new(problem).expect("spectral operator specification");
+    let workload = spectral_operator_workload(&specification, plan.limits().max_block_samples())
+        .expect("workload");
+    let prepared = prepare_spectral_operator(specification, workload).expect("prepare operator");
     let mut state = prepared
         .begin(problem, &generation)
         .expect("begin complete-data owner");
@@ -499,10 +502,11 @@ fn bound_major_cycle_model_cannot_be_replaced_by_diagnostic_prediction() {
     let generation = freeze_weighting_generation(&problem, &plan, &samples)
         .expect("freeze weighting generation");
     let (blocks, _) = replay(&generation, &problem, &plan, &samples);
-    let specification = SerialMfsSpecification::new(&problem).expect("serial MFS specification");
-    let workload = serial_mfs_workload(&specification, plan.limits().max_block_samples())
-        .expect("serial MFS workload");
-    let prepared = prepare_serial_mfs_operator(specification, workload).expect("prepare operator");
+    let specification =
+        SpectralOperatorSpecification::new(&problem).expect("spectral operator specification");
+    let workload = spectral_operator_workload(&specification, plan.limits().max_block_samples())
+        .expect("spectral operator workload");
+    let prepared = prepare_spectral_operator(specification, workload).expect("prepare operator");
     let mut state = prepared
         .begin(&problem, &generation)
         .expect("begin complete-data owner");
@@ -515,7 +519,7 @@ fn bound_major_cycle_model_cannot_be_replaced_by_diagnostic_prediction() {
         state
             .predict_block(&arbitrary_model, &blocks[0])
             .expect_err("prediction must not overwrite the final-model grid"),
-        SerialMfsError::PredictionAfterMajorCycleBinding
+        SpectralOperatorError::PredictionAfterMajorCycleBinding
     );
 }
 
@@ -596,7 +600,7 @@ fn reconciliation_applies_one_pending_delta_through_the_model_owner() {
     assert_eq!(normal_state.block_count(), block_count);
     assert_eq!(
         normal_state.catalog(),
-        casa_imaging_reconstruction::NormalStateCatalog::UnnormalizedNterms1V1
+        casa_imaging_reconstruction::NormalStateCatalog::UnnormalizedPlaneV1
     );
     // The residual content is model-dependent: a nonzero final model never
     // relabels the data-side dirty plane.
@@ -853,9 +857,9 @@ fn incomplete_or_foreign_operator_evidence_cannot_become_a_major_cycle_owner() {
     // A specification mismatch keeps raw problems from forging operator plans.
     let problem = t19_compatible_problem(15);
     let other = t19_compatible_problem(16);
-    let specification = SerialMfsSpecification::new(&other).expect("other specification");
-    let workload = serial_mfs_workload(&specification, 1).expect("other workload");
-    let prepared = prepare_serial_mfs_operator(specification, workload).expect("prepared");
+    let specification = SpectralOperatorSpecification::new(&other).expect("other specification");
+    let workload = spectral_operator_workload(&specification, 1).expect("other workload");
+    let prepared = prepare_spectral_operator(specification, workload).expect("prepared");
     let plan = plan_weighting(
         &problem,
         WeightingExecutionLimits::new(1, 1).expect("limits"),
@@ -866,7 +870,7 @@ fn incomplete_or_foreign_operator_evidence_cannot_become_a_major_cycle_owner() {
     let foreign = prepared
         .begin(&problem, &generation)
         .expect_err("foreign prepared operator cannot adopt this problem");
-    assert!(matches!(foreign, SerialMfsError::ProblemMismatch));
+    assert!(matches!(foreign, SpectralOperatorError::ProblemMismatch));
 
     // Exhaustive coverage is required before any owner can exist.
     let evidence = run_t19_complete_data(&problem, None);

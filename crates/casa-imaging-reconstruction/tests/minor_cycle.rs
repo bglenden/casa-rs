@@ -37,11 +37,13 @@ use casa_imaging_reconstruction::{
     AutoMultithreshControls, ExecutableModelProblem, FinalModelCompletion, FinalNormalState,
     MajorCycleOwner, MajorCyclePreparation, MaskBox, MinorCycleError, MinorCycleModelPlane,
     MinorCycleProgram as HogbomControls, MinorCycleStopReason, ModelGeneration, ModelLifecycle,
-    ModelLifecycleError, ReconstructionMask, SerialMfsSpecification, WeightingAlgorithmState,
-    WeightingError, WeightingExecutionLimits, WeightingPlan, WeightingReplayChunk,
-    WeightingReplaySummary, auto_multithresh, begin_weighting_generation, model_support_identity,
-    plan_weighting, run_minor_cycle as hogbom_minor_cycle,
-    runtime_adapter::{CompleteDataOwnerResult, prepare_serial_mfs_operator, serial_mfs_workload},
+    ModelLifecycleError, ReconstructionMask, SpectralOperatorSpecification,
+    WeightingAlgorithmState, WeightingError, WeightingExecutionLimits, WeightingPlan,
+    WeightingReplayChunk, WeightingReplaySummary, auto_multithresh, begin_weighting_generation,
+    model_support_identity, plan_weighting, run_minor_cycle as hogbom_minor_cycle,
+    runtime_adapter::{
+        CompleteDataOwnerResult, prepare_spectral_operator, spectral_operator_workload,
+    },
 };
 
 const SHAPE: [usize; 2] = [8, 8];
@@ -475,10 +477,11 @@ fn run_t19_complete_data(
     let (blocks, summary) = replay(&generation, problem, &plan, samples);
     assert!(!blocks.is_empty(), "replay must emit bounded blocks");
 
-    let specification = SerialMfsSpecification::new(problem).expect("serial MFS specification");
-    let workload =
-        serial_mfs_workload(&specification, plan.limits().max_block_samples()).expect("workload");
-    let prepared = prepare_serial_mfs_operator(specification, workload).expect("prepare operator");
+    let specification =
+        SpectralOperatorSpecification::new(problem).expect("spectral operator specification");
+    let workload = spectral_operator_workload(&specification, plan.limits().max_block_samples())
+        .expect("workload");
+    let prepared = prepare_spectral_operator(specification, workload).expect("prepare operator");
     let mut state = prepared
         .begin(problem, &generation)
         .expect("begin complete-data owner");

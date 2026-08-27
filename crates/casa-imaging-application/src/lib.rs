@@ -44,11 +44,11 @@ use casa_imaging_runtime::{
     FrozenWeightingReservation, ImplementationContractMetadata, ImplementationRegistry,
     ImplementationRegistryId, ObservationReadCompletionContext, PlannerCostModelProfileBootstrap,
     PlanningBindings, ResourceAuthority, ResourcePolicy, RunBindings, RunToCompletion,
-    SerialContinuumExecutionPolicy, SerialContinuumExecutor, SerialContinuumPassInput,
-    SerialContinuumPlan, SerialContinuumRegistry, SerialProductPublicationExecutor,
-    SerialProductPublicationPlan, SerialProductPublicationPolicy, SerialProductPublicationRegistry,
-    SerialProductPublicationSink, StorageIoResourceBinding, WorkExecutionContext,
-    WorkImplementation, WorkImplementationId, WorkMeasurements, plan, run,
+    SerialProductPublicationExecutor, SerialProductPublicationPlan, SerialProductPublicationPolicy,
+    SerialProductPublicationRegistry, SerialProductPublicationSink, SpectralCycleExecutionPolicy,
+    SpectralCycleExecutor, SpectralCyclePassInput, SpectralCyclePlan, SpectralCycleRegistry,
+    StorageIoResourceBinding, WorkExecutionContext, WorkImplementation, WorkImplementationId,
+    WorkMeasurements, plan, run,
 };
 use casa_ms::{
     ResolvedSelectedObservationAccess, SelectedObservationResolutionRequest,
@@ -313,12 +313,12 @@ where
     let policy = execution_policy(&runtime, residency.clone());
     let planned = match algorithm {
         ReconstructionAlgorithm::Dirty => {
-            SerialContinuumPlan::dirty(problem, &planning_registry, policy)?
+            SpectralCyclePlan::dirty(problem, &planning_registry, policy)?
         }
         ReconstructionAlgorithm::Hogbom
         | ReconstructionAlgorithm::Clark
         | ReconstructionAlgorithm::Multiscale { .. } => {
-            SerialContinuumPlan::initial(problem, &planning_registry, policy)?
+            SpectralCyclePlan::initial(problem, &planning_registry, policy)?
         }
         _ => unreachable!("native validation admits only continuum minor-cycle solvers"),
     };
@@ -334,7 +334,7 @@ where
         })
         .transpose()?;
     let selected = initial_access.open(problem)?;
-    let mut executor = SerialContinuumExecutor::new(
+    let mut executor = SpectralCycleExecutor::new(
         runtime.implementation.clone(),
         problem.clone(),
         weighting,
@@ -343,7 +343,7 @@ where
         complete,
         selected,
         ExecutableModelProblem::from_compiled(problem.clone())?,
-        SerialContinuumPassInput::Initial,
+        SpectralCyclePassInput::Initial,
     );
     if !matches!(algorithm, ReconstructionAlgorithm::Dirty) {
         executor = executor.with_frozen_weighting_reservation(
@@ -360,7 +360,7 @@ where
             program,
         );
     }
-    let registry = SerialContinuumRegistry::new(
+    let registry = SpectralCycleRegistry::new(
         runtime.registry,
         runtime.implementation.clone(),
         problem,
@@ -481,7 +481,7 @@ where
                 let ordinal =
                     u32::try_from(cycle).map_err(|_| boxed("major-cycle ordinal exceeds u32"))?;
                 let final_planned = if continue_cleaning {
-                    SerialContinuumPlan::continuing_major(
+                    SpectralCyclePlan::continuing_major(
                         problem,
                         &planning_registry,
                         final_policy,
@@ -489,7 +489,7 @@ where
                         ordinal,
                     )?
                 } else {
-                    SerialContinuumPlan::final_major_at(
+                    SpectralCyclePlan::final_major_at(
                         problem,
                         &planning_registry,
                         final_policy,
@@ -499,7 +499,7 @@ where
                 };
                 let (physical, weighting, complete, resources, pass, minor_node) =
                     final_planned.into_parts();
-                let mut executor = SerialContinuumExecutor::new(
+                let mut executor = SpectralCycleExecutor::new(
                     runtime.implementation.clone(),
                     problem.clone(),
                     weighting,
@@ -508,7 +508,7 @@ where
                     complete,
                     access.open(problem)?,
                     ExecutableModelProblem::from_compiled(problem.clone())?,
-                    SerialContinuumPassInput::FinalMajor(final_input),
+                    SpectralCyclePassInput::FinalMajor(final_input),
                 )
                 .with_frozen_weighting(frozen_weighting);
                 let mut terminal_replay = None;
@@ -537,7 +537,7 @@ where
                     executor = executor.with_final_visibility_sink(sink);
                     terminal_replay = Some(replay);
                 }
-                let registry = SerialContinuumRegistry::new(
+                let registry = SpectralCycleRegistry::new(
                     runtime.registry,
                     runtime.implementation.clone(),
                     problem,
@@ -623,8 +623,8 @@ struct PriorPhaseOutcome {
 fn execution_policy(
     runtime: &ApplicationRuntime,
     residency: casa_ms::SelectedObservationResidencyCertificate,
-) -> SerialContinuumExecutionPolicy {
-    SerialContinuumExecutionPolicy::new(
+) -> SpectralCycleExecutionPolicy {
+    SpectralCycleExecutionPolicy::new(
         runtime.implementation.clone(),
         runtime.weighting_limits,
         residency,
@@ -638,7 +638,7 @@ fn execution_policy(
 fn run_phase(
     problem: &CompiledProblem,
     execution_plan: &casa_imaging_runtime::ExecutionPlan,
-    registry: &SerialContinuumRegistry<SerialContinuumExecutor>,
+    registry: &SpectralCycleRegistry<SpectralCycleExecutor>,
     runtime: &ApplicationRuntime,
     attempt: ExecutionAttemptId,
 ) -> Result<(), ApplicationError> {

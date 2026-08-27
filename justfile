@@ -59,6 +59,11 @@ imaging-t36-spectral-law:
     CARGO_INCREMENTAL=0 cargo test -p casa-ms --features cpp-interop-tests --test spectral_frame_parity
     CARGO_INCREMENTAL=0 cargo test -p casa-test-support --features cpp-interop-tests --test spectral_frame_exact_interop
 
+# Focused #523 bounded spectral cube operator, CASA comparator, and residency gate.
+imaging-t37-cube-operator:
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction --features cpp-interop-tests t37_
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-runtime --test compile_plan_run t37_runtime_residency
+
 release-perf:
     bash scripts/test-release-perf.sh
 

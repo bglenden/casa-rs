@@ -47,13 +47,13 @@ fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
     )
 }
 #[test]
-fn installed_serial_continuum_accepts_its_compiled_contract() {
-    let problem = compile(standard_dirty_request()).expect("compile serial continuum request");
+fn installed_spectral_cycle_accepts_its_compiled_contract() {
+    let problem = compile(standard_dirty_request()).expect("compile spectral cycle request");
     require_installed_implementation(
         &problem,
         [TaskRequirement::SerialCpu, TaskRequirement::RustFft],
     )
-    .expect("installed serial continuum contract");
+    .expect("installed spectral cycle contract");
 }
 
 #[test]
@@ -70,7 +70,7 @@ fn moving_source_fails_typed_before_execution() {
 
 #[test]
 fn unavailable_task_requirements_are_exact_and_typed() {
-    let problem = compile(standard_dirty_request()).expect("compile serial continuum request");
+    let problem = compile(standard_dirty_request()).expect("compile spectral cycle request");
     let error = require_installed_implementation(
         &problem,
         [TaskRequirement::ExecutionAuto, TaskRequirement::FftAuto],
