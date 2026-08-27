@@ -11,6 +11,7 @@ use casa_imaging_model::{
     UvTaper, WeightDensityScope, WeightingCommitmentId, WeightingScheme,
 };
 use sha2::{Digest, Sha256};
+use smallvec::SmallVec;
 
 const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
 const GENERATION_DOMAIN: &[u8] = b"casa-rs-frozen-weighting-generation";
@@ -585,7 +586,7 @@ impl WeightingDensityPhase {
                             &mut self.partials[partial_index],
                             plane,
                             uv,
-                            input * f64::from(contribution.factor()),
+                            input * contribution.factor(),
                         )?;
                     }
                 }
@@ -707,32 +708,34 @@ impl WeightingSumWeightPhase {
         {
             return Err(WeightingError::ProblemMismatch);
         }
-        let mut spectral_values = [None, None];
-        for (slot, contribution) in contributions.iter().enumerate() {
-            spectral_values[slot] = Some(WeightingSpectralValue {
-                contribution,
-                imaging_weight: weight_from_state(
-                    problem,
-                    self.grid,
-                    &self.density,
-                    &self.robust_f2,
-                    self.frequency_range_hz,
-                    &sample,
-                    Some(contribution),
-                )?,
-            });
-        }
+        let spectral_values = contributions
+            .iter()
+            .map(|contribution| {
+                Ok(WeightingSpectralValue {
+                    contribution,
+                    imaging_weight: weight_from_state(
+                        problem,
+                        self.grid,
+                        &self.density,
+                        &self.robust_f2,
+                        self.frequency_range_hz,
+                        &sample,
+                        Some(contribution),
+                    )?,
+                })
+            })
+            .collect::<Result<SmallVec<[_; 4]>, WeightingError>>()?;
         match problem.weighting().density_scope() {
             WeightDensityScope::NotApplicable | WeightDensityScope::GlobalSelection => {
-                if let Some(value) = spectral_values.iter().flatten().next() {
+                if let Some(value) = spectral_values.first() {
                     self.sum_weights[0].add(value.imaging_weight)?;
                 }
             }
             WeightDensityScope::PerOutputChannel => {
-                for value in spectral_values.iter().flatten() {
+                for value in &spectral_values {
                     let plane = contribution_plane(self.grid, value.contribution)?;
                     self.sum_weights[plane]
-                        .add(value.imaging_weight * f64::from(value.contribution.factor()))?;
+                        .add(value.imaging_weight * value.contribution.factor())?;
                 }
             }
         }
@@ -963,10 +966,10 @@ impl WeightingSpectralValue {
 }
 
 /// One unbranded weighted selected sample produced by reconstruction.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct WeightingSampleValue {
     sample: SelectedObservationSample,
-    spectral_values: [Option<WeightingSpectralValue>; 2],
+    spectral_values: SmallVec<[WeightingSpectralValue; 4]>,
 }
 
 impl WeightingSampleValue {
@@ -978,7 +981,7 @@ impl WeightingSampleValue {
 
     /// Iterate over output-channel contributions and their W values.
     pub fn spectral_values(&self) -> impl Iterator<Item = WeightingSpectralValue> + '_ {
-        self.spectral_values.iter().flatten().copied()
+        self.spectral_values.iter().copied()
     }
 }
 
@@ -992,7 +995,7 @@ pub struct WeightingReplayChunk {
     samples: Vec<WeightingSampleValue>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct WeightingReplayInputSample {
     sample: SelectedObservationSample,
     contributions: SelectedSpectralContributions,
@@ -1131,17 +1134,20 @@ impl WeightingReplayPhase<'_> {
         }
         self.peak_weighted_capacity = self.peak_weighted_capacity.max(self.block.capacity());
         for input in &self.input {
-            let mut spectral_values = [None, None];
-            for (slot, contribution) in input.contributions.iter().enumerate() {
-                spectral_values[slot] = Some(WeightingSpectralValue {
-                    contribution,
-                    imaging_weight: self.generation.weight(
-                        self.problem,
-                        &input.sample,
-                        Some(contribution),
-                    )?,
-                });
-            }
+            let spectral_values = input
+                .contributions
+                .iter()
+                .map(|contribution| {
+                    Ok(WeightingSpectralValue {
+                        contribution,
+                        imaging_weight: self.generation.weight(
+                            self.problem,
+                            &input.sample,
+                            Some(contribution),
+                        )?,
+                    })
+                })
+                .collect::<Result<SmallVec<[_; 4]>, WeightingError>>()?;
             let weighted = WeightingSampleValue {
                 sample: input.sample,
                 spectral_values,
@@ -1226,6 +1232,9 @@ impl WeightingReplaySummary {
 /// Weighting failure independent of source or consumer I/O.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum WeightingError {
+    /// Reconstruction could not compile the paired sparse spectral stencil.
+    #[error(transparent)]
+    SpectralStencil(#[from] crate::SpectralStencilError),
     /// A physical execution limit was zero.
     #[error("weighting execution limits must be non-zero")]
     ZeroExecutionLimit,

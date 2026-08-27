@@ -25,10 +25,10 @@ use casa_imaging_model::{
     ProductRequirements, Projection, ReconstructionAlgorithm, ReconstructionBasis,
     ReconstructionContract, ReconstructionControls, ReductionPolicy, ReferenceDataKind,
     RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection, SpectralContract,
-    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSampling, SpectralWcs,
-    StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct, VisibilityPhaseConvention,
-    WeightColumn, WeightDensityScope, WeightingCommitmentId, WeightingContract, WeightingScheme,
-    compile,
+    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
+    SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct,
+    VisibilityPhaseConvention, WeightColumn, WeightDensityScope, WeightingCommitmentId,
+    WeightingContract, WeightingScheme, compile,
 };
 
 mod common;
@@ -217,12 +217,12 @@ fn geometry() -> GeometryInput {
     )
 }
 
-fn compile_contract(sampling: SpectralSampling) -> casa_imaging_model::CompiledProblem {
+fn compile_contract(sampling: SpectralSamplingLaw) -> casa_imaging_model::CompiledProblem {
     compile_contract_with_reduction(sampling, ReductionPolicy::Compensated)
 }
 
 fn compile_contract_with_reduction(
-    sampling: SpectralSampling,
+    sampling: SpectralSamplingLaw,
     reduction: ReductionPolicy,
 ) -> casa_imaging_model::CompiledProblem {
     let inner_products = DeclaredInnerProducts::new(
@@ -292,10 +292,10 @@ fn compile_contract_with_reduction(
 
 #[test]
 fn weighting_commitment_binds_sampling_and_numerics() {
-    let linear = compile_contract(SpectralSampling::Linear);
-    let nearest = compile_contract(SpectralSampling::Nearest);
+    let linear = compile_contract(SpectralSamplingLaw::LINEAR);
+    let nearest = compile_contract(SpectralSamplingLaw::NEAREST);
     let deterministic = compile_contract_with_reduction(
-        SpectralSampling::Linear,
+        SpectralSamplingLaw::LINEAR,
         ReductionPolicy::DeterministicPairwise,
     );
 
@@ -322,9 +322,7 @@ fn weighting_commitment_binds_sampling_and_numerics() {
 
 #[test]
 fn compiled_contract_owns_paired_operator_weighting_and_product_boundary() {
-    let problem = compile_contract(SpectralSampling::ChannelAverage {
-        channels_per_bin: 2,
-    });
+    let problem = compile_contract(SpectralSamplingLaw::channel_integration(2));
     let normal = problem.normal_equation();
     let operator = normal.measurement_operator();
 
@@ -405,10 +403,8 @@ fn compiled_contract_owns_paired_operator_weighting_and_product_boundary() {
 
 #[test]
 fn paired_compositions_obey_linearity_and_weighted_adjointness() {
-    let channel_integration = compile_contract(SpectralSampling::ChannelAverage {
-        channels_per_bin: 2,
-    });
-    let spectral_resampling = compile_contract(SpectralSampling::Linear);
+    let channel_integration = compile_contract(SpectralSamplingLaw::channel_integration(2));
+    let spectral_resampling = compile_contract(SpectralSamplingLaw::LINEAR);
     let compositions = [
         channel_integration
             .normal_equation()
@@ -461,7 +457,7 @@ fn paired_compositions_obey_linearity_and_weighted_adjointness() {
 
 #[test]
 fn schema_eleven_problem_and_weighting_commitment_identities_are_pinned() {
-    let problem = compile_contract(SpectralSampling::Linear);
+    let problem = compile_contract(SpectralSamplingLaw::LINEAR);
 
     assert_eq!(CompiledProblemId::SCHEMA_VERSION, 11);
     assert_eq!(WeightingCommitmentId::SCHEMA_VERSION, 3);

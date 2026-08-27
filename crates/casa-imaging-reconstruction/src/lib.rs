@@ -33,6 +33,7 @@ mod mask;
 mod minor_cycle;
 mod psf_beam;
 mod serial_mfs;
+mod spectral_sampling;
 mod weighting;
 
 pub use serial_mfs::{
@@ -70,6 +71,9 @@ pub use minor_cycle::{
 pub use psf_beam::{
     DEFAULT_PSF_FIT_CUTOFF, PsfBeamFitError, RestoringBeam, fit_restoring_beam,
     fitted_psf_sidelobe_fraction,
+};
+pub use spectral_sampling::{
+    SpectralStencilError, SpectralStencilReceipt, SpectralStencilValidity, compile_spectral_stencil,
 };
 pub use weighting::{
     FusedWeightingPhase, WeightingAlgorithmState, WeightingDensityPhase, WeightingError,

@@ -2440,36 +2440,6 @@ fn linear_channel_model_contributions(
     )
 }
 
-/// Map one selected source frequency into the existing #45 output-channel
-/// contribution law. The returned channel index addresses the supplied output
-/// coordinate arrays.
-pub(crate) fn source_frequency_output_contributions(
-    output_channel_frequencies_hz: &[f64],
-    output_channel_widths_hz: &[f64],
-    interpolation: CubeInterpolation,
-    source_frequency_hz: f64,
-) -> Vec<CubeChannelContribution> {
-    match interpolation {
-        CubeInterpolation::Nearest => {
-            nearest_channel_index(output_channel_frequencies_hz, source_frequency_hz)
-                .map(|output_channel| {
-                    vec![CubeChannelContribution {
-                        source_channel: output_channel,
-                        source_frequency_hz: output_channel_frequencies_hz[output_channel],
-                        factor: 1.0,
-                    }]
-                })
-                .unwrap_or_default()
-        }
-        CubeInterpolation::Linear | CubeInterpolation::Cubic => linear_channel_model_contributions(
-            output_channel_frequencies_hz,
-            output_channel_frequencies_hz,
-            output_channel_widths_hz,
-            source_frequency_hz,
-        ),
-    }
-}
-
 fn linear_channel_contributions_impl(
     native_source_channel_frequencies_hz: &[f64],
     source_channel_frequencies_hz: &[f64],

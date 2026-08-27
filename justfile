@@ -47,6 +47,18 @@ release-cpp-interop:
 imaging-solver-crosscheck input_ms output_dir:
     python tools/science/casa_rust_solver_crosscheck.py "{{input_ms}}" "{{output_dir}}"
 
+# Focused #521 source-backed spectral identity/tracer foundation.
+imaging-t35-spectral-tracer:
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction t35_
+    CARGO_INCREMENTAL=0 cargo test -p casa-ms real_ms_cube_traversal_compiles_source_backed_casa_cubic_stencils
+
+# Focused #522 paired sparse law, frame/interval evaluation, and edge coverage.
+imaging-t36-spectral-law:
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction t36_
+    CARGO_INCREMENTAL=0 cargo test -p casa-ms real_ms_cubedata_traversal_compiles_source_backed_casa_cubic_stencils
+    CARGO_INCREMENTAL=0 cargo test -p casa-ms --features cpp-interop-tests --test spectral_frame_parity
+    CARGO_INCREMENTAL=0 cargo test -p casa-test-support --features cpp-interop-tests --test spectral_frame_exact_interop
+
 release-perf:
     bash scripts/test-release-perf.sh
 

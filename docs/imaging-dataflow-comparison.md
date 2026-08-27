@@ -86,6 +86,26 @@ mosaic, W/AW-projection, and backend choices fail as
 `TemporarilyUnavailable`; they do not enter the pre-T23 runners described
 below.
 
+### T35/T36 spectral cutover map
+
+Source inspection for the sparse paired spectral foundation produced this
+compact semantic and performance map. The pre-cutover reference is
+`fff9c2d55^`; the current foundation starts from `af3bd99c5`.
+
+| Concern | Pre-cutover Rust | CASA/casacore and LibRA source evidence | T35/T36 owner and retained behavior |
+|---|---|---|---|
+| Frame evaluation | Cube preparation mixed native frequencies and row-local conversions while building channel maps. | `FTMachine::matchChannel` evaluates row frequencies in the requested frame; Measures context varies with MS, field, epoch, direction, and observatory. | `casa-ms` emits distinct native and output-frame centres plus both transformed boundaries. Its cache key retains source, SPW/channel interval, field, epoch, frame, flags, and weight. |
+| Coefficients | Independent to-grid/from-grid maps and fixed positive interpolation records could diverge. | `InterpolateArray1D` implements nearest, linear, and four-point polynomial cubic; its cubic stencil can contain signed coefficients. LibRA passes the task interpolation choice into the imaging/regridding machinery. | `casa-imaging-reconstruction` compiles one sparse stencil receipt. Prediction, dirty/adjoint, PSF, density, sum-weight, and replay consume that same coefficient sequence; there is no second coefficient authority. |
+| Edges and order | Cube helpers contained useful descending-axis, edge-clipping, and transformed-width rules but scattered them across maps. | Casacore binary bracketing explicitly supports ascending and descending coordinates; non-extrapolating interpolation marks unsupported edges invalid. | The law declares complete-support versus partial-overlap edges. Receipts distinguish flagged, unmapped, and mapped samples and retain canonical source/output order. |
+| Flags, weights, covariance | Flags and weights were applied downstream of a coefficient record that could not declare induced output covariance. | Casacore interpolation treats coefficient evaluation separately from flag validity; shared source samples necessarily induce output covariance. | The source trace reports exact flags and effective weight. The law declares `A C A^H` propagation from independent source noise; coefficients are finite signed `f64`. |
+| Residency and throughput | The old spectral-slab planner preserved bounded row blocks, source reuse, deterministic reductions, and slab halos, but also carried mode-specific control and duplicate maps. | CASA/LibRA operate on visibility buffers rather than materializing a full MeasurementSet cube. | Four terms stay inline for nearest/linear/cubic. Interval integration may spill only up to its planner-declared term bound. Chunking does not enter scientific identity or contribution order. No T37 cube plane arrays or cycles are introduced here. |
+
+The retained performance techniques are bounded source traversal, row-local
+frame caching, canonical reductions, and planner-derived term/residency bounds.
+The displaced semantics are duplicate channel maps, positive-`f32` two-term
+records, and frontend cubic coercion. This map is source-backed; no long CASA
+run was launched for T35/T36.
+
 ## Historical pre-T23 `casa-rs` Overlay
 
 The remainder of this section is retained only to explain the implementation

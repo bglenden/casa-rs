@@ -17,9 +17,9 @@ use casa_imaging_model::{
     ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
     ReferenceDataKind, RequiredCapability, RestFrequency, RestoringBeamPolicy, ScientificContract,
     SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSampling, SpectralWcs, StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy,
-    TimeScale, UvTaper, UvwCoordinateLaw, VisibilityInnerProduct, WeightDensityScope,
-    WeightingContract, WeightingScheme, compile, compile_observation,
+    SpectralSamplingLaw, SpectralWcs, StageErrorBudget, TaylorSupportReference,
+    TaylorValidityPolicy, TimeScale, UvTaper, UvwCoordinateLaw, VisibilityInnerProduct,
+    WeightDensityScope, WeightingContract, WeightingScheme, compile, compile_observation,
 };
 
 mod common;
@@ -130,7 +130,7 @@ fn product_validity() -> ProductValidityPolicies {
 
 fn science() -> ScientificContract {
     ScientificContract::new(
-        SpectralContract::new(SpectralSampling::Identity, SpectralCoupling::Independent),
+        SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
         MeasurementEquationContract::new(InstrumentResponse::Scalar, inner_products()),
     )
 }
@@ -251,7 +251,7 @@ fn compile_product_set(
     compile_request(
         ProblemSpecification::new(
             ScientificContract::new(
-                SpectralContract::new(SpectralSampling::Identity, SpectralCoupling::Independent),
+                SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
                 MeasurementEquationContract::new(instrument_response, inner_products()),
             ),
             reconstruction(),
@@ -475,7 +475,7 @@ fn spectral_index_error_and_pb_correction_name_every_scientific_input() {
     let compiled = compile_request(
         ProblemSpecification::new(
             ScientificContract::new(
-                SpectralContract::new(SpectralSampling::Identity, SpectralCoupling::Independent),
+                SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
                 MeasurementEquationContract::new(InstrumentResponse::PrimaryBeam, inner_products()),
             ),
             reconstruction(),
@@ -1067,7 +1067,7 @@ fn complete_science_contract_changes_identity_and_capabilities() {
         .expect("baseline");
     let widefield_science = ScientificContract::new(
         SpectralContract::new(
-            SpectralSampling::Linear,
+            SpectralSamplingLaw::LINEAR,
             SpectralCoupling::CommonRestoringBeam,
         ),
         MeasurementEquationContract::new(InstrumentResponse::PrimaryBeam, inner_products()),
@@ -1131,7 +1131,7 @@ fn complete_science_contract_changes_identity_and_capabilities() {
 #[test]
 fn direction_dependent_response_requires_instrument_identity() {
     let direction_dependent = ScientificContract::new(
-        SpectralContract::new(SpectralSampling::Identity, SpectralCoupling::Independent),
+        SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
         MeasurementEquationContract::new(InstrumentResponse::PrimaryBeam, inner_products()),
     );
     let specification = ProblemSpecification::new(
@@ -1193,7 +1193,7 @@ fn dirty_reconstruction_rejects_scientifically_unused_controls() {
 fn spectral_coupling_and_restoring_beam_policy_must_agree() {
     let science_with_coupling = |coupling| {
         ScientificContract::new(
-            SpectralContract::new(SpectralSampling::Identity, coupling),
+            SpectralContract::new(SpectralSamplingLaw::IDENTITY, coupling),
             MeasurementEquationContract::new(InstrumentResponse::Scalar, inner_products()),
         )
     };
@@ -1233,9 +1233,7 @@ fn spectral_coupling_and_restoring_beam_policy_must_agree() {
 fn invalid_science_contracts_fail_before_bulk_io() {
     let invalid_sampling = ScientificContract::new(
         SpectralContract::new(
-            SpectralSampling::ChannelAverage {
-                channels_per_bin: 0,
-            },
+            SpectralSamplingLaw::channel_integration(0),
             SpectralCoupling::Independent,
         ),
         MeasurementEquationContract::new(InstrumentResponse::Scalar, inner_products()),

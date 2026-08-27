@@ -15,9 +15,9 @@ use casa_imaging_model::{
     ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
     ReductionPolicy, RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection,
     SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSampling, SpectralWcs, StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy,
-    UvwCoordinateLaw, VisibilityInnerProduct, WeightDensityScope, WeightingContract,
-    WeightingScheme, compile,
+    SpectralSamplingLaw, SpectralWcs, StageErrorBudget, TaylorSupportReference,
+    TaylorValidityPolicy, UvwCoordinateLaw, VisibilityInnerProduct, WeightDensityScope,
+    WeightingContract, WeightingScheme, compile,
 };
 use casa_imaging_reconstruction::{
     ExecutableModelProblem, FinalModelCompletionId, ModelDeltaId, ModelGenerationId,
@@ -206,7 +206,7 @@ fn problem_with_contract(
     };
     let specification = ProblemSpecification::new(
         ScientificContract::new(
-            SpectralContract::new(SpectralSampling::Identity, SpectralCoupling::Independent),
+            SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
             MeasurementEquationContract::new(
                 InstrumentResponse::Scalar,
                 DeclaredInnerProducts::new(

@@ -27,11 +27,11 @@ use casa_imaging_model::{
     ProductSupportComparison, ProductTerm, ProductUnit, ProductValidityRule, Projection,
     ReconstructionAlgorithm, ReconstructionBasis, ReductionPolicy, ReferenceDataKind,
     RequiredCapability, RestFrequency, RestoringBeamPolicy, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSampling, SpectralWcs, TaylorSupportReference, TimeScale, TimeSelection,
-    UvDistanceUnit, UvSelection, UvwAxes, UvwUnit, VisibilityColumn, VisibilityInnerProduct,
-    VisibilityPhaseConvention, WeightColumn, WeightDensityScope, WeightingScheme,
-    validate_compiled_problem_identity, validate_model_lifecycle_contract_identity,
-    validate_model_reprojection_contract_identity,
+    SpectralKernel, SpectralSamplingLaw, SpectralWcs, TaylorSupportReference, TimeScale,
+    TimeSelection, UvDistanceUnit, UvSelection, UvwAxes, UvwUnit, VisibilityColumn,
+    VisibilityInnerProduct, VisibilityPhaseConvention, WeightColumn, WeightDensityScope,
+    WeightingScheme, validate_compiled_problem_identity,
+    validate_model_lifecycle_contract_identity, validate_model_reprojection_contract_identity,
 };
 use casa_imaging_reconstruction::{
     ExecutableModelProblem, validate_reprojected_seed_proof_identity,
@@ -5578,7 +5578,10 @@ fn project_science(fields: &mut BTreeMap<String, String>, problem: &CompiledProb
         "science.spectral.sampling",
         spectral_sampling(science.spectral().sampling()),
     );
-    if let SpectralSampling::ChannelAverage { channels_per_bin } = science.spectral().sampling() {
+    if let SpectralKernel::ChannelIntegration {
+        maximum_terms: channels_per_bin,
+    } = science.spectral().sampling().kernel()
+    {
         evidence_field(
             fields,
             "science.spectral.channels_per_bin",
@@ -7113,12 +7116,13 @@ fn stable_float32(value: f32) -> String {
     format!("f32:{bits:08x}")
 }
 
-fn spectral_sampling(value: SpectralSampling) -> &'static str {
-    match value {
-        SpectralSampling::Identity => "identity",
-        SpectralSampling::Nearest => "nearest",
-        SpectralSampling::Linear => "linear",
-        SpectralSampling::ChannelAverage { .. } => "channel_average",
+fn spectral_sampling(value: SpectralSamplingLaw) -> &'static str {
+    match value.kernel() {
+        SpectralKernel::Identity => "identity",
+        SpectralKernel::Nearest => "nearest",
+        SpectralKernel::Linear => "linear",
+        SpectralKernel::Cubic => "cubic",
+        SpectralKernel::ChannelIntegration { .. } => "channel_integration",
     }
 }
 

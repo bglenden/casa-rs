@@ -28,7 +28,7 @@ use casa_imaging_model::{
     SelectedSampleCoordinates, SelectedSampleMetadata, SelectedSpectralContribution,
     SelectedSpectralContributions, SelectedVisibilitySample, SkyDirection, SourceGenerations,
     SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSampling, SpectralWcs, SpectralWindowSelection, StageErrorBudget,
+    SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection, StageErrorBudget,
     TaylorSupportReference, TaylorValidityPolicy, TimeScale, TimeSelection, UvSelection,
     UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope,
     WeightingContract, WeightingScheme, compile, compile_observation,
@@ -219,7 +219,7 @@ fn t19_compatible_problem_with_width(
     compile(ImagingRequest::new(
         ProblemSpecification::new(
             ScientificContract::new(
-                SpectralContract::new(SpectralSampling::Identity, SpectralCoupling::Independent),
+                SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
                 MeasurementEquationContract::new(
                     InstrumentResponse::Scalar,
                     DeclaredInnerProducts::new(

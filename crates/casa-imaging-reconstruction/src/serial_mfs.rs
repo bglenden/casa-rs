@@ -783,7 +783,7 @@ impl CompleteDataOwnerState {
                         selected.coordinates.phase_shift_m,
                         if grids { visibility } else { [0.0, 0.0] },
                         spectral.imaging_weight(),
-                        f64::from(contribution.factor()),
+                        contribution.factor(),
                     )?;
                     match (self.residual_model.is_some(), grids) {
                         (true, true) => {
@@ -854,7 +854,7 @@ impl CompleteDataOwnerState {
                     selected.coordinates.phase_shift_m,
                     [0.0, 0.0],
                     spectral.imaging_weight(),
-                    f64::from(contribution.factor()),
+                    contribution.factor(),
                 )?;
                 self.operator.push_prediction(sample)?;
             }

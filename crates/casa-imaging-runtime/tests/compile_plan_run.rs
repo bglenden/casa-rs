@@ -34,7 +34,7 @@ use casa_imaging_model::{
     ReconstructionContract, ReconstructionControls, ReductionPolicy, ReferenceDataKind,
     RestFrequency, RestoringBeamPolicy, ScientificContract, SelectedVisibilitySample, SkyDirection,
     SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSampling, SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct,
+    SpectralSamplingLaw, SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct,
     WeightDensityScope, WeightingContract, WeightingScheme, compile,
 };
 use casa_imaging_products::{
@@ -823,7 +823,7 @@ fn request_with_geometry_references_weighting_products_model_write_input_and_sou
     );
     let specification = ProblemSpecification::new(
         ScientificContract::new(
-            SpectralContract::new(SpectralSampling::Identity, SpectralCoupling::Independent),
+            SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
             MeasurementEquationContract::new(
                 InstrumentResponse::Scalar,
                 DeclaredInnerProducts::new(
@@ -1105,7 +1105,7 @@ impl CompleteDataLawEvidence {
                     / 299_792_458.0,
             );
             for spectral in weighted.spectral_values() {
-                expected_unit.push(phase.conj() * f64::from(spectral.contribution().factor()));
+                expected_unit.push(phase.conj() * spectral.contribution().factor());
                 weighted_visibility.push(visibility * spectral.imaging_weight());
             }
         }
@@ -9647,7 +9647,7 @@ fn sealed_products_request(observation: u8) -> ImagingRequest {
     );
     let specification = ProblemSpecification::new(
         ScientificContract::new(
-            SpectralContract::new(SpectralSampling::Identity, SpectralCoupling::Independent),
+            SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
             MeasurementEquationContract::new(
                 InstrumentResponse::Scalar,
                 DeclaredInnerProducts::new(

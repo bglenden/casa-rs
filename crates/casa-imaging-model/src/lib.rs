@@ -23,9 +23,9 @@ pub use compiled_problem::{
     ProductValidityPolicyError, ReconstructionAlgorithm, ReconstructionBasis,
     ReconstructionContract, ReconstructionControls, ReductionPolicy, ReferenceDataKind,
     RequiredCapability, RestoringBeamPolicy, ScientificContract, SpectralContract,
-    SpectralCoupling, SpectralSampling, StageErrorBudget, TaylorSupportReference,
-    TaylorValidityPolicy, UvTaper, WeightDensityScope, WeightingContract, WeightingScheme, compile,
-    validate_compiled_problem_identity,
+    SpectralCoupling, SpectralCovariance, SpectralEdgePolicy, SpectralKernel, SpectralSamplingLaw,
+    StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy, UvTaper, WeightDensityScope,
+    WeightingContract, WeightingScheme, compile, validate_compiled_problem_identity,
 };
 
 pub use geometry::{
@@ -88,7 +88,7 @@ pub use selected_observation_sample::{
     SelectedObservationGenerationId, SelectedObservationSample, SelectedPointingDirections,
     SelectedPredictionTarget, SelectedSampleAddress, SelectedSampleCoordinates,
     SelectedSampleMetadata, SelectedSpectralContribution, SelectedSpectralContributions,
-    SelectedVisibilitySample,
+    SelectedSpectralEvaluation, SelectedSpectralInterval, SelectedVisibilitySample,
 };
 
 pub use product_graph::{

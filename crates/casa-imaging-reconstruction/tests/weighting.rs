@@ -21,11 +21,11 @@ use casa_imaging_model::{
     SelectedPredictionTarget, SelectedRows, SelectedSampleAddress, SelectedSampleCoordinates,
     SelectedSampleMetadata, SelectedSpectralContribution, SelectedSpectralContributions,
     SelectedVisibilitySample, SkyDirection, SourceGenerations, SpectralContract,
-    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSampling, SpectralWcs,
-    SpectralWindowSelection, StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy,
-    TimeScale, TimeSelection, UvSelection, UvTaper, UvwCoordinateLaw, VisibilityColumn,
-    VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract, WeightingScheme,
-    compile, compile_observation,
+    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
+    SpectralWcs, SpectralWindowSelection, StageErrorBudget, TaylorSupportReference,
+    TaylorValidityPolicy, TimeScale, TimeSelection, UvSelection, UvTaper, UvwCoordinateLaw,
+    VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract,
+    WeightingScheme, compile, compile_observation,
 };
 use casa_imaging_reconstruction::{
     WeightingAlgorithmState, WeightingExecutionLimits, WeightingReplayChunk,
@@ -201,7 +201,7 @@ fn problem(
     compile(ImagingRequest::new(
         ProblemSpecification::new(
             ScientificContract::new(
-                SpectralContract::new(SpectralSampling::Linear, SpectralCoupling::Independent),
+                SpectralContract::new(SpectralSamplingLaw::LINEAR, SpectralCoupling::Independent),
                 MeasurementEquationContract::new(
                     InstrumentResponse::Scalar,
                     DeclaredInnerProducts::new(
@@ -732,11 +732,11 @@ fn linear_contribution_coefficients_drive_per_output_density_and_replay() {
     .expect("plan");
     let mut density = begin_weighting_generation(&problem, &plan).expect("density");
     density
-        .consume(&problem, sample, contributions)
+        .consume(&problem, sample, contributions.clone())
         .expect("accumulate split density");
     let mut sum_weight = density.finish(&problem).expect("sum-weight phase");
     sum_weight
-        .consume(&problem, sample, contributions)
+        .consume(&problem, sample, contributions.clone())
         .expect("accumulate split sum weights");
     let generation = sum_weight.finish().expect("freeze split generation");
     let mut replay = generation.begin_replay(&problem, &plan).expect("replay");

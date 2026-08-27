@@ -153,20 +153,121 @@ impl ProblemInputIdentities {
     }
 }
 
-/// Paired spectral sampling used in prediction and adjoint imaging.
+/// Spectral coefficient kernel shared exactly by prediction and adjoint imaging.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SpectralSampling {
-    /// Preserve native channel samples exactly.
+pub enum SpectralKernel {
+    /// Preserve channel-local samples exactly.
     Identity,
-    /// Nearest covered source channel.
+    /// Select the nearest covered output-channel centre.
     Nearest,
-    /// Linear paired interpolation.
+    /// Interpolate between the two bracketing output-channel centres.
     Linear,
-    /// Integrate a fixed number of adjacent channels into each output bin.
-    ChannelAverage {
-        /// Number of source channels in each bin.
-        channels_per_bin: usize,
+    /// Fit the four-point Lagrange polynomial used by casacore cubic interpolation.
+    Cubic,
+    /// Integrate source-channel intervals into output-channel intervals.
+    ChannelIntegration {
+        /// Planner-proved upper bound on non-zero output terms for one source channel.
+        maximum_terms: usize,
     },
+}
+
+/// Treatment of a source channel whose support touches or crosses output-axis edges.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpectralEdgePolicy {
+    /// Reject samples without the complete requested interpolation support.
+    CompleteSupport,
+    /// Retain the covered fraction of interval-integration samples.
+    PartialOverlap,
+}
+
+/// Covariance law declared for a compiled spectral stencil.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpectralCovariance {
+    /// Source-sample noise is independent and shared-source output covariance is `A C A^H`.
+    PropagateIndependentSourceNoise,
+}
+
+/// One coherent paired spectral sampling law.
+///
+/// Coefficients are compiled once from this law and reused byte-for-byte by
+/// prediction, weighting, PSF, dirty/adjoint, and sum-weight consumers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpectralSamplingLaw {
+    kernel: SpectralKernel,
+    edge_policy: SpectralEdgePolicy,
+    covariance: SpectralCovariance,
+}
+
+impl SpectralSamplingLaw {
+    /// Channel-local identity law.
+    pub const IDENTITY: Self = Self::new(
+        SpectralKernel::Identity,
+        SpectralEdgePolicy::CompleteSupport,
+        SpectralCovariance::PropagateIndependentSourceNoise,
+    );
+
+    /// Nearest-centre interpolation law.
+    pub const NEAREST: Self = Self::new(
+        SpectralKernel::Nearest,
+        SpectralEdgePolicy::CompleteSupport,
+        SpectralCovariance::PropagateIndependentSourceNoise,
+    );
+
+    /// Linear interpolation law.
+    pub const LINEAR: Self = Self::new(
+        SpectralKernel::Linear,
+        SpectralEdgePolicy::CompleteSupport,
+        SpectralCovariance::PropagateIndependentSourceNoise,
+    );
+
+    /// Four-point cubic interpolation law.
+    pub const CUBIC: Self = Self::new(
+        SpectralKernel::Cubic,
+        SpectralEdgePolicy::CompleteSupport,
+        SpectralCovariance::PropagateIndependentSourceNoise,
+    );
+
+    /// Construct an explicit paired spectral law.
+    #[must_use]
+    pub const fn new(
+        kernel: SpectralKernel,
+        edge_policy: SpectralEdgePolicy,
+        covariance: SpectralCovariance,
+    ) -> Self {
+        Self {
+            kernel,
+            edge_policy,
+            covariance,
+        }
+    }
+
+    /// Construct partial-overlap channel integration with a planner term bound.
+    #[must_use]
+    pub const fn channel_integration(maximum_terms: usize) -> Self {
+        Self::new(
+            SpectralKernel::ChannelIntegration { maximum_terms },
+            SpectralEdgePolicy::PartialOverlap,
+            SpectralCovariance::PropagateIndependentSourceNoise,
+        )
+    }
+
+    /// Return the coefficient kernel.
+    #[must_use]
+    pub const fn kernel(self) -> SpectralKernel {
+        self.kernel
+    }
+
+    /// Return the edge-coverage policy.
+    #[must_use]
+    pub const fn edge_policy(self) -> SpectralEdgePolicy {
+        self.edge_policy
+    }
+
+    /// Return the covariance declaration.
+    #[must_use]
+    pub const fn covariance(self) -> SpectralCovariance {
+        self.covariance
+    }
 }
 
 /// Scientific coupling between reconstructed spectral planes or coefficients.
@@ -181,20 +282,20 @@ pub enum SpectralCoupling {
 /// Spectral coordinate, sampling, and cross-plane requirements.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SpectralContract {
-    sampling: SpectralSampling,
+    sampling: SpectralSamplingLaw,
     coupling: SpectralCoupling,
 }
 
 impl SpectralContract {
     /// Construct spectral requirements.
     #[must_use]
-    pub const fn new(sampling: SpectralSampling, coupling: SpectralCoupling) -> Self {
+    pub const fn new(sampling: SpectralSamplingLaw, coupling: SpectralCoupling) -> Self {
         Self { sampling, coupling }
     }
 
     /// Return paired spectral sampling semantics.
     #[must_use]
-    pub const fn sampling(self) -> SpectralSampling {
+    pub const fn sampling(self) -> SpectralSamplingLaw {
         self.sampling
     }
 
@@ -1669,9 +1770,8 @@ fn validate_science(
     science: &ScientificContract,
     inputs: &ProblemInputIdentities,
 ) -> Result<(), CompileProblemError> {
-    if let SpectralSampling::ChannelAverage {
-        channels_per_bin: 0,
-    } = science.spectral.sampling
+    if let SpectralKernel::ChannelIntegration { maximum_terms: 0 } =
+        science.spectral.sampling.kernel()
     {
         return Err(CompileProblemError::InvalidScientificContract {
             reason: "spectral channel averaging requires a positive bin width",
@@ -2010,7 +2110,7 @@ fn derive_capabilities(
     if geometry.spectral().source_frame() != geometry.spectral().output_frame() {
         capabilities.insert(RequiredCapability::SpectralFrameTransform);
     }
-    if science.spectral.sampling != SpectralSampling::Identity {
+    if science.spectral.sampling != SpectralSamplingLaw::IDENTITY {
         capabilities.insert(RequiredCapability::SpectralResampling);
     }
     if science.spectral.coupling == SpectralCoupling::CommonRestoringBeam {
@@ -2104,15 +2204,7 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
         encoder.u8(reference_data_tag(*kind));
         encoder.identity(*identity);
     }
-    match science.spectral.sampling {
-        SpectralSampling::Identity => encoder.u8(0),
-        SpectralSampling::Nearest => encoder.u8(1),
-        SpectralSampling::Linear => encoder.u8(2),
-        SpectralSampling::ChannelAverage { channels_per_bin } => {
-            encoder.u8(3);
-            encoder.usize(channels_per_bin);
-        }
-    }
+    encode_spectral_sampling_law(&mut encoder, science.spectral.sampling);
     encoder.u8(match science.spectral.coupling {
         SpectralCoupling::Independent => 0,
         SpectralCoupling::CommonRestoringBeam => 1,
@@ -2165,10 +2257,11 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
             }
             PairedMeasurementTransform::SpectralResampling { sampling } => {
                 encoder.u8(4);
-                encoder.u8(match sampling {
-                    SpectralSampling::Nearest => 0,
-                    SpectralSampling::Linear => 1,
-                    SpectralSampling::Identity | SpectralSampling::ChannelAverage { .. } => {
+                encoder.u8(match sampling.kernel() {
+                    SpectralKernel::Nearest => 0,
+                    SpectralKernel::Linear => 1,
+                    SpectralKernel::Cubic => 2,
+                    SpectralKernel::Identity | SpectralKernel::ChannelIntegration { .. } => {
                         unreachable!("compiled spectral resampling is nearest or linear")
                     }
                 });
@@ -2349,6 +2442,29 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
     }
     encode_numerics(&mut encoder, numerics);
     LogicalIdentity::from_sha256(encoder.finish())
+}
+
+pub(crate) fn encode_spectral_sampling_law(
+    encoder: &mut CanonicalEncoder,
+    sampling: SpectralSamplingLaw,
+) {
+    match sampling.kernel() {
+        SpectralKernel::Identity => encoder.u8(0),
+        SpectralKernel::Nearest => encoder.u8(1),
+        SpectralKernel::Linear => encoder.u8(2),
+        SpectralKernel::Cubic => encoder.u8(3),
+        SpectralKernel::ChannelIntegration { maximum_terms } => {
+            encoder.u8(4);
+            encoder.usize(maximum_terms);
+        }
+    }
+    encoder.u8(match sampling.edge_policy() {
+        SpectralEdgePolicy::CompleteSupport => 0,
+        SpectralEdgePolicy::PartialOverlap => 1,
+    });
+    encoder.u8(match sampling.covariance() {
+        SpectralCovariance::PropagateIndependentSourceNoise => 0,
+    });
 }
 
 fn canonical_problem_id(

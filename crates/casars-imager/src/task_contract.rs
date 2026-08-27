@@ -1503,13 +1503,16 @@ pub enum ImagerCubeInterpolation {
     /// Linear interpolation.
     #[default]
     Linear,
+    /// Four-point cubic interpolation.
+    Cubic,
 }
 
 impl From<CubeInterpolation> for ImagerCubeInterpolation {
     fn from(value: CubeInterpolation) -> Self {
         match value {
             CubeInterpolation::Nearest => Self::Nearest,
-            CubeInterpolation::Linear | CubeInterpolation::Cubic => Self::Linear,
+            CubeInterpolation::Linear => Self::Linear,
+            CubeInterpolation::Cubic => Self::Cubic,
         }
     }
 }
@@ -1519,6 +1522,7 @@ impl From<ImagerCubeInterpolation> for CubeInterpolation {
         match value {
             ImagerCubeInterpolation::Nearest => Self::Nearest,
             ImagerCubeInterpolation::Linear => Self::Linear,
+            ImagerCubeInterpolation::Cubic => Self::Cubic,
         }
     }
 }
@@ -3582,7 +3586,7 @@ mod tests {
         assert_eq!(WTermMode::from(ImagerWTermMode::Direct), WTermMode::Direct);
         assert_eq!(
             ImagerCubeInterpolation::from(CubeInterpolation::Cubic),
-            ImagerCubeInterpolation::Linear
+            ImagerCubeInterpolation::Cubic
         );
         assert_eq!(
             CubeInterpolation::from(ImagerCubeInterpolation::Nearest),

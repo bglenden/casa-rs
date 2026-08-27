@@ -12,7 +12,7 @@ use std::{
 
 use casa_imaging_model::{
     CompiledProblem, CompiledProblemId, SelectedObservationGenerationId, SelectedObservationSample,
-    SelectedSpectralContribution,
+    SelectedSpectralContribution, SelectedSpectralContributions,
 };
 use casa_imaging_reconstruction::{
     WeightingAlgorithmState, WeightingDensityPhase, WeightingError, WeightingGenerationId,
@@ -20,7 +20,7 @@ use casa_imaging_reconstruction::{
     WeightingReplayId, WeightingReplaySummary, WeightingResidency,
     WeightingSampleValue as ReconstructionWeightedSample,
     WeightingSpectralValue as ReconstructionWeightedSpectralValue, begin_natural_weighting_stream,
-    begin_weighting_generation,
+    begin_weighting_generation, compile_spectral_stencil,
 };
 use casa_ms::{
     BoundSelectedObservation, SelectedObservationCompletion,
@@ -42,6 +42,17 @@ use crate::{
     StorageMode, WorkDependency, WorkDomain, WorkExecutionContext, WorkImplementationId, WorkKind,
     WorkNode, WorkNodeId,
 };
+
+fn compiled_spectral_contributions(
+    problem: &CompiledProblem,
+    reported: &SelectedObservationTraversalSample,
+) -> Result<SelectedSpectralContributions, WeightingError> {
+    Ok(
+        compile_spectral_stencil(problem, reported.selected(), reported.spectral_evaluation())?
+            .contributions()
+            .clone(),
+    )
+}
 
 /// Scientific phase occupied by one ordinary continuum reconstruction plan.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -1105,11 +1116,8 @@ impl WeightingExecutionState {
             .map_err(WeightingGenerationError::Owner)?;
         let completion = selected
             .traverse(problem, |reported| {
-                density.consume(
-                    problem,
-                    *reported.selected(),
-                    reported.spectral_contributions(),
-                )
+                let contributions = compiled_spectral_contributions(problem, &reported)?;
+                density.consume(problem, *reported.selected(), contributions)
             })
             .map_err(WeightingGenerationError::DensityTraversal)?;
         self.density = Some(density);
@@ -1183,12 +1191,10 @@ impl WeightingExecutionState {
         };
         let owner_completion = selected
             .traverse(problem, |reported| {
+                let contributions = compiled_spectral_contributions(problem, &reported)
+                    .map_err(ReplayCallbackError::Owner)?;
                 if let Some(block) = stream
-                    .consume(
-                        problem,
-                        *reported.selected(),
-                        reported.spectral_contributions(),
-                    )
+                    .consume(problem, *reported.selected(), contributions)
                     .map_err(ReplayCallbackError::Owner)?
                 {
                     emit(&block).map_err(ReplayCallbackError::Consumer)?;
@@ -1278,12 +1284,10 @@ impl WeightingExecutionState {
             .map_err(WeightingReplayError::Owner)?;
         let owner_completion = selected
             .traverse(problem, |reported| {
+                let contributions = compiled_spectral_contributions(problem, &reported)
+                    .map_err(ReplayCallbackError::Owner)?;
                 if let Some(block) = replay
-                    .consume(
-                        problem,
-                        *reported.selected(),
-                        reported.spectral_contributions(),
-                    )
+                    .consume(problem, *reported.selected(), contributions)
                     .map_err(ReplayCallbackError::Owner)?
                 {
                     emit(&block).map_err(ReplayCallbackError::Consumer)?;
@@ -2395,12 +2399,10 @@ impl FrozenWeightingGeneration {
             .map_err(WeightingReplayError::Owner)?;
         let owner_completion = selected
             .traverse(problem, |reported| {
+                let contributions = compiled_spectral_contributions(problem, &reported)
+                    .map_err(ReplayCallbackError::Owner)?;
                 if let Some(block) = phase
-                    .consume(
-                        problem,
-                        *reported.selected(),
-                        reported.spectral_contributions(),
-                    )
+                    .consume(problem, *reported.selected(), contributions)
                     .map_err(ReplayCallbackError::Owner)?
                 {
                     let block = WeightedObservationBlock::authorize(self.generation_id(), block);
@@ -2459,11 +2461,8 @@ fn traverse_weighting_generation(
         .map_err(WeightingGenerationError::Owner)?;
     let density_completion = selected
         .traverse(problem, |reported| {
-            density.consume(
-                problem,
-                *reported.selected(),
-                reported.spectral_contributions(),
-            )
+            let contributions = compiled_spectral_contributions(problem, &reported)?;
+            density.consume(problem, *reported.selected(), contributions)
         })
         .map_err(WeightingGenerationError::DensityTraversal)?;
     let sum_weight = density
@@ -2472,11 +2471,8 @@ fn traverse_weighting_generation(
     let mut sum_weight = sum_weight;
     let sum_weight_completion = selected
         .traverse(problem, |reported| {
-            sum_weight.consume(
-                problem,
-                *reported.selected(),
-                reported.spectral_contributions(),
-            )
+            let contributions = compiled_spectral_contributions(problem, &reported)?;
+            sum_weight.consume(problem, *reported.selected(), contributions)
         })
         .map_err(WeightingGenerationError::SumWeightTraversal)?;
     let state = sum_weight

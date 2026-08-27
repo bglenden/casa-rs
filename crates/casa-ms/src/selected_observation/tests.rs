@@ -33,12 +33,13 @@ use casa_imaging_model::{
     SelectedObservationGenerationId, SelectedObservationInspectionError,
     SelectedObservationPassError, SelectedObservationSample, SelectedRows,
     SelectedVisibilitySample, SelectionBound, SkyDirection, SourceGenerations, SpectralContract,
-    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSampling, SpectralWcs,
-    SpectralWindowSelection, StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy,
-    TimeRange, TimeScale, TimeSelection, UvSelection, UvwCoordinateLaw, VisibilityColumn,
-    VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract, WeightingScheme,
-    compile, compile_observation,
+    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
+    SpectralWcs, SpectralWindowSelection, StageErrorBudget, TaylorSupportReference,
+    TaylorValidityPolicy, TimeRange, TimeScale, TimeSelection, UvSelection, UvwCoordinateLaw,
+    VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract,
+    WeightingScheme, compile, compile_observation,
 };
+use casa_imaging_reconstruction::compile_spectral_stencil;
 use casa_tables::ColumnSchema;
 use casa_types::measures::{
     EopValues, MeasuresProvider, MeasuresProviderState,
@@ -550,17 +551,17 @@ fn measures_provider_growth_during_traversal_prevents_owner_completion() {
 }
 
 #[test]
-fn real_ms_cube_linear_traversal_reports_owner_derived_output_contributions() {
+fn real_ms_cube_traversal_compiles_source_backed_casa_cubic_stencils() {
     let directory = tempfile::tempdir().expect("temporary cube-contribution fixture");
     let path = directory.path().join("cube-contributions.ms");
     generate_fixture(&path);
     let problem = compiled_problem_with_sampling(
         &path,
         2,
-        SpectralSampling::Linear,
+        SpectralSamplingLaw::CUBIC,
         SpectralWcs::Tabular {
-            channel_centres_hz: vec![1.3995e9, 1.4005e9],
-            channel_boundaries_hz: vec![1.399e9, 1.4e9, 1.401e9],
+            channel_centres_hz: vec![1.3995e9, 1.4005e9, 1.4015e9, 1.4025e9],
+            channel_boundaries_hz: vec![1.399e9, 1.4e9, 1.401e9, 1.402e9, 1.403e9],
         },
     );
     let source = &problem.inputs().observation_snapshot().sources()[0];
@@ -574,26 +575,51 @@ fn real_ms_cube_linear_traversal_reports_owner_derived_output_contributions() {
     )
     .expect("bind real MeasurementSet cube traversal");
     let mut values = Vec::new();
+    let mut stencils = Vec::new();
 
     let completion = observation
         .traverse(&problem, |reported| {
-            values.push((
-                reported.selected().address.channel_index,
-                reported
-                    .spectral_contributions()
+            let sample = reported.selected();
+            let evaluation = reported.spectral_evaluation();
+            stencils.push(
+                compile_spectral_stencil(&problem, sample, evaluation)
+                    .expect("compile reconstruction-owned cubic stencil")
+                    .contributions()
                     .iter()
-                    .map(|contribution| (contribution.output_channel(), contribution.factor()))
+                    .map(|term| (term.output_channel(), term.factor()))
                     .collect::<Vec<_>>(),
+            );
+            values.push((
+                sample.address.channel_index,
+                evaluation.native(),
+                evaluation.output_frame(),
+                evaluation.effective_weight(),
+                evaluation.is_valid(),
             ));
             Ok::<_, Infallible>(())
         })
-        .expect("complete owner-derived cube traversal");
+        .expect("complete source-backed cube traversal");
 
     assert_eq!(completion.sample_count(), 8);
-    assert_eq!(values[0], (0, vec![(0, 0.5), (1, 0.5)]));
+    assert_eq!(values[0].0, 0);
+    assert_eq!(values[0].1.centre_hz().to_bits(), 1.4e9_f64.to_bits());
+    assert_eq!(values[0].1.boundaries_hz(), [1.3995e9, 1.4005e9]);
+    assert_eq!(values[0].2, values[0].1);
+    assert_eq!(values[0].3, 1.0);
+    assert!(values[0].4);
     assert_eq!(values[1], values[0]);
-    assert_eq!(values[2], (2, Vec::new()));
+    assert_eq!(values[2].0, 2);
+    assert_eq!(values[2].1.centre_hz().to_bits(), 1.402e9_f64.to_bits());
+    assert_eq!(values[2].1.boundaries_hz(), [1.4015e9, 1.4025e9]);
+    assert_eq!(values[2].2, values[2].1);
     assert_eq!(values[3], values[2]);
+    // Casacore InterpolateArray1D uses four-point polynomial interpolation
+    // (Neville's algorithm). At the first half-channel this is the exact
+    // CASA/casacore coefficient oracle, including its signed outer term.
+    assert_eq!(
+        stencils[0],
+        vec![(0, 0.3125), (1, 0.9375), (2, -0.3125), (3, 0.0625)]
+    );
 }
 
 #[test]
@@ -604,7 +630,7 @@ fn real_ms_cube_traversal_maps_contributions_into_the_transformed_output_frame()
     let problem = compiled_problem_with_transformed_sampling(
         &path,
         2,
-        SpectralSampling::Linear,
+        SpectralSamplingLaw::LINEAR,
         SpectralWcs::Tabular {
             channel_centres_hz: vec![1.4e9, 1.4001e9],
             channel_boundaries_hz: vec![1.39995e9, 1.40005e9, 1.40015e9],
@@ -642,7 +668,6 @@ fn real_ms_cube_traversal_maps_contributions_into_the_transformed_output_frame()
         )],
     )
     .expect("bind transformed-frame traversal");
-    let output_centres_hz = [1.4e9, 1.4001e9];
     let mut values = Vec::new();
 
     let completion = observation
@@ -659,15 +684,21 @@ fn real_ms_cube_traversal_maps_contributions_into_the_transformed_output_frame()
                     usize::try_from(sample.metadata.field_id).expect("non-negative FIELD_ID"),
                 )
                 .expect("independent row frame");
-            let transformed_hz =
-                MFrequency::new(sample.address.frequency_centre_hz, FrequencyRef::TOPO)
+            let transform_to_output = |frequency_hz| {
+                MFrequency::new(frequency_hz, FrequencyRef::TOPO)
                     .convert_to(FrequencyRef::GEO, &frame)
                     .expect("TOPO to GEO")
                     .convert_to(FrequencyRef::BARY, &frame)
                     .expect("GEO to BARY")
                     .convert_to(FrequencyRef::LSRK, &expected_output_frame)
                     .expect("BARY to LSRK")
-                    .hz();
+                    .hz()
+            };
+            let transformed_hz = transform_to_output(sample.address.frequency_centre_hz);
+            let transformed_boundaries = [
+                transform_to_output(sample.address.frequency_lower_hz),
+                transform_to_output(sample.address.frequency_upper_hz),
+            ];
             let source_only_hz =
                 MFrequency::new(sample.address.frequency_centre_hz, FrequencyRef::TOPO)
                     .convert_to(FrequencyRef::GEO, &frame)
@@ -678,33 +709,33 @@ fn real_ms_cube_traversal_maps_contributions_into_the_transformed_output_frame()
                     .expect("source-only BARY to LSRK")
                     .hz();
             assert!((transformed_hz - source_only_hz).abs() > 1.0);
-            let expected =
-                if (output_centres_hz[0]..=output_centres_hz[1]).contains(&transformed_hz) {
-                    let upper = ((transformed_hz - output_centres_hz[0])
-                        / (output_centres_hz[1] - output_centres_hz[0]))
-                        as f32;
-                    vec![(0, 1.0 - upper), (1, upper)]
-                } else {
-                    Vec::new()
-                };
-            let actual = reported
-                .spectral_contributions()
-                .iter()
-                .map(|contribution| {
-                    assert_eq!(
-                        contribution.evaluation_frequency_hz().to_bits(),
-                        transformed_hz.to_bits(),
-                        "every output contribution must carry the owner-evaluated operator frequency"
-                    );
-                    (contribution.output_channel(), contribution.factor())
-                })
-                .collect::<Vec<_>>();
-            assert_eq!(actual, expected);
+            let evaluation = reported.spectral_evaluation();
+            assert_eq!(
+                evaluation.native().centre_hz().to_bits(),
+                sample.address.frequency_centre_hz.to_bits()
+            );
+            assert_eq!(
+                evaluation.native().boundaries_hz(),
+                [
+                    sample.address.frequency_lower_hz,
+                    sample.address.frequency_upper_hz,
+                ]
+            );
+            assert_eq!(
+                evaluation.output_frame().centre_hz().to_bits(),
+                transformed_hz.to_bits()
+            );
+            assert_eq!(
+                evaluation.output_frame().boundaries_hz(),
+                transformed_boundaries
+            );
+            assert_eq!(evaluation.effective_weight(), 1.0);
+            assert!(evaluation.is_valid());
             values.push((
                 sample.address.channel_index,
                 transformed_hz,
                 source_only_hz,
-                expected,
+                transformed_boundaries,
             ));
             Ok::<_, Infallible>(())
         })
@@ -717,34 +748,27 @@ fn real_ms_cube_traversal_maps_contributions_into_the_transformed_output_frame()
     assert_eq!(completion.sample_count(), 8);
     assert_eq!(values.len(), 8);
     assert_eq!(values[0].0, 0);
-    assert_eq!(values[0].3, vec![(0, 0.43484688), (1, 0.5651531)]);
     assert!(
-        values[0].2 < output_centres_hz[0]
-            && (output_centres_hz[0]..=output_centres_hz[1]).contains(&values[0].1),
-        "the fixed output anchor must move channel zero into a different contribution interval"
+        values[0].1 != values[0].2,
+        "the fixed output anchor must transform the source centre"
     );
     assert_eq!(values[1].3, values[0].3);
     assert_eq!(values[2].0, 2);
-    assert!(values[2].3.is_empty());
     assert_eq!(values[3].3, values[2].3);
 }
 
 #[test]
-fn real_ms_cubedata_channel_average_reports_normalized_bin_coefficients() {
+fn real_ms_cubedata_traversal_compiles_source_backed_casa_cubic_stencils() {
     let directory = tempfile::tempdir().expect("temporary cubedata-contribution fixture");
     let path = directory.path().join("cubedata-contributions.ms");
     generate_fixture(&path);
     let problem = compiled_problem_with_sampling(
         &path,
         2,
-        SpectralSampling::ChannelAverage {
-            channels_per_bin: 2,
-        },
-        SpectralWcs::Linear {
-            channels: 1,
-            reference_pixel: 0.0,
-            reference_frequency_hz: 1.401e9,
-            increment_hz: 2.0e6,
+        SpectralSamplingLaw::CUBIC,
+        SpectralWcs::Tabular {
+            channel_centres_hz: vec![1.3995e9, 1.4005e9, 1.4015e9, 1.4025e9],
+            channel_boundaries_hz: vec![1.399e9, 1.4e9, 1.401e9, 1.402e9, 1.403e9],
         },
     );
     let source = &problem.inputs().observation_snapshot().sources()[0];
@@ -758,25 +782,45 @@ fn real_ms_cubedata_channel_average_reports_normalized_bin_coefficients() {
     )
     .expect("bind real MeasurementSet cubedata traversal");
     let mut values = Vec::new();
+    let mut stencils = Vec::new();
 
     observation
         .traverse(&problem, |reported| {
-            values.push((
-                reported.selected().address.channel_index,
-                reported
-                    .spectral_contributions()
+            let sample = reported.selected();
+            let evaluation = reported.spectral_evaluation();
+            stencils.push(
+                compile_spectral_stencil(&problem, sample, evaluation)
+                    .expect("compile reconstruction-owned cubic stencil")
+                    .contributions()
                     .iter()
-                    .map(|contribution| (contribution.output_channel(), contribution.factor()))
+                    .map(|term| (term.output_channel(), term.factor()))
                     .collect::<Vec<_>>(),
+            );
+            values.push((
+                sample.address.channel_index,
+                evaluation.native(),
+                evaluation.output_frame(),
+                evaluation.effective_weight(),
+                evaluation.is_valid(),
             ));
             Ok::<_, Infallible>(())
         })
-        .expect("complete owner-derived cubedata traversal");
+        .expect("complete source-backed cubedata traversal");
 
-    assert_eq!(values[0], (0, vec![(0, 0.5)]));
+    assert_eq!(values[0].0, 0);
+    assert_eq!(values[0].1, values[0].2);
+    assert_eq!(values[0].3, 1.0);
+    assert!(values[0].4);
     assert_eq!(values[1], values[0]);
-    assert_eq!(values[2], (2, vec![(0, 0.5)]));
+    assert_eq!(values[2].0, 2);
+    assert_eq!(values[2].1, values[2].2);
+    assert_eq!(values[2].3, 1.0);
+    assert!(values[2].4);
     assert_eq!(values[3], values[2]);
+    assert_eq!(
+        stencils[0],
+        vec![(0, 0.3125), (1, 0.9375), (2, -0.3125), (3, 0.0625)]
+    );
 }
 
 #[test]
@@ -3108,7 +3152,7 @@ fn compiled_problem(
 fn compiled_problem_with_sampling(
     path: &std::path::Path,
     row_count: usize,
-    sampling: SpectralSampling,
+    sampling: SpectralSamplingLaw,
     wcs: SpectralWcs,
 ) -> casa_imaging_model::CompiledProblem {
     let snapshot = compile_observation(ObservationSnapshotInput::new(
@@ -3129,7 +3173,7 @@ fn compiled_problem_with_sampling(
 fn compiled_problem_with_transformed_sampling(
     path: &std::path::Path,
     row_count: usize,
-    sampling: SpectralSampling,
+    sampling: SpectralSamplingLaw,
     wcs: SpectralWcs,
 ) -> casa_imaging_model::CompiledProblem {
     let snapshot = compile_observation(ObservationSnapshotInput::new(
@@ -3490,10 +3534,10 @@ fn scoped_identity(source: u8, byte: u8) -> LogicalIdentity {
 }
 
 fn specification() -> ProblemSpecification {
-    specification_with_sampling(SpectralSampling::Identity)
+    specification_with_sampling(SpectralSamplingLaw::IDENTITY)
 }
 
-fn specification_with_sampling(sampling: SpectralSampling) -> ProblemSpecification {
+fn specification_with_sampling(sampling: SpectralSamplingLaw) -> ProblemSpecification {
     ProblemSpecification::new(
         ScientificContract::new(
             SpectralContract::new(sampling, SpectralCoupling::Independent),

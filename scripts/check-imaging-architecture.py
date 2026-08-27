@@ -54,12 +54,12 @@ ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256 = (
     "daafa560c0e941fb3f2cea5c02a46de8a3363c2dd327cb839ef8ab2111f09835"
 )
 ACCEPTED_MATRIX_ROWS_SHA256 = (
-    "0fdc583980ba1d7976ffa78e4803830d596c5803e209057f1840018c9947bf9a"
+    "114f4fe757c38fe1e15123165f322658f61233d6ed9dfd650cbdfaed0c7cdfbf"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "0034d15937430f9a5007a2462406ccd8c317fc560673b3b1b46a606aeee95fb4"
+    "50c87c14e297acdd1dce99c4dd266b14407601c80bd5963d17f8af0bbf98327e"
 )
-ACCEPTED_MATRIX_CONTRACT_REVISION = 47
+ACCEPTED_MATRIX_CONTRACT_REVISION = 48
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "scientific-products-v1",
@@ -1638,7 +1638,7 @@ def validate_t18_global_weighting_transfer(rows: list[dict[str, Any]]) -> None:
         "crates/casa-imaging-model/src/selected_observation_sample.rs::pub struct SelectedSpectralContributions",
         "crates/casa-ms/src/derived/engine.rs::pub(crate) fn spectral_frame_explicit",
         "crates/casa-ms/src/spectral_selection.rs::pub(crate) fn convert_frequency_to_frame_with_frames",
-        "crates/casa-ms/src/selected_observation/spectral_contributions.rs::pub struct SelectedObservationTraversalSample",
+        "crates/casa-ms/src/selected_observation/spectral_evaluation.rs::pub struct SelectedObservationTraversalSample",
         "crates/casa-ms/src/selected_observation/bound_observation.rs::pub fn traverse",
         "crates/casa-imaging-reconstruction/src/weighting.rs::pub fn plan_weighting",
         "crates/casa-imaging-reconstruction/src/weighting.rs::pub fn begin_natural_weighting_stream",
@@ -1672,7 +1672,7 @@ def validate_t18_global_weighting_transfer(rows: list[dict[str, Any]]) -> None:
         "repo://crates/casa-ms/src/derived/engine.rs",
         "repo://crates/casa-ms/src/spectral_selection.rs",
         "repo://crates/casa-ms/src/selected_observation/access.rs",
-        "repo://crates/casa-ms/src/selected_observation/spectral_contributions.rs",
+        "repo://crates/casa-ms/src/selected_observation/spectral_evaluation.rs",
         "repo://crates/casa-ms/src/selected_observation/bound_observation.rs",
         "repo://crates/casa-imaging-reconstruction/src/lib.rs",
         "repo://crates/casa-imaging-reconstruction/src/weighting.rs",
@@ -1694,7 +1694,7 @@ def validate_t18_global_weighting_transfer(rows: list[dict[str, Any]]) -> None:
         REPO_ROOT / "crates/casa-imaging-model/src/selected_observation_sample.rs"
     )
     traversal_sample_path = (
-        REPO_ROOT / "crates/casa-ms/src/selected_observation/spectral_contributions.rs"
+        REPO_ROOT / "crates/casa-ms/src/selected_observation/spectral_evaluation.rs"
     )
     spectral_engine_path = REPO_ROOT / "crates/casa-ms/src/derived/engine.rs"
     spectral_selection_path = REPO_ROOT / "crates/casa-ms/src/spectral_selection.rs"
@@ -1807,19 +1807,27 @@ def validate_t18_global_weighting_sources(
     contribution_set_fields = rust_struct_fields(
         sample_model, "SelectedSpectralContributions", sample_model_path
     )
+    evaluation_fields = rust_struct_fields(
+        sample_model, "SelectedSpectralEvaluation", sample_model_path
+    )
     selected_sample_fields = rust_struct_fields(
         sample_model, "SelectedObservationSample", sample_model_path
     )
     if contribution_fields != {
         "output_channel": "u32",
-        "factor": "f32",
+        "factor": "f64",
         "evaluation_frequency_hz": "f64",
     } or (
         contribution_set_fields
-        != {"entries": "[Option<SelectedSpectralContribution>;2]"}
-    ):
+        != {"entries": "SmallVec<[SelectedSpectralContribution;4]>"}
+    ) or evaluation_fields != {
+        "native": "SelectedSpectralInterval",
+        "output_frame": "SelectedSpectralInterval",
+        "effective_weight": "f64",
+        "valid": "bool",
+    }:
         raise ArchitectureError(
-            "T18 spectral contribution values differ from the accepted bounded model"
+            "T18/T36 spectral trace and sparse coefficients differ from the accepted paired model"
         )
     if (
         "spectral_contributions" in selected_sample_fields
@@ -1834,28 +1842,17 @@ def validate_t18_global_weighting_sources(
     )
     if traversal_fields != {
         "sample": "SelectedObservationSample",
-        "spectral_contributions": "SelectedSpectralContributions",
+        "spectral_evaluation": "SelectedSpectralEvaluation",
     }:
         raise ArchitectureError(
-            "T18 traversal envelope omits owner-derived spectral contributions"
+            "T18/T36 traversal envelope omits storage-owner spectral evaluation"
         )
     if re.search(
         r"\bpub\s+(?:const\s+)?fn\s+(?:new|from_owner)\b", traversal_sample
     ):
         raise ArchitectureError("T18 traversal envelope construction must remain owner-only")
     derivation = rust_function_body(
-        traversal_sample, "derive_spectral_contributions_cached", traversal_sample_path
-    )
-    required_derivation = (
-        "geometry_engine",
-        "interpolation_contributions(",
-        "SpectralSampling::Identity",
-        "SpectralSampling::Nearest",
-        "SpectralSampling::Linear",
-        "SpectralSampling::ChannelAverage",
-    )
-    interpolation = rust_function_body(
-        traversal_sample, "interpolation_contributions", traversal_sample_path
+        traversal_sample, "derive_spectral_evaluation_cached", traversal_sample_path
     )
     evaluation = rust_function_body(
         traversal_sample, "evaluated_frequency_hz_cached", traversal_sample_path
@@ -1869,10 +1866,18 @@ def validate_t18_global_weighting_sources(
         "convert_frequency_to_frame_with_frames",
         spectral_selection_path,
     )
-    if not all(token in derivation for token in required_derivation) or (
-        "source_frequency_output_contributions(" not in traversal_sample
-        or "evaluation_frequency_hz" not in interpolation
-        or "convert_frequency_to_frame_with_frames(" not in evaluation
+    spectral_sampling_path = (
+        REPO_ROOT / "crates/casa-imaging-reconstruction/src/spectral_sampling.rs"
+    )
+    spectral_sampling = spectral_sampling_path.read_text(encoding="utf-8")
+    stencil = rust_function_body(
+        spectral_sampling, "compile_spectral_stencil", spectral_sampling_path
+    )
+    if (
+        "convert_frequency_to_frame_with_frames(" not in evaluation
+        or "native.centre_hz()" not in derivation
+        or "native_boundaries[0]" not in derivation
+        or "native_boundaries[1]" not in derivation
         or "spectral.anchor()" not in evaluation
         or "spectral_frame_observatory(" not in evaluation
         or "spectral_frame_explicit(" not in evaluation
@@ -1888,17 +1893,21 @@ def validate_t18_global_weighting_sources(
         or "source_frame" not in two_frame_conversion
         or "target_frame" not in two_frame_conversion
         or "direct_frequency_hop_uses_target_frame(" not in two_frame_conversion
-        or "UnsupportedSpectralContributionFrame" in derivation
+        or "SpectralKernel::Cubic" not in stencil
+        or "SpectralKernel::ChannelIntegration" not in stencil
+        or "compile_spectral_stencil(" not in runtime_weighting
+        or "reported.spectral_evaluation()" not in runtime_weighting
+        or "spectral_contributions" in traversal_fields
     ):
         raise ArchitectureError(
-            "T18 traversal envelope bypasses owner-derived spectral mapping"
+            "T18/T36 storage evaluation or reconstruction-owned paired sampling is bypassed"
         )
     traversal = rust_impl_method_body(
         bound_observation, "BoundSelectedObservation", "traverse", bound_observation_path
     )
     if (
-        "SpectralContributionProjector::new()" not in traversal
-        or "spectral_projector.project(" not in traversal
+        "SpectralEvaluationProjector::new()" not in traversal
+        or "spectral_evaluator.project(" not in traversal
         or "source.geometry_engine()" not in traversal
         or "consume_projected_validated_stream(" not in traversal
     ):

@@ -13,4 +13,5 @@ workspace = true
 
 [dependencies]
 sha2 = "0.10"
+smallvec.workspace = true
 thiserror.workspace = true
