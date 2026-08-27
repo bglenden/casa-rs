@@ -2634,11 +2634,24 @@ fn spectral_cycle_executes_initial_major_and_shared_reconstruction_cycle() {
     for (node_id, node) in execution_plan.execution_dag().nodes() {
         for claim in &node.claims {
             if let LeaseResource::IoBuffer(kind) = &claim.resource {
-                assert_eq!(
-                    receipt.stage_actual_io(node_id, *kind),
-                    None,
-                    "capacity claim for {node_id:?} must not become fabricated actual I/O"
-                );
+                if node.kind.reads_observation() && *kind == IoBufferKind::SourceReadAhead {
+                    let (bytes, operations) = receipt
+                        .stage_actual_io(node_id, *kind)
+                        .expect("selected source traversal reports actual logical I/O");
+                    assert!(bytes > 0);
+                    assert!(operations > 0);
+                    let peak = receipt
+                        .actual_resource_peak(node_id, &claim.resource, &claim.lifetime)
+                        .expect("selected source traversal reports actual buffer peak");
+                    assert!(peak > 0);
+                    assert!(peak <= claim.amount);
+                } else {
+                    assert_eq!(
+                        receipt.stage_actual_io(node_id, *kind),
+                        None,
+                        "unobserved capacity claim for {node_id:?} must not become fabricated actual I/O"
+                    );
+                }
             }
         }
     }

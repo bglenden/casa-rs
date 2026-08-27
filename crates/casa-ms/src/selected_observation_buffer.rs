@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Instant};
 
 use casa_tables::{RequiredScalarColumnValues, SelectedArray1DCells, SelectedArray2DCells};
 
@@ -123,6 +123,51 @@ pub(crate) struct SelectedObservationBufferResidency {
     pub(crate) fill_peak_bytes: usize,
 }
 
+/// Factual diagnostics for one closed selected-observation buffer fill.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SelectedObservationBufferFillReport {
+    pub(crate) block_count: u64,
+    pub(crate) row_count: u64,
+    pub(crate) sample_count: u64,
+    pub(crate) logical_output_bytes: u64,
+    pub(crate) modeled_physical_read_bytes: Option<u64>,
+    pub(crate) read_operation_count: u64,
+    pub(crate) request_handoff_bytes: u64,
+    pub(crate) retained_current_bytes: u64,
+    pub(crate) retained_capacity_bytes: u64,
+    pub(crate) allocation: SelectedObservationBufferAllocationReport,
+    pub(crate) timings: SelectedObservationBufferTimings,
+}
+
+/// Allocation outcome for the caller-owned selected-observation buffer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SelectedObservationBufferAllocationReport {
+    pub(crate) reused_storage_buffers: u64,
+    pub(crate) allocated_storage_buffers: u64,
+}
+
+/// Nanosecond timings for the sequential selected-observation fill stages.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct SelectedObservationBufferTimings {
+    pub(crate) total_fill_nanos: u128,
+    pub(crate) visibility_read_nanos: u128,
+    pub(crate) flag_read_nanos: u128,
+    pub(crate) weight_read_nanos: u128,
+    pub(crate) scalar_read_nanos: u128,
+    pub(crate) uvw_read_nanos: u128,
+    pub(crate) assembly_nanos: u128,
+}
+
+impl SelectedObservationBufferTimings {
+    pub(crate) const fn storage_read_nanos(self) -> u128 {
+        self.visibility_read_nanos
+            + self.flag_read_nanos
+            + self.weight_read_nanos
+            + self.scalar_read_nanos
+            + self.uvw_read_nanos
+    }
+}
+
 /// Project the allocations performed by [`MeasurementSet::fill_selected_observation_buffer`].
 pub(crate) fn selected_observation_buffer_residency(
     rows: usize,
@@ -230,6 +275,58 @@ impl SelectedObservationBuffer {
     #[must_use]
     pub(crate) fn row_count(&self) -> usize {
         self.row_indices.len()
+    }
+
+    pub(crate) fn retained_current_bytes(&self) -> Option<usize> {
+        self.retained_bytes(false)
+    }
+
+    pub(crate) fn retained_capacity_bytes(&self) -> Option<usize> {
+        self.retained_bytes(true)
+    }
+
+    fn retained_bytes(&self, capacity: bool) -> Option<usize> {
+        let count = |len: usize, cap: usize| if capacity { cap } else { len };
+        let mut bytes = 0_usize;
+        macro_rules! add_vec {
+            ($values:expr, $type:ty) => {{
+                let values = $values;
+                bytes = bytes.checked_add(
+                    count(values.len(), values.capacity()).checked_mul(size_of::<$type>())?,
+                )?;
+            }};
+        }
+        add_vec!(&self.row_indices, usize);
+        match self.visibility.as_ref() {
+            Some(SelectedStoredVisibilities::Float32(values)) => add_vec!(values, f32),
+            Some(SelectedStoredVisibilities::Complex32(values)) => {
+                add_vec!(values, casa_types::Complex32)
+            }
+            None => {}
+        }
+        add_vec!(&self.flags, bool);
+        match self.weights.as_ref() {
+            Some(SelectedStoredWeights::PerRow(values))
+            | Some(SelectedStoredWeights::PerChannel(values)) => add_vec!(values, f32),
+            None => {}
+        }
+        add_vec!(&self.row_flag, bool);
+        add_vec!(&self.uvw_m, [f64; 3]);
+        add_vec!(&self.data_description_ids, i32);
+        add_vec!(&self.field_ids, i32);
+        add_vec!(&self.antenna1, i32);
+        add_vec!(&self.antenna2, i32);
+        add_vec!(&self.feed1, i32);
+        add_vec!(&self.feed2, i32);
+        add_vec!(&self.time_mjd_seconds, f64);
+        add_vec!(&self.time_centroid_mjd_seconds, f64);
+        add_vec!(&self.interval_seconds, f64);
+        add_vec!(&self.exposure_seconds, f64);
+        add_vec!(&self.scan_numbers, i32);
+        add_vec!(&self.state_ids, i32);
+        add_vec!(&self.observation_ids, i32);
+        add_vec!(&self.array_ids, i32);
+        Some(bytes)
     }
 
     /// Return one stored sample by channel, row, and correlation block offsets.
@@ -409,9 +506,11 @@ impl MeasurementSet {
         &self,
         request: &SelectedObservationBufferRequest,
         buffer: &mut SelectedObservationBuffer,
-    ) -> MsResult<()> {
+    ) -> MsResult<SelectedObservationBufferFillReport> {
+        let fill_started = Instant::now();
         validate_request(self, request)?;
         *buffer = SelectedObservationBuffer::default();
+        let visibility_started = Instant::now();
         let visibility_cells = read_required_2d(
             self,
             request.visibility.name(),
@@ -464,6 +563,7 @@ impl MeasurementSet {
                     ));
                 }
             };
+        let visibility_read_nanos = visibility_started.elapsed().as_nanos();
         require_shape(
             request.visibility.name(),
             visibility_rows,
@@ -472,6 +572,7 @@ impl MeasurementSet {
             request,
             correlation_count,
         )?;
+        let flag_started = Instant::now();
         let flag_cells =
             read_required_2d(self, "FLAG", &request.row_indices, request.channel_range)?;
         let SelectedArray2DCells::Bool(flags) = flag_cells else {
@@ -491,7 +592,11 @@ impl MeasurementSet {
             correlation_count,
         )?;
         let flags = flags.into_values();
+        let flag_read_nanos = flag_started.elapsed().as_nanos();
+        let weight_started = Instant::now();
         let weights = read_weights(self, request, correlation_count)?;
+        let weight_read_nanos = weight_started.elapsed().as_nanos();
+        let scalar_started = Instant::now();
         let mut scalars = self.main_table().required_scalar_columns_owned_for_rows(
             &[
                 "DATA_DESC_ID",
@@ -512,7 +617,11 @@ impl MeasurementSet {
             ],
             &request.row_indices,
         )?;
+        let scalar_read_nanos = scalar_started.elapsed().as_nanos();
+        let uvw_started = Instant::now();
         let uvw_m = read_strict_uvw(self, &request.row_indices)?;
+        let uvw_read_nanos = uvw_started.elapsed().as_nanos();
+        let assembly_started = Instant::now();
         *buffer = SelectedObservationBuffer {
             row_indices: request.row_indices.clone(),
             channel_range: request.channel_range,
@@ -538,7 +647,66 @@ impl MeasurementSet {
             array_ids: take_i32(&mut scalars, "ARRAY_ID")?,
         };
         validate_buffer_lengths(buffer)?;
-        Ok(())
+        let assembly_nanos = assembly_started.elapsed().as_nanos();
+        let row_count = u64::try_from(request.row_indices.len())
+            .map_err(|_| invalid("selected-observation row count exceeds diagnostics domain"))?;
+        let sample_count = row_count
+            .checked_mul(u64::try_from(request.channel_range.count).map_err(|_| {
+                invalid("selected-observation channel count exceeds diagnostics domain")
+            })?)
+            .and_then(|count| count.checked_mul(u64::try_from(correlation_count).ok()?))
+            .ok_or_else(|| {
+                invalid("selected-observation sample count exceeds diagnostics domain")
+            })?;
+        let retained_current_bytes = buffer
+            .retained_current_bytes()
+            .and_then(|bytes| u64::try_from(bytes).ok())
+            .ok_or_else(|| {
+                invalid("selected-observation current bytes exceed diagnostics domain")
+            })?;
+        let retained_capacity_bytes = buffer
+            .retained_capacity_bytes()
+            .and_then(|bytes| u64::try_from(bytes).ok())
+            .ok_or_else(|| {
+                invalid("selected-observation capacity bytes exceed diagnostics domain")
+            })?;
+        let request_handoff_bytes = row_count
+            .checked_mul(size_of::<usize>() as u64)
+            .ok_or_else(|| {
+                invalid("selected-observation handoff bytes exceed diagnostics domain")
+            })?;
+        let logical_output_bytes = retained_current_bytes
+            .checked_sub(request_handoff_bytes)
+            .ok_or_else(|| invalid("selected-observation logical byte accounting underflowed"))?;
+        let timings = SelectedObservationBufferTimings {
+            total_fill_nanos: fill_started.elapsed().as_nanos(),
+            visibility_read_nanos,
+            flag_read_nanos,
+            weight_read_nanos,
+            scalar_read_nanos,
+            uvw_read_nanos,
+            assembly_nanos,
+        };
+        Ok(SelectedObservationBufferFillReport {
+            block_count: 1,
+            row_count,
+            sample_count,
+            logical_output_bytes,
+            // This private path does not yet expose trustworthy storage-manager
+            // granularity, so it deliberately reports no physical-byte model.
+            modeled_physical_read_bytes: None,
+            // Visibility, FLAG, one weight column, UVW, and fifteen scalar columns.
+            read_operation_count: 19,
+            request_handoff_bytes,
+            retained_current_bytes,
+            retained_capacity_bytes,
+            // Resetting the destination above discards every prior allocation.
+            allocation: SelectedObservationBufferAllocationReport {
+                reused_storage_buffers: 0,
+                allocated_storage_buffers: 19,
+            },
+            timings,
+        })
     }
 }
 
@@ -774,10 +942,20 @@ mod tests {
             VisibilityChannelReadRange::new(1, 2),
         );
         let mut buffer = SelectedObservationBuffer::default();
-        ms.fill_selected_observation_buffer(&request, &mut buffer)
+        let report = ms
+            .fill_selected_observation_buffer(&request, &mut buffer)
             .unwrap();
 
         assert_eq!(buffer.row_count(), 2);
+        assert_eq!(report.block_count, 1);
+        assert_eq!(report.row_count, 2);
+        assert_eq!(report.sample_count, 8);
+        assert_eq!(report.logical_output_bytes, 298);
+        assert_eq!(report.modeled_physical_read_bytes, None);
+        assert_eq!(report.allocation.reused_storage_buffers, 0);
+        assert_eq!(report.allocation.allocated_storage_buffers, 19);
+        assert_eq!(report.retained_current_bytes, 314);
+        assert!(report.retained_capacity_bytes >= report.retained_current_bytes);
         assert_eq!(buffer.channel_range, VisibilityChannelReadRange::new(1, 2));
         assert_eq!(buffer.correlation_count, 2);
         let sample = buffer.sample(0, 0, 1).unwrap();

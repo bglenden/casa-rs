@@ -2346,6 +2346,36 @@ fn retained_selected_observation_owns_canonical_multi_source_order() {
     assert_eq!(one_row_samples.len(), 16);
     assert_eq!(one_row_samples, two_row_samples);
     assert_eq!(one_row_completion.sample_count(), 16);
+    let one_row_measurements = one_row_completion.measurements();
+    assert_eq!(one_row_measurements.source_pass_count(), 2);
+    assert_eq!(one_row_measurements.block_count(), 4);
+    assert_eq!(one_row_measurements.stored_row_count(), 4);
+    assert_eq!(one_row_measurements.stored_sample_count(), 24);
+    assert_eq!(one_row_measurements.logical_output_bytes(), 636);
+    assert_eq!(one_row_measurements.modeled_physical_read_bytes(), None);
+    assert_eq!(one_row_measurements.source_read_operations(), 76);
+    assert_eq!(one_row_measurements.request_handoff_bytes(), 32);
+    assert!(one_row_measurements.selected_sample_handoff_bytes() > 0);
+    assert_eq!(one_row_measurements.allocated_storage_buffers(), 76);
+    assert_eq!(one_row_measurements.reused_storage_buffers(), 0);
+    assert_eq!(one_row_measurements.peak_live_blocks(), 1);
+    assert!(
+        one_row_measurements.peak_live_capacity_bytes()
+            >= one_row_measurements.peak_live_current_bytes()
+    );
+    assert!(one_row_measurements.source_read_nanos() > 0);
+    assert!(one_row_measurements.source_fill_nanos() >= one_row_measurements.source_read_nanos());
+    assert!(one_row_measurements.source_arrangement_nanos() > 0);
+    let two_row_measurements = two_row_completion.measurements();
+    assert_eq!(two_row_measurements.source_pass_count(), 2);
+    assert_eq!(two_row_measurements.block_count(), 2);
+    assert_eq!(two_row_measurements.stored_row_count(), 4);
+    assert_eq!(two_row_measurements.stored_sample_count(), 24);
+    assert_eq!(two_row_measurements.logical_output_bytes(), 636);
+    assert_eq!(two_row_measurements.source_read_operations(), 38);
+    assert_eq!(two_row_measurements.request_handoff_bytes(), 32);
+    assert_eq!(two_row_measurements.allocated_storage_buffers(), 38);
+    assert_eq!(two_row_measurements.reused_storage_buffers(), 0);
     assert_eq!(
         one_row_completion.generation_id(),
         two_row_completion.generation_id(),

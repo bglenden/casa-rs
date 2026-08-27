@@ -1237,16 +1237,25 @@ impl WorkImplementation for SpectralCycleExecutor {
                 .release(context, &fragment)
                 .map_err(io::Error::other)?;
         }
+        let traversal_measurements = (context.node().id == *fragment.source_read_node()
+            || (context.node().id == *fragment.generation_node()
+                && fragment.streaming_mode()
+                    == Some(crate::WeightingStreamingMode::DensityInitial)))
+        .then(|| state.weighting.latest_traversal_measurements().copied())
+        .flatten();
         let resources = context
             .node()
             .claims
             .iter()
             .map(|claim| {
-                ResourceMeasurement::new(
-                    claim.resource.clone(),
-                    claim.lifetime.clone(),
-                    claim.amount,
-                )
+                let peak = match (&claim.resource, traversal_measurements) {
+                    (
+                        LeaseResource::IoBuffer(crate::IoBufferKind::SourceReadAhead),
+                        Some(measurements),
+                    ) => measurements.peak_live_capacity_bytes(),
+                    _ => claim.amount,
+                };
+                ResourceMeasurement::new(claim.resource.clone(), claim.lifetime.clone(), peak)
             })
             .collect();
         let io = context
@@ -1254,6 +1263,16 @@ impl WorkImplementation for SpectralCycleExecutor {
             .claims
             .iter()
             .filter_map(|claim| match claim.resource {
+                LeaseResource::IoBuffer(crate::IoBufferKind::SourceReadAhead) => {
+                    Some(match traversal_measurements {
+                        Some(measurements) => IoMeasurement::new(
+                            crate::IoBufferKind::SourceReadAhead,
+                            measurements.logical_output_bytes(),
+                            measurements.source_read_operations(),
+                        ),
+                        None => IoMeasurement::unobserved(crate::IoBufferKind::SourceReadAhead),
+                    })
+                }
                 LeaseResource::IoBuffer(kind) => Some(IoMeasurement::unobserved(kind)),
                 _ => None,
             })

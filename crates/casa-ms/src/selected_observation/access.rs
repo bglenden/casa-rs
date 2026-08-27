@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use std::{collections::VecDeque, mem::size_of};
+use std::{cell::RefCell, collections::VecDeque, mem::size_of, rc::Rc, time::Instant};
 
 use crate::derived::engine::MsCalEngine;
 use crate::subtables::SubTable;
@@ -23,6 +23,7 @@ use casa_imaging_model::{
 };
 use thiserror::Error;
 
+use super::bound_observation::SelectedObservationTraversalMeasurementsBuilder;
 use super::{
     SelectedObservationContentBudget, SelectedObservationContentPlan,
     SelectedObservationContentPlanError, SelectedObservationMeasures,
@@ -204,9 +205,23 @@ impl BoundObservationSource {
     ///
     /// Samples are emitted in canonical physical-row, channel, and correlation order. Physical
     /// row blocking comes only from the admitted content plan and is absent from scientific identity.
+    #[cfg(test)]
     pub(crate) fn selected_samples<'a>(
         &'a self,
         problem: &'a CompiledProblem,
+    ) -> Result<BoundObservationSamples<'a>, BoundObservationSourceError> {
+        self.selected_samples_measured(
+            problem,
+            Rc::new(RefCell::new(
+                SelectedObservationTraversalMeasurementsBuilder::default(),
+            )),
+        )
+    }
+
+    pub(super) fn selected_samples_measured<'a>(
+        &'a self,
+        problem: &'a CompiledProblem,
+        measurements: Rc<RefCell<SelectedObservationTraversalMeasurementsBuilder>>,
     ) -> Result<BoundObservationSamples<'a>, BoundObservationSourceError> {
         self.geometry_engine
             .verify_selected_observation_measures()?;
@@ -240,6 +255,7 @@ impl BoundObservationSource {
             channel_ordinal: 0,
             correlation_ordinal: 0,
             finished: false,
+            measurements,
         })
     }
 }
@@ -262,6 +278,7 @@ pub(crate) struct BoundObservationSamples<'a> {
     channel_ordinal: usize,
     correlation_ordinal: usize,
     finished: bool,
+    measurements: Rc<RefCell<SelectedObservationTraversalMeasurementsBuilder>>,
 }
 
 impl Iterator for BoundObservationSamples<'_> {
@@ -341,7 +358,10 @@ impl Iterator for BoundObservationSamples<'_> {
                 self.row_offset = 0;
                 self.channel_ordinal = 0;
                 self.correlation_ordinal = 0;
-                self.record_live_block_high_water();
+                if let Err(error) = self.record_live_block_high_water() {
+                    self.finished = true;
+                    return Some(Err(error));
+                }
                 continue;
             }
             if let Some(error) = self.pending_error.take() {
@@ -386,7 +406,10 @@ impl BoundObservationSamples<'_> {
         match self.fill_next_block(&mut block) {
             Ok(true) => {
                 self.ready_blocks.push_back(block);
-                self.record_live_block_high_water();
+                if let Err(error) = self.record_live_block_high_water() {
+                    self.source_exhausted = true;
+                    self.pending_error = Some(error);
+                }
             }
             Ok(false) => self.source_exhausted = true,
             Err(error) => {
@@ -411,7 +434,10 @@ impl BoundObservationSamples<'_> {
             match self.fill_next_block(&mut block) {
                 Ok(true) => {
                     self.ready_blocks.push_back(block);
-                    self.record_live_block_high_water();
+                    if let Err(error) = self.record_live_block_high_water() {
+                        self.source_exhausted = true;
+                        self.pending_error = Some(error);
+                    }
                 }
                 Ok(false) => self.source_exhausted = true,
                 Err(error) => {
@@ -422,10 +448,27 @@ impl BoundObservationSamples<'_> {
         }
     }
 
-    fn record_live_block_high_water(&mut self) {
+    fn record_live_block_high_water(&mut self) -> Result<(), BoundObservationSourceError> {
         self.live_block_high_water = self
             .live_block_high_water
             .max(self.active_block.is_some() as usize + self.ready_blocks.len());
+        let mut current_bytes = 0_u64;
+        let mut capacity_bytes = 0_u64;
+        for block in self.active_block.iter().chain(self.ready_blocks.iter()) {
+            current_bytes = current_bytes
+                .checked_add(block.current_bytes()?)
+                .ok_or(BoundObservationSourceError::MeasurementOverflow)?;
+            capacity_bytes = capacity_bytes
+                .checked_add(block.capacity_bytes()?)
+                .ok_or(BoundObservationSourceError::MeasurementOverflow)?;
+        }
+        self.measurements.borrow_mut().record_live_blocks(
+            u64::try_from(self.active_block.is_some() as usize + self.ready_blocks.len())
+                .map_err(|_| BoundObservationSourceError::MeasurementOverflow)?,
+            current_bytes,
+            capacity_bytes,
+        );
+        Ok(())
     }
 
     fn project_sample(
@@ -587,7 +630,8 @@ impl BoundObservationSamples<'_> {
             );
         }
         let coordinates = &self.source.coordinates[coordinate_index];
-        self.source
+        let fill_report = self
+            .source
             .measurement_set
             .fill_selected_observation_buffer(
                 &SelectedObservationBufferRequest::new(
@@ -601,6 +645,8 @@ impl BoundObservationSamples<'_> {
                 ),
                 &mut block.buffer,
             )?;
+        self.measurements.borrow_mut().record_fill(fill_report)?;
+        let arrangement_started = Instant::now();
         for row in 0..block.buffer.row_count() {
             let stored = block
                 .buffer
@@ -649,6 +695,9 @@ impl BoundObservationSamples<'_> {
             )?);
         }
         block.coordinate_index = coordinate_index;
+        self.measurements
+            .borrow_mut()
+            .record_arrangement_nanos(arrangement_started.elapsed().as_nanos())?;
         Ok(true)
     }
 }
@@ -669,6 +718,42 @@ impl BufferedObservationBlock {
             row_geometry: Vec::with_capacity(rows_per_block),
         }
     }
+
+    fn current_bytes(&self) -> Result<u64, BoundObservationSourceError> {
+        let buffer = self
+            .buffer
+            .retained_current_bytes()
+            .ok_or(BoundObservationSourceError::MeasurementOverflow)?;
+        let geometry = self
+            .row_geometry
+            .len()
+            .checked_mul(size_of::<EvaluatedRowGeometry>())
+            .ok_or(BoundObservationSourceError::MeasurementOverflow)?;
+        u64::try_from(
+            buffer
+                .checked_add(geometry)
+                .ok_or(BoundObservationSourceError::MeasurementOverflow)?,
+        )
+        .map_err(|_| BoundObservationSourceError::MeasurementOverflow)
+    }
+
+    fn capacity_bytes(&self) -> Result<u64, BoundObservationSourceError> {
+        let buffer = self
+            .buffer
+            .retained_capacity_bytes()
+            .ok_or(BoundObservationSourceError::MeasurementOverflow)?;
+        let geometry = self
+            .row_geometry
+            .capacity()
+            .checked_mul(size_of::<EvaluatedRowGeometry>())
+            .ok_or(BoundObservationSourceError::MeasurementOverflow)?;
+        u64::try_from(
+            buffer
+                .checked_add(geometry)
+                .ok_or(BoundObservationSourceError::MeasurementOverflow)?,
+        )
+        .map_err(|_| BoundObservationSourceError::MeasurementOverflow)
+    }
 }
 
 /// Failure to bind a retained MeasurementSet to one compiled observation source.
@@ -680,6 +765,9 @@ pub enum BoundObservationSourceError {
     /// The MeasurementSet could not be opened or read under the admitted content budget.
     #[error(transparent)]
     Storage(#[from] MsError),
+    /// Physical traversal counters exceeded their diagnostics domain.
+    #[error("selected-observation traversal measurements overflowed")]
+    MeasurementOverflow,
     /// Stored DATA_DESCRIPTION metadata contradicted the compiler-owned coordinate catalog.
     #[error(
         "stored DATA_DESCRIPTION row {data_description_id} does not match the compiled coordinate catalog"

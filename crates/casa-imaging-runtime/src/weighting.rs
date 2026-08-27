@@ -25,7 +25,7 @@ use casa_imaging_reconstruction::{
 use casa_ms::{
     BoundSelectedObservation, SelectedObservationCompletion,
     SelectedObservationResidencyCertificate, SelectedObservationTraversalError,
-    SelectedObservationTraversalSample,
+    SelectedObservationTraversalMeasurements, SelectedObservationTraversalSample,
 };
 
 use crate::{
@@ -1040,6 +1040,7 @@ pub struct WeightingExecutionState {
     retained_observation: Option<RetainedWeightingObservation>,
     density: Option<WeightingDensityPhase>,
     imported: Option<FrozenWeightingArtifact>,
+    latest_traversal_measurements: Option<SelectedObservationTraversalMeasurements>,
 }
 
 struct RetainedWeightingObservation {
@@ -1107,6 +1108,7 @@ impl WeightingExecutionState {
             retained_observation: None,
             density: None,
             imported: None,
+            latest_traversal_measurements: None,
         }
     }
 
@@ -1118,6 +1120,7 @@ impl WeightingExecutionState {
             retained_observation: None,
             density: None,
             imported: Some(artifact),
+            latest_traversal_measurements: None,
         }
     }
 
@@ -1128,6 +1131,14 @@ impl WeightingExecutionState {
             WeightingExecutionPhase::Replayed { frozen, .. } => Some(frozen.artifact.clone()),
             _ => None,
         }
+    }
+
+    /// Return measurements from the most recently completed owner traversal.
+    #[must_use]
+    pub(crate) const fn latest_traversal_measurements(
+        &self,
+    ) -> Option<&SelectedObservationTraversalMeasurements> {
+        self.latest_traversal_measurements.as_ref()
     }
 
     /// Validate, traverse, and adopt the exact T17 source owner.
@@ -1162,6 +1173,7 @@ impl WeightingExecutionState {
         let completion = selected
             .traverse(problem, consume)
             .map_err(WeightingSourceTraversalError::Traversal)?;
+        self.latest_traversal_measurements = Some(*completion.measurements());
         if !selected.can_resume_after(&completion) {
             return Err(WeightingSourceTraversalError::Evidence(
                 WeightingEvidenceError,
@@ -1213,6 +1225,7 @@ impl WeightingExecutionState {
                     .map_err(ContinuumDensityCallbackError::Owner)
             })
             .map_err(ContinuumDensityTraversalError::Traversal)?;
+        self.latest_traversal_measurements = Some(*completion.measurements());
         self.density = Some(density);
         self.retained_observation = Some(RetainedWeightingObservation {
             selected,
@@ -1346,6 +1359,7 @@ impl WeightingExecutionState {
                 Ok(())
             })
             .map_err(WeightingReplayError::Traversal)?;
+        self.latest_traversal_measurements = Some(*owner_completion.measurements());
         let continuum_completion = if let Some(mut transform) = continuum_stream {
             for transformed in transform
                 .finish_rows()
@@ -1526,6 +1540,7 @@ impl WeightingExecutionState {
                 Ok(())
             })
             .map_err(WeightingReplayError::Traversal)?;
+        self.latest_traversal_measurements = Some(*owner_completion.measurements());
         let continuum_completion = if let Some(mut transform) = continuum_stream {
             for transformed in transform
                 .finish_rows()

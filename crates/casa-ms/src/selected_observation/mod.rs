@@ -23,7 +23,7 @@ pub(crate) use access::{
 pub use bound_observation::{
     BoundSelectedObservation, BoundSelectedObservationError, ObservationSourceBinding,
     SelectedObservationCompletion, SelectedObservationResidencyCertificate,
-    SelectedObservationTraversalError,
+    SelectedObservationTraversalError, SelectedObservationTraversalMeasurements,
 };
 pub use content_plan::SelectedObservationContentBudget;
 pub(crate) use content_plan::{

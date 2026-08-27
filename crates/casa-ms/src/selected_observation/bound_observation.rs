@@ -7,12 +7,16 @@ use casa_imaging_model::{
     SelectedObservationInspectionError, SelectedObservationPassError, SelectedObservationSample,
 };
 use std::{
+    cell::RefCell,
     error::Error,
     fmt,
     mem::size_of,
+    rc::Rc,
     sync::atomic::{AtomicU64, Ordering},
 };
 use thiserror::Error;
+
+use crate::selected_observation_buffer::SelectedObservationBufferFillReport;
 
 use super::{
     BoundObservationSamples, BoundObservationSource, BoundObservationSourceError,
@@ -394,12 +398,16 @@ impl BoundSelectedObservation {
             return Err(BoundSelectedObservationError::ProblemMismatch);
         }
         self.measures.verify_state()?;
+        let measurements = Rc::new(RefCell::new(
+            SelectedObservationTraversalMeasurementsBuilder::default(),
+        ));
         Ok(BoundSelectedObservationSamples {
             observation: self,
             problem,
             source_index: 0,
             current: None,
             finished: false,
+            measurements,
         })
     }
 
@@ -424,6 +432,7 @@ impl BoundSelectedObservation {
         let samples = self
             .selected_samples(problem)
             .map_err(SelectedObservationTraversalError::Binding)?;
+        let measurements = Rc::clone(&samples.measurements);
         let sources = &self.sources;
         let mut spectral_evaluator = SpectralEvaluationProjector::new();
         let (generation_id, sample_count) = consume_projected_validated_stream(
@@ -434,10 +443,16 @@ impl BoundSelectedObservation {
                     .iter()
                     .find(|source| source.source_identity() == sample.address.measurement_set)
                     .ok_or(BoundObservationSourceError::ProblemSourceMismatch)?;
-                spectral_evaluator.project(problem, sample, source.geometry_engine())
+                let projected =
+                    spectral_evaluator.project(problem, sample, source.geometry_engine());
+                projected
             },
             &mut consume,
         )?;
+        let measurements = measurements
+            .borrow()
+            .finish(sample_count)
+            .ok_or(SelectedObservationTraversalError::MeasurementOverflow)?;
         self.next_traversal = next_traversal;
         Ok(SelectedObservationCompletion {
             problem_id: problem.problem_id(),
@@ -446,6 +461,7 @@ impl BoundSelectedObservation {
             commitment_id: problem.selected_observation().commitment_id(),
             generation_id,
             sample_count,
+            measurements,
             access_binding,
             traversal,
         })
@@ -505,6 +521,7 @@ pub(crate) struct BoundSelectedObservationSamples<'a> {
     source_index: usize,
     current: Option<BoundObservationSamples<'a>>,
     finished: bool,
+    measurements: Rc<RefCell<SelectedObservationTraversalMeasurementsBuilder>>,
 }
 
 static NEXT_ACCESS_BINDING: AtomicU64 = AtomicU64::new(1);
@@ -534,6 +551,268 @@ impl BoundSelectedObservationIdentity {
     }
 }
 
+/// Immutable physical measurements for one completed selected-observation traversal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SelectedObservationTraversalMeasurements {
+    source_pass_count: u64,
+    block_count: u64,
+    stored_row_count: u64,
+    stored_sample_count: u64,
+    logical_output_bytes: u64,
+    modeled_physical_read_bytes: Option<u64>,
+    source_read_operations: u64,
+    request_handoff_bytes: u64,
+    selected_sample_handoff_bytes: u64,
+    allocated_storage_buffers: u64,
+    reused_storage_buffers: u64,
+    peak_live_blocks: u64,
+    peak_live_current_bytes: u64,
+    peak_live_capacity_bytes: u64,
+    source_read_nanos: u128,
+    source_fill_nanos: u128,
+    source_arrangement_nanos: u128,
+}
+
+macro_rules! traversal_measurement_getter {
+    ($name:ident, $field:ident, $type:ty, $doc:literal) => {
+        #[doc = $doc]
+        #[must_use]
+        pub const fn $name(&self) -> $type {
+            self.$field
+        }
+    };
+}
+
+impl SelectedObservationTraversalMeasurements {
+    traversal_measurement_getter!(
+        source_pass_count,
+        source_pass_count,
+        u64,
+        "Return the number of MeasurementSet sources traversed exactly once."
+    );
+    traversal_measurement_getter!(
+        block_count,
+        block_count,
+        u64,
+        "Return the number of bounded storage blocks filled."
+    );
+    traversal_measurement_getter!(
+        stored_row_count,
+        stored_row_count,
+        u64,
+        "Return the aggregate stored MAIN rows read across blocks."
+    );
+    traversal_measurement_getter!(
+        stored_sample_count,
+        stored_sample_count,
+        u64,
+        "Return packed stored channel-correlation samples read across blocks."
+    );
+    traversal_measurement_getter!(
+        logical_output_bytes,
+        logical_output_bytes,
+        u64,
+        "Return exact logical bytes produced by the closed storage-column reads."
+    );
+    traversal_measurement_getter!(
+        modeled_physical_read_bytes,
+        modeled_physical_read_bytes,
+        Option<u64>,
+        "Return modeled physical bytes only when every fill exposes a trustworthy model."
+    );
+    traversal_measurement_getter!(
+        source_read_operations,
+        source_read_operations,
+        u64,
+        "Return the exact closed-column read operation count."
+    );
+    traversal_measurement_getter!(
+        request_handoff_bytes,
+        request_handoff_bytes,
+        u64,
+        "Return bytes copied while handing requested physical rows into retained blocks."
+    );
+    traversal_measurement_getter!(
+        selected_sample_handoff_bytes,
+        selected_sample_handoff_bytes,
+        u64,
+        "Return semantic bytes handed to the downstream sample consumer."
+    );
+    traversal_measurement_getter!(
+        allocated_storage_buffers,
+        allocated_storage_buffers,
+        u64,
+        "Return storage-backed vectors allocated by successful fills."
+    );
+    traversal_measurement_getter!(
+        reused_storage_buffers,
+        reused_storage_buffers,
+        u64,
+        "Return storage-backed vectors reused by successful fills."
+    );
+    traversal_measurement_getter!(
+        peak_live_blocks,
+        peak_live_blocks,
+        u64,
+        "Return the observed high-water count of simultaneously live blocks."
+    );
+    traversal_measurement_getter!(
+        peak_live_current_bytes,
+        peak_live_current_bytes,
+        u64,
+        "Return peak current bytes in simultaneously live block payloads."
+    );
+    traversal_measurement_getter!(
+        peak_live_capacity_bytes,
+        peak_live_capacity_bytes,
+        u64,
+        "Return peak allocated capacity bytes in simultaneously live block payloads."
+    );
+    traversal_measurement_getter!(
+        source_read_nanos,
+        source_read_nanos,
+        u128,
+        "Return wall nanoseconds spent in closed storage reads."
+    );
+    traversal_measurement_getter!(
+        source_fill_nanos,
+        source_fill_nanos,
+        u128,
+        "Return wall nanoseconds spent in complete selected-buffer fills."
+    );
+    traversal_measurement_getter!(
+        source_arrangement_nanos,
+        source_arrangement_nanos,
+        u128,
+        "Return wall nanoseconds spent arranging block-level source geometry."
+    );
+}
+
+pub(super) struct SelectedObservationTraversalMeasurementsBuilder {
+    measurements: SelectedObservationTraversalMeasurements,
+    physical_model_complete: bool,
+}
+
+impl Default for SelectedObservationTraversalMeasurementsBuilder {
+    fn default() -> Self {
+        Self {
+            measurements: SelectedObservationTraversalMeasurements {
+                source_pass_count: 0,
+                block_count: 0,
+                stored_row_count: 0,
+                stored_sample_count: 0,
+                logical_output_bytes: 0,
+                modeled_physical_read_bytes: Some(0),
+                source_read_operations: 0,
+                request_handoff_bytes: 0,
+                selected_sample_handoff_bytes: 0,
+                allocated_storage_buffers: 0,
+                reused_storage_buffers: 0,
+                peak_live_blocks: 0,
+                peak_live_current_bytes: 0,
+                peak_live_capacity_bytes: 0,
+                source_read_nanos: 0,
+                source_fill_nanos: 0,
+                source_arrangement_nanos: 0,
+            },
+            physical_model_complete: true,
+        }
+    }
+}
+
+impl SelectedObservationTraversalMeasurementsBuilder {
+    pub(super) fn record_source_pass(&mut self) -> Result<(), BoundObservationSourceError> {
+        self.measurements.source_pass_count = self
+            .measurements
+            .source_pass_count
+            .checked_add(1)
+            .ok_or(BoundObservationSourceError::MeasurementOverflow)?;
+        Ok(())
+    }
+
+    pub(super) fn record_fill(
+        &mut self,
+        report: SelectedObservationBufferFillReport,
+    ) -> Result<(), BoundObservationSourceError> {
+        macro_rules! add {
+            ($field:ident, $value:expr) => {
+                self.measurements.$field = self
+                    .measurements
+                    .$field
+                    .checked_add($value)
+                    .ok_or(BoundObservationSourceError::MeasurementOverflow)?;
+            };
+        }
+        add!(block_count, report.block_count);
+        add!(stored_row_count, report.row_count);
+        add!(stored_sample_count, report.sample_count);
+        add!(logical_output_bytes, report.logical_output_bytes);
+        add!(source_read_operations, report.read_operation_count);
+        add!(request_handoff_bytes, report.request_handoff_bytes);
+        add!(
+            allocated_storage_buffers,
+            report.allocation.allocated_storage_buffers
+        );
+        add!(
+            reused_storage_buffers,
+            report.allocation.reused_storage_buffers
+        );
+        add!(source_read_nanos, report.timings.storage_read_nanos());
+        add!(source_fill_nanos, report.timings.total_fill_nanos);
+        match (
+            self.measurements.modeled_physical_read_bytes,
+            report.modeled_physical_read_bytes,
+        ) {
+            (Some(total), Some(bytes)) if self.physical_model_complete => {
+                self.measurements.modeled_physical_read_bytes = Some(
+                    total
+                        .checked_add(bytes)
+                        .ok_or(BoundObservationSourceError::MeasurementOverflow)?,
+                );
+            }
+            _ => {
+                self.physical_model_complete = false;
+                self.measurements.modeled_physical_read_bytes = None;
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn record_arrangement_nanos(
+        &mut self,
+        nanos: u128,
+    ) -> Result<(), BoundObservationSourceError> {
+        self.measurements.source_arrangement_nanos = self
+            .measurements
+            .source_arrangement_nanos
+            .checked_add(nanos)
+            .ok_or(BoundObservationSourceError::MeasurementOverflow)?;
+        Ok(())
+    }
+
+    pub(super) fn record_live_blocks(
+        &mut self,
+        blocks: u64,
+        current_bytes: u64,
+        capacity_bytes: u64,
+    ) {
+        self.measurements.peak_live_blocks = self.measurements.peak_live_blocks.max(blocks);
+        self.measurements.peak_live_current_bytes =
+            self.measurements.peak_live_current_bytes.max(current_bytes);
+        self.measurements.peak_live_capacity_bytes = self
+            .measurements
+            .peak_live_capacity_bytes
+            .max(capacity_bytes);
+    }
+
+    fn finish(&self, sample_count: u64) -> Option<SelectedObservationTraversalMeasurements> {
+        let mut measurements = self.measurements;
+        measurements.selected_sample_handoff_bytes = sample_count
+            .checked_mul(u64::try_from(size_of::<SelectedObservationTraversalSample>()).ok()?)?;
+        Some(measurements)
+    }
+}
+
 /// Opaque owner-minted proof of one complete retained-access traversal.
 ///
 /// This affine record is intentionally not cloneable. Content identity remains
@@ -549,6 +828,7 @@ pub struct SelectedObservationCompletion {
     commitment_id: SelectedObservationCommitmentId,
     generation_id: SelectedObservationGenerationId,
     sample_count: u64,
+    measurements: SelectedObservationTraversalMeasurements,
     access_binding: u64,
     traversal: u64,
 }
@@ -590,6 +870,12 @@ impl SelectedObservationCompletion {
         self.sample_count
     }
 
+    /// Return immutable physical execution measurements for this completed pass.
+    #[must_use]
+    pub const fn measurements(&self) -> &SelectedObservationTraversalMeasurements {
+        &self.measurements
+    }
+
     /// Return whether this completion came from the same retained access binding.
     #[must_use]
     pub fn same_access_binding(&self, other: &Self) -> bool {
@@ -616,6 +902,8 @@ pub enum SelectedObservationTraversalError<E> {
     Consumer(E),
     /// The affine traversal identity domain was exhausted.
     TraversalIdentityExhausted,
+    /// Physical traversal counters exceeded their diagnostics domain.
+    MeasurementOverflow,
 }
 
 impl<E> fmt::Display for SelectedObservationTraversalError<E> {
@@ -628,6 +916,9 @@ impl<E> fmt::Display for SelectedObservationTraversalError<E> {
             Self::TraversalIdentityExhausted => {
                 formatter.write_str("selected-observation traversal identity exhausted")
             }
+            Self::MeasurementOverflow => {
+                formatter.write_str("selected-observation traversal measurements overflowed")
+            }
         }
     }
 }
@@ -639,7 +930,7 @@ impl<E: Error + 'static> Error for SelectedObservationTraversalError<E> {
             Self::Source(error) => Some(error),
             Self::Inspection(error) => Some(error),
             Self::Consumer(error) => Some(error),
-            Self::TraversalIdentityExhausted => None,
+            Self::TraversalIdentityExhausted | Self::MeasurementOverflow => None,
         }
     }
 }
@@ -666,8 +957,14 @@ impl Iterator for BoundSelectedObservationSamples<'_> {
                 self.finished = true;
                 return None;
             };
-            match source.selected_samples(self.problem) {
-                Ok(samples) => self.current = Some(samples),
+            match source.selected_samples_measured(self.problem, Rc::clone(&self.measurements)) {
+                Ok(samples) => {
+                    if let Err(error) = self.measurements.borrow_mut().record_source_pass() {
+                        self.finished = true;
+                        return Some(Err(error));
+                    }
+                    self.current = Some(samples);
+                }
                 Err(error) => {
                     self.finished = true;
                     return Some(Err(error));
