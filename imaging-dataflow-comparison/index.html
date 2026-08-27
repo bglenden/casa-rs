@@ -818,6 +818,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Optimization Map">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#historical-reconnaissance-for-the-fused-terminal-ms-pass" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Historical reconnaissance for the fused terminal MS pass
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1314,6 +1331,41 @@ hypothesis is:</p>
 <h2 id="optimization-map">Optimization Map<a class="headerlink" href="#optimization-map" title="Permanent link">&para;</a></h2>
 <p>Once the shape is stable, this same diagram can be annotated with timings and
 resource ownership.</p>
+<h3 id="historical-reconnaissance-for-the-fused-terminal-ms-pass">Historical reconnaissance for the fused terminal MS pass<a class="headerlink" href="#historical-reconnaissance-for-the-fused-terminal-ms-pass" title="Permanent link">&para;</a></h3>
+<p>The T60 terminal-pass work checked the last optimized pre-cutover Rust tree at
+<code>fff9c2d553eace4b6a57b1df9ded4773f2263ceb</code>, CASA/casacore, and LibRA before
+choosing its ownership and writeback shape. This is a historical design map,
+not a new benchmark claim.</p>
+<table>
+<thead>
+<tr>
+<th>Lineage</th>
+<th>Technique and observed benefit</th>
+<th>Current owner</th>
+<th>Disposition</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Pre-cutover <code>casa-rs</code></td>
+<td>Bounded prepared blocks, at most two live source blocks, grouped MS reads, and shared-source replay constrained peak residency and could overlap source I/O with preparation. The archived ledger also recorded both positive evidence (the memory-derived mosaic-cube grouping was <code>1.098x</code> faster with exact products) and a negative control (cubedata read-ahead was <code>22.1%</code> slower when it reduced active planes), showing that overlap must remain planner-derived.</td>
+<td><code>casa-ms</code> selected observation, <code>casa-tables</code> grouped reads, and <code>casa-imaging-runtime</code> fused replay</td>
+<td>Retain bounded/grouped mechanics and causal controls; do not restore the removed frontend stream or dataset-shaped switches.</td>
+</tr>
+<tr>
+<td>CASA/casacore</td>
+<td>VI2/VisBuffer operates on row/channel/correlation cubes, while <code>SynthesisImagerVi2::predictModel</code> zeroes the model cube, degrids it, and writes the complete buffer through <code>writeVisModel</code> under the MS lock. Batched column-cell access amortizes table I/O and the whole-buffer write prevents selected flagged or non-Stokes cells from retaining stale model values.</td>
+<td><code>casa-ms</code> selection/writeback plus <code>serial_mfs</code> prediction and <code>serial_continuum</code> transaction ownership</td>
+<td>Adapt the complete selected write set and lock semantics in idiomatic Rust; keep gridding eligibility separate from write eligibility.</td>
+</tr>
+<tr>
+<td>LibRA</td>
+<td><code>SIMapper::degrid</code> and the synthesis-imager path likewise operate on whole visibility buffers, while workflow job and resampler boundaries separate read, prediction, write, and gridding work for resource placement. The benefit is a mature bulk-I/O and resource seam rather than a measured result on this Rust branch.</td>
+<td><code>casa-imaging-reconstruction</code> operators and <code>casa-imaging-runtime</code> plan/resource owners</td>
+<td>Adapt whole-buffer semantics and explicit resource ownership; reject the distributed frontend/job graph and any extra MS replay for the in-process terminal plan.</td>
+</tr>
+</tbody>
+</table>
 <p>Current <code>casa-rs</code> measurement points include:</p>
 <ul>
 <li>MS column loads, source bytes, effective bandwidth, producer/consumer
