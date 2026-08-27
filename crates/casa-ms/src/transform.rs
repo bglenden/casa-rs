@@ -235,23 +235,6 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
     Ok(report)
 }
 
-/// Materialize a transformed MeasurementSet directly at the requested output path.
-///
-/// Unlike [`mstransform`], this entry point does not create or rename a staging
-/// directory. The output may therefore remain incomplete after an error. It is
-/// intended for application owners whose user-visible contract explicitly
-/// permits direct, non-transactional MeasurementSet creation.
-pub fn mstransform_direct(
-    request: &MsTransformRequest,
-) -> Result<MsTransformReport, MsTransformError> {
-    if request.input_ms == request.output_ms {
-        return Err(MsTransformError::SameInputOutput {
-            path: request.input_ms.display().to_string(),
-        });
-    }
-    mstransform_staged(request)
-}
-
 fn mstransform_staged(request: &MsTransformRequest) -> Result<MsTransformReport, MsTransformError> {
     let started_at = Instant::now();
     tracing::info!(

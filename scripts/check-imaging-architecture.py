@@ -54,12 +54,12 @@ ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256 = (
     "daafa560c0e941fb3f2cea5c02a46de8a3363c2dd327cb839ef8ab2111f09835"
 )
 ACCEPTED_MATRIX_ROWS_SHA256 = (
-    "d078b625a924535dc5b8694cc8025f8891e0b22ee6673e08b07c8ab81b24ac12"
+    "4486e7c4f8e3904e2041525b1c924f75854374802b697b49792f7a3382c32f67"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "2371e7955cd073be514a40c57b7561c2aa570291afc54f408665a3cb962dac4d"
+    "3c7c2867b80423b22cd1ef000e31146fd3c957d01c503aed0e6f2cadd024baad"
 )
-ACCEPTED_MATRIX_CONTRACT_REVISION = 52
+ACCEPTED_MATRIX_CONTRACT_REVISION = 53
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "scientific-products-v1",
@@ -1340,7 +1340,41 @@ def validate_migration_matrix(
     if enforce_accepted_scope:
         validate_t28_model_lifecycle_transfer(rows)
         validate_t18_global_weighting_transfer(rows)
+        validate_t36_spectral_sampling_transfer(rows)
         validate_t37_spectral_operator_transfer(rows)
+
+
+def validate_t36_spectral_sampling_transfer(rows: list[dict[str, Any]]) -> None:
+    """Keep T36 coordinate and paired-sampling ownership native."""
+    rows_by_id = {row.get("id"): row for row in rows}
+    required_evidence = {
+        "capability.lsrk-transform": {
+            "crates/casa-ms/src/derived/engine.rs::pub(crate) fn spectral_frame_explicit",
+            "crates/casa-ms/src/selected_observation/spectral_evaluation.rs::pub struct SelectedObservationTraversalSample",
+            "crates/casa-imaging-reconstruction/src/spectral_sampling.rs::pub fn compile_spectral_stencil",
+        },
+        "capability.nearest-interpolation": {
+            "crates/casa-imaging-reconstruction/src/spectral_sampling.rs::fn nearest_terms",
+        },
+        "capability.linear-interpolation": {
+            "crates/casa-imaging-reconstruction/src/spectral_sampling.rs::fn linear_terms",
+        },
+        "capability.cubic-interpolation": {
+            "crates/casa-imaging-reconstruction/src/spectral_sampling.rs::fn cubic_terms",
+        },
+    }
+    for identifier, evidence in required_evidence.items():
+        row = rows_by_id.get(identifier)
+        if row is None or row.get("status") != "Native":
+            raise ArchitectureError(f"T36 matrix row {identifier} must remain Native")
+        if row.get("migration_obligation") is not None:
+            raise ArchitectureError(
+                f"T36 matrix row {identifier} must not retain a migration obligation"
+            )
+        if not evidence.issubset(set(row.get("source_evidence", []))):
+            raise ArchitectureError(
+                f"T36 matrix row {identifier} lacks native coordinate/sampling evidence"
+            )
 
 
 def validate_t37_spectral_operator_transfer(rows: list[dict[str, Any]]) -> None:

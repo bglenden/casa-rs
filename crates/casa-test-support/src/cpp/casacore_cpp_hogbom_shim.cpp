@@ -49,6 +49,7 @@ extern "C" int cpp_hogbom_clean_minor_cycle_2d(
     int cycle_niter,
     const float* psf_in,
     const float* residual_in,
+    const unsigned char* mask_in,
     float* model_out,
     float* residual_out,
     int max_len,
@@ -70,8 +71,13 @@ extern "C" int cpp_hogbom_clean_minor_cycle_2d(
         std::vector<float> residual(residual_in, residual_in + npix);
         std::vector<float> psf(psf_in, psf_in + npix);
         std::vector<float> mask(npix, 1.0f);
+        if (mask_in) {
+            for (int index = 0; index < npix; ++index) {
+                mask[index] = mask_in[index] ? 1.0f : 0.0f;
+            }
+        }
 
-        int domask = 0;
+        int domask = mask_in ? 1 : 0;
         int npol = 1;
         int xbeg = 1;
         int xend = nx;
@@ -108,8 +114,10 @@ extern "C" int cpp_hogbom_clean_minor_cycle_2d(
         );
 
         float peak = 0.0f;
-        for (float value : residual) {
-            peak = std::max(peak, std::abs(value));
+        for (int index = 0; index < npix; ++index) {
+            if (!mask_in || mask_in[index]) {
+                peak = std::max(peak, std::abs(residual[index]));
+            }
         }
 
         std::copy(model.begin(), model.end(), model_out);

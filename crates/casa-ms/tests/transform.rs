@@ -7,43 +7,11 @@ use casa_ms::{
     MeasurementSetMutationBatch, MeasurementSetMutationColumnBatch,
     MeasurementSetMutationColumnValues, MeasurementSetWriteColumnPlan, MeasurementSetWritePlan,
     MeasurementSetWriteResources, MeasurementSetWriteSession, MsTransformRequest, SubTable,
-    TransformDataColumn, mstransform, mstransform_direct, schema::main_table::VisibilityDataColumn,
+    TransformDataColumn, mstransform, schema::main_table::VisibilityDataColumn,
     selection::MsSelection,
 };
 use casa_types::{ArrayValue, ScalarValue};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
-
-#[test]
-fn direct_transform_writes_the_final_path_without_a_publish_staging_directory() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let input_ms = common::create_msexplore_spectrum_fixture_ms(dir.path(), true, &[]);
-    let output_ms = dir.path().join("direct.ms");
-
-    let report = mstransform_direct(&MsTransformRequest {
-        input_ms,
-        output_ms: output_ms.clone(),
-        spw: "0:2~5".to_string(),
-        width: 1,
-        data_column: TransformDataColumn::Data,
-        selection: MsSelection::new(),
-        keep_flags: true,
-    })
-    .expect("direct bounded transform");
-
-    assert!(output_ms.exists());
-    assert_eq!(report.row_count, 4);
-    assert_eq!(report.write_telemetry.rows_written, 4);
-    let staging_prefix = ".direct.ms.casa-rs-incomplete-";
-    assert!(
-        std::fs::read_dir(dir.path())
-            .expect("read output parent")
-            .all(|entry| !entry
-                .expect("directory entry")
-                .file_name()
-                .to_string_lossy()
-                .starts_with(staging_prefix))
-    );
-}
 
 #[test]
 fn mstransform_selects_channels_updates_metadata_and_weight_spectrum() {

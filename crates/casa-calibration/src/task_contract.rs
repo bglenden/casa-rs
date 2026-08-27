@@ -27,7 +27,7 @@ use crate::{
 /// Stable protocol name advertised by `calibrate --protocol-info`.
 pub const CALIBRATION_TASK_PROTOCOL_NAME: &str = "casa_calibration_task";
 /// Stable protocol version advertised by `calibrate --protocol-info`.
-pub const CALIBRATION_TASK_PROTOCOL_VERSION: u32 = 1;
+pub const CALIBRATION_TASK_PROTOCOL_VERSION: u32 = 2;
 
 /// Build the current shared calibration protocol descriptor.
 pub fn calibration_protocol_descriptor() -> ProviderProtocolDescriptor {

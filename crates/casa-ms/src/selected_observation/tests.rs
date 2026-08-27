@@ -622,6 +622,143 @@ fn real_ms_cube_traversal_compiles_source_backed_casa_cubic_stencils() {
     );
 }
 
+#[cfg(feature = "cpp-interop-tests")]
+#[test]
+fn t35_source_backed_identity_and_nonidentity_tracers_match_casacore() {
+    use casa_test_support::spectral_interop::{
+        SpectralInterpolationMethod, SpectralInterpolationOracle,
+    };
+
+    let directory = tempfile::tempdir().expect("temporary T35 source-backed fixture");
+    let path = directory.path().join("t35-spectral-tracer.ms");
+    generate_fixture(&path);
+    let output_centres = vec![1.3995e9, 1.4005e9, 1.4015e9, 1.4025e9];
+    let output_boundaries = vec![1.399e9, 1.4e9, 1.401e9, 1.402e9, 1.403e9];
+
+    let identity = compiled_problem_with_sampling(
+        &path,
+        2,
+        SpectralSamplingLaw::IDENTITY,
+        SpectralWcs::Tabular {
+            channel_centres_hz: vec![1.4e9, 1.402e9],
+            channel_boundaries_hz: vec![1.3995e9, 1.401e9, 1.4025e9],
+        },
+    );
+    let nonidentity = compiled_problem_with_sampling(
+        &path,
+        2,
+        SpectralSamplingLaw::CUBIC,
+        SpectralWcs::Tabular {
+            channel_centres_hz: output_centres.clone(),
+            channel_boundaries_hz: output_boundaries,
+        },
+    );
+
+    let trace = |problem: &casa_imaging_model::CompiledProblem| {
+        let source = &problem.inputs().observation_snapshot().sources()[0];
+        let mut observation = BoundSelectedObservation::open(
+            problem,
+            test_measures(problem),
+            vec![ObservationSourceBinding::new(
+                source_state(source),
+                content_budget_for_rows(problem, source, 1, 1),
+            )],
+        )
+        .expect("bind the common T35 MeasurementSet");
+        let mut receipts = Vec::new();
+        observation
+            .traverse(problem, |reported| {
+                let sample = *reported.selected();
+                let evaluation = reported.spectral_evaluation();
+                let stencil = compile_spectral_stencil(problem, &sample, evaluation)
+                    .expect("compile paired spectral stencil");
+                receipts.push((sample, evaluation, stencil));
+                Ok::<_, Infallible>(())
+            })
+            .expect("traverse the common T35 MeasurementSet");
+        receipts
+    };
+
+    let identity_receipts = trace(&identity);
+    assert_eq!(identity_receipts.len(), 8);
+    for (sample, evaluation, stencil) in &identity_receipts {
+        let expected_channel = if sample.address.channel_index == 0 {
+            0
+        } else {
+            1
+        };
+        assert_eq!(
+            stencil
+                .contributions()
+                .iter()
+                .map(|term| (term.output_channel(), term.factor()))
+                .collect::<Vec<_>>(),
+            vec![(expected_channel, 1.0)]
+        );
+        assert_eq!(evaluation.native(), evaluation.output_frame());
+        assert_eq!(evaluation.effective_weight(), sample.input_weight as f64);
+        assert_eq!(evaluation.is_valid(), !sample.parallel_hand_group_flag);
+        assert_eq!(
+            stencil.covariance(),
+            casa_imaging_model::SpectralCovariance::PropagateIndependentSourceNoise
+        );
+    }
+
+    let nonidentity_receipts = trace(&nonidentity);
+    let (sample, evaluation, stencil) = &nonidentity_receipts[0];
+    assert_eq!(
+        sample.address.frequency_centre_hz.to_bits(),
+        1.4e9_f64.to_bits()
+    );
+    assert_eq!(
+        evaluation.output_frame().centre_hz().to_bits(),
+        1.4e9_f64.to_bits()
+    );
+    assert_eq!(
+        evaluation.output_frame().boundaries_hz(),
+        [1.3995e9, 1.4005e9]
+    );
+    assert_eq!(evaluation.effective_weight(), 1.0);
+    assert!(evaluation.is_valid());
+
+    let casa = SpectralInterpolationOracle::coefficients(
+        &output_centres,
+        evaluation.output_frame().centre_hz(),
+        SpectralInterpolationMethod::Cubic,
+    )
+    .expect("CASA/casacore cubic spectral oracle");
+    assert!(casa.valid);
+    let rust =
+        stencil
+            .contributions()
+            .iter()
+            .fold(vec![0.0; output_centres.len()], |mut dense, term| {
+                dense[term.output_channel() as usize] = term.factor();
+                dense
+            });
+    for (rust, casa) in rust.iter().zip(&casa.coefficients) {
+        assert!(
+            (rust - casa).abs() <= 2.0 * f64::EPSILON,
+            "CASA/casacore and Rust cubic coefficients diverged: rust={rust} casa={casa}"
+        );
+    }
+
+    let model = [2.0, -1.0, 0.5, 4.0];
+    let source_visibility = -3.25;
+    let prediction = stencil
+        .contributions()
+        .iter()
+        .map(|term| term.factor() * model[term.output_channel() as usize])
+        .sum::<f64>();
+    let lhs = prediction * source_visibility;
+    let rhs = stencil
+        .contributions()
+        .iter()
+        .map(|term| model[term.output_channel() as usize] * term.factor() * source_visibility)
+        .sum::<f64>();
+    assert!((lhs - rhs).abs() <= f64::EPSILON * lhs.abs().max(1.0));
+}
+
 #[test]
 fn real_ms_cube_traversal_maps_contributions_into_the_transformed_output_frame() {
     let directory = tempfile::tempdir().expect("temporary transformed-frame fixture");
@@ -3155,6 +3292,12 @@ fn compiled_problem_with_sampling(
     sampling: SpectralSamplingLaw,
     wcs: SpectralWcs,
 ) -> casa_imaging_model::CompiledProblem {
+    let channels = match &wcs {
+        SpectralWcs::Linear { channels, .. } => *channels,
+        SpectralWcs::Tabular {
+            channel_centres_hz, ..
+        } => channel_centres_hz.len(),
+    };
     let snapshot = compile_observation(ObservationSnapshotInput::new(
         vec![source_input(path, 1, row_count)],
         vec![(ReferenceDataKind::Measures, identity(90))],
@@ -3162,7 +3305,10 @@ fn compiled_problem_with_sampling(
     ))
     .expect("compile spectral-contribution observation");
     compile(ImagingRequest::new(
-        specification_with_sampling(sampling),
+        specification_with_sampling_and_basis(
+            sampling,
+            ReconstructionBasis::ChannelLocal { channels },
+        ),
         geometry_with_spectral_wcs(wcs),
         ProblemInputIdentities::new(snapshot),
         model_lifecycle(ModelStateIdentity::Empty),
@@ -3176,6 +3322,12 @@ fn compiled_problem_with_transformed_sampling(
     sampling: SpectralSamplingLaw,
     wcs: SpectralWcs,
 ) -> casa_imaging_model::CompiledProblem {
+    let channels = match &wcs {
+        SpectralWcs::Linear { channels, .. } => *channels,
+        SpectralWcs::Tabular {
+            channel_centres_hz, ..
+        } => channel_centres_hz.len(),
+    };
     let snapshot = compile_observation(ObservationSnapshotInput::new(
         vec![source_input(path, 1, row_count)],
         vec![(ReferenceDataKind::Measures, identity(90))],
@@ -3193,7 +3345,10 @@ fn compiled_problem_with_transformed_sampling(
             observatory_position: ItrfPosition::new(-1_601_188.0, -5_041_977.0, 3_554_875.0),
         });
     compile(ImagingRequest::new(
-        specification_with_sampling(sampling),
+        specification_with_sampling_and_basis(
+            sampling,
+            ReconstructionBasis::ChannelLocal { channels },
+        ),
         geometry.with_spectral(transformed),
         ProblemInputIdentities::new(snapshot),
         model_lifecycle(ModelStateIdentity::Empty),
@@ -3538,6 +3693,13 @@ fn specification() -> ProblemSpecification {
 }
 
 fn specification_with_sampling(sampling: SpectralSamplingLaw) -> ProblemSpecification {
+    specification_with_sampling_and_basis(sampling, ReconstructionBasis::Constant)
+}
+
+fn specification_with_sampling_and_basis(
+    sampling: SpectralSamplingLaw,
+    basis: ReconstructionBasis,
+) -> ProblemSpecification {
     ProblemSpecification::new(
         ScientificContract::new(
             SpectralContract::new(sampling, SpectralCoupling::Independent),
@@ -3550,7 +3712,7 @@ fn specification_with_sampling(sampling: SpectralSamplingLaw) -> ProblemSpecific
             ),
         ),
         ReconstructionContract::new(
-            ReconstructionBasis::Constant,
+            basis,
             ReconstructionAlgorithm::Hogbom,
             ReconstructionControls::new(10, 0.1, 0.0),
             PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),

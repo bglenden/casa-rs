@@ -1183,46 +1183,6 @@ impl WeightingExecutionState {
         fragment: &WeightingPlanFragment<'_>,
         mut selected: BoundSelectedObservation,
         problem: &CompiledProblem,
-    ) -> Result<SelectedObservationCompletion, WeightingGenerationError> {
-        if !matches!(self.phase, WeightingExecutionPhase::Empty)
-            || self.retained_observation.is_some()
-            || self.density.is_some()
-            || fragment.streaming != Some(WeightingStreamingMode::DensityInitial)
-        {
-            return Err(WeightingGenerationError::Evidence(WeightingEvidenceError));
-        }
-        fragment
-            .authorize_source_observation(context, problem, selected.residency_certificate())
-            .map_err(WeightingGenerationError::Evidence)?;
-        let mut density = begin_weighting_generation(problem, fragment.plan)
-            .map_err(WeightingGenerationError::Owner)?;
-        let completion = selected
-            .traverse(problem, |reported| {
-                let contributions = compiled_spectral_contributions(problem, &reported)?;
-                density.consume(problem, *reported.selected(), contributions)
-            })
-            .map_err(WeightingGenerationError::DensityTraversal)?;
-        self.density = Some(density);
-        self.retained_observation = Some(RetainedWeightingObservation {
-            selected,
-            attempt_id: context.attempt_id(),
-            owner_node: context.node().id.clone(),
-            lease_epoch: context.lease_epoch(),
-        });
-        Ok(completion)
-    }
-
-    /// Run the density prepass while excluding transform fit-only channels from W.
-    ///
-    /// This pass resolves roles but deliberately does not fit visibility data;
-    /// the terminal stream performs the sole row fit and subtraction.
-    pub fn traverse_density_source_with_continuum(
-        &mut self,
-        context: WorkExecutionContext<'_>,
-        fragment: &WeightingPlanFragment<'_>,
-        mut selected: BoundSelectedObservation,
-        problem: &CompiledProblem,
-        continuum: &SequentialContinuumTransform,
     ) -> Result<SelectedObservationCompletion, ContinuumDensityTraversalError> {
         if !matches!(self.phase, WeightingExecutionPhase::Empty)
             || self.retained_observation.is_some()
@@ -1238,9 +1198,16 @@ impl WeightingExecutionState {
             .map_err(ContinuumDensityTraversalError::Evidence)?;
         let mut density = begin_weighting_generation(problem, fragment.plan)
             .map_err(ContinuumDensityTraversalError::Owner)?;
+        let continuum = problem.visibility_transform();
         let completion = selected
             .traverse(problem, |reported| {
-                let contributions = density_spectral_contributions(problem, &reported, continuum)?;
+                let contributions = match continuum {
+                    Some(continuum) => {
+                        density_spectral_contributions(problem, &reported, continuum)?
+                    }
+                    None => compiled_spectral_contributions(problem, &reported)
+                        .map_err(ContinuumDensityCallbackError::Owner)?,
+                };
                 density
                     .consume(problem, *reported.selected(), contributions)
                     .map_err(ContinuumDensityCallbackError::Owner)
@@ -1268,28 +1235,12 @@ impl WeightingExecutionState {
     where
         E: Error + 'static,
     {
-        self.traverse_initial_stream_impl(context, fragment, problem, selected, None, emit)
-    }
-
-    /// Run the terminal initial-major stream through one sequential continuum transform.
-    pub fn traverse_initial_stream_with_continuum<E>(
-        &mut self,
-        context: WorkExecutionContext<'_>,
-        fragment: &WeightingPlanFragment<'_>,
-        problem: &CompiledProblem,
-        selected: Option<BoundSelectedObservation>,
-        continuum: &SequentialContinuumTransform,
-        emit: impl FnMut(&ReconstructionWeightedBlock) -> Result<(), E>,
-    ) -> Result<(), WeightingReplayError<E>>
-    where
-        E: Error + 'static,
-    {
         self.traverse_initial_stream_impl(
             context,
             fragment,
             problem,
             selected,
-            Some(continuum),
+            problem.visibility_transform(),
             emit,
         )
     }
@@ -1489,23 +1440,14 @@ impl WeightingExecutionState {
     where
         E: Error + 'static,
     {
-        self.traverse_reuse_stream_impl(context, fragment, selected, problem, None, emit)
-    }
-
-    /// Replay a later major through the same sequential continuum transform.
-    pub fn traverse_reuse_stream_with_continuum<E>(
-        &mut self,
-        context: WorkExecutionContext<'_>,
-        fragment: &WeightingPlanFragment<'_>,
-        selected: BoundSelectedObservation,
-        problem: &CompiledProblem,
-        continuum: &SequentialContinuumTransform,
-        emit: impl FnMut(&ReconstructionWeightedBlock) -> Result<(), E>,
-    ) -> Result<(), WeightingReplayError<E>>
-    where
-        E: Error + 'static,
-    {
-        self.traverse_reuse_stream_impl(context, fragment, selected, problem, Some(continuum), emit)
+        self.traverse_reuse_stream_impl(
+            context,
+            fragment,
+            selected,
+            problem,
+            problem.visibility_transform(),
+            emit,
+        )
     }
 
     fn traverse_reuse_stream_impl<E>(

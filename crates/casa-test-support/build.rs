@@ -50,6 +50,7 @@ fn main() {
     build.file("src/cpp/casacore_cpp_hogbom_shim.cpp");
     build.file("src/cpp/casacore_cpp_lattice_stats.cpp");
     build.file("src/cpp/casacore_cpp_gridder_shim.cpp");
+    build.file("src/cpp/casacore_cpp_spectral_shim.cpp");
 
     for include in &casacore.include_paths {
         build.include(include);

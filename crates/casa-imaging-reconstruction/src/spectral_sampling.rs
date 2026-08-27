@@ -487,4 +487,93 @@ mod tests {
         );
         assert!(cubic_terms(&[10.0, 20.0, 30.0], 15.0).is_empty());
     }
+
+    #[cfg(feature = "cpp-interop-tests")]
+    #[test]
+    fn t36_nearest_linear_cubic_edge_and_covariance_match_casacore_oracles() {
+        use casa_imaging_model::SpectralSamplingLaw;
+        use casa_test_support::spectral_interop::{
+            SpectralInterpolationMethod, SpectralInterpolationOracle,
+        };
+
+        let centres = [10.0, 20.0, 30.0, 40.0];
+        let boundaries = [5.0, 15.0, 25.0, 35.0, 45.0];
+        let cases = [
+            (
+                SpectralInterpolationMethod::Nearest,
+                nearest_terms(&centres, &boundaries, 26.0),
+                26.0,
+            ),
+            (
+                SpectralInterpolationMethod::Linear,
+                linear_terms(&centres, &boundaries, 25.0),
+                25.0,
+            ),
+            (
+                SpectralInterpolationMethod::Cubic,
+                cubic_terms(&centres, 25.0),
+                25.0,
+            ),
+        ];
+        for (method, rust, coordinate) in cases {
+            let casa = SpectralInterpolationOracle::coefficients(&centres, coordinate, method)
+                .expect("CASA/casacore spectral coefficient oracle");
+            assert!(casa.valid);
+            let dense = rust.iter().fold([0.0; 4], |mut dense, term| {
+                dense[term.output_channel() as usize] = term.factor();
+                dense
+            });
+            assert_eq!(dense.as_slice(), casa.coefficients.as_slice());
+        }
+
+        for method in [
+            SpectralInterpolationMethod::Nearest,
+            SpectralInterpolationMethod::Linear,
+            SpectralInterpolationMethod::Cubic,
+        ] {
+            let edge = SpectralInterpolationOracle::coefficients(&centres, 45.1, method)
+                .expect("CASA/casacore edge oracle");
+            assert!(!edge.valid);
+            assert!(
+                edge.coefficients
+                    .iter()
+                    .all(|coefficient| *coefficient == 0.0)
+            );
+        }
+        assert!(nearest_terms(&centres, &boundaries, 45.1).is_empty());
+        assert!(linear_terms(&centres, &boundaries, 45.1).is_empty());
+        assert!(cubic_terms(&centres, 45.1).is_empty());
+
+        let integrated = integration_terms(
+            &boundaries,
+            [12.0, 28.0],
+            SpectralEdgePolicy::PartialOverlap,
+            3,
+            20.0,
+        )
+        .expect("bounded partial-overlap integration");
+        assert_eq!(
+            integrated
+                .iter()
+                .map(|term| (term.output_channel(), term.factor()))
+                .collect::<Vec<_>>(),
+            vec![(0, 0.3), (1, 1.0), (2, 0.3)]
+        );
+        assert_eq!(
+            SpectralSamplingLaw::NEAREST.covariance(),
+            SpectralCovariance::PropagateIndependentSourceNoise
+        );
+        assert_eq!(
+            SpectralSamplingLaw::LINEAR.covariance(),
+            SpectralCovariance::PropagateIndependentSourceNoise
+        );
+        assert_eq!(
+            SpectralSamplingLaw::CUBIC.covariance(),
+            SpectralCovariance::PropagateIndependentSourceNoise
+        );
+        assert_eq!(
+            SpectralSamplingLaw::channel_integration(3).covariance(),
+            SpectralCovariance::PropagateIndependentSourceNoise
+        );
+    }
 }
