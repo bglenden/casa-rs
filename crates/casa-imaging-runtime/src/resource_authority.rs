@@ -2579,10 +2579,15 @@ fn validate_alternative(
     topology: &ResourceTopology,
     alternative: &DemandAlternative,
 ) -> Result<(), ResourceError> {
-    if alternative.scaling.minimum_workers == 0
-        || alternative.scaling.maximum_workers < alternative.scaling.minimum_workers
-        || alternative.demand.workers.hard < alternative.scaling.minimum_workers
-        || alternative.demand.workers.hard > alternative.scaling.maximum_workers
+    let worker_scaling_valid = if alternative.demand.workers.hard == 0 {
+        alternative.scaling.minimum_workers == 0 && alternative.scaling.maximum_workers == 0
+    } else {
+        alternative.scaling.minimum_workers > 0
+            && alternative.scaling.maximum_workers >= alternative.scaling.minimum_workers
+            && alternative.demand.workers.hard >= alternative.scaling.minimum_workers
+            && alternative.demand.workers.hard <= alternative.scaling.maximum_workers
+    };
+    if !worker_scaling_valid
         || alternative.scaling.maximum_batch_size == 0
         || alternative.scaling.maximum_tile_width == 0
         || alternative.scaling.maximum_tile_height == 0
@@ -4111,23 +4116,13 @@ fn detect_performance_cpu_cores() -> Option<u64> {
 
 #[cfg(target_os = "macos")]
 fn detect_unified_metal_device() -> bool {
-    let hardware_support = Command::new("/usr/sbin/system_profiler")
-        .args(["SPDisplaysDataType", "-json"])
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .is_some_and(|output| String::from_utf8_lossy(&output.stdout).contains("spdisplays_metal"));
     let (process_access, has_unified_memory) = detect_process_metal_access();
-    metal_inventory_available(hardware_support, process_access, has_unified_memory)
+    metal_inventory_available(process_access, has_unified_memory)
 }
 
 #[cfg(any(target_os = "macos", test))]
-fn metal_inventory_available(
-    hardware_support: bool,
-    process_access: bool,
-    has_unified_memory: bool,
-) -> bool {
-    hardware_support && process_access && has_unified_memory
+fn metal_inventory_available(process_access: bool, has_unified_memory: bool) -> bool {
+    process_access && has_unified_memory
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]

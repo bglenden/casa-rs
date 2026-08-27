@@ -29,7 +29,8 @@ use casa_imaging_model::{
 };
 use casa_imaging_reconstruction::{
     WeightingAlgorithmState, WeightingExecutionLimits, WeightingReplayChunk,
-    WeightingReplaySummary, begin_weighting_generation, plan_weighting,
+    WeightingReplaySummary, begin_natural_weighting_stream, begin_weighting_generation,
+    plan_weighting,
 };
 
 fn identity(seed: u8, scope: u8) -> LogicalIdentity {
@@ -412,6 +413,44 @@ fn replay_weights(
         .collect()
 }
 
+fn fused_stream(
+    problem: &casa_imaging_model::CompiledProblem,
+    plan: &casa_imaging_reconstruction::WeightingPlan,
+    samples: &[SelectedObservationSample],
+) -> (
+    WeightingAlgorithmState,
+    Vec<WeightingReplayChunk>,
+    WeightingReplaySummary,
+) {
+    let mut stream = if matches!(problem.weighting().scheme(), WeightingScheme::Natural) {
+        begin_natural_weighting_stream(problem, plan).expect("begin natural fused stream")
+    } else {
+        let mut density = begin_weighting_generation(problem, plan).expect("begin density pass");
+        for sample in samples {
+            density
+                .consume(problem, *sample, exact_contributions(sample))
+                .expect("density sample");
+        }
+        density
+            .finish_into_stream(problem, plan)
+            .expect("begin density-weighted fused stream")
+    };
+    let mut blocks = Vec::new();
+    for sample in samples {
+        if let Some(block) = stream
+            .consume(problem, *sample, exact_contributions(sample))
+            .expect("fused weighted sample")
+        {
+            blocks.push(block);
+        }
+    }
+    let (final_block, state, summary) = stream.finish().expect("finish fused stream");
+    if let Some(block) = final_block {
+        blocks.push(block);
+    }
+    (state, blocks, summary)
+}
+
 #[test]
 fn compiler_commitment_freezes_only_after_two_exhaustive_owner_passes() {
     let problem = problem(
@@ -501,6 +540,51 @@ fn casa_global_natural_uniform_and_briggs_formulas_are_preserved() {
     {
         let expected = input / (input * expected_f2 + 1.0);
         assert!((actual - expected).abs() <= 1.0e-15);
+    }
+}
+
+#[test]
+fn fused_terminal_stream_is_identical_to_separate_sum_weight_and_replay_passes() {
+    for (scheme, scope) in [
+        (WeightingScheme::Natural, WeightDensityScope::NotApplicable),
+        (
+            WeightingScheme::Uniform,
+            WeightDensityScope::GlobalSelection,
+        ),
+        (
+            WeightingScheme::Briggs { robust: 0.5 },
+            WeightDensityScope::GlobalSelection,
+        ),
+    ] {
+        let problem = problem(scheme, scope, None);
+        let samples = exact_samples(&problem);
+        let plan = plan_weighting(
+            &problem,
+            WeightingExecutionLimits::new(3, 2).expect("limits"),
+        )
+        .expect("plan");
+        let separate =
+            freeze_weighting_generation(&problem, &plan, &samples).expect("separate generation");
+        let (separate_blocks, separate_summary) = replay(&separate, &problem, &plan, &samples);
+        let (fused, fused_blocks, fused_summary) = fused_stream(&problem, &plan, &samples);
+
+        assert_eq!(fused.generation_id(), separate.generation_id());
+        assert_eq!(fused.sum_weights(), separate.sum_weights());
+        assert_eq!(fused_summary.coverage(), separate_summary.coverage());
+        assert_eq!(
+            fused_summary.sample_count(),
+            separate_summary.sample_count()
+        );
+        assert_eq!(fused_summary.block_count(), separate_summary.block_count());
+        let weights = |blocks: &[WeightingReplayChunk]| {
+            blocks
+                .iter()
+                .flat_map(WeightingReplayChunk::samples)
+                .flat_map(|sample| sample.spectral_values())
+                .map(|value| value.imaging_weight())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(weights(&fused_blocks), weights(&separate_blocks));
     }
 }
 

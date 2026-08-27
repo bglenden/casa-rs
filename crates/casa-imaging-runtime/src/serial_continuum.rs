@@ -20,13 +20,13 @@ use casa_imaging_reconstruction::{
 
 use crate::{
     AttemptBoundObservationCompletion, CompleteDataOperatorResult, CompleteDataPlanFragment,
-    CompleteDataPreparedState, ContinuumPassIdentity, FenceKind, ImplementationContractMetadata,
-    ImplementationRegistry, ImplementationRegistryId, IoMeasurement, LeaseResource,
-    MajorCycleOperatorResult, MajorCycleOperatorState, ObservationReadCompletionContext,
-    ResourceMeasurement, SelectedObservationSourceResources, SerialMfsOperatorState,
-    WeightingExecutionState, WeightingPlanFragment, WeightingReplayCompletion, WorkDependency,
-    WorkExecutionContext, WorkImplementation, WorkImplementationId, WorkKind, WorkMeasurements,
-    WorkNodeId,
+    CompleteDataPreparedState, ContinuumPassIdentity, FenceKind, FrozenWeightingArtifact,
+    ImplementationContractMetadata, ImplementationRegistry, ImplementationRegistryId,
+    IoMeasurement, LeaseResource, MajorCycleOperatorResult, MajorCycleOperatorState,
+    ObservationReadCompletionContext, ResourceMeasurement, SelectedObservationSourceResources,
+    SerialMfsOperatorState, WeightingExecutionState, WeightingPlanFragment,
+    WeightingReplayCompletion, WorkDependency, WorkExecutionContext, WorkImplementation,
+    WorkImplementationId, WorkKind, WorkMeasurements, WorkNodeId,
 };
 use casa_imaging_reconstruction::WeightingPlan;
 use casa_ms::{BoundSelectedObservation, ModelDataWrite, SelectedObservationCompletion};
@@ -276,10 +276,159 @@ struct ModelColumnWorker {
 }
 
 pub(crate) struct ModelDataCellWrite {
+    address: casa_imaging_model::SelectedSampleAddress,
+    value: num_complex::Complex32,
+}
+
+struct SelectedModelDataCoverage {
+    selection: Arc<casa_imaging_model::ObservationSelection>,
+    row: usize,
+    channel: usize,
+    correlation: usize,
+    written: u64,
+}
+
+struct ExpectedModelDataAddress {
     physical_row: u64,
+    data_description_id: u32,
+    spectral_window_id: u32,
+    polarization_id: u32,
     channel_index: u32,
     correlation_index: u32,
-    value: num_complex::Complex32,
+}
+
+impl SelectedModelDataCoverage {
+    fn new(selection: Arc<casa_imaging_model::ObservationSelection>) -> Self {
+        Self {
+            selection,
+            row: 0,
+            channel: 0,
+            correlation: 0,
+            written: 0,
+        }
+    }
+
+    fn push(&mut self, address: casa_imaging_model::SelectedSampleAddress) -> io::Result<()> {
+        let Some(expected) = self.expected()? else {
+            return Err(io::Error::other(
+                "MODEL_DATA replay exceeded the exact selected write set",
+            ));
+        };
+        if address.physical_row != expected.physical_row
+            || u32::try_from(address.data_description_id).ok() != Some(expected.data_description_id)
+            || address.spectral_window_id != expected.spectral_window_id
+            || address.polarization_id != expected.polarization_id
+            || address.channel_index != expected.channel_index
+            || address.correlation_index != expected.correlation_index
+        {
+            return Err(io::Error::other(format!(
+                "MODEL_DATA replay address ({}, {}, {}) did not match selected address ({}, {}, {})",
+                address.physical_row,
+                address.channel_index,
+                address.correlation_index,
+                expected.physical_row,
+                expected.channel_index,
+                expected.correlation_index,
+            )));
+        }
+        self.written = self
+            .written
+            .checked_add(1)
+            .ok_or_else(|| io::Error::other("MODEL_DATA sample count overflowed"))?;
+        self.advance()?;
+        Ok(())
+    }
+
+    fn finish(&self, expected_samples: u64) -> io::Result<()> {
+        if self.written != expected_samples || self.expected()?.is_some() {
+            return Err(io::Error::other(format!(
+                "MODEL_DATA wrote {} samples without exhausting the exact selected write set of {expected_samples}",
+                self.written
+            )));
+        }
+        Ok(())
+    }
+
+    fn expected(&self) -> io::Result<Option<ExpectedModelDataAddress>> {
+        let Some(row) = self.selection.rows().ordered_main_rows().get(self.row) else {
+            return Ok(None);
+        };
+        let data_description = self
+            .selection
+            .data_descriptions()
+            .iter()
+            .find(|selection| selection.data_description_id() == row.data_description_id())
+            .ok_or_else(|| io::Error::other("selected MODEL_DATA DDID is absent"))?;
+        let spectral_window = self
+            .selection
+            .spectral_windows()
+            .iter()
+            .find(|selection| {
+                selection.spectral_window_id() == data_description.spectral_window_id()
+            })
+            .ok_or_else(|| io::Error::other("selected MODEL_DATA SPW is absent"))?;
+        let correlations = self
+            .selection
+            .correlations()
+            .iter()
+            .find(|selection| selection.polarization_id() == data_description.polarization_id())
+            .ok_or_else(|| io::Error::other("selected MODEL_DATA polarization is absent"))?;
+        let channel = spectral_window
+            .channel_indices()
+            .get(self.channel)
+            .ok_or_else(|| io::Error::other("selected MODEL_DATA channel is absent"))?;
+        let correlation = correlations
+            .products()
+            .get(self.correlation)
+            .ok_or_else(|| io::Error::other("selected MODEL_DATA correlation is absent"))?;
+        Ok(Some(ExpectedModelDataAddress {
+            physical_row: row.physical_row(),
+            data_description_id: data_description.data_description_id(),
+            spectral_window_id: data_description.spectral_window_id(),
+            polarization_id: data_description.polarization_id(),
+            channel_index: *channel,
+            correlation_index: correlation.correlation_index(),
+        }))
+    }
+
+    fn advance(&mut self) -> io::Result<()> {
+        let row = self
+            .selection
+            .rows()
+            .ordered_main_rows()
+            .get(self.row)
+            .ok_or_else(|| io::Error::other("selected MODEL_DATA row is absent"))?;
+        let data_description = self
+            .selection
+            .data_descriptions()
+            .iter()
+            .find(|selection| selection.data_description_id() == row.data_description_id())
+            .ok_or_else(|| io::Error::other("selected MODEL_DATA DDID is absent"))?;
+        let spectral_window = self
+            .selection
+            .spectral_windows()
+            .iter()
+            .find(|selection| {
+                selection.spectral_window_id() == data_description.spectral_window_id()
+            })
+            .ok_or_else(|| io::Error::other("selected MODEL_DATA SPW is absent"))?;
+        let correlations = self
+            .selection
+            .correlations()
+            .iter()
+            .find(|selection| selection.polarization_id() == data_description.polarization_id())
+            .ok_or_else(|| io::Error::other("selected MODEL_DATA polarization is absent"))?;
+        self.correlation += 1;
+        if self.correlation == correlations.products().len() {
+            self.correlation = 0;
+            self.channel += 1;
+            if self.channel == spectral_window.channel_indices().len() {
+                self.channel = 0;
+                self.row += 1;
+            }
+        }
+        Ok(())
+    }
 }
 
 enum ModelColumnCommand {
@@ -308,17 +457,18 @@ impl ModelColumnWorker {
             .name("model-data-write".to_string())
             .stack_size(MODEL_COLUMN_WORKER_STACK_BYTES)
             .spawn(move || {
+                let mut coverage = SelectedModelDataCoverage::new(Arc::clone(&selection));
                 let mut writer = match ModelDataWrite::begin(path, &expected, &selection) {
-                        Ok(writer) => {
-                            let _ = ready_sender.send(Ok(()));
-                            writer
-                        }
-                        Err(error) => {
-                            let message = error.to_string();
-                            let _ = ready_sender.send(Err(message.clone()));
-                            return Err(io::Error::other(message));
-                        }
-                    };
+                    Ok(writer) => {
+                        let _ = ready_sender.send(Ok(()));
+                        writer
+                    }
+                    Err(error) => {
+                        let message = error.to_string();
+                        let _ = ready_sender.send(Err(message.clone()));
+                        return Err(io::Error::other(message));
+                    }
+                };
                 let mut written_samples = 0_u64;
                 let completed_samples = loop {
                     let command = receiver
@@ -327,16 +477,18 @@ impl ModelColumnWorker {
                     match command {
                         ModelColumnCommand::Write { values, reply } => {
                             let result = (|| {
-                                written_samples =
-                                    written_samples.checked_add(values.len() as u64).ok_or_else(
-                                        || io::Error::other("MODEL_DATA sample count overflowed"),
-                                    )?;
+                                written_samples = written_samples
+                                    .checked_add(values.len() as u64)
+                                    .ok_or_else(|| {
+                                        io::Error::other("MODEL_DATA sample count overflowed")
+                                    })?;
                                 for cell in values {
+                                    coverage.push(cell.address)?;
                                     writer
                                         .write(
-                                            cell.physical_row,
-                                            cell.channel_index,
-                                            cell.correlation_index,
+                                            cell.address.physical_row,
+                                            cell.address.channel_index,
+                                            cell.address.correlation_index,
                                             cell.value,
                                         )
                                         .map_err(io::Error::other)?;
@@ -358,11 +510,7 @@ impl ModelColumnWorker {
                             expected_samples,
                             generation,
                         } => {
-                            if written_samples != expected_samples {
-                                return Err(io::Error::other(format!(
-                                    "MODEL_DATA wrote {written_samples} samples, expected {expected_samples}"
-                                )));
-                            }
+                            coverage.finish(expected_samples)?;
                             writer.complete(generation).map_err(io::Error::other)?;
                             break written_samples;
                         }
@@ -388,9 +536,7 @@ impl ModelColumnWorker {
                 let address = sample.address();
                 let predicted = sample.predicted();
                 ModelDataCellWrite {
-                    physical_row: address.physical_row,
-                    channel_index: address.channel_index,
-                    correlation_index: address.correlation_index,
+                    address,
                     value: num_complex::Complex32::new(predicted.re as f32, predicted.im as f32),
                 }
             })
@@ -499,6 +645,8 @@ struct SerialContinuumExecutorState {
     selected: Option<BoundSelectedObservation>,
     selected_completion: Option<SelectedObservationCompletion>,
     weighting: WeightingExecutionState,
+    pending_frozen_reservation: Option<Arc<crate::FrozenWeightingReservation>>,
+    frozen_weighting: Option<FrozenWeightingArtifact>,
     prepared: Option<CompleteDataPreparedState>,
     operator: Option<SerialMfsOperatorState>,
     complete_data: Option<CompleteDataOperatorResult>,
@@ -654,6 +802,8 @@ impl SerialContinuumExecutor {
                 selected: Some(selected),
                 selected_completion: None,
                 weighting: WeightingExecutionState::new(),
+                pending_frozen_reservation: None,
+                frozen_weighting: None,
                 prepared: None,
                 operator: None,
                 complete_data: None,
@@ -688,15 +838,55 @@ impl SerialContinuumExecutor {
         self
     }
 
+    /// Attach immutable weighting produced by the initial major to a later pass.
+    #[must_use]
+    pub fn with_frozen_weighting(mut self, artifact: FrozenWeightingArtifact) -> Self {
+        self.state
+            .get_mut()
+            .expect("new serial continuum executor mutex is not poisoned")
+            .weighting = WeightingExecutionState::with_frozen_artifact(artifact);
+        self
+    }
+
+    /// Attach the Resource Authority reservation spanning later major plans.
+    #[must_use]
+    pub fn with_frozen_weighting_reservation(
+        mut self,
+        reservation: crate::FrozenWeightingReservation,
+    ) -> Self {
+        self.state
+            .get_mut()
+            .expect("new serial continuum executor mutex is not poisoned")
+            .pending_frozen_reservation = Some(Arc::new(reservation));
+        self
+    }
+
+    /// Consume immutable weighting retained after a successful major pass.
+    pub fn take_frozen_weighting(&self) -> Option<FrozenWeightingArtifact> {
+        self.state.lock().ok()?.frozen_weighting.take()
+    }
+
     fn fragment(&self) -> WeightingPlanFragment<'_> {
-        WeightingPlanFragment::new_for_pass(
+        let mode = match self.pass.phase() {
+            crate::ContinuumPassPhase::FinalMajor => crate::WeightingStreamingMode::Reuse,
+            crate::ContinuumPassPhase::InitialMajor => match self.problem.weighting().scheme() {
+                casa_imaging_model::WeightingScheme::Natural => {
+                    crate::WeightingStreamingMode::NaturalInitial
+                }
+                casa_imaging_model::WeightingScheme::Uniform
+                | casa_imaging_model::WeightingScheme::Briggs { .. }
+                | casa_imaging_model::WeightingScheme::BriggsBandwidthTaper { .. } => {
+                    crate::WeightingStreamingMode::DensityInitial
+                }
+            },
+        };
+        WeightingPlanFragment::streaming_for_pass(
             &self.weighting_plan,
             crate::serial_continuum_plan::pass_node("transaction-read", self.pass),
             self.source_resources.clone(),
             self.id.clone(),
-            self.id.clone(),
-            self.id.clone(),
             self.pass,
+            mode,
         )
     }
 
@@ -770,6 +960,75 @@ impl SerialContinuumExecutor {
         state.lifecycle = Some(lifecycle);
         Ok(())
     }
+
+    fn run_stream(
+        &self,
+        state: &mut SerialContinuumExecutorState,
+        context: WorkExecutionContext<'_>,
+        fragment: &WeightingPlanFragment<'_>,
+        selected: Option<BoundSelectedObservation>,
+    ) -> Result<(), io::Error> {
+        if let Some(sink) = &self.final_visibility_sink {
+            sink.lock()
+                .map_err(|_| io::Error::other("final visibility sink poisoned"))?
+                .begin_replay()?;
+        }
+        let prepared = state
+            .prepared
+            .take()
+            .ok_or_else(|| io::Error::other("FFT preparation did not run"))?;
+        let mut operator = prepared
+            .begin_streaming(context, &self.problem, &self.complete_data)
+            .map_err(io::Error::other)?;
+        operator
+            .bind_major_cycle_model(
+                state
+                    .prepared_model
+                    .as_ref()
+                    .ok_or_else(|| io::Error::other("final-model preparation missing"))?
+                    .for_replay(context)?,
+            )
+            .map_err(io::Error::other)?;
+        state.operator = Some(operator);
+        let SerialContinuumExecutorState {
+            weighting,
+            operator,
+            ..
+        } = state;
+        let mut consume = |block: &casa_imaging_reconstruction::WeightingReplayChunk| {
+            let predicted = operator
+                .as_mut()
+                .ok_or_else(|| io::Error::other("complete-data operator missing"))?
+                .consume_streaming_block(block)
+                .map_err(io::Error::other)?;
+            if !predicted.is_empty()
+                && let Some(sink) = &self.final_visibility_sink
+            {
+                sink.lock()
+                    .map_err(|_| io::Error::other("final visibility sink poisoned"))?
+                    .consume(predicted)?;
+            }
+            Ok::<(), io::Error>(())
+        };
+        match fragment.streaming_mode() {
+            Some(crate::WeightingStreamingMode::NaturalInitial)
+            | Some(crate::WeightingStreamingMode::DensityInitial) => weighting
+                .traverse_initial_stream(context, fragment, &self.problem, selected, &mut consume)
+                .map_err(io::Error::other),
+            Some(crate::WeightingStreamingMode::Reuse) => weighting
+                .traverse_reuse_stream(
+                    context,
+                    fragment,
+                    selected.ok_or_else(|| {
+                        io::Error::other("later-major selected observation missing")
+                    })?,
+                    &self.problem,
+                    &mut consume,
+                )
+                .map_err(io::Error::other),
+            None => Err(io::Error::other("streaming weighting mode missing")),
+        }
+    }
 }
 
 impl WorkImplementation for SerialContinuumExecutor {
@@ -810,65 +1069,27 @@ impl WorkImplementation for SerialContinuumExecutor {
                 .selected
                 .take()
                 .ok_or_else(|| io::Error::other("selected observation already consumed"))?;
-            state.selected_completion = Some(
-                state
-                    .weighting
-                    .traverse_and_retain_source(context, &fragment, selected, &self.problem, |_| {
-                        Ok::<_, io::Error>(())
-                    })
-                    .map_err(io::Error::other)?,
-            );
-        } else if context.node().id == *fragment.generation_node() {
-            state
-                .weighting
-                .traverse_generation(context, &fragment, &self.problem)
-                .map_err(io::Error::other)?;
-        } else if context.node().id == *fragment.replay_node() {
-            if let Some(sink) = &self.final_visibility_sink {
-                sink.lock()
-                    .map_err(|_| io::Error::other("final visibility sink poisoned"))?
-                    .begin_replay()?;
+            match fragment.streaming_mode() {
+                Some(crate::WeightingStreamingMode::NaturalInitial) => {
+                    self.run_stream(&mut state, context, &fragment, Some(selected))?;
+                }
+                Some(crate::WeightingStreamingMode::DensityInitial) => {
+                    state.selected_completion = Some(
+                        state
+                            .weighting
+                            .traverse_density_source(context, &fragment, selected, &self.problem)
+                            .map_err(io::Error::other)?,
+                    );
+                }
+                Some(crate::WeightingStreamingMode::Reuse) => {
+                    self.run_stream(&mut state, context, &fragment, Some(selected))?;
+                }
+                None => return Err(io::Error::other("streaming weighting mode missing")),
             }
-            let prepared = state
-                .prepared
-                .take()
-                .ok_or_else(|| io::Error::other("FFT preparation did not run"))?;
-            let mut operator = state
-                .weighting
-                .begin_complete_data(context, &self.complete_data, &self.problem, prepared)
-                .map_err(io::Error::other)?;
-            operator
-                .bind_major_cycle_model(
-                    state
-                        .prepared_model
-                        .as_ref()
-                        .ok_or_else(|| io::Error::other("final-model preparation missing"))?
-                        .for_replay(context)?,
-                )
-                .map_err(io::Error::other)?;
-            state.operator = Some(operator);
-            let SerialContinuumExecutorState {
-                weighting,
-                operator,
-                ..
-            } = &mut *state;
-            weighting
-                .traverse_replay(context, &fragment, &self.problem, |block| {
-                    let predicted = operator
-                        .as_mut()
-                        .ok_or_else(|| io::Error::other("complete-data operator missing"))?
-                        .consume_weighted_block(block)
-                        .map_err(io::Error::other)?;
-                    if !predicted.is_empty()
-                        && let Some(sink) = &self.final_visibility_sink
-                    {
-                        sink.lock()
-                            .map_err(|_| io::Error::other("final visibility sink poisoned"))?
-                            .consume(predicted)?;
-                    }
-                    Ok::<(), io::Error>(())
-                })
-                .map_err(io::Error::other)?;
+        } else if context.node().id == *fragment.generation_node()
+            && fragment.streaming_mode() == Some(crate::WeightingStreamingMode::DensityInitial)
+        {
+            self.run_stream(&mut state, context, &fragment, None)?;
         } else if self
             .complete_data
             .reconciliation_node()
@@ -983,13 +1204,7 @@ impl WorkImplementation for SerialContinuumExecutor {
             .state
             .lock()
             .map_err(|_| io::Error::other("serial continuum state poisoned"))?;
-        if completion.owner_node() == fragment.generation_node() {
-            return state
-                .weighting
-                .complete_generation(completion)
-                .map_err(io::Error::other);
-        }
-        if completion.owner_node() == fragment.replay_node() {
+        if completion.owner_node() == fragment.streaming_node() {
             let predecessor = state
                 .weighting
                 .complete_replay(completion)
@@ -998,6 +1213,13 @@ impl WorkImplementation for SerialContinuumExecutor {
                 .operator
                 .take()
                 .ok_or_else(|| io::Error::other("complete-data operator missing"))?;
+            let frozen_weighting = state.weighting.frozen_artifact().and_then(|artifact| {
+                if let Some(reservation) = state.pending_frozen_reservation.take() {
+                    Some(artifact.with_cross_plan_reservation(reservation))
+                } else {
+                    artifact.has_cross_plan_reservation().then_some(artifact)
+                }
+            });
             let replay = state
                 .weighting
                 .replay_completion()
@@ -1007,7 +1229,9 @@ impl WorkImplementation for SerialContinuumExecutor {
                     .map_err(|_| io::Error::other("final visibility sink poisoned"))?
                     .finish(replay)?;
             }
-            state.complete_data = Some(operator.complete(replay).map_err(io::Error::other)?);
+            let complete_data = operator.complete(replay).map_err(io::Error::other)?;
+            state.frozen_weighting = frozen_weighting;
+            state.complete_data = Some(complete_data);
             return Ok(predecessor);
         }
         let selected = state

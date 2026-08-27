@@ -41,9 +41,9 @@ use casa_imaging_reconstruction::{
 use casa_imaging_runtime::{
     AttemptBoundObservationCompletion, BuildIdentity, ExecutionAttemptId, ExecutionProvenance,
     ExecutionReceipt, ExecutionReceiptStore, FenceKind, FinalVisibilityReplay,
-    ImplementationContractMetadata, ImplementationRegistry, ImplementationRegistryId,
-    ObservationReadCompletionContext, PlannerCostModelProfileBootstrap, PlanningBindings,
-    ResourceAuthority, ResourcePolicy, RunBindings, RunToCompletion,
+    FrozenWeightingReservation, ImplementationContractMetadata, ImplementationRegistry,
+    ImplementationRegistryId, ObservationReadCompletionContext, PlannerCostModelProfileBootstrap,
+    PlanningBindings, ResourceAuthority, ResourcePolicy, RunBindings, RunToCompletion,
     SerialContinuumExecutionPolicy, SerialContinuumExecutor, SerialContinuumPassInput,
     SerialContinuumPlan, SerialContinuumRegistry, SerialProductPublicationExecutor,
     SerialProductPublicationPlan, SerialProductPublicationPolicy, SerialProductPublicationRegistry,
@@ -324,6 +324,15 @@ where
     };
     let minor_node = planned.minor_cycle_node().cloned();
     let (physical, weighting, complete, resources, pass, _) = planned.into_parts();
+    let frozen_reservation = (!matches!(algorithm, ReconstructionAlgorithm::Dirty))
+        .then(|| {
+            FrozenWeightingReservation::acquire(
+                &runtime.authority,
+                runtime.resource_policy.clone(),
+                weighting.planned_residency(),
+            )
+        })
+        .transpose()?;
     let selected = initial_access.open(problem)?;
     let mut executor = SerialContinuumExecutor::new(
         runtime.implementation.clone(),
@@ -337,6 +346,9 @@ where
         SerialContinuumPassInput::Initial,
     );
     if !matches!(algorithm, ReconstructionAlgorithm::Dirty) {
+        executor = executor.with_frozen_weighting_reservation(
+            frozen_reservation.expect("non-dirty execution reserves frozen weighting"),
+        );
         let program = MinorCycleProgram::for_algorithm(
             algorithm.clone(),
             problem.reconstruction().controls(),
@@ -404,6 +416,10 @@ where
         ReconstructionAlgorithm::Hogbom
         | ReconstructionAlgorithm::Clark
         | ReconstructionAlgorithm::Multiscale { .. } => {
+            let mut frozen_weighting = registry
+                .implementation()
+                .take_frozen_weighting()
+                .ok_or_else(|| boxed("initial major omitted frozen weighting"))?;
             let mut minor = registry
                 .implementation()
                 .take_minor_completion()
@@ -493,7 +509,8 @@ where
                     access.open(problem)?,
                     ExecutableModelProblem::from_compiled(problem.clone())?,
                     SerialContinuumPassInput::FinalMajor(final_input),
-                );
+                )
+                .with_frozen_weighting(frozen_weighting);
                 let mut terminal_replay = None;
                 if continue_cleaning {
                     let remaining = controls
@@ -541,6 +558,10 @@ where
                 let attempt = major_cycle_attempt(runtime.attempts[1], ordinal);
                 run_phase(problem, &final_plan, &registry, &runtime, attempt)?;
                 let receipt = runtime.receipts.open(attempt)?;
+                frozen_weighting = registry
+                    .implementation()
+                    .take_frozen_weighting()
+                    .ok_or_else(|| boxed("later major omitted reusable frozen weighting"))?;
                 if continue_cleaning {
                     minor = registry
                         .implementation()
@@ -575,7 +596,6 @@ where
         problem,
         scientific,
         final_reconstruction_mask,
-        input.observation,
         runtime,
         publication,
         PriorPhaseOutcome {
@@ -658,7 +678,6 @@ fn publish_products<S>(
     problem: &CompiledProblem,
     scientific: MajorCycleCompletion,
     reconstruction_mask: Option<casa_imaging_reconstruction::ReconstructionMask>,
-    observation: SelectedObservationResolutionRequest,
     runtime: ApplicationRuntime,
     publication_config: ApplicationPublication<S>,
     prior: PriorPhaseOutcome,
@@ -675,10 +694,6 @@ where
     let authority = ProductGenerationAuthority::bind(problem);
     let planned_products = authority.plan(&sources, &publication_config.controls)?;
 
-    let resolved = resolve_selected_observation(observation)?;
-    let (_, access) = resolved.into_parts();
-    let access = access.with_minimum_content_budget(problem)?;
-    let residency = access.certify_residency(problem)?;
     let model_data_receipt = prior
         .visibility_replay
         .as_ref()
@@ -696,7 +711,6 @@ where
         &planning_registry,
         SerialProductPublicationPolicy::new(
             runtime.implementation.clone(),
-            residency,
             runtime.storage_io.clone(),
             runtime.stage_nanos,
             runtime.confidence_parts_per_million,
@@ -711,10 +725,8 @@ where
     let (physical, publication) = publication_plan.into_parts();
     let executor = SerialProductPublicationExecutor::new(
         runtime.implementation.clone(),
-        problem.clone(),
         publication,
         sealed,
-        access.open(problem)?,
         publication_config.sink,
     )?;
     let registry = SerialProductPublicationRegistry::new(

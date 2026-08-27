@@ -63,13 +63,13 @@ use self::stman_aipsio::{
     read_stman_array_column_rows, read_stman_file, read_stman_scalar_column,
     read_stman_scalar_column_rows, write_stman_file,
 };
-pub(crate) use self::table_control::RefTableDatContents;
+pub(crate) use self::table_control::{
+    RefTableDatContents, TableDatContents, TableDatResult, read_table_dat_dispatch,
+};
+pub(crate) use self::tiled_stman::TiledReadMetadata;
 use self::virtual_engine::{VirtualContext, is_virtual_engine, lookup_engine};
 
-use self::table_control::{
-    TableDatContents, TableDatResult, read_table_dat_dispatch, write_concat_table_dat,
-    write_ref_table_dat, write_table_dat,
-};
+use self::table_control::{write_concat_table_dat, write_ref_table_dat, write_table_dat};
 
 pub(crate) const TABLE_CONTROL_FILE: &str = "table.dat";
 pub(crate) const TABLE_DATA_FILE_PREFIX: &str = "table.f";
@@ -85,6 +85,28 @@ struct SelectedArray2DChannelRead<'a> {
 struct SelectedArray1DRead<'a> {
     column: &'a str,
     selected_rows: &'a [usize],
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct RetainedTableReadMetadata {
+    pub(crate) table_dat: TableDatContents,
+    pub(crate) tiled: TiledReadMetadata,
+}
+
+impl RetainedTableReadMetadata {
+    pub(crate) fn open(
+        table_path: &Path,
+        table_dat: TableDatContents,
+    ) -> Result<Self, StorageError> {
+        let tiled = TiledReadMetadata::open(table_path, &table_dat.column_set.data_managers)?;
+        Ok(Self { table_dat, tiled })
+    }
+
+    pub(crate) fn retained_heap_bytes(&self) -> Option<usize> {
+        self.table_dat
+            .retained_heap_bytes()?
+            .checked_add(self.tiled.retained_heap_bytes()?)
+    }
 }
 
 fn reorder_row_to_requested_columns(row: &RecordValue, columns: &[&str]) -> RecordValue {
@@ -293,6 +315,8 @@ pub(crate) struct StorageSnapshot {
     pub(crate) virtual_bindings: Vec<virtual_engine::VirtualColumnBinding>,
     /// Data manager info extracted from table.dat (empty for memory tables).
     pub(crate) dm_info: Vec<DataManagerInfo>,
+    /// Parsed immutable storage metadata retained by a lazy plain-table open.
+    pub(crate) retained_read_metadata: Option<RetainedTableReadMetadata>,
 }
 
 #[derive(Debug, Clone)]
@@ -1284,7 +1308,7 @@ impl CompositeStorage {
         }
         match table_dat {
             TableDatResult::Plain(table_dat) => {
-                let snapshot = self.load_plain_table_metadata(table_path, &table_dat)?;
+                let snapshot = self.load_plain_table_metadata(table_path, table_dat)?;
                 if profile_open {
                     eprintln!(
                         "table_open_profile path={} stage=storage_load_metadata_only/plain_metadata rows={} dm_count={} elapsed_s={:.3}",
@@ -1492,6 +1516,23 @@ impl CompositeStorage {
             });
         };
 
+        self.load_named_required_scalar_column_rows_from_plain(
+            table_path,
+            &table_dat,
+            columns,
+            selected_rows,
+            row_hint,
+        )
+    }
+
+    pub(crate) fn load_named_required_scalar_column_rows_from_plain(
+        &self,
+        table_path: &Path,
+        table_dat: &TableDatContents,
+        columns: &HashSet<&str>,
+        selected_rows: &[usize],
+        row_hint: Option<u64>,
+    ) -> Result<RequiredScalarColumnSnapshot, StorageError> {
         if table_dat
             .column_set
             .data_managers
@@ -1503,7 +1544,7 @@ impl CompositeStorage {
                 .map(|column| {
                     self.load_plain_scalar_column_rows(
                         table_path,
-                        &table_dat,
+                        table_dat,
                         column,
                         selected_rows,
                         row_hint,
@@ -1572,7 +1613,7 @@ impl CompositeStorage {
             }
             let values = self.load_plain_scalar_column_rows(
                 table_path,
-                &table_dat,
+                table_dat,
                 column,
                 selected_rows,
                 row_hint,
@@ -1673,14 +1714,16 @@ impl CompositeStorage {
 
         match read_table_dat_dispatch(&control_path)? {
             TableDatResult::Plain(table_dat) => {
-                let request = SelectedArray2DChannelRead {
+                let read_metadata =
+                    TiledReadMetadata::open(table_path, &table_dat.column_set.data_managers)?;
+                self.load_array_column_rows_2d_channel_range_typed_from_plain(
+                    table_path,
+                    &table_dat,
+                    &read_metadata,
                     column,
                     selected_rows,
                     channel_start,
                     channel_count,
-                };
-                self.load_plain_array_column_rows_2d_channel_range_typed(
-                    table_path, &table_dat, request,
                 )
             }
             TableDatResult::Ref(_) | TableDatResult::Concat(_) => {
@@ -1689,6 +1732,31 @@ impl CompositeStorage {
                 )))
             }
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn load_array_column_rows_2d_channel_range_typed_from_plain(
+        &self,
+        table_path: &Path,
+        table_dat: &TableDatContents,
+        read_metadata: &TiledReadMetadata,
+        column: &str,
+        selected_rows: &[usize],
+        channel_start: usize,
+        channel_count: usize,
+    ) -> Result<Option<SelectedArray2DCells>, StorageError> {
+        let request = SelectedArray2DChannelRead {
+            column,
+            selected_rows,
+            channel_start,
+            channel_count,
+        };
+        self.load_plain_array_column_rows_2d_channel_range_typed(
+            table_path,
+            table_dat,
+            read_metadata,
+            request,
+        )
     }
 
     pub(crate) fn load_array_column_rows_1d_typed_with_row_hint(
@@ -1714,11 +1782,15 @@ impl CompositeStorage {
 
         match read_table_dat_dispatch(&control_path)? {
             TableDatResult::Plain(table_dat) => {
-                let request = SelectedArray1DRead {
+                let read_metadata =
+                    TiledReadMetadata::open(table_path, &table_dat.column_set.data_managers)?;
+                self.load_array_column_rows_1d_typed_from_plain(
+                    table_path,
+                    &table_dat,
+                    &read_metadata,
                     column,
                     selected_rows,
-                };
-                self.load_plain_array_column_rows_1d_typed(table_path, &table_dat, request)
+                )
             }
             TableDatResult::Ref(_) | TableDatResult::Concat(_) => {
                 Err(StorageError::FormatMismatch(format!(
@@ -1726,6 +1798,21 @@ impl CompositeStorage {
                 )))
             }
         }
+    }
+
+    pub(crate) fn load_array_column_rows_1d_typed_from_plain(
+        &self,
+        table_path: &Path,
+        table_dat: &TableDatContents,
+        read_metadata: &TiledReadMetadata,
+        column: &str,
+        selected_rows: &[usize],
+    ) -> Result<SelectedArray1DCells, StorageError> {
+        let request = SelectedArray1DRead {
+            column,
+            selected_rows,
+        };
+        self.load_plain_array_column_rows_1d_typed(table_path, table_dat, read_metadata, request)
     }
 
     /// Load a PlainTable from table.dat contents and data files.
@@ -1994,6 +2081,7 @@ impl CompositeStorage {
             virtual_columns,
             virtual_bindings: Vec::new(),
             dm_info,
+            retained_read_metadata: None,
         })
     }
 
@@ -2682,6 +2770,7 @@ impl CompositeStorage {
             virtual_columns: HashSet::new(),
             virtual_bindings: Vec::new(),
             dm_info: Vec::new(),
+            retained_read_metadata: None,
         };
         array_column_from_snapshot(&snapshot, column)
     }
@@ -2864,6 +2953,7 @@ impl CompositeStorage {
         &self,
         table_path: &Path,
         table_dat: &TableDatContents,
+        read_metadata: &TiledReadMetadata,
         request: SelectedArray2DChannelRead<'_>,
     ) -> Result<Option<SelectedArray2DCells>, StorageError> {
         let column = request.column;
@@ -2925,6 +3015,7 @@ impl CompositeStorage {
         match dm.type_name.as_str() {
             "TiledShapeStMan" => tiled_stman::load_tiled_column_rows_2d_channel_range_typed(
                 table_path,
+                read_metadata,
                 dm,
                 &table_dat.table_desc.columns,
                 &bound_cols,
@@ -2944,6 +3035,7 @@ impl CompositeStorage {
         &self,
         table_path: &Path,
         table_dat: &TableDatContents,
+        read_metadata: &TiledReadMetadata,
         request: SelectedArray1DRead<'_>,
     ) -> Result<SelectedArray1DCells, StorageError> {
         let column = request.column;
@@ -3005,6 +3097,7 @@ impl CompositeStorage {
         match dm.type_name.as_str() {
             "TiledColumnStMan" | "TiledShapeStMan" => tiled_stman::load_tiled_column_rows_1d_typed(
                 table_path,
+                read_metadata,
                 dm,
                 &table_dat.table_desc.columns,
                 &bound_cols,
@@ -3021,7 +3114,7 @@ impl CompositeStorage {
     fn load_plain_table_metadata(
         &self,
         table_path: &Path,
-        table_dat: &TableDatContents,
+        table_dat: TableDatContents,
     ) -> Result<StorageSnapshot, StorageError> {
         let schema = table_dat.to_table_schema()?;
         let keywords = table_dat.table_desc.table_keywords.clone();
@@ -3045,8 +3138,12 @@ impl CompositeStorage {
             }
         }
 
+        let row_count = table_dat.nrrow.max(table_dat.column_set.nrrow) as usize;
+        let dm_info = extract_dm_info(&table_dat);
+        let retained_read_metadata = Some(RetainedTableReadMetadata::open(table_path, table_dat)?);
+
         Ok(StorageSnapshot {
-            row_count: table_dat.nrrow.max(table_dat.column_set.nrrow) as usize,
+            row_count,
             rows: Vec::new(),
             undefined_cells: Vec::new(),
             keywords,
@@ -3055,7 +3152,8 @@ impl CompositeStorage {
             table_info: load_table_info(table_path),
             virtual_columns,
             virtual_bindings: Vec::new(),
-            dm_info: extract_dm_info(table_dat),
+            dm_info,
+            retained_read_metadata,
         })
     }
 
@@ -3159,6 +3257,7 @@ impl CompositeStorage {
             virtual_columns: HashSet::new(),
             virtual_bindings: Vec::new(),
             dm_info: vec![],
+            retained_read_metadata: None,
         })
     }
 
@@ -3219,6 +3318,7 @@ impl CompositeStorage {
             virtual_columns: HashSet::new(),
             virtual_bindings: Vec::new(),
             dm_info: vec![],
+            retained_read_metadata: None,
         })
     }
 

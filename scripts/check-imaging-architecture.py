@@ -51,15 +51,15 @@ ACCEPTED_ISSUE_OUTCOMES_SHA256 = (
     "1d2a77232fdc25a50053097b644b64cbdf0d21e1970590ec4180de6dce29738d"
 )
 ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256 = (
-    "2a926a786ddbad1e99dfd7cf73b8fb02547e34159ec07952f106d284dc6e2c35"
+    "daafa560c0e941fb3f2cea5c02a46de8a3363c2dd327cb839ef8ab2111f09835"
 )
 ACCEPTED_MATRIX_ROWS_SHA256 = (
-    "180c750802a15d82266f4333d65ec4afbdc97d1fd2bfec5f6bfd2ef749300c9e"
+    "0fdc583980ba1d7976ffa78e4803830d596c5803e209057f1840018c9947bf9a"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "778f7da5bd6096c576b53301fe25f75272ca931b4efcd723c74a82c0ae7f1dbe"
+    "0034d15937430f9a5007a2462406ccd8c317fc560673b3b1b46a606aeee95fb4"
 )
-ACCEPTED_MATRIX_CONTRACT_REVISION = 45
+ACCEPTED_MATRIX_CONTRACT_REVISION = 47
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "scientific-products-v1",
@@ -152,7 +152,7 @@ ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "global-weighting-v1",
         "laws",
-    ): "9fb09c33452bcc79cc14a774fa8b0a26f6899e5b2bcd035cbbc87aa58bb006b9",
+    ): "1aad4038f52298deca0b836ddc81ae59d29ac46d0bcbf44dc18c06f3a4cd582c",
     (
         "global-weighting-v1",
         "resource_gates",
@@ -1641,8 +1641,9 @@ def validate_t18_global_weighting_transfer(rows: list[dict[str, Any]]) -> None:
         "crates/casa-ms/src/selected_observation/spectral_contributions.rs::pub struct SelectedObservationTraversalSample",
         "crates/casa-ms/src/selected_observation/bound_observation.rs::pub fn traverse",
         "crates/casa-imaging-reconstruction/src/weighting.rs::pub fn plan_weighting",
+        "crates/casa-imaging-reconstruction/src/weighting.rs::pub fn begin_natural_weighting_stream",
         "crates/casa-imaging-reconstruction/src/weighting.rs::pub fn begin_weighting_generation",
-        "crates/casa-imaging-reconstruction/src/weighting.rs::struct WeightingReplayInputSample",
+        "crates/casa-imaging-reconstruction/src/weighting.rs::pub struct FusedWeightingPhase",
         "crates/casa-imaging-runtime/src/execution.rs::pub enum ClaimLifetime",
         "crates/casa-imaging-runtime/src/execution.rs::fn begin_draining",
         "crates/casa-imaging-runtime/src/execution.rs::fn validate_retained_claims",
@@ -1651,10 +1652,10 @@ def validate_t18_global_weighting_transfer(rows: list[dict[str, Any]]) -> None:
         "crates/casa-imaging-runtime/src/weighting.rs::pub struct SelectedObservationSourceResources",
         "crates/casa-imaging-runtime/src/weighting.rs::pub struct WeightingPlanFragment",
         "crates/casa-imaging-runtime/src/weighting.rs::pub struct WeightingExecutionState",
-        "crates/casa-imaging-runtime/src/weighting.rs::pub fn traverse_generation",
-        "crates/casa-imaging-runtime/src/weighting.rs::pub fn complete_generation",
-        "crates/casa-imaging-runtime/src/weighting.rs::pub fn traverse_replay",
-        "crates/casa-imaging-runtime/src/weighting.rs::pub fn complete_replay",
+        "crates/casa-imaging-runtime/src/weighting.rs::pub fn traverse_density_source",
+        "crates/casa-imaging-runtime/src/weighting.rs::pub fn traverse_initial_stream",
+        "crates/casa-imaging-runtime/src/weighting.rs::pub fn traverse_reuse_stream",
+        "crates/casa-imaging-runtime/src/weighting.rs::pub struct FrozenWeightingArtifact",
         "crates/casa-imaging-runtime/src/weighting.rs::pub fn release",
         "crates/casa-imaging-runtime/src/weighting.rs::pub struct WeightedObservationBlock",
         "crates/casa-imaging-runtime/src/weighting.rs::pub struct WeightingReplayCompletion",
@@ -1843,7 +1844,7 @@ def validate_t18_global_weighting_sources(
     ):
         raise ArchitectureError("T18 traversal envelope construction must remain owner-only")
     derivation = rust_function_body(
-        traversal_sample, "derive_spectral_contributions", traversal_sample_path
+        traversal_sample, "derive_spectral_contributions_cached", traversal_sample_path
     )
     required_derivation = (
         "geometry_engine",
@@ -1857,7 +1858,7 @@ def validate_t18_global_weighting_sources(
         traversal_sample, "interpolation_contributions", traversal_sample_path
     )
     evaluation = rust_function_body(
-        traversal_sample, "evaluated_frequency_hz", traversal_sample_path
+        traversal_sample, "evaluated_frequency_hz_cached", traversal_sample_path
     )
     compact_evaluation = re.sub(r"\s+", "", evaluation)
     explicit_output_frame = rust_function_body(
@@ -1879,7 +1880,7 @@ def validate_t18_global_weighting_sources(
         or "sample.metadata.field_id" not in evaluation
         or "source_frame" not in evaluation
         or "output_frame" not in evaluation
-        or "Some(&source_frame),Some(&output_frame)" not in compact_evaluation
+        or "Some(source_frame),Some(output_frame)" not in compact_evaluation
         or not all(
             token in explicit_output_frame
             for token in ("with_epoch(", "with_position(", "with_direction(", "with_measures(")
@@ -1896,7 +1897,8 @@ def validate_t18_global_weighting_sources(
         bound_observation, "BoundSelectedObservation", "traverse", bound_observation_path
     )
     if (
-        "SelectedObservationTraversalSample::from_owner(" not in traversal
+        "SpectralContributionProjector::new()" not in traversal
+        or "spectral_projector.project(" not in traversal
         or "source.geometry_engine()" not in traversal
         or "consume_projected_validated_stream(" not in traversal
     ):
@@ -1907,20 +1909,25 @@ def validate_t18_global_weighting_sources(
     frozen_fields = rust_struct_fields(
         runtime_weighting, "FrozenWeightingGeneration", runtime_weighting_path
     )
-    pending_fields = rust_struct_fields(
-        runtime_weighting, "PendingWeightingGeneration", runtime_weighting_path
+    artifact_fields = rust_struct_fields(
+        runtime_weighting, "FrozenWeightingArtifact", runtime_weighting_path
     )
     if (
-        frozen_fields.get("state") != "WeightingAlgorithmState"
-        or frozen_fields.get("density_completion") != "SelectedObservationCompletion"
-        or frozen_fields.get("binding") != "WeightingGenerationBinding"
-        or pending_fields.get("density_completion") != "SelectedObservationCompletion"
-        or pending_fields.get("sum_weight_completion")
-        != "SelectedObservationCompletion"
-        or pending_fields.get("binding") != "WeightingGenerationBinding"
+        frozen_fields
+        != {
+            "artifact": "FrozenWeightingArtifact",
+            "binding": "WeightingGenerationBinding",
+        }
+        or artifact_fields
+        != {
+            "state": "Arc<WeightingAlgorithmState>",
+            "source_generation": "SelectedObservationGenerationId",
+            "source_sample_count": "u64",
+            "cross_plan_reservation": "Option<Arc<FrozenWeightingReservation>>",
+        }
     ):
         raise ArchitectureError(
-            "T18 weighting generation does not retain reconstruction and opaque T17 evidence"
+            "global weighting must retain immutable reconstruction state with exact T17 generation evidence"
         )
     execution_state_fields = rust_struct_fields(
         runtime_weighting, "WeightingExecutionState", runtime_weighting_path
@@ -1931,52 +1938,39 @@ def validate_t18_global_weighting_sources(
         != {
             "phase": "WeightingExecutionPhase",
             "retained_observation": "Option<RetainedWeightingObservation>",
+            "density": "Option<WeightingDensityPhase>",
+            "imported": "Option<FrozenWeightingArtifact>",
         }
-        or "PendingGeneration(PendingWeightingGeneration)" not in compact_runtime
-        or "Frozen(FrozenWeightingGeneration)" not in compact_runtime
-        or "PendingReplay{frozen:FrozenWeightingGeneration,pending:PendingWeightingReplay,}"
-        not in compact_runtime
-        or "Replayed{frozen:FrozenWeightingGeneration,completion:WeightingReplayCompletion,}"
-        not in compact_runtime
-        or any(
-            public_raw in compact_runtime
-            for public_raw in (
-                "pubstructFrozenWeightingGeneration",
-                "pubstructPendingWeightingGeneration",
-                "pubstructPendingWeightingReplay",
-                "pubfntraverse_weighting_generation",
-                "pubfncomplete_weighting_generation",
-            )
-        )
+        or "pubfntraverse_density_source(" not in compact_runtime
+        or "pubfntraverse_initial_stream<" not in compact_runtime
+        or "pubfntraverse_reuse_stream<" not in compact_runtime
+        or "pubfnwith_frozen_artifact(" not in compact_runtime
     ):
         raise ArchitectureError(
-            "T18 must expose one opaque lifecycle owner rather than rebindable raw weighting phases"
+            "global weighting must expose one opaque fused-stream lifecycle with frozen reuse"
         )
-    generation = rust_function_body(
-        runtime_weighting, "traverse_weighting_generation", runtime_weighting_path
+    density = rust_function_body(
+        runtime_weighting, "traverse_density_source", runtime_weighting_path
     )
-    if (
-        generation.count(".traverse(") != 2
-        or generation.find(".authorize_generation(")
-        > generation.find("begin_weighting_generation(")
-        or generation.find(".authorize_generation(") < 0
-    ):
-        raise ArchitectureError(
-            "T18 weighting generation must require distinct exhaustive density and sum-weight passes"
-        )
-    completion = rust_function_body(
-        runtime_weighting, "complete_weighting_generation", runtime_weighting_path
+    initial_stream = rust_function_body(
+        runtime_weighting, "traverse_initial_stream", runtime_weighting_path
     )
-    compact_completion = re.sub(r"\s+", "", completion)
+    reuse_stream = rust_function_body(
+        runtime_weighting, "traverse_reuse_stream", runtime_weighting_path
+    )
+    if density.count(".traverse(") != 1 or "begin_weighting_generation(" not in density:
+        raise ArchitectureError(
+            "density-dependent weighting must use exactly one bounded density prepass"
+        )
     if (
-        "fncomplete_weighting_generation(pending:PendingWeightingGeneration,context:ObservationReadCompletionContext,)"
-        not in compact_runtime
-        or "pubfncomplete_weighting_generation(" in compact_runtime
-        or "context.bind(pending.sum_weight_completion)" not in compact_completion
-        or "pubfnfreeze_weighting_generation(" in compact_runtime
+        initial_stream.count(".traverse(") != 1
+        or "begin_natural_weighting_stream(" not in initial_stream
+        or "finish_into_stream(" not in initial_stream
+        or reuse_stream.count(".traverse(") != 1
+        or ".begin_replay(" not in reuse_stream
     ):
         raise ArchitectureError(
-            "T18 weighting freeze must require owner traversals and scheduler-issued completion authority"
+            "initial and later majors must each use one fused terminal selected-payload traversal"
         )
     replay = rust_impl_method_body(
         runtime_weighting, "FrozenWeightingGeneration", "replay", runtime_weighting_path
@@ -2110,8 +2104,11 @@ def validate_t18_global_weighting_sources(
             bound_observation_path,
         ),
     )
-    compose = rust_function_body(runtime_weighting, "compose", runtime_weighting_path)
+    compose = rust_function_body(runtime_weighting, "compose_legacy", runtime_weighting_path)
     compact_compose = re.sub(r"\s+", "", compose)
+    compose_streaming = rust_function_body(
+        runtime_weighting, "compose_streaming", runtime_weighting_path
+    )
     allocation_specs = rust_function_body(
         runtime_weighting, "allocation_specs", runtime_weighting_path
     )
@@ -2200,6 +2197,11 @@ def validate_t18_global_weighting_sources(
         or source_preflight_position > first_sample_position
         or "selected.residency_certificate()" not in source_traversal
         or compose.count("kind: WorkKind::ObservationRead") != 2
+        or "WeightingStreamingMode::DensityInitial" not in compose_streaming
+        or "WeightingStreamingMode::NaturalInitial" not in compose_streaming
+        or "WeightingStreamingMode::Reuse" not in compose_streaming
+        or "removed.contains" not in compose_streaming
+        or "terminal_fence" not in compose_streaming
         or "kind: WorkKind::Release" not in compose
         or allocation_specs.count("AllocationSpec::new(") != 5
         or "predecessor_observation_completion(&self.source_read)"

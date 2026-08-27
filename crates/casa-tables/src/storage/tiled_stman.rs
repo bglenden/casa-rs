@@ -448,6 +448,154 @@ enum TiledVariant {
     },
 }
 
+#[derive(Clone, Debug)]
+struct TiledReadHeader {
+    variant: TiledVariant,
+    header: TiledStManHeader,
+}
+
+/// Immutable tiled-manager metadata retained for the lifetime of one open table.
+///
+/// The metadata is local to the table capability and contains exactly one
+/// parsed header per tiled data manager. It deliberately does not retain tile
+/// payloads or participate in the process-wide tile cache, and it cannot grow
+/// after table-open admission.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct TiledReadMetadata {
+    headers: HashMap<u32, TiledReadHeader>,
+}
+
+impl TiledReadMetadata {
+    pub(crate) fn open(
+        table_path: &Path,
+        data_managers: &[DataManagerEntry],
+    ) -> Result<Self, StorageError> {
+        let tiled_manager_count = data_managers
+            .iter()
+            .filter(|manager| is_tiled_manager(&manager.type_name))
+            .count();
+        let mut headers = HashMap::with_capacity(tiled_manager_count);
+        for manager in data_managers
+            .iter()
+            .filter(|manager| is_tiled_manager(&manager.type_name))
+        {
+            let header_path = table_path.join(format!("table.f{}", manager.seq_nr));
+            let (variant, header) = read_tiled_header(&header_path)?;
+            headers.insert(manager.seq_nr, TiledReadHeader { variant, header });
+        }
+        Ok(Self { headers })
+    }
+
+    fn header(&self, dm_seq_nr: u32) -> Result<&TiledReadHeader, StorageError> {
+        self.headers.get(&dm_seq_nr).ok_or_else(|| {
+            StorageError::FormatMismatch(format!(
+                "retained tiled read metadata is missing data manager {dm_seq_nr}"
+            ))
+        })
+    }
+
+    pub(crate) fn retained_heap_bytes(&self) -> Option<usize> {
+        let mut bytes = self
+            .headers
+            .capacity()
+            .checked_mul(std::mem::size_of::<(u32, TiledReadHeader)>())?;
+        for read_header in self.headers.values() {
+            bytes = bytes.checked_add(read_header.retained_heap_bytes()?)?;
+        }
+        Some(bytes)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cached_header_count(&self) -> usize {
+        self.headers.len()
+    }
+}
+
+impl TiledReadHeader {
+    fn retained_heap_bytes(&self) -> Option<usize> {
+        let variant_bytes = match &self.variant {
+            TiledVariant::Column { default_tile_shape }
+            | TiledVariant::Cell { default_tile_shape } => default_tile_shape
+                .capacity()
+                .checked_mul(std::mem::size_of::<i32>())?,
+            TiledVariant::Shape {
+                default_tile_shape,
+                row_map,
+                cube_map,
+                pos_map,
+                ..
+            } => default_tile_shape
+                .capacity()
+                .checked_mul(std::mem::size_of::<i32>())?
+                .checked_add(row_map.capacity().checked_mul(std::mem::size_of::<u32>())?)?
+                .checked_add(
+                    cube_map
+                        .capacity()
+                        .checked_mul(std::mem::size_of::<u32>())?,
+                )?
+                .checked_add(pos_map.capacity().checked_mul(std::mem::size_of::<u32>())?)?,
+            TiledVariant::Data {
+                default_tile_shape,
+                row_map,
+                cube_map,
+                pos_map,
+                ..
+            } => default_tile_shape
+                .capacity()
+                .checked_mul(std::mem::size_of::<i32>())?
+                .checked_add(row_map.capacity().checked_mul(std::mem::size_of::<u64>())?)?
+                .checked_add(
+                    cube_map
+                        .capacity()
+                        .checked_mul(std::mem::size_of::<u32>())?,
+                )?
+                .checked_add(pos_map.capacity().checked_mul(std::mem::size_of::<u32>())?)?,
+        };
+        let mut bytes = variant_bytes
+            .checked_add(
+                self.header
+                    .col_data_types
+                    .capacity()
+                    .checked_mul(std::mem::size_of::<CasacoreDataType>())?,
+            )?
+            .checked_add(self.header.hypercolumn_name.capacity())?
+            .checked_add(
+                self.header
+                    .files
+                    .capacity()
+                    .checked_mul(std::mem::size_of::<Option<TsmFileInfo>>())?,
+            )?
+            .checked_add(
+                self.header
+                    .cubes
+                    .capacity()
+                    .checked_mul(std::mem::size_of::<TsmCubeInfo>())?,
+            )?;
+        for cube in &self.header.cubes {
+            bytes = bytes
+                .checked_add(cube.values.retained_heap_bytes()?)?
+                .checked_add(
+                    cube.cube_shape
+                        .capacity()
+                        .checked_mul(std::mem::size_of::<usize>())?,
+                )?
+                .checked_add(
+                    cube.tile_shape
+                        .capacity()
+                        .checked_mul(std::mem::size_of::<usize>())?,
+                )?;
+        }
+        Some(bytes)
+    }
+}
+
+fn is_tiled_manager(type_name: &str) -> bool {
+    matches!(
+        type_name,
+        "TiledColumnStMan" | "TiledShapeStMan" | "TiledCellStMan" | "TiledDataStMan"
+    )
+}
+
 // ---------------------------------------------------------------------------
 // Tile element size (different from SSM canonical size)
 // ---------------------------------------------------------------------------
@@ -1627,6 +1775,7 @@ pub(crate) fn load_tiled_column_rows(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn load_tiled_column_rows_2d_channel_range_typed(
     table_path: &Path,
+    read_metadata: &TiledReadMetadata,
     dm: &DataManagerEntry,
     all_col_descs: &[ColumnDescContents],
     bound_cols: &[(usize, &super::table_control::PlainColumnEntry)],
@@ -1635,8 +1784,7 @@ pub(crate) fn load_tiled_column_rows_2d_channel_range_typed(
     channel_start: usize,
     channel_count: usize,
 ) -> Result<Option<SelectedArray2DCells>, StorageError> {
-    let header_path = table_path.join(format!("table.f{}", dm.seq_nr));
-    let (variant, header) = read_tiled_header(&header_path)?;
+    let TiledReadHeader { variant, header } = read_metadata.header(dm.seq_nr)?;
     let Some(target_col_idx) = bound_cols
         .iter()
         .position(|(desc_idx, _)| *desc_idx == target_desc_idx)
@@ -1665,21 +1813,21 @@ pub(crate) fn load_tiled_column_rows_2d_channel_range_typed(
     match variant {
         TiledVariant::Shape {
             nr_used_row_map,
-            ref row_map,
-            ref cube_map,
-            ref pos_map,
+            row_map,
+            cube_map,
+            pos_map,
             ..
         } => load_tiled_column_rows_shape_variant_2d_channel_range_typed(
             table_path,
             dm.seq_nr,
-            &header,
+            header,
             target_col_idx,
             col_desc,
             dt,
             elem_size,
             selected_rows,
             &ShapeRowMapping {
-                nr_used_row_map,
+                nr_used_row_map: *nr_used_row_map,
                 row_map,
                 cube_map,
                 pos_map,
@@ -1697,14 +1845,14 @@ pub(crate) fn load_tiled_column_rows_2d_channel_range_typed(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn load_tiled_column_rows_1d_typed(
     table_path: &Path,
+    read_metadata: &TiledReadMetadata,
     dm: &DataManagerEntry,
     all_col_descs: &[ColumnDescContents],
     bound_cols: &[(usize, &super::table_control::PlainColumnEntry)],
     target_desc_idx: usize,
     selected_rows: &[usize],
 ) -> Result<SelectedArray1DCells, StorageError> {
-    let header_path = table_path.join(format!("table.f{}", dm.seq_nr));
-    let (variant, header) = read_tiled_header(&header_path)?;
+    let TiledReadHeader { variant, header } = read_metadata.header(dm.seq_nr)?;
     let Some(target_col_idx) = bound_cols
         .iter()
         .position(|(desc_idx, _)| *desc_idx == target_desc_idx)
@@ -1753,7 +1901,7 @@ pub(crate) fn load_tiled_column_rows_1d_typed(
             load_tiled_column_rows_from_patches_1d_typed(
                 table_path,
                 dm.seq_nr,
-                &header,
+                header,
                 target_col_idx,
                 col_desc,
                 dt,
@@ -1764,21 +1912,21 @@ pub(crate) fn load_tiled_column_rows_1d_typed(
         }
         TiledVariant::Shape {
             nr_used_row_map,
-            ref row_map,
-            ref cube_map,
-            ref pos_map,
+            row_map,
+            cube_map,
+            pos_map,
             ..
         } => load_tiled_column_rows_shape_variant_1d_typed(
             table_path,
             dm.seq_nr,
-            &header,
+            header,
             target_col_idx,
             col_desc,
             dt,
             elem_size,
             selected_rows,
             &ShapeRowMapping {
-                nr_used_row_map,
+                nr_used_row_map: *nr_used_row_map,
                 row_map,
                 cube_map,
                 pos_map,

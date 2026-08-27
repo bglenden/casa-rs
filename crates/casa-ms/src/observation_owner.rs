@@ -564,7 +564,7 @@ pub fn resolve_selected_observation(
     let measurement_set = MeasurementSet::open_retained_read(&request.locator)?;
     let manifest = OwnerManifest::read(measurement_set.main_table().keywords())?;
     manifest.validate_physical_state(&measurement_set)?;
-    validate_physical_selection(&measurement_set, &request.selection)?;
+    validate_physical_selection(&measurement_set, &request.selection, request.content_budget)?;
     let model_column_storage =
         derive_model_column_storage_plan(&measurement_set, &request.selection)?;
     let generations =
@@ -922,6 +922,7 @@ impl OwnerManifest {
 fn validate_physical_selection(
     measurement_set: &MeasurementSet,
     selection: &ObservationSelection,
+    content_budget: SelectedObservationContentBudget,
 ) -> Result<(), ObservationOwnerError> {
     validate_selected_coordinates(measurement_set, selection)?;
     let expected = selection.rows().ordered_main_rows();
@@ -930,12 +931,7 @@ fn validate_physical_selection(
     let mut mismatch = false;
     measurement_set.visit_selected_observation_rows(
         &row_selection,
-        MsSelectionIoBudget {
-            available_bytes: SelectedObservationRow::STORAGE_BYTES_PER_ROW,
-            maximum_live_blocks: 1,
-            requested_bytes_per_row: SelectedObservationRow::STORAGE_BYTES_PER_ROW,
-            storage_alignment_rows: None,
-        },
+        physical_selection_io_budget(content_budget),
         |row| {
             let matches = expected.get(visited).is_some_and(|planned| {
                 planned.physical_row() == row.physical_row() as u64
@@ -950,6 +946,17 @@ fn validate_physical_selection(
         return Err(ObservationOwnerError::PhysicalSelectionMismatch);
     }
     Ok(())
+}
+
+fn physical_selection_io_budget(
+    content_budget: SelectedObservationContentBudget,
+) -> MsSelectionIoBudget {
+    MsSelectionIoBudget {
+        available_bytes: content_budget.available_bytes(),
+        maximum_live_blocks: content_budget.maximum_live_blocks(),
+        requested_bytes_per_row: SelectedObservationRow::STORAGE_BYTES_PER_ROW,
+        storage_alignment_rows: None,
+    }
 }
 
 fn mint_owner_identity(entropy: &[u8; 32], ordinal: u64, label: &[u8]) -> LogicalIdentity {
@@ -1215,6 +1222,25 @@ mod tests {
             SelectedObservationContentBudget::new(1 << 20, 1, 4),
             casa_test_support::deterministic_measures_provider_for_identity([90; 32]),
         )
+    }
+
+    #[test]
+    fn physical_selection_batches_rows_within_the_owner_content_budget() {
+        let content_budget = SelectedObservationContentBudget::new(64 << 20, 2, 4);
+        let io_budget = physical_selection_io_budget(content_budget);
+
+        assert_eq!(
+            io_budget,
+            MsSelectionIoBudget {
+                available_bytes: 64 << 20,
+                maximum_live_blocks: 2,
+                requested_bytes_per_row: SelectedObservationRow::STORAGE_BYTES_PER_ROW,
+                storage_alignment_rows: None,
+            }
+        );
+        let plan = crate::MsReadPlan::new(42_320, io_budget).expect("budget admits the scan");
+        assert_eq!(plan.rows_per_block, 42_320);
+        assert_eq!(plan.row_count, 42_320);
     }
 
     fn create_ms(path: &Path, model_data: bool) {

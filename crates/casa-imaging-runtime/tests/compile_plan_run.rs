@@ -2166,9 +2166,12 @@ fn production_weighting_fragment_owns_generation_replay_and_release_lifetimes() 
             )))
     );
     assert!(
-        dag.nodes()[base.observation_transaction().post_replay_reconciliation()]
-            .dependencies
-            .contains(&WorkDependency::Fence(FenceId::new(replay, FenceKind::Io,)))
+        dag.nodes()[base
+            .observation_transaction()
+            .post_replay_reconciliation()
+            .expect("reconstruction has reconciliation")]
+        .dependencies
+        .contains(&WorkDependency::Fence(FenceId::new(replay, FenceKind::Io,)))
     );
     assert!(
         dag.nodes()[&release]
@@ -2176,6 +2179,7 @@ fn production_weighting_fragment_owns_generation_replay_and_release_lifetimes() 
             .contains(&WorkDependency::Work(
                 base.observation_transaction()
                     .post_replay_reconciliation()
+                    .expect("reconstruction has reconciliation")
                     .clone(),
             ))
     );
@@ -2289,6 +2293,74 @@ fn serial_continuum_dirty_plan_omits_minor_cycle_work() {
 }
 
 #[test]
+fn serial_continuum_initial_plan_bounds_selected_payload_traversals_by_weighting_scheme() {
+    let cases = [
+        (
+            WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
+            1,
+        ),
+        (
+            WeightingContract::new(
+                WeightingScheme::Uniform,
+                WeightDensityScope::GlobalSelection,
+            ),
+            2,
+        ),
+        (
+            WeightingContract::new(
+                WeightingScheme::Briggs { robust: 0.5 },
+                WeightDensityScope::GlobalSelection,
+            ),
+            2,
+        ),
+        (
+            WeightingContract::new(
+                WeightingScheme::BriggsBandwidthTaper { robust: -0.5 },
+                WeightDensityScope::GlobalSelection,
+            ),
+            2,
+        ),
+    ];
+    for (weighting, expected) in cases {
+        let problem = compile(request_with_geometry_references_and_weighting(
+            1,
+            geometry(255.0),
+            default_references(),
+            weighting,
+        ))
+        .expect("logical continuum compilation");
+        let registry = test_registry(&problem, 3, 6, None);
+        let plan = SerialContinuumPlan::dirty(
+            &problem,
+            &registry,
+            SerialContinuumExecutionPolicy::new(
+                implementation(6),
+                WeightingExecutionLimits::new(2, 3).expect("weighting limits"),
+                selected_content_residency(&problem),
+                serial_storage_io(),
+                1_000,
+                1_000,
+                900_000,
+            ),
+        )
+        .expect("streaming plan");
+        let payload_traversals = plan
+            .physical_work()
+            .execution_dag()
+            .nodes()
+            .values()
+            .filter(|node| node.kind == WorkKind::ObservationRead)
+            .count();
+        assert_eq!(
+            payload_traversals,
+            expected,
+            "{:?}",
+            problem.weighting().scheme()
+        );
+    }
+}
+
+#[test]
 fn serial_continuum_executes_initial_major_and_scheduler_minor_cycle() {
     let problem = compile(request_with_geometry(
         1,
@@ -2397,6 +2469,10 @@ fn serial_continuum_executes_initial_major_and_scheduler_minor_cycle() {
         .implementation()
         .take_minor_completion()
         .expect("minor completion");
+    let frozen_weighting = runtime_registry
+        .implementation()
+        .take_frozen_weighting()
+        .expect("initial major retains frozen weighting");
     assert_eq!(minor.evidence().problem_id(), problem.problem_id());
     let final_input = minor.into_final_major_input();
     let source_delta = final_input.source_delta();
@@ -2434,6 +2510,19 @@ fn serial_continuum_executes_initial_major_and_scheduler_minor_cycle() {
         .keys()
         .cloned()
         .collect::<BTreeSet<_>>();
+    assert_eq!(
+        final_physical
+            .execution_dag()
+            .nodes()
+            .values()
+            .filter(|node| matches!(
+                node.kind,
+                WorkKind::ObservationRead | WorkKind::ObservationReadWriteback
+            ))
+            .count(),
+        1,
+        "a later major cycle reuses frozen weighting and traverses selected payload once"
+    );
     let collisions = initial_nodes
         .intersection(&final_nodes)
         .cloned()
@@ -2452,7 +2541,8 @@ fn serial_continuum_executes_initial_major_and_scheduler_minor_cycle() {
         open_selected_observation(&problem, &residency).expect("final selected owner"),
         ExecutableModelProblem::from_compiled(problem.clone()).expect("final executable model"),
         SerialContinuumPassInput::FinalMajor(final_input),
-    );
+    )
+    .with_frozen_weighting(frozen_weighting);
     let final_registry =
         SerialContinuumRegistry::new(registry(73), implementation(73), &problem, final_executor);
     let final_plan = runtime_plan(
@@ -4825,6 +4915,7 @@ fn physical_work_binding_rejects_io_and_publication_evidence_outside_plan_semant
         io_base
             .observation_transaction()
             .post_replay_reconciliation()
+            .expect("reconstruction has reconciliation")
             .clone(),
         io_base.observation_transaction().commit().clone(),
     );
@@ -4905,6 +4996,7 @@ fn physical_work_binding_rejects_io_and_publication_evidence_outside_plan_semant
         contract_base
             .observation_transaction()
             .post_replay_reconciliation()
+            .expect("reconstruction has reconciliation")
             .clone(),
         contract_base.observation_transaction().commit().clone(),
     );
@@ -4940,6 +5032,7 @@ fn physical_work_binding_rejects_io_and_publication_evidence_outside_plan_semant
         publication_base
             .observation_transaction()
             .post_replay_reconciliation()
+            .expect("reconstruction has reconciliation")
             .clone(),
         publication_base.observation_transaction().commit().clone(),
     );
@@ -5436,7 +5529,9 @@ fn native_product_publication_rejects_reconstruction_only_transaction_scope() {
     let work = base.observation_transaction();
     let reconstruction = ObservationTransactionWork::new_reconstruction(
         work.initial_consistency_check().clone(),
-        work.post_replay_reconciliation().clone(),
+        work.post_replay_reconciliation()
+            .expect("reconstruction has reconciliation")
+            .clone(),
         work.commit().clone(),
     );
     let error = PhysicalWorkBinding::new_with_product_publication(
@@ -5611,6 +5706,7 @@ fn transaction_seal_blocks_unbound_transaction_work() {
             WorkNodeId::new("execute"),
             base.observation_transaction()
                 .post_replay_reconciliation()
+                .expect("reconstruction has reconciliation")
                 .clone(),
             base.observation_transaction().commit().clone(),
         ),
@@ -6213,7 +6309,7 @@ fn later_member_failure_retains_terminal_prefix_and_suffix_evidence() {
     ));
     assert!(publication_launched.load(Ordering::SeqCst));
     assert_eq!(visible_generation.load(Ordering::SeqCst), 1);
-    assert_eq!(receipt.schema_version(), 17);
+    assert_eq!(receipt.schema_version(), 18);
     assert_eq!(receipt.status(), ReceiptStatus::Failed);
     let dispositions = execution_plan
         .publication_layouts()
@@ -9924,25 +10020,80 @@ impl SerialProductPublicationSink for InMemoryProductSink {
 fn serial_product_publication_stages_privately_then_publishes_once() {
     let problem = compile(sealed_products_request(242)).expect("continuum compilation");
     let (planned, sealed) = sealed_generation_for_problem(&problem);
-    let residency = selected_content_residency(&problem);
     let planning_registry = ContractOnlyRegistry::new(
         registry(77),
         implementation_metadata(&problem),
         [implementation(77)],
     );
+    let storage_io = serial_storage_io();
     let planned_runtime = SerialProductPublicationPlan::new(
         &problem,
         &planned,
         &planning_registry,
-        SerialProductPublicationPolicy::new(
-            implementation(77),
-            residency.clone(),
-            serial_storage_io(),
-            1_000,
-            900_000,
-        ),
+        SerialProductPublicationPolicy::new(implementation(77), storage_io.clone(), 1_000, 900_000),
     )
     .expect("production publication plan");
+    let publication_dag = planned_runtime.physical_work().execution_dag();
+    assert_eq!(
+        planned_runtime
+            .physical_work()
+            .observation_transaction()
+            .post_replay_reconciliation(),
+        None,
+        "sealed publication has a total public reconciliation query"
+    );
+    assert!(
+        publication_dag
+            .nodes()
+            .values()
+            .all(|node| !node.kind.reads_observation()),
+        "sealed conventional products require no ObservationRead work"
+    );
+    assert!(publication_dag.nodes().values().all(|node| {
+        node.claims.iter().all(|claim| {
+            !matches!(
+                claim.resource,
+                LeaseResource::MeasurementSetLock { .. }
+                    | LeaseResource::StorageReadRate { .. }
+                    | LeaseResource::StorageQueue { .. }
+                    | LeaseResource::IoBuffer(IoBufferKind::SourceReadAhead)
+            )
+        })
+    }));
+    let demand = &publication_dag.resource_alternative().demand;
+    assert_eq!(demand.locks.hard(), 0);
+    assert_eq!(
+        demand.file_descriptors.hard(),
+        1,
+        "one serial output descriptor is distinct from zero observation descriptors"
+    );
+    for node in ["product-publication-stage", "product-publication-commit"] {
+        assert!(
+            publication_dag.nodes()[&WorkNodeId::new(node)]
+                .claims
+                .iter()
+                .any(|claim| {
+                    claim.resource == LeaseResource::FileDescriptors && claim.amount == 1
+                })
+        );
+    }
+    assert!(
+        publication_dag.nodes()[&WorkNodeId::new("product-publication-check")]
+            .claims
+            .iter()
+            .all(|claim| claim.resource != LeaseResource::FileDescriptors)
+    );
+    assert_eq!(demand.queues.len(), 1);
+    assert_eq!(
+        demand.queues[0].demand_id,
+        "product-publication-output-queue"
+    );
+    assert_eq!(demand.io_buffers.source_read_ahead_bytes, 0);
+    assert_eq!(demand.rates.len(), 1);
+    assert_eq!(
+        demand.rates[0].demand_id, "product-publication-output-write-rate",
+        "publication must reserve only output write throughput"
+    );
     let expected_members = planned_runtime.publication().entries().len();
     let retry_entry = planned_runtime
         .publication()
@@ -9953,10 +10104,8 @@ fn serial_product_publication_stages_privately_then_publishes_once() {
     let expected_layouts = physical.publication_layouts().entries().to_vec();
     let executor = SerialProductPublicationExecutor::new(
         implementation(77),
-        problem.clone(),
         publication,
         sealed,
-        open_selected_observation(&problem, &residency).expect("publication observation owner"),
         InMemoryProductSink::default(),
     )
     .expect("sealed publication executor");
@@ -10120,7 +10269,6 @@ fn production_storage_profile_admits_serial_scientific_and_publication_plans() {
         &planning_registry,
         SerialProductPublicationPolicy::new(
             implementation(81),
-            residency,
             storage.io_resources(),
             1_000,
             900_000,
@@ -10157,7 +10305,7 @@ fn production_storage_profile_admits_serial_scientific_and_publication_plans() {
 }
 
 #[test]
-fn profiled_serial_plans_reject_every_substituted_storage_identity() {
+fn profiled_serial_plans_bind_only_their_used_storage_identities() {
     let problem = compile(sealed_products_request(246)).expect("continuum compilation");
     let (planned, _) = sealed_generation_for_problem(&problem);
     let residency = selected_content_residency(&problem);
@@ -10233,7 +10381,7 @@ fn profiled_serial_plans_reject_every_substituted_storage_identity() {
         }
     };
 
-    for substitution in substitutions {
+    for (index, substitution) in substitutions.into_iter().enumerate() {
         let scientific = SerialContinuumPlan::dirty(
             &problem,
             &planning_registry,
@@ -10254,23 +10402,29 @@ fn profiled_serial_plans_reject_every_substituted_storage_identity() {
             &problem,
             &planned,
             &planning_registry,
-            SerialProductPublicationPolicy::new(
-                implementation(82),
-                residency.clone(),
-                substitution,
-                1_000,
-                900_000,
-            ),
+            SerialProductPublicationPolicy::new(implementation(82), substitution, 1_000, 900_000),
         )
         .expect("publication plan construction");
-        reject(publication.into_parts().0);
+        let publication = publication.into_parts().0;
+        if index == 1 {
+            runtime_plan(
+                &problem,
+                PlanningBindings::new(registry(82), ResourcePolicy::Balanced, planning_profile(4)),
+                &authority,
+                &planning_registry,
+                &receipts,
+                move |_, _| Ok::<_, io::Error>(vec![publication]),
+            )
+            .expect("unused observation-read rate does not constrain sealed publication");
+        } else {
+            reject(publication);
+        }
     }
 }
 
 fn assert_member_failure_receipt(uncertain: bool, expected: ArtifactDisposition) {
     let problem = compile(sealed_products_request(245)).expect("continuum compilation");
     let (planned, sealed) = sealed_generation_for_problem(&problem);
-    let residency = selected_content_residency(&problem);
     let planning_registry = ContractOnlyRegistry::new(
         registry(81),
         implementation_metadata(&problem),
@@ -10282,7 +10436,6 @@ fn assert_member_failure_receipt(uncertain: bool, expected: ArtifactDisposition)
         &planning_registry,
         SerialProductPublicationPolicy::new(
             implementation(81),
-            residency.clone(),
             serial_storage_io(),
             1_000,
             900_000,
@@ -10297,10 +10450,8 @@ fn assert_member_failure_receipt(uncertain: bool, expected: ArtifactDisposition)
     let (physical, publication) = planned_runtime.into_parts();
     let executor = SerialProductPublicationExecutor::new(
         implementation(81),
-        problem.clone(),
         publication,
         sealed,
-        open_selected_observation(&problem, &residency).expect("publication observation owner"),
         InMemoryProductSink {
             fail_at: Some(1),
             uncertain,
@@ -10379,13 +10530,10 @@ fn serial_product_publication_rejects_foreign_sealed_generation() {
     let (planned, _) = sealed_generation_for_problem(&problem);
     let (_, foreign_sealed) = sealed_generation_for_problem(&foreign);
     let publication = ProductPublicationPlan::bind(&problem, &planned).expect("publication plan");
-    let residency = selected_content_residency(&problem);
     let error = match SerialProductPublicationExecutor::new(
         implementation(80),
-        problem.clone(),
         publication,
         foreign_sealed,
-        open_selected_observation(&problem, &residency).expect("publication observation owner"),
         InMemoryProductSink::default(),
     ) {
         Ok(_) => panic!("foreign seal must be rejected before staging"),

@@ -389,6 +389,14 @@ impl PreparedSerialMfsOperator {
     ) -> Result<CompleteDataOwnerState, SerialMfsError> {
         CompleteDataOwnerState::new(problem, weighting, self)
     }
+
+    /// Begin before a fused weighting stream has minted its terminal generation.
+    pub fn begin_streaming(
+        self,
+        problem: &CompiledProblem,
+    ) -> Result<CompleteDataOwnerState, SerialMfsError> {
+        CompleteDataOwnerState::new_streaming(problem, self)
+    }
 }
 
 /// Prepare the reusable FFT implementation under runtime planning authority.
@@ -663,7 +671,7 @@ pub struct CompleteDataOwnerState {
     geometry: CompiledGeometryId,
     numerics: NumericsContractId,
     weighting_commitment: WeightingCommitmentId,
-    weighting_generation: WeightingGenerationId,
+    weighting_generation: Option<WeightingGenerationId>,
     next_block_sequence: u64,
     sample_count: u64,
     coverage: CoverageEncoder,
@@ -688,10 +696,34 @@ impl CompleteDataOwnerState {
             geometry: specification.geometry,
             numerics: specification.numerics,
             weighting_commitment: specification.weighting_commitment,
-            weighting_generation: weighting.generation_id(),
+            weighting_generation: Some(weighting.generation_id()),
             next_block_sequence: 0,
             sample_count: 0,
-            coverage: CoverageEncoder::new(weighting.generation_id()),
+            coverage: CoverageEncoder::new(),
+            finite_values: specification.finite_values,
+            residual_model: None,
+            predicted_selected: Vec::with_capacity(prepared.workload.max_replay_block_samples),
+            operator: SerialMfsOperator::new(specification, prepared.workload, prepared.fft),
+        })
+    }
+
+    fn new_streaming(
+        problem: &CompiledProblem,
+        prepared: PreparedSerialMfsOperator,
+    ) -> Result<Self, SerialMfsError> {
+        let specification = SerialMfsSpecification::new(problem)?;
+        if specification != prepared.specification {
+            return Err(SerialMfsError::ProblemMismatch);
+        }
+        Ok(Self {
+            problem: specification.problem,
+            geometry: specification.geometry,
+            numerics: specification.numerics,
+            weighting_commitment: specification.weighting_commitment,
+            weighting_generation: None,
+            next_block_sequence: 0,
+            sample_count: 0,
+            coverage: CoverageEncoder::new(),
             finite_values: specification.finite_values,
             residual_model: None,
             predicted_selected: Vec::with_capacity(prepared.workload.max_replay_block_samples),
@@ -715,7 +747,7 @@ impl CompleteDataOwnerState {
 
     /// Return the sole frozen T18 generation accepted by this owner.
     #[must_use]
-    pub const fn weighting_generation(&self) -> WeightingGenerationId {
+    pub const fn weighting_generation(&self) -> Option<WeightingGenerationId> {
         self.weighting_generation
     }
 
@@ -731,46 +763,52 @@ impl CompleteDataOwnerState {
         for weighted in block.samples() {
             self.coverage.push(weighted);
             let selected = weighted.selected();
-            if self.accept_input(selected)?
-                && selected.address.correlation_type.contributes_to_stokes_i()
-            {
-                let visibility = match selected.visibility {
-                    SelectedVisibilitySample::Float32(value) => [f64::from(value), 0.0],
-                    SelectedVisibilitySample::Complex32([real, imaginary]) => {
-                        [f64::from(real), f64::from(imaginary)]
-                    }
-                };
-                let mut predicted_visibility = Complex64::default();
+            let visibility = match selected.visibility {
+                SelectedVisibilitySample::Float32(value) => [f64::from(value), 0.0],
+                SelectedVisibilitySample::Complex32([real, imaginary]) => {
+                    [f64::from(real), f64::from(imaginary)]
+                }
+            };
+            let contributes_to_stokes_i =
+                selected.address.correlation_type.contributes_to_stokes_i();
+            let accepted_input = self.accept_input(selected)?;
+            let grids = contributes_to_stokes_i && accepted_input;
+            let mut predicted_visibility = Complex64::default();
+            if contributes_to_stokes_i {
                 for spectral in weighted.spectral_values() {
                     let contribution = spectral.contribution();
                     let sample = SerialMfsSample::new(
                         selected.coordinates.transformed_uvw_m,
                         contribution.evaluation_frequency_hz(),
                         selected.coordinates.phase_shift_m,
-                        visibility,
+                        if grids { visibility } else { [0.0, 0.0] },
                         spectral.imaging_weight(),
                         f64::from(contribution.factor()),
                     )?;
-                    if self.residual_model.is_some() {
-                        predicted_visibility += self.operator.push_with_residual(sample)?;
-                    } else {
-                        self.operator.push(sample)?;
+                    match (self.residual_model.is_some(), grids) {
+                        (true, true) => {
+                            predicted_visibility += self.operator.push_with_residual(sample)?;
+                        }
+                        (true, false) => {
+                            predicted_visibility += self.operator.predict_one(sample)?;
+                        }
+                        (false, true) => self.operator.push(sample)?,
+                        (false, false) => {}
                     }
                 }
-                if self.residual_model.is_some() {
-                    let observed = Complex64::new(visibility[0], visibility[1]);
-                    // MODEL_DATA is a CASA Complex column. Quantize exactly
-                    // once at this product/persistence boundary so the paired
-                    // residual product and the persisted prediction describe
-                    // the same sample; operator accumulation above remains f64.
-                    let predicted = casa_persistent_complex(predicted_visibility);
-                    self.predicted_selected.push(FinalVisibilitySample {
-                        address: selected.address,
-                        observed,
-                        predicted,
-                        residual: observed - predicted,
-                    });
-                }
+            }
+            if self.residual_model.is_some() {
+                let observed = Complex64::new(visibility[0], visibility[1]);
+                // CASA degrids and writes the whole selected visibility
+                // buffer. Flags and Stokes-I participation govern gridding,
+                // not whether the selected MODEL_DATA destination is refreshed.
+                let predicted = casa_persistent_complex(predicted_visibility);
+                self.predicted_selected.push(FinalVisibilitySample {
+                    address: selected.address,
+                    observed,
+                    predicted,
+                    residual: observed - predicted,
+                });
             }
         }
         self.sample_count = self
@@ -834,7 +872,10 @@ impl CompleteDataOwnerState {
         replay: &WeightingReplaySummary,
         selected_generation: SelectedObservationGenerationId,
     ) -> Result<CompleteDataOwnerResult, SerialMfsError> {
-        if self.weighting_generation != replay.weighting_generation() {
+        if self
+            .weighting_generation
+            .is_some_and(|generation| generation != replay.weighting_generation())
+        {
             return Err(SerialMfsError::WeightingGeneration);
         }
         if self.sample_count != replay.sample_count()
@@ -842,7 +883,9 @@ impl CompleteDataOwnerState {
         {
             return Err(SerialMfsError::IncompleteCoverage);
         }
-        let coverage = self.coverage.finish(self.sample_count);
+        let coverage = self
+            .coverage
+            .finish(replay.weighting_generation(), self.sample_count);
         if coverage != replay.coverage() {
             return Err(SerialMfsError::IncompleteCoverage);
         }

@@ -107,6 +107,83 @@ fn inventory_with_views(memory_views: Vec<MemoryView>) -> HostInventory {
     }
 }
 
+#[test]
+fn pure_memory_lease_remains_accounted_until_its_last_owner_drops() {
+    let host_view = CapacityViewId::new("host-memory");
+    let authority = ResourceAuthority::with_inventory(inventory_with_views(vec![MemoryView {
+        id: host_view.clone(),
+        domain: CapacityDomainId::new("unified-memory"),
+        kind: MemoryViewKind::Host,
+    }]))
+    .expect("valid host inventory");
+    let alternatives = DemandAlternatives {
+        required_capabilities: BTreeSet::new(),
+        alternatives: vec![DemandAlternative {
+            id: AlternativeId::new("cross-plan-artifact"),
+            capabilities: CapabilityPredicate::default(),
+            demand: DemandEnvelope {
+                host_memory_view: host_view.clone(),
+                memory: vec![MemoryDemand {
+                    allocation_id: "cross-plan-artifact".to_string(),
+                    hard_bytes: 600,
+                    preferred_bytes: 600,
+                    views: vec![host_view],
+                }],
+                workers: CountDemand::zero(),
+                overhead: RuntimeOverheadDemand::zero(),
+                storage: Vec::new(),
+                rates: Vec::new(),
+                caches: CacheDemand::zero(),
+                locks: CountDemand::zero(),
+                file_descriptors: CountDemand::zero(),
+                queues: Vec::new(),
+                transfers: Vec::new(),
+                accelerators: Vec::new(),
+                io_buffers: IoBufferDemand::zero(),
+            },
+            headroom: ResourceHeadroom::default(),
+            scaling: ScalingMetadata {
+                minimum_workers: 0,
+                maximum_workers: 0,
+                maximum_batch_size: 1,
+                maximum_tile_width: 1,
+                maximum_tile_height: 1,
+                maximum_slab_depth: 1,
+                memory_bytes_per_worker: BTreeMap::new(),
+            },
+            quiescence_points: BTreeSet::from([QuiescencePoint::MajorCycle]),
+        }],
+    };
+
+    let lease = std::sync::Arc::new(
+        authority
+            .acquire(ResourcePolicy::Exclusive, alternatives.clone())
+            .expect("first cross-plan artifact fits"),
+    );
+    let cloned_owner = std::sync::Arc::clone(&lease);
+    assert_eq!(
+        authority
+            .acquire(ResourcePolicy::Exclusive, alternatives.clone())
+            .expect_err("live artifact lease still owns its memory")
+            .available(),
+        Some(400)
+    );
+
+    drop(lease);
+    assert_eq!(
+        authority
+            .acquire(ResourcePolicy::Exclusive, alternatives.clone())
+            .expect_err("a cloned artifact still owns the shared lease")
+            .available(),
+        Some(400)
+    );
+
+    drop(cloned_owner);
+    authority
+        .acquire(ResourcePolicy::Exclusive, alternatives)
+        .expect("dropping the final artifact owner releases its memory");
+}
+
 fn lock_only_demand() -> DemandEnvelope {
     DemandEnvelope {
         host_memory_view: CapacityViewId::new("host-memory"),
@@ -314,10 +391,9 @@ fn inventory_retains_typed_storage_transfer_queue_and_metal_topology() {
 
 #[test]
 fn metal_inventory_requires_process_device_and_queue_access() {
-    assert!(!metal_inventory_available(true, false, true));
-    assert!(!metal_inventory_available(false, true, true));
-    assert!(!metal_inventory_available(true, true, false));
-    assert!(metal_inventory_available(true, true, true));
+    assert!(!metal_inventory_available(false, true));
+    assert!(!metal_inventory_available(true, false));
+    assert!(metal_inventory_available(true, true));
 }
 
 #[test]

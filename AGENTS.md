@@ -63,6 +63,11 @@ the smallest local patch, even when that means changing more in-repo code now.
 - Before implementing behavior that exists in CASA/casacore C++, inspect the
   relevant upstream task, tool, or library path and preserve its semantics
   unless there is an explicit reason to diverge.
+- Before optimizing imaging behavior, inspect the last optimized pre-cutover
+  casa-rs implementation at `fff9c2d553eace4b6a57b1df9ded4773f2263ceb`,
+  then the corresponding CASA/casacore and LibRA paths. Reuse proven
+  techniques through the current shared owners; do not restore displaced
+  packages, mode-specific duplicate paths, or old dependency direction.
 - For parity or correctness differences, instrument both implementations
   instead of relying on blind parameter experiments or speculative fixes.
 - Prefer idiomatic Rust over direct C++ API mirroring; this is not a wrapper

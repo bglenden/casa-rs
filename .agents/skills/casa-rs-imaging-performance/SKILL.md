@@ -9,27 +9,64 @@ description: Use when optimizing casa-rs imaging performance or correctness/perf
 
 Optimize casa-rs imaging modes without trading away CASA parity, mode semantics, or credible performance evidence.
 
+## Historical implementation reconnaissance
+
+Before proposing or implementing an imaging performance change, inspect all
+three relevant implementation lineages:
+
+1. Start with casa-rs commit
+   `fff9c2d553eace4b6a57b1df9ded4773f2263ceb`, the last optimized production
+   snapshot that still contains the displaced pre-cutover imaging machinery.
+   Use its code and deleted performance ledgers to identify proven data-flow,
+   allocation, streaming, I/O, gridding, degridding, weighting, and scheduling
+   techniques. Consult earlier history when the relevant technique predates
+   that snapshot.
+2. Inspect the corresponding CASA/casacore implementation under
+   `/Users/brianglendenning/SoftwareProjects/casa` and
+   `/Users/brianglendenning/SoftwareProjects/casacore`. Preserve CASA science
+   semantics and use its mature hot-path choices as a performance floor, not a
+   requirement to mirror its C++ structure.
+3. Inspect the corresponding LibRA implementation under
+   `/Users/brianglendenning/SoftwareProjects/libRA`, especially for newer
+   gridding, prediction, weighting, CPU/GPU, and large-data techniques.
+
+Record a compact old-to-current map before editing: the historical technique,
+its measured or documented benefit, its current equivalent or absence, the
+shared owner where it belongs now, and whether it is retained, adapted, or
+rejected. Do not rediscover an already documented experiment unless the
+architecture, workload, or hardware difference gives a concrete reason to
+retest it.
+
+Historical code is evidence, not an architecture template. Port the mechanism
+through current owner boundaries and prefer one broadly reusable optimization
+for multiple imaging modes. A narrow optimization is acceptable only when the
+science or data shape is genuinely mode-specific, and it must remain cohesive
+inside the canonical owner. Never restore a displaced package, compatibility
+shim, fallback route, calculation-bearing frontend, duplicated planner, or old
+dependency direction merely to recover speed.
+
 ## Core workflow
 
-1. Establish correctness before claiming speed.
+1. Complete the historical implementation reconnaissance above.
+2. Establish correctness before claiming speed.
    Compare CASA and casa-rs products numerically and visually for the products the mode writes: `.image`, `.residual`, `.model`, `.psf`, `.pb`, `.weight`, `.sumwt`, `.image.pbcor`, and Taylor products where relevant. CASA and casa-rs panels must use the same color scale; difference panels must be labeled.
-2. Use the right dataset tier for the question.
+3. Use the right dataset tier for the question.
    Small rows are for correctness and debugging only. Medium and large rows are required before making closeout performance claims.
-3. Instrument before optimizing.
+4. Instrument before optimizing.
    Attribute time to MS open/read, selection, prepare, density/weighting, gridding, degridding/residual refresh, minor cycle, Clark bookkeeping, PB/weight generation, product writing, and frontend/core totals.
-4. Avoid blind long runs.
+5. Avoid blind long runs.
    If a large run has no pass/stage progress or product output after a few minutes, stop and add progress instrumentation before waiting longer.
-5. Reuse shared imaging infrastructure.
+6. Reuse shared imaging infrastructure.
    Extend shared streaming prepare, row/run preservation, bounded residency, worker planning, grouped GPU input contracts, and benchmark bundle code. Do not create a mode-specific duplicate when a shared routine can be generalized.
-6. Preserve CASA semantics while sharing mechanics.
+7. Preserve CASA semantics while sharing mechanics.
    Cube, cubedata, mosaic, MT-MFS, W-projection, AW-style, MFS, and multiscale modes must keep their mode-specific CASA behavior.
-7. Never full-materialize large imaging inputs.
+8. Never full-materialize large imaging inputs.
    A path that requires materializing all visibilities or cube planes for a large MS is an architecture bug. Fix bounded streaming once in shared I/O/prepare code and remove redundant misleading paths.
-8. Compare serial, multi-worker, and Metal honestly.
+9. Compare serial, multi-worker, and Metal honestly.
    Keep serial CPU as a baseline. Do not assume fixed-tile, central quadrants, more workers, or Metal wins without total runtime and stage evidence.
-9. Make `auto` usable.
+10. Make `auto` usable.
    Explicit parameters are good for debugging, but user-facing defaults should choose reasonable worker counts, buffers, strategies, and Metal eligibility.
-10. Prefer explicit parameters over environment variables.
+11. Prefer explicit parameters over environment variables.
     Environment variables are acceptable for diagnostics, but performance behavior should be controllable through explicit API/CLI parameters.
 
 ## Iteration dataset scaling
@@ -107,6 +144,13 @@ candidate.
 
 ## Timing rules
 
+- Size a candidate discriminator so repeated measurements distinguish the
+  affected stage from host variance and setup noise. Do not make a traversal
+  or gridding discriminator longer merely by inflating unrelated FFT or
+  product-writing work. Prefer interleaved repeated cohorts, report their
+  variance, and label aggregation separately from problem-size evidence; the
+  evidence must discriminate the proposed cause rather than satisfy an
+  invented absolute duration.
 - Before changing casa-rs performance code, obtain and freeze a corresponding
   CASA timing for the exact workload or component boundary being optimized.
   Match the dataset, selection, geometry, products, and timed stage. Do not use
