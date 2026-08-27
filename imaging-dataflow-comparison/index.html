@@ -752,6 +752,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="casa-rs Native Overlay">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#t35t36-spectral-cutover-map" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        T35/T36 spectral cutover map
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -952,6 +969,57 @@ operators, planning, product generation, or persistence. Unsupported cube,
 mosaic, W/AW-projection, and backend choices fail as
 <code>TemporarilyUnavailable</code>; they do not enter the pre-T23 runners described
 below.</p>
+<h3 id="t35t36-spectral-cutover-map">T35/T36 spectral cutover map<a class="headerlink" href="#t35t36-spectral-cutover-map" title="Permanent link">&para;</a></h3>
+<p>Source inspection for the sparse paired spectral foundation produced this
+compact semantic and performance map. The pre-cutover reference is
+<code>fff9c2d55^</code>; the current foundation starts from <code>af3bd99c5</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Concern</th>
+<th>Pre-cutover Rust</th>
+<th>CASA/casacore and LibRA source evidence</th>
+<th>T35/T36 owner and retained behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Frame evaluation</td>
+<td>Cube preparation mixed native frequencies and row-local conversions while building channel maps.</td>
+<td><code>FTMachine::matchChannel</code> evaluates row frequencies in the requested frame; Measures context varies with MS, field, epoch, direction, and observatory.</td>
+<td><code>casa-ms</code> emits distinct native and output-frame centres plus both transformed boundaries. Its cache key retains source, SPW/channel interval, field, epoch, frame, flags, and weight.</td>
+</tr>
+<tr>
+<td>Coefficients</td>
+<td>Independent to-grid/from-grid maps and fixed positive interpolation records could diverge.</td>
+<td><code>InterpolateArray1D</code> implements nearest, linear, and four-point polynomial cubic; its cubic stencil can contain signed coefficients. LibRA passes the task interpolation choice into the imaging/regridding machinery.</td>
+<td><code>casa-imaging-reconstruction</code> compiles one sparse stencil receipt. Prediction, dirty/adjoint, PSF, density, sum-weight, and replay consume that same coefficient sequence; there is no second coefficient authority.</td>
+</tr>
+<tr>
+<td>Edges and order</td>
+<td>Cube helpers contained useful descending-axis, edge-clipping, and transformed-width rules but scattered them across maps.</td>
+<td>Casacore binary bracketing explicitly supports ascending and descending coordinates; non-extrapolating interpolation marks unsupported edges invalid.</td>
+<td>The law declares complete-support versus partial-overlap edges. Receipts distinguish flagged, unmapped, and mapped samples and retain canonical source/output order.</td>
+</tr>
+<tr>
+<td>Flags, weights, covariance</td>
+<td>Flags and weights were applied downstream of a coefficient record that could not declare induced output covariance.</td>
+<td>Casacore interpolation treats coefficient evaluation separately from flag validity; shared source samples necessarily induce output covariance.</td>
+<td>The source trace reports exact flags and effective weight. The law declares <code>A C A^H</code> propagation from independent source noise; coefficients are finite signed <code>f64</code>.</td>
+</tr>
+<tr>
+<td>Residency and throughput</td>
+<td>The old spectral-slab planner preserved bounded row blocks, source reuse, deterministic reductions, and slab halos, but also carried mode-specific control and duplicate maps.</td>
+<td>CASA/LibRA operate on visibility buffers rather than materializing a full MeasurementSet cube.</td>
+<td>Four terms stay inline for nearest/linear/cubic. Interval integration may spill only up to its planner-declared term bound. Chunking does not enter scientific identity or contribution order. No T37 cube plane arrays or cycles are introduced here.</td>
+</tr>
+</tbody>
+</table>
+<p>The retained performance techniques are bounded source traversal, row-local
+frame caching, canonical reductions, and planner-derived term/residency bounds.
+The displaced semantics are duplicate channel maps, positive-<code>f32</code> two-term
+records, and frontend cubic coercion. This map is source-backed; no long CASA
+run was launched for T35/T36.</p>
 <h2 id="historical-pre-t23-casa-rs-overlay">Historical pre-T23 <code>casa-rs</code> Overlay<a class="headerlink" href="#historical-pre-t23-casa-rs-overlay" title="Permanent link">&para;</a></h2>
 <p>The remainder of this section is retained only to explain the implementation
 that T23 removed and the pressure that motivated the refactor. It is not an
@@ -1355,7 +1423,7 @@ not a new benchmark claim.</p>
 <tr>
 <td>CASA/casacore</td>
 <td>VI2/VisBuffer operates on row/channel/correlation cubes, while <code>SynthesisImagerVi2::predictModel</code> zeroes the model cube, degrids it, and writes the complete buffer through <code>writeVisModel</code> under the MS lock. Batched column-cell access amortizes table I/O and the whole-buffer write prevents selected flagged or non-Stokes cells from retaining stale model values.</td>
-<td><code>casa-ms</code> selection/writeback plus <code>serial_mfs</code> prediction and <code>serial_continuum</code> transaction ownership</td>
+<td><code>casa-ms</code> selection/writeback plus <code>spectral_operator</code> prediction and <code>spectral_cycle</code> transaction ownership</td>
 <td>Adapt the complete selected write set and lock semantics in idiomatic Rust; keep gridding eligibility separate from write eligibility.</td>
 </tr>
 <tr>

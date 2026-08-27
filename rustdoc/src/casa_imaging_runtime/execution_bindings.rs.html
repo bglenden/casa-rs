@@ -2946,7 +2946,7 @@
 <a href=#2946 id=2946 data-nosnippet>2946</a><span class="doccomment">/// Capability-scoped compiled inputs supplied to one exact work node.
 <a href=#2947 id=2947 data-nosnippet>2947</a>///
 <a href=#2948 id=2948 data-nosnippet>2948</a>/// Generic work receives compiled science but no MeasurementSet source set.
-<a href=#2949 id=2949 data-nosnippet>2949</a>/// Only the initial consistency check, typed observation reads, model
+<a href=#2949 id=2949 data-nosnippet>2949</a>/// Only the initial consistency check, typed observation reads, selected-visibility
 <a href=#2950 id=2950 data-nosnippet>2950</a>/// writeback, and atomic publication receive their corresponding transaction
 <a href=#2951 id=2951 data-nosnippet>2951</a>/// authority.
 <a href=#2952 id=2952 data-nosnippet>2952</a></span><span class="attr">#[derive(Clone, Copy, Debug)]
@@ -2960,7 +2960,7 @@
 <a href=#2960 id=2960 data-nosnippet>2960</a>    resource_alternative: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw">crate</span>::DemandAlternative,
 <a href=#2961 id=2961 data-nosnippet>2961</a>    observation_consistency: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>ObservationTransactionContract&gt;,
 <a href=#2962 id=2962 data-nosnippet>2962</a>    observation_reads: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>ObservationReadSet&gt;,
-<a href=#2963 id=2963 data-nosnippet>2963</a>    model_writes: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>ObservationWriteSet&gt;,
+<a href=#2963 id=2963 data-nosnippet>2963</a>    visibility_writes: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>ObservationWriteSet&gt;,
 <a href=#2964 id=2964 data-nosnippet>2964</a>    publication: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>ObservationTransactionContract&gt;,
 <a href=#2965 id=2965 data-nosnippet>2965</a>    publication_resources: <span class="prelude-ty">Option</span>&lt;PublicationResources&lt;<span class="lifetime">'a</span>&gt;&gt;,
 <a href=#2966 id=2966 data-nosnippet>2966</a>    product_publication: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw">crate</span>::ProductPublicationAuthorization&gt;,
@@ -3080,10 +3080,10 @@
 <a href=#3080 id=3080 data-nosnippet>3080</a>        </span>}
 <a href=#3081 id=3081 data-nosnippet>3081</a>    }
 <a href=#3082 id=3082 data-nosnippet>3082</a>
-<a href=#3083 id=3083 data-nosnippet>3083</a>    <span class="doccomment">/// Return exact model-column writes only for the bound private writeback node.
+<a href=#3083 id=3083 data-nosnippet>3083</a>    <span class="doccomment">/// Return exact selected-visibility writes only for the bound private writeback node.
 <a href=#3084 id=3084 data-nosnippet>3084</a>    </span><span class="attr">#[must_use]
-<a href=#3085 id=3085 data-nosnippet>3085</a>    </span><span class="kw">pub const fn </span>model_writes(<span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>ObservationWriteSet&gt; {
-<a href=#3086 id=3086 data-nosnippet>3086</a>        <span class="self">self</span>.model_writes
+<a href=#3085 id=3085 data-nosnippet>3085</a>    </span><span class="kw">pub const fn </span>visibility_writes(<span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>ObservationWriteSet&gt; {
+<a href=#3086 id=3086 data-nosnippet>3086</a>        <span class="self">self</span>.visibility_writes
 <a href=#3087 id=3087 data-nosnippet>3087</a>    }
 <a href=#3088 id=3088 data-nosnippet>3088</a>
 <a href=#3089 id=3089 data-nosnippet>3089</a>    <span class="doccomment">/// Return the complete transaction only for the sole atomic Publication node.
@@ -3799,7 +3799,7 @@
 <a href=#3799 id=3799 data-nosnippet>3799</a>    <span class="kw">let </span>transaction_work = plan.observation_transaction.work();
 <a href=#3800 id=3800 data-nosnippet>3800</a>    <span class="kw">let </span>common = |observation_consistency,
 <a href=#3801 id=3801 data-nosnippet>3801</a>                  observation_reads,
-<a href=#3802 id=3802 data-nosnippet>3802</a>                  model_writes,
+<a href=#3802 id=3802 data-nosnippet>3802</a>                  visibility_writes,
 <a href=#3803 id=3803 data-nosnippet>3803</a>                  publication,
 <a href=#3804 id=3804 data-nosnippet>3804</a>                  publication_resources| WorkExecutionContext {
 <a href=#3805 id=3805 data-nosnippet>3805</a>        attempt_id,
@@ -3811,7 +3811,7 @@
 <a href=#3811 id=3811 data-nosnippet>3811</a>        resource_alternative: plan.execution_dag.resource_alternative(),
 <a href=#3812 id=3812 data-nosnippet>3812</a>        observation_consistency,
 <a href=#3813 id=3813 data-nosnippet>3813</a>        observation_reads,
-<a href=#3814 id=3814 data-nosnippet>3814</a>        model_writes,
+<a href=#3814 id=3814 data-nosnippet>3814</a>        visibility_writes,
 <a href=#3815 id=3815 data-nosnippet>3815</a>        publication,
 <a href=#3816 id=3816 data-nosnippet>3816</a>        publication_resources,
 <a href=#3817 id=3817 data-nosnippet>3817</a>        product_publication: <span class="prelude-val">None</span>,
@@ -4906,7 +4906,7 @@
 <a href=#4906 id=4906 data-nosnippet>4906</a>        <span class="prelude-val">None </span>=&gt; encoder.u8(<span class="number">0</span>),
 <a href=#4907 id=4907 data-nosnippet>4907</a>    }
 <a href=#4908 id=4908 data-nosnippet>4908</a>    encode_dependencies(encoder, work.product_staging());
-<a href=#4909 id=4909 data-nosnippet>4909</a>    <span class="kw">match </span>work.model_column_writeback() {
+<a href=#4909 id=4909 data-nosnippet>4909</a>    <span class="kw">match </span>work.visibility_writeback() {
 <a href=#4910 id=4910 data-nosnippet>4910</a>        <span class="prelude-val">Some</span>(node) =&gt; {
 <a href=#4911 id=4911 data-nosnippet>4911</a>            encoder.u8(<span class="number">1</span>);
 <a href=#4912 id=4912 data-nosnippet>4912</a>            encoder.string(node.as_str());

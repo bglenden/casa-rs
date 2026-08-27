@@ -902,14 +902,14 @@ and oracle map; it does not add public APIs.</p>
 <td>#123</td>
 </tr>
 <tr>
-<td><code>uvcontsub</code></td>
-<td>partial/available</td>
-<td><code>casa-calibration</code>, <code>casa-ms</code></td>
-<td><code>calibrate uvcontsub</code>, Python calibration wrapper</td>
-<td>line-free channel fitting, output MS semantics, field/data-column selection</td>
-<td>CASA <code>uvcontsub</code> output MS and downstream image products</td>
-<td>TW Hydra uvcontsub timing and cube parity note</td>
-<td>#119, #123</td>
+<td>visibility-domain continuum subtraction</td>
+<td>native</td>
+<td><code>casa-imaging-model</code>, <code>casa-imaging-reconstruction</code>, <code>casa-imaging-runtime</code>, <code>casa-imaging-application</code></td>
+<td>inline <code>casars-imager --fitspw ... --fitorder ...</code>; Python imager projection</td>
+<td>wider fit orders and selector tails</td>
+<td>CASA <code>uvcontsub</code> residual visibilities and downstream line cubes</td>
+<td>TW Hydra residual/cube parity note; transform stream peak residency</td>
+<td>#119, #123, #526</td>
 </tr>
 <tr>
 <td><code>imcontsub</code></td>

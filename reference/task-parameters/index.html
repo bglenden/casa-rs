@@ -545,17 +545,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#uv-continuum-subtraction-uvcontsub" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        UV Continuum Subtraction (uvcontsub)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#applycal-applycal" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1391,17 +1380,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#uv-continuum-subtraction-uvcontsub" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        UV Continuum Subtraction (uvcontsub)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#applycal-applycal" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1738,8 +1716,8 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
 <li>Concepts: 401</li>
-<li>Surfaces: 42 (40 task, 2 session)</li>
-<li>Surface bindings: 773</li>
+<li>Surfaces: 41 (39 task, 2 session)</li>
+<li>Surface bindings: 756</li>
 </ul>
 <table>
 <thead>
@@ -1764,9 +1742,9 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-calibrate">Calibrate</a><br><code>calibrate</code></td>
 <td>task</td>
-<td style="text-align: right;">3</td>
+<td style="text-align: right;">4</td>
 <td><code>calibration</code></td>
-<td style="text-align: right;">51</td>
+<td style="text-align: right;">49</td>
 <td>apply, inspect, and solve CASA-style calibration workflows</td>
 </tr>
 <tr>
@@ -1780,9 +1758,9 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-imager">Imager</a><br><code>imager</code></td>
 <td>task</td>
-<td style="text-align: right;">8</td>
+<td style="text-align: right;">9</td>
 <td><code>imager</code></td>
-<td style="text-align: right;">91</td>
+<td style="text-align: right;">93</td>
 <td>Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet</td>
 </tr>
 <tr>
@@ -1856,14 +1834,6 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>mstransform</code></td>
 <td style="text-align: right;">11</td>
 <td>Create a selected MeasurementSet subset, equivalent to CASA split.</td>
-</tr>
-<tr>
-<td><a href="#surface-uvcontsub">UV Continuum Subtraction</a><br><code>uvcontsub</code></td>
-<td>task</td>
-<td style="text-align: right;">3</td>
-<td><code>calibration</code></td>
-<td style="text-align: right;">17</td>
-<td>Subtract continuum emission from a MeasurementSet.</td>
 </tr>
 <tr>
 <td><a href="#surface-applycal">Applycal</a><br><code>applycal</code></td>
@@ -2662,7 +2632,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="calibrate-calibrate">Calibrate (<code>calibrate</code>)<a class="headerlink" href="#calibrate-calibrate" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>3</code></li>
+<li>Contract version: <code>4</code></li>
 <li>Category: Calibration</li>
 <li>Provider family: <code>calibration</code></li>
 <li>Summary: apply, inspect, and solve CASA-style calibration workflows</li>
@@ -2681,8 +2651,8 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tbody>
 <tr>
 <td><code>mode</code></td>
-<td><code>calibrate.mode@r1</code></td>
-<td><code>choice (9 values)</code></td>
+<td><code>calibrate.mode@r2</code></td>
+<td><code>choice (8 values)</code></td>
 <td><code>"apply"</code>; optional</td>
 <td>Workflow</td>
 <td>Calibration workflow to run from the launcher form</td>
@@ -2691,7 +2661,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>vis</code></td>
 <td><code>data.input.vis@r1</code></td>
 <td><code>array&lt;path (measurement_set)&gt;</code></td>
-<td><code>[]</code>; required when (mode="apply" or mode="continuum_subtract" or mode="export_corrected_data" or mode="solve_bandpass" or mode="solve_gain" or mode="gencal")</td>
+<td><code>[]</code>; required when (mode="apply" or mode="export_corrected_data" or mode="solve_bandpass" or mode="solve_gain" or mode="gencal")</td>
 <td>Input</td>
 <td>Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field measurement_set. This surface uses the MeasurementSet as calibration workflow input.</td>
 </tr>
@@ -2699,7 +2669,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>outputvis</code></td>
 <td><code>parameter.outputvis@r1</code></td>
 <td><code>path (measurement_set)</code></td>
-<td><code>"none"</code>; required when (mode="continuum_subtract" or mode="export_corrected_data")</td>
+<td><code>"none"</code>; required when (mode="export_corrected_data")</td>
 <td>Input</td>
 <td>Output MeasurementSet path for corrected-data export or continuum subtraction<br><em>Surface:</em> Canonical outputvis maps to provider field output_measurement_set.</td>
 </tr>
@@ -2824,28 +2794,12 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td>Calibration-table column to inspect in stats mode</td>
 </tr>
 <tr>
-<td><code>fit_spw</code></td>
-<td><code>parameter.fit_spw@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; required when mode="continuum_subtract"</td>
-<td>Continuum Subtraction</td>
-<td>CASA-style line-free channel selector for uvcontsub, e.g. 0:0~500;900~1919</td>
-</tr>
-<tr>
 <td><code>use_flags</code></td>
 <td><code>parameter.use_flags@r1</code></td>
 <td><code>bool</code></td>
 <td><code>false</code>; optional</td>
 <td>Inspect</td>
 <td>Include flagged values in stats calculations</td>
-</tr>
-<tr>
-<td><code>fit_order</code></td>
-<td><code>parameter.fit_order@r1</code></td>
-<td><code>integer</code></td>
-<td><code>0</code>; optional</td>
-<td>Continuum Subtraction</td>
-<td>Polynomial order for continuum fitting</td>
 </tr>
 <tr>
 <td><code>out_table</code></td>
@@ -3212,7 +3166,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="imager-imager">Imager (<code>imager</code>)<a class="headerlink" href="#imager-imager" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>8</code></li>
+<li>Contract version: <code>9</code></li>
 <li>Category: Imaging</li>
 <li>Provider family: <code>imager</code></li>
 <li>Summary: Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet</li>
@@ -3956,6 +3910,22 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>"auto"</code>; optional</td>
 <td>Execution Resources</td>
 <td>Grid-stage worker selection for standard, mosaic, and AWProject MFS imaging<br><em>Surface:</em> auto delegates to the resource-adaptive execution planner; a positive integer is an explicit override.</td>
+</tr>
+<tr>
+<td><code>fitspw</code></td>
+<td><code>parameter.fitspw@r1</code></td>
+<td><code>string</code></td>
+<td><code>"none"</code>; optional</td>
+<td>Continuum Subtraction</td>
+<td>Fit SPW selector.</td>
+</tr>
+<tr>
+<td><code>fitorder</code></td>
+<td><code>parameter.fitorder@r1</code></td>
+<td><code>integer</code></td>
+<td><code>0</code>; optional</td>
+<td>Continuum Subtraction</td>
+<td>Polynomial fit order.</td>
 </tr>
 </tbody>
 </table>
@@ -5027,165 +4997,6 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>true</code>; optional</td>
 <td>Data</td>
 <td>Preserve rows that are fully flagged in the selected output.</td>
-</tr>
-</tbody>
-</table>
-<p><a id="surface-uvcontsub"></a></p>
-<h2 id="uv-continuum-subtraction-uvcontsub">UV Continuum Subtraction (<code>uvcontsub</code>)<a class="headerlink" href="#uv-continuum-subtraction-uvcontsub" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Kind: <code>task</code></li>
-<li>Contract version: <code>3</code></li>
-<li>Category: MeasurementSet</li>
-<li>Provider family: <code>calibration</code></li>
-<li>Summary: Subtract continuum emission from a MeasurementSet.</li>
-</ul>
-<table>
-<thead>
-<tr>
-<th>Parameter</th>
-<th>Concept ID / revision</th>
-<th>Type / unit</th>
-<th>Default / required</th>
-<th>Group</th>
-<th>Summary</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>vis</code></td>
-<td><code>data.input.vis@r1</code></td>
-<td><code>array&lt;path (measurement_set)&gt;</code></td>
-<td>no default; required</td>
-<td>Input</td>
-<td>Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field measurement_set. This surface uses the MeasurementSet as calibration workflow input.</td>
-</tr>
-<tr>
-<td><code>outputvis</code></td>
-<td><code>parameter.outputvis@r1</code></td>
-<td><code>path (measurement_set)</code></td>
-<td>no default; required</td>
-<td>Input</td>
-<td>Output MeasurementSet path for corrected-data export or continuum subtraction<br><em>Surface:</em> Canonical outputvis maps to provider field output_measurement_set.</td>
-</tr>
-<tr>
-<td><code>output</code></td>
-<td><code>calibration.report.output@r1</code></td>
-<td><code>path (any)</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Output</td>
-<td>Optional destination for a calibration task report.</td>
-</tr>
-<tr>
-<td><code>overwrite</code></td>
-<td><code>output.overwrite@r1</code></td>
-<td><code>bool</code></td>
-<td><code>false</code>; optional</td>
-<td>Output</td>
-<td>Replace an existing output file</td>
-</tr>
-<tr>
-<td><code>format</code></td>
-<td><code>parameter.format@r1</code></td>
-<td><code>choice (2 values)</code></td>
-<td><code>"text"</code>; optional</td>
-<td>Output</td>
-<td>Execution report format</td>
-</tr>
-<tr>
-<td><code>stats_datacolumn</code></td>
-<td><code>parameter.stats_datacolumn@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Inspect</td>
-<td>Calibration-table column to inspect in stats mode</td>
-</tr>
-<tr>
-<td><code>fit_spw</code></td>
-<td><code>parameter.fit_spw@r1</code></td>
-<td><code>string</code></td>
-<td>no default; required</td>
-<td>Continuum Subtraction</td>
-<td>CASA-style line-free channel selector for uvcontsub, e.g. 0:0~500;900~1919</td>
-</tr>
-<tr>
-<td><code>fit_order</code></td>
-<td><code>parameter.fit_order@r1</code></td>
-<td><code>integer</code></td>
-<td><code>0</code>; optional</td>
-<td>Continuum Subtraction</td>
-<td>Polynomial order for continuum fitting</td>
-</tr>
-<tr>
-<td><code>selectdata</code></td>
-<td><code>parameter.selectdata@r1</code></td>
-<td><code>bool</code></td>
-<td><code>true</code>; optional</td>
-<td>Selection</td>
-<td>Whether detailed data-selection controls are enabled.<br><em>Surface:</em> Enables the detailed selection controls for this calibration workflow.</td>
-</tr>
-<tr>
-<td><code>field</code></td>
-<td><code>ms.selection.field@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>CASA field selector.<br><em>Surface:</em> This calibration provider currently accepts comma-separated FIELD_ID integers.</td>
-</tr>
-<tr>
-<td><code>spw</code></td>
-<td><code>ms.selection.spw@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>Comma-separated SPECTRAL_WINDOW_ID integers</td>
-</tr>
-<tr>
-<td><code>antenna</code></td>
-<td><code>ms.selection.antenna@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>Comma-separated antenna ids matched against ANTENNA1/ANTENNA2</td>
-</tr>
-<tr>
-<td><code>scan</code></td>
-<td><code>ms.selection.scan@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>Comma-separated scan numbers</td>
-</tr>
-<tr>
-<td><code>observation</code></td>
-<td><code>ms.selection.observation@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>Comma-separated OBSERVATION_ID integers</td>
-</tr>
-<tr>
-<td><code>array</code></td>
-<td><code>ms.selection.array@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>Comma-separated ARRAY_ID integers</td>
-</tr>
-<tr>
-<td><code>timerange</code></td>
-<td><code>ms.selection.timerange@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>Inclusive TIME range in MJD seconds</td>
-</tr>
-<tr>
-<td><code>msselect</code></td>
-<td><code>ms.selection.msselect@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>Raw TaQL WHERE expression to AND with the structured selectors</td>
 </tr>
 </tbody>
 </table>

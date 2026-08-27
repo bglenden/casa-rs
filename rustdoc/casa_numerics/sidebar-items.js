@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["solve_symmetric_ldlt_casacore","solve_weighted_least_squares"]};
+window.SIDEBAR_ITEMS = {"enum":["EllipticalGaussianError"],"fn":["common_enclosing_gaussian","deconvolving_gaussian","gaussian_covariance","normalize_position_angle","solve_symmetric_ldlt_casacore","solve_weighted_least_squares"],"struct":["EllipticalGaussian"]};

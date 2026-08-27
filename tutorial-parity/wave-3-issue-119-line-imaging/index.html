@@ -785,7 +785,7 @@
 <h1 id="wave-3-issue-119-tw-hydra-line-imaging-and-continuum-subtraction">Wave 3 Issue 119 - TW Hydra Line Imaging And Continuum Subtraction<a class="headerlink" href="#wave-3-issue-119-tw-hydra-line-imaging-and-continuum-subtraction" title="Permanent link">&para;</a></h1>
 <p>Truth class: implementation note
 Last reality check: 2026-04-28
-Verification: focused <code>casa-calibration</code> / <code>casars-imager</code> tests; local CASA 6.7.5-9 comparisons below</p>
+Verification: focused imaging transform / <code>casars-imager</code> tests; local CASA 6.7.5-9 comparisons below</p>
 <h2 id="scope">Scope<a class="headerlink" href="#scope" title="Permanent link">&para;</a></h2>
 <p>This note records the casa-rs mapping for the ALMA First Look / TW Hydra line
 imaging segment. It adds UV continuum subtraction and validates spectral cube
@@ -807,9 +807,9 @@ image products from the self-calibrated tutorial MeasurementSet.</p>
 </thead>
 <tbody>
 <tr>
-<td><code>uvcontsub(..., field="5", fitspw="0:0~239;281~383", fitorder=0)</code></td>
-<td><code>calibrate uvcontsub --field 5 --fitspw '0:0~239;281~383' --fitorder 0 --datacolumn DATA</code></td>
-<td>Implemented; output MS opens in CASA and matches CASA data values.</td>
+<td><code>uvcontsub(..., field="5", fitspw="0:0~239;281~383", fitorder=0)</code> followed by <code>tclean(...)</code></td>
+<td><code>casars-imager --specmode cube --fitspw '0:0~239;281~383' --fitorder 0 ...</code></td>
+<td>Implemented as one bounded visibility transform feeding the line-only cube; no intermediate casa-rs continuum-subtracted MS is required.</td>
 </tr>
 <tr>
 <td><code>tclean(..., specmode="cube", nchan=15, start="0.0km/s", width="0.5km/s", outframe="LSRK", restfreq="372.67249GHz")</code></td>
@@ -829,26 +829,14 @@ image products from the self-calibrated tutorial MeasurementSet.</p>
 </tbody>
 </table>
 <p>Current CASA 6.7 <code>uvcontsub(outputvis=...)</code> keeps the selected field id as <code>5</code>;
-the older CASA guide text says the output may be relabeled to <code>0</code>. The parity
-commands below therefore use <code>field=5</code> for both CASA and casa-rs.</p>
+the older CASA guide text says the output may be relabeled to <code>0</code>. The retained
+historical residual-visibility evidence below therefore used <code>field=5</code>. The
+current casa-rs route transforms selected visibility rows inline and preserves
+the original selection lineage.</p>
 <h2 id="commands">Commands<a class="headerlink" href="#commands" title="Permanent link">&para;</a></h2>
-<div class="codehilite"><pre><span></span><code>cargo<span class="w"> </span>build<span class="w"> </span>--release<span class="w"> </span>-q<span class="w"> </span>-p<span class="w"> </span>casa-calibration<span class="w"> </span>--bin<span class="w"> </span>calibrate
-rm<span class="w"> </span>-rf<span class="w"> </span>target/issue-119/twhya_selfcal.ms.contsub
-/usr/bin/time<span class="w"> </span>-p<span class="w"> </span>target/release/calibrate<span class="w"> </span>uvcontsub<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--ms<span class="w"> </span>target/issue-119/twhya_selfcal.ms<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--out<span class="w"> </span>target/issue-119/twhya_selfcal.ms.contsub<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--field<span class="w"> </span><span class="m">5</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--fitspw<span class="w"> </span><span class="s1">'0:0~239;281~383'</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--fitorder<span class="w"> </span><span class="m">0</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--datacolumn<span class="w"> </span>DATA<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--format<span class="w"> </span>json<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>-o<span class="w"> </span>target/issue-119/casars-uvcontsub-release.json<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--overwrite
-</code></pre></div>
-
 <div class="codehilite"><pre><span></span><code>cargo<span class="w"> </span>build<span class="w"> </span>--release<span class="w"> </span>-q<span class="w"> </span>-p<span class="w"> </span>casars-imager<span class="w"> </span>--bin<span class="w"> </span>casars-imager
 target/release/casars-imager<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--ms<span class="w"> </span>target/issue-119/twhya_selfcal.ms.contsub<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--ms<span class="w"> </span>target/issue-119/twhya_selfcal.ms<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--imagename<span class="w"> </span>target/issue-119/casars-natural-twhya-n2hp<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--field<span class="w"> </span><span class="m">5</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--spw<span class="w"> </span><span class="m">0</span><span class="w"> </span><span class="se">\</span>
@@ -868,11 +856,14 @@ target/release/casars-imager<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--niter<span class="w"> </span><span class="m">0</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--threshold-jy<span class="w"> </span><span class="m">0</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--datacolumn<span class="w"> </span>DATA<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--fitspw<span class="w"> </span><span class="s1">'0:0~239;281~383'</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--fitorder<span class="w"> </span><span class="m">0</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--no-preview-pngs
 </code></pre></div>
 
 <h2 id="evidence">Evidence<a class="headerlink" href="#evidence" title="Permanent link">&para;</a></h2>
-<p><code>uvcontsub</code> timing on the staged TW Hydra dataset:</p>
+<p>Historical standalone residual-visibility timing on the staged TW Hydra dataset
+(retained as parity evidence, not as a current command surface):</p>
 <table>
 <thead>
 <tr>
@@ -888,15 +879,16 @@ target/release/casars-imager<span class="w"> </span><span class="se">\</span>
 <td><code>1.926 s</code></td>
 </tr>
 <tr>
-<td>casa-rs release</td>
-<td><code>calibrate uvcontsub ...</code></td>
+<td>pre-T40 casa-rs release</td>
+<td>former standalone continuum-subtraction route</td>
 <td><code>5.65 s</code> wall, report <code>4.490 s</code> elapsed</td>
 </tr>
 </tbody>
 </table>
-<p>The CASA and casa-rs continuum-subtracted MS outputs both open with CASA tools
-and contain <code>44772</code> rows with field id <code>[5]</code>. For valid unflagged <code>DATA</code> cells,
-CASA vs casa-rs residual visibility differences are:</p>
+<p>The former comparison output and CASA continuum-subtracted MS both opened with
+CASA tools and contained <code>44772</code> rows with field id <code>[5]</code>. That evidence pins
+the fitting semantics now owned by the inline transform. For valid unflagged
+<code>DATA</code> cells, CASA vs casa-rs residual visibility differences were:</p>
 <ul>
 <li>RMS absolute difference: <code>2.6704246849068624e-09</code></li>
 <li>max absolute difference: <code>1.9073486328125e-06</code></li>
