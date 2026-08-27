@@ -2,7 +2,13 @@
 
 //! Runtime composition of reconstruction phases with opaque T17 traversal evidence.
 
-use std::{collections::BTreeSet, error::Error, fmt, mem::align_of, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    error::Error,
+    fmt,
+    mem::align_of,
+    sync::Arc,
+};
 
 use casa_imaging_model::{
     CompiledProblem, CompiledProblemId, SelectedObservationGenerationId, SelectedObservationSample,
@@ -24,12 +30,15 @@ use casa_ms::{
 
 use crate::{
     AllocationAccess, AllocationId, AllocationLayout, AllocationLifetime, AllocationPurpose,
-    AllocationUse, AlternativeId, AttemptBoundObservationCompletion, CapacityDomainId,
-    CapacityViewId, ClaimLifetime, ExecutionAttemptId, ExecutionDag, ExecutionDagSpecification,
-    ExecutionError, FenceId, FenceKind, InitializationPolicy, IoBufferKind, IoPrediction,
-    LeaseResource, LogicalAllocation, MemoryDemand, ObservationCompletionBindingError,
-    ObservationReadCompletionContext, PhysicalSlot, PhysicalSlotId, PhysicalWorkBinding,
-    PhysicalWorkBindingError, PlanPrediction, ResourceClaim, SlotCompatibility, StagePrediction,
+    AllocationUse, AlternativeId, AttemptBoundObservationCompletion, CacheDemand,
+    CapabilityPredicate, CapacityDomainId, CapacityViewId, ClaimLifetime, CountDemand,
+    DemandAlternative, DemandAlternatives, DemandEnvelope, ExecutionAttemptId, ExecutionDag,
+    ExecutionDagSpecification, ExecutionError, FenceId, FenceKind, InitializationPolicy,
+    IoBufferDemand, IoBufferKind, IoPrediction, LeaseResource, LogicalAllocation, MemoryDemand,
+    ObservationCompletionBindingError, ObservationReadCompletionContext, PhysicalSlot,
+    PhysicalSlotId, PhysicalWorkBinding, PhysicalWorkBindingError, PlanPrediction, QuiescencePoint,
+    ResourceAuthority, ResourceClaim, ResourceError, ResourceHeadroom, ResourceLease,
+    ResourcePolicy, RuntimeOverheadDemand, ScalingMetadata, SlotCompatibility, StagePrediction,
     StorageMode, WorkDependency, WorkDomain, WorkExecutionContext, WorkImplementationId, WorkKind,
     WorkNode, WorkNodeId,
 };
@@ -272,7 +281,10 @@ impl<'a> WeightingPlanFragment<'a> {
                 self.source_read.clone(),
             ));
         }
-        let reconciliation_id = base.observation_transaction().post_replay_reconciliation();
+        let reconciliation_id = base
+            .observation_transaction()
+            .post_replay_reconciliation()
+            .expect("weighting composition requires reconstruction");
         let model_preparation_id = base
             .observation_transaction()
             .final_model_preparation()
@@ -546,7 +558,10 @@ impl<'a> WeightingPlanFragment<'a> {
             .observation_transaction()
             .final_model_preparation()
             .cloned();
-        let reconciliation = base.observation_transaction().post_replay_reconciliation();
+        let reconciliation = base
+            .observation_transaction()
+            .post_replay_reconciliation()
+            .expect("streaming weighting composition requires reconstruction");
         let mut nodes = legacy
             .execution_dag()
             .nodes()
@@ -1202,6 +1217,7 @@ impl WeightingExecutionState {
             state: Arc::new(state),
             source_generation: owner_completion.generation_id(),
             source_sample_count: owner_completion.sample_count(),
+            cross_plan_reservation: None,
         };
         let frozen = FrozenWeightingGeneration {
             artifact,
@@ -2233,6 +2249,109 @@ pub struct FrozenWeightingArtifact {
     state: Arc<WeightingAlgorithmState>,
     source_generation: SelectedObservationGenerationId,
     source_sample_count: u64,
+    cross_plan_reservation: Option<Arc<FrozenWeightingReservation>>,
+}
+
+/// Resource Authority lease retaining frozen weighting bytes between major plans.
+///
+/// The ordinary per-plan allocation still accounts each plan's direct use. This
+/// longer lease closes the interval between those plans and is shared by every
+/// immutable artifact clone until the final owner drops it.
+#[derive(Debug)]
+pub struct FrozenWeightingReservation {
+    _lease: ResourceLease,
+    bytes: u64,
+}
+
+impl FrozenWeightingReservation {
+    /// Reserve the exact frozen density, robust-factor, and sum-weight state.
+    pub fn acquire(
+        authority: &ResourceAuthority,
+        policy: ResourcePolicy,
+        residency: WeightingResidency,
+    ) -> Result<Self, ResourceError> {
+        let bytes = [
+            residency.density_grid_bytes(),
+            residency.robust_factor_bytes(),
+            residency.sum_weight_bytes(),
+        ]
+        .into_iter()
+        .try_fold(0_u64, |total, bytes| {
+            total
+                .checked_add(
+                    u64::try_from(bytes)
+                        .map_err(|_| ResourceError::Overflow("frozen weighting residency"))?,
+                )
+                .ok_or(ResourceError::Overflow("frozen weighting residency"))
+        })?;
+        let memory = MemoryDemand {
+            allocation_id: "cross-plan-frozen-weighting".to_string(),
+            hard_bytes: bytes,
+            preferred_bytes: bytes,
+            views: vec![CapacityViewId::new("host-memory")],
+        };
+        let alternative = DemandAlternative {
+            id: AlternativeId::new("cross-plan-frozen-weighting"),
+            capabilities: CapabilityPredicate::default(),
+            demand: DemandEnvelope {
+                host_memory_view: CapacityViewId::new("host-memory"),
+                memory: vec![memory],
+                workers: CountDemand::zero(),
+                overhead: RuntimeOverheadDemand::zero(),
+                storage: vec![],
+                rates: vec![],
+                caches: CacheDemand::zero(),
+                locks: CountDemand::zero(),
+                file_descriptors: CountDemand::zero(),
+                queues: vec![],
+                transfers: vec![],
+                accelerators: vec![],
+                io_buffers: IoBufferDemand::zero(),
+            },
+            headroom: ResourceHeadroom::default(),
+            scaling: ScalingMetadata {
+                minimum_workers: 0,
+                maximum_workers: 0,
+                maximum_batch_size: 1,
+                maximum_tile_width: 1,
+                maximum_tile_height: 1,
+                maximum_slab_depth: 1,
+                memory_bytes_per_worker: BTreeMap::new(),
+            },
+            quiescence_points: BTreeSet::from([QuiescencePoint::MajorCycle]),
+        };
+        let lease = authority.acquire(
+            policy,
+            DemandAlternatives {
+                required_capabilities: BTreeSet::new(),
+                alternatives: vec![alternative],
+            },
+        )?;
+        Ok(Self {
+            _lease: lease,
+            bytes,
+        })
+    }
+
+    /// Return the resident-byte ceiling held between plans.
+    #[must_use]
+    pub const fn bytes(&self) -> u64 {
+        self.bytes
+    }
+}
+
+impl FrozenWeightingArtifact {
+    pub(crate) fn with_cross_plan_reservation(
+        mut self,
+        reservation: Arc<FrozenWeightingReservation>,
+    ) -> Self {
+        self.cross_plan_reservation = Some(reservation);
+        self
+    }
+
+    pub(crate) fn has_cross_plan_reservation(&self) -> bool {
+        self.cross_plan_reservation.is_some()
+    }
 }
 
 #[derive(Debug)]
@@ -2414,6 +2533,7 @@ fn complete_weighting_generation(
                 state: Arc::new(pending.state),
                 source_generation: pending.density_completion.generation_id(),
                 source_sample_count: pending.density_completion.sample_count(),
+                cross_plan_reservation: None,
             },
             binding,
         },

@@ -57,7 +57,7 @@ ACCEPTED_MATRIX_ROWS_SHA256 = (
     "0fdc583980ba1d7976ffa78e4803830d596c5803e209057f1840018c9947bf9a"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "0f1336c17721fbcef8f5a72f14ea04d5868e8619e78997900c608f1dd5f13814"
+    "0034d15937430f9a5007a2462406ccd8c317fc560673b3b1b46a606aeee95fb4"
 )
 ACCEPTED_MATRIX_CONTRACT_REVISION = 47
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
@@ -1923,6 +1923,7 @@ def validate_t18_global_weighting_sources(
             "state": "Arc<WeightingAlgorithmState>",
             "source_generation": "SelectedObservationGenerationId",
             "source_sample_count": "u64",
+            "cross_plan_reservation": "Option<Arc<FrozenWeightingReservation>>",
         }
     ):
         raise ArchitectureError(

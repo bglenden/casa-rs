@@ -942,6 +942,7 @@ fn append_model_data_resources<R: ImplementationRegistry>(
             .clone(),
         base.observation_transaction()
             .post_replay_reconciliation()
+            .expect("serial continuum plan has post-replay reconciliation")
             .clone(),
         commit,
     )
@@ -971,6 +972,7 @@ fn append_minor<R: ImplementationRegistry>(
     let reconcile = base
         .observation_transaction()
         .post_replay_reconciliation()
+        .expect("serial continuum plan has post-replay reconciliation")
         .clone();
     let commit = base.observation_transaction().commit().clone();
     let allocation = AllocationId::new("serial-continuum-minor-cycle");
@@ -1084,6 +1086,7 @@ fn append_minor<R: ImplementationRegistry>(
             .clone(),
         base.observation_transaction()
             .post_replay_reconciliation()
+            .expect("serial continuum plan has post-replay reconciliation")
             .clone(),
         commit,
     );

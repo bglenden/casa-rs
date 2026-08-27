@@ -147,15 +147,10 @@ impl ObservationTransactionWork {
         self.final_model_preparation.as_ref()
     }
 
-    /// Return the mandatory post-replay Major-Cycle reconciliation node.
+    /// Return the post-replay Major-Cycle reconciliation node, when this
+    /// transaction performs reconstruction.
     #[must_use]
-    pub fn post_replay_reconciliation(&self) -> &WorkNodeId {
-        self.post_replay_reconciliation
-            .as_ref()
-            .expect("reconstruction transaction has a reconciliation node")
-    }
-
-    pub(crate) const fn optional_post_replay_reconciliation(&self) -> Option<&WorkNodeId> {
+    pub const fn post_replay_reconciliation(&self) -> Option<&WorkNodeId> {
         self.post_replay_reconciliation.as_ref()
     }
 

@@ -20,6 +20,7 @@ use crate::*;
 const CHECK: &str = "product-publication-check";
 const STAGE: &str = "product-publication-stage";
 const COMMIT: &str = "product-publication-commit";
+const OUTPUT_FILE_DESCRIPTOR_BOUND: u64 = 1;
 
 /// Storage boundary used by the runtime publication owner.
 ///
@@ -103,6 +104,7 @@ pub struct SerialProductPublicationPolicy {
     storage_io: StorageIoResourceBinding,
     stage_nanos: u64,
     confidence_parts_per_million: u32,
+    output_file_descriptor_bound: u64,
 }
 
 impl SerialProductPublicationPolicy {
@@ -119,6 +121,7 @@ impl SerialProductPublicationPolicy {
             storage_io,
             stage_nanos,
             confidence_parts_per_million,
+            output_file_descriptor_bound: OUTPUT_FILE_DESCRIPTOR_BOUND,
         }
     }
 }
@@ -192,6 +195,11 @@ fn build_physical<R: ImplementationRegistry>(
     let check_claims = vec![claim(LeaseResource::Workers, 1, ClaimLifetime::Work)];
     let commit_claims = vec![
         claim(
+            LeaseResource::FileDescriptors,
+            policy.output_file_descriptor_bound,
+            publication_lifetime.clone(),
+        ),
+        claim(
             LeaseResource::Rate {
                 demand_id: output_rate_demand.clone(),
             },
@@ -247,6 +255,11 @@ fn build_physical<R: ImplementationRegistry>(
             dependencies: BTreeSet::from([WorkDependency::Work(check.clone())]),
             claims: vec![
                 claim(LeaseResource::Workers, 1, ClaimLifetime::Work),
+                claim(
+                    LeaseResource::FileDescriptors,
+                    policy.output_file_descriptor_bound,
+                    ClaimLifetime::Work,
+                ),
                 claim(
                     LeaseResource::Storage {
                         demand_id: storage_demand.clone(),
@@ -367,7 +380,12 @@ fn build_physical<R: ImplementationRegistry>(
             }],
             caches: CacheDemand::zero(),
             locks: CountDemand::zero(),
-            file_descriptors: CountDemand::zero(),
+            // The serial sink stages or promotes one output member at a time.
+            // This is a declared capacity bound, not an exact OS-FD count.
+            file_descriptors: CountDemand::new(
+                policy.output_file_descriptor_bound,
+                policy.output_file_descriptor_bound,
+            ),
             queues: vec![QueueDemand {
                 demand_id: output_queue_demand,
                 resource: policy.storage_io.queue().clone(),

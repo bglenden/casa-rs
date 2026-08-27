@@ -315,7 +315,10 @@ impl CompleteDataPlanFragment {
         mut self,
         base: &PhysicalWorkBinding,
     ) -> Result<(PhysicalWorkBinding, Self), CompleteDataPlanError> {
-        let reconciliation = base.observation_transaction().post_replay_reconciliation();
+        let reconciliation = base
+            .observation_transaction()
+            .post_replay_reconciliation()
+            .ok_or(CompleteDataPlanError::MissingReconciliationNode)?;
         if !base.execution_dag().nodes().contains_key(&self.replay_node) {
             return Err(CompleteDataPlanError::MissingReplayNode);
         }

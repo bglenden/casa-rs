@@ -26,12 +26,22 @@ const PRODUCT_SUFFIXES: [&str; 6] = [".psf", ".residual", ".model", ".image", ".
 static EXECUTION_LOCK: Mutex<()> = Mutex::new(());
 
 fn tiny_measurement_set(root: &Path) -> PathBuf {
-    let output = root.join("input.ms");
-    let mut measurement_set = MeasurementSet::create_memory(
-        MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
-    )
-    .expect("create in-memory application fixture");
-    populate_fixture(&mut measurement_set);
+    measurement_set_fixture(root, "input.ms", false)
+}
+
+fn flagged_polarized_measurement_set(root: &Path) -> PathBuf {
+    measurement_set_fixture(root, "polarized-input.ms", true)
+}
+
+fn measurement_set_fixture(root: &Path, name: &str, polarized: bool) -> PathBuf {
+    let output = root.join(name);
+    let mut builder = MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data);
+    if polarized {
+        builder = builder.with_main_column(OptionalMainColumn::ModelData);
+    }
+    let mut measurement_set =
+        MeasurementSet::create_memory(builder).expect("create in-memory application fixture");
+    populate_fixture(&mut measurement_set, polarized);
     measurement_set
         .save_as(&output)
         .expect("persist fixture with production tiled bindings");
@@ -56,7 +66,7 @@ fn tiny_measurement_set(root: &Path) -> PathBuf {
     output
 }
 
-fn populate_fixture(measurement_set: &mut MeasurementSet) {
+fn populate_fixture(measurement_set: &mut MeasurementSet, polarized: bool) {
     {
         let mut antennas = measurement_set.antenna_mut().expect("ANTENNA");
         antennas
@@ -86,6 +96,13 @@ fn populate_fixture(measurement_set: &mut MeasurementSet) {
     let direction = ArrayValue::Float64(
         ArrayD::from_shape_vec(vec![2, 1], vec![1.0, 0.5]).expect("direction shape"),
     );
+    let correlation_codes = if polarized { vec![5, 6, 7, 8] } else { vec![5] };
+    let correlation_count = correlation_codes.len();
+    let correlation_products = if polarized {
+        vec![0, 0, 0, 1, 1, 0, 1, 1]
+    } else {
+        vec![0, 0]
+    };
     measurement_set
         .subtable_mut(SubtableId::Field)
         .expect("FIELD")
@@ -111,17 +128,18 @@ fn populate_fixture(measurement_set: &mut MeasurementSet) {
         .add_row(required_row(
             schema::polarization::REQUIRED_COLUMNS,
             &[
-                ("NUM_CORR", int(1)),
+                ("NUM_CORR", int(correlation_count as i32)),
                 (
                     "CORR_TYPE",
                     Value::Array(ArrayValue::Int32(
-                        ArrayD::from_shape_vec(vec![1], vec![5]).expect("RR shape"),
+                        ArrayD::from_shape_vec(vec![correlation_count], correlation_codes)
+                            .expect("correlation shape"),
                     )),
                 ),
                 (
                     "CORR_PRODUCT",
                     Value::Array(ArrayValue::Int32(
-                        ArrayD::from_shape_vec(vec![2, 1], vec![0, 0])
+                        ArrayD::from_shape_vec(vec![2, correlation_count], correlation_products)
                             .expect("receptor-pair shape"),
                     )),
                 ),
@@ -130,11 +148,19 @@ fn populate_fixture(measurement_set: &mut MeasurementSet) {
         ))
         .expect("add POLARIZATION row");
 
+    let channel_count = if polarized { 2 } else { 1 };
     let frequency = Value::Array(ArrayValue::Float64(
-        ArrayD::from_shape_vec(vec![1], vec![44.0e9]).expect("frequency shape"),
+        ArrayD::from_shape_vec(
+            vec![channel_count],
+            (0..channel_count)
+                .map(|channel| 44.0e9 + channel as f64 * 1.0e6)
+                .collect(),
+        )
+        .expect("frequency shape"),
     ));
     let width = Value::Array(ArrayValue::Float64(
-        ArrayD::from_shape_vec(vec![1], vec![1.0e6]).expect("width shape"),
+        ArrayD::from_shape_vec(vec![channel_count], vec![1.0e6; channel_count])
+            .expect("width shape"),
     ));
     measurement_set
         .subtable_mut(SubtableId::SpectralWindow)
@@ -142,10 +168,10 @@ fn populate_fixture(measurement_set: &mut MeasurementSet) {
         .add_row(required_row(
             schema::spectral_window::REQUIRED_COLUMNS,
             &[
-                ("NUM_CHAN", int(1)),
+                ("NUM_CHAN", int(channel_count as i32)),
                 ("NAME", string("CONTINUUM")),
                 ("REF_FREQUENCY", float(44.0e9)),
-                ("TOTAL_BANDWIDTH", float(1.0e6)),
+                ("TOTAL_BANDWIDTH", float(channel_count as f64 * 1.0e6)),
                 ("CHAN_FREQ", frequency),
                 ("CHAN_WIDTH", width.clone()),
                 ("EFFECTIVE_BW", width.clone()),
@@ -173,52 +199,81 @@ fn populate_fixture(measurement_set: &mut MeasurementSet) {
         ))
         .expect("add DATA_DESCRIPTION row");
 
-    add_main_row(
-        measurement_set,
-        &[
-            ("ANTENNA1", int(0)),
-            ("ANTENNA2", int(1)),
-            ("FIELD_ID", int(0)),
-            ("DATA_DESC_ID", int(0)),
-            ("TIME", float(59_000.0 * 86_400.0)),
-            ("TIME_CENTROID", float(59_000.0 * 86_400.0)),
-            ("EXPOSURE", float(10.0)),
-            ("INTERVAL", float(10.0)),
-            ("SCAN_NUMBER", int(1)),
-            (
-                "UVW",
-                Value::Array(ArrayValue::Float64(
-                    ArrayD::from_shape_vec(vec![3], vec![30.0, 40.0, 0.0]).expect("UVW shape"),
-                )),
-            ),
-            (
-                "DATA",
-                Value::Array(ArrayValue::Complex32(
-                    ArrayD::from_shape_vec(vec![1, 1], vec![Complex32::new(1.0, 0.0)])
-                        .expect("DATA shape"),
-                )),
-            ),
-            (
-                "FLAG",
-                Value::Array(ArrayValue::Bool(
-                    ArrayD::from_shape_vec(vec![1, 1], vec![false]).expect("FLAG shape"),
-                )),
-            ),
-            (
-                "WEIGHT",
-                Value::Array(ArrayValue::Float32(
-                    ArrayD::from_shape_vec(vec![1], vec![1.0]).expect("WEIGHT shape"),
-                )),
-            ),
-            (
-                "SIGMA",
-                Value::Array(ArrayValue::Float32(
-                    ArrayD::from_shape_vec(vec![1], vec![1.0]).expect("SIGMA shape"),
-                )),
-            ),
-            ("FLAG_ROW", boolean(false)),
-        ],
-    );
+    let visibilities = if polarized {
+        vec![
+            Complex32::new(1.0, 0.0),
+            Complex32::new(2.0, 0.0),
+            Complex32::new(3.0, 0.0),
+            Complex32::new(4.0, 0.0),
+            Complex32::new(5.0, 0.0),
+            Complex32::new(6.0, 0.0),
+            Complex32::new(1.0, 0.0),
+            Complex32::new(2.0, 0.0),
+        ]
+    } else {
+        vec![Complex32::new(1.0, 0.0)]
+    };
+    let flags = if polarized {
+        vec![false, false, false, true, false, false, false, true]
+    } else {
+        vec![false]
+    };
+    let weights = vec![1.0; correlation_count];
+    let mut overrides = vec![
+        ("ANTENNA1", int(0)),
+        ("ANTENNA2", int(1)),
+        ("FIELD_ID", int(0)),
+        ("DATA_DESC_ID", int(0)),
+        ("TIME", float(59_000.0 * 86_400.0)),
+        ("TIME_CENTROID", float(59_000.0 * 86_400.0)),
+        ("EXPOSURE", float(10.0)),
+        ("INTERVAL", float(10.0)),
+        ("SCAN_NUMBER", int(1)),
+        (
+            "UVW",
+            Value::Array(ArrayValue::Float64(
+                ArrayD::from_shape_vec(vec![3], vec![30.0, 40.0, 0.0]).expect("UVW shape"),
+            )),
+        ),
+        (
+            "DATA",
+            Value::Array(ArrayValue::Complex32(
+                ArrayD::from_shape_vec(vec![correlation_count, channel_count], visibilities)
+                    .expect("DATA shape"),
+            )),
+        ),
+        (
+            "FLAG",
+            Value::Array(ArrayValue::Bool(
+                ArrayD::from_shape_vec(vec![correlation_count, channel_count], flags)
+                    .expect("FLAG shape"),
+            )),
+        ),
+        (
+            "WEIGHT",
+            Value::Array(ArrayValue::Float32(
+                ArrayD::from_shape_vec(vec![correlation_count], weights.clone())
+                    .expect("WEIGHT shape"),
+            )),
+        ),
+        (
+            "SIGMA",
+            Value::Array(ArrayValue::Float32(
+                ArrayD::from_shape_vec(vec![correlation_count], weights).expect("SIGMA shape"),
+            )),
+        ),
+        ("FLAG_ROW", boolean(false)),
+    ];
+    if polarized {
+        overrides.push((
+            "MODEL_DATA",
+            Value::Array(ArrayValue::Complex32(ArrayD::from_elem(
+                vec![correlation_count, channel_count],
+                Complex32::new(9.0, 9.0),
+            ))),
+        ));
+    }
+    add_main_row(measurement_set, &overrides);
 }
 
 fn add_main_row(measurement_set: &mut MeasurementSet, overrides: &[(&str, Value)]) {
@@ -720,6 +775,69 @@ fn application_commits_exact_final_prediction_to_model_data() {
         None,
         "existing MODEL_DATA reserves no new full-column persistent capacity"
     );
+}
+
+#[test]
+fn application_replaces_every_selected_model_cell_when_flags_and_correlations_differ() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = flagged_polarized_measurement_set(root.path());
+    let mut imaging = request(
+        measurement_set.clone(),
+        root.path().join("polarized-savemodel"),
+        ContinuumAlgorithm::Hogbom,
+    );
+    imaging.channel_count = Some(2);
+    imaging.save_model_column = true;
+
+    let result = execute_continuum(imaging).expect("partially flagged MODEL_DATA write");
+    let visibility = result
+        .outcome
+        .output
+        .visibility_products
+        .expect("terminal visibility completion");
+    assert_eq!(
+        visibility.sample_count(),
+        8,
+        "the sink covers all selected rows, channels, and correlations"
+    );
+    let receipt = result
+        .outcome
+        .output
+        .model_data_receipt
+        .expect("MODEL_DATA receipt");
+    let terminal_pass = receipt
+        .plan_node_identities()
+        .into_iter()
+        .find(|node| node.as_str().starts_with("transaction-read-final-major"))
+        .expect("single fused terminal pass");
+    assert_eq!(
+        receipt.stage_predicted_io(
+            &terminal_pass,
+            casa_imaging_runtime::IoBufferKind::Writeback,
+        ),
+        Some((64, 1)),
+        "the existing column receives all eight selected Complex cells"
+    );
+
+    let reopened = MeasurementSet::open(&measurement_set).expect("reopen MODEL_DATA");
+    let model_column = reopened
+        .data_column(VisibilityDataColumn::ModelData)
+        .expect("MODEL_DATA column");
+    let ArrayValue::Complex32(model) = model_column.get(0).expect("MODEL_DATA row") else {
+        panic!("MODEL_DATA row is complex")
+    };
+    assert!(
+        model.iter().all(|value| *value != Complex32::new(9.0, 9.0)),
+        "no selected destination retains its stale pre-run value"
+    );
+    for channel in 0..2 {
+        assert_ne!(model[[0, channel]], Complex32::new(0.0, 0.0));
+        assert_ne!(model[[3, channel]], Complex32::new(0.0, 0.0));
+        assert_eq!(model[[1, channel]], Complex32::new(0.0, 0.0));
+        assert_eq!(model[[2, channel]], Complex32::new(0.0, 0.0));
+    }
 }
 
 #[test]

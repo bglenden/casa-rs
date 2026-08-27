@@ -2166,9 +2166,12 @@ fn production_weighting_fragment_owns_generation_replay_and_release_lifetimes() 
             )))
     );
     assert!(
-        dag.nodes()[base.observation_transaction().post_replay_reconciliation()]
-            .dependencies
-            .contains(&WorkDependency::Fence(FenceId::new(replay, FenceKind::Io,)))
+        dag.nodes()[base
+            .observation_transaction()
+            .post_replay_reconciliation()
+            .expect("reconstruction has reconciliation")]
+        .dependencies
+        .contains(&WorkDependency::Fence(FenceId::new(replay, FenceKind::Io,)))
     );
     assert!(
         dag.nodes()[&release]
@@ -2176,6 +2179,7 @@ fn production_weighting_fragment_owns_generation_replay_and_release_lifetimes() 
             .contains(&WorkDependency::Work(
                 base.observation_transaction()
                     .post_replay_reconciliation()
+                    .expect("reconstruction has reconciliation")
                     .clone(),
             ))
     );
@@ -4911,6 +4915,7 @@ fn physical_work_binding_rejects_io_and_publication_evidence_outside_plan_semant
         io_base
             .observation_transaction()
             .post_replay_reconciliation()
+            .expect("reconstruction has reconciliation")
             .clone(),
         io_base.observation_transaction().commit().clone(),
     );
@@ -4991,6 +4996,7 @@ fn physical_work_binding_rejects_io_and_publication_evidence_outside_plan_semant
         contract_base
             .observation_transaction()
             .post_replay_reconciliation()
+            .expect("reconstruction has reconciliation")
             .clone(),
         contract_base.observation_transaction().commit().clone(),
     );
@@ -5026,6 +5032,7 @@ fn physical_work_binding_rejects_io_and_publication_evidence_outside_plan_semant
         publication_base
             .observation_transaction()
             .post_replay_reconciliation()
+            .expect("reconstruction has reconciliation")
             .clone(),
         publication_base.observation_transaction().commit().clone(),
     );
@@ -5522,7 +5529,9 @@ fn native_product_publication_rejects_reconstruction_only_transaction_scope() {
     let work = base.observation_transaction();
     let reconstruction = ObservationTransactionWork::new_reconstruction(
         work.initial_consistency_check().clone(),
-        work.post_replay_reconciliation().clone(),
+        work.post_replay_reconciliation()
+            .expect("reconstruction has reconciliation")
+            .clone(),
         work.commit().clone(),
     );
     let error = PhysicalWorkBinding::new_with_product_publication(
@@ -5697,6 +5706,7 @@ fn transaction_seal_blocks_unbound_transaction_work() {
             WorkNodeId::new("execute"),
             base.observation_transaction()
                 .post_replay_reconciliation()
+                .expect("reconstruction has reconciliation")
                 .clone(),
             base.observation_transaction().commit().clone(),
         ),
@@ -10024,6 +10034,14 @@ fn serial_product_publication_stages_privately_then_publishes_once() {
     )
     .expect("production publication plan");
     let publication_dag = planned_runtime.physical_work().execution_dag();
+    assert_eq!(
+        planned_runtime
+            .physical_work()
+            .observation_transaction()
+            .post_replay_reconciliation(),
+        None,
+        "sealed publication has a total public reconciliation query"
+    );
     assert!(
         publication_dag
             .nodes()
@@ -10036,7 +10054,6 @@ fn serial_product_publication_stages_privately_then_publishes_once() {
             !matches!(
                 claim.resource,
                 LeaseResource::MeasurementSetLock { .. }
-                    | LeaseResource::FileDescriptors
                     | LeaseResource::StorageReadRate { .. }
                     | LeaseResource::StorageQueue { .. }
                     | LeaseResource::IoBuffer(IoBufferKind::SourceReadAhead)
@@ -10045,7 +10062,27 @@ fn serial_product_publication_stages_privately_then_publishes_once() {
     }));
     let demand = &publication_dag.resource_alternative().demand;
     assert_eq!(demand.locks.hard(), 0);
-    assert_eq!(demand.file_descriptors.hard(), 0);
+    assert_eq!(
+        demand.file_descriptors.hard(),
+        1,
+        "one serial output descriptor is distinct from zero observation descriptors"
+    );
+    for node in ["product-publication-stage", "product-publication-commit"] {
+        assert!(
+            publication_dag.nodes()[&WorkNodeId::new(node)]
+                .claims
+                .iter()
+                .any(|claim| {
+                    claim.resource == LeaseResource::FileDescriptors && claim.amount == 1
+                })
+        );
+    }
+    assert!(
+        publication_dag.nodes()[&WorkNodeId::new("product-publication-check")]
+            .claims
+            .iter()
+            .all(|claim| claim.resource != LeaseResource::FileDescriptors)
+    );
     assert_eq!(demand.queues.len(), 1);
     assert_eq!(
         demand.queues[0].demand_id,

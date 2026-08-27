@@ -276,10 +276,159 @@ struct ModelColumnWorker {
 }
 
 pub(crate) struct ModelDataCellWrite {
+    address: casa_imaging_model::SelectedSampleAddress,
+    value: num_complex::Complex32,
+}
+
+struct SelectedModelDataCoverage {
+    selection: Arc<casa_imaging_model::ObservationSelection>,
+    row: usize,
+    channel: usize,
+    correlation: usize,
+    written: u64,
+}
+
+struct ExpectedModelDataAddress {
     physical_row: u64,
+    data_description_id: u32,
+    spectral_window_id: u32,
+    polarization_id: u32,
     channel_index: u32,
     correlation_index: u32,
-    value: num_complex::Complex32,
+}
+
+impl SelectedModelDataCoverage {
+    fn new(selection: Arc<casa_imaging_model::ObservationSelection>) -> Self {
+        Self {
+            selection,
+            row: 0,
+            channel: 0,
+            correlation: 0,
+            written: 0,
+        }
+    }
+
+    fn push(&mut self, address: casa_imaging_model::SelectedSampleAddress) -> io::Result<()> {
+        let Some(expected) = self.expected()? else {
+            return Err(io::Error::other(
+                "MODEL_DATA replay exceeded the exact selected write set",
+            ));
+        };
+        if address.physical_row != expected.physical_row
+            || u32::try_from(address.data_description_id).ok() != Some(expected.data_description_id)
+            || address.spectral_window_id != expected.spectral_window_id
+            || address.polarization_id != expected.polarization_id
+            || address.channel_index != expected.channel_index
+            || address.correlation_index != expected.correlation_index
+        {
+            return Err(io::Error::other(format!(
+                "MODEL_DATA replay address ({}, {}, {}) did not match selected address ({}, {}, {})",
+                address.physical_row,
+                address.channel_index,
+                address.correlation_index,
+                expected.physical_row,
+                expected.channel_index,
+                expected.correlation_index,
+            )));
+        }
+        self.written = self
+            .written
+            .checked_add(1)
+            .ok_or_else(|| io::Error::other("MODEL_DATA sample count overflowed"))?;
+        self.advance()?;
+        Ok(())
+    }
+
+    fn finish(&self, expected_samples: u64) -> io::Result<()> {
+        if self.written != expected_samples || self.expected()?.is_some() {
+            return Err(io::Error::other(format!(
+                "MODEL_DATA wrote {} samples without exhausting the exact selected write set of {expected_samples}",
+                self.written
+            )));
+        }
+        Ok(())
+    }
+
+    fn expected(&self) -> io::Result<Option<ExpectedModelDataAddress>> {
+        let Some(row) = self.selection.rows().ordered_main_rows().get(self.row) else {
+            return Ok(None);
+        };
+        let data_description = self
+            .selection
+            .data_descriptions()
+            .iter()
+            .find(|selection| selection.data_description_id() == row.data_description_id())
+            .ok_or_else(|| io::Error::other("selected MODEL_DATA DDID is absent"))?;
+        let spectral_window = self
+            .selection
+            .spectral_windows()
+            .iter()
+            .find(|selection| {
+                selection.spectral_window_id() == data_description.spectral_window_id()
+            })
+            .ok_or_else(|| io::Error::other("selected MODEL_DATA SPW is absent"))?;
+        let correlations = self
+            .selection
+            .correlations()
+            .iter()
+            .find(|selection| selection.polarization_id() == data_description.polarization_id())
+            .ok_or_else(|| io::Error::other("selected MODEL_DATA polarization is absent"))?;
+        let channel = spectral_window
+            .channel_indices()
+            .get(self.channel)
+            .ok_or_else(|| io::Error::other("selected MODEL_DATA channel is absent"))?;
+        let correlation = correlations
+            .products()
+            .get(self.correlation)
+            .ok_or_else(|| io::Error::other("selected MODEL_DATA correlation is absent"))?;
+        Ok(Some(ExpectedModelDataAddress {
+            physical_row: row.physical_row(),
+            data_description_id: data_description.data_description_id(),
+            spectral_window_id: data_description.spectral_window_id(),
+            polarization_id: data_description.polarization_id(),
+            channel_index: *channel,
+            correlation_index: correlation.correlation_index(),
+        }))
+    }
+
+    fn advance(&mut self) -> io::Result<()> {
+        let row = self
+            .selection
+            .rows()
+            .ordered_main_rows()
+            .get(self.row)
+            .ok_or_else(|| io::Error::other("selected MODEL_DATA row is absent"))?;
+        let data_description = self
+            .selection
+            .data_descriptions()
+            .iter()
+            .find(|selection| selection.data_description_id() == row.data_description_id())
+            .ok_or_else(|| io::Error::other("selected MODEL_DATA DDID is absent"))?;
+        let spectral_window = self
+            .selection
+            .spectral_windows()
+            .iter()
+            .find(|selection| {
+                selection.spectral_window_id() == data_description.spectral_window_id()
+            })
+            .ok_or_else(|| io::Error::other("selected MODEL_DATA SPW is absent"))?;
+        let correlations = self
+            .selection
+            .correlations()
+            .iter()
+            .find(|selection| selection.polarization_id() == data_description.polarization_id())
+            .ok_or_else(|| io::Error::other("selected MODEL_DATA polarization is absent"))?;
+        self.correlation += 1;
+        if self.correlation == correlations.products().len() {
+            self.correlation = 0;
+            self.channel += 1;
+            if self.channel == spectral_window.channel_indices().len() {
+                self.channel = 0;
+                self.row += 1;
+            }
+        }
+        Ok(())
+    }
 }
 
 enum ModelColumnCommand {
@@ -308,17 +457,18 @@ impl ModelColumnWorker {
             .name("model-data-write".to_string())
             .stack_size(MODEL_COLUMN_WORKER_STACK_BYTES)
             .spawn(move || {
+                let mut coverage = SelectedModelDataCoverage::new(Arc::clone(&selection));
                 let mut writer = match ModelDataWrite::begin(path, &expected, &selection) {
-                        Ok(writer) => {
-                            let _ = ready_sender.send(Ok(()));
-                            writer
-                        }
-                        Err(error) => {
-                            let message = error.to_string();
-                            let _ = ready_sender.send(Err(message.clone()));
-                            return Err(io::Error::other(message));
-                        }
-                    };
+                    Ok(writer) => {
+                        let _ = ready_sender.send(Ok(()));
+                        writer
+                    }
+                    Err(error) => {
+                        let message = error.to_string();
+                        let _ = ready_sender.send(Err(message.clone()));
+                        return Err(io::Error::other(message));
+                    }
+                };
                 let mut written_samples = 0_u64;
                 let completed_samples = loop {
                     let command = receiver
@@ -327,16 +477,18 @@ impl ModelColumnWorker {
                     match command {
                         ModelColumnCommand::Write { values, reply } => {
                             let result = (|| {
-                                written_samples =
-                                    written_samples.checked_add(values.len() as u64).ok_or_else(
-                                        || io::Error::other("MODEL_DATA sample count overflowed"),
-                                    )?;
+                                written_samples = written_samples
+                                    .checked_add(values.len() as u64)
+                                    .ok_or_else(|| {
+                                        io::Error::other("MODEL_DATA sample count overflowed")
+                                    })?;
                                 for cell in values {
+                                    coverage.push(cell.address)?;
                                     writer
                                         .write(
-                                            cell.physical_row,
-                                            cell.channel_index,
-                                            cell.correlation_index,
+                                            cell.address.physical_row,
+                                            cell.address.channel_index,
+                                            cell.address.correlation_index,
                                             cell.value,
                                         )
                                         .map_err(io::Error::other)?;
@@ -358,11 +510,7 @@ impl ModelColumnWorker {
                             expected_samples,
                             generation,
                         } => {
-                            if written_samples != expected_samples {
-                                return Err(io::Error::other(format!(
-                                    "MODEL_DATA wrote {written_samples} samples, expected {expected_samples}"
-                                )));
-                            }
+                            coverage.finish(expected_samples)?;
                             writer.complete(generation).map_err(io::Error::other)?;
                             break written_samples;
                         }
@@ -388,9 +536,7 @@ impl ModelColumnWorker {
                 let address = sample.address();
                 let predicted = sample.predicted();
                 ModelDataCellWrite {
-                    physical_row: address.physical_row,
-                    channel_index: address.channel_index,
-                    correlation_index: address.correlation_index,
+                    address,
                     value: num_complex::Complex32::new(predicted.re as f32, predicted.im as f32),
                 }
             })
@@ -499,6 +645,7 @@ struct SerialContinuumExecutorState {
     selected: Option<BoundSelectedObservation>,
     selected_completion: Option<SelectedObservationCompletion>,
     weighting: WeightingExecutionState,
+    pending_frozen_reservation: Option<Arc<crate::FrozenWeightingReservation>>,
     frozen_weighting: Option<FrozenWeightingArtifact>,
     prepared: Option<CompleteDataPreparedState>,
     operator: Option<SerialMfsOperatorState>,
@@ -655,6 +802,7 @@ impl SerialContinuumExecutor {
                 selected: Some(selected),
                 selected_completion: None,
                 weighting: WeightingExecutionState::new(),
+                pending_frozen_reservation: None,
                 frozen_weighting: None,
                 prepared: None,
                 operator: None,
@@ -697,6 +845,19 @@ impl SerialContinuumExecutor {
             .get_mut()
             .expect("new serial continuum executor mutex is not poisoned")
             .weighting = WeightingExecutionState::with_frozen_artifact(artifact);
+        self
+    }
+
+    /// Attach the Resource Authority reservation spanning later major plans.
+    #[must_use]
+    pub fn with_frozen_weighting_reservation(
+        mut self,
+        reservation: crate::FrozenWeightingReservation,
+    ) -> Self {
+        self.state
+            .get_mut()
+            .expect("new serial continuum executor mutex is not poisoned")
+            .pending_frozen_reservation = Some(Arc::new(reservation));
         self
     }
 
@@ -1052,7 +1213,13 @@ impl WorkImplementation for SerialContinuumExecutor {
                 .operator
                 .take()
                 .ok_or_else(|| io::Error::other("complete-data operator missing"))?;
-            let frozen_weighting = state.weighting.frozen_artifact();
+            let frozen_weighting = state.weighting.frozen_artifact().and_then(|artifact| {
+                if let Some(reservation) = state.pending_frozen_reservation.take() {
+                    Some(artifact.with_cross_plan_reservation(reservation))
+                } else {
+                    artifact.has_cross_plan_reservation().then_some(artifact)
+                }
+            });
             let replay = state
                 .weighting
                 .replay_completion()

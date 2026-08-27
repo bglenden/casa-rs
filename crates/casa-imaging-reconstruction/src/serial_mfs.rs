@@ -763,46 +763,52 @@ impl CompleteDataOwnerState {
         for weighted in block.samples() {
             self.coverage.push(weighted);
             let selected = weighted.selected();
-            if self.accept_input(selected)?
-                && selected.address.correlation_type.contributes_to_stokes_i()
-            {
-                let visibility = match selected.visibility {
-                    SelectedVisibilitySample::Float32(value) => [f64::from(value), 0.0],
-                    SelectedVisibilitySample::Complex32([real, imaginary]) => {
-                        [f64::from(real), f64::from(imaginary)]
-                    }
-                };
-                let mut predicted_visibility = Complex64::default();
+            let visibility = match selected.visibility {
+                SelectedVisibilitySample::Float32(value) => [f64::from(value), 0.0],
+                SelectedVisibilitySample::Complex32([real, imaginary]) => {
+                    [f64::from(real), f64::from(imaginary)]
+                }
+            };
+            let contributes_to_stokes_i =
+                selected.address.correlation_type.contributes_to_stokes_i();
+            let accepted_input = self.accept_input(selected)?;
+            let grids = contributes_to_stokes_i && accepted_input;
+            let mut predicted_visibility = Complex64::default();
+            if contributes_to_stokes_i {
                 for spectral in weighted.spectral_values() {
                     let contribution = spectral.contribution();
                     let sample = SerialMfsSample::new(
                         selected.coordinates.transformed_uvw_m,
                         contribution.evaluation_frequency_hz(),
                         selected.coordinates.phase_shift_m,
-                        visibility,
+                        if grids { visibility } else { [0.0, 0.0] },
                         spectral.imaging_weight(),
                         f64::from(contribution.factor()),
                     )?;
-                    if self.residual_model.is_some() {
-                        predicted_visibility += self.operator.push_with_residual(sample)?;
-                    } else {
-                        self.operator.push(sample)?;
+                    match (self.residual_model.is_some(), grids) {
+                        (true, true) => {
+                            predicted_visibility += self.operator.push_with_residual(sample)?;
+                        }
+                        (true, false) => {
+                            predicted_visibility += self.operator.predict_one(sample)?;
+                        }
+                        (false, true) => self.operator.push(sample)?,
+                        (false, false) => {}
                     }
                 }
-                if self.residual_model.is_some() {
-                    let observed = Complex64::new(visibility[0], visibility[1]);
-                    // MODEL_DATA is a CASA Complex column. Quantize exactly
-                    // once at this product/persistence boundary so the paired
-                    // residual product and the persisted prediction describe
-                    // the same sample; operator accumulation above remains f64.
-                    let predicted = casa_persistent_complex(predicted_visibility);
-                    self.predicted_selected.push(FinalVisibilitySample {
-                        address: selected.address,
-                        observed,
-                        predicted,
-                        residual: observed - predicted,
-                    });
-                }
+            }
+            if self.residual_model.is_some() {
+                let observed = Complex64::new(visibility[0], visibility[1]);
+                // CASA degrids and writes the whole selected visibility
+                // buffer. Flags and Stokes-I participation govern gridding,
+                // not whether the selected MODEL_DATA destination is refreshed.
+                let predicted = casa_persistent_complex(predicted_visibility);
+                self.predicted_selected.push(FinalVisibilitySample {
+                    address: selected.address,
+                    observed,
+                    predicted,
+                    residual: observed - predicted,
+                });
             }
         }
         self.sample_count = self

@@ -927,7 +927,7 @@ impl FusedWeightingPhase {
         self.peak_weighted_capacity = self.peak_weighted_capacity.max(self.block.capacity());
         Ok(WeightingReplayChunk {
             sequence,
-            samples: std::mem::replace(&mut self.block, Vec::with_capacity(self.max_block_samples)),
+            samples: std::mem::take(&mut self.block),
         })
     }
 }

@@ -4898,7 +4898,7 @@ fn encode_observation_transaction(
         }
         None => encoder.u8(0),
     }
-    match work.optional_post_replay_reconciliation() {
+    match work.post_replay_reconciliation() {
         Some(node) => {
             encoder.u8(1);
             encoder.string(node.as_str());

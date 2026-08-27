@@ -41,9 +41,9 @@ use casa_imaging_reconstruction::{
 use casa_imaging_runtime::{
     AttemptBoundObservationCompletion, BuildIdentity, ExecutionAttemptId, ExecutionProvenance,
     ExecutionReceipt, ExecutionReceiptStore, FenceKind, FinalVisibilityReplay,
-    ImplementationContractMetadata, ImplementationRegistry, ImplementationRegistryId,
-    ObservationReadCompletionContext, PlannerCostModelProfileBootstrap, PlanningBindings,
-    ResourceAuthority, ResourcePolicy, RunBindings, RunToCompletion,
+    FrozenWeightingReservation, ImplementationContractMetadata, ImplementationRegistry,
+    ImplementationRegistryId, ObservationReadCompletionContext, PlannerCostModelProfileBootstrap,
+    PlanningBindings, ResourceAuthority, ResourcePolicy, RunBindings, RunToCompletion,
     SerialContinuumExecutionPolicy, SerialContinuumExecutor, SerialContinuumPassInput,
     SerialContinuumPlan, SerialContinuumRegistry, SerialProductPublicationExecutor,
     SerialProductPublicationPlan, SerialProductPublicationPolicy, SerialProductPublicationRegistry,
@@ -324,6 +324,15 @@ where
     };
     let minor_node = planned.minor_cycle_node().cloned();
     let (physical, weighting, complete, resources, pass, _) = planned.into_parts();
+    let frozen_reservation = (!matches!(algorithm, ReconstructionAlgorithm::Dirty))
+        .then(|| {
+            FrozenWeightingReservation::acquire(
+                &runtime.authority,
+                runtime.resource_policy.clone(),
+                weighting.planned_residency(),
+            )
+        })
+        .transpose()?;
     let selected = initial_access.open(problem)?;
     let mut executor = SerialContinuumExecutor::new(
         runtime.implementation.clone(),
@@ -337,6 +346,9 @@ where
         SerialContinuumPassInput::Initial,
     );
     if !matches!(algorithm, ReconstructionAlgorithm::Dirty) {
+        executor = executor.with_frozen_weighting_reservation(
+            frozen_reservation.expect("non-dirty execution reserves frozen weighting"),
+        );
         let program = MinorCycleProgram::for_algorithm(
             algorithm.clone(),
             problem.reconstruction().controls(),
@@ -498,7 +510,7 @@ where
                     ExecutableModelProblem::from_compiled(problem.clone())?,
                     SerialContinuumPassInput::FinalMajor(final_input),
                 )
-                .with_frozen_weighting(frozen_weighting.clone());
+                .with_frozen_weighting(frozen_weighting);
                 let mut terminal_replay = None;
                 if continue_cleaning {
                     let remaining = controls

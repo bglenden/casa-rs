@@ -2579,10 +2579,15 @@ fn validate_alternative(
     topology: &ResourceTopology,
     alternative: &DemandAlternative,
 ) -> Result<(), ResourceError> {
-    if alternative.scaling.minimum_workers == 0
-        || alternative.scaling.maximum_workers < alternative.scaling.minimum_workers
-        || alternative.demand.workers.hard < alternative.scaling.minimum_workers
-        || alternative.demand.workers.hard > alternative.scaling.maximum_workers
+    let worker_scaling_valid = if alternative.demand.workers.hard == 0 {
+        alternative.scaling.minimum_workers == 0 && alternative.scaling.maximum_workers == 0
+    } else {
+        alternative.scaling.minimum_workers > 0
+            && alternative.scaling.maximum_workers >= alternative.scaling.minimum_workers
+            && alternative.demand.workers.hard >= alternative.scaling.minimum_workers
+            && alternative.demand.workers.hard <= alternative.scaling.maximum_workers
+    };
+    if !worker_scaling_valid
         || alternative.scaling.maximum_batch_size == 0
         || alternative.scaling.maximum_tile_width == 0
         || alternative.scaling.maximum_tile_height == 0

@@ -144,12 +144,13 @@ candidate.
 
 ## Timing rules
 
-- Size a candidate discriminator so the affected stage, or a clearly bounded
-  aggregate of that same stage, runs for at least about 10 seconds. Do not make
-  a traversal or gridding discriminator longer merely by inflating unrelated
-  FFT or product-writing work. When no suitable single workload is available,
-  use interleaved repeated cohorts and label them as aggregation rather than
-  problem-size evidence.
+- Size a candidate discriminator so repeated measurements distinguish the
+  affected stage from host variance and setup noise. Do not make a traversal
+  or gridding discriminator longer merely by inflating unrelated FFT or
+  product-writing work. Prefer interleaved repeated cohorts, report their
+  variance, and label aggregation separately from problem-size evidence; the
+  evidence must discriminate the proposed cause rather than satisfy an
+  invented absolute duration.
 - Before changing casa-rs performance code, obtain and freeze a corresponding
   CASA timing for the exact workload or component boundary being optimized.
   Match the dataset, selection, geometry, products, and timed stage. Do not use

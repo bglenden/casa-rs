@@ -110,10 +110,11 @@ pub use serial_product_publication::{
     SerialProductPublicationRegistry, SerialProductPublicationSink,
 };
 pub use weighting::{
-    ContinuumPassIdentity, ContinuumPassPhase, FrozenWeightingArtifact, ReplayCallbackError,
-    SelectedObservationSourceResources, WeightedObservationBlock, WeightedObservationSample,
-    WeightedSpectralValue, WeightingEvidenceError, WeightingExecutionState,
-    WeightingGenerationCompletionError, WeightingGenerationError, WeightingPlanFragment,
-    WeightingPlanFragmentError, WeightingReplayCompletion, WeightingReplayCompletionError,
-    WeightingReplayError, WeightingSourceTraversalError, WeightingStreamingMode,
+    ContinuumPassIdentity, ContinuumPassPhase, FrozenWeightingArtifact, FrozenWeightingReservation,
+    ReplayCallbackError, SelectedObservationSourceResources, WeightedObservationBlock,
+    WeightedObservationSample, WeightedSpectralValue, WeightingEvidenceError,
+    WeightingExecutionState, WeightingGenerationCompletionError, WeightingGenerationError,
+    WeightingPlanFragment, WeightingPlanFragmentError, WeightingReplayCompletion,
+    WeightingReplayCompletionError, WeightingReplayError, WeightingSourceTraversalError,
+    WeightingStreamingMode,
 };
