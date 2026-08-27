@@ -15,6 +15,7 @@ casa-coordinates = { path = "../casa-coordinates" }
 casa-provider-contracts = { path = "../casa-provider-contracts" }
 casa-task-runtime = { path = "../casa-task-runtime" }
 casa-lattices = { path = "../casa-lattices" }
+casa-numerics = { path = "../casa-numerics" }
 casa-tables = { path = "../casa-tables" }
 casa-types = { path = "../casa-types" }
 fitsio = { version = "0.21", features = ["fitsio-src", "src-cmake"] }

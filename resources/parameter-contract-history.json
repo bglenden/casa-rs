@@ -17,6 +17,11 @@
       "fingerprint": "d10ff24f863e66e9e76d0c8637b357b95feca7bc93921235cd869840ce0c47f2"
     },
     {
+      "id": "calibrate.mode",
+      "semantic_revision": 2,
+      "fingerprint": "594f532851b163f22979f705d9ef90755b621e82389aa46c1fe221e736500b23"
+    },
+    {
       "id": "calibrate.output",
       "semantic_revision": 1,
       "fingerprint": "63678a3eed3347c7f54c88bdd695c6d3723cbaf350b0b530c441896b00a7a2c0"
@@ -2134,6 +2139,11 @@
       "fingerprint": "45e166e01d0570205eaf4fb90efc2fff5fea9fb8cb8b37de261bd9eaa8821b95"
     },
     {
+      "id": "calibrate",
+      "contract_version": 4,
+      "fingerprint": "a2fc77dfb01b217ad4f2d50b3512c44f13adab1d75b1b64474d12f27174104a1"
+    },
+    {
       "id": "clearcal",
       "contract_version": 1,
       "fingerprint": "5c00940ae32a554810ed4cd8a85d70bd5f0afc3670e698dd13c12c5e71518e62"
@@ -2352,6 +2362,11 @@
       "id": "imager",
       "contract_version": 8,
       "fingerprint": "3bd6cad6d370af533a534bb4123fb734e18ef43c18d117260971118d22fc8597"
+    },
+    {
+      "id": "imager",
+      "contract_version": 9,
+      "fingerprint": "72f083f9db60770ab8b702aee9adad1f8b3f6c9eac8e1494d332a36b712d6985"
     },
     {
       "id": "imcollapse",

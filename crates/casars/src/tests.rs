@@ -99,7 +99,6 @@ fn launcher_lists_registered_apps_in_expected_order() {
             "exportfits",
             "mstransform",
             "split",
-            "uvcontsub",
             "applycal",
             "gaincal",
             "bandpass",

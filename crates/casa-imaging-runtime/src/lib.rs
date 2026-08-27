@@ -3,6 +3,7 @@
 //! Plan-bound imaging execution, process resource arbitration, and leases.
 
 mod complete_data_operator;
+mod continuum_transform;
 mod cost_model;
 mod execution;
 mod execution_bindings;
@@ -32,11 +33,16 @@ pub use execution_bindings::{
     WorkImplementation, WorkMeasurements, plan, run,
 };
 
+pub use casa_imaging_model::{ContinuumFitWeightGenerationId, ContinuumTransformGenerationId};
 pub use casa_imaging_reconstruction::{MajorCyclePreparation, SpectralPrimitiveCatalog};
 pub use complete_data_operator::{
     CompleteDataOperatorError, CompleteDataOperatorResult, CompleteDataPlanError,
     CompleteDataPlanFragment, CompleteDataPreparedState, CompleteDataResidency,
     SpectralOperatorState,
+};
+pub use continuum_transform::{
+    ContinuumTransformCompletion, ContinuumTransformError, ContinuumTransformRowPlan,
+    ContinuumTransformStream, ContinuumTransformedSample, plan_continuum_transform_row,
 };
 pub use cost_model::{
     PlannerCostModelProfileBootstrap, PlannerCostModelProfileRecord, ProfileEvidenceEntry,
@@ -110,11 +116,11 @@ pub use spectral_cycle_plan::{
     SpectralCycleExecutionPolicy, SpectralCyclePlan, SpectralCyclePlanError,
 };
 pub use weighting::{
-    FrozenWeightingArtifact, FrozenWeightingReservation, ReplayCallbackError,
-    SelectedObservationSourceResources, SpectralPassIdentity, SpectralPassPhase,
-    WeightedObservationBlock, WeightedObservationSample, WeightedSpectralValue,
-    WeightingEvidenceError, WeightingExecutionState, WeightingGenerationCompletionError,
-    WeightingGenerationError, WeightingPlanFragment, WeightingPlanFragmentError,
-    WeightingReplayCompletion, WeightingReplayCompletionError, WeightingReplayError,
-    WeightingSourceTraversalError, WeightingStreamingMode,
+    ContinuumDensityCallbackError, ContinuumDensityTraversalError, FrozenWeightingArtifact,
+    FrozenWeightingReservation, ReplayCallbackError, SelectedObservationSourceResources,
+    SpectralPassIdentity, SpectralPassPhase, WeightedObservationBlock, WeightedObservationSample,
+    WeightedSpectralValue, WeightingEvidenceError, WeightingExecutionState,
+    WeightingGenerationCompletionError, WeightingGenerationError, WeightingPlanFragment,
+    WeightingPlanFragmentError, WeightingReplayCompletion, WeightingReplayCompletionError,
+    WeightingReplayError, WeightingSourceTraversalError, WeightingStreamingMode,
 };

@@ -5,10 +5,11 @@
 use std::{fmt, sync::Arc};
 
 use casa_imaging_model::{
-    CompiledGeometryId, CompiledProblem, CompiledProblemId, FiniteValuePolicy, InstrumentResponse,
-    LogicalIdentity, NumericPrecision, NumericsContractId, PolarizationCoordinate, Projection,
-    ReconstructionBasis, ReductionPolicy, SelectedObservationGenerationId, SelectedSampleAddress,
-    SelectedVisibilitySample, SpectralKernel, WeightingCommitmentId,
+    CompiledGeometryId, CompiledProblem, CompiledProblemId, ContinuumTransformGenerationId,
+    FiniteValuePolicy, InstrumentResponse, LogicalIdentity, NumericPrecision, NumericsContractId,
+    PolarizationCoordinate, Projection, ReconstructionBasis, ReductionPolicy,
+    SelectedObservationGenerationId, SelectedSampleAddress, SelectedVisibilitySample,
+    SpectralKernel, WeightingCommitmentId,
 };
 use ndarray::{Array2, Axis};
 use num_complex::Complex64;
@@ -715,6 +716,7 @@ pub struct CompleteDataOwnerCompletion {
     coverage: WeightingReplayCoverageId,
     primitives: SpectralPrimitiveCatalog,
     selected_generation: SelectedObservationGenerationId,
+    continuum_transform_generation: Option<ContinuumTransformGenerationId>,
     sample_count: u64,
     block_count: u64,
 }
@@ -773,6 +775,12 @@ impl CompleteDataOwnerCompletion {
     #[must_use]
     pub const fn selected_generation(&self) -> SelectedObservationGenerationId {
         self.selected_generation
+    }
+
+    /// Return the transformed visibility generation, when sequential subtraction ran.
+    #[must_use]
+    pub const fn continuum_transform_generation(&self) -> Option<ContinuumTransformGenerationId> {
+        self.continuum_transform_generation
     }
 
     /// Return the exhaustive selected-sample count.
@@ -969,6 +977,7 @@ impl CompleteDataOwnerState {
             let grids = contributes_to_stokes_i && accepted_input;
             let mut predicted_visibility = Complex64::default();
             let mut touches_core = false;
+            let has_spectral_support = weighted.spectral_values().next().is_some();
             if contributes_to_stokes_i {
                 let mut stencil = Vec::new();
                 for spectral in weighted.spectral_values() {
@@ -1002,6 +1011,7 @@ impl CompleteDataOwnerState {
                 }
             }
             if self.residual_model.is_some()
+                && has_spectral_support
                 && (touches_core || self.operator.slab.total_channels() == 1)
             {
                 let observed = Complex64::new(visibility[0], visibility[1]);
@@ -1085,6 +1095,7 @@ impl CompleteDataOwnerState {
         self,
         replay: &WeightingReplaySummary,
         selected_generation: SelectedObservationGenerationId,
+        continuum_transform_generation: Option<ContinuumTransformGenerationId>,
     ) -> Result<CompleteDataOwnerResult, SpectralOperatorError> {
         if self
             .weighting_generation
@@ -1120,6 +1131,7 @@ impl CompleteDataOwnerState {
                 coverage,
                 primitives,
                 selected_generation,
+                continuum_transform_generation,
                 sample_count: replay.sample_count(),
                 block_count: replay.block_count(),
             },

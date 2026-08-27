@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_imaging_model::{
-    AxisOrder, CentreLaws, CompileObservationError, CompileProblemError, DeclaredInnerProducts,
-    DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame, DopplerConvention, Epoch, FacetLayout,
+    AxisOrder, CentreLaws, CompileObservationError, CompileProblemError, ContinuumChannelRole,
+    ContinuumChannelUse, ContinuumFitRule, DeclaredInnerProducts, DelayCentreLaw,
+    DirectionCoordinateSpec, DirectionFrame, DopplerConvention, Epoch, FacetLayout,
     FiniteValuePolicy, FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec,
     ImageShape, ImagingRequest, InstrumentResponse, ItrfPosition, MeasurementEquationContract,
     MissingPointingPolicy, ModelColumnWrite, ModelInnerProduct, ModelStateIdentity,
@@ -16,10 +17,11 @@ use casa_imaging_model::{
     ProductValidityPolicies, ProductValidityRule, Projection, ReconstructionAlgorithm,
     ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
     ReferenceDataKind, RequiredCapability, RestFrequency, RestoringBeamPolicy, ScientificContract,
-    SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSamplingLaw, SpectralWcs, StageErrorBudget, TaylorSupportReference,
-    TaylorValidityPolicy, TimeScale, UvTaper, UvwCoordinateLaw, VisibilityInnerProduct,
-    WeightDensityScope, WeightingContract, WeightingScheme, compile, compile_observation,
+    SequentialContinuumTransform, SkyDirection, SpectralContract, SpectralCoordinateSpec,
+    SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, StageErrorBudget,
+    TaylorSupportReference, TaylorValidityPolicy, TimeScale, UvTaper, UvwCoordinateLaw,
+    VisibilityInnerProduct, WeightDensityScope, WeightingContract, WeightingScheme, compile,
+    compile_observation,
 };
 
 mod common;
@@ -1149,6 +1151,61 @@ fn direction_dependent_response_requires_instrument_identity() {
             reason: "direction-dependent response requires bound instrument reference data"
         })
     ));
+}
+
+#[test]
+fn sequential_continuum_transform_is_a_compiled_capability_and_identity_input() {
+    let base = || {
+        ProblemSpecification::new(
+            science(),
+            ReconstructionContract::new(
+                ReconstructionBasis::ChannelLocal { channels: 1 },
+                ReconstructionAlgorithm::Dirty,
+                ReconstructionControls::new(0, 1.0, 0.0),
+                PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+            ),
+            WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
+            ProductRequirements::new(
+                vec![
+                    ProductKind::Psf,
+                    ProductKind::Residual,
+                    ProductKind::SumWeights,
+                ],
+                ProductNormalization::UnitResponse,
+                RestoringBeamPolicy::None,
+                product_validity(),
+            ),
+            read_only_transaction(),
+            numerics(false),
+        )
+    };
+    let transform = SequentialContinuumTransform::new(vec![
+        ContinuumFitRule::new(
+            0,
+            0,
+            0,
+            vec![ContinuumChannelRole::new(
+                0,
+                ContinuumChannelUse::FitAndApply,
+            )],
+        )
+        .expect("fit/apply rule"),
+    ])
+    .expect("transform");
+    let plain = compile_request(base(), inputs(false)).expect("plain problem");
+    let transformed = compile_request(
+        base().with_visibility_transform(transform.clone()),
+        inputs(false),
+    )
+    .expect("transformed problem");
+
+    assert_eq!(transformed.visibility_transform(), Some(&transform));
+    assert!(
+        transformed
+            .required_capabilities()
+            .contains(&RequiredCapability::SequentialContinuumTransform)
+    );
+    assert_ne!(plain.problem_id(), transformed.problem_id());
 }
 
 #[test]

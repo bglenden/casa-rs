@@ -544,6 +544,57 @@ fn casa_global_natural_uniform_and_briggs_formulas_are_preserved() {
 }
 
 #[test]
+fn fit_only_samples_cannot_change_density_dependent_output_weights() {
+    let problem = problem(
+        WeightingScheme::Uniform,
+        WeightDensityScope::GlobalSelection,
+        None,
+    );
+    let plan = plan_weighting(
+        &problem,
+        WeightingExecutionLimits::new(1, 2).expect("limits"),
+    )
+    .expect("plan");
+    let target = exact_samples(&problem)[0];
+    let mut fit_only = target;
+    fit_only.input_weight = 1.0e30;
+
+    let output_weight = |include_fit_only: bool| {
+        let mut density = begin_weighting_generation(&problem, &plan).expect("density");
+        density
+            .consume(&problem, target, exact_contributions(&target))
+            .expect("target density");
+        if include_fit_only {
+            density
+                .consume(&problem, fit_only, SelectedSpectralContributions::empty())
+                .expect("fit-only density exclusion");
+        }
+        let mut sum_weight = density.finish(&problem).expect("sum-weight phase");
+        sum_weight
+            .consume(&problem, target, exact_contributions(&target))
+            .expect("target sum weight");
+        if include_fit_only {
+            sum_weight
+                .consume(&problem, fit_only, SelectedSpectralContributions::empty())
+                .expect("fit-only sum-weight exclusion");
+        }
+        let generation = sum_weight.finish().expect("freeze weighting");
+        let mut replay = generation.begin_replay(&problem, &plan).expect("replay");
+        replay
+            .consume(&problem, target, exact_contributions(&target))
+            .expect("target replay")
+            .expect("single-sample block")
+            .samples()[0]
+            .spectral_values()
+            .next()
+            .expect("target spectral weight")
+            .imaging_weight()
+    };
+
+    assert_eq!(output_weight(false), output_weight(true));
+}
+
+#[test]
 fn fused_terminal_stream_is_identical_to_separate_sum_weight_and_replay_passes() {
     for (scheme, scope) in [
         (WeightingScheme::Natural, WeightDensityScope::NotApplicable),

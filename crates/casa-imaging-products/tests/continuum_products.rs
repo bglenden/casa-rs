@@ -461,7 +461,7 @@ fn run_round_with_samples(
         state.consume_block(block).expect("consume weighted block");
     }
     let evidence: CompleteDataOwnerResult = state
-        .complete(&summary, selected_generation)
+        .complete(&summary, selected_generation, None)
         .expect("complete T19 evidence");
     let joined = MajorCycleOwner::from_complete_data(evidence, preparation)
         .expect("T20 owner from T19")
@@ -891,6 +891,10 @@ fn clean_mask_product_is_the_committed_reconstruction_mask_intersected_with_vali
         .iter()
         .find(|member| member.name().starts_with(".mask"))
         .expect("mask member");
+    assert!(
+        published_mask.validity().iter().all(|valid| *valid),
+        "the numeric CLEAN-mask support is not the product-validity mask"
+    );
     let expected = normal
         .sensitivity()
         .iter()

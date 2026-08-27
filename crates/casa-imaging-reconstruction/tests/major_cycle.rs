@@ -7,11 +7,11 @@ use std::convert::Infallible;
 
 use casa_imaging_model::{
     AntennaSelection, AxisOrder, CentreLaws, ColumnGeneration, ConsistencyToken,
-    CorrelationProduct, CorrelationSelection, CorrelationType, DataDescriptionSelection,
-    DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame,
-    DopplerConvention, Epoch, FacetLayout, FiniteValuePolicy, FlagPolicy, FrequencyFrame,
-    GeometryInput, IdSelection, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
-    ImagingRequest, InstrumentResponse, IntentSelection, LogicalIdentity,
+    ContinuumTransformGenerationId, CorrelationProduct, CorrelationSelection, CorrelationType,
+    DataDescriptionSelection, DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec,
+    DirectionFrame, DopplerConvention, Epoch, FacetLayout, FiniteValuePolicy, FlagPolicy,
+    FrequencyFrame, GeometryInput, IdSelection, ImageAxis, ImageDomainRole, ImageDomainSpec,
+    ImageShape, ImagingRequest, InstrumentResponse, IntentSelection, LogicalIdentity,
     MeasurementEquationContract, MeasurementSetIdentity, MetadataGeneration, MetadataTableKind,
     ModelBounds, ModelCell, ModelColumnState, ModelColumnWrite, ModelDeltaTerm,
     ModelExecutionAttemptId, ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements,
@@ -739,6 +739,15 @@ fn run_t19_complete_data_with_samples(
     preparation: Option<&MajorCyclePreparation>,
     samples: &[SelectedObservationSample],
 ) -> CompleteDataOwnerResult {
+    run_t19_complete_data_with_transform(problem, preparation, samples, None)
+}
+
+fn run_t19_complete_data_with_transform(
+    problem: &casa_imaging_model::CompiledProblem,
+    preparation: Option<&MajorCyclePreparation>,
+    samples: &[SelectedObservationSample],
+    transform_generation: Option<ContinuumTransformGenerationId>,
+) -> CompleteDataOwnerResult {
     let plan = plan_weighting(
         problem,
         WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
@@ -767,7 +776,7 @@ fn run_t19_complete_data_with_samples(
         state.consume_block(block).expect("consume weighted block");
     }
     state
-        .complete(&summary, selected_generation)
+        .complete(&summary, selected_generation, transform_generation)
         .expect("complete T19 evidence")
 }
 
@@ -1033,6 +1042,56 @@ fn completion_ids_stay_stable_across_owner_allocations() {
         first_join.normal_state().completion_id(),
         second_join.normal_state().completion_id()
     );
+}
+
+#[test]
+fn transformed_visibility_generation_cannot_be_substituted_under_raw_lineage() {
+    let problem = t19_compatible_problem(41);
+    let samples = fixture_samples(&problem);
+    let selected_generation = replay_selected_generation(&problem, &samples);
+    let first_transform = ContinuumTransformGenerationId::from_owner_digest([1; 32]);
+    let second_transform = ContinuumTransformGenerationId::from_owner_digest([2; 32]);
+
+    let reconcile = |transform_generation, attempt_byte| {
+        let mut lifecycle = bind_lifecycle(&problem, attempt(attempt_byte));
+        let named = lifecycle.initial_empty().expect("empty named generation");
+        let preparation =
+            MajorCyclePreparation::prepare(&lifecycle, named, None).expect("preparation");
+        let evidence = run_t19_complete_data_with_transform(
+            &problem,
+            Some(&preparation),
+            &samples,
+            Some(transform_generation),
+        );
+        MajorCycleOwner::from_complete_data(evidence, preparation)
+            .expect("owner")
+            .reconcile(&mut lifecycle)
+            .expect("reconciliation")
+    };
+
+    let first = reconcile(first_transform, 42);
+    let second = reconcile(second_transform, 42);
+    assert_eq!(
+        first.normal_state().selected_generation(),
+        selected_generation
+    );
+    assert_eq!(
+        second.normal_state().selected_generation(),
+        selected_generation
+    );
+    assert_eq!(
+        first.normal_state().continuum_transform_generation(),
+        Some(first_transform)
+    );
+    assert_eq!(
+        second.normal_state().continuum_transform_generation(),
+        Some(second_transform)
+    );
+    assert_ne!(
+        first.normal_state().completion_id(),
+        second.normal_state().completion_id()
+    );
+    assert_ne!(first.completion_id(), second.completion_id());
 }
 
 #[test]

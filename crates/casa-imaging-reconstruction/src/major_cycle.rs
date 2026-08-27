@@ -16,8 +16,8 @@
 use std::fmt;
 
 use casa_imaging_model::{
-    CompiledGeometryId, CompiledProblemId, LogicalIdentity, NumericsContractId,
-    SelectedObservationGenerationId, WeightingCommitmentId,
+    CompiledGeometryId, CompiledProblemId, ContinuumTransformGenerationId, LogicalIdentity,
+    NumericsContractId, SelectedObservationGenerationId, WeightingCommitmentId,
 };
 
 use crate::{
@@ -72,6 +72,7 @@ pub struct FinalNormalState {
     input_model_generation: ModelGenerationId,
     final_model_generation: ModelGenerationId,
     selected_generation: SelectedObservationGenerationId,
+    continuum_transform_generation: Option<ContinuumTransformGenerationId>,
     primitives: SpectralOperatorPrimitives,
 }
 
@@ -167,6 +168,12 @@ impl FinalNormalState {
     #[must_use]
     pub const fn selected_generation(&self) -> SelectedObservationGenerationId {
         self.selected_generation
+    }
+
+    /// Return the sequential continuum-transform generation, when present.
+    #[must_use]
+    pub const fn continuum_transform_generation(&self) -> Option<ContinuumTransformGenerationId> {
+        self.continuum_transform_generation
     }
 
     /// Return the authoritative model-dependent residual plane.
@@ -430,6 +437,7 @@ pub struct MajorCycleOwner {
     coverage: WeightingReplayCoverageId,
     catalog: SpectralPrimitiveCatalog,
     selected_generation: SelectedObservationGenerationId,
+    continuum_transform_generation: Option<ContinuumTransformGenerationId>,
     sample_count: u64,
     block_count: u64,
     primitives: SpectralOperatorPrimitives,
@@ -466,6 +474,7 @@ impl MajorCycleOwner {
             coverage: completion.coverage(),
             catalog: completion.primitive_catalog(),
             selected_generation: completion.selected_generation(),
+            continuum_transform_generation: completion.continuum_transform_generation(),
             sample_count: completion.sample_count(),
             block_count: completion.block_count(),
             primitives,
@@ -539,6 +548,7 @@ impl MajorCycleOwner {
                 input_model_generation,
                 final_model_generation,
                 self.selected_generation,
+                self.continuum_transform_generation,
             ),
             problem: self.problem,
             geometry: self.geometry,
@@ -561,6 +571,7 @@ impl MajorCycleOwner {
             input_model_generation,
             final_model_generation,
             selected_generation: self.selected_generation,
+            continuum_transform_generation: self.continuum_transform_generation,
             primitives: self.primitives,
         };
         let completion_id = major_cycle_completion_id(
@@ -595,6 +606,7 @@ fn final_normal_state_id(
     input_model_generation: ModelGenerationId,
     final_model_generation: ModelGenerationId,
     selected_generation: SelectedObservationGenerationId,
+    continuum_transform_generation: Option<ContinuumTransformGenerationId>,
 ) -> FinalNormalStateCompletionId {
     let mut encoder = Encoder::new(FINAL_NORMAL_STATE_DOMAIN, FINAL_NORMAL_STATE_VERSION);
     encoder.identity(authority.as_bytes());
@@ -607,6 +619,13 @@ fn final_normal_state_id(
     encoder.identity(input_model_generation.as_bytes());
     encoder.identity(final_model_generation.as_bytes());
     encoder.identity(selected_generation.as_bytes());
+    match continuum_transform_generation {
+        Some(generation) => {
+            encoder.u8(1);
+            encoder.identity(generation.as_bytes());
+        }
+        None => encoder.u8(0),
+    }
     FinalNormalStateCompletionId(LogicalIdentity::from_sha256(encoder.finish()))
 }
 

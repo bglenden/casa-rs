@@ -24,17 +24,19 @@ use crate::beam::{RestoringBeam, fit_restoring_beam};
 use crate::digest::{
     ARTIFACT_IDENTITY_DOMAIN, ARTIFACT_IDENTITY_VERSION, COMPLETIONS_DOMAIN, COMPLETIONS_VERSION,
     Encoder, PLANNED_GENERATION_DOMAIN, PLANNED_GENERATION_VERSION, SEAL_DOMAIN, SEAL_VERSION,
-    plane_digest,
+    member_content_digest,
 };
 use crate::error::ProductsError;
-use crate::restore::{fft_convolve, gaussian_beam_image, normalize_plane};
+use crate::restore::{
+    fft_convolve, gaussian_beam_image, normalize_plane, rescale_residual_to_beam,
+};
 use crate::source::{ContinuumProductInputs, ContinuumSourceCatalog};
 
 /// Version of the native continuum product-algorithm catalog.
 ///
 /// The identity binds every product algorithm's semantics; changing any
 /// algorithm changes every derived artifact identity and seal.
-pub const CONTINUUM_ALGORITHM_CATALOG_VERSION: u32 = 3;
+pub const CONTINUUM_ALGORITHM_CATALOG_VERSION: u32 = 4;
 
 /// Default main-lobe cutoff fraction for restoring-beam fitting.
 pub const DEFAULT_PSF_CUTOFF: f32 = casa_imaging_reconstruction::DEFAULT_PSF_FIT_CUTOFF;
@@ -290,7 +292,13 @@ impl ProductGenerationAuthority {
                     actual: produced.payload.len(),
                 });
             }
-            let digest = plane_digest(&produced.payload);
+            if produced.validity.len() != member.payload_values {
+                return Err(ProductsError::PayloadLengthMismatch {
+                    expected: member.payload_values,
+                    actual: produced.validity.len(),
+                });
+            }
+            let digest = member_content_digest(&produced.payload, &produced.validity);
             if digest != produced.digest.as_bytes() {
                 return Err(ProductsError::MemberContentMismatch);
             }
@@ -300,18 +308,8 @@ impl ProductGenerationAuthority {
         encoder.identity(planned.generation_id.as_bytes());
         encoder.identity(planned.commitment_id.as_bytes());
         encoder.u32(CONTINUUM_ALGORITHM_CATALOG_VERSION);
-        encoder.usize(completions.restoring_beams.len());
-        for beam in &completions.restoring_beams {
-            match beam {
-                Some(beam) => {
-                    encoder.u8(1);
-                    encoder.u64(beam.major_fwhm_rad().to_bits());
-                    encoder.u64(beam.minor_fwhm_rad().to_bits());
-                    encoder.u64(beam.position_angle_rad().to_bits());
-                }
-                None => encoder.u8(0),
-            }
-        }
+        encode_beams(&mut encoder, &completions.fitted_beams);
+        encode_beams(&mut encoder, &completions.restoring_beams);
         for pair in planned.members.iter().zip(&completions.members) {
             let (member, produced) = pair;
             // Bind the planned artifact identity and the exact produced
@@ -346,8 +344,13 @@ impl ProductGenerationAuthority {
                     validity: member.validity,
                     dependencies: member.dependencies.clone(),
                 },
-                resolved_beams: sealed_beams(member.beam_rule, &completions.restoring_beams),
+                resolved_beams: sealed_beams(
+                    member.beam_rule,
+                    &completions.fitted_beams,
+                    &completions.restoring_beams,
+                ),
                 payload: produced.payload.clone(),
+                validity: produced.validity.clone().into_boxed_slice(),
             })
             .collect::<Box<[_]>>();
         Ok(SealedContinuumGeneration {
@@ -356,9 +359,25 @@ impl ProductGenerationAuthority {
             seal_id,
             generation_id: planned.generation_id,
             completions_id,
+            fitted_beams: completions.fitted_beams.clone(),
             restoring_beams: completions.restoring_beams.clone(),
             members,
         })
+    }
+}
+
+fn encode_beams(encoder: &mut Encoder, beams: &[Option<RestoringBeam>]) {
+    encoder.usize(beams.len());
+    for beam in beams {
+        match beam {
+            Some(beam) => {
+                encoder.u8(1);
+                encoder.u64(beam.major_fwhm_rad().to_bits());
+                encoder.u64(beam.minor_fwhm_rad().to_bits());
+                encoder.u64(beam.position_angle_rad().to_bits());
+            }
+            None => encoder.u8(0),
+        }
     }
 }
 
@@ -609,6 +628,7 @@ impl PlannedMember {
 pub struct ContinuumProducedMembers {
     planned_generation: PlannedGenerationId,
     commitment_id: ContinuumCommitmentId,
+    fitted_beams: Box<[Option<RestoringBeam>]>,
     restoring_beams: Box<[Option<RestoringBeam>]>,
     members: Box<[ProducedMember]>,
 }
@@ -620,6 +640,7 @@ struct ProducedMember {
     artifact_id: MemberArtifactId,
     digest: MemberArtifactId,
     payload: Vec<f32>,
+    validity: Vec<bool>,
 }
 
 /// Produce every planned member through the continuum algorithm catalog.
@@ -655,19 +676,11 @@ pub fn produce_continuum_members(
     {
         return Err(ProductsError::SourceLineageMismatch);
     }
-    if channel_count > 1
-        && inputs.problem().products().restoring_beam() == RestoringBeamPolicy::Common
-    {
-        // T39 owns common-beam selection and common-beam restoration. T38
-        // produces the exact independently fitted per-channel generation.
-        return Err(ProductsError::UnsupportedProblem);
-    }
-
     let requires_beam = planned
         .members
         .iter()
         .any(|member| member.beam_rule != ProductBeamRule::None);
-    let restoring_beams = if requires_beam {
+    let fitted_beams = if requires_beam {
         (0..channel_count)
             .map(|local_channel| {
                 let plane = normal_state
@@ -689,15 +702,43 @@ pub fn produce_continuum_members(
     } else {
         Box::new([])
     };
+    let restoring_beams = match inputs.problem().products().restoring_beam() {
+        RestoringBeamPolicy::None => Box::new([]),
+        RestoringBeamPolicy::PerPlane => fitted_beams.clone(),
+        RestoringBeamPolicy::Common => {
+            let valid = fitted_beams.iter().flatten().copied().collect::<Vec<_>>();
+            if valid.is_empty() {
+                fitted_beams.clone()
+            } else {
+                let common = RestoringBeam::common_enclosing(&valid)
+                    .map_err(|error| ProductsError::BeamFitFailed(error.to_string()))?;
+                fitted_beams
+                    .iter()
+                    .map(|fitted| fitted.map(|_| common))
+                    .collect()
+            }
+        }
+    };
 
     let mut members = Vec::with_capacity(planned.members.len());
     for member in &planned.members {
         let mut payload = vec![0.0_f32; member.payload_values];
+        let mut validity = vec![true; member.payload_values];
         for local_channel in 0..channel_count {
             let plane = normal_state
                 .plane(local_channel)
                 .ok_or(ProductsError::SourceLineageMismatch)?;
             let output_channel = plane.output_channel();
+            if member.validity != ProductValidityRule::All {
+                let plane_validity = product_plane_validity(member.validity, plane, plane_shape)?;
+                scatter_image_plane(
+                    &mut validity,
+                    member.axes(),
+                    output_channel,
+                    plane_shape,
+                    &plane_validity,
+                )?;
+            }
             if matches!(member.role, ProductRole::SumWeights(_)) {
                 scatter_plane_state(
                     &mut payload,
@@ -711,6 +752,7 @@ pub fn produce_continuum_members(
                 member,
                 inputs,
                 plane,
+                fitted_beams.get(local_channel).copied().flatten(),
                 restoring_beams.get(local_channel).copied().flatten(),
             )?;
             scatter_image_plane(
@@ -730,18 +772,20 @@ pub fn produce_continuum_members(
                 actual: payload.len(),
             });
         }
-        let digest = MemberArtifactId(plane_digest(&payload));
+        let digest = MemberArtifactId(member_content_digest(&payload, &validity));
         members.push(ProducedMember {
             node: member.node,
             artifact_id: member.artifact_id,
             digest,
             payload,
+            validity,
         });
     }
 
     Ok(ContinuumProducedMembers {
         planned_generation: planned.generation_id,
         commitment_id: planned.commitment_id,
+        fitted_beams,
         restoring_beams,
         members: members.into_boxed_slice(),
     })
@@ -751,6 +795,7 @@ fn produce_plane_member(
     member: &PlannedMember,
     inputs: &ContinuumProductInputs<'_>,
     plane: FinalNormalStatePlane<'_>,
+    fitted_beam: Option<RestoringBeam>,
     restoring_beam: Option<RestoringBeam>,
 ) -> Result<Vec<f32>, ProductsError> {
     let sensitivity = plane.sum_weight();
@@ -759,7 +804,7 @@ fn produce_plane_member(
         && sensitivity > 0.0;
     let shape = plane.shape();
     let cells = shape[0] * shape[1];
-    let invalid_residual = || vec![f32::NAN; cells];
+    let invalid_residual = || vec![0.0; cells];
     match member.role {
         ProductRole::Psf(casa_imaging_model::ProductTerm::Single)
         | ProductRole::Psf(casa_imaging_model::ProductTerm::Taylor(0)) => {
@@ -818,6 +863,19 @@ fn produce_plane_member(
                 required_normalization(member)?,
                 sensitivity,
             )?;
+            let fitted_beam = fitted_beam.ok_or_else(|| {
+                ProductsError::BeamFitFailed(
+                    "restoration requires a fitted beam for every valid plane".to_string(),
+                )
+            })?;
+            let residual = rescale_residual_to_beam(
+                &residual,
+                shape,
+                inputs.cell_size_rad(),
+                fitted_beam,
+                *beam,
+            )?
+            .into_values();
             for (restored, residual) in restored.iter_mut().zip(residual) {
                 *restored += residual;
             }
@@ -867,6 +925,27 @@ fn residual_real_plane(plane: FinalNormalStatePlane<'_>) -> Vec<f32> {
         .collect()
 }
 
+fn product_plane_validity(
+    rule: ProductValidityRule,
+    plane: FinalNormalStatePlane<'_>,
+    shape: [usize; 2],
+) -> Result<Vec<bool>, ProductsError> {
+    match rule {
+        ProductValidityRule::All => Ok(vec![true; shape[0] * shape[1]]),
+        ProductValidityRule::FinalNormalState => {
+            let valid = plane.validity() == SpectralChannelValidity::Valid
+                && plane.sum_weight().is_finite()
+                && plane.sum_weight() > 0.0;
+            Ok(vec![valid; shape[0] * shape[1]])
+        }
+        ProductValidityRule::PrimaryBeam(_)
+        | ProductValidityRule::Taylor(_)
+        | ProductValidityRule::TaylorAndPrimaryBeam { .. } => {
+            Err(ProductsError::UnsupportedProblem)
+        }
+    }
+}
+
 fn model_real_plane(
     model: &ModelGeneration,
     output_channel: usize,
@@ -896,12 +975,12 @@ fn model_real_plane(
     Ok(plane)
 }
 
-fn scatter_image_plane(
-    payload: &mut [f32],
+fn scatter_image_plane<T: Copy>(
+    payload: &mut [T],
     axes: &ProductAxes,
     output_channel: usize,
     plane_shape: [usize; 2],
-    plane: &[f32],
+    plane: &[T],
 ) -> Result<(), ProductsError> {
     let [width, height] = plane_shape;
     if plane.len() != width * height {
@@ -1020,6 +1099,7 @@ pub struct SealedMember {
     contract: SealedMemberContract,
     resolved_beams: Box<[Option<RestoringBeam>]>,
     payload: Vec<f32>,
+    validity: Box<[bool]>,
 }
 
 impl SealedMember {
@@ -1077,22 +1157,40 @@ impl SealedMember {
     pub fn payload(&self) -> &[f32] {
         &self.payload
     }
+
+    /// Borrow the sealed product-validity mask in the same storage order as
+    /// the numeric payload.
+    ///
+    /// This is independent of the numeric CLEAN-mask product. Invalid or
+    /// unmapped spectral planes are false here even when a CASA-compatible
+    /// persistence beam placeholder is later required.
+    #[must_use]
+    pub fn validity(&self) -> &[bool] {
+        &self.validity
+    }
 }
 
 /// Resolve one member's compiled beam rule against the fitted generation beam.
 fn sealed_beams(
     rule: ProductBeamRule,
     fitted: &[Option<RestoringBeam>],
+    restoring: &[Option<RestoringBeam>],
 ) -> Box<[Option<RestoringBeam>]> {
     match rule {
         ProductBeamRule::None => Box::new([]),
-        ProductBeamRule::Fitted | ProductBeamRule::Metadata(_) | ProductBeamRule::Restoring(_) => {
-            fitted.into()
+        ProductBeamRule::Restoring(RestoringBeamPolicy::None)
+        | ProductBeamRule::Metadata(RestoringBeamPolicy::None) => Box::new([]),
+        ProductBeamRule::Fitted => fitted.into(),
+        ProductBeamRule::Restoring(RestoringBeamPolicy::PerPlane)
+        | ProductBeamRule::Metadata(RestoringBeamPolicy::PerPlane) => restoring.into(),
+        ProductBeamRule::Restoring(RestoringBeamPolicy::Common)
+        | ProductBeamRule::Metadata(RestoringBeamPolicy::Common) => {
+            vec![restoring.iter().flatten().next().copied()].into_boxed_slice()
         }
         // Inherit rules resolve through their referenced member; the
         // embedded metadata is identical because the generation carries one
         // fitted beam set, so resolving to it preserves the contract.
-        ProductBeamRule::Inherit(_) => fitted.into(),
+        ProductBeamRule::Inherit(_) => restoring.into(),
     }
 }
 
@@ -1112,6 +1210,7 @@ pub struct SealedContinuumGeneration {
     seal_id: ContinuumSealId,
     generation_id: PlannedGenerationId,
     completions_id: ContinuumCompletionsId,
+    fitted_beams: Box<[Option<RestoringBeam>]>,
     restoring_beams: Box<[Option<RestoringBeam>]>,
     members: Box<[SealedMember]>,
 }
@@ -1156,10 +1255,19 @@ impl SealedContinuumGeneration {
         }
     }
 
-    /// Return all fitted per-plane beams in output-channel order.
+    /// Return all selected restoring beams in output-channel order.
     #[must_use]
     pub const fn restoring_beams(&self) -> &[Option<RestoringBeam>] {
         &self.restoring_beams
+    }
+
+    /// Return all independently fitted PSF beams in output-channel order.
+    ///
+    /// Common restoration may select a different beam while PSF and residual
+    /// products retain this fitted topology.
+    #[must_use]
+    pub const fn fitted_beams(&self) -> &[Option<RestoringBeam>] {
+        &self.fitted_beams
     }
 
     /// Return the exact sealed member set in canonical publication order.

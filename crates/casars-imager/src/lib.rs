@@ -264,6 +264,10 @@ pub struct CliConfig {
     pub channel_start: Option<usize>,
     /// Selected channel count.
     pub channel_count: Option<usize>,
+    /// CASA-style line-free channels used for visibility-domain continuum fitting.
+    pub continuum_fit_spw: Option<String>,
+    /// Polynomial order for visibility-domain continuum fitting.
+    pub continuum_fit_order: usize,
     /// Visibility-column override.
     pub datacolumn: Option<String>,
     /// Model persistence mode.
@@ -427,6 +431,13 @@ impl CliConfig {
                 "--channel-count" | "--nchan" => {
                     config.channel_count = Some(parse(value(1)?, flag)?);
                 }
+                "--fitspw" => {
+                    let selector = value(1)?;
+                    config.continuum_fit_spw = (!selector.is_empty()
+                        && !selector.eq_ignore_ascii_case("none"))
+                    .then(|| selector.to_string());
+                }
+                "--fitorder" => config.continuum_fit_order = parse(value(1)?, flag)?,
                 "--datacolumn" => config.datacolumn = Some(value(1)?.to_string()),
                 "--savemodel" => config.save_model = parse_save_model(value(1)?)?,
                 "--startmodel" => config.start_model = Some(PathBuf::from(value(1)?)),
@@ -698,6 +709,8 @@ impl CliConfig {
             spw_selector: None,
             channel_start: None,
             channel_count: None,
+            continuum_fit_spw: None,
+            continuum_fit_order: 0,
             datacolumn: None,
             save_model: SaveModelMode::None,
             start_model: None,

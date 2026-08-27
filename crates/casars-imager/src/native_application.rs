@@ -7,7 +7,7 @@ use std::time::Instant;
 use casa_imaging_application::{
     ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumBeamPolicy, ContinuumImagingRequest,
     ContinuumMask, ContinuumMaskBox, ContinuumStopReason, ContinuumWeighting, SpectralImagingMode,
-    TaskRequirement, execute_continuum,
+    TaskRequirement, VisibilityContinuumSubtraction, execute_continuum,
 };
 
 use super::{
@@ -118,6 +118,12 @@ fn application_request(config: &CliConfig) -> Result<ContinuumImagingRequest, St
         channel_start: config.channel_start,
         channel_count: config.channel_count,
         spectral_mode,
+        continuum_subtraction: config.continuum_fit_spw.as_ref().map(|fit_spw| {
+            VisibilityContinuumSubtraction {
+                fit_spw: fit_spw.clone(),
+                fit_order: config.continuum_fit_order,
+            }
+        }),
         data_column: config.datacolumn.clone(),
         algorithm: if config.dirty_only || config.niter == 0 {
             ContinuumAlgorithm::Dirty

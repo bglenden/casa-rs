@@ -202,6 +202,7 @@ pub use task_contract::{
 };
 pub use transform::{
     MsTransformError, MsTransformReport, MsTransformRequest, TransformDataColumn, mstransform,
+    mstransform_direct,
 };
 pub use visibility_buffer::{
     SourcePartition, SourcePartitionId, VisibilityBuffer, VisibilityBufferAllocationReport,

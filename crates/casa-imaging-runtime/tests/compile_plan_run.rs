@@ -16,26 +16,27 @@ use std::{
 use sha2::{Digest, Sha256};
 
 use casa_imaging_model::{
-    AxisOrder, CentreLaws, CorrelationType, DeclaredInnerProducts, DelayCentreLaw,
-    DirectionCoordinateSpec, DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy,
-    FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
-    ImagingRequest, ImagingRequestVersion, InstrumentResponse, LogicalIdentity,
-    MeasurementEquationContract, MetadataTableKind, MissingPointingPolicy, ModelCell,
-    ModelColumnWrite, ModelDeltaTerm, ModelExecutionAttemptId, ModelInnerProduct,
-    ModelStateIdentity, ModelValue, MsColumnKind, NumericPrecision, NumericalStage,
-    NumericsContract, ObservationPointingLaw, ObservationSourceState, ObservationTransactionId,
-    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn,
-    PointingDirectionSemantic, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
-    PolarizationContract, PolarizationCoordinate, PreparedArtifactAwInterpretation,
-    PreparedArtifactCellSemantics, PreparedArtifactKernelAlgorithm,
-    PreparedArtifactKernelSemantics, PreparedArtifactScientificIdentity,
-    PreparedArtifactSpectralMapSemantics, ProblemSpecification, ProductKind, ProductNormalization,
-    ProductRequirements, Projection, ReconstructionAlgorithm, ReconstructionBasis,
-    ReconstructionContract, ReconstructionControls, ReductionPolicy, ReferenceDataKind,
-    RestFrequency, RestoringBeamPolicy, ScientificContract, SelectedVisibilitySample, SkyDirection,
-    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSamplingLaw, SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct,
-    WeightDensityScope, WeightingContract, WeightingScheme, compile,
+    AxisOrder, CentreLaws, ContinuumChannelRole, ContinuumChannelUse, ContinuumFitRule,
+    CorrelationType, DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec,
+    DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy, FrequencyFrame,
+    GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, ImagingRequest,
+    ImagingRequestVersion, InstrumentResponse, LogicalIdentity, MeasurementEquationContract,
+    MetadataTableKind, MissingPointingPolicy, ModelCell, ModelColumnWrite, ModelDeltaTerm,
+    ModelExecutionAttemptId, ModelInnerProduct, ModelStateIdentity, ModelValue, MsColumnKind,
+    NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
+    ObservationSourceState, ObservationTransactionId, ObservationTransactionRequirements,
+    PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic,
+    PointingExtrapolation, PointingInterpolation, PointingTimeSampling, PolarizationContract,
+    PolarizationCoordinate, PreparedArtifactAwInterpretation, PreparedArtifactCellSemantics,
+    PreparedArtifactKernelAlgorithm, PreparedArtifactKernelSemantics,
+    PreparedArtifactScientificIdentity, PreparedArtifactSpectralMapSemantics, ProblemSpecification,
+    ProductKind, ProductNormalization, ProductRequirements, Projection, ReconstructionAlgorithm,
+    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
+    ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract,
+    SelectedVisibilitySample, SequentialContinuumTransform, SkyDirection, SpectralContract,
+    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
+    SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct, WeightDensityScope,
+    WeightingContract, WeightingScheme, compile,
 };
 use casa_imaging_products::{
     ContinuumProductControls, ContinuumProductInputs, ContinuumSourceCatalog,
@@ -92,7 +93,8 @@ use casa_imaging_runtime::{
     StagePrediction, StorageDomain, StorageDomainId, StorageIoResourceBinding, StorageMode,
     StorageUseKind, WeightedObservationBlock, WeightingExecutionState, WeightingPlanFragment,
     WorkDependency, WorkDomain, WorkExecutionContext, WorkImplementation, WorkImplementationId,
-    WorkKind, WorkMeasurements, WorkNode, WorkNodeId, plan as runtime_plan, run as runtime_run,
+    WorkKind, WorkMeasurements, WorkNode, WorkNodeId, plan as runtime_plan,
+    plan_continuum_transform_row, run as runtime_run,
 };
 use casa_ms::{
     BoundSelectedObservation, ObservationSourceBinding, SelectedObservationCompletion,
@@ -695,6 +697,24 @@ fn channel_local_request_with_reconstruction(
     algorithm: ReconstructionAlgorithm,
     controls: ReconstructionControls,
 ) -> ImagingRequest {
+    channel_local_request_with_reconstruction_and_transform(
+        observation,
+        channels,
+        selected_channels,
+        algorithm,
+        controls,
+        None,
+    )
+}
+
+fn channel_local_request_with_reconstruction_and_transform(
+    observation: u8,
+    channels: usize,
+    selected_channels: usize,
+    algorithm: ReconstructionAlgorithm,
+    controls: ReconstructionControls,
+    visibility_transform: Option<SequentialContinuumTransform>,
+) -> ImagingRequest {
     let geometry =
         geometry_with_shape_and_increment([4.0, 4.0], ImageShape::new(8, 8), [-1.0e-6, 1.0e-6]);
     let spectral = geometry.spectral().clone().with_wcs(SpectralWcs::Linear {
@@ -704,7 +724,7 @@ fn channel_local_request_with_reconstruction(
         increment_hz: 128.0e6,
     });
     let geometry = geometry.with_spectral(spectral);
-    let specification = ProblemSpecification::new(
+    let mut specification = ProblemSpecification::new(
         ScientificContract::new(
             SpectralContract::new(SpectralSamplingLaw::LINEAR, SpectralCoupling::Independent),
             MeasurementEquationContract::new(
@@ -743,6 +763,9 @@ fn channel_local_request_with_reconstruction(
                 .collect(),
         ),
     );
+    if let Some(transform) = visibility_transform {
+        specification = specification.with_visibility_transform(transform);
+    }
     ImagingRequest::new(
         specification,
         geometry,
@@ -2383,6 +2406,66 @@ fn spectral_cycle_dirty_plan_omits_minor_cycle_work() {
             .nodes()
             .keys()
             .all(|node| node.as_str() != "spectral-cycle-minor-cycle")
+    );
+}
+
+#[test]
+fn spectral_cycle_claims_the_compiled_continuum_row_buffer() {
+    let transform = SequentialContinuumTransform::new(vec![
+        ContinuumFitRule::new(
+            0,
+            0,
+            1,
+            (0..2)
+                .map(|channel| ContinuumChannelRole::new(channel, ContinuumChannelUse::FitAndApply))
+                .collect(),
+        )
+        .expect("fit/apply channels"),
+    ])
+    .expect("compiled transform");
+    let problem = compile(channel_local_request_with_reconstruction_and_transform(
+        1,
+        2,
+        2,
+        ReconstructionAlgorithm::Dirty,
+        ReconstructionControls::new(0, 1.0, 0.0),
+        Some(transform),
+    ))
+    .expect("transformed cube problem");
+    let row_plan = plan_continuum_transform_row(&problem)
+        .expect("row plan")
+        .expect("transform row plan");
+    let registry = test_registry(&problem, 3, 6, None);
+    let planned = SpectralCyclePlan::dirty(
+        &problem,
+        &registry,
+        SpectralCycleExecutionPolicy::new(
+            implementation(6),
+            WeightingExecutionLimits::new(2, 3).expect("weighting limits"),
+            selected_content_residency(&problem),
+            serial_storage_io(),
+            1_000,
+            8 * 8 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
+            900_000,
+        ),
+    )
+    .expect("transformed dirty plan");
+    let allocation = planned
+        .physical_work()
+        .execution_dag()
+        .logical_allocations()
+        .values()
+        .find(|allocation| {
+            allocation
+                .id
+                .as_str()
+                .starts_with("continuum-transform-row-")
+        })
+        .expect("continuum row allocation");
+
+    assert_eq!(
+        allocation.bytes,
+        u64::try_from(row_plan.bytes()).expect("row plan bytes fit u64")
     );
 }
 
@@ -10186,7 +10269,7 @@ fn sealed_products_round(
         state.consume_block(block).expect("consume block");
     }
     let evidence: CompleteDataOwnerResult = state
-        .complete(&summary, selected_generation)
+        .complete(&summary, selected_generation, None)
         .expect("complete T19 evidence");
     MajorCycleOwner::from_complete_data(evidence, preparation)
         .expect("T20 owner")

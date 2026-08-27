@@ -13,7 +13,6 @@ from ._catalog import (
     exportfits,
     mstransform,
     split,
-    uvcontsub,
     applycal,
     gaincal,
     bandpass,
@@ -53,4 +52,4 @@ from ._runner import (
     run,
 )
 
-__all__ = ['CasarsBinaryNotFoundError', 'TaskBaseSource', 'TaskCompletion', 'TaskExecutionError', 'TaskInvocationError', 'TaskResultError', 'TASK_SURFACES', 'run', 'msexplore', 'calibrate', 'importvla', 'imager', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'uvcontsub', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'plotcal', 'flagdata', 'flagmanager', 'imcollapse', 'imfit', 'impbcor', 'widebandpbcor', 'imcontsub', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'concat', 'statwt', 'hanningsmooth', 'clearcal', 'delmod', 'ft', 'simanalyze', 'simalma']
+__all__ = ['CasarsBinaryNotFoundError', 'TaskBaseSource', 'TaskCompletion', 'TaskExecutionError', 'TaskInvocationError', 'TaskResultError', 'TASK_SURFACES', 'run', 'msexplore', 'calibrate', 'importvla', 'imager', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'plotcal', 'flagdata', 'flagmanager', 'imcollapse', 'imfit', 'impbcor', 'widebandpbcor', 'imcontsub', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'concat', 'statwt', 'hanningsmooth', 'clearcal', 'delmod', 'ft', 'simanalyze', 'simalma']

@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ApplyExecutionReport, ApplyPlan, BandpassSolveReport, CalibrationStatsReport,
-    CalibrationTableSummary, ContinuumSubtractionReport, ExportCorrectedDataReport,
-    FluxScaleReport, GainSolveReport, GencalReport,
+    CalibrationTableSummary, ExportCorrectedDataReport, FluxScaleReport, GainSolveReport,
+    GencalReport,
 };
 
 /// Canonical structured result for one calibration task execution.
@@ -18,8 +18,6 @@ pub enum CalibrationTaskResult {
     Apply(ApplyExecutionReport),
     /// `calibrate export-corrected`
     ExportCorrectedData(ExportCorrectedDataReport),
-    /// `calibrate uvcontsub`
-    ContinuumSubtract(ContinuumSubtractionReport),
     /// `calibrate summary`
     Summary(Vec<CalibrationTableSummary>),
     /// `calibrate plan-apply`

@@ -10,15 +10,17 @@ use casa_images::PagedImage;
 use casa_imaging_application::{
     ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumBeamPolicy, ContinuumImagingRequest,
     ContinuumMask, ContinuumMaskBox, ContinuumStopReason, ContinuumWeighting, SpectralImagingMode,
-    execute_continuum,
+    VisibilityContinuumSubtraction, execute_continuum,
 };
 use casa_ms::{
-    MeasurementSet, MeasurementSetBuilder, OptionalMainColumn, SubtableId, VisibilityDataColumn,
+    CubeAxisConfig, CubeAxisValue, MeasurementSet, MeasurementSetBuilder, OptionalMainColumn,
+    SubtableId, VisibilityDataColumn,
     column_def::{ColumnDef, ColumnKind},
     initialize_measurement_set_owner_manifest, schema,
 };
 use casa_types::{
     ArrayValue, Complex32, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
+    measures::frequency::FrequencyRef,
 };
 use ndarray::ArrayD;
 
@@ -27,14 +29,23 @@ const PRODUCT_SUFFIXES: [&str; 6] = [".psf", ".residual", ".model", ".image", ".
 static EXECUTION_LOCK: Mutex<()> = Mutex::new(());
 
 fn tiny_measurement_set(root: &Path) -> PathBuf {
-    measurement_set_fixture(root, "input.ms", false)
+    measurement_set_fixture(root, "input.ms", false, 1)
 }
 
 fn flagged_polarized_measurement_set(root: &Path) -> PathBuf {
-    measurement_set_fixture(root, "polarized-input.ms", true)
+    measurement_set_fixture(root, "polarized-input.ms", true, 2)
 }
 
-fn measurement_set_fixture(root: &Path, name: &str, polarized: bool) -> PathBuf {
+fn spectral_line_measurement_set(root: &Path) -> PathBuf {
+    measurement_set_fixture(root, "line-input.ms", true, 4)
+}
+
+fn measurement_set_fixture(
+    root: &Path,
+    name: &str,
+    polarized: bool,
+    channel_count: usize,
+) -> PathBuf {
     let output = root.join(name);
     let mut builder = MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data);
     if polarized {
@@ -42,7 +53,7 @@ fn measurement_set_fixture(root: &Path, name: &str, polarized: bool) -> PathBuf 
     }
     let mut measurement_set =
         MeasurementSet::create_memory(builder).expect("create in-memory application fixture");
-    populate_fixture(&mut measurement_set, polarized);
+    populate_fixture(&mut measurement_set, polarized, channel_count);
     measurement_set
         .save_as(&output)
         .expect("persist fixture with production tiled bindings");
@@ -67,7 +78,7 @@ fn measurement_set_fixture(root: &Path, name: &str, polarized: bool) -> PathBuf 
     output
 }
 
-fn populate_fixture(measurement_set: &mut MeasurementSet, polarized: bool) {
+fn populate_fixture(measurement_set: &mut MeasurementSet, polarized: bool, channel_count: usize) {
     {
         let mut antennas = measurement_set.antenna_mut().expect("ANTENNA");
         antennas
@@ -149,7 +160,6 @@ fn populate_fixture(measurement_set: &mut MeasurementSet, polarized: bool) {
         ))
         .expect("add POLARIZATION row");
 
-    let channel_count = if polarized { 2 } else { 1 };
     let frequency = Value::Array(ArrayValue::Float64(
         ArrayD::from_shape_vec(
             vec![channel_count],
@@ -200,25 +210,12 @@ fn populate_fixture(measurement_set: &mut MeasurementSet, polarized: bool) {
         ))
         .expect("add DATA_DESCRIPTION row");
 
-    let visibilities = if polarized {
-        vec![
-            Complex32::new(1.0, 0.0),
-            Complex32::new(2.0, 0.0),
-            Complex32::new(3.0, 0.0),
-            Complex32::new(4.0, 0.0),
-            Complex32::new(5.0, 0.0),
-            Complex32::new(6.0, 0.0),
-            Complex32::new(1.0, 0.0),
-            Complex32::new(2.0, 0.0),
-        ]
-    } else {
-        vec![Complex32::new(1.0, 0.0)]
-    };
-    let flags = if polarized {
-        vec![false, false, false, true, false, false, false, true]
-    } else {
-        vec![false]
-    };
+    let visibilities = (0..correlation_count * channel_count)
+        .map(|index| Complex32::new((index % 6 + 1) as f32, 0.0))
+        .collect::<Vec<_>>();
+    let flags = (0..correlation_count * channel_count)
+        .map(|index| polarized && index % 4 == 3)
+        .collect::<Vec<_>>();
     let weights = vec![1.0; correlation_count];
     let mut overrides = vec![
         ("ANTENNA1", int(0)),
@@ -401,6 +398,7 @@ fn request(
         channel_start: Some(0),
         channel_count: Some(1),
         spectral_mode: SpectralImagingMode::Continuum,
+        continuum_subtraction: None,
         data_column: Some("DATA".to_string()),
         algorithm,
         weighting: ContinuumWeighting::Natural,
@@ -490,6 +488,129 @@ fn application_executes_single_ddid_stokes_i_mfs_dirty_and_publishes_products() 
     assert_eq!(result.minor_iterations, 0);
     assert_eq!(result.minor_stop_reason, None);
     assert_standard_products(&image_name, &result.product_names);
+    for suffix in [".residual", ".image"] {
+        let product =
+            PagedImage::<f32>::open(PathBuf::from(format!("{}{}", image_name.display(), suffix)))
+                .expect("reopen validity-bearing product");
+        assert_eq!(product.default_mask_name().as_deref(), Some("mask0"));
+    }
+    let clean_mask =
+        PagedImage::<f32>::open(PathBuf::from(format!("{}.mask", image_name.display())))
+            .expect("reopen numeric CLEAN mask");
+    assert_eq!(clean_mask.default_mask_name(), None);
+}
+
+#[test]
+fn application_compiles_common_beam_requests_with_common_spectral_coupling() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = tiny_measurement_set(root.path());
+    let image_name = root.path().join("common-beam");
+    let mut imaging = request(
+        measurement_set,
+        image_name.clone(),
+        ContinuumAlgorithm::Dirty,
+    );
+    imaging.beam_policy = ContinuumBeamPolicy::Common;
+
+    let result = execute_continuum(imaging).expect("native common-beam application execution");
+    assert_standard_products(&image_name, &result.product_names);
+    let restored =
+        PagedImage::<f32>::open(PathBuf::from(format!("{}.image", image_name.display())))
+            .expect("reopen common-beam restored image");
+    assert!(
+        restored
+            .image_info()
+            .expect("read restored image info")
+            .beam_set
+            .has_single_beam()
+    );
+}
+
+#[test]
+fn cube_common_beam_products_preserve_blank_validity_beams_units_and_descending_wcs() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = spectral_line_measurement_set(root.path());
+    let image_name = root.path().join("common-beam-cube");
+    let mut imaging = request(
+        measurement_set,
+        image_name.clone(),
+        ContinuumAlgorithm::Dirty,
+    );
+    imaging.spectral_window = Some("0:0~3".to_string());
+    imaging.channel_count = Some(4);
+    imaging.spectral_mode = SpectralImagingMode::Cube {
+        axis: CubeAxisConfig {
+            outframe: FrequencyRef::TOPO,
+            start: Some(CubeAxisValue::Channel(3)),
+            width: Some(CubeAxisValue::Channel(-1)),
+            ..CubeAxisConfig::default()
+        },
+        output_channels: Some(4),
+    };
+    imaging.beam_policy = ContinuumBeamPolicy::Common;
+
+    let result = execute_continuum(imaging).expect("native common-beam cube execution");
+    assert_standard_products(&image_name, &result.product_names);
+    let open = |suffix: &str| {
+        PagedImage::<f32>::open(PathBuf::from(format!("{}{suffix}", image_name.display())))
+            .expect("reopen cube product")
+    };
+    let psf = open(".psf");
+    let residual = open(".residual");
+    let restored = open(".image");
+    let clean_mask = open(".mask");
+    for product in [&psf, &residual, &restored, &clean_mask] {
+        assert_eq!(product.shape(), &[16, 16, 1, 4]);
+    }
+    assert_eq!(psf.units(), "Jy/beam");
+    assert_eq!(residual.units(), "Jy/beam");
+    assert_eq!(restored.units(), "Jy/beam");
+    assert_eq!(clean_mask.units(), "");
+
+    let psf_beams = psf.image_info().expect("PSF ImageInfo").beam_set;
+    let residual_beams = residual.image_info().expect("residual ImageInfo").beam_set;
+    assert!(psf_beams.equivalent(&residual_beams));
+    assert!(
+        restored
+            .image_info()
+            .expect("restored ImageInfo")
+            .beam_set
+            .has_single_beam()
+    );
+    let largest_valid = (1..4)
+        .map(|channel| *psf_beams.beam(channel, 0))
+        .max_by(|left, right| left.area().total_cmp(&right.area()))
+        .expect("valid fitted beams");
+    assert_eq!(*psf_beams.beam(0, 0), largest_valid);
+
+    for product in [&residual, &restored] {
+        assert_eq!(product.default_mask_name().as_deref(), Some("mask0"));
+        let blank = product
+            .get_mask_slice(&[0, 0, 0, 0], &[16, 16, 1, 1], &[1; 4])
+            .expect("blank-channel mask")
+            .expect("product validity mask");
+        assert!(blank.iter().all(|valid| !*valid));
+        let valid = product
+            .get_mask_slice(&[0, 0, 0, 1], &[16, 16, 1, 1], &[1; 4])
+            .expect("valid-channel mask")
+            .expect("product validity mask");
+        assert!(valid.iter().all(|valid| *valid));
+    }
+    assert_eq!(clean_mask.default_mask_name(), None);
+
+    let first = restored
+        .coordinates()
+        .to_world(&[8.0, 8.0, 0.0, 0.0])
+        .expect("first channel world coordinate");
+    let second = restored
+        .coordinates()
+        .to_world(&[8.0, 8.0, 0.0, 1.0])
+        .expect("second channel world coordinate");
+    assert!(first[3] > second[3], "descending spectral WCS");
 }
 
 #[test]
@@ -777,6 +898,74 @@ fn application_commits_exact_final_prediction_to_model_data() {
         None,
         "existing MODEL_DATA reserves no new full-column persistent capacity"
     );
+}
+
+#[test]
+fn continuum_fit_only_channels_are_read_but_not_persisted_as_line_model_data() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = spectral_line_measurement_set(root.path());
+    let mut imaging = request(
+        measurement_set.clone(),
+        root.path().join("continuum-subtracted-line"),
+        ContinuumAlgorithm::Hogbom,
+    );
+    imaging.channel_start = Some(1);
+    imaging.channel_count = Some(1);
+    imaging.spectral_window = Some("0:1".to_string());
+    let axis = CubeAxisConfig {
+        outframe: FrequencyRef::TOPO,
+        start: Some(CubeAxisValue::Channel(1)),
+        width: Some(CubeAxisValue::Channel(1)),
+        ..CubeAxisConfig::default()
+    };
+    imaging.spectral_mode = SpectralImagingMode::Cube {
+        axis,
+        output_channels: Some(1),
+    };
+    imaging.continuum_subtraction = Some(VisibilityContinuumSubtraction {
+        fit_spw: "0:0;3".to_string(),
+        fit_order: 0,
+    });
+    imaging.save_model_column = true;
+
+    let result = execute_continuum(imaging).expect("line-only MODEL_DATA write");
+    assert_eq!(
+        result
+            .outcome
+            .output
+            .visibility_products
+            .expect("final visibility completion")
+            .sample_count(),
+        4,
+        "only the output channel contributes final line predictions"
+    );
+    let reopened = MeasurementSet::open(&measurement_set).expect("reopen MODEL_DATA");
+    let model_column = reopened
+        .data_column(VisibilityDataColumn::ModelData)
+        .expect("MODEL_DATA");
+    let model = model_column.get(0).expect("MODEL_DATA row");
+    let ArrayValue::Complex32(model) = model else {
+        panic!("MODEL_DATA row is complex")
+    };
+    for correlation in 0..4 {
+        assert_eq!(
+            model[[correlation, 0]],
+            Complex32::new(9.0, 9.0),
+            "fit-only channel must remain untouched"
+        );
+        assert_ne!(
+            model[[correlation, 1]],
+            Complex32::new(9.0, 9.0),
+            "output channel must receive the final line model"
+        );
+        assert_eq!(
+            model[[correlation, 3]],
+            Complex32::new(9.0, 9.0),
+            "second fit-only channel must remain untouched"
+        );
+    }
 }
 
 #[test]

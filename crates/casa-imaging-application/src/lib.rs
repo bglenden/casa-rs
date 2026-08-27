@@ -19,15 +19,15 @@ pub use casa_product_sink::CasaImageProductSink;
 pub use continuum_request::{
     ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumBeamPolicy, ContinuumImagingRequest,
     ContinuumImagingResult, ContinuumMask, ContinuumMaskBox, ContinuumStopReason,
-    ContinuumWeighting, SpectralImagingMode, execute_continuum,
+    ContinuumWeighting, SpectralImagingMode, VisibilityContinuumSubtraction, execute_continuum,
 };
 
-use std::{error::Error, fmt, io};
+use std::{error::Error, fmt, io, sync::Arc};
 
 use casa_imaging_model::{
     CompileProblemError, CompiledProblem, GeometryInput, ImagingRequest,
-    ModelLifecycleRequirements, ProblemInputIdentities, ProblemSpecification,
-    ReconstructionAlgorithm, compile, compile_observation,
+    ModelLifecycleRequirements, ObservationSelection, ProblemInputIdentities, ProblemSpecification,
+    ReconstructionAlgorithm, SpectralWindowSelection, compile, compile_observation,
 };
 use casa_imaging_products::{
     ContinuumProductControls, ContinuumProductInputs, ContinuumSourceCatalog,
@@ -525,7 +525,7 @@ where
                         FinalVisibilityReplay::with_model_column(
                             std::path::PathBuf::from(input.observation.locator()),
                             source_state,
-                            input.observation.selection(),
+                            model_data_selection(problem, input.observation.selection())?,
                         )?
                     } else {
                         FinalVisibilityReplay::new()
@@ -604,6 +604,50 @@ where
             visibility_replay,
         },
     )
+}
+
+fn model_data_selection(
+    problem: &CompiledProblem,
+    selected: Arc<ObservationSelection>,
+) -> Result<Arc<ObservationSelection>, ApplicationError> {
+    let Some(transform) = problem.visibility_transform() else {
+        return Ok(selected);
+    };
+    let spectral_windows = selected
+        .spectral_windows()
+        .iter()
+        .map(|selection| {
+            let output_channels = selection
+                .channel_indices()
+                .iter()
+                .copied()
+                .filter(|channel| {
+                    transform.rules().iter().any(|rule| {
+                        rule.spectral_window_id() == selection.spectral_window_id()
+                            && rule
+                                .channel_use(*channel)
+                                .is_some_and(|role| role.contributes_to_output())
+                    })
+                })
+                .collect::<Vec<_>>();
+            if output_channels.is_empty() {
+                return Err(boxed(
+                    "continuum transform selected no MODEL_DATA output channels",
+                ));
+            }
+            Ok(SpectralWindowSelection::new(
+                selection.spectral_window_id(),
+                output_channels,
+            ))
+        })
+        .collect::<Result<Vec<_>, ApplicationError>>()?;
+    Ok(Arc::new(ObservationSelection::new(
+        selected.rows().clone(),
+        selected.rows_filter().clone(),
+        selected.data_descriptions().to_vec(),
+        spectral_windows,
+        selected.correlations().to_vec(),
+    )))
 }
 
 struct PriorPhaseOutcome {

@@ -189,6 +189,8 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
         RequiredCapability::Polarization(PolarizationCoordinate::StokesI)
             | RequiredCapability::SpectralFrameTransform
             | RequiredCapability::SpectralResampling
+            | RequiredCapability::CommonBeamSpectralCoupling
+            | RequiredCapability::SequentialContinuumTransform
             | RequiredCapability::ConstantBasis
             | RequiredCapability::ChannelLocalBasis
             | RequiredCapability::DirtyReconstruction
@@ -208,5 +210,6 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
             | RequiredCapability::Product(ProductKind::RestoredImage)
             | RequiredCapability::Product(ProductKind::SumWeights)
             | RequiredCapability::Product(ProductKind::Mask)
+            | RequiredCapability::Product(ProductKind::Beam)
     )
 }

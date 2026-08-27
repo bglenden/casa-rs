@@ -494,7 +494,7 @@ fn run_t19_complete_data(
         state.consume_block(block).expect("consume weighted block");
     }
     state
-        .complete(&summary, selected_generation)
+        .complete(&summary, selected_generation, None)
         .expect("complete T19 evidence")
 }
 

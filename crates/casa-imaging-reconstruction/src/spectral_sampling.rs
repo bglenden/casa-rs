@@ -129,7 +129,7 @@ fn channel_local_terms(
     match law.kernel() {
         SpectralKernel::Identity => identity_terms(problem, sample, frequency_hz),
         SpectralKernel::Nearest => Ok(nearest_terms(&centres, &boundaries, frequency_hz)),
-        SpectralKernel::Linear => Ok(linear_terms(&centres, frequency_hz)),
+        SpectralKernel::Linear => Ok(linear_terms(&centres, &boundaries, frequency_hz)),
         SpectralKernel::Cubic => Ok(cubic_terms(&centres, frequency_hz)),
         SpectralKernel::ChannelIntegration { maximum_terms } => integration_terms(
             &boundaries,
@@ -182,6 +182,21 @@ fn identity_terms(
     sample: &SelectedObservationSample,
     frequency_hz: f64,
 ) -> Result<SmallVec<[SelectedSpectralContribution; 4]>, SpectralStencilError> {
+    if let Some(transform) = problem.visibility_transform()
+        && let Some(rule) =
+            transform.rule(sample.metadata.field_id, sample.address.spectral_window_id)
+    {
+        let ordinal = rule
+            .channels()
+            .iter()
+            .filter(|channel| channel.use_role().contributes_to_output())
+            .position(|channel| channel.channel_index() == sample.address.channel_index)
+            .ok_or(SpectralStencilError::IdentitySourceMismatch)?;
+        if ordinal >= problem.geometry().spectral().output_channels() {
+            return Ok(SmallVec::new());
+        }
+        return one_term(ordinal, 1.0, frequency_hz);
+    }
     let source = problem
         .inputs()
         .observation_snapshot()
@@ -226,7 +241,14 @@ fn nearest_terms(
     one_term(index, 1.0, frequency_hz).unwrap_or_default()
 }
 
-fn linear_terms(centres: &[f64], frequency_hz: f64) -> SmallVec<[SelectedSpectralContribution; 4]> {
+fn linear_terms(
+    centres: &[f64],
+    boundaries: &[f64],
+    frequency_hz: f64,
+) -> SmallVec<[SelectedSpectralContribution; 4]> {
+    if centres.len() == 1 {
+        return nearest_terms(centres, boundaries, frequency_hz);
+    }
     interpolation_interval(centres, frequency_hz)
         .and_then(|index| {
             let first = centres[index];
@@ -385,7 +407,7 @@ mod tests {
     #[test]
     fn t35_dense_oracle_matches_sparse_linear_and_signed_cubic_stencils() {
         let centres = [10.0, 20.0, 30.0, 40.0];
-        let linear = linear_terms(&centres, 25.0);
+        let linear = linear_terms(&centres, &[5.0, 15.0, 25.0, 35.0, 45.0], 25.0);
         assert_eq!(
             linear
                 .iter()
@@ -408,6 +430,19 @@ mod tests {
                 .sum::<f64>();
             assert!((reconstructed - 25.0_f64.powi(degree)).abs() < 1.0e-9);
         }
+    }
+
+    #[test]
+    fn t40_one_channel_linear_sampling_degenerates_to_its_exact_constant_stencil() {
+        let inside = linear_terms(&[44.001e9], &[44.0005e9, 44.0015e9], 44.001e9);
+        assert_eq!(
+            inside
+                .iter()
+                .map(|term| (term.output_channel(), term.factor()))
+                .collect::<Vec<_>>(),
+            vec![(0, 1.0)]
+        );
+        assert!(linear_terms(&[44.001e9], &[44.0005e9, 44.0015e9], 44.002e9).is_empty());
     }
 
     #[test]
@@ -442,9 +477,9 @@ mod tests {
 
     #[test]
     fn t36_edge_validity_and_source_channel_order_are_deterministic() {
-        assert!(linear_terms(&[30.0, 20.0, 10.0], 35.0).is_empty());
+        assert!(linear_terms(&[30.0, 20.0, 10.0], &[35.0, 25.0, 15.0, 5.0], 35.0).is_empty());
         assert_eq!(
-            linear_terms(&[30.0, 20.0, 10.0], 25.0)
+            linear_terms(&[30.0, 20.0, 10.0], &[35.0, 25.0, 15.0, 5.0], 25.0)
                 .iter()
                 .map(|term| term.output_channel())
                 .collect::<Vec<_>>(),

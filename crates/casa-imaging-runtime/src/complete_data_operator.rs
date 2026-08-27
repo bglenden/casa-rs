@@ -1176,6 +1176,9 @@ impl SpectralOperatorState {
         let evidence = self.state.complete(
             replay.reconstruction_summary(),
             replay.selected_generation(),
+            replay
+                .continuum_transform()
+                .map(|completion| completion.generation_id()),
         )?;
         Ok(CompleteDataOperatorResult {
             evidence,

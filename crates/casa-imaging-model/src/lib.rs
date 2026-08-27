@@ -12,6 +12,7 @@ mod product_graph;
 mod selected_observation;
 mod selected_observation_sample;
 mod transaction;
+mod visibility_transform;
 
 pub use compiled_problem::{
     CompileProblemError, CompiledProblem, CompiledProblemId, FiniteValuePolicy, ImagingRequest,
@@ -102,4 +103,10 @@ pub use transaction::{
     ModelColumnWriteAccess, ModelColumnWriteDisposition, ObservationReadSet,
     ObservationTransactionContract, ObservationTransactionId, ObservationTransactionRequirements,
     ObservationWriteSet,
+};
+
+pub use visibility_transform::{
+    ContinuumChannelRole, ContinuumChannelUse, ContinuumCovariancePolicy, ContinuumFitRule,
+    ContinuumFitWeightGenerationId, ContinuumTransformContractError, ContinuumTransformContractId,
+    ContinuumTransformGenerationId, SequentialContinuumTransform,
 };

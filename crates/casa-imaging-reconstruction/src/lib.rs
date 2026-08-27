@@ -28,6 +28,7 @@ use casa_imaging_model::{
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+mod continuum_transform;
 mod major_cycle;
 mod mask;
 mod minor_cycle;
@@ -56,6 +57,10 @@ pub mod runtime_adapter {
     pub use crate::weighting::{FusedWeightingPhase, begin_natural_weighting_stream};
 }
 
+pub use continuum_transform::{
+    ContinuumFitError, ContinuumFitStatus, ContinuumRowInput, ContinuumRowResult, ContinuumSample,
+    fit_and_subtract_continuum,
+};
 pub use major_cycle::{
     FinalNormalState, FinalNormalStatePlane, MajorCycleCompletion, MajorCycleError,
     MajorCycleOwner, MajorCyclePreparation, NormalStateCatalog,
@@ -106,7 +111,7 @@ const REPROJECTED_PROOF_VERSION: u32 = 1;
 const FINAL_COMPLETION_DOMAIN: &[u8] = b"casa-rs-final-model-completion";
 const FINAL_COMPLETION_VERSION: u32 = 2;
 const FINAL_NORMAL_STATE_DOMAIN: &[u8] = b"casa-rs-final-normal-state";
-const FINAL_NORMAL_STATE_VERSION: u32 = 2;
+const FINAL_NORMAL_STATE_VERSION: u32 = 3;
 const MAJOR_CYCLE_DOMAIN: &[u8] = b"casa-rs-major-cycle-completion";
 const MAJOR_CYCLE_VERSION: u32 = 2;
 

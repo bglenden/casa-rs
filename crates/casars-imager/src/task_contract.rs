@@ -1907,6 +1907,12 @@ pub struct ImagerRunTaskRequest {
     /// Optional selected-channel count.
     #[serde(default)]
     pub channel_count: Option<usize>,
+    /// Optional CASA-style line-free channel selector for visibility-domain continuum fitting.
+    #[serde(default)]
+    pub continuum_fit_spw: Option<String>,
+    /// Polynomial order used for visibility-domain continuum fitting.
+    #[serde(default)]
+    pub continuum_fit_order: usize,
     /// Optional explicit data-column override.
     #[serde(default)]
     pub data_column: Option<String>,
@@ -2130,6 +2136,8 @@ impl ImagerRunTaskRequest {
                 .or_else(|| config.spw.map(|spw| spw.to_string())),
             channel_start: config.channel_start,
             channel_count: config.channel_count,
+            continuum_fit_spw: config.continuum_fit_spw.clone(),
+            continuum_fit_order: config.continuum_fit_order,
             data_column: config.datacolumn.clone(),
             save_model: config.save_model.into(),
             start_model: config.start_model.clone(),
@@ -2301,6 +2309,8 @@ impl ImagerRunTaskRequest {
             spw_selector: self.spw_selector.clone(),
             channel_start: self.channel_start,
             channel_count: self.channel_count,
+            continuum_fit_spw: self.continuum_fit_spw.clone(),
+            continuum_fit_order: self.continuum_fit_order,
             datacolumn: self.data_column.clone(),
             save_model: self.save_model.into(),
             start_model: self.start_model.clone(),
@@ -3065,6 +3075,10 @@ mod tests {
             OsString::from("2"),
             OsString::from("--spw"),
             OsString::from("5:10~19"),
+            OsString::from("--fitspw"),
+            OsString::from("5:0~9;20~29"),
+            OsString::from("--fitorder"),
+            OsString::from("1"),
             OsString::from("--datacolumn"),
             OsString::from("CORRECTED_DATA"),
             OsString::from("--savemodel"),
@@ -3164,6 +3178,8 @@ mod tests {
         );
         assert_eq!(restored.phasecenter_field, Some(2));
         assert_eq!(restored.spw_selector.as_deref(), Some("5:10~19"));
+        assert_eq!(restored.continuum_fit_spw.as_deref(), Some("5:0~9;20~29"));
+        assert_eq!(restored.continuum_fit_order, 1);
         assert_eq!(restored.datacolumn.as_deref(), Some("CORRECTED_DATA"));
         assert_eq!(restored.save_model, SaveModelMode::ModelColumn);
         assert_eq!(restored.correlation.as_deref(), Some("XX"));
@@ -3351,6 +3367,8 @@ mod tests {
             spw_selector: None,
             channel_start: None,
             channel_count: None,
+            continuum_fit_spw: None,
+            continuum_fit_order: 0,
             data_column: None,
             save_model: ImagerSaveModel::None,
             start_model: None,
@@ -3446,6 +3464,8 @@ mod tests {
             spw_selector: None,
             channel_start: None,
             channel_count: None,
+            continuum_fit_spw: None,
+            continuum_fit_order: 0,
             data_column: None,
             save_model: ImagerSaveModel::None,
             start_model: None,
@@ -3717,6 +3737,8 @@ mod tests {
             spw_selector: None,
             channel_start: None,
             channel_count: None,
+            continuum_fit_spw: None,
+            continuum_fit_order: 0,
             data_column: None,
             save_model: ImagerSaveModel::None,
             start_model: None,
@@ -3880,6 +3902,8 @@ mod tests {
             spw_selector: Some("7".to_string()),
             channel_start: None,
             channel_count: None,
+            continuum_fit_spw: None,
+            continuum_fit_order: 0,
             data_column: None,
             save_model: ImagerSaveModel::None,
             start_model: None,
@@ -4456,6 +4480,8 @@ mod tests {
             spw_selector: None,
             channel_start: None,
             channel_count: None,
+            continuum_fit_spw: None,
+            continuum_fit_order: 0,
             data_column: None,
             save_model: ImagerSaveModel::None,
             start_model: Some(PathBuf::from("seed.model")),

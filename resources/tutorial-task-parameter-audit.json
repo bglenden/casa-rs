@@ -66,7 +66,9 @@
         "phasecenter_field",
         "niter",
         "threshold",
-        "datacolumn"
+        "datacolumn",
+        "fitspw",
+        "fitorder"
       ]
     },
     {
@@ -280,7 +282,7 @@
       "id": "calibration-spine",
       "source": "docs/tutorial-parity/current-tutorial-inventory.md",
       "task_id": "calibrate",
-      "task_represents": "uvcontsub, gencal, gaincal, bandpass, fluxscale, applycal",
+      "task_represents": "gencal, gaincal, bandpass, fluxscale, applycal",
       "parameters": [
         "mode",
         "vis",
@@ -294,8 +296,6 @@
         "apply_mode",
         "calwt",
         "parang",
-        "fit_spw",
-        "fit_order",
         "stats_datacolumn",
         "out_table",
         "refant",
@@ -312,31 +312,6 @@
         "reference_fields",
         "transfer_fields",
         "refspwmap",
-        "selectdata",
-        "field",
-        "spw",
-        "antenna",
-        "scan",
-        "observation",
-        "array",
-        "timerange",
-        "msselect"
-      ]
-    },
-    {
-      "id": "uv-continuum-subtraction",
-      "source": "docs/tutorial-parity/current-tutorial-inventory.md",
-      "task_id": "uvcontsub",
-      "task_represents": "uvcontsub",
-      "parameters": [
-        "vis",
-        "outputvis",
-        "fit_spw",
-        "fit_order",
-        "stats_datacolumn",
-        "format",
-        "output",
-        "overwrite",
         "selectdata",
         "field",
         "spw",

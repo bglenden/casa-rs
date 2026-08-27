@@ -24,13 +24,12 @@
     },
     {
       "id": "calibrate.mode",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "mode",
       "value_domain": {
         "kind": "choice",
         "values": [
           "apply",
-          "continuum_subtract",
           "export_corrected_data",
           "fluxscale",
           "gencal",
@@ -2989,7 +2988,7 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "CASA-style line-free channel selector for uvcontsub, e.g. 0:0~500;900~1919",
+        "summary": "CASA-style line-free channel selector for inline visibility-domain continuum subtraction, e.g. 0:0~500;900~1919",
         "details": null,
         "examples": []
       },

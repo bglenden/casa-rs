@@ -198,6 +198,10 @@ impl SpectralCyclePlan {
             policy.implementation.clone(),
             pass,
             weighting_mode,
+            crate::plan_continuum_transform_row(problem)?
+                .map(|plan| u64::try_from(plan.bytes()))
+                .transpose()
+                .map_err(|_| SpectralCyclePlanError::Overflow)?,
         );
         let replay = fragment.streaming_node().clone();
         let physical = fragment.compose(&base)?;
@@ -1125,6 +1129,8 @@ pub enum SpectralCyclePlanError {
     Weighting(casa_imaging_reconstruction::WeightingError),
     /// T18 physical composition rejected the base transaction authority.
     WeightingFragment(WeightingPlanFragmentError),
+    /// The compiled visibility transform could not derive a bounded row plan.
+    ContinuumTransform(crate::ContinuumTransformError),
     /// T19/T20 physical composition rejected the weighting plan.
     Complete(CompleteDataPlanError),
     /// The composed execution DAG violated scheduler invariants.
@@ -1146,6 +1152,11 @@ impl From<casa_imaging_reconstruction::WeightingError> for SpectralCyclePlanErro
 impl From<WeightingPlanFragmentError> for SpectralCyclePlanError {
     fn from(v: WeightingPlanFragmentError) -> Self {
         Self::WeightingFragment(v)
+    }
+}
+impl From<crate::ContinuumTransformError> for SpectralCyclePlanError {
+    fn from(value: crate::ContinuumTransformError) -> Self {
+        Self::ContinuumTransform(value)
     }
 }
 impl From<CompleteDataPlanError> for SpectralCyclePlanError {

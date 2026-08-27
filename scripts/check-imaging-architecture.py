@@ -54,12 +54,12 @@ ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256 = (
     "daafa560c0e941fb3f2cea5c02a46de8a3363c2dd327cb839ef8ab2111f09835"
 )
 ACCEPTED_MATRIX_ROWS_SHA256 = (
-    "8115ac40f8bb1cd6270b335161f7d94b73a190747865eac6d17a49b23109d952"
+    "d078b625a924535dc5b8694cc8025f8891e0b22ee6673e08b07c8ab81b24ac12"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "e4c3b368e4ae22f4728bf62613a5e9ff3ce94560354daf3008380ca9d65bc01b"
+    "2371e7955cd073be514a40c57b7561c2aa570291afc54f408665a3cb962dac4d"
 )
-ACCEPTED_MATRIX_CONTRACT_REVISION = 50
+ACCEPTED_MATRIX_CONTRACT_REVISION = 52
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "scientific-products-v1",
@@ -2005,6 +2005,7 @@ def validate_t18_global_weighting_sources(
             "state": "Arc<WeightingAlgorithmState>",
             "source_generation": "SelectedObservationGenerationId",
             "source_sample_count": "u64",
+            "continuum_transform": "Option<ContinuumTransformCompletion>",
             "cross_plan_reservation": "Option<Arc<FrozenWeightingReservation>>",
         }
     ):
@@ -2035,10 +2036,10 @@ def validate_t18_global_weighting_sources(
         runtime_weighting, "traverse_density_source", runtime_weighting_path
     )
     initial_stream = rust_function_body(
-        runtime_weighting, "traverse_initial_stream", runtime_weighting_path
+        runtime_weighting, "traverse_initial_stream_impl", runtime_weighting_path
     )
     reuse_stream = rust_function_body(
-        runtime_weighting, "traverse_reuse_stream", runtime_weighting_path
+        runtime_weighting, "traverse_reuse_stream_impl", runtime_weighting_path
     )
     if density.count(".traverse(") != 1 or "begin_weighting_generation(" not in density:
         raise ArchitectureError(
@@ -2285,7 +2286,9 @@ def validate_t18_global_weighting_sources(
         or "removed.contains" not in compose_streaming
         or "terminal_fence" not in compose_streaming
         or "kind: WorkKind::Release" not in compose
-        or allocation_specs.count("AllocationSpec::new(") != 5
+        or allocation_specs.count("AllocationSpec::new(") != 6
+        or "if let Some(bytes) = self.continuum_row_bytes" not in allocation_specs
+        or '"continuum-transform-row"' not in allocation_specs
         or "predecessor_observation_completion(&self.source_read)"
         not in generation_authority
         or "predecessor_observation_completion(&self.ids.generation_node)"

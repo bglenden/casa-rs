@@ -10,7 +10,10 @@
 //! casacore `LSQFit` LDLT order. Fitted values pass through casacore's
 //! Float rounding before becoming beam metadata.
 
-use casa_numerics::solve_symmetric_ldlt_casacore;
+use casa_numerics::{
+    EllipticalGaussian, common_enclosing_gaussian, deconvolving_gaussian,
+    solve_symmetric_ldlt_casacore,
+};
 use ndarray::Array2;
 
 use thiserror::Error;
@@ -40,6 +43,39 @@ pub struct RestoringBeam {
 }
 
 impl RestoringBeam {
+    /// Construct a finite CASA restoring beam.
+    ///
+    /// The major axis must be at least the minor axis and both widths must be
+    /// strictly positive. Position angle is wrapped to CASA's canonical
+    /// `[-pi/2, pi/2]` interval.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PsfBeamFitError`] for non-finite, non-positive, or inverted
+    /// axes.
+    pub fn new(
+        major_fwhm_rad: f64,
+        minor_fwhm_rad: f64,
+        position_angle_rad: f64,
+    ) -> Result<Self, PsfBeamFitError> {
+        if !major_fwhm_rad.is_finite()
+            || !minor_fwhm_rad.is_finite()
+            || !position_angle_rad.is_finite()
+            || major_fwhm_rad <= 0.0
+            || minor_fwhm_rad <= 0.0
+            || major_fwhm_rad < minor_fwhm_rad
+        {
+            return Err(PsfBeamFitError(
+                "restoring beam requires finite positive major >= minor axes".to_string(),
+            ));
+        }
+        Ok(Self {
+            major_fwhm_rad,
+            minor_fwhm_rad,
+            position_angle_rad: casa_wrap_beam_position_angle(position_angle_rad),
+        })
+    }
+
     /// Major full width at half maximum in radians.
     #[must_use]
     pub const fn major_fwhm_rad(&self) -> f64 {
@@ -56,6 +92,54 @@ impl RestoringBeam {
     #[must_use]
     pub const fn position_angle_rad(&self) -> f64 {
         self.position_angle_rad
+    }
+
+    /// Return the Gaussian area in steradians.
+    #[must_use]
+    pub fn area_sr(self) -> f64 {
+        numeric_beam(self).area()
+    }
+
+    /// Compute CASA's minimum-area common enclosing restoring beam.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PsfBeamFitError`] when the set is empty or contains an
+    /// invalid beam.
+    pub fn common_enclosing(beams: &[Self]) -> Result<Self, PsfBeamFitError> {
+        common_enclosing_gaussian(&beams.iter().copied().map(numeric_beam).collect::<Vec<_>>())
+            .map(restoring_beam)
+            .map_err(|error| PsfBeamFitError(error.to_string()))
+    }
+
+    /// Compute the beam that convolves `source` to this target beam.
+    ///
+    /// Returns `Ok(None)` when the beams are effectively identical.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PsfBeamFitError`] when either beam is invalid or the target
+    /// is smaller than the source.
+    pub fn deconvolving_beam(self, source: Self) -> Result<Option<Self>, PsfBeamFitError> {
+        deconvolving_gaussian(numeric_beam(self), numeric_beam(source))
+            .map(|beam| beam.map(restoring_beam))
+            .map_err(|error| PsfBeamFitError(error.to_string()))
+    }
+}
+
+fn numeric_beam(beam: RestoringBeam) -> EllipticalGaussian {
+    EllipticalGaussian::new(
+        beam.major_fwhm_rad,
+        beam.minor_fwhm_rad,
+        beam.position_angle_rad,
+    )
+}
+
+fn restoring_beam(beam: EllipticalGaussian) -> RestoringBeam {
+    RestoringBeam {
+        major_fwhm_rad: beam.major,
+        minor_fwhm_rad: beam.minor,
+        position_angle_rad: beam.position_angle,
     }
 }
 
@@ -908,5 +992,38 @@ mod tests {
         psf[27 * shape[1] + 26] = -0.4;
         let sidelobe = fitted_psf_sidelobe_fraction(&psf, shape).expect("Gaussian fit");
         assert!((sidelobe - 0.4).abs() <= 1.0e-6, "{sidelobe}");
+    }
+
+    #[test]
+    fn restoring_beam_common_envelope_matches_casa_6_7_6_14() {
+        let arcsec = std::f64::consts::PI / (180.0 * 3_600.0);
+        let beams = [
+            RestoringBeam::new(7.0 * arcsec, 4.0 * arcsec, 35_f64.to_radians()).unwrap(),
+            RestoringBeam::new(6.0 * arcsec, 5.0 * arcsec, -20_f64.to_radians()).unwrap(),
+        ];
+        let common = RestoringBeam::common_enclosing(&beams).expect("common beam");
+        assert!((common.major_fwhm_rad() / arcsec - 7.116_149_425_836_256).abs() < 1.0e-6);
+        assert!((common.minor_fwhm_rad() / arcsec - 5.640_938_804_984_346).abs() < 1.0e-6);
+        assert!((common.position_angle_rad().to_degrees() - 23.593_728_922_728_804).abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn restoring_beam_deconvolution_preserves_axis_aligned_covariance() {
+        let source = RestoringBeam::new(4.0e-6, 2.0e-6, 0.1).unwrap();
+        let target = RestoringBeam::new(5.0e-6, 3.0e-6, 0.1).unwrap();
+        let smoothing = target
+            .deconvolving_beam(source)
+            .expect("deconvolution")
+            .expect("nonzero smoothing beam");
+        assert!(
+            (source.major_fwhm_rad().hypot(smoothing.major_fwhm_rad()) - target.major_fwhm_rad())
+                .abs()
+                < 1.0e-15
+        );
+        assert!(
+            (source.minor_fwhm_rad().hypot(smoothing.minor_fwhm_rad()) - target.minor_fwhm_rad())
+                .abs()
+                < 1.0e-15
+        );
     }
 }

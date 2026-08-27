@@ -2,7 +2,7 @@
 
 Truth class: implementation note
 Last reality check: 2026-04-28
-Verification: focused `casa-calibration` / `casars-imager` tests; local CASA 6.7.5-9 comparisons below
+Verification: focused imaging transform / `casars-imager` tests; local CASA 6.7.5-9 comparisons below
 
 ## Scope
 
@@ -20,36 +20,23 @@ The tutorial source is:
 
 | CASA guide step | casa-rs path | Status |
 | --- | --- | --- |
-| `uvcontsub(..., field="5", fitspw="0:0~239;281~383", fitorder=0)` | `calibrate uvcontsub --field 5 --fitspw '0:0~239;281~383' --fitorder 0 --datacolumn DATA` | Implemented; output MS opens in CASA and matches CASA data values. |
+| `uvcontsub(..., field="5", fitspw="0:0~239;281~383", fitorder=0)` followed by `tclean(...)` | `casars-imager --specmode cube --fitspw '0:0~239;281~383' --fitorder 0 ...` | Implemented as one bounded visibility transform feeding the line-only cube; no intermediate casa-rs continuum-subtracted MS is required. |
 | `tclean(..., specmode="cube", nchan=15, start="0.0km/s", width="0.5km/s", outframe="LSRK", restfreq="372.67249GHz")` | `casars-imager --specmode cube --channel-count 15 --start 0.0km/s --width 0.5km/s --outframe LSRK --restfreq 372.67249GHz` | Implemented; natural-weight dirty cube matches CASA at floating-point noise. |
 | `restoringbeam="common"` | `--restoringbeam common` | Implemented for restored `.image` beam metadata. |
 | `weighting="briggsbwtaper", perchanweightdensity=True` | partially implemented | The option is exposed and follows CASA's `BriggsCubeWeightor` robust/bandwidth-taper formula, but exact TW Hydra weighted-cube parity is still open in the per-channel density source. |
 
 Current CASA 6.7 `uvcontsub(outputvis=...)` keeps the selected field id as `5`;
-the older CASA guide text says the output may be relabeled to `0`. The parity
-commands below therefore use `field=5` for both CASA and casa-rs.
+the older CASA guide text says the output may be relabeled to `0`. The retained
+historical residual-visibility evidence below therefore used `field=5`. The
+current casa-rs route transforms selected visibility rows inline and preserves
+the original selection lineage.
 
 ## Commands
 
 ```bash
-cargo build --release -q -p casa-calibration --bin calibrate
-rm -rf target/issue-119/twhya_selfcal.ms.contsub
-/usr/bin/time -p target/release/calibrate uvcontsub \
-  --ms target/issue-119/twhya_selfcal.ms \
-  --out target/issue-119/twhya_selfcal.ms.contsub \
-  --field 5 \
-  --fitspw '0:0~239;281~383' \
-  --fitorder 0 \
-  --datacolumn DATA \
-  --format json \
-  -o target/issue-119/casars-uvcontsub-release.json \
-  --overwrite
-```
-
-```bash
 cargo build --release -q -p casars-imager --bin casars-imager
 target/release/casars-imager \
-  --ms target/issue-119/twhya_selfcal.ms.contsub \
+  --ms target/issue-119/twhya_selfcal.ms \
   --imagename target/issue-119/casars-natural-twhya-n2hp \
   --field 5 \
   --spw 0 \
@@ -69,21 +56,25 @@ target/release/casars-imager \
   --niter 0 \
   --threshold-jy 0 \
   --datacolumn DATA \
+  --fitspw '0:0~239;281~383' \
+  --fitorder 0 \
   --no-preview-pngs
 ```
 
 ## Evidence
 
-`uvcontsub` timing on the staged TW Hydra dataset:
+Historical standalone residual-visibility timing on the staged TW Hydra dataset
+(retained as parity evidence, not as a current command surface):
 
 | Engine | Command | Wall time |
 | --- | --- | --- |
 | CASA 6.7.5-9 | `uvcontsub(..., outputvis=..., field="5", fitspec="0:0~239;281~383", fitorder=0)` | `1.926 s` |
-| casa-rs release | `calibrate uvcontsub ...` | `5.65 s` wall, report `4.490 s` elapsed |
+| pre-T40 casa-rs release | former standalone continuum-subtraction route | `5.65 s` wall, report `4.490 s` elapsed |
 
-The CASA and casa-rs continuum-subtracted MS outputs both open with CASA tools
-and contain `44772` rows with field id `[5]`. For valid unflagged `DATA` cells,
-CASA vs casa-rs residual visibility differences are:
+The former comparison output and CASA continuum-subtracted MS both opened with
+CASA tools and contained `44772` rows with field id `[5]`. That evidence pins
+the fitting semantics now owned by the inline transform. For valid unflagged
+`DATA` cells, CASA vs casa-rs residual visibility differences were:
 
 - RMS absolute difference: `2.6704246849068624e-09`
 - max absolute difference: `1.9073486328125e-06`

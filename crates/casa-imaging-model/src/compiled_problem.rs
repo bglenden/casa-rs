@@ -31,9 +31,9 @@ use crate::transaction::{
 };
 
 const COMPILED_PROBLEM_IDENTITY_DOMAIN: &[u8] = b"casa-rs-compiled-problem";
-const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 11;
+const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 12;
 const COMPILED_PROBLEM_BASIS_DOMAIN: &[u8] = b"casa-rs-compiled-problem-basis";
-const COMPILED_PROBLEM_BASIS_VERSION: u32 = 1;
+const COMPILED_PROBLEM_BASIS_VERSION: u32 = 2;
 const NUMERICS_CONTRACT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-numerics-contract";
 const NUMERICS_CONTRACT_IDENTITY_VERSION: u32 = 1;
 
@@ -1305,6 +1305,7 @@ pub struct ProblemSpecification {
     products: ProductRequirements,
     observation_transaction: ObservationTransactionRequirements,
     numerics: NumericsContract,
+    visibility_transform: Option<crate::SequentialContinuumTransform>,
 }
 
 /// One versioned, backend-independent native imaging request.
@@ -1360,7 +1361,18 @@ impl ProblemSpecification {
             products,
             observation_transaction,
             numerics,
+            visibility_transform: None,
         }
+    }
+
+    /// Compose one sequential visibility transform into the logical problem.
+    #[must_use]
+    pub fn with_visibility_transform(
+        mut self,
+        transform: crate::SequentialContinuumTransform,
+    ) -> Self {
+        self.visibility_transform = Some(transform);
+        self
     }
 }
 
@@ -1373,6 +1385,8 @@ pub enum RequiredCapability {
     SpectralFrameTransform,
     /// Non-identity paired spectral sampling.
     SpectralResampling,
+    /// Sequential visibility-domain continuum subtraction.
+    SequentialContinuumTransform,
     /// Common restoring-beam coupling across spectral planes.
     CommonBeamSpectralCoupling,
     /// Reconstruction of one polarization coordinate.
@@ -1493,6 +1507,7 @@ pub struct CompiledProblem {
     selected_observation: SelectedObservationCommitment,
     numerics: NumericsContract,
     required_capabilities: BTreeSet<RequiredCapability>,
+    visibility_transform: Option<crate::SequentialContinuumTransform>,
 }
 
 impl CompiledProblem {
@@ -1612,6 +1627,12 @@ impl CompiledProblem {
     pub const fn required_capabilities(&self) -> &BTreeSet<RequiredCapability> {
         &self.required_capabilities
     }
+
+    /// Return the compiled sequential visibility transform, when present.
+    #[must_use]
+    pub const fn visibility_transform(&self) -> Option<&crate::SequentialContinuumTransform> {
+        self.visibility_transform.as_ref()
+    }
 }
 
 /// Failure to compile a logical imaging problem.
@@ -1687,6 +1708,7 @@ pub fn compile(request: ImagingRequest) -> Result<CompiledProblem, CompileProble
         model_lifecycle,
     } = request;
     let geometry = compile_geometry(geometry, &inputs)?;
+    let visibility_transform = specification.visibility_transform;
     let science = specification.science;
     let products = specification.products.canonicalize();
     let observation_transaction = compile_observation_transaction(
@@ -1697,6 +1719,16 @@ pub fn compile(request: ImagingRequest) -> Result<CompiledProblem, CompileProble
     let numerics_id = canonical_numerics_id(&numerics);
     validate_science(&science, &inputs)?;
     validate_reconstruction(&specification.reconstruction, &geometry)?;
+    if visibility_transform.is_some()
+        && !matches!(
+            specification.reconstruction.basis(),
+            ReconstructionBasis::ChannelLocal { .. }
+        )
+    {
+        return Err(CompileProblemError::InvalidScientificContract {
+            reason: "sequential visibility transforms require channel-local reconstruction",
+        });
+    }
     let reconstruction = specification.reconstruction.canonicalize()?;
     validate_weighting(specification.weighting)?;
     validate_products(&science, &reconstruction, &products)?;
@@ -1715,13 +1747,16 @@ pub fn compile(request: ImagingRequest) -> Result<CompiledProblem, CompileProble
         numerics_id,
         selected_observation.commitment_id(),
     );
-    let required_capabilities = derive_capabilities(
+    let mut required_capabilities = derive_capabilities(
         &geometry,
         &science,
         &reconstruction,
         normal_equation.weighting(),
         &products,
     );
+    if visibility_transform.is_some() {
+        required_capabilities.insert(RequiredCapability::SequentialContinuumTransform);
+    }
     let product_graph = compile_product_graph(&geometry, &reconstruction, &products);
     let model_lifecycle = compile_model_lifecycle_contract(
         &geometry,
@@ -1741,6 +1776,7 @@ pub fn compile(request: ImagingRequest) -> Result<CompiledProblem, CompileProble
         products: &products,
         observation_transaction: &observation_transaction,
         numerics: &numerics,
+        visibility_transform: visibility_transform.as_ref(),
     });
     let problem_id = canonical_problem_id(
         problem_identity_basis,
@@ -1763,6 +1799,7 @@ pub fn compile(request: ImagingRequest) -> Result<CompiledProblem, CompileProble
         selected_observation,
         numerics,
         required_capabilities,
+        visibility_transform,
     })
 }
 
@@ -2180,6 +2217,7 @@ struct ProblemIdentityInput<'a> {
     products: &'a ProductRequirements,
     observation_transaction: &'a ObservationTransactionContract,
     numerics: &'a NumericsContract,
+    visibility_transform: Option<&'a crate::SequentialContinuumTransform>,
 }
 
 fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalIdentity {
@@ -2192,6 +2230,7 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
         products,
         observation_transaction,
         numerics,
+        visibility_transform,
     } = input;
     let mut encoder = CanonicalEncoder::new();
     encoder.bytes(COMPILED_PROBLEM_BASIS_DOMAIN);
@@ -2199,6 +2238,13 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
     encoder.identity(inputs.observation().identity());
     encoder.digest(observation_transaction.transaction_id().as_bytes());
     encoder.digest(geometry.geometry_id().as_bytes());
+    match visibility_transform {
+        Some(transform) => {
+            encoder.u8(1);
+            encoder.digest(transform.contract_id().as_bytes());
+        }
+        None => encoder.u8(0),
+    }
     encoder.usize(inputs.reference_data().len());
     for (kind, identity) in inputs.reference_data() {
         encoder.u8(reference_data_tag(*kind));

@@ -15,24 +15,24 @@ use casa_coordinates::{
 };
 use casa_images::AnyPagedImage;
 use casa_imaging_model::{
-    AxisOrder, CentreLaws, CorrelationProduct, CorrelationSelection, CorrelationType,
-    DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame,
-    DopplerConvention, Epoch, FacetLayout, FiniteValuePolicy, FrequencyFrame, ImageAxis,
-    ImageDomainRole, ImageDomainSpec, ImageShape, InstrumentResponse, ItrfPosition,
-    LogicalIdentity, MeasurementEquationContract, ModelBounds, ModelColumnWrite, ModelInnerProduct,
-    ModelInputCommitment, ModelLifecycleRequirements, ModelStateIdentity, NumericPrecision,
-    NumericalStage, NumericsContract, ObservationSelection, ObservationTransactionRequirements,
-    PhaseCentreLaw, PointingCentreLaw, PolarizationContract, PolarizationCoordinate,
-    PrimaryBeamValidityPolicy, ProblemSpecification, ProductBlankingPolicy, ProductKind,
-    ProductNormalization, ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
-    Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
-    ReconstructionControls, ReductionPolicy, RestFrequency, RestoringBeamPolicy,
-    ScientificContract, SelectedMainRow, SelectedRows, SkyDirection, SpectralContract,
-    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
-    SpectralWcs, SpectralWindowSelection, StageErrorBudget, TaylorSupportReference,
-    TaylorValidityPolicy, TimeScale, UvwCoordinateLaw, VisibilityColumn as OwnerVisibilityColumn,
-    VisibilityInnerProduct, WeightColumn as OwnerWeightColumn, WeightDensityScope,
-    WeightingContract, WeightingScheme,
+    AxisOrder, CentreLaws, ContinuumChannelRole, ContinuumChannelUse, ContinuumFitRule,
+    CorrelationProduct, CorrelationSelection, CorrelationType, DeclaredInnerProducts,
+    DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame, DopplerConvention, Epoch, FacetLayout,
+    FiniteValuePolicy, FrequencyFrame, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
+    InstrumentResponse, ItrfPosition, LogicalIdentity, MeasurementEquationContract, ModelBounds,
+    ModelColumnWrite, ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements,
+    ModelStateIdentity, NumericPrecision, NumericalStage, NumericsContract, ObservationSelection,
+    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PolarizationContract,
+    PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemSpecification, ProductBlankingPolicy,
+    ProductKind, ProductNormalization, ProductRequirements, ProductSupportComparison,
+    ProductValidityPolicies, Projection, ReconstructionAlgorithm, ReconstructionBasis,
+    ReconstructionContract, ReconstructionControls, ReductionPolicy, RestFrequency,
+    RestoringBeamPolicy, ScientificContract, SelectedMainRow, SelectedRows,
+    SequentialContinuumTransform, SkyDirection, SpectralContract, SpectralCoordinateSpec,
+    SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs,
+    SpectralWindowSelection, StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy,
+    TimeScale, UvwCoordinateLaw, VisibilityColumn as OwnerVisibilityColumn, VisibilityInnerProduct,
+    WeightColumn as OwnerWeightColumn, WeightDensityScope, WeightingContract, WeightingScheme,
 };
 use casa_imaging_reconstruction::{ReconstructionMaskPlan, WeightingExecutionLimits};
 use casa_imaging_runtime::{
@@ -175,6 +175,15 @@ pub enum SpectralImagingMode {
     },
 }
 
+/// Visibility-domain continuum subtraction composed before cube sampling.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VisibilityContinuumSubtraction {
+    /// CASA-style line-free channel selector, for example `0:0~239;281~383`.
+    pub fit_spw: String,
+    /// Polynomial order fitted independently to real and imaginary visibilities.
+    pub fit_order: usize,
+}
+
 /// Canonical application input for one MeasurementSet-backed continuum run.
 ///
 /// The frontend parses strings and maps task enums into this record. All
@@ -206,6 +215,8 @@ pub struct ContinuumImagingRequest {
     pub channel_count: Option<usize>,
     /// Continuum or channel-local cube reconstruction.
     pub spectral_mode: SpectralImagingMode,
+    /// Optional sequential visibility-domain continuum subtraction for line cubes.
+    pub continuum_subtraction: Option<VisibilityContinuumSubtraction>,
     /// Optional explicit visibility column.
     pub data_column: Option<String>,
     /// Reconstruction algorithm.
@@ -573,7 +584,14 @@ fn prepare(
         direction,
         &frame_engine,
     )?;
-    let channels = &prepared_spectral.selected_source_channels;
+    let (continuum_transform, selected_source_channels) = prepare_continuum_transform(
+        request.continuum_subtraction.as_ref(),
+        i32::try_from(field_id).map_err(|_| boxed("FIELD_ID exceeds i32"))?,
+        spw_id,
+        &frequencies,
+        &prepared_spectral.selected_source_channels,
+    )?;
+    let channels = &selected_source_channels;
     let correlation_codes = polarization.corr_type(polarization_id)?;
     let correlations = correlation_codes
         .iter()
@@ -660,7 +678,12 @@ fn prepare(
         .checked_mul(prepared_spectral.output_channels)
         .ok_or_else(|| boxed("cube model sample count overflowed"))?;
     Ok(ApplicationRequest {
-        specification: specification(&request, &prepared_spectral)?,
+        specification: match continuum_transform {
+            Some(transform) => {
+                specification(&request, &prepared_spectral)?.with_visibility_transform(transform)
+            }
+            None => specification(&request, &prepared_spectral)?,
+        },
         geometry,
         model_lifecycle: ModelLifecycleRequirements::new(
             ModelBounds::new(
@@ -753,7 +776,98 @@ fn validate_request(request: &ContinuumImagingRequest) -> Result<(), crate::Appl
             "MODEL_DATA persistence requires a solved final model, not a dirty-only request",
         ));
     }
+    if request.continuum_subtraction.is_some()
+        && !matches!(request.spectral_mode, SpectralImagingMode::Cube { .. })
+    {
+        return Err(boxed(
+            "visibility-domain continuum subtraction requires channel-local cube imaging",
+        ));
+    }
     Ok(())
+}
+
+fn prepare_continuum_transform(
+    controls: Option<&VisibilityContinuumSubtraction>,
+    field_id: i32,
+    spw_id: usize,
+    frequencies_hz: &[f64],
+    output_channels: &[usize],
+) -> Result<(Option<SequentialContinuumTransform>, Vec<usize>), crate::ApplicationError> {
+    let Some(controls) = controls else {
+        return Ok((None, output_channels.to_vec()));
+    };
+    let order = u8::try_from(controls.fit_order)
+        .map_err(|_| boxed("continuum fit order exceeds the supported contract range"))?;
+    let selectors = parse_spw_selector(&controls.fit_spw)?;
+    if selectors.len() != 1 || usize::try_from(selectors[0].spw_id).ok() != Some(spw_id) {
+        return Err(boxed(
+            "continuum fit selector must name exactly the selected spectral window",
+        ));
+    }
+    let fit_channels = match selectors.into_iter().next().expect("one selector").channels {
+        Some(selector) => resolve_channel_selector_selection(frequencies_hz, &selector)?.indices,
+        None => (0..frequencies_hz.len()).collect(),
+    };
+    let fit = fit_channels.into_iter().collect::<BTreeSet<_>>();
+    let output = output_channels.iter().copied().collect::<BTreeSet<_>>();
+    let selected = fit.union(&output).copied().collect::<Vec<_>>();
+    let roles = selected
+        .iter()
+        .copied()
+        .map(|channel| {
+            let use_role = match (fit.contains(&channel), output.contains(&channel)) {
+                (true, false) => ContinuumChannelUse::FitOnly,
+                (false, true) => ContinuumChannelUse::ApplyOnly,
+                (true, true) => ContinuumChannelUse::FitAndApply,
+                (false, false) => unreachable!("set union member"),
+            };
+            Ok(ContinuumChannelRole::new(
+                u32::try_from(channel).map_err(|_| boxed("channel index exceeds u32"))?,
+                use_role,
+            ))
+        })
+        .collect::<Result<Vec<_>, crate::ApplicationError>>()?;
+    let rule = ContinuumFitRule::new(
+        field_id,
+        u32::try_from(spw_id).map_err(|_| boxed("SPW id exceeds u32"))?,
+        order,
+        roles,
+    )?;
+    Ok((
+        Some(SequentialContinuumTransform::new(vec![rule])?),
+        selected,
+    ))
+}
+
+#[cfg(test)]
+mod continuum_transform_tests {
+    use super::*;
+
+    #[test]
+    fn fit_and_output_channels_compile_to_one_union_with_exact_roles() {
+        let controls = VisibilityContinuumSubtraction {
+            fit_spw: "0:0~1;6~7".to_string(),
+            fit_order: 1,
+        };
+        let (transform, selected) = prepare_continuum_transform(
+            Some(&controls),
+            5,
+            0,
+            &[100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 106.0, 107.0],
+            &[1, 3, 4],
+        )
+        .expect("compile transform roles");
+
+        assert_eq!(selected, [0, 1, 3, 4, 6, 7]);
+        let transform = transform.expect("compiled transform");
+        let rule = transform.rule(5, 0).expect("field/SPW rule");
+        assert_eq!(rule.channel_use(0), Some(ContinuumChannelUse::FitOnly));
+        assert_eq!(rule.channel_use(1), Some(ContinuumChannelUse::FitAndApply));
+        assert_eq!(rule.channel_use(3), Some(ContinuumChannelUse::ApplyOnly));
+        assert_eq!(rule.channel_use(4), Some(ContinuumChannelUse::ApplyOnly));
+        assert_eq!(rule.channel_use(6), Some(ContinuumChannelUse::FitOnly));
+        assert_eq!(rule.channel_use(7), Some(ContinuumChannelUse::FitOnly));
+    }
 }
 
 fn selected_data_descriptions(
@@ -1073,7 +1187,13 @@ fn specification(
     };
     Ok(ProblemSpecification::new(
         ScientificContract::new(
-            SpectralContract::new(spectral.sampling, SpectralCoupling::Independent),
+            SpectralContract::new(
+                spectral.sampling,
+                match request.beam_policy {
+                    ContinuumBeamPolicy::PerPlane => SpectralCoupling::Independent,
+                    ContinuumBeamPolicy::Common => SpectralCoupling::CommonRestoringBeam,
+                },
+            ),
             MeasurementEquationContract::new(
                 InstrumentResponse::Scalar,
                 DeclaredInnerProducts::new(
@@ -1115,6 +1235,7 @@ fn specification(
                 ProductKind::RestoredImage,
                 ProductKind::SumWeights,
                 ProductKind::Mask,
+                ProductKind::Beam,
             ],
             ProductNormalization::UnitResponse,
             match request.beam_policy {

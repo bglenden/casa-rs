@@ -7431,6 +7431,9 @@ fn required_capability(value: RequiredCapability) -> String {
         RequiredCapability::FacetedGeometry => "faceted_geometry".to_string(),
         RequiredCapability::SpectralFrameTransform => "spectral_frame_transform".to_string(),
         RequiredCapability::SpectralResampling => "spectral_resampling".to_string(),
+        RequiredCapability::SequentialContinuumTransform => {
+            "sequential_continuum_transform".to_string()
+        }
         RequiredCapability::CommonBeamSpectralCoupling => {
             "common_beam_spectral_coupling".to_string()
         }

@@ -10,7 +10,8 @@ use std::{
 };
 
 use casa_imaging_model::{
-    CompiledProblem, LogicalIdentity, ModelDeltaTerm, ModelExecutionAttemptId, ModelInputCommitment,
+    CompiledProblem, LogicalIdentity, ModelDeltaTerm, ModelExecutionAttemptId,
+    ModelInputCommitment, SequentialContinuumTransform,
 };
 use casa_imaging_reconstruction::{
     ChannelCyclePolicy, ExecutableModelProblem, FinalModelCompletion, FinalModelContinuation,
@@ -239,8 +240,23 @@ impl FinalVisibilitySink for FinalVisibilityReplay {
                 return Err(io::Error::other("final-visibility replay is not bound"));
             }
         };
-        let completion =
-            authority.finish(replay.selected_generation(), replay.weighting_generation());
+        let completion = authority.finish(
+            replay.selected_generation(),
+            replay
+                .continuum_transform()
+                .map(|completion| completion.generation_id()),
+            replay.weighting_generation(),
+        );
+        if let Some(transform) = replay.continuum_transform()
+            && completion.sample_count() != transform.output_sample_count()
+        {
+            return Err(io::Error::other(format!(
+                "final visibility emitted {} samples after the continuum transform admitted {} output-role samples and weighting retained {} spectral-support samples",
+                completion.sample_count(),
+                transform.output_sample_count(),
+                replay.spectral_support_sample_count(),
+            )));
+        }
         if let Some(model_column) = &self.model_column {
             let mut write_state = model_column
                 .state
@@ -634,6 +650,7 @@ pub struct SpectralCycleExecutor {
     source_resources: SelectedObservationSourceResources,
     pass: SpectralPassIdentity,
     complete_data: CompleteDataPlanFragment,
+    continuum_transform: Option<SequentialContinuumTransform>,
     reconstruction_cycle: Option<SerialReconstructionCycleExecution>,
     final_visibility_sink: Option<Mutex<Box<dyn FinalVisibilitySink>>>,
     phase_input_artifact: Option<(crate::ArtifactIdentity, u64)>,
@@ -787,6 +804,7 @@ impl SpectralCycleExecutor {
                     .saturating_mul(std::mem::size_of::<ModelDeltaTerm>() as u64),
             )),
         };
+        let continuum_transform = problem.visibility_transform().cloned();
         Self {
             id,
             problem,
@@ -794,6 +812,7 @@ impl SpectralCycleExecutor {
             source_resources,
             pass,
             complete_data,
+            continuum_transform,
             reconstruction_cycle: None,
             final_visibility_sink: None,
             phase_input_artifact,
@@ -888,6 +907,9 @@ impl SpectralCycleExecutor {
             self.id.clone(),
             self.pass,
             mode,
+            crate::plan_continuum_transform_row(&self.problem)
+                .expect("compiled transform row plan remains valid")
+                .map(|plan| u64::try_from(plan.bytes()).expect("transform bytes fit u64")),
         )
     }
 
@@ -1019,20 +1041,56 @@ impl SpectralCycleExecutor {
         };
         match fragment.streaming_mode() {
             Some(crate::WeightingStreamingMode::NaturalInitial)
-            | Some(crate::WeightingStreamingMode::DensityInitial) => weighting
-                .traverse_initial_stream(context, fragment, &self.problem, selected, &mut consume)
-                .map_err(io::Error::other),
-            Some(crate::WeightingStreamingMode::Reuse) => weighting
-                .traverse_reuse_stream(
-                    context,
-                    fragment,
-                    selected.ok_or_else(|| {
-                        io::Error::other("later-major selected observation missing")
-                    })?,
-                    &self.problem,
-                    &mut consume,
-                )
-                .map_err(io::Error::other),
+            | Some(crate::WeightingStreamingMode::DensityInitial) => {
+                if let Some(continuum) = &self.continuum_transform {
+                    weighting
+                        .traverse_initial_stream_with_continuum(
+                            context,
+                            fragment,
+                            &self.problem,
+                            selected,
+                            continuum,
+                            &mut consume,
+                        )
+                        .map_err(io::Error::other)
+                } else {
+                    weighting
+                        .traverse_initial_stream(
+                            context,
+                            fragment,
+                            &self.problem,
+                            selected,
+                            &mut consume,
+                        )
+                        .map_err(io::Error::other)
+                }
+            }
+            Some(crate::WeightingStreamingMode::Reuse) => {
+                let selected = selected
+                    .ok_or_else(|| io::Error::other("later-major selected observation missing"))?;
+                if let Some(continuum) = &self.continuum_transform {
+                    weighting
+                        .traverse_reuse_stream_with_continuum(
+                            context,
+                            fragment,
+                            selected,
+                            &self.problem,
+                            continuum,
+                            &mut consume,
+                        )
+                        .map_err(io::Error::other)
+                } else {
+                    weighting
+                        .traverse_reuse_stream(
+                            context,
+                            fragment,
+                            selected,
+                            &self.problem,
+                            &mut consume,
+                        )
+                        .map_err(io::Error::other)
+                }
+            }
             None => Err(io::Error::other("streaming weighting mode missing")),
         }
     }
@@ -1081,12 +1139,29 @@ impl WorkImplementation for SpectralCycleExecutor {
                     self.run_stream(&mut state, context, &fragment, Some(selected))?;
                 }
                 Some(crate::WeightingStreamingMode::DensityInitial) => {
-                    state.selected_completion = Some(
-                        state
-                            .weighting
-                            .traverse_density_source(context, &fragment, selected, &self.problem)
-                            .map_err(io::Error::other)?,
-                    );
+                    state.selected_completion =
+                        Some(if let Some(continuum) = &self.continuum_transform {
+                            state
+                                .weighting
+                                .traverse_density_source_with_continuum(
+                                    context,
+                                    &fragment,
+                                    selected,
+                                    &self.problem,
+                                    continuum,
+                                )
+                                .map_err(io::Error::other)?
+                        } else {
+                            state
+                                .weighting
+                                .traverse_density_source(
+                                    context,
+                                    &fragment,
+                                    selected,
+                                    &self.problem,
+                                )
+                                .map_err(io::Error::other)?
+                        });
                 }
                 Some(crate::WeightingStreamingMode::Reuse) => {
                     self.run_stream(&mut state, context, &fragment, Some(selected))?;
