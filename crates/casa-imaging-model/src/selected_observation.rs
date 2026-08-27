@@ -284,7 +284,12 @@ impl<E: std::error::Error + 'static> std::error::Error for SelectedObservationPa
     }
 }
 
-struct SelectedObservationInspection<'a> {
+/// Incremental validator and content-identity encoder for one canonical
+/// selected-observation pass.
+///
+/// This state supports bounded block transports without materializing the
+/// pass. It does not prove retained source access or mint storage completion.
+pub struct SelectedObservationInspection<'a> {
     expected_sources: &'a [MeasurementSetReadAccess],
     write_set: &'a ObservationWriteSet,
     source_index: usize,
@@ -308,7 +313,8 @@ impl<'a> SelectedObservationInspection<'a> {
     }
 
     /// Validate the next sample in canonical source/row/channel/correlation order.
-    fn push(
+    /// Validate and record the next canonical sample.
+    pub fn push(
         &mut self,
         sample: &SelectedObservationSample,
     ) -> Result<(), SelectedObservationInspectionError> {
@@ -351,7 +357,8 @@ impl<'a> SelectedObservationInspection<'a> {
     }
 
     /// Finish exhaustive coverage validation and return content identity/count.
-    fn finish(
+    /// Finish exhaustive coverage validation and return content identity and count.
+    pub fn finish(
         self,
     ) -> Result<(SelectedObservationGenerationId, u64), SelectedObservationInspectionError> {
         self.source.finish()?;

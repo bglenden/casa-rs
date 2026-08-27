@@ -2,6 +2,7 @@
 #![warn(missing_docs)]
 //! Plan-bound imaging execution, process resource arbitration, and leases.
 
+mod bounded_stream;
 mod complete_data_operator;
 mod continuum_transform;
 mod cost_model;

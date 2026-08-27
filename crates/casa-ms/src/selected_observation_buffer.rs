@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use std::{collections::HashMap, time::Instant};
+use std::time::Instant;
 
-use casa_tables::{RequiredScalarColumnValues, SelectedArray1DCells, SelectedArray2DCells};
+use casa_tables::{
+    RequiredScalarColumnDestination, RequiredScalarColumnValues, RequiredScalarColumnValuesMut,
+    SelectedArray1DCellsMut, SelectedArray2DCellsMut,
+};
 
 use crate::{
     MeasurementSet, MsError, MsResult, VisibilityChannelReadRange,
@@ -41,20 +44,20 @@ pub(crate) enum SelectedWeightColumn {
 
 /// One closed bounded selected-observation storage read.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct SelectedObservationBufferRequest {
+pub(crate) struct SelectedObservationBufferRequest<'a> {
     visibility: SelectedVisibilityColumn,
     weight: SelectedWeightColumn,
-    row_indices: Vec<usize>,
+    row_indices: &'a [usize],
     channel_range: VisibilityChannelReadRange,
 }
 
-impl SelectedObservationBufferRequest {
+impl<'a> SelectedObservationBufferRequest<'a> {
     /// Construct one exact contiguous-channel storage request.
     #[must_use]
     pub(crate) const fn new(
         visibility: SelectedVisibilityColumn,
         weight: SelectedWeightColumn,
-        row_indices: Vec<usize>,
+        row_indices: &'a [usize],
         channel_range: VisibilityChannelReadRange,
     ) -> Self {
         Self {
@@ -97,7 +100,7 @@ pub(crate) struct SelectedObservationBuffer {
     flags: Vec<bool>,
     weights: Option<SelectedStoredWeights>,
     row_flag: Vec<bool>,
-    uvw_m: Vec<[f64; 3]>,
+    uvw_m: Vec<f64>,
     data_description_ids: Vec<i32>,
     field_ids: Vec<i32>,
     antenna1: Vec<i32>,
@@ -144,6 +147,50 @@ pub(crate) struct SelectedObservationBufferFillReport {
 pub(crate) struct SelectedObservationBufferAllocationReport {
     pub(crate) reused_storage_buffers: u64,
     pub(crate) allocated_storage_buffers: u64,
+}
+
+#[derive(Clone, Copy)]
+struct AllocationProbe {
+    pointer: usize,
+    capacity: usize,
+}
+
+impl AllocationProbe {
+    fn capture<T>(values: &Vec<T>) -> Self {
+        Self {
+            pointer: values.as_ptr() as usize,
+            capacity: values.capacity(),
+        }
+    }
+
+    fn reused<T>(self, values: &Vec<T>) -> bool {
+        self.capacity > 0
+            && self.capacity >= values.len()
+            && self.pointer == values.as_ptr() as usize
+    }
+}
+
+#[derive(Default)]
+struct AllocationCounter {
+    reused: u64,
+    allocated: u64,
+}
+
+impl AllocationCounter {
+    fn observe<T>(&mut self, probe: AllocationProbe, values: &Vec<T>) {
+        if probe.reused(values) {
+            self.reused += 1;
+        } else if !values.is_empty() {
+            self.allocated += 1;
+        }
+    }
+
+    const fn report(self) -> SelectedObservationBufferAllocationReport {
+        SelectedObservationBufferAllocationReport {
+            reused_storage_buffers: self.reused,
+            allocated_storage_buffers: self.allocated,
+        }
+    }
 }
 
 /// Nanosecond timings for the sequential selected-observation fill stages.
@@ -221,20 +268,11 @@ pub(crate) fn selected_observation_buffer_residency(
             .checked_add(size_of::<RequiredScalarColumnValues>())?
             .checked_add(1)?,
     )?;
-    // casa-tables converts its internal typed map into the public typed map.
-    // The consumed source map keeps its bucket allocation until conversion
-    // ends, so both bucket arrays coexist even though String and Vec payloads
-    // move between them.
     let scalar_map_bytes = scalar_bucket_bytes
-        .checked_mul(2)?
         .checked_add(SCALAR_COLUMNS.iter().map(|name| name.len()).sum::<usize>())?;
-    // UVW conversion owns the typed flat input and the final [f64; 3] vector
-    // together; the final vector is already part of resident_bytes.
-    let uvw_conversion_input = rows.checked_mul(3 * size_of::<f64>())?;
     let fill_peak_bytes = resident_bytes
         .checked_add(row_indices)?
-        .checked_add(scalar_map_bytes)?
-        .checked_add(uvw_conversion_input)?;
+        .checked_add(scalar_map_bytes)?;
     Some(SelectedObservationBufferResidency {
         resident_bytes,
         fill_peak_bytes,
@@ -311,7 +349,7 @@ impl SelectedObservationBuffer {
             None => {}
         }
         add_vec!(&self.row_flag, bool);
-        add_vec!(&self.uvw_m, [f64; 3]);
+        add_vec!(&self.uvw_m, f64);
         add_vec!(&self.data_description_ids, i32);
         add_vec!(&self.field_ids, i32);
         add_vec!(&self.antenna1, i32);
@@ -364,6 +402,8 @@ impl SelectedObservationBuffer {
             SelectedStoredWeights::PerRow(values) => *values.get(row_weight_index)?,
             SelectedStoredWeights::PerChannel(values) => *values.get(sample_index)?,
         };
+        let uvw_start = row_offset.checked_mul(3)?;
+        let uvw = self.uvw_m.get(uvw_start..uvw_start + 3)?;
         Some(SelectedStoredSample {
             physical_row: *self.row_indices.get(row_offset)?,
             data_description_id: *self.data_description_ids.get(row_offset)?,
@@ -371,7 +411,7 @@ impl SelectedObservationBuffer {
             channel_flag: *self.flags.get(sample_index)?,
             row_flag: *self.row_flag.get(row_offset)?,
             input_weight,
-            uvw_m: *self.uvw_m.get(row_offset)?,
+            uvw_m: [uvw[0], uvw[1], uvw[2]],
             time_mjd_seconds: *self.time_mjd_seconds.get(row_offset)?,
             time_centroid_mjd_seconds: *self.time_centroid_mjd_seconds.get(row_offset)?,
             interval_seconds: *self.interval_seconds.get(row_offset)?,
@@ -504,148 +544,293 @@ impl MeasurementSet {
     /// no pending array-cell writes. It never falls back to cloning complete array cells.
     pub(crate) fn fill_selected_observation_buffer(
         &self,
-        request: &SelectedObservationBufferRequest,
+        request: &SelectedObservationBufferRequest<'_>,
         buffer: &mut SelectedObservationBuffer,
     ) -> MsResult<SelectedObservationBufferFillReport> {
         let fill_started = Instant::now();
         validate_request(self, request)?;
-        *buffer = SelectedObservationBuffer::default();
+        let mut allocation = AllocationCounter::default();
+        buffer.row_indices.clear();
+        buffer.row_indices.extend_from_slice(request.row_indices);
+        buffer.channel_range = request.channel_range;
+
         let visibility_started = Instant::now();
-        let visibility_cells = read_required_2d(
-            self,
-            request.visibility.name(),
-            &request.row_indices,
-            request.channel_range,
-        )?;
-        let (visibility, visibility_rows, visibility_channels, correlation_count) =
-            match (request.visibility, visibility_cells) {
-                (SelectedVisibilityColumn::FloatData, SelectedArray2DCells::Float32(values)) => {
-                    let shape = (
-                        values.row_count(),
-                        values.channel_count(),
-                        values.axis0_count(),
-                    );
-                    (
-                        SelectedStoredVisibilities::Float32(values.into_values()),
-                        shape.0,
-                        shape.1,
-                        shape.2,
-                    )
+        let visibility_shape = match request.visibility {
+            SelectedVisibilityColumn::FloatData => {
+                if !matches!(
+                    buffer.visibility,
+                    Some(SelectedStoredVisibilities::Float32(_))
+                ) {
+                    buffer.visibility = Some(SelectedStoredVisibilities::Float32(Vec::new()));
                 }
-                (
-                    SelectedVisibilityColumn::Data | SelectedVisibilityColumn::CorrectedData,
-                    SelectedArray2DCells::Complex32(values),
-                ) => {
-                    let shape = (
-                        values.row_count(),
-                        values.channel_count(),
-                        values.axis0_count(),
-                    );
-                    (
-                        SelectedStoredVisibilities::Complex32(values.into_values()),
-                        shape.0,
-                        shape.1,
-                        shape.2,
-                    )
+                let Some(SelectedStoredVisibilities::Float32(values)) = buffer.visibility.as_mut()
+                else {
+                    unreachable!("FLOAT_DATA destination installed above")
+                };
+                let probe = AllocationProbe::capture(values);
+                let shape = self
+                    .main_table()
+                    .column_accessor(request.visibility.name())?
+                    .fill_array_cells_2d_channel_range_typed_uncached(
+                        request.row_indices,
+                        request.channel_range.start,
+                        request.channel_range.count,
+                        SelectedArray2DCellsMut::Float32(values),
+                    )?
+                    .ok_or_else(|| {
+                        invalid(format!(
+                            "required MAIN {} cells are undefined",
+                            request.visibility.name()
+                        ))
+                    })?;
+                allocation.observe(probe, values);
+                shape
+            }
+            SelectedVisibilityColumn::Data | SelectedVisibilityColumn::CorrectedData => {
+                if !matches!(
+                    buffer.visibility,
+                    Some(SelectedStoredVisibilities::Complex32(_))
+                ) {
+                    buffer.visibility = Some(SelectedStoredVisibilities::Complex32(Vec::new()));
                 }
-                (SelectedVisibilityColumn::FloatData, other) => {
-                    return Err(column_type_error(
-                        request.visibility.name(),
-                        "Float32 2-D array",
-                        &other,
-                    ));
-                }
-                (_, other) => {
-                    return Err(column_type_error(
-                        request.visibility.name(),
-                        "Complex32 2-D array",
-                        &other,
-                    ));
-                }
-            };
+                let Some(SelectedStoredVisibilities::Complex32(values)) =
+                    buffer.visibility.as_mut()
+                else {
+                    unreachable!("complex visibility destination installed above")
+                };
+                let probe = AllocationProbe::capture(values);
+                let shape = self
+                    .main_table()
+                    .column_accessor(request.visibility.name())?
+                    .fill_array_cells_2d_channel_range_typed_uncached(
+                        request.row_indices,
+                        request.channel_range.start,
+                        request.channel_range.count,
+                        SelectedArray2DCellsMut::Complex32(values),
+                    )?
+                    .ok_or_else(|| {
+                        invalid(format!(
+                            "required MAIN {} cells are undefined",
+                            request.visibility.name()
+                        ))
+                    })?;
+                allocation.observe(probe, values);
+                shape
+            }
+        };
         let visibility_read_nanos = visibility_started.elapsed().as_nanos();
         require_shape(
             request.visibility.name(),
-            visibility_rows,
-            visibility_channels,
-            correlation_count,
+            visibility_shape.row_count,
+            visibility_shape.channel_count,
+            visibility_shape.axis0_count,
             request,
-            correlation_count,
+            visibility_shape.axis0_count,
         )?;
+        let correlation_count = visibility_shape.axis0_count;
+        buffer.correlation_count = correlation_count;
+
         let flag_started = Instant::now();
-        let flag_cells =
-            read_required_2d(self, "FLAG", &request.row_indices, request.channel_range)?;
-        let SelectedArray2DCells::Bool(flags) = flag_cells else {
-            return Err(MsError::ColumnTypeMismatch {
-                column: "FLAG".to_string(),
-                table: "MAIN".to_string(),
-                expected: "Bool 2-D array".to_string(),
-                found: "different array primitive".to_string(),
-            });
-        };
+        let flag_probe = AllocationProbe::capture(&buffer.flags);
+        let flag_shape = self
+            .main_table()
+            .column_accessor("FLAG")?
+            .fill_array_cells_2d_channel_range_typed_uncached(
+                request.row_indices,
+                request.channel_range.start,
+                request.channel_range.count,
+                SelectedArray2DCellsMut::Bool(&mut buffer.flags),
+            )?
+            .ok_or_else(|| invalid("required MAIN FLAG cells are undefined"))?;
+        allocation.observe(flag_probe, &buffer.flags);
         require_shape(
             "FLAG",
-            flags.row_count(),
-            flags.channel_count(),
-            flags.axis0_count(),
+            flag_shape.row_count,
+            flag_shape.channel_count,
+            flag_shape.axis0_count,
             request,
             correlation_count,
         )?;
-        let flags = flags.into_values();
         let flag_read_nanos = flag_started.elapsed().as_nanos();
+
         let weight_started = Instant::now();
-        let weights = read_weights(self, request, correlation_count)?;
-        let weight_read_nanos = weight_started.elapsed().as_nanos();
-        let scalar_started = Instant::now();
-        let mut scalars = self.main_table().required_scalar_columns_owned_for_rows(
-            &[
-                "DATA_DESC_ID",
-                "FIELD_ID",
-                "ANTENNA1",
-                "ANTENNA2",
-                "FEED1",
-                "FEED2",
-                "TIME",
-                "TIME_CENTROID",
-                "INTERVAL",
-                "EXPOSURE",
-                "SCAN_NUMBER",
-                "STATE_ID",
-                "OBSERVATION_ID",
-                "ARRAY_ID",
-                "FLAG_ROW",
-            ],
-            &request.row_indices,
-        )?;
-        let scalar_read_nanos = scalar_started.elapsed().as_nanos();
-        let uvw_started = Instant::now();
-        let uvw_m = read_strict_uvw(self, &request.row_indices)?;
-        let uvw_read_nanos = uvw_started.elapsed().as_nanos();
-        let assembly_started = Instant::now();
-        *buffer = SelectedObservationBuffer {
-            row_indices: request.row_indices.clone(),
-            channel_range: request.channel_range,
-            correlation_count,
-            visibility: Some(visibility),
-            flags,
-            weights: Some(weights),
-            row_flag: take_bool(&mut scalars, "FLAG_ROW")?,
-            uvw_m,
-            data_description_ids: take_i32(&mut scalars, "DATA_DESC_ID")?,
-            field_ids: take_i32(&mut scalars, "FIELD_ID")?,
-            antenna1: take_i32(&mut scalars, "ANTENNA1")?,
-            antenna2: take_i32(&mut scalars, "ANTENNA2")?,
-            feed1: take_i32(&mut scalars, "FEED1")?,
-            feed2: take_i32(&mut scalars, "FEED2")?,
-            time_mjd_seconds: take_f64(&mut scalars, "TIME")?,
-            time_centroid_mjd_seconds: take_f64(&mut scalars, "TIME_CENTROID")?,
-            interval_seconds: take_f64(&mut scalars, "INTERVAL")?,
-            exposure_seconds: take_f64(&mut scalars, "EXPOSURE")?,
-            scan_numbers: take_i32(&mut scalars, "SCAN_NUMBER")?,
-            state_ids: take_i32(&mut scalars, "STATE_ID")?,
-            observation_ids: take_i32(&mut scalars, "OBSERVATION_ID")?,
-            array_ids: take_i32(&mut scalars, "ARRAY_ID")?,
+        let weight_shape = match request.weight {
+            SelectedWeightColumn::Weight => {
+                if !matches!(buffer.weights, Some(SelectedStoredWeights::PerRow(_))) {
+                    buffer.weights = Some(SelectedStoredWeights::PerRow(Vec::new()));
+                }
+                let Some(SelectedStoredWeights::PerRow(values)) = buffer.weights.as_mut() else {
+                    unreachable!("per-row weight destination installed above")
+                };
+                let probe = AllocationProbe::capture(values);
+                let shape = self
+                    .main_table()
+                    .column_accessor("WEIGHT")?
+                    .fill_array_cells_1d_typed_uncached(
+                        request.row_indices,
+                        SelectedArray1DCellsMut::Float32(values),
+                    )?;
+                allocation.observe(probe, values);
+                if shape.row_count != request.row_indices.len()
+                    || shape.axis0_count != correlation_count
+                {
+                    return Err(invalid(
+                        "MAIN WEIGHT shape differs from selected visibility shape",
+                    ));
+                }
+                None
+            }
+            SelectedWeightColumn::WeightSpectrum => {
+                if !matches!(buffer.weights, Some(SelectedStoredWeights::PerChannel(_))) {
+                    buffer.weights = Some(SelectedStoredWeights::PerChannel(Vec::new()));
+                }
+                let Some(SelectedStoredWeights::PerChannel(values)) = buffer.weights.as_mut()
+                else {
+                    unreachable!("per-channel weight destination installed above")
+                };
+                let probe = AllocationProbe::capture(values);
+                let shape = self
+                    .main_table()
+                    .column_accessor("WEIGHT_SPECTRUM")?
+                    .fill_array_cells_2d_channel_range_typed_uncached(
+                        request.row_indices,
+                        request.channel_range.start,
+                        request.channel_range.count,
+                        SelectedArray2DCellsMut::Float32(values),
+                    )?
+                    .ok_or_else(|| invalid("required MAIN WEIGHT_SPECTRUM cells are undefined"))?;
+                allocation.observe(probe, values);
+                Some(shape)
+            }
         };
+        if let Some(shape) = weight_shape {
+            require_shape(
+                "WEIGHT_SPECTRUM",
+                shape.row_count,
+                shape.channel_count,
+                shape.axis0_count,
+                request,
+                correlation_count,
+            )?;
+        }
+        let weight_read_nanos = weight_started.elapsed().as_nanos();
+
+        let scalar_started = Instant::now();
+        let scalar_probes = [
+            AllocationProbe::capture(&buffer.data_description_ids),
+            AllocationProbe::capture(&buffer.field_ids),
+            AllocationProbe::capture(&buffer.antenna1),
+            AllocationProbe::capture(&buffer.antenna2),
+            AllocationProbe::capture(&buffer.feed1),
+            AllocationProbe::capture(&buffer.feed2),
+            AllocationProbe::capture(&buffer.time_mjd_seconds),
+            AllocationProbe::capture(&buffer.time_centroid_mjd_seconds),
+            AllocationProbe::capture(&buffer.interval_seconds),
+            AllocationProbe::capture(&buffer.exposure_seconds),
+            AllocationProbe::capture(&buffer.scan_numbers),
+            AllocationProbe::capture(&buffer.state_ids),
+            AllocationProbe::capture(&buffer.observation_ids),
+            AllocationProbe::capture(&buffer.array_ids),
+            AllocationProbe::capture(&buffer.row_flag),
+        ];
+        let mut scalar_destinations = [
+            RequiredScalarColumnDestination::new(
+                "DATA_DESC_ID",
+                RequiredScalarColumnValuesMut::Int32(&mut buffer.data_description_ids),
+            ),
+            RequiredScalarColumnDestination::new(
+                "FIELD_ID",
+                RequiredScalarColumnValuesMut::Int32(&mut buffer.field_ids),
+            ),
+            RequiredScalarColumnDestination::new(
+                "ANTENNA1",
+                RequiredScalarColumnValuesMut::Int32(&mut buffer.antenna1),
+            ),
+            RequiredScalarColumnDestination::new(
+                "ANTENNA2",
+                RequiredScalarColumnValuesMut::Int32(&mut buffer.antenna2),
+            ),
+            RequiredScalarColumnDestination::new(
+                "FEED1",
+                RequiredScalarColumnValuesMut::Int32(&mut buffer.feed1),
+            ),
+            RequiredScalarColumnDestination::new(
+                "FEED2",
+                RequiredScalarColumnValuesMut::Int32(&mut buffer.feed2),
+            ),
+            RequiredScalarColumnDestination::new(
+                "TIME",
+                RequiredScalarColumnValuesMut::Float64(&mut buffer.time_mjd_seconds),
+            ),
+            RequiredScalarColumnDestination::new(
+                "TIME_CENTROID",
+                RequiredScalarColumnValuesMut::Float64(&mut buffer.time_centroid_mjd_seconds),
+            ),
+            RequiredScalarColumnDestination::new(
+                "INTERVAL",
+                RequiredScalarColumnValuesMut::Float64(&mut buffer.interval_seconds),
+            ),
+            RequiredScalarColumnDestination::new(
+                "EXPOSURE",
+                RequiredScalarColumnValuesMut::Float64(&mut buffer.exposure_seconds),
+            ),
+            RequiredScalarColumnDestination::new(
+                "SCAN_NUMBER",
+                RequiredScalarColumnValuesMut::Int32(&mut buffer.scan_numbers),
+            ),
+            RequiredScalarColumnDestination::new(
+                "STATE_ID",
+                RequiredScalarColumnValuesMut::Int32(&mut buffer.state_ids),
+            ),
+            RequiredScalarColumnDestination::new(
+                "OBSERVATION_ID",
+                RequiredScalarColumnValuesMut::Int32(&mut buffer.observation_ids),
+            ),
+            RequiredScalarColumnDestination::new(
+                "ARRAY_ID",
+                RequiredScalarColumnValuesMut::Int32(&mut buffer.array_ids),
+            ),
+            RequiredScalarColumnDestination::new(
+                "FLAG_ROW",
+                RequiredScalarColumnValuesMut::Bool(&mut buffer.row_flag),
+            ),
+        ];
+        self.main_table()
+            .required_scalar_columns_for_rows_into(request.row_indices, &mut scalar_destinations)?;
+        drop(scalar_destinations);
+        allocation.observe(scalar_probes[0], &buffer.data_description_ids);
+        allocation.observe(scalar_probes[1], &buffer.field_ids);
+        allocation.observe(scalar_probes[2], &buffer.antenna1);
+        allocation.observe(scalar_probes[3], &buffer.antenna2);
+        allocation.observe(scalar_probes[4], &buffer.feed1);
+        allocation.observe(scalar_probes[5], &buffer.feed2);
+        allocation.observe(scalar_probes[6], &buffer.time_mjd_seconds);
+        allocation.observe(scalar_probes[7], &buffer.time_centroid_mjd_seconds);
+        allocation.observe(scalar_probes[8], &buffer.interval_seconds);
+        allocation.observe(scalar_probes[9], &buffer.exposure_seconds);
+        allocation.observe(scalar_probes[10], &buffer.scan_numbers);
+        allocation.observe(scalar_probes[11], &buffer.state_ids);
+        allocation.observe(scalar_probes[12], &buffer.observation_ids);
+        allocation.observe(scalar_probes[13], &buffer.array_ids);
+        allocation.observe(scalar_probes[14], &buffer.row_flag);
+        let scalar_read_nanos = scalar_started.elapsed().as_nanos();
+
+        let uvw_started = Instant::now();
+        let uvw_probe = AllocationProbe::capture(&buffer.uvw_m);
+        let uvw_shape = self
+            .main_table()
+            .column_accessor("UVW")?
+            .fill_array_cells_1d_typed_uncached(
+                request.row_indices,
+                SelectedArray1DCellsMut::Float64(&mut buffer.uvw_m),
+            )?;
+        allocation.observe(uvw_probe, &buffer.uvw_m);
+        if uvw_shape.row_count != request.row_indices.len() || uvw_shape.axis0_count != 3 {
+            return Err(invalid("MAIN UVW shape must be exactly [row][3]"));
+        }
+        let uvw_read_nanos = uvw_started.elapsed().as_nanos();
+
+        let assembly_started = Instant::now();
         validate_buffer_lengths(buffer)?;
         let assembly_nanos = assembly_started.elapsed().as_nanos();
         let row_count = u64::try_from(request.row_indices.len())
@@ -700,11 +885,7 @@ impl MeasurementSet {
             request_handoff_bytes,
             retained_current_bytes,
             retained_capacity_bytes,
-            // Resetting the destination above discards every prior allocation.
-            allocation: SelectedObservationBufferAllocationReport {
-                reused_storage_buffers: 0,
-                allocated_storage_buffers: 19,
-            },
+            allocation: allocation.report(),
             timings,
         })
     }
@@ -712,7 +893,7 @@ impl MeasurementSet {
 
 fn validate_request(
     ms: &MeasurementSet,
-    request: &SelectedObservationBufferRequest,
+    request: &SelectedObservationBufferRequest<'_>,
 ) -> MsResult<()> {
     if request.row_indices.is_empty() {
         return Err(invalid(
@@ -730,70 +911,12 @@ fn validate_request(
     Ok(())
 }
 
-fn read_required_2d(
-    ms: &MeasurementSet,
-    column: &str,
-    rows: &[usize],
-    channels: VisibilityChannelReadRange,
-) -> MsResult<SelectedArray2DCells> {
-    ms.main_table()
-        .column_accessor(column)?
-        .array_cells_2d_channel_range_typed_uncached(rows, channels.start, channels.count)?
-        .ok_or_else(|| invalid(format!("required MAIN {column} cells are undefined")))
-}
-
-fn read_weights(
-    ms: &MeasurementSet,
-    request: &SelectedObservationBufferRequest,
-    correlation_count: usize,
-) -> MsResult<SelectedStoredWeights> {
-    match request.weight {
-        SelectedWeightColumn::Weight => {
-            let cells = ms
-                .main_table()
-                .column_accessor("WEIGHT")?
-                .array_cells_1d_typed_uncached(&request.row_indices)?;
-            let SelectedArray1DCells::Float32(values) = cells else {
-                return Err(invalid("MAIN WEIGHT must be a Float32 1-D array"));
-            };
-            if values.row_count() != request.row_indices.len()
-                || values.axis0_count() != correlation_count
-            {
-                return Err(invalid(
-                    "MAIN WEIGHT shape differs from selected visibility shape",
-                ));
-            }
-            Ok(SelectedStoredWeights::PerRow(values.into_values()))
-        }
-        SelectedWeightColumn::WeightSpectrum => {
-            let cells = read_required_2d(
-                ms,
-                "WEIGHT_SPECTRUM",
-                &request.row_indices,
-                request.channel_range,
-            )?;
-            let SelectedArray2DCells::Float32(values) = cells else {
-                return Err(invalid("MAIN WEIGHT_SPECTRUM must be a Float32 2-D array"));
-            };
-            require_shape(
-                "WEIGHT_SPECTRUM",
-                values.row_count(),
-                values.channel_count(),
-                values.axis0_count(),
-                request,
-                correlation_count,
-            )?;
-            Ok(SelectedStoredWeights::PerChannel(values.into_values()))
-        }
-    }
-}
-
 fn require_shape(
     column: &str,
     rows: usize,
     channels: usize,
     correlations: usize,
-    request: &SelectedObservationBufferRequest,
+    request: &SelectedObservationBufferRequest<'_>,
     expected_correlations: usize,
 ) -> MsResult<()> {
     if rows != request.row_indices.len()
@@ -807,29 +930,10 @@ fn require_shape(
     Ok(())
 }
 
-fn read_strict_uvw(ms: &MeasurementSet, rows: &[usize]) -> MsResult<Vec<[f64; 3]>> {
-    let cells = ms
-        .main_table()
-        .column_accessor("UVW")?
-        .array_cells_1d_typed_uncached(rows)?;
-    let SelectedArray1DCells::Float64(values) = cells else {
-        return Err(invalid("MAIN UVW must be a Float64 1-D array"));
-    };
-    if values.row_count() != rows.len() || values.axis0_count() != 3 {
-        return Err(invalid("MAIN UVW shape must be exactly [row][3]"));
-    }
-    Ok(values
-        .into_values()
-        .chunks_exact(3)
-        .map(|uvw| [uvw[0], uvw[1], uvw[2]])
-        .collect())
-}
-
 fn validate_buffer_lengths(buffer: &SelectedObservationBuffer) -> MsResult<()> {
     let rows = buffer.row_count();
     let lengths = [
         buffer.row_flag.len(),
-        buffer.uvw_m.len(),
         buffer.data_description_ids.len(),
         buffer.field_ids.len(),
         buffer.antenna1.len(),
@@ -848,49 +952,10 @@ fn validate_buffer_lengths(buffer: &SelectedObservationBuffer) -> MsResult<()> {
     if lengths.into_iter().any(|length| length != rows) {
         return Err(invalid("selected-observation scalar column lengths differ"));
     }
+    if buffer.uvw_m.len() != rows.saturating_mul(3) {
+        return Err(invalid("selected-observation UVW length differs"));
+    }
     Ok(())
-}
-
-fn take_i32(
-    columns: &mut HashMap<String, RequiredScalarColumnValues>,
-    column: &str,
-) -> MsResult<Vec<i32>> {
-    match columns.remove(column) {
-        Some(RequiredScalarColumnValues::Int32(values)) => Ok(values),
-        Some(_) => Err(invalid(format!("MAIN {column} must be Int32"))),
-        None => Err(invalid(format!("MAIN {column} is missing"))),
-    }
-}
-
-fn take_f64(
-    columns: &mut HashMap<String, RequiredScalarColumnValues>,
-    column: &str,
-) -> MsResult<Vec<f64>> {
-    match columns.remove(column) {
-        Some(RequiredScalarColumnValues::Float64(values)) => Ok(values),
-        Some(_) => Err(invalid(format!("MAIN {column} must be Float64"))),
-        None => Err(invalid(format!("MAIN {column} is missing"))),
-    }
-}
-
-fn take_bool(
-    columns: &mut HashMap<String, RequiredScalarColumnValues>,
-    column: &str,
-) -> MsResult<Vec<bool>> {
-    match columns.remove(column) {
-        Some(RequiredScalarColumnValues::Bool(values)) => Ok(values),
-        Some(_) => Err(invalid(format!("MAIN {column} must be Bool"))),
-        None => Err(invalid(format!("MAIN {column} is missing"))),
-    }
-}
-
-fn column_type_error(column: &str, expected: &str, actual: &SelectedArray2DCells) -> MsError {
-    MsError::ColumnTypeMismatch {
-        column: column.to_string(),
-        table: "MAIN".to_string(),
-        expected: expected.to_string(),
-        found: format!("{:?} 2-D array", actual.primitive_type()),
-    }
 }
 
 fn invalid(message: impl Into<String>) -> MsError {
@@ -938,7 +1003,7 @@ mod tests {
         let request = SelectedObservationBufferRequest::new(
             SelectedVisibilityColumn::Data,
             SelectedWeightColumn::WeightSpectrum,
-            vec![1, 0],
+            &[1, 0],
             VisibilityChannelReadRange::new(1, 2),
         );
         let mut buffer = SelectedObservationBuffer::default();
@@ -985,6 +1050,65 @@ mod tests {
     }
 
     #[test]
+    fn selected_observation_buffer_refills_compatible_storage_in_place() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory
+            .path()
+            .join("selected-observation-buffer-reuse.ms");
+        let mut ms = MeasurementSet::create(
+            &path,
+            MeasurementSetBuilder::new()
+                .with_main_column(OptionalMainColumn::Data)
+                .with_main_column(OptionalMainColumn::WeightSpectrum),
+        )
+        .unwrap();
+        add_row(&mut ms, 0);
+        add_row(&mut ms, 1);
+        ms.save().unwrap();
+        drop(ms);
+        let ms = MeasurementSet::open(&path).unwrap();
+        let request = SelectedObservationBufferRequest::new(
+            SelectedVisibilityColumn::Data,
+            SelectedWeightColumn::WeightSpectrum,
+            &[1, 0],
+            VisibilityChannelReadRange::new(1, 2),
+        );
+        let mut buffer = SelectedObservationBuffer::default();
+
+        let first = ms
+            .fill_selected_observation_buffer(&request, &mut buffer)
+            .unwrap();
+        let first_storage = storage_pointers(&buffer);
+        let first_samples = (0..2)
+            .flat_map(|row| {
+                let buffer = &buffer;
+                (0..2).flat_map(move |channel| {
+                    (0..2).map(move |correlation| buffer.sample(channel, row, correlation).unwrap())
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let second = ms
+            .fill_selected_observation_buffer(&request, &mut buffer)
+            .unwrap();
+        let second_samples = (0..2)
+            .flat_map(|row| {
+                let buffer = &buffer;
+                (0..2).flat_map(move |channel| {
+                    (0..2).map(move |correlation| buffer.sample(channel, row, correlation).unwrap())
+                })
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(first.allocation.allocated_storage_buffers, 19);
+        assert_eq!(first.allocation.reused_storage_buffers, 0);
+        assert_eq!(second.allocation.allocated_storage_buffers, 0);
+        assert_eq!(second.allocation.reused_storage_buffers, 19);
+        assert_eq!(storage_pointers(&buffer), first_storage);
+        assert_eq!(second_samples, first_samples);
+    }
+
+    #[test]
     fn selected_observation_buffer_never_falls_back_from_weight_spectrum() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("selected-observation-no-spectrum.ms");
@@ -1000,13 +1124,45 @@ mod tests {
         let request = SelectedObservationBufferRequest::new(
             SelectedVisibilityColumn::Data,
             SelectedWeightColumn::WeightSpectrum,
-            vec![0],
+            &[0],
             VisibilityChannelReadRange::new(0, 1),
         );
         let error = ms
             .fill_selected_observation_buffer(&request, &mut SelectedObservationBuffer::default())
             .unwrap_err();
         assert!(error.to_string().contains("WEIGHT_SPECTRUM"));
+    }
+
+    fn storage_pointers(buffer: &SelectedObservationBuffer) -> [usize; 19] {
+        let visibility = match buffer.visibility.as_ref().unwrap() {
+            super::SelectedStoredVisibilities::Float32(values) => values.as_ptr() as usize,
+            super::SelectedStoredVisibilities::Complex32(values) => values.as_ptr() as usize,
+        };
+        let weights = match buffer.weights.as_ref().unwrap() {
+            super::SelectedStoredWeights::PerRow(values)
+            | super::SelectedStoredWeights::PerChannel(values) => values.as_ptr() as usize,
+        };
+        [
+            visibility,
+            buffer.flags.as_ptr() as usize,
+            weights,
+            buffer.row_flag.as_ptr() as usize,
+            buffer.uvw_m.as_ptr() as usize,
+            buffer.data_description_ids.as_ptr() as usize,
+            buffer.field_ids.as_ptr() as usize,
+            buffer.antenna1.as_ptr() as usize,
+            buffer.antenna2.as_ptr() as usize,
+            buffer.feed1.as_ptr() as usize,
+            buffer.feed2.as_ptr() as usize,
+            buffer.time_mjd_seconds.as_ptr() as usize,
+            buffer.time_centroid_mjd_seconds.as_ptr() as usize,
+            buffer.interval_seconds.as_ptr() as usize,
+            buffer.exposure_seconds.as_ptr() as usize,
+            buffer.scan_numbers.as_ptr() as usize,
+            buffer.state_ids.as_ptr() as usize,
+            buffer.observation_ids.as_ptr() as usize,
+            buffer.array_ids.as_ptr() as usize,
+        ]
     }
 
     #[test]
@@ -1036,7 +1192,7 @@ mod tests {
         let request = SelectedObservationBufferRequest::new(
             SelectedVisibilityColumn::FloatData,
             SelectedWeightColumn::Weight,
-            vec![0],
+            &[0],
             VisibilityChannelReadRange::new(1, 2),
         );
         let mut buffer = SelectedObservationBuffer::default();

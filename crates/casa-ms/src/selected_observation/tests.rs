@@ -2199,6 +2199,80 @@ fn selected_observation_residency_charges_cardinality_and_is_schedule_invariant(
 }
 
 #[test]
+fn refillable_block_stream_matches_scalar_traversal_and_returns_the_owner() {
+    let directory = tempfile::tempdir().expect("temporary block-stream fixture");
+    let path = directory.path().join("block-stream.ms");
+    generate_fixture_with_rows(&path, 4);
+    let problem = compiled_problem(&path, 4);
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let binding = ObservationSourceBinding::new(
+        source_state(source),
+        bound_content_budget_for_rows(&problem, source, 1, 1),
+    );
+    let mut scalar =
+        BoundSelectedObservation::open(&problem, test_measures(&problem), vec![binding.clone()])
+            .expect("bind scalar traversal");
+    let mut scalar_samples = Vec::new();
+    let scalar_completion = scalar
+        .traverse(&problem, |sample| {
+            scalar_samples.push(sample);
+            Ok::<_, Infallible>(())
+        })
+        .expect("complete scalar traversal");
+
+    let block = BoundSelectedObservation::open(&problem, test_measures(&problem), vec![binding])
+        .expect("bind block traversal");
+    let (mut source, mut consumer) = block
+        .into_block_stream(&problem)
+        .expect("split block traversal");
+    let mut storage = source.create_storage(0);
+    let mut block_samples = Vec::new();
+    let mut peak_current = 0_u64;
+    let mut peak_capacity = 0_u64;
+    while source
+        .fill_next(&mut storage)
+        .expect("fill canonical block")
+        .is_some()
+    {
+        peak_current = peak_current.max(
+            storage
+                .resident_current_bytes()
+                .expect("measure block current bytes"),
+        );
+        peak_capacity = peak_capacity.max(
+            storage
+                .resident_capacity_bytes()
+                .expect("measure block capacity bytes"),
+        );
+        consumer
+            .consume(&storage, |sample| {
+                block_samples.push(sample);
+                Ok::<_, Infallible>(())
+            })
+            .expect("consume canonical block");
+    }
+    let mut terminal = source.complete().expect("complete terminal source poll");
+    terminal
+        .record_runtime_residency(1, peak_current, peak_capacity)
+        .expect("record one-slot residency");
+    let (block, block_completion) = consumer
+        .complete(terminal)
+        .expect("combine source and inspection completion");
+
+    assert_eq!(block_samples, scalar_samples);
+    assert_eq!(
+        block_completion.generation_id(),
+        scalar_completion.generation_id()
+    );
+    assert_eq!(
+        block_completion.sample_count(),
+        scalar_completion.sample_count()
+    );
+    assert_eq!(block_completion.measurements().peak_live_blocks(), 1);
+    assert!(block.can_resume_after(&block_completion));
+}
+
+#[test]
 fn retained_selected_observation_owns_canonical_multi_source_order() {
     let directory = tempfile::tempdir().expect("temporary multi-source fixture");
     let first_path = directory.path().join("first.ms");
@@ -2356,8 +2430,8 @@ fn retained_selected_observation_owns_canonical_multi_source_order() {
     assert_eq!(one_row_measurements.source_read_operations(), 76);
     assert_eq!(one_row_measurements.request_handoff_bytes(), 32);
     assert!(one_row_measurements.selected_sample_handoff_bytes() > 0);
-    assert_eq!(one_row_measurements.allocated_storage_buffers(), 76);
-    assert_eq!(one_row_measurements.reused_storage_buffers(), 0);
+    assert_eq!(one_row_measurements.allocated_storage_buffers(), 38);
+    assert_eq!(one_row_measurements.reused_storage_buffers(), 38);
     assert_eq!(one_row_measurements.peak_live_blocks(), 1);
     assert!(
         one_row_measurements.peak_live_capacity_bytes()

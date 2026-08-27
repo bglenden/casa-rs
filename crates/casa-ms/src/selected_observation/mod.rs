@@ -16,14 +16,16 @@ mod spectral_evaluation;
 #[cfg(test)]
 mod tests;
 
-pub use access::BoundObservationSourceError;
 pub(crate) use access::{
     BoundObservationSamples, BoundObservationSource, validate_selected_coordinates,
 };
+pub use access::{BoundObservationSourceError, SelectedObservationBlock};
 pub use bound_observation::{
     BoundSelectedObservation, BoundSelectedObservationError, ObservationSourceBinding,
+    SelectedObservationBlockConsumer, SelectedObservationBlockSource,
     SelectedObservationCompletion, SelectedObservationResidencyCertificate,
-    SelectedObservationTraversalError, SelectedObservationTraversalMeasurements,
+    SelectedObservationTerminal, SelectedObservationTraversalError,
+    SelectedObservationTraversalMeasurements,
 };
 pub use content_plan::SelectedObservationContentBudget;
 pub(crate) use content_plan::{

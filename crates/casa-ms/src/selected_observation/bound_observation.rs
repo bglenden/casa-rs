@@ -4,7 +4,8 @@ use casa_imaging_model::{
     CompiledGeometryId, CompiledProblem, CompiledProblemId, MeasurementSetIdentity,
     ObservationProvenanceId, ObservationSnapshotId, ObservationSourceState,
     SelectedObservationCommitmentId, SelectedObservationGenerationId,
-    SelectedObservationInspectionError, SelectedObservationPassError, SelectedObservationSample,
+    SelectedObservationInspection, SelectedObservationInspectionError,
+    SelectedObservationPassError, SelectedObservationSample,
 };
 use std::{
     cell::RefCell,
@@ -18,9 +19,10 @@ use thiserror::Error;
 
 use crate::selected_observation_buffer::SelectedObservationBufferFillReport;
 
+use super::access::BlockVisitError;
 use super::{
     BoundObservationSamples, BoundObservationSource, BoundObservationSourceError,
-    SelectedObservationContentBudget, SelectedObservationMeasures,
+    SelectedObservationBlock, SelectedObservationContentBudget, SelectedObservationMeasures,
     SelectedObservationMeasuresError,
     content_plan::SelectedObservationSharedBytes,
     spectral_evaluation::{SelectedObservationTraversalSample, SpectralEvaluationProjector},
@@ -465,6 +467,246 @@ impl BoundSelectedObservation {
             access_binding,
             traversal,
         })
+    }
+
+    /// Split one retained traversal into an ordered refillable block source and
+    /// its sole validating consumer.
+    pub fn into_block_stream<'a>(
+        self,
+        problem: &'a CompiledProblem,
+    ) -> Result<
+        (
+            SelectedObservationBlockSource<'a>,
+            SelectedObservationBlockConsumer<'a>,
+        ),
+        BoundSelectedObservationError,
+    > {
+        if !self.identity.matches(problem) {
+            return Err(BoundSelectedObservationError::ProblemMismatch);
+        }
+        self.measures.verify_state()?;
+        let traversal = self.next_traversal;
+        traversal
+            .checked_add(1)
+            .ok_or(BoundSelectedObservationError::TraversalIdentityExhausted)?;
+        let maximum_rows = self
+            .sources
+            .iter()
+            .map(BoundObservationSource::rows_per_block)
+            .max()
+            .unwrap_or(0);
+        let identity = self.identity;
+        let access_binding = self.access_binding;
+        let next_traversal = traversal
+            .checked_add(1)
+            .ok_or(BoundSelectedObservationError::TraversalIdentityExhausted)?;
+        Ok((
+            SelectedObservationBlockSource {
+                problem,
+                residency: self.residency,
+                measures: self.measures,
+                sources: self.sources,
+                source_index: 0,
+                row_offset: 0,
+                source_pass_recorded: false,
+                exhausted: false,
+                maximum_rows,
+                measurements: SelectedObservationTraversalMeasurementsBuilder::default(),
+                identity,
+                access_binding,
+                traversal,
+                next_traversal,
+            },
+            SelectedObservationBlockConsumer {
+                problem,
+                inspection: problem.begin_selected_observation_inspection(),
+                spectral_evaluator: SpectralEvaluationProjector::new(),
+            },
+        ))
+    }
+}
+
+/// Ordered refillable source for one retained selected-observation pass.
+pub struct SelectedObservationBlockSource<'a> {
+    problem: &'a CompiledProblem,
+    residency: SelectedObservationResidencyCertificate,
+    measures: SelectedObservationMeasures,
+    sources: Vec<BoundObservationSource>,
+    source_index: usize,
+    row_offset: usize,
+    source_pass_recorded: bool,
+    exhausted: bool,
+    maximum_rows: usize,
+    measurements: SelectedObservationTraversalMeasurementsBuilder,
+    identity: BoundSelectedObservationIdentity,
+    access_binding: u64,
+    traversal: u64,
+    next_traversal: u64,
+}
+
+impl SelectedObservationBlockSource<'_> {
+    /// Create one empty source-owned storage slot.
+    #[must_use]
+    pub fn create_storage(&self, slot: usize) -> SelectedObservationBlock {
+        SelectedObservationBlock::new(slot, self.maximum_rows)
+    }
+
+    /// Fill the next canonical block, returning its source ordinal when ready.
+    pub fn fill_next(
+        &mut self,
+        block: &mut SelectedObservationBlock,
+    ) -> Result<Option<u32>, BoundObservationSourceError> {
+        if self.exhausted {
+            return Ok(None);
+        }
+        loop {
+            let Some(source) = self.sources.get(self.source_index) else {
+                self.exhausted = true;
+                return Ok(None);
+            };
+            if !self.source_pass_recorded {
+                self.measurements.record_source_pass()?;
+                self.source_pass_recorded = true;
+            }
+            let logical_source = self
+                .problem
+                .selected_observation()
+                .read_set()
+                .sources()
+                .get(self.source_index)
+                .ok_or(BoundObservationSourceError::ProblemSourceMismatch)?;
+            if source.fill_next_selected_block(
+                self.problem,
+                logical_source,
+                &mut self.row_offset,
+                block,
+                &mut self.measurements,
+            )? {
+                return u32::try_from(self.source_index)
+                    .map(Some)
+                    .map_err(|_| BoundObservationSourceError::MeasurementOverflow);
+            }
+            self.source_index += 1;
+            self.row_offset = 0;
+            self.source_pass_recorded = false;
+        }
+    }
+
+    /// Mint terminal source proof only after the canonical terminal poll.
+    pub fn complete(self) -> Result<SelectedObservationTerminal, BoundObservationSourceError> {
+        if !self.exhausted {
+            return Err(BoundObservationSourceError::IncompleteBlockTraversal);
+        }
+        Ok(SelectedObservationTerminal {
+            identity: self.identity,
+            residency: self.residency,
+            measures: self.measures,
+            sources: self.sources,
+            access_binding: self.access_binding,
+            traversal: self.traversal,
+            next_traversal: self.next_traversal,
+            measurements: self.measurements,
+        })
+    }
+}
+
+/// Sole incremental validator/projector for blocks from one source stream.
+pub struct SelectedObservationBlockConsumer<'a> {
+    problem: &'a CompiledProblem,
+    inspection: SelectedObservationInspection<'a>,
+    spectral_evaluator: SpectralEvaluationProjector,
+}
+
+impl SelectedObservationBlockConsumer<'_> {
+    /// Validate and consume every sample in one opaque block.
+    pub fn consume<E: Error + 'static>(
+        &mut self,
+        block: &SelectedObservationBlock,
+        mut consume: impl FnMut(SelectedObservationTraversalSample) -> Result<(), E>,
+    ) -> Result<(), SelectedObservationTraversalError<E>> {
+        block
+            .visit_selected_samples(self.problem, |sample, geometry_engine| {
+                self.inspection
+                    .push(&sample)
+                    .map_err(SelectedObservationTraversalError::Inspection)?;
+                let projected = self
+                    .spectral_evaluator
+                    .project(self.problem, sample, geometry_engine)
+                    .map_err(SelectedObservationTraversalError::Source)?;
+                consume(projected).map_err(SelectedObservationTraversalError::Consumer)
+            })
+            .map_err(|error| match error {
+                BlockVisitError::Source(error) => SelectedObservationTraversalError::Source(error),
+                BlockVisitError::Consumer(error) => error,
+            })
+    }
+
+    /// Finish exhaustive inspection and combine it with terminal source proof.
+    pub fn complete(
+        self,
+        terminal: SelectedObservationTerminal,
+    ) -> Result<
+        (BoundSelectedObservation, SelectedObservationCompletion),
+        SelectedObservationTraversalError<std::convert::Infallible>,
+    > {
+        let (generation_id, sample_count) = self
+            .inspection
+            .finish()
+            .map_err(SelectedObservationTraversalError::Inspection)?;
+        let measurements = terminal
+            .measurements
+            .finish(sample_count)
+            .ok_or(SelectedObservationTraversalError::MeasurementOverflow)?;
+        let completion = SelectedObservationCompletion {
+            problem_id: terminal.identity.problem_id,
+            observation_snapshot_id: terminal.identity.observation_snapshot_id,
+            observation_provenance_id: terminal.identity.observation_provenance_id,
+            commitment_id: terminal.identity.commitment_id,
+            generation_id,
+            sample_count,
+            measurements,
+            access_binding: terminal.access_binding,
+            traversal: terminal.traversal,
+        };
+        let selected = BoundSelectedObservation {
+            identity: terminal.identity,
+            residency: terminal.residency,
+            measures: terminal.measures,
+            sources: terminal.sources,
+            access_binding: terminal.access_binding,
+            next_traversal: terminal.next_traversal,
+        };
+        Ok((selected, completion))
+    }
+}
+
+/// Source-owner proof that the ordered block source reached its terminal poll.
+pub struct SelectedObservationTerminal {
+    identity: BoundSelectedObservationIdentity,
+    residency: SelectedObservationResidencyCertificate,
+    measures: SelectedObservationMeasures,
+    sources: Vec<BoundObservationSource>,
+    access_binding: u64,
+    traversal: u64,
+    next_traversal: u64,
+    measurements: SelectedObservationTraversalMeasurementsBuilder,
+}
+
+impl SelectedObservationTerminal {
+    /// Record runtime-observed simultaneous source-slot residency before validation closes.
+    pub fn record_runtime_residency(
+        &mut self,
+        peak_live_blocks: usize,
+        peak_live_current_bytes: u64,
+        peak_live_capacity_bytes: u64,
+    ) -> Result<(), BoundObservationSourceError> {
+        self.measurements.record_live_blocks(
+            u64::try_from(peak_live_blocks)
+                .map_err(|_| BoundObservationSourceError::MeasurementOverflow)?,
+            peak_live_current_bytes,
+            peak_live_capacity_bytes,
+        );
+        Ok(())
     }
 }
 
@@ -1007,6 +1249,9 @@ pub enum BoundSelectedObservationError {
     /// A different compiled problem was supplied for replay.
     #[error("retained selected observation belongs to a different compiled problem")]
     ProblemMismatch,
+    /// The affine traversal identity domain was exhausted.
+    #[error("selected-observation traversal identity exhausted")]
+    TraversalIdentityExhausted,
     /// The process-local retained-access identity domain was exhausted.
     #[error("selected-observation retained-access identity exhausted")]
     AccessIdentityExhausted,

@@ -82,7 +82,7 @@ pub use prepared_artifact::{
 };
 
 pub use selected_observation::{
-    SelectedObservationCommitment, SelectedObservationCommitmentId,
+    SelectedObservationCommitment, SelectedObservationCommitmentId, SelectedObservationInspection,
     SelectedObservationInspectionError, SelectedObservationPassError, SelectedSampleEvaluation,
 };
 

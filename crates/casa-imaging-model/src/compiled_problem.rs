@@ -19,7 +19,7 @@ use crate::model_state::{
 use crate::observation::{FlagPolicy, ObservationSnapshot, ObservationSnapshotId, WeightColumn};
 use crate::product_graph::{ProductGraph, compile_product_graph};
 use crate::selected_observation::{
-    SelectedObservationCommitment, SelectedObservationPassError,
+    SelectedObservationCommitment, SelectedObservationInspection, SelectedObservationPassError,
     compile_selected_observation_commitment, inspect_selected_observation,
 };
 use crate::selected_observation_sample::{
@@ -1613,6 +1613,15 @@ impl CompiledProblem {
             self.observation_transaction.write_set(),
             samples,
             consume,
+        )
+    }
+
+    /// Begin incremental validation for one bounded canonical selected-observation pass.
+    #[must_use]
+    pub fn begin_selected_observation_inspection(&self) -> SelectedObservationInspection<'_> {
+        SelectedObservationInspection::new(
+            &self.selected_observation,
+            self.observation_transaction.write_set(),
         )
     }
 
