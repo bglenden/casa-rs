@@ -8,6 +8,10 @@ description = "Native authoritative reconstruction and model-state algorithms"
 repository.workspace = true
 publish = false
 
+[features]
+default = []
+cpp-interop-tests = ["casa-test-support/cpp-interop-tests"]
+
 [lints]
 workspace = true
 
@@ -18,4 +22,8 @@ ndarray.workspace = true
 num-complex.workspace = true
 rustfft.workspace = true
 sha2 = "0.10"
+smallvec.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+casa-test-support = { path = "../casa-test-support" }

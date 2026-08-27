@@ -28,7 +28,7 @@ use casa_imaging_model::{
     SelectedSampleCoordinates, SelectedSampleMetadata, SelectedSpectralContribution,
     SelectedSpectralContributions, SelectedVisibilitySample, SkyDirection, SourceGenerations,
     SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSampling, SpectralWcs, SpectralWindowSelection, StageErrorBudget,
+    SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection, StageErrorBudget,
     TaylorSupportReference, TaylorValidityPolicy, TimeScale, TimeSelection, UvSelection,
     UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope,
     WeightingContract, WeightingScheme, compile, compile_observation,
@@ -39,10 +39,12 @@ use casa_imaging_products::{
 };
 use casa_imaging_reconstruction::{
     ExecutableModelProblem, MajorCycleCompletion, MajorCycleOwner, MajorCyclePreparation, MaskBox,
-    ModelGenerationId, ModelLifecycle, ReconstructionMask, SerialMfsSpecification,
+    ModelGenerationId, ModelLifecycle, ReconstructionMask, SpectralOperatorSpecification,
     WeightingAlgorithmState, WeightingError, WeightingExecutionLimits, WeightingPlan,
     WeightingReplayChunk, WeightingReplaySummary, begin_weighting_generation, plan_weighting,
-    runtime_adapter::{CompleteDataOwnerResult, prepare_serial_mfs_operator, serial_mfs_workload},
+    runtime_adapter::{
+        CompleteDataOwnerResult, prepare_spectral_operator, spectral_operator_workload,
+    },
 };
 
 const SHAPE: [usize; 2] = [8, 8];
@@ -238,7 +240,7 @@ fn continuum_problem_with_policy_and_response(
     compile(ImagingRequest::new(
         ProblemSpecification::new(
             ScientificContract::new(
-                SpectralContract::new(SpectralSampling::Identity, SpectralCoupling::Independent),
+                SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
                 MeasurementEquationContract::new(
                     response,
                     DeclaredInnerProducts::new(
@@ -363,11 +365,7 @@ fn fixture_samples_with_flux(
 
 fn exact_contributions(sample: &SelectedObservationSample) -> SelectedSpectralContributions {
     SelectedSpectralContributions::new([
-        SelectedSpectralContribution::new(
-            sample.address.channel_index,
-            1.0,
-            sample.address.frequency_centre_hz,
-        ),
+        SelectedSpectralContribution::new(0, 1.0, sample.address.frequency_centre_hz),
         None,
     ])
     .expect("one exact output contribution")
@@ -448,10 +446,11 @@ fn run_round_with_samples(
     let (blocks, summary) = replay(&generation, problem, &plan, &samples);
     assert!(!blocks.is_empty(), "replay must emit bounded blocks");
 
-    let specification = SerialMfsSpecification::new(problem).expect("serial MFS specification");
-    let workload =
-        serial_mfs_workload(&specification, plan.limits().max_block_samples()).expect("workload");
-    let prepared = prepare_serial_mfs_operator(specification, workload).expect("prepare operator");
+    let specification =
+        SpectralOperatorSpecification::new(problem).expect("spectral operator specification");
+    let workload = spectral_operator_workload(&specification, plan.limits().max_block_samples())
+        .expect("workload");
+    let prepared = prepare_spectral_operator(specification, workload).expect("prepare operator");
     let mut state = prepared
         .begin(problem, &generation)
         .expect("begin complete-data owner");
@@ -462,7 +461,7 @@ fn run_round_with_samples(
         state.consume_block(block).expect("consume weighted block");
     }
     let evidence: CompleteDataOwnerResult = state
-        .complete(&summary, selected_generation)
+        .complete(&summary, selected_generation, None)
         .expect("complete T19 evidence");
     let joined = MajorCycleOwner::from_complete_data(evidence, preparation)
         .expect("T20 owner from T19")
@@ -892,6 +891,10 @@ fn clean_mask_product_is_the_committed_reconstruction_mask_intersected_with_vali
         .iter()
         .find(|member| member.name().starts_with(".mask"))
         .expect("mask member");
+    assert!(
+        published_mask.validity().iter().all(|valid| *valid),
+        "the numeric CLEAN-mask support is not the product-validity mask"
+    );
     let expected = normal
         .sensitivity()
         .iter()

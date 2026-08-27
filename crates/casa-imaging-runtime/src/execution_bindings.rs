@@ -2946,7 +2946,7 @@ impl<'a> CompiledWorkContext<'a> {
 /// Capability-scoped compiled inputs supplied to one exact work node.
 ///
 /// Generic work receives compiled science but no MeasurementSet source set.
-/// Only the initial consistency check, typed observation reads, model
+/// Only the initial consistency check, typed observation reads, selected-visibility
 /// writeback, and atomic publication receive their corresponding transaction
 /// authority.
 #[derive(Clone, Copy, Debug)]
@@ -2960,7 +2960,7 @@ pub struct WorkExecutionContext<'a> {
     resource_alternative: &'a crate::DemandAlternative,
     observation_consistency: Option<&'a ObservationTransactionContract>,
     observation_reads: Option<&'a ObservationReadSet>,
-    model_writes: Option<&'a ObservationWriteSet>,
+    visibility_writes: Option<&'a ObservationWriteSet>,
     publication: Option<&'a ObservationTransactionContract>,
     publication_resources: Option<PublicationResources<'a>>,
     product_publication: Option<&'a crate::ProductPublicationAuthorization>,
@@ -3080,10 +3080,10 @@ impl<'a> WorkExecutionContext<'a> {
         }
     }
 
-    /// Return exact model-column writes only for the bound private writeback node.
+    /// Return exact selected-visibility writes only for the bound private writeback node.
     #[must_use]
-    pub const fn model_writes(self) -> Option<&'a ObservationWriteSet> {
-        self.model_writes
+    pub const fn visibility_writes(self) -> Option<&'a ObservationWriteSet> {
+        self.visibility_writes
     }
 
     /// Return the complete transaction only for the sole atomic Publication node.
@@ -3799,7 +3799,7 @@ fn work_execution_context<'a>(
     let transaction_work = plan.observation_transaction.work();
     let common = |observation_consistency,
                   observation_reads,
-                  model_writes,
+                  visibility_writes,
                   publication,
                   publication_resources| WorkExecutionContext {
         attempt_id,
@@ -3811,7 +3811,7 @@ fn work_execution_context<'a>(
         resource_alternative: plan.execution_dag.resource_alternative(),
         observation_consistency,
         observation_reads,
-        model_writes,
+        visibility_writes,
         publication,
         publication_resources,
         product_publication: None,
@@ -4906,7 +4906,7 @@ fn encode_observation_transaction(
         None => encoder.u8(0),
     }
     encode_dependencies(encoder, work.product_staging());
-    match work.model_column_writeback() {
+    match work.visibility_writeback() {
         Some(node) => {
             encoder.u8(1);
             encoder.string(node.as_str());

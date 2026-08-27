@@ -11,7 +11,7 @@ pub(crate) const PLANNED_GENERATION_VERSION: u32 = 1;
 pub(crate) const ARTIFACT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-product-artifact";
 pub(crate) const ARTIFACT_IDENTITY_VERSION: u32 = 1;
 pub(crate) const COMPLETIONS_DOMAIN: &[u8] = b"casa-rs-continuum-completions";
-pub(crate) const COMPLETIONS_VERSION: u32 = 1;
+pub(crate) const COMPLETIONS_VERSION: u32 = 3;
 pub(crate) const SEAL_DOMAIN: &[u8] = b"casa-rs-product-generation-seal";
 pub(crate) const SEAL_VERSION: u32 = 1;
 
@@ -73,4 +73,29 @@ pub(crate) fn plane_digest(values: &[f32]) -> [u8; 32] {
         encoder.f32_bits(*value);
     }
     encoder.finish()
+}
+
+/// Digest one product member's numeric payload and exact validity topology.
+pub(crate) fn member_content_digest(values: &[f32], validity: &[bool]) -> [u8; 32] {
+    let mut encoder = Encoder::new(b"casa-rs-product-member-content", 1);
+    encoder.identity(plane_digest(values));
+    encoder.usize(validity.len());
+    for valid in validity {
+        encoder.u8(u8::from(*valid));
+    }
+    encoder.finish()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::member_content_digest;
+
+    #[test]
+    fn member_identity_binds_validity_independently_of_numeric_pixels() {
+        let pixels = [0.0_f32, 1.0, 0.0, 2.0];
+        assert_ne!(
+            member_content_digest(&pixels, &[true, true, true, true]),
+            member_content_digest(&pixels, &[true, false, true, true])
+        );
+    }
 }

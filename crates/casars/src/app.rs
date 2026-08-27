@@ -11993,9 +11993,6 @@ impl AppState {
             ManagedCalibrationOutput::ExportCorrectedData(_) => {
                 self.activate_result_tab(ResultTab::Overview);
             }
-            ManagedCalibrationOutput::ContinuumSubtract(_) => {
-                self.activate_result_tab(ResultTab::Overview);
-            }
             ManagedCalibrationOutput::Summary(_) => {
                 self.activate_result_tab(ResultTab::Overview);
             }
@@ -12072,15 +12069,6 @@ impl AppState {
                 vec![
                     format!("output={}", report.output_ms.display()),
                     format!("rows={}", report.row_count),
-                ],
-            ),
-            ManagedCalibrationOutput::ContinuumSubtract(report) => (
-                Some(WorkflowStageId::Apply),
-                "Continuum Subtract".to_string(),
-                vec![
-                    format!("output={}", report.output_ms.display()),
-                    format!("rows={}", report.row_count),
-                    format!("fit_order={}", report.fit_order),
                 ],
             ),
             ManagedCalibrationOutput::Summary(summaries) => (
@@ -14925,7 +14913,6 @@ impl AppState {
             ManagedCalibrationOutput::FluxScale(report) => &report.output_table,
             ManagedCalibrationOutput::Gencal(report) => &report.output_table,
             ManagedCalibrationOutput::Apply(_)
-            | ManagedCalibrationOutput::ContinuumSubtract(_)
             | ManagedCalibrationOutput::ExportCorrectedData(_)
             | ManagedCalibrationOutput::Summary(_)
             | ManagedCalibrationOutput::PlanApply(_)
@@ -16036,19 +16023,6 @@ fn build_calibration_overview_lines(report: &ManagedCalibrationOutput) -> Vec<St
             format!(
                 "Rows: {}   Copied: {} -> {}",
                 report.row_count, report.source_column, report.output_column
-            ),
-        ],
-        ManagedCalibrationOutput::ContinuumSubtract(report) => vec![
-            "Continuum Subtraction".to_string(),
-            format!("Input MS: {}", report.input_ms.display()),
-            format!("Output MS: {}", report.output_ms.display()),
-            format!(
-                "Rows: {}   Fitted rows: {}   Skipped fits: {}",
-                report.row_count, report.fitted_row_count, report.skipped_fit_count
-            ),
-            format!(
-                "Source: {}   Output: {}   Fit order: {}",
-                report.source_column, report.output_column, report.fit_order
             ),
         ],
         ManagedCalibrationOutput::Summary(summaries) => {

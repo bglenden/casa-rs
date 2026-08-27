@@ -41,6 +41,7 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+casa-imaging-reconstruction = { path = "../casa-imaging-reconstruction" }
 casa-test-support = { path = "../casa-test-support" }
 flate2 = "1"
 tar = "0.4"

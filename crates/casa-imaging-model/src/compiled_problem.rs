@@ -26,14 +26,14 @@ use crate::selected_observation_sample::{
     SelectedObservationGenerationId, SelectedObservationSample,
 };
 use crate::transaction::{
-    ObservationTransactionContract, ObservationTransactionRequirements,
-    compile_observation_transaction,
+    ObservationTransactionCompileError, ObservationTransactionContract,
+    ObservationTransactionRequirements, compile_observation_transaction,
 };
 
 const COMPILED_PROBLEM_IDENTITY_DOMAIN: &[u8] = b"casa-rs-compiled-problem";
-const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 11;
+const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 12;
 const COMPILED_PROBLEM_BASIS_DOMAIN: &[u8] = b"casa-rs-compiled-problem-basis";
-const COMPILED_PROBLEM_BASIS_VERSION: u32 = 1;
+const COMPILED_PROBLEM_BASIS_VERSION: u32 = 2;
 const NUMERICS_CONTRACT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-numerics-contract";
 const NUMERICS_CONTRACT_IDENTITY_VERSION: u32 = 1;
 
@@ -153,20 +153,121 @@ impl ProblemInputIdentities {
     }
 }
 
-/// Paired spectral sampling used in prediction and adjoint imaging.
+/// Spectral coefficient kernel shared exactly by prediction and adjoint imaging.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SpectralSampling {
-    /// Preserve native channel samples exactly.
+pub enum SpectralKernel {
+    /// Preserve channel-local samples exactly.
     Identity,
-    /// Nearest covered source channel.
+    /// Select the nearest covered output-channel centre.
     Nearest,
-    /// Linear paired interpolation.
+    /// Interpolate between the two bracketing output-channel centres.
     Linear,
-    /// Integrate a fixed number of adjacent channels into each output bin.
-    ChannelAverage {
-        /// Number of source channels in each bin.
-        channels_per_bin: usize,
+    /// Fit the four-point Lagrange polynomial used by casacore cubic interpolation.
+    Cubic,
+    /// Integrate source-channel intervals into output-channel intervals.
+    ChannelIntegration {
+        /// Planner-proved upper bound on non-zero output terms for one source channel.
+        maximum_terms: usize,
     },
+}
+
+/// Treatment of a source channel whose support touches or crosses output-axis edges.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpectralEdgePolicy {
+    /// Reject samples without the complete requested interpolation support.
+    CompleteSupport,
+    /// Retain the covered fraction of interval-integration samples.
+    PartialOverlap,
+}
+
+/// Covariance law declared for a compiled spectral stencil.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpectralCovariance {
+    /// Source-sample noise is independent and shared-source output covariance is `A C A^H`.
+    PropagateIndependentSourceNoise,
+}
+
+/// One coherent paired spectral sampling law.
+///
+/// Coefficients are compiled once from this law and reused byte-for-byte by
+/// prediction, weighting, PSF, dirty/adjoint, and sum-weight consumers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpectralSamplingLaw {
+    kernel: SpectralKernel,
+    edge_policy: SpectralEdgePolicy,
+    covariance: SpectralCovariance,
+}
+
+impl SpectralSamplingLaw {
+    /// Channel-local identity law.
+    pub const IDENTITY: Self = Self::new(
+        SpectralKernel::Identity,
+        SpectralEdgePolicy::CompleteSupport,
+        SpectralCovariance::PropagateIndependentSourceNoise,
+    );
+
+    /// Nearest-centre interpolation law.
+    pub const NEAREST: Self = Self::new(
+        SpectralKernel::Nearest,
+        SpectralEdgePolicy::CompleteSupport,
+        SpectralCovariance::PropagateIndependentSourceNoise,
+    );
+
+    /// Linear interpolation law.
+    pub const LINEAR: Self = Self::new(
+        SpectralKernel::Linear,
+        SpectralEdgePolicy::CompleteSupport,
+        SpectralCovariance::PropagateIndependentSourceNoise,
+    );
+
+    /// Four-point cubic interpolation law.
+    pub const CUBIC: Self = Self::new(
+        SpectralKernel::Cubic,
+        SpectralEdgePolicy::CompleteSupport,
+        SpectralCovariance::PropagateIndependentSourceNoise,
+    );
+
+    /// Construct an explicit paired spectral law.
+    #[must_use]
+    pub const fn new(
+        kernel: SpectralKernel,
+        edge_policy: SpectralEdgePolicy,
+        covariance: SpectralCovariance,
+    ) -> Self {
+        Self {
+            kernel,
+            edge_policy,
+            covariance,
+        }
+    }
+
+    /// Construct partial-overlap channel integration with a planner term bound.
+    #[must_use]
+    pub const fn channel_integration(maximum_terms: usize) -> Self {
+        Self::new(
+            SpectralKernel::ChannelIntegration { maximum_terms },
+            SpectralEdgePolicy::PartialOverlap,
+            SpectralCovariance::PropagateIndependentSourceNoise,
+        )
+    }
+
+    /// Return the coefficient kernel.
+    #[must_use]
+    pub const fn kernel(self) -> SpectralKernel {
+        self.kernel
+    }
+
+    /// Return the edge-coverage policy.
+    #[must_use]
+    pub const fn edge_policy(self) -> SpectralEdgePolicy {
+        self.edge_policy
+    }
+
+    /// Return the covariance declaration.
+    #[must_use]
+    pub const fn covariance(self) -> SpectralCovariance {
+        self.covariance
+    }
 }
 
 /// Scientific coupling between reconstructed spectral planes or coefficients.
@@ -181,20 +282,20 @@ pub enum SpectralCoupling {
 /// Spectral coordinate, sampling, and cross-plane requirements.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SpectralContract {
-    sampling: SpectralSampling,
+    sampling: SpectralSamplingLaw,
     coupling: SpectralCoupling,
 }
 
 impl SpectralContract {
     /// Construct spectral requirements.
     #[must_use]
-    pub const fn new(sampling: SpectralSampling, coupling: SpectralCoupling) -> Self {
+    pub const fn new(sampling: SpectralSamplingLaw, coupling: SpectralCoupling) -> Self {
         Self { sampling, coupling }
     }
 
     /// Return paired spectral sampling semantics.
     #[must_use]
-    pub const fn sampling(self) -> SpectralSampling {
+    pub const fn sampling(self) -> SpectralSamplingLaw {
         self.sampling
     }
 
@@ -1204,6 +1305,7 @@ pub struct ProblemSpecification {
     products: ProductRequirements,
     observation_transaction: ObservationTransactionRequirements,
     numerics: NumericsContract,
+    visibility_transform: Option<crate::SequentialContinuumTransform>,
 }
 
 /// One versioned, backend-independent native imaging request.
@@ -1259,7 +1361,18 @@ impl ProblemSpecification {
             products,
             observation_transaction,
             numerics,
+            visibility_transform: None,
         }
+    }
+
+    /// Compose one sequential visibility transform into the logical problem.
+    #[must_use]
+    pub fn with_visibility_transform(
+        mut self,
+        transform: crate::SequentialContinuumTransform,
+    ) -> Self {
+        self.visibility_transform = Some(transform);
+        self
     }
 }
 
@@ -1272,6 +1385,8 @@ pub enum RequiredCapability {
     SpectralFrameTransform,
     /// Non-identity paired spectral sampling.
     SpectralResampling,
+    /// Sequential visibility-domain continuum subtraction.
+    SequentialContinuumTransform,
     /// Common restoring-beam coupling across spectral planes.
     CommonBeamSpectralCoupling,
     /// Reconstruction of one polarization coordinate.
@@ -1392,6 +1507,7 @@ pub struct CompiledProblem {
     selected_observation: SelectedObservationCommitment,
     numerics: NumericsContract,
     required_capabilities: BTreeSet<RequiredCapability>,
+    visibility_transform: Option<crate::SequentialContinuumTransform>,
 }
 
 impl CompiledProblem {
@@ -1511,6 +1627,12 @@ impl CompiledProblem {
     pub const fn required_capabilities(&self) -> &BTreeSet<RequiredCapability> {
         &self.required_capabilities
     }
+
+    /// Return the compiled sequential visibility transform, when present.
+    #[must_use]
+    pub const fn visibility_transform(&self) -> Option<&crate::SequentialContinuumTransform> {
+        self.visibility_transform.as_ref()
+    }
 }
 
 /// Failure to compile a logical imaging problem.
@@ -1522,6 +1644,9 @@ pub enum CompileProblemError {
     /// The requested model lifecycle is incomplete or conflicts with the problem.
     #[error(transparent)]
     ModelLifecycle(#[from] ModelContractError),
+    /// The requested MeasurementSet write contract is invalid for this snapshot.
+    #[error(transparent)]
+    ObservationTransaction(#[from] ObservationTransactionCompileError),
     /// Reconstruction and capability requirements contradict each other.
     #[error("invalid capability combination: {reason}")]
     InvalidCapabilityCombination {
@@ -1586,16 +1711,28 @@ pub fn compile(request: ImagingRequest) -> Result<CompiledProblem, CompileProble
         model_lifecycle,
     } = request;
     let geometry = compile_geometry(geometry, &inputs)?;
+    let visibility_transform = specification.visibility_transform;
     let science = specification.science;
     let products = specification.products.canonicalize();
     let observation_transaction = compile_observation_transaction(
         inputs.observation_snapshot(),
         specification.observation_transaction,
-    );
+        visibility_transform.as_ref(),
+    )?;
     let numerics = specification.numerics.canonicalize()?;
     let numerics_id = canonical_numerics_id(&numerics);
     validate_science(&science, &inputs)?;
     validate_reconstruction(&specification.reconstruction, &geometry)?;
+    if visibility_transform.is_some()
+        && !matches!(
+            specification.reconstruction.basis(),
+            ReconstructionBasis::ChannelLocal { .. }
+        )
+    {
+        return Err(CompileProblemError::InvalidScientificContract {
+            reason: "sequential visibility transforms require channel-local reconstruction",
+        });
+    }
     let reconstruction = specification.reconstruction.canonicalize()?;
     validate_weighting(specification.weighting)?;
     validate_products(&science, &reconstruction, &products)?;
@@ -1614,13 +1751,16 @@ pub fn compile(request: ImagingRequest) -> Result<CompiledProblem, CompileProble
         numerics_id,
         selected_observation.commitment_id(),
     );
-    let required_capabilities = derive_capabilities(
+    let mut required_capabilities = derive_capabilities(
         &geometry,
         &science,
         &reconstruction,
         normal_equation.weighting(),
         &products,
     );
+    if visibility_transform.is_some() {
+        required_capabilities.insert(RequiredCapability::SequentialContinuumTransform);
+    }
     let product_graph = compile_product_graph(&geometry, &reconstruction, &products);
     let model_lifecycle = compile_model_lifecycle_contract(
         &geometry,
@@ -1640,6 +1780,7 @@ pub fn compile(request: ImagingRequest) -> Result<CompiledProblem, CompileProble
         products: &products,
         observation_transaction: &observation_transaction,
         numerics: &numerics,
+        visibility_transform: visibility_transform.as_ref(),
     });
     let problem_id = canonical_problem_id(
         problem_identity_basis,
@@ -1662,6 +1803,7 @@ pub fn compile(request: ImagingRequest) -> Result<CompiledProblem, CompileProble
         selected_observation,
         numerics,
         required_capabilities,
+        visibility_transform,
     })
 }
 
@@ -1669,9 +1811,8 @@ fn validate_science(
     science: &ScientificContract,
     inputs: &ProblemInputIdentities,
 ) -> Result<(), CompileProblemError> {
-    if let SpectralSampling::ChannelAverage {
-        channels_per_bin: 0,
-    } = science.spectral.sampling
+    if let SpectralKernel::ChannelIntegration { maximum_terms: 0 } =
+        science.spectral.sampling.kernel()
     {
         return Err(CompileProblemError::InvalidScientificContract {
             reason: "spectral channel averaging requires a positive bin width",
@@ -2010,7 +2151,7 @@ fn derive_capabilities(
     if geometry.spectral().source_frame() != geometry.spectral().output_frame() {
         capabilities.insert(RequiredCapability::SpectralFrameTransform);
     }
-    if science.spectral.sampling != SpectralSampling::Identity {
+    if science.spectral.sampling != SpectralSamplingLaw::IDENTITY {
         capabilities.insert(RequiredCapability::SpectralResampling);
     }
     if science.spectral.coupling == SpectralCoupling::CommonRestoringBeam {
@@ -2080,6 +2221,7 @@ struct ProblemIdentityInput<'a> {
     products: &'a ProductRequirements,
     observation_transaction: &'a ObservationTransactionContract,
     numerics: &'a NumericsContract,
+    visibility_transform: Option<&'a crate::SequentialContinuumTransform>,
 }
 
 fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalIdentity {
@@ -2092,6 +2234,7 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
         products,
         observation_transaction,
         numerics,
+        visibility_transform,
     } = input;
     let mut encoder = CanonicalEncoder::new();
     encoder.bytes(COMPILED_PROBLEM_BASIS_DOMAIN);
@@ -2099,20 +2242,19 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
     encoder.identity(inputs.observation().identity());
     encoder.digest(observation_transaction.transaction_id().as_bytes());
     encoder.digest(geometry.geometry_id().as_bytes());
+    match visibility_transform {
+        Some(transform) => {
+            encoder.u8(1);
+            encoder.digest(transform.contract_id().as_bytes());
+        }
+        None => encoder.u8(0),
+    }
     encoder.usize(inputs.reference_data().len());
     for (kind, identity) in inputs.reference_data() {
         encoder.u8(reference_data_tag(*kind));
         encoder.identity(*identity);
     }
-    match science.spectral.sampling {
-        SpectralSampling::Identity => encoder.u8(0),
-        SpectralSampling::Nearest => encoder.u8(1),
-        SpectralSampling::Linear => encoder.u8(2),
-        SpectralSampling::ChannelAverage { channels_per_bin } => {
-            encoder.u8(3);
-            encoder.usize(channels_per_bin);
-        }
-    }
+    encode_spectral_sampling_law(&mut encoder, science.spectral.sampling);
     encoder.u8(match science.spectral.coupling {
         SpectralCoupling::Independent => 0,
         SpectralCoupling::CommonRestoringBeam => 1,
@@ -2165,10 +2307,11 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
             }
             PairedMeasurementTransform::SpectralResampling { sampling } => {
                 encoder.u8(4);
-                encoder.u8(match sampling {
-                    SpectralSampling::Nearest => 0,
-                    SpectralSampling::Linear => 1,
-                    SpectralSampling::Identity | SpectralSampling::ChannelAverage { .. } => {
+                encoder.u8(match sampling.kernel() {
+                    SpectralKernel::Nearest => 0,
+                    SpectralKernel::Linear => 1,
+                    SpectralKernel::Cubic => 2,
+                    SpectralKernel::Identity | SpectralKernel::ChannelIntegration { .. } => {
                         unreachable!("compiled spectral resampling is nearest or linear")
                     }
                 });
@@ -2349,6 +2492,29 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
     }
     encode_numerics(&mut encoder, numerics);
     LogicalIdentity::from_sha256(encoder.finish())
+}
+
+pub(crate) fn encode_spectral_sampling_law(
+    encoder: &mut CanonicalEncoder,
+    sampling: SpectralSamplingLaw,
+) {
+    match sampling.kernel() {
+        SpectralKernel::Identity => encoder.u8(0),
+        SpectralKernel::Nearest => encoder.u8(1),
+        SpectralKernel::Linear => encoder.u8(2),
+        SpectralKernel::Cubic => encoder.u8(3),
+        SpectralKernel::ChannelIntegration { maximum_terms } => {
+            encoder.u8(4);
+            encoder.usize(maximum_terms);
+        }
+    }
+    encoder.u8(match sampling.edge_policy() {
+        SpectralEdgePolicy::CompleteSupport => 0,
+        SpectralEdgePolicy::PartialOverlap => 1,
+    });
+    encoder.u8(match sampling.covariance() {
+        SpectralCovariance::PropagateIndependentSourceNoise => 0,
+    });
 }
 
 fn canonical_problem_id(

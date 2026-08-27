@@ -11,14 +11,14 @@ use std::{
 
 use casa_coordinates::CoordinateSystem;
 use casa_images::{GaussianBeam, ImageBeamSet, ImageInfo, ImageType, PagedImage};
-use casa_imaging_model::{ProductRole, ProductUnit};
-use casa_imaging_products::SealedMember;
+use casa_imaging_model::{ProductRole, ProductUnit, ProductValidityRule};
+use casa_imaging_products::{RestoringBeam, SealedMember};
 use casa_imaging_runtime::{
     ArtifactIdentity, AuthorizedProductPublicationEntry, MemberPromotionFailure,
     SerialProductPublicationSink,
 };
 use casa_types::{RecordField, RecordValue, ScalarValue, Value};
-use ndarray::Array4;
+use ndarray::{Array4, ArrayD, IxDyn};
 
 struct StagedProduct {
     observed: ArtifactIdentity,
@@ -77,19 +77,22 @@ impl SerialProductPublicationSink for CasaImageProductSink {
         image
             .put_slice_view(data.view().into_dyn(), &[0, 0, 0, 0])
             .map_err(|error| std::io::Error::other(error.to_string()))?;
+        if member.contract().validity() != ProductValidityRule::All {
+            let validity = ArrayD::from_shape_vec(
+                IxDyn(&member.contract().axes().shape()),
+                member.validity().to_vec(),
+            )
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+            image
+                .put_mask("mask0", &validity)
+                .and_then(|()| image.set_default_mask("mask0"))
+                .map_err(|error| std::io::Error::other(error.to_string()))?;
+        }
         image
             .set_units(unit_label(member.contract().unit()))
             .map_err(|error| std::io::Error::other(error.to_string()))?;
         let role = role_label(member.contract().role());
-        let beam_set = member
-            .resolved_beam()
-            .map_or_else(ImageBeamSet::default, |beam| {
-                ImageBeamSet::new(GaussianBeam::new(
-                    beam.major_fwhm_rad(),
-                    beam.minor_fwhm_rad(),
-                    beam.position_angle_rad(),
-                ))
-            });
+        let beam_set = persisted_beam_set(member.resolved_beams());
         image
             .set_image_info(&ImageInfo {
                 beam_set,
@@ -116,7 +119,10 @@ impl SerialProductPublicationSink for CasaImageProductSink {
                     Value::Scalar(ScalarValue::String(identity_hex(observed))),
                 ),
             ]))
-            .and_then(|()| image.save())
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        image.prepare_relocation(&target);
+        image
+            .save()
             .map_err(|error| std::io::Error::other(error.to_string()))?;
         self.staged
             .lock()
@@ -165,6 +171,78 @@ impl SerialProductPublicationSink for CasaImageProductSink {
             PromotionError::Failed(error) => MemberPromotionFailure::failed(error),
             PromotionError::Uncertain(error) => MemberPromotionFailure::uncertain(error),
         })
+    }
+}
+
+fn persisted_beam_set(beams: &[Option<RestoringBeam>]) -> ImageBeamSet {
+    if beams.is_empty() {
+        return ImageBeamSet::default();
+    }
+    let valid = beams.iter().flatten().copied().collect::<Vec<_>>();
+    if let Some(first) = valid.first().copied()
+        && valid.len() == beams.len()
+        && valid.iter().all(|beam| *beam == first)
+    {
+        return ImageBeamSet::new(gaussian_beam(first));
+    }
+    let filler = valid
+        .iter()
+        .copied()
+        .max_by(|left, right| {
+            beam_area(*left)
+                .partial_cmp(&beam_area(*right))
+                .expect("validated beam areas are finite")
+        })
+        .map(gaussian_beam)
+        .unwrap_or_else(|| {
+            let one_microarcsecond_rad = std::f64::consts::PI / (180.0 * 3_600_000_000.0);
+            GaussianBeam::new(one_microarcsecond_rad, one_microarcsecond_rad, 0.0)
+        });
+    ImageBeamSet::from_grid(
+        beams
+            .iter()
+            .map(|beam| vec![beam.map_or(filler, gaussian_beam)])
+            .collect(),
+    )
+}
+
+fn gaussian_beam(beam: RestoringBeam) -> GaussianBeam {
+    GaussianBeam::new(
+        beam.major_fwhm_rad(),
+        beam.minor_fwhm_rad(),
+        beam.position_angle_rad(),
+    )
+}
+
+fn beam_area(beam: RestoringBeam) -> f64 {
+    beam.major_fwhm_rad() * beam.minor_fwhm_rad()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::persisted_beam_set;
+    use casa_imaging_products::RestoringBeam;
+
+    #[test]
+    fn blank_beam_slots_use_the_largest_valid_casa_persistence_filler() {
+        let small = RestoringBeam::new(2.0e-6, 1.0e-6, 0.1).expect("small beam");
+        let large = RestoringBeam::new(4.0e-6, 3.0e-6, -0.2).expect("large beam");
+        let persisted = persisted_beam_set(&[Some(small), None, Some(large)]);
+
+        assert_eq!(persisted.shape(), (3, 1));
+        assert_eq!(persisted.beam(0, 0).major, small.major_fwhm_rad());
+        assert_eq!(persisted.beam(1, 0).major, large.major_fwhm_rad());
+        assert_eq!(persisted.beam(2, 0).major, large.major_fwhm_rad());
+    }
+
+    #[test]
+    fn all_blank_beam_slots_use_only_the_casa_imageinfo_placeholder() {
+        let persisted = persisted_beam_set(&[None, None]);
+        let filler = persisted.beam(0, 0);
+        assert_eq!(persisted.shape(), (2, 1));
+        assert!(filler.major > 0.0);
+        assert_eq!(filler.major, filler.minor);
+        assert_eq!(persisted.beam(1, 0), filler);
     }
 }
 

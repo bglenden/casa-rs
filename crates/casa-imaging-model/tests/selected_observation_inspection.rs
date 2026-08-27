@@ -22,10 +22,11 @@ use casa_imaging_model::{
     SelectedObservationPassError, SelectedObservationSample, SelectedPredictionTarget,
     SelectedRows, SelectedSampleAddress, SelectedSampleCoordinates, SelectedSampleMetadata,
     SelectedVisibilitySample, SkyDirection, SourceGenerations, SpectralContract,
-    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSampling, SpectralWcs,
-    SpectralWindowSelection, StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy,
-    TimeScale, UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn,
-    WeightDensityScope, WeightingContract, WeightingScheme, compile, compile_observation,
+    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
+    SpectralWcs, SpectralWindowSelection, StageErrorBudget, TaylorSupportReference,
+    TaylorValidityPolicy, TimeScale, UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct,
+    WeightColumn, WeightDensityScope, WeightingContract, WeightingScheme, compile,
+    compile_observation,
 };
 
 mod common;
@@ -522,7 +523,7 @@ fn source(
 fn specification() -> ProblemSpecification {
     ProblemSpecification::new(
         ScientificContract::new(
-            SpectralContract::new(SpectralSampling::Identity, SpectralCoupling::Independent),
+            SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
             MeasurementEquationContract::new(
                 InstrumentResponse::Scalar,
                 DeclaredInnerProducts::new(

@@ -5,8 +5,8 @@
 //! CASA and LibRA write visibility models while holding MeasurementSet table
 //! locks. This contract retains their explicit selection and lock semantics.
 //! Conventional products retain their independent publication protocol.
-//! `MODEL_DATA` is different: its final-major replay writes selected cells in
-//! place under the planned MeasurementSet lock and incomplete-write marker.
+//! Selected visibility columns are different: their terminal replay writes
+//! cells in place under the planned MeasurementSet lock and incomplete-write marker.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -44,7 +44,7 @@ pub struct ObservationTransactionWork {
     final_model_preparation: Option<WorkNodeId>,
     post_replay_reconciliation: Option<WorkNodeId>,
     product_staging: BTreeSet<WorkDependency>,
-    model_column_writeback: Option<WorkNodeId>,
+    visibility_writeback: Option<WorkNodeId>,
     commit: WorkNodeId,
 }
 
@@ -66,7 +66,7 @@ impl ObservationTransactionWork {
             final_model_preparation: None,
             post_replay_reconciliation: Some(post_replay_reconciliation),
             product_staging: BTreeSet::new(),
-            model_column_writeback: None,
+            visibility_writeback: None,
             commit,
         }
     }
@@ -85,7 +85,7 @@ impl ObservationTransactionWork {
             final_model_preparation: None,
             post_replay_reconciliation: Some(post_replay_reconciliation),
             product_staging: BTreeSet::new(),
-            model_column_writeback: None,
+            visibility_writeback: None,
             commit,
         }
     }
@@ -103,7 +103,7 @@ impl ObservationTransactionWork {
             final_model_preparation: None,
             post_replay_reconciliation: None,
             product_staging: BTreeSet::new(),
-            model_column_writeback: None,
+            visibility_writeback: None,
             commit,
         }
     }
@@ -114,9 +114,9 @@ impl ObservationTransactionWork {
         self
     }
 
-    /// Bind the sole terminal replay that writes selected `MODEL_DATA` cells.
-    pub(crate) fn with_model_column_writeback(mut self, node: WorkNodeId) -> Self {
-        self.model_column_writeback = Some(node);
+    /// Bind the sole terminal replay that writes selected visibility cells.
+    pub(crate) fn with_visibility_writeback(mut self, node: WorkNodeId) -> Self {
+        self.visibility_writeback = Some(node);
         self
     }
 
@@ -160,10 +160,10 @@ impl ObservationTransactionWork {
         &self.product_staging
     }
 
-    /// Return the final-major replay that writes selected `MODEL_DATA` cells.
+    /// Return the terminal replay that writes selected visibility cells.
     #[must_use]
-    pub const fn model_column_writeback(&self) -> Option<&WorkNodeId> {
-        self.model_column_writeback.as_ref()
+    pub const fn visibility_writeback(&self) -> Option<&WorkNodeId> {
+        self.visibility_writeback.as_ref()
     }
 
     /// Return the sole node permitted to revalidate and publish side effects.
@@ -172,7 +172,7 @@ impl ObservationTransactionWork {
     /// read/write preconditions. Successful completion of its publication
     /// fence establishes readiness only; the runtime's final publish call
     /// atomically activates conventional-product members. In-place
-    /// `MODEL_DATA` completion is owned by its final-major replay instead.
+    /// selected visibility completion is owned by its terminal replay instead.
     #[must_use]
     pub const fn commit(&self) -> &WorkNodeId {
         &self.commit
@@ -351,14 +351,14 @@ pub(crate) fn bind_observation_transaction(
             }
         }
     }
-    let phase_model_columns = if work.model_column_writeback.is_some() {
-        contract.write_set().model_columns().len()
+    let phase_visibility_columns = if work.visibility_writeback.is_some() {
+        contract.write_set().visibility_columns().len()
     } else {
         0
     };
     work.observation_reads = validate_transaction_nodes(
         contract.read_set().sources().len(),
-        phase_model_columns,
+        phase_visibility_columns,
         dag.nodes(),
         &work,
     )?;
@@ -376,7 +376,7 @@ pub(crate) fn bind_observation_transaction(
 
 fn validate_transaction_nodes(
     read_sources: usize,
-    model_column_sources: usize,
+    visibility_column_writes: usize,
     nodes: &BTreeMap<WorkNodeId, WorkNode>,
     work: &ObservationTransactionWork,
 ) -> Result<BTreeSet<WorkDependency>, ObservationTransactionPlanError> {
@@ -406,7 +406,7 @@ fn validate_transaction_nodes(
         nodes,
         initial,
         &work.commit,
-        work.model_column_writeback.as_ref(),
+        work.visibility_writeback.as_ref(),
     )?;
     if observation_reads.is_empty() {
         return invalid("observation read event set is empty");
@@ -476,40 +476,40 @@ fn validate_transaction_nodes(
         staged_nodes.push(producer);
     }
 
-    match (model_column_sources, &work.model_column_writeback) {
+    match (visibility_column_writes, &work.visibility_writeback) {
         (0, None) => {}
-        (0, Some(_)) => return invalid("read-only transaction declares MODEL_DATA writeback"),
-        (_, None) => return invalid("write transaction omits MODEL_DATA writeback"),
-        (_, Some(model_id)) => {
+        (0, Some(_)) => return invalid("read-only transaction declares visibility writeback"),
+        (_, None) => return invalid("write transaction omits visibility writeback"),
+        (_, Some(write_id)) => {
             let preparation =
                 model_preparation.ok_or_else(|| ObservationTransactionPlanError::InvalidPlan {
-                    reason: "MODEL_DATA writeback omits final-model preparation".to_string(),
+                    reason: "visibility writeback omits final-model preparation".to_string(),
                 })?;
-            let model = require_node(nodes, model_id, "MODEL_DATA writeback")?;
+            let write = require_node(nodes, write_id, "visibility writeback")?;
             require_kind(
-                model,
+                write,
                 WorkKind::ObservationReadWriteback,
-                "MODEL_DATA writeback",
+                "visibility writeback",
             )?;
-            // An existing MODEL_DATA column is overwritten in place and
-            // requires no new persistent capacity. Creation plans carry a
+            // Existing visibility columns are overwritten in place and require
+            // no new persistent capacity. MODEL_DATA creation plans carry a
             // FinalOutput claim, but the transaction law requires only the
             // bounded write buffer and terminal I/O fence common to both
             // physical operations.
             require_claim(
-                model,
+                write,
                 is_writeback_buffer,
                 "writeback buffer",
-                "MODEL_DATA writeback",
+                "visibility writeback",
             )?;
-            if !model.fences.contains(&FenceKind::Io) {
+            if !write.fences.contains(&FenceKind::Io) {
                 return invalid(format!(
-                    "MODEL_DATA writeback node {} omits its terminal I/O fence",
-                    model.id.as_str()
+                    "visibility writeback node {} omits its terminal I/O fence",
+                    write.id.as_str()
                 ));
             }
             for completion in completion_events(preparation) {
-                require_precedes(nodes, &completion, model_id, "final-model preparation")?;
+                require_precedes(nodes, &completion, write_id, "final-model preparation")?;
             }
         }
     }
@@ -562,17 +562,17 @@ fn validate_transaction_nodes(
         }
         require_precedes(nodes, product, &work.commit, "product staging")?;
     }
-    if let Some(model) = &work.model_column_writeback {
-        for completion in completion_events(&nodes[model]) {
+    if let Some(write) = &work.visibility_writeback {
+        for completion in completion_events(&nodes[write]) {
             require_precedes(
                 nodes,
                 &completion,
                 work.post_replay_reconciliation
                     .as_ref()
                     .expect("reconstruction transaction has reconciliation"),
-                "terminal MODEL_DATA replay",
+                "terminal visibility replay",
             )?;
-            require_precedes(nodes, &completion, &work.commit, "MODEL_DATA writeback")?;
+            require_precedes(nodes, &completion, &work.commit, "visibility writeback")?;
         }
     }
     for node in nodes.values().filter(|node| node.id != work.commit) {
@@ -594,10 +594,10 @@ fn validate_product_publication_nodes(
 ) -> Result<BTreeSet<WorkDependency>, ObservationTransactionPlanError> {
     if work.post_replay_reconciliation.is_some()
         || work.final_model_preparation.is_some()
-        || work.model_column_writeback.is_some()
+        || work.visibility_writeback.is_some()
     {
         return invalid(
-            "conventional product publication declares reconstruction or MODEL_DATA work",
+            "conventional product publication declares reconstruction or visibility writeback",
         );
     }
     if let Some(node) = nodes.values().find(|node| {
@@ -682,7 +682,7 @@ fn derive_observation_reads(
     nodes: &BTreeMap<WorkNodeId, WorkNode>,
     initial: &WorkNode,
     commit: &WorkNodeId,
-    model_column_writeback: Option<&WorkNodeId>,
+    visibility_writeback: Option<&WorkNodeId>,
 ) -> Result<BTreeSet<WorkDependency>, ObservationTransactionPlanError> {
     let mut completions = BTreeSet::new();
     for node in nodes.values() {
@@ -695,7 +695,7 @@ fn derive_observation_reads(
         } else if holds_measurement_set_lock
             && node.id != initial.id
             && &node.id != commit
-            && model_column_writeback != Some(&node.id)
+            && visibility_writeback != Some(&node.id)
             && !(node.kind == WorkKind::Release
                 && node.claims.iter().all(|claim| {
                     !matches!(claim.resource, LeaseResource::MeasurementSetLock { .. })
@@ -1321,7 +1321,7 @@ mod tests {
         let mut work =
             ObservationTransactionWork::new_product_publication(initial, reconciliation, commit)
                 .with_final_model_preparation(preparation)
-                .with_model_column_writeback(model);
+                .with_visibility_writeback(model);
         work.product_staging = BTreeSet::from([product_completion]);
         (dag.nodes().clone(), work)
     }
@@ -1371,6 +1371,26 @@ mod tests {
             .dependencies
             .clear();
         assert!(validate_transaction_nodes(1, 1, &reconcile_before_read, &work).is_err());
+    }
+
+    #[test]
+    fn one_terminal_replay_may_own_multiple_selected_visibility_destinations() {
+        let (nodes, work) = transaction_nodes();
+        let observation_reads = validate_transaction_nodes(1, 2, &nodes, &work)
+            .expect("one bounded replay owns MODEL_DATA and CORRECTED_DATA");
+        assert!(
+            observation_reads.contains(&WorkDependency::Fence(FenceId::new(
+                WorkNodeId::new("terminal-model-replay"),
+                FenceKind::Io,
+            )))
+        );
+        assert_eq!(
+            nodes
+                .values()
+                .filter(|node| node.kind == WorkKind::ObservationReadWriteback)
+                .count(),
+            1
+        );
     }
 
     #[test]

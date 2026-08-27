@@ -14,9 +14,9 @@ use casa_imaging_model::{
     ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
     ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection,
     SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSampling, SpectralWcs, StageErrorBudget, TimeScale, UvwAxes, UvwCoordinateLaw, UvwUnit,
-    VisibilityInnerProduct, VisibilityPhaseConvention, WeightDensityScope, WeightingContract,
-    WeightingScheme, compile,
+    SpectralSamplingLaw, SpectralWcs, StageErrorBudget, TimeScale, UvwAxes, UvwCoordinateLaw,
+    UvwUnit, VisibilityInnerProduct, VisibilityPhaseConvention, WeightDensityScope,
+    WeightingContract, WeightingScheme, compile,
 };
 
 mod common;
@@ -128,7 +128,7 @@ fn request(
     ImagingRequest::new(
         ProblemSpecification::new(
             ScientificContract::new(
-                SpectralContract::new(SpectralSampling::Identity, SpectralCoupling::Independent),
+                SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
                 MeasurementEquationContract::new(
                     InstrumentResponse::Scalar,
                     DeclaredInnerProducts::new(

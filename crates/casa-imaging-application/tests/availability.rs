@@ -16,7 +16,7 @@ use casa_imaging_model::{
     ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
     ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract,
     SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSampling, SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct,
+    SpectralSamplingLaw, SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct,
     WeightDensityScope, WeightingContract, WeightingScheme, compile,
 };
 
@@ -47,13 +47,13 @@ fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
     )
 }
 #[test]
-fn installed_serial_continuum_accepts_its_compiled_contract() {
-    let problem = compile(standard_dirty_request()).expect("compile serial continuum request");
+fn installed_spectral_cycle_accepts_its_compiled_contract() {
+    let problem = compile(standard_dirty_request()).expect("compile spectral cycle request");
     require_installed_implementation(
         &problem,
         [TaskRequirement::SerialCpu, TaskRequirement::RustFft],
     )
-    .expect("installed serial continuum contract");
+    .expect("installed spectral cycle contract");
 }
 
 #[test]
@@ -70,7 +70,7 @@ fn moving_source_fails_typed_before_execution() {
 
 #[test]
 fn unavailable_task_requirements_are_exact_and_typed() {
-    let problem = compile(standard_dirty_request()).expect("compile serial continuum request");
+    let problem = compile(standard_dirty_request()).expect("compile spectral cycle request");
     let error = require_installed_implementation(
         &problem,
         [TaskRequirement::ExecutionAuto, TaskRequirement::FftAuto],
@@ -166,7 +166,7 @@ fn request_with_phase_centre(
     ImagingRequest::new(
         ProblemSpecification::new(
             ScientificContract::new(
-                SpectralContract::new(SpectralSampling::Identity, SpectralCoupling::Independent),
+                SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
                 MeasurementEquationContract::new(
                     InstrumentResponse::Scalar,
                     DeclaredInnerProducts::new(

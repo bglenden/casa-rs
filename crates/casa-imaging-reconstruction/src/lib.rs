@@ -28,15 +28,19 @@ use casa_imaging_model::{
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+mod continuum_transform;
 mod major_cycle;
 mod mask;
 mod minor_cycle;
 mod psf_beam;
-mod serial_mfs;
+mod reconstruction_cycle;
+mod spectral_operator;
+mod spectral_sampling;
 mod weighting;
 
-pub use serial_mfs::{
-    ContinuumPrimitiveCatalog, SerialMfsError, SerialMfsPrimitives, SerialMfsSpecification,
+pub use spectral_operator::{
+    SpectralChannelValidity, SpectralOperatorError, SpectralOperatorPrimitives,
+    SpectralOperatorSpecification, SpectralPrimitiveCatalog, SpectralSlabPlan,
 };
 
 /// Internal composition surface used by `casa-imaging-runtime`.
@@ -45,17 +49,21 @@ pub use serial_mfs::{
 /// visibility. Application code should use the runtime's plan-bound T19 API.
 #[doc(hidden)]
 pub mod runtime_adapter {
-    pub use crate::serial_mfs::{
+    pub use crate::spectral_operator::{
         CompleteDataOwnerCompletion, CompleteDataOwnerResult, CompleteDataOwnerState,
-        FinalVisibilitySample, PreparedSerialMfsOperator, SerialMfsWorkload,
-        prepare_serial_mfs_operator, serial_mfs_workload,
+        FinalVisibilitySample, PreparedSpectralOperator, SpectralOperatorWorkload,
+        SpectralSlabPlan, prepare_spectral_operator, spectral_operator_workload,
     };
     pub use crate::weighting::{FusedWeightingPhase, begin_natural_weighting_stream};
 }
 
+pub use continuum_transform::{
+    ContinuumFitError, ContinuumFitStatus, ContinuumRowInput, ContinuumRowResult, ContinuumSample,
+    fit_and_subtract_continuum,
+};
 pub use major_cycle::{
-    FinalNormalState, MajorCycleCompletion, MajorCycleError, MajorCycleOwner,
-    MajorCyclePreparation, NormalStateCatalog,
+    FinalNormalState, FinalNormalStatePlane, MajorCycleCompletion, MajorCycleError,
+    MajorCycleOwner, MajorCyclePreparation, NormalStateCatalog,
 };
 pub use mask::{
     AutoMultithreshControls, AutoMultithreshEvidence, MaskBox, MaskError, ReconstructionMask,
@@ -70,6 +78,14 @@ pub use minor_cycle::{
 pub use psf_beam::{
     DEFAULT_PSF_FIT_CUTOFF, PsfBeamFitError, RestoringBeam, fit_restoring_beam,
     fitted_psf_sidelobe_fraction,
+};
+pub use reconstruction_cycle::{
+    ChannelComponentDivergence, ChannelCycleEvidence, ChannelCyclePolicy, ReconstructionCycle,
+    ReconstructionCycleError, ReconstructionCycleEvidence, ReconstructionCycleEvidenceId,
+    ReconstructionCycleResult,
+};
+pub use spectral_sampling::{
+    SpectralStencilError, SpectralStencilReceipt, SpectralStencilValidity, compile_spectral_stencil,
 };
 pub use weighting::{
     FusedWeightingPhase, WeightingAlgorithmState, WeightingDensityPhase, WeightingError,
@@ -95,7 +111,7 @@ const REPROJECTED_PROOF_VERSION: u32 = 1;
 const FINAL_COMPLETION_DOMAIN: &[u8] = b"casa-rs-final-model-completion";
 const FINAL_COMPLETION_VERSION: u32 = 2;
 const FINAL_NORMAL_STATE_DOMAIN: &[u8] = b"casa-rs-final-normal-state";
-const FINAL_NORMAL_STATE_VERSION: u32 = 2;
+const FINAL_NORMAL_STATE_VERSION: u32 = 3;
 const MAJOR_CYCLE_DOMAIN: &[u8] = b"casa-rs-major-cycle-completion";
 const MAJOR_CYCLE_VERSION: u32 = 2;
 

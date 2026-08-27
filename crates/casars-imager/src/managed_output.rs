@@ -51,6 +51,8 @@ pub struct ManagedImagingRequest {
     pub data_column: Option<String>,
     /// Requested model persistence mode.
     pub save_model: String,
+    /// Whether continuum residual visibilities overwrite existing CORRECTED_DATA.
+    pub save_continuum_residual: bool,
     /// Image size in pixels.
     pub imsize: usize,
     /// Cell size in arcseconds.
@@ -139,6 +141,7 @@ impl ManagedImagingOutput {
                     crate::SaveModelMode::ModelColumn => "modelcolumn",
                 }
                 .to_string(),
+                save_continuum_residual: config.save_continuum_residual,
                 imsize: config.imsize,
                 cell_arcsec: config.cell_arcsec,
                 projection: "SIN".to_string(),
@@ -214,6 +217,7 @@ impl ManagedImagingOutput {
                     ImagerSaveModel::ModelColumn => "modelcolumn",
                 }
                 .to_string(),
+                save_continuum_residual: request.save_continuum_residual,
                 imsize: request.image_size,
                 cell_arcsec: request.cell_arcsec,
                 projection: request.projection.as_cli_text().to_string(),
@@ -398,8 +402,11 @@ mod tests {
             spw_selector: None,
             channel_start: None,
             channel_count: None,
+            continuum_fit_spw: None,
+            continuum_fit_order: 0,
             datacolumn: Some("CORRECTED_DATA".to_string()),
             save_model: SaveModelMode::None,
+            save_continuum_residual: false,
             start_model: None,
             outlier_file: None,
             correlation: Some("XX".to_string()),
@@ -590,8 +597,11 @@ mod tests {
                 spw_selector: Some("2".to_string()),
                 channel_start: Some(4),
                 channel_count: Some(8),
+                continuum_fit_spw: None,
+                continuum_fit_order: 0,
                 data_column: Some("MODEL_DATA".to_string()),
                 save_model: ImagerSaveModel::ModelColumn,
+                save_continuum_residual: false,
                 start_model: None,
                 outlier_file: None,
                 correlation: Some(ImagerPlaneSelection::CorrXX),

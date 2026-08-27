@@ -16,8 +16,8 @@ use casa_imaging_model::{
     ProductRequirements, Projection, ReconstructionAlgorithm, ReconstructionBasis,
     ReconstructionContract, ReconstructionControls, ReductionPolicy, RestFrequency,
     RestoringBeamPolicy, ScientificContract, SkyDirection, SpectralContract,
-    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSampling, SpectralWcs,
-    StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct, WeightDensityScope,
+    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
+    SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct, WeightDensityScope,
     WeightingContract, WeightingScheme, compile,
 };
 use sha2::{Digest, Sha256};
@@ -183,7 +183,7 @@ fn compiled_problem_with_reference_data(
     );
     let specification = ProblemSpecification::new(
         ScientificContract::new(
-            SpectralContract::new(SpectralSampling::Identity, SpectralCoupling::Independent),
+            SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
             MeasurementEquationContract::new(
                 InstrumentResponse::Scalar,
                 DeclaredInnerProducts::new(

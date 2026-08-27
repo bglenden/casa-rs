@@ -5,7 +5,8 @@
 use std::fmt;
 
 use casa_imaging_model::{
-    CompiledProblemId, LogicalIdentity, SelectedObservationGenerationId, SelectedSampleAddress,
+    CompiledProblemId, ContinuumTransformGenerationId, LogicalIdentity,
+    SelectedObservationGenerationId, SelectedSampleAddress,
 };
 use casa_imaging_reconstruction::{
     ModelGenerationId, WeightingGenerationId, runtime_adapter::FinalVisibilitySample,
@@ -15,7 +16,7 @@ use thiserror::Error;
 
 const MODEL_VISIBILITY_DOMAIN: &[u8] = b"casa-rs-final-model-visibility-product";
 const RESIDUAL_VISIBILITY_DOMAIN: &[u8] = b"casa-rs-final-residual-visibility-product";
-const VISIBILITY_PRODUCT_VERSION: u32 = 1;
+const VISIBILITY_PRODUCT_VERSION: u32 = 2;
 
 macro_rules! visibility_identity {
     ($name:ident, $summary:literal) => {
@@ -125,10 +126,18 @@ impl VisibilityProductAuthority {
     pub fn finish(
         mut self,
         selected_generation: SelectedObservationGenerationId,
+        continuum_transform_generation: Option<ContinuumTransformGenerationId>,
         weighting_generation: WeightingGenerationId,
     ) -> VisibilityProductCompletion {
         for hasher in [&mut self.model_hasher, &mut self.residual_hasher] {
             hasher.update(selected_generation.as_bytes());
+            match continuum_transform_generation {
+                Some(generation) => {
+                    hasher.update([1]);
+                    hasher.update(generation.as_bytes());
+                }
+                None => hasher.update([0]),
+            }
             hasher.update(weighting_generation.as_bytes());
             hasher.update(self.sample_count.to_le_bytes());
         }
@@ -136,6 +145,7 @@ impl VisibilityProductAuthority {
             problem: self.problem,
             final_model: self.final_model,
             selected_generation,
+            continuum_transform_generation,
             weighting_generation,
             sample_count: self.sample_count,
             model: ModelVisibilityProductId(LogicalIdentity::from_sha256(
@@ -154,6 +164,7 @@ pub struct VisibilityProductCompletion {
     problem: CompiledProblemId,
     final_model: ModelGenerationId,
     selected_generation: SelectedObservationGenerationId,
+    continuum_transform_generation: Option<ContinuumTransformGenerationId>,
     weighting_generation: WeightingGenerationId,
     sample_count: u64,
     model: ModelVisibilityProductId,
@@ -175,6 +186,11 @@ impl VisibilityProductCompletion {
     #[must_use]
     pub const fn selected_generation(self) -> SelectedObservationGenerationId {
         self.selected_generation
+    }
+    /// Return the sequential continuum-transform generation, when present.
+    #[must_use]
+    pub const fn continuum_transform_generation(self) -> Option<ContinuumTransformGenerationId> {
+        self.continuum_transform_generation
     }
     /// Return the paired replay's weighting generation.
     #[must_use]

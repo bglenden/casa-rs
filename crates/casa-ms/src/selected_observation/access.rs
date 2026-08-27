@@ -450,10 +450,12 @@ impl BoundObservationSamples<'_> {
             .problem
             .observation_transaction()
             .write_set()
-            .model_columns()
+            .visibility_columns()
             .iter()
-            .any(|write| write.measurement_set() == self.logical_source.measurement_set())
-        {
+            .any(|write| {
+                write.column() == casa_imaging_model::MsColumnKind::ModelData
+                    && write.measurement_set() == self.logical_source.measurement_set()
+            }) {
             SelectedPredictionTarget::ModelData
         } else {
             SelectedPredictionTarget::NotRequested
@@ -1334,14 +1336,16 @@ fn validate_current_state(
     let expected_generations = expected.generations();
     let current_generations = current.generations();
     let model_changed = current_generations.model_column() != expected_generations.model_column();
+    let corrected_data_changed =
+        current_generations.corrected_data_column() != expected_generations.corrected_data_column();
     let consistency_changed =
         current_generations.consistency_token() != expected_generations.consistency_token();
-    // MODEL_DATA is a write precondition, not a selected-observation read.
-    // Its owner update may complete between scientific traversal and product
-    // publication without invalidating the DATA/FLAG/WEIGHT/metadata snapshot.
+    // MODEL_DATA and output-only CORRECTED_DATA are write preconditions, not
+    // selected-observation reads. Their owner update may complete between
+    // scientific traversal and publication without invalidating the read set.
     if current_generations.columns() != expected_generations.columns()
         || current_generations.metadata_generations() != expected_generations.metadata_generations()
-        || model_changed != consistency_changed
+        || (model_changed || corrected_data_changed) != consistency_changed
     {
         return Err(BoundObservationSourceError::StaleSourceGenerations);
     }

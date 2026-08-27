@@ -86,6 +86,109 @@ pub fn gaussian_beam_image(
     kernel
 }
 
+/// Result of rescaling one normalized residual plane to a selected beam.
+///
+/// The diagnostics are the first-divergence seam used by the focused CASA
+/// comparator: fitted and common beams are compared before any final restored
+/// image can hide whether selection or smoothing first diverged.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResidualBeamScaling {
+    values: Vec<f32>,
+    smoothing_beam: Option<RestoringBeam>,
+    area_ratio: f64,
+    applied: bool,
+}
+
+impl ResidualBeamScaling {
+    /// Borrow the scaled residual values.
+    #[must_use]
+    pub fn values(&self) -> &[f32] {
+        &self.values
+    }
+
+    /// Return the deconvolved smoothing beam, if the beams differed.
+    #[must_use]
+    pub const fn smoothing_beam(&self) -> Option<RestoringBeam> {
+        self.smoothing_beam
+    }
+
+    /// Return the target/source beam-area ratio.
+    #[must_use]
+    pub const fn area_ratio(&self) -> f64 {
+        self.area_ratio
+    }
+
+    /// Return whether CASA's pixel-width gate applied smoothing and scaling.
+    #[must_use]
+    pub const fn applied(&self) -> bool {
+        self.applied
+    }
+
+    pub(crate) fn into_values(self) -> Vec<f32> {
+        self.values
+    }
+}
+
+/// Rescale a normalized residual plane from its fitted beam to a selected beam.
+///
+/// This follows CASA `SIImageStore::rescaleResolution`: deconvolve the fitted
+/// beam from the selected beam, skip effectively identical or sub-pixel
+/// smoothing, otherwise convolve with unit volume and multiply by the
+/// selected/fitted beam-area ratio.
+///
+/// # Errors
+///
+/// Returns [`ProductsError::BeamFitFailed`] when beam deconvolution fails.
+pub fn rescale_residual_to_beam(
+    residual: &[f32],
+    shape: [usize; 2],
+    cell_size_rad: [f64; 2],
+    fitted: RestoringBeam,
+    selected: RestoringBeam,
+) -> Result<ResidualBeamScaling, ProductsError> {
+    let area_ratio = selected.area_sr() / fitted.area_sr();
+    let smoothing_beam = selected
+        .deconvolving_beam(fitted)
+        .map_err(|error| ProductsError::BeamFitFailed(error.to_string()))?;
+    let Some(smoothing_beam) = smoothing_beam else {
+        return Ok(ResidualBeamScaling {
+            values: residual.to_vec(),
+            smoothing_beam: None,
+            area_ratio,
+            applied: false,
+        });
+    };
+    if smoothing_beam.minor_fwhm_rad() <= cell_size_rad[0].hypot(cell_size_rad[1]) {
+        return Ok(ResidualBeamScaling {
+            values: residual.to_vec(),
+            smoothing_beam: Some(smoothing_beam),
+            area_ratio,
+            applied: false,
+        });
+    }
+
+    let mut kernel = gaussian_beam_image(shape, &smoothing_beam, cell_size_rad);
+    let volume = f64::from(kernel.sum());
+    if !(volume.is_finite() && volume > 0.0) {
+        return Err(ProductsError::GeneratedNonfinite);
+    }
+    kernel.mapv_inplace(|value| (f64::from(value) / volume) as f32);
+    let mut values = fft_convolve(
+        residual,
+        kernel.as_slice().expect("Gaussian kernel is contiguous"),
+        shape,
+    );
+    for value in &mut values {
+        *value *= area_ratio as f32;
+    }
+    Ok(ResidualBeamScaling {
+        values,
+        smoothing_beam: Some(smoothing_beam),
+        area_ratio,
+        applied: true,
+    })
+}
+
 /// Convolve one real plane with an equal-shape kernel through even-shifted
 /// FFTs, matching the reconstruction owner's transform conventions.
 #[must_use]
@@ -169,5 +272,51 @@ fn shift_even(data: &mut Array2<Complex64>) {
             data.swap((x, y), (x + width / 2, y + height / 2));
             data.swap((x + width / 2, y), (x, y + height / 2));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn identical_beams_leave_the_residual_bit_exact() {
+        let beam = RestoringBeam::new(4.0e-6, 3.0e-6, 0.2).expect("beam");
+        let residual = vec![0.0, 1.0, -2.0, 3.0];
+        let scaling = rescale_residual_to_beam(&residual, [2, 2], [1.0e-6; 2], beam, beam).unwrap();
+        assert!(!scaling.applied());
+        assert_eq!(scaling.smoothing_beam(), None);
+        assert_eq!(scaling.area_ratio(), 1.0);
+        assert_eq!(scaling.values(), residual);
+    }
+
+    #[test]
+    fn common_beam_scaling_uses_unit_volume_and_the_beam_area_ratio() {
+        let source = RestoringBeam::new(4.0e-6, 3.0e-6, 0.0).expect("source beam");
+        let target = RestoringBeam::new(8.0e-6, 6.0e-6, 0.0).expect("target beam");
+        let shape = [32, 32];
+        let mut residual = vec![0.0_f32; shape[0] * shape[1]];
+        residual[(shape[0] / 2) * shape[1] + shape[1] / 2] = 1.0;
+
+        let scaling =
+            rescale_residual_to_beam(&residual, shape, [1.0e-6; 2], source, target).unwrap();
+        assert!(scaling.applied());
+        assert!(scaling.smoothing_beam().is_some());
+        assert!((scaling.area_ratio() - 4.0).abs() < 1.0e-12);
+        let sum = scaling
+            .values()
+            .iter()
+            .map(|value| f64::from(*value))
+            .sum::<f64>();
+        assert!((sum - scaling.area_ratio()).abs() < 1.0e-5, "{sum}");
+    }
+
+    #[test]
+    fn smaller_selected_beam_fails_instead_of_silently_skipping_scaling() {
+        let fitted = RestoringBeam::new(8.0e-6, 6.0e-6, 0.0).expect("fitted beam");
+        let selected = RestoringBeam::new(4.0e-6, 3.0e-6, 0.0).expect("selected beam");
+        let error = rescale_residual_to_beam(&[1.0; 16], [4, 4], [1.0e-6; 2], fitted, selected)
+            .expect_err("smaller target must fail");
+        assert!(matches!(error, ProductsError::BeamFitFailed(_)));
     }
 }

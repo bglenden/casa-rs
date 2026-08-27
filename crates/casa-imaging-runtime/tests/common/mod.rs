@@ -17,7 +17,8 @@ use casa_imaging_model::{
     compile_observation,
 };
 use casa_ms::{
-    SyntheticObservationRequest, SyntheticPolarizationBasis, SyntheticPolarizationSetup,
+    SyntheticAnalyticComponent, SyntheticAnalyticSpectrum, SyntheticObservationRequest,
+    SyntheticPolarizationBasis, SyntheticPolarizationSetup, SyntheticSkyModel,
     SyntheticWorkerPolicy, generate_synthetic_observation_ms, tutorial_vla_a_antennas,
 };
 
@@ -63,6 +64,38 @@ pub fn problem_inputs_with_source_count(
     reference_data: Vec<(ReferenceDataKind, LogicalIdentity)>,
     model: ModelStateIdentity,
     source_count: usize,
+) -> ProblemInputIdentities {
+    problem_inputs_with_source_count_and_channels(
+        observation,
+        reference_data,
+        model,
+        source_count,
+        1,
+    )
+}
+
+#[allow(dead_code)]
+pub fn problem_inputs_with_channels(
+    observation: u8,
+    reference_data: Vec<(ReferenceDataKind, LogicalIdentity)>,
+    model: ModelStateIdentity,
+    channel_count: usize,
+) -> ProblemInputIdentities {
+    problem_inputs_with_source_count_and_channels(
+        observation,
+        reference_data,
+        model,
+        1,
+        channel_count,
+    )
+}
+
+fn problem_inputs_with_source_count_and_channels(
+    observation: u8,
+    reference_data: Vec<(ReferenceDataKind, LogicalIdentity)>,
+    model: ModelStateIdentity,
+    source_count: usize,
+    channel_count: usize,
 ) -> ProblemInputIdentities {
     let column_kinds = [
         MsColumnKind::Data,
@@ -124,7 +157,12 @@ pub fn problem_inputs_with_source_count(
             IdSelection::All,
         ),
         vec![DataDescriptionSelection::new(0, 0, 0)],
-        vec![SpectralWindowSelection::new(0, vec![0])],
+        vec![SpectralWindowSelection::new(
+            0,
+            (0..channel_count)
+                .map(|channel| u32::try_from(channel).expect("bounded fixture channel count"))
+                .collect(),
+        )],
         vec![CorrelationSelection::new(
             0,
             vec![CorrelationProduct::new(0, CorrelationType::CircularRr)],
@@ -136,7 +174,9 @@ pub fn problem_inputs_with_source_count(
             ObservationSourceInput::new(
                 MeasurementSetIdentity::new(scoped_identity(observation, 1 + source_index)),
                 ObservationSourceProvenance::new(
-                    runtime_observation_fixture().display().to_string(),
+                    runtime_observation_fixture(channel_count)
+                        .display()
+                        .to_string(),
                     scoped_identity(observation, 3 + source_index),
                 ),
                 selection.clone(),
@@ -168,9 +208,17 @@ struct RuntimeObservationFixture {
     path: PathBuf,
 }
 
-fn runtime_observation_fixture() -> &'static Path {
-    static FIXTURE: OnceLock<RuntimeObservationFixture> = OnceLock::new();
-    &FIXTURE
+fn runtime_observation_fixture(channel_count: usize) -> &'static Path {
+    static CONTINUUM: OnceLock<RuntimeObservationFixture> = OnceLock::new();
+    static TWO_CHANNEL: OnceLock<RuntimeObservationFixture> = OnceLock::new();
+    static EIGHT_CHANNEL: OnceLock<RuntimeObservationFixture> = OnceLock::new();
+    let fixture = match channel_count {
+        1 => &CONTINUUM,
+        2 => &TWO_CHANNEL,
+        8 => &EIGHT_CHANNEL,
+        _ => panic!("runtime fixture supports only one, two, or eight channels"),
+    };
+    &fixture
         .get_or_init(|| {
             let directory = tempfile::tempdir().expect("runtime observation fixture directory");
             let path = directory.path().join("runtime-observation.ms");
@@ -188,6 +236,31 @@ fn runtime_observation_fixture() -> &'static Path {
             request.worker_policy = SyntheticWorkerPolicy::Fixed;
             request.row_workers = Some(1);
             request.channel_workers = Some(1);
+            request.spectral_setup.channel_count = channel_count;
+            if channel_count == 2 {
+                request.model = Some(SyntheticSkyModel::AnalyticComponents {
+                    path: None,
+                    schema_version: Some(1),
+                    name: Some("runtime-two-channel-point".to_string()),
+                    components: vec![SyntheticAnalyticComponent::Point {
+                        name: Some("phase-centre".to_string()),
+                        l_rad: 0.0,
+                        m_rad: 0.0,
+                        spectrum: SyntheticAnalyticSpectrum {
+                            flux_jy: 1.0,
+                            spectral_index: 0.0,
+                            reference_frequency_hz: None,
+                            line_peak_jy: 1.0,
+                            line_center_fraction: 1.0,
+                            line_sigma_fraction: 0.1,
+                            absorption_peak_jy: 0.0,
+                            absorption_center_fraction: 0.5,
+                            absorption_sigma_fraction: 0.1,
+                        },
+                    }],
+                });
+                request.predict_model = true;
+            }
             generate_synthetic_observation_ms(&request)
                 .expect("generate runtime selected-observation fixture");
             RuntimeObservationFixture {

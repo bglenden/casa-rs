@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
+//! Storage-owned source and output-frame spectral evaluation.
 
 use casa_imaging_model::{
     CompiledProblem, DirectionFrame, FrequencyFrame, SelectedObservationSample,
-    SelectedSpectralContribution, SelectedSpectralContributions, SpectralFrameAnchor,
-    SpectralSampling, TimeScale,
+    SelectedSpectralEvaluation, SelectedSpectralInterval, SpectralFrameAnchor, TimeScale,
 };
 
 use casa_types::measures::{
@@ -15,11 +15,7 @@ use casa_types::measures::{
 };
 
 use crate::{
-    derived::engine::MsCalEngine,
-    spectral_selection::{
-        CubeInterpolation, convert_frequency_to_frame_with_frames,
-        source_frequency_output_contributions,
-    },
+    derived::engine::MsCalEngine, spectral_selection::convert_frequency_to_frame_with_frames,
 };
 
 use super::BoundObservationSourceError;
@@ -36,20 +32,20 @@ use super::BoundObservationSourceError;
 ///
 /// let _forged = SelectedObservationTraversalSample {};
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SelectedObservationTraversalSample {
     sample: SelectedObservationSample,
-    spectral_contributions: SelectedSpectralContributions,
+    spectral_evaluation: SelectedSpectralEvaluation,
 }
 
 impl SelectedObservationTraversalSample {
-    pub(super) const fn with_spectral_contributions(
+    pub(super) fn with_spectral_evaluation(
         sample: SelectedObservationSample,
-        spectral_contributions: SelectedSpectralContributions,
+        spectral_evaluation: SelectedSpectralEvaluation,
     ) -> Self {
         Self {
             sample,
-            spectral_contributions,
+            spectral_evaluation,
         }
     }
 
@@ -59,10 +55,10 @@ impl SelectedObservationTraversalSample {
         &self.sample
     }
 
-    /// Return storage-owner-evaluated output spectral contributions.
+    /// Return source-backed native/output-frame intervals, flag validity, and effective weight.
     #[must_use]
-    pub const fn spectral_contributions(&self) -> SelectedSpectralContributions {
-        self.spectral_contributions
+    pub const fn spectral_evaluation(&self) -> SelectedSpectralEvaluation {
+        self.spectral_evaluation
     }
 }
 
@@ -72,9 +68,14 @@ struct SpectralProjectionKey {
     spectral_window_id: u32,
     channel_index: u32,
     frequency_centre_bits: u64,
+    frequency_lower_bits: u64,
+    frequency_upper_bits: u64,
+    channel_width_bits: u64,
     frequency_frame: FrequencyFrame,
     field_id: i32,
     time_mjd_days_bits: u64,
+    input_weight_bits: u32,
+    validity: [bool; 3],
 }
 
 impl SpectralProjectionKey {
@@ -84,9 +85,18 @@ impl SpectralProjectionKey {
             spectral_window_id: sample.address.spectral_window_id,
             channel_index: sample.address.channel_index,
             frequency_centre_bits: sample.address.frequency_centre_hz.to_bits(),
+            frequency_lower_bits: sample.address.frequency_lower_hz.to_bits(),
+            frequency_upper_bits: sample.address.frequency_upper_hz.to_bits(),
+            channel_width_bits: sample.address.channel_width_hz.to_bits(),
             frequency_frame: sample.address.frequency_frame,
             field_id: sample.metadata.field_id,
             time_mjd_days_bits: sample.coordinates.time.mjd_days().to_bits(),
+            input_weight_bits: sample.input_weight.to_bits(),
+            validity: [
+                sample.channel_flag,
+                sample.parallel_hand_group_flag,
+                sample.row_flag,
+            ],
         }
     }
 }
@@ -95,16 +105,16 @@ impl SpectralProjectionKey {
 ///
 /// Spectral assignment is independent of correlation and visibility value. A
 /// row/channel's parallel-hand samples therefore reuse the exact same derived
-/// contribution, while a row, channel, field, time, frame, SPW, or source
+/// evaluation, while a row, channel interval, field, time, frame, weight, flag, SPW, or source
 /// change forces a fresh owner evaluation.
-pub(super) struct SpectralContributionProjector {
+pub(super) struct SpectralEvaluationProjector {
     last_source: Option<casa_imaging_model::MeasurementSetIdentity>,
     output_frame: Option<MeasFrame>,
     source_frame: Option<(i32, u64, MeasFrame)>,
-    last_projection: Option<(SpectralProjectionKey, SelectedSpectralContributions)>,
+    last_projection: Option<(SpectralProjectionKey, SelectedSpectralEvaluation)>,
 }
 
-impl SpectralContributionProjector {
+impl SpectralEvaluationProjector {
     pub(super) const fn new() -> Self {
         Self {
             last_source: None,
@@ -121,14 +131,11 @@ impl SpectralContributionProjector {
         geometry_engine: &MsCalEngine,
     ) -> Result<SelectedObservationTraversalSample, BoundObservationSourceError> {
         let key = SpectralProjectionKey::from_sample(&sample);
-        if let Some((cached_key, contributions)) = self.last_projection
+        if let Some((cached_key, evaluation)) = self.last_projection
             && cached_key == key
         {
             return Ok(
-                SelectedObservationTraversalSample::with_spectral_contributions(
-                    sample,
-                    contributions,
-                ),
+                SelectedObservationTraversalSample::with_spectral_evaluation(sample, evaluation),
             );
         }
         if self.last_source != Some(sample.address.measurement_set) {
@@ -136,95 +143,90 @@ impl SpectralContributionProjector {
             self.output_frame = None;
             self.source_frame = None;
         }
-        let contributions = derive_spectral_contributions_cached(
+        let evaluation = derive_spectral_evaluation_cached(
             problem,
             &sample,
             geometry_engine,
             &mut self.source_frame,
             &mut self.output_frame,
         )?;
-        self.last_projection = Some((key, contributions));
-        Ok(SelectedObservationTraversalSample::with_spectral_contributions(sample, contributions))
+        self.last_projection = Some((key, evaluation));
+        Ok(SelectedObservationTraversalSample::with_spectral_evaluation(sample, evaluation))
     }
 }
 
-fn derive_spectral_contributions_cached(
+fn derive_spectral_evaluation_cached(
     problem: &CompiledProblem,
     sample: &SelectedObservationSample,
     geometry_engine: &MsCalEngine,
     source_frame: &mut Option<(i32, u64, MeasFrame)>,
     output_frame: &mut Option<MeasFrame>,
-) -> Result<SelectedSpectralContributions, BoundObservationSourceError> {
-    let evaluation_frequency_hz = evaluated_frequency_hz_cached(
+) -> Result<SelectedSpectralEvaluation, BoundObservationSourceError> {
+    let native_boundaries = if sample.address.channel_width_hz >= 0.0 {
+        [
+            sample.address.frequency_lower_hz,
+            sample.address.frequency_upper_hz,
+        ]
+    } else {
+        [
+            sample.address.frequency_upper_hz,
+            sample.address.frequency_lower_hz,
+        ]
+    };
+    let native = SelectedSpectralInterval::new(
+        sample.address.frequency_centre_hz,
+        native_boundaries[0],
+        native_boundaries[1],
+    )
+    .ok_or(BoundObservationSourceError::SpectralContributionMismatch)?;
+    let output_centre_hz = evaluated_frequency_hz_cached(
         problem,
         sample,
+        native.centre_hz(),
         geometry_engine,
         source_frame,
         output_frame,
     )?;
-    let contributions = match problem.science().spectral().sampling() {
-        SpectralSampling::Identity | SpectralSampling::Nearest => interpolation_contributions(
-            problem,
-            sample,
-            CubeInterpolation::Nearest,
-            evaluation_frequency_hz,
-        )?,
-        SpectralSampling::Linear => interpolation_contributions(
-            problem,
-            sample,
-            CubeInterpolation::Linear,
-            evaluation_frequency_hz,
-        )?,
-        SpectralSampling::ChannelAverage { channels_per_bin } => channel_average_contribution(
-            problem,
-            sample,
-            channels_per_bin,
-            evaluation_frequency_hz,
-        )?,
-    };
-    SelectedSpectralContributions::new(contributions)
-        .ok_or(BoundObservationSourceError::SpectralContributionMismatch)
-}
-
-fn interpolation_contributions(
-    problem: &CompiledProblem,
-    _sample: &SelectedObservationSample,
-    interpolation: CubeInterpolation,
-    evaluation_frequency_hz: f64,
-) -> Result<[Option<SelectedSpectralContribution>; 2], BoundObservationSourceError> {
-    let spectral = problem.geometry().spectral();
-    let centres = (0..spectral.output_channels())
-        .map(|channel| {
-            spectral
-                .channel_centre_hz(channel)
-                .ok_or(BoundObservationSourceError::SpectralContributionMismatch)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let widths = (0..spectral.output_channels())
-        .map(|channel| {
-            let first = spectral
-                .channel_boundary_hz(channel)
-                .ok_or(BoundObservationSourceError::SpectralContributionMismatch)?;
-            let second = spectral
-                .channel_boundary_hz(channel + 1)
-                .ok_or(BoundObservationSourceError::SpectralContributionMismatch)?;
-            Ok::<_, BoundObservationSourceError>((second - first).abs())
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    pack_contributions(
-        source_frequency_output_contributions(
-            &centres,
-            &widths,
-            interpolation,
-            evaluation_frequency_hz,
-        ),
-        evaluation_frequency_hz,
+    let output_first_hz = evaluated_frequency_hz_cached(
+        problem,
+        sample,
+        native_boundaries[0],
+        geometry_engine,
+        source_frame,
+        output_frame,
+    )?;
+    let output_second_hz = evaluated_frequency_hz_cached(
+        problem,
+        sample,
+        native_boundaries[1],
+        geometry_engine,
+        source_frame,
+        output_frame,
+    )?;
+    let output = SelectedSpectralInterval::new(output_centre_hz, output_first_hz, output_second_hz)
+        .ok_or(BoundObservationSourceError::SpectralContributionMismatch)?;
+    let valid = !sample.channel_flag
+        && !sample.parallel_hand_group_flag
+        && !sample.row_flag
+        && sample.input_weight.is_finite()
+        && sample.input_weight > 0.0;
+    SelectedSpectralEvaluation::new(
+        native,
+        output,
+        if valid {
+            f64::from(sample.input_weight)
+        } else {
+            0.0
+        },
+        valid,
     )
+    .ok_or(BoundObservationSourceError::SpectralContributionMismatch)
 }
 
 fn evaluated_frequency_hz_cached(
     problem: &CompiledProblem,
     sample: &SelectedObservationSample,
+    frequency_hz: f64,
     geometry_engine: &MsCalEngine,
     source_frame_cache: &mut Option<(i32, u64, MeasFrame)>,
     output_frame_cache: &mut Option<MeasFrame>,
@@ -233,7 +235,7 @@ fn evaluated_frequency_hz_cached(
     let source_ref = frequency_ref(sample.address.frequency_frame);
     let output_ref = frequency_ref(spectral.output_frame());
     if source_ref == output_ref {
-        return Ok(sample.address.frequency_centre_hz);
+        return Ok(frequency_hz);
     }
     let field_id = usize::try_from(sample.metadata.field_id)
         .map_err(|_| BoundObservationSourceError::SpectralContributionMismatch)?;
@@ -277,7 +279,7 @@ fn evaluated_frequency_hz_cached(
     convert_frequency_to_frame_with_frames(
         source_ref,
         output_ref,
-        sample.address.frequency_centre_hz,
+        frequency_hz,
         Some(source_frame),
         Some(output_frame),
     )
@@ -308,68 +310,4 @@ const fn frequency_ref(frame: FrequencyFrame) -> FrequencyRef {
         FrequencyFrame::Barycentric => FrequencyRef::BARY,
         FrequencyFrame::Lsrk => FrequencyRef::LSRK,
     }
-}
-
-fn channel_average_contribution(
-    problem: &CompiledProblem,
-    sample: &SelectedObservationSample,
-    channels_per_bin: usize,
-    evaluation_frequency_hz: f64,
-) -> Result<[Option<SelectedSpectralContribution>; 2], BoundObservationSourceError> {
-    let source = problem
-        .inputs()
-        .observation_snapshot()
-        .sources()
-        .iter()
-        .find(|source| source.identity() == sample.address.measurement_set)
-        .ok_or(BoundObservationSourceError::SpectralContributionMismatch)?;
-    let selection = source
-        .selection()
-        .spectral_windows()
-        .iter()
-        .find(|selection| selection.spectral_window_id() == sample.address.spectral_window_id)
-        .ok_or(BoundObservationSourceError::SpectralContributionMismatch)?;
-    let ordinal = selection
-        .channel_indices()
-        .iter()
-        .position(|channel| *channel == sample.address.channel_index)
-        .ok_or(BoundObservationSourceError::SpectralContributionMismatch)?;
-    let output_channel = ordinal / channels_per_bin;
-    if output_channel >= problem.geometry().spectral().output_channels() {
-        return Ok([None, None]);
-    }
-    let bin_start = output_channel
-        .checked_mul(channels_per_bin)
-        .ok_or(BoundObservationSourceError::SpectralContributionMismatch)?;
-    let bin_len = channels_per_bin.min(selection.channel_indices().len() - bin_start);
-    let factor = 1.0 / bin_len as f32;
-    let output_channel = u32::try_from(output_channel)
-        .map_err(|_| BoundObservationSourceError::SpectralContributionMismatch)?;
-    let contribution =
-        SelectedSpectralContribution::new(output_channel, factor, evaluation_frequency_hz)
-            .ok_or(BoundObservationSourceError::SpectralContributionMismatch)?;
-    Ok([Some(contribution), None])
-}
-
-fn pack_contributions(
-    contributions: Vec<crate::spectral_selection::CubeChannelContribution>,
-    evaluation_frequency_hz: f64,
-) -> Result<[Option<SelectedSpectralContribution>; 2], BoundObservationSourceError> {
-    if contributions.len() > 2 {
-        return Err(BoundObservationSourceError::SpectralContributionMismatch);
-    }
-    let mut packed = [None, None];
-    for (slot, contribution) in contributions.into_iter().enumerate() {
-        let output_channel = u32::try_from(contribution.source_channel)
-            .map_err(|_| BoundObservationSourceError::SpectralContributionMismatch)?;
-        packed[slot] = Some(
-            SelectedSpectralContribution::new(
-                output_channel,
-                contribution.factor,
-                evaluation_frequency_hz,
-            )
-            .ok_or(BoundObservationSourceError::SpectralContributionMismatch)?,
-        );
-    }
-    Ok(packed)
 }

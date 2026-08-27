@@ -85,14 +85,14 @@ mod tests {
     #[test]
     fn builtins_cover_exact_current_configurable_catalog() {
         let catalog = builtin_surface_catalog().expect("valid built-in parameter catalog");
-        assert_eq!(catalog.surfaces.len(), 42);
+        assert_eq!(catalog.surfaces.len(), 41);
         assert_eq!(
             catalog
                 .surfaces
                 .iter()
                 .filter(|surface| surface.kind() == SurfaceKind::Task)
                 .count(),
-            40
+            39
         );
         assert_eq!(
             catalog
@@ -537,7 +537,6 @@ mod tests {
                     "fluxscale",
                     "gaincal",
                     "gencal",
-                    "uvcontsub",
                 ][..],
                 "output",
                 "calibration.report.output",

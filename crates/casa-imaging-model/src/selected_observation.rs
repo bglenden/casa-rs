@@ -6,8 +6,9 @@ use std::fmt;
 
 use thiserror::Error;
 
+use crate::MsColumnKind;
 use crate::{
-    compiled_problem::{CanonicalEncoder, SpectralSampling},
+    compiled_problem::{CanonicalEncoder, SpectralSamplingLaw, encode_spectral_sampling_law},
     geometry::CompiledGeometryId,
     measurement_equation::VisibilityInnerProduct,
     observation::{
@@ -74,7 +75,7 @@ impl fmt::Display for SelectedObservationCommitmentId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SelectedSampleEvaluation {
     visibility_inner_product: VisibilityInnerProduct,
-    spectral_sampling: SpectralSampling,
+    spectral_sampling: SpectralSamplingLaw,
 }
 
 impl SelectedSampleEvaluation {
@@ -86,7 +87,7 @@ impl SelectedSampleEvaluation {
 
     /// Return the paired spectral sampling applied to selected samples.
     #[must_use]
-    pub const fn spectral_sampling(self) -> SpectralSampling {
+    pub const fn spectral_sampling(self) -> SpectralSamplingLaw {
         self.spectral_sampling
     }
 }
@@ -335,16 +336,15 @@ impl<'a> SelectedObservationInspection<'a> {
             prior.finish()?;
             self.source_index = next_index;
         }
-        let expected_prediction_target = if self
-            .write_set
-            .model_columns()
-            .iter()
-            .any(|write| write.measurement_set() == self.source.expected.measurement_set())
-        {
-            SelectedPredictionTarget::ModelData
-        } else {
-            SelectedPredictionTarget::NotRequested
-        };
+        let expected_prediction_target =
+            if self.write_set.visibility_columns().iter().any(|write| {
+                write.column() == MsColumnKind::ModelData
+                    && write.measurement_set() == self.source.expected.measurement_set()
+            }) {
+                SelectedPredictionTarget::ModelData
+            } else {
+                SelectedPredictionTarget::NotRequested
+            };
         self.source.push(sample, expected_prediction_target)?;
         self.generation.push(sample);
         Ok(())
@@ -649,7 +649,7 @@ pub(crate) fn compile_selected_observation_commitment(
     observation_transaction: &ObservationTransactionContract,
     geometry_id: CompiledGeometryId,
     visibility_inner_product: VisibilityInnerProduct,
-    spectral_sampling: SpectralSampling,
+    spectral_sampling: SpectralSamplingLaw,
 ) -> SelectedObservationCommitment {
     let observation_snapshot_id = observation_transaction.observation_snapshot_id();
     let sample_evaluation = SelectedSampleEvaluation {
@@ -691,16 +691,8 @@ fn encode_visibility_inner_product(
     });
 }
 
-fn encode_spectral_sampling(encoder: &mut CanonicalEncoder, sampling: SpectralSampling) {
-    match sampling {
-        SpectralSampling::Identity => encoder.u8(0),
-        SpectralSampling::Nearest => encoder.u8(1),
-        SpectralSampling::Linear => encoder.u8(2),
-        SpectralSampling::ChannelAverage { channels_per_bin } => {
-            encoder.u8(3);
-            encoder.usize(channels_per_bin);
-        }
-    }
+fn encode_spectral_sampling(encoder: &mut CanonicalEncoder, sampling: SpectralSamplingLaw) {
+    encode_spectral_sampling_law(encoder, sampling);
 }
 
 fn write_hex(formatter: &mut fmt::Formatter<'_>, bytes: &[u8]) -> fmt::Result {

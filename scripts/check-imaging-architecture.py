@@ -54,12 +54,12 @@ ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256 = (
     "daafa560c0e941fb3f2cea5c02a46de8a3363c2dd327cb839ef8ab2111f09835"
 )
 ACCEPTED_MATRIX_ROWS_SHA256 = (
-    "0fdc583980ba1d7976ffa78e4803830d596c5803e209057f1840018c9947bf9a"
+    "17264480654d34d6a78a7189edebf0f05a2e8b479467f20e00f21444d324727d"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "0034d15937430f9a5007a2462406ccd8c317fc560673b3b1b46a606aeee95fb4"
+    "81a45b8ed34b4857190d81483df7d2e6e400086f0910d2c02b79334e361dc941"
 )
-ACCEPTED_MATRIX_CONTRACT_REVISION = 47
+ACCEPTED_MATRIX_CONTRACT_REVISION = 54
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "scientific-products-v1",
@@ -1340,6 +1340,109 @@ def validate_migration_matrix(
     if enforce_accepted_scope:
         validate_t28_model_lifecycle_transfer(rows)
         validate_t18_global_weighting_transfer(rows)
+        validate_t36_spectral_sampling_transfer(rows)
+        validate_t37_spectral_operator_transfer(rows)
+
+
+def validate_t36_spectral_sampling_transfer(rows: list[dict[str, Any]]) -> None:
+    """Keep T36 coordinate and paired-sampling ownership native."""
+    rows_by_id = {row.get("id"): row for row in rows}
+    required_evidence = {
+        "capability.lsrk-transform": {
+            "crates/casa-ms/src/derived/engine.rs::pub(crate) fn spectral_frame_explicit",
+            "crates/casa-ms/src/selected_observation/spectral_evaluation.rs::pub struct SelectedObservationTraversalSample",
+            "crates/casa-imaging-reconstruction/src/spectral_sampling.rs::pub fn compile_spectral_stencil",
+        },
+        "capability.nearest-interpolation": {
+            "crates/casa-imaging-reconstruction/src/spectral_sampling.rs::fn nearest_terms",
+        },
+        "capability.linear-interpolation": {
+            "crates/casa-imaging-reconstruction/src/spectral_sampling.rs::fn linear_terms",
+        },
+        "capability.cubic-interpolation": {
+            "crates/casa-imaging-reconstruction/src/spectral_sampling.rs::fn cubic_terms",
+        },
+    }
+    for identifier, evidence in required_evidence.items():
+        row = rows_by_id.get(identifier)
+        if row is None or row.get("status") != "Native":
+            raise ArchitectureError(f"T36 matrix row {identifier} must remain Native")
+        if row.get("migration_obligation") is not None:
+            raise ArchitectureError(
+                f"T36 matrix row {identifier} must not retain a migration obligation"
+            )
+        if not evidence.issubset(set(row.get("source_evidence", []))):
+            raise ArchitectureError(
+                f"T36 matrix row {identifier} lacks native coordinate/sampling evidence"
+            )
+
+
+def validate_t37_spectral_operator_transfer(rows: list[dict[str, Any]]) -> None:
+    """Keep the T37 matrix ownership aligned with the spectral operator cutover."""
+    rows_by_id = {row.get("id"): row for row in rows}
+    required_statuses = {
+        "capability.spectral-cube": "Native",
+        "capability.spectral-cubedata": "Native",
+        "capability.standard-gridder": "Native",
+    }
+    required_evidence = {
+        "capability.spectral-cube": {
+            "crates/casa-imaging-reconstruction/src/spectral_operator.rs::pub struct SpectralOperatorSpecification",
+            "crates/casa-imaging-runtime/src/complete_data_operator.rs::pub struct SpectralOperatorState",
+        },
+        "capability.spectral-cubedata": {
+            "crates/casa-imaging-reconstruction/src/spectral_operator.rs::pub struct SpectralOperatorSpecification",
+            "crates/casa-imaging-runtime/src/complete_data_operator.rs::pub struct SpectralOperatorState",
+        },
+        "capability.standard-gridder": {
+            "crates/casa-imaging-reconstruction/src/spectral_operator.rs::pub struct CompleteDataOwnerState",
+            "crates/casa-imaging-runtime/src/complete_data_operator.rs::pub struct SpectralOperatorState",
+        },
+    }
+    for identifier, status in required_statuses.items():
+        row = rows_by_id.get(identifier)
+        if row is None or row.get("status") != status:
+            raise ArchitectureError(
+                f"T37 matrix row {identifier} must remain {status}"
+            )
+        if not required_evidence[identifier].issubset(
+            set(row.get("source_evidence", []))
+        ):
+            raise ArchitectureError(
+                f"T37 matrix row {identifier} lacks spectral-operator ownership evidence"
+            )
+
+    matrix_text = json.dumps(rows, sort_keys=True)
+    if re.search(r"serial[_-](?:mfs|continuum)", matrix_text, re.IGNORECASE):
+        raise ArchitectureError(
+            "T37 matrix retains a displaced serial_mfs or serial_continuum owner"
+        )
+
+    deleted_paths = (
+        "crates/casa-imaging-reconstruction/src/serial_mfs.rs",
+        "crates/casa-imaging-runtime/src/serial_continuum.rs",
+        "crates/casa-imaging-runtime/src/serial_continuum_plan.rs",
+    )
+    for relative in deleted_paths:
+        if (REPO_ROOT / relative).exists():
+            raise ArchitectureError(f"T37 displaced source still exists: {relative}")
+
+    source_paths = (
+        REPO_ROOT / "crates/casa-imaging-reconstruction/src/spectral_operator.rs",
+        REPO_ROOT / "crates/casa-imaging-runtime/src/complete_data_operator.rs",
+        REPO_ROOT / "crates/casa-imaging-runtime/src/spectral_cycle.rs",
+    )
+    for path in source_paths:
+        try:
+            source = path.read_text(encoding="utf-8")
+        except OSError as error:
+            raise ArchitectureError(
+                f"cannot inspect T37 spectral owner {display_path(path)}: {error}"
+            ) from error
+        if re.search(r"\b(?:SerialMfs|SerialContinuum)\b|serial_(?:mfs|continuum)", source):
+            raise ArchitectureError(
+                f"T37 spectral owner retains a displaced serial symbol: {display_path(path)}"
+            )
 
 
 def validate_t28_model_lifecycle_transfer(rows: list[dict[str, Any]]) -> None:
@@ -1638,7 +1741,7 @@ def validate_t18_global_weighting_transfer(rows: list[dict[str, Any]]) -> None:
         "crates/casa-imaging-model/src/selected_observation_sample.rs::pub struct SelectedSpectralContributions",
         "crates/casa-ms/src/derived/engine.rs::pub(crate) fn spectral_frame_explicit",
         "crates/casa-ms/src/spectral_selection.rs::pub(crate) fn convert_frequency_to_frame_with_frames",
-        "crates/casa-ms/src/selected_observation/spectral_contributions.rs::pub struct SelectedObservationTraversalSample",
+        "crates/casa-ms/src/selected_observation/spectral_evaluation.rs::pub struct SelectedObservationTraversalSample",
         "crates/casa-ms/src/selected_observation/bound_observation.rs::pub fn traverse",
         "crates/casa-imaging-reconstruction/src/weighting.rs::pub fn plan_weighting",
         "crates/casa-imaging-reconstruction/src/weighting.rs::pub fn begin_natural_weighting_stream",
@@ -1672,7 +1775,7 @@ def validate_t18_global_weighting_transfer(rows: list[dict[str, Any]]) -> None:
         "repo://crates/casa-ms/src/derived/engine.rs",
         "repo://crates/casa-ms/src/spectral_selection.rs",
         "repo://crates/casa-ms/src/selected_observation/access.rs",
-        "repo://crates/casa-ms/src/selected_observation/spectral_contributions.rs",
+        "repo://crates/casa-ms/src/selected_observation/spectral_evaluation.rs",
         "repo://crates/casa-ms/src/selected_observation/bound_observation.rs",
         "repo://crates/casa-imaging-reconstruction/src/lib.rs",
         "repo://crates/casa-imaging-reconstruction/src/weighting.rs",
@@ -1694,7 +1797,7 @@ def validate_t18_global_weighting_transfer(rows: list[dict[str, Any]]) -> None:
         REPO_ROOT / "crates/casa-imaging-model/src/selected_observation_sample.rs"
     )
     traversal_sample_path = (
-        REPO_ROOT / "crates/casa-ms/src/selected_observation/spectral_contributions.rs"
+        REPO_ROOT / "crates/casa-ms/src/selected_observation/spectral_evaluation.rs"
     )
     spectral_engine_path = REPO_ROOT / "crates/casa-ms/src/derived/engine.rs"
     spectral_selection_path = REPO_ROOT / "crates/casa-ms/src/spectral_selection.rs"
@@ -1807,19 +1910,27 @@ def validate_t18_global_weighting_sources(
     contribution_set_fields = rust_struct_fields(
         sample_model, "SelectedSpectralContributions", sample_model_path
     )
+    evaluation_fields = rust_struct_fields(
+        sample_model, "SelectedSpectralEvaluation", sample_model_path
+    )
     selected_sample_fields = rust_struct_fields(
         sample_model, "SelectedObservationSample", sample_model_path
     )
     if contribution_fields != {
         "output_channel": "u32",
-        "factor": "f32",
+        "factor": "f64",
         "evaluation_frequency_hz": "f64",
     } or (
         contribution_set_fields
-        != {"entries": "[Option<SelectedSpectralContribution>;2]"}
-    ):
+        != {"entries": "SmallVec<[SelectedSpectralContribution;4]>"}
+    ) or evaluation_fields != {
+        "native": "SelectedSpectralInterval",
+        "output_frame": "SelectedSpectralInterval",
+        "effective_weight": "f64",
+        "valid": "bool",
+    }:
         raise ArchitectureError(
-            "T18 spectral contribution values differ from the accepted bounded model"
+            "T18/T36 spectral trace and sparse coefficients differ from the accepted paired model"
         )
     if (
         "spectral_contributions" in selected_sample_fields
@@ -1834,28 +1945,17 @@ def validate_t18_global_weighting_sources(
     )
     if traversal_fields != {
         "sample": "SelectedObservationSample",
-        "spectral_contributions": "SelectedSpectralContributions",
+        "spectral_evaluation": "SelectedSpectralEvaluation",
     }:
         raise ArchitectureError(
-            "T18 traversal envelope omits owner-derived spectral contributions"
+            "T18/T36 traversal envelope omits storage-owner spectral evaluation"
         )
     if re.search(
         r"\bpub\s+(?:const\s+)?fn\s+(?:new|from_owner)\b", traversal_sample
     ):
         raise ArchitectureError("T18 traversal envelope construction must remain owner-only")
     derivation = rust_function_body(
-        traversal_sample, "derive_spectral_contributions_cached", traversal_sample_path
-    )
-    required_derivation = (
-        "geometry_engine",
-        "interpolation_contributions(",
-        "SpectralSampling::Identity",
-        "SpectralSampling::Nearest",
-        "SpectralSampling::Linear",
-        "SpectralSampling::ChannelAverage",
-    )
-    interpolation = rust_function_body(
-        traversal_sample, "interpolation_contributions", traversal_sample_path
+        traversal_sample, "derive_spectral_evaluation_cached", traversal_sample_path
     )
     evaluation = rust_function_body(
         traversal_sample, "evaluated_frequency_hz_cached", traversal_sample_path
@@ -1869,10 +1969,21 @@ def validate_t18_global_weighting_sources(
         "convert_frequency_to_frame_with_frames",
         spectral_selection_path,
     )
-    if not all(token in derivation for token in required_derivation) or (
-        "source_frequency_output_contributions(" not in traversal_sample
-        or "evaluation_frequency_hz" not in interpolation
-        or "convert_frequency_to_frame_with_frames(" not in evaluation
+    spectral_sampling_path = (
+        REPO_ROOT / "crates/casa-imaging-reconstruction/src/spectral_sampling.rs"
+    )
+    spectral_sampling = spectral_sampling_path.read_text(encoding="utf-8")
+    stencil = rust_function_body(
+        spectral_sampling, "compile_spectral_stencil", spectral_sampling_path
+    )
+    channel_local_stencil = rust_function_body(
+        spectral_sampling, "channel_local_terms", spectral_sampling_path
+    )
+    if (
+        "convert_frequency_to_frame_with_frames(" not in evaluation
+        or "native.centre_hz()" not in derivation
+        or "native_boundaries[0]" not in derivation
+        or "native_boundaries[1]" not in derivation
         or "spectral.anchor()" not in evaluation
         or "spectral_frame_observatory(" not in evaluation
         or "spectral_frame_explicit(" not in evaluation
@@ -1888,17 +1999,22 @@ def validate_t18_global_weighting_sources(
         or "source_frame" not in two_frame_conversion
         or "target_frame" not in two_frame_conversion
         or "direct_frequency_hop_uses_target_frame(" not in two_frame_conversion
-        or "UnsupportedSpectralContributionFrame" in derivation
+        or "channel_local_terms(" not in stencil
+        or "SpectralKernel::Cubic" not in channel_local_stencil
+        or "SpectralKernel::ChannelIntegration" not in channel_local_stencil
+        or "compile_spectral_stencil(" not in runtime_weighting
+        or "reported.spectral_evaluation()" not in runtime_weighting
+        or "spectral_contributions" in traversal_fields
     ):
         raise ArchitectureError(
-            "T18 traversal envelope bypasses owner-derived spectral mapping"
+            "T18/T36 storage evaluation or reconstruction-owned paired sampling is bypassed"
         )
     traversal = rust_impl_method_body(
         bound_observation, "BoundSelectedObservation", "traverse", bound_observation_path
     )
     if (
-        "SpectralContributionProjector::new()" not in traversal
-        or "spectral_projector.project(" not in traversal
+        "SpectralEvaluationProjector::new()" not in traversal
+        or "spectral_evaluator.project(" not in traversal
         or "source.geometry_engine()" not in traversal
         or "consume_projected_validated_stream(" not in traversal
     ):
@@ -1923,6 +2039,7 @@ def validate_t18_global_weighting_sources(
             "state": "Arc<WeightingAlgorithmState>",
             "source_generation": "SelectedObservationGenerationId",
             "source_sample_count": "u64",
+            "continuum_transform": "Option<ContinuumTransformCompletion>",
             "cross_plan_reservation": "Option<Arc<FrozenWeightingReservation>>",
         }
     ):
@@ -1953,10 +2070,10 @@ def validate_t18_global_weighting_sources(
         runtime_weighting, "traverse_density_source", runtime_weighting_path
     )
     initial_stream = rust_function_body(
-        runtime_weighting, "traverse_initial_stream", runtime_weighting_path
+        runtime_weighting, "traverse_initial_stream_impl", runtime_weighting_path
     )
     reuse_stream = rust_function_body(
-        runtime_weighting, "traverse_reuse_stream", runtime_weighting_path
+        runtime_weighting, "traverse_reuse_stream_impl", runtime_weighting_path
     )
     if density.count(".traverse(") != 1 or "begin_weighting_generation(" not in density:
         raise ArchitectureError(
@@ -2203,7 +2320,9 @@ def validate_t18_global_weighting_sources(
         or "removed.contains" not in compose_streaming
         or "terminal_fence" not in compose_streaming
         or "kind: WorkKind::Release" not in compose
-        or allocation_specs.count("AllocationSpec::new(") != 5
+        or allocation_specs.count("AllocationSpec::new(") != 6
+        or "if let Some(bytes) = self.continuum_row_bytes" not in allocation_specs
+        or '"continuum-transform-row"' not in allocation_specs
         or "predecessor_observation_completion(&self.source_read)"
         not in generation_authority
         or "predecessor_observation_completion(&self.ids.generation_node)"

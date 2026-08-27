@@ -14,12 +14,12 @@ use casa_imaging_model::{
     NumericsContractId, SelectedObservationGenerationId, WeightingCommitmentId,
 };
 use casa_imaging_reconstruction::{
-    ContinuumPrimitiveCatalog, MajorCyclePreparation, SerialMfsError, SerialMfsPrimitives,
-    SerialMfsSpecification, WeightingAlgorithmState, WeightingGenerationId,
-    WeightingReplayCoverageId, WeightingReplayId,
+    MajorCyclePreparation, SpectralOperatorError, SpectralOperatorPrimitives,
+    SpectralOperatorSpecification, SpectralPrimitiveCatalog, WeightingAlgorithmState,
+    WeightingGenerationId, WeightingReplayCoverageId, WeightingReplayId,
     runtime_adapter::{
-        CompleteDataOwnerResult, CompleteDataOwnerState, PreparedSerialMfsOperator,
-        SerialMfsWorkload, prepare_serial_mfs_operator, serial_mfs_workload,
+        CompleteDataOwnerResult, CompleteDataOwnerState, PreparedSpectralOperator,
+        SpectralOperatorWorkload, prepare_spectral_operator, spectral_operator_workload,
     },
 };
 
@@ -100,8 +100,8 @@ impl CompleteDataResidency {
 /// Hard physical allocations and FFT preparation bound to one T18 replay.
 #[derive(Debug, Clone)]
 pub struct CompleteDataPlanFragment {
-    specification: SerialMfsSpecification,
-    workload: SerialMfsWorkload,
+    specification: SpectralOperatorSpecification,
+    workload: SpectralOperatorWorkload,
     residency: CompleteDataResidency,
     preparation_node: WorkNodeId,
     replay_node: WorkNodeId,
@@ -115,16 +115,51 @@ impl CompleteDataPlanFragment {
         max_replay_block_samples: usize,
         replay_node: WorkNodeId,
     ) -> Result<Self, CompleteDataPlanError> {
-        let specification = SerialMfsSpecification::new(problem)?;
-        let workload = serial_mfs_workload(&specification, max_replay_block_samples)?;
+        let specification = SpectralOperatorSpecification::new(problem)?;
+        let workload = spectral_operator_workload(&specification, max_replay_block_samples)?;
         let shape = workload.grid_shape();
-        let preparation_node =
-            WorkNodeId::new(format!("serial-mfs-fft-plan-{}x{}", shape[0], shape[1]));
-        Self::new_with_preparation_node(
+        let slab = specification.slab();
+        let preparation_node = WorkNodeId::new(format!(
+            "spectral-operator-fft-plan-{}x{}-ch{}-{}",
+            shape[0],
+            shape[1],
+            slab.core_range().start,
+            slab.core_range().end
+        ));
+        Self::from_specification(
             problem,
             max_replay_block_samples,
             replay_node,
             preparation_node,
+            specification,
+        )
+    }
+
+    /// Compile runtime resources for one bounded channel-local core slab.
+    pub fn for_slab(
+        problem: &CompiledProblem,
+        max_replay_block_samples: usize,
+        replay_node: WorkNodeId,
+        core_start: usize,
+        core_depth: usize,
+    ) -> Result<Self, CompleteDataPlanError> {
+        let specification =
+            SpectralOperatorSpecification::for_slab(problem, core_start, core_depth)?;
+        let shape = specification.grid_shape();
+        let slab = specification.slab();
+        let preparation_node = WorkNodeId::new(format!(
+            "spectral-operator-fft-plan-{}x{}-ch{}-{}",
+            shape[0],
+            shape[1],
+            slab.core_range().start,
+            slab.core_range().end
+        ));
+        Self::from_specification(
+            problem,
+            max_replay_block_samples,
+            replay_node,
+            preparation_node,
+            specification,
         )
     }
 
@@ -135,8 +170,24 @@ impl CompleteDataPlanFragment {
         replay_node: WorkNodeId,
         preparation_node: WorkNodeId,
     ) -> Result<Self, CompleteDataPlanError> {
-        let specification = SerialMfsSpecification::new(problem)?;
-        let workload = serial_mfs_workload(&specification, max_replay_block_samples)?;
+        let specification = SpectralOperatorSpecification::new(problem)?;
+        Self::from_specification(
+            problem,
+            max_replay_block_samples,
+            replay_node,
+            preparation_node,
+            specification,
+        )
+    }
+
+    fn from_specification(
+        problem: &CompiledProblem,
+        max_replay_block_samples: usize,
+        replay_node: WorkNodeId,
+        preparation_node: WorkNodeId,
+        specification: SpectralOperatorSpecification,
+    ) -> Result<Self, CompleteDataPlanError> {
+        let workload = spectral_operator_workload(&specification, max_replay_block_samples)?;
         let residency = project_residency(problem, workload)?;
         Ok(Self {
             specification,
@@ -166,6 +217,12 @@ impl CompleteDataPlanFragment {
         self.residency
     }
 
+    /// Return the exact core/halo channel slab projected by this plan.
+    #[must_use]
+    pub const fn slab(&self) -> casa_imaging_reconstruction::SpectralSlabPlan {
+        self.specification.slab()
+    }
+
     /// Prepare reusable FFT state only at the planned FFT node.
     pub fn prepare(
         &self,
@@ -181,7 +238,7 @@ impl CompleteDataPlanFragment {
         }
         self.validate_fft_capability(context)?;
         Ok(CompleteDataPreparedState {
-            owner: prepare_serial_mfs_operator(self.specification.clone(), self.workload)?,
+            owner: prepare_spectral_operator(self.specification.clone(), self.workload)?,
             problem: self.specification.problem_id(),
             attempt: context.attempt_id(),
             preparation_node: self.preparation_node.clone(),
@@ -198,12 +255,18 @@ impl CompleteDataPlanFragment {
         problem: &CompiledProblem,
         weighting: &WeightingAlgorithmState,
         prepared: CompleteDataPreparedState,
-    ) -> Result<SerialMfsOperatorState, CompleteDataPlanError> {
+    ) -> Result<SpectralOperatorState, CompleteDataPlanError> {
+        let slab = self.specification.slab();
+        let compiled_specification = SpectralOperatorSpecification::for_slab(
+            problem,
+            slab.core_range().start,
+            slab.core_depth(),
+        )?;
         if context.node().id != self.replay_node {
             return Err(CompleteDataPlanError::WrongExecutionNode);
         }
         if context.compiled().problem_id() != problem.problem_id()
-            || SerialMfsSpecification::new(problem)? != self.specification
+            || compiled_specification != self.specification
             || weighting.max_replay_block_samples() != self.workload.max_replay_block_samples()
         {
             return Err(CompleteDataPlanError::PlanMismatch);
@@ -216,31 +279,31 @@ impl CompleteDataPlanFragment {
         &self,
         context: WorkExecutionContext<'_>,
     ) -> Result<(), CompleteDataPlanError> {
-        let shape = self.workload.grid_shape();
+        let suffix = operator_allocation_suffix(self.workload);
         let residency = self.residency;
         let required = [
             (
-                format!("serial-mfs-grids-{}x{}", shape[0], shape[1]),
+                format!("spectral-operator-grids-{suffix}"),
                 residency.grid_bytes(),
             ),
             (
-                format!("serial-mfs-convolution-cache-{}x{}", shape[0], shape[1]),
+                format!("spectral-operator-convolution-cache-{suffix}"),
                 residency.convolution_cache_bytes(),
             ),
             (
-                format!("serial-mfs-fft-state-{}x{}", shape[0], shape[1]),
+                format!("spectral-operator-fft-state-{suffix}"),
                 residency.fft_resident_bytes(),
             ),
             (
-                format!("serial-mfs-forward-workspace-{}x{}", shape[0], shape[1]),
+                format!("spectral-operator-forward-workspace-{suffix}"),
                 residency.forward_workspace_bytes(),
             ),
             (
-                format!("serial-mfs-primitives-{}x{}", shape[0], shape[1]),
+                format!("spectral-operator-primitives-{suffix}"),
                 residency.primitive_output_bytes(),
             ),
             (
-                format!("serial-mfs-major-cycle-model-{}x{}", shape[0], shape[1]),
+                format!("spectral-operator-major-cycle-model-{suffix}"),
                 residency.major_cycle_model_bytes(),
             ),
         ];
@@ -283,8 +346,8 @@ impl CompleteDataPlanFragment {
         {
             return Err(CompleteDataPlanError::MissingFftCapability);
         }
-        let shape = self.workload.grid_shape();
-        let allocation = format!("serial-mfs-fft-state-{}x{}", shape[0], shape[1]);
+        let suffix = operator_allocation_suffix(self.workload);
+        let allocation = format!("spectral-operator-fft-state-{suffix}");
         let capacity = u64::try_from(self.residency.fft_resident_bytes())
             .map_err(|_| CompleteDataPlanError::ResidencyOverflow)?;
         if context
@@ -393,7 +456,7 @@ impl CompleteDataPlanFragment {
 
         let mut alternative = base.execution_dag().resource_alternative().clone();
         alternative.id =
-            AlternativeId::new(format!("{}-serial-mfs-nterms1", alternative.id.as_str()));
+            AlternativeId::new(format!("{}-spectral-operator", alternative.id.as_str()));
         alternative
             .demand
             .memory
@@ -469,7 +532,7 @@ impl CompleteDataPlanFragment {
         &self,
         reconciliation: &WorkNodeId,
     ) -> Result<[CompleteDataAllocation; 6], CompleteDataPlanError> {
-        let suffix = self.workload.grid_shape();
+        let suffix = operator_allocation_suffix(self.workload);
         let residency = self.residency;
         let replay_done = BTreeSet::from([WorkDependency::Fence(FenceId::new(
             self.replay_node.clone(),
@@ -478,49 +541,49 @@ impl CompleteDataPlanFragment {
         let reconciled = BTreeSet::from([WorkDependency::Work(reconciliation.clone())]);
         Ok([
             CompleteDataAllocation::new(
-                format!("serial-mfs-grids-{}x{}", suffix[0], suffix[1]),
+                format!("spectral-operator-grids-{suffix}"),
                 residency.grid_bytes(),
-                "serial-mfs-shared-dirty-psf-residual-grids",
+                "spectral-operator-shared-dirty-psf-residual-grids",
                 InitializationPolicy::ZeroBeforeRead,
                 self.replay_node.clone(),
                 replay_done.clone(),
             )?,
             CompleteDataAllocation::new(
-                format!("serial-mfs-convolution-cache-{}x{}", suffix[0], suffix[1]),
+                format!("spectral-operator-convolution-cache-{suffix}"),
                 residency.convolution_cache_bytes(),
-                "serial-mfs-convolution-taps-and-corrections",
+                "spectral-operator-convolution-taps-and-corrections",
                 InitializationPolicy::OverwriteBeforeRead,
                 self.replay_node.clone(),
                 replay_done.clone(),
             )?,
             CompleteDataAllocation::new(
-                format!("serial-mfs-fft-state-{}x{}", suffix[0], suffix[1]),
+                format!("spectral-operator-fft-state-{suffix}"),
                 residency.fft_resident_bytes(),
-                "serial-mfs-rustfft-plans-lane-and-scratch",
+                "spectral-operator-rustfft-plans-lane-and-scratch",
                 InitializationPolicy::OverwriteBeforeRead,
                 self.preparation_node.clone(),
                 replay_done.clone(),
             )?,
             CompleteDataAllocation::new(
-                format!("serial-mfs-forward-workspace-{}x{}", suffix[0], suffix[1]),
+                format!("spectral-operator-forward-workspace-{suffix}"),
                 residency.forward_workspace_bytes(),
-                "serial-mfs-forward-grid-and-bounded-predictions",
+                "spectral-operator-forward-grid-and-bounded-predictions",
                 InitializationPolicy::OverwriteBeforeRead,
                 self.replay_node.clone(),
                 replay_done,
             )?,
             CompleteDataAllocation::new(
-                format!("serial-mfs-primitives-{}x{}", suffix[0], suffix[1]),
+                format!("spectral-operator-primitives-{suffix}"),
                 residency.primitive_output_bytes(),
-                "serial-mfs-unnormalized-dirty-psf-residual-primitives",
+                "spectral-operator-unnormalized-dirty-psf-residual-primitives",
                 InitializationPolicy::OverwriteBeforeRead,
                 self.replay_node.clone(),
                 reconciled,
             )?,
             CompleteDataAllocation::new(
-                format!("serial-mfs-major-cycle-model-{}x{}", suffix[0], suffix[1]),
+                format!("spectral-operator-major-cycle-model-{suffix}"),
                 residency.major_cycle_model_bytes(),
-                "serial-mfs-current-final-model-and-pending-delta",
+                "spectral-operator-current-final-model-and-pending-delta",
                 InitializationPolicy::OverwriteBeforeRead,
                 self.preparation_node.clone(),
                 BTreeSet::from([WorkDependency::Work(reconciliation.clone())]),
@@ -529,9 +592,21 @@ impl CompleteDataPlanFragment {
     }
 }
 
+fn operator_allocation_suffix(workload: SpectralOperatorWorkload) -> String {
+    let shape = workload.grid_shape();
+    let slab = workload.slab();
+    format!(
+        "{}x{}-ch{}-{}",
+        shape[0],
+        shape[1],
+        slab.core_range().start,
+        slab.core_range().end
+    )
+}
+
 fn project_residency(
     problem: &CompiledProblem,
-    workload: SerialMfsWorkload,
+    workload: SpectralOperatorWorkload,
 ) -> Result<CompleteDataResidency, CompleteDataPlanError> {
     let complex_bytes = size_of::<num_complex::Complex64>();
     let grid_bytes = workload
@@ -565,7 +640,12 @@ fn project_residency(
         })
         .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
     let model = problem.model_lifecycle();
-    let model_samples = model.target().sample_count();
+    let total_model_samples = model.target().sample_count();
+    let slab = workload.slab();
+    let model_samples = total_model_samples
+        .checked_div(slab.total_channels())
+        .and_then(|plane_samples| plane_samples.checked_mul(slab.resident_depth()))
+        .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
     let major_cycle_model_bytes = model_samples
         .checked_mul(size_of::<ModelSample>())
         .and_then(|bytes| {
@@ -760,8 +840,8 @@ impl From<PhysicalWorkBindingError> for CompleteDataPlanError {
     }
 }
 
-impl From<SerialMfsError> for CompleteDataPlanError {
-    fn from(error: SerialMfsError) -> Self {
+impl From<SpectralOperatorError> for CompleteDataPlanError {
+    fn from(error: SpectralOperatorError) -> Self {
         Self::Operator(CompleteDataOperatorError::Owner(error))
     }
 }
@@ -770,7 +850,7 @@ impl From<SerialMfsError> for CompleteDataPlanError {
 #[doc(hidden)]
 #[derive(Debug)]
 pub struct CompleteDataPreparedState {
-    owner: PreparedSerialMfsOperator,
+    owner: PreparedSpectralOperator,
     problem: CompiledProblemId,
     attempt: ExecutionAttemptId,
     preparation_node: WorkNodeId,
@@ -786,7 +866,7 @@ impl CompleteDataPreparedState {
         problem: &CompiledProblem,
         weighting: &WeightingAlgorithmState,
         fragment: &CompleteDataPlanFragment,
-    ) -> Result<SerialMfsOperatorState, CompleteDataPlanError> {
+    ) -> Result<SpectralOperatorState, CompleteDataPlanError> {
         if self.problem != problem.problem_id()
             || self.attempt != context.attempt_id()
             || self.preparation_node != fragment.preparation_node
@@ -803,7 +883,7 @@ impl CompleteDataPreparedState {
         let state = self.owner.begin(problem, weighting).map_err(|error| {
             CompleteDataPlanError::Operator(CompleteDataOperatorError::Owner(error))
         })?;
-        Ok(SerialMfsOperatorState {
+        Ok(SpectralOperatorState {
             state,
             binding: CompleteDataExecutionBinding {
                 problem: problem.problem_id(),
@@ -820,7 +900,7 @@ impl CompleteDataPreparedState {
         context: WorkExecutionContext<'_>,
         problem: &CompiledProblem,
         fragment: &CompleteDataPlanFragment,
-    ) -> Result<SerialMfsOperatorState, CompleteDataPlanError> {
+    ) -> Result<SpectralOperatorState, CompleteDataPlanError> {
         if self.problem != problem.problem_id()
             || self.attempt != context.attempt_id()
             || self.preparation_node != fragment.preparation_node
@@ -837,7 +917,7 @@ impl CompleteDataPreparedState {
         let state = self.owner.begin_streaming(problem).map_err(|error| {
             CompleteDataPlanError::Operator(CompleteDataOperatorError::Owner(error))
         })?;
-        Ok(SerialMfsOperatorState {
+        Ok(SpectralOperatorState {
             state,
             binding: CompleteDataExecutionBinding {
                 problem: problem.problem_id(),
@@ -857,7 +937,7 @@ impl CompleteDataPreparedState {
 /// runtime attempt, lease epoch, settled replay node, and plan-authoritative
 /// final-reconciliation node. It is deliberately not constructible from caller
 /// digests or a generic scheduler completion: it is minted only by consuming a
-/// [`SerialMfsOperatorState`] after that state has accepted the complete
+/// [`SpectralOperatorState`] after that state has accepted the complete
 /// ordered stream of [`WeightedObservationBlock`] values and the terminal
 /// [`WeightingReplayCompletion`].
 ///
@@ -865,11 +945,11 @@ impl CompleteDataPreparedState {
 ///
 /// ```compile_fail
 /// use casa_imaging_runtime::{
-///     AttemptBoundObservationCompletion, SerialMfsOperatorState,
+///     AttemptBoundObservationCompletion, SpectralOperatorState,
 /// };
 ///
 /// fn substitute(
-///     state: SerialMfsOperatorState,
+///     state: SpectralOperatorState,
 ///     generic: &AttemptBoundObservationCompletion,
 /// ) {
 ///     let _ = state.complete(generic);
@@ -895,7 +975,7 @@ pub struct CompleteDataOperatorResult {
 impl CompleteDataOperatorResult {
     /// Return reconstruction-owned unnormalized primitives.
     #[must_use]
-    pub const fn primitives(&self) -> &SerialMfsPrimitives {
+    pub const fn primitives(&self) -> &SpectralOperatorPrimitives {
         self.evidence.primitives()
     }
 
@@ -949,7 +1029,7 @@ impl CompleteDataOperatorResult {
 
     /// Return the versioned primitive set produced by the science owner.
     #[must_use]
-    pub const fn primitive_catalog(&self) -> ContinuumPrimitiveCatalog {
+    pub const fn primitive_catalog(&self) -> SpectralPrimitiveCatalog {
         self.evidence.completion().primitive_catalog()
     }
 
@@ -1007,14 +1087,14 @@ impl CompleteDataOperatorResult {
 ///
 /// ```compile_fail
 /// use casa_imaging_model::SelectedObservationSample;
-/// use casa_imaging_runtime::SerialMfsOperatorState;
+/// use casa_imaging_runtime::SpectralOperatorState;
 ///
-/// fn bypass(mut state: SerialMfsOperatorState, raw: &SelectedObservationSample) {
+/// fn bypass(mut state: SpectralOperatorState, raw: &SelectedObservationSample) {
 ///     let _ = state.consume_weighted_block(raw);
 /// }
 /// ```
 #[derive(Debug)]
-pub struct SerialMfsOperatorState {
+pub struct SpectralOperatorState {
     state: CompleteDataOwnerState,
     binding: CompleteDataExecutionBinding,
 }
@@ -1028,7 +1108,12 @@ struct CompleteDataExecutionBinding {
     lease_epoch: u64,
 }
 
-impl SerialMfsOperatorState {
+impl SpectralOperatorState {
+    /// Request final selected visibility samples from this bounded replay.
+    pub(crate) fn enable_final_visibility_samples(&mut self) {
+        self.state.enable_final_visibility_samples();
+    }
+
     /// Bind one validated final model before consuming the exhaustive replay.
     pub fn bind_major_cycle_model(
         &mut self,
@@ -1096,6 +1181,9 @@ impl SerialMfsOperatorState {
         let evidence = self.state.complete(
             replay.reconstruction_summary(),
             replay.selected_generation(),
+            replay
+                .continuum_transform()
+                .map(|completion| completion.generation_id()),
         )?;
         Ok(CompleteDataOperatorResult {
             evidence,
@@ -1115,7 +1203,7 @@ pub enum CompleteDataOperatorError {
     /// Terminal T18 proof does not match the plan capability that began T19.
     ExecutionBinding,
     /// Reconstruction rejected a numerical plan or weighted contribution.
-    Owner(SerialMfsError),
+    Owner(SpectralOperatorError),
 }
 
 impl fmt::Display for CompleteDataOperatorError {
@@ -1130,8 +1218,8 @@ impl fmt::Display for CompleteDataOperatorError {
 
 impl Error for CompleteDataOperatorError {}
 
-impl From<SerialMfsError> for CompleteDataOperatorError {
-    fn from(error: SerialMfsError) -> Self {
+impl From<SpectralOperatorError> for CompleteDataOperatorError {
+    fn from(error: SpectralOperatorError) -> Self {
         Self::Owner(error)
     }
 }

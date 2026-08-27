@@ -16,17 +16,18 @@
 use std::fmt;
 
 use casa_imaging_model::{
-    CompiledGeometryId, CompiledProblemId, LogicalIdentity, NumericsContractId,
-    SelectedObservationGenerationId, WeightingCommitmentId,
+    CompiledGeometryId, CompiledProblemId, ContinuumTransformGenerationId, LogicalIdentity,
+    NumericsContractId, SelectedObservationGenerationId, WeightingCommitmentId,
 };
 
 use crate::{
-    ContinuumPrimitiveCatalog, Encoder, FINAL_NORMAL_STATE_DOMAIN, FINAL_NORMAL_STATE_VERSION,
-    FinalModelCompletion, FinalModelCompletionId, FinalModelContinuation,
-    FinalNormalStateCompletionId, MAJOR_CYCLE_DOMAIN, MAJOR_CYCLE_VERSION, MajorCycleCompletionId,
-    ModelDelta, ModelGeneration, ModelGenerationId, ModelLifecycle, ModelLifecycleError,
-    PreparedFinalModel, SerialMfsError, SerialMfsPrimitives, WeightingGenerationId,
-    WeightingReplayCoverageId, WeightingReplayId, runtime_adapter::CompleteDataOwnerResult,
+    Encoder, FINAL_NORMAL_STATE_DOMAIN, FINAL_NORMAL_STATE_VERSION, FinalModelCompletion,
+    FinalModelCompletionId, FinalModelContinuation, FinalNormalStateCompletionId,
+    MAJOR_CYCLE_DOMAIN, MAJOR_CYCLE_VERSION, MajorCycleCompletionId, ModelDelta, ModelGeneration,
+    ModelGenerationId, ModelLifecycle, ModelLifecycleError, PreparedFinalModel,
+    SpectralOperatorError, SpectralOperatorPrimitives, SpectralPrimitiveCatalog,
+    WeightingGenerationId, WeightingReplayCoverageId, WeightingReplayId,
+    runtime_adapter::CompleteDataOwnerResult,
 };
 
 /// Versioned Normal State Generation catalog minted by a Major Cycle.
@@ -34,7 +35,10 @@ use crate::{
 pub enum NormalStateCatalog {
     /// Unnormalized single-field Stokes-I constant-basis MFS normal state
     /// whose residual follows the exact paired `A* W (d - A x)` composition.
-    UnnormalizedNterms1V1,
+    UnnormalizedPlaneV1,
+    /// Unnormalized channel-major normal-state slab whose planes follow the
+    /// exact output-channel interval named by the paired spectral operator.
+    UnnormalizedChannelSlabV1,
 }
 
 /// Reconstruction-owned proof that the final Normal State generation exists.
@@ -68,7 +72,8 @@ pub struct FinalNormalState {
     input_model_generation: ModelGenerationId,
     final_model_generation: ModelGenerationId,
     selected_generation: SelectedObservationGenerationId,
-    primitives: SerialMfsPrimitives,
+    continuum_transform_generation: Option<ContinuumTransformGenerationId>,
+    primitives: SpectralOperatorPrimitives,
 }
 
 impl FinalNormalState {
@@ -165,6 +170,12 @@ impl FinalNormalState {
         self.selected_generation
     }
 
+    /// Return the sequential continuum-transform generation, when present.
+    #[must_use]
+    pub const fn continuum_transform_generation(&self) -> Option<ContinuumTransformGenerationId> {
+        self.continuum_transform_generation
+    }
+
     /// Return the authoritative model-dependent residual plane.
     #[must_use]
     pub const fn residual(&self) -> &[num_complex::Complex64] {
@@ -175,6 +186,18 @@ impl FinalNormalState {
     #[must_use]
     pub const fn shape(&self) -> [usize; 2] {
         self.primitives.shape()
+    }
+
+    /// Return the exact output-channel slab represented by this state.
+    #[must_use]
+    pub const fn slab(&self) -> crate::SpectralSlabPlan {
+        self.primitives.slab()
+    }
+
+    /// Return the number of channel planes resident in this state.
+    #[must_use]
+    pub const fn channel_count(&self) -> usize {
+        self.primitives.slab().core_depth()
     }
 
     /// Return the T19 normal approximation paired with the residual.
@@ -191,8 +214,98 @@ impl FinalNormalState {
 
     /// Return the exact accumulated sum weight.
     #[must_use]
-    pub const fn sum_weight(&self) -> f64 {
+    pub fn sum_weight(&self) -> f64 {
         self.primitives.sum_weight()
+    }
+
+    /// Return all channel sum weights in output-channel order.
+    #[must_use]
+    pub const fn sum_weights(&self) -> &[f64] {
+        self.primitives.sum_weights()
+    }
+
+    /// Return all channel validity states in output-channel order.
+    #[must_use]
+    pub const fn channel_validity(&self) -> &[crate::SpectralChannelValidity] {
+        self.primitives.channel_validity()
+    }
+
+    /// Borrow one channel plane from this bounded Normal State slab.
+    #[must_use]
+    pub fn plane(&self, local_channel: usize) -> Option<FinalNormalStatePlane<'_>> {
+        let cells = self.shape()[0].checked_mul(self.shape()[1])?;
+        let start = local_channel.checked_mul(cells)?;
+        let end = start.checked_add(cells)?;
+        if local_channel >= self.channel_count() {
+            return None;
+        }
+        Some(FinalNormalStatePlane {
+            owner: self,
+            local_channel,
+            residual: self.primitives.dirty().get(start..end)?,
+            psf: self.primitives.psf().get(start..end)?,
+            sensitivity: self.primitives.sensitivity().get(start..end)?,
+        })
+    }
+}
+
+/// Borrowed two-dimensional plane of one authoritative Normal State slab.
+#[derive(Debug, Clone, Copy)]
+pub struct FinalNormalStatePlane<'a> {
+    owner: &'a FinalNormalState,
+    local_channel: usize,
+    residual: &'a [num_complex::Complex64],
+    psf: &'a [num_complex::Complex64],
+    sensitivity: &'a [f64],
+}
+
+impl<'a> FinalNormalStatePlane<'a> {
+    /// Return the slab owner this view borrows.
+    #[must_use]
+    pub const fn owner(self) -> &'a FinalNormalState {
+        self.owner
+    }
+
+    /// Return the absolute output-channel ordinal.
+    #[must_use]
+    pub const fn output_channel(self) -> usize {
+        self.owner.slab().core_range().start + self.local_channel
+    }
+
+    /// Return this plane's model-dependent unnormalized residual.
+    #[must_use]
+    pub const fn residual(self) -> &'a [num_complex::Complex64] {
+        self.residual
+    }
+
+    /// Return this plane's unnormalized PSF approximation.
+    #[must_use]
+    pub const fn normal_approximation(self) -> &'a [num_complex::Complex64] {
+        self.psf
+    }
+
+    /// Return this plane's per-pixel sensitivity values.
+    #[must_use]
+    pub const fn sensitivity(self) -> &'a [f64] {
+        self.sensitivity
+    }
+
+    /// Return this plane's accumulated sum weight.
+    #[must_use]
+    pub const fn sum_weight(self) -> f64 {
+        self.owner.sum_weights()[self.local_channel]
+    }
+
+    /// Return the common direction-plane shape.
+    #[must_use]
+    pub const fn shape(self) -> [usize; 2] {
+        self.owner.shape()
+    }
+
+    /// Return mapped, blank, or unmapped channel validity.
+    #[must_use]
+    pub const fn validity(self) -> crate::SpectralChannelValidity {
+        self.owner.channel_validity()[self.local_channel]
     }
 }
 
@@ -322,11 +435,12 @@ pub struct MajorCycleOwner {
     weighting_generation: WeightingGenerationId,
     replay: WeightingReplayId,
     coverage: WeightingReplayCoverageId,
-    catalog: ContinuumPrimitiveCatalog,
+    catalog: SpectralPrimitiveCatalog,
     selected_generation: SelectedObservationGenerationId,
+    continuum_transform_generation: Option<ContinuumTransformGenerationId>,
     sample_count: u64,
     block_count: u64,
-    primitives: SerialMfsPrimitives,
+    primitives: SpectralOperatorPrimitives,
     preparation: MajorCyclePreparation,
 }
 
@@ -360,6 +474,7 @@ impl MajorCycleOwner {
             coverage: completion.coverage(),
             catalog: completion.primitive_catalog(),
             selected_generation: completion.selected_generation(),
+            continuum_transform_generation: completion.continuum_transform_generation(),
             sample_count: completion.sample_count(),
             block_count: completion.block_count(),
             primitives,
@@ -433,6 +548,7 @@ impl MajorCycleOwner {
                 input_model_generation,
                 final_model_generation,
                 self.selected_generation,
+                self.continuum_transform_generation,
             ),
             problem: self.problem,
             geometry: self.geometry,
@@ -442,8 +558,11 @@ impl MajorCycleOwner {
             replay: self.replay,
             coverage: self.coverage,
             catalog: match self.catalog {
-                ContinuumPrimitiveCatalog::UnnormalizedNterms1V1 => {
-                    NormalStateCatalog::UnnormalizedNterms1V1
+                SpectralPrimitiveCatalog::UnnormalizedPlaneV1 => {
+                    NormalStateCatalog::UnnormalizedPlaneV1
+                }
+                SpectralPrimitiveCatalog::UnnormalizedChannelSlabV1 => {
+                    NormalStateCatalog::UnnormalizedChannelSlabV1
                 }
             },
             content,
@@ -452,6 +571,7 @@ impl MajorCycleOwner {
             input_model_generation,
             final_model_generation,
             selected_generation: self.selected_generation,
+            continuum_transform_generation: self.continuum_transform_generation,
             primitives: self.primitives,
         };
         let completion_id = major_cycle_completion_id(
@@ -486,6 +606,7 @@ fn final_normal_state_id(
     input_model_generation: ModelGenerationId,
     final_model_generation: ModelGenerationId,
     selected_generation: SelectedObservationGenerationId,
+    continuum_transform_generation: Option<ContinuumTransformGenerationId>,
 ) -> FinalNormalStateCompletionId {
     let mut encoder = Encoder::new(FINAL_NORMAL_STATE_DOMAIN, FINAL_NORMAL_STATE_VERSION);
     encoder.identity(authority.as_bytes());
@@ -498,6 +619,13 @@ fn final_normal_state_id(
     encoder.identity(input_model_generation.as_bytes());
     encoder.identity(final_model_generation.as_bytes());
     encoder.identity(selected_generation.as_bytes());
+    match continuum_transform_generation {
+        Some(generation) => {
+            encoder.u8(1);
+            encoder.identity(generation.as_bytes());
+        }
+        None => encoder.u8(0),
+    }
     FinalNormalStateCompletionId(LogicalIdentity::from_sha256(encoder.finish()))
 }
 
@@ -527,7 +655,7 @@ pub enum MajorCycleError {
     /// The model owner rejected the named generation or pending delta.
     Model(ModelLifecycleError),
     /// Reconciling the final model produced or consumed invalid numbers.
-    Residual(SerialMfsError),
+    Residual(SpectralOperatorError),
 }
 
 impl fmt::Display for MajorCycleError {

@@ -11,7 +11,7 @@ use crate::compiled_problem::{
 };
 
 const OBSERVATION_SNAPSHOT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-observation-snapshot";
-const OBSERVATION_SNAPSHOT_IDENTITY_VERSION: u32 = 4;
+const OBSERVATION_SNAPSHOT_IDENTITY_VERSION: u32 = 5;
 const OBSERVATION_PROVENANCE_IDENTITY_DOMAIN: &[u8] = b"casa-rs-observation-provenance";
 const OBSERVATION_PROVENANCE_IDENTITY_VERSION: u32 = 1;
 const SELECTED_ROW_SEQUENCE_IDENTITY_DOMAIN: &[u8] = b"casa-rs-selected-row-sequence";
@@ -1503,6 +1503,15 @@ pub enum ModelColumnState {
     Present(LogicalIdentity),
 }
 
+/// Exact existence and generation of output-only `CORRECTED_DATA`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CorrectedDataColumnState {
+    /// The destination did not exist when the snapshot was captured.
+    Absent,
+    /// The destination existed with this storage-owner generation.
+    Present(LogicalIdentity),
+}
+
 impl ColumnGeneration {
     /// Construct one column generation binding.
     #[must_use]
@@ -1676,6 +1685,7 @@ pub struct SourceGenerations {
     columns: SelectedColumns,
     metadata: Vec<MetadataGeneration>,
     model_column: ModelColumnState,
+    corrected_data_column: CorrectedDataColumnState,
 }
 
 impl SourceGenerations {
@@ -1692,7 +1702,15 @@ impl SourceGenerations {
             columns,
             metadata,
             model_column,
+            corrected_data_column: CorrectedDataColumnState::Absent,
         }
+    }
+
+    /// Bind the output-only CORRECTED_DATA write precondition.
+    #[must_use]
+    pub const fn with_corrected_data_column(mut self, state: CorrectedDataColumnState) -> Self {
+        self.corrected_data_column = state;
+        self
     }
 
     /// Return the atomic source consistency token.
@@ -1725,6 +1743,12 @@ impl SourceGenerations {
     #[must_use]
     pub const fn model_column(&self) -> ModelColumnState {
         self.model_column
+    }
+
+    /// Return the captured output-only CORRECTED_DATA state.
+    #[must_use]
+    pub const fn corrected_data_column(&self) -> CorrectedDataColumnState {
+        self.corrected_data_column
     }
 
     /// Return bytes owned by this shared immutable generation manifest.
@@ -1778,6 +1802,9 @@ impl SourceGenerations {
                     return Err(CompileObservationError::InconsistentModelColumnState);
                 }
             }
+        }
+        if let CorrectedDataColumnState::Present(generation) = self.corrected_data_column {
+            require_identity(generation, "CORRECTED_DATA generation")?;
         }
         for table in REQUIRED_METADATA_TABLES {
             if self.metadata(table).is_none() {
@@ -2014,6 +2041,14 @@ impl ObservationSnapshot {
             if expected.generations.model_column != actual.generations.model_column {
                 return Err(ObservationConsistencyError::ModelColumnStateChanged {
                     measurement_set: source,
+                });
+            }
+            if expected.generations.corrected_data_column
+                != actual.generations.corrected_data_column
+            {
+                return Err(ObservationConsistencyError::ColumnGenerationChanged {
+                    measurement_set: source,
+                    column: MsColumnKind::CorrectedData,
                 });
             }
             compare_metadata(source, &expected.generations, &actual.generations)?;
@@ -2809,6 +2844,13 @@ fn encode_generations(encoder: &mut CanonicalEncoder, generations: &SourceGenera
     match generations.model_column {
         ModelColumnState::Absent => encoder.u8(0),
         ModelColumnState::Present(generation) => {
+            encoder.u8(1);
+            encoder.identity(generation);
+        }
+    }
+    match generations.corrected_data_column {
+        CorrectedDataColumnState::Absent => encoder.u8(0),
+        CorrectedDataColumnState::Present(generation) => {
             encoder.u8(1);
             encoder.identity(generation);
         }

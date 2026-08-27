@@ -4,6 +4,8 @@
 
 use std::fmt;
 
+use smallvec::SmallVec;
+
 use crate::{
     compiled_problem::CanonicalEncoder,
     geometry::{
@@ -139,25 +141,24 @@ pub struct SelectedSampleMetadata {
 
 /// One source-sample contribution to a compiled output spectral channel.
 ///
-/// The factor is the owner-evaluated interpolation or channel-averaging
-/// coefficient in `(0, 1]`. This reported value carries no traversal authority
+/// The factor is the reconstruction-evaluated interpolation or integration
+/// coefficient. Cubic coefficients may be signed. This reported value carries no traversal authority
 /// and is deliberately outside [`SelectedObservationSample`]'s persisted
 /// schema and content identity.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SelectedSpectralContribution {
     output_channel: u32,
-    factor: f32,
+    factor: f64,
     evaluation_frequency_hz: f64,
 }
 
 impl SelectedSpectralContribution {
-    /// Construct one finite, positive, normalized contribution at its
+    /// Construct one finite, non-zero contribution at its
     /// owner-evaluated frequency in the compiled output frame.
     #[must_use]
-    pub fn new(output_channel: u32, factor: f32, evaluation_frequency_hz: f64) -> Option<Self> {
+    pub fn new(output_channel: u32, factor: f64, evaluation_frequency_hz: f64) -> Option<Self> {
         (factor.is_finite()
-            && factor > 0.0
-            && factor <= 1.0
+            && factor != 0.0
             && evaluation_frequency_hz.is_finite()
             && evaluation_frequency_hz > 0.0)
             .then_some(Self {
@@ -175,7 +176,7 @@ impl SelectedSpectralContribution {
 
     /// Return the interpolation or averaging coefficient.
     #[must_use]
-    pub const fn factor(self) -> f32 {
+    pub const fn factor(self) -> f64 {
         self.factor
     }
 
@@ -186,25 +187,33 @@ impl SelectedSpectralContribution {
     }
 }
 
-/// At most two output-channel contributions reported for one selected sample.
+/// Compact sparse output-channel stencil compiled for one selected sample.
 ///
-/// Entries are compact and address distinct output channels. Nearest and
-/// channel-average sampling report at most one entry; linear interpolation may
-/// report two. Empty coverage is represented explicitly.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// Four terms remain inline for nearest, linear, and cubic sampling. A
+/// planner-bounded integration stencil may spill only when its declared bound
+/// exceeds that inline capacity. Empty coverage is represented explicitly.
+#[derive(Debug, Clone, PartialEq)]
 pub struct SelectedSpectralContributions {
-    entries: [Option<SelectedSpectralContribution>; 2],
+    entries: SmallVec<[SelectedSpectralContribution; 4]>,
 }
 
 impl SelectedSpectralContributions {
-    /// Construct a compact contribution set with distinct output channels.
+    /// Construct a compact contribution set with distinct output channels in
+    /// reconstruction-reported order.
     #[must_use]
-    pub fn new(entries: [Option<SelectedSpectralContribution>; 2]) -> Option<Self> {
-        if entries[0].is_none() && entries[1].is_some() {
-            return None;
-        }
-        if entries[0].is_some_and(|first| {
-            entries[1].is_some_and(|second| first.output_channel == second.output_channel)
+    pub fn new<I, T>(entries: I) -> Option<Self>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<Option<SelectedSpectralContribution>>,
+    {
+        let entries = entries
+            .into_iter()
+            .filter_map(Into::into)
+            .collect::<SmallVec<[_; 4]>>();
+        if entries.iter().enumerate().any(|(index, entry)| {
+            entries[..index]
+                .iter()
+                .any(|prior| prior.output_channel == entry.output_channel)
         }) {
             return None;
         }
@@ -213,15 +222,123 @@ impl SelectedSpectralContributions {
 
     /// Return an empty contribution set.
     #[must_use]
-    pub const fn empty() -> Self {
+    pub fn empty() -> Self {
         Self {
-            entries: [None, None],
+            entries: SmallVec::new(),
         }
     }
 
     /// Iterate through contributions in owner-reported order.
     pub fn iter(&self) -> impl Iterator<Item = SelectedSpectralContribution> + '_ {
-        self.entries.iter().flatten().copied()
+        self.entries.iter().copied()
+    }
+
+    /// Return the exact number of non-zero terms.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Return whether this stencil has no mapped output support.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
+/// One channel interval in a named spectral frame.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SelectedSpectralInterval {
+    centre_hz: f64,
+    first_boundary_hz: f64,
+    second_boundary_hz: f64,
+}
+
+impl SelectedSpectralInterval {
+    /// Construct a finite positive centre and two distinct finite positive boundaries.
+    #[must_use]
+    pub fn new(centre_hz: f64, first_boundary_hz: f64, second_boundary_hz: f64) -> Option<Self> {
+        (centre_hz.is_finite()
+            && centre_hz > 0.0
+            && first_boundary_hz.is_finite()
+            && first_boundary_hz > 0.0
+            && second_boundary_hz.is_finite()
+            && second_boundary_hz > 0.0
+            && first_boundary_hz != second_boundary_hz)
+            .then_some(Self {
+                centre_hz,
+                first_boundary_hz,
+                second_boundary_hz,
+            })
+    }
+
+    /// Return the channel centre.
+    #[must_use]
+    pub const fn centre_hz(self) -> f64 {
+        self.centre_hz
+    }
+
+    /// Return boundaries in original channel order, preserving descending axes.
+    #[must_use]
+    pub const fn boundaries_hz(self) -> [f64; 2] {
+        [self.first_boundary_hz, self.second_boundary_hz]
+    }
+
+    /// Return the positive channel width.
+    #[must_use]
+    pub fn width_hz(self) -> f64 {
+        (self.second_boundary_hz - self.first_boundary_hz).abs()
+    }
+}
+
+/// Source-backed frame/interval evaluation for one selected spectral sample.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SelectedSpectralEvaluation {
+    native: SelectedSpectralInterval,
+    output_frame: SelectedSpectralInterval,
+    effective_weight: f64,
+    valid: bool,
+}
+
+impl SelectedSpectralEvaluation {
+    /// Construct a source-backed trace, keeping native and transformed coordinates distinct.
+    #[must_use]
+    pub fn new(
+        native: SelectedSpectralInterval,
+        output_frame: SelectedSpectralInterval,
+        effective_weight: f64,
+        valid: bool,
+    ) -> Option<Self> {
+        (effective_weight.is_finite() && effective_weight >= 0.0).then_some(Self {
+            native,
+            output_frame,
+            effective_weight,
+            valid,
+        })
+    }
+
+    /// Return the exact native-frame centre and boundaries read from the source.
+    #[must_use]
+    pub const fn native(self) -> SelectedSpectralInterval {
+        self.native
+    }
+
+    /// Return the centre and boundaries evaluated in the compiled output frame.
+    #[must_use]
+    pub const fn output_frame(self) -> SelectedSpectralInterval {
+        self.output_frame
+    }
+
+    /// Return the source weight after exact flag validity has been applied.
+    #[must_use]
+    pub const fn effective_weight(self) -> f64 {
+        self.effective_weight
+    }
+
+    /// Return whether channel, group, row flags and numerical weight admit the sample.
+    #[must_use]
+    pub const fn is_valid(self) -> bool {
+        self.valid
     }
 }
 
@@ -501,7 +618,7 @@ mod tests {
             vec![first, second]
         );
         assert_eq!(SelectedSpectralContributions::empty().iter().count(), 0);
-        assert!(SelectedSpectralContribution::new(0, f32::NAN, 1.4e9).is_none());
+        assert!(SelectedSpectralContribution::new(0, f64::NAN, 1.4e9).is_none());
         assert!(SelectedSpectralContribution::new(0, -0.5, 1.4e9).is_none());
         assert!(SelectedSpectralContribution::new(0, 1.5, 1.4e9).is_none());
         assert!(SelectedSpectralContribution::new(0, 1.0, f64::NAN).is_none());

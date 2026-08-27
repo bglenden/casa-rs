@@ -12,15 +12,15 @@ use std::{
 
 use casa_imaging_model::{
     CompiledProblem, CompiledProblemId, SelectedObservationGenerationId, SelectedObservationSample,
-    SelectedSpectralContribution,
+    SelectedSpectralContribution, SelectedSpectralContributions, SequentialContinuumTransform,
 };
 use casa_imaging_reconstruction::{
-    WeightingAlgorithmState, WeightingDensityPhase, WeightingError, WeightingGenerationId,
-    WeightingPlan, WeightingReplayChunk as ReconstructionWeightedBlock, WeightingReplayCoverageId,
-    WeightingReplayId, WeightingReplaySummary, WeightingResidency,
+    FusedWeightingPhase, WeightingAlgorithmState, WeightingDensityPhase, WeightingError,
+    WeightingGenerationId, WeightingPlan, WeightingReplayChunk as ReconstructionWeightedBlock,
+    WeightingReplayCoverageId, WeightingReplayId, WeightingReplaySummary, WeightingResidency,
     WeightingSampleValue as ReconstructionWeightedSample,
     WeightingSpectralValue as ReconstructionWeightedSpectralValue, begin_natural_weighting_stream,
-    begin_weighting_generation,
+    begin_weighting_generation, compile_spectral_stencil,
 };
 use casa_ms::{
     BoundSelectedObservation, SelectedObservationCompletion,
@@ -42,10 +42,78 @@ use crate::{
     StorageMode, WorkDependency, WorkDomain, WorkExecutionContext, WorkImplementationId, WorkKind,
     WorkNode, WorkNodeId,
 };
+use crate::{
+    ContinuumTransformCompletion, ContinuumTransformError, ContinuumTransformStream,
+    ContinuumTransformedSample, plan_continuum_transform_row,
+};
+
+fn compiled_spectral_contributions(
+    problem: &CompiledProblem,
+    reported: &SelectedObservationTraversalSample,
+) -> Result<SelectedSpectralContributions, WeightingError> {
+    Ok(
+        compile_spectral_stencil(problem, reported.selected(), reported.spectral_evaluation())?
+            .contributions()
+            .clone(),
+    )
+}
+
+fn transformed_spectral_contributions(
+    problem: &CompiledProblem,
+    transformed: &ContinuumTransformedSample,
+) -> Result<SelectedSpectralContributions, WeightingError> {
+    if !transformed.use_role().contributes_to_output() {
+        return Ok(SelectedSpectralContributions::empty());
+    }
+    Ok(compile_spectral_stencil(
+        problem,
+        transformed.selected(),
+        transformed.spectral_evaluation(),
+    )?
+    .contributions()
+    .clone())
+}
+
+fn density_spectral_contributions(
+    problem: &CompiledProblem,
+    reported: &SelectedObservationTraversalSample,
+    continuum: &SequentialContinuumTransform,
+) -> Result<SelectedSpectralContributions, ContinuumDensityCallbackError> {
+    if let Some(rule) = continuum.rule(
+        reported.selected().metadata.field_id,
+        reported.selected().address.spectral_window_id,
+    ) {
+        let use_role = rule
+            .channel_use(reported.selected().address.channel_index)
+            .ok_or(ContinuumTransformError::UndeclaredChannel)?;
+        if !use_role.contributes_to_output() {
+            return Ok(SelectedSpectralContributions::empty());
+        }
+    }
+    compiled_spectral_contributions(problem, reported).map_err(ContinuumDensityCallbackError::Owner)
+}
+
+fn consume_transformed_weighted<E>(
+    problem: &CompiledProblem,
+    stream: &mut FusedWeightingPhase,
+    transformed: ContinuumTransformedSample,
+    emit: &mut impl FnMut(&ReconstructionWeightedBlock) -> Result<(), E>,
+) -> Result<bool, ReplayCallbackError<E>> {
+    let contributions = transformed_spectral_contributions(problem, &transformed)
+        .map_err(ReplayCallbackError::Owner)?;
+    let has_spectral_support = !contributions.is_empty();
+    if let Some(block) = stream
+        .consume(problem, *transformed.selected(), contributions)
+        .map_err(ReplayCallbackError::Owner)?
+    {
+        emit(&block).map_err(ReplayCallbackError::Consumer)?;
+    }
+    Ok(has_spectral_support)
+}
 
 /// Scientific phase occupied by one ordinary continuum reconstruction plan.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum ContinuumPassPhase {
+pub enum SpectralPassPhase {
     /// Normal state used to drive a minor cycle.
     InitialMajor,
     /// Mandatory reconciliation of the accepted final model.
@@ -54,21 +122,21 @@ pub enum ContinuumPassPhase {
 
 /// Stable phase and ordinal namespace for one continuum pass.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ContinuumPassIdentity {
-    phase: ContinuumPassPhase,
+pub struct SpectralPassIdentity {
+    phase: SpectralPassPhase,
     ordinal: u32,
 }
 
-impl ContinuumPassIdentity {
+impl SpectralPassIdentity {
     /// Construct one explicit pass namespace.
     #[must_use]
-    pub const fn new(phase: ContinuumPassPhase, ordinal: u32) -> Self {
+    pub const fn new(phase: SpectralPassPhase, ordinal: u32) -> Self {
         Self { phase, ordinal }
     }
 
     /// Return the semantic phase namespace.
     #[must_use]
-    pub const fn phase(self) -> ContinuumPassPhase {
+    pub const fn phase(self) -> SpectralPassPhase {
         self.phase
     }
 
@@ -80,8 +148,8 @@ impl ContinuumPassIdentity {
 
     fn suffix(self) -> String {
         let phase = match self.phase {
-            ContinuumPassPhase::InitialMajor => "initial-major",
-            ContinuumPassPhase::FinalMajor => "final-major",
+            SpectralPassPhase::InitialMajor => "initial-major",
+            SpectralPassPhase::FinalMajor => "final-major",
         };
         format!("{phase}-{}", self.ordinal)
     }
@@ -128,6 +196,7 @@ pub struct WeightingPlanFragment<'a> {
     release_implementation: WorkImplementationId,
     ids: WeightingPlanIds,
     streaming: Option<WeightingStreamingMode>,
+    continuum_row_bytes: Option<u64>,
 }
 
 /// Production selected-payload traversal shape for one continuum major pass.
@@ -159,7 +228,7 @@ impl<'a> WeightingPlanFragment<'a> {
             generation_implementation,
             replay_implementation,
             release_implementation,
-            ContinuumPassIdentity::new(ContinuumPassPhase::InitialMajor, 0),
+            SpectralPassIdentity::new(SpectralPassPhase::InitialMajor, 0),
         )
     }
 
@@ -172,7 +241,7 @@ impl<'a> WeightingPlanFragment<'a> {
         generation_implementation: WorkImplementationId,
         replay_implementation: WorkImplementationId,
         release_implementation: WorkImplementationId,
-        pass: ContinuumPassIdentity,
+        pass: SpectralPassIdentity,
     ) -> Self {
         Self {
             plan,
@@ -183,6 +252,7 @@ impl<'a> WeightingPlanFragment<'a> {
             release_implementation,
             ids: WeightingPlanIds::new(plan, pass),
             streaming: None,
+            continuum_row_bytes: None,
         }
     }
 
@@ -193,8 +263,9 @@ impl<'a> WeightingPlanFragment<'a> {
         source_read: WorkNodeId,
         source_resources: SelectedObservationSourceResources,
         implementation: WorkImplementationId,
-        pass: ContinuumPassIdentity,
+        pass: SpectralPassIdentity,
         mode: WeightingStreamingMode,
+        continuum_row_bytes: Option<u64>,
     ) -> Self {
         Self {
             plan,
@@ -205,6 +276,7 @@ impl<'a> WeightingPlanFragment<'a> {
             release_implementation: implementation,
             ids: WeightingPlanIds::new(plan, pass),
             streaming: Some(mode),
+            continuum_row_bytes,
         }
     }
 
@@ -358,6 +430,9 @@ impl<'a> WeightingPlanFragment<'a> {
                     allocation_use(&self.ids.replay_read_allocation, io_lifetime.clone()),
                     allocation_use(&self.ids.weighted_block_allocation, io_lifetime.clone()),
                 ])
+                .chain(self.continuum_row_bytes.map(|_| {
+                    allocation_use(&self.ids.continuum_row_allocation, io_lifetime.clone())
+                }))
                 .collect(),
             fences: BTreeSet::from([FenceKind::Io]),
             quiescence_after: BTreeSet::new(),
@@ -686,7 +761,7 @@ impl<'a> WeightingPlanFragment<'a> {
         )?)
     }
 
-    fn allocation_specs(&self) -> Result<[AllocationSpec; 5], WeightingPlanFragmentError> {
+    fn allocation_specs(&self) -> Result<Vec<AllocationSpec>, WeightingPlanFragmentError> {
         let residency = self.plan.planned_residency();
         let frozen_bytes = checked_sum([
             residency.density_grid_bytes(),
@@ -701,7 +776,7 @@ impl<'a> WeightingPlanFragment<'a> {
             self.ids.replay_node.clone(),
             FenceKind::Io,
         ))]);
-        Ok([
+        let mut specs = vec![
             AllocationSpec::new(
                 self.ids.frozen_allocation.clone(),
                 self.ids.frozen_slot.clone(),
@@ -740,9 +815,21 @@ impl<'a> WeightingPlanFragment<'a> {
                 residency.weighted_block_bytes(),
                 "weighting-weighted-block",
                 self.ids.replay_node.clone(),
-                replay_fence,
+                replay_fence.clone(),
             )?,
-        ])
+        ];
+        if let Some(bytes) = self.continuum_row_bytes {
+            specs.push(AllocationSpec::new(
+                self.ids.continuum_row_allocation.clone(),
+                self.ids.continuum_row_slot.clone(),
+                usize::try_from(bytes)
+                    .map_err(|_| WeightingPlanFragmentError::ResidencyOverflow)?,
+                "continuum-transform-row",
+                self.ids.replay_node.clone(),
+                replay_fence,
+            )?);
+        }
+        Ok(specs)
     }
 
     /// Validate one weighting traversal's complete lease and return its owner certificate.
@@ -754,13 +841,19 @@ impl<'a> WeightingPlanFragment<'a> {
         let specs = self
             .allocation_specs()
             .map_err(|_| WeightingEvidenceError)?;
-        let (expected_node, expected) = if context.node().id == self.ids.generation_node {
-            (&self.ids.generation_node, [&specs[0], &specs[1], &specs[2]])
+        let (expected_node, mut expected) = if context.node().id == self.ids.generation_node {
+            (
+                &self.ids.generation_node,
+                vec![&specs[0], &specs[1], &specs[2]],
+            )
         } else if context.node().id == self.ids.replay_node {
-            (&self.ids.replay_node, [&specs[0], &specs[3], &specs[4]])
+            (&self.ids.replay_node, vec![&specs[0], &specs[3], &specs[4]])
         } else {
             return Err(WeightingEvidenceError);
         };
+        if self.continuum_row_bytes.is_some() {
+            expected.push(&specs[5]);
+        }
         validate_work_authority(
             context,
             expected_node,
@@ -999,7 +1092,7 @@ impl WeightingExecutionState {
         fragment: &crate::CompleteDataPlanFragment,
         problem: &CompiledProblem,
         prepared: crate::CompleteDataPreparedState,
-    ) -> Result<crate::SerialMfsOperatorState, crate::CompleteDataPlanError> {
+    ) -> Result<crate::SpectralOperatorState, crate::CompleteDataPlanError> {
         let WeightingExecutionPhase::Frozen(frozen) = &self.phase else {
             return Err(crate::CompleteDataPlanError::MissingFrozenWeighting);
         };
@@ -1090,28 +1183,36 @@ impl WeightingExecutionState {
         fragment: &WeightingPlanFragment<'_>,
         mut selected: BoundSelectedObservation,
         problem: &CompiledProblem,
-    ) -> Result<SelectedObservationCompletion, WeightingGenerationError> {
+    ) -> Result<SelectedObservationCompletion, ContinuumDensityTraversalError> {
         if !matches!(self.phase, WeightingExecutionPhase::Empty)
             || self.retained_observation.is_some()
             || self.density.is_some()
             || fragment.streaming != Some(WeightingStreamingMode::DensityInitial)
         {
-            return Err(WeightingGenerationError::Evidence(WeightingEvidenceError));
+            return Err(ContinuumDensityTraversalError::Evidence(
+                WeightingEvidenceError,
+            ));
         }
         fragment
             .authorize_source_observation(context, problem, selected.residency_certificate())
-            .map_err(WeightingGenerationError::Evidence)?;
+            .map_err(ContinuumDensityTraversalError::Evidence)?;
         let mut density = begin_weighting_generation(problem, fragment.plan)
-            .map_err(WeightingGenerationError::Owner)?;
+            .map_err(ContinuumDensityTraversalError::Owner)?;
+        let continuum = problem.visibility_transform();
         let completion = selected
             .traverse(problem, |reported| {
-                density.consume(
-                    problem,
-                    *reported.selected(),
-                    reported.spectral_contributions(),
-                )
+                let contributions = match continuum {
+                    Some(continuum) => {
+                        density_spectral_contributions(problem, &reported, continuum)?
+                    }
+                    None => compiled_spectral_contributions(problem, &reported)
+                        .map_err(ContinuumDensityCallbackError::Owner)?,
+                };
+                density
+                    .consume(problem, *reported.selected(), contributions)
+                    .map_err(ContinuumDensityCallbackError::Owner)
             })
-            .map_err(WeightingGenerationError::DensityTraversal)?;
+            .map_err(ContinuumDensityTraversalError::Traversal)?;
         self.density = Some(density);
         self.retained_observation = Some(RetainedWeightingObservation {
             selected,
@@ -1129,6 +1230,28 @@ impl WeightingExecutionState {
         fragment: &WeightingPlanFragment<'_>,
         problem: &CompiledProblem,
         selected: Option<BoundSelectedObservation>,
+        emit: impl FnMut(&ReconstructionWeightedBlock) -> Result<(), E>,
+    ) -> Result<(), WeightingReplayError<E>>
+    where
+        E: Error + 'static,
+    {
+        self.traverse_initial_stream_impl(
+            context,
+            fragment,
+            problem,
+            selected,
+            problem.visibility_transform(),
+            emit,
+        )
+    }
+
+    fn traverse_initial_stream_impl<E>(
+        &mut self,
+        context: WorkExecutionContext<'_>,
+        fragment: &WeightingPlanFragment<'_>,
+        problem: &CompiledProblem,
+        selected: Option<BoundSelectedObservation>,
+        continuum: Option<&SequentialContinuumTransform>,
         mut emit: impl FnMut(&ReconstructionWeightedBlock) -> Result<(), E>,
     ) -> Result<(), WeightingReplayError<E>>
     where
@@ -1181,21 +1304,77 @@ impl WeightingExecutionState {
                 return Err(WeightingReplayError::Evidence(WeightingEvidenceError));
             }
         };
+        let mut continuum_stream = match continuum {
+            Some(contract) => {
+                let plan = plan_continuum_transform_row(problem)
+                    .map_err(WeightingReplayError::Transform)?
+                    .ok_or(WeightingReplayError::Evidence(WeightingEvidenceError))?;
+                Some(
+                    ContinuumTransformStream::new(contract, plan)
+                        .map_err(WeightingReplayError::Transform)?,
+                )
+            }
+            None => None,
+        };
+        let mut spectral_support_sample_count = 0_u64;
         let owner_completion = selected
             .traverse(problem, |reported| {
-                if let Some(block) = stream
-                    .consume(
-                        problem,
-                        *reported.selected(),
-                        reported.spectral_contributions(),
-                    )
-                    .map_err(ReplayCallbackError::Owner)?
-                {
-                    emit(&block).map_err(ReplayCallbackError::Consumer)?;
+                if let Some(transform) = &mut continuum_stream {
+                    let completed = transform
+                        .push(*reported.selected(), reported.spectral_evaluation())
+                        .map_err(ReplayCallbackError::Transform)?;
+                    for transformed in completed {
+                        if consume_transformed_weighted(
+                            problem,
+                            &mut stream,
+                            transformed,
+                            &mut emit,
+                        )? {
+                            spectral_support_sample_count += 1;
+                        }
+                    }
+                } else {
+                    let contributions = compiled_spectral_contributions(problem, &reported)
+                        .map_err(ReplayCallbackError::Owner)?;
+                    if let Some(block) = stream
+                        .consume(problem, *reported.selected(), contributions)
+                        .map_err(ReplayCallbackError::Owner)?
+                    {
+                        emit(&block).map_err(ReplayCallbackError::Consumer)?;
+                    }
                 }
                 Ok(())
             })
             .map_err(WeightingReplayError::Traversal)?;
+        let continuum_completion = if let Some(mut transform) = continuum_stream {
+            for transformed in transform
+                .finish_rows()
+                .map_err(WeightingReplayError::Transform)?
+            {
+                if consume_transformed_weighted(problem, &mut stream, transformed, &mut emit)
+                    .map_err(|error| match error {
+                        ReplayCallbackError::Owner(error) => WeightingReplayError::Owner(error),
+                        ReplayCallbackError::Transform(error) => {
+                            WeightingReplayError::Transform(error)
+                        }
+                        ReplayCallbackError::Consumer(error) => {
+                            WeightingReplayError::Consumer(error)
+                        }
+                    })?
+                {
+                    spectral_support_sample_count = spectral_support_sample_count
+                        .checked_add(1)
+                        .ok_or(WeightingReplayError::Evidence(WeightingEvidenceError))?;
+                }
+            }
+            Some(
+                transform
+                    .complete(owner_completion.generation_id())
+                    .map_err(WeightingReplayError::Transform)?,
+            )
+        } else {
+            None
+        };
         let (final_block, state, summary) = stream.finish().map_err(WeightingReplayError::Owner)?;
         if let Some(block) = final_block {
             emit(&block).map_err(WeightingReplayError::Consumer)?;
@@ -1217,6 +1396,7 @@ impl WeightingExecutionState {
             state: Arc::new(state),
             source_generation: owner_completion.generation_id(),
             source_sample_count: owner_completion.sample_count(),
+            continuum_transform: continuum_completion,
             cross_plan_reservation: None,
         };
         let frozen = FrozenWeightingGeneration {
@@ -1241,6 +1421,8 @@ impl WeightingExecutionState {
                 state: summary,
                 owner_completion,
                 binding,
+                continuum_transform: continuum_completion,
+                spectral_support_sample_count,
             },
         };
         Ok(())
@@ -1251,8 +1433,30 @@ impl WeightingExecutionState {
         &mut self,
         context: WorkExecutionContext<'_>,
         fragment: &WeightingPlanFragment<'_>,
+        selected: BoundSelectedObservation,
+        problem: &CompiledProblem,
+        emit: impl FnMut(&ReconstructionWeightedBlock) -> Result<(), E>,
+    ) -> Result<(), WeightingReplayError<E>>
+    where
+        E: Error + 'static,
+    {
+        self.traverse_reuse_stream_impl(
+            context,
+            fragment,
+            selected,
+            problem,
+            problem.visibility_transform(),
+            emit,
+        )
+    }
+
+    fn traverse_reuse_stream_impl<E>(
+        &mut self,
+        context: WorkExecutionContext<'_>,
+        fragment: &WeightingPlanFragment<'_>,
         mut selected: BoundSelectedObservation,
         problem: &CompiledProblem,
+        continuum: Option<&SequentialContinuumTransform>,
         mut emit: impl FnMut(&ReconstructionWeightedBlock) -> Result<(), E>,
     ) -> Result<(), WeightingReplayError<E>>
     where
@@ -1276,23 +1480,82 @@ impl WeightingExecutionState {
             .state
             .begin_replay(problem, fragment.plan)
             .map_err(WeightingReplayError::Owner)?;
+        let mut continuum_stream = match continuum {
+            Some(contract) => {
+                let plan = plan_continuum_transform_row(problem)
+                    .map_err(WeightingReplayError::Transform)?
+                    .ok_or(WeightingReplayError::Evidence(WeightingEvidenceError))?;
+                Some(
+                    ContinuumTransformStream::new(contract, plan)
+                        .map_err(WeightingReplayError::Transform)?,
+                )
+            }
+            None => None,
+        };
+        let mut spectral_support_sample_count = 0_u64;
         let owner_completion = selected
             .traverse(problem, |reported| {
-                if let Some(block) = replay
-                    .consume(
-                        problem,
-                        *reported.selected(),
-                        reported.spectral_contributions(),
-                    )
-                    .map_err(ReplayCallbackError::Owner)?
-                {
-                    emit(&block).map_err(ReplayCallbackError::Consumer)?;
+                if let Some(transform) = &mut continuum_stream {
+                    let completed = transform
+                        .push(*reported.selected(), reported.spectral_evaluation())
+                        .map_err(ReplayCallbackError::Transform)?;
+                    for transformed in completed {
+                        let contributions =
+                            transformed_spectral_contributions(problem, &transformed)
+                                .map_err(ReplayCallbackError::Owner)?;
+                        if !contributions.is_empty() {
+                            spectral_support_sample_count += 1;
+                        }
+                        if let Some(block) = replay
+                            .consume(problem, *transformed.selected(), contributions)
+                            .map_err(ReplayCallbackError::Owner)?
+                        {
+                            emit(&block).map_err(ReplayCallbackError::Consumer)?;
+                        }
+                    }
+                } else {
+                    let contributions = compiled_spectral_contributions(problem, &reported)
+                        .map_err(ReplayCallbackError::Owner)?;
+                    if let Some(block) = replay
+                        .consume(problem, *reported.selected(), contributions)
+                        .map_err(ReplayCallbackError::Owner)?
+                    {
+                        emit(&block).map_err(ReplayCallbackError::Consumer)?;
+                    }
                 }
                 Ok(())
             })
             .map_err(WeightingReplayError::Traversal)?;
+        let continuum_completion = if let Some(mut transform) = continuum_stream {
+            for transformed in transform
+                .finish_rows()
+                .map_err(WeightingReplayError::Transform)?
+            {
+                let contributions = transformed_spectral_contributions(problem, &transformed)
+                    .map_err(WeightingReplayError::Owner)?;
+                if !contributions.is_empty() {
+                    spectral_support_sample_count = spectral_support_sample_count
+                        .checked_add(1)
+                        .ok_or(WeightingReplayError::Evidence(WeightingEvidenceError))?;
+                }
+                if let Some(block) = replay
+                    .consume(problem, *transformed.selected(), contributions)
+                    .map_err(WeightingReplayError::Owner)?
+                {
+                    emit(&block).map_err(WeightingReplayError::Consumer)?;
+                }
+            }
+            Some(
+                transform
+                    .complete(owner_completion.generation_id())
+                    .map_err(WeightingReplayError::Transform)?,
+            )
+        } else {
+            None
+        };
         if owner_completion.generation_id() != artifact.source_generation
             || owner_completion.sample_count() != artifact.source_sample_count
+            || continuum_completion != artifact.continuum_transform
         {
             return Err(WeightingReplayError::Evidence(WeightingEvidenceError));
         }
@@ -1328,6 +1591,8 @@ impl WeightingExecutionState {
                 state: summary,
                 owner_completion,
                 binding,
+                continuum_transform: continuum_completion,
+                spectral_support_sample_count,
             },
         };
         Ok(())
@@ -1548,15 +1813,17 @@ struct WeightingPlanIds {
     reduction_allocation: AllocationId,
     replay_read_allocation: AllocationId,
     weighted_block_allocation: AllocationId,
+    continuum_row_allocation: AllocationId,
     frozen_slot: PhysicalSlotId,
     partial_slot: PhysicalSlotId,
     reduction_slot: PhysicalSlotId,
     replay_read_slot: PhysicalSlotId,
     weighted_block_slot: PhysicalSlotId,
+    continuum_row_slot: PhysicalSlotId,
 }
 
 impl WeightingPlanIds {
-    fn new(plan: &WeightingPlan, pass: ContinuumPassIdentity) -> Self {
+    fn new(plan: &WeightingPlan, pass: SpectralPassIdentity) -> Self {
         let suffix = format!("{}-{}", pass.suffix(), plan.commitment_id());
         Self {
             generation_node: WorkNodeId::new(format!("weighting-generation-{suffix}")),
@@ -1569,12 +1836,18 @@ impl WeightingPlanIds {
             weighted_block_allocation: AllocationId::new(format!(
                 "weighting-weighted-block-{suffix}"
             )),
+            continuum_row_allocation: AllocationId::new(format!(
+                "continuum-transform-row-{suffix}"
+            )),
             frozen_slot: PhysicalSlotId::new(format!("weighting-frozen-slot-{suffix}")),
             partial_slot: PhysicalSlotId::new(format!("weighting-partials-slot-{suffix}")),
             reduction_slot: PhysicalSlotId::new(format!("weighting-reduction-slot-{suffix}")),
             replay_read_slot: PhysicalSlotId::new(format!("weighting-replay-read-slot-{suffix}")),
             weighted_block_slot: PhysicalSlotId::new(format!(
                 "weighting-weighted-block-slot-{suffix}"
+            )),
+            continuum_row_slot: PhysicalSlotId::new(format!(
+                "continuum-transform-row-slot-{suffix}"
             )),
         }
     }
@@ -2249,6 +2522,7 @@ pub struct FrozenWeightingArtifact {
     state: Arc<WeightingAlgorithmState>,
     source_generation: SelectedObservationGenerationId,
     source_sample_count: u64,
+    continuum_transform: Option<ContinuumTransformCompletion>,
     cross_plan_reservation: Option<Arc<FrozenWeightingReservation>>,
 }
 
@@ -2395,12 +2669,10 @@ impl FrozenWeightingGeneration {
             .map_err(WeightingReplayError::Owner)?;
         let owner_completion = selected
             .traverse(problem, |reported| {
+                let contributions = compiled_spectral_contributions(problem, &reported)
+                    .map_err(ReplayCallbackError::Owner)?;
                 if let Some(block) = phase
-                    .consume(
-                        problem,
-                        *reported.selected(),
-                        reported.spectral_contributions(),
-                    )
+                    .consume(problem, *reported.selected(), contributions)
                     .map_err(ReplayCallbackError::Owner)?
                 {
                     let block = WeightedObservationBlock::authorize(self.generation_id(), block);
@@ -2422,10 +2694,13 @@ impl FrozenWeightingGeneration {
             let block = WeightedObservationBlock::authorize(self.generation_id(), block);
             emit(&block).map_err(WeightingReplayError::Consumer)?;
         }
+        let spectral_support_sample_count = state.sample_count();
         Ok(PendingWeightingReplay {
             state,
             owner_completion,
             binding: replay_binding,
+            continuum_transform: None,
+            spectral_support_sample_count,
         })
     }
 }
@@ -2459,11 +2734,8 @@ fn traverse_weighting_generation(
         .map_err(WeightingGenerationError::Owner)?;
     let density_completion = selected
         .traverse(problem, |reported| {
-            density.consume(
-                problem,
-                *reported.selected(),
-                reported.spectral_contributions(),
-            )
+            let contributions = compiled_spectral_contributions(problem, &reported)?;
+            density.consume(problem, *reported.selected(), contributions)
         })
         .map_err(WeightingGenerationError::DensityTraversal)?;
     let sum_weight = density
@@ -2472,11 +2744,8 @@ fn traverse_weighting_generation(
     let mut sum_weight = sum_weight;
     let sum_weight_completion = selected
         .traverse(problem, |reported| {
-            sum_weight.consume(
-                problem,
-                *reported.selected(),
-                reported.spectral_contributions(),
-            )
+            let contributions = compiled_spectral_contributions(problem, &reported)?;
+            sum_weight.consume(problem, *reported.selected(), contributions)
         })
         .map_err(WeightingGenerationError::SumWeightTraversal)?;
     let state = sum_weight
@@ -2533,6 +2802,7 @@ fn complete_weighting_generation(
                 state: Arc::new(pending.state),
                 source_generation: pending.density_completion.generation_id(),
                 source_sample_count: pending.density_completion.sample_count(),
+                continuum_transform: None,
                 cross_plan_reservation: None,
             },
             binding,
@@ -2583,6 +2853,8 @@ struct PendingWeightingReplay {
     state: WeightingReplaySummary,
     owner_completion: SelectedObservationCompletion,
     binding: WeightingGenerationBinding,
+    continuum_transform: Option<ContinuumTransformCompletion>,
+    spectral_support_sample_count: u64,
 }
 
 impl PendingWeightingReplay {
@@ -2614,6 +2886,8 @@ impl PendingWeightingReplay {
                 selected_generation,
                 sample_count,
                 binding: self.binding,
+                continuum_transform: self.continuum_transform,
+                spectral_support_sample_count: self.spectral_support_sample_count,
             },
             owner_completion,
         ))
@@ -2628,6 +2902,8 @@ pub struct WeightingReplayCompletion {
     selected_generation: SelectedObservationGenerationId,
     sample_count: u64,
     binding: WeightingGenerationBinding,
+    continuum_transform: Option<ContinuumTransformCompletion>,
+    spectral_support_sample_count: u64,
 }
 
 impl WeightingReplayCompletion {
@@ -2657,6 +2933,18 @@ impl WeightingReplayCompletion {
     #[must_use]
     pub const fn selected_generation(&self) -> SelectedObservationGenerationId {
         self.selected_generation
+    }
+
+    /// Return sequential continuum-transform evidence when the replay used it.
+    #[must_use]
+    pub const fn continuum_transform(&self) -> Option<ContinuumTransformCompletion> {
+        self.continuum_transform
+    }
+
+    /// Return samples whose compiled spectral stencil reached weighting.
+    #[must_use]
+    pub const fn spectral_support_sample_count(&self) -> u64 {
+        self.spectral_support_sample_count
     }
 
     /// Return exact emitted weighted-sample coverage.
@@ -2741,6 +3029,55 @@ pub enum WeightingGenerationError {
     Evidence(WeightingEvidenceError),
 }
 
+/// Failure while resolving channel roles or accumulating the density prepass.
+#[derive(Debug)]
+pub enum ContinuumDensityCallbackError {
+    /// The compiled transform did not cover a selected channel.
+    Transform(ContinuumTransformError),
+    /// Reconstruction rejected the spectral stencil or density sample.
+    Owner(WeightingError),
+}
+
+impl From<ContinuumTransformError> for ContinuumDensityCallbackError {
+    fn from(error: ContinuumTransformError) -> Self {
+        Self::Transform(error)
+    }
+}
+
+impl fmt::Display for ContinuumDensityCallbackError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Transform(error) => error.fmt(formatter),
+            Self::Owner(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl Error for ContinuumDensityCallbackError {}
+
+/// Transform-aware density traversal failure.
+#[derive(Debug)]
+pub enum ContinuumDensityTraversalError {
+    /// Resource or phase evidence did not authorize the traversal.
+    Evidence(WeightingEvidenceError),
+    /// Reconstruction rejected density initialization.
+    Owner(WeightingError),
+    /// The exhaustive storage traversal or role callback failed.
+    Traversal(SelectedObservationTraversalError<ContinuumDensityCallbackError>),
+}
+
+impl fmt::Display for ContinuumDensityTraversalError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Evidence(error) => error.fmt(formatter),
+            Self::Owner(error) => error.fmt(formatter),
+            Self::Traversal(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl Error for ContinuumDensityTraversalError {}
+
 impl fmt::Display for WeightingGenerationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -2805,6 +3142,8 @@ pub enum WeightingReplayError<E> {
     Traversal(SelectedObservationTraversalError<ReplayCallbackError<E>>),
     /// Reconstruction rejected the replay.
     Owner(WeightingError),
+    /// Sequential continuum transformation rejected a row or its evidence.
+    Transform(ContinuumTransformError),
     /// Opaque replay completion did not follow the frozen generation passes.
     Evidence(WeightingEvidenceError),
     /// The consumer rejected the terminal partial block.
@@ -2816,6 +3155,7 @@ impl<E: fmt::Display> fmt::Display for WeightingReplayError<E> {
         match self {
             Self::Traversal(error) => error.fmt(formatter),
             Self::Owner(error) => error.fmt(formatter),
+            Self::Transform(error) => error.fmt(formatter),
             Self::Evidence(error) => error.fmt(formatter),
             Self::Consumer(error) => write!(formatter, "weighted replay consumer failed: {error}"),
         }
@@ -2829,6 +3169,8 @@ impl<E: Error + 'static> Error for WeightingReplayError<E> {}
 pub enum ReplayCallbackError<E> {
     /// Reconstruction rejected a validated sample.
     Owner(WeightingError),
+    /// Sequential continuum transformation rejected a row.
+    Transform(ContinuumTransformError),
     /// The downstream block consumer failed.
     Consumer(E),
 }
@@ -2837,6 +3179,7 @@ impl<E: fmt::Display> fmt::Display for ReplayCallbackError<E> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Owner(error) => error.fmt(formatter),
+            Self::Transform(error) => error.fmt(formatter),
             Self::Consumer(error) => error.fmt(formatter),
         }
     }

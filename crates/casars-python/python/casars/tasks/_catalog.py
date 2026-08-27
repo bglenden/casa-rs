@@ -126,7 +126,7 @@ def msexplore(
 
 def calibrate(
     *,
-    mode: Literal['apply', 'continuum_subtract', 'export_corrected_data', 'fluxscale', 'gencal', 'solve_bandpass', 'solve_gain', 'stats', 'summary'] | object = _UNSET,
+    mode: Literal['apply', 'export_corrected_data', 'fluxscale', 'gencal', 'solve_bandpass', 'solve_gain', 'stats', 'summary'] | object = _UNSET,
     vis: StrPath | list[StrPath] | tuple[StrPath, ...] | object = _UNSET,
     outputvis: StrPath | object = _UNSET,
     summary_paths: str | object = _UNSET,
@@ -144,9 +144,7 @@ def calibrate(
     format: Literal['json', 'text'] | object = _UNSET,
     stats_axis: Literal['amp', 'imag', 'phase', 'real'] | object = _UNSET,
     stats_datacolumn: str | object = _UNSET,
-    fit_spw: str | object = _UNSET,
     use_flags: bool | object = _UNSET,
-    fit_order: int | object = _UNSET,
     out_table: StrPath | object = _UNSET,
     refant: str | object = _UNSET,
     gain_type: Literal['g', 't'] | object = _UNSET,
@@ -192,7 +190,7 @@ def calibrate(
     confirm_mutation: bool = False,
 ) -> TaskCompletion:
     """apply, inspect, and solve CASA-style calibration workflows"""
-    overrides = _explicit(locals(), ('mode', 'vis', 'outputvis', 'summary_paths', 'gaintables', 'table_path', 'callib', 'gainfield', 'interp', 'spwmap', 'apply_mode', 'calwt', 'output', 'overwrite', 'parang', 'format', 'stats_axis', 'stats_datacolumn', 'fit_spw', 'use_flags', 'fit_order', 'out_table', 'refant', 'gain_type', 'solve_mode', 'solint', 'gain_combine', 'gain_model_source', 'smodel', 'min_snr', 'bandpass_combine', 'bandtype', 'solnorm', 'fluxscale_input', 'reference_fields', 'transfer_fields', 'refspwmap', 'gainthreshold', 'incremental', 'selectdata', 'field', 'spw', 'antenna', 'scan', 'observation', 'array', 'timerange', 'msselect', 'caltype', 'parameter', 'gaincurve_table'))
+    overrides = _explicit(locals(), ('mode', 'vis', 'outputvis', 'summary_paths', 'gaintables', 'table_path', 'callib', 'gainfield', 'interp', 'spwmap', 'apply_mode', 'calwt', 'output', 'overwrite', 'parang', 'format', 'stats_axis', 'stats_datacolumn', 'use_flags', 'out_table', 'refant', 'gain_type', 'solve_mode', 'solint', 'gain_combine', 'gain_model_source', 'smodel', 'min_snr', 'bandpass_combine', 'bandtype', 'solnorm', 'fluxscale_input', 'reference_fields', 'transfer_fields', 'refspwmap', 'gainthreshold', 'incremental', 'selectdata', 'field', 'spw', 'antenna', 'scan', 'observation', 'array', 'timerange', 'msselect', 'caltype', 'parameter', 'gaincurve_table'))
     return _run(
         "calibrate",
         parameters=parameters,
@@ -352,6 +350,8 @@ def imager(
     imaging_fft_precision: Literal['auto', 'f32', 'f64'] | object = _UNSET,
     projection: Literal['SIN'] | object = _UNSET,
     standard_mfs_grid_threads: int | Literal['auto'] | object = _UNSET,
+    fitspw: str | object = _UNSET,
+    fitorder: int | object = _UNSET,
     parameters: TaskParameters | None = None,
     profile: StrPath | None = None,
     base_source: Literal["defaults", "last", "last_successful"] = "defaults",
@@ -367,7 +367,7 @@ def imager(
     confirm_mutation: bool = False,
 ) -> TaskCompletion:
     """Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet"""
-    overrides = _explicit(locals(), ('vis', 'imagename', 'imsize', 'cell', 'datacolumn', 'savemodel', 'startmodel', 'outlierfile', 'field', 'phasecenter_field', 'ddid', 'phasecenter', 'spw', 'channel_start', 'channel_count', 'stokes', 'specmode', 'start', 'width', 'outframe', 'veltype', 'interpolation', 'restfreq', 'restoringbeam', 'perchanweightdensity', 'dirty_only', 'niter', 'threshold', 'nmajor', 'fullsummary', 'gain', 'nsigma', 'psfcutoff', 'minor_cycle_length', 'cyclefactor', 'deconvolver', 'minpsffraction', 'maxpsffraction', 'nterms', 'hogbom_iteration_mode', 'scales', 'smallscalebias', 'usemask', 'sidelobethreshold', 'noisethreshold', 'lownoisethreshold', 'negativethreshold', 'minbeamfrac', 'growiterations', 'mask_box', 'weighting', 'mask_image', 'robust', 'wprojplanes', 'usepointing', 'uvtaper', 'write_preview_pngs', 'write_pb', 'pbcor', 'pblimit', 'wterm', 'gridder', 'standard_mfs_acceleration', 'parallel', 'imaging_read_ahead_blocks', 'imaging_fft_backend', 'chanchunks', 'uvrange', 'intent', 'cfcache', 'cf_resident_mb', 'facets', 'psfphasecenter', 'vptable', 'aterm', 'psterm', 'wbawp', 'conjbeams', 'computepastep', 'rotatepastep', 'pointingoffsetsigdev', 'mosweight', 'normtype', 'imaging_memory_target_mb', 'imaging_memory_pressure_policy', 'imaging_prepare_buffer_mb', 'imaging_row_block_rows', 'imaging_prepare_workers', 'imaging_fft_precision', 'projection', 'standard_mfs_grid_threads'))
+    overrides = _explicit(locals(), ('vis', 'imagename', 'imsize', 'cell', 'datacolumn', 'savemodel', 'startmodel', 'outlierfile', 'field', 'phasecenter_field', 'ddid', 'phasecenter', 'spw', 'channel_start', 'channel_count', 'stokes', 'specmode', 'start', 'width', 'outframe', 'veltype', 'interpolation', 'restfreq', 'restoringbeam', 'perchanweightdensity', 'dirty_only', 'niter', 'threshold', 'nmajor', 'fullsummary', 'gain', 'nsigma', 'psfcutoff', 'minor_cycle_length', 'cyclefactor', 'deconvolver', 'minpsffraction', 'maxpsffraction', 'nterms', 'hogbom_iteration_mode', 'scales', 'smallscalebias', 'usemask', 'sidelobethreshold', 'noisethreshold', 'lownoisethreshold', 'negativethreshold', 'minbeamfrac', 'growiterations', 'mask_box', 'weighting', 'mask_image', 'robust', 'wprojplanes', 'usepointing', 'uvtaper', 'write_preview_pngs', 'write_pb', 'pbcor', 'pblimit', 'wterm', 'gridder', 'standard_mfs_acceleration', 'parallel', 'imaging_read_ahead_blocks', 'imaging_fft_backend', 'chanchunks', 'uvrange', 'intent', 'cfcache', 'cf_resident_mb', 'facets', 'psfphasecenter', 'vptable', 'aterm', 'psterm', 'wbawp', 'conjbeams', 'computepastep', 'rotatepastep', 'pointingoffsetsigdev', 'mosweight', 'normtype', 'imaging_memory_target_mb', 'imaging_memory_pressure_policy', 'imaging_prepare_buffer_mb', 'imaging_row_block_rows', 'imaging_prepare_workers', 'imaging_fft_precision', 'projection', 'standard_mfs_grid_threads', 'fitspw', 'fitorder'))
     return _run(
         "imager",
         parameters=parameters,
@@ -706,59 +706,6 @@ def split(
     overrides = _explicit(locals(), ('vis', 'outputvis', 'spw', 'width', 'field', 'scan', 'antenna', 'timerange', 'msselect', 'datacolumn', 'keepflags'))
     return _run(
         "split",
-        parameters=parameters,
-        profile=profile,
-        base_source=base_source,
-        overrides=overrides,
-        workspace=workspace,
-        notebook=notebook,
-        save_last=save_last,
-        record_notebook=record_notebook,
-        binary=binary,
-        check=check,
-        timeout=timeout,
-        env=env,
-        confirm_overwrite=confirm_overwrite,
-        confirm_mutation=confirm_mutation,
-    )
-
-def uvcontsub(
-    *,
-    vis: StrPath | list[StrPath] | tuple[StrPath, ...] | object = _UNSET,
-    outputvis: StrPath | object = _UNSET,
-    output: StrPath | object = _UNSET,
-    overwrite: bool | object = _UNSET,
-    format: Literal['json', 'text'] | object = _UNSET,
-    stats_datacolumn: str | object = _UNSET,
-    fit_spw: str | object = _UNSET,
-    fit_order: int | object = _UNSET,
-    selectdata: bool | object = _UNSET,
-    field: str | object = _UNSET,
-    spw: str | object = _UNSET,
-    antenna: str | object = _UNSET,
-    scan: str | object = _UNSET,
-    observation: str | object = _UNSET,
-    array: str | object = _UNSET,
-    timerange: str | object = _UNSET,
-    msselect: str | object = _UNSET,
-    parameters: TaskParameters | None = None,
-    profile: StrPath | None = None,
-    base_source: Literal["defaults", "last", "last_successful"] = "defaults",
-    workspace: StrPath | None = None,
-    notebook: str | None = None,
-    save_last: bool = True,
-    record_notebook: bool = True,
-    binary: StrPath | None = None,
-    check: bool = True,
-    timeout: float | None = None,
-    env: Mapping[str, str] | None = None,
-    confirm_overwrite: bool = False,
-    confirm_mutation: bool = False,
-) -> TaskCompletion:
-    """Subtract continuum emission from a MeasurementSet."""
-    overrides = _explicit(locals(), ('vis', 'outputvis', 'output', 'overwrite', 'format', 'stats_datacolumn', 'fit_spw', 'fit_order', 'selectdata', 'field', 'spw', 'antenna', 'scan', 'observation', 'array', 'timerange', 'msselect'))
-    return _run(
-        "uvcontsub",
         parameters=parameters,
         profile=profile,
         base_source=base_source,
@@ -2209,6 +2156,6 @@ def simalma(
         confirm_mutation=confirm_mutation,
     )
 
-TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'imager', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'uvcontsub', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'plotcal', 'flagdata', 'flagmanager', 'imcollapse', 'imfit', 'impbcor', 'widebandpbcor', 'imcontsub', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'concat', 'statwt', 'hanningsmooth', 'clearcal', 'delmod', 'ft', 'simanalyze', 'simalma')
+TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'imager', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'plotcal', 'flagdata', 'flagmanager', 'imcollapse', 'imfit', 'impbcor', 'widebandpbcor', 'imcontsub', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'concat', 'statwt', 'hanningsmooth', 'clearcal', 'delmod', 'ft', 'simanalyze', 'simalma')
 
-__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'imager', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'uvcontsub', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'plotcal', 'flagdata', 'flagmanager', 'imcollapse', 'imfit', 'impbcor', 'widebandpbcor', 'imcontsub', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'concat', 'statwt', 'hanningsmooth', 'clearcal', 'delmod', 'ft', 'simanalyze', 'simalma']
+__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'imager', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'plotcal', 'flagdata', 'flagmanager', 'imcollapse', 'imfit', 'impbcor', 'widebandpbcor', 'imcontsub', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'concat', 'statwt', 'hanningsmooth', 'clearcal', 'delmod', 'ft', 'simanalyze', 'simalma']

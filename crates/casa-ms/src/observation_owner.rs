@@ -15,11 +15,11 @@ use std::{
 };
 
 use casa_imaging_model::{
-    ColumnGeneration, ConsistencyToken, FlagPolicy, LogicalIdentity, MeasurementSetIdentity,
-    MetadataGeneration, MetadataTableKind, ModelColumnState, ModelStateIdentity, MsColumnKind,
-    ObservationSelection, ObservationSnapshotInput, ObservationSourceInput,
-    ObservationSourceProvenance, ObservationSourceState, ReferenceDataKind, SelectedColumns,
-    SourceGenerations, VisibilityColumn, WeightColumn,
+    ColumnGeneration, ConsistencyToken, CorrectedDataColumnState, FlagPolicy, LogicalIdentity,
+    MeasurementSetIdentity, MetadataGeneration, MetadataTableKind, ModelColumnState,
+    ModelStateIdentity, MsColumnKind, ObservationSelection, ObservationSnapshotInput,
+    ObservationSourceInput, ObservationSourceProvenance, ObservationSourceState, ReferenceDataKind,
+    SelectedColumns, SourceGenerations, VisibilityColumn, WeightColumn,
 };
 use casa_tables::{ColumnSchema, LockType, Table};
 use casa_types::{
@@ -182,46 +182,86 @@ impl SelectedObservationResolutionRequest {
     }
 }
 
-/// Bounded in-place `MODEL_DATA` writer following ordinary casacore semantics.
+/// Selected visibility columns written by one bounded owner transaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SelectedVisibilityWriteTargets {
+    model_data: bool,
+    corrected_data: bool,
+}
+
+impl SelectedVisibilityWriteTargets {
+    /// Construct the exact destination set. At least one destination is required.
+    #[must_use]
+    pub const fn new(model_data: bool, corrected_data: bool) -> Self {
+        Self {
+            model_data,
+            corrected_data,
+        }
+    }
+
+    /// Return whether `MODEL_DATA` is written.
+    #[must_use]
+    pub const fn model_data(self) -> bool {
+        self.model_data
+    }
+
+    /// Return whether existing `CORRECTED_DATA` is written.
+    #[must_use]
+    pub const fn corrected_data(self) -> bool {
+        self.corrected_data
+    }
+}
+
+/// Owner generations published by one selected visibility write.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SelectedVisibilityWriteGenerations {
+    /// Final prediction generation, when `MODEL_DATA` was selected.
+    pub model_data: Option<LogicalIdentity>,
+    /// Transformed-observation generation, when `CORRECTED_DATA` was selected.
+    pub corrected_data: Option<LogicalIdentity>,
+}
+
+/// Bounded in-place selected-visibility writer following ordinary casacore semantics.
 ///
 /// The writer retains the MAIN write lock and the repository's standard
-/// incomplete-write marker. Successful completion flushes `MODEL_DATA`, updates
-/// its owner generation, and removes the marker. Failure may leave partially
+/// incomplete-write marker. Successful completion flushes every selected
+/// destination, updates its owner generation, and removes the marker. Failure may leave partially
 /// written derived values, but the retained marker makes that state fail closed
 /// until explicitly recovered or recomputed. No backup, staging column,
 /// rollback, snapshot, or content digest is created.
 #[cfg(unix)]
-pub struct ModelDataWrite {
+pub struct SelectedVisibilityWrite {
     measurement_set: Option<MeasurementSet>,
     manifest: OwnerManifest,
     incomplete_marker: Option<std::path::PathBuf>,
-    pending_cell: Option<PendingModelCell>,
+    targets: SelectedVisibilityWriteTargets,
+    pending_cell: Option<PendingVisibilityCells>,
     completed: bool,
 }
 
-struct PendingModelCell {
+struct PendingVisibilityCells {
     row: usize,
-    values: ndarray::ArrayD<Complex32>,
+    model_data: Option<ndarray::ArrayD<Complex32>>,
+    corrected_data: Option<ndarray::ArrayD<Complex32>>,
 }
 
-/// Owner-derived storage plan for one bounded `MODEL_DATA` write.
+/// Owner-derived storage plan for one bounded selected-visibility write.
 ///
 /// The plan is derived from MAIN row/DDID coordinates and the standard
 /// DATA_DESCRIPTION, SPECTRAL_WINDOW, and POLARIZATION metadata. It never reads
 /// a visibility payload merely to discover a cell shape.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ModelColumnStoragePlan {
+pub struct SelectedVisibilityStoragePlan {
     additional_persistent_bytes: u64,
     write_bytes: u64,
     maximum_cell_bytes: u64,
 }
 
-impl ModelColumnStoragePlan {
+impl SelectedVisibilityStoragePlan {
     /// New persistent capacity required for this write.
     ///
-    /// This is the complete logical column size when `MODEL_DATA` must be
-    /// created and zero-initialized, and zero for an in-place overwrite of an
-    /// existing column.
+    /// This includes complete logical `MODEL_DATA` capacity when creation and
+    /// zero-initialization are required. Existing destinations add no capacity.
     #[must_use]
     pub const fn additional_persistent_bytes(self) -> u64 {
         self.additional_persistent_bytes
@@ -241,13 +281,17 @@ impl ModelColumnStoragePlan {
 }
 
 #[cfg(unix)]
-impl ModelDataWrite {
+impl SelectedVisibilityWrite {
     /// Acquire owner write authority and start a detectable in-place mutation.
     pub fn begin(
         path: impl AsRef<Path>,
         expected: &ObservationSourceState,
         selection: &ObservationSelection,
+        targets: SelectedVisibilityWriteTargets,
     ) -> Result<Self, ObservationOwnerError> {
+        if !targets.model_data && !targets.corrected_data {
+            return Err(ObservationOwnerError::EmptyWriteTargets);
+        }
         let path = path.as_ref();
         let mut measurement_set = MeasurementSet::open_retained_read(path)?;
         if !measurement_set.main_table_mut().lock(LockType::Write, 1)? {
@@ -265,8 +309,19 @@ impl ModelDataWrite {
             })?;
             schema.contains_column("MODEL_DATA")
         };
+        let has_corrected = measurement_set
+            .main_table()
+            .schema()
+            .is_some_and(|schema| schema.contains_column("CORRECTED_DATA"));
+        if targets.corrected_data
+            && (!has_corrected
+                || expected.generations().corrected_data_column()
+                    == CorrectedDataColumnState::Absent)
+        {
+            return Err(ObservationOwnerError::MissingCorrectedDataDestination);
+        }
         let incomplete_marker = crate::write_session::begin_in_place_write(path)?;
-        if !has_model {
+        if targets.model_data && !has_model {
             measurement_set.main_table_mut().add_column(
                 ColumnSchema::array_variable("MODEL_DATA", PrimitiveType::Complex32, Some(2)),
                 None,
@@ -279,8 +334,9 @@ impl ModelDataWrite {
             for row in 0..row_count {
                 let data_description_id = main_data_description_id(&measurement_set, row)?;
                 let shape = model_cell_shape(&measurement_set, data_description_id)?;
-                persist_model_cell(
+                persist_visibility_cell(
                     measurement_set.main_table_mut(),
+                    "MODEL_DATA",
                     row,
                     ArrayValue::Complex32(ndarray::ArrayD::from_elem(
                         ndarray::IxDyn(&shape),
@@ -293,6 +349,7 @@ impl ModelDataWrite {
             measurement_set: Some(measurement_set),
             manifest,
             incomplete_marker,
+            targets,
             pending_cell: None,
             completed: false,
         })
@@ -301,6 +358,7 @@ impl ModelDataWrite {
     /// Write one selected prediction at its physical row/channel/correlation.
     pub fn write(
         &mut self,
+        column: MsColumnKind,
         row: u64,
         channel: u32,
         correlation: u32,
@@ -313,22 +371,44 @@ impl ModelDataWrite {
                 .measurement_set
                 .as_ref()
                 .ok_or(ObservationOwnerError::TransactionClosed)?;
-            let current = measurement_set
-                .main_table()
-                .column_accessor("MODEL_DATA")?
-                .get(row)?
-                .cloned()
-                .ok_or(ObservationOwnerError::PredictionAddress)?;
-            let Value::Array(ArrayValue::Complex32(values)) = current else {
-                return Err(ObservationOwnerError::PredictionAddress);
+            let load = |name: &str| -> Result<ndarray::ArrayD<Complex32>, ObservationOwnerError> {
+                let current = measurement_set
+                    .main_table()
+                    .column_accessor(name)?
+                    .get(row)?
+                    .cloned()
+                    .ok_or(ObservationOwnerError::PredictionAddress)?;
+                let Value::Array(ArrayValue::Complex32(values)) = current else {
+                    return Err(ObservationOwnerError::PredictionAddress);
+                };
+                Ok(values)
             };
-            self.pending_cell = Some(PendingModelCell { row, values });
+            self.pending_cell = Some(PendingVisibilityCells {
+                row,
+                model_data: self
+                    .targets
+                    .model_data
+                    .then(|| load("MODEL_DATA"))
+                    .transpose()?,
+                corrected_data: self
+                    .targets
+                    .corrected_data
+                    .then(|| load("CORRECTED_DATA"))
+                    .transpose()?,
+            });
         }
-        let values = &mut self
+        let pending = self
             .pending_cell
             .as_mut()
-            .ok_or(ObservationOwnerError::TransactionClosed)?
-            .values;
+            .ok_or(ObservationOwnerError::TransactionClosed)?;
+        let values = match column {
+            MsColumnKind::ModelData if self.targets.model_data => pending.model_data.as_mut(),
+            MsColumnKind::CorrectedData if self.targets.corrected_data => {
+                pending.corrected_data.as_mut()
+            }
+            _ => None,
+        }
+        .ok_or(ObservationOwnerError::UnselectedWriteTarget)?;
         let index = [correlation as usize, channel as usize];
         let Some(cell) = values.get_mut(index) else {
             return Err(ObservationOwnerError::PredictionAddress);
@@ -338,21 +418,43 @@ impl ModelDataWrite {
     }
 
     /// Flush the in-place write, publish its generation, and clear the marker.
-    pub fn complete(mut self, generation: LogicalIdentity) -> Result<(), ObservationOwnerError> {
+    pub fn complete(
+        mut self,
+        generations: SelectedVisibilityWriteGenerations,
+    ) -> Result<(), ObservationOwnerError> {
+        if self.targets.model_data != generations.model_data.is_some()
+            || self.targets.corrected_data != generations.corrected_data.is_some()
+        {
+            return Err(ObservationOwnerError::WriteGenerationMismatch);
+        }
         self.flush_pending_cell()?;
         let measurement_set = self
             .measurement_set
             .as_mut()
             .ok_or(ObservationOwnerError::TransactionClosed)?;
-        self.manifest.model_data = PersistedModelColumn::Present {
-            generation: encode_identity(generation),
-        };
+        if let Some(generation) = generations.model_data {
+            self.manifest.model_data = PersistedModelColumn::Present {
+                generation: encode_identity(generation),
+            };
+        }
+        if let Some(generation) = generations.corrected_data {
+            self.manifest
+                .columns
+                .insert("CORRECTED_DATA".to_string(), encode_identity(generation));
+        }
         let mut hasher = Sha256::new();
-        hasher.update(b"casa-rs-model-column-consistency-v1");
+        hasher.update(b"casa-rs-selected-visibility-consistency-v1");
         hasher.update(
             parse_identity(&self.manifest.consistency_token, "consistency token")?.as_bytes(),
         );
-        hasher.update(generation.as_bytes());
+        if let Some(generation) = generations.model_data {
+            hasher.update(b"MODEL_DATA");
+            hasher.update(generation.as_bytes());
+        }
+        if let Some(generation) = generations.corrected_data {
+            hasher.update(b"CORRECTED_DATA");
+            hasher.update(generation.as_bytes());
+        }
         self.manifest.consistency_token =
             encode_identity(LogicalIdentity::from_sha256(hasher.finalize().into()));
         self.manifest.main_modify_counter = measurement_set
@@ -375,16 +477,28 @@ impl ModelDataWrite {
             .measurement_set
             .as_mut()
             .ok_or(ObservationOwnerError::TransactionClosed)?;
-        persist_model_cell(
-            measurement_set.main_table_mut(),
-            cell.row,
-            ArrayValue::Complex32(cell.values),
-        )
+        if let Some(values) = cell.model_data {
+            persist_visibility_cell(
+                measurement_set.main_table_mut(),
+                "MODEL_DATA",
+                cell.row,
+                ArrayValue::Complex32(values),
+            )?;
+        }
+        if let Some(values) = cell.corrected_data {
+            persist_visibility_cell(
+                measurement_set.main_table_mut(),
+                "CORRECTED_DATA",
+                cell.row,
+                ArrayValue::Complex32(values),
+            )?;
+        }
+        Ok(())
     }
 }
 
 #[cfg(unix)]
-impl Drop for ModelDataWrite {
+impl Drop for SelectedVisibilityWrite {
     fn drop(&mut self) {
         if !self.completed {
             if let Some(measurement_set) = self.measurement_set.as_mut() {
@@ -413,7 +527,8 @@ impl ResolvedSelectedObservation {
 pub struct ResolvedSelectedObservationAccess {
     binding: ObservationSourceBinding,
     measures: SelectedObservationMeasures,
-    model_column_storage: ModelColumnStoragePlan,
+    model_column_storage: SelectedVisibilityStoragePlan,
+    corrected_column_storage: Option<SelectedVisibilityStoragePlan>,
 }
 
 impl ResolvedSelectedObservationAccess {
@@ -430,9 +545,49 @@ impl ResolvedSelectedObservationAccess {
     }
 
     /// Return the payload-free storage plan captured by this owner resolution.
-    #[must_use]
-    pub const fn model_column_storage_plan(&self) -> ModelColumnStoragePlan {
-        self.model_column_storage
+    pub fn selected_visibility_storage_plan(
+        &self,
+        targets: SelectedVisibilityWriteTargets,
+    ) -> Result<SelectedVisibilityStoragePlan, ObservationOwnerError> {
+        if !targets.model_data && !targets.corrected_data {
+            return Err(ObservationOwnerError::EmptyWriteTargets);
+        }
+        let corrected = targets
+            .corrected_data
+            .then_some(self.corrected_column_storage)
+            .flatten()
+            .ok_or(ObservationOwnerError::MissingCorrectedDataDestination)
+            .or_else(|error| {
+                if targets.corrected_data {
+                    Err(error)
+                } else {
+                    Ok(SelectedVisibilityStoragePlan {
+                        additional_persistent_bytes: 0,
+                        write_bytes: 0,
+                        maximum_cell_bytes: 0,
+                    })
+                }
+            })?;
+        let model = if targets.model_data {
+            self.model_column_storage
+        } else {
+            SelectedVisibilityStoragePlan {
+                additional_persistent_bytes: 0,
+                write_bytes: 0,
+                maximum_cell_bytes: 0,
+            }
+        };
+        Ok(SelectedVisibilityStoragePlan {
+            additional_persistent_bytes: model.additional_persistent_bytes,
+            write_bytes: model
+                .write_bytes
+                .checked_add(corrected.write_bytes)
+                .ok_or(ObservationOwnerError::PredictionAddress)?,
+            maximum_cell_bytes: model
+                .maximum_cell_bytes
+                .checked_add(corrected.maximum_cell_bytes)
+                .ok_or(ObservationOwnerError::PredictionAddress)?,
+        })
     }
 
     /// Replace the caller's upper-bound content budget with the smallest budget
@@ -566,7 +721,20 @@ pub fn resolve_selected_observation(
     manifest.validate_physical_state(&measurement_set)?;
     validate_physical_selection(&measurement_set, &request.selection, request.content_budget)?;
     let model_column_storage =
-        derive_model_column_storage_plan(&measurement_set, &request.selection)?;
+        derive_column_storage_plan(&measurement_set, &request.selection, "MODEL_DATA", true)?;
+    let corrected_column_storage = measurement_set
+        .main_table()
+        .schema()
+        .is_some_and(|schema| schema.contains_column("CORRECTED_DATA"))
+        .then(|| {
+            derive_column_storage_plan(
+                &measurement_set,
+                &request.selection,
+                "CORRECTED_DATA",
+                false,
+            )
+        })
+        .transpose()?;
     let generations =
         manifest.source_generations(&measurement_set, request.visibility, request.weights)?;
     let identity = MeasurementSetIdentity::new(parse_identity(
@@ -595,6 +763,7 @@ pub fn resolve_selected_observation(
             binding,
             measures,
             model_column_storage,
+            corrected_column_storage,
         },
     })
 }
@@ -680,15 +849,27 @@ pub enum ObservationOwnerError {
     /// The MAIN write lock could not be acquired.
     #[error("could not acquire the MeasurementSet MAIN write lock")]
     WriteLockUnavailable,
-    /// Final prediction addressed a row/channel/correlation outside MODEL_DATA.
-    #[error("final prediction address is outside MODEL_DATA")]
+    /// A selected visibility addressed a cell outside its destination.
+    #[error("selected visibility address is outside its destination column")]
     PredictionAddress,
-    /// The bounded MODEL_DATA writer was already completed or released.
-    #[error("MODEL_DATA write is closed")]
+    /// The bounded selected-visibility writer was already completed or released.
+    #[error("selected visibility write is closed")]
     TransactionClosed,
     /// The retained owner generation no longer matches the planned write.
-    #[error("MODEL_DATA write precondition changed")]
+    #[error("selected visibility write precondition changed")]
     TransactionPrecondition,
+    /// No destination was selected for a write transaction.
+    #[error("selected visibility write requires at least one destination")]
+    EmptyWriteTargets,
+    /// CORRECTED_DATA persistence requires an existing owner-tracked column.
+    #[error("selected visibility write requires existing owner-tracked CORRECTED_DATA")]
+    MissingCorrectedDataDestination,
+    /// A cell write named a column outside the bound destination set.
+    #[error("selected visibility write named an unselected destination")]
+    UnselectedWriteTarget,
+    /// Completion generations must exactly match the bound destination set.
+    #[error("selected visibility write completion generations do not match its destinations")]
+    WriteGenerationMismatch,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -907,6 +1088,15 @@ impl OwnerManifest {
                 ModelColumnState::Present(parse_identity(generation, "MODEL_DATA generation")?)
             }
         };
+        let corrected_data_column = self
+            .columns
+            .get("CORRECTED_DATA")
+            .map(|generation| parse_identity(generation, "CORRECTED_DATA generation"))
+            .transpose()?
+            .map_or(
+                CorrectedDataColumnState::Absent,
+                CorrectedDataColumnState::Present,
+            );
         Ok(SourceGenerations::new(
             ConsistencyToken::new(parse_identity(
                 &self.consistency_token,
@@ -915,7 +1105,8 @@ impl OwnerManifest {
             SelectedColumns::new(visibility, FlagPolicy::FlagOrFlagRow, weights, columns),
             metadata,
             model_column,
-        ))
+        )
+        .with_corrected_data_column(corrected_data_column))
     }
 }
 
@@ -1080,14 +1271,16 @@ fn model_cell_bytes(
         .ok_or(ObservationOwnerError::PredictionAddress)
 }
 
-fn derive_model_column_storage_plan(
+fn derive_column_storage_plan(
     measurement_set: &MeasurementSet,
     selection: &ObservationSelection,
-) -> Result<ModelColumnStoragePlan, ObservationOwnerError> {
-    let has_model = measurement_set
+    column: &str,
+    create_if_absent: bool,
+) -> Result<SelectedVisibilityStoragePlan, ObservationOwnerError> {
+    let has_column = measurement_set
         .main_table()
         .schema()
-        .is_some_and(|schema| schema.contains_column("MODEL_DATA"));
+        .is_some_and(|schema| schema.contains_column(column));
     let mut selected_write_bytes = 0_u64;
     let mut maximum_cell_bytes = 0_u64;
     for selected_row in selection.rows().ordered_main_rows() {
@@ -1102,7 +1295,7 @@ fn derive_model_column_storage_plan(
         maximum_cell_bytes = maximum_cell_bytes.max(bytes);
     }
     let mut additional_persistent_bytes = 0_u64;
-    if !has_model {
+    if create_if_absent && !has_column {
         for row in 0..measurement_set.main_table().row_count() {
             let bytes = model_cell_bytes(
                 measurement_set,
@@ -1117,7 +1310,7 @@ fn derive_model_column_storage_plan(
     let write_bytes = additional_persistent_bytes
         .checked_add(selected_write_bytes)
         .ok_or(ObservationOwnerError::PredictionAddress)?;
-    Ok(ModelColumnStoragePlan {
+    Ok(SelectedVisibilityStoragePlan {
         additional_persistent_bytes,
         write_bytes,
         maximum_cell_bytes,
@@ -1125,20 +1318,21 @@ fn derive_model_column_storage_plan(
 }
 
 #[cfg(unix)]
-fn persist_model_cell(
+fn persist_visibility_cell(
     table: &mut Table,
+    column: &str,
     row: usize,
     value: ArrayValue,
 ) -> Result<(), ObservationOwnerError> {
     {
-        let mut prepared = table.row_accessor_mut().prepare(&["MODEL_DATA"])?;
+        let mut prepared = table.row_accessor_mut().prepare(&[column])?;
         prepared.seek(row)?;
         prepared.set_value_at(0, Value::Array(value))?;
     }
     table
         .prepare_write()
-        .save_selected_rows(&["MODEL_DATA"], &[row])?;
-    table.discard_persisted_cell_updates(&["MODEL_DATA"], &[row]);
+        .save_selected_rows(&[column], &[row])?;
+    table.discard_persisted_cell_updates(&[column], &[row]);
     Ok(())
 }
 
@@ -1157,7 +1351,7 @@ fn column_name(kind: MsColumnKind) -> &'static str {
     TRACKED_COLUMNS
         .iter()
         .find_map(|(candidate, name)| (*candidate == kind).then_some(*name))
-        .expect("every model column kind has one owner-manifest name")
+        .expect("every tracked column kind has one owner-manifest name")
 }
 
 fn metadata_subtable(kind: MetadataTableKind) -> SubtableId {
@@ -1244,9 +1438,16 @@ mod tests {
     }
 
     fn create_ms(path: &Path, model_data: bool) {
+        create_ms_columns(path, model_data, false);
+    }
+
+    fn create_ms_columns(path: &Path, model_data: bool, corrected_data: bool) {
         let mut builder = MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data);
         if model_data {
             builder = builder.with_main_column(OptionalMainColumn::ModelData);
+        }
+        if corrected_data {
+            builder = builder.with_main_column(OptionalMainColumn::CorrectedData);
         }
         let mut measurement_set =
             MeasurementSet::create(path, builder).expect("create test MeasurementSet");
@@ -1341,10 +1542,12 @@ mod tests {
             .map(|column| {
                 let value = match column.name() {
                     "DATA_DESC_ID" => Value::Scalar(ScalarValue::Int32(0)),
-                    "DATA" | "MODEL_DATA" => Value::Array(ArrayValue::Complex32(
-                        ArrayD::from_shape_vec(vec![1, 1], vec![Complex32::new(1.0, 0.0)])
-                            .expect("one visibility"),
-                    )),
+                    "DATA" | "MODEL_DATA" | "CORRECTED_DATA" => {
+                        Value::Array(ArrayValue::Complex32(
+                            ArrayD::from_shape_vec(vec![1, 1], vec![Complex32::new(1.0, 0.0)])
+                                .expect("one visibility"),
+                        ))
+                    }
                     "FLAG" => Value::Array(ArrayValue::Bool(
                         ArrayD::from_shape_vec(vec![1, 1], vec![false]).expect("one flag"),
                     )),
@@ -1565,10 +1768,15 @@ mod tests {
         let generation = expected.generations().model_column();
 
         {
-            let mut writer =
-                ModelDataWrite::begin(&path, &expected, &one_row_selection()).expect("begin write");
+            let mut writer = SelectedVisibilityWrite::begin(
+                &path,
+                &expected,
+                &one_row_selection(),
+                SelectedVisibilityWriteTargets::new(true, false),
+            )
+            .expect("begin write");
             writer
-                .write(0, 0, 0, Complex32::new(9.0, -2.0))
+                .write(MsColumnKind::ModelData, 0, 0, 0, Complex32::new(9.0, -2.0))
                 .expect("write prediction");
         }
 
@@ -1605,7 +1813,10 @@ mod tests {
         create_ms(&path, false);
         initialize_measurement_set_owner_manifest(&path).expect("initialize owner manifest");
         let resolved = resolve_selected_observation(request(&path)).expect("resolve owner");
-        let plan = resolved.access.model_column_storage_plan();
+        let plan = resolved
+            .access
+            .selected_visibility_storage_plan(SelectedVisibilityWriteTargets::new(true, false))
+            .expect("MODEL_DATA storage plan");
 
         assert_eq!(plan.additional_persistent_bytes(), 8);
         assert_eq!(plan.write_bytes(), 16);
@@ -1617,7 +1828,10 @@ mod tests {
             .expect("initialize existing MODEL_DATA owner manifest");
         let existing = resolve_selected_observation(request(&existing_path))
             .expect("resolve existing MODEL_DATA owner");
-        let existing_plan = existing.access.model_column_storage_plan();
+        let existing_plan = existing
+            .access
+            .selected_visibility_storage_plan(SelectedVisibilityWriteTargets::new(true, false))
+            .expect("MODEL_DATA storage plan");
 
         assert_eq!(existing_plan.additional_persistent_bytes(), 0);
         assert_eq!(existing_plan.write_bytes(), 8);
@@ -1635,12 +1849,22 @@ mod tests {
         let expected = before.access.source_state().clone();
         let generation = identity(73);
 
-        let mut writer =
-            ModelDataWrite::begin(&path, &expected, &one_row_selection()).expect("begin write");
+        let mut writer = SelectedVisibilityWrite::begin(
+            &path,
+            &expected,
+            &one_row_selection(),
+            SelectedVisibilityWriteTargets::new(true, false),
+        )
+        .expect("begin write");
         writer
-            .write(0, 0, 0, Complex32::new(4.5, -1.25))
+            .write(MsColumnKind::ModelData, 0, 0, 0, Complex32::new(4.5, -1.25))
             .expect("write prediction");
-        writer.complete(generation).expect("complete write");
+        writer
+            .complete(SelectedVisibilityWriteGenerations {
+                model_data: Some(generation),
+                corrected_data: None,
+            })
+            .expect("complete write");
 
         let reopened = MeasurementSet::open(&path).expect("reopen committed MS");
         let schema = reopened.main_table().schema().expect("MAIN schema");
@@ -1659,6 +1883,77 @@ mod tests {
             after.access.source_state().generations().model_column(),
             ModelColumnState::Present(generation)
         );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn combined_visibility_write_uses_one_owner_transaction_and_publishes_both_generations() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("combined-write.ms");
+        create_ms_columns(&path, true, true);
+        initialize_measurement_set_owner_manifest(&path).expect("initialize owner manifest");
+        let before = resolve_selected_observation(request(&path)).expect("resolve owner");
+        let expected = before.access.source_state().clone();
+        let before_token = expected.generations().consistency_token();
+        let model_generation = identity(74);
+        let corrected_generation = identity(75);
+
+        let mut writer = SelectedVisibilityWrite::begin(
+            &path,
+            &expected,
+            &one_row_selection(),
+            SelectedVisibilityWriteTargets::new(true, true),
+        )
+        .expect("begin combined write");
+        writer
+            .write(MsColumnKind::ModelData, 0, 0, 0, Complex32::new(4.0, -1.0))
+            .expect("write model");
+        writer
+            .write(
+                MsColumnKind::CorrectedData,
+                0,
+                0,
+                0,
+                Complex32::new(2.5, 0.5),
+            )
+            .expect("write corrected");
+        writer
+            .complete(SelectedVisibilityWriteGenerations {
+                model_data: Some(model_generation),
+                corrected_data: Some(corrected_generation),
+            })
+            .expect("complete combined write");
+
+        assert!(!path.join(".casa-rs-write-incomplete").exists());
+        let reopened = MeasurementSet::open(&path).expect("reopen committed MS");
+        let model_column = reopened
+            .data_column(crate::VisibilityDataColumn::ModelData)
+            .expect("MODEL_DATA");
+        let ArrayValue::Complex32(model) = model_column.get(0).expect("model cell") else {
+            panic!("MODEL_DATA is complex")
+        };
+        let corrected_column = reopened
+            .data_column(crate::VisibilityDataColumn::CorrectedData)
+            .expect("CORRECTED_DATA");
+        let ArrayValue::Complex32(corrected) = corrected_column.get(0).expect("corrected cell")
+        else {
+            panic!("CORRECTED_DATA is complex")
+        };
+        assert_eq!(model[[0, 0]], Complex32::new(4.0, -1.0));
+        assert_eq!(corrected[[0, 0]], Complex32::new(2.5, 0.5));
+        drop(reopened);
+
+        let after = resolve_selected_observation(request(&path)).expect("resolve after commit");
+        let generations = after.access.source_state().generations();
+        assert_eq!(
+            generations.model_column(),
+            ModelColumnState::Present(model_generation)
+        );
+        assert_eq!(
+            generations.corrected_data_column(),
+            CorrectedDataColumnState::Present(corrected_generation)
+        );
+        assert_ne!(generations.consistency_token(), before_token);
     }
 
     #[test]

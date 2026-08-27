@@ -12,6 +12,7 @@ mod product_graph;
 mod selected_observation;
 mod selected_observation_sample;
 mod transaction;
+mod visibility_transform;
 
 pub use compiled_problem::{
     CompileProblemError, CompiledProblem, CompiledProblemId, FiniteValuePolicy, ImagingRequest,
@@ -23,9 +24,9 @@ pub use compiled_problem::{
     ProductValidityPolicyError, ReconstructionAlgorithm, ReconstructionBasis,
     ReconstructionContract, ReconstructionControls, ReductionPolicy, ReferenceDataKind,
     RequiredCapability, RestoringBeamPolicy, ScientificContract, SpectralContract,
-    SpectralCoupling, SpectralSampling, StageErrorBudget, TaylorSupportReference,
-    TaylorValidityPolicy, UvTaper, WeightDensityScope, WeightingContract, WeightingScheme, compile,
-    validate_compiled_problem_identity,
+    SpectralCoupling, SpectralCovariance, SpectralEdgePolicy, SpectralKernel, SpectralSamplingLaw,
+    StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy, UvTaper, WeightDensityScope,
+    WeightingContract, WeightingScheme, compile, validate_compiled_problem_identity,
 };
 
 pub use geometry::{
@@ -60,16 +61,17 @@ pub use model_state::{
 
 pub use observation::{
     AntennaBaseline, AntennaSelection, ColumnGeneration, CompileObservationError, ConsistencyToken,
-    CorrelationProduct, CorrelationSelection, CorrelationType, DataDescriptionSelection,
-    FlagPolicy, IdSelection, IntentSelection, MeasurementSetIdentity, MetadataGeneration,
-    MetadataTableKind, ModelColumnState, MsColumnKind, ObservationConsistencyError,
-    ObservationProvenanceId, ObservationSelection, ObservationSnapshot, ObservationSnapshotId,
-    ObservationSnapshotInput, ObservationSource, ObservationSourceInput,
-    ObservationSourceProvenance, ObservationSourceState, ObservationState, ResolvedIntent,
-    RowSelection, SelectedColumns, SelectedMainRow, SelectedRowManifestValidationError,
-    SelectedRowSequenceError, SelectedRowSequenceId, SelectedRows, SelectionBound,
-    SourceGenerations, SpectralWindowSelection, TimeRange, TimeSelection, UvDistanceRange,
-    UvDistanceUnit, UvSelection, VisibilityColumn, WeightColumn, compile_observation,
+    CorrectedDataColumnState, CorrelationProduct, CorrelationSelection, CorrelationType,
+    DataDescriptionSelection, FlagPolicy, IdSelection, IntentSelection, MeasurementSetIdentity,
+    MetadataGeneration, MetadataTableKind, ModelColumnState, MsColumnKind,
+    ObservationConsistencyError, ObservationProvenanceId, ObservationSelection,
+    ObservationSnapshot, ObservationSnapshotId, ObservationSnapshotInput, ObservationSource,
+    ObservationSourceInput, ObservationSourceProvenance, ObservationSourceState, ObservationState,
+    ResolvedIntent, RowSelection, SelectedColumns, SelectedMainRow,
+    SelectedRowManifestValidationError, SelectedRowSequenceError, SelectedRowSequenceId,
+    SelectedRows, SelectionBound, SourceGenerations, SpectralWindowSelection, TimeRange,
+    TimeSelection, UvDistanceRange, UvDistanceUnit, UvSelection, VisibilityColumn, WeightColumn,
+    compile_observation,
 };
 
 pub use prepared_artifact::{
@@ -88,7 +90,7 @@ pub use selected_observation_sample::{
     SelectedObservationGenerationId, SelectedObservationSample, SelectedPointingDirections,
     SelectedPredictionTarget, SelectedSampleAddress, SelectedSampleCoordinates,
     SelectedSampleMetadata, SelectedSpectralContribution, SelectedSpectralContributions,
-    SelectedVisibilitySample,
+    SelectedSpectralEvaluation, SelectedSpectralInterval, SelectedVisibilitySample,
 };
 
 pub use product_graph::{
@@ -98,8 +100,15 @@ pub use product_graph::{
 };
 
 pub use transaction::{
-    MeasurementSetReadAccess, ModelColumnInitialization, ModelColumnPrecondition, ModelColumnWrite,
-    ModelColumnWriteAccess, ModelColumnWriteDisposition, ObservationReadSet,
-    ObservationTransactionContract, ObservationTransactionId, ObservationTransactionRequirements,
-    ObservationWriteSet,
+    CorrectedDataWrite, MeasurementSetReadAccess, ModelColumnInitialization, ModelColumnWrite,
+    ObservationReadSet, ObservationTransactionCompileError, ObservationTransactionContract,
+    ObservationTransactionId, ObservationTransactionRequirements, ObservationWriteSet,
+    SelectedVisibilityColumnPrecondition, SelectedVisibilityWriteAccess,
+    SelectedVisibilityWriteDisposition,
+};
+
+pub use visibility_transform::{
+    ContinuumChannelRole, ContinuumChannelUse, ContinuumCovariancePolicy, ContinuumFitRule,
+    ContinuumFitWeightGenerationId, ContinuumTransformContractError, ContinuumTransformContractId,
+    ContinuumTransformGenerationId, SequentialContinuumTransform,
 };

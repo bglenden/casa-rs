@@ -47,6 +47,28 @@ release-cpp-interop:
 imaging-solver-crosscheck input_ms output_dir:
     python tools/science/casa_rust_solver_crosscheck.py "{{input_ms}}" "{{output_dir}}"
 
+# Focused #521 source-backed spectral identity/tracer foundation.
+imaging-t35-spectral-tracer:
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction t35_
+    CARGO_INCREMENTAL=0 cargo test -p casa-ms --features cpp-interop-tests t35_source_backed_identity_and_nonidentity_tracers_match_casacore
+
+# Focused #522 paired sparse law, frame/interval evaluation, and edge coverage.
+imaging-t36-spectral-law:
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction --features cpp-interop-tests t36_
+    CARGO_INCREMENTAL=0 cargo test -p casa-ms real_ms_cubedata_traversal_compiles_source_backed_casa_cubic_stencils
+    CARGO_INCREMENTAL=0 cargo test -p casa-ms --features cpp-interop-tests --test spectral_frame_parity
+    CARGO_INCREMENTAL=0 cargo test -p casa-test-support --features cpp-interop-tests --test spectral_frame_exact_interop
+
+# Focused #523 bounded spectral cube operator, CASA comparator, and residency gate.
+imaging-t37-cube-operator:
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction --features cpp-interop-tests t37_
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-runtime --test compile_plan_run t37_runtime_residency
+
+# Focused #524 CASA/Rust multi-channel clean and reconciliation gate.
+imaging-t38-cube-clean:
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction --features cpp-interop-tests --test major_cycle t38_
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-runtime --test compile_plan_run t38_runtime_runs_one_shared_cycle_with_combined_channel_evidence
+
 release-perf:
     bash scripts/test-release-perf.sh
 

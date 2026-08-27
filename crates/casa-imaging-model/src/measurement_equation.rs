@@ -17,8 +17,8 @@ use crate::{
     compiled_problem::{
         InstrumentResponse, LogicalIdentity, NumericsContractId, PolarizationContract, ProductKind,
         ProductNormalization, ReconstructionBasis, ReconstructionContract, RestoringBeamPolicy,
-        ScientificContract, SpectralSampling, UvTaper, WeightDensityScope, WeightingContract,
-        WeightingScheme,
+        ScientificContract, SpectralKernel, SpectralSamplingLaw, UvTaper, WeightDensityScope,
+        WeightingContract, WeightingScheme,
     },
     geometry::{CompiledGeometry, CompiledGeometryId, VisibilityPhaseConvention},
     observation::{
@@ -167,7 +167,7 @@ pub enum PairedMeasurementTransform {
     /// Interpolate spectra with one explicitly paired rule.
     SpectralResampling {
         /// Nearest or linear paired sampling rule.
-        sampling: SpectralSampling,
+        sampling: SpectralSamplingLaw,
     },
     /// Integrate source channels and distribute through the paired adjoint.
     ChannelIntegration {
@@ -540,13 +540,16 @@ pub(crate) fn compile_normal_equation(
             convention: geometry.uvw().prediction_phase(),
         },
     ];
-    match science.spectral().sampling() {
-        SpectralSampling::Identity => {}
-        sampling @ (SpectralSampling::Nearest | SpectralSampling::Linear) => {
+    match science.spectral().sampling().kernel() {
+        SpectralKernel::Identity => {}
+        SpectralKernel::Nearest | SpectralKernel::Linear | SpectralKernel::Cubic => {
+            let sampling = science.spectral().sampling();
             transforms.push(PairedMeasurementTransform::SpectralResampling { sampling });
         }
-        SpectralSampling::ChannelAverage { channels_per_bin } => {
-            transforms.push(PairedMeasurementTransform::ChannelIntegration { channels_per_bin });
+        SpectralKernel::ChannelIntegration { maximum_terms } => {
+            transforms.push(PairedMeasurementTransform::ChannelIntegration {
+                channels_per_bin: maximum_terms,
+            });
         }
     }
     let measurement_operator = MeasurementOperatorContract {
@@ -607,7 +610,7 @@ pub(crate) fn compile_product_boundary(
 fn compile_weighting_operator(
     geometry: &CompiledGeometry,
     inputs: &ProblemInputIdentities,
-    sampling: SpectralSampling,
+    sampling: SpectralSamplingLaw,
     weighting: WeightingContract,
     numerics: NumericsContractId,
     selected_observation: SelectedObservationCommitmentId,
@@ -664,7 +667,7 @@ fn compile_weighting_operator(
 fn weighting_commitment_id(
     snapshot: ObservationSnapshotId,
     geometry: CompiledGeometryId,
-    sampling: SpectralSampling,
+    sampling: SpectralSamplingLaw,
     weighting: WeightingContract,
     numerics: NumericsContractId,
     selected_observation: SelectedObservationCommitmentId,
@@ -675,15 +678,23 @@ fn weighting_commitment_id(
     hasher.update(WEIGHTING_COMMITMENT_IDENTITY_VERSION.to_be_bytes());
     hasher.update(snapshot.as_bytes());
     hasher.update(geometry.as_bytes());
-    match sampling {
-        SpectralSampling::Identity => hasher.update([0]),
-        SpectralSampling::Nearest => hasher.update([1]),
-        SpectralSampling::Linear => hasher.update([2]),
-        SpectralSampling::ChannelAverage { channels_per_bin } => {
-            hasher.update([3]);
-            hasher.update((channels_per_bin as u128).to_be_bytes());
+    match sampling.kernel() {
+        SpectralKernel::Identity => hasher.update([0]),
+        SpectralKernel::Nearest => hasher.update([1]),
+        SpectralKernel::Linear => hasher.update([2]),
+        SpectralKernel::Cubic => hasher.update([3]),
+        SpectralKernel::ChannelIntegration { maximum_terms } => {
+            hasher.update([4]);
+            hasher.update((maximum_terms as u128).to_be_bytes());
         }
     }
+    hasher.update([match sampling.edge_policy() {
+        crate::compiled_problem::SpectralEdgePolicy::CompleteSupport => 0,
+        crate::compiled_problem::SpectralEdgePolicy::PartialOverlap => 1,
+    }]);
+    hasher.update([match sampling.covariance() {
+        crate::compiled_problem::SpectralCovariance::PropagateIndependentSourceNoise => 0,
+    }]);
     hasher.update(numerics.as_bytes());
     hasher.update(selected_observation.as_bytes());
     hasher.update([match visibility_inner_product {

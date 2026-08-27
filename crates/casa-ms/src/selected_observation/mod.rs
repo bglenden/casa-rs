@@ -12,7 +12,7 @@ mod content_plan;
 mod measures;
 mod row_access;
 mod row_selection;
-mod spectral_contributions;
+mod spectral_evaluation;
 #[cfg(test)]
 mod tests;
 
@@ -31,4 +31,4 @@ pub(crate) use content_plan::{
 };
 pub use measures::{SelectedObservationMeasures, SelectedObservationMeasuresError};
 pub use row_access::{SelectedObservationRow, SelectedObservationRowSelection};
-pub use spectral_contributions::SelectedObservationTraversalSample;
+pub use spectral_evaluation::SelectedObservationTraversalSample;

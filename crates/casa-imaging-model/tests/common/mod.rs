@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_imaging_model::{
-    AntennaSelection, ColumnGeneration, ConsistencyToken, CorrelationProduct, CorrelationSelection,
-    CorrelationType, DataDescriptionSelection, FlagPolicy, IdSelection, IntentSelection,
-    LogicalIdentity, MeasurementSetIdentity, MetadataGeneration, MetadataTableKind,
-    ModelColumnState, ModelStateIdentity, MsColumnKind, ObservationSelection, ObservationSnapshot,
-    ObservationSnapshotInput, ObservationSourceInput, ObservationSourceProvenance,
-    ProblemInputIdentities, ReferenceDataKind, RowSelection, SelectedColumns, SelectedMainRow,
-    SelectedRows, SourceGenerations, SpectralWindowSelection, TimeSelection, UvSelection,
-    VisibilityColumn, WeightColumn, compile_observation,
+    AntennaSelection, ColumnGeneration, ConsistencyToken, CorrectedDataColumnState,
+    CorrelationProduct, CorrelationSelection, CorrelationType, DataDescriptionSelection,
+    FlagPolicy, IdSelection, IntentSelection, LogicalIdentity, MeasurementSetIdentity,
+    MetadataGeneration, MetadataTableKind, ModelColumnState, ModelStateIdentity, MsColumnKind,
+    ObservationSelection, ObservationSnapshot, ObservationSnapshotInput, ObservationSourceInput,
+    ObservationSourceProvenance, ProblemInputIdentities, ReferenceDataKind, RowSelection,
+    SelectedColumns, SelectedMainRow, SelectedRows, SourceGenerations, SpectralWindowSelection,
+    TimeSelection, UvSelection, VisibilityColumn, WeightColumn, compile_observation,
 };
 
 pub fn identity(byte: u8) -> LogicalIdentity {
@@ -53,6 +53,36 @@ pub fn observation_source_with_model_state(
     observation: u8,
     model_column: ModelColumnState,
     consumed_model_generation: Option<LogicalIdentity>,
+) -> ObservationSourceInput {
+    observation_source_with_write_generations(
+        observation,
+        model_column,
+        consumed_model_generation,
+        None,
+    )
+}
+
+#[allow(
+    dead_code,
+    reason = "this shared helper is used only by the observation-transaction test target"
+)]
+pub fn observation_source_with_corrected_generation(
+    observation: u8,
+    corrected_generation: LogicalIdentity,
+) -> ObservationSourceInput {
+    observation_source_with_write_generations(
+        observation,
+        ModelColumnState::Absent,
+        None,
+        Some(corrected_generation),
+    )
+}
+
+fn observation_source_with_write_generations(
+    observation: u8,
+    model_column: ModelColumnState,
+    consumed_model_generation: Option<LogicalIdentity>,
+    corrected_generation: Option<LogicalIdentity>,
 ) -> ObservationSourceInput {
     let column_kinds = [
         MsColumnKind::Data,
@@ -140,7 +170,11 @@ pub fn observation_source_with_model_state(
             ),
             metadata,
             model_column,
-        ),
+        )
+        .with_corrected_data_column(corrected_generation.map_or(
+            CorrectedDataColumnState::Absent,
+            CorrectedDataColumnState::Present,
+        )),
     )
 }
 

@@ -40,7 +40,10 @@ pub use authority::{
 pub use beam::{RestoringBeam, fit_restoring_beam};
 pub use error::ProductsError;
 pub use projection::{PublicationMemberProjection, PublicationProjection};
-pub use restore::{fft_convolve, gaussian_beam_image, normalize_plane};
+pub use restore::{
+    ResidualBeamScaling, fft_convolve, gaussian_beam_image, normalize_plane,
+    rescale_residual_to_beam,
+};
 pub use source::{ContinuumProductInputs, ContinuumSourceCatalog};
 pub use visibility::{
     ModelVisibilityProductId, ResidualVisibilityProductId, VisibilityProductAuthority,
@@ -51,7 +54,7 @@ pub use visibility::{
 mod tests {
     #[test]
     fn algorithm_catalog_version_is_pinned() {
-        assert_eq!(super::CONTINUUM_ALGORITHM_CATALOG_VERSION, 2);
+        assert_eq!(super::CONTINUUM_ALGORITHM_CATALOG_VERSION, 4);
         assert_eq!(super::DEFAULT_PSF_CUTOFF, 0.35);
     }
 }

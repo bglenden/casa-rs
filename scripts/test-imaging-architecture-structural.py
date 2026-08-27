@@ -213,6 +213,20 @@ class MatrixTests(unittest.TestCase):
                 matrix, self.policy, enforce_accepted_scope=False
             )
 
+    def test_t37_retains_spectral_operator_ownership(self) -> None:
+        checker.validate_t37_spectral_operator_transfer(self.matrix["rows"])
+
+    def test_t37_rejects_displaced_serial_owner_evidence(self) -> None:
+        matrix = copy.deepcopy(self.matrix)
+        row = next(
+            item for item in matrix["rows"] if item["id"] == "capability.standard-gridder"
+        )
+        row["source_evidence"][0] = (
+            "crates/casa-imaging-reconstruction/src/serial_mfs.rs::pub struct CompleteDataOwnerState"
+        )
+        with self.assertRaisesRegex(checker.ArchitectureError, "lacks spectral-operator"):
+            checker.validate_t37_spectral_operator_transfer(matrix["rows"])
+
 
 if __name__ == "__main__":
     unittest.main()

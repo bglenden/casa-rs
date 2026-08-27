@@ -58,7 +58,6 @@ rm -rf \
   "$outdir/casa-transform.ms" \
   "$outdir/rust-transform.ms" \
   "$outdir/casa-contsub.ms" \
-  "$outdir/rust-contsub.ms" \
   "$outdir/casa-HC3N-natural.image" \
   "$outdir/casa-HC3N-natural.model" \
   "$outdir/casa-HC3N-natural.psf" \
@@ -365,27 +364,9 @@ with open(f"{outdir}/casa-impv-timing.json", "w") as handle:
     json.dump({"elapsed_seconds": time.perf_counter() - started}, handle, indent=2)
 PY
 
-time_json rust-uvcontsub "$outdir/rust-uvcontsub-wall-timing.json" \
-  target/release/calibrate uvcontsub \
-  --ms "$outdir/rust-transform.ms" \
-  --out "$outdir/rust-contsub.ms" \
-  --fitspw "0:0~7;44~51" \
-  --fitorder 0 \
-  --datacolumn DATA \
-  --format json \
-  --output "$outdir/rust-uvcontsub-report.json" \
-  --overwrite
-python3 - "$outdir/rust-uvcontsub-report.json" "$outdir/rust-uvcontsub-timing.json" <<'PY'
-import json
-import sys
-report = json.loads(open(sys.argv[1]).read())
-with open(sys.argv[2], "w") as handle:
-    json.dump({"elapsed_seconds": report["elapsed_ns"] / 1.0e9}, handle, indent=2)
-PY
-
 rust_tclean_cmd=(
   target/release/casars-imager \
-  --ms "$outdir/rust-contsub.ms" \
+  --ms "$outdir/rust-transform.ms" \
   --imagename "$outdir/rust-HC3N-natural" \
   --field 1 \
   --spw 0 \
@@ -402,6 +383,8 @@ rust_tclean_cmd=(
   --niter 0 \
   --threshold-jy 0 \
   --datacolumn DATA \
+  --fitspw "0:0~7;44~51" \
+  --fitorder 0 \
   --no-preview-pngs \
   --dirty-only \
   --managed-output true
@@ -477,7 +460,6 @@ def compare_array(name, casa, rust):
 
 summary = {}
 summary["transform_data"] = compare_array("transform", read_ms_data(outdir / "casa-transform.ms"), read_ms_data(outdir / "rust-transform.ms"))
-summary["contsub_data"] = compare_array("contsub", read_ms_data(outdir / "casa-contsub.ms"), read_ms_data(outdir / "rust-contsub.ms"))
 for product in ["image", "residual", "psf", "sumwt"]:
     summary[f"cube_{product}"] = compare_array(
         product,

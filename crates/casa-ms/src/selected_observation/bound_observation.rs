@@ -19,7 +19,7 @@ use super::{
     SelectedObservationContentBudget, SelectedObservationMeasures,
     SelectedObservationMeasuresError,
     content_plan::SelectedObservationSharedBytes,
-    spectral_contributions::{SelectedObservationTraversalSample, SpectralContributionProjector},
+    spectral_evaluation::{SelectedObservationTraversalSample, SpectralEvaluationProjector},
 };
 
 /// One current storage-owner state probe and bounded-content budget.
@@ -425,7 +425,7 @@ impl BoundSelectedObservation {
             .selected_samples(problem)
             .map_err(SelectedObservationTraversalError::Binding)?;
         let sources = &self.sources;
-        let mut spectral_projector = SpectralContributionProjector::new();
+        let mut spectral_evaluator = SpectralEvaluationProjector::new();
         let (generation_id, sample_count) = consume_projected_validated_stream(
             problem,
             samples,
@@ -434,7 +434,7 @@ impl BoundSelectedObservation {
                     .iter()
                     .find(|source| source.source_identity() == sample.address.measurement_set)
                     .ok_or(BoundObservationSourceError::ProblemSourceMismatch)?;
-                spectral_projector.project(problem, sample, source.geometry_engine())
+                spectral_evaluator.project(problem, sample, source.geometry_engine())
             },
             &mut consume,
         )?;

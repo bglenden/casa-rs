@@ -36,6 +36,7 @@ pub struct ContinuumSourceCatalog {
     replay: casa_imaging_reconstruction::WeightingReplayId,
     coverage: casa_imaging_reconstruction::WeightingReplayCoverageId,
     selected_generation: casa_imaging_model::SelectedObservationGenerationId,
+    continuum_transform_generation: Option<casa_imaging_model::ContinuumTransformGenerationId>,
     sample_count: u64,
     block_count: u64,
     reconstruction_mask: Option<ReconstructionMaskGenerationId>,
@@ -74,12 +75,10 @@ impl ContinuumSourceCatalog {
         if join.model_completion().problem() != problem.problem_id() {
             return Err(ProductsError::SourceLineageMismatch);
         }
-        if matches!(
+        if !matches!(
             normal_state.catalog(),
-            NormalStateCatalog::UnnormalizedNterms1V1
+            NormalStateCatalog::UnnormalizedPlaneV1 | NormalStateCatalog::UnnormalizedChannelSlabV1
         ) {
-            // The only supported continuum catalog.
-        } else {
             return Err(ProductsError::UnsupportedProblem);
         }
         if mask.is_some_and(|mask| {
@@ -99,6 +98,7 @@ impl ContinuumSourceCatalog {
             replay: normal_state.replay_id(),
             coverage: normal_state.coverage(),
             selected_generation: normal_state.selected_generation(),
+            continuum_transform_generation: normal_state.continuum_transform_generation(),
             sample_count: normal_state.sample_count(),
             block_count: normal_state.block_count(),
             reconstruction_mask: mask.map(ReconstructionMask::generation_id),
@@ -140,7 +140,8 @@ impl ContinuumSourceCatalog {
         encoder.identity(self.normal_state_completion.as_bytes());
         encoder.identity(self.normal_state_content.as_bytes());
         encoder.u8(match self.normal_state_catalog {
-            NormalStateCatalog::UnnormalizedNterms1V1 => 0,
+            NormalStateCatalog::UnnormalizedPlaneV1 => 0,
+            NormalStateCatalog::UnnormalizedChannelSlabV1 => 1,
         });
         encoder.identity(self.input_model_generation.as_bytes());
         encoder.identity(self.final_model_generation.as_bytes());
@@ -148,6 +149,13 @@ impl ContinuumSourceCatalog {
         encoder.identity(self.replay.as_bytes());
         encoder.identity(self.coverage.as_bytes());
         encoder.identity(self.selected_generation.as_bytes());
+        match self.continuum_transform_generation {
+            Some(generation) => {
+                encoder.u8(1);
+                encoder.identity(generation.as_bytes());
+            }
+            None => encoder.u8(0),
+        }
         encoder.u64(self.sample_count);
         encoder.u64(self.block_count);
         match self.reconstruction_mask {

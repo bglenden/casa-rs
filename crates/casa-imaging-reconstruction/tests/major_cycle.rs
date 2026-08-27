@@ -7,11 +7,11 @@ use std::convert::Infallible;
 
 use casa_imaging_model::{
     AntennaSelection, AxisOrder, CentreLaws, ColumnGeneration, ConsistencyToken,
-    CorrelationProduct, CorrelationSelection, CorrelationType, DataDescriptionSelection,
-    DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame,
-    DopplerConvention, Epoch, FacetLayout, FiniteValuePolicy, FlagPolicy, FrequencyFrame,
-    GeometryInput, IdSelection, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
-    ImagingRequest, InstrumentResponse, IntentSelection, LogicalIdentity,
+    ContinuumTransformGenerationId, CorrelationProduct, CorrelationSelection, CorrelationType,
+    DataDescriptionSelection, DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec,
+    DirectionFrame, DopplerConvention, Epoch, FacetLayout, FiniteValuePolicy, FlagPolicy,
+    FrequencyFrame, GeometryInput, IdSelection, ImageAxis, ImageDomainRole, ImageDomainSpec,
+    ImageShape, ImagingRequest, InstrumentResponse, IntentSelection, LogicalIdentity,
     MeasurementEquationContract, MeasurementSetIdentity, MetadataGeneration, MetadataTableKind,
     ModelBounds, ModelCell, ModelColumnState, ModelColumnWrite, ModelDeltaTerm,
     ModelExecutionAttemptId, ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements,
@@ -28,18 +28,21 @@ use casa_imaging_model::{
     SelectedSampleCoordinates, SelectedSampleMetadata, SelectedSpectralContribution,
     SelectedSpectralContributions, SelectedVisibilitySample, SkyDirection, SourceGenerations,
     SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSampling, SpectralWcs, SpectralWindowSelection, StageErrorBudget,
+    SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection, StageErrorBudget,
     TaylorSupportReference, TaylorValidityPolicy, TimeScale, TimeSelection, UvSelection,
     UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope,
     WeightingContract, WeightingScheme, compile, compile_observation,
 };
 use casa_imaging_reconstruction::{
-    ExecutableModelProblem, FinalModelCompletionId, MajorCycleError, MajorCycleOwner,
-    MajorCyclePreparation, ModelDelta, ModelGeneration, ModelLifecycle, ModelLifecycleError,
-    SerialMfsError, SerialMfsSpecification, WeightingAlgorithmState, WeightingError,
-    WeightingExecutionLimits, WeightingPlan, WeightingReplayChunk, WeightingReplaySummary,
-    begin_weighting_generation, plan_weighting,
-    runtime_adapter::{CompleteDataOwnerResult, prepare_serial_mfs_operator, serial_mfs_workload},
+    ChannelCyclePolicy, ExecutableModelProblem, FinalModelCompletionId, MajorCycleError,
+    MajorCycleOwner, MajorCyclePreparation, MinorCycleProgram, ModelDelta, ModelGeneration,
+    ModelLifecycle, ModelLifecycleError, ReconstructionCycle, ReconstructionMask,
+    SpectralChannelValidity, SpectralOperatorError, SpectralOperatorSpecification,
+    WeightingAlgorithmState, WeightingError, WeightingExecutionLimits, WeightingPlan,
+    WeightingReplayChunk, WeightingReplaySummary, begin_weighting_generation, plan_weighting,
+    runtime_adapter::{
+        CompleteDataOwnerResult, prepare_spectral_operator, spectral_operator_workload,
+    },
 };
 
 fn identity(seed: u8, scope: u8) -> LogicalIdentity {
@@ -168,6 +171,56 @@ fn t19_compatible_problem_with_width(
     observation: u8,
     width: usize,
 ) -> casa_imaging_model::CompiledProblem {
+    reconstruction_problem(
+        observation,
+        width,
+        1,
+        ReconstructionBasis::Constant,
+        ReconstructionAlgorithm::Dirty,
+        ReconstructionControls::new(0, 1.0, 0.0),
+    )
+}
+
+fn t38_cube_problem(observation: u8) -> casa_imaging_model::CompiledProblem {
+    t38_cube_problem_with_channels(observation, 2)
+}
+
+fn t38_cube_problem_with_channels(
+    observation: u8,
+    channels: usize,
+) -> casa_imaging_model::CompiledProblem {
+    t38_cube_problem_with_controls(
+        observation,
+        channels,
+        ReconstructionControls::new(8, 0.5, 0.0)
+            .with_maximum_model_update(1.0e30)
+            .with_noise_sigma(0.0),
+    )
+}
+
+fn t38_cube_problem_with_controls(
+    observation: u8,
+    channels: usize,
+    controls: ReconstructionControls,
+) -> casa_imaging_model::CompiledProblem {
+    reconstruction_problem(
+        observation,
+        8,
+        channels,
+        ReconstructionBasis::ChannelLocal { channels },
+        ReconstructionAlgorithm::Hogbom,
+        controls,
+    )
+}
+
+fn reconstruction_problem(
+    observation: u8,
+    width: usize,
+    channels: usize,
+    basis: ReconstructionBasis,
+    algorithm: ReconstructionAlgorithm,
+    controls: ReconstructionControls,
+) -> casa_imaging_model::CompiledProblem {
     let centre = width as f64 / 2.0;
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
@@ -201,10 +254,10 @@ fn t19_compatible_problem_with_width(
             FrequencyFrame::Topocentric,
             SpectralFrameAnchor::NotApplicable,
             SpectralWcs::Linear {
-                channels: 1,
+                channels,
                 reference_pixel: 0.0,
-                reference_frequency_hz: 1.4e9,
-                increment_hz: 1.0e6,
+                reference_frequency_hz: 1.05e9,
+                increment_hz: 1.0e8,
             },
             RestFrequency::NotApplicable,
             DopplerConvention::NotApplicable,
@@ -219,7 +272,7 @@ fn t19_compatible_problem_with_width(
     compile(ImagingRequest::new(
         ProblemSpecification::new(
             ScientificContract::new(
-                SpectralContract::new(SpectralSampling::Identity, SpectralCoupling::Independent),
+                SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
                 MeasurementEquationContract::new(
                     InstrumentResponse::Scalar,
                     DeclaredInnerProducts::new(
@@ -229,9 +282,9 @@ fn t19_compatible_problem_with_width(
                 ),
             ),
             ReconstructionContract::new(
-                ReconstructionBasis::Constant,
-                ReconstructionAlgorithm::Dirty,
-                ReconstructionControls::new(0, 1.0, 0.0),
+                basis,
+                algorithm,
+                controls,
                 PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
             ),
             WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
@@ -261,6 +314,457 @@ fn t19_compatible_problem_with_width(
         ),
     ))
     .expect("compile T20 reconciliation problem")
+}
+
+#[test]
+fn t38_two_channel_hogbom_cycle_is_ordered_and_model_plane_complete() {
+    let problem = t38_cube_problem(238);
+    let mut lifecycle = ModelLifecycle::bind(
+        ExecutableModelProblem::from_compiled(problem.clone()).expect("executable cube problem"),
+        attempt(239),
+        1,
+    )
+    .expect("cube lifecycle");
+    let initial = lifecycle.initial_empty().expect("empty cube model");
+    let preparation =
+        MajorCyclePreparation::prepare(&lifecycle, initial, None).expect("prepare cube model");
+    let complete = run_t19_complete_data(&problem, Some(&preparation));
+    let joined = MajorCycleOwner::from_complete_data(complete, preparation)
+        .expect("channel-local major-cycle owner")
+        .reconcile(&mut lifecycle)
+        .expect("channel-local normal state");
+    let (normal, continuation) = joined.into_continuation();
+    let coordinate = problem.geometry().domains()[0].direction();
+    let mask = ReconstructionMask::full_plane(
+        problem.problem_id(),
+        continuation.generation().generation_id(),
+        coordinate,
+        normal.shape(),
+    )
+    .expect("shared cube mask");
+    let program = MinorCycleProgram::for_algorithm(
+        ReconstructionAlgorithm::Hogbom,
+        problem.reconstruction().controls(),
+    )
+    .expect("cube Högbom program")
+    .record_component_sequence(16)
+    .expect("bounded component evidence");
+    let result = ReconstructionCycle::new(ChannelCyclePolicy::Independent, program)
+        .run(&lifecycle, continuation.generation(), &normal, &mask)
+        .expect("two-channel reconstruction cycle");
+
+    let channels = result.evidence().channels();
+    assert_eq!(channels.len(), 2);
+    assert_eq!(
+        channels
+            .iter()
+            .map(|channel| channel.output_channel())
+            .collect::<Vec<_>>(),
+        vec![0, 1],
+        "cycle evidence is always in output-channel order"
+    );
+    assert!(channels.iter().all(|channel| {
+        channel
+            .minor_cycle()
+            .is_some_and(|evidence| evidence.iterations() > 0)
+    }));
+    let delta = result
+        .delta()
+        .expect("both channel planes update the model");
+    assert_eq!(
+        delta
+            .terms()
+            .iter()
+            .map(|term| term.cell().coefficient())
+            .collect::<std::collections::BTreeSet<_>>(),
+        std::collections::BTreeSet::from([0, 1]),
+        "one owner-minted delta contains every cleaned channel plane"
+    );
+}
+
+#[cfg(feature = "cpp-interop-tests")]
+// Reconstruct the finite-support residual implied by Rust's recorded
+// components without treating casacore's working residual as a Major-Cycle
+// oracle.
+fn t38_finite_hogbom_residual(
+    initial: &[f32],
+    psf: &[f32],
+    shape: [usize; 2],
+    psf_peak: [usize; 2],
+    components: &[([usize; 2], f32)],
+) -> Vec<f32> {
+    let mut residual = initial.to_vec();
+    for (component, flux) in components {
+        for x in 0..shape[0] {
+            let Some(source_x) = (x + psf_peak[0]).checked_sub(component[0]) else {
+                continue;
+            };
+            if source_x >= shape[0] {
+                continue;
+            }
+            for y in 0..shape[1] {
+                let Some(source_y) = (y + psf_peak[1]).checked_sub(component[1]) else {
+                    continue;
+                };
+                if source_y < shape[1] {
+                    residual[x * shape[1] + y] -= flux * psf[source_x * shape[1] + source_y];
+                }
+            }
+        }
+    }
+    residual
+}
+
+#[cfg(feature = "cpp-interop-tests")]
+#[test]
+fn t38_casacore_minor_cycle_and_paired_final_residual_are_split_oracles() {
+    use casa_imaging_reconstruction::MaskBox;
+    use casa_test_support::hogbom_interop::HogbomOracle;
+
+    let controls = ReconstructionControls::new(4, 0.5, 0.0)
+        .with_maximum_model_update(1.0e30)
+        .with_noise_sigma(0.0);
+    let problem = t38_cube_problem_with_controls(246, 2, controls);
+    let mut initial_lifecycle = ModelLifecycle::bind(
+        ExecutableModelProblem::from_compiled(problem.clone()).expect("executable cube problem"),
+        attempt(247),
+        1,
+    )
+    .expect("initial cube lifecycle");
+    let initial = initial_lifecycle.initial_empty().expect("empty cube model");
+    let preparation = MajorCyclePreparation::prepare(&initial_lifecycle, initial, None)
+        .expect("prepare empty cube model");
+    let complete = run_t19_complete_data(&problem, Some(&preparation));
+    let joined = MajorCycleOwner::from_complete_data(complete, preparation)
+        .expect("initial complete-data owner")
+        .reconcile(&mut initial_lifecycle)
+        .expect("initial paired normal state");
+    let (normal, continuation) = joined.into_continuation();
+    let (mut lifecycle, carried) = ModelLifecycle::continue_from(
+        ExecutableModelProblem::from_compiled(problem.clone()).expect("continued cube problem"),
+        attempt(248),
+        2,
+        continuation,
+    )
+    .expect("continue the initial final model");
+
+    // The full synthetic plane has exact symmetry ties whose winner depends
+    // only on row-major versus column-major scan order. Keep the mask finite
+    // and interior while selecting an unambiguous two-component trajectory.
+    let mask = ReconstructionMask::from_boxes(
+        problem.problem_id(),
+        carried.generation_id(),
+        problem.geometry().domains()[0].direction(),
+        normal.shape(),
+        [MaskBox::new([2, 4], [4, 4]).expect("interior CLEAN strip")],
+    )
+    .expect("identical interior CASA/Rust mask");
+    let mut mask_pixels = Vec::with_capacity(normal.shape()[0] * normal.shape()[1]);
+    for x in 0..normal.shape()[0] {
+        for y in 0..normal.shape()[1] {
+            mask_pixels.push(mask.contains([x, y]));
+        }
+    }
+    let program = MinorCycleProgram::for_algorithm(
+        ReconstructionAlgorithm::Hogbom,
+        problem.reconstruction().controls(),
+    )
+    .expect("identical Högbom controls")
+    .record_component_sequence(4)
+    .expect("bounded component sequence");
+    let rust = ReconstructionCycle::new(ChannelCyclePolicy::Independent, program)
+        .run(&lifecycle, &carried, &normal, &mask)
+        .expect("Rust channel-local minor cycle");
+    assert_eq!(rust.evidence().iterations(), 4);
+    assert!(rust.evidence().requests_reconciliation());
+
+    for (channel_index, channel) in rust.evidence().channels().iter().enumerate() {
+        let plane = normal.plane(channel_index).expect("channel normal plane");
+        let psf = plane
+            .normal_approximation()
+            .iter()
+            .map(|value| value.re as f32)
+            .collect::<Vec<_>>();
+        let residual = plane
+            .residual()
+            .iter()
+            .map(|value| value.re as f32)
+            .collect::<Vec<_>>();
+        let casa_steps = [1, 2].map(|iterations| {
+            HogbomOracle::clean_minor_cycle_2d_masked(
+                &psf,
+                &residual,
+                plane.shape(),
+                &mask_pixels,
+                0.5,
+                0.0,
+                iterations,
+            )
+            .expect("CASA/casacore masked Högbom oracle")
+        });
+        let evidence = channel.minor_cycle().expect("valid channel evidence");
+        assert_eq!(evidence.iterations(), 2);
+        let components = evidence
+            .recorded_component_sequence()
+            .expect("recorded T38 component trajectory");
+        assert_eq!(components.len(), 2);
+
+        let mut cumulative_model = vec![0.0_f32; psf.len()];
+        for (step, (component, casa)) in components.iter().zip(&casa_steps).enumerate() {
+            let pixel = component.cell().pixel();
+            cumulative_model[pixel[0] * plane.shape()[1] + pixel[1]] += component.flux() as f32;
+            assert_eq!(casa.iterdone, step + 1);
+            for (rust_value, casa_value) in cumulative_model.iter().zip(&casa.model) {
+                assert!((rust_value - casa_value).abs() < 1.0e-5);
+            }
+        }
+
+        let casa = &casa_steps[1];
+        let psf_peak = psf
+            .iter()
+            .map(|value| f64::from(value.abs()))
+            .fold(0.0_f64, f64::max);
+        let casa_terminal_peak = f64::from(casa.peak_residual_jy_per_beam) / psf_peak;
+        assert!((evidence.final_peak_flux() - casa_terminal_peak).abs() < 1.0e-5);
+        let mut psf_peak_index = 0;
+        for index in 1..psf.len() {
+            if psf[index].abs() > psf[psf_peak_index].abs() {
+                psf_peak_index = index;
+            }
+        }
+        let component_values = components
+            .iter()
+            .map(|component| (component.cell().pixel(), component.flux() as f32))
+            .collect::<Vec<_>>();
+        let rust_working_residual = t38_finite_hogbom_residual(
+            &residual,
+            &psf,
+            plane.shape(),
+            [
+                psf_peak_index / plane.shape()[1],
+                psf_peak_index % plane.shape()[1],
+            ],
+            &component_values,
+        );
+        for (index, ((rust_value, casa_value), selected)) in rust_working_residual
+            .iter()
+            .zip(&casa.residual)
+            .zip(&mask_pixels)
+            .enumerate()
+        {
+            if *selected {
+                assert!(
+                    (rust_value - casa_value).abs() < 1.0e-4,
+                    "channel {channel_index} finite minor residual diverged at {:?}: rust={rust_value} casa={casa_value}",
+                    [index / plane.shape()[1], index % plane.shape()[1]],
+                );
+            }
+        }
+    }
+
+    let (delta, _) = rust.into_parts();
+    let (complete, preparation) = prepare_reconciliation(&problem, &lifecycle, carried, delta);
+    let final_join = MajorCycleOwner::from_complete_data(complete, preparation)
+        .expect("final complete-data owner")
+        .reconcile(&mut lifecycle)
+        .expect("final paired A/A* reconciliation");
+    assert!(final_join.model_completion().delta().is_some());
+    let (paired_normal, continuation) = final_join.into_continuation();
+    let paired_final_residual = paired_normal.residual().to_vec();
+
+    let (mut replay_lifecycle, replay_carried) = ModelLifecycle::continue_from(
+        ExecutableModelProblem::from_compiled(problem.clone()).expect("replay cube problem"),
+        attempt(249),
+        3,
+        continuation,
+    )
+    .expect("continue the exact final model for a fresh paired replay");
+    let (replayed_complete, replayed_preparation) =
+        prepare_reconciliation(&problem, &replay_lifecycle, replay_carried, None);
+    let replayed_join =
+        MajorCycleOwner::from_complete_data(replayed_complete, replayed_preparation)
+            .expect("fresh paired complete-data owner")
+            .reconcile(&mut replay_lifecycle)
+            .expect("fresh paired A/A* replay");
+    assert_eq!(
+        replayed_join.normal_state().residual(),
+        paired_final_residual,
+        "the final residual is bit-exact under a fresh Rust paired A/A* replay of the same model"
+    );
+    assert_eq!(replayed_join.model_completion().delta(), None);
+}
+
+#[test]
+fn t38_independent_channels_share_one_ordered_iteration_budget() {
+    let problem = t38_cube_problem_with_controls(
+        244,
+        2,
+        ReconstructionControls::new(3, 0.5, 0.0).with_maximum_model_update(1.0e30),
+    );
+    let mut lifecycle = ModelLifecycle::bind(
+        ExecutableModelProblem::from_compiled(problem.clone()).expect("executable cube problem"),
+        attempt(245),
+        1,
+    )
+    .expect("cube lifecycle");
+    let initial = lifecycle.initial_empty().expect("empty cube model");
+    let preparation =
+        MajorCyclePreparation::prepare(&lifecycle, initial, None).expect("prepare cube model");
+    let complete = run_t19_complete_data(&problem, Some(&preparation));
+    let joined = MajorCycleOwner::from_complete_data(complete, preparation)
+        .expect("channel-local major-cycle owner")
+        .reconcile(&mut lifecycle)
+        .expect("channel-local normal state");
+    let (normal, continuation) = joined.into_continuation();
+    let mask = ReconstructionMask::full_plane(
+        problem.problem_id(),
+        continuation.generation().generation_id(),
+        problem.geometry().domains()[0].direction(),
+        normal.shape(),
+    )
+    .expect("shared cube mask");
+    let program = MinorCycleProgram::for_algorithm(
+        ReconstructionAlgorithm::Hogbom,
+        problem.reconstruction().controls(),
+    )
+    .expect("cube Högbom program");
+    let result = ReconstructionCycle::new(ChannelCyclePolicy::Independent, program)
+        .run(&lifecycle, continuation.generation(), &normal, &mask)
+        .expect("budgeted cube cycle");
+    let iterations = result
+        .evidence()
+        .channels()
+        .iter()
+        .map(|channel| {
+            channel.minor_cycle().map_or(
+                0,
+                casa_imaging_reconstruction::MinorCycleEvidence::iterations,
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(iterations, vec![2, 1]);
+    assert_eq!(result.evidence().iterations(), 3);
+    assert!(
+        result
+            .evidence()
+            .channels()
+            .iter()
+            .all(|channel| !channel.budget_exhausted())
+    );
+}
+
+#[test]
+fn t38_blank_and_unmapped_channels_are_ordered_and_never_cleaned() {
+    let problem = t38_cube_problem_with_channels(240, 3);
+    let mut samples = fixture_samples(&problem);
+    samples[1].input_weight = 0.0;
+    let mut lifecycle = ModelLifecycle::bind(
+        ExecutableModelProblem::from_compiled(problem.clone()).expect("executable cube problem"),
+        attempt(241),
+        1,
+    )
+    .expect("cube lifecycle");
+    let initial = lifecycle.initial_empty().expect("empty cube model");
+    let preparation =
+        MajorCyclePreparation::prepare(&lifecycle, initial, None).expect("prepare cube model");
+    let complete = run_t19_complete_data_with_samples(&problem, Some(&preparation), &samples);
+    let joined = MajorCycleOwner::from_complete_data(complete, preparation)
+        .expect("channel-local major-cycle owner")
+        .reconcile(&mut lifecycle)
+        .expect("channel-local normal state");
+    let (normal, continuation) = joined.into_continuation();
+    let mask = ReconstructionMask::full_plane(
+        problem.problem_id(),
+        continuation.generation().generation_id(),
+        problem.geometry().domains()[0].direction(),
+        normal.shape(),
+    )
+    .expect("shared cube mask");
+    let program = MinorCycleProgram::for_algorithm(
+        ReconstructionAlgorithm::Hogbom,
+        problem.reconstruction().controls(),
+    )
+    .expect("cube Högbom program");
+    let result = ReconstructionCycle::new(ChannelCyclePolicy::Independent, program)
+        .run(&lifecycle, continuation.generation(), &normal, &mask)
+        .expect("three-channel reconstruction cycle");
+    let channels = result.evidence().channels();
+    assert_eq!(
+        channels
+            .iter()
+            .map(|channel| channel.validity())
+            .collect::<Vec<_>>(),
+        vec![
+            SpectralChannelValidity::Valid,
+            SpectralChannelValidity::Blank,
+            SpectralChannelValidity::Unmapped,
+        ]
+    );
+    assert!(channels[0].minor_cycle().is_some());
+    assert!(channels[1].minor_cycle().is_none());
+    assert!(channels[2].minor_cycle().is_none());
+    assert!(result.delta().is_some_and(|delta| {
+        delta
+            .terms()
+            .iter()
+            .all(|term| term.cell().coefficient() == 0)
+    }));
+}
+
+#[test]
+fn t38_late_nsigma_floor_and_first_component_divergence_remain_per_channel() {
+    let problem = t38_cube_problem(242);
+    let mut lifecycle = ModelLifecycle::bind(
+        ExecutableModelProblem::from_compiled(problem.clone()).expect("executable cube problem"),
+        attempt(243),
+        1,
+    )
+    .expect("cube lifecycle");
+    let initial = lifecycle.initial_empty().expect("empty cube model");
+    let preparation =
+        MajorCyclePreparation::prepare(&lifecycle, initial, None).expect("prepare cube model");
+    let complete = run_t19_complete_data(&problem, Some(&preparation));
+    let joined = MajorCycleOwner::from_complete_data(complete, preparation)
+        .expect("channel-local major-cycle owner")
+        .reconcile(&mut lifecycle)
+        .expect("channel-local normal state");
+    let (normal, continuation) = joined.into_continuation();
+    let mask = ReconstructionMask::full_plane(
+        problem.problem_id(),
+        continuation.generation().generation_id(),
+        problem.geometry().domains()[0].direction(),
+        normal.shape(),
+    )
+    .expect("shared cube mask");
+    let baseline_program = MinorCycleProgram::for_algorithm(
+        ReconstructionAlgorithm::Hogbom,
+        problem.reconstruction().controls(),
+    )
+    .expect("compiled nsigma floor")
+    .record_component_sequence(16)
+    .expect("bounded sequence");
+    let candidate_program = MinorCycleProgram::new(0.25, 0.5, 8, 1.0e30)
+        .expect("candidate controls")
+        .record_component_sequence(16)
+        .expect("bounded sequence");
+    let baseline = ReconstructionCycle::new(ChannelCyclePolicy::Independent, baseline_program)
+        .run(&lifecycle, continuation.generation(), &normal, &mask)
+        .expect("baseline cube cycle");
+    let candidate = ReconstructionCycle::new(ChannelCyclePolicy::Independent, candidate_program)
+        .run(&lifecycle, continuation.generation(), &normal, &mask)
+        .expect("candidate cube cycle");
+
+    assert!(baseline.evidence().channels().iter().all(|channel| {
+        channel
+            .minor_cycle()
+            .is_some_and(|evidence| evidence.noise_rms().is_some())
+    }));
+    let divergence = candidate
+        .evidence()
+        .first_divergence(baseline.evidence())
+        .expect("gain change diverges at the first accepted component");
+    assert_eq!(divergence.output_channel(), 0);
+    assert_eq!(divergence.component().index(), 0);
 }
 
 /// The fixture sample stream for one compiled problem.
@@ -439,22 +943,39 @@ fn run_t19_complete_data(
     problem: &casa_imaging_model::CompiledProblem,
     preparation: Option<&MajorCyclePreparation>,
 ) -> CompleteDataOwnerResult {
+    run_t19_complete_data_with_samples(problem, preparation, &fixture_samples(problem))
+}
+
+fn run_t19_complete_data_with_samples(
+    problem: &casa_imaging_model::CompiledProblem,
+    preparation: Option<&MajorCyclePreparation>,
+    samples: &[SelectedObservationSample],
+) -> CompleteDataOwnerResult {
+    run_t19_complete_data_with_transform(problem, preparation, samples, None)
+}
+
+fn run_t19_complete_data_with_transform(
+    problem: &casa_imaging_model::CompiledProblem,
+    preparation: Option<&MajorCyclePreparation>,
+    samples: &[SelectedObservationSample],
+    transform_generation: Option<ContinuumTransformGenerationId>,
+) -> CompleteDataOwnerResult {
     let plan = plan_weighting(
         problem,
         WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
     )
     .expect("weighting residency plan");
-    let samples = fixture_samples(problem);
-    let selected_generation = replay_selected_generation(problem, &samples);
-    let generation = freeze_weighting_generation(problem, &plan, &samples)
+    let selected_generation = replay_selected_generation(problem, samples);
+    let generation = freeze_weighting_generation(problem, &plan, samples)
         .expect("freeze global weighting generation");
-    let (blocks, summary) = replay(&generation, problem, &plan, &samples);
+    let (blocks, summary) = replay(&generation, problem, &plan, samples);
     assert!(!blocks.is_empty(), "replay must emit bounded blocks");
 
-    let specification = SerialMfsSpecification::new(problem).expect("serial MFS specification");
-    let workload =
-        serial_mfs_workload(&specification, plan.limits().max_block_samples()).expect("workload");
-    let prepared = prepare_serial_mfs_operator(specification, workload).expect("prepare operator");
+    let specification =
+        SpectralOperatorSpecification::new(problem).expect("spectral operator specification");
+    let workload = spectral_operator_workload(&specification, plan.limits().max_block_samples())
+        .expect("workload");
+    let prepared = prepare_spectral_operator(specification, workload).expect("prepare operator");
     let mut state = prepared
         .begin(problem, &generation)
         .expect("begin complete-data owner");
@@ -467,7 +988,7 @@ fn run_t19_complete_data(
         state.consume_block(block).expect("consume weighted block");
     }
     state
-        .complete(&summary, selected_generation)
+        .complete(&summary, selected_generation, transform_generation)
         .expect("complete T19 evidence")
 }
 
@@ -499,10 +1020,11 @@ fn bound_major_cycle_model_cannot_be_replaced_by_diagnostic_prediction() {
     let generation = freeze_weighting_generation(&problem, &plan, &samples)
         .expect("freeze weighting generation");
     let (blocks, _) = replay(&generation, &problem, &plan, &samples);
-    let specification = SerialMfsSpecification::new(&problem).expect("serial MFS specification");
-    let workload = serial_mfs_workload(&specification, plan.limits().max_block_samples())
-        .expect("serial MFS workload");
-    let prepared = prepare_serial_mfs_operator(specification, workload).expect("prepare operator");
+    let specification =
+        SpectralOperatorSpecification::new(&problem).expect("spectral operator specification");
+    let workload = spectral_operator_workload(&specification, plan.limits().max_block_samples())
+        .expect("spectral operator workload");
+    let prepared = prepare_spectral_operator(specification, workload).expect("prepare operator");
     let mut state = prepared
         .begin(&problem, &generation)
         .expect("begin complete-data owner");
@@ -515,7 +1037,7 @@ fn bound_major_cycle_model_cannot_be_replaced_by_diagnostic_prediction() {
         state
             .predict_block(&arbitrary_model, &blocks[0])
             .expect_err("prediction must not overwrite the final-model grid"),
-        SerialMfsError::PredictionAfterMajorCycleBinding
+        SpectralOperatorError::PredictionAfterMajorCycleBinding
     );
 }
 
@@ -596,7 +1118,7 @@ fn reconciliation_applies_one_pending_delta_through_the_model_owner() {
     assert_eq!(normal_state.block_count(), block_count);
     assert_eq!(
         normal_state.catalog(),
-        casa_imaging_reconstruction::NormalStateCatalog::UnnormalizedNterms1V1
+        casa_imaging_reconstruction::NormalStateCatalog::UnnormalizedPlaneV1
     );
     // The residual content is model-dependent: a nonzero final model never
     // relabels the data-side dirty plane.
@@ -735,6 +1257,56 @@ fn completion_ids_stay_stable_across_owner_allocations() {
 }
 
 #[test]
+fn transformed_visibility_generation_cannot_be_substituted_under_raw_lineage() {
+    let problem = t19_compatible_problem(41);
+    let samples = fixture_samples(&problem);
+    let selected_generation = replay_selected_generation(&problem, &samples);
+    let first_transform = ContinuumTransformGenerationId::from_owner_digest([1; 32]);
+    let second_transform = ContinuumTransformGenerationId::from_owner_digest([2; 32]);
+
+    let reconcile = |transform_generation, attempt_byte| {
+        let mut lifecycle = bind_lifecycle(&problem, attempt(attempt_byte));
+        let named = lifecycle.initial_empty().expect("empty named generation");
+        let preparation =
+            MajorCyclePreparation::prepare(&lifecycle, named, None).expect("preparation");
+        let evidence = run_t19_complete_data_with_transform(
+            &problem,
+            Some(&preparation),
+            &samples,
+            Some(transform_generation),
+        );
+        MajorCycleOwner::from_complete_data(evidence, preparation)
+            .expect("owner")
+            .reconcile(&mut lifecycle)
+            .expect("reconciliation")
+    };
+
+    let first = reconcile(first_transform, 42);
+    let second = reconcile(second_transform, 42);
+    assert_eq!(
+        first.normal_state().selected_generation(),
+        selected_generation
+    );
+    assert_eq!(
+        second.normal_state().selected_generation(),
+        selected_generation
+    );
+    assert_eq!(
+        first.normal_state().continuum_transform_generation(),
+        Some(first_transform)
+    );
+    assert_eq!(
+        second.normal_state().continuum_transform_generation(),
+        Some(second_transform)
+    );
+    assert_ne!(
+        first.normal_state().completion_id(),
+        second.normal_state().completion_id()
+    );
+    assert_ne!(first.completion_id(), second.completion_id());
+}
+
+#[test]
 fn observation_generation_lineage_is_bound_into_the_normal_state() {
     // Two problems whose fixture streams carry different observation content.
     let first_problem = t19_compatible_problem(33);
@@ -853,9 +1425,9 @@ fn incomplete_or_foreign_operator_evidence_cannot_become_a_major_cycle_owner() {
     // A specification mismatch keeps raw problems from forging operator plans.
     let problem = t19_compatible_problem(15);
     let other = t19_compatible_problem(16);
-    let specification = SerialMfsSpecification::new(&other).expect("other specification");
-    let workload = serial_mfs_workload(&specification, 1).expect("other workload");
-    let prepared = prepare_serial_mfs_operator(specification, workload).expect("prepared");
+    let specification = SpectralOperatorSpecification::new(&other).expect("other specification");
+    let workload = spectral_operator_workload(&specification, 1).expect("other workload");
+    let prepared = prepare_spectral_operator(specification, workload).expect("prepared");
     let plan = plan_weighting(
         &problem,
         WeightingExecutionLimits::new(1, 1).expect("limits"),
@@ -866,7 +1438,7 @@ fn incomplete_or_foreign_operator_evidence_cannot_become_a_major_cycle_owner() {
     let foreign = prepared
         .begin(&problem, &generation)
         .expect_err("foreign prepared operator cannot adopt this problem");
-    assert!(matches!(foreign, SerialMfsError::ProblemMismatch));
+    assert!(matches!(foreign, SpectralOperatorError::ProblemMismatch));
 
     // Exhaustive coverage is required before any owner can exist.
     let evidence = run_t19_complete_data(&problem, None);
