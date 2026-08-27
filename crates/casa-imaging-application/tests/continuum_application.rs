@@ -9,7 +9,8 @@ use casa_coordinates::{CoordinateSystem, DirectionCoordinate, Projection, Projec
 use casa_images::PagedImage;
 use casa_imaging_application::{
     ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumBeamPolicy, ContinuumImagingRequest,
-    ContinuumMask, ContinuumMaskBox, ContinuumStopReason, ContinuumWeighting, execute_continuum,
+    ContinuumMask, ContinuumMaskBox, ContinuumStopReason, ContinuumWeighting, SpectralImagingMode,
+    execute_continuum,
 };
 use casa_ms::{
     MeasurementSet, MeasurementSetBuilder, OptionalMainColumn, SubtableId, VisibilityDataColumn,
@@ -399,6 +400,7 @@ fn request(
         spectral_window: None,
         channel_start: Some(0),
         channel_count: Some(1),
+        spectral_mode: SpectralImagingMode::Continuum,
         data_column: Some("DATA".to_string()),
         algorithm,
         weighting: ContinuumWeighting::Natural,

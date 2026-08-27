@@ -6,12 +6,12 @@ use std::time::Instant;
 
 use casa_imaging_application::{
     ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumBeamPolicy, ContinuumImagingRequest,
-    ContinuumMask, ContinuumMaskBox, ContinuumStopReason, ContinuumWeighting, TaskRequirement,
-    execute_continuum,
+    ContinuumMask, ContinuumMaskBox, ContinuumStopReason, ContinuumWeighting, SpectralImagingMode,
+    TaskRequirement, execute_continuum,
 };
 
 use super::{
-    CleanMaskMode, CleanStopReason, CliConfig, Deconvolver, ImagingFftBackendPolicy,
+    CleanMaskMode, CleanStopReason, CliConfig, CubeAxisValue, Deconvolver, ImagingFftBackendPolicy,
     ImagingFftPrecisionPolicy, ImagingMemoryPressurePolicy, RestoringBeamMode, RunSummary,
     SaveModelMode, SpectralMode, StandardMfsAccelerationPolicy, WTermMode, WeightingMode,
 };
@@ -71,6 +71,37 @@ fn application_request(config: &CliConfig) -> Result<ContinuumImagingRequest, St
             .maximum_model_update_jy
             .ok_or_else(|| "native deconvolution requires --maximum-model-update-jy".to_string())?
     };
+    let spectral_mode = match config.spectral_mode {
+        SpectralMode::Mfs => SpectralImagingMode::Continuum,
+        SpectralMode::Cube | SpectralMode::Cubedata => {
+            let mut axis = config.cube_axis.clone();
+            axis.specmode = config.spectral_mode.cube_specmode();
+            if axis.start.is_none()
+                && let Some(start) = config.channel_start
+            {
+                axis.start = Some(CubeAxisValue::Channel(
+                    i32::try_from(start)
+                        .map_err(|_| "cube channel start exceeds i32".to_string())?,
+                ));
+            }
+            SpectralImagingMode::Cube {
+                axis,
+                output_channels: config.channel_count,
+            }
+        }
+    };
+    let casa_inclusive = config.hogbom_iteration_mode == super::HogbomIterationMode::CasaInclusive;
+    let iterations = if casa_inclusive && config.niter > 0 {
+        config.niter.saturating_add(1)
+    } else {
+        config.niter
+    };
+    let cycle_iterations = if casa_inclusive {
+        config.minor_cycle_length.saturating_add(1)
+    } else {
+        config.minor_cycle_length
+    }
+    .min(iterations.max(1));
     Ok(ContinuumImagingRequest {
         measurement_set: config.ms.clone(),
         image_name: config.imagename.clone(),
@@ -86,6 +117,7 @@ fn application_request(config: &CliConfig) -> Result<ContinuumImagingRequest, St
             .or_else(|| config.spw.map(|spw| spw.to_string())),
         channel_start: config.channel_start,
         channel_count: config.channel_count,
+        spectral_mode,
         data_column: config.datacolumn.clone(),
         algorithm: if config.dirty_only || config.niter == 0 {
             ContinuumAlgorithm::Dirty
@@ -115,8 +147,8 @@ fn application_request(config: &CliConfig) -> Result<ContinuumImagingRequest, St
                 ContinuumWeighting::BriggsBandwidthTaper(f64::from(robust))
             }
         },
-        iterations: config.niter,
-        cycle_iterations: config.minor_cycle_length.min(config.niter.max(1)),
+        iterations,
+        cycle_iterations,
         maximum_major_cycles: config.nmajor.unwrap_or(1),
         maximum_model_update_jy: f64::from(maximum_model_update_jy),
         noise_sigma: (config.nsigma > 0.0).then_some(f64::from(config.nsigma)),
@@ -244,7 +276,6 @@ fn unsupported_native_controls(config: &CliConfig) -> bool {
             .as_deref()
             .is_some_and(|plane| !plane.eq_ignore_ascii_case("I"))
         || config.uv_taper.is_some()
-        || config.hogbom_iteration_mode != super::HogbomIterationMode::Strict
         || config.fullsummary
         || config.pbcor
         || config.write_pb
@@ -273,7 +304,9 @@ fn unsupported_native_controls(config: &CliConfig) -> bool {
 mod tests {
     use std::ffi::OsString;
 
-    use super::{CliConfig, TaskRequirement, backend_requirements, task_requirements};
+    use super::{
+        CliConfig, TaskRequirement, application_request, backend_requirements, task_requirements,
+    };
 
     fn config(extra: &[&str]) -> CliConfig {
         let mut args = vec![
@@ -319,6 +352,24 @@ mod tests {
             "3",
         ]));
         assert!(!requirements.contains(&TaskRequirement::UnsupportedControls));
+    }
+
+    #[test]
+    fn casa_inclusive_hogbom_mode_projects_task_iteration_accounting_once() {
+        let config = config(&[
+            "--niter",
+            "2",
+            "--minor-cycle-length",
+            "2",
+            "--maximum-model-update-jy",
+            "100",
+            "--hogbom-iteration-mode",
+            "casa-inclusive",
+        ]);
+        let request = application_request(&config).expect("native request");
+        assert_eq!(request.iterations, 3);
+        assert_eq!(request.cycle_iterations, 3);
+        assert!(!task_requirements(&config).contains(&TaskRequirement::UnsupportedControls));
     }
 
     #[test]

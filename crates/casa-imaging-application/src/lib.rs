@@ -19,7 +19,7 @@ pub use casa_product_sink::CasaImageProductSink;
 pub use continuum_request::{
     ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumBeamPolicy, ContinuumImagingRequest,
     ContinuumImagingResult, ContinuumMask, ContinuumMaskBox, ContinuumStopReason,
-    ContinuumWeighting, execute_continuum,
+    ContinuumWeighting, SpectralImagingMode, execute_continuum,
 };
 
 use std::{error::Error, fmt, io};
@@ -354,7 +354,7 @@ where
             problem.reconstruction().controls(),
         )?
         .record_component_sequence(64)?;
-        executor = executor.with_minor_cycle(
+        executor = executor.with_reconstruction_cycle(
             minor_node.ok_or_else(|| boxed("initial plan omitted its minor-cycle node"))?,
             input.mask.clone(),
             program,
@@ -422,8 +422,8 @@ where
                 .ok_or_else(|| boxed("initial major omitted frozen weighting"))?;
             let mut minor = registry
                 .implementation()
-                .take_minor_completion()
-                .ok_or_else(|| boxed("minor-cycle execution omitted scientific evidence"))?;
+                .take_reconstruction_cycle_completion()
+                .ok_or_else(|| boxed("reconstruction cycle omitted scientific evidence"))?;
             let controls = problem.reconstruction().controls();
             let maximum_cycles = controls.maximum_major_cycles().unwrap_or(1);
             let mut cycle = 1_usize;
@@ -444,11 +444,7 @@ where
                     cycle_threshold: minor.evidence().cycle_threshold(),
                     stop_reason: minor.evidence().stop_reason().into(),
                     clark_refreshes: minor.evidence().clark_refreshes(),
-                    recorded_components: minor
-                        .evidence()
-                        .recorded_component_sequence()
-                        .unwrap_or_default()
-                        .to_vec(),
+                    recorded_components: minor.evidence().recorded_components().copied().collect(),
                     mask_support: minor.mask().support().to_vec(),
                     mask_generation: minor.mask().generation_id(),
                     mask_model_generation: minor.mask().model_generation(),
@@ -519,7 +515,7 @@ where
                     let program = MinorCycleProgram::for_algorithm(algorithm.clone(), controls)?
                         .record_component_sequence(64)?
                         .limit_iterations(remaining)?;
-                    executor = executor.with_minor_cycle(
+                    executor = executor.with_reconstruction_cycle(
                         minor_node.ok_or_else(|| boxed("continuing plan omitted minor node"))?,
                         next_mask.clone(),
                         program,
@@ -565,8 +561,8 @@ where
                 if continue_cleaning {
                     minor = registry
                         .implementation()
-                        .take_minor_completion()
-                        .ok_or_else(|| boxed("continuing major omitted minor evidence"))?;
+                        .take_reconstruction_cycle_completion()
+                        .ok_or_else(|| boxed("continuing major omitted cycle evidence"))?;
                     mask_plan = next_mask;
                     cycle += 1;
                     continue;

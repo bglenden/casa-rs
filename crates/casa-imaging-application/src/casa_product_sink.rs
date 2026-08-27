@@ -81,15 +81,28 @@ impl SerialProductPublicationSink for CasaImageProductSink {
             .set_units(unit_label(member.contract().unit()))
             .map_err(|error| std::io::Error::other(error.to_string()))?;
         let role = role_label(member.contract().role());
-        let beam_set = member
-            .resolved_beam()
-            .map_or_else(ImageBeamSet::default, |beam| {
-                ImageBeamSet::new(GaussianBeam::new(
-                    beam.major_fwhm_rad(),
-                    beam.minor_fwhm_rad(),
-                    beam.position_angle_rad(),
-                ))
-            });
+        let beam_set = match member.resolved_beams() {
+            [] => ImageBeamSet::default(),
+            [Some(beam)] => ImageBeamSet::new(GaussianBeam::new(
+                beam.major_fwhm_rad(),
+                beam.minor_fwhm_rad(),
+                beam.position_angle_rad(),
+            )),
+            beams => ImageBeamSet::from_grid(
+                beams
+                    .iter()
+                    .map(|beam| {
+                        vec![beam.map_or_else(GaussianBeam::default, |beam| {
+                            GaussianBeam::new(
+                                beam.major_fwhm_rad(),
+                                beam.minor_fwhm_rad(),
+                                beam.position_angle_rad(),
+                            )
+                        })]
+                    })
+                    .collect(),
+            ),
+        };
         image
             .set_image_info(&ImageInfo {
                 beam_set,

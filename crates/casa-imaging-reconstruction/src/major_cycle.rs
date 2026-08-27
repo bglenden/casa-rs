@@ -36,6 +36,9 @@ pub enum NormalStateCatalog {
     /// Unnormalized single-field Stokes-I constant-basis MFS normal state
     /// whose residual follows the exact paired `A* W (d - A x)` composition.
     UnnormalizedPlaneV1,
+    /// Unnormalized channel-major normal-state slab whose planes follow the
+    /// exact output-channel interval named by the paired spectral operator.
+    UnnormalizedChannelSlabV1,
 }
 
 /// Reconstruction-owned proof that the final Normal State generation exists.
@@ -178,6 +181,18 @@ impl FinalNormalState {
         self.primitives.shape()
     }
 
+    /// Return the exact output-channel slab represented by this state.
+    #[must_use]
+    pub const fn slab(&self) -> crate::SpectralSlabPlan {
+        self.primitives.slab()
+    }
+
+    /// Return the number of channel planes resident in this state.
+    #[must_use]
+    pub const fn channel_count(&self) -> usize {
+        self.primitives.slab().core_depth()
+    }
+
     /// Return the T19 normal approximation paired with the residual.
     #[must_use]
     pub const fn normal_approximation(&self) -> &[num_complex::Complex64] {
@@ -194,6 +209,96 @@ impl FinalNormalState {
     #[must_use]
     pub fn sum_weight(&self) -> f64 {
         self.primitives.sum_weight()
+    }
+
+    /// Return all channel sum weights in output-channel order.
+    #[must_use]
+    pub const fn sum_weights(&self) -> &[f64] {
+        self.primitives.sum_weights()
+    }
+
+    /// Return all channel validity states in output-channel order.
+    #[must_use]
+    pub const fn channel_validity(&self) -> &[crate::SpectralChannelValidity] {
+        self.primitives.channel_validity()
+    }
+
+    /// Borrow one channel plane from this bounded Normal State slab.
+    #[must_use]
+    pub fn plane(&self, local_channel: usize) -> Option<FinalNormalStatePlane<'_>> {
+        let cells = self.shape()[0].checked_mul(self.shape()[1])?;
+        let start = local_channel.checked_mul(cells)?;
+        let end = start.checked_add(cells)?;
+        if local_channel >= self.channel_count() {
+            return None;
+        }
+        Some(FinalNormalStatePlane {
+            owner: self,
+            local_channel,
+            residual: self.primitives.dirty().get(start..end)?,
+            psf: self.primitives.psf().get(start..end)?,
+            sensitivity: self.primitives.sensitivity().get(start..end)?,
+        })
+    }
+}
+
+/// Borrowed two-dimensional plane of one authoritative Normal State slab.
+#[derive(Debug, Clone, Copy)]
+pub struct FinalNormalStatePlane<'a> {
+    owner: &'a FinalNormalState,
+    local_channel: usize,
+    residual: &'a [num_complex::Complex64],
+    psf: &'a [num_complex::Complex64],
+    sensitivity: &'a [f64],
+}
+
+impl<'a> FinalNormalStatePlane<'a> {
+    /// Return the slab owner this view borrows.
+    #[must_use]
+    pub const fn owner(self) -> &'a FinalNormalState {
+        self.owner
+    }
+
+    /// Return the absolute output-channel ordinal.
+    #[must_use]
+    pub const fn output_channel(self) -> usize {
+        self.owner.slab().core_range().start + self.local_channel
+    }
+
+    /// Return this plane's model-dependent unnormalized residual.
+    #[must_use]
+    pub const fn residual(self) -> &'a [num_complex::Complex64] {
+        self.residual
+    }
+
+    /// Return this plane's unnormalized PSF approximation.
+    #[must_use]
+    pub const fn normal_approximation(self) -> &'a [num_complex::Complex64] {
+        self.psf
+    }
+
+    /// Return this plane's per-pixel sensitivity values.
+    #[must_use]
+    pub const fn sensitivity(self) -> &'a [f64] {
+        self.sensitivity
+    }
+
+    /// Return this plane's accumulated sum weight.
+    #[must_use]
+    pub const fn sum_weight(self) -> f64 {
+        self.owner.sum_weights()[self.local_channel]
+    }
+
+    /// Return the common direction-plane shape.
+    #[must_use]
+    pub const fn shape(self) -> [usize; 2] {
+        self.owner.shape()
+    }
+
+    /// Return mapped, blank, or unmapped channel validity.
+    #[must_use]
+    pub const fn validity(self) -> crate::SpectralChannelValidity {
+        self.owner.channel_validity()[self.local_channel]
     }
 }
 
@@ -347,10 +452,6 @@ impl MajorCycleOwner {
         if result.completion().sample_count() == 0 || result.completion().block_count() == 0 {
             return Err(MajorCycleError::IncompleteCoverage);
         }
-        if result.completion().primitive_catalog() != SpectralPrimitiveCatalog::UnnormalizedPlaneV1
-        {
-            return Err(MajorCycleError::UnsupportedNormalStateCatalog);
-        }
         let (primitives, completion) = result.into_parts();
         let primitives = primitives
             .promote_major_cycle_residual(preparation.final_model_generation())
@@ -451,7 +552,7 @@ impl MajorCycleOwner {
                     NormalStateCatalog::UnnormalizedPlaneV1
                 }
                 SpectralPrimitiveCatalog::UnnormalizedChannelSlabV1 => {
-                    unreachable!("cube normal state is rejected before the T38 cycle owner")
+                    NormalStateCatalog::UnnormalizedChannelSlabV1
                 }
             },
             content,
@@ -532,8 +633,6 @@ pub enum MajorCycleError {
     StaleModelEvidence,
     /// The T19 evidence did not prove exhaustive weighted coverage.
     IncompleteCoverage,
-    /// T38 has not yet transferred channel-local cycle ownership.
-    UnsupportedNormalStateCatalog,
     /// The model owner rejected the named generation or pending delta.
     Model(ModelLifecycleError),
     /// Reconciling the final model produced or consumed invalid numbers.
@@ -548,9 +647,6 @@ impl fmt::Display for MajorCycleError {
             }
             Self::IncompleteCoverage => {
                 formatter.write_str("complete-data evidence lacks exhaustive coverage")
-            }
-            Self::UnsupportedNormalStateCatalog => {
-                formatter.write_str("channel-local normal state requires the cube cycle owner")
             }
             Self::Model(error) => error.fmt(formatter),
             Self::Residual(error) => error.fmt(formatter),

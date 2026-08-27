@@ -3,7 +3,7 @@
 //! Reconstruction-owned compilation of paired sparse spectral stencils.
 
 use casa_imaging_model::{
-    CompiledProblem, SelectedObservationSample, SelectedSpectralContribution,
+    CompiledProblem, ReconstructionBasis, SelectedObservationSample, SelectedSpectralContribution,
     SelectedSpectralContributions, SelectedSpectralEvaluation, SpectralCovariance,
     SpectralEdgePolicy, SpectralKernel,
 };
@@ -80,41 +80,23 @@ pub fn compile_spectral_stencil(
     evaluation: SelectedSpectralEvaluation,
 ) -> Result<SpectralStencilReceipt, SpectralStencilError> {
     let law = problem.science().spectral().sampling();
-    if !evaluation.is_valid() {
-        return Ok(receipt(
-            SelectedSpectralContributions::empty(),
-            evaluation,
-            SpectralStencilValidity::Flagged,
-            law.covariance(),
-        ));
-    }
-    let spectral = problem.geometry().spectral();
-    let centres = (0..spectral.output_channels())
-        .map(|channel| spectral.channel_centre_hz(channel))
-        .collect::<Option<Vec<_>>>()
-        .ok_or(SpectralStencilError::InvalidOutputGeometry)?;
-    let boundaries = (0..=spectral.output_channels())
-        .map(|boundary| spectral.channel_boundary_hz(boundary))
-        .collect::<Option<Vec<_>>>()
-        .ok_or(SpectralStencilError::InvalidOutputGeometry)?;
-    validate_axis(&centres, &boundaries)?;
     let frequency_hz = evaluation.output_frame().centre_hz();
-    let terms = match law.kernel() {
-        SpectralKernel::Identity => identity_terms(problem, sample, frequency_hz)?,
-        SpectralKernel::Nearest => nearest_terms(&centres, &boundaries, frequency_hz),
-        SpectralKernel::Linear => linear_terms(&centres, frequency_hz),
-        SpectralKernel::Cubic => cubic_terms(&centres, frequency_hz),
-        SpectralKernel::ChannelIntegration { maximum_terms } => integration_terms(
-            &boundaries,
-            evaluation.output_frame().boundaries_hz(),
-            law.edge_policy(),
-            maximum_terms,
-            frequency_hz,
-        )?,
+    // Preserve paired forward support even when flags force the adjoint weight
+    // to zero: MODEL_DATA refreshes every selected cell, including flagged
+    // cells. A constant-basis model evaluates the same coefficient at every
+    // selected frequency rather than treating source-channel ordinal as a
+    // model coefficient.
+    let terms = match problem.reconstruction().basis() {
+        ReconstructionBasis::Constant => one_term(0, 1.0, frequency_hz)?,
+        ReconstructionBasis::ChannelLocal { .. } | ReconstructionBasis::Taylor { .. } => {
+            channel_local_terms(problem, sample, evaluation, frequency_hz)?
+        }
     };
     let contributions = SelectedSpectralContributions::new(terms)
         .ok_or(SpectralStencilError::InvalidCoefficients)?;
-    let validity = if contributions.is_empty() {
+    let validity = if !evaluation.is_valid() {
+        SpectralStencilValidity::Flagged
+    } else if contributions.is_empty() {
         SpectralStencilValidity::Unmapped
     } else {
         SpectralStencilValidity::Mapped
@@ -125,6 +107,38 @@ pub fn compile_spectral_stencil(
         validity,
         law.covariance(),
     ))
+}
+
+fn channel_local_terms(
+    problem: &CompiledProblem,
+    sample: &SelectedObservationSample,
+    evaluation: SelectedSpectralEvaluation,
+    frequency_hz: f64,
+) -> Result<SmallVec<[SelectedSpectralContribution; 4]>, SpectralStencilError> {
+    let law = problem.science().spectral().sampling();
+    let spectral = problem.geometry().spectral();
+    let centres = (0..spectral.output_channels())
+        .map(|channel| spectral.channel_centre_hz(channel))
+        .collect::<Option<Vec<_>>>()
+        .ok_or(SpectralStencilError::InvalidOutputGeometry)?;
+    let boundaries = (0..=spectral.output_channels())
+        .map(|boundary| spectral.channel_boundary_hz(boundary))
+        .collect::<Option<Vec<_>>>()
+        .ok_or(SpectralStencilError::InvalidOutputGeometry)?;
+    validate_axis(&centres, &boundaries)?;
+    match law.kernel() {
+        SpectralKernel::Identity => identity_terms(problem, sample, frequency_hz),
+        SpectralKernel::Nearest => Ok(nearest_terms(&centres, &boundaries, frequency_hz)),
+        SpectralKernel::Linear => Ok(linear_terms(&centres, frequency_hz)),
+        SpectralKernel::Cubic => Ok(cubic_terms(&centres, frequency_hz)),
+        SpectralKernel::ChannelIntegration { maximum_terms } => integration_terms(
+            &boundaries,
+            evaluation.output_frame().boundaries_hz(),
+            law.edge_policy(),
+            maximum_terms,
+            frequency_hz,
+        ),
+    }
 }
 
 fn receipt(

@@ -11,7 +11,7 @@ pub(crate) const PLANNED_GENERATION_VERSION: u32 = 1;
 pub(crate) const ARTIFACT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-product-artifact";
 pub(crate) const ARTIFACT_IDENTITY_VERSION: u32 = 1;
 pub(crate) const COMPLETIONS_DOMAIN: &[u8] = b"casa-rs-continuum-completions";
-pub(crate) const COMPLETIONS_VERSION: u32 = 1;
+pub(crate) const COMPLETIONS_VERSION: u32 = 2;
 pub(crate) const SEAL_DOMAIN: &[u8] = b"casa-rs-product-generation-seal";
 pub(crate) const SEAL_VERSION: u32 = 1;
 

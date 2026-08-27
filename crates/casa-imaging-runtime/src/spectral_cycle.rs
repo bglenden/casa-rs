@@ -13,9 +13,10 @@ use casa_imaging_model::{
     CompiledProblem, LogicalIdentity, ModelDeltaTerm, ModelExecutionAttemptId, ModelInputCommitment,
 };
 use casa_imaging_reconstruction::{
-    ExecutableModelProblem, FinalModelCompletion, FinalModelContinuation, FinalNormalState,
-    MajorCyclePreparation, MinorCycleError, MinorCycleEvidence, MinorCycleProgram, ModelDeltaId,
-    ModelLifecycle, ReconstructionMaskPlan, run_minor_cycle,
+    ChannelCyclePolicy, ExecutableModelProblem, FinalModelCompletion, FinalModelContinuation,
+    FinalNormalState, MajorCyclePreparation, MinorCycleProgram, ModelDeltaId, ModelLifecycle,
+    ReconstructionCycle, ReconstructionCycleError, ReconstructionCycleEvidence,
+    ReconstructionMaskPlan,
 };
 
 use crate::{
@@ -633,7 +634,7 @@ pub struct SpectralCycleExecutor {
     source_resources: SelectedObservationSourceResources,
     pass: SpectralPassIdentity,
     complete_data: CompleteDataPlanFragment,
-    minor_cycle: Option<SerialMinorCycleExecution>,
+    reconstruction_cycle: Option<SerialReconstructionCycleExecution>,
     final_visibility_sink: Option<Mutex<Box<dyn FinalVisibilitySink>>>,
     phase_input_artifact: Option<(crate::ArtifactIdentity, u64)>,
     state: Mutex<SpectralCycleExecutorState>,
@@ -653,7 +654,7 @@ struct SpectralCycleExecutorState {
     lifecycle: Option<ModelLifecycle>,
     prepared_model: Option<PreparedFinalModel>,
     result: Option<MajorCycleOperatorResult>,
-    minor_completion: Option<MinorCyclePhaseCompletion>,
+    reconstruction_cycle_completion: Option<ReconstructionCyclePhaseCompletion>,
 }
 
 /// One immutable final-model candidate bound to the exact plan node, attempt,
@@ -719,7 +720,7 @@ pub enum SpectralCyclePassInput {
 pub struct FinalMajorPhaseInput {
     terms: Box<[ModelDeltaTerm]>,
     source_delta: Option<ModelDeltaId>,
-    evidence: Box<MinorCyclePhaseEvidence>,
+    evidence: Box<ReconstructionCyclePhaseEvidence>,
 }
 
 impl FinalMajorPhaseInput {
@@ -728,7 +729,7 @@ impl FinalMajorPhaseInput {
     pub fn identity(&self) -> crate::ArtifactIdentity {
         let mut hash = Sha256::new();
         hash.update(b"casa-rs-spectral-cycle-final-major-input-v1");
-        hash.update(self.evidence.minor_cycle.evidence_id().as_bytes());
+        hash.update(self.evidence.reconstruction_cycle.evidence_id().as_bytes());
         match self.source_delta {
             Some(delta) => {
                 hash.update([1]);
@@ -747,7 +748,7 @@ impl FinalMajorPhaseInput {
 
     /// Return the authoritative T20/T21 handoff evidence.
     #[must_use]
-    pub const fn evidence(&self) -> &MinorCyclePhaseEvidence {
+    pub const fn evidence(&self) -> &ReconstructionCyclePhaseEvidence {
         &self.evidence
     }
 
@@ -756,7 +757,7 @@ impl FinalMajorPhaseInput {
     }
 }
 
-struct SerialMinorCycleExecution {
+struct SerialReconstructionCycleExecution {
     node: crate::WorkNodeId,
     mask: ReconstructionMaskPlan,
     program: MinorCycleProgram,
@@ -793,7 +794,7 @@ impl SpectralCycleExecutor {
             source_resources,
             pass,
             complete_data,
-            minor_cycle: None,
+            reconstruction_cycle: None,
             final_visibility_sink: None,
             phase_input_artifact,
             state: Mutex::new(SpectralCycleExecutorState {
@@ -810,20 +811,20 @@ impl SpectralCycleExecutor {
                 lifecycle: None,
                 prepared_model: None,
                 result: None,
-                minor_completion: None,
+                reconstruction_cycle_completion: None,
             }),
         }
     }
 
-    /// Attach the resource-accounted T21 work owned by an initial-major plan.
+    /// Attach one resource-accounted shared reconstruction cycle to an initial-major plan.
     #[must_use]
-    pub fn with_minor_cycle(
+    pub fn with_reconstruction_cycle(
         mut self,
         node: crate::WorkNodeId,
         mask: ReconstructionMaskPlan,
         program: MinorCycleProgram,
     ) -> Self {
-        self.minor_cycle = Some(SerialMinorCycleExecution {
+        self.reconstruction_cycle = Some(SerialReconstructionCycleExecution {
             node,
             mask,
             program,
@@ -896,8 +897,14 @@ impl SpectralCycleExecutor {
     }
 
     /// Consume the accepted T21 completion after initial-plan success.
-    pub fn take_minor_completion(&self) -> Option<MinorCyclePhaseCompletion> {
-        self.state.lock().ok()?.minor_completion.take()
+    pub fn take_reconstruction_cycle_completion(
+        &self,
+    ) -> Option<ReconstructionCyclePhaseCompletion> {
+        self.state
+            .lock()
+            .ok()?
+            .reconstruction_cycle_completion
+            .take()
     }
 
     fn prepare_final_model(
@@ -1117,11 +1124,14 @@ impl WorkImplementation for SpectralCycleExecutor {
             );
             state.lifecycle = Some(lifecycle);
         } else if self
-            .minor_cycle
+            .reconstruction_cycle
             .as_ref()
-            .is_some_and(|minor| context.node().id == minor.node)
+            .is_some_and(|cycle| context.node().id == cycle.node)
         {
-            let minor = self.minor_cycle.as_ref().expect("minor-cycle node matched");
+            let cycle = self
+                .reconstruction_cycle
+                .as_ref()
+                .expect("reconstruction-cycle node matched");
             let result = state
                 .result
                 .take()
@@ -1130,9 +1140,9 @@ impl WorkImplementation for SpectralCycleExecutor {
                 .lifecycle
                 .as_ref()
                 .ok_or_else(|| io::Error::other("model lifecycle missing"))?;
-            state.minor_completion = Some(
+            state.reconstruction_cycle_completion = Some(
                 InitialMajorPhaseCompletion::new(result)
-                    .run_minor_cycle(lifecycle, &minor.mask, minor.program.clone())
+                    .run_reconstruction_cycle(lifecycle, &cycle.mask, cycle.program.clone())
                     .map_err(io::Error::other)?,
             );
         } else if context.node().id == *fragment.release_node() {
@@ -1263,25 +1273,26 @@ impl InitialMajorPhaseCompletion {
         Self { result }
     }
 
-    /// Run the resource-admitted T21 solve and retain its authoritative evidence.
-    pub fn run_minor_cycle(
+    /// Run one resource-admitted independent cycle over the complete channel slab.
+    pub fn run_reconstruction_cycle(
         self,
         lifecycle: &ModelLifecycle,
         mask_plan: &ReconstructionMaskPlan,
         program: MinorCycleProgram,
-    ) -> Result<MinorCyclePhaseCompletion, MinorCycleError> {
+    ) -> Result<ReconstructionCyclePhaseCompletion, ReconstructionCycleError> {
         let completion = self.result.into_completion();
         let (normal_state, continuation) = completion.into_continuation();
-        let (mask, auto_mask) = mask_plan.materialize(continuation.generation(), &normal_state)?;
-        let minor = run_minor_cycle(
+        let (mask, auto_mask) = mask_plan
+            .materialize(continuation.generation(), &normal_state)
+            .map_err(|error| ReconstructionCycleError::Minor(error.into()))?;
+        let cycle = ReconstructionCycle::new(ChannelCyclePolicy::Independent, program).run(
             lifecycle,
             continuation.generation(),
             &normal_state,
             &mask,
-            program,
         )?;
-        let (delta, evidence) = minor.into_parts();
-        Ok(MinorCyclePhaseCompletion {
+        let (delta, evidence) = cycle.into_parts();
+        Ok(ReconstructionCyclePhaseCompletion {
             normal_state,
             continuation,
             mask,
@@ -1292,20 +1303,20 @@ impl InitialMajorPhaseCompletion {
     }
 }
 
-/// Typed in-memory result carried from T21 into the ordinary final-major plan.
-pub struct MinorCyclePhaseCompletion {
+/// Typed slab-level result carried into the ordinary final-major plan.
+pub struct ReconstructionCyclePhaseCompletion {
     normal_state: FinalNormalState,
     continuation: FinalModelContinuation,
     mask: casa_imaging_reconstruction::ReconstructionMask,
     delta: Option<casa_imaging_reconstruction::ModelDelta>,
-    evidence: MinorCycleEvidence,
+    evidence: ReconstructionCycleEvidence,
     auto_mask: Option<casa_imaging_reconstruction::AutoMultithreshEvidence>,
 }
 
-impl MinorCyclePhaseCompletion {
-    /// Return the owner-minted T21 evidence.
+impl ReconstructionCyclePhaseCompletion {
+    /// Return reconstruction-owner evidence for every output channel.
     #[must_use]
-    pub const fn evidence(&self) -> &MinorCycleEvidence {
+    pub const fn evidence(&self) -> &ReconstructionCycleEvidence {
         &self.evidence
     }
 
@@ -1333,23 +1344,23 @@ impl MinorCyclePhaseCompletion {
         FinalMajorPhaseInput {
             terms: terms.into_boxed_slice(),
             source_delta,
-            evidence: Box::new(MinorCyclePhaseEvidence {
+            evidence: Box::new(ReconstructionCyclePhaseEvidence {
                 normal_state: self.normal_state,
                 continuation: self.continuation,
-                minor_cycle: self.evidence,
+                reconstruction_cycle: self.evidence,
             }),
         }
     }
 }
 
-/// Authoritative initial-normal, initial-model, and T21 evidence retained in memory.
-pub struct MinorCyclePhaseEvidence {
+/// Authoritative initial-normal, initial-model, and reconstruction-cycle evidence.
+pub struct ReconstructionCyclePhaseEvidence {
     normal_state: FinalNormalState,
     continuation: FinalModelContinuation,
-    minor_cycle: MinorCycleEvidence,
+    reconstruction_cycle: ReconstructionCycleEvidence,
 }
 
-impl MinorCyclePhaseEvidence {
+impl ReconstructionCyclePhaseEvidence {
     /// Return the initial authoritative normal state.
     #[must_use]
     pub const fn normal_state(&self) -> &FinalNormalState {
@@ -1368,9 +1379,9 @@ impl MinorCyclePhaseEvidence {
         self.continuation.generation()
     }
 
-    /// Return the accepted minor-cycle evidence.
+    /// Return ordered reconstruction-cycle evidence for the complete slab.
     #[must_use]
-    pub const fn minor_cycle(&self) -> &MinorCycleEvidence {
-        &self.minor_cycle
+    pub const fn reconstruction_cycle(&self) -> &ReconstructionCycleEvidence {
+        &self.reconstruction_cycle
     }
 }

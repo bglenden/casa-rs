@@ -77,7 +77,11 @@ extern "C" int cpp_hogbom_clean_minor_cycle_2d(
         int xend = nx;
         int ybeg = 1;
         int yend = ny;
-        int siter = 0;
+        // `hclean` iterates inclusively from `siter` through `niter`.
+        // Start fresh calls at one so `cycle_niter` is the exact maximum
+        // number of accepted components, matching CASA task controls and the
+        // Rust reconstruction contract.
+        int siter = 1;
         int iter = 0;
         float cycle_speedup = -1.0f;
         hclean_(

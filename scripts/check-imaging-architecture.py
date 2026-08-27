@@ -54,12 +54,12 @@ ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256 = (
     "daafa560c0e941fb3f2cea5c02a46de8a3363c2dd327cb839ef8ab2111f09835"
 )
 ACCEPTED_MATRIX_ROWS_SHA256 = (
-    "3298859de95c76e00a9525c899253defcc20d6c7e53f57d53fdd1c37d31deced"
+    "8115ac40f8bb1cd6270b335161f7d94b73a190747865eac6d17a49b23109d952"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "ac41b88193c70f99acb650d05cdd4b4ea698c63f165ed30f01e45a780874bab4"
+    "e4c3b368e4ae22f4728bf62613a5e9ff3ce94560354daf3008380ca9d65bc01b"
 )
-ACCEPTED_MATRIX_CONTRACT_REVISION = 49
+ACCEPTED_MATRIX_CONTRACT_REVISION = 50
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "scientific-products-v1",
@@ -1347,8 +1347,8 @@ def validate_t37_spectral_operator_transfer(rows: list[dict[str, Any]]) -> None:
     """Keep the T37 matrix ownership aligned with the spectral operator cutover."""
     rows_by_id = {row.get("id"): row for row in rows}
     required_statuses = {
-        "capability.spectral-cube": "TemporarilyUnavailable",
-        "capability.spectral-cubedata": "TemporarilyUnavailable",
+        "capability.spectral-cube": "Native",
+        "capability.spectral-cubedata": "Native",
         "capability.standard-gridder": "Native",
     }
     required_evidence = {
@@ -1942,6 +1942,9 @@ def validate_t18_global_weighting_sources(
     stencil = rust_function_body(
         spectral_sampling, "compile_spectral_stencil", spectral_sampling_path
     )
+    channel_local_stencil = rust_function_body(
+        spectral_sampling, "channel_local_terms", spectral_sampling_path
+    )
     if (
         "convert_frequency_to_frame_with_frames(" not in evaluation
         or "native.centre_hz()" not in derivation
@@ -1962,8 +1965,9 @@ def validate_t18_global_weighting_sources(
         or "source_frame" not in two_frame_conversion
         or "target_frame" not in two_frame_conversion
         or "direct_frequency_hop_uses_target_frame(" not in two_frame_conversion
-        or "SpectralKernel::Cubic" not in stencil
-        or "SpectralKernel::ChannelIntegration" not in stencil
+        or "channel_local_terms(" not in stencil
+        or "SpectralKernel::Cubic" not in channel_local_stencil
+        or "SpectralKernel::ChannelIntegration" not in channel_local_stencil
         or "compile_spectral_stencil(" not in runtime_weighting
         or "reported.spectral_evaluation()" not in runtime_weighting
         or "spectral_contributions" in traversal_fields

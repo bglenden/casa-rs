@@ -103,7 +103,7 @@ pub use serial_product_publication::{
 };
 pub use spectral_cycle::{
     FinalMajorPhaseInput, FinalVisibilityReplay, FinalVisibilitySink, InitialMajorPhaseCompletion,
-    MinorCyclePhaseCompletion, MinorCyclePhaseEvidence, SpectralCycleExecutor,
+    ReconstructionCyclePhaseCompletion, ReconstructionCyclePhaseEvidence, SpectralCycleExecutor,
     SpectralCyclePassInput, SpectralCycleRegistry,
 };
 pub use spectral_cycle_plan::{

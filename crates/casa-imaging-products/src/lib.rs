@@ -51,7 +51,7 @@ pub use visibility::{
 mod tests {
     #[test]
     fn algorithm_catalog_version_is_pinned() {
-        assert_eq!(super::CONTINUUM_ALGORITHM_CATALOG_VERSION, 2);
+        assert_eq!(super::CONTINUUM_ALGORITHM_CATALOG_VERSION, 3);
         assert_eq!(super::DEFAULT_PSF_CUTOFF, 0.35);
     }
 }

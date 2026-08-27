@@ -30,10 +30,11 @@ use thiserror::Error;
 use crate::{
     Encoder, FinalNormalState, FinalNormalStateCompletionId, ModelDelta, ModelGeneration,
     ModelGenerationId, ModelLifecycle, ModelLifecycleError, ReconstructionMask,
+    major_cycle::FinalNormalStatePlane,
 };
 
 const MINOR_CYCLE_EVIDENCE_DOMAIN: &[u8] = b"casa-rs-minor-cycle-evidence";
-const MINOR_CYCLE_EVIDENCE_VERSION: u32 = 3;
+const MINOR_CYCLE_EVIDENCE_VERSION: u32 = 4;
 
 macro_rules! minor_cycle_identity {
     ($name:ident, $version:ident, $summary:literal) => {
@@ -99,6 +100,7 @@ pub struct MinorCycleProgram {
     max_iterations: usize,
     maximum_model_update: f64,
     cycle_threshold: Option<CycleThresholdControls>,
+    fixed_cycle_threshold: Option<f64>,
     component_sequence_limit: Option<usize>,
 }
 
@@ -270,6 +272,7 @@ impl MinorCycleProgram {
             max_iterations,
             maximum_model_update,
             cycle_threshold: None,
+            fixed_cycle_threshold: None,
             component_sequence_limit: None,
         })
     }
@@ -340,6 +343,23 @@ impl MinorCycleProgram {
     #[must_use]
     pub const fn max_iterations(&self) -> usize {
         self.max_iterations
+    }
+
+    pub(crate) fn with_fixed_cycle_threshold(mut self, threshold: Option<f64>) -> Self {
+        self.fixed_cycle_threshold = threshold;
+        self
+    }
+
+    pub(crate) fn cycle_threshold_for(
+        &self,
+        initial_peak: f64,
+        maximum_sidelobe: f64,
+    ) -> Option<f64> {
+        self.cycle_threshold.map(|cycle| {
+            initial_peak
+                * (cycle.factor * maximum_sidelobe)
+                    .clamp(cycle.minimum_psf_fraction, cycle.maximum_psf_fraction)
+        })
     }
 
     /// Return the cumulative absolute component flux that exhausts the view
@@ -717,6 +737,9 @@ pub enum MinorCycleError {
     /// The selected model-space plane does not match the normal-state geometry.
     #[error("selected model plane does not match the normal-state plane")]
     ModelShapeMismatch,
+    /// A multi-channel state must execute through the shared reconstruction cycle.
+    #[error("multi-channel normal state requires ReconstructionCycle")]
+    ChannelCycleRequired,
     /// The named generation is not the view's final model generation.
     #[error("named generation is not the normal state's final model generation")]
     ForeignNormalState,
@@ -770,6 +793,26 @@ pub fn run_minor_cycle(
     mask: &ReconstructionMask,
     controls: MinorCycleProgram,
 ) -> Result<MinorCycleResult, MinorCycleError> {
+    if view.channel_count() != 1 {
+        return Err(MinorCycleError::ChannelCycleRequired);
+    }
+    run_minor_cycle_plane(
+        lifecycle,
+        base,
+        view.plane(0).ok_or(MinorCycleError::ModelShapeMismatch)?,
+        mask,
+        controls,
+    )
+}
+
+pub(crate) fn run_minor_cycle_plane(
+    lifecycle: &ModelLifecycle,
+    base: &ModelGeneration,
+    plane: FinalNormalStatePlane<'_>,
+    mask: &ReconstructionMask,
+    controls: MinorCycleProgram,
+) -> Result<MinorCycleResult, MinorCycleError> {
+    let view = plane.owner();
     let shape = view.shape();
     let cells = shape[0] * shape[1];
     let model_plane = controls.model_plane();
@@ -801,9 +844,9 @@ pub fn run_minor_cycle(
 
     // The PSF peak normalization follows the reference cleaner: peaks are
     // reported in model units regardless of the accumulated weight scale.
-    let psf_peak_index = find_peak_abs(view.normal_approximation(), shape, |v| v.re, |_| true)
+    let psf_peak_index = find_peak_abs(plane.normal_approximation(), shape, |v| v.re, |_| true)
         .ok_or(MinorCycleError::InvalidPsfPeak)?;
-    let psf_peak = view.normal_approximation()[psf_peak_index].re;
+    let psf_peak = plane.normal_approximation()[psf_peak_index].re;
     if !psf_peak.is_finite() || psf_peak <= 0.0 {
         return Err(MinorCycleError::InvalidPsfPeak);
     }
@@ -812,7 +855,7 @@ pub fn run_minor_cycle(
     let clark = match controls.algorithm() {
         ReconstructionAlgorithm::Hogbom => None,
         ReconstructionAlgorithm::Clark => Some(derive_clark_approximation(
-            view.normal_approximation(),
+            plane.normal_approximation(),
             shape,
             psf_peak_pixel,
         )?),
@@ -822,7 +865,7 @@ pub fn run_minor_cycle(
 
     // Private working copy: authoritative state is never mutated.
     let mut residual = Vec::with_capacity(cells);
-    for value in view.residual() {
+    for value in plane.residual() {
         let real = value.re;
         if !real.is_finite() {
             return Err(MinorCycleError::GeneratedNonfinite);
@@ -844,8 +887,10 @@ pub fn run_minor_cycle(
         .iter()
         .fold(0.0_f64, |peak, value| peak.max(value.abs()))
         / psf_peak;
-    let cycle_threshold = if let Some(cycle) = controls.cycle_threshold {
-        let psf = view
+    let cycle_threshold = if controls.fixed_cycle_threshold.is_some() {
+        controls.fixed_cycle_threshold
+    } else if let Some(cycle) = controls.cycle_threshold {
+        let psf = plane
             .normal_approximation()
             .iter()
             .map(|value| value.re as f32)
@@ -912,7 +957,7 @@ pub fn run_minor_cycle(
         let (peak_index, strength, scale_index) = if let Some(kernels) = multiscale.as_ref() {
             let candidate = select_multiscale_candidate(
                 &residual,
-                view.normal_approximation(),
+                plane.normal_approximation(),
                 shape,
                 psf_peak_pixel,
                 base,
@@ -988,7 +1033,7 @@ pub fn run_minor_cycle(
         match (clark, scale_index) {
             (_, Some(scale_index)) => subtract_scaled_psf(
                 &mut residual,
-                view.normal_approximation(),
+                plane.normal_approximation(),
                 shape,
                 peak_pixel,
                 psf_peak_pixel,
@@ -997,7 +1042,7 @@ pub fn run_minor_cycle(
             )?,
             (Some(approximation), None) => subtract_psf_patch(
                 &mut residual,
-                view.normal_approximation(),
+                plane.normal_approximation(),
                 shape,
                 peak_pixel,
                 psf_peak_pixel,
@@ -1006,7 +1051,7 @@ pub fn run_minor_cycle(
             )?,
             (None, None) => subtract_psf(
                 &mut residual,
-                view.normal_approximation(),
+                plane.normal_approximation(),
                 shape,
                 peak_pixel,
                 psf_peak_pixel,
@@ -1050,8 +1095,8 @@ pub fn run_minor_cycle(
             // errors to accumulate across the public cycle boundary.
             refresh_point_residual(
                 &mut residual,
-                view.residual(),
-                view.normal_approximation(),
+                plane.residual(),
+                plane.normal_approximation(),
                 shape,
                 psf_peak_pixel,
                 base,
@@ -1085,8 +1130,8 @@ pub fn run_minor_cycle(
         // normal-operator boundary instead of the last finite work patch.
         refresh_circular_residual(
             &mut residual,
-            view.residual(),
-            view.normal_approximation(),
+            plane.residual(),
+            plane.normal_approximation(),
             shape,
             psf_peak_pixel,
             base,
@@ -1753,6 +1798,13 @@ fn minor_cycle_evidence_id(
             encoder.u64(crate::canonical_f64_bits(cycle.factor));
             encoder.u64(crate::canonical_f64_bits(cycle.minimum_psf_fraction));
             encoder.u64(crate::canonical_f64_bits(cycle.maximum_psf_fraction));
+        }
+        None => encoder.u8(0),
+    }
+    match controls.fixed_cycle_threshold {
+        Some(threshold) => {
+            encoder.u8(1);
+            encoder.u64(crate::canonical_f64_bits(threshold));
         }
         None => encoder.u8(0),
     }

@@ -83,6 +83,7 @@ niter="${IMAGER_BENCH_NITER:-4}"
 gain="${IMAGER_BENCH_GAIN:-0.1}"
 threshold_jy="${IMAGER_BENCH_THRESHOLD_JY:-0}"
 nsigma="${IMAGER_BENCH_NSIGMA:-0}"
+maximum_model_update_jy="${IMAGER_BENCH_MAXIMUM_MODEL_UPDATE_JY:-100}"
 psfcutoff="${IMAGER_BENCH_PSFCUTOFF:-0.35}"
 pblimit="${IMAGER_BENCH_PBLIMIT:-0.2}"
 write_pb="${IMAGER_BENCH_WRITE_PB:-0}"
@@ -202,8 +203,8 @@ case "$hogbom_iteration_mode" in
     exit 2
     ;;
 esac
-if [[ "$hogbom_iteration_mode" == "casa_inclusive" ]]; then
-  hogbom_iteration_mode="casa"
+if [[ "$hogbom_iteration_mode" == "casa" || "$hogbom_iteration_mode" == "casa_inclusive" ]]; then
+  hogbom_iteration_mode="casa-inclusive"
 fi
 
 if [[ "$ms_staging" != "copy" && "$ms_staging" != "direct" ]]; then
@@ -410,7 +411,7 @@ echo "mode=$mode specmode=$specmode gridder=$gridder casa_gridder=$casa_gridder 
 echo
 
 if [[ "$skip_rust_enabled" == "0" ]]; then
-  cargo build --release -p casars-imager --bin casars-imager --example profile_imager >/dev/null
+  cargo build --release -p casars-imager --bin casars-imager >/dev/null
 fi
 
 tmpdir="$(mktemp -d "$tmp_root/casa-rs-imager-bench.XXXXXX")"
@@ -534,6 +535,7 @@ for run in $(seq 1 "$repeats"); do
       --gain "$gain" \
       --threshold-jy "$threshold_jy" \
       --nsigma "$nsigma" \
+      --maximum-model-update-jy "$maximum_model_update_jy" \
       --psfcutoff "$psfcutoff" \
       ${rust_pb_flags[@]+"${rust_pb_flags[@]}"} \
       --minor-cycle-length "$minor_cycle_length" \
@@ -579,6 +581,7 @@ for run in $(seq 1 "$repeats"); do
       --gain "$gain" \
       --threshold-jy "$threshold_jy" \
       --nsigma "$nsigma" \
+      --maximum-model-update-jy "$maximum_model_update_jy" \
       --psfcutoff "$psfcutoff" \
       ${rust_pb_flags[@]+"${rust_pb_flags[@]}"} \
       --minor-cycle-length "$minor_cycle_length" \

@@ -98,8 +98,8 @@ impl fmt::Display for ImplementationUnavailable {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "imaging request requires {} unsupported installed-implementation contract item(s)",
-            self.unsupported.len()
+            "imaging request requires unsupported installed-implementation contract items: {:?}",
+            self.unsupported
         )
     }
 }
@@ -173,7 +173,9 @@ pub fn validate_installed_implementation(
 const fn supports_task(requirement: TaskRequirement) -> bool {
     matches!(
         requirement,
-        TaskRequirement::Automasking
+        TaskRequirement::SpectralCube
+            | TaskRequirement::SpectralCubedata
+            | TaskRequirement::Automasking
             | TaskRequirement::MaskProduct
             | TaskRequirement::ModelColumnWrite
             | TaskRequirement::SerialCpu
@@ -186,7 +188,9 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
         capability,
         RequiredCapability::Polarization(PolarizationCoordinate::StokesI)
             | RequiredCapability::SpectralFrameTransform
+            | RequiredCapability::SpectralResampling
             | RequiredCapability::ConstantBasis
+            | RequiredCapability::ChannelLocalBasis
             | RequiredCapability::DirtyReconstruction
             | RequiredCapability::HogbomReconstruction
             | RequiredCapability::ClarkReconstruction

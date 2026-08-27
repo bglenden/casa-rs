@@ -1994,12 +1994,12 @@ mod tests {
     use num_complex::Complex64;
 
     #[cfg(feature = "cpp-interop-tests")]
-    use super::{OVERSAMPLING, SPEED_OF_LIGHT_M_PER_S, SUPPORT, StandardConvolution};
+    use super::{OVERSAMPLING, SPEED_OF_LIGHT_M_PER_S};
     use super::{
-        PreparedFft, SpectralChannelValidity, SpectralOperatorError, SpectralOperatorGeometry,
-        SpectralOperatorPrimitives, SpectralOperatorSample, SpectralOperatorWorkload,
-        SpectralSlabOperator, SpectralSlabPlan, apply_finite_value_policy, apply_input_policy,
-        casa_persistent_complex, checked_cells,
+        PreparedFft, SUPPORT, SpectralChannelValidity, SpectralOperatorError,
+        SpectralOperatorGeometry, SpectralOperatorPrimitives, SpectralOperatorSample,
+        SpectralOperatorWorkload, SpectralSlabOperator, SpectralSlabPlan, StandardConvolution,
+        apply_finite_value_policy, apply_input_policy, casa_persistent_complex, checked_cells,
     };
 
     fn geometry() -> SpectralOperatorGeometry {
@@ -2185,6 +2185,50 @@ mod tests {
         let right = inner(&model, dirty.dirty());
         assert!((left - right).norm() <= 1.0e-9 * left.norm().max(right.norm()).max(1.0));
         assert_eq!(visibility.len(), prediction.len());
+    }
+
+    #[test]
+    fn terminal_grid_support_remains_part_of_the_paired_operator() {
+        let geometry = geometry();
+        let gridder = StandardConvolution::new(&geometry);
+        let uv_lambda = [1.25 * gridder.du_lambda, -1.25 * gridder.dv_lambda];
+        let taps = gridder
+            .taps(uv_lambda)
+            .expect("support ending on the terminal grid cells is valid");
+        assert_eq!(taps.x.start + 2 * SUPPORT, geometry.grid_shape[0] - 1);
+        assert_eq!(taps.y.start + 2 * SUPPORT, geometry.grid_shape[1] - 1);
+
+        let shape = (geometry.grid_shape[0], geometry.grid_shape[1]);
+        let mut model = Array2::<Complex64>::zeros(shape);
+        for x in taps.x.start..=taps.x.start + 2 * SUPPORT {
+            for y in taps.y.start..=taps.y.start + 2 * SUPPORT {
+                model[(x, y)] = Complex64::new(
+                    0.13 * x as f64 - 0.07 * y as f64,
+                    0.05 * x as f64 + 0.11 * y as f64,
+                );
+            }
+        }
+        let visibility = Complex64::new(1.25, -0.75);
+        let prediction = gridder.degrid(&model, taps);
+        let mut adjoint = Array2::<Complex64>::zeros(shape);
+        let mut compensation = Array2::<Complex64>::zeros(shape);
+        gridder.grid_compensated(&mut adjoint, &mut compensation, taps, visibility);
+
+        assert_ne!(
+            adjoint[(geometry.grid_shape[0] - 1, geometry.grid_shape[1] - 1)],
+            Complex64::new(0.0, 0.0),
+            "the terminal row and column must not be clipped from the convolution footprint"
+        );
+        let left = prediction.conj() * visibility;
+        let right = model
+            .iter()
+            .zip(adjoint.iter())
+            .map(|(model, adjoint)| model.conj() * adjoint)
+            .sum::<Complex64>();
+        assert!(
+            (left - right).norm() <= 1.0e-13 * left.norm().max(right.norm()).max(1.0),
+            "terminal-support A/A* mismatch: left={left:?} right={right:?}"
+        );
     }
 
     #[test]

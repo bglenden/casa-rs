@@ -62,15 +62,15 @@ use casa_imaging_runtime::{
     DemandAlternative, DemandEnvelope, ExecutionDag, ExecutionDagSpecification, ExecutionError,
     ExecutionEvidenceError, ExecutionKnobs, ExecutionOutcome, ExecutionPlanId, ExecutionProvenance,
     ExecutionReceipt, ExecutionReceiptBinding, ExecutionReceiptStore, ExecutionStatus,
-    ExternalPressure, FenceId, FenceKind, HostInventory, ImplementationContractCatalog,
-    ImplementationContractMetadata, ImplementationRegistry, ImplementationRegistryId,
-    InitializationPolicy, IoBufferDemand, IoBufferKind, IoMeasurement, IoPrediction, LeaseResource,
-    LogicalAllocation, MajorCycleOperatorResult, MajorCycleOperatorState, MemoryCapacityDomain,
-    MemoryCapacityKind, MemoryDemand, MemoryView, MemoryViewKind, ObservationReadCompletionContext,
-    ObservationTransactionWork, PhysicalLayoutId, PhysicalSlot, PhysicalSlotId,
-    PhysicalWorkBinding, PhysicalWorkBindingError, PlanError, PlanPrediction, PlannedArtifact,
-    PlannerCostModelProfileBootstrap, PlannerCostModelProfileId, PlanningBindings,
-    PredictionConfidence, PredictionUncertainty, PreparedArtifactBudget,
+    ExternalPressure, FenceId, FenceKind, FrozenWeightingReservation, HostInventory,
+    ImplementationContractCatalog, ImplementationContractMetadata, ImplementationRegistry,
+    ImplementationRegistryId, InitializationPolicy, IoBufferDemand, IoBufferKind, IoMeasurement,
+    IoPrediction, LeaseResource, LogicalAllocation, MajorCycleOperatorResult,
+    MajorCycleOperatorState, MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand, MemoryView,
+    MemoryViewKind, ObservationReadCompletionContext, ObservationTransactionWork, PhysicalLayoutId,
+    PhysicalSlot, PhysicalSlotId, PhysicalWorkBinding, PhysicalWorkBindingError, PlanError,
+    PlanPrediction, PlannedArtifact, PlannerCostModelProfileBootstrap, PlannerCostModelProfileId,
+    PlanningBindings, PredictionConfidence, PredictionUncertainty, PreparedArtifactBudget,
     PreparedArtifactDescriptor, PreparedArtifactError, PreparedArtifactLoadSource,
     PreparedArtifactOperation, PreparedArtifactOrder, PreparedArtifactPlanFragment,
     PreparedArtifactPlaneDescriptor, PreparedArtifactPrecision, PreparedArtifactRegistration,
@@ -80,10 +80,11 @@ use casa_imaging_runtime::{
     PublicationLayoutLedger, PublicationMappedStaging, PublicationParticipant,
     PublicationPhysicalLayout, PublicationResourceBounds, PublicationStaging, QueueDemand,
     QueueResource, QueueResourceId, QuiescencePoint, RateDemand, RateResource, RateResourceId,
-    RateUnit, ReceiptFailureKind, ReceiptRetention, ReceiptStatus, RedactedPath, ResourceAuthority,
-    ResourceClaim, ResourceError, ResourceHeadroom, ResourceMeasurement, ResourceOverride,
-    ResourcePolicy, ResourceTopology, RunBindings, RunController, RunDirective, RunError,
-    RunToCompletion, RuntimeOverheadDemand, ScalingMetadata, SelectedObservationSourceResources,
+    RateUnit, ReceiptFailureKind, ReceiptRetention, ReceiptStatus,
+    ReconstructionCyclePhaseCompletion, RedactedPath, ResourceAuthority, ResourceClaim,
+    ResourceError, ResourceHeadroom, ResourceMeasurement, ResourceOverride, ResourcePolicy,
+    ResourceTopology, RunBindings, RunController, RunDirective, RunError, RunToCompletion,
+    RuntimeOverheadDemand, ScalingMetadata, SelectedObservationSourceResources,
     SerialProductPublicationExecutor, SerialProductPublicationPlan, SerialProductPublicationPolicy,
     SerialProductPublicationRegistry, SerialProductPublicationSink, SlotCompatibility,
     SpectralCycleExecutionPolicy, SpectralCycleExecutor, SpectralCyclePassInput, SpectralCyclePlan,
@@ -153,7 +154,10 @@ mod cost_model_profile;
 mod imaging_plan_selection;
 mod walking_skeleton;
 
-use common::{identity, model_lifecycle, problem_inputs, problem_inputs_with_source_count};
+use common::{
+    identity, model_lifecycle, problem_inputs, problem_inputs_with_channels,
+    problem_inputs_with_source_count,
+};
 
 const SELECTED_CONTENT_BYTES: usize = 128 * 1024;
 
@@ -661,13 +665,43 @@ fn geometry_with_shape_and_increment(
 }
 
 fn channel_local_request(observation: u8, channels: usize) -> ImagingRequest {
+    channel_local_request_with_reconstruction(
+        observation,
+        channels,
+        channels,
+        ReconstructionAlgorithm::Dirty,
+        ReconstructionControls::new(0, 1.0, 0.0),
+    )
+}
+
+fn channel_local_hogbom_request(
+    observation: u8,
+    output_channels: usize,
+    selected_channels: usize,
+) -> ImagingRequest {
+    channel_local_request_with_reconstruction(
+        observation,
+        output_channels,
+        selected_channels,
+        ReconstructionAlgorithm::Hogbom,
+        ReconstructionControls::new(2, 0.5, 0.0).with_maximum_model_update(1.0e6),
+    )
+}
+
+fn channel_local_request_with_reconstruction(
+    observation: u8,
+    channels: usize,
+    selected_channels: usize,
+    algorithm: ReconstructionAlgorithm,
+    controls: ReconstructionControls,
+) -> ImagingRequest {
     let geometry =
         geometry_with_shape_and_increment([4.0, 4.0], ImageShape::new(8, 8), [-1.0e-6, 1.0e-6]);
     let spectral = geometry.spectral().clone().with_wcs(SpectralWcs::Linear {
         channels,
         reference_pixel: 0.0,
-        reference_frequency_hz: 1.4e9,
-        increment_hz: 1.0e6,
+        reference_frequency_hz: 44.0e9,
+        increment_hz: 128.0e6,
     });
     let geometry = geometry.with_spectral(spectral);
     let specification = ProblemSpecification::new(
@@ -683,8 +717,8 @@ fn channel_local_request(observation: u8, channels: usize) -> ImagingRequest {
         ),
         ReconstructionContract::new(
             ReconstructionBasis::ChannelLocal { channels },
-            ReconstructionAlgorithm::Dirty,
-            ReconstructionControls::new(0, 1.0, 0.0),
+            algorithm,
+            controls,
             PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
         ),
         WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
@@ -712,7 +746,12 @@ fn channel_local_request(observation: u8, channels: usize) -> ImagingRequest {
     ImagingRequest::new(
         specification,
         geometry,
-        problem_inputs(observation, default_references(), ModelStateIdentity::Empty),
+        problem_inputs_with_channels(
+            observation,
+            default_references(),
+            ModelStateIdentity::Empty,
+            selected_channels,
+        ),
         model_lifecycle(ModelStateIdentity::Empty),
     )
 }
@@ -2416,13 +2455,15 @@ fn spectral_cycle_initial_plan_bounds_selected_payload_traversals_by_weighting_s
 }
 
 #[test]
-fn spectral_cycle_executes_initial_major_and_scheduler_minor_cycle() {
+fn spectral_cycle_executes_initial_major_and_shared_reconstruction_cycle() {
     let problem = compile(request_with_geometry(
         1,
         geometry_with_shape_and_increment([4.0, 4.0], ImageShape::new(8, 8), [-1.0e-6, 1.0e-6]),
     ))
     .expect("logical continuum compilation");
-    let residency = selected_content_residency(&problem);
+    let residency = selected_content_residency_with(&problem, |_| {
+        SelectedObservationContentBudget::new(256 * 1024, 1, 4)
+    });
     let planning_registry = ContractOnlyRegistry::new(
         registry(73),
         implementation_metadata(&problem),
@@ -2444,6 +2485,12 @@ fn spectral_cycle_executes_initial_major_and_scheduler_minor_cycle() {
     .expect("production initial plan");
     let minor_node = planned.minor_cycle_node().expect("T21 node").clone();
     let (physical, weighting, complete, resources, pass, _) = planned.into_parts();
+    let frozen_reservation = FrozenWeightingReservation::acquire(
+        authority(),
+        ResourcePolicy::Balanced,
+        weighting.planned_residency(),
+    )
+    .expect("cross-plan frozen weighting reservation");
     let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([73; 32]);
     let executor = SpectralCycleExecutor::new(
         implementation(73),
@@ -2456,7 +2503,8 @@ fn spectral_cycle_executes_initial_major_and_scheduler_minor_cycle() {
         ExecutableModelProblem::from_compiled(problem.clone()).expect("executable model"),
         SpectralCyclePassInput::Initial,
     )
-    .with_minor_cycle(
+    .with_frozen_weighting_reservation(frozen_reservation)
+    .with_reconstruction_cycle(
         minor_node.clone(),
         casa_imaging_reconstruction::ReconstructionMaskPlan::FullPlane {
             coordinate: problem.geometry().domains()[0].direction(),
@@ -2522,8 +2570,8 @@ fn spectral_cycle_executes_initial_major_and_scheduler_minor_cycle() {
     assert!(receipt.stage_actual_elapsed_nanos(&minor_node).is_some());
     let minor = runtime_registry
         .implementation()
-        .take_minor_completion()
-        .expect("minor completion");
+        .take_reconstruction_cycle_completion()
+        .expect("reconstruction cycle completion");
     let frozen_weighting = runtime_registry
         .implementation()
         .take_frozen_weighting()
@@ -2532,7 +2580,7 @@ fn spectral_cycle_executes_initial_major_and_scheduler_minor_cycle() {
     let final_input = minor.into_final_major_input();
     let source_delta = final_input.source_delta();
     let accepted_update = final_input.identity();
-    let minor_evidence_id = final_input.evidence().minor_cycle().evidence_id();
+    let minor_evidence_id = final_input.evidence().reconstruction_cycle().evidence_id();
     let selected_generation = final_input.evidence().normal_state().selected_generation();
 
     let final_planned = SpectralCyclePlan::final_major(
@@ -2658,6 +2706,150 @@ fn spectral_cycle_executes_initial_major_and_scheduler_minor_cycle() {
         source_delta.is_some()
     );
     assert_ne!(minor_evidence_id.as_bytes(), [0; 32]);
+}
+
+fn execute_initial_reconstruction_cycle(
+    problem: &casa_imaging_model::CompiledProblem,
+    byte: u8,
+) -> ReconstructionCyclePhaseCompletion {
+    let residency = selected_content_residency_with(problem, |_| {
+        SelectedObservationContentBudget::new(256 * 1024, 1, 4)
+    });
+    let planning_registry = ContractOnlyRegistry::new(
+        registry(byte),
+        implementation_metadata(problem),
+        [implementation(byte)],
+    );
+    let channel_count = problem.geometry().spectral().output_channels();
+    let policy = SpectralCycleExecutionPolicy::new(
+        implementation(byte),
+        WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
+        residency.clone(),
+        serial_storage_io(),
+        1_000,
+        (channel_count * 8 * 8 * std::mem::size_of::<num_complex::Complex64>() * 3) as u64,
+        900_000,
+    );
+    let planned = SpectralCyclePlan::initial(problem, &planning_registry, policy)
+        .expect("channel-cycle initial plan");
+    let cycle_node = planned
+        .minor_cycle_node()
+        .expect("initial plan owns reconstruction cycle")
+        .clone();
+    let (physical, weighting, complete, resources, pass, _) = planned.into_parts();
+    let reservation = FrozenWeightingReservation::acquire(
+        authority(),
+        ResourcePolicy::Balanced,
+        weighting.planned_residency(),
+    )
+    .expect("frozen weighting reservation");
+    let program = casa_imaging_reconstruction::MinorCycleProgram::for_algorithm(
+        problem.reconstruction().algorithm().clone(),
+        problem.reconstruction().controls(),
+    )
+    .expect("channel-cycle program")
+    .record_component_sequence(16)
+    .expect("component diagnostics");
+    let executor = SpectralCycleExecutor::new(
+        implementation(byte),
+        problem.clone(),
+        weighting,
+        resources,
+        pass,
+        complete,
+        open_selected_observation(problem, &residency).expect("selected owner"),
+        ExecutableModelProblem::from_compiled(problem.clone()).expect("executable model"),
+        SpectralCyclePassInput::Initial,
+    )
+    .with_frozen_weighting_reservation(reservation)
+    .with_reconstruction_cycle(
+        cycle_node.clone(),
+        casa_imaging_reconstruction::ReconstructionMaskPlan::FullPlane {
+            coordinate: problem.geometry().domains()[0].direction(),
+        },
+        program,
+    );
+    let runtime_registry =
+        SpectralCycleRegistry::new(registry(byte), implementation(byte), problem, executor);
+    let directory = tempfile::tempdir().expect("receipt directory");
+    let receipts = ExecutionReceiptStore::new(
+        directory.path(),
+        ReceiptRetention::new(2, 1_048_576).expect("retention"),
+    )
+    .expect("receipt store");
+    let execution_plan = runtime_plan(
+        problem,
+        PlanningBindings::new(
+            registry(byte),
+            ResourcePolicy::Balanced,
+            planning_profile(byte),
+        ),
+        authority(),
+        &runtime_registry,
+        &receipts,
+        move |_, _| Ok::<_, io::Error>(vec![physical]),
+    )
+    .expect("channel-cycle runtime plan");
+    let resource_policy = ResourcePolicy::Balanced;
+    let current = RunBindings::new(problem.inputs().clone(), &resource_policy, cost_model(byte));
+    let executable = ExecutableModelProblem::from_compiled(problem.clone()).expect("executable");
+    let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([byte; 32]);
+    runtime_run(
+        &executable,
+        &execution_plan,
+        &current,
+        &runtime_registry,
+        authority(),
+        &mut RunToCompletion,
+        receipts.bind(execution_provenance(
+            attempt,
+            BuildIdentity::from_sha256([byte.wrapping_add(1); 32]),
+        )),
+    )
+    .expect("channel-cycle runtime execution");
+    let receipt = receipts.open(attempt).expect("channel-cycle receipt");
+    assert_eq!(
+        receipt.node_status(&cycle_node),
+        Some(ReceiptStatus::Completed)
+    );
+    runtime_registry
+        .implementation()
+        .take_reconstruction_cycle_completion()
+        .expect("channel-cycle completion")
+}
+
+#[test]
+fn t38_runtime_runs_one_shared_cycle_with_combined_channel_evidence() {
+    let problem = compile(channel_local_hogbom_request(238, 3, 2))
+        .expect("two selected channels and one unmapped output");
+    let completion = execute_initial_reconstruction_cycle(&problem, 78);
+    let evidence = completion.evidence();
+    assert_eq!(
+        evidence.channel_policy(),
+        casa_imaging_reconstruction::ChannelCyclePolicy::Independent
+    );
+    assert_eq!(evidence.channels().len(), 3);
+    assert_eq!(
+        evidence.channels()[0].validity(),
+        casa_imaging_reconstruction::SpectralChannelValidity::Valid
+    );
+    assert_eq!(
+        evidence.channels()[1].validity(),
+        casa_imaging_reconstruction::SpectralChannelValidity::Valid
+    );
+    assert_eq!(
+        evidence.channels()[2].validity(),
+        casa_imaging_reconstruction::SpectralChannelValidity::Unmapped
+    );
+    assert!(evidence.channels()[0].minor_cycle().is_some());
+    assert!(evidence.channels()[1].minor_cycle().is_some());
+    assert!(evidence.channels()[2].minor_cycle().is_none());
+    let coefficients = evidence
+        .recorded_components()
+        .map(|component| component.cell().coefficient())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(coefficients, BTreeSet::from([0, 1]));
+    assert!(completion.into_final_major_input().source_delta().is_some());
 }
 
 #[test]

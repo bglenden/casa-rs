@@ -74,12 +74,10 @@ impl ContinuumSourceCatalog {
         if join.model_completion().problem() != problem.problem_id() {
             return Err(ProductsError::SourceLineageMismatch);
         }
-        if matches!(
+        if !matches!(
             normal_state.catalog(),
-            NormalStateCatalog::UnnormalizedPlaneV1
+            NormalStateCatalog::UnnormalizedPlaneV1 | NormalStateCatalog::UnnormalizedChannelSlabV1
         ) {
-            // The only supported continuum catalog.
-        } else {
             return Err(ProductsError::UnsupportedProblem);
         }
         if mask.is_some_and(|mask| {
@@ -141,6 +139,7 @@ impl ContinuumSourceCatalog {
         encoder.identity(self.normal_state_content.as_bytes());
         encoder.u8(match self.normal_state_catalog {
             NormalStateCatalog::UnnormalizedPlaneV1 => 0,
+            NormalStateCatalog::UnnormalizedChannelSlabV1 => 1,
         });
         encoder.identity(self.input_model_generation.as_bytes());
         encoder.identity(self.final_model_generation.as_bytes());

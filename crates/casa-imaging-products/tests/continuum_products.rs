@@ -365,11 +365,7 @@ fn fixture_samples_with_flux(
 
 fn exact_contributions(sample: &SelectedObservationSample) -> SelectedSpectralContributions {
     SelectedSpectralContributions::new([
-        SelectedSpectralContribution::new(
-            sample.address.channel_index,
-            1.0,
-            sample.address.frequency_centre_hz,
-        ),
+        SelectedSpectralContribution::new(0, 1.0, sample.address.frequency_centre_hz),
         None,
     ])
     .expect("one exact output contribution")

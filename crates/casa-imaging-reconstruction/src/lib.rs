@@ -32,6 +32,7 @@ mod major_cycle;
 mod mask;
 mod minor_cycle;
 mod psf_beam;
+mod reconstruction_cycle;
 mod spectral_operator;
 mod spectral_sampling;
 mod weighting;
@@ -56,8 +57,8 @@ pub mod runtime_adapter {
 }
 
 pub use major_cycle::{
-    FinalNormalState, MajorCycleCompletion, MajorCycleError, MajorCycleOwner,
-    MajorCyclePreparation, NormalStateCatalog,
+    FinalNormalState, FinalNormalStatePlane, MajorCycleCompletion, MajorCycleError,
+    MajorCycleOwner, MajorCyclePreparation, NormalStateCatalog,
 };
 pub use mask::{
     AutoMultithreshControls, AutoMultithreshEvidence, MaskBox, MaskError, ReconstructionMask,
@@ -72,6 +73,11 @@ pub use minor_cycle::{
 pub use psf_beam::{
     DEFAULT_PSF_FIT_CUTOFF, PsfBeamFitError, RestoringBeam, fit_restoring_beam,
     fitted_psf_sidelobe_fraction,
+};
+pub use reconstruction_cycle::{
+    ChannelComponentDivergence, ChannelCycleEvidence, ChannelCyclePolicy, ReconstructionCycle,
+    ReconstructionCycleError, ReconstructionCycleEvidence, ReconstructionCycleEvidenceId,
+    ReconstructionCycleResult,
 };
 pub use spectral_sampling::{
     SpectralStencilError, SpectralStencilReceipt, SpectralStencilValidity, compile_spectral_stencil,
