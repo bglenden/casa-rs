@@ -42,8 +42,7 @@ use casa_imaging_reconstruction::{
     WeightingReplayChunk, WeightingReplaySummary, auto_multithresh, begin_weighting_generation,
     model_support_identity, plan_weighting, run_minor_cycle as hogbom_minor_cycle,
     runtime_adapter::{
-        CompleteDataOwnerResult, SpectralOperatorPass, prepare_spectral_operator,
-        spectral_operator_workload,
+        CompleteDataOwnerResult, prepare_spectral_operator, spectral_operator_workload,
     },
 };
 
@@ -480,19 +479,15 @@ fn run_t19_complete_data(
 
     let specification =
         SpectralOperatorSpecification::new(problem).expect("spectral operator specification");
-    let workload = spectral_operator_workload(
-        &specification,
-        plan.limits().max_block_samples(),
-        SpectralOperatorPass::InitialMajor,
-    )
-    .expect("workload");
+    let workload = spectral_operator_workload(&specification, plan.limits().max_block_samples())
+        .expect("workload");
     let prepared = prepare_spectral_operator(specification, workload).expect("prepare operator");
     let mut state = prepared
         .begin(problem, &generation)
         .expect("begin complete-data owner");
     if let Some(preparation) = preparation {
         state
-            .bind_major_cycle_model(preparation.final_model(), None)
+            .bind_major_cycle_model(preparation.final_model())
             .expect("bind exact final model before replay");
     }
     for block in &blocks {

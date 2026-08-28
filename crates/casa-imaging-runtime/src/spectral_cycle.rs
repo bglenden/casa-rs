@@ -730,28 +730,22 @@ struct PreparedFinalModel {
     attempt: crate::ExecutionAttemptId,
     lease_epoch: u64,
     preparation: MajorCyclePreparation,
-    prior_normal_state: Option<FinalNormalState>,
 }
 
 impl PreparedFinalModel {
-    fn new(
-        context: WorkExecutionContext<'_>,
-        preparation: MajorCyclePreparation,
-        prior_normal_state: Option<FinalNormalState>,
-    ) -> Self {
+    fn new(context: WorkExecutionContext<'_>, preparation: MajorCyclePreparation) -> Self {
         Self {
             owner_node: context.node().id.clone(),
             attempt: context.attempt_id(),
             lease_epoch: context.lease_epoch(),
             preparation,
-            prior_normal_state,
         }
     }
 
-    fn take_for_replay(
-        &mut self,
+    fn for_replay(
+        &self,
         context: WorkExecutionContext<'_>,
-    ) -> Result<(&MajorCyclePreparation, Option<FinalNormalState>), io::Error> {
+    ) -> Result<&MajorCyclePreparation, io::Error> {
         let direct_predecessor = context
             .node()
             .dependencies
@@ -764,8 +758,7 @@ impl PreparedFinalModel {
                 "terminal replay is not bound to its final-model preparation capability",
             ));
         }
-        let prior_normal_state = self.prior_normal_state.take();
-        Ok((&self.preparation, prior_normal_state))
+        Ok(&self.preparation)
     }
 
     fn into_reconciliation(
@@ -775,11 +768,6 @@ impl PreparedFinalModel {
         if context.attempt_id() != self.attempt || context.lease_epoch() != self.lease_epoch {
             return Err(io::Error::other(
                 "post-replay reconciliation changed final-model preparation authority",
-            ));
-        }
-        if self.prior_normal_state.is_some() {
-            return Err(io::Error::other(
-                "post-replay reconciliation retained unconsumed prior normal state",
             ));
         }
         Ok(self.preparation)
@@ -830,19 +818,8 @@ impl FinalMajorPhaseInput {
         &self.evidence
     }
 
-    fn into_execution_parts(
-        self,
-    ) -> (
-        Box<[ModelDeltaTerm]>,
-        FinalModelContinuation,
-        FinalNormalState,
-    ) {
-        let ReconstructionCyclePhaseEvidence {
-            normal_state,
-            continuation,
-            reconstruction_cycle: _,
-        } = *self.evidence;
-        (self.terms, continuation, normal_state)
+    fn into_execution_parts(self) -> (Box<[ModelDeltaTerm]>, FinalModelContinuation) {
+        (self.terms, self.evidence.continuation)
     }
 }
 
@@ -1020,7 +997,7 @@ impl SpectralCycleExecutor {
             context.attempt_id().as_bytes(),
         ));
         let epoch = context.lease_epoch();
-        let (lifecycle, named, terms, prior_normal_state) = match input {
+        let (lifecycle, named, terms) = match input {
             SpectralCyclePassInput::Initial => {
                 let mut lifecycle =
                     ModelLifecycle::bind(executable, attempt, epoch).map_err(io::Error::other)?;
@@ -1035,14 +1012,14 @@ impl SpectralCycleExecutor {
                     }
                 }
                 .map_err(io::Error::other)?;
-                (lifecycle, named, None, None)
+                (lifecycle, named, None)
             }
             SpectralCyclePassInput::FinalMajor(input) => {
-                let (terms, continuation, prior_normal_state) = input.into_execution_parts();
+                let (terms, continuation) = input.into_execution_parts();
                 let (lifecycle, named) =
                     ModelLifecycle::continue_from(executable, attempt, epoch, continuation)
                         .map_err(io::Error::other)?;
-                (lifecycle, named, Some(terms), Some(prior_normal_state))
+                (lifecycle, named, Some(terms))
             }
         };
         let delta = match terms {
@@ -1055,11 +1032,7 @@ impl SpectralCycleExecutor {
         };
         let preparation =
             MajorCyclePreparation::prepare(&lifecycle, named, delta).map_err(io::Error::other)?;
-        state.prepared_model = Some(PreparedFinalModel::new(
-            context,
-            preparation,
-            prior_normal_state,
-        ));
+        state.prepared_model = Some(PreparedFinalModel::new(context, preparation));
         state.lifecycle = Some(lifecycle);
         Ok(())
     }
@@ -1086,13 +1059,14 @@ impl SpectralCycleExecutor {
         if self.final_visibility_sink.is_some() {
             operator.enable_final_visibility_samples();
         }
-        let (preparation, prior_normal_state) = state
-            .prepared_model
-            .as_mut()
-            .ok_or_else(|| io::Error::other("final-model preparation missing"))?
-            .take_for_replay(context)?;
         operator
-            .bind_major_cycle_model(preparation, prior_normal_state)
+            .bind_major_cycle_model(
+                state
+                    .prepared_model
+                    .as_ref()
+                    .ok_or_else(|| io::Error::other("final-model preparation missing"))?
+                    .for_replay(context)?,
+            )
             .map_err(io::Error::other)?;
         state.operator = Some(operator);
         let SpectralCycleExecutorState {
