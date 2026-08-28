@@ -164,14 +164,58 @@ spectral-stencil construction, generation inspection, coverage encoding, and
 visibility-address encoding. Source I/O was not the limiting stage.
 
 This selects one replacement candidate before implementation: `casa-ms` keeps
-canonical ordered traversal but lends a bounded run-shaped view that separates
-row-, channel-, and correlation-level fields. The shared runtime transports the
-same leased block through its one bounded executor; reconstruction compiles
-spectral contributions once and consumes the borrowed run directly, while
-scientific coverage and final visibility evidence are accumulated at bounded
-block boundaries. `workers=1` remains this exact code path. The candidate must
-not add an MFS-only route, materialize selected data, weaken deterministic
-reduction, or move MS interpretation out of `casa-ms`.
+canonical ordered traversal and lends each selected sample through a bounded
+borrowed envelope whose lifetime cannot escape the live source block. The
+shared runtime transports the same leased block through its one bounded
+executor. Reconstruction immediately projects only the fields its kernel
+retains, reuses spectral contributions across correlations in the same native
+channel, and advances coverage evidence at bounded block boundaries.
+`workers=1` remains this exact code path. The candidate must not add an MFS-only
+route, materialize selected data, weaken deterministic reduction, or move MS
+interpretation out of `casa-ms`.
+
+### Accepted compact serial-handoff result
+
+Commit `bb9c24ac2` implements that candidate without changing the source pass
+shape or adding another execution route. The borrowed traversal envelope is 72
+bytes, while reconstruction's retained weighting record contains only the
+address, visibility, flags, input weight, density/transformed UVW, and phase
+shift required by the scientific kernel. Spectral-contribution compilation is
+cached by MeasurementSet, field, spectral window, channel, native interval,
+and output interval; correlations in the same channel reuse the compiled
+stencil. Coverage checkpoints move privately with each immutable replay block,
+so the complete-data owner adopts the checkpoint once per block rather than
+rehashing each sample. Final visibility identity hashes the ordered address
+stream once and keeps separate model and residual value digests.
+
+On the realistic serial 64-channel, `niter=1`, `nmajor=1` discriminator, the
+unchanged `6666883ec` control took 584.974955 seconds and `bb9c24ac2` took
+487.939629 seconds: 97.035326 seconds or 16.59 percent faster. Both runs used
+one worker and exactly one density pass, one initial weighted replay, and one
+final-major replay. Every pass traversed the same 188 blocks, 4,094,064 rows,
+and 524,040,192 samples.
+
+| Serial stage | Control | Candidate | Improvement |
+| --- | ---: | ---: | ---: |
+| Density | 102.125557 s | 84.753683 s | 17.01% |
+| Initial weighted replay | 231.761949 s | 195.891281 s | 15.48% |
+| Final-major replay | 248.643193 s | 204.455013 s | 17.77% |
+
+Logical source bytes remained exactly 5,146,238,448 per pass. Semantic handoff
+fell from 230,577,684,480 to 37,730,893,824 bytes per pass, or from 440 to 72
+bytes per sample: an 83.64 percent reduction. Direct source-read time remained
+effectively unchanged at 10.29-10.50 seconds in the candidate versus
+10.33-10.71 seconds in the control. The terminal gain is therefore a serial
+kernel/handoff improvement, not a disk-cache or worker-count effect.
+
+The full-native comparator then visited all 5,242,881 stored elements across
+image, residual, model, PSF, mask, and sum-weight products. Every array had
+`diff_rms=0` and `diff_abs_max=0`, with exact product inventory, metadata,
+pixel-mask topology, and finite-value topology. This is one provisional
+control/candidate observation; it proves the candidate's causal effect and
+scientific identity but not a repeatable timing distribution. The frozen
+CASA-anchored `niter=500` serial workload remains the final performance and
+CASA-parity gate.
 
 ## Scope
 
