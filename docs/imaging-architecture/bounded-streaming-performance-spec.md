@@ -217,7 +217,7 @@ scientific identity but not a repeatable timing distribution. The frozen
 CASA-anchored `niter=500` serial workload remains the final performance and
 CASA-parity gate.
 
-### Re-evaluated residual-only candidate on the compact baseline
+### Accepted residual-only candidate on the compact baseline
 
 The accepted compact handoff changed the measured bottleneck enough to reopen
 the previously rejected invariant-normal-state mechanism, without changing its
@@ -236,13 +236,31 @@ bit-exact but worth only 5.05 percent before the compact handoff can therefore
 remove a materially larger measured fraction across the repeated later-major
 stage.
 
-The candidate remains provisional. It must keep one worker, one ordered source
-pass per stage, the existing bounded residency, and exact full-native image,
-residual, model, PSF, mask, and sum-weight products. It is retained only if it
-materially reduces the realistic final-major and total serial receipts on the
-compact baseline. Reconstruction continues to own invariant scientific state;
-runtime owns its validated lifetime and residency; the application only carries
-the prior normal state between passes.
+Commit `5a3be7eeb` retained the mechanism after the realistic discriminator.
+Against the `bb9c24ac2` compact control, total serial wall fell from 487.939629
+to 465.766714 seconds, a 22.172915-second or 4.54 percent improvement. The
+terminal final-major replay fell from 204.455013 to 183.448796 seconds, a
+21.006217-second or 10.27 percent improvement. Density and initial weighted
+replay remained effectively unchanged at 84.688515 and 194.902731 seconds.
+The same one worker, one ordered pass per stage, 188 blocks, 4,094,064 rows,
+524,040,192 samples, 5,146,238,448 logical source bytes, and 62,272,500-byte
+peak live source residency were preserved.
+
+The full-native comparator visited all 5,242,881 stored elements across image,
+residual, model, PSF, mask, and sum weight. Every product had `diff_rms=0` and
+`diff_abs_max=0`, with exact inventory, metadata, pixel masks, and finite-value
+topology. The candidate therefore meets its causal and scientific retention
+conditions.
+
+It does not meet the serial CASA gate. On the frozen `niter=500` workload,
+density took 84.671362 seconds, initial weighted replay took 195.093978 seconds,
+and the first two residual refreshes took 159.625824 and 159.977950 seconds.
+The run crossed CASA's 733.660-second wall during the third of ten expected
+later-major replays and was stopped. Reconstruction continues to own invariant
+scientific state; runtime owns its validated lifetime and residency; the
+application only carries prior normal state. The next candidate must reduce
+the remaining scalar block-to-kernel work; worker count cannot mask this serial
+failure.
 
 ## Scope
 
