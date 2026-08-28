@@ -20,6 +20,7 @@ const GENERATION_VERSION: u32 = 2;
 const REPLAY_DOMAIN: &[u8] = b"casa-rs-weighting-replay";
 const REPLAY_VERSION: u32 = 1;
 const COVERAGE_DOMAIN: &[u8] = b"casa-rs-weighting-replay-coverage";
+const COVERAGE_HASH_CHUNK_BYTES: usize = 256;
 const COVERAGE_VERSION: u32 = 2;
 const F32_MINIMUM_POWER: i16 = -149;
 const F32_SUPERACCUMULATOR_LIMBS: usize = 6;
@@ -1907,33 +1908,78 @@ impl CoverageEncoder {
 
     pub(super) fn push(&mut self, weighted: &WeightingSampleValue) {
         let sample = weighted.selected();
-        self.0
-            .update(sample.address.measurement_set.identity().as_bytes());
-        self.0.update(sample.address.physical_row.to_be_bytes());
-        self.0
-            .update(sample.address.data_description_id.to_be_bytes());
-        self.0
-            .update(sample.address.spectral_window_id.to_be_bytes());
-        self.0.update(sample.address.channel_index.to_be_bytes());
-        self.0
-            .update(sample.address.correlation_index.to_be_bytes());
+        let mut chunk = [0_u8; COVERAGE_HASH_CHUNK_BYTES];
+        let mut used = 0;
+        append_coverage_bytes(
+            &mut self.0,
+            &mut chunk,
+            &mut used,
+            &sample.address.measurement_set.identity().as_bytes(),
+        );
+        append_coverage_bytes(
+            &mut self.0,
+            &mut chunk,
+            &mut used,
+            &sample.address.physical_row.to_be_bytes(),
+        );
+        append_coverage_bytes(
+            &mut self.0,
+            &mut chunk,
+            &mut used,
+            &sample.address.data_description_id.to_be_bytes(),
+        );
+        append_coverage_bytes(
+            &mut self.0,
+            &mut chunk,
+            &mut used,
+            &sample.address.spectral_window_id.to_be_bytes(),
+        );
+        append_coverage_bytes(
+            &mut self.0,
+            &mut chunk,
+            &mut used,
+            &sample.address.channel_index.to_be_bytes(),
+        );
+        append_coverage_bytes(
+            &mut self.0,
+            &mut chunk,
+            &mut used,
+            &sample.address.correlation_index.to_be_bytes(),
+        );
         let mut count = 0_u8;
         for value in weighted.spectral_values() {
             count += 1;
-            self.0
-                .update(value.contribution.output_channel().to_be_bytes());
-            self.0
-                .update(value.contribution.factor().to_bits().to_be_bytes());
-            self.0.update(
-                value
+            append_coverage_bytes(
+                &mut self.0,
+                &mut chunk,
+                &mut used,
+                &value.contribution.output_channel().to_be_bytes(),
+            );
+            append_coverage_bytes(
+                &mut self.0,
+                &mut chunk,
+                &mut used,
+                &value.contribution.factor().to_bits().to_be_bytes(),
+            );
+            append_coverage_bytes(
+                &mut self.0,
+                &mut chunk,
+                &mut used,
+                &value
                     .contribution
                     .evaluation_frequency_hz()
                     .to_bits()
                     .to_be_bytes(),
             );
-            self.0.update(value.imaging_weight.to_bits().to_be_bytes());
+            append_coverage_bytes(
+                &mut self.0,
+                &mut chunk,
+                &mut used,
+                &value.imaging_weight.to_bits().to_be_bytes(),
+            );
         }
-        self.0.update([count]);
+        append_coverage_bytes(&mut self.0, &mut chunk, &mut used, &[count]);
+        self.0.update(&chunk[..used]);
     }
 
     pub(super) fn adopt(&mut self, checkpoint: &Self) {
@@ -1954,6 +2000,23 @@ impl CoverageEncoder {
         hasher.update(content);
         WeightingReplayCoverageId(LogicalIdentity::from_sha256(hasher.finalize().into()))
     }
+}
+
+#[inline]
+fn append_coverage_bytes(
+    hasher: &mut Sha256,
+    chunk: &mut [u8; COVERAGE_HASH_CHUNK_BYTES],
+    used: &mut usize,
+    bytes: &[u8],
+) {
+    debug_assert!(bytes.len() <= chunk.len());
+    if chunk.len() - *used < bytes.len() {
+        hasher.update(&chunk[..*used]);
+        *used = 0;
+    }
+    let end = *used + bytes.len();
+    chunk[*used..end].copy_from_slice(bytes);
+    *used = end;
 }
 
 fn replay_identity(
