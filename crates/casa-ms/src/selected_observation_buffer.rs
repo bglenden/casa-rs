@@ -163,7 +163,7 @@ impl AllocationProbe {
         }
     }
 
-    fn reused<T>(self, values: &Vec<T>) -> bool {
+    fn reused<T>(self, values: &[T]) -> bool {
         self.capacity > 0
             && self.capacity >= values.len()
             && self.pointer == values.as_ptr() as usize
@@ -177,7 +177,7 @@ struct AllocationCounter {
 }
 
 impl AllocationCounter {
-    fn observe<T>(&mut self, probe: AllocationProbe, values: &Vec<T>) {
+    fn observe<T>(&mut self, probe: AllocationProbe, values: &[T]) {
         if probe.reused(values) {
             self.reused += 1;
         } else if !values.is_empty() {
@@ -733,71 +733,74 @@ impl MeasurementSet {
             AllocationProbe::capture(&buffer.array_ids),
             AllocationProbe::capture(&buffer.row_flag),
         ];
-        let mut scalar_destinations = [
-            RequiredScalarColumnDestination::new(
-                "DATA_DESC_ID",
-                RequiredScalarColumnValuesMut::Int32(&mut buffer.data_description_ids),
-            ),
-            RequiredScalarColumnDestination::new(
-                "FIELD_ID",
-                RequiredScalarColumnValuesMut::Int32(&mut buffer.field_ids),
-            ),
-            RequiredScalarColumnDestination::new(
-                "ANTENNA1",
-                RequiredScalarColumnValuesMut::Int32(&mut buffer.antenna1),
-            ),
-            RequiredScalarColumnDestination::new(
-                "ANTENNA2",
-                RequiredScalarColumnValuesMut::Int32(&mut buffer.antenna2),
-            ),
-            RequiredScalarColumnDestination::new(
-                "FEED1",
-                RequiredScalarColumnValuesMut::Int32(&mut buffer.feed1),
-            ),
-            RequiredScalarColumnDestination::new(
-                "FEED2",
-                RequiredScalarColumnValuesMut::Int32(&mut buffer.feed2),
-            ),
-            RequiredScalarColumnDestination::new(
-                "TIME",
-                RequiredScalarColumnValuesMut::Float64(&mut buffer.time_mjd_seconds),
-            ),
-            RequiredScalarColumnDestination::new(
-                "TIME_CENTROID",
-                RequiredScalarColumnValuesMut::Float64(&mut buffer.time_centroid_mjd_seconds),
-            ),
-            RequiredScalarColumnDestination::new(
-                "INTERVAL",
-                RequiredScalarColumnValuesMut::Float64(&mut buffer.interval_seconds),
-            ),
-            RequiredScalarColumnDestination::new(
-                "EXPOSURE",
-                RequiredScalarColumnValuesMut::Float64(&mut buffer.exposure_seconds),
-            ),
-            RequiredScalarColumnDestination::new(
-                "SCAN_NUMBER",
-                RequiredScalarColumnValuesMut::Int32(&mut buffer.scan_numbers),
-            ),
-            RequiredScalarColumnDestination::new(
-                "STATE_ID",
-                RequiredScalarColumnValuesMut::Int32(&mut buffer.state_ids),
-            ),
-            RequiredScalarColumnDestination::new(
-                "OBSERVATION_ID",
-                RequiredScalarColumnValuesMut::Int32(&mut buffer.observation_ids),
-            ),
-            RequiredScalarColumnDestination::new(
-                "ARRAY_ID",
-                RequiredScalarColumnValuesMut::Int32(&mut buffer.array_ids),
-            ),
-            RequiredScalarColumnDestination::new(
-                "FLAG_ROW",
-                RequiredScalarColumnValuesMut::Bool(&mut buffer.row_flag),
-            ),
-        ];
-        self.main_table()
-            .required_scalar_columns_for_rows_into(request.row_indices, &mut scalar_destinations)?;
-        drop(scalar_destinations);
+        {
+            let mut scalar_destinations = [
+                RequiredScalarColumnDestination::new(
+                    "DATA_DESC_ID",
+                    RequiredScalarColumnValuesMut::Int32(&mut buffer.data_description_ids),
+                ),
+                RequiredScalarColumnDestination::new(
+                    "FIELD_ID",
+                    RequiredScalarColumnValuesMut::Int32(&mut buffer.field_ids),
+                ),
+                RequiredScalarColumnDestination::new(
+                    "ANTENNA1",
+                    RequiredScalarColumnValuesMut::Int32(&mut buffer.antenna1),
+                ),
+                RequiredScalarColumnDestination::new(
+                    "ANTENNA2",
+                    RequiredScalarColumnValuesMut::Int32(&mut buffer.antenna2),
+                ),
+                RequiredScalarColumnDestination::new(
+                    "FEED1",
+                    RequiredScalarColumnValuesMut::Int32(&mut buffer.feed1),
+                ),
+                RequiredScalarColumnDestination::new(
+                    "FEED2",
+                    RequiredScalarColumnValuesMut::Int32(&mut buffer.feed2),
+                ),
+                RequiredScalarColumnDestination::new(
+                    "TIME",
+                    RequiredScalarColumnValuesMut::Float64(&mut buffer.time_mjd_seconds),
+                ),
+                RequiredScalarColumnDestination::new(
+                    "TIME_CENTROID",
+                    RequiredScalarColumnValuesMut::Float64(&mut buffer.time_centroid_mjd_seconds),
+                ),
+                RequiredScalarColumnDestination::new(
+                    "INTERVAL",
+                    RequiredScalarColumnValuesMut::Float64(&mut buffer.interval_seconds),
+                ),
+                RequiredScalarColumnDestination::new(
+                    "EXPOSURE",
+                    RequiredScalarColumnValuesMut::Float64(&mut buffer.exposure_seconds),
+                ),
+                RequiredScalarColumnDestination::new(
+                    "SCAN_NUMBER",
+                    RequiredScalarColumnValuesMut::Int32(&mut buffer.scan_numbers),
+                ),
+                RequiredScalarColumnDestination::new(
+                    "STATE_ID",
+                    RequiredScalarColumnValuesMut::Int32(&mut buffer.state_ids),
+                ),
+                RequiredScalarColumnDestination::new(
+                    "OBSERVATION_ID",
+                    RequiredScalarColumnValuesMut::Int32(&mut buffer.observation_ids),
+                ),
+                RequiredScalarColumnDestination::new(
+                    "ARRAY_ID",
+                    RequiredScalarColumnValuesMut::Int32(&mut buffer.array_ids),
+                ),
+                RequiredScalarColumnDestination::new(
+                    "FLAG_ROW",
+                    RequiredScalarColumnValuesMut::Bool(&mut buffer.row_flag),
+                ),
+            ];
+            self.main_table().required_scalar_columns_for_rows_into(
+                request.row_indices,
+                &mut scalar_destinations,
+            )?;
+        }
         allocation.observe(scalar_probes[0], &buffer.data_description_ids);
         allocation.observe(scalar_probes[1], &buffer.field_ids);
         allocation.observe(scalar_probes[2], &buffer.antenna1);

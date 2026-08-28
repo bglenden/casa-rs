@@ -888,9 +888,6 @@ pub(crate) fn apply_parallel_runtime_control(
 ) -> Result<(), String> {
     if parallel == Some(false) {
         config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Cpu;
-        config.standard_mfs_grid_threads = Some("1".to_string());
-        config.imaging_prepare_workers = Some(1);
-        config.imaging_read_ahead_blocks = Some(1);
     }
     Ok(())
 }

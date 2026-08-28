@@ -72,16 +72,22 @@ fn selected_row_sequence_manifest_is_storage_owner_reproducible() {
     assert_ne!(planned, changed);
     assert_eq!(planned.source_row_count(), 12);
     assert_eq!(planned.selected_row_count(), 4);
-    assert_eq!(planned.ordered_main_rows(), &main_rows([0, 3, 7, 11]));
+    planned
+        .validate_ordered_main_rows(
+            main_rows([0, 3, 7, 11])
+                .into_iter()
+                .map(Ok::<_, std::io::Error>),
+        )
+        .expect("compact manifest validates the same storage replay");
     assert_eq!(empty.selected_row_count(), 0);
     assert_eq!(empty.sequence_id(), empty_larger_source.sequence_id());
     assert_ne!(empty, empty_larger_source);
-    assert_eq!(SelectedRowSequenceId::SCHEMA_VERSION, 2);
+    assert_eq!(SelectedRowSequenceId::SCHEMA_VERSION, 3);
     assert_eq!(
         planned.sequence_id().as_bytes(),
         [
-            130, 199, 211, 154, 223, 41, 223, 172, 141, 120, 225, 121, 188, 85, 28, 237, 187, 229,
-            98, 77, 157, 11, 182, 75, 139, 206, 31, 38, 9, 148, 240, 42,
+            107, 25, 169, 178, 186, 205, 209, 116, 41, 37, 11, 89, 11, 165, 218, 52, 157, 86, 239,
+            193, 78, 29, 84, 0, 20, 80, 199, 182, 11, 227, 95, 183,
         ]
     );
     assert_eq!(
@@ -152,7 +158,7 @@ fn selected_main_row_manifest_binds_data_description_to_physical_row() {
 
     assert_eq!(planned, reopened);
     assert_ne!(planned.sequence_id(), substituted.sequence_id());
-    assert_eq!(SelectedRowSequenceId::SCHEMA_VERSION, 2);
+    assert_eq!(SelectedRowSequenceId::SCHEMA_VERSION, 3);
 }
 
 #[test]

@@ -86,7 +86,10 @@ transport.
 Three separate bounded-memory traversals read every row of
 `wave1-alma-mosaic-large.ms`: 6,709,290 rows, 6,553 probe blocks, and
 13,740,625,920 delivered samples. Every traversal produced identical digest
-bits and completed near 153 MB peak RSS.
+bits and completed near 153 MB peak RSS. The accepted serial checksum is
+12,412,252,160 accepted samples, real-sum bits `423bdb13113a47c7`,
+imaginary-sum bits `c1c2e4fdfd889d2d`, and weight-sum bits
+`420721a68210e413`.
 
 | Representation | Wall | Source fill | Consume | Net on-disk rate |
 |---|---:|---:|---:|---:|

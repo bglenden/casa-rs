@@ -25,6 +25,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 casa-test-support = { path = "../casa-test-support" }
+libc = "0.2"
 
 [target.'cfg(all(target_os = "macos", not(coverage)))'.dependencies]
 objc2-metal = { version = "0.3.2", default-features = false, features = [

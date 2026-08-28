@@ -349,6 +349,43 @@ mod tests {
     }
 
     #[test]
+    fn issue_540_reduced_mfs_gate_uses_only_installed_controls() {
+        let requirements = task_requirements(&config(&[
+            "--field",
+            "0",
+            "--spw",
+            "0",
+            "--channel-start",
+            "0",
+            "--channel-count",
+            "8",
+            "--weighting",
+            "briggs",
+            "--robust",
+            "0.5",
+            "--dirty-only",
+            "--standard-mfs-acceleration",
+            "cpu",
+            "--imaging-fft-backend",
+            "rustfft",
+            "--no-preview-pngs",
+            "--gridder",
+            "standard",
+            "--deconvolver",
+            "hogbom",
+            "--specmode",
+            "mfs",
+            "--stokes",
+            "I",
+            "--datacolumn",
+            "DATA",
+            "--no-parallel",
+        ]));
+
+        assert!(!requirements.contains(&TaskRequirement::UnsupportedControls));
+    }
+
+    #[test]
     fn bounded_minor_cycles_are_a_supported_native_controller_control() {
         let requirements = task_requirements(&config(&[
             "--niter",

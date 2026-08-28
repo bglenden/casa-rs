@@ -54,7 +54,9 @@ pub mod runtime_adapter {
         FinalVisibilitySample, PreparedSpectralOperator, SpectralOperatorWorkload,
         SpectralSlabPlan, prepare_spectral_operator, spectral_operator_workload,
     };
-    pub use crate::weighting::{FusedWeightingPhase, begin_natural_weighting_stream};
+    pub use crate::weighting::{
+        FusedWeightingPhase, WeightingReplayPhase, begin_natural_weighting_stream,
+    };
 }
 
 pub use continuum_transform::{

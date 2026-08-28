@@ -698,6 +698,75 @@ fn partition_block_worker_and_repeated_replay_choices_are_invariant() {
 }
 
 #[test]
+fn fused_and_replay_streams_reuse_returned_weighted_block_storage() {
+    let problem = problem(
+        WeightingScheme::Natural,
+        WeightDensityScope::NotApplicable,
+        None,
+    );
+    let samples = exact_samples(&problem);
+    let plan = plan_weighting(
+        &problem,
+        WeightingExecutionLimits::new(2, 1).expect("limits"),
+    )
+    .expect("plan");
+
+    let mut fused = begin_natural_weighting_stream(&problem, &plan).expect("fused stream");
+    let first = samples[..2]
+        .iter()
+        .find_map(|sample| {
+            fused
+                .consume(&problem, *sample, exact_contributions(sample))
+                .expect("first fused block")
+        })
+        .expect("full first fused block");
+    let fused_pointer = first.samples().as_ptr();
+    fused
+        .reuse_emitted_block(first)
+        .expect("reuse first fused block");
+    let second = samples[2..]
+        .iter()
+        .find_map(|sample| {
+            fused
+                .consume(&problem, *sample, exact_contributions(sample))
+                .expect("second fused block")
+        })
+        .expect("full second fused block");
+    assert_eq!(second.samples().as_ptr(), fused_pointer);
+    fused
+        .reuse_emitted_block(second)
+        .expect("reuse second fused block");
+    let (_, generation, _) = fused.finish().expect("finish fused stream");
+
+    let mut replay = generation.begin_replay(&problem, &plan).expect("replay");
+    let first = samples[..2]
+        .iter()
+        .find_map(|sample| {
+            replay
+                .consume(&problem, *sample, exact_contributions(sample))
+                .expect("first replay block")
+        })
+        .expect("full first replay block");
+    let replay_pointer = first.samples().as_ptr();
+    replay
+        .reuse_emitted_block(first)
+        .expect("reuse first replay block");
+    let second = samples[2..]
+        .iter()
+        .find_map(|sample| {
+            replay
+                .consume(&problem, *sample, exact_contributions(sample))
+                .expect("second replay block")
+        })
+        .expect("full second replay block");
+    assert_eq!(second.samples().as_ptr(), replay_pointer);
+    replay
+        .reuse_emitted_block(second)
+        .expect("reuse second replay block");
+    replay.finish().expect("finish replay");
+}
+
+#[test]
 fn replay_coverage_binds_the_owner_evaluated_operator_frequency() {
     let problem = problem(
         WeightingScheme::Natural,

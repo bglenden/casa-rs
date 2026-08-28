@@ -69,9 +69,9 @@ pub use observation::{
     ObservationSourceInput, ObservationSourceProvenance, ObservationSourceState, ObservationState,
     ResolvedIntent, RowSelection, SelectedColumns, SelectedMainRow,
     SelectedRowManifestValidationError, SelectedRowSequenceError, SelectedRowSequenceId,
-    SelectedRows, SelectionBound, SourceGenerations, SpectralWindowSelection, TimeRange,
-    TimeSelection, UvDistanceRange, UvDistanceUnit, UvSelection, VisibilityColumn, WeightColumn,
-    compile_observation,
+    SelectedRows, SelectedRowsBuilder, SelectionBound, SourceGenerations, SpectralWindowSelection,
+    TimeRange, TimeSelection, UvDistanceRange, UvDistanceUnit, UvSelection, VisibilityColumn,
+    WeightColumn, compile_observation,
 };
 
 pub use prepared_artifact::{

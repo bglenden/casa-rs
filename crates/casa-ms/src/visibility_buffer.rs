@@ -10,7 +10,9 @@ use std::ops::Range;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use casa_tables::{RequiredScalarColumnValues, SelectedArray1DCells, SelectedArray2DCells, Table};
+use casa_tables::{
+    RequiredScalarColumnValues, SelectedArray1DCells, SelectedArray2DCellsMut, Table,
+};
 #[cfg(test)]
 use casa_types::ScalarValue;
 use casa_types::{ArrayValue, Complex32, Complex64, PrimitiveType};
@@ -601,15 +603,9 @@ impl MeasurementSet {
         let mut columns = Vec::new();
         buffer.clear_for_request(request);
 
-        if request.include_data {
-            buffer.data = None;
-        }
-        if request.include_flags {
-            buffer.flags = None;
-        }
-        if request.include_weight_spectrum {
-            buffer.weight_spectrum = None;
-        }
+        let data_existing = buffer.data.take();
+        let flags_existing = buffer.flags.take();
+        let weight_spectrum_existing = buffer.weight_spectrum.take();
         let uvw_existing = buffer.uvw.take();
         let scalar_existing = ScalarColumnExistingBuffers {
             antenna1: buffer.antenna1.take(),
@@ -653,6 +649,7 @@ impl MeasurementSet {
                         &request.row_indices,
                         request.channel_start,
                         request.channel_count,
+                        data_existing,
                     )
                     .map(|result| (result, started.elapsed()))
                 })
@@ -666,6 +663,7 @@ impl MeasurementSet {
                         &request.row_indices,
                         request.channel_start,
                         request.channel_count,
+                        flags_existing,
                     )
                     .map(|result| (result, started.elapsed()))
                 })
@@ -686,6 +684,7 @@ impl MeasurementSet {
                         &request.row_indices,
                         request.channel_start,
                         request.channel_count,
+                        weight_spectrum_existing,
                     )
                     .map(|result| (result, started.elapsed()))
                 })
@@ -1094,42 +1093,6 @@ fn ensure_typed_channel_block_shape(
     Ok(axis0_count)
 }
 
-struct TypedChannelBlock {
-    primitive: PrimitiveType,
-    corr_count: usize,
-    cells: SelectedArray2DCells,
-}
-
-fn read_typed_channel_block(
-    ms: &MeasurementSet,
-    column_name: &str,
-    row_indices: &[usize],
-    channel_start: usize,
-    channel_count: usize,
-) -> MsResult<Option<TypedChannelBlock>> {
-    let cells = ms
-        .main_table()
-        .column_accessor(column_name)?
-        .array_cells_2d_channel_range_typed_uncached(row_indices, channel_start, channel_count)?;
-    let Some(cells) = cells else {
-        return Ok(None);
-    };
-    let primitive = cells.primitive_type();
-    let corr_count = ensure_typed_channel_block_shape(
-        column_name,
-        cells.row_count(),
-        cells.axis0_count(),
-        cells.channel_count(),
-        row_indices.len(),
-        channel_count,
-    )?;
-    Ok(Some(TypedChannelBlock {
-        primitive,
-        corr_count,
-        cells,
-    }))
-}
-
 fn channel_block_report(
     ms: &MeasurementSet,
     column_name: &str,
@@ -1157,35 +1120,69 @@ fn read_complex_channel_column(
     row_indices: &[usize],
     channel_start: usize,
     channel_count: usize,
+    existing: Option<VisibilityComplexSamples>,
 ) -> MsResult<(
     VisibilityComplexSamples,
     usize,
     VisibilityBufferColumnReport,
 )> {
-    let block =
-        read_typed_channel_block(ms, column_name, row_indices, channel_start, channel_count)?
-            .ok_or_else(|| {
-                invalid_input(format!(
-                    "required visibility column {column_name} is undefined for the selected rows"
-                ))
-            })?;
-    let primitive = block.primitive;
-    let corr_count = block.corr_count;
-    let samples = match block.cells {
-        SelectedArray2DCells::Complex32(values) => {
-            VisibilityComplexSamples::Complex32(values.into_values())
+    let primitive = main_column_primitive_type(ms.main_table(), column_name)?;
+    let accessor = ms.main_table().column_accessor(column_name)?;
+    let (samples, shape) = match primitive {
+        PrimitiveType::Complex32 => {
+            let mut values = match existing {
+                Some(VisibilityComplexSamples::Complex32(values)) => values,
+                _ => Vec::new(),
+            };
+            let shape = accessor
+                .fill_array_cells_2d_channel_range_typed_uncached(
+                    row_indices,
+                    channel_start,
+                    channel_count,
+                    SelectedArray2DCellsMut::Complex32(&mut values),
+                )?
+                .ok_or_else(|| {
+                    invalid_input(format!(
+                        "required visibility column {column_name} is undefined for the selected rows"
+                    ))
+                })?;
+            (VisibilityComplexSamples::Complex32(values), shape)
         }
-        SelectedArray2DCells::Complex64(values) => {
-            VisibilityComplexSamples::Complex64(values.into_values())
+        PrimitiveType::Complex64 => {
+            let mut values = match existing {
+                Some(VisibilityComplexSamples::Complex64(values)) => values,
+                _ => Vec::new(),
+            };
+            let shape = accessor
+                .fill_array_cells_2d_channel_range_typed_uncached(
+                    row_indices,
+                    channel_start,
+                    channel_count,
+                    SelectedArray2DCellsMut::Complex64(&mut values),
+                )?
+                .ok_or_else(|| {
+                    invalid_input(format!(
+                        "required visibility column {column_name} is undefined for the selected rows"
+                    ))
+                })?;
+            (VisibilityComplexSamples::Complex64(values), shape)
         }
         other => {
             return Err(column_type_error(
                 column_name,
                 "Complex32 or Complex64 array",
-                other.primitive_type(),
+                other,
             ));
         }
     };
+    let corr_count = ensure_typed_channel_block_shape(
+        column_name,
+        shape.row_count,
+        shape.axis0_count,
+        shape.channel_count,
+        row_indices.len(),
+        channel_count,
+    )?;
     let report = channel_block_report(
         ms,
         column_name,
@@ -1204,20 +1201,35 @@ fn read_bool_channel_column(
     row_indices: &[usize],
     channel_start: usize,
     channel_count: usize,
+    existing: Option<Vec<bool>>,
 ) -> MsResult<(Vec<bool>, usize, VisibilityBufferColumnReport)> {
-    let block =
-        read_typed_channel_block(ms, column_name, row_indices, channel_start, channel_count)?
-            .ok_or_else(|| {
-                invalid_input(format!(
-                    "required visibility column {column_name} is undefined for the selected rows"
-                ))
-            })?;
-    let primitive = block.primitive;
-    let corr_count = block.corr_count;
-    let SelectedArray2DCells::Bool(values) = block.cells else {
+    let primitive = main_column_primitive_type(ms.main_table(), column_name)?;
+    if primitive != PrimitiveType::Bool {
         return Err(column_type_error(column_name, "Bool array", primitive));
-    };
-    let out = values.into_values();
+    }
+    let mut out = existing.unwrap_or_default();
+    let shape = ms
+        .main_table()
+        .column_accessor(column_name)?
+        .fill_array_cells_2d_channel_range_typed_uncached(
+            row_indices,
+            channel_start,
+            channel_count,
+            SelectedArray2DCellsMut::Bool(&mut out),
+        )?
+        .ok_or_else(|| {
+            invalid_input(format!(
+                "required visibility column {column_name} is undefined for the selected rows"
+            ))
+        })?;
+    let corr_count = ensure_typed_channel_block_shape(
+        column_name,
+        shape.row_count,
+        shape.axis0_count,
+        shape.channel_count,
+        row_indices.len(),
+        channel_count,
+    )?;
     let report = channel_block_report(
         ms,
         column_name,
@@ -1236,29 +1248,59 @@ fn read_float_channel_column(
     row_indices: &[usize],
     channel_start: usize,
     channel_count: usize,
+    existing: Option<VisibilityFloatSamples>,
 ) -> MsResult<Option<(VisibilityFloatSamples, usize, VisibilityBufferColumnReport)>> {
-    let Some(block) =
-        read_typed_channel_block(ms, column_name, row_indices, channel_start, channel_count)?
-    else {
-        return Ok(None);
-    };
-    let primitive = block.primitive;
-    let corr_count = block.corr_count;
-    let samples = match block.cells {
-        SelectedArray2DCells::Float32(values) => {
-            VisibilityFloatSamples::Float32(values.into_values())
+    let primitive = main_column_primitive_type(ms.main_table(), column_name)?;
+    let accessor = ms.main_table().column_accessor(column_name)?;
+    let (samples, shape) = match primitive {
+        PrimitiveType::Float32 => {
+            let mut values = match existing {
+                Some(VisibilityFloatSamples::Float32(values)) => values,
+                _ => Vec::new(),
+            };
+            let Some(shape) = accessor.fill_array_cells_2d_channel_range_typed_uncached(
+                row_indices,
+                channel_start,
+                channel_count,
+                SelectedArray2DCellsMut::Float32(&mut values),
+            )?
+            else {
+                return Ok(None);
+            };
+            (VisibilityFloatSamples::Float32(values), shape)
         }
-        SelectedArray2DCells::Float64(values) => {
-            VisibilityFloatSamples::Float64(values.into_values())
+        PrimitiveType::Float64 => {
+            let mut values = match existing {
+                Some(VisibilityFloatSamples::Float64(values)) => values,
+                _ => Vec::new(),
+            };
+            let Some(shape) = accessor.fill_array_cells_2d_channel_range_typed_uncached(
+                row_indices,
+                channel_start,
+                channel_count,
+                SelectedArray2DCellsMut::Float64(&mut values),
+            )?
+            else {
+                return Ok(None);
+            };
+            (VisibilityFloatSamples::Float64(values), shape)
         }
         other => {
             return Err(column_type_error(
                 column_name,
                 "Float32 or Float64 array",
-                other.primitive_type(),
+                other,
             ));
         }
     };
+    let corr_count = ensure_typed_channel_block_shape(
+        column_name,
+        shape.row_count,
+        shape.axis0_count,
+        shape.channel_count,
+        row_indices.len(),
+        channel_count,
+    )?;
     let report = channel_block_report(
         ms,
         column_name,
@@ -2086,8 +2128,24 @@ mod tests {
         assert_eq!(buffer.scan_numbers.as_deref(), Some(&[17, 7][..]));
         assert_eq!(buffer.state_ids.as_deref(), Some(&[18, 8][..]));
 
+        let data_pointer = buffer.data.as_ref().map(|samples| match samples {
+            VisibilityComplexSamples::Complex32(values) => values.as_ptr() as usize,
+            VisibilityComplexSamples::Complex64(values) => values.as_ptr() as usize,
+        });
+        let flag_pointer = buffer.flags.as_ref().map(|values| values.as_ptr() as usize);
         let second_report = ms.fill_visibility_buffer(&request, &mut buffer).unwrap();
         assert!(second_report.allocation.reused_buffers > 0);
+        assert_eq!(
+            buffer.data.as_ref().map(|samples| match samples {
+                VisibilityComplexSamples::Complex32(values) => values.as_ptr() as usize,
+                VisibilityComplexSamples::Complex64(values) => values.as_ptr() as usize,
+            }),
+            data_pointer
+        );
+        assert_eq!(
+            buffer.flags.as_ref().map(|values| values.as_ptr() as usize),
+            flag_pointer
+        );
     }
 
     #[test]

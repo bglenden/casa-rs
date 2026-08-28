@@ -54,12 +54,12 @@ ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256 = (
     "daafa560c0e941fb3f2cea5c02a46de8a3363c2dd327cb839ef8ab2111f09835"
 )
 ACCEPTED_MATRIX_ROWS_SHA256 = (
-    "17264480654d34d6a78a7189edebf0f05a2e8b479467f20e00f21444d324727d"
+    "f0eb3a56db6bec14871eaf2d2f99dda98c2f3623002fcb2745f5f659ed17a0e7"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "81a45b8ed34b4857190d81483df7d2e6e400086f0910d2c02b79334e361dc941"
+    "e0ab31d0d764e866933a91cd9baee65b649d9a97459a5a8a44d2bc1706a77b55"
 )
-ACCEPTED_MATRIX_CONTRACT_REVISION = 54
+ACCEPTED_MATRIX_CONTRACT_REVISION = 55
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "scientific-products-v1",
@@ -1756,8 +1756,8 @@ def validate_t18_global_weighting_transfer(rows: list[dict[str, Any]]) -> None:
         "crates/casa-imaging-runtime/src/weighting.rs::pub struct WeightingPlanFragment",
         "crates/casa-imaging-runtime/src/weighting.rs::pub struct WeightingExecutionState",
         "crates/casa-imaging-runtime/src/weighting.rs::pub fn traverse_density_source",
-        "crates/casa-imaging-runtime/src/weighting.rs::pub fn traverse_initial_stream",
-        "crates/casa-imaging-runtime/src/weighting.rs::pub fn traverse_reuse_stream",
+        "crates/casa-imaging-runtime/src/weighting.rs::pub(crate) fn traverse_initial_bounded_stream",
+        "crates/casa-imaging-runtime/src/weighting.rs::pub(crate) fn traverse_reuse_bounded_stream",
         "crates/casa-imaging-runtime/src/weighting.rs::pub struct FrozenWeightingArtifact",
         "crates/casa-imaging-runtime/src/weighting.rs::pub fn release",
         "crates/casa-imaging-runtime/src/weighting.rs::pub struct WeightedObservationBlock",
@@ -2057,10 +2057,12 @@ def validate_t18_global_weighting_sources(
             "retained_observation": "Option<RetainedWeightingObservation>",
             "density": "Option<WeightingDensityPhase>",
             "imported": "Option<FrozenWeightingArtifact>",
+            "latest_traversal_measurements": "Option<SelectedObservationTraversalMeasurements>",
+            "latest_stream_measurements": "Option<BoundedStreamMeasurements>",
         }
         or "pubfntraverse_density_source(" not in compact_runtime
-        or "pubfntraverse_initial_stream<" not in compact_runtime
-        or "pubfntraverse_reuse_stream<" not in compact_runtime
+        or "pub(crate)fntraverse_initial_bounded_stream<" not in compact_runtime
+        or "pub(crate)fntraverse_reuse_bounded_stream<" not in compact_runtime
         or "pubfnwith_frozen_artifact(" not in compact_runtime
     ):
         raise ArchitectureError(
@@ -2070,24 +2072,34 @@ def validate_t18_global_weighting_sources(
         runtime_weighting, "traverse_density_source", runtime_weighting_path
     )
     initial_stream = rust_function_body(
-        runtime_weighting, "traverse_initial_stream_impl", runtime_weighting_path
+        runtime_weighting, "traverse_initial_bounded_stream", runtime_weighting_path
     )
     reuse_stream = rust_function_body(
-        runtime_weighting, "traverse_reuse_stream_impl", runtime_weighting_path
+        runtime_weighting, "traverse_reuse_bounded_stream", runtime_weighting_path
     )
-    if density.count(".traverse(") != 1 or "begin_weighting_generation(" not in density:
+    bounded_stream = rust_function_body(
+        runtime_weighting, "execute_weighting_block_stream", runtime_weighting_path
+    )
+    if (
+        density.count("execute_bounded(") != 1
+        or density.count("selected.into_block_stream(problem)") != 1
+        or "begin_weighting_generation(" not in density
+    ):
         raise ArchitectureError(
             "density-dependent weighting must use exactly one bounded density prepass"
         )
     if (
-        initial_stream.count(".traverse(") != 1
+        initial_stream.count("execute_weighting_block_stream(") != 1
         or "begin_natural_weighting_stream(" not in initial_stream
         or "finish_into_stream(" not in initial_stream
-        or reuse_stream.count(".traverse(") != 1
+        or reuse_stream.count("execute_weighting_block_stream(") != 1
         or ".begin_replay(" not in reuse_stream
+        or bounded_stream.count("execute_bounded(") != 1
+        or bounded_stream.count("selected.into_block_stream(problem)") != 1
+        or ".complete(terminal)" not in bounded_stream
     ):
         raise ArchitectureError(
-            "initial and later majors must each use one fused terminal selected-payload traversal"
+            "initial and later majors must each use the shared bounded terminal selected-payload traversal"
         )
     replay = rust_impl_method_body(
         runtime_weighting, "FrozenWeightingGeneration", "replay", runtime_weighting_path
@@ -2521,35 +2533,35 @@ def validate_t17_ms_selection_transfer(rows: list[dict[str, Any]]) -> None:
     )
     if (
         "CompiledRowPredicate::new(" not in frontend_projection
-        or ".main_row_selection_blocks(" not in frontend_projection
+        or ".visit_main_row_selection_blocks(" not in frontend_projection
     ):
         raise ArchitectureError(
-            "frontend row projection does not own the canonical bounded T17 predicate traversal"
+            "selected-row projection does not use the canonical bounded T17 predicate traversal"
         )
     if (
-        ".ordered_main_rows()" not in access
+        ".main_row_selection_cursor(" not in access
         or ".row_predicate" not in access
-        or ".main_row_selection_blocks(" in access
+        or "SelectedRowsBuilder::with_data_description_capacity(" not in access
+        or "SelectedMainRow::new(" not in access
+        or ".push(row)" not in access
+        or ".ordered_main_rows()" in access
         or "struct SelectedMainRows" in access
     ):
         raise ArchitectureError(
-            "retained selected-observation access must seek by the exact model manifest and must not scan the MAIN row span"
+            "retained selected-observation access must rebuild and validate the compact manifest during its sole bounded MAIN traversal"
         )
-    forbidden_incremental_evidence_patterns = {
-        r"pub\s+struct\s+SelectedObservationInspection\b": (
-            "selected-observation incremental evidence state is public"
-        ),
-        r"pub\s+fn\s+selected_observation_inspection\s*\(": (
-            "compiled problem exposes an incremental evidence factory"
-        ),
-    }
-    combined_model_surface = "\n".join((model, compiled_problem))
-    for pattern, message in forbidden_incremental_evidence_patterns.items():
-        if re.search(pattern, combined_model_surface):
-            raise ArchitectureError(message)
-    if re.search(r"\bSelectedObservationInspection\b", model_lib):
+    compact_model = re.sub(r"\s+", "", model)
+    compact_compiled_problem = re.sub(r"\s+", "", compiled_problem)
+    if (
+        "pubstructSelectedObservationInspection<'a>{" not in compact_model
+        or "pub(crate)fnnew(" not in compact_model
+        or "pubfnpush(" not in compact_model
+        or "pubfnfinish(" not in compact_model
+        or "pubfnbegin_selected_observation_inspection(" not in compact_compiled_problem
+        or not re.search(r"\bSelectedObservationInspection\b", model_lib)
+    ):
         raise ArchitectureError(
-            "casa-imaging-model re-exports incremental evidence state"
+            "casa-imaging-model must expose only the opaque incremental validator needed by bounded source blocks"
         )
     validate_t17_selected_observation_resource_sources(
         measures,
@@ -2765,11 +2777,10 @@ def validate_t17_selected_observation_resource_sources(
     if (
         "self.selected_rows.additional_retained_manifest_bytes(already_accounted_rows)?.checked_add(self.generations.retained_owned_heap_bytes()?)"
         not in source_state_projection
-        or "Arc::ptr_eq(&self.ordered_main_rows,&rows.ordered_main_rows)"
-        not in selected_rows_projection
         or "Arc::ptr_eq(&self.used_data_description_ids,&rows.used_data_description_ids,)"
         not in selected_rows_projection
-        or selected_rows_projection.count("2*size_of::<usize>()") != 2
+        or "ordered_main_rows" in selected_rows_projection
+        or selected_rows_projection.count("2*size_of::<usize>()") != 1
         or ".capacity().checked_mul(size_of::<ColumnGeneration>())?"
         not in generation_projection
         or ".capacity().checked_mul(size_of::<MetadataGeneration>())?"
@@ -2785,11 +2796,6 @@ def validate_t17_selected_observation_resource_sources(
     bound_open = re.sub(r"\s+", "", rust_function_body(bound, "open", bound_path))
     bound_shared_bytes = re.sub(
         r"\s+", "", rust_function_body(bound, "shared_bytes", bound_path)
-    )
-    bound_single_source_shared_bytes = re.sub(
-        r"\s+",
-        "",
-        rust_function_body(bound, "single_source_shared_bytes", bound_path),
     )
     compact_access = re.sub(r"\s+", "", access)
     access_open = re.sub(
@@ -2834,9 +2840,6 @@ def validate_t17_selected_observation_resource_sources(
         or "Ok(SelectedObservationSharedBytes::new(measures.retained_bytes(),source_slots_retained_bytes,binding_graph_initialization_bytes,))"
         not in bound_shared_bytes
         or bound_shared_bytes.count("measures.retained_bytes()") != 1
-        or "letbindings=vec![binding.clone()];" not in bound_single_source_shared_bytes
-        or "Self::shared_bytes(problem,measures,&bindings,bindings.capacity(),source_capacity,)"
-        not in bound_single_source_shared_bytes
         or bound_open.count("source_index==0") != 1
         or "letshared_bytes=ifsource_index==0{first_source_shared_bytes}else{SelectedObservationSharedBytes::NONE};"
         not in bound_open

@@ -90,8 +90,8 @@ pub use listobs::{
     ListObsUvPoint as MeasurementSetUvPoint, ListObsUvTrack as MeasurementSetUvTrack,
 };
 pub(crate) use listobs::{ListObsOptions, ListObsSummary, ListObsUvCoverage};
-pub(crate) use ms::MainRowSelectionFact;
 pub use ms::MeasurementSet;
+pub(crate) use ms::{MainRowSelectionCursor, MainRowSelectionFact};
 pub use msexplore::task_contract::{
     MSEXPLORE_TASK_PROTOCOL_NAME, MSEXPLORE_TASK_PROTOCOL_VERSION, MsExploreFlagEditRequest,
     MsExplorePlotArtifact, MsExplorePlotExportRequest, MsExploreRunTaskRequest,

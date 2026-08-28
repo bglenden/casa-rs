@@ -161,7 +161,7 @@ use common::{
     problem_inputs_with_source_count,
 };
 
-const SELECTED_CONTENT_BYTES: usize = 128 * 1024;
+const SELECTED_CONTENT_BYTES: usize = 160 * 1024;
 
 const fn selected_content_budget() -> SelectedObservationContentBudget {
     SelectedObservationContentBudget::new(SELECTED_CONTENT_BYTES, 1, 4)
@@ -2539,13 +2539,27 @@ fn spectral_cycle_initial_plan_bounds_selected_payload_traversals_by_weighting_s
 
 #[test]
 fn spectral_cycle_executes_initial_major_and_shared_reconstruction_cycle() {
-    let problem = compile(request_with_geometry(
+    for weighting in [
+        WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
+        WeightingContract::new(
+            WeightingScheme::Uniform,
+            WeightDensityScope::GlobalSelection,
+        ),
+    ] {
+        execute_spectral_cycle_with_weighting(weighting);
+    }
+}
+
+fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
+    let problem = compile(request_with_geometry_references_and_weighting(
         1,
-        geometry_with_shape_and_increment([4.0, 4.0], ImageShape::new(8, 8), [-1.0e-6, 1.0e-6]),
+        geometry_with_shape_and_increment([2.0, 2.0], ImageShape::new(4, 4), [-1.0e-6, 1.0e-6]),
+        default_references(),
+        weighting,
     ))
     .expect("logical continuum compilation");
     let residency = selected_content_residency_with(&problem, |_| {
-        SelectedObservationContentBudget::new(256 * 1024, 1, 4)
+        SelectedObservationContentBudget::new(160 * 1024, 1, 4)
     });
     let planning_registry = ContractOnlyRegistry::new(
         registry(73),
@@ -2561,16 +2575,19 @@ fn spectral_cycle_executes_initial_major_and_shared_reconstruction_cycle() {
             residency.clone(),
             serial_storage_io(),
             1_000,
-            8 * 8 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
+            4 * 4 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
             900_000,
         ),
     )
     .expect("production initial plan");
     let minor_node = planned.minor_cycle_node().expect("T21 node").clone();
     let (physical, weighting, complete, resources, pass, _) = planned.into_parts();
+    // The exact 4x4 density scratch and selected-owner minimum fit the fixture's
+    // physical 1 MiB capacity but intentionally exceed Balanced's 75% ceiling.
+    let resource_policy = ResourcePolicy::Exclusive;
     let frozen_reservation = FrozenWeightingReservation::acquire(
         authority(),
-        ResourcePolicy::Balanced,
+        resource_policy.clone(),
         weighting.planned_residency(),
     )
     .expect("cross-plan frozen weighting reservation");
@@ -2604,18 +2621,14 @@ fn spectral_cycle_executes_initial_major_and_shared_reconstruction_cycle() {
     .expect("receipt store");
     let execution_plan = runtime_plan(
         &problem,
-        PlanningBindings::new(registry(73), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(73), resource_policy.clone(), planning_profile(4)),
         authority(),
         &runtime_registry,
         &receipts,
         move |_, _| Ok::<_, io::Error>(vec![physical]),
     )
     .expect("ordinary initial plan");
-    let current = RunBindings::new(
-        problem.inputs().clone(),
-        &ResourcePolicy::Balanced,
-        cost_model(4),
-    );
+    let current = RunBindings::new(problem.inputs().clone(), &resource_policy, cost_model(4));
     let executable = ExecutableModelProblem::from_compiled(problem.clone()).expect("executable");
     runtime_run(
         &executable,
@@ -2653,6 +2666,15 @@ fn spectral_cycle_executes_initial_major_and_shared_reconstruction_cycle() {
                     );
                 }
             }
+            if node.kind.reads_observation()
+                && matches!(claim.resource, LeaseResource::Queue { .. })
+            {
+                let peak = receipt
+                    .actual_resource_peak(node_id, &claim.resource, &claim.lifetime)
+                    .expect("bounded source queue reports its actual high-water");
+                assert!(peak > 0);
+                assert!(peak <= claim.amount);
+            }
         }
     }
     assert_eq!(
@@ -2688,7 +2710,7 @@ fn spectral_cycle_executes_initial_major_and_shared_reconstruction_cycle() {
             residency.clone(),
             serial_storage_io(),
             1_000,
-            8 * 8 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
+            4 * 4 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
             900_000,
         ),
         &final_input,
@@ -2746,7 +2768,7 @@ fn spectral_cycle_executes_initial_major_and_shared_reconstruction_cycle() {
         SpectralCycleRegistry::new(registry(73), implementation(73), &problem, final_executor);
     let final_plan = runtime_plan(
         &problem,
-        PlanningBindings::new(registry(73), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(73), resource_policy, planning_profile(4)),
         authority(),
         &final_registry,
         &receipts,
@@ -7061,7 +7083,11 @@ fn actual_bound_observation_traversals_drive_both_weighting_generation_passes() 
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let mut executor = recording_executor(6, None, None);
+    let mut executor = product_publication_recording_executor(
+        &problem,
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(AtomicUsize::new(0)),
+    );
     executor.weighting_source_residency = Some(selected_content_residency(&problem));
     executor.weighting_plan = Some(weighting_plan);
     let registry = TestRegistry {

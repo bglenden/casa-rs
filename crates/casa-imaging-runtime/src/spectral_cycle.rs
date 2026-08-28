@@ -342,26 +342,21 @@ pub(crate) struct SelectedVisibilityCellWrite {
 
 struct SelectedVisibilityCoverage {
     selection: Arc<casa_imaging_model::ObservationSelection>,
-    row: usize,
+    rows: Option<casa_imaging_model::SelectedRowsBuilder>,
+    current_row: Option<(u64, u32)>,
     channel: usize,
     correlation: usize,
     written: u64,
 }
 
-struct ExpectedVisibilityAddress {
-    physical_row: u64,
-    data_description_id: u32,
-    spectral_window_id: u32,
-    polarization_id: u32,
-    channel_index: u32,
-    correlation_index: u32,
-}
-
 impl SelectedVisibilityCoverage {
     fn new(selection: Arc<casa_imaging_model::ObservationSelection>) -> Self {
         Self {
+            rows: Some(casa_imaging_model::SelectedRowsBuilder::new(
+                selection.rows().source_row_count(),
+            )),
             selection,
-            row: 0,
+            current_row: None,
             channel: 0,
             correlation: 0,
             written: 0,
@@ -369,55 +364,29 @@ impl SelectedVisibilityCoverage {
     }
 
     fn push(&mut self, address: casa_imaging_model::SelectedSampleAddress) -> io::Result<()> {
-        let Some(expected) = self.expected()? else {
+        let data_description_id = u32::try_from(address.data_description_id)
+            .map_err(|_| io::Error::other("visibility replay DDID is negative"))?;
+        if self.current_row.is_none() {
+            self.rows
+                .as_mut()
+                .expect("visibility row manifest remains active before finish")
+                .push(casa_imaging_model::SelectedMainRow::new(
+                    address.physical_row,
+                    data_description_id,
+                ))
+                .map_err(io::Error::other)?;
+            self.current_row = Some((address.physical_row, data_description_id));
+        }
+        if self.current_row != Some((address.physical_row, data_description_id)) {
             return Err(io::Error::other(
-                "visibility replay exceeded the exact selected write set",
+                "visibility replay changed physical row before completing its selected samples",
             ));
-        };
-        if address.physical_row != expected.physical_row
-            || u32::try_from(address.data_description_id).ok() != Some(expected.data_description_id)
-            || address.spectral_window_id != expected.spectral_window_id
-            || address.polarization_id != expected.polarization_id
-            || address.channel_index != expected.channel_index
-            || address.correlation_index != expected.correlation_index
-        {
-            return Err(io::Error::other(format!(
-                "visibility replay address ({}, {}, {}) did not match selected address ({}, {}, {})",
-                address.physical_row,
-                address.channel_index,
-                address.correlation_index,
-                expected.physical_row,
-                expected.channel_index,
-                expected.correlation_index,
-            )));
         }
-        self.written = self
-            .written
-            .checked_add(1)
-            .ok_or_else(|| io::Error::other("visibility write sample count overflowed"))?;
-        self.advance()?;
-        Ok(())
-    }
-
-    fn finish(&self, expected_samples: u64) -> io::Result<()> {
-        if self.written != expected_samples || self.expected()?.is_some() {
-            return Err(io::Error::other(format!(
-                "visibility writer wrote {} samples without exhausting the exact selected write set of {expected_samples}",
-                self.written
-            )));
-        }
-        Ok(())
-    }
-
-    fn expected(&self) -> io::Result<Option<ExpectedVisibilityAddress>> {
-        let Some(row) = self.selection.rows().ordered_main_rows().get(self.row) else {
-            return Ok(None);
-        };
         let data_description = self
             .selection
             .data_descriptions()
             .iter()
-            .find(|selection| selection.data_description_id() == row.data_description_id())
+            .find(|selection| selection.data_description_id() == data_description_id)
             .ok_or_else(|| io::Error::other("selected visibility DDID is absent"))?;
         let spectral_window = self
             .selection
@@ -441,51 +410,46 @@ impl SelectedVisibilityCoverage {
             .products()
             .get(self.correlation)
             .ok_or_else(|| io::Error::other("selected visibility correlation is absent"))?;
-        Ok(Some(ExpectedVisibilityAddress {
-            physical_row: row.physical_row(),
-            data_description_id: data_description.data_description_id(),
-            spectral_window_id: data_description.spectral_window_id(),
-            polarization_id: data_description.polarization_id(),
-            channel_index: *channel,
-            correlation_index: correlation.correlation_index(),
-        }))
-    }
-
-    fn advance(&mut self) -> io::Result<()> {
-        let row = self
-            .selection
-            .rows()
-            .ordered_main_rows()
-            .get(self.row)
-            .ok_or_else(|| io::Error::other("selected visibility row is absent"))?;
-        let data_description = self
-            .selection
-            .data_descriptions()
-            .iter()
-            .find(|selection| selection.data_description_id() == row.data_description_id())
-            .ok_or_else(|| io::Error::other("selected visibility DDID is absent"))?;
-        let spectral_window = self
-            .selection
-            .spectral_windows()
-            .iter()
-            .find(|selection| {
-                selection.spectral_window_id() == data_description.spectral_window_id()
-            })
-            .ok_or_else(|| io::Error::other("selected visibility SPW is absent"))?;
-        let correlations = self
-            .selection
-            .correlations()
-            .iter()
-            .find(|selection| selection.polarization_id() == data_description.polarization_id())
-            .ok_or_else(|| io::Error::other("selected visibility polarization is absent"))?;
+        if address.spectral_window_id != data_description.spectral_window_id()
+            || address.polarization_id != data_description.polarization_id()
+            || address.channel_index != *channel
+            || address.correlation_index != correlation.correlation_index()
+        {
+            return Err(io::Error::other(format!(
+                "visibility replay address ({}, {}, {}) does not follow the selected coordinate order",
+                address.physical_row, address.channel_index, address.correlation_index,
+            )));
+        }
+        self.written = self
+            .written
+            .checked_add(1)
+            .ok_or_else(|| io::Error::other("visibility write sample count overflowed"))?;
         self.correlation += 1;
         if self.correlation == correlations.products().len() {
             self.correlation = 0;
             self.channel += 1;
             if self.channel == spectral_window.channel_indices().len() {
                 self.channel = 0;
-                self.row += 1;
+                self.current_row = None;
             }
+        }
+        Ok(())
+    }
+
+    fn finish(&mut self, expected_samples: u64) -> io::Result<()> {
+        let observed_rows = self
+            .rows
+            .take()
+            .expect("visibility row manifest finishes once")
+            .finish();
+        if self.written != expected_samples
+            || self.current_row.is_some()
+            || observed_rows != *self.selection.rows()
+        {
+            return Err(io::Error::other(format!(
+                "visibility writer wrote {} samples without exhausting the exact selected write set of {expected_samples}",
+                self.written
+            )));
         }
         Ok(())
     }
@@ -1096,7 +1060,7 @@ impl SpectralCycleExecutor {
             let predicted = operator
                 .as_mut()
                 .ok_or_else(|| io::Error::other("complete-data operator missing"))?
-                .consume_streaming_block(block)
+                .consume_bounded_replay_chunk(block)
                 .map_err(io::Error::other)?;
             if !predicted.is_empty()
                 && let Some(sink) = &self.final_visibility_sink
@@ -1110,13 +1074,25 @@ impl SpectralCycleExecutor {
         match fragment.streaming_mode() {
             Some(crate::WeightingStreamingMode::NaturalInitial)
             | Some(crate::WeightingStreamingMode::DensityInitial) => weighting
-                .traverse_initial_stream(context, fragment, &self.problem, selected, &mut consume)
+                .traverse_initial_bounded_stream(
+                    context,
+                    fragment,
+                    &self.problem,
+                    selected,
+                    &mut consume,
+                )
                 .map_err(io::Error::other),
             Some(crate::WeightingStreamingMode::Reuse) => {
                 let selected = selected
                     .ok_or_else(|| io::Error::other("later-major selected observation missing"))?;
                 weighting
-                    .traverse_reuse_stream(context, fragment, selected, &self.problem, &mut consume)
+                    .traverse_reuse_bounded_stream(
+                        context,
+                        fragment,
+                        selected,
+                        &self.problem,
+                        &mut consume,
+                    )
                     .map_err(io::Error::other)
             }
             None => Err(io::Error::other("streaming weighting mode missing")),
@@ -1243,6 +1219,16 @@ impl WorkImplementation for SpectralCycleExecutor {
                     == Some(crate::WeightingStreamingMode::DensityInitial)))
         .then(|| state.weighting.latest_traversal_measurements().copied())
         .flatten();
+        let stream_measurements = (context.node().id == *fragment.source_read_node()
+            || (context.node().id == *fragment.generation_node()
+                && fragment.streaming_mode()
+                    == Some(crate::WeightingStreamingMode::DensityInitial)))
+        .then(|| state.weighting.latest_stream_measurements().copied())
+        .flatten();
+        let stream_queue_high_water = stream_measurements
+            .map(|measurements| u64::try_from(measurements.ready_queue_high_water))
+            .transpose()
+            .map_err(|_| io::Error::other("stream queue high-water exceeds receipt domain"))?;
         let resources = context
             .node()
             .claims
@@ -1253,6 +1239,12 @@ impl WorkImplementation for SpectralCycleExecutor {
                         LeaseResource::IoBuffer(crate::IoBufferKind::SourceReadAhead),
                         Some(measurements),
                     ) => measurements.peak_live_capacity_bytes(),
+                    (LeaseResource::Queue { .. }, _)
+                        if &claim.resource == fragment.source_queue()
+                            && stream_queue_high_water.is_some() =>
+                    {
+                        stream_queue_high_water.expect("stream queue high-water was checked")
+                    }
                     _ => claim.amount,
                 };
                 ResourceMeasurement::new(claim.resource.clone(), claim.lifetime.clone(), peak)

@@ -1628,11 +1628,6 @@ fn retained_predicate_catalog_is_charged_before_construction() {
         content_budget_for_rows(&problem, source, 1, 1),
     )
     .expect("bind source with predicate allowance");
-    assert_eq!(
-        admitted.predicate_row_manifest_ptr(),
-        Some(source.selection().rows().ordered_main_rows().as_ptr()),
-        "the retained predicate must share the compiler-owned row manifest"
-    );
     let predicate_bytes =
         super::row_selection::CompiledRowPredicate::shared_retained_heap_bytes(source)
             .expect("finite predicate projection");
@@ -2014,7 +2009,7 @@ fn row_manifest_validation_occurs_in_the_sole_value_traversal() {
 }
 
 #[test]
-fn selected_observation_residency_charges_cardinality_and_is_schedule_invariant() {
+fn selected_observation_residency_is_cardinality_independent_and_schedule_invariant() {
     let directory = tempfile::tempdir().expect("temporary residency fixtures");
     let small_path = directory.path().join("small.ms");
     let large_path = directory.path().join("large.ms");
@@ -2156,38 +2151,45 @@ fn selected_observation_residency_charges_cardinality_and_is_schedule_invariant(
         large.content_plan().bytes_per_block(),
         synchronous.content_plan().bytes_per_block()
     );
-    assert!(
+    assert_eq!(
         large_source
             .selection()
             .rows()
             .retained_manifest_bytes()
-            .expect("large retained row manifest byte count")
-            > small_source
-                .selection()
-                .rows()
-                .retained_manifest_bytes()
-                .expect("small retained row manifest byte count")
+            .expect("large retained row manifest byte count"),
+        small_source
+            .selection()
+            .rows()
+            .retained_manifest_bytes()
+            .expect("small retained row manifest byte count"),
+        "selected-row cardinality is encoded without retaining a row-sized corpus"
     );
-    assert!(large.content_plan().retained_bytes() > synchronous.content_plan().retained_bytes());
+    assert_eq!(
+        large.content_plan().retained_bytes(),
+        synchronous.content_plan().retained_bytes(),
+        "source cardinality does not increase retained selection state"
+    );
     assert_eq!(
         large.content_plan().initialization_scratch_bytes(),
         synchronous.content_plan().initialization_scratch_bytes(),
         "shared selected-row allocations are retained once, not recharged as validation scratch"
     );
-    assert!(large_budget.available_bytes() > synchronous_budget.available_bytes());
+    assert_eq!(
+        large_budget.available_bytes(),
+        synchronous_budget.available_bytes()
+    );
     assert!(large.content_plan().maximum_resident_bytes() <= large_budget.available_bytes());
-    assert!(matches!(
-        BoundObservationSource::open(
-            &large_problem,
-            large_source,
-            &source_state(large_source),
-            synchronous_budget,
-        ),
-        Err(super::BoundObservationSourceError::ContentPlan(
-            super::content_plan::SelectedObservationContentPlanError::InsufficientRetainedBudget { .. }
-                | super::content_plan::SelectedObservationContentPlanError::InsufficientBudget { .. }
-        ))
-    ));
+    let large_with_small_budget = BoundObservationSource::open(
+        &large_problem,
+        large_source,
+        &source_state(large_source),
+        synchronous_budget,
+    )
+    .expect("compact selection admits the larger source under the same one-row budget");
+    assert_eq!(
+        large_with_small_budget.content_plan().rows_per_block(),
+        synchronous.content_plan().rows_per_block()
+    );
     assert_eq!(
         large
             .selected_samples(&large_problem)
@@ -3211,22 +3213,9 @@ fn source_state_with_generation_capacity(
                 .and_then(|metadata| bytes.checked_add(metadata))
         })
         .expect("finite oversized generation allocations");
-    let selected_rows = SelectedRows::from_ordered_main_rows(
-        source.selection().rows().source_row_count(),
-        source
-            .selection()
-            .rows()
-            .ordered_main_rows()
-            .iter()
-            .copied(),
-    )
-    .expect("rebuild an independently allocated current row manifest");
-    let selected_row_bytes = selected_rows
-        .retained_manifest_bytes()
-        .expect("finite independent current row manifest");
     let state = ObservationSourceState::new(
         source.identity(),
-        selected_rows,
+        source.selection().rows().clone(),
         SourceGenerations::new(
             source_generations.consistency_token(),
             SelectedColumns::new(
@@ -3241,8 +3230,8 @@ fn source_state_with_generation_capacity(
     );
     assert_eq!(
         state.additional_retained_heap_bytes([source.selection().rows()]),
-        selected_row_bytes.checked_add(retained_generation_bytes),
-        "independent rows and generation vectors are both binding-owned"
+        Some(retained_generation_bytes),
+        "the compact row manifest is shared while generation vectors remain binding-owned"
     );
     (state, retained_generation_bytes)
 }

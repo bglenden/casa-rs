@@ -356,7 +356,6 @@ impl<'a> SelectedObservationInspection<'a> {
         Ok(())
     }
 
-    /// Finish exhaustive coverage validation and return content identity/count.
     /// Finish exhaustive coverage validation and return content identity and count.
     pub fn finish(
         self,
@@ -380,10 +379,7 @@ impl<'a> SourceInspection<'a> {
         let selected_rows = expected.selection().rows();
         Self {
             expected,
-            rows: SelectedRowSequenceAccumulator::new(
-                selected_rows.source_row_count(),
-                selected_rows.selected_row_count(),
-            ),
+            rows: SelectedRowSequenceAccumulator::new(selected_rows.source_row_count()),
             row: None,
         }
     }

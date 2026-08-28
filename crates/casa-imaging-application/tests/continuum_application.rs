@@ -29,15 +29,19 @@ const PRODUCT_SUFFIXES: [&str; 6] = [".psf", ".residual", ".model", ".image", ".
 static EXECUTION_LOCK: Mutex<()> = Mutex::new(());
 
 fn tiny_measurement_set(root: &Path) -> PathBuf {
-    measurement_set_fixture(root, "input.ms", false, 1)
+    measurement_set_fixture(root, "input.ms", false, 1, 1)
+}
+
+fn multi_row_measurement_set(root: &Path) -> PathBuf {
+    measurement_set_fixture(root, "multi-row-input.ms", false, 1, 8)
 }
 
 fn flagged_polarized_measurement_set(root: &Path) -> PathBuf {
-    measurement_set_fixture(root, "polarized-input.ms", true, 2)
+    measurement_set_fixture(root, "polarized-input.ms", true, 2, 1)
 }
 
 fn spectral_line_measurement_set(root: &Path) -> PathBuf {
-    measurement_set_fixture(root, "line-input.ms", true, 4)
+    measurement_set_fixture(root, "line-input.ms", true, 4, 1)
 }
 
 fn measurement_set_fixture(
@@ -45,6 +49,7 @@ fn measurement_set_fixture(
     name: &str,
     polarized: bool,
     channel_count: usize,
+    main_row_count: usize,
 ) -> PathBuf {
     let output = root.join(name);
     let mut builder = MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data);
@@ -56,7 +61,12 @@ fn measurement_set_fixture(
     }
     let mut measurement_set =
         MeasurementSet::create_memory(builder).expect("create in-memory application fixture");
-    populate_fixture(&mut measurement_set, polarized, channel_count);
+    populate_fixture(
+        &mut measurement_set,
+        polarized,
+        channel_count,
+        main_row_count,
+    );
     measurement_set
         .save_as(&output)
         .expect("persist fixture with production tiled bindings");
@@ -81,7 +91,12 @@ fn measurement_set_fixture(
     output
 }
 
-fn populate_fixture(measurement_set: &mut MeasurementSet, polarized: bool, channel_count: usize) {
+fn populate_fixture(
+    measurement_set: &mut MeasurementSet,
+    polarized: bool,
+    channel_count: usize,
+    main_row_count: usize,
+) {
     {
         let mut antennas = measurement_set.antenna_mut().expect("ANTENNA");
         antennas
@@ -288,7 +303,9 @@ fn populate_fixture(measurement_set: &mut MeasurementSet, polarized: bool, chann
             )),
         ));
     }
-    add_main_row(measurement_set, &overrides);
+    for _ in 0..main_row_count {
+        add_main_row(measurement_set, &overrides);
+    }
 }
 
 fn add_main_row(measurement_set: &mut MeasurementSet, overrides: &[(&str, Value)]) {
@@ -516,6 +533,49 @@ fn application_executes_single_ddid_stokes_i_mfs_dirty_and_publishes_products() 
         PagedImage::<f32>::open(PathBuf::from(format!("{}.mask", image_name.display())))
             .expect("reopen numeric CLEAN mask");
     assert_eq!(clean_mask.default_mask_name(), None);
+}
+
+#[test]
+fn application_preserves_the_bounded_source_budget_across_multiple_rows() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = multi_row_measurement_set(root.path());
+    let image_name = root.path().join("multi-row-dirty");
+
+    let result = execute_continuum(request(
+        measurement_set,
+        image_name,
+        ContinuumAlgorithm::Dirty,
+    ))
+    .expect("native multi-row dirty execution");
+    let receipt = result.outcome.output.initial_receipt;
+    let source_read = receipt
+        .plan_node_identities()
+        .into_iter()
+        .find(|node| node.as_str().starts_with("transaction-read-initial-major"))
+        .expect("initial source-read node");
+    let source_buffer = casa_imaging_runtime::LeaseResource::IoBuffer(
+        casa_imaging_runtime::IoBufferKind::SourceReadAhead,
+    );
+    let io_lifetime =
+        casa_imaging_runtime::ClaimLifetime::through_fence(casa_imaging_runtime::FenceKind::Io);
+    assert_eq!(
+        receipt.planned_resource_amount(&source_read, &source_buffer, &io_lifetime),
+        Some(64 << 20),
+        "the application must preserve the admitted caller-owned source budget"
+    );
+    let (_, operations) = receipt
+        .stage_actual_io(
+            &source_read,
+            casa_imaging_runtime::IoBufferKind::SourceReadAhead,
+        )
+        .expect("measured selected-observation source reads");
+
+    assert_eq!(
+        operations, 19,
+        "the caller's admitted content budget should fill all eight rows in one bounded block"
+    );
 }
 
 #[test]

@@ -164,18 +164,6 @@ impl CompiledRowPredicate {
         })
     }
 
-    #[cfg(test)]
-    pub(crate) fn shared_row_manifest_ptr(
-        &self,
-    ) -> Option<*const casa_imaging_model::SelectedMainRow> {
-        match &self.catalog {
-            PredicateCatalog::SharedSource(source) => {
-                Some(source.selection().rows().ordered_main_rows().as_ptr())
-            }
-            PredicateCatalog::OwnedProjection { .. } => None,
-        }
-    }
-
     pub(crate) fn matches(&self, row: StoredMainRow) -> bool {
         let selection = self.catalog.selection();
         let data_descriptions = self.catalog.data_descriptions();

@@ -864,6 +864,26 @@ impl FusedWeightingPhase {
         }
     }
 
+    /// Return one synchronously consumed full chunk to this phase for refill.
+    ///
+    /// The runtime adapter calls this immediately after its scientific
+    /// consumer releases the borrowed chunk. Keeping the allocation in the
+    /// phase prevents one full weighted-buffer allocation per emitted chunk.
+    pub fn reuse_emitted_block(
+        &mut self,
+        mut block: WeightingReplayChunk,
+    ) -> Result<(), WeightingError> {
+        if !self.block.is_empty()
+            || block.samples.len() != self.max_block_samples
+            || block.sequence.checked_add(1) != Some(self.block_sequence)
+        {
+            return Err(WeightingError::ReturnedBlockMismatch);
+        }
+        block.samples.clear();
+        self.block = block.samples;
+        Ok(())
+    }
+
     /// Finish the fused stream and late-bind generation, coverage, and replay.
     pub fn finish(
         mut self,
@@ -1058,6 +1078,22 @@ impl WeightingReplayPhase<'_> {
         } else {
             Ok(None)
         }
+    }
+
+    /// Return one synchronously consumed full chunk to this phase for refill.
+    pub fn reuse_emitted_block(
+        &mut self,
+        mut block: WeightingReplayChunk,
+    ) -> Result<(), WeightingError> {
+        if !self.block.is_empty()
+            || block.samples.len() != self.max_block_samples
+            || block.sequence.checked_add(1) != Some(self.block_sequence)
+        {
+            return Err(WeightingError::ReturnedBlockMismatch);
+        }
+        block.samples.clear();
+        self.block = block.samples;
+        Ok(())
     }
 
     /// Finish local replay state; this is not traversal-completion evidence.
@@ -1265,6 +1301,9 @@ pub enum WeightingError {
     /// The emitted block count exceeded u64.
     #[error("weighting replay block count overflowed")]
     BlockCountOverflow,
+    /// A consumer returned a chunk that is not the latest full emitted block.
+    #[error("returned weighting replay block does not match the active stream")]
+    ReturnedBlockMismatch,
     /// The affine replay identity domain was exhausted.
     #[error("weighting replay identity exhausted")]
     ReplayIdentityExhausted,

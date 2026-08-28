@@ -19,7 +19,7 @@ use thiserror::Error;
 
 use crate::selected_observation_buffer::SelectedObservationBufferFillReport;
 
-use super::access::BlockVisitError;
+use super::access::{BlockVisitError, SelectedRowReplay};
 use super::{
     BoundObservationSamples, BoundObservationSource, BoundObservationSourceError,
     SelectedObservationBlock, SelectedObservationContentBudget, SelectedObservationMeasures,
@@ -212,22 +212,6 @@ impl BoundSelectedObservation {
         bindings: &[ObservationSourceBinding],
     ) -> Result<SelectedObservationResidencyCertificate, BoundSelectedObservationError> {
         SelectedObservationResidencyCertificate::mint(problem, bindings)
-    }
-
-    pub(crate) fn single_source_shared_bytes(
-        problem: &CompiledProblem,
-        measures: &SelectedObservationMeasures,
-        binding: &ObservationSourceBinding,
-    ) -> Result<SelectedObservationSharedBytes, BoundSelectedObservationError> {
-        let bindings = vec![binding.clone()];
-        let source_capacity = Vec::<BoundObservationSource>::with_capacity(1).capacity();
-        Self::shared_bytes(
-            problem,
-            measures,
-            &bindings,
-            bindings.capacity(),
-            source_capacity,
-        )
     }
 
     fn shared_bytes(
@@ -445,9 +429,7 @@ impl BoundSelectedObservation {
                     .iter()
                     .find(|source| source.source_identity() == sample.address.measurement_set)
                     .ok_or(BoundObservationSourceError::ProblemSourceMismatch)?;
-                let projected =
-                    spectral_evaluator.project(problem, sample, source.geometry_engine());
-                projected
+                spectral_evaluator.project(problem, sample, source.geometry_engine())
             },
             &mut consume,
         )?;
@@ -507,7 +489,7 @@ impl BoundSelectedObservation {
                 measures: self.measures,
                 sources: self.sources,
                 source_index: 0,
-                row_offset: 0,
+                row_replay: None,
                 source_pass_recorded: false,
                 exhausted: false,
                 maximum_rows,
@@ -533,7 +515,7 @@ pub struct SelectedObservationBlockSource<'a> {
     measures: SelectedObservationMeasures,
     sources: Vec<BoundObservationSource>,
     source_index: usize,
-    row_offset: usize,
+    row_replay: Option<SelectedRowReplay>,
     source_pass_recorded: bool,
     exhausted: bool,
     maximum_rows: usize,
@@ -575,10 +557,15 @@ impl SelectedObservationBlockSource<'_> {
                 .sources()
                 .get(self.source_index)
                 .ok_or(BoundObservationSourceError::ProblemSourceMismatch)?;
+            if self.row_replay.is_none() {
+                self.row_replay = Some(source.selected_row_replay()?);
+            }
             if source.fill_next_selected_block(
                 self.problem,
                 logical_source,
-                &mut self.row_offset,
+                self.row_replay
+                    .as_mut()
+                    .expect("selected-row replay initialized for current source"),
                 block,
                 &mut self.measurements,
             )? {
@@ -587,7 +574,7 @@ impl SelectedObservationBlockSource<'_> {
                     .map_err(|_| BoundObservationSourceError::MeasurementOverflow);
             }
             self.source_index += 1;
-            self.row_offset = 0;
+            self.row_replay = None;
             self.source_pass_recorded = false;
         }
     }

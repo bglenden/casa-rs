@@ -14,6 +14,7 @@ use casa_imaging_model::{
 use ndarray::{Array2, Axis};
 use num_complex::Complex64;
 use rustfft::{Fft, FftPlanner};
+use smallvec::SmallVec;
 use thiserror::Error;
 
 use crate::{
@@ -987,7 +988,7 @@ impl CompleteDataOwnerState {
             let mut touches_core = false;
             let has_spectral_support = weighted.spectral_values().next().is_some();
             if contributes_to_stokes_i {
-                let mut stencil = Vec::new();
+                let mut stencil = SmallVec::<[SpectralOperatorSample; 4]>::new();
                 for spectral in weighted.spectral_values() {
                     let contribution = spectral.contribution();
                     stencil.push(SpectralOperatorSample::new(
@@ -1070,7 +1071,7 @@ impl CompleteDataOwnerState {
             {
                 continue;
             }
-            let mut stencil = Vec::new();
+            let mut stencil = SmallVec::<[SpectralOperatorSample; 4]>::new();
             for spectral in weighted.spectral_values() {
                 let contribution = spectral.contribution();
                 stencil.push(SpectralOperatorSample::new(

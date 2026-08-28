@@ -650,6 +650,7 @@ dependencies = [
  "casa-ms",
  "casa-test-support",
  "fs2",
+ "libc",
  "num-complex",
  "objc2-metal",
  "serde",

@@ -1152,7 +1152,7 @@ impl SpectralOperatorState {
             .predict_block(model, block.reconstruction_block())?)
     }
 
-    pub(crate) fn consume_streaming_block(
+    pub(crate) fn consume_bounded_replay_chunk(
         &mut self,
         block: &casa_imaging_reconstruction::WeightingReplayChunk,
     ) -> Result<

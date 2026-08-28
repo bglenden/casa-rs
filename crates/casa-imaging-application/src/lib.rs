@@ -310,7 +310,7 @@ where
         publication,
     } = input.native?;
     let algorithm = problem.reconstruction().algorithm().clone();
-    let initial_access = input.initial_access.with_minimum_content_budget(problem)?;
+    let initial_access = input.initial_access;
     let residency = initial_access.certify_residency(problem)?;
     let write_targets =
         SelectedVisibilityWriteTargets::new(input.write_model_column, input.write_corrected_data);
@@ -495,7 +495,6 @@ where
                 let final_input = minor.into_final_major_input();
                 let resolved = resolve_selected_observation(input.observation.clone())?;
                 let (_, access) = resolved.into_parts();
-                let access = access.with_minimum_content_budget(problem)?;
                 let final_residency = access.certify_residency(problem)?;
                 let source_state = access.source_state().clone();
                 let mut final_policy = execution_policy(&runtime, final_residency);
