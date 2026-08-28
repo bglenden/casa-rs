@@ -114,22 +114,36 @@ The probe used the public `VisibilityBuffer` only to obtain real stored shapes.
 It does not prove private selected-observation allocation identity. The private
 exact selected-observation path must provide that evidence in Delivery 1.
 
-### Rejected residual-only refresh candidate
+### Rejected invariant-normal-state candidate
 
-Commit `70d823603` tested one causal hypothesis against parent `707ae2322`:
+Commit `77c5a6ccf` tested one causal hypothesis against parent `e30f59302`:
 carry invariant PSF, sensitivity, sum weights, and validity across later major
-cycles so each replay grids only the changing residual. The reconstruction
-fixture was bit-exact against a fresh full replay, and the saved turnaround
-image, residual, model, and PSF had zero sampled RMS and maximum difference
-from the parent products.
+cycles so each replay grids only the changing residual. An initial one-channel
+turnaround showed no terminal improvement, but that screen was not a valid
+discriminator for channel-scaled compute: its selected DATA tile reads were
+amplified 20.66 times and the run was source-I/O dominated. The candidate was
+therefore re-evaluated on the realistic 64-channel shape before making a
+retention decision.
 
-The serial turnaround exercised one initial pass and seven later major passes.
-Mean later-pass receipt duration fell only from about 9.035 seconds to 8.962
-seconds, while the initial pass rose from 17.802 seconds to 17.917 seconds.
-End-to-end wall was 84.818450 seconds versus the 84.812526-second parent: no
-observable improvement. This falsified the candidate before the long matched
-run. Commit `a276c4673` removed it; residual-only invariant reuse is not carried
-as speculative complexity in Delivery 1.
+The serial discriminator used the matched 32 GiB MeasurementSet and CASA
+geometry with 64 channels, `niter=1`, and `nmajor=1`. It performs one density
+pass, one initial weighted replay, and one final-major weighted replay while
+isolating exactly one later major cycle. Parent and candidate took 586.816469
+seconds and 572.770956 seconds respectively: a 14.045513-second or 2.39 percent
+terminal improvement. The final-major replay fell from 250.704273 seconds to
+238.037814 seconds, a 12.666459-second or 5.05 percent improvement; the density
+pass rose from 101.805694 seconds to 102.678155 seconds.
+
+A full-native comparator then read every element of the six emitted 1024-pixel
+products. Image, residual, model, PSF, mask, and sum-weight arrays were
+bit-identical (`diff_rms=0`, `diff_abs_max=0`), with exact inventory and metadata
+parity. The mechanism is scientifically valid, but its small terminal gain does
+not justify carrying additional cross-cycle state, validation, and residency,
+and it does not clear a credible threshold for the frozen 733.660-second CASA
+gate. Commit `d49cca7d5` removed the candidate. Invariant-normal-state reuse is
+retained as source evidence, not production complexity; the next serial
+candidate must target the residual/model-prediction kernel that still consumes
+238 seconds in the realistic final-major replay.
 
 ## Scope
 
