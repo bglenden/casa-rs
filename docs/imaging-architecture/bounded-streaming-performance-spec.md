@@ -262,6 +262,53 @@ application only carries prior normal state. The next candidate must reduce
 the remaining scalar block-to-kernel work; worker count cannot mask this serial
 failure.
 
+### Repeat-weighted serial candidate gate
+
+The next optimization is selected from the matched full-workload cost, not a
+single profiler percentage. Completed receipts from `ab11726f8` measured the
+initial plan at 260.906 seconds and three ordinary intermediate later-major
+plans at 153.025, 152.892, and 152.981 seconds. The matched one-later-major row
+measured its terminal replay at 176.846 seconds. Applying the full workload's
+nine intermediate replays and one terminal replay gives this diagnostic
+projection:
+
+| Serial phase | Seconds per occurrence | Occurrences | Projected seconds | Share |
+| --- | ---: | ---: | ---: | ---: |
+| Initial density, replay, and first minor cycle | 260.906 | 1 | 260.906 | 14.4% |
+| Ordinary intermediate later-major replay | 152.966 mean | 9 | 1,376.694 | 75.9% |
+| Terminal later-major replay | 176.846 | 1 | 176.846 | 9.7% |
+| **Projected casa-rs total** |  |  | **1,814.446** | **100%** |
+
+This is a projection from completed phase receipts, not a claimed completed
+wall time. It is nevertheless sufficient to reject terminal-only micro-work
+as the next candidate: even deleting the entire 14.16-percent terminal
+visibility-product stack would save at most 1.38 percent end to end.
+
+Commit `2ed88e89c` tested the narrower hypothesis that reducing SHA-256 update
+calls would remove that sampled cost. The terminal replay changed from
+171.309033 to 171.133995 seconds, only 0.10 percent, and total wall was
+424.219776 seconds versus the parent's 423.296910 seconds. All 5,242,881
+elements across the six products were bit-identical with exact inventory,
+metadata, and topology. The performance hypothesis was falsified and commit
+`4e735d9ce` reverted it. Most sampled SHA-256 time was compression work, not
+call overhead.
+
+While the projected serial time remains more than twice the frozen CASA time,
+a production optimization candidate must have an optimistic repeat-weighted
+ceiling of at least 10 percent of full casa-rs wall. The candidate record must
+name the affected phase, occurrence count, measured phase wall, affected and
+removable fractions, projected end-to-end ceiling, exact parent revision, fast
+stage-local discriminator, and automatic falsifier. A lower-ceiling idea may
+be measured as a diagnostic probe but must not enter production code.
+
+Before another candidate, collect an intermediate-major profile that excludes
+terminal visibility products and build a 5-to-20-second discriminator over the
+same production reconstruction kernel with one worker and a scientific
+checksum. The discriminator may capture representative bounded source blocks
+before its timed interval; it must not materialize a MeasurementSet, create an
+alternate production path, or replace the medium, 32 GiB, and final full-data
+acceptance rows.
+
 ## Scope
 
 Delivery 1 includes:
