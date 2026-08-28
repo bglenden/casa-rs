@@ -1,0 +1,8 @@
+{
+  "gridding": [
+    "StandardConvolution::grid_compensated"
+  ],
+  "hashing": [
+    "^sha2::"
+  ]
+}

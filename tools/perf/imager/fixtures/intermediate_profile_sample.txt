@@ -1,0 +1,18 @@
+Analysis of sampling casars-imager (pid 29569) every 5 milliseconds
+Process:         casars-imager [29569]
+
+Call graph:
+    3172 Thread_37592600   DispatchQueue_1: com.apple.main-thread  (serial)
+      3172 main  (in casars-imager) + 52
+    3172 Thread_37592646
+      3172 __workq_kernreturn  (in libsystem_kernel.dylib) + 8
+
+Sort by top of stack, same collapsed (when >= 5):
+        __workq_kernreturn  (in libsystem_kernel.dylib)        6344
+        semaphore_wait_trap  (in libsystem_kernel.dylib)        2951
+        sha2::sha256::compress256::ha8ed5a5e0215a05a  (in casars-imager)        478
+        casa_imaging_reconstruction::spectral_operator::StandardConvolution::grid_compensated::he6b50333658faec3  (in casars-imager)        410
+        read  (in libsystem_kernel.dylib)        142
+
+Binary Images:
+       0x100000000 -        0x1000fffff +casars-imager
