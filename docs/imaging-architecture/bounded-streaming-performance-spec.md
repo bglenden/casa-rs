@@ -425,6 +425,117 @@ calls were all zero. This passes the first candidate gate only; production-path
 medium validation and the directly mounted 32 GiB acceptance run remain
 pending, so the candidate is not yet recorded as fully accepted.
 
+### Full frozen result and diagnosis reset
+
+The complete frozen workload invalidated candidate selection from the narrow
+proof discriminator. The exact pre-change control at `b8c050ac9` completed in
+3,011.981146 seconds. The proof-derivation implementation at
+`271b4e106` completed in 2,227.762623 seconds, a 784.218523-second or
+26.04-percent improvement, but remained 3.04 times slower than the frozen
+733.660-second CASA serial anchor. This is a performance failure.
+
+Both Rust runs performed one density pass, one initial weighted replay, and 16
+later weighted replays. Every pass retained 188 blocks, 4,094,064 rows,
+524,040,192 samples, 5,146,238,448 logical source bytes, 3,572 source reads,
+two source slots, one worker, and approximately 62.3 MB peak live source
+storage. Steady candidate later passes spent about 10.4 seconds in source-read
+service and about 112 seconds in the broad `kernel_commit`/consumer interval.
+Those intervals overlap; only consumer starvation waiting for source data is
+additive critical-path I/O time. The 16 steady replays therefore account for
+approximately 1,792 seconds and establish compute consumption, not disk
+service, as the current attribution target.
+
+Candidate and control products are bit-identical across image, model, PSF,
+residual, and sum weight. Both fail the frozen CASA product comparison: image,
+model, and residual normalized RMS differences are respectively
+`0.00215064096`, `0.0504555781`, and `0.0110697379`; PSF and sum weight pass.
+Correctness is consequently a performance confounder because a model,
+residual, threshold, or stopping difference can change both the number and the
+cost of major cycles. Scientific-control repair and performance optimization
+remain separate candidates, but no performance conclusion may assume that all
+16 later replays are scientifically required.
+
+The retained CASA image log table confirms the frozen command and parameters,
+including `fullsummary=False`, but contains no major-cycle trajectory or stage
+timing. CASA is not rerun. Artifact forensics must produce either an exact
+retained cycle trace or an absence certificate over a finite recorded search
+universe. If no trace survives, the historical report is limited to terminal
+product facts and defensible iteration/threshold bounds; it must not infer
+major-cycle boundaries, peak-residual trajectory, model-flux trajectory, or
+stop reason from final arrays.
+
+### Evidence-gated next work
+
+Only artifact forensics and algorithmically inert instrumentation are
+authorized before another implementation candidate.
+
+1. Produce a compact forensics receipt that lists every searched retained CASA
+   root, console/logger table, task-return record, result directory, and known
+   archive; records the searches and table keywords inspected; and supplies
+   either the recovered trace or a hashed absence manifest. Resolve the binary
+   provenance of the historical 97.81-second and 41.790-second runs when
+   available. Unresolved provenance does not block current instrumentation or
+   qualitative source inspection, but those timings may not rank candidates or
+   enter serial projections.
+2. Add pass kind and ordinal plus a Rust cycle trace containing iteration
+   entry/execution/total counts, initial and final peak, cycle and terminal
+   thresholds, model flux or delta, raw stop outcome, and associated replay.
+   This changes no scientific or control behavior.
+3. Replace the broad timer with mutually exclusive outer critical-path buckets:
+   `source_starved`, `process_block_busy`, `pass_finalize`, `fft_normalize`,
+   `residual_reconcile`, `minor_cycle`, `output_checkpoint`, and
+   `outer_other`. Record producer read/decode service separately because it can
+   overlap consumption.
+4. Split `process_block_busy` only at existing coarse boundaries into
+   `block_prepare`, `predict_degrid`, `weight_work_build`,
+   `route_consume_combined`, `flush_reduce`, and `kernel_other`. Do not insert
+   clock reads per sample, scalar record, consumer call, or convolution tap.
+   Use preallocated worker-local counters for work cardinality, run lengths,
+   scalar submissions, convolution taps, tile transitions and flushes, copies,
+   buffer growth, and grid/sum-weight/order checksums.
+5. Validate observer cost on one warmed 8-to-12-second production-kernel slice
+   in OFF-ON-OFF order. Checksums and work signatures must be exact, the two OFF
+   observations must agree within three percent, and ON must be within two
+   percent of their mean. Repeat this triplet once only when the OFF pair is
+   unstable. Persistent observer failure removes internal clocks; it does not
+   authorize an optimization.
+6. Collect one 10-to-20-second external sampling profile and one complete
+   instrumented steady later replay at `b978778a0`. Compute each bucket's
+   repeat-weighted infinite-speed ceiling from exact affected-work counts. Do
+   not run all 16 replays merely for attribution unless unclassified wall
+   prevents a decision.
+
+One performance candidate may be selected only when one measured causal
+hypothesis has an infinite-speed ceiling of at least 149.410 seconds, ten
+percent of the current 1,494.103-second CASA gap. Before implementation, its
+record names one bucket, one falsifier, affected counters, immutable checksum,
+repeat assumption, and point and conservative full-run projections. Historical
+mechanisms explain a currently measured hypothesis; their unmatched timings do
+not supply its arithmetic.
+
+The minimum candidate run ladder is:
+
+1. baseline-candidate-baseline on the same 5-to-20-second production-kernel
+   slice;
+2. one complete representative candidate later replay; and
+3. one complete frozen workload only after the first two gates pass.
+
+The discriminator and representative replay must preserve exact checksums and
+work signatures. Their point projection must save at least 298.821 seconds,
+and their conservative projection must save at least 149.410 seconds. A failed
+falsifier retires the hypothesis rather than broadening it. No second full run
+may tune a weak result; another full run requires a demonstrated invalid build,
+execution, or measurement. A change to checksum, replay count, iteration count,
+threshold, stop reason, or model/residual trajectory leaves the performance
+lane and requires a separately justified correctness candidate.
+
+The unchanged full 64-channel, 1024-pixel, `niter=500` serial workload and
+saved CASA products remain the only final pass/fail gate. Final reporting keeps
+correctness and performance separate and includes total wall, pass/cycle
+counts, exclusive attribution, source starvation, source service, peak
+residency, and product comparisons. Multiple workers or device acceleration
+cannot turn a serial failure into a pass.
+
 ## Scope
 
 Delivery 1 includes:
