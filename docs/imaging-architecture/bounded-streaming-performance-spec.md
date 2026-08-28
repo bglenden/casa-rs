@@ -43,7 +43,13 @@ This implements ADR-0009 and ADR-0010. It does not amend either decision.
 The retained Wave 2 paired workload is the correctness and CASA performance
 oracle: 64 channels, 1024-pixel image, 0.25 arcsec cell, Briggs weighting, and
 `niter=500` on the medium VLA MeasurementSet. CASA took 733.660 seconds. The
-retained product RMS ratios were `1.72e-5` for image, `3.53e-5` for residual,
+CASA run used `parallel=False`, so this timing is the single-process serial
+anchor rather than an accelerated reference. The matched casa-rs `workers = 1`
+production path must independently take no longer than this anchor before any
+multi-worker or device result can count as a performance success. Acceleration
+may demonstrate scaling, but it may not compensate for or conceal a serial
+miss. The retained product RMS ratios were `1.72e-5` for image, `3.53e-5` for
+residual,
 `1.02e-5` for model, and `3.04e-5` for PSF. The corresponding historical
 casa-rs timing is not a current-main baseline.
 
@@ -376,6 +382,8 @@ Delivery 1 must prove:
 - current pinned CASA product-oracle and accepted serial-Rust equivalence for
   the focused complete-data fixture;
 - MFS `workers = 1` execution through the sole bounded executor;
+- matched MFS `workers = 1` wall time no longer than the single-process CASA
+  anchor, without using a multi-worker or device result to offset a miss;
 - no application/frontend calculation and no dependency-direction change; and
 - deletion or unreachability of the displaced production MFS route.
 
@@ -392,9 +400,11 @@ rerun CASA.
 
 Each candidate must preserve the pinned product thresholds, exact scientific
 pass count, and hard resource bounds, and must show an observed wall-time
-improvement over its current-Rust control. Because each is a single pair, label
-the performance result provisional; do not claim repeatability or a statistical
-speedup distribution.
+improvement over its current-Rust control. On the matched medium oracle, the
+`workers = 1` candidate must also take no longer than CASA's 733.660-second
+single-process anchor. A multi-worker or device result cannot satisfy or waive
+that serial gate. Because each is a single pair, label the performance result
+provisional; do not claim repeatability or a statistical speedup distribution.
 
 ### Complete 106.9 GiB streaming gate
 
@@ -419,7 +429,9 @@ The gate passes only if it reports:
 - terminal completion only after every lease and fence settles.
 
 Delivery 2 adds one matched serial/multicore MFS pair using the same Interface,
-stable partitions, deterministic reduction, and pinned CASA products.
+stable partitions, deterministic reduction, and pinned CASA products. Its
+multicore result is eligible for a performance claim only after the matched
+serial row passes the serial CASA gate above.
 
 ## Stop conditions
 

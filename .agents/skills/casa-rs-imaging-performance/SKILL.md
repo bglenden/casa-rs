@@ -63,7 +63,14 @@ dependency direction merely to recover speed.
 8. Never full-materialize large imaging inputs.
    A path that requires materializing all visibilities or cube planes for a large MS is an architecture bug. Fix bounded streaming once in shared I/O/prepare code and remove redundant misleading paths.
 9. Compare serial, multi-worker, and Metal honestly.
-   Keep serial CPU as a baseline. Do not assume fixed-tile, central quadrants, more workers, or Metal wins without total runtime and stage evidence.
+   Keep serial CPU as a required performance gate, not merely a comparison
+   row. On a matched workload whose CASA oracle is single-process, the
+   `workers = 1` production path must independently meet the accepted CASA
+   serial target before a multi-worker or device result can count as a
+   performance success. More workers, Metal, or another accelerator may prove
+   scaling, but may never compensate for or conceal a serial miss. Do not
+   assume fixed-tile, central quadrants, more workers, or Metal wins without
+   total runtime and stage evidence.
 10. Make `auto` usable.
    Explicit parameters are good for debugging, but user-facing defaults should choose reasonable worker counts, buffers, strategies, and Metal eligibility.
 11. Prefer explicit parameters over environment variables.
