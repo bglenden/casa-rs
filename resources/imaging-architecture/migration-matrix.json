@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "contract_revision": 56,
+  "contract_revision": 57,
   "programme_issue": 486,
   "owner_issue": 487,
   "status_values": ["Native", "TemporarilyUnavailable"],
@@ -95,7 +95,7 @@
   "baseline_manifest_digests": {
     "repo://crates/casa-imaging-model/src/lib.rs": "a416915726727395cf547bd1a2497eda3293d09b60121532d87cdf87359f6f1b",
     "repo://crates/casa-imaging-model/src/measurement_equation.rs": "500a8e01d49641bc23a4d4ca6d97c9d3fff8f5ab1e411d79e4ceb7299c0f52a0",
-    "repo://crates/casa-imaging-model/src/selected_observation_sample.rs": "98608ebf1f4526c793118377aef2aaed1385cd028ac85aba3320a4a5239dd41f",
+    "repo://crates/casa-imaging-model/src/selected_observation_sample.rs": "a1b80d3fa94d74e48ed22bfbb7e2519d189a59244f46a15d32eb860c0b7c321e",
     "repo://crates/casa-imaging-runtime/src/lib.rs": "aac02ace27bd7163116a2e0dc2988eeefe8aa19cd67b90aa2f4edc98ec60454c",
     "repo://crates/casa-imaging-model/src/model_state.rs": "62ba95ae2f25b5594341840000bfef81856a195a8a2a355baf09d02ce9defe2b",
     "repo://crates/casa-imaging-reconstruction/src/lib.rs": "6e24e6b89d83561c026b8c51c5e1042dd01ff279d95a1e179faef136b2776c6a",
@@ -111,7 +111,7 @@
     "repo://crates/casa-imaging-runtime/src/complete_data_operator.rs": "3bc6a981f4dbe7738ce92de156dd408da80e21610ca13e93b139736ef363d605",
     "repo://crates/casa-imaging-runtime/src/major_cycle.rs": "b032a1b12e5d2b6ecb46cbad50e4108fd409688b1c93dff1f9a4eb61257cca9e",
     "repo://crates/casa-ms/src/selected_observation/access.rs": "8d3ca9c5584faf051ba9f3e7bd7a5870a5c7f918bdcccef6e4d1081f4ae701cb",
-    "repo://crates/casa-ms/src/selected_observation/bound_observation.rs": "1d5f7f7afd6764ff4697a657d6ac589c47f1aac425ec7eac0a3317862ffbf0d7",
+    "repo://crates/casa-ms/src/selected_observation/bound_observation.rs": "68b974710c68fcce2e512aa44175a58a8e8888f114b30434244add999a8d4ffe",
     "repo://crates/casa-ms/src/derived/engine.rs": "b9ea3c6d107cd0a7e696fc7f8cb2c372fa339fb45010a588bfeec7569912102c",
     "repo://crates/casa-ms/src/selected_observation/spectral_evaluation.rs": "c5f42e0d533cc033d9fc34393361c29b096636d46c18b9044e1f15b47fa2061e",
     "repo://crates/casa-ms/src/spectral_selection.rs": "6538894c318ad2ddb2fa7bede7fc07baf3dfad4536923bb65e9e37c7a790d136",

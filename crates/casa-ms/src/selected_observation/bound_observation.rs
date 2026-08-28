@@ -654,12 +654,12 @@ impl SelectedObservationBlockConsumer<'_> {
                             BoundObservationSourceError::StoredSampleShapeMismatch,
                         ));
                     }
+                    inspection
+                        .push_run(row, &channel, correlations)
+                        .map_err(SelectedObservationTraversalError::Inspection)?;
                     for correlation in correlations {
                         let sample =
                             SelectedObservationSampleView::from_run(row, &channel, correlation);
-                        inspection
-                            .push_view(sample)
-                            .map_err(SelectedObservationTraversalError::Inspection)?;
                         evaluations.push(
                             spectral_evaluator
                                 .project(self.problem, sample, geometry_engine)
