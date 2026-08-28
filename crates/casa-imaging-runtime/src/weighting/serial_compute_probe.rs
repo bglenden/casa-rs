@@ -658,9 +658,7 @@ fn specification() -> Result<ProblemSpecification, Box<dyn Error>> {
         ReconstructionContract::new(
             ReconstructionBasis::Constant,
             ReconstructionAlgorithm::Hogbom,
-            ReconstructionControls::new(500, 0.1, 0.0)
-                .with_maximum_model_update(1.0e30)
-                .with_cycle_limits(50, None),
+            ReconstructionControls::new(500, 0.1, 0.0).with_cycle_limits(50, None),
             PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
         ),
         WeightingContract::new(

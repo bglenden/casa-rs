@@ -439,7 +439,6 @@ fn request(
         iterations: 1,
         cycle_iterations: 1,
         maximum_major_cycles: Some(1),
-        maximum_model_update_jy: 100.0,
         noise_sigma: None,
         cycle_factor: 1.0,
         minimum_psf_fraction: 0.05,
@@ -749,31 +748,23 @@ fn application_executes_single_ddid_stokes_i_mfs_hogbom_with_one_iteration() {
 }
 
 #[test]
-fn application_enforces_requested_model_update_envelope_before_mutation() {
+fn application_algorithms_do_not_invent_a_flux_staleness_bound() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = tiny_measurement_set(root.path());
     let image_name = root.path().join("model-envelope");
-    let mut imaging = request(measurement_set, image_name, ContinuumAlgorithm::Clark);
-    imaging.maximum_model_update_jy = f64::EPSILON;
+    let imaging = request(measurement_set, image_name, ContinuumAlgorithm::Clark);
 
-    let result = execute_continuum(imaging).expect("bounded Clark execution");
+    let result = execute_continuum(imaging).expect("exact Clark execution");
 
-    assert_eq!(result.minor_iterations, 0);
-    assert_eq!(
+    assert!(
+        result.minor_iterations > 0,
+        "active Clark execution must make scientific progress"
+    );
+    assert_ne!(
         result.minor_stop_reason,
         Some(ContinuumStopReason::StalenessBound)
-    );
-    assert!(
-        result
-            .outcome
-            .output
-            .minor_cycles
-            .last()
-            .expect("minor diagnostic")
-            .recorded_components
-            .is_empty()
     );
 }
 
@@ -821,6 +812,27 @@ fn application_reconciles_between_bounded_minor_cycles() {
             .iter()
             .all(|cycle| cycle.iterations == 1)
     );
+    assert_eq!(
+        result
+            .outcome
+            .output
+            .minor_cycles
+            .iter()
+            .map(|cycle| (
+                cycle.iterations_entering,
+                cycle.iterations,
+                cycle.total_iterations,
+                cycle.associated_replay_ordinal,
+            ))
+            .collect::<Vec<_>>(),
+        vec![(0, 1, 1, 1), (1, 1, 2, 2), (2, 1, 3, 3)]
+    );
+    assert!(result.outcome.output.minor_cycles.iter().all(|cycle| {
+        cycle.initial_peak_flux.is_finite()
+            && cycle.final_peak_flux.is_finite()
+            && cycle.global_threshold.is_finite()
+            && cycle.effective_threshold.is_finite()
+    }));
     assert_eq!(
         result.minor_stop_reason,
         Some(ContinuumStopReason::IterationBound)

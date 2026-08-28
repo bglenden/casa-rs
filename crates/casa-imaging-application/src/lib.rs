@@ -162,22 +162,32 @@ pub struct NativeApplicationOutcome {
 pub struct NativeMinorCycleOutcome {
     /// One-based minor-cycle ordinal within this reconstruction.
     pub cycle: usize,
+    /// Cumulative accepted iterations before this cycle started.
+    pub iterations_entering: usize,
     /// Number of accepted component updates.
     pub iterations: usize,
+    /// Cumulative accepted iterations after this cycle completed.
+    pub total_iterations: usize,
     /// Cumulative absolute component flux accepted in this cycle.
     pub total_flux: f64,
+    /// Normalized residual peak at entry to this cycle.
+    pub initial_peak_flux: f64,
     /// Final normalized residual peak.
     pub final_peak_flux: f64,
     /// Robust RMS used for `nsigma` stopping, when enabled.
     pub noise_rms: Option<f64>,
     /// Effective absolute/noise/cycle threshold used by the owner.
     pub effective_threshold: f64,
+    /// Global absolute/noise threshold before applying the cycle threshold.
+    pub global_threshold: f64,
     /// PSF-derived cycle threshold, when enabled.
     pub cycle_threshold: Option<f64>,
     /// Scientific terminal reason.
     pub stop_reason: NativeMinorCycleStopReason,
     /// Number of exact Clark residual refreshes.
     pub clark_refreshes: usize,
+    /// One-based major replay ordinal associated with this cycle's accepted update.
+    pub associated_replay_ordinal: usize,
     /// Bounded leading component sequence for CASA/Rust first-divergence diagnostics.
     pub recorded_components: Vec<casa_imaging_reconstruction::MinorCycleComponent>,
     /// Exact x-major reconstruction support used for component placement.
@@ -467,19 +477,25 @@ where
             let mut mask_plan = input.mask.clone();
             let mut minor_outcomes = Vec::new();
             loop {
+                let iterations_entering = total_iterations;
                 total_iterations = total_iterations
                     .checked_add(minor.evidence().iterations())
                     .ok_or_else(|| boxed("minor-cycle iteration count overflowed"))?;
                 let minor_outcome = NativeMinorCycleOutcome {
                     cycle,
+                    iterations_entering,
                     iterations: minor.evidence().iterations(),
+                    total_iterations,
                     total_flux: minor.evidence().total_flux(),
+                    initial_peak_flux: minor.evidence().initial_peak_flux(),
                     final_peak_flux: minor.evidence().final_peak_flux(),
                     noise_rms: minor.evidence().noise_rms(),
                     effective_threshold: minor.evidence().effective_threshold(),
+                    global_threshold: minor.evidence().global_threshold(),
                     cycle_threshold: minor.evidence().cycle_threshold(),
                     stop_reason: minor.evidence().stop_reason().into(),
                     clark_refreshes: minor.evidence().clark_refreshes(),
+                    associated_replay_ordinal: cycle,
                     recorded_components: minor.evidence().recorded_components().copied().collect(),
                     mask_support: minor.mask().support().to_vec(),
                     mask_generation: minor.mask().generation_id(),
@@ -487,6 +503,24 @@ where
                     mask_normal_state: minor.mask().normal_state_completion(),
                     auto_mask: minor.auto_mask_evidence(),
                 };
+                eprintln!(
+                    "imaging_minor_cycle_summary cycle={} associated_replay_ordinal={} iterations_entering={} iterations_executed={} iterations_total={} initial_peak_flux={} final_peak_flux={} model_update_abs_flux={} global_threshold={} effective_threshold={} cycle_threshold={} stop_reason={:?} clark_refreshes={}",
+                    minor_outcome.cycle,
+                    minor_outcome.associated_replay_ordinal,
+                    minor_outcome.iterations_entering,
+                    minor_outcome.iterations,
+                    minor_outcome.total_iterations,
+                    minor_outcome.initial_peak_flux,
+                    minor_outcome.final_peak_flux,
+                    minor_outcome.total_flux,
+                    minor_outcome.global_threshold,
+                    minor_outcome.effective_threshold,
+                    minor_outcome
+                        .cycle_threshold
+                        .map_or_else(|| "none".to_owned(), |value| value.to_string()),
+                    minor_outcome.stop_reason,
+                    minor_outcome.clark_refreshes,
+                );
                 let continue_cleaning = cycle < maximum_cycles
                     && total_iterations < controls.max_minor_iterations()
                     && minor.evidence().requests_reconciliation();

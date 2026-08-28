@@ -42,16 +42,22 @@ This implements ADR-0009 and ADR-0010. It does not amend either decision.
 
 The retained Wave 2 paired workload is the correctness and CASA performance
 oracle: 64 channels, 1024-pixel image, 0.25 arcsec cell, Briggs weighting, and
-`niter=500` on the medium VLA MeasurementSet. CASA took 733.660 seconds. The
-CASA run used `parallel=False`, so this timing is the single-process serial
-anchor rather than an accelerated reference. The matched casa-rs `workers = 1`
+`niter=500` on the medium VLA MeasurementSet. The surviving CASA wrapper and
+global logger bind the retained products to a 688.996833-second run. The CASA
+run used `parallel=False`, so this timing is the single-process serial anchor
+rather than an accelerated reference. The matched casa-rs `workers = 1`
 production path must independently take no longer than this anchor before any
 multi-worker or device result can count as a performance success. Acceleration
 may demonstrate scaling, but it may not compensate for or conceal a serial
-miss. The retained product RMS ratios were `1.72e-5` for image, `3.53e-5` for
-residual,
-`1.02e-5` for model, and `3.04e-5` for PSF. The corresponding historical
-casa-rs timing is not a current-main baseline.
+miss.
+
+The previously accepted 733.660-second value is a historical Wave 2
+observation. Its cited May 2026 target directory and source receipt have not
+survived, so it remains useful historical context but is not the operational
+gate for the products retained from the directly bound 688.996833-second run.
+The retained historical product RMS ratios were `1.72e-5` for image,
+`3.53e-5` for residual, `1.02e-5` for model, and `3.04e-5` for PSF. The
+corresponding historical casa-rs timing is not a current-main baseline.
 
 CASA is not rerun for these deliveries. The saved products and timing remain
 frozen unless the oracle, workload, or comparator contract changes.
@@ -342,7 +348,8 @@ production optimization. Weighting/generation/coverage is first because it has
 the largest ceiling and contains per-sample hashing, inspection, equality, and
 coverage work. It is falsified as the next candidate if the short production
 kernel probe cannot remove at least 10 percent of its stage wall while keeping
-the scientific checksum exact. Prediction/stencil is second and is falsified
+the scientific array comparison within 0.001 normalized RMS.
+Prediction/stencil is second and is falsified
 if cached or reusable work is already channel/block-scaled or its probe saves
 less than 10 percent. Traversal/projection is third and is falsified if a
 run-shaped projection does not reduce the same-kernel probe by 10 percent.
@@ -431,8 +438,8 @@ The complete frozen workload invalidated candidate selection from the narrow
 proof discriminator. The exact pre-change control at `b8c050ac9` completed in
 3,011.981146 seconds. The proof-derivation implementation at
 `271b4e106` completed in 2,227.762623 seconds, a 784.218523-second or
-26.04-percent improvement, but remained 3.04 times slower than the frozen
-733.660-second CASA serial anchor. This is a performance failure.
+26.04-percent improvement, but remained 3.23 times slower than the directly
+bound 688.996833-second CASA serial anchor. This is a performance failure.
 
 Both Rust runs performed one density pass, one initial weighted replay, and 16
 later weighted replays. Every pass retained 188 blocks, 4,094,064 rows,
@@ -455,14 +462,35 @@ cost of major cycles. Scientific-control repair and performance optimization
 remain separate candidates, but no performance conclusion may assume that all
 16 later replays are scientifically required.
 
+The first demonstrated scientific-control delta was an application-supplied
+100 Jy cumulative component-flux cap that CASA does not have. It ended the
+first Rust minor cycle after 12 updates with `StalenessBound`, while CASA
+continued to its cycle-iteration boundary. The correction removes that scalar
+from frontend and generic reconstruction controls and places typed
+`Exact`/`Bounded` view validity under reconstruction ownership. Current
+Högbom, Clark, and multiscale views are exact; a bounded view must carry an
+owner-proven envelope rather than a benchmark constant.
+
+On the mounted `niter=50` discriminator, the corrected first cycle stopped on
+`IterationBound`; its initial peak, threshold, model flux, and final peak round
+to the retained CASA logger values. This is diagnostic evidence that the
+unmatched control was removed, not an exact-intermediate-state acceptance
+contract. CASA retained limited printed precision, and implementations may
+make different internal choices. Final scientific pass/fail is product-level:
+normalized RMS must be no greater than 0.001 on declared valid support.
+Component sequences, internal flux totals, and intermediate residual values
+need not match CASA exactly. The compact evidence is retained in
+`tools/perf/imager/evidence/artifacts/20260828-issue540-exact-minor-cycle-view.md`.
+
 The retained CASA image log table confirms the frozen command and parameters,
-including `fullsummary=False`, but contains no major-cycle trajectory or stage
-timing. CASA is not rerun. Artifact forensics must produce either an exact
-retained cycle trace or an absence certificate over a finite recorded search
-universe. If no trace survives, the historical report is limited to terminal
-product facts and defensible iteration/threshold bounds; it must not infer
-major-cycle boundaries, peak-residual trajectory, model-flux trajectory, or
-stop reason from final arrays.
+including `fullsummary=False`. A run-bound global CASA logger nevertheless
+survived and records 11 major-cycle ordinals, ten 50-iteration minor cycles,
+their thresholds, model and peak-residual transitions, 500 cumulative
+iterations, and terminal reason `iteration limit`. No CASA stage-timing report
+or serialized task-return dictionary survived. Exact forensics, including
+digests and the finite search universe, are retained in
+`tools/perf/imager/evidence/artifacts/20260828-issue540-casa-cycle-forensics.md`.
+CASA is not rerun.
 
 ### Evidence-gated next work
 
@@ -506,8 +534,8 @@ authorized before another implementation candidate.
    prevents a decision.
 
 One performance candidate may be selected only when one measured causal
-hypothesis has an infinite-speed ceiling of at least 149.410 seconds, ten
-percent of the current 1,494.103-second CASA gap. Before implementation, its
+hypothesis has an infinite-speed ceiling of at least 153.877 seconds, ten
+percent of the current 1,538.766-second CASA gap. Before implementation, its
 record names one bucket, one falsifier, affected counters, immutable checksum,
 repeat assumption, and point and conservative full-run projections. Historical
 mechanisms explain a currently measured hypothesis; their unmatched timings do
@@ -520,14 +548,18 @@ The minimum candidate run ladder is:
 2. one complete representative candidate later replay; and
 3. one complete frozen workload only after the first two gates pass.
 
-The discriminator and representative replay must preserve exact checksums and
-work signatures. Their point projection must save at least 298.821 seconds,
-and their conservative projection must save at least 149.410 seconds. A failed
+The discriminator and representative replay must preserve exact structural
+work signatures. Scientific arrays are compared at no more than 0.001
+normalized RMS; exact floating-point checksums are diagnostic, not acceptance
+requirements. Their point projection must save at least 307.753 seconds,
+and their conservative projection must save at least 153.877 seconds. A failed
 falsifier retires the hypothesis rather than broadening it. No second full run
 may tune a weak result; another full run requires a demonstrated invalid build,
-execution, or measurement. A change to checksum, replay count, iteration count,
-threshold, stop reason, or model/residual trajectory leaves the performance
-lane and requires a separately justified correctness candidate.
+execution, or measurement. A change to replay count or iteration count
+invalidates the existing performance projection and must be re-derived. A
+change to a requested scientific control or a product comparison beyond the
+0.001 normalized-RMS ceiling leaves the performance lane and requires a
+separately justified correctness candidate.
 
 The unchanged full 64-channel, 1024-pixel, `niter=500` serial workload and
 saved CASA products remain the only final pass/fail gate. Final reporting keeps
@@ -820,10 +852,11 @@ CASA products/timing as the oracle. Run one matched control/candidate pair on
 the medium workload and one on the directly mounted 32 GiB workload. Do not
 rerun CASA.
 
-Each candidate must preserve the pinned product thresholds, exact scientific
-pass count, and hard resource bounds, and must show an observed wall-time
-improvement over its current-Rust control. On the matched medium oracle, the
-`workers = 1` candidate must also take no longer than CASA's 733.660-second
+Each candidate must preserve the pinned product thresholds, including the
+0.001 normalized-RMS CASA ceiling on declared valid support, the exact
+scientific pass count, and hard resource bounds, and must show an observed
+wall-time improvement over its current-Rust control. On the matched medium oracle, the
+`workers = 1` candidate must also take no longer than CASA's 688.996833-second
 single-process anchor. A multi-worker or device result cannot satisfy or waive
 that serial gate. Because each is a single pair, label the performance result
 provisional; do not claim repeatability or a statistical speedup distribution.

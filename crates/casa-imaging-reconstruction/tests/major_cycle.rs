@@ -193,9 +193,7 @@ fn t38_cube_problem_with_channels(
     t38_cube_problem_with_controls(
         observation,
         channels,
-        ReconstructionControls::new(8, 0.5, 0.0)
-            .with_maximum_model_update(1.0e30)
-            .with_noise_sigma(0.0),
+        ReconstructionControls::new(8, 0.5, 0.0).with_noise_sigma(0.0),
     )
 }
 
@@ -422,9 +420,7 @@ fn t38_casacore_minor_cycle_and_paired_final_residual_are_split_oracles() {
     use casa_imaging_reconstruction::MaskBox;
     use casa_test_support::hogbom_interop::HogbomOracle;
 
-    let controls = ReconstructionControls::new(4, 0.5, 0.0)
-        .with_maximum_model_update(1.0e30)
-        .with_noise_sigma(0.0);
+    let controls = ReconstructionControls::new(4, 0.5, 0.0).with_noise_sigma(0.0);
     let problem = t38_cube_problem_with_controls(246, 2, controls);
     let mut initial_lifecycle = ModelLifecycle::bind(
         ExecutableModelProblem::from_compiled(problem.clone()).expect("executable cube problem"),
@@ -661,11 +657,7 @@ fn residual_refresh_rejects_prior_invariants_from_another_selected_generation() 
 
 #[test]
 fn t38_independent_channels_share_one_ordered_iteration_budget() {
-    let problem = t38_cube_problem_with_controls(
-        244,
-        2,
-        ReconstructionControls::new(3, 0.5, 0.0).with_maximum_model_update(1.0e30),
-    );
+    let problem = t38_cube_problem_with_controls(244, 2, ReconstructionControls::new(3, 0.5, 0.0));
     let mut lifecycle = ModelLifecycle::bind(
         ExecutableModelProblem::from_compiled(problem.clone()).expect("executable cube problem"),
         attempt(245),
@@ -808,7 +800,7 @@ fn t38_late_nsigma_floor_and_first_component_divergence_remain_per_channel() {
     .expect("compiled nsigma floor")
     .record_component_sequence(16)
     .expect("bounded sequence");
-    let candidate_program = MinorCycleProgram::new(0.25, 0.5, 8, 1.0e30)
+    let candidate_program = MinorCycleProgram::new(0.25, 0.5, 8)
         .expect("candidate controls")
         .record_component_sequence(16)
         .expect("bounded sequence");

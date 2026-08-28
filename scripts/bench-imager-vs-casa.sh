@@ -84,7 +84,6 @@ nmajor="${IMAGER_BENCH_NMAJOR:--1}"
 gain="${IMAGER_BENCH_GAIN:-0.1}"
 threshold_jy="${IMAGER_BENCH_THRESHOLD_JY:-0}"
 nsigma="${IMAGER_BENCH_NSIGMA:-0}"
-maximum_model_update_jy="${IMAGER_BENCH_MAXIMUM_MODEL_UPDATE_JY:-100}"
 psfcutoff="${IMAGER_BENCH_PSFCUTOFF:-0.35}"
 pblimit="${IMAGER_BENCH_PBLIMIT:-0.2}"
 write_pb="${IMAGER_BENCH_WRITE_PB:-0}"
@@ -542,7 +541,6 @@ for run in $(seq 1 "$repeats"); do
       --gain "$gain" \
       --threshold-jy "$threshold_jy" \
       --nsigma "$nsigma" \
-      --maximum-model-update-jy "$maximum_model_update_jy" \
       --psfcutoff "$psfcutoff" \
       ${rust_pb_flags[@]+"${rust_pb_flags[@]}"} \
       --minor-cycle-length "$minor_cycle_length" \
@@ -589,7 +587,6 @@ for run in $(seq 1 "$repeats"); do
       --gain "$gain" \
       --threshold-jy "$threshold_jy" \
       --nsigma "$nsigma" \
-      --maximum-model-update-jy "$maximum_model_update_jy" \
       --psfcutoff "$psfcutoff" \
       ${rust_pb_flags[@]+"${rust_pb_flags[@]}"} \
       --minor-cycle-length "$minor_cycle_length" \

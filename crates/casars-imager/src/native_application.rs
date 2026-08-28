@@ -64,13 +64,6 @@ pub(super) fn execute(config: &CliConfig) -> Result<RunSummary, String> {
 }
 
 fn application_request(config: &CliConfig) -> Result<ContinuumImagingRequest, String> {
-    let maximum_model_update_jy = if config.dirty_only || config.niter == 0 {
-        1.0
-    } else {
-        config
-            .maximum_model_update_jy
-            .ok_or_else(|| "native deconvolution requires --maximum-model-update-jy".to_string())?
-    };
     let spectral_mode = match config.spectral_mode {
         SpectralMode::Mfs => SpectralImagingMode::Continuum,
         SpectralMode::Cube | SpectralMode::Cubedata => {
@@ -156,7 +149,6 @@ fn application_request(config: &CliConfig) -> Result<ContinuumImagingRequest, St
         iterations,
         cycle_iterations,
         maximum_major_cycles: config.nmajor,
-        maximum_model_update_jy: f64::from(maximum_model_update_jy),
         noise_sigma: (config.nsigma > 0.0).then_some(f64::from(config.nsigma)),
         cycle_factor: f64::from(config.cyclefactor),
         minimum_psf_fraction: f64::from(config.min_psf_fraction),
@@ -407,8 +399,6 @@ mod tests {
             "50",
             "--nmajor",
             "-1",
-            "--maximum-model-update-jy",
-            "100",
         ]);
         let request = application_request(&config).expect("native request");
 
@@ -422,8 +412,6 @@ mod tests {
             "2",
             "--minor-cycle-length",
             "2",
-            "--maximum-model-update-jy",
-            "100",
             "--hogbom-iteration-mode",
             "casa-inclusive",
         ]);

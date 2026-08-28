@@ -83,13 +83,10 @@ minor_cycle_identity!(
 
 /// One reconstruction-owned minor-cycle program.
 ///
-/// Every control is explicit and validated; there are no defaults that could
-/// silently change deconvolution semantics. `maximum_model_update` is the
-/// error/staleness bound of the linear view envelope: before any component
-/// is applied, the candidate cumulative absolute flux is checked against it,
-/// and a candidate that would exceed the bound is rejected without touching
-/// the residual, the delta, recorded diagnostics, or evidence counters. The
-/// solve then stops and requests Major-Cycle reconciliation.
+/// The validity contract states whether the compiled normal-state view remains
+/// exact for the full solve or requires reconciliation at a proven update
+/// envelope. The common Högbom path is exact; bounded validity is explicit and
+/// owner-supplied rather than inferred from an arbitrary flux constant.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MinorCycleProgram {
     algorithm: ReconstructionAlgorithm,
@@ -98,10 +95,22 @@ pub struct MinorCycleProgram {
     threshold: f64,
     noise_sigma: Option<f64>,
     max_iterations: usize,
-    maximum_model_update: f64,
+    validity: MinorCycleValidity,
     cycle_threshold: Option<CycleThresholdControls>,
     fixed_cycle_threshold: Option<f64>,
     component_sequence_limit: Option<usize>,
+}
+
+/// Validity of the reconstruction-owned normal-state view used by one solve.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MinorCycleValidity {
+    /// The view remains scientifically valid for the full minor cycle.
+    Exact,
+    /// Reconciliation is required before cumulative absolute updates exceed the bound.
+    Bounded {
+        /// Maximum cumulative absolute component update accepted by one minor cycle.
+        maximum_absolute_update: f64,
+    },
 }
 
 /// Typed model-space plane updated by one shared minor-cycle control loop.
@@ -161,8 +170,6 @@ struct CycleThresholdControls {
 impl MinorCycleProgram {
     /// Derive the executable minor-cycle controls from the compiled contract.
     ///
-    /// Unlike the general model constructor, this production seam requires an
-    /// explicit staleness envelope and never invents an unbounded default.
     pub fn for_algorithm(
         mut algorithm: ReconstructionAlgorithm,
         controls: ReconstructionControls,
@@ -186,9 +193,6 @@ impl MinorCycleProgram {
             scales_px.sort_by(f64::total_cmp);
             scales_px.dedup_by(|left, right| left.to_bits() == right.to_bits());
         }
-        let maximum_model_update = controls
-            .maximum_model_update()
-            .ok_or(MinorCycleError::MissingMaximumModelUpdate)?;
         Self::new_for_algorithm(
             algorithm,
             controls.gain(),
@@ -197,7 +201,7 @@ impl MinorCycleProgram {
                 .cycle_iteration_limit()
                 .unwrap_or(controls.max_minor_iterations())
                 .min(controls.max_minor_iterations()),
-            maximum_model_update,
+            MinorCycleValidity::Exact,
         )
         .map(|mut program| {
             program.noise_sigma = controls.noise_sigma();
@@ -222,25 +226,37 @@ impl MinorCycleProgram {
         Self::for_algorithm(ReconstructionAlgorithm::Hogbom, controls)
     }
 
-    /// Construct validated controls.
+    /// Construct an exact Högbom view.
     ///
     /// # Errors
     ///
-    /// Rejects a gain outside `(0, 1]`, a negative or non-finite threshold, a
-    /// zero iteration bound, and a non-positive or non-finite maximum model
-    /// update.
-    pub fn new(
+    /// Rejects a gain outside `(0, 1]`, a negative or non-finite threshold, or
+    /// a zero iteration bound.
+    pub fn new(gain: f64, threshold: f64, max_iterations: usize) -> Result<Self, MinorCycleError> {
+        Self::new_for_algorithm(
+            ReconstructionAlgorithm::Hogbom,
+            gain,
+            threshold,
+            max_iterations,
+            MinorCycleValidity::Exact,
+        )
+    }
+
+    /// Construct a Högbom view with an owner-proven finite validity envelope.
+    pub fn new_bounded(
         gain: f64,
         threshold: f64,
         max_iterations: usize,
-        maximum_model_update: f64,
+        maximum_absolute_update: f64,
     ) -> Result<Self, MinorCycleError> {
         Self::new_for_algorithm(
             ReconstructionAlgorithm::Hogbom,
             gain,
             threshold,
             max_iterations,
-            maximum_model_update,
+            MinorCycleValidity::Bounded {
+                maximum_absolute_update,
+            },
         )
     }
 
@@ -249,7 +265,7 @@ impl MinorCycleProgram {
         gain: f64,
         threshold: f64,
         max_iterations: usize,
-        maximum_model_update: f64,
+        validity: MinorCycleValidity,
     ) -> Result<Self, MinorCycleError> {
         if !(gain > 0.0 && gain <= 1.0) {
             return Err(MinorCycleError::InvalidGain);
@@ -260,8 +276,12 @@ impl MinorCycleProgram {
         if max_iterations == 0 {
             return Err(MinorCycleError::InvalidIterationBound);
         }
-        if !maximum_model_update.is_finite() || maximum_model_update <= 0.0 {
-            return Err(MinorCycleError::InvalidMaximumModelUpdate);
+        if let MinorCycleValidity::Bounded {
+            maximum_absolute_update,
+        } = validity
+            && (!maximum_absolute_update.is_finite() || maximum_absolute_update <= 0.0)
+        {
+            return Err(MinorCycleError::InvalidValidityBound);
         }
         Ok(Self {
             algorithm,
@@ -270,7 +290,7 @@ impl MinorCycleProgram {
             threshold,
             noise_sigma: None,
             max_iterations,
-            maximum_model_update,
+            validity,
             cycle_threshold: None,
             fixed_cycle_threshold: None,
             component_sequence_limit: None,
@@ -362,11 +382,10 @@ impl MinorCycleProgram {
         })
     }
 
-    /// Return the cumulative absolute component flux that exhausts the view
-    /// envelope and forces an explicit reconciliation request.
+    /// Return the validity contract for this normal-state view.
     #[must_use]
-    pub const fn maximum_model_update(&self) -> f64 {
-        self.maximum_model_update
+    pub const fn validity(&self) -> MinorCycleValidity {
+        self.validity
     }
 
     /// Return the optional recorded-component-sequence capacity.
@@ -441,7 +460,7 @@ impl ComponentDivergence {
     }
 }
 
-/// Why one bounded Högbom solve stopped.
+/// Why one minor-cycle solve stopped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MinorCycleStopReason {
     /// The normalized residual peak fell strictly below the explicit
@@ -450,16 +469,15 @@ pub enum MinorCycleStopReason {
     ThresholdReached,
     /// The hard iteration bound was reached with work potentially remaining.
     IterationBound,
-    /// Accepting the next candidate would push the cumulative component
-    /// flux past the maximum model update, so continuing would extrapolate
-    /// the frozen approximation beyond its validity envelope. The rejected
-    /// candidate left no trace in the delta or evidence.
+    /// Accepting the next candidate would exceed the reconstruction owner's
+    /// proven validity envelope. The rejected candidate left no trace in the
+    /// delta or evidence.
     StalenessBound,
     /// A multiscale candidate grew by more than 50 percent after accepted progress.
     MultiscaleDivergence,
 }
 
-/// Owner-minted evidence of one bounded Högbom solve.
+/// Owner-minted evidence of one minor-cycle solve.
 ///
 /// The evidence names the exact consumed approximation (the Final Normal
 /// State completion and content identities) and the exact input model
@@ -477,6 +495,7 @@ pub struct MinorCycleEvidence {
     normal_state_content: LogicalIdentity,
     iterations: usize,
     total_flux: f64,
+    initial_peak_flux: f64,
     final_peak_flux: f64,
     noise_rms: Option<f64>,
     global_threshold: f64,
@@ -543,6 +562,12 @@ impl MinorCycleEvidence {
         self.total_flux
     }
 
+    /// Return the normalized residual peak at entry to this minor cycle.
+    #[must_use]
+    pub const fn initial_peak_flux(&self) -> f64 {
+        self.initial_peak_flux
+    }
+
     /// Return the last evaluated normalized residual peak magnitude.
     #[must_use]
     pub const fn final_peak_flux(&self) -> f64 {
@@ -559,6 +584,12 @@ impl MinorCycleEvidence {
     #[must_use]
     pub const fn effective_threshold(&self) -> f64 {
         self.effective_threshold
+    }
+
+    /// Return the global absolute/noise threshold before applying any cycle threshold.
+    #[must_use]
+    pub const fn global_threshold(&self) -> f64 {
+        self.global_threshold
     }
 
     /// Return the PSF-sidelobe-derived cycle threshold, when configured.
@@ -670,7 +701,7 @@ impl ClarkApproximation {
     }
 }
 
-/// One bounded Högbom solve: the owner-minted Model Delta plus its evidence.
+/// One Högbom solve: the owner-minted Model Delta plus its evidence.
 #[derive(Debug)]
 pub struct MinorCycleResult {
     delta: Option<ModelDelta>,
@@ -698,7 +729,7 @@ impl MinorCycleResult {
     }
 }
 
-/// Exact reason a bounded Högbom solve failed closed.
+/// Exact reason a minor-cycle solve failed closed.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum MinorCycleError {
     /// The selected reconstruction algorithm has no minor-cycle implementation.
@@ -707,9 +738,6 @@ pub enum MinorCycleError {
     /// A multiscale program omitted scales or supplied a negative/non-finite scale.
     #[error("multiscale CLEAN requires finite non-negative scales")]
     InvalidScale,
-    /// The compiled problem omitted the mandatory linear-view envelope.
-    #[error("compiled Högbom controls require an explicit maximum model update")]
-    MissingMaximumModelUpdate,
     /// The Högbom gain was outside `(0, 1]`.
     #[error("Högbom gain must lie in (0, 1]")]
     InvalidGain,
@@ -719,9 +747,9 @@ pub enum MinorCycleError {
     /// The iteration bound was zero.
     #[error("Högbom iteration bound must be non-zero")]
     InvalidIterationBound,
-    /// The maximum model update was non-positive or non-finite.
-    #[error("Högbom maximum model update must be finite and positive")]
-    InvalidMaximumModelUpdate,
+    /// A bounded view supplied a non-positive or non-finite update envelope.
+    #[error("bounded minor-cycle validity requires a finite positive update envelope")]
+    InvalidValidityBound,
     /// Component-sequence recording requested a zero capacity.
     #[error("component-sequence recording requires a non-zero limit")]
     InvalidRecordingLimit,
@@ -766,7 +794,7 @@ impl From<casa_imaging_model::ModelContractError> for MinorCycleError {
     }
 }
 
-/// Run one bounded Högbom Minor Cycle.
+/// Run one reconstruction-owned Minor Cycle.
 ///
 /// Consumes an immutable view of one authoritative Final Normal State and the
 /// exact named final model generation, and returns the sparse Model Delta
@@ -1020,13 +1048,11 @@ pub(crate) fn run_minor_cycle_plane(
         if !flux.is_finite() {
             return Err(MinorCycleError::GeneratedNonfinite);
         }
-        // Envelope guard: a candidate whose acceptance would push the
-        // cumulative absolute update past the maximum model update is
-        // rejected before it can touch the working residual, the accumulated
-        // delta terms, the recorded component sequence, or any evidence
-        // counter. Accepted components therefore never exceed the linear
-        // view envelope.
-        if total_flux + flux.abs() > controls.maximum_model_update() {
+        if let MinorCycleValidity::Bounded {
+            maximum_absolute_update,
+        } = controls.validity()
+            && total_flux + flux.abs() > maximum_absolute_update
+        {
             stop_reason = Some(MinorCycleStopReason::StalenessBound);
             break;
         }
@@ -1193,6 +1219,7 @@ pub(crate) fn run_minor_cycle_plane(
             normal_state_content: view.content_identity(),
             iterations,
             total_flux,
+            initial_peak_flux: initial_peak,
             final_peak_flux,
             noise_rms,
             global_threshold,
@@ -1791,7 +1818,15 @@ fn minor_cycle_evidence_id(
         None => encoder.u8(0),
     }
     encoder.usize(controls.max_iterations());
-    encoder.u64(crate::canonical_f64_bits(controls.maximum_model_update()));
+    match controls.validity() {
+        MinorCycleValidity::Exact => encoder.u8(0),
+        MinorCycleValidity::Bounded {
+            maximum_absolute_update,
+        } => {
+            encoder.u8(1);
+            encoder.u64(crate::canonical_f64_bits(maximum_absolute_update));
+        }
+    }
     match controls.cycle_threshold {
         Some(cycle) => {
             encoder.u8(1);

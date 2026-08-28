@@ -163,6 +163,16 @@ impl ReconstructionCycleEvidence {
             .sum()
     }
 
+    /// Return the maximum normalized entry peak across valid channels.
+    #[must_use]
+    pub fn initial_peak_flux(&self) -> f64 {
+        self.channels
+            .iter()
+            .filter_map(ChannelCycleEvidence::minor_cycle)
+            .map(MinorCycleEvidence::initial_peak_flux)
+            .fold(0.0, f64::max)
+    }
+
     /// Return the maximum final normalized peak across valid channels.
     #[must_use]
     pub fn final_peak_flux(&self) -> f64 {
@@ -190,6 +200,16 @@ impl ReconstructionCycleEvidence {
             .iter()
             .filter_map(ChannelCycleEvidence::minor_cycle)
             .map(MinorCycleEvidence::effective_threshold)
+            .fold(0.0, f64::max)
+    }
+
+    /// Return the maximum global absolute/noise threshold across valid channels.
+    #[must_use]
+    pub fn global_threshold(&self) -> f64 {
+        self.channels
+            .iter()
+            .filter_map(ChannelCycleEvidence::minor_cycle)
+            .map(MinorCycleEvidence::global_threshold)
             .fold(0.0, f64::max)
     }
 

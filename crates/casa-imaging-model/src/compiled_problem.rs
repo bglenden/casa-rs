@@ -511,7 +511,6 @@ pub struct ReconstructionControls {
     max_minor_iterations: usize,
     gain: f64,
     threshold_jy_per_beam: f64,
-    maximum_model_update: Option<f64>,
     cycle_iteration_limit: Option<usize>,
     maximum_major_cycles: Option<usize>,
     noise_sigma: Option<f64>,
@@ -528,7 +527,6 @@ impl ReconstructionControls {
             max_minor_iterations,
             gain,
             threshold_jy_per_beam,
-            maximum_model_update: None,
             cycle_iteration_limit: None,
             maximum_major_cycles: None,
             noise_sigma: None,
@@ -536,13 +534,6 @@ impl ReconstructionControls {
             minimum_psf_fraction: None,
             maximum_psf_fraction: None,
         }
-    }
-
-    /// Bind the explicit linear-view staleness envelope for a minor cycle.
-    #[must_use]
-    pub const fn with_maximum_model_update(mut self, maximum_model_update: f64) -> Self {
-        self.maximum_model_update = Some(maximum_model_update);
-        self
     }
 
     /// Bind the per-cycle iteration bound and optional total major-cycle bound.
@@ -594,12 +585,6 @@ impl ReconstructionControls {
     #[must_use]
     pub const fn threshold_jy_per_beam(self) -> f64 {
         self.threshold_jy_per_beam
-    }
-
-    /// Return the explicit cumulative model-update envelope, when supplied.
-    #[must_use]
-    pub const fn maximum_model_update(self) -> Option<f64> {
-        self.maximum_model_update
     }
 
     /// Return the explicit per-cycle iteration bound.
@@ -1905,15 +1890,6 @@ fn validate_reconstruction(
             reason: "reconstruction gain and threshold must be finite and in their valid domains",
         });
     }
-    if contract
-        .controls
-        .maximum_model_update
-        .is_some_and(|bound| !bound.is_finite() || bound <= 0.0)
-    {
-        return Err(CompileProblemError::InvalidCapabilityCombination {
-            reason: "maximum model update must be finite and positive when supplied",
-        });
-    }
     if contract.controls.cycle_iteration_limit == Some(0)
         || contract.controls.maximum_major_cycles == Some(0)
         || contract
@@ -2372,13 +2348,6 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
     encoder.usize(reconstruction.controls.max_minor_iterations);
     encoder.f64(reconstruction.controls.gain);
     encoder.f64(reconstruction.controls.threshold_jy_per_beam);
-    match reconstruction.controls.maximum_model_update {
-        Some(bound) => {
-            encoder.u8(1);
-            encoder.f64(bound);
-        }
-        None => encoder.u8(0),
-    }
     for value in [
         reconstruction.controls.cycle_iteration_limit,
         reconstruction.controls.maximum_major_cycles,

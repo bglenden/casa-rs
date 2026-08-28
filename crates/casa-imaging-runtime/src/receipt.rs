@@ -5756,13 +5756,6 @@ fn project_reconstruction(fields: &mut BTreeMap<String, String>, problem: &Compi
         "reconstruction.controls.threshold_jy_per_beam",
         stable_float(controls.threshold_jy_per_beam()),
     );
-    if let Some(bound) = controls.maximum_model_update() {
-        evidence_field(
-            fields,
-            "reconstruction.controls.maximum_model_update",
-            stable_float(bound),
-        );
-    }
     if let Some(limit) = controls.cycle_iteration_limit() {
         evidence_field(
             fields,

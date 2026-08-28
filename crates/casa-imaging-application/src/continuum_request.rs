@@ -229,8 +229,6 @@ pub struct ContinuumImagingRequest {
     pub cycle_iterations: usize,
     /// Optional maximum number of major cycles admitted by the controller contract.
     pub maximum_major_cycles: Option<usize>,
-    /// Hard cumulative component-flux envelope accepted between reconciliations.
-    pub maximum_model_update_jy: f64,
     /// Optional robust-RMS stopping multiplier.
     pub noise_sigma: Option<f64>,
     /// PSF-sidelobe multiplier used to derive each cycle threshold.
@@ -702,12 +700,8 @@ fn prepare(
                 prepared_spectral.output_channels,
                 prepared_spectral.output_channels,
                 model_samples,
-                request.maximum_model_update_jy
-                    * request
-                        .maximum_major_cycles
-                        .unwrap_or(request.iterations)
-                        .max(1) as f64,
-                request.maximum_model_update_jy,
+                f64::MAX,
+                f64::MAX,
             )?,
             NumericPrecision::F64,
             ModelInputCommitment::Empty,
@@ -773,8 +767,6 @@ fn validate_request(request: &ContinuumImagingRequest) -> Result<(), crate::Appl
         || request.cell_arcsec <= 0.0
         || !request.gain.is_finite()
         || !request.threshold_jy.is_finite()
-        || !request.maximum_model_update_jy.is_finite()
-        || request.maximum_model_update_jy <= 0.0
         || !request.psf_cutoff.is_finite()
         || request.psf_cutoff <= 0.0
         || (request.algorithm != ContinuumAlgorithm::Dirty
@@ -1234,7 +1226,6 @@ fn specification(
                     request.gain,
                     request.threshold_jy,
                 )
-                .with_maximum_model_update(request.maximum_model_update_jy)
                 .with_cycle_limits(request.cycle_iterations, request.maximum_major_cycles)
                 .with_cycle_threshold(
                     request.cycle_factor,

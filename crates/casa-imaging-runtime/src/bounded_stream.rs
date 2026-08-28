@@ -245,6 +245,8 @@ pub(crate) struct BoundedStreamMeasurements {
     pub(crate) commit_nanos: u128,
     pub(crate) producer_wait_nanos: u128,
     pub(crate) consumer_wait_nanos: u128,
+    pub(crate) source_starved_nanos: u128,
+    pub(crate) terminal_wait_nanos: u128,
     pub(crate) ready_queue_high_water: usize,
     pub(crate) ready_queue_current_bytes_high_water: u64,
     pub(crate) ready_queue_capacity_bytes_high_water: u64,
@@ -1047,9 +1049,9 @@ where
         loop {
             let wait_started = Instant::now();
             let message = ready_rx.recv();
-            let Some(consumer_wait_nanos) = measurements
-                .consumer_wait_nanos
-                .checked_add(wait_started.elapsed().as_nanos())
+            let waited_nanos = wait_started.elapsed().as_nanos();
+            let Some(consumer_wait_nanos) =
+                measurements.consumer_wait_nanos.checked_add(waited_nanos)
             else {
                 cancelled.store(true, Ordering::Release);
                 returned_tx.take();
@@ -1057,6 +1059,30 @@ where
                 return Err(BoundedStreamError::MeasurementOverflow);
             };
             measurements.consumer_wait_nanos = consumer_wait_nanos;
+            match &message {
+                Ok(ReadyMessage::Block { .. }) => {
+                    let Some(source_starved_nanos) =
+                        measurements.source_starved_nanos.checked_add(waited_nanos)
+                    else {
+                        cancelled.store(true, Ordering::Release);
+                        returned_tx.take();
+                        drop(ready_rx);
+                        return Err(BoundedStreamError::MeasurementOverflow);
+                    };
+                    measurements.source_starved_nanos = source_starved_nanos;
+                }
+                _ => {
+                    let Some(terminal_wait_nanos) =
+                        measurements.terminal_wait_nanos.checked_add(waited_nanos)
+                    else {
+                        cancelled.store(true, Ordering::Release);
+                        returned_tx.take();
+                        drop(ready_rx);
+                        return Err(BoundedStreamError::MeasurementOverflow);
+                    };
+                    measurements.terminal_wait_nanos = terminal_wait_nanos;
+                }
+            }
             match message {
                 Ok(ReadyMessage::Block {
                     identity,
@@ -1407,7 +1433,16 @@ mod tests {
         assert_eq!(inline.measurements.ready_queue_high_water, 0);
         assert_eq!(inline.measurements.producer_wait_nanos, 0);
         assert_eq!(inline.measurements.consumer_wait_nanos, 0);
+        assert_eq!(inline.measurements.source_starved_nanos, 0);
+        assert_eq!(inline.measurements.terminal_wait_nanos, 0);
         assert_eq!(overlapped.measurements.ready_queue_high_water, 0);
+        assert_eq!(
+            overlapped.measurements.consumer_wait_nanos,
+            overlapped
+                .measurements
+                .source_starved_nanos
+                .saturating_add(overlapped.measurements.terminal_wait_nanos)
+        );
         assert!(
             inline.measurements.peak_kernel_window_capacity_bytes
                 <= inline.measurements.planned_kernel_window_capacity_bytes

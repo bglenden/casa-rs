@@ -690,7 +690,7 @@ fn channel_local_hogbom_request(
         output_channels,
         selected_channels,
         ReconstructionAlgorithm::Hogbom,
-        ReconstructionControls::new(2, 0.5, 0.0).with_maximum_model_update(1.0e6),
+        ReconstructionControls::new(2, 0.5, 0.0),
     )
 }
 
@@ -2845,7 +2845,7 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
         casa_imaging_reconstruction::ReconstructionMaskPlan::FullPlane {
             coordinate: problem.geometry().domains()[0].direction(),
         },
-        casa_imaging_reconstruction::MinorCycleProgram::new(0.1, 0.0, 2, 1.0e6).expect("controls"),
+        casa_imaging_reconstruction::MinorCycleProgram::new(0.1, 0.0, 2).expect("controls"),
     );
     let runtime_registry =
         SpectralCycleRegistry::new(registry(73), implementation(73), &problem, executor);

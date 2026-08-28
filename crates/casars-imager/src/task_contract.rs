@@ -1973,9 +1973,6 @@ pub struct ImagerRunTaskRequest {
     /// CASA-style major-cycle limit. `None` corresponds to CASA `nmajor=-1`.
     #[serde(default)]
     pub nmajor: Option<usize>,
-    /// Hard cumulative component-flux envelope between major reconciliations.
-    #[serde(default)]
-    pub maximum_model_update_jy: Option<f32>,
     /// Include long-form CASA-compatible `summaryminor` fields.
     #[serde(default)]
     pub fullsummary: bool,
@@ -2165,7 +2162,6 @@ impl ImagerRunTaskRequest {
             small_scale_bias: config.small_scale_bias,
             niter: config.niter,
             nmajor: config.nmajor,
-            maximum_model_update_jy: config.maximum_model_update_jy,
             fullsummary: config.fullsummary,
             gain: config.gain,
             threshold_jy: config.threshold_jy,
@@ -2338,7 +2334,6 @@ impl ImagerRunTaskRequest {
             small_scale_bias: self.small_scale_bias,
             niter: self.niter,
             nmajor: self.nmajor,
-            maximum_model_update_jy: self.maximum_model_update_jy,
             fullsummary: self.fullsummary,
             gain: self.gain,
             threshold_jy: self.threshold_jy,
@@ -2539,22 +2534,32 @@ pub struct ImagerAutoMaskDiagnostic {
 pub struct ImagerMinorCycleDiagnostic {
     /// One-based cycle ordinal.
     pub cycle: usize,
+    /// Cumulative accepted iterations before this cycle started.
+    pub iterations_entering: usize,
     /// Accepted component count.
     pub iterations: usize,
+    /// Cumulative accepted iterations after this cycle completed.
+    pub total_iterations: usize,
     /// Cumulative absolute component flux accepted in this cycle.
     pub total_flux: f64,
+    /// Normalized residual peak at cycle entry.
+    pub initial_peak_flux: f64,
     /// Final normalized residual peak.
     pub final_peak_flux: f64,
     /// Robust RMS used for `nsigma` stopping, when enabled.
     pub noise_rms: Option<f64>,
     /// Effective owner threshold.
     pub effective_threshold: f64,
+    /// Global absolute/noise threshold before applying the cycle threshold.
+    pub global_threshold: f64,
     /// PSF-derived cycle threshold, when enabled.
     pub cycle_threshold: Option<f64>,
     /// Scientific terminal reason.
     pub stop_reason: ImagerMinorCycleStopReason,
     /// Exact Clark residual refresh count.
     pub clark_refreshes: usize,
+    /// One-based major replay ordinal associated with this cycle.
+    pub associated_replay_ordinal: usize,
     /// Bounded leading component sequence.
     pub components: Vec<ImagerMinorCycleComponent>,
     /// Exact x-major reconstruction support.
@@ -2570,11 +2575,15 @@ fn project_minor_cycle(
 
     ImagerMinorCycleDiagnostic {
         cycle: cycle.cycle,
+        iterations_entering: cycle.iterations_entering,
         iterations: cycle.iterations,
+        total_iterations: cycle.total_iterations,
         total_flux: cycle.total_flux,
+        initial_peak_flux: cycle.initial_peak_flux,
         final_peak_flux: cycle.final_peak_flux,
         noise_rms: cycle.noise_rms,
         effective_threshold: cycle.effective_threshold,
+        global_threshold: cycle.global_threshold,
         cycle_threshold: cycle.cycle_threshold,
         stop_reason: match cycle.stop_reason {
             NativeStop::ThresholdReached => ImagerMinorCycleStopReason::ThresholdReached,
@@ -2583,6 +2592,7 @@ fn project_minor_cycle(
             NativeStop::MultiscaleDivergence => ImagerMinorCycleStopReason::MultiscaleDivergence,
         },
         clark_refreshes: cycle.clark_refreshes,
+        associated_replay_ordinal: cycle.associated_replay_ordinal,
         components: cycle
             .recorded_components
             .iter()
@@ -3406,7 +3416,6 @@ mod tests {
             small_scale_bias: 0.0,
             niter: 0,
             nmajor: None,
-            maximum_model_update_jy: None,
             fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
@@ -3504,7 +3513,6 @@ mod tests {
             small_scale_bias: 0.0,
             niter: 0,
             nmajor: None,
-            maximum_model_update_jy: None,
             fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
@@ -3778,7 +3786,6 @@ mod tests {
             small_scale_bias: 0.0,
             niter: 0,
             nmajor: None,
-            maximum_model_update_jy: None,
             fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
@@ -3944,7 +3951,6 @@ mod tests {
             small_scale_bias: 0.0,
             niter: 1,
             nmajor: None,
-            maximum_model_update_jy: Some(100.0),
             fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
@@ -4523,7 +4529,6 @@ mod tests {
             small_scale_bias: 0.0,
             niter: 0,
             nmajor: None,
-            maximum_model_update_jy: None,
             fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
