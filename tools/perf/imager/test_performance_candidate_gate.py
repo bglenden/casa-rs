@@ -7,9 +7,11 @@ import contextlib
 import copy
 import io
 import json
+import sys
 import unittest
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import performance_candidate_gate as gate
 
 
