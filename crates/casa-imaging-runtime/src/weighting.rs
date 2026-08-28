@@ -1070,7 +1070,6 @@ impl<'a> WeightingPlanFragment<'a> {
                 .chain([
                     allocation_use(&self.ids.frozen_allocation, io_lifetime.clone()),
                     allocation_use(&self.ids.reduction_allocation, io_lifetime.clone()),
-                    allocation_use(&self.ids.replay_read_allocation, io_lifetime.clone()),
                     allocation_use(&self.ids.weighted_block_allocation, io_lifetime.clone()),
                 ])
                 .chain(self.continuum_row_bytes.map(|_| {
@@ -1445,14 +1444,6 @@ impl<'a> WeightingPlanFragment<'a> {
                 replay_fence.clone(),
             )?,
             AllocationSpec::new(
-                self.ids.replay_read_allocation.clone(),
-                self.ids.replay_read_slot.clone(),
-                residency.replay_read_bytes(),
-                "weighting-replay-read",
-                self.ids.replay_node.clone(),
-                replay_fence.clone(),
-            )?,
-            AllocationSpec::new(
                 self.ids.weighted_block_allocation.clone(),
                 self.ids.weighted_block_slot.clone(),
                 residency.weighted_block_bytes(),
@@ -1487,15 +1478,12 @@ impl<'a> WeightingPlanFragment<'a> {
         let (expected_node, mut expected) = if context.node().id == self.ids.generation_node {
             (&self.ids.generation_node, vec![&specs[0], &specs[1]])
         } else if context.node().id == self.ids.replay_node {
-            (
-                &self.ids.replay_node,
-                vec![&specs[0], &specs[2], &specs[3], &specs[4]],
-            )
+            (&self.ids.replay_node, vec![&specs[0], &specs[2], &specs[3]])
         } else {
             return Err(WeightingEvidenceError);
         };
         if self.continuum_row_bytes.is_some() {
-            expected.push(&specs[5]);
+            expected.push(&specs[4]);
         }
         validate_work_authority(
             context,
@@ -1611,7 +1599,7 @@ impl<'a> WeightingPlanFragment<'a> {
         let specs = self
             .allocation_specs()
             .map_err(|_| WeightingEvidenceError)?;
-        let expected = [&specs[0], &specs[2], &specs[3], &specs[4]];
+        let expected = [&specs[0], &specs[2], &specs[3]];
         validate_work_authority(
             context,
             &self.ids.replay_node,
@@ -2459,13 +2447,11 @@ struct WeightingPlanIds {
     frozen_allocation: AllocationId,
     partial_allocation: AllocationId,
     reduction_allocation: AllocationId,
-    replay_read_allocation: AllocationId,
     weighted_block_allocation: AllocationId,
     continuum_row_allocation: AllocationId,
     frozen_slot: PhysicalSlotId,
     partial_slot: PhysicalSlotId,
     reduction_slot: PhysicalSlotId,
-    replay_read_slot: PhysicalSlotId,
     weighted_block_slot: PhysicalSlotId,
     continuum_row_slot: PhysicalSlotId,
 }
@@ -2484,7 +2470,6 @@ impl WeightingPlanIds {
             reduction_allocation: AllocationId::new(format!(
                 "weighting-sum-weight-accumulator-{suffix}"
             )),
-            replay_read_allocation: AllocationId::new(format!("weighting-replay-read-{suffix}")),
             weighted_block_allocation: AllocationId::new(format!(
                 "weighting-weighted-block-{suffix}"
             )),
@@ -2498,7 +2483,6 @@ impl WeightingPlanIds {
             reduction_slot: PhysicalSlotId::new(format!(
                 "weighting-sum-weight-accumulator-slot-{suffix}"
             )),
-            replay_read_slot: PhysicalSlotId::new(format!("weighting-replay-read-slot-{suffix}")),
             weighted_block_slot: PhysicalSlotId::new(format!(
                 "weighting-weighted-block-slot-{suffix}"
             )),

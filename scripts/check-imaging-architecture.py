@@ -57,7 +57,7 @@ ACCEPTED_MATRIX_ROWS_SHA256 = (
     "0ad645f25cce979824634660a2a4c7ea1be6a06d12869eb9186495d9875c2719"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "a57acc70f99ecfe82c33f29ed16f8c8ee174608444b7bd33166d67d1b9b23d2a"
+    "ceaa3b1789ab4f92ec78c3ca0f17ab238f4b7174d62892b3816cd162ccf16125"
 )
 ACCEPTED_MATRIX_CONTRACT_REVISION = 55
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
@@ -2157,9 +2157,6 @@ def validate_t18_global_weighting_sources(
     replay_chunk_fields = rust_struct_fields(
         weighting, "WeightingReplayChunk", weighting_path
     )
-    replay_input_fields = rust_struct_fields(
-        weighting, "WeightingReplayInputSample", weighting_path
-    )
     compact_sample_fields = rust_struct_fields(
         weighting, "WeightingSelectedSample", weighting_path
     )
@@ -2172,16 +2169,13 @@ def validate_t18_global_weighting_sources(
     replay_consume = rust_impl_method_body(
         weighting, "WeightingReplayPhase<'_>", "consume", weighting_path
     )
-    take_block = rust_function_body(weighting, "take_input_block", weighting_path)
+    take_block = rust_impl_method_body(
+        weighting, "WeightingReplayPhase<'_>", "take_block", weighting_path
+    )
     if (
         block_fields.get("generation") != "WeightingGenerationId"
         or block_fields.get("block") != "ReconstructionWeightedBlock"
         or replay_chunk_fields.get("samples") != "Vec<WeightingSampleValue>"
-        or replay_input_fields
-        != {
-            "sample": "WeightingSelectedSample",
-            "contributions": "SelectedSpectralContributions",
-        }
         or compact_sample_fields
         != {
             "address": "SelectedSampleAddress",
@@ -2194,19 +2188,22 @@ def validate_t18_global_weighting_sources(
             "transformed_uvw_m": "[f64;3]",
             "phase_shift_m": "f64",
         }
-        or replay_phase_fields.get("input") != "Vec<WeightingReplayInputSample>"
+        or "input" in replay_phase_fields
         or replay_phase_fields.get("block") != "Vec<WeightingSampleValue>"
         or sample_fields.get("generation") != "WeightingGenerationId"
         or "into_boxed_slice" in take_block
-        or "self.input.push(WeightingReplayInputSample" not in replay_consume
-        or "for input in &self.input" not in take_block
-        or "self.input.clear()" not in take_block
+        or "self.generation.weight(" not in replay_consume
+        or "self.coverage.push(&weighted)" not in replay_consume
+        or "self.block.push(weighted)" not in replay_consume
         or "std::mem::take(&mut self.block)" not in take_block
         or "Vec::with_capacity(self.max_block_samples)" not in weighting
-        or "size_of::<WeightingReplayInputSample>()" not in weighting
+        or "WeightingReplayInputSample" in weighting
+        or "let replay_read_bytes = 0;" not in weighting
+        or "let simultaneous_selected_weighted_bytes = weighted_block_bytes;" not in weighting
+        or "weighting-replay-read" in runtime_weighting
     ):
         raise ArchitectureError(
-            "T18 weighted replay does not carry one opaque W generation through real bounded input and output blocks"
+            "T18 weighted replay does not project directly into one bounded weighted block without duplicate input staging"
         )
     residency_fields = rust_struct_fields(weighting, "WeightingResidency", weighting_path)
     required_residency = {
@@ -2357,7 +2354,7 @@ def validate_t18_global_weighting_sources(
         or "removed.contains" not in compose_streaming
         or "terminal_fence" not in compose_streaming
         or "kind: WorkKind::Release" not in compose
-        or allocation_specs.count("AllocationSpec::new(") != 6
+        or allocation_specs.count("AllocationSpec::new(") != 5
         or "if let Some(bytes) = self.continuum_row_bytes" not in allocation_specs
         or '"continuum-transform-row"' not in allocation_specs
         or "predecessor_observation_completion(&self.source_read)"
@@ -2413,7 +2410,7 @@ def validate_t18_global_weighting_sources(
         or "quarantine_external_permits" not in finish_draining
     ):
         raise ArchitectureError(
-            "T18 production fragment must own five allocations, exact queue authority, continuous retained-source authority, and fail-closed scheduler release"
+            "T18 production fragment must own four core allocations plus optional continuum storage, exact queue authority, continuous retained-source authority, and fail-closed scheduler release"
         )
 
     plan_projection = rust_impl_method_body(receipt, "PlanProjection", "new", receipt_path)

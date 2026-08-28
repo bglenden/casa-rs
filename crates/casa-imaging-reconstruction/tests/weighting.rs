@@ -1085,6 +1085,7 @@ fn planned_and_receipted_residency_cover_every_weighting_buffer_class() {
     assert!(generated.robust_factor_bytes() <= planned.robust_factor_bytes());
     assert!(generated.sum_weight_bytes() <= planned.sum_weight_bytes());
     assert_eq!(replayed.replay_read_bytes(), planned.replay_read_bytes());
+    assert_eq!(replayed.replay_read_bytes(), 0);
     assert_eq!(
         replayed.weighted_block_bytes(),
         planned.weighted_block_bytes()
@@ -1092,7 +1093,7 @@ fn planned_and_receipted_residency_cover_every_weighting_buffer_class() {
     assert_eq!(
         replayed.simultaneous_selected_weighted_bytes(),
         planned.simultaneous_selected_weighted_bytes(),
-        "the real replay-input block and weighted-output block coexist at the declared peak"
+        "direct weighting retains only the bounded weighted-output block"
     );
     assert!(generated.peak_bytes() <= planned.peak_bytes());
     assert!(replayed.peak_bytes() <= planned.peak_bytes());
