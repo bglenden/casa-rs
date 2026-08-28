@@ -1933,15 +1933,27 @@ impl StandardConvolution {
         taps: SampleTaps,
         value: Complex64,
     ) {
+        debug_assert_eq!(grid.dim(), compensation.dim());
+        let row_stride = grid.ncols();
+        let grid = grid
+            .as_slice_mut()
+            .expect("spectral grids use standard contiguous layout");
+        let compensation = compensation
+            .as_slice_mut()
+            .expect("spectral compensation uses standard contiguous layout");
         let x_weights = self.weights[taps.x.weight_index];
         let y_weights = self.weights[taps.y.weight_index];
         for (x, x_weight) in x_weights.into_iter().enumerate() {
-            for (y, y_weight) in y_weights.into_iter().enumerate() {
-                let index = (taps.x.start + x, taps.y.start + y);
-                let contribution = value * x_weight * y_weight - compensation[index];
-                let updated = grid[index] + contribution;
-                compensation[index] = (updated - grid[index]) - contribution;
-                grid[index] = updated;
+            let start = (taps.x.start + x) * row_stride + taps.y.start;
+            let grid_row = &mut grid[start..start + y_weights.len()];
+            let compensation_row = &mut compensation[start..start + y_weights.len()];
+            for ((grid_cell, compensation_cell), y_weight) in
+                grid_row.iter_mut().zip(compensation_row).zip(y_weights)
+            {
+                let contribution = value * x_weight * y_weight - *compensation_cell;
+                let updated = *grid_cell + contribution;
+                *compensation_cell = (updated - *grid_cell) - contribution;
+                *grid_cell = updated;
             }
         }
     }
