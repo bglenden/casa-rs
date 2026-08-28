@@ -91,6 +91,7 @@ pub(crate) enum SourcePoll {
     Ready {
         source_ordinal: u32,
         logical_bytes: u64,
+        source_read_operations: u64,
         resident_current_bytes: u64,
         resident_capacity_bytes: u64,
     },
@@ -226,6 +227,7 @@ pub(crate) trait PartitionedKernel<S>: Sync {
 pub(crate) struct BoundedStreamMeasurements {
     pub(crate) blocks_filled: u64,
     pub(crate) logical_source_bytes: u64,
+    pub(crate) source_read_operations: u64,
     pub(crate) source_fill_nanos: u128,
     pub(crate) prepare_nanos: u128,
     pub(crate) execute_nanos: u128,
@@ -492,6 +494,7 @@ struct StorageLease<S> {
 struct ProducerMeasurements {
     blocks_filled: u64,
     logical_source_bytes: u64,
+    source_read_operations: u64,
     source_fill_nanos: u128,
     producer_wait_nanos: u128,
     peak_live_source_blocks: usize,
@@ -636,6 +639,7 @@ where
                 SourcePoll::Ready {
                     source_ordinal,
                     logical_bytes,
+                    source_read_operations,
                     resident_current_bytes,
                     resident_capacity_bytes,
                 } => {
@@ -649,6 +653,10 @@ where
                     measurements.logical_source_bytes = measurements
                         .logical_source_bytes
                         .checked_add(logical_bytes)
+                        .ok_or(BoundedStreamError::MeasurementOverflow)?;
+                    measurements.source_read_operations = measurements
+                        .source_read_operations
+                        .checked_add(source_read_operations)
                         .ok_or(BoundedStreamError::MeasurementOverflow)?;
                     measurements.peak_live_source_blocks = 1;
                     measurements.peak_live_source_current_bytes = measurements
@@ -834,6 +842,7 @@ where
                     Ok(SourcePoll::Ready {
                         source_ordinal,
                         logical_bytes,
+                        source_read_operations,
                         resident_current_bytes,
                         resident_capacity_bytes,
                     }) => {
@@ -849,6 +858,13 @@ where
                         let Some(logical_source_bytes) = producer_measurements
                             .logical_source_bytes
                             .checked_add(logical_bytes)
+                        else {
+                            let _ = ready_tx.send(ReadyMessage::MeasurementOverflow);
+                            return;
+                        };
+                        let Some(total_source_read_operations) = producer_measurements
+                            .source_read_operations
+                            .checked_add(source_read_operations)
                         else {
                             let _ = ready_tx.send(ReadyMessage::MeasurementOverflow);
                             return;
@@ -871,6 +887,7 @@ where
                         }
                         producer_measurements.blocks_filled = blocks_filled;
                         producer_measurements.logical_source_bytes = logical_source_bytes;
+                        producer_measurements.source_read_operations = total_source_read_operations;
                         live_current_bytes = current_bytes;
                         live_capacity_bytes = capacity_bytes;
                         outstanding += 1;
@@ -1134,6 +1151,8 @@ where
                 Ok(ReadyMessage::Completed(value, producer_measurements)) => {
                     measurements.blocks_filled = producer_measurements.blocks_filled;
                     measurements.logical_source_bytes = producer_measurements.logical_source_bytes;
+                    measurements.source_read_operations =
+                        producer_measurements.source_read_operations;
                     measurements.source_fill_nanos = producer_measurements.source_fill_nanos;
                     measurements.producer_wait_nanos = producer_measurements.producer_wait_nanos;
                     measurements.peak_live_source_blocks =
@@ -1163,6 +1182,7 @@ where
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     measurements.blocks_filled = producer_measurements.blocks_filled;
     measurements.logical_source_bytes = producer_measurements.logical_source_bytes;
+    measurements.source_read_operations = producer_measurements.source_read_operations;
     measurements.source_fill_nanos = producer_measurements.source_fill_nanos;
     measurements.producer_wait_nanos = producer_measurements.producer_wait_nanos;
     measurements.peak_live_source_blocks = producer_measurements.peak_live_source_blocks;
@@ -1273,6 +1293,7 @@ mod tests {
             Ok(SourcePoll::Ready {
                 source_ordinal: 0,
                 logical_bytes: (storage.len() * size_of::<u64>()) as u64,
+                source_read_operations: 1,
                 resident_current_bytes: (storage.len() * size_of::<u64>()) as u64,
                 resident_capacity_bytes: (storage.capacity() * size_of::<u64>()) as u64,
             })
@@ -1542,6 +1563,10 @@ mod tests {
             BoundedStreamError::Kernel(TestFailure)
         ));
         assert!(failure.measurements.blocks_filled > 0);
+        assert_eq!(
+            failure.measurements.source_read_operations,
+            failure.measurements.blocks_filled
+        );
         assert!(failure.measurements.wall_nanos > 0);
         assert_eq!(completions.load(Ordering::SeqCst), 0);
     }
@@ -1574,6 +1599,7 @@ mod tests {
             Ok(SourcePoll::Ready {
                 source_ordinal: 0,
                 logical_bytes: 8,
+                source_read_operations: 1,
                 resident_current_bytes: 8,
                 resident_capacity_bytes: 8,
             })
@@ -1603,6 +1629,7 @@ mod tests {
             BoundedStreamError::Source(TestFailure)
         ));
         assert_eq!(failure.measurements.blocks_filled, 1);
+        assert_eq!(failure.measurements.source_read_operations, 1);
         assert!(failure.measurements.source_fill_nanos > 0);
         assert_eq!(completions.load(Ordering::SeqCst), 0);
     }
@@ -1929,6 +1956,8 @@ mod tests {
             Ok(SourcePoll::Ready {
                 source_ordinal: 0,
                 logical_bytes: fill.logical_output_bytes,
+                source_read_operations: u64::try_from(fill.columns.len())
+                    .expect("large-gate column count fits u64"),
                 resident_current_bytes,
                 resident_capacity_bytes,
             })
@@ -2259,6 +2288,7 @@ mod tests {
                 "digest_weight_bits": format!("{:016x}", digest.weight.to_bits()),
                 "fill_operations": source.fill_operations,
                 "logical_source_bytes": measurements.logical_source_bytes,
+                "source_read_operations": measurements.source_read_operations,
                 "modeled_physical_bytes": source.modeled_physical_bytes,
                 "named_row_projection_bytes": source.named_row_projection_bytes,
                 "explicit_adaptation_copy_bytes": source.explicit_adaptation_copy_bytes,

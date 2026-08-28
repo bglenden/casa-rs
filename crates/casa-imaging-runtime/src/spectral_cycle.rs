@@ -1187,7 +1187,7 @@ impl SpectralCycleExecutor {
                             IoMeasurement::new(
                                 crate::IoBufferKind::SourceReadAhead,
                                 measurements.logical_source_bytes,
-                                measurements.blocks_filled,
+                                measurements.source_read_operations,
                             )
                         }
                         None => IoMeasurement::unobserved(crate::IoBufferKind::SourceReadAhead),

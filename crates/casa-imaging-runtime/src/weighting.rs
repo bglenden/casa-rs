@@ -125,6 +125,7 @@ impl OrderedBlockSource for SelectedBlockSource<'_> {
         Ok(SourcePoll::Ready {
             source_ordinal,
             logical_bytes: storage.logical_bytes(),
+            source_read_operations: storage.source_read_operations(),
             resident_current_bytes: storage.resident_current_bytes()?,
             resident_capacity_bytes: storage.resident_capacity_bytes()?,
         })
@@ -1761,6 +1762,11 @@ impl WeightingExecutionState {
         self.latest_stream_measurements.as_ref()
     }
 
+    fn begin_measurement_scope(&mut self) {
+        self.latest_traversal_measurements = None;
+        self.latest_stream_measurements = None;
+    }
+
     /// Validate, traverse, and adopt the exact T17 source owner.
     ///
     /// Owner-certificate and scheduler authority are checked before the first
@@ -1817,6 +1823,7 @@ impl WeightingExecutionState {
         selected: BoundSelectedObservation,
         problem: &CompiledProblem,
     ) -> Result<SelectedObservationCompletion, ContinuumDensityTraversalError> {
+        self.begin_measurement_scope();
         if !matches!(self.phase, WeightingExecutionPhase::Empty)
             || self.retained_observation.is_some()
             || self.density.is_some()
@@ -1944,6 +1951,7 @@ impl WeightingExecutionState {
         E: Error + Send + 'static,
         F: FnMut(&ReconstructionWeightedBlock) -> Result<(), E> + Sync,
     {
+        self.begin_measurement_scope();
         if !matches!(self.phase, WeightingExecutionPhase::Empty) {
             return Err(WeightingReplayError::Evidence(WeightingEvidenceError));
         }
@@ -2083,6 +2091,7 @@ impl WeightingExecutionState {
         E: Error + Send + 'static,
         F: FnMut(&ReconstructionWeightedBlock) -> Result<(), E> + Sync,
     {
+        self.begin_measurement_scope();
         if !matches!(self.phase, WeightingExecutionPhase::Empty)
             || self.retained_observation.is_some()
             || self.density.is_some()

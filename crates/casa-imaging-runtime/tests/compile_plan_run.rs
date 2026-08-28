@@ -63,15 +63,16 @@ use casa_imaging_runtime::{
     DemandAlternative, DemandEnvelope, ExecutionDag, ExecutionDagSpecification, ExecutionError,
     ExecutionEvidenceError, ExecutionKnobs, ExecutionOutcome, ExecutionPlanId, ExecutionProvenance,
     ExecutionReceipt, ExecutionReceiptBinding, ExecutionReceiptStore, ExecutionStatus,
-    ExternalPressure, FenceId, FenceKind, FrozenWeightingReservation, HostInventory,
-    ImplementationContractCatalog, ImplementationContractMetadata, ImplementationRegistry,
-    ImplementationRegistryId, InitializationPolicy, IoBufferDemand, IoBufferKind, IoMeasurement,
-    IoPrediction, LeaseResource, LogicalAllocation, MajorCycleOperatorResult,
-    MajorCycleOperatorState, MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand, MemoryView,
-    MemoryViewKind, ObservationReadCompletionContext, ObservationTransactionWork, PhysicalLayoutId,
-    PhysicalSlot, PhysicalSlotId, PhysicalWorkBinding, PhysicalWorkBindingError, PlanError,
-    PlanPrediction, PlannedArtifact, PlannerCostModelProfileBootstrap, PlannerCostModelProfileId,
-    PlanningBindings, PredictionConfidence, PredictionUncertainty, PreparedArtifactBudget,
+    ExternalPressure, FenceId, FenceKind, FinalVisibilitySink, FrozenWeightingReservation,
+    HostInventory, ImplementationContractCatalog, ImplementationContractMetadata,
+    ImplementationRegistry, ImplementationRegistryId, InitializationPolicy, IoBufferDemand,
+    IoBufferKind, IoMeasurement, IoPrediction, LeaseResource, LogicalAllocation,
+    MajorCycleOperatorResult, MajorCycleOperatorState, MemoryCapacityDomain, MemoryCapacityKind,
+    MemoryDemand, MemoryView, MemoryViewKind, ObservationReadCompletionContext,
+    ObservationTransactionWork, PhysicalLayoutId, PhysicalSlot, PhysicalSlotId,
+    PhysicalWorkBinding, PhysicalWorkBindingError, PlanError, PlanPrediction, PlannedArtifact,
+    PlannerCostModelProfileBootstrap, PlannerCostModelProfileId, PlanningBindings,
+    PredictionConfidence, PredictionUncertainty, PreparedArtifactBudget,
     PreparedArtifactDescriptor, PreparedArtifactError, PreparedArtifactLoadSource,
     PreparedArtifactOperation, PreparedArtifactOrder, PreparedArtifactPlanFragment,
     PreparedArtifactPlaneDescriptor, PreparedArtifactPrecision, PreparedArtifactRegistration,
@@ -92,9 +93,9 @@ use casa_imaging_runtime::{
     SpectralCycleRegistry, SpectralOperatorState, SpectralPassIdentity, SpectralPassPhase,
     StagePrediction, StorageDomain, StorageDomainId, StorageIoResourceBinding, StorageMode,
     StorageUseKind, WeightedObservationBlock, WeightingExecutionState, WeightingPlanFragment,
-    WorkDependency, WorkDomain, WorkExecutionContext, WorkImplementation, WorkImplementationId,
-    WorkKind, WorkMeasurements, WorkNode, WorkNodeId, plan as runtime_plan,
-    plan_continuum_transform_row, run as runtime_run,
+    WeightingReplayCompletion, WorkDependency, WorkDomain, WorkExecutionContext,
+    WorkImplementation, WorkImplementationId, WorkKind, WorkMeasurements, WorkNode, WorkNodeId,
+    plan as runtime_plan, plan_continuum_transform_row, run as runtime_run,
 };
 use casa_ms::{
     BoundSelectedObservation, ObservationSourceBinding, SelectedObservationCompletion,
@@ -2548,6 +2549,149 @@ fn spectral_cycle_executes_initial_major_and_shared_reconstruction_cycle() {
     ] {
         execute_spectral_cycle_with_weighting(weighting);
     }
+}
+
+struct RejectFirstVisibilityBlock;
+
+impl FinalVisibilitySink for RejectFirstVisibilityBlock {
+    fn bind(
+        &mut self,
+        _problem: casa_imaging_model::CompiledProblemId,
+        _final_model: casa_imaging_reconstruction::ModelGenerationId,
+    ) -> io::Result<()> {
+        Ok(())
+    }
+
+    fn begin_replay(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+
+    fn consume(
+        &mut self,
+        _samples: &[casa_imaging_reconstruction::runtime_adapter::FinalVisibilitySample],
+    ) -> io::Result<()> {
+        Err(io::Error::other("injected terminal visibility failure"))
+    }
+
+    fn finish(&mut self, _replay: &WeightingReplayCompletion) -> io::Result<()> {
+        Err(io::Error::other("visibility failure was not observed"))
+    }
+}
+
+#[test]
+fn failed_density_generation_receipt_uses_current_partial_stream_measurements() {
+    let problem = compile(
+        request_with_geometry_references_weighting_products_model_write_input_and_source_count(
+            74,
+            geometry_with_shape_and_increment([2.0, 2.0], ImageShape::new(4, 4), [-1.0e-6, 1.0e-6]),
+            default_references(),
+            WeightingContract::new(
+                WeightingScheme::Uniform,
+                WeightDensityScope::GlobalSelection,
+            ),
+            vec![ProductKind::Psf],
+            ModelColumnWrite::Disabled,
+            ModelStateIdentity::Empty,
+            2,
+        ),
+    )
+    .expect("two-source density fixture");
+    let residency = selected_content_residency_with(&problem, |_| {
+        SelectedObservationContentBudget::new(160 * 1024, 1, 4)
+    });
+    let planning_registry = ContractOnlyRegistry::new(
+        registry(74),
+        implementation_metadata(&problem),
+        [implementation(74)],
+    );
+    let planned = SpectralCyclePlan::dirty(
+        &problem,
+        &planning_registry,
+        SpectralCycleExecutionPolicy::new(
+            implementation(74),
+            WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
+            residency.clone(),
+            serial_storage_io(),
+            1_000,
+            4 * 4 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
+            900_000,
+        ),
+    )
+    .expect("dirty density plan");
+    let (physical, weighting, complete, resources, pass, minor) = planned.into_parts();
+    assert!(minor.is_none());
+    let executor = SpectralCycleExecutor::new(
+        implementation(74),
+        problem.clone(),
+        weighting,
+        resources,
+        pass,
+        complete,
+        open_selected_observation(&problem, &residency).expect("selected owner"),
+        ExecutableModelProblem::from_compiled(problem.clone()).expect("executable model"),
+        SpectralCyclePassInput::Initial,
+    )
+    .with_final_visibility_sink(Box::new(RejectFirstVisibilityBlock));
+    let runtime_registry =
+        SpectralCycleRegistry::new(registry(74), implementation(74), &problem, executor);
+    let directory = tempfile::tempdir().expect("receipt directory");
+    let receipts = ExecutionReceiptStore::new(
+        directory.path(),
+        ReceiptRetention::new(4, 1_048_576).expect("retention"),
+    )
+    .expect("receipt store");
+    let resource_policy = ResourcePolicy::Exclusive;
+    let execution_plan = runtime_plan(
+        &problem,
+        PlanningBindings::new(registry(74), resource_policy.clone(), planning_profile(4)),
+        authority(),
+        &runtime_registry,
+        &receipts,
+        move |_, _| Ok::<_, io::Error>(vec![physical]),
+    )
+    .expect("runtime plan");
+    let current = RunBindings::new(problem.inputs().clone(), &resource_policy, cost_model(4));
+    let executable = ExecutableModelProblem::from_compiled(problem.clone()).expect("executable");
+    let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([74; 32]);
+    runtime_run(
+        &executable,
+        &execution_plan,
+        &current,
+        &runtime_registry,
+        authority(),
+        &mut RunToCompletion,
+        receipts.bind(execution_provenance(
+            attempt,
+            BuildIdentity::from_sha256([75; 32]),
+        )),
+    )
+    .expect_err("injected generation failure");
+    let receipt = receipts.open(attempt).expect("failed receipt");
+    let density_source = execution_plan
+        .execution_dag()
+        .nodes()
+        .values()
+        .find(|node| node.id.as_str().starts_with("transaction-read"))
+        .expect("density source node");
+    let generation = execution_plan
+        .execution_dag()
+        .nodes()
+        .values()
+        .find(|node| node.id.as_str().starts_with("weighting-generation"))
+        .expect("density generation node");
+    assert_eq!(
+        receipt.node_status(&generation.id),
+        Some(ReceiptStatus::Failed)
+    );
+    assert_eq!(
+        receipt.stage_actual_io(&density_source.id, IoBufferKind::SourceReadAhead),
+        Some((220, 38))
+    );
+    assert_eq!(
+        receipt.stage_actual_io(&generation.id, IoBufferKind::SourceReadAhead),
+        Some((110, 19)),
+        "the failed generation reports only its current partial pass"
+    );
 }
 
 fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {

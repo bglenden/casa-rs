@@ -240,6 +240,7 @@ impl BoundObservationSource {
             &mut block.buffer,
         )?;
         block.logical_bytes = fill_report.logical_output_bytes;
+        block.source_read_operations = fill_report.read_operation_count;
         measurements.record_fill(fill_report)?;
         let arrangement_started = Instant::now();
         for row in 0..block.buffer.row_count() {
@@ -852,6 +853,7 @@ pub struct SelectedObservationBlock {
     coordinates: Option<Arc<[SelectedCoordinates]>>,
     geometry_engine: Option<Arc<MsCalEngine>>,
     logical_bytes: u64,
+    source_read_operations: u64,
 }
 
 impl SelectedObservationBlock {
@@ -866,6 +868,7 @@ impl SelectedObservationBlock {
             coordinates: None,
             geometry_engine: None,
             logical_bytes: 0,
+            source_read_operations: 0,
         }
     }
 
@@ -879,6 +882,12 @@ impl SelectedObservationBlock {
     #[must_use]
     pub const fn logical_bytes(&self) -> u64 {
         self.logical_bytes
+    }
+
+    /// Exact closed-column read operations completed by the latest fill.
+    #[must_use]
+    pub const fn source_read_operations(&self) -> u64 {
+        self.source_read_operations
     }
 
     /// Exact currently populated bytes retained by this reusable source slot.
