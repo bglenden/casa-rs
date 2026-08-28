@@ -118,6 +118,7 @@ impl OrderedBlockSource for SelectedBlockSource<'_> {
         &mut self,
         _block_ordinal: u64,
         storage: &mut Self::Storage,
+        _cancellation: crate::bounded_stream::SourceFillCancellation<'_>,
     ) -> Result<SourcePoll, Self::Error> {
         let Some(source_ordinal) = self.source.fill_next(storage)? else {
             return Ok(SourcePoll::Exhausted);

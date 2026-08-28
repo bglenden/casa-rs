@@ -98,6 +98,16 @@ pub(crate) enum SourcePoll {
     Exhausted,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SourceFillCancellation<'a>(&'a AtomicBool);
+
+impl SourceFillCancellation<'_> {
+    #[must_use]
+    pub(crate) fn is_cancelled(self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
+}
+
 pub(crate) trait OrderedBlockSource: Send {
     type Storage: Send + Sync;
     type Completion: Send;
@@ -108,6 +118,7 @@ pub(crate) trait OrderedBlockSource: Send {
         &mut self,
         block_ordinal: u64,
         storage: &mut Self::Storage,
+        cancellation: SourceFillCancellation<'_>,
     ) -> Result<SourcePoll, Self::Error>;
     fn complete(self) -> Result<Self::Completion, Self::Error>;
 }
@@ -617,6 +628,7 @@ where
     S: OrderedBlockSource,
     K: PartitionedKernel<S::Storage>,
 {
+    let cancelled = AtomicBool::new(false);
     let mut measurements = BoundedStreamMeasurements {
         source_slots: plan.source_slots,
         workers: plan.workers,
@@ -630,7 +642,11 @@ where
         let mut block_ordinal = 0_u64;
         loop {
             let fill_started = Instant::now();
-            let poll = source.fill(block_ordinal, &mut storage);
+            let poll = source.fill(
+                block_ordinal,
+                &mut storage,
+                SourceFillCancellation(&cancelled),
+            );
             measurements.source_fill_nanos = measurements
                 .source_fill_nanos
                 .checked_add(fill_started.elapsed().as_nanos())
@@ -825,7 +841,8 @@ where
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner())
                     .set_producer(true);
-                let poll = source.fill(block_ordinal, &mut lease.storage);
+                let fill_cancellation = SourceFillCancellation(producer_cancelled.as_ref());
+                let poll = source.fill(block_ordinal, &mut lease.storage, fill_cancellation);
                 producer_overlap
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -846,9 +863,6 @@ where
                         resident_current_bytes,
                         resident_capacity_bytes,
                     }) => {
-                        if producer_cancelled.load(Ordering::Acquire) {
-                            return;
-                        }
                         let Some(blocks_filled) =
                             producer_measurements.blocks_filled.checked_add(1)
                         else {
@@ -904,6 +918,9 @@ where
                                 .max(live_capacity_bytes);
                         lease.resident_current_bytes = resident_current_bytes;
                         lease.resident_capacity_bytes = resident_capacity_bytes;
+                        if fill_cancellation.is_cancelled() {
+                            return;
+                        }
                         if ready_queue_capacity > 0 {
                             let current_queued = match producer_ready_current_bytes.fetch_update(
                                 Ordering::AcqRel,
@@ -1279,6 +1296,7 @@ mod tests {
             &mut self,
             block_ordinal: u64,
             storage: &mut Self::Storage,
+            _cancellation: SourceFillCancellation<'_>,
         ) -> Result<SourcePoll, Self::Error> {
             let Some(values) = self.blocks.get(self.next) else {
                 return Ok(SourcePoll::Exhausted);
@@ -1571,6 +1589,136 @@ mod tests {
         assert_eq!(completions.load(Ordering::SeqCst), 0);
     }
 
+    struct CancellationDelayedSource {
+        next: usize,
+        second_fill_started: Arc<AtomicBool>,
+        completions: Arc<AtomicUsize>,
+    }
+
+    impl OrderedBlockSource for CancellationDelayedSource {
+        type Storage = Vec<u64>;
+        type Completion = ();
+        type Error = Infallible;
+
+        fn create_storage(&self, _slot: usize) -> Self::Storage {
+            Vec::with_capacity(1)
+        }
+
+        fn fill(
+            &mut self,
+            _block_ordinal: u64,
+            storage: &mut Self::Storage,
+            cancellation: SourceFillCancellation<'_>,
+        ) -> Result<SourcePoll, Self::Error> {
+            if self.next == 2 {
+                return Ok(SourcePoll::Exhausted);
+            }
+            if self.next == 1 {
+                self.second_fill_started.store(true, Ordering::Release);
+                while !cancellation.is_cancelled() {
+                    std::thread::yield_now();
+                }
+            }
+            storage.clear();
+            storage.push(self.next as u64);
+            let source_read_operations = if self.next == 0 { 3 } else { 5 };
+            self.next += 1;
+            Ok(SourcePoll::Ready {
+                source_ordinal: 0,
+                logical_bytes: 8,
+                source_read_operations,
+                resident_current_bytes: 8,
+                resident_capacity_bytes: 8,
+            })
+        }
+
+        fn complete(self) -> Result<Self::Completion, Self::Error> {
+            self.completions.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    struct FailAfterReadAheadStarts {
+        second_fill_started: Arc<AtomicBool>,
+    }
+
+    impl PartitionedKernel<Vec<u64>> for FailAfterReadAheadStarts {
+        type Partition = ();
+        type Partial = ();
+        type Completion = ();
+        type Error = TestFailure;
+
+        fn partition_count(
+            &self,
+            _block: BlockIdentity,
+            _storage: &Vec<u64>,
+        ) -> Result<usize, Self::Error> {
+            Ok(1)
+        }
+
+        fn partition(
+            &self,
+            _block: BlockIdentity,
+            _storage: &Vec<u64>,
+            _local_ordinal: usize,
+        ) -> Result<KernelPartition<Self::Partition>, Self::Error> {
+            Ok(KernelPartition::exclusive(0, 0, ()))
+        }
+
+        fn execute(
+            &self,
+            _work: WorkIdentity,
+            _storage: &Vec<u64>,
+            _partition: &Self::Partition,
+        ) -> Result<Self::Partial, Self::Error> {
+            Ok(())
+        }
+
+        fn commit(
+            &mut self,
+            _work: WorkIdentity,
+            _storage: &Vec<u64>,
+            (): Self::Partial,
+        ) -> Result<(), Self::Error> {
+            while !self.second_fill_started.load(Ordering::Acquire) {
+                std::thread::yield_now();
+            }
+            Err(TestFailure)
+        }
+
+        fn complete(self) -> Result<Self::Completion, Self::Error> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn completed_read_ahead_fill_is_measured_after_consumer_cancellation() {
+        let second_fill_started = Arc::new(AtomicBool::new(false));
+        let completions = Arc::new(AtomicUsize::new(0));
+        let result = execute_bounded(
+            BoundedStreamPlan::new::<(), ()>(2, 1, 16, 1, 0).unwrap(),
+            0,
+            CancellationDelayedSource {
+                next: 0,
+                second_fill_started: Arc::clone(&second_fill_started),
+                completions: Arc::clone(&completions),
+            },
+            FailAfterReadAheadStarts {
+                second_fill_started,
+            },
+        );
+        let failure = result.unwrap_err();
+        assert!(matches!(
+            *failure.cause,
+            BoundedStreamError::Kernel(TestFailure)
+        ));
+        assert_eq!(failure.measurements.blocks_filled, 2);
+        assert_eq!(failure.measurements.logical_source_bytes, 16);
+        assert_eq!(failure.measurements.source_read_operations, 8);
+        assert_eq!(failure.measurements.peak_live_source_blocks, 2);
+        assert_eq!(completions.load(Ordering::SeqCst), 0);
+    }
+
     struct FailingSource {
         emitted: bool,
         completions: Arc<AtomicUsize>,
@@ -1589,6 +1737,7 @@ mod tests {
             &mut self,
             _block_ordinal: u64,
             storage: &mut Self::Storage,
+            _cancellation: SourceFillCancellation<'_>,
         ) -> Result<SourcePoll, Self::Error> {
             if self.emitted {
                 return Err(TestFailure);
@@ -1888,6 +2037,7 @@ mod tests {
             &mut self,
             _block_ordinal: u64,
             storage: &mut Self::Storage,
+            _cancellation: SourceFillCancellation<'_>,
         ) -> Result<SourcePoll, Self::Error> {
             if self.next_row == LARGE_GATE_ROWS {
                 return Ok(SourcePoll::Exhausted);
