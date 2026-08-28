@@ -354,7 +354,7 @@ The normalized receipt, exact counters, group counts, artifact hashes, and
 limitations are recorded in
 `tools/perf/imager/evidence/artifacts/20260828-issue540-intermediate-major-profile.json`.
 
-### Proposed later-major proof-derivation candidate
+### Approved later-major proof-derivation candidate
 
 The first production-seam discriminator at `b8c050ac9` retained the exact
 normal-state checksum and measured the proof work directly. Its 10.229-second
@@ -375,7 +375,8 @@ gate. The instrumented 10.229-second observation does not relax the original
 8.919854 seconds with the exact checksum, one worker, one partition, unchanged
 pass/copy/residency evidence, and zero later-pass proof bytes.
 
-The proposed seam retains a small opaque proof, not an MS lock. `casa-ms`
+The approved seam retains an opaque proof, not an MS lock. Its exact retained
+heap is charged in the cross-plan frozen-weighting reservation. `casa-ms`
 mints it only after the first exhaustive traversal and owns the only rebind
 operation. Each later plan opens fresh retained locks and, under those locks,
 revalidates the owner manifest, physical modification counters, selected rows,
@@ -399,10 +400,30 @@ released, including cancellation and failure paths.
 
 The full candidate and automatic falsifier are recorded in
 `tools/perf/imager/evidence/artifacts/20260828-issue540-proof-derivation-candidate.json`.
-The candidate is eligible by measured ceiling but remains pending explicit
-acceptance because issue #540 previously states that cross-cycle proof reuse
-was not yet selected or approved. No proof-derivation production code is
-authorized by this section alone.
+Issue #540 explicitly approved this seam. Its first discriminator attempt
+failed before timing with `ContentPlan(ByteOverflow)`: the proof-eligible
+fresh-lock open reached physical owner validation before the retained-read
+scalar cache had been initialized by `selected_content_plan`, so the cache's
+zero sentinel was misclassified as overflow. The bounded mechanical fix derives
+the content plan under the same fresh retained locks before physical owner
+validation. The owner-open reproducer then passed in 0.93 seconds without
+adding a pass or fallback.
+
+The permitted implementation retry observed 7.421470958 seconds in the
+uncommitted implementation worktree. That observation is retained in the
+candidate artifact but is not used as a durable source identity. After the
+implementation was committed as
+`271b4e106227b5b4bfe313cffd41c236b17e0157`, one provenance-only exact
+confirmation passed at 7.405217709 seconds, below the 8.9198541747-second
+ceiling, with checksum
+`e6368112404a3ce2b3b3b9e988bde85dadd5726e09de8d87ca4499dc27a71b91`.
+It retained one worker and partition, 263,250 rows, 33,696,000 samples, six
+captured blocks, 8,227 weighted blocks, and the exact captured logical-byte,
+read-operation, current-byte, and capacity-byte measurements. Selected-
+generation, weighting-coverage, and operator-coverage proof bytes and hash
+calls were all zero. This passes the first candidate gate only; production-path
+medium validation and the directly mounted 32 GiB acceptance run remain
+pending, so the candidate is not yet recorded as fully accepted.
 
 ## Scope
 

@@ -1,6 +1,6 @@
 {
   "affected_fraction": 0.17422911492094262,
-  "approval_status": "pending_user_acceptance",
+  "approval_status": "approved",
   "artifact_retention_class": "immutable",
   "attribution": {
     "instrumented_replay_seconds": 10.229,
@@ -29,6 +29,61 @@
       "zero later-pass weighting-coverage proof bytes",
       "zero later-pass operator-coverage proof bytes"
     ]
+  },
+  "discriminator_result": {
+    "candidate_replay_seconds": 7.405217709,
+    "command": "CARGO_INCREMENTAL=0 CASA_RS_IMPERF_DATA_ROOT=/Volumes/GLENDENNING/casa-rs-imperformance cargo test --release -p casa-imaging-runtime --lib weighting::serial_compute_probe::medium_vla_64ch_residual_refresh -- --ignored --exact --nocapture --test-threads=1",
+    "date": "2026-08-28",
+    "dataset": "wave1/vla/single/medium/ms/wave1-vla-single-medium.ms",
+    "initial_failure": {
+      "classification": "mechanical lazy-cache zero-sentinel ordering regression",
+      "diagnosis": "The proof-eligible fresh-lock open validated physical owner state before selected_content_plan initialized the exact retained-read scalar cache, so the cache's zero sentinel was reported as ContentPlan(ByteOverflow) before timing began.",
+      "failure": "ContentPlan(ByteOverflow)",
+      "fix": "Derive selected_content_plan under the same fresh retained locks before physical owner validation, preserving the single scientific selected-payload pass and adding no fallback.",
+      "narrow_reproducer_command": "CARGO_INCREMENTAL=0 CASA_RS_IMPERF_DATA_ROOT=/Volumes/GLENDENNING/casa-rs-imperformance cargo test --release -p casa-imaging-runtime --lib weighting::serial_compute_probe::medium_vla_64ch_owner_validated_open -- --ignored --exact --nocapture --test-threads=1",
+      "narrow_reproducer_result": "passed in 0.93 seconds"
+    },
+    "invariants": {
+      "captured_blocks": 6,
+      "captured_capacity_bytes": 378169650,
+      "captured_current_bytes": 375131250,
+      "captured_logical_bytes": 330905250,
+      "captured_read_operations": 114,
+      "normal_state_identity": "e6368112404a3ce2b3b3b9e988bde85dadd5726e09de8d87ca4499dc27a71b91",
+      "operator_coverage_proof_bytes": 0,
+      "operator_coverage_proof_hash_calls": 0,
+      "partitions_per_block": 1,
+      "predicted_samples": 33696000,
+      "selected_generation_proof_bytes": 0,
+      "selected_generation_proof_hash_calls": 0,
+      "selected_generation_proof_terminalized": false,
+      "selected_rows": 263250,
+      "selected_samples": 33696000,
+      "total_coverage_proof_bytes": 0,
+      "total_coverage_proof_hash_calls": 0,
+      "weighted_blocks": 8227,
+      "weighting_coverage_proof_bytes": 0,
+      "weighting_coverage_proof_hash_calls": 0,
+      "workers": 1
+    },
+    "maximum_candidate_seconds": 8.9198541747,
+    "precommit_observation": {
+      "candidate_replay_seconds": 7.421470958,
+      "provenance": "uncommitted implementation worktree atop 76967c738e5335927b49cbe361d35de770e64ce9; retained only as the bounded retry observation, not as durable source identity"
+    },
+    "problem_id": "b9db8b4a5b454c7b9804285d7d9cb56c07e7a663b9ec01ad723b37b2ae706faa",
+    "run_kind": "exact committed-revision confirmation",
+    "source_revision": "271b4e106227b5b4bfe313cffd41c236b17e0157",
+    "status": "exact_confirmation_passed",
+    "timings_ms": {
+      "capture": 1378.489083,
+      "operator_consume": 2774.11887,
+      "operator_finish": 31.014208,
+      "projection_spectral_weighting": 4631.098839,
+      "replay": 7405.217709,
+      "setup": 18217.560834,
+      "total": 28460.412042
+    }
   },
   "falsifier": "Revert unless the median candidate replay is at most 8.9198541747 seconds with the exact checksum and every required invariant; any nonzero later-pass proof hashing also falsifies the candidate.",
   "hypothesis": "A freshly locked casa-ms owner can rebind first-pass selected-generation evidence, allowing reconstruction to derive unchanged later-major coverage and remove redundant proof hashing without weakening traversal, science, or resource checks.",
