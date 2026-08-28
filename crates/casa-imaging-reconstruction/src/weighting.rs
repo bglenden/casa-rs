@@ -523,7 +523,7 @@ impl WeightingDensityPhase {
         &mut self,
         problem: &CompiledProblem,
         sample: &SelectedObservationSample,
-        contributions: &SelectedSpectralContributions,
+        contributions: SelectedSpectralContributions,
     ) -> Result<(), WeightingError> {
         if self.problem != problem.problem_id()
             || self.commitment != problem.weighting().commitment_id()
@@ -638,7 +638,7 @@ impl WeightingSumWeightPhase {
         &mut self,
         problem: &CompiledProblem,
         sample: &SelectedObservationSample,
-        contributions: &SelectedSpectralContributions,
+        contributions: SelectedSpectralContributions,
     ) -> Result<(), WeightingError> {
         if self.problem != problem.problem_id()
             || self.commitment != problem.weighting().commitment_id()
@@ -653,7 +653,7 @@ impl WeightingSumWeightPhase {
         &mut self,
         problem: &CompiledProblem,
         sample: &SelectedObservationSample,
-        contributions: &SelectedSpectralContributions,
+        contributions: SelectedSpectralContributions,
     ) -> Result<WeightingSampleValue, WeightingError> {
         if self.problem != problem.problem_id()
             || self.commitment != problem.weighting().commitment_id()
@@ -803,7 +803,7 @@ impl FusedWeightingPhase {
         &mut self,
         problem: &CompiledProblem,
         sample: &SelectedObservationSample,
-        contributions: &SelectedSpectralContributions,
+        contributions: SelectedSpectralContributions,
     ) -> Result<Option<WeightingReplayChunk>, WeightingError> {
         let weighted = self.sum.weighted_sample(problem, sample, contributions)?;
         self.coverage.push(&weighted);
@@ -1091,7 +1091,7 @@ impl WeightingReplayPhase<'_> {
         &mut self,
         problem: &CompiledProblem,
         sample: &SelectedObservationSample,
-        contributions: &SelectedSpectralContributions,
+        contributions: SelectedSpectralContributions,
     ) -> Result<Option<WeightingReplayChunk>, WeightingError> {
         if self.generation.problem != problem.problem_id()
             || self.problem.problem_id() != problem.problem_id()
