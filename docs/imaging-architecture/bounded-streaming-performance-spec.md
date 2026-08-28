@@ -217,6 +217,33 @@ scientific identity but not a repeatable timing distribution. The frozen
 CASA-anchored `niter=500` serial workload remains the final performance and
 CASA-parity gate.
 
+### Re-evaluated residual-only candidate on the compact baseline
+
+The accepted compact handoff changed the measured bottleneck enough to reopen
+the previously rejected invariant-normal-state mechanism, without changing its
+ownership or creating another execution route. On the frozen `niter=500`
+serial gate, `bb9c24ac2` crossed CASA's 733.660-second wall after completing the
+density pass, initial weighted replay, and only two of the matched workload's
+ten later-major replays. Those two replays took 179.836987 and 179.689802
+seconds; their direct source reads took 10.347980 and 10.335971 seconds.
+
+A separate full-shape terminal-replay sample attributed 23.7 percent of
+main-thread leaf samples to compensated gridding. The terminal replay also
+hashes final visibility products, while intermediate replays do not; removing
+that terminal-only sink puts the approximate intermediate gridding share near
+26 to 27 percent. The same residual-only mechanism that was scientifically
+bit-exact but worth only 5.05 percent before the compact handoff can therefore
+remove a materially larger measured fraction across the repeated later-major
+stage.
+
+The candidate remains provisional. It must keep one worker, one ordered source
+pass per stage, the existing bounded residency, and exact full-native image,
+residual, model, PSF, mask, and sum-weight products. It is retained only if it
+materially reduces the realistic final-major and total serial receipts on the
+compact baseline. Reconstruction continues to own invariant scientific state;
+runtime owns its validated lifetime and residency; the application only carries
+the prior normal state between passes.
+
 ## Scope
 
 Delivery 1 includes:

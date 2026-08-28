@@ -41,7 +41,8 @@ use casa_imaging_reconstruction::{
     WeightingAlgorithmState, WeightingError, WeightingExecutionLimits, WeightingPlan,
     WeightingReplayChunk, WeightingReplaySummary, begin_weighting_generation, plan_weighting,
     runtime_adapter::{
-        CompleteDataOwnerResult, prepare_spectral_operator, spectral_operator_workload,
+        CompleteDataOwnerResult, SpectralOperatorPass, prepare_spectral_operator,
+        spectral_operator_workload,
     },
 };
 
@@ -563,7 +564,8 @@ fn t38_casacore_minor_cycle_and_paired_final_residual_are_split_oracles() {
     }
 
     let (delta, _) = rust.into_parts();
-    let (complete, preparation) = prepare_reconciliation(&problem, &lifecycle, carried, delta);
+    let (complete, preparation) =
+        prepare_reconciliation_reusing(&problem, &lifecycle, carried, delta, normal);
     let final_join = MajorCycleOwner::from_complete_data(complete, preparation)
         .expect("final complete-data owner")
         .reconcile(&mut lifecycle)
@@ -571,6 +573,10 @@ fn t38_casacore_minor_cycle_and_paired_final_residual_are_split_oracles() {
     assert!(final_join.model_completion().delta().is_some());
     let (paired_normal, continuation) = final_join.into_continuation();
     let paired_final_residual = paired_normal.residual().to_vec();
+    let paired_psf = paired_normal.normal_approximation().to_vec();
+    let paired_sensitivity = paired_normal.sensitivity().to_vec();
+    let paired_sum_weights = paired_normal.sum_weights().to_vec();
+    let paired_validity = paired_normal.channel_validity().to_vec();
 
     let (mut replay_lifecycle, replay_carried) = ModelLifecycle::continue_from(
         ExecutableModelProblem::from_compiled(problem.clone()).expect("replay cube problem"),
@@ -589,9 +595,68 @@ fn t38_casacore_minor_cycle_and_paired_final_residual_are_split_oracles() {
     assert_eq!(
         replayed_join.normal_state().residual(),
         paired_final_residual,
-        "the final residual is bit-exact under a fresh Rust paired A/A* replay of the same model"
+        "invariant reuse is bit-exact under a full paired A/A* replay of the same model"
+    );
+    assert_eq!(
+        replayed_join.normal_state().normal_approximation(),
+        paired_psf
+    );
+    assert_eq!(
+        replayed_join.normal_state().sensitivity(),
+        paired_sensitivity
+    );
+    assert_eq!(
+        replayed_join.normal_state().sum_weights(),
+        paired_sum_weights
+    );
+    assert_eq!(
+        replayed_join.normal_state().channel_validity(),
+        paired_validity
     );
     assert_eq!(replayed_join.model_completion().delta(), None);
+}
+
+#[test]
+fn residual_refresh_rejects_prior_invariants_from_another_selected_generation() {
+    let problem = t19_compatible_problem(250);
+    let mut initial_lifecycle = ModelLifecycle::bind(
+        ExecutableModelProblem::from_compiled(problem.clone()).expect("executable problem"),
+        attempt(251),
+        1,
+    )
+    .expect("initial lifecycle");
+    let initial_model = initial_lifecycle.initial_empty().expect("empty model");
+    let initial_preparation =
+        MajorCyclePreparation::prepare(&initial_lifecycle, initial_model, None)
+            .expect("initial preparation");
+    let initial_complete = run_t19_complete_data(&problem, Some(&initial_preparation));
+    let initial_join = MajorCycleOwner::from_complete_data(initial_complete, initial_preparation)
+        .expect("initial major owner")
+        .reconcile(&mut initial_lifecycle)
+        .expect("initial normal state");
+    let (normal_state, continuation) = initial_join.into_continuation();
+    let (continued_lifecycle, carried_model) = ModelLifecycle::continue_from(
+        ExecutableModelProblem::from_compiled(problem.clone()).expect("continued problem"),
+        attempt(252),
+        2,
+        continuation,
+    )
+    .expect("continued lifecycle");
+    let preparation = MajorCyclePreparation::prepare(&continued_lifecycle, carried_model, None)
+        .expect("residual refresh preparation");
+    let mut changed_samples = fixture_samples(&problem);
+    changed_samples[0].visibility = SelectedVisibilitySample::Complex32([91.0, -17.0]);
+
+    let error = run_t19_complete_data_for_pass_result(
+        &problem,
+        Some(&preparation),
+        &changed_samples,
+        None,
+        SpectralOperatorPass::ResidualRefresh,
+        Some(normal_state),
+    )
+    .expect_err("changed selected content must invalidate reused normal state");
+    assert_eq!(error, SpectralOperatorError::ReusableNormalStateMismatch);
 }
 
 #[test]
@@ -960,6 +1025,43 @@ fn run_t19_complete_data_with_transform(
     samples: &[SelectedObservationSample],
     transform_generation: Option<ContinuumTransformGenerationId>,
 ) -> CompleteDataOwnerResult {
+    run_t19_complete_data_for_pass(
+        problem,
+        preparation,
+        samples,
+        transform_generation,
+        SpectralOperatorPass::InitialMajor,
+        None,
+    )
+}
+
+fn run_t19_complete_data_for_pass(
+    problem: &casa_imaging_model::CompiledProblem,
+    preparation: Option<&MajorCyclePreparation>,
+    samples: &[SelectedObservationSample],
+    transform_generation: Option<ContinuumTransformGenerationId>,
+    pass: SpectralOperatorPass,
+    prior_normal_state: Option<casa_imaging_reconstruction::FinalNormalState>,
+) -> CompleteDataOwnerResult {
+    run_t19_complete_data_for_pass_result(
+        problem,
+        preparation,
+        samples,
+        transform_generation,
+        pass,
+        prior_normal_state,
+    )
+    .expect("complete T19 evidence")
+}
+
+fn run_t19_complete_data_for_pass_result(
+    problem: &casa_imaging_model::CompiledProblem,
+    preparation: Option<&MajorCyclePreparation>,
+    samples: &[SelectedObservationSample],
+    transform_generation: Option<ContinuumTransformGenerationId>,
+    pass: SpectralOperatorPass,
+    prior_normal_state: Option<casa_imaging_reconstruction::FinalNormalState>,
+) -> Result<CompleteDataOwnerResult, SpectralOperatorError> {
     let plan = plan_weighting(
         problem,
         WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
@@ -973,23 +1075,22 @@ fn run_t19_complete_data_with_transform(
 
     let specification =
         SpectralOperatorSpecification::new(problem).expect("spectral operator specification");
-    let workload = spectral_operator_workload(&specification, plan.limits().max_block_samples())
-        .expect("workload");
+    let workload =
+        spectral_operator_workload(&specification, plan.limits().max_block_samples(), pass)
+            .expect("workload");
     let prepared = prepare_spectral_operator(specification, workload).expect("prepare operator");
     let mut state = prepared
         .begin(problem, &generation)
         .expect("begin complete-data owner");
     if let Some(preparation) = preparation {
         state
-            .bind_major_cycle_model(preparation.final_model())
+            .bind_major_cycle_model(preparation.final_model(), prior_normal_state)
             .expect("bind exact final model before replay");
     }
     for block in &blocks {
         state.consume_block(block).expect("consume weighted block");
     }
-    state
-        .complete(&summary, selected_generation, transform_generation)
-        .expect("complete T19 evidence")
+    state.complete(&summary, selected_generation, transform_generation)
 }
 
 fn prepare_reconciliation(
@@ -1001,6 +1102,27 @@ fn prepare_reconciliation(
     let preparation =
         MajorCyclePreparation::prepare(lifecycle, named, delta).expect("prepare final model");
     let evidence = run_t19_complete_data(problem, Some(&preparation));
+    (evidence, preparation)
+}
+
+#[cfg(feature = "cpp-interop-tests")]
+fn prepare_reconciliation_reusing(
+    problem: &casa_imaging_model::CompiledProblem,
+    lifecycle: &ModelLifecycle,
+    named: ModelGeneration,
+    delta: Option<ModelDelta>,
+    prior_normal_state: casa_imaging_reconstruction::FinalNormalState,
+) -> (CompleteDataOwnerResult, MajorCyclePreparation) {
+    let preparation =
+        MajorCyclePreparation::prepare(lifecycle, named, delta).expect("prepare final model");
+    let evidence = run_t19_complete_data_for_pass(
+        problem,
+        Some(&preparation),
+        &fixture_samples(problem),
+        None,
+        SpectralOperatorPass::ResidualRefresh,
+        Some(prior_normal_state),
+    );
     (evidence, preparation)
 }
 
@@ -1022,14 +1144,18 @@ fn bound_major_cycle_model_cannot_be_replaced_by_diagnostic_prediction() {
     let (blocks, _) = replay(&generation, &problem, &plan, &samples);
     let specification =
         SpectralOperatorSpecification::new(&problem).expect("spectral operator specification");
-    let workload = spectral_operator_workload(&specification, plan.limits().max_block_samples())
-        .expect("spectral operator workload");
+    let workload = spectral_operator_workload(
+        &specification,
+        plan.limits().max_block_samples(),
+        SpectralOperatorPass::InitialMajor,
+    )
+    .expect("spectral operator workload");
     let prepared = prepare_spectral_operator(specification, workload).expect("prepare operator");
     let mut state = prepared
         .begin(&problem, &generation)
         .expect("begin complete-data owner");
     state
-        .bind_major_cycle_model(preparation.final_model())
+        .bind_major_cycle_model(preparation.final_model(), None)
         .expect("bind final model");
     let arbitrary_model = vec![num_complex::Complex64::new(1.0, 0.0); 8 * 8];
 
@@ -1426,7 +1552,9 @@ fn incomplete_or_foreign_operator_evidence_cannot_become_a_major_cycle_owner() {
     let problem = t19_compatible_problem(15);
     let other = t19_compatible_problem(16);
     let specification = SpectralOperatorSpecification::new(&other).expect("other specification");
-    let workload = spectral_operator_workload(&specification, 1).expect("other workload");
+    let workload =
+        spectral_operator_workload(&specification, 1, SpectralOperatorPass::InitialMajor)
+            .expect("other workload");
     let prepared = prepare_spectral_operator(specification, workload).expect("prepared");
     let plan = plan_weighting(
         &problem,

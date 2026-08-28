@@ -49,7 +49,8 @@ use casa_imaging_reconstruction::{
     WeightingExecutionLimits, WeightingPlan, WeightingReplayChunk, WeightingReplaySummary,
     begin_weighting_generation, plan_weighting,
     runtime_adapter::{
-        CompleteDataOwnerResult, prepare_spectral_operator, spectral_operator_workload,
+        CompleteDataOwnerResult, SpectralOperatorPass, prepare_spectral_operator,
+        spectral_operator_workload,
     },
 };
 use casa_imaging_runtime::{
@@ -1699,7 +1700,7 @@ impl WorkImplementation for RecordingExecutor {
                     if self.major_cycle_problem.is_some() {
                         let preparation = self.prepare_major_cycle(context)?;
                         operator
-                            .bind_major_cycle_model(&preparation)
+                            .bind_major_cycle_model(&preparation, None)
                             .map_err(io::Error::other)?;
                         *self
                             .major_cycle_preparation
@@ -2894,6 +2895,33 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
     assert!(
         collisions.is_empty(),
         "ordinary pass node identities collide: {collisions:?}"
+    );
+    let final_preparation = final_complete.preparation_node().clone();
+    let final_preparation_node = final_physical
+        .execution_dag()
+        .nodes()
+        .get(&final_preparation)
+        .expect("final FFT preparation node");
+    assert!(final_preparation_node.allocations.iter().any(|allocation| {
+        allocation
+            .allocation
+            .as_str()
+            .starts_with("spectral-operator-primitives-residual-refresh-")
+    }));
+    let residual_grid = final_physical
+        .execution_dag()
+        .logical_allocations()
+        .values()
+        .find(|allocation| {
+            allocation
+                .id
+                .as_str()
+                .starts_with("spectral-operator-grids-residual-refresh-")
+        })
+        .expect("residual-refresh grid allocation");
+    assert_eq!(
+        residual_grid.bytes,
+        final_complete.residency().grid_bytes() as u64
     );
     let final_executor = SpectralCycleExecutor::new(
         implementation(73),
@@ -7980,12 +8008,42 @@ fn multi_source_weighting_receipts_certified_aggregate_residency_through_release
 fn t37_runtime_residency_tracks_core_and_sampler_halo_depth() {
     let problem = compile(channel_local_request(237, 8)).expect("channel-local problem");
     let replay = WorkNodeId::new("t37-weighted-replay");
-    let depth_one = CompleteDataPlanFragment::for_slab(&problem, 4, replay.clone(), 3, 1)
-        .expect("one-channel core slab");
-    let depth_two = CompleteDataPlanFragment::for_slab(&problem, 4, replay.clone(), 3, 2)
-        .expect("two-channel core slab");
-    let full =
-        CompleteDataPlanFragment::for_slab(&problem, 4, replay, 0, 8).expect("full channel slab");
+    let depth_one = CompleteDataPlanFragment::for_slab(
+        &problem,
+        4,
+        replay.clone(),
+        3,
+        1,
+        SpectralOperatorPass::InitialMajor,
+    )
+    .expect("one-channel core slab");
+    let depth_two = CompleteDataPlanFragment::for_slab(
+        &problem,
+        4,
+        replay.clone(),
+        3,
+        2,
+        SpectralOperatorPass::InitialMajor,
+    )
+    .expect("two-channel core slab");
+    let full = CompleteDataPlanFragment::for_slab(
+        &problem,
+        4,
+        replay.clone(),
+        0,
+        8,
+        SpectralOperatorPass::InitialMajor,
+    )
+    .expect("full channel slab");
+    let residual_refresh = CompleteDataPlanFragment::for_slab(
+        &problem,
+        4,
+        replay,
+        3,
+        1,
+        SpectralOperatorPass::ResidualRefresh,
+    )
+    .expect("one-channel residual refresh");
 
     assert_eq!(depth_one.slab().core_range(), 3..4);
     assert_eq!(depth_one.slab().resident_range(), 2..5);
@@ -7998,6 +8056,16 @@ fn t37_runtime_residency_tracks_core_and_sampler_halo_depth() {
     let all = full.residency();
     assert_eq!(two.grid_bytes(), one.grid_bytes() * 2);
     assert_eq!(all.grid_bytes(), one.grid_bytes() * 8);
+    assert_eq!(
+        residual_refresh.residency().grid_bytes() * 3,
+        one.grid_bytes(),
+        "later major passes retain only residual plus compensation grids"
+    );
+    assert_eq!(
+        residual_refresh.residency().primitive_output_bytes(),
+        one.primitive_output_bytes(),
+        "the primitive lease covers prior invariants overlapping the new residual"
+    );
     assert_eq!(
         two.primitive_output_bytes(),
         one.primitive_output_bytes() * 2
@@ -8064,11 +8132,13 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
         &problem,
         weighting_plan.limits().max_block_samples(),
         replay.clone(),
+        SpectralOperatorPass::InitialMajor,
     )
     .expect("spectral operator runtime plan");
     let preparation = operator_plan.preparation_node().clone();
     let reconciliation = WorkNodeId::new("post-replay-reconciliation");
-    let major_cycle_model = AllocationId::new("spectral-operator-major-cycle-model-10x10-ch0-1");
+    let major_cycle_model =
+        AllocationId::new("spectral-operator-major-cycle-model-initial-10x10-ch0-1");
     let (physical, operator_plan) = operator_plan
         .compose(&physical)
         .expect("T19 resources compose onto T18 replay");
@@ -9964,6 +10034,7 @@ fn t20_major_cycle_harness(
         &problem,
         weighting_plan.limits().max_block_samples(),
         replay.clone(),
+        SpectralOperatorPass::InitialMajor,
     )
     .expect("spectral operator runtime plan");
     let (physical, operator_plan) = operator_plan
@@ -10438,14 +10509,18 @@ fn sealed_products_round(
 
     let specification =
         SpectralOperatorSpecification::new(problem).expect("spectral operator specification");
-    let workload = spectral_operator_workload(&specification, plan.limits().max_block_samples())
-        .expect("workload");
+    let workload = spectral_operator_workload(
+        &specification,
+        plan.limits().max_block_samples(),
+        SpectralOperatorPass::InitialMajor,
+    )
+    .expect("workload");
     let prepared = prepare_spectral_operator(specification, workload).expect("prepare operator");
     let mut state = prepared
         .begin(problem, &generation)
         .expect("begin complete-data owner");
     state
-        .bind_major_cycle_model(preparation.final_model())
+        .bind_major_cycle_model(preparation.final_model(), None)
         .expect("bind final model");
     for block in &blocks {
         state.consume_block(block).expect("consume block");
