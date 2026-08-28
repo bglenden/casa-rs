@@ -57,7 +57,7 @@ ACCEPTED_MATRIX_ROWS_SHA256 = (
     "0ad645f25cce979824634660a2a4c7ea1be6a06d12869eb9186495d9875c2719"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "18293323f2b660bca4d81ee2f97e82a58dd5f4c2add160deb6889c3c2307433e"
+    "8128f69045bbb7805fbd846d3c263b4a462a239e66fb7367f7bb3d3692c2153f"
 )
 ACCEPTED_MATRIX_CONTRACT_REVISION = 55
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
@@ -1944,7 +1944,7 @@ def validate_t18_global_weighting_sources(
         traversal_sample, "SelectedObservationTraversalSample", traversal_sample_path
     )
     if traversal_fields != {
-        "sample": "SelectedObservationSample",
+        "sample": "&'aSelectedObservationSample",
         "spectral_evaluation": "SelectedSpectralEvaluation",
     }:
         raise ArchitectureError(
@@ -2020,11 +2020,13 @@ def validate_t18_global_weighting_sources(
     traversal = rust_impl_method_body(
         bound_observation, "BoundSelectedObservation", "traverse", bound_observation_path
     )
+    compact_traversal = re.sub(r"\s+", "", traversal)
     if (
-        "SpectralEvaluationProjector::new()" not in traversal
-        or "spectral_evaluator.project(" not in traversal
-        or "source.geometry_engine()" not in traversal
-        or "consume_projected_validated_stream(" not in traversal
+        "SpectralEvaluationProjector::new()" not in compact_traversal
+        or "spectral_evaluator.project(" not in compact_traversal
+        or "source.geometry_engine()" not in compact_traversal
+        or "problem.inspect_selected_observation(" not in compact_traversal
+        or "consume(projected)" not in compact_traversal
     ):
         raise ArchitectureError(
             "T18 traversal does not issue its envelope after owner validation"
@@ -2158,6 +2160,9 @@ def validate_t18_global_weighting_sources(
     replay_input_fields = rust_struct_fields(
         weighting, "WeightingReplayInputSample", weighting_path
     )
+    compact_sample_fields = rust_struct_fields(
+        weighting, "WeightingSelectedSample", weighting_path
+    )
     replay_phase_fields = rust_struct_fields(
         weighting, "WeightingReplayPhase", weighting_path
     )
@@ -2174,8 +2179,20 @@ def validate_t18_global_weighting_sources(
         or replay_chunk_fields.get("samples") != "Vec<WeightingSampleValue>"
         or replay_input_fields
         != {
-            "sample": "SelectedObservationSample",
+            "sample": "WeightingSelectedSample",
             "contributions": "SelectedSpectralContributions",
+        }
+        or compact_sample_fields
+        != {
+            "address": "SelectedSampleAddress",
+            "visibility": "SelectedVisibilitySample",
+            "channel_flag": "bool",
+            "parallel_hand_group_flag": "bool",
+            "row_flag": "bool",
+            "input_weight": "f32",
+            "density_uvw_m": "[f64;3]",
+            "transformed_uvw_m": "[f64;3]",
+            "phase_shift_m": "f64",
         }
         or replay_phase_fields.get("input") != "Vec<WeightingReplayInputSample>"
         or replay_phase_fields.get("block") != "Vec<WeightingSampleValue>"

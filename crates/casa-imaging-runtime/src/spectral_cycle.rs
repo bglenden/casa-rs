@@ -1145,7 +1145,7 @@ impl SpectralCycleExecutor {
                 / (1024.0 * 1024.0)
         };
         let streamed_samples = traversal.selected_sample_handoff_bytes()
-            / size_of::<casa_ms::SelectedObservationTraversalSample>() as u64;
+            / size_of::<casa_ms::SelectedObservationTraversalSample<'static>>() as u64;
         let modeled_physical_read_bytes = traversal
             .modeled_physical_read_bytes()
             .map_or_else(|| "unavailable".to_owned(), |bytes| bytes.to_string());

@@ -11,8 +11,9 @@ use std::{
 };
 
 use casa_imaging_model::{
-    CompiledProblem, CompiledProblemId, SelectedObservationGenerationId, SelectedObservationSample,
-    SelectedSpectralContribution, SelectedSpectralContributions, SequentialContinuumTransform,
+    CompiledProblem, CompiledProblemId, MeasurementSetIdentity, SelectedObservationGenerationId,
+    SelectedObservationSample, SelectedSpectralContribution, SelectedSpectralContributions,
+    SelectedSpectralInterval, SequentialContinuumTransform,
 };
 use casa_imaging_reconstruction::runtime_adapter::WeightingReplayPhase;
 use casa_imaging_reconstruction::{
@@ -20,6 +21,7 @@ use casa_imaging_reconstruction::{
     WeightingGenerationId, WeightingPlan, WeightingReplayChunk as ReconstructionWeightedBlock,
     WeightingReplayCoverageId, WeightingReplayId, WeightingReplaySummary, WeightingResidency,
     WeightingSampleValue as ReconstructionWeightedSample,
+    WeightingSelectedSample as ReconstructionSelectedSample,
     WeightingSpectralValue as ReconstructionWeightedSpectralValue, begin_natural_weighting_stream,
     begin_weighting_generation, compile_spectral_stencil,
 };
@@ -55,15 +57,51 @@ use crate::{
     ContinuumTransformedSample, plan_continuum_transform_row,
 };
 
-fn compiled_spectral_contributions(
-    problem: &CompiledProblem,
-    reported: &SelectedObservationTraversalSample,
-) -> Result<SelectedSpectralContributions, WeightingError> {
-    Ok(
-        compile_spectral_stencil(problem, reported.selected(), reported.spectral_evaluation())?
-            .contributions()
-            .clone(),
-    )
+#[derive(Clone, Copy, PartialEq)]
+struct SpectralContributionKey {
+    measurement_set: MeasurementSetIdentity,
+    field_id: i32,
+    spectral_window_id: u32,
+    channel_index: u32,
+    native: SelectedSpectralInterval,
+    output_frame: SelectedSpectralInterval,
+}
+
+struct SpectralContributionCache {
+    last: Option<(SpectralContributionKey, SelectedSpectralContributions)>,
+}
+
+impl SpectralContributionCache {
+    const fn new() -> Self {
+        Self { last: None }
+    }
+
+    fn compile(
+        &mut self,
+        problem: &CompiledProblem,
+        reported: &SelectedObservationTraversalSample<'_>,
+    ) -> Result<SelectedSpectralContributions, WeightingError> {
+        let sample = reported.selected();
+        let key = SpectralContributionKey {
+            measurement_set: sample.address.measurement_set,
+            field_id: sample.metadata.field_id,
+            spectral_window_id: sample.address.spectral_window_id,
+            channel_index: sample.address.channel_index,
+            native: reported.spectral_evaluation().native(),
+            output_frame: reported.spectral_evaluation().output_frame(),
+        };
+        if let Some((cached_key, contributions)) = &self.last
+            && *cached_key == key
+        {
+            return Ok(contributions.clone());
+        }
+        let contributions =
+            compile_spectral_stencil(problem, sample, reported.spectral_evaluation())?
+                .contributions()
+                .clone();
+        self.last = Some((key, contributions.clone()));
+        Ok(contributions)
+    }
 }
 
 fn transformed_spectral_contributions(
@@ -83,8 +121,9 @@ fn transformed_spectral_contributions(
 }
 
 fn density_spectral_contributions(
+    cache: &mut SpectralContributionCache,
     problem: &CompiledProblem,
-    reported: &SelectedObservationTraversalSample,
+    reported: &SelectedObservationTraversalSample<'_>,
     continuum: &SequentialContinuumTransform,
 ) -> Result<SelectedSpectralContributions, ContinuumDensityCallbackError> {
     if let Some(rule) = continuum.rule(
@@ -98,7 +137,9 @@ fn density_spectral_contributions(
             return Ok(SelectedSpectralContributions::empty());
         }
     }
-    compiled_spectral_contributions(problem, reported).map_err(ContinuumDensityCallbackError::Owner)
+    cache
+        .compile(problem, reported)
+        .map_err(ContinuumDensityCallbackError::Owner)
 }
 
 struct SelectedBlockSource<'a> {
@@ -143,7 +184,7 @@ trait StreamingWeightPhase {
     fn consume_sample(
         &mut self,
         problem: &CompiledProblem,
-        sample: SelectedObservationSample,
+        sample: &SelectedObservationSample,
         contributions: SelectedSpectralContributions,
     ) -> Result<Option<ReconstructionWeightedBlock>, WeightingError>;
 
@@ -163,7 +204,7 @@ impl StreamingWeightPhase for FusedWeightingPhase {
     fn consume_sample(
         &mut self,
         problem: &CompiledProblem,
-        sample: SelectedObservationSample,
+        sample: &SelectedObservationSample,
         contributions: SelectedSpectralContributions,
     ) -> Result<Option<ReconstructionWeightedBlock>, WeightingError> {
         self.consume(problem, sample, contributions)
@@ -190,7 +231,7 @@ impl StreamingWeightPhase for WeightingReplayPhase<'_> {
     fn consume_sample(
         &mut self,
         problem: &CompiledProblem,
-        sample: SelectedObservationSample,
+        sample: &SelectedObservationSample,
         contributions: SelectedSpectralContributions,
     ) -> Result<Option<ReconstructionWeightedBlock>, WeightingError> {
         self.consume(problem, sample, contributions)
@@ -237,6 +278,7 @@ struct WeightingBlockKernel<'a, W, F> {
     weights: W,
     continuum: Option<ContinuumTransformStream<'a>>,
     spectral_support_sample_count: u64,
+    spectral_contributions: SpectralContributionCache,
     emit: F,
 }
 
@@ -251,6 +293,7 @@ struct DensityBlockKernel<'a> {
     problem: &'a CompiledProblem,
     consumer: SelectedObservationBlockConsumer<'a>,
     density: WeightingDensityPhase,
+    spectral_contributions: SpectralContributionCache,
 }
 
 struct DensityBlockKernelCompletion<'a> {
@@ -337,8 +380,9 @@ fn consume_weighting_sample<W, F, E>(
     weights: &mut W,
     continuum: &mut Option<ContinuumTransformStream<'_>>,
     spectral_support_sample_count: &mut u64,
+    spectral_contributions: &mut SpectralContributionCache,
     emit: &mut F,
-    reported: SelectedObservationTraversalSample,
+    reported: SelectedObservationTraversalSample<'_>,
 ) -> Result<(), ReplayCallbackError<E>>
 where
     W: StreamingWeightPhase,
@@ -358,7 +402,7 @@ where
                     )?;
             }
             if let Some(block) = weights
-                .consume_sample(problem, *transformed.selected(), contributions)
+                .consume_sample(problem, transformed.selected(), contributions)
                 .map_err(ReplayCallbackError::Owner)?
             {
                 emit(&block).map_err(ReplayCallbackError::Consumer)?;
@@ -368,10 +412,11 @@ where
             }
         }
     } else {
-        let contributions = compiled_spectral_contributions(problem, &reported)
+        let contributions = spectral_contributions
+            .compile(problem, &reported)
             .map_err(ReplayCallbackError::Owner)?;
         if let Some(block) = weights
-            .consume_sample(problem, *reported.selected(), contributions)
+            .consume_sample(problem, reported.selected(), contributions)
             .map_err(ReplayCallbackError::Owner)?
         {
             emit(&block).map_err(ReplayCallbackError::Consumer)?;
@@ -431,6 +476,7 @@ where
         let weights = &mut self.weights;
         let continuum = &mut self.continuum;
         let spectral_support_sample_count = &mut self.spectral_support_sample_count;
+        let spectral_contributions = &mut self.spectral_contributions;
         let emit = &mut self.emit;
         self.consumer
             .consume(storage, |reported| {
@@ -439,6 +485,7 @@ where
                     weights,
                     continuum,
                     spectral_support_sample_count,
+                    spectral_contributions,
                     emit,
                     reported,
                 )
@@ -462,7 +509,7 @@ where
                 }
                 if let Some(block) = self
                     .weights
-                    .consume_sample(self.problem, *transformed.selected(), contributions)
+                    .consume_sample(self.problem, transformed.selected(), contributions)
                     .map_err(WeightingBlockKernelError::Owner)?
                 {
                     (self.emit)(&block).map_err(WeightingBlockKernelError::Consumer)?;
@@ -530,17 +577,22 @@ impl<'a> PartitionedKernel<SelectedObservationBlock> for DensityBlockKernel<'a> 
         let problem = self.problem;
         let continuum = problem.visibility_transform();
         let density = &mut self.density;
+        let spectral_contributions = &mut self.spectral_contributions;
         self.consumer
             .consume(storage, |reported| {
                 let contributions = match continuum {
-                    Some(continuum) => {
-                        density_spectral_contributions(problem, &reported, continuum)?
-                    }
-                    None => compiled_spectral_contributions(problem, &reported)
+                    Some(continuum) => density_spectral_contributions(
+                        spectral_contributions,
+                        problem,
+                        &reported,
+                        continuum,
+                    )?,
+                    None => spectral_contributions
+                        .compile(problem, &reported)
                         .map_err(ContinuumDensityCallbackError::Owner)?,
                 };
                 density
-                    .consume(problem, *reported.selected(), contributions)
+                    .consume(problem, reported.selected(), contributions)
                     .map_err(ContinuumDensityCallbackError::Owner)
             })
             .map_err(DensityBlockKernelError::Traversal)
@@ -654,6 +706,7 @@ where
             weights,
             continuum,
             spectral_support_sample_count: 0,
+            spectral_contributions: SpectralContributionCache::new(),
             emit,
         },
     ) {
@@ -1780,7 +1833,7 @@ impl WeightingExecutionState {
         fragment: &WeightingPlanFragment<'_>,
         mut selected: BoundSelectedObservation,
         problem: &CompiledProblem,
-        consume: impl FnMut(SelectedObservationTraversalSample) -> Result<(), E>,
+        consume: impl FnMut(SelectedObservationTraversalSample<'_>) -> Result<(), E>,
     ) -> Result<SelectedObservationCompletion, WeightingSourceTraversalError<E>>
     where
         E: Error + 'static,
@@ -1855,6 +1908,7 @@ impl WeightingExecutionState {
                 problem,
                 consumer,
                 density,
+                spectral_contributions: SpectralContributionCache::new(),
             },
         ) {
             Ok(outcome) => outcome,
@@ -3050,7 +3104,7 @@ pub struct WeightedObservationSample<'a> {
 impl WeightedObservationSample<'_> {
     /// Return the selected sample validated by T17 traversal.
     #[must_use]
-    pub const fn selected(&self) -> &SelectedObservationSample {
+    pub const fn selected(&self) -> &ReconstructionSelectedSample {
         self.sample.selected()
     }
 
@@ -3269,12 +3323,14 @@ impl FrozenWeightingGeneration {
             .state
             .begin_replay(problem, fragment.plan)
             .map_err(WeightingReplayError::Owner)?;
+        let mut spectral_contributions = SpectralContributionCache::new();
         let owner_completion = selected
             .traverse(problem, |reported| {
-                let contributions = compiled_spectral_contributions(problem, &reported)
+                let contributions = spectral_contributions
+                    .compile(problem, &reported)
                     .map_err(ReplayCallbackError::Owner)?;
                 if let Some(block) = phase
-                    .consume(problem, *reported.selected(), contributions)
+                    .consume(problem, reported.selected(), contributions)
                     .map_err(ReplayCallbackError::Owner)?
                 {
                     let block = WeightedObservationBlock::authorize(self.generation_id(), block);
@@ -3334,20 +3390,22 @@ fn traverse_weighting_generation(
     }
     let mut density = begin_weighting_generation(problem, fragment.plan)
         .map_err(WeightingGenerationError::Owner)?;
+    let mut spectral_contributions = SpectralContributionCache::new();
     let density_completion = selected
         .traverse(problem, |reported| {
-            let contributions = compiled_spectral_contributions(problem, &reported)?;
-            density.consume(problem, *reported.selected(), contributions)
+            let contributions = spectral_contributions.compile(problem, &reported)?;
+            density.consume(problem, reported.selected(), contributions)
         })
         .map_err(WeightingGenerationError::DensityTraversal)?;
     let sum_weight = density
         .finish(problem)
         .map_err(WeightingGenerationError::Owner)?;
     let mut sum_weight = sum_weight;
+    let mut spectral_contributions = SpectralContributionCache::new();
     let sum_weight_completion = selected
         .traverse(problem, |reported| {
-            let contributions = compiled_spectral_contributions(problem, &reported)?;
-            sum_weight.consume(problem, *reported.selected(), contributions)
+            let contributions = spectral_contributions.compile(problem, &reported)?;
+            sum_weight.consume(problem, reported.selected(), contributions)
         })
         .map_err(WeightingGenerationError::SumWeightTraversal)?;
     let state = sum_weight

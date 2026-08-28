@@ -2217,7 +2217,7 @@ fn refillable_block_stream_matches_scalar_traversal_and_returns_the_owner() {
     let mut scalar_samples = Vec::new();
     let scalar_completion = scalar
         .traverse(&problem, |sample| {
-            scalar_samples.push(sample);
+            scalar_samples.push((*sample.selected(), sample.spectral_evaluation()));
             Ok::<_, Infallible>(())
         })
         .expect("complete scalar traversal");
@@ -2248,7 +2248,7 @@ fn refillable_block_stream_matches_scalar_traversal_and_returns_the_owner() {
         );
         consumer
             .consume(&storage, |sample| {
-                block_samples.push(sample);
+                block_samples.push((*sample.selected(), sample.spectral_evaluation()));
                 Ok::<_, Infallible>(())
             })
             .expect("consume canonical block");
@@ -2407,14 +2407,14 @@ fn retained_selected_observation_owns_canonical_multi_source_order() {
     let mut one_row_samples = Vec::new();
     let one_row_completion = one_row
         .traverse(&problem, |sample| {
-            one_row_samples.push(sample);
+            one_row_samples.push((*sample.selected(), sample.spectral_evaluation()));
             Ok::<_, Infallible>(())
         })
         .expect("complete canonical multi-source traversal");
     let mut two_row_samples = Vec::new();
     let two_row_completion = two_rows
         .traverse(&problem, |sample| {
-            two_row_samples.push(sample);
+            two_row_samples.push((*sample.selected(), sample.spectral_evaluation()));
             Ok::<_, Infallible>(())
         })
         .expect("complete repartitioned multi-source traversal");
@@ -2472,7 +2472,7 @@ fn retained_selected_observation_owns_canonical_multi_source_order() {
     assert_eq!(
         one_row_samples
             .chunks_exact(8)
-            .map(|samples| samples[0].selected().address.measurement_set)
+            .map(|samples| samples[0].0.address.measurement_set)
             .collect::<Vec<_>>(),
         problem
             .selected_observation()

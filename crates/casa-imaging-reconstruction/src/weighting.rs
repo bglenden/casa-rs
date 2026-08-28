@@ -7,8 +7,9 @@ use std::{collections::BTreeMap, fmt, mem::size_of};
 
 use casa_imaging_model::{
     CompiledProblem, CompiledProblemId, FiniteValuePolicy, ImageDomainRole, LogicalIdentity,
-    SelectedObservationSample, SelectedSpectralContribution, SelectedSpectralContributions,
-    UvTaper, WeightDensityScope, WeightingCommitmentId, WeightingScheme,
+    SelectedObservationSample, SelectedSampleAddress, SelectedSpectralContribution,
+    SelectedSpectralContributions, SelectedVisibilitySample, UvTaper, WeightDensityScope,
+    WeightingCommitmentId, WeightingScheme,
 };
 use sha2::{Digest, Sha256};
 use smallvec::SmallVec;
@@ -403,7 +404,7 @@ impl WeightingAlgorithmState {
     fn weight(
         &self,
         problem: &CompiledProblem,
-        sample: &SelectedObservationSample,
+        sample: &WeightingSelectedSample,
         contribution: Option<SelectedSpectralContribution>,
     ) -> Result<f64, WeightingError> {
         weight_from_state(
@@ -424,7 +425,7 @@ fn weight_from_state(
     density: &[f64],
     robust_f2: &[f64],
     frequency_range_hz: Option<[f64; 2]>,
-    sample: &SelectedObservationSample,
+    sample: &WeightingSelectedSample,
     contribution: Option<SelectedSpectralContribution>,
 ) -> Result<f64, WeightingError> {
     let input = input_weight(problem, sample)?;
@@ -529,7 +530,7 @@ impl WeightingDensityPhase {
     pub fn consume(
         &mut self,
         problem: &CompiledProblem,
-        sample: SelectedObservationSample,
+        sample: &SelectedObservationSample,
         contributions: SelectedSpectralContributions,
     ) -> Result<(), WeightingError> {
         if self.problem != problem.problem_id()
@@ -537,6 +538,7 @@ impl WeightingDensityPhase {
         {
             return Err(WeightingError::ProblemMismatch);
         }
+        let sample = WeightingSelectedSample::from_selected(sample);
         for contribution in contributions.iter() {
             extend_frequency_range(
                 &mut self.frequency_range_hz,
@@ -643,7 +645,7 @@ impl WeightingSumWeightPhase {
     pub fn consume(
         &mut self,
         problem: &CompiledProblem,
-        sample: SelectedObservationSample,
+        sample: &SelectedObservationSample,
         contributions: SelectedSpectralContributions,
     ) -> Result<(), WeightingError> {
         if self.problem != problem.problem_id()
@@ -658,7 +660,7 @@ impl WeightingSumWeightPhase {
     fn weighted_sample(
         &mut self,
         problem: &CompiledProblem,
-        sample: SelectedObservationSample,
+        sample: &SelectedObservationSample,
         contributions: SelectedSpectralContributions,
     ) -> Result<WeightingSampleValue, WeightingError> {
         if self.problem != problem.problem_id()
@@ -666,6 +668,7 @@ impl WeightingSumWeightPhase {
         {
             return Err(WeightingError::ProblemMismatch);
         }
+        let sample = WeightingSelectedSample::from_selected(sample);
         let spectral_values = contributions
             .iter()
             .map(|contribution| {
@@ -807,7 +810,7 @@ impl FusedWeightingPhase {
     pub fn consume(
         &mut self,
         problem: &CompiledProblem,
-        sample: SelectedObservationSample,
+        sample: &SelectedObservationSample,
         contributions: SelectedSpectralContributions,
     ) -> Result<Option<WeightingReplayChunk>, WeightingError> {
         let weighted = self.sum.weighted_sample(problem, sample, contributions)?;
@@ -911,6 +914,7 @@ impl FusedWeightingPhase {
         Ok(WeightingReplayChunk {
             sequence,
             samples: std::mem::take(&mut self.block),
+            coverage: self.coverage.clone(),
         })
     }
 }
@@ -945,17 +949,93 @@ impl WeightingSpectralValue {
     }
 }
 
+/// Compact kernel projection of one validated selected sample.
+///
+/// Row-level geometry that is needed only for source validation is deliberately
+/// absent. Bounded weighting/reconstruction blocks retain only the coordinates,
+/// flags, visibility, and address consumed by the scientific kernels.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WeightingSelectedSample {
+    pub(crate) address: SelectedSampleAddress,
+    pub(crate) visibility: SelectedVisibilitySample,
+    pub(crate) channel_flag: bool,
+    pub(crate) parallel_hand_group_flag: bool,
+    pub(crate) row_flag: bool,
+    pub(crate) input_weight: f32,
+    pub(crate) density_uvw_m: [f64; 3],
+    pub(crate) transformed_uvw_m: [f64; 3],
+    pub(crate) phase_shift_m: f64,
+}
+
+impl WeightingSelectedSample {
+    fn from_selected(sample: &SelectedObservationSample) -> Self {
+        Self {
+            address: sample.address,
+            visibility: sample.visibility,
+            channel_flag: sample.channel_flag,
+            parallel_hand_group_flag: sample.parallel_hand_group_flag,
+            row_flag: sample.row_flag,
+            input_weight: sample.input_weight,
+            density_uvw_m: sample.coordinates.density_uvw_m,
+            transformed_uvw_m: sample.coordinates.transformed_uvw_m,
+            phase_shift_m: sample.coordinates.phase_shift_m,
+        }
+    }
+
+    /// Return the exact selected-sample address.
+    #[must_use]
+    pub const fn address(&self) -> SelectedSampleAddress {
+        self.address
+    }
+
+    /// Return the selected visibility in its MeasurementSet storage precision.
+    #[must_use]
+    pub const fn visibility(&self) -> SelectedVisibilitySample {
+        self.visibility
+    }
+
+    /// Return the exact selected cell flag.
+    #[must_use]
+    pub const fn channel_flag(&self) -> bool {
+        self.channel_flag
+    }
+
+    /// Return whether either selected parallel hand flags this Stokes-I group.
+    #[must_use]
+    pub const fn parallel_hand_group_flag(&self) -> bool {
+        self.parallel_hand_group_flag
+    }
+
+    /// Return the MAIN row flag.
+    #[must_use]
+    pub const fn row_flag(&self) -> bool {
+        self.row_flag
+    }
+
+    /// Return the transformed UVW coordinate consumed by the paired operator.
+    #[must_use]
+    pub const fn transformed_uvw_m(&self) -> [f64; 3] {
+        self.transformed_uvw_m
+    }
+
+    /// Return the phase-shift path length consumed by prediction and gridding.
+    #[must_use]
+    pub const fn phase_shift_m(&self) -> f64 {
+        self.phase_shift_m
+    }
+}
+
 /// One unbranded weighted selected sample produced by reconstruction.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WeightingSampleValue {
-    sample: SelectedObservationSample,
+    sample: WeightingSelectedSample,
     spectral_values: SmallVec<[WeightingSpectralValue; 4]>,
 }
 
 impl WeightingSampleValue {
     /// Return the validated selected sample.
     #[must_use]
-    pub const fn selected(&self) -> &SelectedObservationSample {
+    pub const fn selected(&self) -> &WeightingSelectedSample {
         &self.sample
     }
 
@@ -973,11 +1053,12 @@ impl WeightingSampleValue {
 pub struct WeightingReplayChunk {
     sequence: u64,
     samples: Vec<WeightingSampleValue>,
+    coverage: CoverageEncoder,
 }
 
 #[derive(Debug, Clone)]
 struct WeightingReplayInputSample {
-    sample: SelectedObservationSample,
+    sample: WeightingSelectedSample,
     contributions: SelectedSpectralContributions,
 }
 
@@ -992,6 +1073,10 @@ impl WeightingReplayChunk {
     #[must_use]
     pub fn samples(&self) -> &[WeightingSampleValue] {
         &self.samples
+    }
+
+    pub(super) const fn coverage_checkpoint(&self) -> &CoverageEncoder {
+        &self.coverage
     }
 
     /// Transfer the bounded sample buffer to the runtime authorization layer.
@@ -1020,7 +1105,7 @@ impl WeightingReplayPhase<'_> {
     pub fn consume(
         &mut self,
         problem: &CompiledProblem,
-        sample: SelectedObservationSample,
+        sample: &SelectedObservationSample,
         contributions: SelectedSpectralContributions,
     ) -> Result<Option<WeightingReplayChunk>, WeightingError> {
         if self.generation.problem != problem.problem_id()
@@ -1030,7 +1115,7 @@ impl WeightingReplayPhase<'_> {
             return Err(WeightingError::ProblemMismatch);
         }
         self.input.push(WeightingReplayInputSample {
-            sample,
+            sample: WeightingSelectedSample::from_selected(sample),
             contributions,
         });
         if self.input.len() == self.max_block_samples {
@@ -1165,7 +1250,11 @@ impl WeightingReplayPhase<'_> {
         // original full-capacity allocation with its logical length intact;
         // shrinking a partial terminal block could transiently allocate a copy.
         let samples = std::mem::take(&mut self.block);
-        Ok(WeightingReplayChunk { sequence, samples })
+        Ok(WeightingReplayChunk {
+            sequence,
+            samples,
+            coverage: self.coverage.clone(),
+        })
     }
 }
 
@@ -1404,7 +1493,7 @@ fn add_density_sample(
 fn weighting_coordinate(
     problem: &CompiledProblem,
     grid: DensityGridShape,
-    sample: &SelectedObservationSample,
+    sample: &WeightingSelectedSample,
     contribution: Option<SelectedSpectralContribution>,
 ) -> Result<(usize, [f64; 2]), WeightingError> {
     match problem.weighting().density_scope() {
@@ -1434,17 +1523,17 @@ fn contribution_plane(
         .ok_or(WeightingError::OutputChannelMismatch)
 }
 
-fn uv_lambda(sample: &SelectedObservationSample, frequency_hz: f64) -> [f64; 2] {
+fn uv_lambda(sample: &WeightingSelectedSample, frequency_hz: f64) -> [f64; 2] {
     let scale = f64::from((frequency_hz / SPEED_OF_LIGHT_M_PER_S) as f32);
     [
-        f64::from((sample.coordinates.density_uvw_m[0] * scale) as f32),
-        f64::from((sample.coordinates.density_uvw_m[1] * scale) as f32),
+        f64::from((sample.density_uvw_m[0] * scale) as f32),
+        f64::from((sample.density_uvw_m[1] * scale) as f32),
     ]
 }
 
 fn input_weight(
     problem: &CompiledProblem,
-    sample: &SelectedObservationSample,
+    sample: &WeightingSelectedSample,
 ) -> Result<f64, WeightingError> {
     if sample.parallel_hand_group_flag || sample.row_flag {
         return Ok(0.0);
@@ -1830,7 +1919,7 @@ fn hash_usize(hasher: &mut Sha256, value: usize) {
     hasher.update((value as u128).to_be_bytes());
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(super) struct CoverageEncoder(Sha256);
 
 impl CoverageEncoder {
@@ -1870,6 +1959,10 @@ impl CoverageEncoder {
             self.0.update(value.imaging_weight.to_bits().to_be_bytes());
         }
         self.0.update([count]);
+    }
+
+    pub(super) fn adopt(&mut self, checkpoint: &Self) {
+        self.clone_from(checkpoint);
     }
 
     pub(super) fn finish(

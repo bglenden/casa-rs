@@ -901,11 +901,11 @@ fn freeze_weighting_generation(
 ) -> Result<WeightingAlgorithmState, WeightingError> {
     let mut density = begin_weighting_generation(problem, plan)?;
     for sample in samples {
-        density.consume(problem, *sample, exact_contributions(sample))?;
+        density.consume(problem, sample, exact_contributions(sample))?;
     }
     let mut sum_weight = density.finish(problem)?;
     for sample in samples {
-        sum_weight.consume(problem, *sample, exact_contributions(sample))?;
+        sum_weight.consume(problem, sample, exact_contributions(sample))?;
     }
     sum_weight.finish()
 }
@@ -922,7 +922,7 @@ fn replay(
         .expect("begin replay");
     for sample in samples {
         if let Some(block) = phase
-            .consume(problem, *sample, exact_contributions(sample))
+            .consume(problem, sample, exact_contributions(sample))
             .expect("weight sample")
         {
             blocks.push(block);

@@ -30,15 +30,15 @@ use super::BoundObservationSourceError;
 ///
 /// let _forged = SelectedObservationTraversalSample {};
 /// ```
-#[derive(Debug, Clone, PartialEq)]
-pub struct SelectedObservationTraversalSample {
-    sample: SelectedObservationSample,
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SelectedObservationTraversalSample<'a> {
+    sample: &'a SelectedObservationSample,
     spectral_evaluation: SelectedSpectralEvaluation,
 }
 
-impl SelectedObservationTraversalSample {
+impl<'a> SelectedObservationTraversalSample<'a> {
     pub(super) fn with_spectral_evaluation(
-        sample: SelectedObservationSample,
+        sample: &'a SelectedObservationSample,
         spectral_evaluation: SelectedSpectralEvaluation,
     ) -> Self {
         Self {
@@ -49,8 +49,8 @@ impl SelectedObservationTraversalSample {
 
     /// Return the selected sample validated by the compiled problem.
     #[must_use]
-    pub const fn selected(&self) -> &SelectedObservationSample {
-        &self.sample
+    pub const fn selected(&self) -> &'a SelectedObservationSample {
+        self.sample
     }
 
     /// Return source-backed native/output-frame intervals, flag validity, and effective weight.
@@ -129,13 +129,13 @@ impl SpectralEvaluationProjector {
         }
     }
 
-    pub(super) fn project(
+    pub(super) fn project<'a>(
         &mut self,
         problem: &CompiledProblem,
-        sample: SelectedObservationSample,
+        sample: &'a SelectedObservationSample,
         geometry_engine: &MsCalEngine,
-    ) -> Result<SelectedObservationTraversalSample, BoundObservationSourceError> {
-        let key = SpectralProjectionKey::from_sample(&sample);
+    ) -> Result<SelectedObservationTraversalSample<'a>, BoundObservationSourceError> {
+        let key = SpectralProjectionKey::from_sample(sample);
         if self.last_source != Some(sample.address.measurement_set) {
             self.last_source = Some(sample.address.measurement_set);
             self.output_frame = None;
@@ -150,7 +150,7 @@ impl SpectralEvaluationProjector {
         } else {
             let intervals = derive_spectral_intervals_cached(
                 problem,
-                &sample,
+                sample,
                 geometry_engine,
                 &mut self.source_frame,
                 &mut self.output_frame,

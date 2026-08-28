@@ -970,9 +970,9 @@ impl CompleteDataOwnerState {
         if block.sequence() != self.next_block_sequence {
             return Err(SpectralOperatorError::BlockSequence);
         }
+        self.coverage.adopt(block.coverage_checkpoint());
         self.predicted_selected.clear();
         for weighted in block.samples() {
-            self.coverage.push(weighted);
             let selected = weighted.selected();
             let visibility = match selected.visibility {
                 SelectedVisibilitySample::Float32(value) => [f64::from(value), 0.0],
@@ -994,9 +994,9 @@ impl CompleteDataOwnerState {
                     stencil.push(SpectralOperatorSample::new(
                         usize::try_from(contribution.output_channel())
                             .map_err(|_| SpectralOperatorError::InvalidSample)?,
-                        selected.coordinates.transformed_uvw_m,
+                        selected.transformed_uvw_m,
                         contribution.evaluation_frequency_hz(),
-                        selected.coordinates.phase_shift_m,
+                        selected.phase_shift_m,
                         if grids { visibility } else { [0.0, 0.0] },
                         spectral.imaging_weight(),
                         contribution.factor(),
@@ -1077,9 +1077,9 @@ impl CompleteDataOwnerState {
                 stencil.push(SpectralOperatorSample::new(
                     usize::try_from(contribution.output_channel())
                         .map_err(|_| SpectralOperatorError::InvalidSample)?,
-                    selected.coordinates.transformed_uvw_m,
+                    selected.transformed_uvw_m,
                     contribution.evaluation_frequency_hz(),
-                    selected.coordinates.phase_shift_m,
+                    selected.phase_shift_m,
                     [0.0, 0.0],
                     spectral.imaging_weight(),
                     contribution.factor(),
@@ -1149,14 +1149,13 @@ impl CompleteDataOwnerState {
 
     fn accept_input(
         &self,
-        sample: &casa_imaging_model::SelectedObservationSample,
+        sample: &crate::weighting::WeightingSelectedSample,
     ) -> Result<bool, SpectralOperatorError> {
         let nonfinite = sample
-            .coordinates
             .transformed_uvw_m
             .iter()
             .any(|value| !value.is_finite())
-            || !sample.coordinates.phase_shift_m.is_finite()
+            || !sample.phase_shift_m.is_finite()
             || !sample.address.frequency_centre_hz.is_finite()
             || !sample.input_weight.is_finite()
             || match sample.visibility {

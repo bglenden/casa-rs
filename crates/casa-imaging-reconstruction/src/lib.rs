@@ -93,8 +93,8 @@ pub use weighting::{
     FusedWeightingPhase, WeightingAlgorithmState, WeightingDensityPhase, WeightingError,
     WeightingExecutionLimits, WeightingGenerationId, WeightingPlan, WeightingReplayChunk,
     WeightingReplayCoverageId, WeightingReplayId, WeightingReplaySummary, WeightingResidency,
-    WeightingSampleValue, WeightingSpectralValue, begin_natural_weighting_stream,
-    begin_weighting_generation, plan_weighting,
+    WeightingSampleValue, WeightingSelectedSample, WeightingSpectralValue,
+    begin_natural_weighting_stream, begin_weighting_generation, plan_weighting,
 };
 
 const AUTHORITY_DOMAIN: &[u8] = b"casa-rs-model-lifecycle-authority";
@@ -113,7 +113,7 @@ const REPROJECTED_PROOF_VERSION: u32 = 1;
 const FINAL_COMPLETION_DOMAIN: &[u8] = b"casa-rs-final-model-completion";
 const FINAL_COMPLETION_VERSION: u32 = 2;
 const FINAL_NORMAL_STATE_DOMAIN: &[u8] = b"casa-rs-final-normal-state";
-const FINAL_NORMAL_STATE_VERSION: u32 = 3;
+const FINAL_NORMAL_STATE_VERSION: u32 = 2;
 const MAJOR_CYCLE_DOMAIN: &[u8] = b"casa-rs-major-cycle-completion";
 const MAJOR_CYCLE_VERSION: u32 = 2;
 

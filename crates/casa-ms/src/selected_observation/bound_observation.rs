@@ -405,7 +405,7 @@ impl BoundSelectedObservation {
     pub fn traverse<E>(
         &mut self,
         problem: &CompiledProblem,
-        mut consume: impl FnMut(SelectedObservationTraversalSample) -> Result<(), E>,
+        mut consume: impl FnMut(SelectedObservationTraversalSample<'_>) -> Result<(), E>,
     ) -> Result<SelectedObservationCompletion, SelectedObservationTraversalError<E>>
     where
         E: Error + 'static,
@@ -421,18 +421,32 @@ impl BoundSelectedObservation {
         let measurements = Rc::clone(&samples.measurements);
         let sources = &self.sources;
         let mut spectral_evaluator = SpectralEvaluationProjector::new();
-        let (generation_id, sample_count) = consume_projected_validated_stream(
-            problem,
-            samples,
-            |sample| {
+        let selected = samples.map(|sample| sample.map_err(TraversalPassError::Source));
+        let (generation_id, sample_count) =
+            match problem.inspect_selected_observation(selected, |sample| {
                 let source = sources
                     .iter()
                     .find(|source| source.source_identity() == sample.address.measurement_set)
-                    .ok_or(BoundObservationSourceError::ProblemSourceMismatch)?;
-                spectral_evaluator.project(problem, sample, source.geometry_engine())
-            },
-            &mut consume,
-        )?;
+                    .ok_or(BoundObservationSourceError::ProblemSourceMismatch)
+                    .map_err(TraversalPassError::Source)?;
+                let projected = spectral_evaluator
+                    .project(problem, &sample, source.geometry_engine())
+                    .map_err(TraversalPassError::Source)?;
+                consume(projected).map_err(TraversalPassError::Consumer)
+            }) {
+                Ok(completion) => completion,
+                Err(SelectedObservationPassError::Inspection(error)) => {
+                    return Err(SelectedObservationTraversalError::Inspection(error));
+                }
+                Err(SelectedObservationPassError::External(TraversalPassError::Source(error))) => {
+                    return Err(SelectedObservationTraversalError::Source(error));
+                }
+                Err(SelectedObservationPassError::External(TraversalPassError::Consumer(
+                    error,
+                ))) => {
+                    return Err(SelectedObservationTraversalError::Consumer(error));
+                }
+            };
         let measurements = measurements
             .borrow()
             .finish(sample_count)
@@ -609,7 +623,7 @@ impl SelectedObservationBlockConsumer<'_> {
     pub fn consume<E: Error + 'static>(
         &mut self,
         block: &SelectedObservationBlock,
-        mut consume: impl FnMut(SelectedObservationTraversalSample) -> Result<(), E>,
+        mut consume: impl FnMut(SelectedObservationTraversalSample<'_>) -> Result<(), E>,
     ) -> Result<(), SelectedObservationTraversalError<E>> {
         block
             .visit_selected_samples(self.problem, |sample, geometry_engine| {
@@ -618,7 +632,7 @@ impl SelectedObservationBlockConsumer<'_> {
                     .map_err(SelectedObservationTraversalError::Inspection)?;
                 let projected = self
                     .spectral_evaluator
-                    .project(self.problem, sample, geometry_engine)
+                    .project(self.problem, &sample, geometry_engine)
                     .map_err(SelectedObservationTraversalError::Source)?;
                 consume(projected).map_err(SelectedObservationTraversalError::Consumer)
             })
@@ -709,6 +723,7 @@ where
     consume_projected_validated_stream(problem, samples, Ok, &mut consume)
 }
 
+#[cfg(test)]
 fn consume_projected_validated_stream<E, T>(
     problem: &CompiledProblem,
     samples: impl Iterator<Item = Result<SelectedObservationSample, BoundObservationSourceError>>,
@@ -1036,8 +1051,9 @@ impl SelectedObservationTraversalMeasurementsBuilder {
 
     fn finish(&self, sample_count: u64) -> Option<SelectedObservationTraversalMeasurements> {
         let mut measurements = self.measurements;
-        measurements.selected_sample_handoff_bytes = sample_count
-            .checked_mul(u64::try_from(size_of::<SelectedObservationTraversalSample>()).ok()?)?;
+        measurements.selected_sample_handoff_bytes = sample_count.checked_mul(
+            u64::try_from(size_of::<SelectedObservationTraversalSample<'static>>()).ok()?,
+        )?;
         Some(measurements)
     }
 }

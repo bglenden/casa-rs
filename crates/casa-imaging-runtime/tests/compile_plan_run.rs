@@ -1204,13 +1204,13 @@ impl CompleteDataLawEvidence {
         let mut weighted_visibility = Vec::new();
         for weighted in block.samples() {
             let selected = weighted.selected();
-            if selected.row_flag
-                || selected.channel_flag
-                || !complete_data_parallel_hand(selected.address.correlation_type)
+            if selected.row_flag()
+                || selected.channel_flag()
+                || !complete_data_parallel_hand(selected.address().correlation_type)
             {
                 continue;
             }
-            let visibility = match selected.visibility {
+            let visibility = match selected.visibility() {
                 SelectedVisibilitySample::Float32(value) => {
                     num_complex::Complex64::new(f64::from(value), 0.0)
                 }
@@ -1221,8 +1221,8 @@ impl CompleteDataLawEvidence {
             let phase = num_complex::Complex64::from_polar(
                 1.0,
                 std::f64::consts::TAU
-                    * selected.coordinates.phase_shift_m
-                    * selected.address.frequency_centre_hz
+                    * selected.phase_shift_m()
+                    * selected.address().frequency_centre_hz
                     / 299_792_458.0,
             );
             for spectral in weighted.spectral_values() {
@@ -10358,11 +10358,11 @@ fn freeze_sealed_products_weighting(
 ) -> Result<WeightingAlgorithmState, WeightingError> {
     let mut density = begin_weighting_generation(problem, plan)?;
     for sample in samples {
-        density.consume(problem, *sample, exact_sample_contributions(sample))?;
+        density.consume(problem, sample, exact_sample_contributions(sample))?;
     }
     let mut sum_weight = density.finish(problem)?;
     for sample in samples {
-        sum_weight.consume(problem, *sample, exact_sample_contributions(sample))?;
+        sum_weight.consume(problem, sample, exact_sample_contributions(sample))?;
     }
     sum_weight.finish()
 }
@@ -10379,7 +10379,7 @@ fn replay_sealed_products_weighting(
         .expect("begin replay");
     for sample in samples {
         if let Some(block) = phase
-            .consume(problem, *sample, exact_sample_contributions(sample))
+            .consume(problem, sample, exact_sample_contributions(sample))
             .expect("weight sample")
         {
             blocks.push(block);

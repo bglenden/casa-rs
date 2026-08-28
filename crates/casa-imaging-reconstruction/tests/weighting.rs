@@ -31,8 +31,8 @@ use casa_imaging_model::{
 };
 use casa_imaging_reconstruction::{
     WeightingAlgorithmState, WeightingExecutionLimits, WeightingReplayChunk,
-    WeightingReplaySummary, begin_natural_weighting_stream, begin_weighting_generation,
-    plan_weighting,
+    WeightingReplaySummary, WeightingSelectedSample, begin_natural_weighting_stream,
+    begin_weighting_generation, plan_weighting,
 };
 
 fn identity(seed: u8, scope: u8) -> LogicalIdentity {
@@ -351,6 +351,14 @@ fn exact_contributions(sample: &SelectedObservationSample) -> SelectedSpectralCo
     .expect("one exact output contribution")
 }
 
+#[test]
+fn bounded_replay_retains_a_compact_kernel_projection() {
+    assert!(
+        size_of::<WeightingSelectedSample>() < size_of::<SelectedObservationSample>() / 2,
+        "replay must not retain the complete validated source record"
+    );
+}
+
 fn freeze_weighting_generation(
     problem: &casa_imaging_model::CompiledProblem,
     plan: &casa_imaging_reconstruction::WeightingPlan,
@@ -358,11 +366,11 @@ fn freeze_weighting_generation(
 ) -> Result<WeightingAlgorithmState, casa_imaging_reconstruction::WeightingError> {
     let mut density = begin_weighting_generation(problem, plan)?;
     for sample in samples {
-        density.consume(problem, *sample, exact_contributions(sample))?;
+        density.consume(problem, sample, exact_contributions(sample))?;
     }
     let mut sum_weight = density.finish(problem)?;
     for sample in samples {
-        sum_weight.consume(problem, *sample, exact_contributions(sample))?;
+        sum_weight.consume(problem, sample, exact_contributions(sample))?;
     }
     sum_weight.finish()
 }
@@ -379,7 +387,7 @@ fn replay(
         .expect("begin replay");
     for sample in samples {
         if let Some(block) = phase
-            .consume(problem, *sample, exact_contributions(sample))
+            .consume(problem, sample, exact_contributions(sample))
             .expect("weight sample")
         {
             blocks.push(block);
@@ -413,7 +421,7 @@ fn replay_with_evaluation_frequency(
         ])
         .expect("one shifted-frame contribution");
         phase
-            .consume(problem, *sample, contributions)
+            .consume(problem, sample, contributions)
             .expect("weight shifted-frame sample");
     }
     phase.finish().expect("finish shifted-frame replay").1
@@ -449,7 +457,7 @@ fn fused_stream(
         let mut density = begin_weighting_generation(problem, plan).expect("begin density pass");
         for sample in samples {
             density
-                .consume(problem, *sample, exact_contributions(sample))
+                .consume(problem, sample, exact_contributions(sample))
                 .expect("density sample");
         }
         density
@@ -459,7 +467,7 @@ fn fused_stream(
     let mut blocks = Vec::new();
     for sample in samples {
         if let Some(block) = stream
-            .consume(problem, *sample, exact_contributions(sample))
+            .consume(problem, sample, exact_contributions(sample))
             .expect("fused weighted sample")
         {
             blocks.push(block);
@@ -583,26 +591,26 @@ fn fit_only_samples_cannot_change_density_dependent_output_weights() {
     let output_weight = |include_fit_only: bool| {
         let mut density = begin_weighting_generation(&problem, &plan).expect("density");
         density
-            .consume(&problem, target, exact_contributions(&target))
+            .consume(&problem, &target, exact_contributions(&target))
             .expect("target density");
         if include_fit_only {
             density
-                .consume(&problem, fit_only, SelectedSpectralContributions::empty())
+                .consume(&problem, &fit_only, SelectedSpectralContributions::empty())
                 .expect("fit-only density exclusion");
         }
         let mut sum_weight = density.finish(&problem).expect("sum-weight phase");
         sum_weight
-            .consume(&problem, target, exact_contributions(&target))
+            .consume(&problem, &target, exact_contributions(&target))
             .expect("target sum weight");
         if include_fit_only {
             sum_weight
-                .consume(&problem, fit_only, SelectedSpectralContributions::empty())
+                .consume(&problem, &fit_only, SelectedSpectralContributions::empty())
                 .expect("fit-only sum-weight exclusion");
         }
         let generation = sum_weight.finish().expect("freeze weighting");
         let mut replay = generation.begin_replay(&problem, &plan).expect("replay");
         replay
-            .consume(&problem, target, exact_contributions(&target))
+            .consume(&problem, &target, exact_contributions(&target))
             .expect("target replay")
             .expect("single-sample block")
             .samples()[0]
@@ -737,7 +745,7 @@ fn fused_and_replay_streams_reuse_returned_weighted_block_storage() {
         .iter()
         .find_map(|sample| {
             fused
-                .consume(&problem, *sample, exact_contributions(sample))
+                .consume(&problem, sample, exact_contributions(sample))
                 .expect("first fused block")
         })
         .expect("full first fused block");
@@ -749,7 +757,7 @@ fn fused_and_replay_streams_reuse_returned_weighted_block_storage() {
         .iter()
         .find_map(|sample| {
             fused
-                .consume(&problem, *sample, exact_contributions(sample))
+                .consume(&problem, sample, exact_contributions(sample))
                 .expect("second fused block")
         })
         .expect("full second fused block");
@@ -764,7 +772,7 @@ fn fused_and_replay_streams_reuse_returned_weighted_block_storage() {
         .iter()
         .find_map(|sample| {
             replay
-                .consume(&problem, *sample, exact_contributions(sample))
+                .consume(&problem, sample, exact_contributions(sample))
                 .expect("first replay block")
         })
         .expect("full first replay block");
@@ -776,7 +784,7 @@ fn fused_and_replay_streams_reuse_returned_weighted_block_storage() {
         .iter()
         .find_map(|sample| {
             replay
-                .consume(&problem, *sample, exact_contributions(sample))
+                .consume(&problem, sample, exact_contributions(sample))
                 .expect("second replay block")
         })
         .expect("full second replay block");
@@ -873,16 +881,16 @@ fn linear_contribution_coefficients_drive_per_output_density_and_replay() {
     .expect("plan");
     let mut density = begin_weighting_generation(&problem, &plan).expect("density");
     density
-        .consume(&problem, sample, contributions.clone())
+        .consume(&problem, &sample, contributions.clone())
         .expect("accumulate split density");
     let mut sum_weight = density.finish(&problem).expect("sum-weight phase");
     sum_weight
-        .consume(&problem, sample, contributions.clone())
+        .consume(&problem, &sample, contributions.clone())
         .expect("accumulate split sum weights");
     let generation = sum_weight.finish().expect("freeze split generation");
     let mut replay = generation.begin_replay(&problem, &plan).expect("replay");
     let block = replay
-        .consume(&problem, sample, contributions)
+        .consume(&problem, &sample, contributions)
         .expect("weight split sample")
         .expect("one-sample block");
     let weighted = block.samples()[0].spectral_values().collect::<Vec<_>>();
@@ -1148,13 +1156,13 @@ fn incomplete_callback_phase_cannot_finalize_weighting_state() {
     let mut density = begin_weighting_generation(&problem, &plan).expect("density phase");
     for sample in &samples {
         density
-            .consume(&problem, *sample, exact_contributions(sample))
+            .consume(&problem, sample, exact_contributions(sample))
             .expect("density sample");
     }
     let mut sum_weight = density.finish(&problem).expect("sum-weight phase");
     for sample in &samples[..samples.len() - 1] {
         sum_weight
-            .consume(&problem, *sample, exact_contributions(sample))
+            .consume(&problem, sample, exact_contributions(sample))
             .expect("sum-weight sample");
     }
     assert!(matches!(
