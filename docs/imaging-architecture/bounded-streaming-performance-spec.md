@@ -145,6 +145,34 @@ retained as source evidence, not production complexity; the next serial
 candidate must target the residual/model-prediction kernel that still consumes
 238 seconds in the realistic final-major replay.
 
+### Selected scalar-handoff candidate
+
+An unchanged release binary at commit `6666883ec` was sampled for 20 seconds in
+each phase of the same 64-channel, `niter=1`, `nmajor=1`, serial CPU
+discriminator. Rust completed in 584.974955 seconds. Density, initial weighted
+replay, and final-major replay took 102.125557, 231.761949, and 248.643193
+seconds respectively, while their direct source reads took only 10.329587,
+10.582272, and 10.708021 seconds. Every pass traversed 4,094,064 rows and
+524,040,192 selected samples in 188 bounded blocks with one worker.
+
+The current scalar callback reports 230,577,684,480 semantic handoff bytes per
+pass from 5,146,238,448 logical source bytes. That is a 44.80-times expansion
+and 440 bytes per selected sample. In the final-major sample, SHA-256 was 18.7
+percent of main-thread leaf samples, record movement was 13.7 percent, gridding
+was 10.4 percent, and the remaining leaders included repeated sample assembly,
+spectral-stencil construction, generation inspection, coverage encoding, and
+visibility-address encoding. Source I/O was not the limiting stage.
+
+This selects one replacement candidate before implementation: `casa-ms` keeps
+canonical ordered traversal but lends a bounded run-shaped view that separates
+row-, channel-, and correlation-level fields. The shared runtime transports the
+same leased block through its one bounded executor; reconstruction compiles
+spectral contributions once and consumes the borrowed run directly, while
+scientific coverage and final visibility evidence are accumulated at bounded
+block boundaries. `workers=1` remains this exact code path. The candidate must
+not add an MFS-only route, materialize selected data, weaken deterministic
+reduction, or move MS interpretation out of `casa-ms`.
+
 ## Scope
 
 Delivery 1 includes:
