@@ -75,6 +75,31 @@ class IntermediateProfileEvidenceTests(unittest.TestCase):
         )
         self.assertEqual(1030, result["non_idle_exclusive_count"])
 
+    def test_sample_accepts_macos_singular_millisecond_header(self) -> None:
+        sample = SAMPLE.read_text(encoding="utf-8").replace(
+            "every 5 milliseconds", "every 1 millisecond", 1
+        )
+
+        result = evidence.parse_sample(sample)
+
+        self.assertEqual(1, result["sampling_interval_milliseconds"])
+
+    def test_sample_accepts_unsymbolicated_leaf_with_load_address(self) -> None:
+        sample = SAMPLE.read_text(encoding="utf-8").replace(
+            "\nBinary Images:",
+            "\n        ???  (in libsystem_m.dylib)  "
+            "load address 0x19e255000 + 0x10ac  [0x19e2560ac]        8\n"
+            "Binary Images:",
+            1,
+        )
+
+        result = evidence.parse_sample(sample)
+
+        unknown = next(
+            leaf for leaf in result["exclusive_leaves"] if leaf["symbol"] == "???"
+        )
+        self.assertEqual(8, unknown["count"])
+
     def test_optional_groups_are_disjoint_and_deterministic(self) -> None:
         sample = evidence.parse_sample(SAMPLE.read_text(encoding="utf-8"))
 

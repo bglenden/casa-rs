@@ -19,7 +19,7 @@ IDLE_SYMBOLS = frozenset({"__workq_kernreturn", "semaphore_wait_trap"})
 FINAL_MAJOR_READ = re.compile(r"^transaction-read-final-major-(\d+)$")
 SAMPLE_HEADER = re.compile(
     r"^Analysis of sampling (?P<process>.+) \(pid (?P<pid>\d+)\) "
-    r"every (?P<interval>\d+) milliseconds$",
+    r"every (?P<interval>\d+) milliseconds?$",
     re.MULTILINE,
 )
 MAIN_THREAD = re.compile(
@@ -29,6 +29,8 @@ MAIN_THREAD = re.compile(
 )
 EXCLUSIVE_LEAF = re.compile(
     r"^\s*(?P<symbol>.+?)\s{2,}\(in (?P<image>.+?)\)\s+"
+    r"(?:load address 0x[0-9a-fA-F]+ \+ 0x[0-9a-fA-F]+\s+"
+    r"\[0x[0-9a-fA-F]+\]\s+)?"
     r"(?P<count>\d+)\s*$"
 )
 
