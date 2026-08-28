@@ -354,6 +354,56 @@ The normalized receipt, exact counters, group counts, artifact hashes, and
 limitations are recorded in
 `tools/perf/imager/evidence/artifacts/20260828-issue540-intermediate-major-profile.json`.
 
+### Proposed later-major proof-derivation candidate
+
+The first production-seam discriminator at `b8c050ac9` retained the exact
+normal-state checksum and measured the proof work directly. Its 10.229-second
+instrumented replay fed 1,565,284,533 bytes through 467,005,498 selected-
+generation hasher updates. Weighting coverage and the independent operator
+coverage encoder each consumed another 2,864,160,146 bytes in 33,696,007
+updates. The observed proof feed was therefore 7,293,604,825 bytes and
+534,397,512 updates. The selected-generation count covers the captured hot
+loop before terminalization; it is deliberately not presented as a complete
+generation digest byte count.
+
+The call-graph-attributed proof leaves are 2,876 of 16,507 samples, or 17.42
+percent of the ordinary intermediate replay. Applied to nine 152.966-second
+intermediate majors in the 1,814.446-second projection, their optimistic
+repeat-weighted ceiling is 13.22 percent. This clears the 10-percent admission
+gate. The instrumented 10.229-second observation does not relax the original
+9.910949-second discriminator: the candidate must complete in at most
+8.919854 seconds with the exact checksum, one worker, one partition, unchanged
+pass/copy/residency evidence, and zero later-pass proof bytes.
+
+The proposed seam retains a small opaque proof, not an MS lock. `casa-ms`
+mints it only after the first exhaustive traversal and owns the only rebind
+operation. Each later plan opens fresh retained locks and, under those locks,
+revalidates the owner manifest, physical modification counters, selected rows,
+physical selection, and selected read state before using the retained
+generation. The pass still consumes every bounded block, validates canonical
+order, reaches the terminal poll, and checks exact sample and block counts.
+`casa-imaging-runtime` carries the proof beside frozen weighting and otherwise
+keeps the existing per-plan leases and cancellation. Reconstruction derives
+later coverage from the rebound selected proof, frozen weighting generation,
+transform identity, and deterministic completion. The application only
+composes the opaque continuation.
+
+This rejects whole-run read-lock retention because it would block external
+writers and change the concurrency contract. It also rejects direct runtime
+comparison of public source state, reuse of an access-bound completion, a
+second same-MS lock permit, deferred terminal writes requiring materialization
+or another pass, and a compatibility fallback. Terminal visibility writes
+continue to stream during the final traversal; their worker must flush,
+publish, unlock, and join before the single logical terminal-MS permit is
+released, including cancellation and failure paths.
+
+The full candidate and automatic falsifier are recorded in
+`tools/perf/imager/evidence/artifacts/20260828-issue540-proof-derivation-candidate.json`.
+The candidate is eligible by measured ceiling but remains pending explicit
+acceptance because issue #540 previously states that cross-cycle proof reuse
+was not yet selected or approved. No proof-derivation production code is
+authorized by this section alone.
+
 ## Scope
 
 Delivery 1 includes:
