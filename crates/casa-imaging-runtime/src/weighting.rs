@@ -12,7 +12,7 @@ use std::{
 
 use casa_imaging_model::{
     CompiledProblem, CompiledProblemId, MeasurementSetIdentity, SelectedObservationGenerationId,
-    SelectedObservationSample, SelectedSpectralContribution, SelectedSpectralContributions,
+    SelectedObservationSampleView, SelectedSpectralContribution, SelectedSpectralContributions,
     SelectedSpectralInterval, SequentialContinuumTransform,
 };
 use casa_imaging_reconstruction::runtime_adapter::WeightingReplayPhase;
@@ -82,11 +82,12 @@ impl SpectralContributionCache {
         reported: &SelectedObservationTraversalSample<'_>,
     ) -> Result<SelectedSpectralContributions, WeightingError> {
         let sample = reported.selected();
+        let address = sample.address();
         let key = SpectralContributionKey {
-            measurement_set: sample.address.measurement_set,
-            field_id: sample.metadata.field_id,
-            spectral_window_id: sample.address.spectral_window_id,
-            channel_index: sample.address.channel_index,
+            measurement_set: address.measurement_set,
+            field_id: sample.metadata().field_id,
+            spectral_window_id: address.spectral_window_id,
+            channel_index: address.channel_index,
             native: reported.spectral_evaluation().native(),
             output_frame: reported.spectral_evaluation().output_frame(),
         };
@@ -113,7 +114,7 @@ fn transformed_spectral_contributions(
     }
     Ok(compile_spectral_stencil(
         problem,
-        transformed.selected(),
+        transformed.selected().as_view(),
         transformed.spectral_evaluation(),
     )?
     .contributions()
@@ -127,11 +128,11 @@ fn density_spectral_contributions(
     continuum: &SequentialContinuumTransform,
 ) -> Result<SelectedSpectralContributions, ContinuumDensityCallbackError> {
     if let Some(rule) = continuum.rule(
-        reported.selected().metadata.field_id,
-        reported.selected().address.spectral_window_id,
+        reported.selected().metadata().field_id,
+        reported.selected().address().spectral_window_id,
     ) {
         let use_role = rule
-            .channel_use(reported.selected().address.channel_index)
+            .channel_use(reported.selected().address().channel_index)
             .ok_or(ContinuumTransformError::UndeclaredChannel)?;
         if !use_role.contributes_to_output() {
             return Ok(SelectedSpectralContributions::empty());
@@ -184,7 +185,7 @@ trait StreamingWeightPhase {
     fn consume_sample(
         &mut self,
         problem: &CompiledProblem,
-        sample: &SelectedObservationSample,
+        sample: SelectedObservationSampleView<'_>,
         contributions: SelectedSpectralContributions,
     ) -> Result<Option<ReconstructionWeightedBlock>, WeightingError>;
 
@@ -204,7 +205,7 @@ impl StreamingWeightPhase for FusedWeightingPhase {
     fn consume_sample(
         &mut self,
         problem: &CompiledProblem,
-        sample: &SelectedObservationSample,
+        sample: SelectedObservationSampleView<'_>,
         contributions: SelectedSpectralContributions,
     ) -> Result<Option<ReconstructionWeightedBlock>, WeightingError> {
         self.consume(problem, sample, contributions)
@@ -231,7 +232,7 @@ impl StreamingWeightPhase for WeightingReplayPhase<'_> {
     fn consume_sample(
         &mut self,
         problem: &CompiledProblem,
-        sample: &SelectedObservationSample,
+        sample: SelectedObservationSampleView<'_>,
         contributions: SelectedSpectralContributions,
     ) -> Result<Option<ReconstructionWeightedBlock>, WeightingError> {
         self.consume(problem, sample, contributions)
@@ -390,7 +391,10 @@ where
 {
     if let Some(transform) = continuum {
         let completed = transform
-            .push(*reported.selected(), reported.spectral_evaluation())
+            .push(
+                reported.selected().to_owned(),
+                reported.spectral_evaluation(),
+            )
             .map_err(ReplayCallbackError::Transform)?;
         for transformed in completed {
             let contributions = transformed_spectral_contributions(problem, &transformed)
@@ -402,7 +406,7 @@ where
                     )?;
             }
             if let Some(block) = weights
-                .consume_sample(problem, transformed.selected(), contributions)
+                .consume_sample(problem, transformed.selected().as_view(), contributions)
                 .map_err(ReplayCallbackError::Owner)?
             {
                 emit(&block).map_err(ReplayCallbackError::Consumer)?;
@@ -479,16 +483,19 @@ where
         let spectral_contributions = &mut self.spectral_contributions;
         let emit = &mut self.emit;
         self.consumer
-            .consume(storage, |reported| {
-                consume_weighting_sample(
-                    problem,
-                    weights,
-                    continuum,
-                    spectral_support_sample_count,
-                    spectral_contributions,
-                    emit,
-                    reported,
-                )
+            .consume(storage, |run| {
+                for reported in run.samples() {
+                    consume_weighting_sample(
+                        problem,
+                        weights,
+                        continuum,
+                        spectral_support_sample_count,
+                        spectral_contributions,
+                        emit,
+                        reported,
+                    )?;
+                }
+                Ok(())
             })
             .map_err(WeightingBlockKernelError::Traversal)
     }
@@ -509,7 +516,11 @@ where
                 }
                 if let Some(block) = self
                     .weights
-                    .consume_sample(self.problem, transformed.selected(), contributions)
+                    .consume_sample(
+                        self.problem,
+                        transformed.selected().as_view(),
+                        contributions,
+                    )
                     .map_err(WeightingBlockKernelError::Owner)?
                 {
                     (self.emit)(&block).map_err(WeightingBlockKernelError::Consumer)?;
@@ -579,21 +590,24 @@ impl<'a> PartitionedKernel<SelectedObservationBlock> for DensityBlockKernel<'a> 
         let density = &mut self.density;
         let spectral_contributions = &mut self.spectral_contributions;
         self.consumer
-            .consume(storage, |reported| {
-                let contributions = match continuum {
-                    Some(continuum) => density_spectral_contributions(
-                        spectral_contributions,
-                        problem,
-                        &reported,
-                        continuum,
-                    )?,
-                    None => spectral_contributions
-                        .compile(problem, &reported)
-                        .map_err(ContinuumDensityCallbackError::Owner)?,
-                };
-                density
-                    .consume(problem, reported.selected(), contributions)
-                    .map_err(ContinuumDensityCallbackError::Owner)
+            .consume(storage, |run| {
+                for reported in run.samples() {
+                    let contributions = match continuum {
+                        Some(continuum) => density_spectral_contributions(
+                            spectral_contributions,
+                            problem,
+                            &reported,
+                            continuum,
+                        )?,
+                        None => spectral_contributions
+                            .compile(problem, &reported)
+                            .map_err(ContinuumDensityCallbackError::Owner)?,
+                    };
+                    density
+                        .consume(problem, reported.selected(), contributions)
+                        .map_err(ContinuumDensityCallbackError::Owner)?;
+                }
+                Ok(())
             })
             .map_err(DensityBlockKernelError::Traversal)
     }

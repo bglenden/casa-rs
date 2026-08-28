@@ -57,9 +57,9 @@ ACCEPTED_MATRIX_ROWS_SHA256 = (
     "0ad645f25cce979824634660a2a4c7ea1be6a06d12869eb9186495d9875c2719"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "ceaa3b1789ab4f92ec78c3ca0f17ab238f4b7174d62892b3816cd162ccf16125"
+    "357f2b56bc3366e7566878cb139061d7b55c2f27fd6696a8301e4471e990e241"
 )
-ACCEPTED_MATRIX_CONTRACT_REVISION = 55
+ACCEPTED_MATRIX_CONTRACT_REVISION = 56
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "scientific-products-v1",
@@ -1943,12 +1943,20 @@ def validate_t18_global_weighting_sources(
     traversal_fields = rust_struct_fields(
         traversal_sample, "SelectedObservationTraversalSample", traversal_sample_path
     )
+    traversal_run_fields = rust_struct_fields(
+        traversal_sample, "SelectedObservationTraversalRun", traversal_sample_path
+    )
     if traversal_fields != {
-        "sample": "&'aSelectedObservationSample",
+        "sample": "SelectedObservationSampleView<'a>",
         "spectral_evaluation": "SelectedSpectralEvaluation",
+    } or traversal_run_fields != {
+        "row": "&'aSelectedObservationRunRow",
+        "channel": "SelectedObservationRunChannel",
+        "correlations": "&'a[SelectedObservationRunCorrelation]",
+        "evaluations": "&'a[SelectedSpectralEvaluation]",
     }:
         raise ArchitectureError(
-            "T18/T36 traversal envelope omits storage-owner spectral evaluation"
+            "T18/T36 traversal envelopes omit the borrowed storage-owner run or spectral evaluation"
         )
     if re.search(
         r"\bpub\s+(?:const\s+)?fn\s+(?:new|from_owner)\b", traversal_sample
@@ -1994,8 +2002,8 @@ def validate_t18_global_weighting_sources(
         or "spectral.anchor()" not in evaluation
         or "spectral_frame_observatory(" not in evaluation
         or "spectral_frame_explicit(" not in evaluation
-        or "sample.coordinates.time.mjd_days()" not in evaluation
-        or "sample.metadata.field_id" not in evaluation
+        or "sample.coordinates()" not in evaluation
+        or "sample.metadata()" not in evaluation
         or "source_frame" not in evaluation
         or "output_frame" not in evaluation
         or "Some(source_frame),Some(output_frame)" not in compact_evaluation

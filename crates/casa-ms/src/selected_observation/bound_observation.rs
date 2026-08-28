@@ -5,7 +5,9 @@ use casa_imaging_model::{
     ObservationProvenanceId, ObservationSnapshotId, ObservationSourceState,
     SelectedObservationCommitmentId, SelectedObservationGenerationId,
     SelectedObservationInspection, SelectedObservationInspectionError,
-    SelectedObservationPassError, SelectedObservationSample,
+    SelectedObservationPassError, SelectedObservationRunChannel, SelectedObservationRunCorrelation,
+    SelectedObservationRunRow, SelectedObservationSample, SelectedObservationSampleView,
+    SelectedSpectralEvaluation,
 };
 use std::{
     cell::RefCell,
@@ -25,7 +27,11 @@ use super::{
     SelectedObservationBlock, SelectedObservationContentBudget, SelectedObservationMeasures,
     SelectedObservationMeasuresError,
     content_plan::SelectedObservationSharedBytes,
-    spectral_evaluation::{SelectedObservationTraversalSample, SpectralEvaluationProjector},
+    maximum_selected_correlations,
+    spectral_evaluation::{
+        SelectedObservationTraversalRun, SelectedObservationTraversalSample,
+        SpectralEvaluationProjector,
+    },
 };
 
 /// One current storage-owner state probe and bounded-content budget.
@@ -430,7 +436,7 @@ impl BoundSelectedObservation {
                     .ok_or(BoundObservationSourceError::ProblemSourceMismatch)
                     .map_err(TraversalPassError::Source)?;
                 let projected = spectral_evaluator
-                    .project(problem, &sample, source.geometry_engine())
+                    .project(problem, sample.as_view(), source.geometry_engine())
                     .map_err(TraversalPassError::Source)?;
                 consume(projected).map_err(TraversalPassError::Consumer)
             }) {
@@ -496,6 +502,7 @@ impl BoundSelectedObservation {
         let next_traversal = traversal
             .checked_add(1)
             .ok_or(BoundSelectedObservationError::TraversalIdentityExhausted)?;
+        let maximum_correlations = maximum_selected_correlations(problem);
         Ok((
             SelectedObservationBlockSource {
                 problem,
@@ -507,7 +514,7 @@ impl BoundSelectedObservation {
                 source_pass_recorded: false,
                 exhausted: false,
                 maximum_rows,
-                measurements: SelectedObservationTraversalMeasurementsBuilder::default(),
+                measurements: SelectedObservationTraversalMeasurementsBuilder::for_run_handoff(),
                 identity,
                 access_binding,
                 traversal,
@@ -517,6 +524,9 @@ impl BoundSelectedObservation {
                 problem,
                 inspection: problem.begin_selected_observation_inspection(),
                 spectral_evaluator: SpectralEvaluationProjector::new(),
+                correlations: Vec::with_capacity(maximum_correlations),
+                evaluations: Vec::with_capacity(maximum_correlations),
+                peak_scratch_current_bytes: 0,
             },
         ))
     }
@@ -616,26 +626,68 @@ pub struct SelectedObservationBlockConsumer<'a> {
     problem: &'a CompiledProblem,
     inspection: SelectedObservationInspection<'a>,
     spectral_evaluator: SpectralEvaluationProjector,
+    correlations: Vec<SelectedObservationRunCorrelation>,
+    evaluations: Vec<SelectedSpectralEvaluation>,
+    peak_scratch_current_bytes: usize,
 }
 
 impl SelectedObservationBlockConsumer<'_> {
-    /// Validate and consume every sample in one opaque block.
+    /// Validate and consume every row/channel run in one opaque block.
     pub fn consume<E: Error + 'static>(
         &mut self,
         block: &SelectedObservationBlock,
-        mut consume: impl FnMut(SelectedObservationTraversalSample<'_>) -> Result<(), E>,
+        mut consume: impl FnMut(SelectedObservationTraversalRun<'_>) -> Result<(), E>,
     ) -> Result<(), SelectedObservationTraversalError<E>> {
+        let inspection = &mut self.inspection;
+        let spectral_evaluator = &mut self.spectral_evaluator;
+        let correlations = &mut self.correlations;
+        let evaluations = &mut self.evaluations;
+        let peak_scratch_current_bytes = &mut self.peak_scratch_current_bytes;
         block
-            .visit_selected_samples(self.problem, |sample, geometry_engine| {
-                self.inspection
-                    .push(&sample)
-                    .map_err(SelectedObservationTraversalError::Inspection)?;
-                let projected = self
-                    .spectral_evaluator
-                    .project(self.problem, &sample, geometry_engine)
-                    .map_err(SelectedObservationTraversalError::Source)?;
-                consume(projected).map_err(SelectedObservationTraversalError::Consumer)
-            })
+            .visit_selected_samples(
+                self.problem,
+                correlations,
+                |row, channel, correlations, geometry_engine| {
+                    evaluations.clear();
+                    if evaluations.capacity() < correlations.len() {
+                        return Err(SelectedObservationTraversalError::Source(
+                            BoundObservationSourceError::StoredSampleShapeMismatch,
+                        ));
+                    }
+                    for correlation in correlations {
+                        let sample =
+                            SelectedObservationSampleView::from_run(row, &channel, correlation);
+                        inspection
+                            .push_view(sample)
+                            .map_err(SelectedObservationTraversalError::Inspection)?;
+                        evaluations.push(
+                            spectral_evaluator
+                                .project(self.problem, sample, geometry_engine)
+                                .map_err(SelectedObservationTraversalError::Source)?
+                                .spectral_evaluation(),
+                        );
+                    }
+                    *peak_scratch_current_bytes = (*peak_scratch_current_bytes).max(
+                        correlations
+                            .len()
+                            .checked_mul(size_of::<SelectedObservationRunCorrelation>())
+                            .and_then(|bytes| {
+                                evaluations
+                                    .len()
+                                    .checked_mul(size_of::<SelectedSpectralEvaluation>())
+                                    .and_then(|evaluations| bytes.checked_add(evaluations))
+                            })
+                            .ok_or(SelectedObservationTraversalError::MeasurementOverflow)?,
+                    );
+                    consume(SelectedObservationTraversalRun::new(
+                        row,
+                        channel,
+                        correlations,
+                        evaluations.as_slice(),
+                    ))
+                    .map_err(SelectedObservationTraversalError::Consumer)
+                },
+            )
             .map_err(|error| match error {
                 BlockVisitError::Source(error) => SelectedObservationTraversalError::Source(error),
                 BlockVisitError::Consumer(error) => error,
@@ -650,12 +702,27 @@ impl SelectedObservationBlockConsumer<'_> {
         (BoundSelectedObservation, SelectedObservationCompletion),
         SelectedObservationTraversalError<std::convert::Infallible>,
     > {
+        let scratch_capacity_bytes = self
+            .correlations
+            .capacity()
+            .checked_mul(size_of::<SelectedObservationRunCorrelation>())
+            .and_then(|bytes| {
+                self.evaluations
+                    .capacity()
+                    .checked_mul(size_of::<SelectedSpectralEvaluation>())
+                    .and_then(|evaluations| bytes.checked_add(evaluations))
+            })
+            .ok_or(SelectedObservationTraversalError::MeasurementOverflow)?;
+        let peak_scratch_current_bytes = self.peak_scratch_current_bytes;
         let (generation_id, sample_count) = self
             .inspection
             .finish()
             .map_err(SelectedObservationTraversalError::Inspection)?;
-        let measurements = terminal
-            .measurements
+        let mut measurements = terminal.measurements;
+        measurements
+            .record_consumer_scratch(peak_scratch_current_bytes, scratch_capacity_bytes)
+            .map_err(SelectedObservationTraversalError::Source)?;
+        let measurements = measurements
             .finish(sample_count)
             .ok_or(SelectedObservationTraversalError::MeasurementOverflow)?;
         let completion = SelectedObservationCompletion {
@@ -806,7 +873,11 @@ pub struct SelectedObservationTraversalMeasurements {
     modeled_physical_read_bytes: Option<u64>,
     source_read_operations: u64,
     request_handoff_bytes: u64,
+    selected_sample_count: u64,
+    selected_channel_run_count: u64,
     selected_sample_handoff_bytes: u64,
+    peak_consumer_scratch_current_bytes: u64,
+    consumer_scratch_capacity_bytes: u64,
     allocated_storage_buffers: u64,
     reused_storage_buffers: u64,
     peak_live_blocks: u64,
@@ -877,10 +948,34 @@ impl SelectedObservationTraversalMeasurements {
         "Return bytes copied while handing requested physical rows into retained blocks."
     );
     traversal_measurement_getter!(
+        selected_sample_count,
+        selected_sample_count,
+        u64,
+        "Return the exact selected correlation-sample count handed downstream."
+    );
+    traversal_measurement_getter!(
+        selected_channel_run_count,
+        selected_channel_run_count,
+        u64,
+        "Return the exact selected row/channel run count handed downstream."
+    );
+    traversal_measurement_getter!(
         selected_sample_handoff_bytes,
         selected_sample_handoff_bytes,
         u64,
         "Return semantic bytes handed to the downstream sample consumer."
+    );
+    traversal_measurement_getter!(
+        peak_consumer_scratch_current_bytes,
+        peak_consumer_scratch_current_bytes,
+        u64,
+        "Return peak populated bytes in reusable run-correlation consumer scratch."
+    );
+    traversal_measurement_getter!(
+        consumer_scratch_capacity_bytes,
+        consumer_scratch_capacity_bytes,
+        u64,
+        "Return allocated capacity bytes in reusable run-correlation consumer scratch."
     );
     traversal_measurement_getter!(
         allocated_storage_buffers,
@@ -935,6 +1030,7 @@ impl SelectedObservationTraversalMeasurements {
 pub(super) struct SelectedObservationTraversalMeasurementsBuilder {
     measurements: SelectedObservationTraversalMeasurements,
     physical_model_complete: bool,
+    selected_channel_run_count: Option<u64>,
 }
 
 impl Default for SelectedObservationTraversalMeasurementsBuilder {
@@ -949,7 +1045,11 @@ impl Default for SelectedObservationTraversalMeasurementsBuilder {
                 modeled_physical_read_bytes: Some(0),
                 source_read_operations: 0,
                 request_handoff_bytes: 0,
+                selected_sample_count: 0,
+                selected_channel_run_count: 0,
                 selected_sample_handoff_bytes: 0,
+                peak_consumer_scratch_current_bytes: 0,
+                consumer_scratch_capacity_bytes: 0,
                 allocated_storage_buffers: 0,
                 reused_storage_buffers: 0,
                 peak_live_blocks: 0,
@@ -960,11 +1060,19 @@ impl Default for SelectedObservationTraversalMeasurementsBuilder {
                 source_arrangement_nanos: 0,
             },
             physical_model_complete: true,
+            selected_channel_run_count: None,
         }
     }
 }
 
 impl SelectedObservationTraversalMeasurementsBuilder {
+    fn for_run_handoff() -> Self {
+        Self {
+            selected_channel_run_count: Some(0),
+            ..Self::default()
+        }
+    }
+
     pub(super) fn record_source_pass(&mut self) -> Result<(), BoundObservationSourceError> {
         self.measurements.source_pass_count = self
             .measurements
@@ -1034,6 +1142,39 @@ impl SelectedObservationTraversalMeasurementsBuilder {
         Ok(())
     }
 
+    pub(super) fn record_selected_channel_runs(
+        &mut self,
+        row_count: u64,
+        channel_count: usize,
+    ) -> Result<(), BoundObservationSourceError> {
+        let count = row_count
+            .checked_mul(
+                u64::try_from(channel_count)
+                    .map_err(|_| BoundObservationSourceError::MeasurementOverflow)?,
+            )
+            .ok_or(BoundObservationSourceError::MeasurementOverflow)?;
+        let total = self
+            .selected_channel_run_count
+            .ok_or(BoundObservationSourceError::MeasurementOverflow)?
+            .checked_add(count)
+            .ok_or(BoundObservationSourceError::MeasurementOverflow)?;
+        self.selected_channel_run_count = Some(total);
+        Ok(())
+    }
+
+    fn record_consumer_scratch(
+        &mut self,
+        peak_current_bytes: usize,
+        capacity_bytes: usize,
+    ) -> Result<(), BoundObservationSourceError> {
+        self.measurements.peak_consumer_scratch_current_bytes =
+            u64::try_from(peak_current_bytes)
+                .map_err(|_| BoundObservationSourceError::MeasurementOverflow)?;
+        self.measurements.consumer_scratch_capacity_bytes = u64::try_from(capacity_bytes)
+            .map_err(|_| BoundObservationSourceError::MeasurementOverflow)?;
+        Ok(())
+    }
+
     pub(super) fn record_live_blocks(
         &mut self,
         blocks: u64,
@@ -1051,9 +1192,30 @@ impl SelectedObservationTraversalMeasurementsBuilder {
 
     fn finish(&self, sample_count: u64) -> Option<SelectedObservationTraversalMeasurements> {
         let mut measurements = self.measurements;
-        measurements.selected_sample_handoff_bytes = sample_count.checked_mul(
-            u64::try_from(size_of::<SelectedObservationTraversalSample<'static>>()).ok()?,
-        )?;
+        measurements.selected_sample_count = sample_count;
+        measurements.selected_channel_run_count = self.selected_channel_run_count.unwrap_or(0);
+        measurements.selected_sample_handoff_bytes =
+            if let Some(channel_runs) = self.selected_channel_run_count {
+                measurements
+                    .stored_row_count
+                    .checked_mul(u64::try_from(size_of::<SelectedObservationRunRow>()).ok()?)?
+                    .checked_add(channel_runs.checked_mul(
+                        u64::try_from(size_of::<SelectedObservationRunChannel>()).ok()?,
+                    )?)?
+                    .checked_add(
+                        sample_count.checked_mul(
+                            u64::try_from(
+                                size_of::<SelectedObservationRunCorrelation>()
+                                    .checked_add(size_of::<SelectedSpectralEvaluation>())?,
+                            )
+                            .ok()?,
+                        )?,
+                    )?
+            } else {
+                sample_count.checked_mul(
+                    u64::try_from(size_of::<SelectedObservationTraversalSample<'static>>()).ok()?,
+                )?
+            };
         Some(measurements)
     }
 }

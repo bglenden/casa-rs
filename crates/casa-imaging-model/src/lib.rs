@@ -87,10 +87,12 @@ pub use selected_observation::{
 };
 
 pub use selected_observation_sample::{
-    SelectedObservationGenerationId, SelectedObservationSample, SelectedPointingDirections,
-    SelectedPredictionTarget, SelectedSampleAddress, SelectedSampleCoordinates,
-    SelectedSampleMetadata, SelectedSpectralContribution, SelectedSpectralContributions,
-    SelectedSpectralEvaluation, SelectedSpectralInterval, SelectedVisibilitySample,
+    SelectedObservationGenerationId, SelectedObservationRunChannel,
+    SelectedObservationRunCorrelation, SelectedObservationRunRow, SelectedObservationSample,
+    SelectedObservationSampleView, SelectedPointingDirections, SelectedPredictionTarget,
+    SelectedSampleAddress, SelectedSampleCoordinates, SelectedSampleMetadata,
+    SelectedSpectralContribution, SelectedSpectralContributions, SelectedSpectralEvaluation,
+    SelectedSpectralInterval, SelectedVisibilitySample,
 };
 
 pub use product_graph::{

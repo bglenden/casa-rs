@@ -10,7 +10,8 @@ use crate::{
 };
 use casa_imaging_model::{
     CompiledProblem, CorrelationProduct, ObservationSource, PointingCentreLaw,
-    SelectedPointingDirections, VisibilityColumn, WeightColumn,
+    SelectedObservationRunCorrelation, SelectedPointingDirections, SelectedSpectralEvaluation,
+    VisibilityColumn, WeightColumn,
 };
 use thiserror::Error;
 
@@ -18,6 +19,7 @@ use super::access::{
     BoundObservationSource, BufferedObservationBlock, EvaluatedRowGeometry, SelectedChannel,
     SelectedCoordinates,
 };
+use super::maximum_selected_correlations;
 use super::row_selection::CompiledRowPredicate;
 
 /// Once-only allocations shared by one bound selected-observation owner.
@@ -261,6 +263,13 @@ pub(crate) fn selected_content_plan(
         .selected_observation()
         .inspection_scratch_bytes()
         .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
+    let run_scratch_bytes = maximum_selected_correlations(problem)
+        .checked_mul(
+            size_of::<SelectedObservationRunCorrelation>()
+                .checked_add(size_of::<SelectedSpectralEvaluation>())
+                .ok_or(SelectedObservationContentPlanError::ByteOverflow)?,
+        )
+        .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
     let row_replay_fixed_bytes = BoundObservationSource::row_replay_fixed_bytes(
         source.selection().data_descriptions().len(),
     )
@@ -274,6 +283,7 @@ pub(crate) fn selected_content_plan(
         .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
     let traversal_base_bytes = retained_bytes
         .checked_add(inspection_bytes)
+        .and_then(|bytes| bytes.checked_add(run_scratch_bytes))
         .and_then(|bytes| bytes.checked_add(block_container_bytes))
         .and_then(|bytes| bytes.checked_add(row_replay_fixed_bytes))
         .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;

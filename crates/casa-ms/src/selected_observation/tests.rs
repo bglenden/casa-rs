@@ -31,7 +31,8 @@ use casa_imaging_model::{
     ReconstructionControls, ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy,
     RowSelection, ScientificContract, SelectedColumns, SelectedMainRow,
     SelectedObservationGenerationId, SelectedObservationInspectionError,
-    SelectedObservationPassError, SelectedObservationSample, SelectedRows,
+    SelectedObservationPassError, SelectedObservationRunChannel, SelectedObservationRunCorrelation,
+    SelectedObservationRunRow, SelectedObservationSample, SelectedRows, SelectedSpectralEvaluation,
     SelectedVisibilitySample, SelectionBound, SkyDirection, SourceGenerations, SpectralContract,
     SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
     SpectralWcs, SpectralWindowSelection, StageErrorBudget, TaylorSupportReference,
@@ -590,7 +591,7 @@ fn real_ms_cube_traversal_compiles_source_backed_casa_cubic_stencils() {
                     .collect::<Vec<_>>(),
             );
             values.push((
-                sample.address.channel_index,
+                sample.address().channel_index,
                 evaluation.native(),
                 evaluation.output_frame(),
                 evaluation.effective_weight(),
@@ -810,15 +811,15 @@ fn real_ms_cube_traversal_maps_contributions_into_the_transformed_output_frame()
     let completion = observation
         .traverse(&problem, |reported| {
             assert_eq!(
-                reported.selected().address.frequency_frame,
+                reported.selected().address().frequency_frame,
                 FrequencyFrame::Topocentric
             );
             let sample = reported.selected();
             let frame = expected_source
                 .geometry_engine()
                 .spectral_frame_observatory(
-                    sample.coordinates.time.mjd_days() * 86_400.0,
-                    usize::try_from(sample.metadata.field_id).expect("non-negative FIELD_ID"),
+                    sample.coordinates().time.mjd_days() * 86_400.0,
+                    usize::try_from(sample.metadata().field_id).expect("non-negative FIELD_ID"),
                 )
                 .expect("independent row frame");
             let transform_to_output = |frequency_hz| {
@@ -831,13 +832,13 @@ fn real_ms_cube_traversal_maps_contributions_into_the_transformed_output_frame()
                     .expect("BARY to LSRK")
                     .hz()
             };
-            let transformed_hz = transform_to_output(sample.address.frequency_centre_hz);
+            let transformed_hz = transform_to_output(sample.address().frequency_centre_hz);
             let transformed_boundaries = [
-                transform_to_output(sample.address.frequency_lower_hz),
-                transform_to_output(sample.address.frequency_upper_hz),
+                transform_to_output(sample.address().frequency_lower_hz),
+                transform_to_output(sample.address().frequency_upper_hz),
             ];
             let source_only_hz =
-                MFrequency::new(sample.address.frequency_centre_hz, FrequencyRef::TOPO)
+                MFrequency::new(sample.address().frequency_centre_hz, FrequencyRef::TOPO)
                     .convert_to(FrequencyRef::GEO, &frame)
                     .expect("source-only TOPO to GEO")
                     .convert_to(FrequencyRef::BARY, &frame)
@@ -849,13 +850,13 @@ fn real_ms_cube_traversal_maps_contributions_into_the_transformed_output_frame()
             let evaluation = reported.spectral_evaluation();
             assert_eq!(
                 evaluation.native().centre_hz().to_bits(),
-                sample.address.frequency_centre_hz.to_bits()
+                sample.address().frequency_centre_hz.to_bits()
             );
             assert_eq!(
                 evaluation.native().boundaries_hz(),
                 [
-                    sample.address.frequency_lower_hz,
-                    sample.address.frequency_upper_hz,
+                    sample.address().frequency_lower_hz,
+                    sample.address().frequency_upper_hz,
                 ]
             );
             assert_eq!(
@@ -869,7 +870,7 @@ fn real_ms_cube_traversal_maps_contributions_into_the_transformed_output_frame()
             assert_eq!(evaluation.effective_weight(), 1.0);
             assert!(evaluation.is_valid());
             values.push((
-                sample.address.channel_index,
+                sample.address().channel_index,
                 transformed_hz,
                 source_only_hz,
                 transformed_boundaries,
@@ -934,7 +935,7 @@ fn real_ms_cubedata_traversal_compiles_source_backed_casa_cubic_stencils() {
                     .collect::<Vec<_>>(),
             );
             values.push((
-                sample.address.channel_index,
+                sample.address().channel_index,
                 evaluation.native(),
                 evaluation.output_frame(),
                 evaluation.effective_weight(),
@@ -2217,7 +2218,7 @@ fn refillable_block_stream_matches_scalar_traversal_and_returns_the_owner() {
     let mut scalar_samples = Vec::new();
     let scalar_completion = scalar
         .traverse(&problem, |sample| {
-            scalar_samples.push((*sample.selected(), sample.spectral_evaluation()));
+            scalar_samples.push((sample.selected().to_owned(), sample.spectral_evaluation()));
             Ok::<_, Infallible>(())
         })
         .expect("complete scalar traversal");
@@ -2247,8 +2248,11 @@ fn refillable_block_stream_matches_scalar_traversal_and_returns_the_owner() {
                 .expect("measure block capacity bytes"),
         );
         consumer
-            .consume(&storage, |sample| {
-                block_samples.push((*sample.selected(), sample.spectral_evaluation()));
+            .consume(&storage, |run| {
+                block_samples
+                    .extend(run.samples().map(|sample| {
+                        (sample.selected().to_owned(), sample.spectral_evaluation())
+                    }));
                 Ok::<_, Infallible>(())
             })
             .expect("consume canonical block");
@@ -2270,7 +2274,25 @@ fn refillable_block_stream_matches_scalar_traversal_and_returns_the_owner() {
         block_completion.sample_count(),
         scalar_completion.sample_count()
     );
-    assert_eq!(block_completion.measurements().peak_live_blocks(), 1);
+    let measurements = block_completion.measurements();
+    assert_eq!(measurements.peak_live_blocks(), 1);
+    assert_eq!(measurements.selected_sample_count(), 16);
+    assert_eq!(measurements.selected_channel_run_count(), 8);
+    assert_eq!(
+        measurements.selected_sample_handoff_bytes(),
+        (4 * size_of::<SelectedObservationRunRow>()
+            + 8 * size_of::<SelectedObservationRunChannel>()
+            + 16 * (size_of::<SelectedObservationRunCorrelation>()
+                + size_of::<SelectedSpectralEvaluation>())) as u64
+    );
+    let expected_scratch = 2
+        * (size_of::<SelectedObservationRunCorrelation>()
+            + size_of::<SelectedSpectralEvaluation>());
+    assert_eq!(
+        measurements.peak_consumer_scratch_current_bytes(),
+        expected_scratch as u64
+    );
+    assert!(measurements.consumer_scratch_capacity_bytes() >= expected_scratch as u64);
     assert!(block.can_resume_after(&block_completion));
 }
 
@@ -2407,14 +2429,14 @@ fn retained_selected_observation_owns_canonical_multi_source_order() {
     let mut one_row_samples = Vec::new();
     let one_row_completion = one_row
         .traverse(&problem, |sample| {
-            one_row_samples.push((*sample.selected(), sample.spectral_evaluation()));
+            one_row_samples.push((sample.selected().to_owned(), sample.spectral_evaluation()));
             Ok::<_, Infallible>(())
         })
         .expect("complete canonical multi-source traversal");
     let mut two_row_samples = Vec::new();
     let two_row_completion = two_rows
         .traverse(&problem, |sample| {
-            two_row_samples.push((*sample.selected(), sample.spectral_evaluation()));
+            two_row_samples.push((sample.selected().to_owned(), sample.spectral_evaluation()));
             Ok::<_, Infallible>(())
         })
         .expect("complete repartitioned multi-source traversal");
@@ -2431,7 +2453,12 @@ fn retained_selected_observation_owns_canonical_multi_source_order() {
     assert_eq!(one_row_measurements.modeled_physical_read_bytes(), None);
     assert_eq!(one_row_measurements.source_read_operations(), 76);
     assert_eq!(one_row_measurements.request_handoff_bytes(), 32);
-    assert!(one_row_measurements.selected_sample_handoff_bytes() > 0);
+    assert_eq!(one_row_measurements.selected_sample_count(), 16);
+    assert_eq!(one_row_measurements.selected_channel_run_count(), 0);
+    assert_eq!(
+        one_row_measurements.selected_sample_handoff_bytes(),
+        16 * size_of::<super::SelectedObservationTraversalSample<'static>>() as u64
+    );
     assert_eq!(one_row_measurements.allocated_storage_buffers(), 38);
     assert_eq!(one_row_measurements.reused_storage_buffers(), 38);
     assert_eq!(one_row_measurements.peak_live_blocks(), 1);

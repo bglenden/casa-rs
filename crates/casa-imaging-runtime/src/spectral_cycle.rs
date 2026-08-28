@@ -4,7 +4,6 @@
 
 use std::{
     io,
-    mem::size_of,
     path::PathBuf,
     sync::{Arc, Mutex, mpsc::SyncSender},
     thread::JoinHandle,
@@ -1170,13 +1169,11 @@ impl SpectralCycleExecutor {
                 / traversal.source_read_nanos() as f64
                 / (1024.0 * 1024.0)
         };
-        let streamed_samples = traversal.selected_sample_handoff_bytes()
-            / size_of::<casa_ms::SelectedObservationTraversalSample<'static>>() as u64;
         let modeled_physical_read_bytes = traversal
             .modeled_physical_read_bytes()
             .map_or_else(|| "unavailable".to_owned(), |bytes| bytes.to_string());
         eprintln!(
-            "imaging_source_read_ahead_summary mode=bounded_spectral stage={stage} phase={phase} ordinal={} enabled={} max_live_row_blocks={} queue_capacity={} live_row_block_high_water={} row_blocks={} pass_count={} stored_rows={} stored_samples={} streamed_samples={} source_bytes={} modeled_physical_read_bytes={} source_read_operations={} request_handoff_bytes={} selected_sample_handoff_bytes={} allocated_storage_buffers={} reused_storage_buffers={} peak_live_current_bytes={} peak_live_capacity_bytes={} source_slots={} workers={} maximum_partitions_per_block={} planned_source_capacity_bytes={} ready_queue_high_water={} ready_queue_current_bytes_high_water={} ready_queue_capacity_bytes_high_water={} planned_kernel_window_capacity_bytes={} peak_kernel_window_capacity_bytes={} source_read_nanos={} source_fill_nanos={} source_arrangement_nanos={} stream_source_fill_nanos={} kernel_prepare_nanos={} kernel_execute_nanos={} kernel_commit_nanos={} producer_wait_nanos={} consumer_wait_nanos={} lease_return_nanos={} producer_consumer_overlap_nanos={} wall_nanos={} consumer_recv_blocked_ms={:.3} producer_send_blocked_ms={:.3} producer_consumer_overlap_ms={:.3} source_read_ms={:.3} source_route_ms={:.3} consumer_ms={:.3} source_prepare_ms={:.3} effective_read_bandwidth_mib_s={:.3}",
+            "imaging_source_read_ahead_summary mode=bounded_spectral stage={stage} phase={phase} ordinal={} enabled={} max_live_row_blocks={} queue_capacity={} live_row_block_high_water={} row_blocks={} pass_count={} stored_rows={} stored_samples={} selected_channel_runs={} streamed_samples={} source_bytes={} modeled_physical_read_bytes={} source_read_operations={} request_handoff_bytes={} selected_sample_handoff_bytes={} peak_consumer_scratch_current_bytes={} consumer_scratch_capacity_bytes={} allocated_storage_buffers={} reused_storage_buffers={} peak_live_current_bytes={} peak_live_capacity_bytes={} source_slots={} workers={} maximum_partitions_per_block={} planned_source_capacity_bytes={} ready_queue_high_water={} ready_queue_current_bytes_high_water={} ready_queue_capacity_bytes_high_water={} planned_kernel_window_capacity_bytes={} peak_kernel_window_capacity_bytes={} source_read_nanos={} source_fill_nanos={} source_arrangement_nanos={} stream_source_fill_nanos={} kernel_prepare_nanos={} kernel_execute_nanos={} kernel_commit_nanos={} producer_wait_nanos={} consumer_wait_nanos={} lease_return_nanos={} producer_consumer_overlap_nanos={} wall_nanos={} consumer_recv_blocked_ms={:.3} producer_send_blocked_ms={:.3} producer_consumer_overlap_ms={:.3} source_read_ms={:.3} source_route_ms={:.3} consumer_ms={:.3} source_prepare_ms={:.3} effective_read_bandwidth_mib_s={:.3}",
             self.pass.ordinal(),
             stream.source_slots > 1,
             stream.source_slots,
@@ -1186,12 +1183,15 @@ impl SpectralCycleExecutor {
             traversal.source_pass_count(),
             traversal.stored_row_count(),
             traversal.stored_sample_count(),
-            streamed_samples,
+            traversal.selected_channel_run_count(),
+            traversal.selected_sample_count(),
             traversal.logical_output_bytes(),
             modeled_physical_read_bytes,
             traversal.source_read_operations(),
             traversal.request_handoff_bytes(),
             traversal.selected_sample_handoff_bytes(),
+            traversal.peak_consumer_scratch_current_bytes(),
+            traversal.consumer_scratch_capacity_bytes(),
             traversal.allocated_storage_buffers(),
             traversal.reused_storage_buffers(),
             stream.peak_live_source_current_bytes,

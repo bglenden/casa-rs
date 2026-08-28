@@ -18,7 +18,8 @@ use crate::{
     },
     selected_observation_sample::{
         SelectedObservationGenerationEncoder, SelectedObservationGenerationId,
-        SelectedObservationSample, SelectedPredictionTarget, SelectedVisibilitySample,
+        SelectedObservationSample, SelectedObservationSampleView, SelectedPredictionTarget,
+        SelectedVisibilitySample,
     },
     transaction::{
         MeasurementSetReadAccess, ObservationReadSet, ObservationTransactionContract,
@@ -321,14 +322,23 @@ impl<'a> SelectedObservationInspection<'a> {
         &mut self,
         sample: &SelectedObservationSample,
     ) -> Result<(), SelectedObservationInspectionError> {
-        while sample.address.measurement_set != self.source.expected.measurement_set() {
+        self.push_view(sample.as_view())
+    }
+
+    /// Validate and record one borrowed scalar or run member.
+    pub fn push_view(
+        &mut self,
+        sample: SelectedObservationSampleView<'_>,
+    ) -> Result<(), SelectedObservationInspectionError> {
+        let address = sample.address();
+        while address.measurement_set != self.source.expected.measurement_set() {
             if self.source.observed_row_count() == 0
                 && self.source.expected.selection().rows().selected_row_count() > 0
             {
                 return Err(
                     SelectedObservationInspectionError::NonCanonicalSampleOrder {
-                        measurement_set: sample.address.measurement_set,
-                        physical_row: sample.address.physical_row,
+                        measurement_set: address.measurement_set,
+                        physical_row: address.physical_row,
                     },
                 );
             }
@@ -336,8 +346,8 @@ impl<'a> SelectedObservationInspection<'a> {
             let Some(expected) = self.expected_sources.get(next_index) else {
                 return Err(
                     SelectedObservationInspectionError::NonCanonicalSampleOrder {
-                        measurement_set: sample.address.measurement_set,
-                        physical_row: sample.address.physical_row,
+                        measurement_set: address.measurement_set,
+                        physical_row: address.physical_row,
                     },
                 );
             };
@@ -352,7 +362,7 @@ impl<'a> SelectedObservationInspection<'a> {
             self.source_index = next_index;
         }
         self.source.push(sample)?;
-        self.generation.push(sample);
+        self.generation.push_view(sample);
         Ok(())
     }
 
@@ -412,20 +422,21 @@ impl<'a> SourceInspection<'a> {
 
     fn push(
         &mut self,
-        sample: &SelectedObservationSample,
+        sample: SelectedObservationSampleView<'_>,
     ) -> Result<(), SelectedObservationInspectionError> {
-        if sample.prediction_target != self.prediction_target {
+        let address = sample.address();
+        if sample.prediction_target() != self.prediction_target {
             return Err(
                 SelectedObservationInspectionError::PredictionTargetMismatch {
-                    measurement_set: sample.address.measurement_set,
-                    physical_row: sample.address.physical_row,
+                    measurement_set: address.measurement_set,
+                    physical_row: address.physical_row,
                 },
             );
         }
         let visibility_matches = matches!(
             (
                 self.expected.selected_columns().visibility(),
-                sample.visibility
+                sample.visibility()
             ),
             (
                 VisibilityColumn::FloatData,
@@ -438,50 +449,49 @@ impl<'a> SourceInspection<'a> {
         if !visibility_matches {
             return Err(
                 SelectedObservationInspectionError::VisibilityStorageMismatch {
-                    measurement_set: sample.address.measurement_set,
-                    physical_row: sample.address.physical_row,
+                    measurement_set: address.measurement_set,
+                    physical_row: address.physical_row,
                 },
             );
         }
         let start_new_row = self
             .row
             .as_ref()
-            .is_none_or(|row| row.physical_row != sample.address.physical_row);
+            .is_none_or(|row| row.physical_row != address.physical_row);
         if start_new_row {
             if let Some(row) = self.row.take() {
                 let previous_row = row.physical_row;
                 row.finish()?;
-                if sample.address.physical_row < previous_row {
+                if address.physical_row < previous_row {
                     return Err(
                         SelectedObservationInspectionError::NonCanonicalSampleOrder {
-                            measurement_set: sample.address.measurement_set,
-                            physical_row: sample.address.physical_row,
+                            measurement_set: address.measurement_set,
+                            physical_row: address.physical_row,
                         },
                     );
                 }
             }
-            let data_description_id =
-                u32::try_from(sample.address.data_description_id).map_err(|_| {
-                    SelectedObservationInspectionError::DataDescriptionCoordinateMismatch {
-                        measurement_set: sample.address.measurement_set,
-                        physical_row: sample.address.physical_row,
-                    }
-                })?;
+            let data_description_id = u32::try_from(address.data_description_id).map_err(|_| {
+                SelectedObservationInspectionError::DataDescriptionCoordinateMismatch {
+                    measurement_set: address.measurement_set,
+                    physical_row: address.physical_row,
+                }
+            })?;
             self.rows
                 .push(SelectedMainRow::new(
-                    sample.address.physical_row,
+                    address.physical_row,
                     data_description_id,
                 ))
                 .map_err(|error| match error {
                     SelectedRowSequenceError::DuplicatePhysicalRow { .. }
                     | SelectedRowSequenceError::DescendingPhysicalRow { .. } => {
                         SelectedObservationInspectionError::NonCanonicalSampleOrder {
-                            measurement_set: sample.address.measurement_set,
-                            physical_row: sample.address.physical_row,
+                            measurement_set: address.measurement_set,
+                            physical_row: address.physical_row,
                         }
                     }
                     _ => SelectedObservationInspectionError::SelectedRowSequenceMismatch {
-                        measurement_set: sample.address.measurement_set,
+                        measurement_set: address.measurement_set,
                     },
                 })?;
             self.row = Some(RowInspection::new(self.expected, sample)?);
@@ -526,9 +536,9 @@ struct RowInspection<'a> {
 impl<'a> RowInspection<'a> {
     fn new(
         expected: &'a MeasurementSetReadAccess,
-        sample: &SelectedObservationSample,
+        sample: SelectedObservationSampleView<'_>,
     ) -> Result<Self, SelectedObservationInspectionError> {
-        let address = sample.address;
+        let address = sample.address();
         let Ok(data_description_id) = u32::try_from(address.data_description_id) else {
             return Err(
                 SelectedObservationInspectionError::DataDescriptionCoordinateMismatch {
@@ -580,9 +590,9 @@ impl<'a> RowInspection<'a> {
 
     fn push(
         &mut self,
-        sample: &SelectedObservationSample,
+        sample: SelectedObservationSampleView<'_>,
     ) -> Result<(), SelectedObservationInspectionError> {
-        let address = sample.address;
+        let address = sample.address();
         if address.data_description_id
             != i32::try_from(self.data_description.data_description_id())
                 .expect("compiled DATA_DESC_ID fits the MeasurementSet Int domain")
@@ -630,7 +640,7 @@ impl<'a> RowInspection<'a> {
             let correlation_ordinal = self.next_ordinal % products.len();
             let observed = &mut self.broadcast_weights[correlation_ordinal];
             if let Some(expected) = observed {
-                if !canonical_f32_eq(*expected, sample.input_weight) {
+                if !canonical_f32_eq(*expected, sample.input_weight()) {
                     return Err(
                         SelectedObservationInspectionError::WeightBroadcastMismatch {
                             measurement_set: address.measurement_set,
@@ -639,7 +649,7 @@ impl<'a> RowInspection<'a> {
                     );
                 }
             } else {
-                *observed = Some(sample.input_weight);
+                *observed = Some(sample.input_weight());
             }
         }
         self.previous = Some(actual);

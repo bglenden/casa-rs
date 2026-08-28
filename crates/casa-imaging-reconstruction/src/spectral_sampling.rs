@@ -3,9 +3,9 @@
 //! Reconstruction-owned compilation of paired sparse spectral stencils.
 
 use casa_imaging_model::{
-    CompiledProblem, ReconstructionBasis, SelectedObservationSample, SelectedSpectralContribution,
-    SelectedSpectralContributions, SelectedSpectralEvaluation, SpectralCovariance,
-    SpectralEdgePolicy, SpectralKernel,
+    CompiledProblem, ReconstructionBasis, SelectedObservationSampleView,
+    SelectedSpectralContribution, SelectedSpectralContributions, SelectedSpectralEvaluation,
+    SpectralCovariance, SpectralEdgePolicy, SpectralKernel,
 };
 use smallvec::SmallVec;
 use thiserror::Error;
@@ -74,11 +74,12 @@ pub enum SpectralStencilError {
 }
 
 /// Compile one paired sparse stencil from a source trace and logical sampling law.
-pub fn compile_spectral_stencil(
+pub fn compile_spectral_stencil<'a>(
     problem: &CompiledProblem,
-    sample: &SelectedObservationSample,
+    sample: impl Into<SelectedObservationSampleView<'a>>,
     evaluation: SelectedSpectralEvaluation,
 ) -> Result<SpectralStencilReceipt, SpectralStencilError> {
+    let sample = sample.into();
     let law = problem.science().spectral().sampling();
     let frequency_hz = evaluation.output_frame().centre_hz();
     // Preserve paired forward support even when flags force the adjoint weight
@@ -111,7 +112,7 @@ pub fn compile_spectral_stencil(
 
 fn channel_local_terms(
     problem: &CompiledProblem,
-    sample: &SelectedObservationSample,
+    sample: SelectedObservationSampleView<'_>,
     evaluation: SelectedSpectralEvaluation,
     frequency_hz: f64,
 ) -> Result<SmallVec<[SelectedSpectralContribution; 4]>, SpectralStencilError> {
@@ -179,18 +180,18 @@ fn validate_axis(centres: &[f64], boundaries: &[f64]) -> Result<(), SpectralSten
 
 fn identity_terms(
     problem: &CompiledProblem,
-    sample: &SelectedObservationSample,
+    sample: SelectedObservationSampleView<'_>,
     frequency_hz: f64,
 ) -> Result<SmallVec<[SelectedSpectralContribution; 4]>, SpectralStencilError> {
+    let address = sample.address();
     if let Some(transform) = problem.visibility_transform()
-        && let Some(rule) =
-            transform.rule(sample.metadata.field_id, sample.address.spectral_window_id)
+        && let Some(rule) = transform.rule(sample.metadata().field_id, address.spectral_window_id)
     {
         let ordinal = rule
             .channels()
             .iter()
             .filter(|channel| channel.use_role().contributes_to_output())
-            .position(|channel| channel.channel_index() == sample.address.channel_index)
+            .position(|channel| channel.channel_index() == address.channel_index)
             .ok_or(SpectralStencilError::IdentitySourceMismatch)?;
         if ordinal >= problem.geometry().spectral().output_channels() {
             return Ok(SmallVec::new());
@@ -202,18 +203,18 @@ fn identity_terms(
         .observation_snapshot()
         .sources()
         .iter()
-        .find(|source| source.identity() == sample.address.measurement_set)
+        .find(|source| source.identity() == address.measurement_set)
         .ok_or(SpectralStencilError::IdentitySourceMismatch)?;
     let selection = source
         .selection()
         .spectral_windows()
         .iter()
-        .find(|selection| selection.spectral_window_id() == sample.address.spectral_window_id)
+        .find(|selection| selection.spectral_window_id() == address.spectral_window_id)
         .ok_or(SpectralStencilError::IdentitySourceMismatch)?;
     let ordinal = selection
         .channel_indices()
         .iter()
-        .position(|channel| *channel == sample.address.channel_index)
+        .position(|channel| *channel == address.channel_index)
         .ok_or(SpectralStencilError::IdentitySourceMismatch)?;
     if ordinal >= problem.geometry().spectral().output_channels() {
         return Ok(SmallVec::new());

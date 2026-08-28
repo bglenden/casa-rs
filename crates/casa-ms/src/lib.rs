@@ -151,7 +151,7 @@ pub use selected_observation::{
     SelectedObservationMeasuresError, SelectedObservationResidencyCertificate,
     SelectedObservationRow, SelectedObservationRowSelection, SelectedObservationTerminal,
     SelectedObservationTraversalError, SelectedObservationTraversalMeasurements,
-    SelectedObservationTraversalSample,
+    SelectedObservationTraversalRun, SelectedObservationTraversalSample,
 };
 pub(crate) use selected_observation_buffer::{
     SelectedObservationBuffer, SelectedObservationBufferRequest, SelectedStoredSample,

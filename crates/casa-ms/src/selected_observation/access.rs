@@ -16,10 +16,11 @@ use casa_imaging_model::{
     DirectionFrame, Epoch, FrequencyFrame, MeasurementSetReadAccess, MissingPointingPolicy,
     ObservationSelection, ObservationSource, ObservationSourceState, PhaseCentreLaw,
     PointingCentreLaw, PointingDirectionColumn, PointingExtrapolation, PointingInterpolation,
-    PointingTimeSampling, SelectedMainRow, SelectedObservationSample, SelectedPointingDirections,
-    SelectedPredictionTarget, SelectedRowsBuilder, SelectedSampleAddress,
-    SelectedSampleCoordinates, SelectedSampleMetadata, SelectedVisibilitySample, SkyDirection,
-    TimeScale, VisibilityColumn, WeightColumn,
+    PointingTimeSampling, SelectedMainRow, SelectedObservationRunChannel,
+    SelectedObservationRunCorrelation, SelectedObservationRunRow, SelectedObservationSample,
+    SelectedObservationSampleView, SelectedPointingDirections, SelectedPredictionTarget,
+    SelectedRowsBuilder, SelectedSampleCoordinates, SelectedSampleMetadata,
+    SelectedVisibilitySample, SkyDirection, TimeScale, VisibilityColumn, WeightColumn,
 };
 use thiserror::Error;
 
@@ -241,6 +242,8 @@ impl BoundObservationSource {
         )?;
         block.logical_bytes = fill_report.logical_output_bytes;
         block.source_read_operations = fill_report.read_operation_count;
+        measurements
+            .record_selected_channel_runs(fill_report.row_count, coordinates.channels.len())?;
         measurements.record_fill(fill_report)?;
         let arrangement_started = Instant::now();
         for row in 0..block.buffer.row_count() {
@@ -769,13 +772,30 @@ fn project_stored_sample(
     parallel_hand_group_flag: bool,
     geometry: EvaluatedRowGeometry,
 ) -> Result<SelectedObservationSample, BoundObservationSourceError> {
+    let row = project_stored_run_row(
+        logical_source,
+        problem,
+        geometry_engine,
+        coordinates,
+        stored,
+        geometry,
+    )?;
+    let channel = project_run_channel(channel);
+    let correlation = project_stored_run_correlation(product, stored, parallel_hand_group_flag);
+    Ok(SelectedObservationSampleView::from_run(&row, &channel, &correlation).to_owned())
+}
+
+fn project_stored_run_row(
+    logical_source: &MeasurementSetReadAccess,
+    problem: &CompiledProblem,
+    geometry_engine: &MsCalEngine,
+    coordinates: &SelectedCoordinates,
+    stored: SelectedStoredSample,
+    geometry: EvaluatedRowGeometry,
+) -> Result<SelectedObservationRunRow, BoundObservationSourceError> {
     let time_scale = time_scale(geometry_engine.time_reference().as_str())?;
     let physical_row = u64::try_from(stored.physical_row())
         .map_err(|_| BoundObservationSourceError::PhysicalRowIndexOverflow)?;
-    let visibility = match stored.visibility() {
-        SelectedStoredVisibility::Float32(value) => SelectedVisibilitySample::Float32(value),
-        SelectedStoredVisibility::Complex32(value) => SelectedVisibilitySample::Complex32(value),
-    };
     let prediction_target = if problem
         .observation_transaction()
         .write_set()
@@ -789,28 +809,14 @@ fn project_stored_sample(
     } else {
         SelectedPredictionTarget::NotRequested
     };
-    Ok(SelectedObservationSample {
-        address: SelectedSampleAddress {
-            measurement_set: logical_source.measurement_set(),
-            physical_row,
-            data_description_id: stored.data_description_id(),
-            spectral_window_id: coordinates.data_description.spectral_window_id(),
-            channel_index: channel.channel_index,
-            frequency_centre_hz: channel.centre_hz,
-            frequency_lower_hz: channel.lower_hz,
-            frequency_upper_hz: channel.upper_hz,
-            channel_width_hz: channel.width_hz,
-            frequency_frame: channel.frame,
-            polarization_id: coordinates.data_description.polarization_id(),
-            correlation_index: product.correlation_index(),
-            correlation_type: product.correlation_type(),
-        },
-        visibility,
+    Ok(SelectedObservationRunRow {
+        measurement_set: logical_source.measurement_set(),
+        physical_row,
+        data_description_id: stored.data_description_id(),
+        spectral_window_id: coordinates.data_description.spectral_window_id(),
+        polarization_id: coordinates.data_description.polarization_id(),
         prediction_target,
-        channel_flag: stored.channel_flag(),
-        parallel_hand_group_flag,
         row_flag: stored.row_flag(),
-        input_weight: stored.input_weight(),
         coordinates: SelectedSampleCoordinates {
             raw_uvw_m: stored.uvw_m(),
             density_uvw_m: geometry.density_uvw_m,
@@ -837,6 +843,36 @@ fn project_stored_sample(
             array_id: stored.array_id(),
         },
     })
+}
+
+const fn project_run_channel(channel: SelectedChannel) -> SelectedObservationRunChannel {
+    SelectedObservationRunChannel {
+        channel_index: channel.channel_index,
+        frequency_centre_hz: channel.centre_hz,
+        frequency_lower_hz: channel.lower_hz,
+        frequency_upper_hz: channel.upper_hz,
+        channel_width_hz: channel.width_hz,
+        frequency_frame: channel.frame,
+    }
+}
+
+fn project_stored_run_correlation(
+    product: CorrelationProduct,
+    stored: SelectedStoredSample,
+    parallel_hand_group_flag: bool,
+) -> SelectedObservationRunCorrelation {
+    let visibility = match stored.visibility() {
+        SelectedStoredVisibility::Float32(value) => SelectedVisibilitySample::Float32(value),
+        SelectedStoredVisibility::Complex32(value) => SelectedVisibilitySample::Complex32(value),
+    };
+    SelectedObservationRunCorrelation {
+        correlation_index: product.correlation_index(),
+        correlation_type: product.correlation_type(),
+        visibility,
+        channel_flag: stored.channel_flag(),
+        parallel_hand_group_flag,
+        input_weight: stored.input_weight(),
+    }
 }
 
 /// Opaque caller-owned selected-observation storage block.
@@ -903,7 +939,13 @@ impl SelectedObservationBlock {
     pub(super) fn visit_selected_samples<E>(
         &self,
         problem: &CompiledProblem,
-        mut consume: impl FnMut(SelectedObservationSample, &MsCalEngine) -> Result<(), E>,
+        correlations: &mut Vec<SelectedObservationRunCorrelation>,
+        mut consume: impl FnMut(
+            &SelectedObservationRunRow,
+            SelectedObservationRunChannel,
+            &[SelectedObservationRunCorrelation],
+            &MsCalEngine,
+        ) -> Result<(), E>,
     ) -> Result<(), BlockVisitError<E>> {
         let logical_source = self.logical_source.as_ref().ok_or(BlockVisitError::Source(
             BoundObservationSourceError::StoredSampleShapeMismatch,
@@ -922,11 +964,51 @@ impl SelectedObservationBlock {
                 BoundObservationSourceError::StoredSampleShapeMismatch,
             ))?;
         for row in 0..self.buffer.row_count() {
+            let stored_row = self
+                .buffer
+                .sample(0, row, 0)
+                .ok_or(BlockVisitError::Source(
+                    BoundObservationSourceError::StoredSampleShapeMismatch,
+                ))?;
+            let run_row = project_stored_run_row(
+                logical_source,
+                problem,
+                geometry_engine,
+                coordinates,
+                stored_row,
+                self.row_geometry[row],
+            )
+            .map_err(BlockVisitError::Source)?;
             for channel in coordinates.channels.iter().copied() {
+                let run_channel = project_run_channel(channel);
+                correlations.clear();
+                if correlations.capacity() < coordinates.products.len() {
+                    return Err(BlockVisitError::Source(
+                        BoundObservationSourceError::StoredSampleShapeMismatch,
+                    ));
+                }
+                let channel_offset = usize::try_from(channel.channel_index)
+                    .ok()
+                    .and_then(|channel| channel.checked_sub(coordinates.channel_start));
+                let stokes_i_group_flag = coordinates
+                    .products
+                    .iter()
+                    .copied()
+                    .filter(|peer| peer.correlation_type().contributes_to_stokes_i())
+                    .try_fold(false, |flagged, peer| {
+                        let correlation = usize::try_from(peer.correlation_index()).ok();
+                        let peer = match (channel_offset, correlation) {
+                            (Some(channel), Some(correlation)) => {
+                                self.buffer.sample(channel, row, correlation)
+                            }
+                            _ => None,
+                        }
+                        .ok_or(BlockVisitError::Source(
+                            BoundObservationSourceError::StoredSampleShapeMismatch,
+                        ))?;
+                        Ok::<_, BlockVisitError<E>>(flagged || peer.channel_flag())
+                    })?;
                 for product in coordinates.products.iter().copied() {
-                    let channel_offset = usize::try_from(channel.channel_index)
-                        .ok()
-                        .and_then(|channel| channel.checked_sub(coordinates.channel_start));
                     let correlation_offset = usize::try_from(product.correlation_index()).ok();
                     let stored = match (channel_offset, correlation_offset) {
                         (Some(channel), Some(correlation)) => {
@@ -937,45 +1019,25 @@ impl SelectedObservationBlock {
                     .ok_or(BlockVisitError::Source(
                         BoundObservationSourceError::StoredSampleShapeMismatch,
                     ))?;
-                    let parallel_hand_group_flag = if product
-                        .correlation_type()
-                        .contributes_to_stokes_i()
-                    {
-                        coordinates
-                            .products
-                            .iter()
-                            .copied()
-                            .filter(|peer| peer.correlation_type().contributes_to_stokes_i())
-                            .try_fold(false, |flagged, peer| {
-                                let correlation = usize::try_from(peer.correlation_index()).ok();
-                                let peer = match (channel_offset, correlation) {
-                                    (Some(channel), Some(correlation)) => {
-                                        self.buffer.sample(channel, row, correlation)
-                                    }
-                                    _ => None,
-                                }
-                                .ok_or(BlockVisitError::Source(
-                                    BoundObservationSourceError::StoredSampleShapeMismatch,
-                                ))?;
-                                Ok::<_, BlockVisitError<E>>(flagged || peer.channel_flag())
-                            })?
-                    } else {
-                        stored.channel_flag()
-                    };
-                    let sample = project_stored_sample(
-                        logical_source,
-                        problem,
-                        geometry_engine,
-                        coordinates,
-                        channel,
+                    let parallel_hand_group_flag =
+                        if product.correlation_type().contributes_to_stokes_i() {
+                            stokes_i_group_flag
+                        } else {
+                            stored.channel_flag()
+                        };
+                    correlations.push(project_stored_run_correlation(
                         product,
                         stored,
                         parallel_hand_group_flag,
-                        self.row_geometry[row],
-                    )
-                    .map_err(BlockVisitError::Source)?;
-                    consume(sample, geometry_engine).map_err(BlockVisitError::Consumer)?;
+                    ));
                 }
+                consume(
+                    &run_row,
+                    run_channel,
+                    correlations.as_slice(),
+                    geometry_engine,
+                )
+                .map_err(BlockVisitError::Consumer)?;
             }
         }
         Ok(())

@@ -145,6 +145,68 @@ pub struct SelectedSampleMetadata {
     pub array_id: i32,
 }
 
+/// Row-shared portion of one selected-observation run.
+///
+/// This value is a backend-free report, not traversal authority. Keeping it
+/// separate lets a storage owner lend one evaluated row to all selected
+/// channel/correlation members without rebuilding the large row record for
+/// every scalar sample.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SelectedObservationRunRow {
+    /// Logical MeasurementSet identity from the compiled observation commitment.
+    pub measurement_set: MeasurementSetIdentity,
+    /// Physical MAIN row number.
+    pub physical_row: u64,
+    /// MAIN `DATA_DESC_ID`.
+    pub data_description_id: i32,
+    /// Resolved `SPECTRAL_WINDOW_ID`.
+    pub spectral_window_id: u32,
+    /// Resolved `POLARIZATION_ID`.
+    pub polarization_id: u32,
+    /// Prediction destination declared by the observation transaction.
+    pub prediction_target: SelectedPredictionTarget,
+    /// MAIN `FLAG_ROW` value.
+    pub row_flag: bool,
+    /// Evaluated science coordinates shared by the row.
+    pub coordinates: SelectedSampleCoordinates,
+    /// Per-row MeasurementSet provenance.
+    pub metadata: SelectedSampleMetadata,
+}
+
+/// Channel-shared portion of one selected-observation run.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SelectedObservationRunChannel {
+    /// Zero-based native channel index.
+    pub channel_index: u32,
+    /// Native channel centre frequency in hertz.
+    pub frequency_centre_hz: f64,
+    /// Lower native channel boundary in hertz.
+    pub frequency_lower_hz: f64,
+    /// Upper native channel boundary in hertz.
+    pub frequency_upper_hz: f64,
+    /// Signed native channel width in hertz.
+    pub channel_width_hz: f64,
+    /// Reference frame of the channel frequencies.
+    pub frequency_frame: FrequencyFrame,
+}
+
+/// Correlation-local portion of one selected-observation run.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SelectedObservationRunCorrelation {
+    /// Zero-based correlation array index.
+    pub correlation_index: u32,
+    /// Physical correlation coordinate.
+    pub correlation_type: CorrelationType,
+    /// Visibility value in its MeasurementSet storage representation.
+    pub visibility: SelectedVisibilitySample,
+    /// Selected channel/correlation `FLAG` value.
+    pub channel_flag: bool,
+    /// CASA complete-parallel-hand Stokes-I flag.
+    pub parallel_hand_group_flag: bool,
+    /// Selected `WEIGHT` or `WEIGHT_SPECTRUM` value.
+    pub input_weight: f32,
+}
+
 /// One source-sample contribution to a compiled output spectral channel.
 ///
 /// The factor is the reconstruction-evaluated interpolation or integration
@@ -382,6 +444,172 @@ pub struct SelectedObservationSample {
 impl SelectedObservationSample {
     /// Closed schema version of the selected-sample value record.
     pub const SCHEMA_VERSION: u32 = 3;
+
+    /// Borrow this scalar record through the same interface used by a
+    /// row/channel run.
+    #[must_use]
+    pub const fn as_view(&self) -> SelectedObservationSampleView<'_> {
+        SelectedObservationSampleView::Scalar(self)
+    }
+}
+
+/// Borrowed view of one selected sample, either from a scalar record or from
+/// shared row/channel run components.
+///
+/// The view cannot outlive its source block and carries no traversal authority.
+/// It gives validators and scientific owners one interface while allowing the
+/// storage owner to keep repeated row and channel fields shared.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SelectedObservationSampleView<'a> {
+    /// Borrow one existing scalar report.
+    Scalar(&'a SelectedObservationSample),
+    /// Borrow shared run components.
+    Run {
+        /// Row-shared values.
+        row: &'a SelectedObservationRunRow,
+        /// Channel-shared values.
+        channel: &'a SelectedObservationRunChannel,
+        /// Correlation-local values.
+        correlation: &'a SelectedObservationRunCorrelation,
+    },
+}
+
+impl<'a> From<&'a SelectedObservationSample> for SelectedObservationSampleView<'a> {
+    fn from(sample: &'a SelectedObservationSample) -> Self {
+        Self::Scalar(sample)
+    }
+}
+
+impl<'a> SelectedObservationSampleView<'a> {
+    /// Borrow one member of a row/channel run.
+    #[must_use]
+    pub const fn from_run(
+        row: &'a SelectedObservationRunRow,
+        channel: &'a SelectedObservationRunChannel,
+        correlation: &'a SelectedObservationRunCorrelation,
+    ) -> Self {
+        Self::Run {
+            row,
+            channel,
+            correlation,
+        }
+    }
+
+    /// Return the exact selected-sample address.
+    #[must_use]
+    pub const fn address(self) -> SelectedSampleAddress {
+        match self {
+            Self::Scalar(sample) => sample.address,
+            Self::Run {
+                row,
+                channel,
+                correlation,
+            } => SelectedSampleAddress {
+                measurement_set: row.measurement_set,
+                physical_row: row.physical_row,
+                data_description_id: row.data_description_id,
+                spectral_window_id: row.spectral_window_id,
+                channel_index: channel.channel_index,
+                frequency_centre_hz: channel.frequency_centre_hz,
+                frequency_lower_hz: channel.frequency_lower_hz,
+                frequency_upper_hz: channel.frequency_upper_hz,
+                channel_width_hz: channel.channel_width_hz,
+                frequency_frame: channel.frequency_frame,
+                polarization_id: row.polarization_id,
+                correlation_index: correlation.correlation_index,
+                correlation_type: correlation.correlation_type,
+            },
+        }
+    }
+
+    /// Return the selected visibility value.
+    #[must_use]
+    pub const fn visibility(self) -> SelectedVisibilitySample {
+        match self {
+            Self::Scalar(sample) => sample.visibility,
+            Self::Run { correlation, .. } => correlation.visibility,
+        }
+    }
+
+    /// Return the declared prediction destination.
+    #[must_use]
+    pub const fn prediction_target(self) -> SelectedPredictionTarget {
+        match self {
+            Self::Scalar(sample) => sample.prediction_target,
+            Self::Run { row, .. } => row.prediction_target,
+        }
+    }
+
+    /// Return the selected cell flag.
+    #[must_use]
+    pub const fn channel_flag(self) -> bool {
+        match self {
+            Self::Scalar(sample) => sample.channel_flag,
+            Self::Run { correlation, .. } => correlation.channel_flag,
+        }
+    }
+
+    /// Return the complete selected parallel-hand flag.
+    #[must_use]
+    pub const fn parallel_hand_group_flag(self) -> bool {
+        match self {
+            Self::Scalar(sample) => sample.parallel_hand_group_flag,
+            Self::Run { correlation, .. } => correlation.parallel_hand_group_flag,
+        }
+    }
+
+    /// Return the MAIN row flag.
+    #[must_use]
+    pub const fn row_flag(self) -> bool {
+        match self {
+            Self::Scalar(sample) => sample.row_flag,
+            Self::Run { row, .. } => row.row_flag,
+        }
+    }
+
+    /// Return the selected input weight.
+    #[must_use]
+    pub const fn input_weight(self) -> f32 {
+        match self {
+            Self::Scalar(sample) => sample.input_weight,
+            Self::Run { correlation, .. } => correlation.input_weight,
+        }
+    }
+
+    /// Return evaluated row coordinates.
+    #[must_use]
+    pub const fn coordinates(self) -> &'a SelectedSampleCoordinates {
+        match self {
+            Self::Scalar(sample) => &sample.coordinates,
+            Self::Run { row, .. } => &row.coordinates,
+        }
+    }
+
+    /// Return per-row MeasurementSet provenance.
+    #[must_use]
+    pub const fn metadata(self) -> &'a SelectedSampleMetadata {
+        match self {
+            Self::Scalar(sample) => &sample.metadata,
+            Self::Run { row, .. } => &row.metadata,
+        }
+    }
+
+    /// Materialize the closed scalar record only for an owner that must retain
+    /// every field independently of the source block.
+    #[must_use]
+    pub const fn to_owned(self) -> SelectedObservationSample {
+        SelectedObservationSample {
+            address: self.address(),
+            visibility: self.visibility(),
+            prediction_target: self.prediction_target(),
+            channel_flag: self.channel_flag(),
+            parallel_hand_group_flag: self.parallel_hand_group_flag(),
+            row_flag: self.row_flag(),
+            input_weight: self.input_weight(),
+            coordinates: *self.coordinates(),
+            metadata: *self.metadata(),
+        }
+    }
 }
 
 /// Content digest of one ordered selected-observation sample sequence.
@@ -429,13 +657,61 @@ impl SelectedObservationGenerationId {
 
 pub(crate) struct SelectedObservationGenerationEncoder {
     encoder: CanonicalEncoder,
-    row_run: Option<SelectedObservationSample>,
-    channel_run: Option<SelectedObservationSample>,
+    row_run: Option<GenerationRowContent>,
+    channel_run: Option<GenerationChannelContent>,
     row_run_count: u64,
     row_run_sample_count: u64,
     channel_run_count: u64,
     channel_run_sample_count: u64,
     sample_count: u64,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+struct GenerationRowContent {
+    data_description_id: i32,
+    spectral_window_id: u32,
+    polarization_id: u32,
+    row_flag: bool,
+    coordinates: SelectedSampleCoordinates,
+    metadata: SelectedSampleMetadata,
+}
+
+impl GenerationRowContent {
+    fn from_view(sample: SelectedObservationSampleView<'_>) -> Self {
+        let address = sample.address();
+        Self {
+            data_description_id: address.data_description_id,
+            spectral_window_id: address.spectral_window_id,
+            polarization_id: address.polarization_id,
+            row_flag: sample.row_flag(),
+            coordinates: *sample.coordinates(),
+            metadata: *sample.metadata(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+struct GenerationChannelContent {
+    channel_index: u32,
+    frequency_centre_hz: f64,
+    frequency_lower_hz: f64,
+    frequency_upper_hz: f64,
+    channel_width_hz: f64,
+    frequency_frame: FrequencyFrame,
+}
+
+impl GenerationChannelContent {
+    fn from_view(sample: SelectedObservationSampleView<'_>) -> Self {
+        let address = sample.address();
+        Self {
+            channel_index: address.channel_index,
+            frequency_centre_hz: address.frequency_centre_hz,
+            frequency_lower_hz: address.frequency_lower_hz,
+            frequency_upper_hz: address.frequency_upper_hz,
+            channel_width_hz: address.channel_width_hz,
+            frequency_frame: address.frequency_frame,
+        }
+    }
 }
 
 impl SelectedObservationGenerationEncoder {
@@ -455,28 +731,29 @@ impl SelectedObservationGenerationEncoder {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn push(&mut self, sample: &SelectedObservationSample) {
-        if self
-            .row_run
-            .is_none_or(|current| !same_generation_row_content(&current, sample))
-        {
+        self.push_view(sample.as_view());
+    }
+
+    pub(crate) fn push_view(&mut self, sample: SelectedObservationSampleView<'_>) {
+        let row = GenerationRowContent::from_view(sample);
+        if self.row_run != Some(row) {
             self.finish_row_run();
             self.encoder.u8(GENERATION_ROW_RUN_MARKER);
             encode_generation_row_content(&mut self.encoder, sample);
-            self.row_run = Some(*sample);
+            self.row_run = Some(row);
             self.row_run_count = self
                 .row_run_count
                 .checked_add(1)
                 .expect("selected-observation row-run count fits u64");
         }
-        if self
-            .channel_run
-            .is_none_or(|current| !same_generation_channel_content(&current, sample))
-        {
+        let channel = GenerationChannelContent::from_view(sample);
+        if self.channel_run != Some(channel) {
             self.finish_channel_run();
             self.encoder.u8(GENERATION_CHANNEL_RUN_MARKER);
             encode_generation_channel_content(&mut self.encoder, sample);
-            self.channel_run = Some(*sample);
+            self.channel_run = Some(channel);
             self.channel_run_count = self
                 .channel_run_count
                 .checked_add(1)
@@ -543,41 +820,17 @@ impl fmt::Display for SelectedObservationGenerationId {
     }
 }
 
-fn same_generation_row_content(
-    left: &SelectedObservationSample,
-    right: &SelectedObservationSample,
-) -> bool {
-    left.address.data_description_id == right.address.data_description_id
-        && left.address.spectral_window_id == right.address.spectral_window_id
-        && left.address.polarization_id == right.address.polarization_id
-        && left.row_flag == right.row_flag
-        && left.coordinates == right.coordinates
-        && left.metadata == right.metadata
-}
-
-fn same_generation_channel_content(
-    left: &SelectedObservationSample,
-    right: &SelectedObservationSample,
-) -> bool {
-    left.address.channel_index == right.address.channel_index
-        && left.address.frequency_centre_hz == right.address.frequency_centre_hz
-        && left.address.frequency_lower_hz == right.address.frequency_lower_hz
-        && left.address.frequency_upper_hz == right.address.frequency_upper_hz
-        && left.address.channel_width_hz == right.address.channel_width_hz
-        && left.address.frequency_frame == right.address.frequency_frame
-}
-
 fn encode_generation_row_content(
     encoder: &mut CanonicalEncoder,
-    sample: &SelectedObservationSample,
+    sample: SelectedObservationSampleView<'_>,
 ) {
-    let address = sample.address;
+    let address = sample.address();
     encoder.i32(address.data_description_id);
     encoder.u32(address.spectral_window_id);
     encoder.u32(address.polarization_id);
-    encoder.u8(u8::from(sample.row_flag));
+    encoder.u8(u8::from(sample.row_flag()));
 
-    let coordinates = sample.coordinates;
+    let coordinates = sample.coordinates();
     for value in coordinates.raw_uvw_m {
         encoder.f64(value);
     }
@@ -600,7 +853,7 @@ fn encode_generation_row_content(
     encode_sky_direction(encoder, coordinates.pointing_directions.antenna1);
     encode_sky_direction(encoder, coordinates.pointing_directions.antenna2);
 
-    let metadata = sample.metadata;
+    let metadata = sample.metadata();
     encoder.i32(metadata.field_id);
     encoder.i32(metadata.antenna1);
     encoder.i32(metadata.antenna2);
@@ -614,9 +867,9 @@ fn encode_generation_row_content(
 
 fn encode_generation_channel_content(
     encoder: &mut CanonicalEncoder,
-    sample: &SelectedObservationSample,
+    sample: SelectedObservationSampleView<'_>,
 ) {
-    let address = sample.address;
+    let address = sample.address();
     encoder.u32(address.channel_index);
     encoder.f64(address.frequency_centre_hz);
     encoder.f64(address.frequency_lower_hz);
@@ -627,11 +880,12 @@ fn encode_generation_channel_content(
 
 fn encode_generation_correlation_content(
     encoder: &mut CanonicalEncoder,
-    sample: &SelectedObservationSample,
+    sample: SelectedObservationSampleView<'_>,
 ) {
-    encoder.u32(sample.address.correlation_index);
-    encoder.u8(correlation_type_tag(sample.address.correlation_type));
-    match sample.visibility {
+    let address = sample.address();
+    encoder.u32(address.correlation_index);
+    encoder.u8(correlation_type_tag(address.correlation_type));
+    match sample.visibility() {
         SelectedVisibilitySample::Float32(value) => {
             encoder.u8(0);
             encoder.f32(value);
@@ -642,9 +896,9 @@ fn encode_generation_correlation_content(
             encoder.f32(imaginary);
         }
     }
-    encoder.u8(u8::from(sample.channel_flag));
-    encoder.u8(u8::from(sample.parallel_hand_group_flag));
-    encoder.f32(sample.input_weight);
+    encoder.u8(u8::from(sample.channel_flag()));
+    encoder.u8(u8::from(sample.parallel_hand_group_flag()));
+    encoder.f32(sample.input_weight());
 }
 
 fn encode_epoch(encoder: &mut CanonicalEncoder, epoch: Epoch) {

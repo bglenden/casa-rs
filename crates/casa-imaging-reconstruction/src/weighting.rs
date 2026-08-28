@@ -7,7 +7,7 @@ use std::{collections::BTreeMap, fmt, mem::size_of};
 
 use casa_imaging_model::{
     CompiledProblem, CompiledProblemId, FiniteValuePolicy, ImageDomainRole, LogicalIdentity,
-    SelectedObservationSample, SelectedSampleAddress, SelectedSpectralContribution,
+    SelectedObservationSampleView, SelectedSampleAddress, SelectedSpectralContribution,
     SelectedSpectralContributions, SelectedVisibilitySample, UvTaper, WeightDensityScope,
     WeightingCommitmentId, WeightingScheme,
 };
@@ -519,10 +519,10 @@ pub struct WeightingDensityPhase {
 
 impl WeightingDensityPhase {
     /// Consume one sample delivered by the storage owner's T17 traversal.
-    pub fn consume(
+    pub fn consume<'a>(
         &mut self,
         problem: &CompiledProblem,
-        sample: &SelectedObservationSample,
+        sample: impl Into<SelectedObservationSampleView<'a>>,
         contributions: SelectedSpectralContributions,
     ) -> Result<(), WeightingError> {
         if self.problem != problem.problem_id()
@@ -530,7 +530,7 @@ impl WeightingDensityPhase {
         {
             return Err(WeightingError::ProblemMismatch);
         }
-        let sample = WeightingSelectedSample::from_selected(sample);
+        let sample = WeightingSelectedSample::from_selected(sample.into());
         for contribution in contributions.iter() {
             extend_frequency_range(
                 &mut self.frequency_range_hz,
@@ -634,10 +634,10 @@ pub struct WeightingSumWeightPhase {
 
 impl WeightingSumWeightPhase {
     /// Consume one sample delivered by the storage owner's second T17 traversal.
-    pub fn consume(
+    pub fn consume<'a>(
         &mut self,
         problem: &CompiledProblem,
-        sample: &SelectedObservationSample,
+        sample: impl Into<SelectedObservationSampleView<'a>>,
         contributions: SelectedSpectralContributions,
     ) -> Result<(), WeightingError> {
         if self.problem != problem.problem_id()
@@ -645,14 +645,14 @@ impl WeightingSumWeightPhase {
         {
             return Err(WeightingError::ProblemMismatch);
         }
-        let _ = self.weighted_sample(problem, sample, contributions)?;
+        let _ = self.weighted_sample(problem, sample.into(), contributions)?;
         Ok(())
     }
 
     fn weighted_sample(
         &mut self,
         problem: &CompiledProblem,
-        sample: &SelectedObservationSample,
+        sample: SelectedObservationSampleView<'_>,
         contributions: SelectedSpectralContributions,
     ) -> Result<WeightingSampleValue, WeightingError> {
         if self.problem != problem.problem_id()
@@ -799,13 +799,15 @@ pub struct FusedWeightingPhase {
 
 impl FusedWeightingPhase {
     /// Consume one selected payload sample and return a full bounded block.
-    pub fn consume(
+    pub fn consume<'a>(
         &mut self,
         problem: &CompiledProblem,
-        sample: &SelectedObservationSample,
+        sample: impl Into<SelectedObservationSampleView<'a>>,
         contributions: SelectedSpectralContributions,
     ) -> Result<Option<WeightingReplayChunk>, WeightingError> {
-        let weighted = self.sum.weighted_sample(problem, sample, contributions)?;
+        let weighted = self
+            .sum
+            .weighted_sample(problem, sample.into(), contributions)?;
         self.coverage.push(&weighted);
         self.block.push(weighted);
         if self.block.len() == self.max_block_samples {
@@ -960,17 +962,18 @@ pub struct WeightingSelectedSample {
 }
 
 impl WeightingSelectedSample {
-    fn from_selected(sample: &SelectedObservationSample) -> Self {
+    fn from_selected(sample: SelectedObservationSampleView<'_>) -> Self {
+        let coordinates = sample.coordinates();
         Self {
-            address: sample.address,
-            visibility: sample.visibility,
-            channel_flag: sample.channel_flag,
-            parallel_hand_group_flag: sample.parallel_hand_group_flag,
-            row_flag: sample.row_flag,
-            input_weight: sample.input_weight,
-            density_uvw_m: sample.coordinates.density_uvw_m,
-            transformed_uvw_m: sample.coordinates.transformed_uvw_m,
-            phase_shift_m: sample.coordinates.phase_shift_m,
+            address: sample.address(),
+            visibility: sample.visibility(),
+            channel_flag: sample.channel_flag(),
+            parallel_hand_group_flag: sample.parallel_hand_group_flag(),
+            row_flag: sample.row_flag(),
+            input_weight: sample.input_weight(),
+            density_uvw_m: coordinates.density_uvw_m,
+            transformed_uvw_m: coordinates.transformed_uvw_m,
+            phase_shift_m: coordinates.phase_shift_m,
         }
     }
 
@@ -1087,10 +1090,10 @@ pub struct WeightingReplayPhase<'a> {
 
 impl WeightingReplayPhase<'_> {
     /// Consume one T17 sample and return a full bounded block when ready.
-    pub fn consume(
+    pub fn consume<'a>(
         &mut self,
         problem: &CompiledProblem,
-        sample: &SelectedObservationSample,
+        sample: impl Into<SelectedObservationSampleView<'a>>,
         contributions: SelectedSpectralContributions,
     ) -> Result<Option<WeightingReplayChunk>, WeightingError> {
         if self.generation.problem != problem.problem_id()
@@ -1099,7 +1102,7 @@ impl WeightingReplayPhase<'_> {
         {
             return Err(WeightingError::ProblemMismatch);
         }
-        let sample = WeightingSelectedSample::from_selected(sample);
+        let sample = WeightingSelectedSample::from_selected(sample.into());
         let spectral_values = contributions
             .iter()
             .map(|contribution| {
