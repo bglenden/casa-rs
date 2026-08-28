@@ -80,7 +80,7 @@ impl SpectralContributionCache {
         &mut self,
         problem: &CompiledProblem,
         reported: &SelectedObservationTraversalSample<'_>,
-    ) -> Result<SelectedSpectralContributions, WeightingError> {
+    ) -> Result<&SelectedSpectralContributions, WeightingError> {
         let sample = reported.selected();
         let key = SpectralContributionKey {
             measurement_set: sample.address.measurement_set,
@@ -90,17 +90,22 @@ impl SpectralContributionCache {
             native: reported.spectral_evaluation().native(),
             output_frame: reported.spectral_evaluation().output_frame(),
         };
-        if let Some((cached_key, contributions)) = &self.last
-            && *cached_key == key
+        if self
+            .last
+            .as_ref()
+            .is_none_or(|(cached_key, _)| *cached_key != key)
         {
-            return Ok(contributions.clone());
+            let contributions =
+                compile_spectral_stencil(problem, sample, reported.spectral_evaluation())?
+                    .contributions()
+                    .clone();
+            self.last = Some((key, contributions));
         }
-        let contributions =
-            compile_spectral_stencil(problem, sample, reported.spectral_evaluation())?
-                .contributions()
-                .clone();
-        self.last = Some((key, contributions.clone()));
-        Ok(contributions)
+        Ok(&self
+            .last
+            .as_ref()
+            .expect("spectral contribution cache was populated")
+            .1)
     }
 }
 
@@ -139,6 +144,7 @@ fn density_spectral_contributions(
     }
     cache
         .compile(problem, reported)
+        .cloned()
         .map_err(ContinuumDensityCallbackError::Owner)
 }
 
@@ -185,7 +191,7 @@ trait StreamingWeightPhase {
         &mut self,
         problem: &CompiledProblem,
         sample: &SelectedObservationSample,
-        contributions: SelectedSpectralContributions,
+        contributions: &SelectedSpectralContributions,
     ) -> Result<Option<ReconstructionWeightedBlock>, WeightingError>;
 
     fn reuse_emitted_block(
@@ -205,7 +211,7 @@ impl StreamingWeightPhase for FusedWeightingPhase {
         &mut self,
         problem: &CompiledProblem,
         sample: &SelectedObservationSample,
-        contributions: SelectedSpectralContributions,
+        contributions: &SelectedSpectralContributions,
     ) -> Result<Option<ReconstructionWeightedBlock>, WeightingError> {
         self.consume(problem, sample, contributions)
     }
@@ -232,7 +238,7 @@ impl StreamingWeightPhase for WeightingReplayPhase<'_> {
         &mut self,
         problem: &CompiledProblem,
         sample: &SelectedObservationSample,
-        contributions: SelectedSpectralContributions,
+        contributions: &SelectedSpectralContributions,
     ) -> Result<Option<ReconstructionWeightedBlock>, WeightingError> {
         self.consume(problem, sample, contributions)
     }
@@ -402,7 +408,7 @@ where
                     )?;
             }
             if let Some(block) = weights
-                .consume_sample(problem, transformed.selected(), contributions)
+                .consume_sample(problem, transformed.selected(), &contributions)
                 .map_err(ReplayCallbackError::Owner)?
             {
                 emit(&block).map_err(ReplayCallbackError::Consumer)?;
@@ -509,7 +515,7 @@ where
                 }
                 if let Some(block) = self
                     .weights
-                    .consume_sample(self.problem, transformed.selected(), contributions)
+                    .consume_sample(self.problem, transformed.selected(), &contributions)
                     .map_err(WeightingBlockKernelError::Owner)?
                 {
                     (self.emit)(&block).map_err(WeightingBlockKernelError::Consumer)?;
@@ -579,21 +585,26 @@ impl<'a> PartitionedKernel<SelectedObservationBlock> for DensityBlockKernel<'a> 
         let density = &mut self.density;
         let spectral_contributions = &mut self.spectral_contributions;
         self.consumer
-            .consume(storage, |reported| {
-                let contributions = match continuum {
-                    Some(continuum) => density_spectral_contributions(
+            .consume(storage, |reported| match continuum {
+                Some(continuum) => {
+                    let contributions = density_spectral_contributions(
                         spectral_contributions,
                         problem,
                         &reported,
                         continuum,
-                    )?,
-                    None => spectral_contributions
+                    )?;
+                    density
+                        .consume(problem, reported.selected(), &contributions)
+                        .map_err(ContinuumDensityCallbackError::Owner)
+                }
+                None => {
+                    let contributions = spectral_contributions
                         .compile(problem, &reported)
-                        .map_err(ContinuumDensityCallbackError::Owner)?,
-                };
-                density
-                    .consume(problem, reported.selected(), contributions)
-                    .map_err(ContinuumDensityCallbackError::Owner)
+                        .map_err(ContinuumDensityCallbackError::Owner)?;
+                    density
+                        .consume(problem, reported.selected(), contributions)
+                        .map_err(ContinuumDensityCallbackError::Owner)
+                }
             })
             .map_err(DensityBlockKernelError::Traversal)
     }
