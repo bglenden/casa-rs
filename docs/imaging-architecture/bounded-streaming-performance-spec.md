@@ -405,6 +405,9 @@ improvement over its current-Rust control. On the matched medium oracle, the
 single-process anchor. A multi-worker or device result cannot satisfy or waive
 that serial gate. Because each is a single pair, label the performance result
 provisional; do not claim repeatability or a statistical speedup distribution.
+The executable full-data gate is
+`tools/perf/imager/workloads/wave3-standard-mfs-single-term-heavy-wave2-serial.json`;
+it pins `parallel = false`, CPU standard-MFS execution, and the RustFFT backend.
 
 ### Complete 106.9 GiB streaming gate
 
