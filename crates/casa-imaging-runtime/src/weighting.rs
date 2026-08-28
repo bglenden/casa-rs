@@ -302,6 +302,74 @@ struct DensityBlockKernelCompletion<'a> {
     density: WeightingDensityPhase,
 }
 
+impl<W, F, E> WeightingBlockKernel<'_, W, F>
+where
+    W: StreamingWeightPhase,
+    F: FnMut(&ReconstructionWeightedBlock) -> Result<(), E>,
+    E: Error + 'static,
+{
+    fn consume_selected_block(
+        &mut self,
+        storage: &SelectedObservationBlock,
+    ) -> Result<(), WeightingBlockKernelError<E>> {
+        let problem = self.problem;
+        let weights = &mut self.weights;
+        let continuum = &mut self.continuum;
+        let spectral_support_sample_count = &mut self.spectral_support_sample_count;
+        let spectral_contributions = &mut self.spectral_contributions;
+        let emit = &mut self.emit;
+        self.consumer
+            .consume(storage, |run| {
+                for reported in run.samples() {
+                    consume_weighting_sample(
+                        problem,
+                        weights,
+                        continuum,
+                        spectral_support_sample_count,
+                        spectral_contributions,
+                        emit,
+                        reported,
+                    )?;
+                }
+                Ok(())
+            })
+            .map_err(WeightingBlockKernelError::Traversal)
+    }
+}
+
+impl DensityBlockKernel<'_> {
+    fn consume_selected_block(
+        &mut self,
+        storage: &SelectedObservationBlock,
+    ) -> Result<(), DensityBlockKernelError> {
+        let problem = self.problem;
+        let continuum = problem.visibility_transform();
+        let density = &mut self.density;
+        let spectral_contributions = &mut self.spectral_contributions;
+        self.consumer
+            .consume(storage, |run| {
+                for reported in run.samples() {
+                    let contributions = match continuum {
+                        Some(continuum) => density_spectral_contributions(
+                            spectral_contributions,
+                            problem,
+                            &reported,
+                            continuum,
+                        )?,
+                        None => spectral_contributions
+                            .compile(problem, &reported)
+                            .map_err(ContinuumDensityCallbackError::Owner)?,
+                    };
+                    density
+                        .consume(problem, reported.selected(), contributions)
+                        .map_err(ContinuumDensityCallbackError::Owner)?;
+                }
+                Ok(())
+            })
+            .map_err(DensityBlockKernelError::Traversal)
+    }
+}
+
 #[derive(Debug)]
 enum DensityBlockKernelError {
     Traversal(SelectedObservationTraversalError<ContinuumDensityCallbackError>),
@@ -476,28 +544,7 @@ where
         storage: &SelectedObservationBlock,
         (): Self::Partial,
     ) -> Result<(), Self::Error> {
-        let problem = self.problem;
-        let weights = &mut self.weights;
-        let continuum = &mut self.continuum;
-        let spectral_support_sample_count = &mut self.spectral_support_sample_count;
-        let spectral_contributions = &mut self.spectral_contributions;
-        let emit = &mut self.emit;
-        self.consumer
-            .consume(storage, |run| {
-                for reported in run.samples() {
-                    consume_weighting_sample(
-                        problem,
-                        weights,
-                        continuum,
-                        spectral_support_sample_count,
-                        spectral_contributions,
-                        emit,
-                        reported,
-                    )?;
-                }
-                Ok(())
-            })
-            .map_err(WeightingBlockKernelError::Traversal)
+        self.consume_selected_block(storage)
     }
 
     fn complete(mut self) -> Result<Self::Completion, Self::Error> {
@@ -585,31 +632,7 @@ impl<'a> PartitionedKernel<SelectedObservationBlock> for DensityBlockKernel<'a> 
         storage: &SelectedObservationBlock,
         (): Self::Partial,
     ) -> Result<(), Self::Error> {
-        let problem = self.problem;
-        let continuum = problem.visibility_transform();
-        let density = &mut self.density;
-        let spectral_contributions = &mut self.spectral_contributions;
-        self.consumer
-            .consume(storage, |run| {
-                for reported in run.samples() {
-                    let contributions = match continuum {
-                        Some(continuum) => density_spectral_contributions(
-                            spectral_contributions,
-                            problem,
-                            &reported,
-                            continuum,
-                        )?,
-                        None => spectral_contributions
-                            .compile(problem, &reported)
-                            .map_err(ContinuumDensityCallbackError::Owner)?,
-                    };
-                    density
-                        .consume(problem, reported.selected(), contributions)
-                        .map_err(ContinuumDensityCallbackError::Owner)?;
-                }
-                Ok(())
-            })
-            .map_err(DensityBlockKernelError::Traversal)
+        self.consume_selected_block(storage)
     }
 
     fn complete(self) -> Result<Self::Completion, Self::Error> {
@@ -3267,6 +3290,9 @@ impl FrozenWeightingReservation {
         self.bytes
     }
 }
+
+#[cfg(test)]
+mod serial_compute_probe;
 
 impl FrozenWeightingArtifact {
     pub(crate) fn with_cross_plan_reservation(

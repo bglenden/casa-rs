@@ -649,6 +649,7 @@ dependencies = [
  "casa-imaging-reconstruction",
  "casa-ms",
  "casa-test-support",
+ "casa-types",
  "fs2",
  "libc",
  "num-complex",

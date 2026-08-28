@@ -25,6 +25,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 casa-test-support = { path = "../casa-test-support" }
+casa-types = { path = "../casa-types" }
 libc = "0.2"
 
 [target.'cfg(all(target_os = "macos", not(coverage)))'.dependencies]
