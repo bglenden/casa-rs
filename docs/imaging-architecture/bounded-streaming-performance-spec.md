@@ -114,6 +114,23 @@ The probe used the public `VisibilityBuffer` only to obtain real stored shapes.
 It does not prove private selected-observation allocation identity. The private
 exact selected-observation path must provide that evidence in Delivery 1.
 
+### Rejected residual-only refresh candidate
+
+Commit `70d823603` tested one causal hypothesis against parent `707ae2322`:
+carry invariant PSF, sensitivity, sum weights, and validity across later major
+cycles so each replay grids only the changing residual. The reconstruction
+fixture was bit-exact against a fresh full replay, and the saved turnaround
+image, residual, model, and PSF had zero sampled RMS and maximum difference
+from the parent products.
+
+The serial turnaround exercised one initial pass and seven later major passes.
+Mean later-pass receipt duration fell only from about 9.035 seconds to 8.962
+seconds, while the initial pass rose from 17.802 seconds to 17.917 seconds.
+End-to-end wall was 84.818450 seconds versus the 84.812526-second parent: no
+observable improvement. This falsified the candidate before the long matched
+run. Commit `a276c4673` removed it; residual-only invariant reuse is not carried
+as speculative complexity in Delivery 1.
+
 ## Scope
 
 Delivery 1 includes:
