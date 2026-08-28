@@ -7652,7 +7652,7 @@ fn weighting_generation_rejects_missing_direct_predecessor_before_state_exists()
 }
 
 #[test]
-fn weighting_generation_rejects_mismatched_allocation_capabilities_before_state_exists() {
+fn weighting_replay_rejects_mismatched_block_allocation_before_samples_emit() {
     let problem = compile(request(198)).expect("logical weighting compilation");
     let planned_weighting = plan_weighting(
         &problem,
@@ -7667,7 +7667,7 @@ fn weighting_generation_rejects_mismatched_allocation_capabilities_before_state_
         implementation(6),
         implementation(6),
     );
-    let generation = fragment.generation_node().clone();
+    let replay = fragment.replay_node().clone();
     let physical = fragment
         .compose(&physical_work_for_weighting_problem(&problem, 6))
         .expect("production weighting physical work");
@@ -7705,9 +7705,9 @@ fn weighting_generation_rejects_mismatched_allocation_capabilities_before_state_
         authority(),
         &mut controller,
     )
-    .expect_err("generation must not begin with different allocation capacities");
+    .expect_err("replay must not begin with different block allocation capacities");
 
-    assert!(matches!(error, RunError::Execution { node, .. } if node == generation));
+    assert!(matches!(error, RunError::Execution { node, .. } if node == replay));
     let executor = &registry.executors[&implementation(6)];
     assert!(
         executor

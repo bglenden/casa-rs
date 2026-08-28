@@ -15,14 +15,17 @@ use smallvec::SmallVec;
 
 const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
 const GENERATION_DOMAIN: &[u8] = b"casa-rs-frozen-weighting-generation";
-const GENERATION_VERSION: u32 = 1;
+const GENERATION_VERSION: u32 = 2;
 const REPLAY_DOMAIN: &[u8] = b"casa-rs-weighting-replay";
 const REPLAY_VERSION: u32 = 1;
 const COVERAGE_DOMAIN: &[u8] = b"casa-rs-weighting-replay-coverage";
 const COVERAGE_VERSION: u32 = 2;
+const F32_MINIMUM_POWER: i16 = -149;
+const F32_SUPERACCUMULATOR_LIMBS: usize = 6;
 const CONSERVATIVE_TREE_ENTRY_BYTES: usize = 64;
-const F32_EXPONENT_BINS: usize = 254;
 const F64_EXPONENT_BINS: usize = 2_046;
+const DENSITY_ACCUMULATOR_DOMAIN: &[u8] = b"casa-rs-exact-density-accumulator";
+const DENSITY_ACCUMULATOR_VERSION: u32 = 1;
 
 macro_rules! weighting_identity {
     ($name:ident, $version:ident, $summary:literal) => {
@@ -123,8 +126,8 @@ pub struct WeightingResidency {
     density_grid_bytes: usize,
     robust_factor_bytes: usize,
     sum_weight_bytes: usize,
-    deterministic_partial_bytes: usize,
-    reduction_scratch_bytes: usize,
+    shared_density_accumulator_bytes: usize,
+    sum_weight_accumulator_bytes: usize,
     replay_read_bytes: usize,
     weighted_block_bytes: usize,
     simultaneous_selected_weighted_bytes: usize,
@@ -150,16 +153,16 @@ impl WeightingResidency {
         self.sum_weight_bytes
     }
 
-    /// Deterministic worker-partial bytes.
+    /// Shared exact density-accumulator bytes.
     #[must_use]
-    pub const fn deterministic_partial_bytes(self) -> usize {
-        self.deterministic_partial_bytes
+    pub const fn shared_density_accumulator_bytes(self) -> usize {
+        self.shared_density_accumulator_bytes
     }
 
-    /// Final-reduction scratch bytes.
+    /// Exact sum-weight accumulator bytes.
     #[must_use]
-    pub const fn reduction_scratch_bytes(self) -> usize {
-        self.reduction_scratch_bytes
+    pub const fn sum_weight_accumulator_bytes(self) -> usize {
+        self.sum_weight_accumulator_bytes
     }
 
     /// One bounded replay-read envelope block.
@@ -236,31 +239,15 @@ pub fn plan_weighting(
         .checked_mul(size_of::<f64>())
         .ok_or(WeightingError::ResidencyOverflow)?;
     let sum_weight_bytes = robust_factor_bytes;
-    let exact_cell_bytes = F32_EXPONENT_BINS
-        .checked_add(1)
-        .and_then(|entries| entries.checked_mul(CONSERVATIVE_TREE_ENTRY_BYTES))
+    let shared_density_accumulator_bytes = cells
+        .checked_mul(F32_SUPERACCUMULATOR_LIMBS)
+        .and_then(|limbs| limbs.checked_mul(size_of::<u64>()))
+        .and_then(|bytes| bytes.checked_add(size_of::<ExactF32Grid>()))
         .ok_or(WeightingError::ResidencyOverflow)?;
-    let deterministic_partial_bytes = cells
-        .checked_mul(exact_cell_bytes)
-        .and_then(|bytes| bytes.checked_mul(limits.density_partitions))
-        .and_then(|bytes| {
-            limits
-                .density_partitions
-                .checked_mul(size_of::<DensityPartial>())
-                .and_then(|containers| bytes.checked_add(containers))
-        })
-        .ok_or(WeightingError::ResidencyOverflow)?;
-    let density_reduction_bytes = cells
-        .checked_mul(exact_cell_bytes)
-        .ok_or(WeightingError::ResidencyOverflow)?;
-    let sum_weight_reduction_bytes = F64_EXPONENT_BINS
+    let sum_weight_accumulator_bytes = F64_EXPONENT_BINS
         .checked_add(1)
         .and_then(|entries| entries.checked_mul(CONSERVATIVE_TREE_ENTRY_BYTES))
         .and_then(|bytes| bytes.checked_mul(grid.planes))
-        .ok_or(WeightingError::ResidencyOverflow)?;
-    let reduction_scratch_bytes = density_reduction_bytes
-        .checked_add(sum_weight_reduction_bytes)
-        .and_then(|bytes| bytes.checked_add(size_of::<BTreeMap<usize, ExactF32Sum>>()))
         .ok_or(WeightingError::ResidencyOverflow)?;
     let replay_sample_bytes = size_of::<WeightingReplayInputSample>();
     let replay_read_bytes = limits
@@ -277,8 +264,8 @@ pub fn plan_weighting(
     let peak_bytes = density_grid_bytes
         .checked_add(robust_factor_bytes)
         .and_then(|bytes| bytes.checked_add(sum_weight_bytes))
-        .and_then(|bytes| bytes.checked_add(deterministic_partial_bytes))
-        .and_then(|bytes| bytes.checked_add(reduction_scratch_bytes))
+        .and_then(|bytes| bytes.checked_add(shared_density_accumulator_bytes))
+        .and_then(|bytes| bytes.checked_add(sum_weight_accumulator_bytes))
         .and_then(|bytes| bytes.checked_add(simultaneous_selected_weighted_bytes))
         .ok_or(WeightingError::ResidencyOverflow)?;
     Ok(WeightingPlan {
@@ -290,8 +277,8 @@ pub fn plan_weighting(
             density_grid_bytes,
             robust_factor_bytes,
             sum_weight_bytes,
-            deterministic_partial_bytes,
-            reduction_scratch_bytes,
+            shared_density_accumulator_bytes,
+            sum_weight_accumulator_bytes,
             replay_read_bytes,
             weighted_block_bytes,
             simultaneous_selected_weighted_bytes,
@@ -498,9 +485,13 @@ pub fn begin_weighting_generation(
         commitment: plan.commitment,
         grid: plan.grid,
         planned_residency: plan.planned,
-        partials: (0..plan.limits.density_partitions)
-            .map(|_| DensityPartial::default())
-            .collect(),
+        density: ExactF32Grid::new(
+            if matches!(problem.weighting().scheme(), WeightingScheme::Natural) {
+                0
+            } else {
+                plan.grid.cell_count()?
+            },
+        )?,
         ordinal: 0,
         frequency_range_hz: None,
     })
@@ -528,7 +519,7 @@ pub struct WeightingDensityPhase {
     commitment: WeightingCommitmentId,
     grid: DensityGridShape,
     planned_residency: WeightingResidency,
-    partials: Vec<DensityPartial>,
+    density: ExactF32Grid,
     ordinal: u64,
     frequency_range_hz: Option<[f64; 2]>,
 }
@@ -554,26 +545,13 @@ impl WeightingDensityPhase {
         }
         let input = input_weight(problem, &sample)?;
         if input > 0.0 && !matches!(problem.weighting().scheme(), WeightingScheme::Natural) {
-            let partial_index = usize::try_from(
-                self.ordinal
-                    % u64::try_from(self.partials.len())
-                        .map_err(|_| WeightingError::ResidencyOverflow)?,
-            )
-            .map_err(|_| WeightingError::ResidencyOverflow)?;
             match problem.weighting().density_scope() {
                 WeightDensityScope::NotApplicable => {}
                 WeightDensityScope::GlobalSelection => {
                     if let Some(contribution) = contributions.iter().next() {
                         let (_, uv) =
                             weighting_coordinate(problem, self.grid, &sample, Some(contribution))?;
-                        add_density_sample(
-                            problem,
-                            self.grid,
-                            &mut self.partials[partial_index],
-                            0,
-                            uv,
-                            input,
-                        )?;
+                        add_density_sample(problem, self.grid, &mut self.density, 0, uv, input)?;
                     }
                 }
                 WeightDensityScope::PerOutputChannel => {
@@ -583,7 +561,7 @@ impl WeightingDensityPhase {
                         add_density_sample(
                             problem,
                             self.grid,
-                            &mut self.partials[partial_index],
+                            &mut self.density,
                             plane,
                             uv,
                             input * contribution.factor(),
@@ -609,40 +587,20 @@ impl WeightingDensityPhase {
         {
             return Err(WeightingError::ProblemMismatch);
         }
-        let deterministic_partial_bytes = self
-            .partials
-            .iter()
-            .try_fold(0_usize, |total, partial| {
-                total.checked_add(partial.resident_bytes()?)
-            })
-            .ok_or(WeightingError::ResidencyOverflow)?;
-        let mut density_state = BTreeMap::<usize, ExactF32Sum>::new();
-        for partial in self.partials {
-            for (cell, sum) in partial.cells {
-                density_state.entry(cell).or_default().merge(sum)?;
-            }
-        }
-        let density_cells = if matches!(problem.weighting().scheme(), WeightingScheme::Natural) {
-            0
-        } else {
-            self.grid.cell_count()?
-        };
-        let mut density = vec![0.0; density_cells];
-        for (cell, sum) in &density_state {
-            density[*cell] = sum.value();
-        }
-        let density = density.into_boxed_slice();
+        let shared_density_accumulator_bytes = self.density.resident_bytes()?;
+        let density_digest = self.density.digest();
+        let density = self.density.values()?;
         let robust_f2 = robust_factors(problem, self.grid, &density);
         Ok(WeightingSumWeightPhase {
             problem: self.problem,
             commitment: self.commitment,
             grid: self.grid,
             density,
-            density_state,
+            density_digest,
             robust_f2,
             frequency_range_hz: self.frequency_range_hz,
             planned_residency: self.planned_residency,
-            deterministic_partial_bytes,
+            shared_density_accumulator_bytes,
             density_sample_count: self.ordinal,
             sum_weights: (0..self.grid.planes)
                 .map(|_| ExactF64Sum::default())
@@ -670,11 +628,11 @@ pub struct WeightingSumWeightPhase {
     commitment: WeightingCommitmentId,
     grid: DensityGridShape,
     density: Box<[f64]>,
-    density_state: BTreeMap<usize, ExactF32Sum>,
+    density_digest: [u8; 32],
     robust_f2: Box<[f64]>,
     frequency_range_hz: Option<[f64; 2]>,
     planned_residency: WeightingResidency,
-    deterministic_partial_bytes: usize,
+    shared_density_accumulator_bytes: usize,
     density_sample_count: u64,
     sum_weights: Vec<ExactF64Sum>,
     sum_sample_count: u64,
@@ -780,7 +738,7 @@ impl WeightingSumWeightPhase {
             self.commitment,
             sample_count,
             self.grid,
-            &self.density_state,
+            self.density_digest,
             &self.robust_f2,
             &sum_weights,
         );
@@ -789,9 +747,7 @@ impl WeightingSumWeightPhase {
             .len()
             .checked_mul(size_of::<f64>())
             .ok_or(WeightingError::ResidencyOverflow)?;
-        let reduction_scratch_bytes = exact_state_resident_bytes(&self.density_state)
-            .and_then(|bytes| bytes.checked_add(exact_sum_weight_bytes))
-            .ok_or(WeightingError::ResidencyOverflow)?;
+        let sum_weight_accumulator_bytes = exact_sum_weight_bytes;
         let robust_factor_bytes = self
             .robust_f2
             .len()
@@ -804,8 +760,8 @@ impl WeightingSumWeightPhase {
         let peak_bytes = density_grid_bytes
             .checked_add(robust_factor_bytes)
             .and_then(|bytes| bytes.checked_add(sum_weight_bytes))
-            .and_then(|bytes| bytes.checked_add(self.deterministic_partial_bytes))
-            .and_then(|bytes| bytes.checked_add(reduction_scratch_bytes))
+            .and_then(|bytes| bytes.checked_add(self.shared_density_accumulator_bytes))
+            .and_then(|bytes| bytes.checked_add(sum_weight_accumulator_bytes))
             .ok_or(WeightingError::ResidencyOverflow)?;
         Ok(WeightingAlgorithmState {
             generation_id,
@@ -822,8 +778,8 @@ impl WeightingSumWeightPhase {
                 density_grid_bytes,
                 robust_factor_bytes,
                 sum_weight_bytes,
-                deterministic_partial_bytes: self.deterministic_partial_bytes,
-                reduction_scratch_bytes,
+                shared_density_accumulator_bytes: self.shared_density_accumulator_bytes,
+                sum_weight_accumulator_bytes,
                 replay_read_bytes: 0,
                 weighted_block_bytes: 0,
                 simultaneous_selected_weighted_bytes: 0,
@@ -930,8 +886,12 @@ impl FusedWeightingPhase {
                 density_grid_bytes: state.generation_residency.density_grid_bytes,
                 robust_factor_bytes: state.generation_residency.robust_factor_bytes,
                 sum_weight_bytes: state.generation_residency.sum_weight_bytes,
-                deterministic_partial_bytes: state.generation_residency.deterministic_partial_bytes,
-                reduction_scratch_bytes: state.generation_residency.reduction_scratch_bytes,
+                shared_density_accumulator_bytes: state
+                    .generation_residency
+                    .shared_density_accumulator_bytes,
+                sum_weight_accumulator_bytes: state
+                    .generation_residency
+                    .sum_weight_accumulator_bytes,
                 replay_read_bytes: 0,
                 weighted_block_bytes,
                 simultaneous_selected_weighted_bytes: weighted_block_bytes,
@@ -1153,8 +1113,8 @@ impl WeightingReplayPhase<'_> {
                     density_grid_bytes: self.generation.generation_residency.density_grid_bytes,
                     robust_factor_bytes: self.generation.generation_residency.robust_factor_bytes,
                     sum_weight_bytes: self.generation.generation_residency.sum_weight_bytes,
-                    deterministic_partial_bytes: 0,
-                    reduction_scratch_bytes: 0,
+                    shared_density_accumulator_bytes: 0,
+                    sum_weight_accumulator_bytes: 0,
                     replay_read_bytes,
                     weighted_block_bytes,
                     simultaneous_selected_weighted_bytes,
@@ -1427,15 +1387,15 @@ fn density_cell_index(shape: DensityGridShape, plane: usize, x: isize, y: isize)
 fn add_density_sample(
     problem: &CompiledProblem,
     grid: DensityGridShape,
-    partial: &mut DensityPartial,
+    density: &mut ExactF32Grid,
     plane: usize,
     uv: [f64; 2],
     input: f64,
 ) -> Result<(), WeightingError> {
     if let Some(cell) = density_build_cell(problem, grid, plane, uv) {
-        partial.add(cell, input as f32)?;
+        density.add(cell, input as f32)?;
         if let Some(conjugate) = density_build_cell(problem, grid, plane, [-uv[0], -uv[1]]) {
-            partial.add(conjugate, input as f32)?;
+            density.add(conjugate, input as f32)?;
         }
     }
     Ok(())
@@ -1573,30 +1533,6 @@ fn robust_factors(
     factors.into_boxed_slice()
 }
 
-#[derive(Default)]
-struct DensityPartial {
-    cells: BTreeMap<usize, ExactF32Sum>,
-}
-
-impl DensityPartial {
-    fn add(&mut self, cell: usize, value: f32) -> Result<(), WeightingError> {
-        self.cells.entry(cell).or_default().add(value)
-    }
-
-    fn resident_bytes(&self) -> Option<usize> {
-        exact_state_resident_bytes(&self.cells)
-    }
-}
-
-fn exact_state_resident_bytes(state: &BTreeMap<usize, ExactF32Sum>) -> Option<usize> {
-    state
-        .values()
-        .try_fold(size_of::<BTreeMap<usize, ExactF32Sum>>(), |total, sum| {
-            let entries = sum.bins.len().checked_add(1)?;
-            total.checked_add(entries.checked_mul(CONSERVATIVE_TREE_ENTRY_BYTES)?)
-        })
-}
-
 fn exact_f64_state_resident_bytes(state: &[ExactF64Sum], capacity: usize) -> Option<usize> {
     state.iter().try_fold(
         capacity.checked_mul(size_of::<ExactF64Sum>())?,
@@ -1604,46 +1540,227 @@ fn exact_f64_state_resident_bytes(state: &[ExactF64Sum], capacity: usize) -> Opt
     )
 }
 
-#[derive(Debug, Default)]
-struct ExactF32Sum {
-    bins: BTreeMap<i16, u128>,
+#[derive(Debug)]
+struct ExactF32Grid {
+    cells: usize,
+    limbs: Box<[u64]>,
 }
 
-impl ExactF32Sum {
-    fn add(&mut self, value: f32) -> Result<(), WeightingError> {
+impl ExactF32Grid {
+    fn new(cells: usize) -> Result<Self, WeightingError> {
+        let limb_count = cells
+            .checked_mul(F32_SUPERACCUMULATOR_LIMBS)
+            .ok_or(WeightingError::ResidencyOverflow)?;
+        Ok(Self {
+            cells,
+            limbs: vec![0; limb_count].into_boxed_slice(),
+        })
+    }
+
+    fn add(&mut self, cell: usize, value: f32) -> Result<(), WeightingError> {
         if value == 0.0 {
             return Ok(());
+        }
+        if !value.is_finite() || value < 0.0 {
+            return Err(WeightingError::GeneratedNonFiniteWeight);
         }
         let bits = value.to_bits();
         let exponent = ((bits >> 23) & 0xff) as i16;
         let fraction = bits & 0x7f_ffff;
         let (mantissa, power) = if exponent == 0 {
-            (u128::from(fraction), -149)
+            (u64::from(fraction), F32_MINIMUM_POWER)
         } else {
-            (u128::from((1 << 23) | fraction), exponent - 127 - 23)
+            (u64::from((1 << 23) | fraction), exponent - 127 - 23)
         };
-        let bin = self.bins.entry(power).or_default();
-        *bin = bin
-            .checked_add(mantissa)
-            .ok_or(WeightingError::ExactReductionOverflow)?;
-        Ok(())
+        let shift = usize::try_from(power - F32_MINIMUM_POWER)
+            .map_err(|_| WeightingError::GeneratedNonFiniteWeight)?;
+        let start = cell
+            .checked_mul(F32_SUPERACCUMULATOR_LIMBS)
+            .ok_or(WeightingError::ResidencyOverflow)?;
+        let end = start
+            .checked_add(F32_SUPERACCUMULATOR_LIMBS)
+            .ok_or(WeightingError::ResidencyOverflow)?;
+        let accumulator = self
+            .limbs
+            .get_mut(start..end)
+            .ok_or(WeightingError::OutputChannelMismatch)?;
+        add_shifted_mantissa(accumulator, mantissa, shift)
     }
 
-    fn merge(&mut self, other: Self) -> Result<(), WeightingError> {
-        for (power, mantissa) in other.bins {
-            let bin = self.bins.entry(power).or_default();
-            *bin = bin
-                .checked_add(mantissa)
-                .ok_or(WeightingError::ExactReductionOverflow)?;
+    fn resident_bytes(&self) -> Result<usize, WeightingError> {
+        self.limbs
+            .len()
+            .checked_mul(size_of::<u64>())
+            .and_then(|bytes| bytes.checked_add(size_of::<Self>()))
+            .ok_or(WeightingError::ResidencyOverflow)
+    }
+
+    fn digest(&self) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        hasher.update(DENSITY_ACCUMULATOR_DOMAIN);
+        hasher.update(DENSITY_ACCUMULATOR_VERSION.to_be_bytes());
+        hash_usize(&mut hasher, self.cells);
+        hash_usize(&mut hasher, F32_SUPERACCUMULATOR_LIMBS);
+        for limb in &self.limbs {
+            hasher.update(limb.to_be_bytes());
         }
-        Ok(())
+        hasher.finalize().into()
     }
 
-    fn value(&self) -> f64 {
-        self.bins
-            .iter()
-            .map(|(power, mantissa)| (*mantissa as f64) * 2_f64.powi(i32::from(*power)))
-            .sum()
+    fn values(self) -> Result<Box<[f64]>, WeightingError> {
+        if self.limbs.len() != self.cells * F32_SUPERACCUMULATOR_LIMBS {
+            return Err(WeightingError::ResidencyOverflow);
+        }
+        Ok(self
+            .limbs
+            .chunks_exact(F32_SUPERACCUMULATOR_LIMBS)
+            .map(exact_f32_accumulator_value)
+            .collect::<Vec<_>>()
+            .into_boxed_slice())
+    }
+}
+
+fn add_shifted_mantissa(
+    accumulator: &mut [u64],
+    mantissa: u64,
+    shift: usize,
+) -> Result<(), WeightingError> {
+    let word = shift / u64::BITS as usize;
+    let bit = shift % u64::BITS as usize;
+    let shifted = u128::from(mantissa) << bit;
+    let low = shifted as u64;
+    let high = (shifted >> u64::BITS) as u64;
+    let mut carry = false;
+    for (offset, addend) in [low, high].into_iter().enumerate() {
+        let target = accumulator
+            .get_mut(word + offset)
+            .ok_or(WeightingError::ExactReductionOverflow)?;
+        let (sum, addend_carry) = target.overflowing_add(addend);
+        let (sum, carry_carry) = sum.overflowing_add(u64::from(carry));
+        *target = sum;
+        carry = addend_carry || carry_carry;
+    }
+    for target in accumulator.iter_mut().skip(word + 2) {
+        if !carry {
+            return Ok(());
+        }
+        let (sum, next) = target.overflowing_add(1);
+        *target = sum;
+        carry = next;
+    }
+    if carry {
+        Err(WeightingError::ExactReductionOverflow)
+    } else {
+        Ok(())
+    }
+}
+
+fn exact_f32_accumulator_value(accumulator: &[u64]) -> f64 {
+    let Some(highest_bit) = accumulator.iter().rposition(|limb| *limb != 0).map(|word| {
+        word * u64::BITS as usize + (u64::BITS - 1 - accumulator[word].leading_zeros()) as usize
+    }) else {
+        return 0.0;
+    };
+    let shift = highest_bit.saturating_sub(f64::MANTISSA_DIGITS as usize - 1);
+    let word = shift / u64::BITS as usize;
+    let bit = shift % u64::BITS as usize;
+    let mut significand = accumulator[word] >> bit;
+    if bit != 0 && word + 1 < accumulator.len() {
+        significand |= accumulator[word + 1] << (u64::BITS as usize - bit);
+    }
+    if shift != 0 {
+        let round_bit = shift - 1;
+        let round_word = round_bit / u64::BITS as usize;
+        let round_offset = round_bit % u64::BITS as usize;
+        let halfway = accumulator[round_word] & (1_u64 << round_offset) != 0;
+        let lower_word_bits = if round_offset == 0 {
+            0
+        } else {
+            accumulator[round_word] & ((1_u64 << round_offset) - 1)
+        };
+        let sticky =
+            lower_word_bits != 0 || accumulator[..round_word].iter().any(|limb| *limb != 0);
+        if halfway && (sticky || significand & 1 != 0) {
+            significand += 1;
+        }
+    }
+    let mut scale = i32::try_from(shift).expect("six limbs fit i32") + i32::from(F32_MINIMUM_POWER);
+    if significand == 1_u64 << f64::MANTISSA_DIGITS {
+        significand >>= 1;
+        scale += 1;
+    }
+    (significand as f64) * 2_f64.powi(scale)
+}
+
+#[cfg(test)]
+mod exact_f32_accumulator_tests {
+    use super::*;
+
+    #[test]
+    fn every_finite_exponent_and_subnormal_extremes_round_trip() {
+        let values = [f32::from_bits(1), f32::from_bits(0x007f_ffff)]
+            .into_iter()
+            .chain((1_u32..=254).map(|exponent| f32::from_bits(exponent << 23)))
+            .chain([f32::MAX]);
+        for value in values {
+            let mut grid = ExactF32Grid::new(1).expect("one-cell grid");
+            grid.add(0, value).expect("finite positive f32");
+            assert_eq!(grid.values().expect("density")[0], f64::from(value));
+        }
+    }
+
+    #[test]
+    fn carry_rounding_and_large_multiplicity_are_exact_and_order_invariant() {
+        let mut carry = [u64::MAX, 0, 0, 0, 0, 0];
+        add_shifted_mantissa(&mut carry, 1, 0).expect("carry into next limb");
+        assert_eq!(carry, [0, 1, 0, 0, 0, 0]);
+
+        let mut first = ExactF32Grid::new(1).expect("first grid");
+        let mut second = ExactF32Grid::new(1).expect("second grid");
+        for _ in 0..100_000 {
+            first.add(0, 1.0).expect("unit contribution");
+            first.add(0, 0.5).expect("half contribution");
+        }
+        for _ in 0..100_000 {
+            second.add(0, 0.5).expect("half contribution");
+        }
+        for _ in 0..100_000 {
+            second.add(0, 1.0).expect("unit contribution");
+        }
+        assert_eq!(first.digest(), second.digest());
+        assert_eq!(first.values().expect("first density")[0], 150_000.0);
+        assert_eq!(second.values().expect("second density")[0], 150_000.0);
+    }
+
+    #[test]
+    fn casa_anchor_shape_touches_every_cell_within_the_planned_fixed_residency() {
+        let cells = 1_024 * 1_024;
+        let mut grid = ExactF32Grid::new(cells).expect("anchor density grid");
+        for cell in 0..cells {
+            let exponent = 1 + u32::try_from(cell % 254).expect("finite exponent");
+            grid.add(cell, f32::from_bits(exponent << 23))
+                .expect("one exact contribution per cell");
+        }
+        assert_eq!(
+            grid.resident_bytes().expect("resident bytes"),
+            cells * F32_SUPERACCUMULATOR_LIMBS * size_of::<u64>() + size_of::<ExactF32Grid>()
+        );
+        let values = grid.values().expect("frozen density");
+        assert_eq!(values.len(), cells);
+        assert!(values.iter().all(|value| value.is_finite() && *value > 0.0));
+    }
+
+    #[test]
+    fn fixed_width_proves_the_u64_sample_domain_and_overflow_fails_closed() {
+        assert!(
+            F32_SUPERACCUMULATOR_LIMBS * u64::BITS as usize >= 277 + u64::BITS as usize + 1,
+            "one f32 needs 277 magnitude bits and at most two density adds occur per sample"
+        );
+        let mut full = [u64::MAX; F32_SUPERACCUMULATOR_LIMBS];
+        assert_eq!(
+            add_shifted_mantissa(&mut full, 1, 0),
+            Err(WeightingError::ExactReductionOverflow)
+        );
     }
 }
 
@@ -1687,7 +1804,7 @@ fn generation_identity(
     commitment: WeightingCommitmentId,
     sample_count: u64,
     grid: DensityGridShape,
-    density: &BTreeMap<usize, ExactF32Sum>,
+    density_digest: [u8; 32],
     robust_f2: &[f64],
     sum_weights: &[f64],
 ) -> WeightingGenerationId {
@@ -1699,15 +1816,7 @@ fn generation_identity(
     hash_usize(&mut hasher, grid.width);
     hash_usize(&mut hasher, grid.height);
     hash_usize(&mut hasher, grid.planes);
-    hash_usize(&mut hasher, density.len());
-    for (cell, sum) in density {
-        hash_usize(&mut hasher, *cell);
-        hash_usize(&mut hasher, sum.bins.len());
-        for (power, mantissa) in &sum.bins {
-            hasher.update(power.to_be_bytes());
-            hasher.update(mantissa.to_be_bytes());
-        }
-    }
+    hasher.update(density_digest);
     for factor in robust_f2 {
         hasher.update(factor.to_bits().to_be_bytes());
     }

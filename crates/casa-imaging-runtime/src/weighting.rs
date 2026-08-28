@@ -990,7 +990,6 @@ impl<'a> WeightingPlanFragment<'a> {
                 .chain([
                     allocation_use(&self.ids.frozen_allocation, io_lifetime.clone()),
                     allocation_use(&self.ids.partial_allocation, io_lifetime.clone()),
-                    allocation_use(&self.ids.reduction_allocation, io_lifetime.clone()),
                 ])
                 .collect(),
             fences: BTreeSet::from([FenceKind::Io]),
@@ -1017,6 +1016,7 @@ impl<'a> WeightingPlanFragment<'a> {
                 .into_iter()
                 .chain([
                     allocation_use(&self.ids.frozen_allocation, io_lifetime.clone()),
+                    allocation_use(&self.ids.reduction_allocation, io_lifetime.clone()),
                     allocation_use(&self.ids.replay_read_allocation, io_lifetime.clone()),
                     allocation_use(&self.ids.weighted_block_allocation, io_lifetime.clone()),
                 ])
@@ -1378,18 +1378,18 @@ impl<'a> WeightingPlanFragment<'a> {
             AllocationSpec::new(
                 self.ids.partial_allocation.clone(),
                 self.ids.partial_slot.clone(),
-                residency.deterministic_partial_bytes(),
-                "weighting-density-partials",
+                residency.shared_density_accumulator_bytes(),
+                "weighting-shared-density-accumulator",
                 self.ids.generation_node.clone(),
                 generation_fence.clone(),
             )?,
             AllocationSpec::new(
                 self.ids.reduction_allocation.clone(),
                 self.ids.reduction_slot.clone(),
-                residency.reduction_scratch_bytes(),
-                "weighting-exact-reduction",
-                self.ids.generation_node.clone(),
-                generation_fence,
+                residency.sum_weight_accumulator_bytes(),
+                "weighting-sum-weight-accumulator",
+                self.ids.replay_node.clone(),
+                replay_fence.clone(),
             )?,
             AllocationSpec::new(
                 self.ids.replay_read_allocation.clone(),
@@ -1432,12 +1432,12 @@ impl<'a> WeightingPlanFragment<'a> {
             .allocation_specs()
             .map_err(|_| WeightingEvidenceError)?;
         let (expected_node, mut expected) = if context.node().id == self.ids.generation_node {
-            (
-                &self.ids.generation_node,
-                vec![&specs[0], &specs[1], &specs[2]],
-            )
+            (&self.ids.generation_node, vec![&specs[0], &specs[1]])
         } else if context.node().id == self.ids.replay_node {
-            (&self.ids.replay_node, vec![&specs[0], &specs[3], &specs[4]])
+            (
+                &self.ids.replay_node,
+                vec![&specs[0], &specs[2], &specs[3], &specs[4]],
+            )
         } else {
             return Err(WeightingEvidenceError);
         };
@@ -1516,7 +1516,7 @@ impl<'a> WeightingPlanFragment<'a> {
         let specs = self
             .allocation_specs()
             .map_err(|_| WeightingEvidenceError)?;
-        let expected = [&specs[0], &specs[1], &specs[2]];
+        let expected = [&specs[0], &specs[1]];
         validate_work_authority(
             context,
             &self.ids.generation_node,
@@ -1558,7 +1558,7 @@ impl<'a> WeightingPlanFragment<'a> {
         let specs = self
             .allocation_specs()
             .map_err(|_| WeightingEvidenceError)?;
-        let expected = [&specs[0], &specs[3], &specs[4]];
+        let expected = [&specs[0], &specs[2], &specs[3], &specs[4]];
         validate_work_authority(
             context,
             &self.ids.replay_node,
@@ -2424,8 +2424,12 @@ impl WeightingPlanIds {
             replay_node: WorkNodeId::new(format!("weighting-replay-{suffix}")),
             release_node: WorkNodeId::new(format!("weighting-release-{suffix}")),
             frozen_allocation: AllocationId::new(format!("weighting-frozen-{suffix}")),
-            partial_allocation: AllocationId::new(format!("weighting-partials-{suffix}")),
-            reduction_allocation: AllocationId::new(format!("weighting-reduction-{suffix}")),
+            partial_allocation: AllocationId::new(format!(
+                "weighting-shared-density-accumulator-{suffix}"
+            )),
+            reduction_allocation: AllocationId::new(format!(
+                "weighting-sum-weight-accumulator-{suffix}"
+            )),
             replay_read_allocation: AllocationId::new(format!("weighting-replay-read-{suffix}")),
             weighted_block_allocation: AllocationId::new(format!(
                 "weighting-weighted-block-{suffix}"
@@ -2434,8 +2438,12 @@ impl WeightingPlanIds {
                 "continuum-transform-row-{suffix}"
             )),
             frozen_slot: PhysicalSlotId::new(format!("weighting-frozen-slot-{suffix}")),
-            partial_slot: PhysicalSlotId::new(format!("weighting-partials-slot-{suffix}")),
-            reduction_slot: PhysicalSlotId::new(format!("weighting-reduction-slot-{suffix}")),
+            partial_slot: PhysicalSlotId::new(format!(
+                "weighting-shared-density-accumulator-slot-{suffix}"
+            )),
+            reduction_slot: PhysicalSlotId::new(format!(
+                "weighting-sum-weight-accumulator-slot-{suffix}"
+            )),
             replay_read_slot: PhysicalSlotId::new(format!("weighting-replay-read-slot-{suffix}")),
             weighted_block_slot: PhysicalSlotId::new(format!(
                 "weighting-weighted-block-slot-{suffix}"

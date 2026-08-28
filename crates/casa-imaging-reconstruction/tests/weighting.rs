@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use std::mem::size_of;
+
 use casa_imaging_model::{
     AntennaSelection, AxisOrder, CentreLaws, ColumnGeneration, ConsistencyToken,
     CorrelationProduct, CorrelationSelection, CorrelationType, DataDescriptionSelection,
@@ -149,10 +151,21 @@ fn problem(
     scope: WeightDensityScope,
     taper: Option<UvTaper>,
 ) -> casa_imaging_model::CompiledProblem {
+    problem_with_image_size(scheme, scope, taper, 32)
+}
+
+fn problem_with_image_size(
+    scheme: WeightingScheme,
+    scope: WeightDensityScope,
+    taper: Option<UvTaper>,
+    image_size: usize,
+) -> casa_imaging_model::CompiledProblem {
+    let reference_pixel = image_size as f64 / 2.0;
+    let model_samples = image_size * image_size * 2;
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
         SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
-        [16.0, 16.0],
+        [reference_pixel, reference_pixel],
         [-0.01, 0.01],
         [[1.0, 0.0], [0.0, 1.0]],
         [180.0, 0.0],
@@ -160,7 +173,7 @@ fn problem(
     let geometry = GeometryInput::new(
         vec![ImageDomainSpec::new(
             ImageDomainRole::Main,
-            ImageShape::new(32, 32),
+            ImageShape::new(image_size, image_size),
             direction,
             FacetLayout::Single,
             AxisOrder::new([
@@ -237,7 +250,15 @@ fn problem(
         geometry,
         ProblemInputIdentities::new(snapshot),
         ModelLifecycleRequirements::new(
-            ModelBounds::new(4_096, 4_096, 4_096, 4_096, 1.0e30, 1.0e30).expect("valid bounds"),
+            ModelBounds::new(
+                model_samples.max(4_096),
+                model_samples.max(4_096),
+                4_096,
+                4_096,
+                1.0e30,
+                1.0e30,
+            )
+            .expect("valid bounds"),
             NumericPrecision::F64,
             ModelInputCommitment::Empty,
         ),
@@ -1049,8 +1070,10 @@ fn planned_and_receipted_residency_cover_every_weighting_buffer_class() {
     let replayed = replay.residency();
 
     assert!(generated.density_grid_bytes() <= planned.density_grid_bytes());
-    assert!(generated.deterministic_partial_bytes() <= planned.deterministic_partial_bytes());
-    assert!(generated.reduction_scratch_bytes() <= planned.reduction_scratch_bytes());
+    assert!(
+        generated.shared_density_accumulator_bytes() <= planned.shared_density_accumulator_bytes()
+    );
+    assert!(generated.sum_weight_accumulator_bytes() <= planned.sum_weight_accumulator_bytes());
     assert!(generated.robust_factor_bytes() <= planned.robust_factor_bytes());
     assert!(generated.sum_weight_bytes() <= planned.sum_weight_bytes());
     assert_eq!(replayed.replay_read_bytes(), planned.replay_read_bytes());
@@ -1065,6 +1088,48 @@ fn planned_and_receipted_residency_cover_every_weighting_buffer_class() {
     );
     assert!(generated.peak_bytes() <= planned.peak_bytes());
     assert!(replayed.peak_bytes() <= planned.peak_bytes());
+}
+
+#[test]
+fn casa_anchor_grid_plans_one_shared_bounded_exact_accumulator() {
+    let image_size = 1_024;
+    let problem = problem_with_image_size(
+        WeightingScheme::Briggs { robust: 0.5 },
+        WeightDensityScope::GlobalSelection,
+        None,
+        image_size,
+    );
+    let plan = plan_weighting(
+        &problem,
+        WeightingExecutionLimits::new(4_096, 1).expect("anchor limits"),
+    )
+    .expect("anchor plan");
+    let partitioned = plan_weighting(
+        &problem,
+        WeightingExecutionLimits::new(4_096, 4).expect("partitioned anchor limits"),
+    )
+    .expect("partitioned anchor plan");
+    let planned = plan.planned_residency();
+    let density_cells = image_size * image_size;
+    let exact_f32_state_bytes = density_cells * 6 * size_of::<u64>() + 3 * size_of::<usize>();
+
+    assert_eq!(
+        planned.shared_density_accumulator_bytes(),
+        exact_f32_state_bytes,
+        "worker count must not multiply the shared exact density grid"
+    );
+    assert_eq!(
+        partitioned
+            .planned_residency()
+            .shared_density_accumulator_bytes(),
+        exact_f32_state_bytes,
+        "density partitions must use the same shared exact grid"
+    );
+    assert_eq!(
+        planned.sum_weight_accumulator_bytes(),
+        2_047 * 64,
+        "one output plane needs one bounded exact-f64 sum-weight accumulator"
+    );
 }
 
 #[test]
