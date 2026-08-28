@@ -561,6 +561,14 @@ change to a requested scientific control or a product comparison beyond the
 0.001 normalized-RMS ceiling leaves the performance lane and requires a
 separately justified correctness candidate.
 
+The first post-correction correlation-run candidate was retired at this first
+gate. Against parent `1cd80c86f`, the matched turnaround wall changed from
+29.217616 to 30.306484 seconds, while the sum of the three route/consume stages
+fell only 4.65 percent. That misses the ten-percent stage falsifier and does
+not authorize a 32 GiB or full frozen run. Its code was removed; the exact
+structural observations and limitations are recorded in
+`tools/perf/imager/evidence/artifacts/20260828-issue540-correlation-run-candidate.md`.
+
 The unchanged full 64-channel, 1024-pixel, `niter=500` serial workload and
 saved CASA products remain the only final pass/fail gate. Final reporting keeps
 correctness and performance separate and includes total wall, pass/cycle
