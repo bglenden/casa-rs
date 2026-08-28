@@ -127,6 +127,29 @@ class FakeMetadataFactory:
 
 
 class ImageComparisonProtocolTests(unittest.TestCase):
+    def test_missing_product_reports_neutral_existence_without_legacy_aliases(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            left = root / "left.image"
+            right = root / "right.image"
+            left.mkdir()
+
+            result = comparator.compare_one(
+                str(left),
+                str(right),
+                max_elements=4,
+                panel_dir=str(root / "panels"),
+                suffix=".image",
+                beam_info={"status": "missing_psf"},
+                legacy_operand_aliases=False,
+            )
+
+        self.assertEqual("missing", result["status"])
+        self.assertTrue(result["left_exists"])
+        self.assertFalse(result["right_exists"])
+        self.assertNotIn("rust_exists", result)
+        self.assertNotIn("casa_exists", result)
+
     def test_host_and_casa_schema_v4_bind_the_same_workspace_request(self) -> None:
         request = normalize_comparison_request(comparison_request())
 
