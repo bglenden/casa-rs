@@ -307,7 +307,10 @@ impl<'a> SelectedObservationInspection<'a> {
             expected_sources,
             write_set,
             source_index: 0,
-            source: SourceInspection::new(&expected_sources[0]),
+            source: SourceInspection::new(
+                &expected_sources[0],
+                prediction_target(write_set, expected_sources[0].measurement_set()),
+            ),
             generation: SelectedObservationGenerationEncoder::new(),
         }
     }
@@ -338,20 +341,17 @@ impl<'a> SelectedObservationInspection<'a> {
                     },
                 );
             };
-            let prior = std::mem::replace(&mut self.source, SourceInspection::new(expected));
+            let prior = std::mem::replace(
+                &mut self.source,
+                SourceInspection::new(
+                    expected,
+                    prediction_target(self.write_set, expected.measurement_set()),
+                ),
+            );
             prior.finish()?;
             self.source_index = next_index;
         }
-        let expected_prediction_target =
-            if self.write_set.visibility_columns().iter().any(|write| {
-                write.column() == MsColumnKind::ModelData
-                    && write.measurement_set() == self.source.expected.measurement_set()
-            }) {
-                SelectedPredictionTarget::ModelData
-            } else {
-                SelectedPredictionTarget::NotRequested
-            };
-        self.source.push(sample, expected_prediction_target)?;
+        self.source.push(sample)?;
         self.generation.push(sample);
         Ok(())
     }
@@ -362,23 +362,45 @@ impl<'a> SelectedObservationInspection<'a> {
     ) -> Result<(SelectedObservationGenerationId, u64), SelectedObservationInspectionError> {
         self.source.finish()?;
         for expected in &self.expected_sources[self.source_index + 1..] {
-            SourceInspection::new(expected).finish()?;
+            SourceInspection::new(
+                expected,
+                prediction_target(self.write_set, expected.measurement_set()),
+            )
+            .finish()?;
         }
         Ok(self.generation.finish())
     }
 }
 
+fn prediction_target(
+    write_set: &ObservationWriteSet,
+    measurement_set: MeasurementSetIdentity,
+) -> SelectedPredictionTarget {
+    if write_set.visibility_columns().iter().any(|write| {
+        write.column() == MsColumnKind::ModelData && write.measurement_set() == measurement_set
+    }) {
+        SelectedPredictionTarget::ModelData
+    } else {
+        SelectedPredictionTarget::NotRequested
+    }
+}
+
 struct SourceInspection<'a> {
     expected: &'a MeasurementSetReadAccess,
+    prediction_target: SelectedPredictionTarget,
     rows: SelectedRowSequenceAccumulator,
     row: Option<RowInspection<'a>>,
 }
 
 impl<'a> SourceInspection<'a> {
-    fn new(expected: &'a MeasurementSetReadAccess) -> Self {
+    fn new(
+        expected: &'a MeasurementSetReadAccess,
+        prediction_target: SelectedPredictionTarget,
+    ) -> Self {
         let selected_rows = expected.selection().rows();
         Self {
             expected,
+            prediction_target,
             rows: SelectedRowSequenceAccumulator::new(selected_rows.source_row_count()),
             row: None,
         }
@@ -391,9 +413,8 @@ impl<'a> SourceInspection<'a> {
     fn push(
         &mut self,
         sample: &SelectedObservationSample,
-        expected_prediction_target: SelectedPredictionTarget,
     ) -> Result<(), SelectedObservationInspectionError> {
-        if sample.prediction_target != expected_prediction_target {
+        if sample.prediction_target != self.prediction_target {
             return Err(
                 SelectedObservationInspectionError::PredictionTargetMismatch {
                     measurement_set: sample.address.measurement_set,

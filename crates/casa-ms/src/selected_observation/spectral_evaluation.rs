@@ -14,9 +14,7 @@ use casa_types::measures::{
     position::MPosition,
 };
 
-use crate::{
-    derived::engine::MsCalEngine, spectral_selection::convert_frequency_to_frame_with_frames,
-};
+use crate::{derived::engine::MsCalEngine, spectral_selection::PreparedFrequencyFrameConversion};
 
 use super::BoundObservationSourceError;
 
@@ -74,8 +72,6 @@ struct SpectralProjectionKey {
     frequency_frame: FrequencyFrame,
     field_id: i32,
     time_mjd_days_bits: u64,
-    input_weight_bits: u32,
-    validity: [bool; 3],
 }
 
 impl SpectralProjectionKey {
@@ -91,14 +87,17 @@ impl SpectralProjectionKey {
             frequency_frame: sample.address.frequency_frame,
             field_id: sample.metadata.field_id,
             time_mjd_days_bits: sample.coordinates.time.mjd_days().to_bits(),
-            input_weight_bits: sample.input_weight.to_bits(),
-            validity: [
-                sample.channel_flag,
-                sample.parallel_hand_group_flag,
-                sample.row_flag,
-            ],
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SpectralTransformKey {
+    measurement_set: casa_imaging_model::MeasurementSetIdentity,
+    field_id: i32,
+    time_mjd_seconds_bits: u64,
+    source_ref: FrequencyRef,
+    output_ref: FrequencyRef,
 }
 
 /// Retains frame-conversion state across the canonical correlation-major stream.
@@ -111,7 +110,12 @@ pub(super) struct SpectralEvaluationProjector {
     last_source: Option<casa_imaging_model::MeasurementSetIdentity>,
     output_frame: Option<MeasFrame>,
     source_frame: Option<(i32, u64, MeasFrame)>,
-    last_projection: Option<(SpectralProjectionKey, SelectedSpectralEvaluation)>,
+    last_transform: Option<(SpectralTransformKey, PreparedFrequencyFrameConversion)>,
+    last_projection: Option<(
+        SpectralProjectionKey,
+        SelectedSpectralInterval,
+        SelectedSpectralInterval,
+    )>,
 }
 
 impl SpectralEvaluationProjector {
@@ -120,6 +124,7 @@ impl SpectralEvaluationProjector {
             last_source: None,
             output_frame: None,
             source_frame: None,
+            last_transform: None,
             last_projection: None,
         }
     }
@@ -131,37 +136,57 @@ impl SpectralEvaluationProjector {
         geometry_engine: &MsCalEngine,
     ) -> Result<SelectedObservationTraversalSample, BoundObservationSourceError> {
         let key = SpectralProjectionKey::from_sample(&sample);
-        if let Some((cached_key, evaluation)) = self.last_projection
-            && cached_key == key
-        {
-            return Ok(
-                SelectedObservationTraversalSample::with_spectral_evaluation(sample, evaluation),
-            );
-        }
         if self.last_source != Some(sample.address.measurement_set) {
             self.last_source = Some(sample.address.measurement_set);
             self.output_frame = None;
             self.source_frame = None;
+            self.last_transform = None;
+            self.last_projection = None;
         }
-        let evaluation = derive_spectral_evaluation_cached(
-            problem,
-            &sample,
-            geometry_engine,
-            &mut self.source_frame,
-            &mut self.output_frame,
-        )?;
-        self.last_projection = Some((key, evaluation));
+        let (native, output) = if let Some((cached_key, native, output)) = self.last_projection
+            && cached_key == key
+        {
+            (native, output)
+        } else {
+            let intervals = derive_spectral_intervals_cached(
+                problem,
+                &sample,
+                geometry_engine,
+                &mut self.source_frame,
+                &mut self.output_frame,
+                &mut self.last_transform,
+            )?;
+            self.last_projection = Some((key, intervals.0, intervals.1));
+            intervals
+        };
+        let valid = !sample.channel_flag
+            && !sample.parallel_hand_group_flag
+            && !sample.row_flag
+            && sample.input_weight.is_finite()
+            && sample.input_weight > 0.0;
+        let evaluation = SelectedSpectralEvaluation::new(
+            native,
+            output,
+            if valid {
+                f64::from(sample.input_weight)
+            } else {
+                0.0
+            },
+            valid,
+        )
+        .ok_or(BoundObservationSourceError::SpectralContributionMismatch)?;
         Ok(SelectedObservationTraversalSample::with_spectral_evaluation(sample, evaluation))
     }
 }
 
-fn derive_spectral_evaluation_cached(
+fn derive_spectral_intervals_cached(
     problem: &CompiledProblem,
     sample: &SelectedObservationSample,
     geometry_engine: &MsCalEngine,
     source_frame: &mut Option<(i32, u64, MeasFrame)>,
     output_frame: &mut Option<MeasFrame>,
-) -> Result<SelectedSpectralEvaluation, BoundObservationSourceError> {
+    last_transform: &mut Option<(SpectralTransformKey, PreparedFrequencyFrameConversion)>,
+) -> Result<(SelectedSpectralInterval, SelectedSpectralInterval), BoundObservationSourceError> {
     let native_boundaries = if sample.address.channel_width_hz >= 0.0 {
         [
             sample.address.frequency_lower_hz,
@@ -179,68 +204,55 @@ fn derive_spectral_evaluation_cached(
         native_boundaries[1],
     )
     .ok_or(BoundObservationSourceError::SpectralContributionMismatch)?;
-    let output_centre_hz = evaluated_frequency_hz_cached(
+    let conversion = prepared_frequency_conversion_cached(
         problem,
         sample,
-        native.centre_hz(),
         geometry_engine,
         source_frame,
         output_frame,
+        last_transform,
     )?;
-    let output_first_hz = evaluated_frequency_hz_cached(
-        problem,
-        sample,
-        native_boundaries[0],
-        geometry_engine,
-        source_frame,
-        output_frame,
-    )?;
-    let output_second_hz = evaluated_frequency_hz_cached(
-        problem,
-        sample,
-        native_boundaries[1],
-        geometry_engine,
-        source_frame,
-        output_frame,
-    )?;
+    let output_centre_hz = conversion.convert_hz(native.centre_hz());
+    let output_first_hz = conversion.convert_hz(native_boundaries[0]);
+    let output_second_hz = conversion.convert_hz(native_boundaries[1]);
     let output = SelectedSpectralInterval::new(output_centre_hz, output_first_hz, output_second_hz)
         .ok_or(BoundObservationSourceError::SpectralContributionMismatch)?;
-    let valid = !sample.channel_flag
-        && !sample.parallel_hand_group_flag
-        && !sample.row_flag
-        && sample.input_weight.is_finite()
-        && sample.input_weight > 0.0;
-    SelectedSpectralEvaluation::new(
-        native,
-        output,
-        if valid {
-            f64::from(sample.input_weight)
-        } else {
-            0.0
-        },
-        valid,
-    )
-    .ok_or(BoundObservationSourceError::SpectralContributionMismatch)
+    Ok((native, output))
 }
 
-fn evaluated_frequency_hz_cached(
+fn prepared_frequency_conversion_cached(
     problem: &CompiledProblem,
     sample: &SelectedObservationSample,
-    frequency_hz: f64,
     geometry_engine: &MsCalEngine,
     source_frame_cache: &mut Option<(i32, u64, MeasFrame)>,
     output_frame_cache: &mut Option<MeasFrame>,
-) -> Result<f64, BoundObservationSourceError> {
+    last_transform: &mut Option<(SpectralTransformKey, PreparedFrequencyFrameConversion)>,
+) -> Result<PreparedFrequencyFrameConversion, BoundObservationSourceError> {
     let spectral = problem.geometry().spectral();
     let source_ref = frequency_ref(sample.address.frequency_frame);
     let output_ref = frequency_ref(spectral.output_frame());
+    let time_mjd_seconds = sample.coordinates.time.mjd_days() * 86_400.0;
+    let time_bits = time_mjd_seconds.to_bits();
+    let key = SpectralTransformKey {
+        measurement_set: sample.address.measurement_set,
+        field_id: sample.metadata.field_id,
+        time_mjd_seconds_bits: time_bits,
+        source_ref,
+        output_ref,
+    };
+    if let Some((cached_key, conversion)) = *last_transform
+        && cached_key == key
+    {
+        return Ok(conversion);
+    }
     if source_ref == output_ref {
-        return Ok(frequency_hz);
+        let conversion = PreparedFrequencyFrameConversion::new(source_ref, output_ref, None, None)
+            .map_err(BoundObservationSourceError::from)?;
+        *last_transform = Some((key, conversion));
+        return Ok(conversion);
     }
     let field_id = usize::try_from(sample.metadata.field_id)
         .map_err(|_| BoundObservationSourceError::SpectralContributionMismatch)?;
-    let time_mjd_seconds = sample.coordinates.time.mjd_days() * 86_400.0;
-    let time_bits = time_mjd_seconds.to_bits();
     let source_frame = match source_frame_cache {
         Some((cached_field, cached_time, frame))
             if *cached_field == sample.metadata.field_id && *cached_time == time_bits =>
@@ -276,14 +288,15 @@ fn evaluated_frequency_hz_cached(
             ),
         )
     });
-    convert_frequency_to_frame_with_frames(
+    let conversion = PreparedFrequencyFrameConversion::new(
         source_ref,
         output_ref,
-        frequency_hz,
         Some(source_frame),
         Some(output_frame),
     )
-    .map_err(Into::into)
+    .map_err(BoundObservationSourceError::from)?;
+    *last_transform = Some((key, conversion));
+    Ok(conversion)
 }
 
 const fn direction_ref(frame: DirectionFrame) -> DirectionRef {

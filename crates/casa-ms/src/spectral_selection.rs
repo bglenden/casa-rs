@@ -1872,38 +1872,76 @@ pub(crate) fn convert_frequency_to_frame_with_frames(
     source_frame: Option<&MeasFrame>,
     target_frame: Option<&MeasFrame>,
 ) -> MsResult<f64> {
-    if source_freq_ref == target_freq_ref {
-        return Ok(frequency_hz);
-    }
-    let source_frame = source_frame.ok_or_else(|| {
+    PreparedFrequencyFrameConversion::new(
+        source_freq_ref,
+        target_freq_ref,
+        source_frame,
+        target_frame,
+    )
+    .map(|conversion| conversion.convert_hz(frequency_hz))
+}
+
+const MAX_DIRECT_FREQUENCY_HOPS: usize = FrequencyRef::ALL.len() - 1;
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PreparedFrequencyFrameConversion {
+    hop_factors: [f64; MAX_DIRECT_FREQUENCY_HOPS],
+    hop_count: usize,
+}
+
+impl PreparedFrequencyFrameConversion {
+    pub(crate) fn new(
+        source_freq_ref: FrequencyRef,
+        target_freq_ref: FrequencyRef,
+        source_frame: Option<&MeasFrame>,
+        target_frame: Option<&MeasFrame>,
+    ) -> MsResult<Self> {
+        if source_freq_ref == target_freq_ref {
+            return Ok(Self {
+                hop_factors: [1.0; MAX_DIRECT_FREQUENCY_HOPS],
+                hop_count: 0,
+            });
+        }
+        let source_frame = source_frame.ok_or_else(|| {
         MsError::VersionError(format!(
             "source frame required for cross-frame frequency conversion from {source_freq_ref} to {target_freq_ref}"
         ))
     })?;
-    let target_frame = target_frame.ok_or_else(|| {
+        let target_frame = target_frame.ok_or_else(|| {
         MsError::VersionError(format!(
             "target frame required for cross-frame frequency conversion from {source_freq_ref} to {target_freq_ref}"
         ))
     })?;
-    let mut current_frequency_hz = frequency_hz;
-    let mut current_ref = source_freq_ref;
-    for next_ref in direct_frequency_hop_path(source_freq_ref, target_freq_ref)? {
-        let hop_frame = if direct_frequency_hop_uses_target_frame(current_ref, next_ref) {
-            target_frame
-        } else {
-            source_frame
-        };
-        current_frequency_hz = MFrequency::new(current_frequency_hz, current_ref)
-            .convert_to(next_ref, hop_frame)
-            .map(|frequency| frequency.hz())
-            .map_err(|error| {
-                MsError::VersionError(format!(
-                    "convert frequency {current_frequency_hz} Hz from {current_ref} to {next_ref}: {error}"
-                ))
-            })?;
-        current_ref = next_ref;
+        let mut hop_factors = [1.0; MAX_DIRECT_FREQUENCY_HOPS];
+        let mut current_ref = source_freq_ref;
+        let path = direct_frequency_hop_path(source_freq_ref, target_freq_ref)?;
+        for (hop_index, next_ref) in path.iter().copied().enumerate() {
+            let hop_frame = if direct_frequency_hop_uses_target_frame(current_ref, next_ref) {
+                target_frame
+            } else {
+                source_frame
+            };
+            hop_factors[hop_index] = MFrequency::new(1.0, current_ref)
+                .convert_to(next_ref, hop_frame)
+                .map(|frequency| frequency.hz())
+                .map_err(|error| {
+                    MsError::VersionError(format!(
+                        "prepare frequency conversion from {current_ref} to {next_ref}: {error}"
+                    ))
+                })?;
+            current_ref = next_ref;
+        }
+        Ok(Self {
+            hop_factors,
+            hop_count: path.len(),
+        })
     }
-    Ok(current_frequency_hz)
+
+    pub(crate) fn convert_hz(self, frequency_hz: f64) -> f64 {
+        self.hop_factors[..self.hop_count]
+            .iter()
+            .fold(frequency_hz, |converted, factor| converted * factor)
+    }
 }
 
 /// Convert one scalar frequency into a doppler velocity in m/s using the given
@@ -3390,7 +3428,7 @@ mod tests {
         )
         .unwrap();
 
-        assert!((converted - manual).abs() < 1.0e-6);
+        assert_eq!(converted.to_bits(), manual.to_bits());
         assert!((converted - source_only).abs() > 1.0e-6);
     }
 
