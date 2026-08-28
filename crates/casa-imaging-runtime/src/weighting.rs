@@ -280,6 +280,20 @@ struct CompletedWeightingBlockStream<'a, T> {
     measurements: BoundedStreamMeasurements,
 }
 
+struct WeightingBlockStreamFailure<E> {
+    error: Box<WeightingReplayError<E>>,
+    measurements: Box<BoundedStreamMeasurements>,
+}
+
+impl<E> From<WeightingReplayError<E>> for WeightingBlockStreamFailure<E> {
+    fn from(error: WeightingReplayError<E>) -> Self {
+        Self {
+            error: Box::new(error),
+            measurements: Box::new(BoundedStreamMeasurements::default()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WeightingStreamRuntimeError {
     /// Exact diagnostic counters exceeded their numeric domain.
@@ -378,12 +392,22 @@ where
     type Completion = WeightingBlockKernelCompletion<'a, W::Finish>;
     type Error = WeightingBlockKernelError<E>;
 
-    fn partitions(
+    fn partition_count(
         &self,
         _block: BlockIdentity,
         _storage: &SelectedObservationBlock,
-    ) -> Result<Vec<KernelPartition<Self::Partition>>, Self::Error> {
-        Ok(vec![KernelPartition::exclusive(0, 0, ())])
+    ) -> Result<usize, Self::Error> {
+        Ok(1)
+    }
+
+    fn partition(
+        &self,
+        _block: BlockIdentity,
+        _storage: &SelectedObservationBlock,
+        local_ordinal: usize,
+    ) -> Result<KernelPartition<Self::Partition>, Self::Error> {
+        debug_assert_eq!(local_ordinal, 0);
+        Ok(KernelPartition::exclusive(0, 0, ()))
     }
 
     fn execute(
@@ -468,12 +492,22 @@ impl<'a> PartitionedKernel<SelectedObservationBlock> for DensityBlockKernel<'a> 
     type Completion = DensityBlockKernelCompletion<'a>;
     type Error = DensityBlockKernelError;
 
-    fn partitions(
+    fn partition_count(
         &self,
         _block: BlockIdentity,
         _storage: &SelectedObservationBlock,
-    ) -> Result<Vec<KernelPartition<Self::Partition>>, Self::Error> {
-        Ok(vec![KernelPartition::exclusive(0, 0, ())])
+    ) -> Result<usize, Self::Error> {
+        Ok(1)
+    }
+
+    fn partition(
+        &self,
+        _block: BlockIdentity,
+        _storage: &SelectedObservationBlock,
+        local_ordinal: usize,
+    ) -> Result<KernelPartition<Self::Partition>, Self::Error> {
+        debug_assert_eq!(local_ordinal, 0);
+        Ok(KernelPartition::exclusive(0, 0, ()))
     }
 
     fn execute(
@@ -599,7 +633,7 @@ fn execute_weighting_block_stream<'a, W, F, E>(
     weights: W,
     continuum: Option<ContinuumTransformStream<'a>>,
     emit: F,
-) -> Result<CompletedWeightingBlockStream<'a, W::Finish>, WeightingReplayError<E>>
+) -> Result<CompletedWeightingBlockStream<'a, W::Finish>, WeightingBlockStreamFailure<E>>
 where
     W: StreamingWeightPhase + Sync,
     F: FnMut(&ReconstructionWeightedBlock) -> Result<(), E> + Sync,
@@ -608,7 +642,7 @@ where
     let (source, consumer) = selected.into_block_stream(problem).map_err(|error| {
         WeightingReplayError::Traversal(SelectedObservationTraversalError::Binding(error))
     })?;
-    let outcome = execute_bounded(
+    let outcome = match execute_bounded(
         plan,
         0,
         SelectedBlockSource { source },
@@ -620,8 +654,15 @@ where
             spectral_support_sample_count: 0,
             emit,
         },
-    )
-    .map_err(map_bounded_stream_error)?;
+    ) {
+        Ok(outcome) => outcome,
+        Err(failure) => {
+            return Err(WeightingBlockStreamFailure {
+                error: Box::new(map_bounded_stream_error(*failure.cause)),
+                measurements: failure.measurements,
+            });
+        }
+    };
     let mut terminal = outcome.source_completion;
     terminal
         .record_runtime_residency(
@@ -751,7 +792,10 @@ pub enum WeightingStreamingMode {
 }
 
 impl<'a> WeightingPlanFragment<'a> {
-    /// Bind one reconstruction plan to its direct T17 predecessor and selected implementations.
+    /// Bind a non-streaming integration fragment.
+    ///
+    /// Production continuum execution uses [`Self::streaming_for_pass`]; this
+    /// constructor cannot enter the bounded spectral-cycle owner.
     #[must_use]
     pub fn new(
         plan: &'a WeightingPlan,
@@ -1451,11 +1495,13 @@ impl<'a> WeightingPlanFragment<'a> {
         }
         // Delivery 1 has one scientific consumer. A second claimed worker may
         // belong to visibility writeback, not to weighting/gridding execution.
-        BoundedStreamPlan::new(
+        BoundedStreamPlan::new::<(), ()>(
             self.source_resources.residency.peak_live_blocks(),
             1,
             u64::try_from(self.source_resources.residency.aggregate_resident_bytes())
                 .map_err(|_| WeightingEvidenceError)?,
+            1,
+            0,
         )
         .map_err(|_| WeightingEvidenceError)
     }
@@ -1734,6 +1780,7 @@ impl WeightingExecutionState {
     {
         if !matches!(self.phase, WeightingExecutionPhase::Empty)
             || self.retained_observation.is_some()
+            || fragment.streaming.is_some()
             || context.node().id != fragment.source_read
             || !context.node().kind.reads_observation()
         {
@@ -1792,7 +1839,7 @@ impl WeightingExecutionState {
                 error,
             ))
         })?;
-        let outcome = execute_bounded(
+        let outcome = match execute_bounded(
             plan,
             0,
             SelectedBlockSource { source },
@@ -1801,30 +1848,45 @@ impl WeightingExecutionState {
                 consumer,
                 density,
             },
-        )
-        .map_err(|error| match error {
-            BoundedStreamError::Source(error) => ContinuumDensityTraversalError::Traversal(
-                SelectedObservationTraversalError::Source(error),
-            ),
-            BoundedStreamError::Kernel(DensityBlockKernelError::Traversal(error)) => {
-                ContinuumDensityTraversalError::Traversal(error)
+        ) {
+            Ok(outcome) => outcome,
+            Err(failure) => {
+                self.latest_stream_measurements = Some(*failure.measurements);
+                return Err(match *failure.cause {
+                    BoundedStreamError::Source(error) => ContinuumDensityTraversalError::Traversal(
+                        SelectedObservationTraversalError::Source(error),
+                    ),
+                    BoundedStreamError::Kernel(DensityBlockKernelError::Traversal(error)) => {
+                        ContinuumDensityTraversalError::Traversal(error)
+                    }
+                    BoundedStreamError::MeasurementOverflow => {
+                        ContinuumDensityTraversalError::Runtime(
+                            WeightingStreamRuntimeError::MeasurementOverflow,
+                        )
+                    }
+                    BoundedStreamError::InvalidKernelPlan => {
+                        ContinuumDensityTraversalError::Runtime(
+                            WeightingStreamRuntimeError::InvalidKernelPlan,
+                        )
+                    }
+                    BoundedStreamError::ResidencyExceeded => {
+                        ContinuumDensityTraversalError::Runtime(
+                            WeightingStreamRuntimeError::ResidencyExceeded,
+                        )
+                    }
+                    BoundedStreamError::ProducerPanicked => {
+                        ContinuumDensityTraversalError::Runtime(
+                            WeightingStreamRuntimeError::ProducerPanicked,
+                        )
+                    }
+                    BoundedStreamError::ProducerDisconnected => {
+                        ContinuumDensityTraversalError::Runtime(
+                            WeightingStreamRuntimeError::ProducerDisconnected,
+                        )
+                    }
+                });
             }
-            BoundedStreamError::MeasurementOverflow => ContinuumDensityTraversalError::Runtime(
-                WeightingStreamRuntimeError::MeasurementOverflow,
-            ),
-            BoundedStreamError::InvalidKernelPlan => ContinuumDensityTraversalError::Runtime(
-                WeightingStreamRuntimeError::InvalidKernelPlan,
-            ),
-            BoundedStreamError::ResidencyExceeded => ContinuumDensityTraversalError::Runtime(
-                WeightingStreamRuntimeError::ResidencyExceeded,
-            ),
-            BoundedStreamError::ProducerPanicked => ContinuumDensityTraversalError::Runtime(
-                WeightingStreamRuntimeError::ProducerPanicked,
-            ),
-            BoundedStreamError::ProducerDisconnected => ContinuumDensityTraversalError::Runtime(
-                WeightingStreamRuntimeError::ProducerDisconnected,
-            ),
-        })?;
+        };
         let mut terminal = outcome.source_completion;
         terminal
             .record_runtime_residency(
@@ -1932,14 +1994,20 @@ impl WeightingExecutionState {
                 return Err(WeightingReplayError::Evidence(WeightingEvidenceError));
             }
         };
-        let completed = execute_weighting_block_stream(
+        let completed = match execute_weighting_block_stream(
             problem,
             selected,
             plan,
             stream,
             begin_continuum_stream(problem)?,
             emit,
-        )?;
+        ) {
+            Ok(completed) => completed,
+            Err(failure) => {
+                self.latest_stream_measurements = Some(*failure.measurements);
+                return Err(*failure.error);
+            }
+        };
         let CompletedWeightingBlockStream {
             selected,
             owner_completion,
@@ -2036,14 +2104,20 @@ impl WeightingExecutionState {
             .state
             .begin_replay(problem, fragment.plan)
             .map_err(WeightingReplayError::Owner)?;
-        let completed = execute_weighting_block_stream(
+        let completed = match execute_weighting_block_stream(
             problem,
             selected,
             plan,
             replay,
             begin_continuum_stream(problem)?,
             emit,
-        )?;
+        ) {
+            Ok(completed) => completed,
+            Err(failure) => {
+                self.latest_stream_measurements = Some(*failure.measurements);
+                return Err(*failure.error);
+            }
+        };
         let CompletedWeightingBlockStream {
             selected,
             owner_completion,
@@ -2106,7 +2180,7 @@ impl WeightingExecutionState {
         fragment: &WeightingPlanFragment<'_>,
         problem: &CompiledProblem,
     ) -> Result<(), WeightingGenerationError> {
-        if !matches!(self.phase, WeightingExecutionPhase::Empty) {
+        if !matches!(self.phase, WeightingExecutionPhase::Empty) || fragment.streaming.is_some() {
             return Err(WeightingGenerationError::Evidence(WeightingEvidenceError));
         }
         let retained = self
@@ -2153,6 +2227,9 @@ impl WeightingExecutionState {
     where
         E: Error + 'static,
     {
+        if fragment.streaming.is_some() {
+            return Err(WeightingReplayError::Evidence(WeightingEvidenceError));
+        }
         let phase = std::mem::take(&mut self.phase);
         let WeightingExecutionPhase::Frozen(frozen) = phase else {
             self.phase = phase;

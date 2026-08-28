@@ -2,6 +2,8 @@
 
 use std::{
     error::Error,
+    mem::size_of,
+    ops::{Deref, DerefMut},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
@@ -15,13 +17,17 @@ pub(crate) struct BoundedStreamPlan {
     source_slots: usize,
     workers: usize,
     source_capacity_bytes: u64,
+    maximum_partitions_per_block: usize,
+    kernel_window_capacity_bytes: u64,
 }
 
 impl BoundedStreamPlan {
-    pub(crate) fn new(
+    pub(crate) fn new<Partition, Partial>(
         source_slots: usize,
         workers: usize,
         source_capacity_bytes: u64,
+        maximum_partitions_per_block: usize,
+        dynamic_kernel_window_capacity_bytes: u64,
     ) -> Result<Self, BoundedStreamPlanError> {
         if !(1..=2).contains(&source_slots) {
             return Err(BoundedStreamPlanError::SourceSlots);
@@ -32,12 +38,40 @@ impl BoundedStreamPlan {
         if source_capacity_bytes == 0 {
             return Err(BoundedStreamPlanError::SourceCapacity);
         }
+        if maximum_partitions_per_block == 0 {
+            return Err(BoundedStreamPlanError::Partitions);
+        }
+        let kernel_window_capacity_bytes =
+            fixed_kernel_window_capacity_bytes::<Partition, Partial>(workers)?
+                .checked_add(dynamic_kernel_window_capacity_bytes)
+                .ok_or(BoundedStreamPlanError::KernelWindowCapacity)?;
         Ok(Self {
             source_slots,
             workers,
             source_capacity_bytes,
+            maximum_partitions_per_block,
+            kernel_window_capacity_bytes,
         })
     }
+}
+
+fn fixed_kernel_window_capacity_bytes<Partition, Partial>(
+    workers: usize,
+) -> Result<u64, BoundedStreamPlanError> {
+    let per_worker = size_of::<(WorkIdentity, KernelPartition<Partition>)>()
+        .checked_add(size_of::<(WorkIdentity, Partial)>())
+        .and_then(|bytes| bytes.checked_add(size_of::<u64>()))
+        .and_then(|bytes| {
+            bytes.checked_add(size_of::<(
+                WorkIdentity,
+                std::thread::ScopedJoinHandle<'static, ()>,
+            )>())
+        })
+        .ok_or(BoundedStreamPlanError::KernelWindowCapacity)?;
+    let vectors = per_worker
+        .checked_mul(workers)
+        .ok_or(BoundedStreamPlanError::KernelWindowCapacity)?;
+    u64::try_from(vectors).map_err(|_| BoundedStreamPlanError::KernelWindowCapacity)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,6 +79,8 @@ pub(crate) enum BoundedStreamPlanError {
     SourceSlots,
     Workers,
     SourceCapacity,
+    Partitions,
+    KernelWindowCapacity,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -155,17 +191,25 @@ pub(crate) trait PartitionedKernel<S>: Sync {
     type Completion;
     type Error: Error + Send + 'static;
 
-    fn partitions(
+    fn partition_count(&self, block: BlockIdentity, storage: &S) -> Result<usize, Self::Error>;
+    fn partition(
         &self,
         block: BlockIdentity,
         storage: &S,
-    ) -> Result<Vec<KernelPartition<Self::Partition>>, Self::Error>;
+        local_ordinal: usize,
+    ) -> Result<KernelPartition<Self::Partition>, Self::Error>;
+    fn partition_dynamic_capacity_bytes(&self, _partition: &Self::Partition) -> u64 {
+        0
+    }
     fn execute(
         &self,
         work: WorkIdentity,
         storage: &S,
         partition: &Self::Partition,
     ) -> Result<Self::Partial, Self::Error>;
+    fn partial_dynamic_capacity_bytes(&self, _partial: &Self::Partial) -> u64 {
+        0
+    }
     fn commit(
         &mut self,
         work: WorkIdentity,
@@ -194,6 +238,9 @@ pub(crate) struct BoundedStreamMeasurements {
     pub(crate) source_slots: usize,
     pub(crate) workers: usize,
     pub(crate) planned_source_capacity_bytes: u64,
+    pub(crate) maximum_partitions_per_block: usize,
+    pub(crate) planned_kernel_window_capacity_bytes: u64,
+    pub(crate) peak_kernel_window_capacity_bytes: u64,
     pub(crate) lease_return_nanos: u128,
     pub(crate) overlap_nanos: u128,
     pub(crate) wall_nanos: u128,
@@ -204,6 +251,12 @@ pub(crate) struct BoundedStreamOutcome<S, K> {
     pub(crate) source_completion: S,
     pub(crate) kernel_completion: K,
     pub(crate) measurements: BoundedStreamMeasurements,
+}
+
+#[derive(Debug)]
+pub(crate) struct BoundedStreamFailure<S, K> {
+    pub(crate) cause: Box<BoundedStreamError<S, K>>,
+    pub(crate) measurements: Box<BoundedStreamMeasurements>,
 }
 
 #[derive(Debug)]
@@ -219,13 +272,14 @@ pub(crate) enum BoundedStreamError<S, K> {
 
 type BoundedStreamResult<SourceCompletion, KernelCompletion, SourceError, KernelError> = Result<
     BoundedStreamOutcome<SourceCompletion, KernelCompletion>,
-    BoundedStreamError<SourceError, KernelError>,
+    BoundedStreamFailure<SourceError, KernelError>,
 >;
 
 struct ProcessMeasurements {
     prepare_nanos: u128,
     execute_nanos: u128,
     commit_nanos: u128,
+    peak_kernel_window_capacity_bytes: u64,
 }
 
 fn process_block<S, K>(
@@ -238,85 +292,162 @@ where
     S: Sync,
     K: PartitionedKernel<S>,
 {
-    let prepare_started = Instant::now();
-    let partitions = kernel
-        .partitions(block, storage)
+    let count_started = Instant::now();
+    let partition_count = kernel
+        .partition_count(block, storage)
         .map_err(BoundedStreamError::Kernel)?;
-    let prepare_nanos = prepare_started.elapsed().as_nanos();
-    let mut pending = (0..partitions.len()).collect::<Vec<_>>();
-    let mut completed = Vec::with_capacity(partitions.len());
-    let execute_started = Instant::now();
-    while !pending.is_empty() {
-        let mut exclusive_regions = Vec::new();
-        let mut wave = Vec::new();
-        let mut rest = Vec::new();
-        for index in pending {
-            let compatible = match partitions[index].accumulation {
+    if partition_count > plan.maximum_partitions_per_block {
+        return Err(BoundedStreamError::InvalidKernelPlan);
+    }
+    let mut prepare_nanos = count_started.elapsed().as_nanos();
+    let mut execute_nanos = 0_u128;
+    let mut commit_nanos = 0_u128;
+    let mut peak_kernel_window_capacity_bytes = 0_u64;
+    let mut wave = Vec::<(WorkIdentity, KernelPartition<K::Partition>)>::new();
+    let mut completed = Vec::<(WorkIdentity, K::Partial)>::new();
+    let mut exclusive_regions = Vec::<u64>::new();
+    wave.try_reserve_exact(plan.workers)
+        .map_err(|_| BoundedStreamError::InvalidKernelPlan)?;
+    completed
+        .try_reserve_exact(plan.workers)
+        .map_err(|_| BoundedStreamError::InvalidKernelPlan)?;
+    exclusive_regions
+        .try_reserve_exact(plan.workers)
+        .map_err(|_| BoundedStreamError::InvalidKernelPlan)?;
+    let fixed_wave_bytes = vector_capacity_bytes(&wave)
+        .and_then(|bytes| bytes.checked_add(vector_capacity_bytes(&completed)?))
+        .and_then(|bytes| bytes.checked_add(vector_capacity_bytes(&exclusive_regions)?))
+        .ok_or(BoundedStreamError::MeasurementOverflow)?;
+    if fixed_wave_bytes > plan.kernel_window_capacity_bytes {
+        return Err(BoundedStreamError::ResidencyExceeded);
+    }
+
+    let mut next_ordinal = 0usize;
+    let mut deferred: Option<(WorkIdentity, KernelPartition<K::Partition>)> = None;
+    let mut previous_identity = None;
+    while next_ordinal < partition_count || deferred.is_some() {
+        wave.clear();
+        completed.clear();
+        exclusive_regions.clear();
+        let mut dynamic_partition_bytes = 0_u64;
+        if let Some((identity, partition)) = deferred.take() {
+            if let Accumulation::Exclusive { region } = partition.accumulation {
+                exclusive_regions.push(region);
+            }
+            dynamic_partition_bytes = kernel.partition_dynamic_capacity_bytes(&partition.payload);
+            wave.push((identity, partition));
+        }
+        while wave.len() < plan.workers && next_ordinal < partition_count {
+            let prepare_started = Instant::now();
+            let partition = kernel
+                .partition(block, storage, next_ordinal)
+                .map_err(BoundedStreamError::Kernel)?;
+            let identity = partition.identity(block, next_ordinal as u64);
+            prepare_nanos = prepare_nanos
+                .checked_add(prepare_started.elapsed().as_nanos())
+                .ok_or(BoundedStreamError::MeasurementOverflow)?;
+            if previous_identity.is_some_and(|previous| identity <= previous) {
+                return Err(BoundedStreamError::InvalidKernelPlan);
+            }
+            previous_identity = Some(identity);
+            next_ordinal += 1;
+            let compatible = match partition.accumulation {
                 Accumulation::Exclusive { region } => !exclusive_regions.contains(&region),
                 Accumulation::OrderedPartial { .. } => true,
             };
-            if wave.len() < plan.workers && compatible {
-                if let Accumulation::Exclusive { region } = partitions[index].accumulation {
-                    exclusive_regions.push(region);
-                }
-                wave.push(index);
-            } else {
-                rest.push(index);
+            if !compatible {
+                deferred = Some((identity, partition));
+                break;
             }
+            if let Accumulation::Exclusive { region } = partition.accumulation {
+                exclusive_regions.push(region);
+            }
+            dynamic_partition_bytes = dynamic_partition_bytes
+                .checked_add(kernel.partition_dynamic_capacity_bytes(&partition.payload))
+                .ok_or(BoundedStreamError::MeasurementOverflow)?;
+            wave.push((identity, partition));
         }
-        pending = rest;
-        let kernel_ref = &*kernel;
+        let partition_window_bytes = fixed_wave_bytes
+            .checked_add(dynamic_partition_bytes)
+            .ok_or(BoundedStreamError::MeasurementOverflow)?;
+        if partition_window_bytes > plan.kernel_window_capacity_bytes {
+            return Err(BoundedStreamError::ResidencyExceeded);
+        }
+        peak_kernel_window_capacity_bytes =
+            peak_kernel_window_capacity_bytes.max(partition_window_bytes);
+
+        let execute_started = Instant::now();
+        let mut handle_capacity_bytes = 0_u64;
         if wave.len() == 1 {
-            let index = wave[0];
-            let identity = partitions[index].identity(block, index as u64);
-            let partial = kernel_ref
-                .execute(identity, storage, &partitions[index].payload)
+            let (identity, partition) = &wave[0];
+            let partial = kernel
+                .execute(*identity, storage, &partition.payload)
                 .map_err(BoundedStreamError::Kernel)?;
-            completed.push((identity, partial));
+            completed.push((*identity, partial));
         } else {
-            let results = std::thread::scope(|scope| {
-                wave.into_iter()
-                    .map(|index| {
-                        let identity = partitions[index].identity(block, index as u64);
-                        let partition = &partitions[index];
-                        (
-                            identity,
-                            scope.spawn(move || {
-                                kernel_ref.execute(identity, storage, &partition.payload)
-                            }),
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .into_iter()
-                    .map(|(identity, handle)| {
-                        handle
-                            .join()
-                            .map(|partial| (identity, partial))
-                            .map_err(|_| BoundedStreamError::InvalidKernelPlan)
-                    })
-                    .collect::<Result<Vec<_>, _>>()
+            let kernel_ref = &*kernel;
+            handle_capacity_bytes = std::thread::scope(|scope| {
+                let mut handles = Vec::new();
+                handles
+                    .try_reserve_exact(wave.len())
+                    .map_err(|_| BoundedStreamError::InvalidKernelPlan)?;
+                for (identity, partition) in &wave {
+                    handles.push((
+                        *identity,
+                        scope.spawn(move || {
+                            kernel_ref.execute(*identity, storage, &partition.payload)
+                        }),
+                    ));
+                }
+                let capacity_bytes = vector_capacity_bytes(&handles)
+                    .ok_or(BoundedStreamError::MeasurementOverflow)?;
+                for (identity, handle) in handles {
+                    let partial = handle
+                        .join()
+                        .map_err(|_| BoundedStreamError::InvalidKernelPlan)?
+                        .map_err(BoundedStreamError::Kernel)?;
+                    completed.push((identity, partial));
+                }
+                Ok::<_, BoundedStreamError<InfallibleSource, K::Error>>(capacity_bytes)
             })?;
-            for (identity, result) in results {
-                completed.push((identity, result.map_err(BoundedStreamError::Kernel)?));
-            }
         }
-    }
-    let execute_nanos = execute_started.elapsed().as_nanos();
-    completed.sort_by_key(|(identity, _)| *identity);
-    if completed.windows(2).any(|items| items[0].0 == items[1].0) {
-        return Err(BoundedStreamError::InvalidKernelPlan);
-    }
-    let commit_started = Instant::now();
-    for (identity, partial) in completed {
-        kernel
-            .commit(identity, storage, partial)
-            .map_err(BoundedStreamError::Kernel)?;
+        execute_nanos = execute_nanos
+            .checked_add(execute_started.elapsed().as_nanos())
+            .ok_or(BoundedStreamError::MeasurementOverflow)?;
+        let dynamic_partial_bytes = completed.iter().try_fold(0_u64, |total, (_, partial)| {
+            total.checked_add(kernel.partial_dynamic_capacity_bytes(partial))
+        });
+        let live_window_bytes = partition_window_bytes
+            .checked_add(handle_capacity_bytes)
+            .and_then(|bytes| bytes.checked_add(dynamic_partial_bytes?))
+            .ok_or(BoundedStreamError::MeasurementOverflow)?;
+        if live_window_bytes > plan.kernel_window_capacity_bytes {
+            return Err(BoundedStreamError::ResidencyExceeded);
+        }
+        peak_kernel_window_capacity_bytes =
+            peak_kernel_window_capacity_bytes.max(live_window_bytes);
+
+        let commit_started = Instant::now();
+        for (identity, partial) in completed.drain(..) {
+            kernel
+                .commit(identity, storage, partial)
+                .map_err(BoundedStreamError::Kernel)?;
+        }
+        commit_nanos = commit_nanos
+            .checked_add(commit_started.elapsed().as_nanos())
+            .ok_or(BoundedStreamError::MeasurementOverflow)?;
     }
     Ok(ProcessMeasurements {
         prepare_nanos,
         execute_nanos,
-        commit_nanos: commit_started.elapsed().as_nanos(),
+        commit_nanos,
+        peak_kernel_window_capacity_bytes,
     })
+}
+
+fn vector_capacity_bytes<T>(values: &Vec<T>) -> Option<u64> {
+    let bytes = values.capacity().checked_mul(size_of::<T>())?;
+    u64::try_from(bytes).ok()
 }
 
 #[derive(Debug)]
@@ -351,6 +482,43 @@ struct ProducerMeasurements {
     peak_live_source_current_bytes: u64,
     peak_live_source_capacity_bytes: u64,
     lease_return_nanos: u128,
+}
+
+struct ProducerMeasurementRecorder {
+    current: ProducerMeasurements,
+    published: Arc<Mutex<ProducerMeasurements>>,
+}
+
+impl ProducerMeasurementRecorder {
+    fn new(published: Arc<Mutex<ProducerMeasurements>>) -> Self {
+        Self {
+            current: ProducerMeasurements::default(),
+            published,
+        }
+    }
+}
+
+impl Deref for ProducerMeasurementRecorder {
+    type Target = ProducerMeasurements;
+
+    fn deref(&self) -> &Self::Target {
+        &self.current
+    }
+}
+
+impl DerefMut for ProducerMeasurementRecorder {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.current
+    }
+}
+
+impl Drop for ProducerMeasurementRecorder {
+    fn drop(&mut self) {
+        *self
+            .published
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = self.current;
+    }
 }
 
 #[derive(Default)]
@@ -403,9 +571,124 @@ where
     K: PartitionedKernel<S::Storage>,
 {
     let started = Instant::now();
-    let mut outcome = execute_overlapped(plan, pass_ordinal, source, kernel)?;
-    outcome.measurements.wall_nanos = started.elapsed().as_nanos();
-    Ok(outcome)
+    let result = if plan.source_slots == 1 {
+        execute_inline(plan, pass_ordinal, source, kernel)
+    } else {
+        execute_overlapped(plan, pass_ordinal, source, kernel)
+    };
+    match result {
+        Ok(mut outcome) => {
+            outcome.measurements.wall_nanos = started.elapsed().as_nanos();
+            Ok(outcome)
+        }
+        Err(mut failure) => {
+            failure.measurements.wall_nanos = started.elapsed().as_nanos();
+            Err(failure)
+        }
+    }
+}
+
+fn execute_inline<S, K>(
+    plan: BoundedStreamPlan,
+    pass_ordinal: u32,
+    mut source: S,
+    mut kernel: K,
+) -> BoundedStreamResult<S::Completion, K::Completion, S::Error, K::Error>
+where
+    S: OrderedBlockSource,
+    K: PartitionedKernel<S::Storage>,
+{
+    let mut measurements = BoundedStreamMeasurements {
+        source_slots: plan.source_slots,
+        workers: plan.workers,
+        planned_source_capacity_bytes: plan.source_capacity_bytes,
+        maximum_partitions_per_block: plan.maximum_partitions_per_block,
+        planned_kernel_window_capacity_bytes: plan.kernel_window_capacity_bytes,
+        ..BoundedStreamMeasurements::default()
+    };
+    let result = (|| {
+        let mut storage = source.create_storage(0);
+        let mut block_ordinal = 0_u64;
+        loop {
+            let fill_started = Instant::now();
+            let poll = source.fill(block_ordinal, &mut storage);
+            measurements.source_fill_nanos = measurements
+                .source_fill_nanos
+                .checked_add(fill_started.elapsed().as_nanos())
+                .ok_or(BoundedStreamError::MeasurementOverflow)?;
+            match poll.map_err(BoundedStreamError::Source)? {
+                SourcePoll::Ready {
+                    source_ordinal,
+                    logical_bytes,
+                    resident_current_bytes,
+                    resident_capacity_bytes,
+                } => {
+                    if resident_capacity_bytes > plan.source_capacity_bytes {
+                        return Err(BoundedStreamError::ResidencyExceeded);
+                    }
+                    measurements.blocks_filled = measurements
+                        .blocks_filled
+                        .checked_add(1)
+                        .ok_or(BoundedStreamError::MeasurementOverflow)?;
+                    measurements.logical_source_bytes = measurements
+                        .logical_source_bytes
+                        .checked_add(logical_bytes)
+                        .ok_or(BoundedStreamError::MeasurementOverflow)?;
+                    measurements.peak_live_source_blocks = 1;
+                    measurements.peak_live_source_current_bytes = measurements
+                        .peak_live_source_current_bytes
+                        .max(resident_current_bytes);
+                    measurements.peak_live_source_capacity_bytes = measurements
+                        .peak_live_source_capacity_bytes
+                        .max(resident_capacity_bytes);
+                    let process = process_block(
+                        plan,
+                        BlockIdentity {
+                            pass_ordinal,
+                            source_ordinal,
+                            block_ordinal,
+                        },
+                        &storage,
+                        &mut kernel,
+                    )
+                    .map_err(map_process_error)?;
+                    measurements.prepare_nanos = measurements
+                        .prepare_nanos
+                        .checked_add(process.prepare_nanos)
+                        .ok_or(BoundedStreamError::MeasurementOverflow)?;
+                    measurements.execute_nanos = measurements
+                        .execute_nanos
+                        .checked_add(process.execute_nanos)
+                        .ok_or(BoundedStreamError::MeasurementOverflow)?;
+                    measurements.commit_nanos = measurements
+                        .commit_nanos
+                        .checked_add(process.commit_nanos)
+                        .ok_or(BoundedStreamError::MeasurementOverflow)?;
+                    measurements.peak_kernel_window_capacity_bytes = measurements
+                        .peak_kernel_window_capacity_bytes
+                        .max(process.peak_kernel_window_capacity_bytes);
+                    block_ordinal = block_ordinal
+                        .checked_add(1)
+                        .ok_or(BoundedStreamError::MeasurementOverflow)?;
+                }
+                SourcePoll::Exhausted => break,
+            }
+        }
+        let source_completion = source.complete().map_err(BoundedStreamError::Source)?;
+        let kernel_completion = kernel.complete().map_err(BoundedStreamError::Kernel)?;
+        Ok((source_completion, kernel_completion))
+    })();
+    match result {
+        Ok((source_completion, kernel_completion)) => Ok(BoundedStreamOutcome {
+            source_completion,
+            kernel_completion,
+            measurements,
+        }),
+        Err(cause) => Err(BoundedStreamFailure {
+            cause: Box::new(cause),
+            measurements: Box::new(measurements),
+        }),
+    }
 }
 
 fn execute_overlapped<S, K>(
@@ -426,6 +709,7 @@ where
     let ready_capacity_bytes = Arc::new(AtomicU64::new(0));
     let ready_capacity_high_water = Arc::new(AtomicU64::new(0));
     let overlap = Arc::new(Mutex::new(OverlapState::default()));
+    let producer_measurements = Arc::new(Mutex::new(ProducerMeasurements::default()));
     let (ready_tx, ready_rx) = mpsc::sync_channel(plan.source_slots);
     let (returned_sender, returned_rx) =
         mpsc::sync_channel::<StorageLease<S::Storage>>(plan.source_slots);
@@ -434,6 +718,8 @@ where
         source_slots: plan.source_slots,
         workers: plan.workers,
         planned_source_capacity_bytes: plan.source_capacity_bytes,
+        maximum_partitions_per_block: plan.maximum_partitions_per_block,
+        planned_kernel_window_capacity_bytes: plan.kernel_window_capacity_bytes,
         ..BoundedStreamMeasurements::default()
     };
     let source_completion = std::thread::scope(|scope| {
@@ -445,6 +731,7 @@ where
         let producer_ready_capacity_bytes = Arc::clone(&ready_capacity_bytes);
         let producer_ready_capacity_high_water = Arc::clone(&ready_capacity_high_water);
         let producer_overlap = Arc::clone(&overlap);
+        let published_producer_measurements = Arc::clone(&producer_measurements);
         let producer = scope.spawn(move || {
             let mut source = source;
             let mut empty = (0..plan.source_slots)
@@ -459,7 +746,8 @@ where
             let mut live_current_bytes = 0_u64;
             let mut live_capacity_bytes = 0_u64;
             let mut block_ordinal = 0_u64;
-            let mut producer_measurements = ProducerMeasurements::default();
+            let mut producer_measurements =
+                ProducerMeasurementRecorder::new(published_producer_measurements);
             loop {
                 if producer_cancelled.load(Ordering::Acquire) {
                     return;
@@ -683,7 +971,7 @@ where
                             Ok(completion) => {
                                 let _ = ready_tx.send(ReadyMessage::Completed(
                                     completion,
-                                    producer_measurements,
+                                    *producer_measurements,
                                 ));
                             }
                             Err(error) => {
@@ -772,6 +1060,9 @@ where
                             measurements.prepare_nanos = prepare_nanos;
                             measurements.execute_nanos = execute_nanos;
                             measurements.commit_nanos = commit_nanos;
+                            measurements.peak_kernel_window_capacity_bytes = measurements
+                                .peak_kernel_window_capacity_bytes
+                                .max(process.peak_kernel_window_capacity_bytes);
                             lease.returned_at = Some(Instant::now());
                             if returned_tx
                                 .as_ref()
@@ -834,7 +1125,20 @@ where
             return Err(BoundedStreamError::ProducerPanicked);
         }
         completion.ok_or(BoundedStreamError::ProducerDisconnected)
-    })?;
+    });
+    let producer_measurements = *producer_measurements
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    measurements.blocks_filled = producer_measurements.blocks_filled;
+    measurements.logical_source_bytes = producer_measurements.logical_source_bytes;
+    measurements.source_fill_nanos = producer_measurements.source_fill_nanos;
+    measurements.producer_wait_nanos = producer_measurements.producer_wait_nanos;
+    measurements.peak_live_source_blocks = producer_measurements.peak_live_source_blocks;
+    measurements.peak_live_source_current_bytes =
+        producer_measurements.peak_live_source_current_bytes;
+    measurements.peak_live_source_capacity_bytes =
+        producer_measurements.peak_live_source_capacity_bytes;
+    measurements.lease_return_nanos = producer_measurements.lease_return_nanos;
     measurements.ready_queue_high_water = ready_high_water.load(Ordering::Acquire);
     measurements.ready_queue_current_bytes_high_water =
         ready_current_high_water.load(Ordering::Acquire);
@@ -844,7 +1148,24 @@ where
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .overlap_nanos;
-    let kernel_completion = kernel.complete().map_err(BoundedStreamError::Kernel)?;
+    let source_completion = match source_completion {
+        Ok(completion) => completion,
+        Err(cause) => {
+            return Err(BoundedStreamFailure {
+                cause: Box::new(cause),
+                measurements: Box::new(measurements),
+            });
+        }
+    };
+    let kernel_completion = match kernel.complete() {
+        Ok(completion) => completion,
+        Err(error) => {
+            return Err(BoundedStreamFailure {
+                cause: Box::new(BoundedStreamError::Kernel(error)),
+                measurements: Box::new(measurements),
+            });
+        }
+    };
     Ok(BoundedStreamOutcome {
         source_completion,
         kernel_completion,
@@ -942,16 +1263,26 @@ mod tests {
         type Completion = Vec<(WorkIdentity, u64)>;
         type Error = Infallible;
 
-        fn partitions(
+        fn partition_count(
             &self,
             _block: BlockIdentity,
             values: &Vec<u64>,
-        ) -> Result<Vec<KernelPartition<Self::Partition>>, Self::Error> {
-            Ok(values
-                .iter()
-                .enumerate()
-                .map(|(index, _)| KernelPartition::ordered(index as u64, 0, index as u64, index))
-                .collect())
+        ) -> Result<usize, Self::Error> {
+            Ok(values.len())
+        }
+
+        fn partition(
+            &self,
+            _block: BlockIdentity,
+            _values: &Vec<u64>,
+            local_ordinal: usize,
+        ) -> Result<KernelPartition<Self::Partition>, Self::Error> {
+            Ok(KernelPartition::ordered(
+                local_ordinal as u64,
+                0,
+                local_ordinal as u64,
+                local_ordinal,
+            ))
         }
 
         fn execute(
@@ -986,7 +1317,7 @@ mod tests {
             completions: Arc::new(AtomicUsize::new(0)),
         };
         execute_bounded(
-            BoundedStreamPlan::new(slots, workers, 64).unwrap(),
+            BoundedStreamPlan::new::<usize, u64>(slots, workers, 64, 4, 0).unwrap(),
             3,
             source,
             SumKernel::default(),
@@ -1002,7 +1333,14 @@ mod tests {
         assert_eq!(inline.kernel_completion, overlapped.kernel_completion);
         assert_eq!(inline.measurements.blocks_filled, 3);
         assert_eq!(overlapped.measurements.blocks_filled, 3);
+        assert_eq!(inline.measurements.ready_queue_high_water, 0);
+        assert_eq!(inline.measurements.producer_wait_nanos, 0);
+        assert_eq!(inline.measurements.consumer_wait_nanos, 0);
         assert!(overlapped.measurements.ready_queue_high_water <= 2);
+        assert!(
+            inline.measurements.peak_kernel_window_capacity_bytes
+                <= inline.measurements.planned_kernel_window_capacity_bytes
+        );
     }
 
     #[test]
@@ -1011,22 +1349,48 @@ mod tests {
     }
 
     #[test]
+    fn kernel_partition_count_must_fit_the_planned_window() {
+        let result = execute_bounded(
+            BoundedStreamPlan::new::<usize, u64>(1, 1, 64, 2, 0).unwrap(),
+            0,
+            NumberSource {
+                blocks: vec![vec![1, 2, 3]],
+                next: 0,
+                pointers: Arc::new(Mutex::new(Vec::new())),
+                completions: Arc::new(AtomicUsize::new(0)),
+            },
+            SumKernel::default(),
+        );
+        let failure = result.unwrap_err();
+        assert!(matches!(
+            *failure.cause,
+            BoundedStreamError::InvalidKernelPlan
+        ));
+        assert_eq!(failure.measurements.blocks_filled, 1);
+        assert!(failure.measurements.wall_nanos > 0);
+    }
+
+    #[test]
     fn plan_rejects_unbounded_or_empty_execution() {
         assert_eq!(
-            BoundedStreamPlan::new(0, 1, 64),
+            BoundedStreamPlan::new::<usize, u64>(0, 1, 64, 4, 0),
             Err(BoundedStreamPlanError::SourceSlots)
         );
         assert_eq!(
-            BoundedStreamPlan::new(3, 1, 64),
+            BoundedStreamPlan::new::<usize, u64>(3, 1, 64, 4, 0),
             Err(BoundedStreamPlanError::SourceSlots)
         );
         assert_eq!(
-            BoundedStreamPlan::new(1, 0, 64),
+            BoundedStreamPlan::new::<usize, u64>(1, 0, 64, 4, 0),
             Err(BoundedStreamPlanError::Workers)
         );
         assert_eq!(
-            BoundedStreamPlan::new(1, 1, 0),
+            BoundedStreamPlan::new::<usize, u64>(1, 1, 0, 4, 0),
             Err(BoundedStreamPlanError::SourceCapacity)
+        );
+        assert_eq!(
+            BoundedStreamPlan::new::<usize, u64>(1, 1, 64, 0, 0),
+            Err(BoundedStreamPlanError::Partitions)
         );
     }
 
@@ -1035,7 +1399,7 @@ mod tests {
         let pointers = Arc::new(Mutex::new(Vec::new()));
         let completions = Arc::new(AtomicUsize::new(0));
         let outcome = execute_bounded(
-            BoundedStreamPlan::new(2, 1, 64).unwrap(),
+            BoundedStreamPlan::new::<usize, u64>(2, 1, 64, 4, 0).unwrap(),
             0,
             NumberSource {
                 blocks: vec![vec![1], vec![2], vec![3], vec![4]],
@@ -1089,12 +1453,22 @@ mod tests {
         type Completion = ();
         type Error = TestFailure;
 
-        fn partitions(
+        fn partition_count(
             &self,
             _block: BlockIdentity,
             _storage: &Vec<u64>,
-        ) -> Result<Vec<KernelPartition<Self::Partition>>, Self::Error> {
-            Ok(vec![KernelPartition::exclusive(0, 0, ())])
+        ) -> Result<usize, Self::Error> {
+            Ok(1)
+        }
+
+        fn partition(
+            &self,
+            _block: BlockIdentity,
+            _storage: &Vec<u64>,
+            local_ordinal: usize,
+        ) -> Result<KernelPartition<Self::Partition>, Self::Error> {
+            debug_assert_eq!(local_ordinal, 0);
+            Ok(KernelPartition::exclusive(0, 0, ()))
         }
 
         fn execute(
@@ -1124,7 +1498,7 @@ mod tests {
     fn consumer_failure_cancels_without_source_completion() {
         let completions = Arc::new(AtomicUsize::new(0));
         let result = execute_bounded(
-            BoundedStreamPlan::new(2, 1, 64).unwrap(),
+            BoundedStreamPlan::new::<(), ()>(2, 1, 64, 1, 0).unwrap(),
             0,
             NumberSource {
                 blocks: (0..100).map(|value| vec![value]).collect(),
@@ -1134,10 +1508,13 @@ mod tests {
             },
             FailingKernel,
         );
+        let failure = result.unwrap_err();
         assert!(matches!(
-            result,
-            Err(BoundedStreamError::Kernel(TestFailure))
+            *failure.cause,
+            BoundedStreamError::Kernel(TestFailure)
         ));
+        assert!(failure.measurements.blocks_filled > 0);
+        assert!(failure.measurements.wall_nanos > 0);
         assert_eq!(completions.load(Ordering::SeqCst), 0);
     }
 
@@ -1184,7 +1561,7 @@ mod tests {
     fn source_failure_is_retained_without_source_completion() {
         let completions = Arc::new(AtomicUsize::new(0));
         let result = execute_bounded(
-            BoundedStreamPlan::new(2, 1, 64).unwrap(),
+            BoundedStreamPlan::new::<usize, u64>(2, 1, 64, 4, 0).unwrap(),
             0,
             FailingSource {
                 emitted: false,
@@ -1192,10 +1569,13 @@ mod tests {
             },
             SumKernel::default(),
         );
+        let failure = result.unwrap_err();
         assert!(matches!(
-            result,
-            Err(BoundedStreamError::Source(TestFailure))
+            *failure.cause,
+            BoundedStreamError::Source(TestFailure)
         ));
+        assert_eq!(failure.measurements.blocks_filled, 1);
+        assert!(failure.measurements.source_fill_nanos > 0);
         assert_eq!(completions.load(Ordering::SeqCst), 0);
     }
 
@@ -1211,14 +1591,21 @@ mod tests {
         type Completion = usize;
         type Error = Infallible;
 
-        fn partitions(
+        fn partition_count(
             &self,
             _block: BlockIdentity,
             _storage: &Vec<u64>,
-        ) -> Result<Vec<KernelPartition<Self::Partition>>, Self::Error> {
-            Ok((0..8)
-                .map(|partition| KernelPartition::exclusive(partition, 7, ()))
-                .collect())
+        ) -> Result<usize, Self::Error> {
+            Ok(8)
+        }
+
+        fn partition(
+            &self,
+            _block: BlockIdentity,
+            _storage: &Vec<u64>,
+            local_ordinal: usize,
+        ) -> Result<KernelPartition<Self::Partition>, Self::Error> {
+            Ok(KernelPartition::exclusive(local_ordinal as u64, 7, ()))
         }
 
         fn execute(
@@ -1259,7 +1646,7 @@ mod tests {
             completions: Arc::new(AtomicUsize::new(0)),
         };
         let outcome = execute_bounded(
-            BoundedStreamPlan::new(1, 8, 32).unwrap(),
+            BoundedStreamPlan::new::<(), ()>(1, 8, 32, 8, 0).unwrap(),
             0,
             source,
             ExclusiveProbe::default(),
@@ -1287,18 +1674,8 @@ mod tests {
         accepted: u64,
     }
 
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    struct LargeGateStorageSignature {
-        rows: usize,
-        data: Option<usize>,
-        weights: Option<usize>,
-        weight_spectrum: Option<usize>,
-        uvw: Option<usize>,
-    }
-
     struct LargeGateStorage {
         buffer: VisibilityBuffer,
-        signature: Option<LargeGateStorageSignature>,
     }
 
     #[derive(Debug)]
@@ -1309,6 +1686,7 @@ mod tests {
         fill_operations: u64,
         modeled_physical_bytes: u64,
         named_row_projection_bytes: u64,
+        explicit_adaptation_copy_bytes: u64,
         implicit_copy_bytes: u64,
         warmup_fills: u64,
         reused_fills: u64,
@@ -1325,6 +1703,8 @@ mod tests {
         fills: u64,
         modeled_physical_bytes: u64,
         named_row_projection_bytes: u64,
+        explicit_adaptation_copy_bytes: u64,
+        implicit_copy_bytes: u64,
         warmup_fills: u64,
         reused_fills: u64,
         rss_samples: [u64; 8],
@@ -1344,6 +1724,8 @@ mod tests {
                 fills: 0,
                 modeled_physical_bytes: 0,
                 named_row_projection_bytes: 0,
+                explicit_adaptation_copy_bytes: 0,
+                implicit_copy_bytes: 0,
                 warmup_fills: 0,
                 reused_fills: 0,
                 rss_samples: [0; 8],
@@ -1369,7 +1751,6 @@ mod tests {
         fn create_storage(&self, _slot: usize) -> Self::Storage {
             LargeGateStorage {
                 buffer: VisibilityBuffer::default(),
-                signature: None,
             }
         }
 
@@ -1397,10 +1778,10 @@ mod tests {
             assert_eq!(storage.buffer.channel_count, LARGE_GATE_CHANNELS);
             assert_eq!(storage.buffer.corr_count, LARGE_GATE_CORRELATIONS);
 
-            let signature = large_gate_storage_signature(&storage.buffer);
-            match storage.signature.replace(signature) {
-                Some(previous) if previous == signature => self.reused_fills += 1,
-                Some(_) | None => self.warmup_fills += 1,
+            if fill.allocation.grown_or_retyped_buffers == 0 {
+                self.reused_fills += 1;
+            } else {
+                self.warmup_fills += 1;
             }
             let rows = row_end - self.next_row;
             let samples = rows
@@ -1416,6 +1797,12 @@ mod tests {
             self.named_row_projection_bytes = self
                 .named_row_projection_bytes
                 .saturating_add((rows * size_of::<usize>()) as u64);
+            self.explicit_adaptation_copy_bytes = self
+                .explicit_adaptation_copy_bytes
+                .saturating_add(fill.explicit_adaptation_copy_bytes);
+            self.implicit_copy_bytes = self
+                .implicit_copy_bytes
+                .saturating_add(fill.implicit_copy_bytes);
 
             if self.fills == 2 || self.fills.is_multiple_of(1_024) {
                 self.sample_rss();
@@ -1453,7 +1840,8 @@ mod tests {
                 fill_operations: self.fills,
                 modeled_physical_bytes: self.modeled_physical_bytes,
                 named_row_projection_bytes: self.named_row_projection_bytes,
-                implicit_copy_bytes: 0,
+                explicit_adaptation_copy_bytes: self.explicit_adaptation_copy_bytes,
+                implicit_copy_bytes: self.implicit_copy_bytes,
                 warmup_fills: self.warmup_fills,
                 reused_fills: self.reused_fills,
                 rss_samples: self.rss_samples,
@@ -1486,12 +1874,22 @@ mod tests {
         type Completion = (LargeGateDigest, u64);
         type Error = LargeGateKernelError;
 
-        fn partitions(
+        fn partition_count(
             &self,
             _block: BlockIdentity,
             _storage: &LargeGateStorage,
-        ) -> Result<Vec<KernelPartition<Self::Partition>>, Self::Error> {
-            Ok(vec![KernelPartition::exclusive(0, 0, ())])
+        ) -> Result<usize, Self::Error> {
+            Ok(1)
+        }
+
+        fn partition(
+            &self,
+            _block: BlockIdentity,
+            _storage: &LargeGateStorage,
+            local_ordinal: usize,
+        ) -> Result<KernelPartition<Self::Partition>, Self::Error> {
+            debug_assert_eq!(local_ordinal, 0);
+            Ok(KernelPartition::exclusive(0, 0, ()))
         }
 
         fn execute(
@@ -1519,28 +1917,6 @@ mod tests {
 
         fn complete(self) -> Result<Self::Completion, Self::Error> {
             Ok((self.digest, self.samples))
-        }
-    }
-
-    fn large_gate_storage_signature(buffer: &VisibilityBuffer) -> LargeGateStorageSignature {
-        LargeGateStorageSignature {
-            rows: buffer.row_indices.as_ptr() as usize,
-            data: buffer.data.as_ref().map(|samples| match samples {
-                VisibilityComplexSamples::Complex32(values) => values.as_ptr() as usize,
-                VisibilityComplexSamples::Complex64(values) => values.as_ptr() as usize,
-            }),
-            weights: buffer.weights.as_ref().map(|samples| match samples {
-                VisibilityFloatSamples::Float32(values) => values.as_ptr() as usize,
-                VisibilityFloatSamples::Float64(values) => values.as_ptr() as usize,
-            }),
-            weight_spectrum: buffer
-                .weight_spectrum
-                .as_ref()
-                .map(|samples| match samples {
-                    VisibilityFloatSamples::Float32(values) => values.as_ptr() as usize,
-                    VisibilityFloatSamples::Float64(values) => values.as_ptr() as usize,
-                }),
-            uvw: buffer.uvw.as_ref().map(|values| values.as_ptr() as usize),
         }
     }
 
@@ -1708,7 +2084,7 @@ mod tests {
         let source = LargeGateSource::new(path).expect("open large MeasurementSet");
         assert_eq!(source.measurement_set.row_count(), LARGE_GATE_ROWS);
         let outcome = execute_bounded(
-            BoundedStreamPlan::new(2, 1, LARGE_GATE_SOURCE_CAPACITY_BYTES)
+            BoundedStreamPlan::new::<(), ()>(2, 1, LARGE_GATE_SOURCE_CAPACITY_BYTES, 1, 0)
                 .expect("valid large gate plan"),
             0,
             source,
@@ -1728,6 +2104,10 @@ mod tests {
         assert_eq!(digest.real.to_bits(), LARGE_GATE_REAL_BITS);
         assert_eq!(digest.imag.to_bits(), LARGE_GATE_IMAG_BITS);
         assert_eq!(digest.weight.to_bits(), LARGE_GATE_WEIGHT_BITS);
+        assert!(
+            source.explicit_adaptation_copy_bytes > source.named_row_projection_bytes,
+            "the gate must report every measured arrangement copy, not only row projection"
+        );
         assert_eq!(source.implicit_copy_bytes, 0);
         assert_eq!(
             source.named_row_projection_bytes,
@@ -1778,12 +2158,16 @@ mod tests {
                 "logical_source_bytes": measurements.logical_source_bytes,
                 "modeled_physical_bytes": source.modeled_physical_bytes,
                 "named_row_projection_bytes": source.named_row_projection_bytes,
+                "explicit_adaptation_copy_bytes": source.explicit_adaptation_copy_bytes,
                 "implicit_copy_bytes": source.implicit_copy_bytes,
                 "warmup_fills": source.warmup_fills,
                 "reused_fills": source.reused_fills,
                 "source_slots": measurements.source_slots,
                 "workers": measurements.workers,
                 "planned_source_capacity_bytes": measurements.planned_source_capacity_bytes,
+                "maximum_partitions_per_block": measurements.maximum_partitions_per_block,
+                "planned_kernel_window_capacity_bytes": measurements.planned_kernel_window_capacity_bytes,
+                "peak_kernel_window_capacity_bytes": measurements.peak_kernel_window_capacity_bytes,
                 "peak_live_source_blocks": measurements.peak_live_source_blocks,
                 "peak_live_source_current_bytes": measurements.peak_live_source_current_bytes,
                 "peak_live_source_capacity_bytes": measurements.peak_live_source_capacity_bytes,

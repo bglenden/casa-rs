@@ -60,19 +60,19 @@
       "observation_node": 22.5
     },
     "final_source_refresh": {
-      "execution_receipt": "ea1c58fdad32a4944fb3fff80ac08be59634f02083f26aa9370dd67beddabdfe",
-      "wall_seconds": 2.74,
-      "user_seconds": 1.91,
-      "system_seconds": 0.08,
-      "observation_node_seconds": 1.829008834,
+      "execution_receipt": "801742fd99b9a437fb8f60b4b7ea24fd38cc82368cde035f846ce2800cdd083d",
+      "wall_seconds": 2.17,
+      "user_seconds": 1.90,
+      "system_seconds": 0.07,
+      "observation_node_seconds": 1.832049292,
       "actual_logical_source_bytes": 10142080,
       "actual_closed_column_read_operations": 19,
       "peak_live_source_current_bytes": 12615040,
       "provisional_improvement_percent": {
-        "wall": 5.2,
-        "observation_node": 22.0
+        "wall": 24.9,
+        "observation_node": 21.8
       },
-      "interpretation": "The source-stage gain remains stable while whole-command timing is noisy at this short duration; both candidate observations are retained rather than selecting only the faster result."
+      "interpretation": "The post-review refresh reproduces the source-stage gain and the initial candidate wall time; timing precision remains intentionally provisional for this short iteration-oriented gate."
     },
     "scientific_product_comparison": {
       "result": "bit_identical_payloads",
@@ -96,19 +96,20 @@
     },
     "candidate": {
       "result": "terminal_completion",
-      "wall_seconds": 338.20,
-      "user_seconds": 339.75,
-      "system_seconds": 6.27,
+      "execution_receipt": "f17419c012e5cbf511af6915a40b661e1c4eb5197ffc557367f1ad0935d63557",
+      "wall_seconds": 336.70,
+      "user_seconds": 338.51,
+      "system_seconds": 6.29,
       "gridded_samples": 65505024,
       "scientific_ms_passes": 2,
-      "peak_resident_set_bytes": 227672064,
-      "peak_planned_footprint_bytes": 206799592,
+      "peak_resident_set_bytes": 224739328,
+      "peak_planned_footprint_bytes": 222511848,
       "swap_operations": 0,
       "planned_source_capacity_bytes": 67108864,
       "passes": [
         {
           "name": "transaction-read",
-          "elapsed_seconds": 153.157298042,
+          "elapsed_seconds": 152.628731833,
           "actual_logical_source_bytes": 1019421936,
           "actual_closed_column_read_operations": 1102,
           "peak_live_source_current_bytes": 59091402,
@@ -116,14 +117,24 @@
         },
         {
           "name": "weighting-generation",
-          "elapsed_seconds": 183.731924416,
+          "elapsed_seconds": 183.207342250,
           "actual_logical_source_bytes": 1019421936,
           "actual_closed_column_read_operations": 1102,
           "peak_live_source_current_bytes": 59091402,
           "ready_queue_high_water": 1
         }
       ],
-      "sampled_resident_set_kib": [211344, 218352, 219840, 219856]
+      "scientific_product_comparison": {
+        "result": "bit_identical_to_pre_review_candidate",
+        "sha256": {
+          "image": "d2d49152498bf50ad87d83281b4659884d3c72348bef315976867c95974ec900",
+          "mask": "17faa485f5409354c6aed458c8cc8dfad1922c98532b3e0349c26f9349388261",
+          "model": "8a39d2abd3999ab73c34db2476849cddf303ce389b35826850f9a700589b4a90",
+          "psf": "6a4c74a0a55847541d614cc67c614b9ac5d6e2c678b8a9d67dafb38ef2714064",
+          "residual": "d2d49152498bf50ad87d83281b4659884d3c72348bef315976867c95974ec900",
+          "sumwt": "eaff4c96e75c8c87ca06ee8a8ed0bea3ef1417542eac2ece549d21d319f3ee14"
+        }
+      }
     },
     "comparison": "The control did not complete, so this observation proves bounded feasibility rather than a wall-time speedup ratio."
   },
@@ -131,8 +142,8 @@
     "measurement_set": "/Volumes/GLENDENNING/casa-rs-imperformance/wave1/alma/mosaic-large/large/ms/wave1-alma-mosaic-large.ms",
     "dataset_identity": "2a7def",
     "dataset_disk_bytes": 114807025664,
-    "executor_wall_seconds": 98.247790625,
-    "net_dataset_gib_per_second": 1.08829,
+    "executor_wall_seconds": 97.227888625,
+    "net_dataset_gib_per_second": 1.099709,
     "passes": 1,
     "rows": 6709290,
     "samples": 13740625920,
@@ -142,19 +153,22 @@
       "imaginary": "c1c2e4fdfd889d2d",
       "weight": "420721a68210e413"
     },
-    "source_fill_seconds": 98.227138734,
-    "commit_seconds": 50.645688368,
-    "overlap_seconds": 50.647359961,
-    "wall_below_serial_stage_sum_percent": 34.006,
-    "producer_wait_seconds": 0.009143509,
-    "consumer_wait_seconds": 47.588387811,
-    "lease_return_seconds": 47.540684107,
+    "source_fill_seconds": 97.201117917,
+    "commit_seconds": 50.766413993,
+    "overlap_seconds": 50.763120188,
+    "wall_below_serial_stage_sum_percent": 34.291,
+    "producer_wait_seconds": 0.015251160,
+    "consumer_wait_seconds": 46.446436956,
+    "lease_return_seconds": 46.398915985,
     "fill_operations": 6553,
     "warmup_fills": 2,
     "reused_fills": 6551,
     "source_slots": 2,
     "workers": 1,
     "planned_source_capacity_bytes": 134217728,
+    "maximum_partitions_per_block": 1,
+    "planned_kernel_window_capacity_bytes": 208,
+    "peak_kernel_window_capacity_bytes": 136,
     "peak_live_source_blocks": 2,
     "peak_live_source_current_bytes": 37865472,
     "peak_live_source_capacity_bytes": 37865472,
@@ -164,9 +178,10 @@
     "logical_source_bytes": 123994388490,
     "modeled_physical_bytes": 127617405090,
     "named_row_projection_bytes": 53674320,
+    "explicit_adaptation_copy_bytes": 382378330,
     "implicit_copy_bytes": 0,
-    "sampled_resident_set_bytes": [92504064, 129056768, 162906112, 171376640, 173883392, 173981696, 175636480, 175669248],
+    "sampled_resident_set_bytes": [92356608, 128745472, 164380672, 170737664, 171786240, 171786240, 171819008, 171835392],
     "terminal": true,
-    "interpretation": "One production-executor pass preserved the accepted serial checksum, kept two reusable source leases within the immutable budget, overlapped source and ordered commit, and reached a stable resident plateau."
+    "interpretation": "One production-executor pass preserved the accepted serial checksum, kept two reusable source leases and one bounded kernel window within their immutable budgets, named every arrangement copy, overlapped source and ordered commit, and reached a stable resident plateau."
   }
 }

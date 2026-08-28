@@ -293,6 +293,7 @@ def imager(
     standard_mfs_grid_threads: int | Literal['auto'] = ...,
     fitspw: str = ...,
     fitorder: int = ...,
+    save_continuum_residual: bool = ...,
     parameters: TaskParameters | None = ...,
     profile: StrPath | None = ... ,
     base_source: Literal["defaults", "last", "last_successful"] = ... ,

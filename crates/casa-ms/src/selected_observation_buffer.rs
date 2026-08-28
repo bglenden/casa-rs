@@ -12,6 +12,11 @@ use crate::{
     schema::main_table::VisibilityDataColumn,
 };
 
+const SELECTED_SCALAR_COLUMN_COUNT: u64 = 15;
+const SELECTED_ARRAY_COLUMN_COUNT: u64 = 4;
+const SELECTED_READ_OPERATION_COUNT: u64 =
+    SELECTED_SCALAR_COLUMN_COUNT + SELECTED_ARRAY_COLUMN_COUNT;
+
 /// Exact MeasurementSet visibility column read for selected-observation input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SelectedVisibilityColumn {
@@ -883,8 +888,7 @@ impl MeasurementSet {
             // This private path does not yet expose trustworthy storage-manager
             // granularity, so it deliberately reports no physical-byte model.
             modeled_physical_read_bytes: None,
-            // Visibility, FLAG, one weight column, UVW, and fifteen scalar columns.
-            read_operation_count: 19,
+            read_operation_count: SELECTED_READ_OPERATION_COUNT,
             request_handoff_bytes,
             retained_current_bytes,
             retained_capacity_bytes,
