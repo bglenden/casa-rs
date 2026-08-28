@@ -20,6 +20,7 @@ INTERMEDIATE_RECEIPT = FIXTURES / "intermediate_profile_receipt.json"
 TERMINAL_RECEIPT = FIXTURES / "terminal_profile_receipt.json"
 SAMPLE = FIXTURES / "intermediate_profile_sample.txt"
 GROUPS = FIXTURES / "intermediate_profile_groups.json"
+ISSUE540_GROUPS = FIXTURES / "issue540_intermediate_profile_groups.json"
 
 
 def load(path: Path) -> dict:
@@ -109,6 +110,21 @@ class IntermediateProfileEvidenceTests(unittest.TestCase):
         self.assertEqual(410, result["exclusive_groups"]["gridding"]["count"])
         self.assertEqual(478, result["exclusive_groups"]["hashing"]["count"])
         self.assertEqual(142, result["ungrouped_non_idle_exclusive_count"])
+
+    def test_issue540_hypothesis_groups_are_disjoint(self) -> None:
+        sample = evidence.parse_sample(SAMPLE.read_text(encoding="utf-8"))
+
+        result = evidence.add_groups(sample, load(ISSUE540_GROUPS))
+
+        self.assertEqual(
+            [
+                "compensated_gridding",
+                "prediction_and_stencil",
+                "selected_traversal_and_projection",
+                "weighting_generation_and_coverage",
+            ],
+            list(result["exclusive_groups"]),
+        )
 
     def test_overlapping_groups_fail_closed(self) -> None:
         sample = evidence.parse_sample(SAMPLE.read_text(encoding="utf-8"))

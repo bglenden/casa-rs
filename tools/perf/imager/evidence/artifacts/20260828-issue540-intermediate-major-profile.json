@@ -1,0 +1,81 @@
+{
+  "schema_name": "casa-rs-intermediate-major-profile-summary",
+  "schema_version": 1,
+  "revision": "daf61d727",
+  "runtime_tree_reference": "dd77fcb30",
+  "workload_id": "wave3-standard-mfs-single-term-heavy-wave2-serial",
+  "casa_rerun": false,
+  "phase": {
+    "classification": "continuing_intermediate",
+    "ordinal": 1,
+    "terminal_visibility_excluded": true,
+    "plan_wall_seconds": 150.136,
+    "transaction_read_seconds": 149.950960709,
+    "minor_cycle_seconds": 0.09846425
+  },
+  "stream": {
+    "passes": 1,
+    "blocks": 188,
+    "stored_rows": 4094064,
+    "stored_samples": 524040192,
+    "selected_channel_runs": 262020096,
+    "logical_source_bytes": 5146238448,
+    "source_read_operations": 3572,
+    "request_handoff_bytes": 32752512,
+    "selected_sample_handoff_bytes": 57906441216,
+    "peak_live_capacity_bytes": 62272500,
+    "source_slots": 2,
+    "workers": 1,
+    "source_read_seconds": 10.52776508,
+    "source_arrangement_seconds": 1.030492017,
+    "kernel_commit_seconds": 149.845133967,
+    "producer_consumer_overlap_seconds": 12.70992049,
+    "wall_seconds": 149.918023583
+  },
+  "sample": {
+    "duration_seconds": 20,
+    "interval_milliseconds": 1,
+    "main_thread_samples": 16507,
+    "exclusive_scope": "all_threads",
+    "groups": {
+      "weighting_generation_and_coverage": {
+        "exclusive_count": 5796,
+        "fraction_of_main_thread_samples": 0.3511237656751681,
+        "optimistic_full_run_ceiling_fraction": 0.2664118863071207
+      },
+      "prediction_and_stencil": {
+        "exclusive_count": 2869,
+        "fraction_of_main_thread_samples": 0.17380505240201127,
+        "optimistic_full_run_ceiling_fraction": 0.1318729644263508
+      },
+      "selected_traversal_and_projection": {
+        "exclusive_count": 2682,
+        "fraction_of_main_thread_samples": 0.16247652511055916,
+        "optimistic_full_run_ceiling_fraction": 0.1232775498750341
+      },
+      "compensated_gridding": {
+        "exclusive_count": 2260,
+        "fraction_of_main_thread_samples": 0.13691161325498274,
+        "optimistic_full_run_ceiling_fraction": 0.10388041115495045
+      }
+    }
+  },
+  "projection": {
+    "intermediate_occurrences": 9,
+    "intermediate_seconds_per_occurrence": 152.966,
+    "projected_total_seconds": 1814.446,
+    "intermediate_full_run_fraction": 0.7587406844844101,
+    "removable_fraction_assumed_for_optimistic_ceilings": 1.0
+  },
+  "artifacts": {
+    "raw_sample_sha256": "a6e9652c91474b63c15c93d28b51b1141d606c20767269d312ac3c0064185f2c",
+    "receipt_sha256": "44f2e892781abdb84597330be5134d510b82106b8fc00a8571d7b869ff795c7b",
+    "grouped_parser_output_sha256": "96bf062a54119ac7bcad07c4b8009bf1e646c0c08a2a194b176b7c77e6e70f7c"
+  },
+  "limitations": [
+    "Sample exclusive leaves aggregate all threads and are normalized by main-thread samples.",
+    "The optimistic ceilings assume the complete grouped cost is removable and therefore select probes, not production changes.",
+    "The run was interrupted only after ordinal 1 completed; ordinal 2 was intentionally left incomplete.",
+    "Scientific correctness remains anchored by the matched bit-exact product comparisons recorded in the performance specification."
+  ]
+}

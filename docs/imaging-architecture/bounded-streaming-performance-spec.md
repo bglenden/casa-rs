@@ -309,6 +309,51 @@ before its timed interval; it must not materialize a MeasurementSet, create an
 alternate production path, or replace the medium, 32 GiB, and final full-data
 acceptance rows.
 
+### Intermediate-major serial profile
+
+The required continuing-major sample was collected at runtime-equivalent
+revision `daf61d727` without rerunning CASA. The completed ordinal-1 receipt
+contains `spectral-cycle-minor-cycle`, which structurally excludes the terminal
+visibility sink. Its plan wall was 150.136 seconds, including 149.951 seconds
+in the transaction read and only 0.098 seconds in the minor cycle. The bounded
+replay again visited 188 blocks, 4,094,064 rows, and 524,040,192 selected
+samples with one worker. Direct source reads took 10.528 seconds while kernel
+commit took 149.845 seconds; adding I/O concurrency cannot close this serial
+gap.
+
+A 20-second, 1-millisecond macOS sample produced 16,507 main-thread samples.
+Exclusive leaves are all-thread counts, so generic `read`, `memcpy`, and
+`memmove` are not assigned to the main thread without call-graph ancestry. The
+four disjoint production-kernel hypotheses rank as follows. The final column
+is deliberately optimistic: it applies the group's entire sampled share to
+the 75.87-percent full-run intermediate-major share and assumes every grouped
+instruction can be removed.
+
+| Hypothesis group | Exclusive count | Intermediate sample share | Optimistic full-run ceiling |
+| --- | ---: | ---: | ---: |
+| Weighting, generation, and coverage bookkeeping | 5,796 | 35.11% | 26.64% |
+| Prediction and stencil construction | 2,869 | 17.38% | 13.19% |
+| Selected traversal and spectral projection | 2,682 | 16.25% | 12.33% |
+| Compensated gridding | 2,260 | 13.69% | 10.39% |
+
+All four clear the 10-percent gate only under the deliberately unrealistic
+upper bound of complete removal. They therefore authorize discriminating probes, not a
+production optimization. Weighting/generation/coverage is first because it has
+the largest ceiling and contains per-sample hashing, inspection, equality, and
+coverage work. It is falsified as the next candidate if the short production
+kernel probe cannot remove at least 10 percent of its stage wall while keeping
+the scientific checksum exact. Prediction/stencil is second and is falsified
+if cached or reusable work is already channel/block-scaled or its probe saves
+less than 10 percent. Traversal/projection is third and is falsified if a
+run-shaped projection does not reduce the same-kernel probe by 10 percent.
+Compensated gridding is fourth: its 10.39-percent theoretical ceiling leaves
+almost no margin and is rejected unless a concrete general kernel change can
+remove nearly all of the sampled cost.
+
+The normalized receipt, exact counters, group counts, artifact hashes, and
+limitations are recorded in
+`tools/perf/imager/evidence/artifacts/20260828-issue540-intermediate-major-profile.json`.
+
 ## Scope
 
 Delivery 1 includes:
