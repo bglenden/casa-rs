@@ -17,20 +17,22 @@ use casa_imaging_model::{
 };
 use casa_imaging_reconstruction::runtime_adapter::WeightingReplayPhase;
 use casa_imaging_reconstruction::{
-    FusedWeightingPhase, WeightingAlgorithmState, WeightingDensityPhase, WeightingError,
-    WeightingGenerationId, WeightingPlan, WeightingReplayChunk as ReconstructionWeightedBlock,
-    WeightingReplayCoverageId, WeightingReplayId, WeightingReplaySummary, WeightingResidency,
+    FrozenWeightingCoverageProof, FusedWeightingPhase, WeightingAlgorithmState,
+    WeightingDensityPhase, WeightingError, WeightingGenerationId, WeightingPlan,
+    WeightingReplayChunk as ReconstructionWeightedBlock, WeightingReplayCoverageId,
+    WeightingReplayId, WeightingReplaySummary, WeightingResidency,
     WeightingSampleValue as ReconstructionWeightedSample,
     WeightingSelectedSample as ReconstructionSelectedSample,
     WeightingSpectralValue as ReconstructionWeightedSpectralValue, begin_natural_weighting_stream,
     begin_weighting_generation, compile_spectral_stencil,
 };
 use casa_ms::{
-    BoundObservationSourceError, BoundSelectedObservation, SelectedObservationBlock,
-    SelectedObservationBlockConsumer, SelectedObservationBlockSource,
-    SelectedObservationCompletion, SelectedObservationResidencyCertificate,
-    SelectedObservationTerminal, SelectedObservationTraversalError,
-    SelectedObservationTraversalMeasurements, SelectedObservationTraversalSample,
+    BoundObservationSourceError, BoundSelectedObservation, BoundSelectedObservationError,
+    ResolvedSelectedObservationAccess, SelectedObservationBlock, SelectedObservationBlockConsumer,
+    SelectedObservationBlockSource, SelectedObservationCompletion, SelectedObservationReplayProof,
+    SelectedObservationResidencyCertificate, SelectedObservationTerminal,
+    SelectedObservationTraversalError, SelectedObservationTraversalMeasurements,
+    SelectedObservationTraversalSample,
 };
 
 use crate::bounded_stream::{
@@ -1820,6 +1822,16 @@ impl WeightingExecutionState {
         }
     }
 
+    pub(crate) fn authorize_imported_operator(
+        &self,
+        operator: &mut crate::SpectralOperatorState,
+    ) -> Result<(), crate::CompleteDataPlanError> {
+        if let Some(artifact) = &self.imported {
+            artifact.authorize_derived_operator(operator)?;
+        }
+        Ok(())
+    }
+
     /// Clone the immutable weighting artifact retained by a completed pass.
     #[must_use]
     pub fn frozen_artifact(&self) -> Option<FrozenWeightingArtifact> {
@@ -2123,11 +2135,29 @@ impl WeightingExecutionState {
         {
             return Err(WeightingReplayError::Evidence(WeightingEvidenceError));
         }
+        let selected_replay_proof = owner_completion
+            .replay_proof()
+            .ok_or(WeightingReplayError::Evidence(WeightingEvidenceError))?;
+        let selected_replay_proof_bytes = selected_replay_proof
+            .retained_heap_bytes(problem)
+            .ok_or(WeightingReplayError::Evidence(WeightingEvidenceError))?;
+        let coverage_proof = FrozenWeightingCoverageProof::seal(
+            problem,
+            &state,
+            &summary,
+            owner_completion.generation_id(),
+            owner_completion.sample_count(),
+            continuum_completion.map(ContinuumTransformCompletion::generation_id),
+        )
+        .map_err(WeightingReplayError::Owner)?;
         let artifact = FrozenWeightingArtifact {
             state: Arc::new(state),
             source_generation: owner_completion.generation_id(),
             source_sample_count: owner_completion.sample_count(),
             continuum_transform: continuum_completion,
+            selected_replay_proof: Some(selected_replay_proof),
+            selected_replay_proof_bytes,
+            coverage_proof: Some(coverage_proof),
             cross_plan_reservation: None,
         };
         let frozen = FrozenWeightingGeneration {
@@ -2189,9 +2219,19 @@ impl WeightingExecutionState {
             .imported
             .take()
             .ok_or(WeightingReplayError::Evidence(WeightingEvidenceError))?;
+        let coverage_proof = artifact
+            .coverage_proof
+            .ok_or(WeightingReplayError::Evidence(WeightingEvidenceError))?;
         let replay = artifact
             .state
-            .begin_replay(problem, fragment.plan)
+            .begin_derived_replay(
+                problem,
+                fragment.plan,
+                coverage_proof,
+                artifact
+                    .continuum_transform
+                    .map(ContinuumTransformCompletion::generation_id),
+            )
             .map_err(WeightingReplayError::Owner)?;
         let completed = match execute_weighting_block_stream(
             problem,
@@ -2221,12 +2261,9 @@ impl WeightingExecutionState {
             .map(|transform| transform.complete(owner_completion.generation_id()))
             .transpose()
             .map_err(WeightingReplayError::Transform)?;
-        if owner_completion.generation_id() != artifact.source_generation
-            || owner_completion.sample_count() != artifact.source_sample_count
-            || continuum_completion != artifact.continuum_transform
-        {
-            return Err(WeightingReplayError::Evidence(WeightingEvidenceError));
-        }
+        artifact
+            .validate_derived_completion(&owner_completion, continuum_completion, &summary)
+            .map_err(WeightingReplayError::Owner)?;
         let binding = WeightingGenerationBinding {
             attempt_id: context.attempt_id(),
             owner_node: context.node().id.clone(),
@@ -3200,6 +3237,9 @@ pub struct FrozenWeightingArtifact {
     source_generation: SelectedObservationGenerationId,
     source_sample_count: u64,
     continuum_transform: Option<ContinuumTransformCompletion>,
+    selected_replay_proof: Option<SelectedObservationReplayProof>,
+    selected_replay_proof_bytes: usize,
+    coverage_proof: Option<FrozenWeightingCoverageProof>,
     cross_plan_reservation: Option<Arc<FrozenWeightingReservation>>,
 }
 
@@ -3212,6 +3252,7 @@ pub struct FrozenWeightingArtifact {
 pub struct FrozenWeightingReservation {
     _lease: ResourceLease,
     bytes: u64,
+    replay_proof_bytes: u64,
 }
 
 impl FrozenWeightingReservation {
@@ -3220,8 +3261,9 @@ impl FrozenWeightingReservation {
         authority: &ResourceAuthority,
         policy: ResourcePolicy,
         residency: WeightingResidency,
+        replay_proof_bytes: usize,
     ) -> Result<Self, ResourceError> {
-        let bytes = [
+        let weighting_bytes = [
             residency.density_grid_bytes(),
             residency.robust_factor_bytes(),
             residency.sum_weight_bytes(),
@@ -3235,6 +3277,11 @@ impl FrozenWeightingReservation {
                 )
                 .ok_or(ResourceError::Overflow("frozen weighting residency"))
         })?;
+        let replay_proof_bytes = u64::try_from(replay_proof_bytes)
+            .map_err(|_| ResourceError::Overflow("selected replay proof residency"))?;
+        let bytes = weighting_bytes
+            .checked_add(replay_proof_bytes)
+            .ok_or(ResourceError::Overflow("cross-plan frozen residency"))?;
         let memory = MemoryDemand {
             allocation_id: "cross-plan-frozen-weighting".to_string(),
             hard_bytes: bytes,
@@ -3281,6 +3328,7 @@ impl FrozenWeightingReservation {
         Ok(Self {
             _lease: lease,
             bytes,
+            replay_proof_bytes,
         })
     }
 
@@ -3295,12 +3343,69 @@ impl FrozenWeightingReservation {
 mod serial_compute_probe;
 
 impl FrozenWeightingArtifact {
+    /// Rebind this artifact's pass-back-only selected proof through a fresh
+    /// casa-ms owner access. No selected generation is exposed by the artifact.
+    pub fn rebind_selected(
+        &self,
+        access: ResolvedSelectedObservationAccess,
+        problem: &CompiledProblem,
+    ) -> Result<BoundSelectedObservation, BoundSelectedObservationError> {
+        let proof = self
+            .selected_replay_proof
+            .as_ref()
+            .ok_or(BoundSelectedObservationError::ReplayProofMismatch)?;
+        access.rebind(problem, proof)
+    }
+
+    fn validate_derived_completion(
+        &self,
+        owner: &SelectedObservationCompletion,
+        continuum: Option<ContinuumTransformCompletion>,
+        replay: &WeightingReplaySummary,
+    ) -> Result<(), WeightingError> {
+        let selected_proof = self
+            .selected_replay_proof
+            .as_ref()
+            .ok_or(WeightingError::CoverageMismatch)?;
+        let authorization = selected_proof
+            .authorize_rebound_completion(owner)
+            .ok_or(WeightingError::CoverageMismatch)?;
+        if continuum != self.continuum_transform {
+            return Err(WeightingError::CoverageMismatch);
+        }
+        self.coverage_proof
+            .ok_or(WeightingError::CoverageMismatch)?
+            .validate_derived_replay(
+                authorization.generation_id(),
+                authorization.sample_count(),
+                continuum.map(ContinuumTransformCompletion::generation_id),
+                replay,
+            )
+    }
+
+    pub(crate) fn authorize_derived_operator(
+        &self,
+        operator: &mut crate::SpectralOperatorState,
+    ) -> Result<(), crate::CompleteDataPlanError> {
+        let proof = self
+            .coverage_proof
+            .ok_or(crate::CompleteDataPlanError::MissingFrozenWeighting)?;
+        operator
+            .authorize_derived_coverage(proof)
+            .map_err(crate::CompleteDataPlanError::Operator)
+    }
+
     pub(crate) fn with_cross_plan_reservation(
         mut self,
         reservation: Arc<FrozenWeightingReservation>,
-    ) -> Self {
+    ) -> Result<Self, WeightingEvidenceError> {
+        let actual =
+            u64::try_from(self.selected_replay_proof_bytes).map_err(|_| WeightingEvidenceError)?;
+        if actual > reservation.replay_proof_bytes {
+            return Err(WeightingEvidenceError);
+        }
         self.cross_plan_reservation = Some(reservation);
-        self
+        Ok(self)
     }
 
     pub(crate) fn has_cross_plan_reservation(&self) -> bool {
@@ -3487,6 +3592,9 @@ fn complete_weighting_generation(
                 source_generation: pending.density_completion.generation_id(),
                 source_sample_count: pending.density_completion.sample_count(),
                 continuum_transform: None,
+                selected_replay_proof: None,
+                selected_replay_proof_bytes: 0,
+                coverage_proof: None,
                 cross_plan_reservation: None,
             },
             binding,

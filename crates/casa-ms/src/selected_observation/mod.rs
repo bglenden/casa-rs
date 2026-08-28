@@ -23,7 +23,8 @@ pub use access::{BoundObservationSourceError, SelectedObservationBlock};
 pub use bound_observation::{
     BoundSelectedObservation, BoundSelectedObservationError, ObservationSourceBinding,
     SelectedObservationBlockConsumer, SelectedObservationBlockSource,
-    SelectedObservationCompletion, SelectedObservationResidencyCertificate,
+    SelectedObservationCompletion, SelectedObservationReplayAuthorization,
+    SelectedObservationReplayProof, SelectedObservationResidencyCertificate,
     SelectedObservationTerminal, SelectedObservationTraversalError,
     SelectedObservationTraversalMeasurements,
 };

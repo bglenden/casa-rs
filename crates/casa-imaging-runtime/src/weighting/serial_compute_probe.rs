@@ -29,17 +29,18 @@ use casa_imaging_model::{
     WeightDensityScope, WeightingContract, WeightingScheme, compile, compile_observation,
 };
 use casa_imaging_reconstruction::{
-    ExecutableModelProblem, MajorCycleOwner, MajorCyclePreparation, ModelLifecycle,
-    SpectralOperatorSpecification, WeightingExecutionLimits, begin_weighting_generation,
-    plan_weighting,
+    ExecutableModelProblem, FrozenWeightingCoverageProof, MajorCycleOwner, MajorCyclePreparation,
+    ModelLifecycle, SpectralOperatorSpecification, WeightingExecutionLimits,
+    begin_weighting_generation, plan_weighting,
     runtime_adapter::{
         SpectralOperatorPass, prepare_spectral_operator, spectral_operator_workload,
     },
 };
 use casa_ms::{
     BoundSelectedObservation, MeasurementSet, MsSelectionIoBudget, SelectedObservationBlock,
-    SelectedObservationContentBudget, SelectedObservationResolutionRequest, SelectedObservationRow,
-    VisibilityDataColumn, resolve_selected_observation,
+    SelectedObservationContentBudget, SelectedObservationReplayProof,
+    SelectedObservationResolutionRequest, SelectedObservationRow, VisibilityDataColumn,
+    resolve_selected_observation,
 };
 use casa_types::measures::{epoch::EpochRef, frequency::FrequencyRef};
 use serde_json::json;
@@ -52,8 +53,15 @@ const EXPECTED_FULL_SELECTED_ROWS: u64 = 4_094_064;
 const WINDOW_ROWS: u64 = 65_536;
 const WINDOW_STARTS: [u64; 4] = [0, 1_342_843, 2_685_685, 4_028_528];
 const EXPECTED_SELECTED_ROWS: u64 = 263_250;
+const EXPECTED_SELECTED_SAMPLES: u64 = 33_696_000;
 const CAPTURED_RESIDENCY_BYTES: usize = 1 << 30;
 const CAPTURED_BLOCK_LIMIT: usize = 16;
+const EXPECTED_CAPTURED_BLOCKS: usize = 6;
+const EXPECTED_CAPTURED_LOGICAL_BYTES: u64 = 330_905_250;
+const EXPECTED_CAPTURED_READ_OPERATIONS: u64 = 114;
+const EXPECTED_CAPTURED_CURRENT_BYTES: u64 = 375_131_250;
+const EXPECTED_CAPTURED_CAPACITY_BYTES: u64 = 378_169_650;
+const EXPECTED_WEIGHTED_BLOCKS: u64 = 8_227;
 const WEIGHTED_BLOCK_SAMPLES: usize = 4_096;
 const EXPECTED_NORMAL_STATE_IDENTITY: &str =
     "e6368112404a3ce2b3b3b9e988bde85dadd5726e09de8d87ca4499dc27a71b91";
@@ -78,6 +86,14 @@ struct CapturedBlocks<'a> {
 
 #[test]
 #[ignore = "requires the mounted VLA medium performance dataset"]
+fn medium_vla_64ch_owner_validated_open() -> Result<(), Box<dyn Error>> {
+    let probe = build_problem(&dataset_path()?)?;
+    assert_eq!(probe.selected_rows, EXPECTED_SELECTED_ROWS);
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires the mounted VLA medium performance dataset"]
 fn medium_vla_64ch_residual_refresh() -> Result<(), Box<dyn Error>> {
     let total_start = Instant::now();
     let ProbeProblem {
@@ -98,6 +114,11 @@ fn medium_vla_64ch_residual_refresh() -> Result<(), Box<dyn Error>> {
         captured.blocks.len() <= CAPTURED_BLOCK_LIMIT,
         "captured block count exceeded the fixed residency bound"
     );
+    assert_eq!(
+        captured.blocks.len(),
+        EXPECTED_CAPTURED_BLOCKS,
+        "bounded source block shape changed"
+    );
     assert!(
         usize::try_from(captured.capacity_bytes)? <= CAPTURED_RESIDENCY_BYTES,
         "captured block capacity exceeded the fixed residency bound"
@@ -114,7 +135,7 @@ fn medium_vla_64ch_residual_refresh() -> Result<(), Box<dyn Error>> {
         elapsed: capture_elapsed,
     } = captured;
     let setup_start = Instant::now();
-    let (selected_generation, density) = freeze_density(
+    let (selected_generation, selected_replay_proof, density) = freeze_density(
         &problem,
         &plan,
         &blocks,
@@ -172,6 +193,14 @@ fn medium_vla_64ch_residual_refresh() -> Result<(), Box<dyn Error>> {
     };
     let initial_complete =
         initial_operator.complete(&initial_summary, selected_generation, None)?;
+    let coverage_proof = FrozenWeightingCoverageProof::seal(
+        &problem,
+        &weighting,
+        &initial_summary,
+        selected_generation,
+        selected_samples,
+        None,
+    )?;
     let initial_join = MajorCycleOwner::from_complete_data(initial_complete, initial_preparation)?
         .reconcile(&mut lifecycle)?;
     let (prior_normal_state, continuation) = initial_join.into_continuation();
@@ -193,8 +222,9 @@ fn medium_vla_64ch_residual_refresh() -> Result<(), Box<dyn Error>> {
     let mut operator =
         prepare_spectral_operator(specification, workload)?.begin(&problem, &weighting)?;
     operator.bind_major_cycle_model(preparation.final_model(), Some(prior_normal_state))?;
-    let replay = weighting.begin_replay(&problem, &plan)?;
-    let consumer = fresh_consumer(&request, &problem)?;
+    operator.authorize_derived_coverage(coverage_proof)?;
+    let replay = weighting.begin_derived_replay(&problem, &plan, coverage_proof, None)?;
+    let consumer = fresh_rebound_consumer(&request, &problem, &selected_replay_proof)?;
     let (
         replay_summary,
         replay_consumer,
@@ -243,6 +273,12 @@ fn medium_vla_64ch_residual_refresh() -> Result<(), Box<dyn Error>> {
         )
     };
     assert_eq!(replay_summary.sample_count(), selected_samples);
+    coverage_proof.validate_derived_replay(
+        selected_generation,
+        selected_samples,
+        None,
+        &replay_summary,
+    )?;
     let finish_started = Instant::now();
     let result = operator.complete(&replay_summary, selected_generation, None)?;
     let finish_elapsed = finish_started.elapsed();
@@ -304,16 +340,41 @@ fn medium_vla_64ch_residual_refresh() -> Result<(), Box<dyn Error>> {
         "fixture row count changed"
     );
     assert_eq!(
+        replay_summary.sample_count(),
+        EXPECTED_SELECTED_SAMPLES,
+        "fixture sample count changed"
+    );
+    assert_eq!(
+        [
+            logical_bytes,
+            read_operations,
+            current_bytes,
+            capacity_bytes
+        ],
+        [
+            EXPECTED_CAPTURED_LOGICAL_BYTES,
+            EXPECTED_CAPTURED_READ_OPERATIONS,
+            EXPECTED_CAPTURED_CURRENT_BYTES,
+            EXPECTED_CAPTURED_CAPACITY_BYTES,
+        ],
+        "captured source I/O or residency invariants changed"
+    );
+    assert_eq!(
+        [emitted_blocks, predicted_samples],
+        [EXPECTED_WEIGHTED_BLOCKS, EXPECTED_SELECTED_SAMPLES],
+        "weighted block shape or prediction count changed"
+    );
+    assert_eq!(
         checksum_text, EXPECTED_NORMAL_STATE_IDENTITY,
         "scientific checksum changed"
     );
     assert!(
-        selected_generation_proof_bytes > 0 && selected_generation_proof_hash_calls > 0,
-        "selected-generation proof counters must report the timed replay"
+        selected_generation_proof_bytes == 0 && selected_generation_proof_hash_calls == 0,
+        "rebound selected-generation proof must perform zero timed hashing"
     );
     assert!(
-        weighting_coverage_proof_bytes > 0 && weighting_coverage_proof_hash_calls > 0,
-        "weighting coverage proof counters must report the timed replay"
+        weighting_coverage_proof_bytes == 0 && weighting_coverage_proof_hash_calls == 0,
+        "derived weighting coverage must perform zero timed hashing"
     );
     assert_eq!(
         [
@@ -324,11 +385,11 @@ fn medium_vla_64ch_residual_refresh() -> Result<(), Box<dyn Error>> {
             operator_coverage_proof_bytes,
             operator_coverage_proof_hash_calls,
         ],
-        "weighting and operator coverage proofs must encode the same replay"
+        "weighting and operator coverage derivation must perform the same zero work"
     );
     assert!(
-        (5.0..=20.0).contains(&replay_elapsed.as_secs_f64()),
-        "timed production-kernel replay must remain a 5-20 second discriminator"
+        replay_elapsed.as_secs_f64() <= 8.919_854_174_7,
+        "timed candidate replay exceeded the approved discriminator ceiling"
     );
     Ok(())
 }
@@ -704,6 +765,7 @@ fn freeze_density<'a>(
 ) -> Result<
     (
         SelectedObservationGenerationId,
+        SelectedObservationReplayProof,
         casa_imaging_reconstruction::WeightingDensityPhase,
     ),
     Box<dyn Error>,
@@ -728,7 +790,10 @@ fn freeze_density<'a>(
         )
         .into());
     }
-    Ok((completion.generation_id(), resolved.density))
+    let replay_proof = completion
+        .replay_proof()
+        .ok_or("owner-validated density traversal omitted replay proof")?;
+    Ok((completion.generation_id(), replay_proof, resolved.density))
 }
 
 fn fresh_consumer<'a>(
@@ -739,6 +804,20 @@ fn fresh_consumer<'a>(
     let (_, access) = resolved.into_parts();
     access.certify_residency(problem)?;
     let selected = access.open(problem)?;
+    let (source, consumer) = selected.into_block_stream(problem)?;
+    drop(source);
+    Ok(consumer)
+}
+
+fn fresh_rebound_consumer<'a>(
+    request: &SelectedObservationResolutionRequest,
+    problem: &'a CompiledProblem,
+    proof: &SelectedObservationReplayProof,
+) -> Result<SelectedObservationBlockConsumer<'a>, Box<dyn Error>> {
+    let resolved = resolve_selected_observation(request.clone())?;
+    let (_, access) = resolved.into_parts();
+    access.certify_residency(problem)?;
+    let selected = access.rebind(problem, proof)?;
     let (source, consumer) = selected.into_block_stream(problem)?;
     drop(source);
     Ok(consumer)

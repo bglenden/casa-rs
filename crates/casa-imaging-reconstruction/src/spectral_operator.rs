@@ -20,8 +20,9 @@ use thiserror::Error;
 use crate::{
     ModelGeneration, ModelGenerationId, ModelSupport, canonical_f64_bits,
     weighting::{
-        CoverageEncoder, WeightingAlgorithmState, WeightingGenerationId, WeightingReplayChunk,
-        WeightingReplayCoverageId, WeightingReplayId, WeightingReplaySummary,
+        CoverageEncoder, FrozenWeightingCoverageProof, WeightingAlgorithmState,
+        WeightingGenerationId, WeightingReplayChunk, WeightingReplayCoverageId, WeightingReplayId,
+        WeightingReplaySummary,
     },
 };
 
@@ -1058,6 +1059,24 @@ impl CompleteDataOwnerState {
             predicted_selected: Vec::with_capacity(prepared.workload.max_replay_block_samples),
             operator: SpectralSlabOperator::new(specification, prepared.workload, prepared.fft),
         })
+    }
+
+    /// Bind a sealed first-pass coverage invariant before a derived later
+    /// replay reaches the operator, including the empty-stream case.
+    pub fn authorize_derived_coverage(
+        &mut self,
+        proof: FrozenWeightingCoverageProof,
+    ) -> Result<(), SpectralOperatorError> {
+        if !proof.matches_streaming_operator(self.problem, self.weighting_commitment)
+            || self.weighting_generation.is_some_and(|generation| {
+                !proof.matches_operator(self.problem, self.weighting_commitment, generation)
+            })
+        {
+            return Err(SpectralOperatorError::WeightingGeneration);
+        }
+        self.weighting_generation = Some(proof.generation());
+        self.coverage = CoverageEncoder::derived(proof.coverage());
+        Ok(())
     }
 
     /// Bind the exact prepared final model before the exhaustive replay starts.

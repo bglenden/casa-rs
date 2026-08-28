@@ -3347,6 +3347,16 @@ pub trait WorkImplementation {
         completion: ObservationReadCompletionContext,
     ) -> Result<AttemptBoundObservationCompletion, Self::Error>;
 
+    /// Abort one incomplete observation read and synchronously settle any
+    /// storage worker owned by it.
+    ///
+    /// The runner invokes this before releasing the observation's logical
+    /// MeasurementSet permits on error or cancellation. Implementations whose
+    /// observation reads cannot escape synchronous work retain the default.
+    fn abort_observation_read(&self, _owner_node: &WorkNodeId) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
     /// Return the Product Generation seal produced by this completed publication node.
     ///
     /// The runtime invokes this after synchronous work and every declared fence
@@ -4063,6 +4073,21 @@ where
             match controller.directive(&status) {
                 RunDirective::Continue => {}
                 RunDirective::Cancel => {
+                    for (node, work) in &launched {
+                        if work.node().kind.reads_observation()
+                            && !completed_observation_reads.contains_key(node)
+                            && let Err(source) = implementations[&work.node().implementation]
+                                .abort_observation_read(node)
+                        {
+                            if pending.is_none() {
+                                pending = Some(PendingRunError::Execution {
+                                    node: node.clone(),
+                                    source,
+                                });
+                            }
+                            break;
+                        }
+                    }
                     if let Err(error) = scheduler.cancel() {
                         defer_scheduler_error(&mut scheduler, &mut pending, error);
                     }
@@ -4091,6 +4116,16 @@ where
                         defer_receipt_error(&mut scheduler, &mut pending, error);
                         controller_stopped = true;
                     }
+                }
+            }
+        }
+        if pending.is_some() || controller_stopped {
+            for (node, work) in &launched {
+                if work.node().kind.reads_observation()
+                    && !completed_observation_reads.contains_key(node)
+                {
+                    let _ =
+                        implementations[&work.node().implementation].abort_observation_read(node);
                 }
             }
         }
@@ -4178,9 +4213,15 @@ where
                                 {
                                     receipt_error = Some(error);
                                 }
+                                let receipt_transition_succeeded = receipt_error.is_none();
                                 if let Some(error) = receipt_error {
                                     defer_receipt_error(&mut scheduler, &mut pending, error);
                                     controller_stopped = true;
+                                }
+                                if !receipt_transition_succeeded
+                                    && work.node().kind.reads_observation()
+                                {
+                                    let _ = implementation.abort_observation_read(&node_id);
                                 }
                                 let synchronous_observation_read =
                                     work.node().kind.reads_observation()
@@ -4190,6 +4231,8 @@ where
                                 match scheduler.finish_work(node_id.clone(), WorkResult::Succeeded)
                                 {
                                     Ok(_) if synchronous_observation_read => {
+                                        let permits =
+                                            scheduler.take_observation_completion_permits(&node_id);
                                         let completion = ObservationReadCompletionContext {
                                             attempt_id: receipt.attempt_id(),
                                             owner_node: node_id.clone(),
@@ -4208,43 +4251,68 @@ where
                                                 .selected_observation()
                                                 .commitment_id(),
                                         };
-                                        match implementation.complete_observation_read(completion) {
-                                            Ok(completion) => {
-                                                if completed_observation_reads
-                                                    .insert(node_id.clone(), completion)
-                                                    .is_some()
-                                                {
-                                                    defer_scheduler_error(
-                                                        &mut scheduler,
-                                                        &mut pending,
-                                                        ExecutionError::InvalidState(format!(
-                                                            "observation read {} completed more than once",
-                                                            node_id.as_str()
-                                                        )),
-                                                    );
+                                        let duplicate =
+                                            completed_observation_reads.contains_key(&node_id);
+                                        if duplicate {
+                                            defer_scheduler_error(
+                                                &mut scheduler,
+                                                &mut pending,
+                                                ExecutionError::InvalidState(format!(
+                                                    "observation read {} completed more than once",
+                                                    node_id.as_str()
+                                                )),
+                                            );
+                                            controller_stopped = true;
+                                        }
+                                        if !receipt_transition_succeeded || duplicate {
+                                            let _ = implementation.abort_observation_read(&node_id);
+                                        } else {
+                                            match implementation
+                                                .complete_observation_read(completion)
+                                            {
+                                                Ok(completion) => {
+                                                    completed_observation_reads
+                                                        .insert(node_id.clone(), completion);
+                                                }
+                                                Err(source) => {
+                                                    let _ = implementation
+                                                        .abort_observation_read(&node_id);
+                                                    if pending.is_none() {
+                                                        pending =
+                                                            Some(PendingRunError::Execution {
+                                                                node: node_id.clone(),
+                                                                source,
+                                                            });
+                                                    }
                                                     controller_stopped = true;
+                                                    scheduler.cancel_after_error();
                                                 }
                                             }
-                                            Err(source) => {
-                                                if pending.is_none() {
-                                                    pending = Some(PendingRunError::Execution {
-                                                        node: node_id,
-                                                        source,
-                                                    });
-                                                }
-                                                controller_stopped = true;
-                                                scheduler.cancel_after_error();
-                                            }
+                                        }
+                                        if let Err(error) = permits.release() {
+                                            defer_scheduler_error(
+                                                &mut scheduler,
+                                                &mut pending,
+                                                error,
+                                            );
+                                            controller_stopped = true;
                                         }
                                     }
                                     Ok(_) => {}
                                     Err(error) => {
+                                        if synchronous_observation_read {
+                                            let _ = implementation.abort_observation_read(&node_id);
+                                            let _ = scheduler
+                                                .take_observation_completion_permits(&node_id)
+                                                .release();
+                                        }
                                         defer_scheduler_error(&mut scheduler, &mut pending, error);
                                         controller_stopped = true;
                                     }
                                 }
                             }
                             Err(error) => {
+                                let observation_read = work.node().kind.reads_observation();
                                 let record_failed_measurements = matches!(
                                     &error,
                                     ExecutionEvidenceError::RejectedArtifact { .. }
@@ -4275,16 +4343,32 @@ where
                                 if let Some(error) = receipt_error {
                                     defer_receipt_error(&mut scheduler, &mut pending, error);
                                 }
+                                if observation_read {
+                                    let _ = implementation.abort_observation_read(&node_id);
+                                }
                                 launched.insert(node_id.clone(), work);
-                                if scheduler
-                                    .finish_work(node_id, WorkResult::Succeeded)
-                                    .is_err()
+                                match scheduler.finish_work(node_id.clone(), WorkResult::Succeeded)
                                 {
-                                    return Err(terminal_drain_error(
-                                        &mut scheduler,
-                                        &mut pending,
-                                        "evidence failure is retained",
-                                    ));
+                                    Ok(fences) if fences.is_empty() && observation_read => {
+                                        if let Err(error) = scheduler
+                                            .take_observation_completion_permits(&node_id)
+                                            .release()
+                                        {
+                                            defer_scheduler_error(
+                                                &mut scheduler,
+                                                &mut pending,
+                                                error,
+                                            );
+                                        }
+                                    }
+                                    Ok(_) => {}
+                                    Err(_) => {
+                                        return Err(terminal_drain_error(
+                                            &mut scheduler,
+                                            &mut pending,
+                                            "evidence failure is retained",
+                                        ));
+                                    }
                                 }
                                 scheduler.cancel_after_error();
                             }
@@ -4292,6 +4376,9 @@ where
                     }
                     Err(source) => {
                         let diagnostic = source.to_string();
+                        if work.node().kind.reads_observation() {
+                            let _ = implementation.abort_observation_read(&node_id);
+                        }
                         match implementation
                             .failure_measurements(&source)
                             .map(|measurements| {
@@ -4347,6 +4434,8 @@ where
                             continue;
                         }
                         controller_stopped = true;
+                        let failed_node = node_id.clone();
+                        let observation_read = work.node().kind.reads_observation();
                         match scheduler.finish_work(
                             node_id,
                             WorkResult::Failed {
@@ -4362,6 +4451,18 @@ where
                                             "executor failure is retained",
                                         ));
                                     }
+                                }
+                                if observation_read
+                                    && scheduler
+                                        .take_observation_completion_permits(&failed_node)
+                                        .release()
+                                        .is_err()
+                                {
+                                    return Err(terminal_drain_error(
+                                        &mut scheduler,
+                                        &mut pending,
+                                        "observation abort completed before permit release failure",
+                                    ));
                                 }
                             }
                             Err(_) => {
@@ -4416,6 +4517,9 @@ where
                     }
                     let _ = receipt.fence_failed(&fence);
                     controller_stopped = true;
+                    if work.node().kind.reads_observation() {
+                        let _ = implementation.abort_observation_read(fence.node());
+                    }
                     if work.node().kind == WorkKind::Release {
                         if scheduler.fail_release_fence(fence).is_err() {
                             return Err(terminal_drain_error(
@@ -4435,6 +4539,18 @@ where
                             &mut scheduler,
                             &mut pending,
                             "fence failure is retained",
+                        ));
+                    }
+                    if work.node().kind.reads_observation()
+                        && scheduler
+                            .take_observation_completion_permits(&work.node().id)
+                            .release()
+                            .is_err()
+                    {
+                        return Err(terminal_drain_error(
+                            &mut scheduler,
+                            &mut pending,
+                            "observation abort completed before permit release failure",
                         ));
                     }
                 } else {
@@ -4477,34 +4593,48 @@ where
                         controller_stopped = true;
                         fence_transition_succeeded = false;
                     }
-                    if fence_transition_succeeded && let Some(completion) = observation_completion {
-                        match implementation.complete_observation_read(completion) {
-                            Ok(completion) => {
-                                if completed_observation_reads
-                                    .insert(work.node().id.clone(), completion)
-                                    .is_some()
-                                {
-                                    defer_scheduler_error(
-                                        &mut scheduler,
-                                        &mut pending,
-                                        ExecutionError::InvalidState(format!(
-                                            "observation read {} completed more than once",
-                                            work.node().id.as_str()
-                                        )),
-                                    );
+                    if let Some(completion) = observation_completion {
+                        let node = work.node().id.clone();
+                        let permits = scheduler.take_observation_completion_permits(&node);
+                        let duplicate = completed_observation_reads.contains_key(&node);
+                        if duplicate {
+                            defer_scheduler_error(
+                                &mut scheduler,
+                                &mut pending,
+                                ExecutionError::InvalidState(format!(
+                                    "observation read {} completed more than once",
+                                    node.as_str()
+                                )),
+                            );
+                            controller_stopped = true;
+                        }
+                        if !fence_transition_succeeded
+                            || duplicate
+                            || pending.is_some()
+                            || controller_stopped
+                        {
+                            let _ = implementation.abort_observation_read(&node);
+                        } else {
+                            match implementation.complete_observation_read(completion) {
+                                Ok(completion) => {
+                                    completed_observation_reads.insert(node.clone(), completion);
+                                }
+                                Err(source) => {
+                                    let _ = implementation.abort_observation_read(&node);
+                                    if pending.is_none() {
+                                        pending = Some(PendingRunError::Execution {
+                                            node: node.clone(),
+                                            source,
+                                        });
+                                    }
                                     controller_stopped = true;
+                                    scheduler.cancel_after_error();
                                 }
                             }
-                            Err(source) => {
-                                if pending.is_none() {
-                                    pending = Some(PendingRunError::Execution {
-                                        node: work.node().id.clone(),
-                                        source,
-                                    });
-                                }
-                                controller_stopped = true;
-                                scheduler.cancel_after_error();
-                            }
+                        }
+                        if let Err(error) = permits.release() {
+                            defer_scheduler_error(&mut scheduler, &mut pending, error);
+                            controller_stopped = true;
                         }
                     }
                 }

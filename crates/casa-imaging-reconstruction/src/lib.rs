@@ -91,11 +91,12 @@ pub use spectral_sampling::{
     SpectralStencilError, SpectralStencilReceipt, SpectralStencilValidity, compile_spectral_stencil,
 };
 pub use weighting::{
-    FusedWeightingPhase, WeightingAlgorithmState, WeightingDensityPhase, WeightingError,
-    WeightingExecutionLimits, WeightingGenerationId, WeightingPlan, WeightingReplayChunk,
-    WeightingReplayCoverageId, WeightingReplayId, WeightingReplaySummary, WeightingResidency,
-    WeightingSampleValue, WeightingSelectedSample, WeightingSpectralValue,
-    begin_natural_weighting_stream, begin_weighting_generation, plan_weighting,
+    FrozenWeightingCoverageProof, FusedWeightingPhase, WeightingAlgorithmState,
+    WeightingDensityPhase, WeightingError, WeightingExecutionLimits, WeightingGenerationId,
+    WeightingPlan, WeightingReplayChunk, WeightingReplayCoverageId, WeightingReplayId,
+    WeightingReplaySummary, WeightingResidency, WeightingSampleValue, WeightingSelectedSample,
+    WeightingSpectralValue, begin_natural_weighting_stream, begin_weighting_generation,
+    plan_weighting,
 };
 
 const AUTHORITY_DOMAIN: &[u8] = b"casa-rs-model-lifecycle-authority";

@@ -61,6 +61,12 @@ pub trait FinalVisibilitySink: Send {
 
     /// Close the stream against the terminal selected/weighting replay proof.
     fn finish(&mut self, replay: &WeightingReplayCompletion) -> io::Result<()>;
+
+    /// Abort an incomplete replay and synchronously join any storage worker.
+    ///
+    /// Returning guarantees that the sink no longer owns a storage lock or
+    /// background worker, whether the replay failed or was cancelled.
+    fn abort(&mut self) -> io::Result<()>;
 }
 
 /// Shared handle for final-visibility product completion and optional in-place
@@ -77,6 +83,20 @@ struct VisibilityWriteBinding {
     selection: Arc<casa_imaging_model::ObservationSelection>,
     targets: SelectedVisibilityWriteTargets,
     state: Mutex<VisibilityWriteState>,
+}
+
+impl Drop for VisibilityWriteBinding {
+    fn drop(&mut self) {
+        let state = self
+            .state
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let VisibilityWriteState::Writing(worker) =
+            std::mem::replace(state, VisibilityWriteState::Idle)
+        {
+            let _ = worker.abort();
+        }
+    }
 }
 
 enum VisibilityWriteState {
@@ -280,20 +300,6 @@ impl FinalVisibilitySink for FinalVisibilityReplay {
             )));
         }
         if let Some(write) = &self.visibility_write {
-            let mut write_state = write
-                .state
-                .lock()
-                .map_err(|_| io::Error::other("visibility write state poisoned"))?;
-            let worker = match std::mem::replace(&mut *write_state, VisibilityWriteState::Idle) {
-                VisibilityWriteState::Writing(worker) => worker,
-                other => {
-                    *write_state = other;
-                    return Err(io::Error::other(
-                        "visibility writer was not active at replay completion",
-                    ));
-                }
-            };
-            drop(write_state);
             let corrected_data = write
                 .targets
                 .corrected_data()
@@ -308,6 +314,19 @@ impl FinalVisibilitySink for FinalVisibilityReplay {
                         })
                 })
                 .transpose()?;
+            let mut write_state = write
+                .state
+                .lock()
+                .map_err(|_| io::Error::other("visibility write state poisoned"))?;
+            let worker = match std::mem::replace(&mut *write_state, VisibilityWriteState::Idle) {
+                VisibilityWriteState::Writing(worker) => worker,
+                other => {
+                    *write_state = other;
+                    return Err(io::Error::other(
+                        "visibility writer was not active at replay completion",
+                    ));
+                }
+            };
             worker.finish(
                 completion.sample_count(),
                 SelectedVisibilityWriteGenerations {
@@ -318,14 +337,32 @@ impl FinalVisibilitySink for FinalVisibilityReplay {
                     corrected_data,
                 },
             )?;
-            *write
-                .state
-                .lock()
-                .map_err(|_| io::Error::other("visibility write state poisoned"))? =
-                VisibilityWriteState::Complete;
+            *write_state = VisibilityWriteState::Complete;
         }
         *state = FinalVisibilityReplayState::Finished(completion);
         Ok(())
+    }
+
+    fn abort(&mut self) -> io::Result<()> {
+        let worker = self.visibility_write.as_ref().and_then(|write| {
+            let mut state = write
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            match std::mem::replace(&mut *state, VisibilityWriteState::Idle) {
+                VisibilityWriteState::Writing(worker) => Some(worker),
+                VisibilityWriteState::Idle | VisibilityWriteState::Complete => None,
+            }
+        });
+        let worker_result = worker.map_or(Ok(()), VisibilityWriteWorker::abort);
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !matches!(*state, FinalVisibilityReplayState::Finished(_)) {
+            *state = FinalVisibilityReplayState::Unbound;
+        }
+        worker_result
     }
 }
 
@@ -464,6 +501,7 @@ enum VisibilityWriteCommand {
         expected_samples: u64,
         generations: SelectedVisibilityWriteGenerations,
     },
+    Abort,
 }
 
 impl VisibilityWriteWorker {
@@ -554,6 +592,7 @@ impl VisibilityWriteWorker {
                             writer.complete(generations).map_err(io::Error::other)?;
                             break written_samples;
                         }
+                        VisibilityWriteCommand::Abort => break written_samples,
                     }
                 };
                 Ok(completed_samples)
@@ -601,15 +640,33 @@ impl VisibilityWriteWorker {
         expected_samples: u64,
         generations: SelectedVisibilityWriteGenerations,
     ) -> io::Result<u64> {
-        self.sender
-            .send(VisibilityWriteCommand::Finish {
-                expected_samples,
-                generations,
-            })
-            .map_err(|_| io::Error::other("visibility writer stopped"))?;
-        self.join
+        let Self { sender, join } = self;
+        let send = sender.send(VisibilityWriteCommand::Finish {
+            expected_samples,
+            generations,
+        });
+        drop(sender);
+        let joined = join
+            .join()
+            .map_err(|_| io::Error::other("visibility writer panicked"))?;
+        match send {
+            Ok(()) => joined,
+            Err(_) => joined.and_then(|_| Err(io::Error::other("visibility writer stopped"))),
+        }
+    }
+
+    fn abort(self) -> io::Result<()> {
+        let Self { sender, join } = self;
+        let send = sender.send(VisibilityWriteCommand::Abort);
+        drop(sender);
+        let joined = join
             .join()
             .map_err(|_| io::Error::other("visibility writer panicked"))?
+            .map(|_| ());
+        match send {
+            Ok(()) => joined,
+            Err(_) => joined.and_then(|_| Err(io::Error::other("visibility writer stopped"))),
+        }
     }
 }
 
@@ -956,6 +1013,15 @@ impl SpectralCycleExecutor {
         self.state.lock().ok()?.frozen_weighting.take()
     }
 
+    fn abort_final_visibility_replay(&self) -> io::Result<()> {
+        let Some(sink) = &self.final_visibility_sink else {
+            return Ok(());
+        };
+        sink.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .abort()
+    }
+
     fn fragment(&self) -> WeightingPlanFragment<'_> {
         let mode = match self.pass.phase() {
             crate::SpectralPassPhase::FinalMajor => crate::WeightingStreamingMode::Reuse,
@@ -1093,6 +1159,10 @@ impl SpectralCycleExecutor {
             .take_for_replay(context)?;
         operator
             .bind_major_cycle_model(preparation, prior_normal_state)
+            .map_err(io::Error::other)?;
+        state
+            .weighting
+            .authorize_imported_operator(&mut operator)
             .map_err(io::Error::other)?;
         state.operator = Some(operator);
         let SpectralCycleExecutorState {
@@ -1499,40 +1569,63 @@ impl WorkImplementation for SpectralCycleExecutor {
             .lock()
             .map_err(|_| io::Error::other("spectral cycle state poisoned"))?;
         if completion.owner_node() == fragment.streaming_node() {
-            let predecessor = state
-                .weighting
-                .complete_replay(completion)
-                .map_err(io::Error::other)?;
-            let operator = state
-                .operator
-                .take()
-                .ok_or_else(|| io::Error::other("complete-data operator missing"))?;
-            let frozen_weighting = state.weighting.frozen_artifact().and_then(|artifact| {
-                if let Some(reservation) = state.pending_frozen_reservation.take() {
-                    Some(artifact.with_cross_plan_reservation(reservation))
-                } else {
-                    artifact.has_cross_plan_reservation().then_some(artifact)
+            let result = (|| {
+                let predecessor = state
+                    .weighting
+                    .complete_replay(completion)
+                    .map_err(io::Error::other)?;
+                let operator = state
+                    .operator
+                    .take()
+                    .ok_or_else(|| io::Error::other("complete-data operator missing"))?;
+                let frozen_weighting = match state.weighting.frozen_artifact() {
+                    Some(artifact) => {
+                        if let Some(reservation) = state.pending_frozen_reservation.take() {
+                            Some(
+                                artifact
+                                    .with_cross_plan_reservation(reservation)
+                                    .map_err(io::Error::other)?,
+                            )
+                        } else {
+                            artifact.has_cross_plan_reservation().then_some(artifact)
+                        }
+                    }
+                    None => None,
+                };
+                let replay = state
+                    .weighting
+                    .replay_completion()
+                    .ok_or_else(|| io::Error::other("replay completion missing"))?;
+                // All fallible scientific validation precedes the in-place
+                // visibility writer's durable completion boundary.
+                let complete_data = operator.complete(replay).map_err(io::Error::other)?;
+                if let Some(sink) = &self.final_visibility_sink {
+                    sink.lock()
+                        .map_err(|_| io::Error::other("final visibility sink poisoned"))?
+                        .finish(replay)?;
                 }
-            });
-            let replay = state
-                .weighting
-                .replay_completion()
-                .ok_or_else(|| io::Error::other("replay completion missing"))?;
-            if let Some(sink) = &self.final_visibility_sink {
-                sink.lock()
-                    .map_err(|_| io::Error::other("final visibility sink poisoned"))?
-                    .finish(replay)?;
+                state.frozen_weighting = frozen_weighting;
+                state.complete_data = Some(complete_data);
+                Ok(predecessor)
+            })();
+            if result.is_err() {
+                drop(state);
+                let _ = self.abort_final_visibility_replay();
             }
-            let complete_data = operator.complete(replay).map_err(io::Error::other)?;
-            state.frozen_weighting = frozen_weighting;
-            state.complete_data = Some(complete_data);
-            return Ok(predecessor);
+            return result;
         }
         let selected = state
             .selected_completion
             .take()
             .ok_or_else(|| io::Error::other("selected-observation completion missing"))?;
         completion.bind(selected).map_err(io::Error::other)
+    }
+
+    fn abort_observation_read(&self, owner_node: &WorkNodeId) -> Result<(), Self::Error> {
+        if owner_node == self.fragment().streaming_node() {
+            self.abort_final_visibility_replay()?;
+        }
+        Ok(())
     }
 
     fn publish(&self, context: WorkExecutionContext<'_>) -> Result<(), Self::Error> {

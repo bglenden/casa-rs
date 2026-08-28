@@ -616,13 +616,36 @@ impl ResolvedSelectedObservationAccess {
         BoundSelectedObservation::certify_residency(problem, std::slice::from_ref(&self.binding))
     }
 
+    /// Return the exact shared replay-proof heap that must remain reserved
+    /// between major plans if this access completes exhaustively.
+    pub fn replay_proof_retained_heap_bytes(
+        &self,
+        problem: &casa_imaging_model::CompiledProblem,
+    ) -> Result<usize, BoundSelectedObservationError> {
+        BoundSelectedObservation::replay_proof_retained_heap_bytes(
+            problem,
+            std::slice::from_ref(&self.binding),
+        )
+    }
+
     /// Consume this exact owner probe and open bounded retained observation access.
     #[cfg(unix)]
     pub fn open(
         self,
         problem: &casa_imaging_model::CompiledProblem,
     ) -> Result<BoundSelectedObservation, BoundSelectedObservationError> {
-        BoundSelectedObservation::open(problem, self.measures, vec![self.binding])
+        BoundSelectedObservation::open_owner_validated(problem, self.measures, vec![self.binding])
+    }
+
+    /// Consume this fresh owner probe and authorize a prior exhaustive proof
+    /// under newly acquired retained locks.
+    #[cfg(unix)]
+    pub fn rebind(
+        self,
+        problem: &casa_imaging_model::CompiledProblem,
+        proof: &crate::SelectedObservationReplayProof,
+    ) -> Result<BoundSelectedObservation, BoundSelectedObservationError> {
+        BoundSelectedObservation::rebind(problem, self.measures, vec![self.binding], proof)
     }
 }
 
@@ -731,6 +754,38 @@ pub fn resolve_selected_observation(
             visibility_storage,
         },
     })
+}
+
+/// Rederive one compiled source's selected read state while its newly opened
+/// retained read locks are held.
+///
+/// This is deliberately crate-private: cross-plan replay must pass through the
+/// selected-observation owner, which combines this physical validation with an
+/// opaque prior completion proof before exposing any blocks.
+#[cfg(unix)]
+pub(crate) fn validate_reopened_selected_observation_source(
+    measurement_set: &MeasurementSet,
+    source: &casa_imaging_model::ObservationSource,
+    content_budget: SelectedObservationContentBudget,
+) -> Result<ObservationSourceState, ObservationOwnerError> {
+    let manifest = OwnerManifest::read(measurement_set.main_table().keywords())?;
+    manifest.validate_physical_state(measurement_set)?;
+    validate_physical_selection(measurement_set, source.selection(), content_budget)?;
+    let selected_columns = source.generations().columns();
+    let generations = manifest.source_generations(
+        measurement_set,
+        selected_columns.visibility(),
+        selected_columns.weights(),
+    )?;
+    let identity = MeasurementSetIdentity::new(parse_identity(
+        &manifest.measurement_set_identity,
+        "MeasurementSet identity",
+    )?);
+    Ok(ObservationSourceState::new(
+        identity,
+        source.selection().rows().clone(),
+        generations,
+    ))
 }
 
 /// Failure to initialize, read, or bind a MeasurementSet owner manifest.

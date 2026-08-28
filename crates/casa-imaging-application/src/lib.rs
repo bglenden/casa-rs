@@ -336,12 +336,14 @@ where
     };
     let minor_node = planned.minor_cycle_node().cloned();
     let (physical, weighting, complete, resources, pass, _) = planned.into_parts();
+    let replay_proof_bytes = initial_access.replay_proof_retained_heap_bytes(problem)?;
     let frozen_reservation = (!matches!(algorithm, ReconstructionAlgorithm::Dirty))
         .then(|| {
             FrozenWeightingReservation::acquire(
                 &runtime.authority,
                 runtime.resource_policy.clone(),
                 weighting.planned_residency(),
+                replay_proof_bytes,
             )
         })
         .transpose()?;
@@ -532,6 +534,7 @@ where
                 };
                 let (physical, weighting, complete, resources, pass, minor_node) =
                     final_planned.into_parts();
+                let selected = frozen_weighting.rebind_selected(access, problem)?;
                 let mut executor = SpectralCycleExecutor::new(
                     runtime.implementation.clone(),
                     problem.clone(),
@@ -539,7 +542,7 @@ where
                     resources,
                     pass,
                     complete,
-                    access.open(problem)?,
+                    selected,
                     ExecutableModelProblem::from_compiled(problem.clone())?,
                     SpectralCyclePassInput::FinalMajor(final_input),
                 )

@@ -15,7 +15,10 @@ use std::{
     fmt,
     mem::size_of,
     rc::Rc,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 use thiserror::Error;
 
@@ -59,6 +62,151 @@ pub struct SelectedObservationResidencyCertificate {
     aggregate_resident_bytes: usize,
     peak_live_blocks: usize,
     maximum_pointing_polynomial_terms: usize,
+}
+
+/// Opaque owner-minted proof that one exact selected read set completed an
+/// exhaustive canonical traversal.
+///
+/// The proof is cloneable because it contains only immutable selected-read
+/// identities. It never contains or extends a retained MeasurementSet lock,
+/// and it deliberately excludes the attempt-local access binding. Only
+/// [`BoundSelectedObservation::rebind`] can authorize it under fresh locks.
+#[derive(Clone, Debug)]
+pub struct SelectedObservationReplayProof {
+    inner: Arc<SelectedObservationReplayProofInner>,
+}
+
+#[derive(Debug)]
+struct SelectedObservationReplayProofInner {
+    identity: BoundSelectedObservationIdentity,
+    sources: Vec<SelectedObservationReplaySource>,
+    generation_id: SelectedObservationGenerationId,
+    sample_count: u64,
+}
+
+#[derive(Clone, Debug)]
+struct SelectedObservationReplaySource {
+    state: ObservationSourceState,
+}
+
+impl SelectedObservationReplayProof {
+    fn mint(
+        identity: BoundSelectedObservationIdentity,
+        sources: &[BoundObservationSource],
+        generation_id: SelectedObservationGenerationId,
+        sample_count: u64,
+    ) -> Self {
+        Self {
+            inner: Arc::new(SelectedObservationReplayProofInner {
+                identity,
+                sources: sources
+                    .iter()
+                    .map(|source| SelectedObservationReplaySource {
+                        state: source.selected_read_state().clone(),
+                    })
+                    .collect(),
+                generation_id,
+                sample_count,
+            }),
+        }
+    }
+
+    fn source_state(
+        &self,
+        measurement_set: MeasurementSetIdentity,
+    ) -> Option<&ObservationSourceState> {
+        self.inner.sources.iter().find_map(|source| {
+            (source.state.identity() == measurement_set).then_some(&source.state)
+        })
+    }
+
+    fn matches_problem(&self, problem: &CompiledProblem) -> bool {
+        self.inner.identity.matches(problem)
+    }
+
+    fn generation_id(&self) -> SelectedObservationGenerationId {
+        self.inner.generation_id
+    }
+
+    fn sample_count(&self) -> u64 {
+        self.inner.sample_count
+    }
+
+    /// Return the exact additional heap retained by this shared proof graph.
+    ///
+    /// Selected-row manifests already owned by the compiled problem are not
+    /// counted again. The shared Arc allocation, source slots, and uniquely
+    /// owned generation vectors are included.
+    pub fn retained_heap_bytes(&self, problem: &CompiledProblem) -> Option<usize> {
+        if !self.matches_problem(problem) {
+            return None;
+        }
+        let states = self
+            .inner
+            .sources
+            .iter()
+            .map(|source| &source.state)
+            .collect::<Vec<_>>();
+        Self::retained_heap_bytes_for_states(problem, &states, self.inner.sources.capacity())
+    }
+
+    fn retained_heap_bytes_for_states(
+        problem: &CompiledProblem,
+        states: &[&ObservationSourceState],
+        source_capacity: usize,
+    ) -> Option<usize> {
+        let arc_header_bytes = size_of::<usize>().checked_mul(2)?;
+        let mut bytes =
+            arc_header_bytes.checked_add(size_of::<SelectedObservationReplayProofInner>())?;
+        bytes = bytes.checked_add(
+            source_capacity.checked_mul(size_of::<SelectedObservationReplaySource>())?,
+        )?;
+        for (source_index, state) in states.iter().enumerate() {
+            let already_accounted_rows = problem
+                .inputs()
+                .observation_snapshot()
+                .sources()
+                .iter()
+                .map(|source| source.selection().rows())
+                .chain(
+                    states[..source_index]
+                        .iter()
+                        .map(|prior| prior.selected_rows()),
+                );
+            bytes =
+                bytes.checked_add(state.additional_retained_heap_bytes(already_accounted_rows)?)?;
+        }
+        Some(bytes)
+    }
+}
+
+/// Current selected generation and count authorized only by a freshly rebound
+/// exhaustive completion.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SelectedObservationReplayAuthorization {
+    generation_id: SelectedObservationGenerationId,
+    sample_count: u64,
+}
+
+impl SelectedObservationReplayAuthorization {
+    /// Return the freshly rebound selected generation.
+    #[must_use]
+    pub const fn generation_id(self) -> SelectedObservationGenerationId {
+        self.generation_id
+    }
+
+    /// Return the freshly rebound exhaustive selected sample count.
+    #[must_use]
+    pub const fn sample_count(self) -> u64 {
+        self.sample_count
+    }
+}
+
+#[derive(Clone, Debug)]
+enum SelectedObservationReplayMode {
+    Unproven,
+    Proving,
+    Rebound(SelectedObservationReplayProof),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -203,6 +351,7 @@ pub struct BoundSelectedObservation {
     residency: SelectedObservationResidencyCertificate,
     measures: SelectedObservationMeasures,
     sources: Vec<BoundObservationSource>,
+    replay_mode: SelectedObservationReplayMode,
     access_binding: u64,
     next_traversal: u64,
 }
@@ -218,6 +367,39 @@ impl BoundSelectedObservation {
         bindings: &[ObservationSourceBinding],
     ) -> Result<SelectedObservationResidencyCertificate, BoundSelectedObservationError> {
         SelectedObservationResidencyCertificate::mint(problem, bindings)
+    }
+
+    pub(crate) fn replay_proof_retained_heap_bytes(
+        problem: &CompiledProblem,
+        bindings: &[ObservationSourceBinding],
+    ) -> Result<usize, BoundSelectedObservationError> {
+        let expected = problem.inputs().observation_snapshot().sources();
+        if bindings.len() != expected.len() {
+            return Err(BoundSelectedObservationError::BindingSetMismatch);
+        }
+        let mut states = Vec::with_capacity(expected.len());
+        for source in expected {
+            let mut matching = bindings
+                .iter()
+                .filter(|binding| binding.measurement_set() == source.identity());
+            let Some(binding) = matching.next() else {
+                return Err(BoundSelectedObservationError::MissingSourceBinding {
+                    measurement_set: source.identity(),
+                });
+            };
+            if matching.next().is_some() {
+                return Err(BoundSelectedObservationError::DuplicateSourceBinding {
+                    measurement_set: source.identity(),
+                });
+            }
+            states.push(&binding.current_state);
+        }
+        SelectedObservationReplayProof::retained_heap_bytes_for_states(
+            problem,
+            &states,
+            states.capacity(),
+        )
+        .ok_or(BoundSelectedObservationError::ReplayProofByteOverflow)
     }
 
     fn shared_bytes(
@@ -267,7 +449,28 @@ impl BoundSelectedObservation {
     pub fn open(
         problem: &CompiledProblem,
         measures: SelectedObservationMeasures,
+        bindings: Vec<ObservationSourceBinding>,
+    ) -> Result<Self, BoundSelectedObservationError> {
+        Self::open_internal(problem, measures, bindings, false)
+    }
+
+    /// Open a proof-eligible owner after rederiving every source state under
+    /// fresh retained locks.
+    #[cfg(unix)]
+    pub(crate) fn open_owner_validated(
+        problem: &CompiledProblem,
+        measures: SelectedObservationMeasures,
+        bindings: Vec<ObservationSourceBinding>,
+    ) -> Result<Self, BoundSelectedObservationError> {
+        Self::open_internal(problem, measures, bindings, true)
+    }
+
+    #[cfg(unix)]
+    fn open_internal(
+        problem: &CompiledProblem,
+        measures: SelectedObservationMeasures,
         mut bindings: Vec<ObservationSourceBinding>,
+        owner_validated: bool,
     ) -> Result<Self, BoundSelectedObservationError> {
         measures.validate_problem(problem)?;
         let residency = SelectedObservationResidencyCertificate::mint(problem, &bindings)?;
@@ -307,11 +510,119 @@ impl BoundSelectedObservation {
             } else {
                 SelectedObservationSharedBytes::NONE
             };
-            sources.push(
+            let opened = if owner_validated {
+                BoundObservationSource::open_owner_validated_with_measures(
+                    problem,
+                    source,
+                    &binding.current_state,
+                    &measures,
+                    shared_bytes,
+                    binding.content_budget,
+                )
+            } else {
                 BoundObservationSource::open_with_measures(
                     problem,
                     source,
                     &binding.current_state,
+                    &measures,
+                    shared_bytes,
+                    binding.content_budget,
+                )
+            };
+            sources.push(
+                opened.map_err(|error| BoundSelectedObservationError::Source {
+                    measurement_set: identity,
+                    error: Box::new(error),
+                })?,
+            );
+        }
+        if !bindings.is_empty() {
+            return Err(BoundSelectedObservationError::BindingSetMismatch);
+        }
+        measures.verify_state()?;
+        let access_binding = NEXT_ACCESS_BINDING
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+                value.checked_add(1)
+            })
+            .map_err(|_| BoundSelectedObservationError::AccessIdentityExhausted)?;
+        Ok(Self {
+            identity: BoundSelectedObservationIdentity::from_problem(problem),
+            residency,
+            measures,
+            sources,
+            replay_mode: if owner_validated {
+                SelectedObservationReplayMode::Proving
+            } else {
+                SelectedObservationReplayMode::Unproven
+            },
+            access_binding,
+            next_traversal: 1,
+        })
+    }
+
+    /// Reopen every compiled source under fresh retained locks and authorize a
+    /// prior exhaustive replay proof for this new access binding.
+    ///
+    /// Owner-manifest, physical modification counters, selected physical rows,
+    /// and selected read generations are rederived under the new locks before
+    /// this function returns, so no block can be emitted on a mismatch.
+    #[cfg(unix)]
+    pub(crate) fn rebind(
+        problem: &CompiledProblem,
+        measures: SelectedObservationMeasures,
+        mut bindings: Vec<ObservationSourceBinding>,
+        proof: &SelectedObservationReplayProof,
+    ) -> Result<Self, BoundSelectedObservationError> {
+        measures.validate_problem(problem)?;
+        if !proof.matches_problem(problem) {
+            return Err(BoundSelectedObservationError::ReplayProofMismatch);
+        }
+        let expected = problem.inputs().observation_snapshot().sources();
+        if bindings.len() != expected.len() || proof.inner.sources.len() != expected.len() {
+            return Err(BoundSelectedObservationError::BindingSetMismatch);
+        }
+        let residency = SelectedObservationResidencyCertificate::mint(problem, &bindings)?;
+        let mut sources = Vec::with_capacity(expected.len());
+        let first_source_shared_bytes = Self::shared_bytes(
+            problem,
+            &measures,
+            &bindings,
+            bindings.capacity(),
+            sources.capacity(),
+        )?;
+        for (source_index, source) in expected.iter().enumerate() {
+            let identity = source.identity();
+            let Some(position) = bindings
+                .iter()
+                .position(|candidate| candidate.measurement_set() == identity)
+            else {
+                return Err(BoundSelectedObservationError::MissingSourceBinding {
+                    measurement_set: identity,
+                });
+            };
+            if bindings[position + 1..]
+                .iter()
+                .any(|candidate| candidate.measurement_set() == identity)
+            {
+                return Err(BoundSelectedObservationError::DuplicateSourceBinding {
+                    measurement_set: identity,
+                });
+            }
+            let Some(prior_state) = proof.source_state(identity) else {
+                return Err(BoundSelectedObservationError::ReplayProofMismatch);
+            };
+            let binding = bindings.remove(position);
+            let shared_bytes = if source_index == 0 {
+                first_source_shared_bytes
+            } else {
+                SelectedObservationSharedBytes::NONE
+            };
+            sources.push(
+                BoundObservationSource::rebind_with_measures(
+                    problem,
+                    source,
+                    &binding.current_state,
+                    prior_state,
                     &measures,
                     shared_bytes,
                     binding.content_budget,
@@ -336,6 +647,7 @@ impl BoundSelectedObservation {
             residency,
             measures,
             sources,
+            replay_mode: SelectedObservationReplayMode::Rebound(proof.clone()),
             access_binding,
             next_traversal: 1,
         })
@@ -457,6 +769,26 @@ impl BoundSelectedObservation {
             .borrow()
             .finish(sample_count)
             .ok_or(SelectedObservationTraversalError::MeasurementOverflow)?;
+        let (replay_proof, rebound) = match &self.replay_mode {
+            SelectedObservationReplayMode::Unproven => (None, false),
+            SelectedObservationReplayMode::Proving => (
+                Some(SelectedObservationReplayProof::mint(
+                    self.identity,
+                    &self.sources,
+                    generation_id,
+                    sample_count,
+                )),
+                false,
+            ),
+            SelectedObservationReplayMode::Rebound(proof) => {
+                if proof.generation_id() != generation_id || proof.sample_count() != sample_count {
+                    return Err(SelectedObservationTraversalError::Binding(
+                        BoundSelectedObservationError::ReplayProofMismatch,
+                    ));
+                }
+                (Some(proof.clone()), true)
+            }
+        };
         self.next_traversal = next_traversal;
         Ok(SelectedObservationCompletion {
             problem_id: problem.problem_id(),
@@ -468,6 +800,8 @@ impl BoundSelectedObservation {
             measurements,
             access_binding,
             traversal,
+            replay_proof,
+            rebound,
         })
     }
 
@@ -503,6 +837,13 @@ impl BoundSelectedObservation {
             .checked_add(1)
             .ok_or(BoundSelectedObservationError::TraversalIdentityExhausted)?;
         let maximum_correlations = maximum_selected_correlations(problem);
+        let replay_mode = self.replay_mode;
+        let rebound = match &replay_mode {
+            SelectedObservationReplayMode::Rebound(proof) => Some(proof.clone()),
+            SelectedObservationReplayMode::Unproven | SelectedObservationReplayMode::Proving => {
+                None
+            }
+        };
         Ok((
             SelectedObservationBlockSource {
                 problem,
@@ -519,10 +860,15 @@ impl BoundSelectedObservation {
                 access_binding,
                 traversal,
                 next_traversal,
+                replay_mode,
             },
             SelectedObservationBlockConsumer {
                 problem,
-                inspection: problem.begin_selected_observation_inspection(),
+                inspection: rebound
+                    .is_none()
+                    .then(|| problem.begin_selected_observation_inspection()),
+                rebound,
+                rebound_sample_count: 0,
                 spectral_evaluator: SpectralEvaluationProjector::new(),
                 correlations: Vec::with_capacity(maximum_correlations),
                 evaluations: Vec::with_capacity(maximum_correlations),
@@ -548,6 +894,7 @@ pub struct SelectedObservationBlockSource<'a> {
     access_binding: u64,
     traversal: u64,
     next_traversal: u64,
+    replay_mode: SelectedObservationReplayMode,
 }
 
 impl SelectedObservationBlockSource<'_> {
@@ -617,6 +964,7 @@ impl SelectedObservationBlockSource<'_> {
             traversal: self.traversal,
             next_traversal: self.next_traversal,
             measurements: self.measurements,
+            replay_mode: self.replay_mode,
         })
     }
 }
@@ -624,7 +972,9 @@ impl SelectedObservationBlockSource<'_> {
 /// Sole incremental validator/projector for blocks from one source stream.
 pub struct SelectedObservationBlockConsumer<'a> {
     problem: &'a CompiledProblem,
-    inspection: SelectedObservationInspection<'a>,
+    inspection: Option<SelectedObservationInspection<'a>>,
+    rebound: Option<SelectedObservationReplayProof>,
+    rebound_sample_count: u64,
     spectral_evaluator: SpectralEvaluationProjector,
     correlations: Vec<SelectedObservationRunCorrelation>,
     evaluations: Vec<SelectedSpectralEvaluation>,
@@ -635,13 +985,19 @@ impl SelectedObservationBlockConsumer<'_> {
     /// Return bytes handed to the selected-generation hasher so far.
     #[must_use]
     pub const fn generation_proof_bytes(&self) -> u64 {
-        self.inspection.generation_proof_bytes()
+        match &self.inspection {
+            Some(inspection) => inspection.generation_proof_bytes(),
+            None => 0,
+        }
     }
 
     /// Return selected-generation hasher update calls so far.
     #[must_use]
     pub const fn generation_proof_hash_calls(&self) -> u64 {
-        self.inspection.generation_proof_hash_calls()
+        match &self.inspection {
+            Some(inspection) => inspection.generation_proof_hash_calls(),
+            None => 0,
+        }
     }
 
     /// Validate and consume every row/channel run in one opaque block.
@@ -651,6 +1007,7 @@ impl SelectedObservationBlockConsumer<'_> {
         mut consume: impl FnMut(SelectedObservationTraversalRun<'_>) -> Result<(), E>,
     ) -> Result<(), SelectedObservationTraversalError<E>> {
         let inspection = &mut self.inspection;
+        let rebound_sample_count = &mut self.rebound_sample_count;
         let spectral_evaluator = &mut self.spectral_evaluator;
         let correlations = &mut self.correlations;
         let evaluations = &mut self.evaluations;
@@ -666,9 +1023,17 @@ impl SelectedObservationBlockConsumer<'_> {
                             BoundObservationSourceError::StoredSampleShapeMismatch,
                         ));
                     }
-                    inspection
-                        .push_run(row, &channel, correlations)
-                        .map_err(SelectedObservationTraversalError::Inspection)?;
+                    if let Some(inspection) = inspection {
+                        inspection
+                            .push_run(row, &channel, correlations)
+                            .map_err(SelectedObservationTraversalError::Inspection)?;
+                    } else {
+                        *rebound_sample_count = rebound_sample_count
+                            .checked_add(u64::try_from(correlations.len()).map_err(|_| {
+                                SelectedObservationTraversalError::MeasurementOverflow
+                            })?)
+                            .ok_or(SelectedObservationTraversalError::MeasurementOverflow)?;
+                    }
                     for correlation in correlations {
                         let sample =
                             SelectedObservationSampleView::from_run(row, &channel, correlation);
@@ -726,10 +1091,20 @@ impl SelectedObservationBlockConsumer<'_> {
             })
             .ok_or(SelectedObservationTraversalError::MeasurementOverflow)?;
         let peak_scratch_current_bytes = self.peak_scratch_current_bytes;
-        let (generation_id, sample_count) = self
-            .inspection
-            .finish()
-            .map_err(SelectedObservationTraversalError::Inspection)?;
+        let rebound_sample_count = self.rebound_sample_count;
+        let (generation_id, sample_count) = match (self.inspection, self.rebound.as_ref()) {
+            (Some(inspection), None) => inspection
+                .finish()
+                .map_err(SelectedObservationTraversalError::Inspection)?,
+            (None, Some(proof)) if rebound_sample_count == proof.sample_count() => {
+                (proof.generation_id(), rebound_sample_count)
+            }
+            _ => {
+                return Err(SelectedObservationTraversalError::Binding(
+                    BoundSelectedObservationError::ReplayProofMismatch,
+                ));
+            }
+        };
         let mut measurements = terminal.measurements;
         measurements
             .record_consumer_scratch(peak_scratch_current_bytes, scratch_capacity_bytes)
@@ -737,6 +1112,33 @@ impl SelectedObservationBlockConsumer<'_> {
         let measurements = measurements
             .finish(sample_count)
             .ok_or(SelectedObservationTraversalError::MeasurementOverflow)?;
+        let (replay_proof, rebound) = match &terminal.replay_mode {
+            SelectedObservationReplayMode::Unproven => (None, false),
+            SelectedObservationReplayMode::Proving => (
+                Some(SelectedObservationReplayProof::mint(
+                    terminal.identity,
+                    &terminal.sources,
+                    generation_id,
+                    sample_count,
+                )),
+                false,
+            ),
+            SelectedObservationReplayMode::Rebound(proof)
+                if proof.generation_id() == generation_id
+                    && proof.sample_count() == sample_count
+                    && self
+                        .rebound
+                        .as_ref()
+                        .is_some_and(|consumer| Arc::ptr_eq(&consumer.inner, &proof.inner)) =>
+            {
+                (Some(proof.clone()), true)
+            }
+            SelectedObservationReplayMode::Rebound(_) => {
+                return Err(SelectedObservationTraversalError::Binding(
+                    BoundSelectedObservationError::ReplayProofMismatch,
+                ));
+            }
+        };
         let completion = SelectedObservationCompletion {
             problem_id: terminal.identity.problem_id,
             observation_snapshot_id: terminal.identity.observation_snapshot_id,
@@ -747,12 +1149,15 @@ impl SelectedObservationBlockConsumer<'_> {
             measurements,
             access_binding: terminal.access_binding,
             traversal: terminal.traversal,
+            replay_proof,
+            rebound,
         };
         let selected = BoundSelectedObservation {
             identity: terminal.identity,
             residency: terminal.residency,
             measures: terminal.measures,
             sources: terminal.sources,
+            replay_mode: terminal.replay_mode,
             access_binding: terminal.access_binding,
             next_traversal: terminal.next_traversal,
         };
@@ -770,6 +1175,7 @@ pub struct SelectedObservationTerminal {
     traversal: u64,
     next_traversal: u64,
     measurements: SelectedObservationTraversalMeasurementsBuilder,
+    replay_mode: SelectedObservationReplayMode,
 }
 
 impl SelectedObservationTerminal {
@@ -1250,6 +1656,8 @@ pub struct SelectedObservationCompletion {
     measurements: SelectedObservationTraversalMeasurements,
     access_binding: u64,
     traversal: u64,
+    replay_proof: Option<SelectedObservationReplayProof>,
+    rebound: bool,
 }
 
 impl SelectedObservationCompletion {
@@ -1305,6 +1713,40 @@ impl SelectedObservationCompletion {
     #[must_use]
     pub fn precedes(&self, other: &Self) -> bool {
         self.same_access_binding(other) && self.traversal < other.traversal
+    }
+
+    /// Clone the pass-back-only proof minted by an owner-validated exhaustive
+    /// traversal, if this access was eligible to establish one.
+    #[must_use]
+    pub fn replay_proof(&self) -> Option<SelectedObservationReplayProof> {
+        self.replay_proof.clone()
+    }
+}
+
+impl SelectedObservationReplayProof {
+    /// Authorize the current generation and count only after this same proof
+    /// completed a freshly rebound exhaustive traversal.
+    #[must_use]
+    pub fn authorize_rebound_completion(
+        &self,
+        completion: &SelectedObservationCompletion,
+    ) -> Option<SelectedObservationReplayAuthorization> {
+        let rebound = completion.rebound
+            && completion
+                .replay_proof
+                .as_ref()
+                .is_some_and(|proof| Arc::ptr_eq(&self.inner, &proof.inner))
+            && completion.problem_id == self.inner.identity.problem_id
+            && completion.observation_snapshot_id == self.inner.identity.observation_snapshot_id
+            && completion.observation_provenance_id
+                == self.inner.identity.observation_provenance_id
+            && completion.commitment_id == self.inner.identity.commitment_id
+            && completion.generation_id == self.inner.generation_id
+            && completion.sample_count == self.inner.sample_count;
+        rebound.then_some(SelectedObservationReplayAuthorization {
+            generation_id: completion.generation_id,
+            sample_count: completion.sample_count,
+        })
     }
 }
 
@@ -1426,6 +1868,9 @@ pub enum BoundSelectedObservationError {
     /// A different compiled problem was supplied for replay.
     #[error("retained selected observation belongs to a different compiled problem")]
     ProblemMismatch,
+    /// A prior replay proof does not authorize this compiled source set.
+    #[error("selected-observation replay proof does not match the rebound source set")]
+    ReplayProofMismatch,
     /// The affine traversal identity domain was exhausted.
     #[error("selected-observation traversal identity exhausted")]
     TraversalIdentityExhausted,
@@ -1441,4 +1886,7 @@ pub enum BoundSelectedObservationError {
     /// Aggregate selected-source residency exceeded the host byte domain.
     #[error("selected-observation aggregate residency projection overflowed")]
     ResidencyByteOverflow,
+    /// The retained replay-proof graph exceeded the host byte domain.
+    #[error("selected-observation replay-proof byte projection overflowed")]
+    ReplayProofByteOverflow,
 }

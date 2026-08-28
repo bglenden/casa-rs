@@ -866,6 +866,19 @@ struct RetainedPermit {
     permit: ResourcePermit,
 }
 
+pub(crate) struct ObservationCompletionPermitGuard {
+    permits: Vec<ResourcePermit>,
+}
+
+impl ObservationCompletionPermitGuard {
+    pub(crate) fn release(self) -> Result<(), ExecutionError> {
+        for permit in self.permits {
+            permit.release()?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug)]
 struct ActiveAllocation {
     slot: PhysicalSlotId,
@@ -885,6 +898,7 @@ pub(crate) struct ExecutionScheduler<'plan> {
     failed_cleanup_fences: BTreeSet<FenceId>,
     deferred_permits: Vec<DeferredPermit>,
     retained_permits: BTreeMap<RetainedPermitId, RetainedPermit>,
+    observation_completion_permits: BTreeMap<WorkNodeId, Vec<ResourcePermit>>,
     terminal_publication: Option<WorkNodeId>,
     publication_permits: Vec<ResourcePermit>,
     publication_allocations: BTreeSet<AllocationId>,
@@ -960,6 +974,7 @@ impl<'plan> ExecutionScheduler<'plan> {
             failed_cleanup_fences: BTreeSet::new(),
             deferred_permits: Vec::new(),
             retained_permits: BTreeMap::new(),
+            observation_completion_permits: BTreeMap::new(),
             terminal_publication: terminal_publication.cloned(),
             publication_permits: Vec::new(),
             publication_allocations: BTreeSet::new(),
@@ -1145,6 +1160,11 @@ impl<'plan> ExecutionScheduler<'plan> {
                     "completed work retained a resource beyond its explicit release node",
                 ));
             }
+            if !self.observation_completion_permits.is_empty() {
+                return Err(ExecutionError::invalid_state(
+                    "completed observation retained its terminal MeasurementSet permit",
+                ));
+            }
             return self.finish(SchedulerTerminal::Succeeded);
         }
         Err(ExecutionError::Deadlock)
@@ -1162,6 +1182,7 @@ impl<'plan> ExecutionScheduler<'plan> {
         })?;
         self.states.insert(node_id.clone(), NodeState::WorkComplete);
         let terminal_publication = self.terminal_publication.as_ref() == Some(&node_id);
+        let observation_read = self.dag.nodes[&node_id].kind.reads_observation();
         for held in active.permits {
             if terminal_publication {
                 self.publication_permits.push(held.permit);
@@ -1169,13 +1190,38 @@ impl<'plan> ExecutionScheduler<'plan> {
             }
             match held.lifetime {
                 ClaimLifetime::Work => {
-                    held.permit.release()?;
+                    if observation_read
+                        && matches!(
+                            held.permit.resource(),
+                            LeaseResource::MeasurementSetLock { .. }
+                        )
+                    {
+                        self.observation_completion_permits
+                            .entry(node_id.clone())
+                            .or_default()
+                            .push(held.permit);
+                    } else {
+                        held.permit.release()?;
+                    }
                 }
                 ClaimLifetime::Fences(kinds) => self.deferred_permits.push(DeferredPermit {
                     remaining: fence_ids(&node_id, &kinds),
                     permit: held.permit,
                 }),
                 ClaimLifetime::RetainedUntil(release) => {
+                    if observation_read
+                        && release == node_id
+                        && matches!(
+                            held.permit.resource(),
+                            LeaseResource::MeasurementSetLock { .. }
+                        )
+                    {
+                        self.observation_completion_permits
+                            .entry(node_id.clone())
+                            .or_default()
+                            .push(held.permit);
+                        continue;
+                    }
                     let id = RetainedPermitId {
                         resource: held.permit.resource().clone(),
                         release,
@@ -1225,17 +1271,30 @@ impl<'plan> ExecutionScheduler<'plan> {
         fence.complete()?;
         self.completed_fences.insert(fence_id.clone());
         let mut retained_permits = Vec::new();
+        let producer = fence_id.node().clone();
+        let observation_read = self.dag.nodes[&producer].kind.reads_observation();
         for mut held in std::mem::take(&mut self.deferred_permits) {
             held.remaining.remove(&fence_id);
             if held.remaining.is_empty() {
-                held.permit.release()?;
+                if observation_read
+                    && matches!(
+                        held.permit.resource(),
+                        LeaseResource::MeasurementSetLock { .. }
+                    )
+                {
+                    self.observation_completion_permits
+                        .entry(producer.clone())
+                        .or_default()
+                        .push(held.permit);
+                } else {
+                    held.permit.release()?;
+                }
             } else {
                 retained_permits.push(held);
             }
         }
         self.deferred_permits = retained_permits;
         self.complete_allocation_event(&WorkDependency::Fence(fence_id.clone()))?;
-        let producer = fence_id.node().clone();
         if !self
             .outstanding_fences
             .keys()
@@ -1253,6 +1312,18 @@ impl<'plan> ExecutionScheduler<'plan> {
             }
         }
         Ok(())
+    }
+
+    pub(crate) fn take_observation_completion_permits(
+        &mut self,
+        node: &WorkNodeId,
+    ) -> ObservationCompletionPermitGuard {
+        ObservationCompletionPermitGuard {
+            permits: self
+                .observation_completion_permits
+                .remove(node)
+                .unwrap_or_default(),
+        }
     }
 
     pub(crate) fn next_pending_fence(&self) -> Option<FenceId> {
@@ -1623,6 +1694,7 @@ impl<'plan> ExecutionScheduler<'plan> {
                     .values()
                     .map(|retained| &retained.permit),
             )
+            .chain(self.observation_completion_permits.values().flatten())
             .chain(self.publication_permits.iter())
             .filter(|permit| predicate(permit.resource()))
             .try_fold(0_u64, |total, permit| {
@@ -1717,6 +1789,12 @@ impl<'plan> ExecutionScheduler<'plan> {
         for (_, retained) in std::mem::take(&mut self.retained_permits) {
             retained.permit.release()?;
         }
+        for permit in std::mem::take(&mut self.observation_completion_permits)
+            .into_values()
+            .flatten()
+        {
+            permit.release()?;
+        }
         Ok(())
     }
 
@@ -1774,6 +1852,7 @@ impl<'plan> ExecutionScheduler<'plan> {
             || !self.outstanding_fences.is_empty()
             || !self.deferred_permits.is_empty()
             || !self.retained_permits.is_empty()
+            || !self.observation_completion_permits.is_empty()
             || !self.publication_permits.is_empty()
             || !self.active_allocations.is_empty()
             || !self.active_slots.is_empty()
@@ -1865,6 +1944,7 @@ impl<'plan> ExecutionScheduler<'plan> {
             || !self.outstanding_fences.is_empty()
             || !self.deferred_permits.is_empty()
             || !self.retained_permits.is_empty()
+            || !self.observation_completion_permits.is_empty()
             || !self.publication_permits.is_empty()
             || !self.active_allocations.is_empty()
             || !self.active_slots.is_empty()

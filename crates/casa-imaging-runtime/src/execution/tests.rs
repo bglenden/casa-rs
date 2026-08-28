@@ -1683,6 +1683,59 @@ fn execution_plan_owns_the_resource_policy_selected_during_planning() {
 }
 
 #[test]
+fn observation_completion_guard_retains_measurement_set_permit_after_fence() {
+    let core = ExecutionDag::new(plan_spec(vec![cpu_node("core", BTreeSet::new())]))
+        .expect("valid core work");
+    let physical = physical_work_binding(core);
+    let dag = physical.execution_dag();
+    let authority = io_authority();
+    let mut scheduler = ExecutionScheduler::start(
+        dag,
+        &ResourcePolicy::Exclusive,
+        &authority,
+        Some(physical.observation_transaction().commit()),
+    )
+    .expect("transaction scheduler admits");
+
+    let SchedulerAction::Work(initial) = scheduler.next_action().expect("initial check dispatch")
+    else {
+        panic!("initial transaction check must dispatch");
+    };
+    assert_eq!(initial.node().id, WorkNodeId::new("transaction-check"));
+    scheduler
+        .finish_work(initial.node().id.clone(), WorkResult::Succeeded)
+        .expect("initial check completes");
+
+    let SchedulerAction::Work(read) = scheduler.next_action().expect("observation read dispatch")
+    else {
+        panic!("observation read must dispatch");
+    };
+    let read_id = WorkNodeId::new("transaction-read");
+    assert_eq!(read.node().id, read_id);
+    scheduler
+        .finish_work(read_id.clone(), WorkResult::Succeeded)
+        .expect("observation read launches its fence");
+    scheduler
+        .complete_fence(FenceId::new(read_id.clone(), FenceKind::Io))
+        .expect("observation fence settles");
+
+    assert_eq!(
+        scheduler
+            .observation_completion_permits
+            .get(&read_id)
+            .map(Vec::len),
+        Some(1),
+        "fence settlement must transfer rather than release the exact MS permit"
+    );
+    let permits = scheduler.take_observation_completion_permits(&read_id);
+    assert_eq!(permits.permits.len(), 1);
+    assert!(scheduler.observation_completion_permits.is_empty());
+    permits
+        .release()
+        .expect("terminal completion releases the retained MS permit");
+}
+
+#[test]
 fn planning_seals_the_first_resource_authority_feasible_candidate() {
     let problem = compiled_problem();
     let registry = ContractOnlyRegistry::new(

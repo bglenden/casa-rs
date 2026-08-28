@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use std::mem::size_of;
+use std::{convert::Infallible, mem::size_of};
 
 use casa_imaging_model::{
     AntennaSelection, AxisOrder, CentreLaws, ColumnGeneration, ConsistencyToken,
-    CorrelationProduct, CorrelationSelection, CorrelationType, DataDescriptionSelection,
-    DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame,
-    DopplerConvention, Epoch, FacetLayout, FiniteValuePolicy, FlagPolicy, FrequencyFrame,
-    GeometryInput, IdSelection, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
-    ImagingRequest, InstrumentResponse, IntentSelection, LogicalIdentity,
+    ContinuumTransformGenerationId, CorrelationProduct, CorrelationSelection, CorrelationType,
+    DataDescriptionSelection, DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec,
+    DirectionFrame, DopplerConvention, Epoch, FacetLayout, FiniteValuePolicy, FlagPolicy,
+    FrequencyFrame, GeometryInput, IdSelection, ImageAxis, ImageDomainRole, ImageDomainSpec,
+    ImageShape, ImagingRequest, InstrumentResponse, IntentSelection, LogicalIdentity,
     MeasurementEquationContract, MeasurementSetIdentity, MetadataGeneration, MetadataTableKind,
     ModelBounds, ModelColumnState, ModelColumnWrite, ModelInputCommitment,
     ModelLifecycleRequirements, ModelStateIdentity, MsColumnKind, NumericPrecision, NumericalStage,
@@ -19,20 +19,21 @@ use casa_imaging_model::{
     ProductNormalization, ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
     Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
     ReconstructionControls, ReductionPolicy, RestFrequency, RestoringBeamPolicy, RowSelection,
-    ScientificContract, SelectedColumns, SelectedMainRow, SelectedObservationSample,
-    SelectedPredictionTarget, SelectedRows, SelectedSampleAddress, SelectedSampleCoordinates,
-    SelectedSampleMetadata, SelectedSpectralContribution, SelectedSpectralContributions,
-    SelectedVisibilitySample, SkyDirection, SourceGenerations, SpectralContract,
-    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
-    SpectralWcs, SpectralWindowSelection, StageErrorBudget, TaylorSupportReference,
-    TaylorValidityPolicy, TimeScale, TimeSelection, UvSelection, UvTaper, UvwCoordinateLaw,
-    VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract,
-    WeightingScheme, compile, compile_observation,
+    ScientificContract, SelectedColumns, SelectedMainRow, SelectedObservationGenerationId,
+    SelectedObservationSample, SelectedPredictionTarget, SelectedRows, SelectedSampleAddress,
+    SelectedSampleCoordinates, SelectedSampleMetadata, SelectedSpectralContribution,
+    SelectedSpectralContributions, SelectedVisibilitySample, SkyDirection, SourceGenerations,
+    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
+    SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection, StageErrorBudget,
+    TaylorSupportReference, TaylorValidityPolicy, TimeScale, TimeSelection, UvSelection, UvTaper,
+    UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope,
+    WeightingContract, WeightingScheme, compile, compile_observation,
 };
 use casa_imaging_reconstruction::{
-    WeightingAlgorithmState, WeightingExecutionLimits, WeightingReplayChunk,
-    WeightingReplaySummary, WeightingSelectedSample, begin_natural_weighting_stream,
-    begin_weighting_generation, plan_weighting,
+    FrozenWeightingCoverageProof, WeightingAlgorithmState, WeightingError,
+    WeightingExecutionLimits, WeightingReplayChunk, WeightingReplaySummary,
+    WeightingSelectedSample, begin_natural_weighting_stream, begin_weighting_generation,
+    plan_weighting,
 };
 
 fn identity(seed: u8, scope: u8) -> LogicalIdentity {
@@ -349,6 +350,18 @@ fn exact_contributions(sample: &SelectedObservationSample) -> SelectedSpectralCo
         None,
     ])
     .expect("one exact output contribution")
+}
+
+fn selected_generation(
+    problem: &casa_imaging_model::CompiledProblem,
+    samples: &[SelectedObservationSample],
+) -> SelectedObservationGenerationId {
+    problem
+        .inspect_selected_observation(samples.iter().copied().map(Ok::<_, Infallible>), |_| {
+            Ok::<_, Infallible>(())
+        })
+        .expect("inspect fixture selected stream")
+        .0
 }
 
 #[test]
@@ -743,6 +756,132 @@ fn partition_block_worker_and_repeated_replay_choices_are_invariant() {
         .into_samples();
     assert_eq!(terminal.len(), 1);
     assert_eq!(terminal.capacity(), 3);
+}
+
+#[test]
+fn derived_coverage_preserves_encoded_identity_across_block_shapes_and_rejects_mismatch() {
+    let problem = problem(
+        WeightingScheme::Uniform,
+        WeightDensityScope::GlobalSelection,
+        None,
+    );
+    let samples = exact_samples(&problem);
+    let encoded_plan = plan_weighting(
+        &problem,
+        WeightingExecutionLimits::new(3, 1).expect("encoded limits"),
+    )
+    .expect("encoded plan");
+    let generation =
+        freeze_weighting_generation(&problem, &encoded_plan, &samples).expect("frozen weighting");
+    let (_, encoded) = replay(&generation, &problem, &encoded_plan, &samples);
+    let selected_generation_id = selected_generation(&problem, &samples);
+    let mut changed_samples = samples.clone();
+    changed_samples[0].visibility = SelectedVisibilitySample::Complex32([2.0, 0.0]);
+    let changed_selected_generation = selected_generation(&problem, &changed_samples);
+    let transform = ContinuumTransformGenerationId::from_owner_digest([0x40; 32]);
+    let proof = FrozenWeightingCoverageProof::seal(
+        &problem,
+        &generation,
+        &encoded,
+        selected_generation_id,
+        samples.len() as u64,
+        Some(transform),
+    )
+    .expect("seal first exhaustive encoded coverage");
+
+    let mut derived = Vec::new();
+    for block_samples in [1, 3, samples.len()] {
+        let plan = plan_weighting(
+            &problem,
+            WeightingExecutionLimits::new(block_samples, 1).expect("derived limits"),
+        )
+        .expect("derived plan");
+        let mut phase = generation
+            .begin_derived_replay(&problem, &plan, proof, Some(transform))
+            .expect("authorize matching frozen state and transform");
+        for sample in &samples {
+            phase
+                .consume(&problem, sample, exact_contributions(sample))
+                .expect("derive weighted sample");
+        }
+        let (_, summary) = phase.finish().expect("finish derived replay");
+        proof
+            .validate_derived_replay(
+                selected_generation_id,
+                samples.len() as u64,
+                Some(transform),
+                &summary,
+            )
+            .expect("validate rebound generation and exact terminal count");
+        assert_eq!(summary.coverage(), encoded.coverage());
+        assert_eq!(summary.coverage_proof_bytes(), 0);
+        assert_eq!(summary.coverage_proof_hash_calls(), 0);
+        derived.push(summary);
+    }
+    assert_eq!(
+        derived
+            .iter()
+            .map(WeightingReplaySummary::coverage)
+            .collect::<Vec<_>>(),
+        vec![encoded.coverage(); 3]
+    );
+    assert_eq!(
+        derived
+            .iter()
+            .map(WeightingReplaySummary::block_count)
+            .collect::<Vec<_>>(),
+        vec![samples.len() as u64, 2, 1]
+    );
+    assert_ne!(derived[0].replay_id(), derived[1].replay_id());
+    assert_ne!(derived[1].replay_id(), derived[2].replay_id());
+
+    assert_eq!(
+        proof.validate_derived_replay(
+            changed_selected_generation,
+            samples.len() as u64,
+            Some(transform),
+            &derived[0],
+        ),
+        Err(WeightingError::CoverageMismatch)
+    );
+    assert_eq!(
+        proof.validate_derived_replay(
+            selected_generation_id,
+            samples.len() as u64 - 1,
+            Some(transform),
+            &derived[0],
+        ),
+        Err(WeightingError::CoverageMismatch)
+    );
+    assert!(matches!(
+        generation.begin_derived_replay(&problem, &encoded_plan, proof, None),
+        Err(WeightingError::CoverageMismatch)
+    ));
+
+    let foreign_problem = problem_with_image_size(
+        WeightingScheme::Briggs { robust: 0.5 },
+        WeightDensityScope::GlobalSelection,
+        None,
+        64,
+    );
+    let foreign_samples = exact_samples(&foreign_problem);
+    let foreign_plan = plan_weighting(
+        &foreign_problem,
+        WeightingExecutionLimits::new(3, 1).expect("foreign limits"),
+    )
+    .expect("foreign plan");
+    let foreign_generation =
+        freeze_weighting_generation(&foreign_problem, &foreign_plan, &foreign_samples)
+            .expect("foreign weighting");
+    assert!(matches!(
+        foreign_generation.begin_derived_replay(
+            &foreign_problem,
+            &foreign_plan,
+            proof,
+            Some(transform),
+        ),
+        Err(WeightingError::CoverageMismatch)
+    ));
 }
 
 #[test]

@@ -1135,6 +1135,15 @@ struct CompleteDataExecutionBinding {
 }
 
 impl SpectralOperatorState {
+    pub(crate) fn authorize_derived_coverage(
+        &mut self,
+        proof: casa_imaging_reconstruction::FrozenWeightingCoverageProof,
+    ) -> Result<(), CompleteDataOperatorError> {
+        self.state
+            .authorize_derived_coverage(proof)
+            .map_err(CompleteDataOperatorError::Owner)
+    }
+
     /// Request final selected visibility samples from this bounded replay.
     pub(crate) fn enable_final_visibility_samples(&mut self) {
         self.state.enable_final_visibility_samples();

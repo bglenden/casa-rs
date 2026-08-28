@@ -29,14 +29,15 @@ use casa_imaging_model::{
     PointingExtrapolation, PointingInterpolation, PointingTimeSampling, PolarizationContract,
     PolarizationCoordinate, PreparedArtifactAwInterpretation, PreparedArtifactCellSemantics,
     PreparedArtifactKernelAlgorithm, PreparedArtifactKernelSemantics,
-    PreparedArtifactScientificIdentity, PreparedArtifactSpectralMapSemantics, ProblemSpecification,
-    ProductKind, ProductNormalization, ProductRequirements, Projection, ReconstructionAlgorithm,
-    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
-    ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract,
-    SelectedVisibilitySample, SequentialContinuumTransform, SkyDirection, SpectralContract,
-    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
-    SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct, WeightDensityScope,
-    WeightingContract, WeightingScheme, compile,
+    PreparedArtifactScientificIdentity, PreparedArtifactSpectralMapSemantics,
+    ProblemInputIdentities, ProblemSpecification, ProductKind, ProductNormalization,
+    ProductRequirements, Projection, ReconstructionAlgorithm, ReconstructionBasis,
+    ReconstructionContract, ReconstructionControls, ReductionPolicy, ReferenceDataKind,
+    RestFrequency, RestoringBeamPolicy, ScientificContract, SelectedVisibilitySample,
+    SequentialContinuumTransform, SkyDirection, SpectralContract, SpectralCoordinateSpec,
+    SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, StageErrorBudget,
+    UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope,
+    WeightingContract, WeightingScheme, compile, compile_observation,
 };
 use casa_imaging_products::{
     ContinuumProductControls, ContinuumProductInputs, ContinuumSourceCatalog,
@@ -101,7 +102,8 @@ use casa_imaging_runtime::{
 use casa_ms::{
     BoundSelectedObservation, ObservationSourceBinding, SelectedObservationCompletion,
     SelectedObservationContentBudget, SelectedObservationMeasures,
-    SelectedObservationResidencyCertificate,
+    SelectedObservationResidencyCertificate, SelectedObservationResolutionRequest,
+    initialize_measurement_set_owner_manifest, resolve_selected_observation,
 };
 
 fn implementation_catalog(
@@ -934,6 +936,20 @@ fn request_with_geometry_references_weighting_products_model_write_input_and_sou
     model: ModelStateIdentity,
     source_count: usize,
 ) -> ImagingRequest {
+    let specification = standard_problem_specification(weighting, products, model_column_write);
+    ImagingRequest::new(
+        specification,
+        geometry,
+        problem_inputs_with_source_count(observation, references, model, source_count),
+        model_lifecycle(model),
+    )
+}
+
+fn standard_problem_specification(
+    weighting: WeightingContract,
+    products: Vec<ProductKind>,
+    model_column_write: ModelColumnWrite,
+) -> ProblemSpecification {
     let numerics = NumericsContract::new(
         vec![NumericPrecision::F64],
         ReductionPolicy::Compensated,
@@ -943,7 +959,7 @@ fn request_with_geometry_references_weighting_products_model_write_input_and_sou
             .map(|stage| (stage, StageErrorBudget::new(1.0e-7, 1.0e-3)))
             .collect(),
     );
-    let specification = ProblemSpecification::new(
+    ProblemSpecification::new(
         ScientificContract::new(
             SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
             MeasurementEquationContract::new(
@@ -969,12 +985,6 @@ fn request_with_geometry_references_weighting_products_model_write_input_and_sou
         ),
         ObservationTransactionRequirements::new(model_column_write),
         numerics,
-    );
-    ImagingRequest::new(
-        specification,
-        geometry,
-        problem_inputs_with_source_count(observation, references, model, source_count),
-        model_lifecycle(model),
     )
 }
 
@@ -2552,7 +2562,21 @@ fn spectral_cycle_executes_initial_major_and_shared_reconstruction_cycle() {
     }
 }
 
-struct RejectFirstVisibilityBlock;
+struct RejectFirstVisibilityBlock {
+    worker_sender: Option<std::sync::mpsc::SyncSender<()>>,
+    worker: Option<std::thread::JoinHandle<()>>,
+    worker_stopped: Arc<AtomicBool>,
+}
+
+impl RejectFirstVisibilityBlock {
+    fn new(worker_stopped: Arc<AtomicBool>) -> Self {
+        Self {
+            worker_sender: None,
+            worker: None,
+            worker_stopped,
+        }
+    }
+}
 
 impl FinalVisibilitySink for RejectFirstVisibilityBlock {
     fn bind(
@@ -2564,6 +2588,16 @@ impl FinalVisibilitySink for RejectFirstVisibilityBlock {
     }
 
     fn begin_replay(&mut self) -> io::Result<()> {
+        if self.worker.is_some() {
+            return Ok(());
+        }
+        let (sender, receiver) = std::sync::mpsc::sync_channel(0);
+        let stopped = Arc::clone(&self.worker_stopped);
+        self.worker_sender = Some(sender);
+        self.worker = Some(std::thread::spawn(move || {
+            let _ = receiver.recv();
+            stopped.store(true, Ordering::SeqCst);
+        }));
         Ok(())
     }
 
@@ -2576,6 +2610,16 @@ impl FinalVisibilitySink for RejectFirstVisibilityBlock {
 
     fn finish(&mut self, _replay: &WeightingReplayCompletion) -> io::Result<()> {
         Err(io::Error::other("visibility failure was not observed"))
+    }
+
+    fn abort(&mut self) -> io::Result<()> {
+        self.worker_sender.take();
+        if let Some(worker) = self.worker.take() {
+            worker
+                .join()
+                .map_err(|_| io::Error::other("injected visibility worker panicked"))?;
+        }
+        Ok(())
     }
 }
 
@@ -2621,6 +2665,7 @@ fn failed_density_generation_receipt_uses_current_partial_stream_measurements() 
     .expect("dirty density plan");
     let (physical, weighting, complete, resources, pass, minor) = planned.into_parts();
     assert!(minor.is_none());
+    let visibility_worker_stopped = Arc::new(AtomicBool::new(false));
     let executor = SpectralCycleExecutor::new(
         implementation(74),
         problem.clone(),
@@ -2632,7 +2677,9 @@ fn failed_density_generation_receipt_uses_current_partial_stream_measurements() 
         ExecutableModelProblem::from_compiled(problem.clone()).expect("executable model"),
         SpectralCyclePassInput::Initial,
     )
-    .with_final_visibility_sink(Box::new(RejectFirstVisibilityBlock));
+    .with_final_visibility_sink(Box::new(RejectFirstVisibilityBlock::new(Arc::clone(
+        &visibility_worker_stopped,
+    ))));
     let runtime_registry =
         SpectralCycleRegistry::new(registry(74), implementation(74), &problem, executor);
     let directory = tempfile::tempdir().expect("receipt directory");
@@ -2693,19 +2740,59 @@ fn failed_density_generation_receipt_uses_current_partial_stream_measurements() 
         Some((110, 19)),
         "the failed generation reports only its current partial pass"
     );
+    assert!(
+        visibility_worker_stopped.load(Ordering::SeqCst),
+        "terminal visibility failure must synchronously abort and join its worker"
+    );
 }
 
 fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
-    let problem = compile(request_with_geometry_references_and_weighting(
+    let geometry =
+        geometry_with_shape_and_increment([2.0, 2.0], ImageShape::new(4, 4), [-1.0e-6, 1.0e-6]);
+    let fixture_problem = compile(request_with_geometry_references_and_weighting(
         1,
-        geometry_with_shape_and_increment([2.0, 2.0], ImageShape::new(4, 4), [-1.0e-6, 1.0e-6]),
+        geometry.clone(),
         default_references(),
         weighting,
     ))
-    .expect("logical continuum compilation");
-    let residency = selected_content_residency_with(&problem, |_| {
-        SelectedObservationContentBudget::new(160 * 1024, 1, 4)
-    });
+    .expect("fixture continuum compilation");
+    let fixture_source = &fixture_problem.inputs().observation_snapshot().sources()[0];
+    match initialize_measurement_set_owner_manifest(fixture_source.provenance().locator()) {
+        Ok(_) | Err(casa_ms::ObservationOwnerError::AlreadyInitialized) => {}
+        Err(error) => panic!("initialize runtime owner fixture: {error}"),
+    }
+    let resolution = SelectedObservationResolutionRequest::new(
+        fixture_source.provenance().locator(),
+        fixture_source.provenance().selection_request_identity(),
+        fixture_source.selection().clone(),
+        VisibilityColumn::Data,
+        WeightColumn::Weight,
+        Vec::new(),
+        ModelStateIdentity::Empty,
+        SelectedObservationContentBudget::new(160 * 1024, 1, 4),
+        casa_test_support::deterministic_measures_provider_for_identity([90; 32]),
+    );
+    let (snapshot_input, initial_access) = resolve_selected_observation(resolution.clone())
+        .expect("resolve runtime owner fixture")
+        .into_parts();
+    let snapshot = compile_observation(snapshot_input).expect("compile runtime owner snapshot");
+    let problem = compile(ImagingRequest::new(
+        standard_problem_specification(
+            weighting,
+            vec![ProductKind::Psf],
+            ModelColumnWrite::Disabled,
+        ),
+        geometry,
+        ProblemInputIdentities::new(snapshot),
+        model_lifecycle(ModelStateIdentity::Empty),
+    ))
+    .expect("owner-resolved continuum compilation");
+    let residency = initial_access
+        .certify_residency(&problem)
+        .expect("owner-certified selected-content residency");
+    let replay_proof_bytes = initial_access
+        .replay_proof_retained_heap_bytes(&problem)
+        .expect("bounded replay-proof residency");
     let planning_registry = ContractOnlyRegistry::new(
         registry(73),
         implementation_metadata(&problem),
@@ -2734,8 +2821,12 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
         authority(),
         resource_policy.clone(),
         weighting.planned_residency(),
+        replay_proof_bytes,
     )
     .expect("cross-plan frozen weighting reservation");
+    let selected = initial_access
+        .open(&problem)
+        .expect("owner-validated initial selected observation");
     let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([73; 32]);
     let executor = SpectralCycleExecutor::new(
         implementation(73),
@@ -2744,7 +2835,7 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
         resources,
         pass,
         complete,
-        open_selected_observation(&problem, &residency).expect("selected owner"),
+        selected,
         ExecutableModelProblem::from_compiled(problem.clone()).expect("executable model"),
         SpectralCyclePassInput::Initial,
     )
@@ -2845,13 +2936,19 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
     let minor_evidence_id = final_input.evidence().reconstruction_cycle().evidence_id();
     let selected_generation = final_input.evidence().normal_state().selected_generation();
 
+    let (_, final_access) = resolve_selected_observation(resolution)
+        .expect("refresh runtime owner fixture")
+        .into_parts();
+    let final_residency = final_access
+        .certify_residency(&problem)
+        .expect("fresh owner-certified selected-content residency");
     let final_planned = SpectralCyclePlan::final_major(
         &problem,
         &planning_registry,
         SpectralCycleExecutionPolicy::new(
             implementation(73),
             WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
-            residency.clone(),
+            final_residency,
             serial_storage_io(),
             1_000,
             4 * 4 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
@@ -2923,6 +3020,9 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
         residual_grid.bytes,
         final_complete.residency().grid_bytes() as u64
     );
+    let final_selected = frozen_weighting
+        .rebind_selected(final_access, &problem)
+        .expect("fresh owner locks rebind frozen selected proof");
     let final_executor = SpectralCycleExecutor::new(
         implementation(73),
         problem.clone(),
@@ -2930,7 +3030,7 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
         final_resources,
         final_pass,
         final_complete,
-        open_selected_observation(&problem, &residency).expect("final selected owner"),
+        final_selected,
         ExecutableModelProblem::from_compiled(problem.clone()).expect("final executable model"),
         SpectralCyclePassInput::FinalMajor(final_input),
     )
@@ -3030,6 +3130,7 @@ fn execute_initial_reconstruction_cycle(
         authority(),
         ResourcePolicy::Balanced,
         weighting.planned_residency(),
+        0,
     )
     .expect("frozen weighting reservation");
     let program = casa_imaging_reconstruction::MinorCycleProgram::for_algorithm(

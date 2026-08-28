@@ -7,8 +7,11 @@ use super::{
 };
 use crate::subtables::SubTable;
 use crate::{
-    MeasurementSet, MsSelectionIoBudget, SyntheticObservationRequest, SyntheticSpectralSetup,
-    SyntheticWorkerPolicy, generate_synthetic_observation_ms, tutorial_vla_a_antennas,
+    MeasurementSet, MsSelectionIoBudget, ResolvedSelectedObservationAccess,
+    SelectedObservationResolutionRequest, SyntheticObservationRequest, SyntheticSpectralSetup,
+    SyntheticWorkerPolicy, generate_synthetic_observation_ms,
+    initialize_measurement_set_owner_manifest, resolve_selected_observation,
+    tutorial_vla_a_antennas,
 };
 use casa_imaging_model::{
     AntennaSelection, AxisOrder, CentreLaws, ColumnGeneration, ConsistencyToken,
@@ -41,7 +44,7 @@ use casa_imaging_model::{
     WeightingScheme, compile, compile_observation,
 };
 use casa_imaging_reconstruction::compile_spectral_stencil;
-use casa_tables::ColumnSchema;
+use casa_tables::{ColumnSchema, LockMode, LockOptions, LockType, Table, TableOptions};
 use casa_types::measures::{
     EopValues, MeasuresProvider, MeasuresProviderState,
     direction::{DirectionRef, MDirection},
@@ -1941,6 +1944,78 @@ fn terminal_poll_failure_prevents_owner_minted_completion() {
 }
 
 #[test]
+#[cfg(unix)]
+fn owner_rebound_requires_exhaustive_proof_and_fresh_locked_state() {
+    let directory = tempfile::tempdir().expect("temporary owner-rebound fixture");
+    let path = directory.path().join("owner-rebound.ms");
+    generate_fixture(&path);
+    initialize_measurement_set_owner_manifest(&path).expect("initialize selected owner");
+    let request = owner_resolution_request(&path, 2);
+    let (problem, access) = owner_problem_and_access(request.clone());
+    let mut selected = access.open(&problem).expect("open owner-validated source");
+    let mut consumed = 0_usize;
+
+    let partial = selected
+        .traverse(&problem, |_| {
+            consumed += 1;
+            Err::<(), _>(std::io::Error::other("stop before exhaustive completion"))
+        })
+        .expect_err("partial traversal cannot mint completion or replay proof");
+    assert_eq!(consumed, 1);
+    assert!(matches!(
+        partial,
+        SelectedObservationTraversalError::Consumer(_)
+    ));
+
+    let initial = selected
+        .traverse(&problem, |_| Ok::<_, Infallible>(()))
+        .expect("exhaustive owner traversal");
+    let proof = initial
+        .replay_proof()
+        .expect("exhaustive owner traversal mints replay proof");
+    assert!(
+        proof.authorize_rebound_completion(&initial).is_none(),
+        "the durable proof alone cannot authorize its original completion"
+    );
+    drop(selected);
+
+    let (fresh_problem, fresh_access) = owner_problem_and_access(request.clone());
+    assert_eq!(fresh_problem.problem_id(), problem.problem_id());
+    let mut rebound = fresh_access
+        .rebind(&problem, &proof)
+        .expect("fresh locked owner state authorizes the opaque proof");
+    assert!(
+        !rebound.can_resume_after(&initial),
+        "rebind must mint a fresh attempt-local access binding"
+    );
+    let rebound_completion = rebound
+        .traverse(&problem, |_| Ok::<_, Infallible>(()))
+        .expect("freshly rebound traversal remains exhaustive");
+    assert!(!initial.same_access_binding(&rebound_completion));
+    let authorization = proof
+        .authorize_rebound_completion(&rebound_completion)
+        .expect("only the freshly rebound terminal completion authorizes generation and count");
+    assert_eq!(authorization.generation_id(), initial.generation_id());
+    assert_eq!(authorization.sample_count(), initial.sample_count());
+    drop(rebound);
+
+    let (_, stale_access) = owner_problem_and_access(request);
+    external_locked_keyword_mutation(&path);
+    let error = match stale_access.rebind(&problem, &proof) {
+        Ok(_) => panic!("fresh-lock rebind must close the resolve/open mutation gap"),
+        Err(error) => error,
+    };
+    let super::BoundSelectedObservationError::Source { error, .. } = error else {
+        panic!("unexpected rebound failure: {error:?}")
+    };
+    assert!(matches!(
+        error.as_ref(),
+        super::BoundObservationSourceError::OwnerState(owner)
+            if matches!(owner.as_ref(), crate::ObservationOwnerError::ModificationCounterMismatch { table, .. } if table == "MAIN")
+    ));
+}
+
+#[test]
 fn row_manifest_validation_occurs_in_the_sole_value_traversal() {
     let directory = tempfile::tempdir().expect("temporary one-pass fixture");
     let path = directory.path().join("one-pass.ms");
@@ -3197,6 +3272,81 @@ fn generate_fixture_with_rows(path: &std::path::Path, row_count: usize) {
     generate_synthetic_observation_ms(&request).expect("generate bounded disk fixture");
 }
 
+#[cfg(unix)]
+fn owner_resolution_request(
+    path: &std::path::Path,
+    row_count: usize,
+) -> SelectedObservationResolutionRequest {
+    let selected_rows = SelectedRows::from_ordered_main_rows(
+        row_count as u64,
+        (0..row_count).map(|row| SelectedMainRow::new(row as u64, 0)),
+    )
+    .expect("owner selected-row manifest");
+    SelectedObservationResolutionRequest::new(
+        path.display().to_string(),
+        identity(2),
+        fixture_selection(
+            selected_rows,
+            RowSelection::new(
+                IdSelection::All,
+                TimeSelection::All,
+                UvSelection::All,
+                AntennaSelection::All,
+                IdSelection::All,
+                IdSelection::All,
+                IntentSelection::All,
+                IdSelection::All,
+            ),
+        ),
+        VisibilityColumn::Data,
+        WeightColumn::Weight,
+        Vec::new(),
+        ModelStateIdentity::Empty,
+        SelectedObservationContentBudget::new(64 << 20, 1, 4),
+        Arc::new(AccountedTestMeasures::with_identity(90, 0)),
+    )
+}
+
+#[cfg(unix)]
+fn owner_problem_and_access(
+    request: SelectedObservationResolutionRequest,
+) -> (
+    casa_imaging_model::CompiledProblem,
+    ResolvedSelectedObservationAccess,
+) {
+    let (snapshot_input, access) = resolve_selected_observation(request)
+        .expect("resolve selected owner")
+        .into_parts();
+    let snapshot = compile_observation(snapshot_input).expect("compile owner snapshot");
+    let problem = compile(ImagingRequest::new(
+        specification(),
+        geometry(),
+        ProblemInputIdentities::new(snapshot.clone()),
+        model_lifecycle(snapshot.model()),
+    ))
+    .expect("compile owner problem");
+    (problem, access)
+}
+
+#[cfg(unix)]
+fn external_locked_keyword_mutation(path: &std::path::Path) {
+    let mut table = Table::open_with_lock(
+        TableOptions::new(path),
+        LockOptions::new(LockMode::UserLocking),
+    )
+    .expect("open external owner writer");
+    assert!(
+        table
+            .lock(LockType::Write, 0)
+            .expect("acquire external owner write lock")
+    );
+    table.keywords_mut().upsert(
+        "EXTERNAL_OWNER_REBOUND_MUTATION",
+        Value::Scalar(ScalarValue::Bool(true)),
+    );
+    table.unlock().expect("commit external owner mutation");
+}
+
 fn main_time_mjd_seconds(measurement_set: &MeasurementSet, row: usize) -> f64 {
     match measurement_set
         .main_table()
@@ -3572,19 +3722,7 @@ fn source_input_with_selected_rows_filter_and_request(
     rows_filter: RowSelection,
     selection_request: LogicalIdentity,
 ) -> ObservationSourceInput {
-    let selection = ObservationSelection::new(
-        selected_rows,
-        rows_filter,
-        vec![DataDescriptionSelection::new(0, 0, 0)],
-        vec![SpectralWindowSelection::new(0, vec![0, 2])],
-        vec![CorrelationSelection::new(
-            0,
-            vec![
-                CorrelationProduct::new(0, CorrelationType::CircularRr),
-                CorrelationProduct::new(1, CorrelationType::CircularLl),
-            ],
-        )],
-    );
+    let selection = fixture_selection(selected_rows, rows_filter);
     let columns = [
         MsColumnKind::Data,
         MsColumnKind::Flag,
@@ -3640,6 +3778,25 @@ fn source_input_with_selected_rows_filter_and_request(
             metadata,
             ModelColumnState::Absent,
         ),
+    )
+}
+
+fn fixture_selection(
+    selected_rows: SelectedRows,
+    rows_filter: RowSelection,
+) -> ObservationSelection {
+    ObservationSelection::new(
+        selected_rows,
+        rows_filter,
+        vec![DataDescriptionSelection::new(0, 0, 0)],
+        vec![SpectralWindowSelection::new(0, vec![0, 2])],
+        vec![CorrelationSelection::new(
+            0,
+            vec![
+                CorrelationProduct::new(0, CorrelationType::CircularRr),
+                CorrelationProduct::new(1, CorrelationType::CircularLl),
+            ],
+        )],
     )
 }
 
