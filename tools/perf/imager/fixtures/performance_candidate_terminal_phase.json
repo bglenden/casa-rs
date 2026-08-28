@@ -1,6 +1,26 @@
 {
   "affected_fraction": 0.1416,
+  "artifact_retention_class": "immutable",
   "candidate_id": "terminal-phase-regression",
+  "discriminator": {
+    "baseline_seconds": 171.309033,
+    "command": "retained issue-540 terminal discriminator",
+    "exact_checksum": "e6368112404a3ce2b3b3b9e988bde85dadd5726e09de8d87ca4499dc27a71b91",
+    "maximum_candidate_seconds": 154.1781297,
+    "required_invariants": [
+      "workers=1",
+      "bit-identical products"
+    ]
+  },
+  "falsifier": "Reject when the optimistic end-to-end ceiling is below ten percent.",
+  "hypothesis": "Removing the complete terminal-only stack would materially reduce full-workload wall time.",
+  "limits": {
+    "maximum_resident_bytes": 1073741824,
+    "maximum_stage_seconds": 180.0,
+    "maximum_swap_operations": 0,
+    "maximum_wall_seconds": 600.0
+  },
+  "parent_revision": "2ed88e89cbedb9d2b8138d83c3f023a6da25fb07",
   "phase": {
     "name": "terminal",
     "occurrence_count": 1,
@@ -9,5 +29,6 @@
   "projected_total_seconds": 1814.446,
   "record_kind": "implementation",
   "removable_fraction": 1.0,
+  "reversion": "Restore the exact parent revision; do not retain a runtime fallback.",
   "schema_version": 1
 }

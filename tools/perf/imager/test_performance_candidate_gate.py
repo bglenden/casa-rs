@@ -36,9 +36,7 @@ class PerformanceCandidateGateTests(unittest.TestCase):
         )
         self.assertAlmostEqual(
             176.846 / 1814.446,
-            metrics[
-                "phase_occurrence_weighted_baseline_contribution_fraction"
-            ],
+            metrics["phase_occurrence_weighted_baseline_contribution_fraction"],
         )
         self.assertAlmostEqual(
             0.1416,
@@ -65,9 +63,7 @@ class PerformanceCandidateGateTests(unittest.TestCase):
                 "removable_fraction": 0.5,
             }
         )
-        record["phase"].update(
-            {"seconds_per_occurrence": 20.0, "occurrence_count": 3}
-        )
+        record["phase"].update({"seconds_per_occurrence": 20.0, "occurrence_count": 3})
 
         result = gate.evaluate(record)
 
@@ -77,13 +73,15 @@ class PerformanceCandidateGateTests(unittest.TestCase):
         )
         self.assertAlmostEqual(
             0.15,
-            result["metrics"][
-                "optimistic_maximum_end_to_end_improvement_fraction"
-            ],
+            result["metrics"]["optimistic_maximum_end_to_end_improvement_fraction"],
         )
         self.assertEqual("eligible_for_implementation", result["decision"])
         self.assertTrue(result["allowed"])
         self.assertTrue(result["implementation_eligible"])
+        self.assertEqual(
+            record["parent_revision"],
+            result["campaign_control"]["parent_revision"],
+        )
 
     def test_diagnostic_only_record_is_allowed_below_threshold(self) -> None:
         record = regression_record()
@@ -96,9 +94,7 @@ class PerformanceCandidateGateTests(unittest.TestCase):
         self.assertFalse(result["implementation_eligible"])
         self.assertAlmostEqual(
             0.013801123648761111,
-            result["metrics"][
-                "optimistic_maximum_end_to_end_improvement_fraction"
-            ],
+            result["metrics"]["optimistic_maximum_end_to_end_improvement_fraction"],
         )
 
     def test_cli_emits_json_and_rejects_below_threshold(self) -> None:
@@ -121,6 +117,31 @@ class PerformanceCandidateGateTests(unittest.TestCase):
             "occurrence-weighted seconds must not exceed",
         ):
             gate.evaluate(record)
+
+    def test_implementation_record_requires_campaign_control(self) -> None:
+        record = regression_record()
+        del record["falsifier"]
+
+        with self.assertRaisesRegex(gate.CandidateError, "falsifier"):
+            gate.evaluate(record)
+
+    def test_diagnostic_record_does_not_claim_campaign_control(self) -> None:
+        record = regression_record()
+        record["record_kind"] = "diagnostic_only"
+        for field in (
+            "artifact_retention_class",
+            "discriminator",
+            "falsifier",
+            "hypothesis",
+            "limits",
+            "parent_revision",
+            "reversion",
+        ):
+            del record[field]
+
+        result = gate.evaluate(record)
+
+        self.assertIsNone(result["campaign_control"])
 
 
 if __name__ == "__main__":
