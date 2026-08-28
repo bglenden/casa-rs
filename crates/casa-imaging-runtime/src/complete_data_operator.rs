@@ -14,12 +14,13 @@ use casa_imaging_model::{
     NumericsContractId, SelectedObservationGenerationId, WeightingCommitmentId,
 };
 use casa_imaging_reconstruction::{
-    MajorCyclePreparation, SpectralOperatorError, SpectralOperatorPrimitives,
+    FinalNormalState, MajorCyclePreparation, SpectralOperatorError, SpectralOperatorPrimitives,
     SpectralOperatorSpecification, SpectralPrimitiveCatalog, WeightingAlgorithmState,
     WeightingGenerationId, WeightingReplayCoverageId, WeightingReplayId,
     runtime_adapter::{
         CompleteDataOwnerResult, CompleteDataOwnerState, PreparedSpectralOperator,
-        SpectralOperatorWorkload, prepare_spectral_operator, spectral_operator_workload,
+        SpectralOperatorPass, SpectralOperatorWorkload, prepare_spectral_operator,
+        spectral_operator_workload,
     },
 };
 
@@ -48,7 +49,7 @@ pub struct CompleteDataResidency {
 }
 
 impl CompleteDataResidency {
-    /// Bytes for dirty, PSF, and exact residual accumulation plus compensation grids.
+    /// Bytes for pass-required accumulation and compensation grids.
     #[must_use]
     pub const fn grid_bytes(self) -> usize {
         self.grid_bytes
@@ -78,7 +79,7 @@ impl CompleteDataResidency {
         self.forward_workspace_bytes
     }
 
-    /// Bytes retained by dirty, PSF, exact residual, and sensitivity primitives.
+    /// Bytes covering retained prior state plus newly produced normal-state primitives.
     #[must_use]
     pub const fn primitive_output_bytes(self) -> usize {
         self.primitive_output_bytes
@@ -114,9 +115,10 @@ impl CompleteDataPlanFragment {
         problem: &CompiledProblem,
         max_replay_block_samples: usize,
         replay_node: WorkNodeId,
+        pass: SpectralOperatorPass,
     ) -> Result<Self, CompleteDataPlanError> {
         let specification = SpectralOperatorSpecification::new(problem)?;
-        let workload = spectral_operator_workload(&specification, max_replay_block_samples)?;
+        let workload = spectral_operator_workload(&specification, max_replay_block_samples, pass)?;
         let shape = workload.grid_shape();
         let slab = specification.slab();
         let preparation_node = WorkNodeId::new(format!(
@@ -132,6 +134,7 @@ impl CompleteDataPlanFragment {
             replay_node,
             preparation_node,
             specification,
+            pass,
         )
     }
 
@@ -142,6 +145,7 @@ impl CompleteDataPlanFragment {
         replay_node: WorkNodeId,
         core_start: usize,
         core_depth: usize,
+        pass: SpectralOperatorPass,
     ) -> Result<Self, CompleteDataPlanError> {
         let specification =
             SpectralOperatorSpecification::for_slab(problem, core_start, core_depth)?;
@@ -160,6 +164,7 @@ impl CompleteDataPlanFragment {
             replay_node,
             preparation_node,
             specification,
+            pass,
         )
     }
 
@@ -169,6 +174,7 @@ impl CompleteDataPlanFragment {
         max_replay_block_samples: usize,
         replay_node: WorkNodeId,
         preparation_node: WorkNodeId,
+        pass: SpectralOperatorPass,
     ) -> Result<Self, CompleteDataPlanError> {
         let specification = SpectralOperatorSpecification::new(problem)?;
         Self::from_specification(
@@ -177,6 +183,7 @@ impl CompleteDataPlanFragment {
             replay_node,
             preparation_node,
             specification,
+            pass,
         )
     }
 
@@ -186,8 +193,9 @@ impl CompleteDataPlanFragment {
         replay_node: WorkNodeId,
         preparation_node: WorkNodeId,
         specification: SpectralOperatorSpecification,
+        pass: SpectralOperatorPass,
     ) -> Result<Self, CompleteDataPlanError> {
-        let workload = spectral_operator_workload(&specification, max_replay_block_samples)?;
+        let workload = spectral_operator_workload(&specification, max_replay_block_samples, pass)?;
         let residency = project_residency(problem, workload)?;
         Ok(Self {
             specification,
@@ -422,10 +430,15 @@ impl CompleteDataPlanFragment {
                     lifetime: ClaimLifetime::Work,
                 },
             ],
-            allocations: vec![
-                specs[2].usage(ClaimLifetime::Work),
-                specs[5].usage(ClaimLifetime::Work),
-            ],
+            allocations: [
+                Some(specs[2].usage(ClaimLifetime::Work)),
+                (self.workload.pass() == SpectralOperatorPass::ResidualRefresh)
+                    .then(|| specs[4].usage(ClaimLifetime::Work)),
+                Some(specs[5].usage(ClaimLifetime::Work)),
+            ]
+            .into_iter()
+            .flatten()
+            .collect(),
             fences: BTreeSet::new(),
             quiescence_after: BTreeSet::new(),
         };
@@ -539,11 +552,16 @@ impl CompleteDataPlanFragment {
             FenceKind::Io,
         ))]);
         let reconciled = BTreeSet::from([WorkDependency::Work(reconciliation.clone())]);
+        let residual_refresh = self.workload.pass() == SpectralOperatorPass::ResidualRefresh;
         Ok([
             CompleteDataAllocation::new(
                 format!("spectral-operator-grids-{suffix}"),
                 residency.grid_bytes(),
-                "spectral-operator-shared-dirty-psf-residual-grids",
+                if residual_refresh {
+                    "spectral-operator-shared-residual-refresh-grid"
+                } else {
+                    "spectral-operator-shared-dirty-psf-residual-grids"
+                },
                 InitializationPolicy::ZeroBeforeRead,
                 self.replay_node.clone(),
                 replay_done.clone(),
@@ -577,7 +595,11 @@ impl CompleteDataPlanFragment {
                 residency.primitive_output_bytes(),
                 "spectral-operator-unnormalized-dirty-psf-residual-primitives",
                 InitializationPolicy::OverwriteBeforeRead,
-                self.replay_node.clone(),
+                if residual_refresh {
+                    self.preparation_node.clone()
+                } else {
+                    self.replay_node.clone()
+                },
                 reconciled,
             )?,
             CompleteDataAllocation::new(
@@ -596,7 +618,11 @@ fn operator_allocation_suffix(workload: SpectralOperatorWorkload) -> String {
     let shape = workload.grid_shape();
     let slab = workload.slab();
     format!(
-        "{}x{}-ch{}-{}",
+        "{}-{}x{}-ch{}-{}",
+        match workload.pass() {
+            SpectralOperatorPass::InitialMajor => "initial",
+            SpectralOperatorPass::ResidualRefresh => "residual-refresh",
+        },
         shape[0],
         shape[1],
         slab.core_range().start,
@@ -1118,9 +1144,10 @@ impl SpectralOperatorState {
     pub fn bind_major_cycle_model(
         &mut self,
         preparation: &MajorCyclePreparation,
+        prior_normal_state: Option<FinalNormalState>,
     ) -> Result<(), CompleteDataOperatorError> {
         self.state
-            .bind_major_cycle_model(preparation.final_model())
+            .bind_major_cycle_model(preparation.final_model(), prior_normal_state)
             .map_err(CompleteDataOperatorError::Owner)
     }
 

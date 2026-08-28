@@ -114,22 +114,34 @@ The probe used the public `VisibilityBuffer` only to obtain real stored shapes.
 It does not prove private selected-observation allocation identity. The private
 exact selected-observation path must provide that evidence in Delivery 1.
 
-### Rejected residual-only refresh candidate
+### Full-shape residual-refresh discriminator
 
-Commit `70d823603` tested one causal hypothesis against parent `707ae2322`:
-carry invariant PSF, sensitivity, sum weights, and validity across later major
-cycles so each replay grids only the changing residual. The reconstruction
-fixture was bit-exact against a fresh full replay, and the saved turnaround
-image, residual, model, and PSF had zero sampled RMS and maximum difference
-from the parent products.
+Commit `70d823603` first tested one causal hypothesis against parent
+`707ae2322`: carry invariant PSF, sensitivity, sum weights, and validity across
+later major cycles so each replay grids only the changing residual. The
+reconstruction fixture was bit-exact against a fresh full replay, and the saved
+one-channel image, residual, model, and PSF had zero sampled RMS and maximum
+difference from the parent products. That one-channel run showed no wall-time
+gain and the candidate was reverted by `a276c4673`.
 
-The serial turnaround exercised one initial pass and seven later major passes.
-Mean later-pass receipt duration fell only from about 9.035 seconds to 8.962
-seconds, while the initial pass rose from 17.802 seconds to 17.917 seconds.
-End-to-end wall was 84.818450 seconds versus the 84.812526-second parent: no
-observable improvement. This falsified the candidate before the long matched
-run. Commit `a276c4673` removed it; residual-only invariant reuse is not carried
-as speculative complexity in Delivery 1.
+Exact tile and stream measurements subsequently proved that the one-channel row
+was not a valid discriminator for this channel-scaled kernel change. Each pass
+returned 65,505,024 DATA bytes but loaded 1,353,381,120 DATA tile bytes, a
+20.66-fold storage-layout amplification; source I/O therefore hid the removed
+gridding work. On the complete 64-channel shape, the instrumented parent
+`e30f59302` is compute-bound: density took 101.806 seconds, the initial weighted
+replay took 232.074 seconds, and one later major replay took 250.704 seconds.
+The later replay recorded 250.632 seconds of kernel work but only 10.484 seconds
+of source reads.
+
+The residual-only mechanism is therefore being re-evaluated on the complete
+64-channel shape through the same shared runtime and reconstruction owners. The
+candidate must preserve exact products and materially reduce the 250.704-second
+later-major stage; otherwise it is rejected again. The initial pass remains the
+same dirty/PSF/residual computation. Reconstruction validates problem,
+geometry, numerics, weighting, selected-observation, and continuum-transform
+lineage before accepting prior state, while runtime retains and charges that
+state through reconciliation.
 
 ## Scope
 
