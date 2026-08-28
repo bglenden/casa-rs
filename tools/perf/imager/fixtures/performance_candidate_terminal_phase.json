@@ -1,0 +1,13 @@
+{
+  "affected_fraction": 0.1416,
+  "candidate_id": "terminal-phase-regression",
+  "phase": {
+    "name": "terminal",
+    "occurrence_count": 1,
+    "seconds_per_occurrence": 176.846
+  },
+  "projected_total_seconds": 1814.446,
+  "record_kind": "implementation",
+  "removable_fraction": 1.0,
+  "schema_version": 1
+}
