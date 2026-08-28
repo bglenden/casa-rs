@@ -54,10 +54,10 @@ ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256 = (
     "daafa560c0e941fb3f2cea5c02a46de8a3363c2dd327cb839ef8ab2111f09835"
 )
 ACCEPTED_MATRIX_ROWS_SHA256 = (
-    "f0eb3a56db6bec14871eaf2d2f99dda98c2f3623002fcb2745f5f659ed17a0e7"
+    "0ad645f25cce979824634660a2a4c7ea1be6a06d12869eb9186495d9875c2719"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "6c0cb88e67274828d4411bc9e99569c34f015d3c37a1c699479e9fd8bfc3e37a"
+    "18293323f2b660bca4d81ee2f97e82a58dd5f4c2add160deb6889c3c2307433e"
 )
 ACCEPTED_MATRIX_CONTRACT_REVISION = 55
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
@@ -1955,10 +1955,10 @@ def validate_t18_global_weighting_sources(
     ):
         raise ArchitectureError("T18 traversal envelope construction must remain owner-only")
     derivation = rust_function_body(
-        traversal_sample, "derive_spectral_evaluation_cached", traversal_sample_path
+        traversal_sample, "derive_spectral_intervals_cached", traversal_sample_path
     )
     evaluation = rust_function_body(
-        traversal_sample, "evaluated_frequency_hz_cached", traversal_sample_path
+        traversal_sample, "prepared_frequency_conversion_cached", traversal_sample_path
     )
     compact_evaluation = re.sub(r"\s+", "", evaluation)
     explicit_output_frame = rust_function_body(
@@ -1967,6 +1967,12 @@ def validate_t18_global_weighting_sources(
     two_frame_conversion = rust_function_body(
         spectral_selection,
         "convert_frequency_to_frame_with_frames",
+        spectral_selection_path,
+    )
+    prepared_conversion = rust_impl_method_body(
+        spectral_selection,
+        "PreparedFrequencyFrameConversion",
+        "new",
         spectral_selection_path,
     )
     spectral_sampling_path = (
@@ -1980,7 +1986,8 @@ def validate_t18_global_weighting_sources(
         spectral_sampling, "channel_local_terms", spectral_sampling_path
     )
     if (
-        "convert_frequency_to_frame_with_frames(" not in evaluation
+        "PreparedFrequencyFrameConversion::new(" not in evaluation
+        or "conversion.convert_hz(" not in derivation
         or "native.centre_hz()" not in derivation
         or "native_boundaries[0]" not in derivation
         or "native_boundaries[1]" not in derivation
@@ -1998,7 +2005,8 @@ def validate_t18_global_weighting_sources(
         )
         or "source_frame" not in two_frame_conversion
         or "target_frame" not in two_frame_conversion
-        or "direct_frequency_hop_uses_target_frame(" not in two_frame_conversion
+        or "PreparedFrequencyFrameConversion::new(" not in two_frame_conversion
+        or "direct_frequency_hop_uses_target_frame(" not in prepared_conversion
         or "channel_local_terms(" not in stencil
         or "SpectralKernel::Cubic" not in channel_local_stencil
         or "SpectralKernel::ChannelIntegration" not in channel_local_stencil
@@ -2188,8 +2196,8 @@ def validate_t18_global_weighting_sources(
         "density_grid_bytes",
         "robust_factor_bytes",
         "sum_weight_bytes",
-        "deterministic_partial_bytes",
-        "reduction_scratch_bytes",
+        "shared_density_accumulator_bytes",
+        "sum_weight_accumulator_bytes",
         "replay_read_bytes",
         "weighted_block_bytes",
         "simultaneous_selected_weighted_bytes",
@@ -2458,7 +2466,7 @@ def validate_t17_ms_selection_transfer(rows: list[dict[str, Any]]) -> None:
         )
     required_baselines = {
         "repo://crates/casa-imaging-model/src/selected_observation_sample.rs",
-        "repo://resources/imaging-architecture/baselines/selected-observation-generation-v4.txt",
+        "repo://resources/imaging-architecture/baselines/selected-observation-generation-v5.txt",
     }
     if not required_baselines.issubset(set(row.get("baseline_manifests", []))):
         raise ArchitectureError(

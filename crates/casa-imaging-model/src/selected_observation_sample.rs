@@ -16,7 +16,13 @@ use crate::{
 };
 
 const SELECTED_OBSERVATION_GENERATION_DOMAIN: &[u8] = b"casa-rs-selected-observation-generation";
-const SELECTED_OBSERVATION_GENERATION_VERSION: u32 = 4;
+const SELECTED_OBSERVATION_GENERATION_VERSION: u32 = 5;
+const GENERATION_ROW_RUN_MARKER: u8 = 0xa1;
+const GENERATION_ROW_RUN_TERMINAL: u8 = 0xaf;
+const GENERATION_CHANNEL_RUN_MARKER: u8 = 0xb1;
+const GENERATION_CHANNEL_RUN_TERMINAL: u8 = 0xbf;
+const GENERATION_CORRELATION_MARKER: u8 = 0xc1;
+const GENERATION_TERMINAL_MARKER: u8 = 0xff;
 
 /// Reported source position and spectral/polarization coordinate of one sample.
 ///
@@ -423,6 +429,12 @@ impl SelectedObservationGenerationId {
 
 pub(crate) struct SelectedObservationGenerationEncoder {
     encoder: CanonicalEncoder,
+    row_run: Option<SelectedObservationSample>,
+    channel_run: Option<SelectedObservationSample>,
+    row_run_count: u64,
+    row_run_sample_count: u64,
+    channel_run_count: u64,
+    channel_run_sample_count: u64,
     sample_count: u64,
 }
 
@@ -433,13 +445,53 @@ impl SelectedObservationGenerationEncoder {
         encoder.u32(SELECTED_OBSERVATION_GENERATION_VERSION);
         Self {
             encoder,
+            row_run: None,
+            channel_run: None,
+            row_run_count: 0,
+            row_run_sample_count: 0,
+            channel_run_count: 0,
+            channel_run_sample_count: 0,
             sample_count: 0,
         }
     }
 
     pub(crate) fn push(&mut self, sample: &SelectedObservationSample) {
-        self.encoder.u8(0xa5);
-        encode_sample(&mut self.encoder, sample);
+        if self
+            .row_run
+            .is_none_or(|current| !same_generation_row_content(&current, sample))
+        {
+            self.finish_row_run();
+            self.encoder.u8(GENERATION_ROW_RUN_MARKER);
+            encode_generation_row_content(&mut self.encoder, sample);
+            self.row_run = Some(*sample);
+            self.row_run_count = self
+                .row_run_count
+                .checked_add(1)
+                .expect("selected-observation row-run count fits u64");
+        }
+        if self
+            .channel_run
+            .is_none_or(|current| !same_generation_channel_content(&current, sample))
+        {
+            self.finish_channel_run();
+            self.encoder.u8(GENERATION_CHANNEL_RUN_MARKER);
+            encode_generation_channel_content(&mut self.encoder, sample);
+            self.channel_run = Some(*sample);
+            self.channel_run_count = self
+                .channel_run_count
+                .checked_add(1)
+                .expect("selected-observation channel-run count fits u64");
+        }
+        self.encoder.u8(GENERATION_CORRELATION_MARKER);
+        encode_generation_correlation_content(&mut self.encoder, sample);
+        self.channel_run_sample_count = self
+            .channel_run_sample_count
+            .checked_add(1)
+            .expect("selected-observation channel-run sample count fits u64");
+        self.row_run_sample_count = self
+            .row_run_sample_count
+            .checked_add(1)
+            .expect("selected-observation row-run sample count fits u64");
         self.sample_count = self
             .sample_count
             .checked_add(1)
@@ -447,12 +499,33 @@ impl SelectedObservationGenerationEncoder {
     }
 
     pub(crate) fn finish(mut self) -> (SelectedObservationGenerationId, u64) {
-        self.encoder.u8(0xff);
+        self.finish_row_run();
+        self.encoder.u8(GENERATION_TERMINAL_MARKER);
+        self.encoder.u64(self.row_run_count);
         self.encoder.u64(self.sample_count);
         (
             SelectedObservationGenerationId(self.encoder.finish()),
             self.sample_count,
         )
+    }
+
+    fn finish_channel_run(&mut self) {
+        if self.channel_run.take().is_some() {
+            self.encoder.u8(GENERATION_CHANNEL_RUN_TERMINAL);
+            self.encoder.u64(self.channel_run_sample_count);
+            self.channel_run_sample_count = 0;
+        }
+    }
+
+    fn finish_row_run(&mut self) {
+        if self.row_run.take().is_some() {
+            self.finish_channel_run();
+            self.encoder.u8(GENERATION_ROW_RUN_TERMINAL);
+            self.encoder.u64(self.channel_run_count);
+            self.encoder.u64(self.row_run_sample_count);
+            self.channel_run_count = 0;
+            self.row_run_sample_count = 0;
+        }
     }
 }
 
@@ -470,35 +543,39 @@ impl fmt::Display for SelectedObservationGenerationId {
     }
 }
 
-fn encode_sample(encoder: &mut CanonicalEncoder, sample: &SelectedObservationSample) {
+fn same_generation_row_content(
+    left: &SelectedObservationSample,
+    right: &SelectedObservationSample,
+) -> bool {
+    left.address.data_description_id == right.address.data_description_id
+        && left.address.spectral_window_id == right.address.spectral_window_id
+        && left.address.polarization_id == right.address.polarization_id
+        && left.row_flag == right.row_flag
+        && left.coordinates == right.coordinates
+        && left.metadata == right.metadata
+}
+
+fn same_generation_channel_content(
+    left: &SelectedObservationSample,
+    right: &SelectedObservationSample,
+) -> bool {
+    left.address.channel_index == right.address.channel_index
+        && left.address.frequency_centre_hz == right.address.frequency_centre_hz
+        && left.address.frequency_lower_hz == right.address.frequency_lower_hz
+        && left.address.frequency_upper_hz == right.address.frequency_upper_hz
+        && left.address.channel_width_hz == right.address.channel_width_hz
+        && left.address.frequency_frame == right.address.frequency_frame
+}
+
+fn encode_generation_row_content(
+    encoder: &mut CanonicalEncoder,
+    sample: &SelectedObservationSample,
+) {
     let address = sample.address;
     encoder.i32(address.data_description_id);
     encoder.u32(address.spectral_window_id);
-    encoder.u32(address.channel_index);
-    encoder.f64(address.frequency_centre_hz);
-    encoder.f64(address.frequency_lower_hz);
-    encoder.f64(address.frequency_upper_hz);
-    encoder.f64(address.channel_width_hz);
-    encoder.u8(frequency_frame_tag(address.frequency_frame));
     encoder.u32(address.polarization_id);
-    encoder.u32(address.correlation_index);
-    encoder.u8(correlation_type_tag(address.correlation_type));
-
-    match sample.visibility {
-        SelectedVisibilitySample::Float32(value) => {
-            encoder.u8(0);
-            encoder.f32(value);
-        }
-        SelectedVisibilitySample::Complex32([real, imaginary]) => {
-            encoder.u8(1);
-            encoder.f32(real);
-            encoder.f32(imaginary);
-        }
-    }
-    encoder.u8(u8::from(sample.channel_flag));
-    encoder.u8(u8::from(sample.parallel_hand_group_flag));
     encoder.u8(u8::from(sample.row_flag));
-    encoder.f32(sample.input_weight);
 
     let coordinates = sample.coordinates;
     for value in coordinates.raw_uvw_m {
@@ -535,6 +612,41 @@ fn encode_sample(encoder: &mut CanonicalEncoder, sample: &SelectedObservationSam
     encoder.i32(metadata.array_id);
 }
 
+fn encode_generation_channel_content(
+    encoder: &mut CanonicalEncoder,
+    sample: &SelectedObservationSample,
+) {
+    let address = sample.address;
+    encoder.u32(address.channel_index);
+    encoder.f64(address.frequency_centre_hz);
+    encoder.f64(address.frequency_lower_hz);
+    encoder.f64(address.frequency_upper_hz);
+    encoder.f64(address.channel_width_hz);
+    encoder.u8(frequency_frame_tag(address.frequency_frame));
+}
+
+fn encode_generation_correlation_content(
+    encoder: &mut CanonicalEncoder,
+    sample: &SelectedObservationSample,
+) {
+    encoder.u32(sample.address.correlation_index);
+    encoder.u8(correlation_type_tag(sample.address.correlation_type));
+    match sample.visibility {
+        SelectedVisibilitySample::Float32(value) => {
+            encoder.u8(0);
+            encoder.f32(value);
+        }
+        SelectedVisibilitySample::Complex32([real, imaginary]) => {
+            encoder.u8(1);
+            encoder.f32(real);
+            encoder.f32(imaginary);
+        }
+    }
+    encoder.u8(u8::from(sample.channel_flag));
+    encoder.u8(u8::from(sample.parallel_hand_group_flag));
+    encoder.f32(sample.input_weight);
+}
+
 fn encode_epoch(encoder: &mut CanonicalEncoder, epoch: Epoch) {
     encoder.f64(epoch.mjd_days());
     encoder.u8(time_scale_tag(epoch.scale()));
@@ -559,48 +671,48 @@ mod tests {
 
     const GENERATION_FIXTURE: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../resources/imaging-architecture/baselines/selected-observation-generation-v4.txt"
+        "/../../resources/imaging-architecture/baselines/selected-observation-generation-v5.txt"
     ));
 
     const ENCODED_FIELDS: [&str; 38] = [
-        "data_description_id:i32",
-        "spectral_window_id:u32",
-        "channel_index:u32",
-        "frequency_centre_hz:f64",
-        "frequency_lower_hz:f64",
-        "frequency_upper_hz:f64",
-        "channel_width_hz:f64",
-        "frequency_frame:tag-u8",
-        "polarization_id:u32",
-        "correlation_index:u32",
-        "correlation_type:tag-u8",
-        "visibility:tag-u8-then-float32-f32-or-complex32-real-f32-imaginary-f32",
-        "channel_flag:u8",
-        "parallel_hand_group_flag:u8",
-        "row_flag:u8",
-        "input_weight:f32",
-        "raw_uvw_m:f64-x-y-z",
-        "density_uvw_m:f64-x-y-z",
-        "transformed_uvw_m:f64-x-y-z",
-        "phase_shift_m:f64",
-        "uvw_law:tag-u8",
-        "time:mjd-days-f64-then-scale-tag-u8",
-        "time_centroid:mjd-days-f64-then-scale-tag-u8",
-        "interval_seconds:f64",
-        "exposure_seconds:f64",
-        "phase_direction:frame-tag-u8-longitude-rad-f64-latitude-rad-f64",
-        "delay_direction:frame-tag-u8-longitude-rad-f64-latitude-rad-f64",
-        "pointing_antenna1:frame-tag-u8-longitude-rad-f64-latitude-rad-f64",
-        "pointing_antenna2:frame-tag-u8-longitude-rad-f64-latitude-rad-f64",
-        "field_id:i32",
-        "antenna1:i32",
-        "antenna2:i32",
-        "feed1:i32",
-        "feed2:i32",
-        "scan_number:i32",
-        "state_id:i32",
-        "observation_id:i32",
-        "array_id:i32",
+        "row.data_description_id:i32",
+        "row.spectral_window_id:u32",
+        "row.polarization_id:u32",
+        "row.row_flag:u8",
+        "row.raw_uvw_m:f64-x-y-z",
+        "row.density_uvw_m:f64-x-y-z",
+        "row.transformed_uvw_m:f64-x-y-z",
+        "row.phase_shift_m:f64",
+        "row.uvw_law:tag-u8",
+        "row.time:mjd-days-f64-then-scale-tag-u8",
+        "row.time_centroid:mjd-days-f64-then-scale-tag-u8",
+        "row.interval_seconds:f64",
+        "row.exposure_seconds:f64",
+        "row.phase_direction:frame-tag-u8-longitude-rad-f64-latitude-rad-f64",
+        "row.delay_direction:frame-tag-u8-longitude-rad-f64-latitude-rad-f64",
+        "row.pointing_antenna1:frame-tag-u8-longitude-rad-f64-latitude-rad-f64",
+        "row.pointing_antenna2:frame-tag-u8-longitude-rad-f64-latitude-rad-f64",
+        "row.field_id:i32",
+        "row.antenna1:i32",
+        "row.antenna2:i32",
+        "row.feed1:i32",
+        "row.feed2:i32",
+        "row.scan_number:i32",
+        "row.state_id:i32",
+        "row.observation_id:i32",
+        "row.array_id:i32",
+        "channel.channel_index:u32",
+        "channel.frequency_centre_hz:f64",
+        "channel.frequency_lower_hz:f64",
+        "channel.frequency_upper_hz:f64",
+        "channel.channel_width_hz:f64",
+        "channel.frequency_frame:tag-u8",
+        "correlation.correlation_index:u32",
+        "correlation.correlation_type:tag-u8",
+        "correlation.visibility:tag-u8-then-float32-f32-or-complex32-real-f32-imaginary-f32",
+        "correlation.channel_flag:u8",
+        "correlation.parallel_hand_group_flag:u8",
+        "correlation.input_weight:f32",
     ];
 
     #[test]
@@ -647,7 +759,7 @@ mod tests {
             generation(&[&[second, first]]),
             "logical sample order participates in content identity"
         );
-        assert_eq!(SelectedObservationGenerationId::SCHEMA_VERSION, 4);
+        assert_eq!(SelectedObservationGenerationId::SCHEMA_VERSION, 5);
 
         let mutations: &[SampleMutation] = &[
             ("data description", |s| s.address.data_description_id += 1),
@@ -742,6 +854,15 @@ mod tests {
             generation(&[&[relocated]]),
             "external source identity and physical row are provenance only"
         );
+        let mut relocated_duplicate = first;
+        relocated_duplicate.address.measurement_set =
+            MeasurementSetIdentity::new(LogicalIdentity::from_sha256([9; 32]));
+        relocated_duplicate.address.physical_row = 999;
+        assert_eq!(
+            generation(&[&[first, first]]),
+            generation(&[&[first, relocated_duplicate]]),
+            "provenance cannot alter hierarchical run boundaries"
+        );
         let mut residual_input = first;
         residual_input.prediction_target = SelectedPredictionTarget::NotRequested;
         assert_eq!(
@@ -786,10 +907,10 @@ mod tests {
         assert_eq!(
             one_block.as_bytes(),
             [
-                94, 163, 119, 28, 151, 12, 53, 64, 196, 4, 192, 4, 254, 120, 214, 116, 76, 89, 227,
-                128, 71, 11, 144, 158, 216, 193, 210, 121, 192, 35, 160, 205,
+                147, 63, 213, 238, 122, 156, 28, 165, 222, 22, 226, 198, 138, 50, 236, 194, 223,
+                146, 186, 47, 248, 10, 112, 9, 20, 166, 149, 62, 223, 109, 1, 55,
             ],
-            "schema-4 golden ratchet"
+            "schema-5 golden ratchet"
         );
     }
 
@@ -799,10 +920,17 @@ mod tests {
             fixture_value("identity_domain"),
             "casa-rs-selected-observation-generation"
         );
-        assert_eq!(fixture_value("generation_schema_version"), "4");
-        assert_eq!(fixture_value("sample_marker"), "0xa5");
+        assert_eq!(fixture_value("generation_schema_version"), "5");
+        assert_eq!(fixture_value("row_run_marker"), "0xa1");
+        assert_eq!(fixture_value("row_run_terminal"), "0xaf");
+        assert_eq!(fixture_value("channel_run_marker"), "0xb1");
+        assert_eq!(fixture_value("channel_run_terminal"), "0xbf");
+        assert_eq!(fixture_value("correlation_marker"), "0xc1");
         assert_eq!(fixture_value("terminal_marker"), "0xff");
-        assert_eq!(fixture_value("terminal_sample_count"), "u64-le");
+        assert_eq!(
+            fixture_value("terminal_counts"),
+            "row-run-count-u64-le,sample-count-u64-le"
+        );
         assert_eq!(
             fixture_value("excluded_provenance"),
             "measurement_set,physical_row,prediction_target"
