@@ -114,6 +114,38 @@ The probe used the public `VisibilityBuffer` only to obtain real stored shapes.
 It does not prove private selected-observation allocation identity. The private
 exact selected-observation path must provide that evidence in Delivery 1.
 
+### Serial major-cycle diagnosis
+
+The first matched serial measurements isolate a scientific-kernel problem, not
+a case for hiding the current path behind more workers. The accepted
+one-channel immutable control took 108.450 seconds; the best current serial
+source/traversal candidate took 84.813 seconds with exact full-array equality.
+On the complete 64-channel shape, `niter=0` still took 338.359 seconds. A
+diagnostic `niter=500` run was stopped after about 420 seconds once it had
+completed the initial pass and begun the first replay, because its forecast was
+already outside the rapid-turnaround budget.
+
+Instrumentation of that replay showed that `push_with_residual` accumulated
+dirty, PSF, and residual grids, each with a compensated partner. Completion
+then promoted the exact residual and discarded the newly computed dirty plane;
+PSF, sensitivity, sum weights, and channel validity were also invariant for the
+unchanged problem, weighting generation, selected-observation generation, and
+continuum-transform generation. The profile independently placed compensated
+gridding at about 18 percent of sampled CPU time and memory movement at about
+11 percent.
+
+The selected candidate therefore carries the prior invariant normal state
+through the existing shared major-pass lifecycle. The initial pass remains the
+same dirty/PSF/residual computation. Each later pass uses the same runtime and
+reconstruction owners but allocates only residual plus compensation grids,
+predicts the current model, and computes the changing residual. Reconstruction
+validates all scientific and source lineage before accepting reuse. The runtime
+retains the full primitive lease from preparation through reconciliation so the
+overlap of prior state and new residual remains honestly budgeted. This is the
+residual-only mechanism already proven by CASA and the pre-cutover
+implementation, transplanted into the current owners rather than restoring the
+old runner.
+
 ## Scope
 
 Delivery 1 includes:

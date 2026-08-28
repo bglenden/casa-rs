@@ -9,7 +9,9 @@ use std::{
 };
 
 use casa_imaging_model::CompiledProblem;
-use casa_imaging_reconstruction::{WeightingExecutionLimits, WeightingPlan, plan_weighting};
+use casa_imaging_reconstruction::{
+    WeightingExecutionLimits, WeightingPlan, plan_weighting, runtime_adapter::SpectralOperatorPass,
+};
 use casa_ms::{SelectedObservationResidencyCertificate, SelectedVisibilityStoragePlan};
 
 use crate::spectral_cycle::{SelectedVisibilityCellWrite, VISIBILITY_WRITE_WORKER_STACK_BYTES};
@@ -210,6 +212,10 @@ impl SpectralCyclePlan {
             weighting.limits().max_block_samples(),
             replay.clone(),
             pass_node("spectral-operator-fft-plan", pass),
+            match pass.phase() {
+                SpectralPassPhase::InitialMajor => SpectralOperatorPass::InitialMajor,
+                SpectralPassPhase::FinalMajor => SpectralOperatorPass::ResidualRefresh,
+            },
         )?;
         let (mut physical, complete_data) = complete_data.compose(&physical)?;
         if let Some(bounds) = policy.visibility_write {
