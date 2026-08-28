@@ -20,6 +20,7 @@ const VISIBILITY_ADDRESS_DOMAIN: &[u8] = b"casa-rs-final-visibility-address-stre
 const MODEL_VALUE_DOMAIN: &[u8] = b"casa-rs-final-model-visibility-values";
 const RESIDUAL_VALUE_DOMAIN: &[u8] = b"casa-rs-final-residual-visibility-values";
 const VISIBILITY_PRODUCT_VERSION: u32 = 3;
+const VISIBILITY_ADDRESS_BYTES: usize = 94;
 
 macro_rules! visibility_identity {
     ($name:ident, $summary:literal) => {
@@ -236,24 +237,37 @@ pub enum VisibilityProductError {
 }
 
 fn encode_address(hasher: &mut Sha256, address: SelectedSampleAddress) {
-    hasher.update(address.measurement_set.identity().as_bytes());
-    hasher.update(address.physical_row.to_le_bytes());
-    hasher.update(address.data_description_id.to_le_bytes());
-    hasher.update(address.spectral_window_id.to_le_bytes());
-    hasher.update(address.channel_index.to_le_bytes());
-    hasher.update(address.frequency_centre_hz.to_bits().to_le_bytes());
-    hasher.update(address.frequency_lower_hz.to_bits().to_le_bytes());
-    hasher.update(address.frequency_upper_hz.to_bits().to_le_bytes());
-    hasher.update(address.channel_width_hz.to_bits().to_le_bytes());
-    hasher.update((address.frequency_frame as u8).to_le_bytes());
-    hasher.update(address.polarization_id.to_le_bytes());
-    hasher.update(address.correlation_index.to_le_bytes());
-    hasher.update((address.correlation_type as u8).to_le_bytes());
+    let mut encoded = [0_u8; VISIBILITY_ADDRESS_BYTES];
+    let mut used = 0;
+    {
+        let mut append = |bytes: &[u8]| {
+            let end = used + bytes.len();
+            encoded[used..end].copy_from_slice(bytes);
+            used = end;
+        };
+        append(&address.measurement_set.identity().as_bytes());
+        append(&address.physical_row.to_le_bytes());
+        append(&address.data_description_id.to_le_bytes());
+        append(&address.spectral_window_id.to_le_bytes());
+        append(&address.channel_index.to_le_bytes());
+        append(&address.frequency_centre_hz.to_bits().to_le_bytes());
+        append(&address.frequency_lower_hz.to_bits().to_le_bytes());
+        append(&address.frequency_upper_hz.to_bits().to_le_bytes());
+        append(&address.channel_width_hz.to_bits().to_le_bytes());
+        append(&(address.frequency_frame as u8).to_le_bytes());
+        append(&address.polarization_id.to_le_bytes());
+        append(&address.correlation_index.to_le_bytes());
+        append(&(address.correlation_type as u8).to_le_bytes());
+    }
+    debug_assert_eq!(used, encoded.len());
+    hasher.update(encoded);
 }
 
 fn encode_complex(hasher: &mut Sha256, value: num_complex::Complex64) {
-    hasher.update(value.re.to_bits().to_le_bytes());
-    hasher.update(value.im.to_bits().to_le_bytes());
+    let mut encoded = [0_u8; 16];
+    encoded[..8].copy_from_slice(&value.re.to_bits().to_le_bytes());
+    encoded[8..].copy_from_slice(&value.im.to_bits().to_le_bytes());
+    hasher.update(encoded);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -286,4 +300,60 @@ fn product_identity(
     hasher.update(address_digest);
     hasher.update(value_digest);
     LogicalIdentity::from_sha256(hasher.finalize().into())
+}
+
+#[cfg(test)]
+mod tests {
+    use casa_imaging_model::{
+        CorrelationType, FrequencyFrame, LogicalIdentity, MeasurementSetIdentity,
+        SelectedSampleAddress,
+    };
+    use num_complex::Complex64;
+    use sha2::{Digest, Sha256};
+
+    use super::{encode_address, encode_complex};
+
+    #[test]
+    fn batched_visibility_encoding_preserves_the_scalar_byte_stream() {
+        let address = SelectedSampleAddress {
+            measurement_set: MeasurementSetIdentity::new(LogicalIdentity::from_sha256([0x5a; 32])),
+            physical_row: 0x0102_0304_0506_0708,
+            data_description_id: -17,
+            spectral_window_id: 29,
+            channel_index: 31,
+            frequency_centre_hz: 1.234_567_89e9,
+            frequency_lower_hz: 1.234_067_89e9,
+            frequency_upper_hz: 1.235_067_89e9,
+            channel_width_hz: -1.0e6,
+            frequency_frame: FrequencyFrame::Lsrk,
+            polarization_id: 37,
+            correlation_index: 41,
+            correlation_type: CorrelationType::LinearYy,
+        };
+        let mut scalar_address = Sha256::new();
+        scalar_address.update(address.measurement_set.identity().as_bytes());
+        scalar_address.update(address.physical_row.to_le_bytes());
+        scalar_address.update(address.data_description_id.to_le_bytes());
+        scalar_address.update(address.spectral_window_id.to_le_bytes());
+        scalar_address.update(address.channel_index.to_le_bytes());
+        scalar_address.update(address.frequency_centre_hz.to_bits().to_le_bytes());
+        scalar_address.update(address.frequency_lower_hz.to_bits().to_le_bytes());
+        scalar_address.update(address.frequency_upper_hz.to_bits().to_le_bytes());
+        scalar_address.update(address.channel_width_hz.to_bits().to_le_bytes());
+        scalar_address.update((address.frequency_frame as u8).to_le_bytes());
+        scalar_address.update(address.polarization_id.to_le_bytes());
+        scalar_address.update(address.correlation_index.to_le_bytes());
+        scalar_address.update((address.correlation_type as u8).to_le_bytes());
+        let mut batched_address = Sha256::new();
+        encode_address(&mut batched_address, address);
+        assert_eq!(batched_address.finalize(), scalar_address.finalize());
+
+        let value = Complex64::new(-13.5, f64::from_bits(0x7ff8_0000_0000_0042));
+        let mut scalar_value = Sha256::new();
+        scalar_value.update(value.re.to_bits().to_le_bytes());
+        scalar_value.update(value.im.to_bits().to_le_bytes());
+        let mut batched_value = Sha256::new();
+        encode_complex(&mut batched_value, value);
+        assert_eq!(batched_value.finalize(), scalar_value.finalize());
+    }
 }
