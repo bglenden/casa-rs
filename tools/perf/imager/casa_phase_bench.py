@@ -214,6 +214,7 @@ def main() -> None:
     deconvolver = env_str("CASA_RS_BENCH_DECONVOLVER")
     scales_env = env_str("CASA_RS_BENCH_SCALES")
     niter = env_int("CASA_RS_BENCH_NITER")
+    nmajor = env_int("CASA_RS_BENCH_NMAJOR")
     gain = env_float("CASA_RS_BENCH_GAIN")
     threshold_jy = env_str("CASA_RS_BENCH_THRESHOLD_JY")
     nsigma = env_float("CASA_RS_BENCH_NSIGMA")
@@ -292,6 +293,7 @@ def main() -> None:
                     weighting=weighting,
                     robust=robust,
                     niter=niter,
+                    nmajor=nmajor,
                     cycleniter=cycleniter,
                     loopgain=gain,
                     threshold=threshold,

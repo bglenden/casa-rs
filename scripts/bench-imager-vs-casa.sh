@@ -80,6 +80,7 @@ parallel="${IMAGER_BENCH_PARALLEL:-}"
 chanchunks="${IMAGER_BENCH_CHANCHUNKS:-}"
 mode="${IMAGER_BENCH_MODE:-dirty}"
 niter="${IMAGER_BENCH_NITER:-4}"
+nmajor="${IMAGER_BENCH_NMAJOR:--1}"
 gain="${IMAGER_BENCH_GAIN:-0.1}"
 threshold_jy="${IMAGER_BENCH_THRESHOLD_JY:-0}"
 nsigma="${IMAGER_BENCH_NSIGMA:-0}"
@@ -334,6 +335,11 @@ else
   casa_niter="$niter"
 fi
 
+if [[ ! "$nmajor" =~ ^(-1|[0-9]+)$ ]]; then
+  echo "error: IMAGER_BENCH_NMAJOR must be -1 or an unsigned integer" >&2
+  exit 2
+fi
+
 median_from_file() {
   python3 - "$1" <<'PY'
 import statistics
@@ -407,7 +413,7 @@ emit_rust_backend_diagnostics() {
 
 echo "ms_path=$ms_path"
 echo "CASA_RS_CASA_PYTHON=$CASA_RS_CASA_PYTHON"
-echo "mode=$mode specmode=$specmode gridder=$gridder casa_gridder=$casa_gridder field=$field phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count cube_start=$cube_start cube_width=$cube_width interpolation=$interpolation weighting=$weighting robust=$robust perchanweightdensity=$perchanweightdensity_enabled deconvolver=$deconvolver standard_mfs_acceleration=$standard_mfs_acceleration imaging_fft_precision=$imaging_fft_precision imaging_fft_backend=$imaging_fft_backend parallel=$parallel chanchunks=$chanchunks hogbom_iteration_mode=$hogbom_iteration_mode nterms=$nterms scales=$scales wterm=$wterm wprojplanes=$wprojplanes casa_wprojplanes=$casa_wprojplanes imaging_memory_target_mb=$imaging_memory_target_mb imaging_prepare_buffer_mb=$imaging_prepare_buffer_mb imaging_row_block_rows=$imaging_row_block_rows imaging_prepare_workers=$imaging_prepare_workers imaging_read_ahead_blocks=$imaging_read_ahead_blocks imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats profile_repeats=$profile_repeats profile_warmups=$profile_warmups niter=$niter nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction pblimit=$pblimit write_pb=$write_pb_enabled pbcor=$pbcor_enabled ms_staging=$ms_staging phase_probe=$phase_probe_enabled skip_casa=$skip_casa skip_rust=$skip_rust_enabled skip_profile=$skip_profile_enabled reuse_rust_prefix=$reuse_rust_prefix reuse_casa_prefix=$reuse_casa_prefix"
+echo "mode=$mode specmode=$specmode gridder=$gridder casa_gridder=$casa_gridder field=$field phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count cube_start=$cube_start cube_width=$cube_width interpolation=$interpolation weighting=$weighting robust=$robust perchanweightdensity=$perchanweightdensity_enabled deconvolver=$deconvolver standard_mfs_acceleration=$standard_mfs_acceleration imaging_fft_precision=$imaging_fft_precision imaging_fft_backend=$imaging_fft_backend parallel=$parallel chanchunks=$chanchunks hogbom_iteration_mode=$hogbom_iteration_mode nterms=$nterms scales=$scales wterm=$wterm wprojplanes=$wprojplanes casa_wprojplanes=$casa_wprojplanes imaging_memory_target_mb=$imaging_memory_target_mb imaging_prepare_buffer_mb=$imaging_prepare_buffer_mb imaging_row_block_rows=$imaging_row_block_rows imaging_prepare_workers=$imaging_prepare_workers imaging_read_ahead_blocks=$imaging_read_ahead_blocks imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats profile_repeats=$profile_repeats profile_warmups=$profile_warmups niter=$niter nmajor=$nmajor nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction pblimit=$pblimit write_pb=$write_pb_enabled pbcor=$pbcor_enabled ms_staging=$ms_staging phase_probe=$phase_probe_enabled skip_casa=$skip_casa skip_rust=$skip_rust_enabled skip_profile=$skip_profile_enabled reuse_rust_prefix=$reuse_rust_prefix reuse_casa_prefix=$reuse_casa_prefix"
 echo
 
 if [[ "$skip_rust_enabled" == "0" ]]; then
@@ -532,6 +538,7 @@ for run in $(seq 1 "$repeats"); do
       --nterms "$nterms" \
       --scales "$scales" \
       --niter "$niter" \
+      --nmajor "$nmajor" \
       --gain "$gain" \
       --threshold-jy "$threshold_jy" \
       --nsigma "$nsigma" \
@@ -578,6 +585,7 @@ for run in $(seq 1 "$repeats"); do
       --hogbom-iteration-mode "$hogbom_iteration_mode" \
       --nterms "$nterms" \
       --niter "$niter" \
+      --nmajor "$nmajor" \
       --gain "$gain" \
       --threshold-jy "$threshold_jy" \
       --nsigma "$nsigma" \
@@ -721,6 +729,7 @@ cube_width = os.environ.get("CASA_RS_BENCH_CUBE_WIDTH", "")
 imsize = int(os.environ["CASA_RS_BENCH_IMSIZE"])
 cell_arcsec = os.environ["CASA_RS_BENCH_CELL_ARCSEC"]
 niter = int(os.environ["CASA_RS_BENCH_NITER"])
+nmajor = int(os.environ["CASA_RS_BENCH_NMAJOR"])
 gain = float(os.environ["CASA_RS_BENCH_GAIN"])
 threshold_jy = os.environ["CASA_RS_BENCH_THRESHOLD_JY"]
 nsigma = float(os.environ["CASA_RS_BENCH_NSIGMA"])
@@ -770,6 +779,7 @@ with tempfile.TemporaryDirectory() as td:
             imsize=imsize,
             cell=f"{cell_arcsec}arcsec",
             niter=niter,
+            nmajor=nmajor,
             cycleniter=cycleniter,
             robust=robust,
             gain=gain,
@@ -854,6 +864,7 @@ else
   CASA_RS_BENCH_NTERMS="$nterms" \
   CASA_RS_BENCH_SCALES="$scales" \
   CASA_RS_BENCH_NITER="$casa_niter" \
+  CASA_RS_BENCH_NMAJOR="$nmajor" \
   CASA_RS_BENCH_GAIN="$gain" \
   CASA_RS_BENCH_THRESHOLD_JY="$threshold_jy" \
   CASA_RS_BENCH_NSIGMA="$nsigma" \
@@ -910,6 +921,7 @@ if [[ "$phase_probe_enabled" == "1" && -z "$reuse_casa_prefix" && ! ( "$skip_cas
   CASA_RS_BENCH_NTERMS="$nterms" \
   CASA_RS_BENCH_SCALES="$scales" \
   CASA_RS_BENCH_NITER="$casa_niter" \
+  CASA_RS_BENCH_NMAJOR="$nmajor" \
   CASA_RS_BENCH_GAIN="$gain" \
   CASA_RS_BENCH_THRESHOLD_JY="$threshold_jy" \
   CASA_RS_BENCH_NSIGMA="$nsigma" \

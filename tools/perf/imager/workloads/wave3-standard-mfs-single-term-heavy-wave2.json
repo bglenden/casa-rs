@@ -24,6 +24,7 @@
     "hogbom_iteration_mode": "casa",
     "nterms": 1,
     "niter": 500,
+    "nmajor": -1,
     "gain": 0.1,
     "threshold_jy": 0.0,
     "minor_cycle_length": 50

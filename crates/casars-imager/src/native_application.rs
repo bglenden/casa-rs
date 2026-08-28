@@ -155,7 +155,7 @@ fn application_request(config: &CliConfig) -> Result<ContinuumImagingRequest, St
         },
         iterations,
         cycle_iterations,
-        maximum_major_cycles: config.nmajor.unwrap_or(1),
+        maximum_major_cycles: config.nmajor,
         maximum_model_update_jy: f64::from(maximum_model_update_jy),
         noise_sigma: (config.nsigma > 0.0).then_some(f64::from(config.nsigma)),
         cycle_factor: f64::from(config.cyclefactor),
@@ -396,6 +396,23 @@ mod tests {
             "3",
         ]));
         assert!(!requirements.contains(&TaskRequirement::UnsupportedControls));
+    }
+
+    #[test]
+    fn casa_unlimited_nmajor_is_not_truncated_to_one_major_cycle() {
+        let config = config(&[
+            "--niter",
+            "500",
+            "--minor-cycle-length",
+            "50",
+            "--nmajor",
+            "-1",
+            "--maximum-model-update-jy",
+            "100",
+        ]);
+        let request = application_request(&config).expect("native request");
+
+        assert_eq!(request.maximum_major_cycles, None);
     }
 
     #[test]

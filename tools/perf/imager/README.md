@@ -616,6 +616,7 @@ It does not add personal workstation data fallbacks.
 - `IMAGER_BENCH_ROBUST`
   - Briggs robustness parameter passed to both Rust and CASA when weighting is `briggs`
 - `IMAGER_BENCH_NITER`
+- `IMAGER_BENCH_NMAJOR` (`-1` preserves CASA's unlimited default)
 - `IMAGER_BENCH_HOGBOM_ITERATION_MODE`
   - `strict` uses casa-rs' corrected Hogbom component accounting
   - `casa` reproduces CASA's documented inclusive Hogbom off-by-one behavior;

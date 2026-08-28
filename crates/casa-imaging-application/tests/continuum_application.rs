@@ -438,7 +438,7 @@ fn request(
         weighting: ContinuumWeighting::Natural,
         iterations: 1,
         cycle_iterations: 1,
-        maximum_major_cycles: 1,
+        maximum_major_cycles: Some(1),
         maximum_model_update_jy: 100.0,
         noise_sigma: None,
         cycle_factor: 1.0,
@@ -791,7 +791,7 @@ fn application_reconciles_between_bounded_minor_cycles() {
     );
     imaging.iterations = 3;
     imaging.cycle_iterations = 1;
-    imaging.maximum_major_cycles = 3;
+    imaging.maximum_major_cycles = Some(3);
     imaging.gain = 0.37;
     imaging.threshold_jy = 1.0e-12;
     imaging.noise_sigma = Some(1.0e-12);
@@ -826,6 +826,32 @@ fn application_reconciles_between_bounded_minor_cycles() {
         Some(ContinuumStopReason::IterationBound)
     );
     assert_standard_products(&image_name, &result.product_names);
+}
+
+#[test]
+fn application_uses_the_iteration_budget_when_major_cycles_are_unlimited() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = tiny_measurement_set(root.path());
+    let mut imaging = request(
+        measurement_set,
+        root.path().join("unlimited-major-cycles"),
+        ContinuumAlgorithm::Hogbom,
+    );
+    imaging.iterations = 3;
+    imaging.cycle_iterations = 1;
+    imaging.maximum_major_cycles = None;
+    imaging.gain = 0.37;
+    imaging.threshold_jy = 1.0e-12;
+    imaging.noise_sigma = Some(1.0e-12);
+    imaging.cycle_factor = 1.4;
+
+    let result = execute_continuum(imaging).expect("unlimited major-cycle execution");
+
+    assert_eq!(result.outcome.output.total_minor_iterations, 3);
+    assert_eq!(result.outcome.output.minor_cycles.len(), 3);
+    assert_eq!(result.outcome.output.major_cycle_count, 4);
 }
 
 #[test]
@@ -1382,7 +1408,7 @@ fn application_materializes_static_and_auto_masks_at_the_normal_state_boundary()
     });
     auto_request.iterations = 2;
     auto_request.cycle_iterations = 1;
-    auto_request.maximum_major_cycles = 2;
+    auto_request.maximum_major_cycles = Some(2);
     auto_request.gain = 0.1;
     let auto_result = execute_continuum(auto_request).expect("auto-mask solve");
     let cycles = &auto_result.outcome.output.minor_cycles;

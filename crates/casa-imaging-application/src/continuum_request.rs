@@ -227,8 +227,8 @@ pub struct ContinuumImagingRequest {
     pub iterations: usize,
     /// Maximum component updates accepted in one minor cycle.
     pub cycle_iterations: usize,
-    /// Maximum number of major cycles admitted by the controller contract.
-    pub maximum_major_cycles: usize,
+    /// Optional maximum number of major cycles admitted by the controller contract.
+    pub maximum_major_cycles: Option<usize>,
     /// Hard cumulative component-flux envelope accepted between reconciliations.
     pub maximum_model_update_jy: f64,
     /// Optional robust-RMS stopping multiplier.
@@ -702,7 +702,11 @@ fn prepare(
                 prepared_spectral.output_channels,
                 prepared_spectral.output_channels,
                 model_samples,
-                request.maximum_model_update_jy * request.maximum_major_cycles.max(1) as f64,
+                request.maximum_model_update_jy
+                    * request
+                        .maximum_major_cycles
+                        .unwrap_or(request.iterations)
+                        .max(1) as f64,
                 request.maximum_model_update_jy,
             )?,
             NumericPrecision::F64,
@@ -774,7 +778,7 @@ fn validate_request(request: &ContinuumImagingRequest) -> Result<(), crate::Appl
         || !request.psf_cutoff.is_finite()
         || request.psf_cutoff <= 0.0
         || (request.algorithm != ContinuumAlgorithm::Dirty
-            && (request.cycle_iterations == 0 || request.maximum_major_cycles == 0))
+            && (request.cycle_iterations == 0 || request.maximum_major_cycles == Some(0)))
         || request
             .noise_sigma
             .is_some_and(|sigma| !sigma.is_finite() || sigma < 0.0)

@@ -809,6 +809,15 @@ class SchemaTests(unittest.TestCase):
             self.assertEqual("full", comparison["mode"])
             self.assertTrue(comparison["tolerances"]["require_full_array"])
 
+    def test_nmajor_accepts_casa_unlimited_and_rejects_lower_values(self) -> None:
+        workload = explicit_aw_workload()
+        workload["imaging"]["nmajor"] = -1
+        validate_workload_manifest(workload)
+
+        workload["imaging"]["nmajor"] = -2
+        with self.assertRaisesRegex(ContractError, "nmajor must be -1 or nonnegative"):
+            validate_workload_manifest(workload)
+
     def test_casa_recipe_requires_path_and_lowercase_sha256(self) -> None:
         workload = explicit_aw_workload()
         workload["casa"] = {

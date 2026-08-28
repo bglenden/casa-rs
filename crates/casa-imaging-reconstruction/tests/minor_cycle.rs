@@ -611,7 +611,7 @@ fn controls_are_validated_explicitly() {
     let compiled = HogbomControls::from_compiled(
         ReconstructionControls::new(100, 0.5, 0.0)
             .with_maximum_model_update(2.5)
-            .with_cycle_limits(7, 3)
+            .with_cycle_limits(7, Some(3))
             .with_noise_sigma(4.5),
     )
     .expect("cycle and nsigma controls");
@@ -1011,7 +1011,7 @@ fn nsigma_and_cycle_iteration_limits_are_solver_evidence_not_frontend_policy() {
     let program = HogbomControls::from_compiled(
         ReconstructionControls::new(64, 0.5, 0.0)
             .with_maximum_model_update(1.0e30)
-            .with_cycle_limits(2, 4)
+            .with_cycle_limits(2, Some(4))
             .with_noise_sigma(1.0)
             .with_cycle_threshold(1.0, 0.05, 0.8),
     )

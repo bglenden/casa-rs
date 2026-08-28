@@ -114,6 +114,7 @@ IMAGING_FIELDS = {
     "mode",
     "mosweight",
     "niter",
+    "nmajor",
     "normtype",
     "nsigma",
     "nterms",
@@ -302,6 +303,7 @@ RESULT_MODE_FIELDS = {
     "imaging_fft_precision",
     "imaging_read_ahead_blocks",
     "niter",
+    "nmajor",
     "nterms",
     "parallel",
     "perchanweightdensity",
@@ -1405,7 +1407,7 @@ def _validate_result_dataset(value: Any, *, source: str) -> None:
 def _validate_result_mode(value: Any, *, source: str) -> None:
     mode = _require_dict(value, source)
     _allowed_fields(mode, RESULT_MODE_FIELDS, source)
-    integer_fields = {"channel_count", "niter", "nterms"}
+    integer_fields = {"channel_count", "niter", "nmajor", "nterms"}
     nullable_integer_fields = {"chanchunks", "imaging_read_ahead_blocks"}
     nullable_string_fields = {
         "start",
@@ -4017,6 +4019,7 @@ def _validate_imaging_types(imaging: dict[str, Any], source: str) -> None:
         "imsize",
         "minor_cycle_length",
         "niter",
+        "nmajor",
         "nterms",
     }
     numbers = {
@@ -4061,6 +4064,8 @@ def _validate_imaging_types(imaging: dict[str, Any], source: str) -> None:
     }
     for key in integers & set(imaging):
         _integer(imaging, key, f"{source}: imaging")
+    if imaging.get("nmajor", -1) < -1:
+        raise ContractError(f"{source}: imaging.nmajor must be -1 or nonnegative")
     for key in numbers & set(imaging):
         finite_number(imaging[key], field=f"{source}: imaging.{key}", optional=False)
     for key in booleans & set(imaging):

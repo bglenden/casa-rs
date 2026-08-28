@@ -545,15 +545,15 @@ impl ReconstructionControls {
         self
     }
 
-    /// Bind the per-cycle iteration bound and total major-cycle bound.
+    /// Bind the per-cycle iteration bound and optional total major-cycle bound.
     #[must_use]
     pub const fn with_cycle_limits(
         mut self,
         cycle_iteration_limit: usize,
-        maximum_major_cycles: usize,
+        maximum_major_cycles: Option<usize>,
     ) -> Self {
         self.cycle_iteration_limit = Some(cycle_iteration_limit);
-        self.maximum_major_cycles = Some(maximum_major_cycles);
+        self.maximum_major_cycles = maximum_major_cycles;
         self
     }
 

@@ -453,7 +453,13 @@ where
                 .take_reconstruction_cycle_completion()
                 .ok_or_else(|| boxed("reconstruction cycle omitted scientific evidence"))?;
             let controls = problem.reconstruction().controls();
-            let maximum_cycles = controls.maximum_major_cycles().unwrap_or(1);
+            // CASA's `nmajor=-1` leaves the major-cycle count unbounded, but
+            // every productive cycle consumes at least one of the total
+            // minor-iteration budget. That budget is therefore the finite
+            // execution ceiling when no explicit major-cycle limit exists.
+            let maximum_cycles = controls
+                .maximum_major_cycles()
+                .unwrap_or(controls.max_minor_iterations());
             let mut cycle = 1_usize;
             let mut total_iterations = 0_usize;
             let mut mask_plan = input.mask.clone();
