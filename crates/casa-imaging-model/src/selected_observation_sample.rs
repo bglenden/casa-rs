@@ -887,6 +887,14 @@ impl SelectedObservationGenerationEncoder {
             .expect("selected-observation sample count fits u64");
     }
 
+    pub(crate) const fn proof_bytes(&self) -> u64 {
+        self.encoder.proof_bytes()
+    }
+
+    pub(crate) const fn proof_hash_calls(&self) -> u64 {
+        self.encoder.proof_hash_calls()
+    }
+
     pub(crate) fn finish(mut self) -> (SelectedObservationGenerationId, u64) {
         self.finish_row_run();
         self.encoder.u8(GENERATION_TERMINAL_MARKER);
@@ -1366,6 +1374,20 @@ mod tests {
         assert_eq!(
             generation(&[&samples]).to_string(),
             fixture_value("generation_sha256")
+        );
+    }
+
+    #[test]
+    fn generation_proof_work_counts_exact_hash_updates() {
+        let samples = generation_fixture_samples();
+        let mut encoder = SelectedObservationGenerationEncoder::new();
+        for sample in &samples {
+            encoder.push(sample);
+        }
+
+        assert_eq!(
+            (encoder.proof_bytes(), encoder.proof_hash_calls()),
+            (419, 80),
         );
     }
 

@@ -1572,5 +1572,7 @@ fn incomplete_or_foreign_operator_evidence_cannot_become_a_major_cycle_owner() {
     let evidence = run_t19_complete_data(&problem, None);
     let completion = evidence.completion();
     assert!(completion.sample_count() > 0 && completion.block_count() > 0);
+    assert!(completion.coverage_proof_bytes() > 0);
+    assert!(completion.coverage_proof_hash_calls() > 0);
     assert_eq!(completion.problem_id(), problem.problem_id());
 }

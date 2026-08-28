@@ -2607,58 +2607,87 @@ fn encode_numerics(encoder: &mut CanonicalEncoder, numerics: &NumericsContract) 
     }
 }
 
-pub(crate) struct CanonicalEncoder(Sha256);
+pub(crate) struct CanonicalEncoder {
+    hasher: Sha256,
+    proof_bytes: u64,
+    proof_hash_calls: u64,
+}
 
 impl CanonicalEncoder {
     pub(crate) fn new() -> Self {
-        Self(Sha256::new())
+        Self {
+            hasher: Sha256::new(),
+            proof_bytes: 0,
+            proof_hash_calls: 0,
+        }
+    }
+
+    fn update(&mut self, value: impl AsRef<[u8]>) {
+        let value = value.as_ref();
+        self.proof_bytes = self
+            .proof_bytes
+            .checked_add(u64::try_from(value.len()).expect("encoded identity chunk fits u64"))
+            .expect("encoded identity byte count fits u64");
+        self.proof_hash_calls = self
+            .proof_hash_calls
+            .checked_add(1)
+            .expect("encoded identity hash-call count fits u64");
+        self.hasher.update(value);
     }
 
     pub(crate) fn u8(&mut self, value: u8) {
-        self.0.update([value]);
+        self.update([value]);
     }
 
     pub(crate) fn u32(&mut self, value: u32) {
-        self.0.update(value.to_le_bytes());
+        self.update(value.to_le_bytes());
     }
 
     pub(crate) fn i32(&mut self, value: i32) {
-        self.0.update(value.to_le_bytes());
+        self.update(value.to_le_bytes());
     }
 
     pub(crate) fn u64(&mut self, value: u64) {
-        self.0.update(value.to_le_bytes());
+        self.update(value.to_le_bytes());
     }
 
     pub(crate) fn usize(&mut self, value: usize) {
-        self.0.update((value as u128).to_le_bytes());
+        self.update((value as u128).to_le_bytes());
     }
 
     pub(crate) fn bytes(&mut self, value: &[u8]) {
         self.usize(value.len());
-        self.0.update(value);
+        self.update(value);
     }
 
     pub(crate) fn identity(&mut self, identity: LogicalIdentity) {
-        self.0.update(identity.0);
+        self.update(identity.0);
     }
 
     pub(crate) fn digest(&mut self, digest: [u8; 32]) {
-        self.0.update(digest);
+        self.update(digest);
     }
 
     pub(crate) fn f64(&mut self, value: f64) {
         let bits = if value == 0.0 { 0 } else { value.to_bits() };
-        self.0.update(bits.to_le_bytes());
+        self.update(bits.to_le_bytes());
     }
 
     pub(crate) fn f32(&mut self, value: f32) {
         let bits = if value == 0.0 { 0 } else { value.to_bits() };
-        self.0.update(bits.to_le_bytes());
+        self.update(bits.to_le_bytes());
+    }
+
+    pub(crate) const fn proof_bytes(&self) -> u64 {
+        self.proof_bytes
+    }
+
+    pub(crate) const fn proof_hash_calls(&self) -> u64 {
+        self.proof_hash_calls
     }
 
     pub(crate) fn finish(self) -> [u8; 32] {
-        self.0.finalize().into()
+        self.hasher.finalize().into()
     }
 }
 

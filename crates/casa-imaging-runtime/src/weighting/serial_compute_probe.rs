@@ -195,7 +195,14 @@ fn medium_vla_64ch_residual_refresh() -> Result<(), Box<dyn Error>> {
     operator.bind_major_cycle_model(preparation.final_model(), Some(prior_normal_state))?;
     let replay = weighting.begin_replay(&problem, &plan)?;
     let consumer = fresh_consumer(&request, &problem)?;
-    let (replay_summary, replay_elapsed, operator_elapsed, predicted_samples, emitted_blocks) = {
+    let (
+        replay_summary,
+        replay_consumer,
+        replay_elapsed,
+        operator_elapsed,
+        predicted_samples,
+        emitted_blocks,
+    ) = {
         let mut operator_elapsed = Duration::ZERO;
         let mut predicted_samples = 0_u64;
         let mut emitted_blocks = 0_u64;
@@ -222,11 +229,13 @@ fn medium_vla_64ch_residual_refresh() -> Result<(), Box<dyn Error>> {
         };
         let replay_started = Instant::now();
         let WeightingBlockKernelCompletion {
+            consumer,
             weights: replay_summary,
             ..
         } = replay_weighting_kernel(kernel, &blocks)?;
         (
             replay_summary,
+            consumer,
             replay_started.elapsed(),
             operator_elapsed,
             predicted_samples,
@@ -237,6 +246,18 @@ fn medium_vla_64ch_residual_refresh() -> Result<(), Box<dyn Error>> {
     let finish_started = Instant::now();
     let result = operator.complete(&replay_summary, selected_generation, None)?;
     let finish_elapsed = finish_started.elapsed();
+    let selected_generation_proof_bytes = replay_consumer.generation_proof_bytes();
+    let selected_generation_proof_hash_calls = replay_consumer.generation_proof_hash_calls();
+    let weighting_coverage_proof_bytes = replay_summary.coverage_proof_bytes();
+    let weighting_coverage_proof_hash_calls = replay_summary.coverage_proof_hash_calls();
+    let operator_coverage_proof_bytes = result.completion().coverage_proof_bytes();
+    let operator_coverage_proof_hash_calls = result.completion().coverage_proof_hash_calls();
+    let total_coverage_proof_bytes = weighting_coverage_proof_bytes
+        .checked_add(operator_coverage_proof_bytes)
+        .ok_or("coverage proof byte count overflowed")?;
+    let total_coverage_proof_hash_calls = weighting_coverage_proof_hash_calls
+        .checked_add(operator_coverage_proof_hash_calls)
+        .ok_or("coverage proof hash-call count overflowed")?;
     let checksum = result.primitives().normal_state_content_identity();
     let checksum_text = checksum.to_string();
     let source_revision = source_revision()?;
@@ -265,6 +286,15 @@ fn medium_vla_64ch_residual_refresh() -> Result<(), Box<dyn Error>> {
             "operator_consume_ms": milliseconds(operator_elapsed),
             "projection_spectral_weighting_ms": milliseconds(weighting_exclusive),
             "operator_finish_ms": milliseconds(finish_elapsed),
+            "selected_generation_proof_bytes": selected_generation_proof_bytes,
+            "selected_generation_proof_hash_calls": selected_generation_proof_hash_calls,
+            "selected_generation_proof_terminalized": false,
+            "weighting_coverage_proof_bytes": weighting_coverage_proof_bytes,
+            "weighting_coverage_proof_hash_calls": weighting_coverage_proof_hash_calls,
+            "operator_coverage_proof_bytes": operator_coverage_proof_bytes,
+            "operator_coverage_proof_hash_calls": operator_coverage_proof_hash_calls,
+            "total_coverage_proof_bytes": total_coverage_proof_bytes,
+            "total_coverage_proof_hash_calls": total_coverage_proof_hash_calls,
             "total_ms": milliseconds(total_start.elapsed()),
             "normal_state_identity": checksum_text,
         }))?
@@ -276,6 +306,25 @@ fn medium_vla_64ch_residual_refresh() -> Result<(), Box<dyn Error>> {
     assert_eq!(
         checksum_text, EXPECTED_NORMAL_STATE_IDENTITY,
         "scientific checksum changed"
+    );
+    assert!(
+        selected_generation_proof_bytes > 0 && selected_generation_proof_hash_calls > 0,
+        "selected-generation proof counters must report the timed replay"
+    );
+    assert!(
+        weighting_coverage_proof_bytes > 0 && weighting_coverage_proof_hash_calls > 0,
+        "weighting coverage proof counters must report the timed replay"
+    );
+    assert_eq!(
+        [
+            weighting_coverage_proof_bytes,
+            weighting_coverage_proof_hash_calls,
+        ],
+        [
+            operator_coverage_proof_bytes,
+            operator_coverage_proof_hash_calls,
+        ],
+        "weighting and operator coverage proofs must encode the same replay"
     );
     assert!(
         (5.0..=20.0).contains(&replay_elapsed.as_secs_f64()),

@@ -861,7 +861,8 @@ impl FusedWeightingPhase {
         let block_count = self.block_sequence;
         let state = self.sum.finish()?;
         state.next_replay.store(1, Ordering::Relaxed);
-        let coverage = self.coverage.finish(state.generation_id, sample_count);
+        let (coverage, coverage_proof_work) =
+            self.coverage.finish(state.generation_id, sample_count);
         let replay_id =
             replay_identity(state.generation_id, coverage, sample_count, block_count, 0);
         let weighted_block_bytes = self
@@ -880,6 +881,8 @@ impl FusedWeightingPhase {
             sample_count,
             block_count,
             replay_sequence: 0,
+            coverage_proof_bytes: coverage_proof_work.bytes,
+            coverage_proof_hash_calls: coverage_proof_work.hash_calls,
             residency: WeightingResidency {
                 density_grid_bytes: state.generation_residency.density_grid_bytes,
                 robust_factor_bytes: state.generation_residency.robust_factor_bytes,
@@ -1165,7 +1168,7 @@ impl WeightingReplayPhase<'_> {
         if self.sample_count != self.generation.sample_count {
             return Err(WeightingError::SelectedGenerationMismatch);
         }
-        let coverage = self
+        let (coverage, coverage_proof_work) = self
             .coverage
             .finish(self.generation.generation_id, self.sample_count);
         let replay_id = replay_identity(
@@ -1200,6 +1203,8 @@ impl WeightingReplayPhase<'_> {
                 sample_count: self.sample_count,
                 block_count: self.block_sequence,
                 replay_sequence: self.replay_sequence,
+                coverage_proof_bytes: coverage_proof_work.bytes,
+                coverage_proof_hash_calls: coverage_proof_work.hash_calls,
                 residency: WeightingResidency {
                     density_grid_bytes: self.generation.generation_residency.density_grid_bytes,
                     robust_factor_bytes: self.generation.generation_residency.robust_factor_bytes,
@@ -1243,6 +1248,8 @@ pub struct WeightingReplaySummary {
     sample_count: u64,
     block_count: u64,
     replay_sequence: u64,
+    coverage_proof_bytes: u64,
+    coverage_proof_hash_calls: u64,
     residency: WeightingResidency,
 }
 
@@ -1281,6 +1288,18 @@ impl WeightingReplaySummary {
     #[must_use]
     pub const fn replay_sequence(&self) -> u64 {
         self.replay_sequence
+    }
+
+    /// Return bytes handed to coverage identity hashers during this replay.
+    #[must_use]
+    pub const fn coverage_proof_bytes(&self) -> u64 {
+        self.coverage_proof_bytes
+    }
+
+    /// Return coverage identity hasher update calls during this replay.
+    #[must_use]
+    pub const fn coverage_proof_hash_calls(&self) -> u64 {
+        self.coverage_proof_hash_calls
     }
 
     /// Return actual bounded replay residency.
@@ -1895,15 +1914,59 @@ fn hash_usize(hasher: &mut Sha256, value: usize) {
     hasher.update((value as u128).to_be_bytes());
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(super) struct CoverageProofWork {
+    pub(super) bytes: u64,
+    pub(super) hash_calls: u64,
+}
+
+impl CoverageProofWork {
+    fn checked_add(self, other: Self) -> Self {
+        Self {
+            bytes: self
+                .bytes
+                .checked_add(other.bytes)
+                .expect("coverage proof byte count fits u64"),
+            hash_calls: self
+                .hash_calls
+                .checked_add(other.hash_calls)
+                .expect("coverage proof hash-call count fits u64"),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
-pub(super) struct CoverageEncoder(Sha256);
+pub(super) struct CoverageEncoder {
+    hasher: Sha256,
+    work: CoverageProofWork,
+}
 
 impl CoverageEncoder {
     pub(super) fn new() -> Self {
-        let mut hasher = Sha256::new();
-        hasher.update(COVERAGE_DOMAIN);
-        hasher.update((COVERAGE_VERSION + 1).to_be_bytes());
-        Self(hasher)
+        let mut encoder = Self {
+            hasher: Sha256::new(),
+            work: CoverageProofWork {
+                bytes: 0,
+                hash_calls: 0,
+            },
+        };
+        encoder.update(COVERAGE_DOMAIN);
+        encoder.update(&(COVERAGE_VERSION + 1).to_be_bytes());
+        encoder
+    }
+
+    fn update(&mut self, bytes: &[u8]) {
+        self.work.bytes = self
+            .work
+            .bytes
+            .checked_add(u64::try_from(bytes.len()).expect("coverage proof chunk fits u64"))
+            .expect("coverage proof byte count fits u64");
+        self.work.hash_calls = self
+            .work
+            .hash_calls
+            .checked_add(1)
+            .expect("coverage proof hash-call count fits u64");
+        self.hasher.update(bytes);
     }
 
     pub(super) fn push(&mut self, weighted: &WeightingSampleValue) {
@@ -1911,37 +1974,37 @@ impl CoverageEncoder {
         let mut chunk = [0_u8; COVERAGE_HASH_CHUNK_BYTES];
         let mut used = 0;
         append_coverage_bytes(
-            &mut self.0,
+            self,
             &mut chunk,
             &mut used,
             &sample.address.measurement_set.identity().as_bytes(),
         );
         append_coverage_bytes(
-            &mut self.0,
+            self,
             &mut chunk,
             &mut used,
             &sample.address.physical_row.to_be_bytes(),
         );
         append_coverage_bytes(
-            &mut self.0,
+            self,
             &mut chunk,
             &mut used,
             &sample.address.data_description_id.to_be_bytes(),
         );
         append_coverage_bytes(
-            &mut self.0,
+            self,
             &mut chunk,
             &mut used,
             &sample.address.spectral_window_id.to_be_bytes(),
         );
         append_coverage_bytes(
-            &mut self.0,
+            self,
             &mut chunk,
             &mut used,
             &sample.address.channel_index.to_be_bytes(),
         );
         append_coverage_bytes(
-            &mut self.0,
+            self,
             &mut chunk,
             &mut used,
             &sample.address.correlation_index.to_be_bytes(),
@@ -1950,19 +2013,19 @@ impl CoverageEncoder {
         for value in weighted.spectral_values() {
             count += 1;
             append_coverage_bytes(
-                &mut self.0,
+                self,
                 &mut chunk,
                 &mut used,
                 &value.contribution.output_channel().to_be_bytes(),
             );
             append_coverage_bytes(
-                &mut self.0,
+                self,
                 &mut chunk,
                 &mut used,
                 &value.contribution.factor().to_bits().to_be_bytes(),
             );
             append_coverage_bytes(
-                &mut self.0,
+                self,
                 &mut chunk,
                 &mut used,
                 &value
@@ -1972,14 +2035,14 @@ impl CoverageEncoder {
                     .to_be_bytes(),
             );
             append_coverage_bytes(
-                &mut self.0,
+                self,
                 &mut chunk,
                 &mut used,
                 &value.imaging_weight.to_bits().to_be_bytes(),
             );
         }
-        append_coverage_bytes(&mut self.0, &mut chunk, &mut used, &[count]);
-        self.0.update(&chunk[..used]);
+        append_coverage_bytes(self, &mut chunk, &mut used, &[count]);
+        self.update(&chunk[..used]);
     }
 
     pub(super) fn adopt(&mut self, checkpoint: &Self) {
@@ -1990,28 +2053,33 @@ impl CoverageEncoder {
         mut self,
         generation: WeightingGenerationId,
         sample_count: u64,
-    ) -> WeightingReplayCoverageId {
-        self.0.update(sample_count.to_be_bytes());
-        let content = self.0.finalize();
-        let mut hasher = Sha256::new();
-        hasher.update(COVERAGE_DOMAIN);
-        hasher.update((COVERAGE_VERSION + 1).to_be_bytes());
-        hasher.update(generation.as_bytes());
-        hasher.update(content);
-        WeightingReplayCoverageId(LogicalIdentity::from_sha256(hasher.finalize().into()))
+    ) -> (WeightingReplayCoverageId, CoverageProofWork) {
+        self.update(&sample_count.to_be_bytes());
+        let content_work = self.work;
+        let content = self.hasher.finalize();
+        let mut identity = Self::new();
+        identity.update(&generation.as_bytes());
+        identity.update(&content);
+        let work = content_work.checked_add(identity.work);
+        (
+            WeightingReplayCoverageId(LogicalIdentity::from_sha256(
+                identity.hasher.finalize().into(),
+            )),
+            work,
+        )
     }
 }
 
 #[inline]
 fn append_coverage_bytes(
-    hasher: &mut Sha256,
+    encoder: &mut CoverageEncoder,
     chunk: &mut [u8; COVERAGE_HASH_CHUNK_BYTES],
     used: &mut usize,
     bytes: &[u8],
 ) {
     debug_assert!(bytes.len() <= chunk.len());
     if chunk.len() - *used < bytes.len() {
-        hasher.update(&chunk[..*used]);
+        encoder.update(&chunk[..*used]);
         *used = 0;
     }
     let end = *used + bytes.len();

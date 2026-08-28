@@ -350,6 +350,18 @@ impl<'a> SelectedObservationInspection<'a> {
         Ok(())
     }
 
+    /// Return bytes handed to the selected-generation identity hasher so far.
+    #[must_use]
+    pub const fn generation_proof_bytes(&self) -> u64 {
+        self.generation.proof_bytes()
+    }
+
+    /// Return selected-generation identity hasher update calls so far.
+    #[must_use]
+    pub const fn generation_proof_hash_calls(&self) -> u64 {
+        self.generation.proof_hash_calls()
+    }
+
     fn advance_to_source(
         &mut self,
         measurement_set: MeasurementSetIdentity,

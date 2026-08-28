@@ -697,6 +697,25 @@ fn partition_block_worker_and_repeated_replay_choices_are_invariant() {
     let (_, repeated_serial_completion) = replay(&serial, &problem, &serial_plan, &samples);
     let (partitioned_blocks, partitioned_completion) =
         replay(&partitioned, &problem, &partitioned_plan, &samples);
+    assert_eq!(
+        (
+            serial_completion.coverage_proof_bytes(),
+            serial_completion.coverage_proof_hash_calls(),
+        ),
+        (486, 11),
+        "proof diagnostics must count every encoded byte and SHA update"
+    );
+    assert_eq!(
+        (
+            partitioned_completion.coverage_proof_bytes(),
+            partitioned_completion.coverage_proof_hash_calls(),
+        ),
+        (
+            serial_completion.coverage_proof_bytes(),
+            serial_completion.coverage_proof_hash_calls(),
+        ),
+        "physical block choices must not change proof work"
+    );
     assert_eq!(serial_blocks.len(), samples.len());
     assert_eq!(partitioned_blocks.len(), 2);
     assert_eq!(

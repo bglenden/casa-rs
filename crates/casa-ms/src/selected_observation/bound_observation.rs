@@ -632,6 +632,18 @@ pub struct SelectedObservationBlockConsumer<'a> {
 }
 
 impl SelectedObservationBlockConsumer<'_> {
+    /// Return bytes handed to the selected-generation hasher so far.
+    #[must_use]
+    pub const fn generation_proof_bytes(&self) -> u64 {
+        self.inspection.generation_proof_bytes()
+    }
+
+    /// Return selected-generation hasher update calls so far.
+    #[must_use]
+    pub const fn generation_proof_hash_calls(&self) -> u64 {
+        self.inspection.generation_proof_hash_calls()
+    }
+
     /// Validate and consume every row/channel run in one opaque block.
     pub fn consume<E: Error + 'static>(
         &mut self,

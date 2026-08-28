@@ -824,6 +824,8 @@ pub struct CompleteDataOwnerCompletion {
     weighting_generation: WeightingGenerationId,
     replay: WeightingReplayId,
     coverage: WeightingReplayCoverageId,
+    coverage_proof_bytes: u64,
+    coverage_proof_hash_calls: u64,
     primitives: SpectralPrimitiveCatalog,
     selected_generation: SelectedObservationGenerationId,
     continuum_transform_generation: Option<ContinuumTransformGenerationId>,
@@ -872,6 +874,18 @@ impl CompleteDataOwnerCompletion {
     #[must_use]
     pub const fn coverage(&self) -> WeightingReplayCoverageId {
         self.coverage
+    }
+
+    /// Return bytes handed to coverage identity hashers by this operator pass.
+    #[must_use]
+    pub const fn coverage_proof_bytes(&self) -> u64 {
+        self.coverage_proof_bytes
+    }
+
+    /// Return coverage identity hasher update calls by this operator pass.
+    #[must_use]
+    pub const fn coverage_proof_hash_calls(&self) -> u64 {
+        self.coverage_proof_hash_calls
     }
 
     /// Return the versioned primitive set produced by the operator.
@@ -1230,7 +1244,7 @@ impl CompleteDataOwnerState {
         {
             return Err(SpectralOperatorError::IncompleteCoverage);
         }
-        let coverage = self
+        let (coverage, coverage_proof_work) = self
             .coverage
             .finish(replay.weighting_generation(), self.sample_count);
         if coverage != replay.coverage() {
@@ -1256,6 +1270,8 @@ impl CompleteDataOwnerState {
                 weighting_generation: replay.weighting_generation(),
                 replay: replay.replay_id(),
                 coverage,
+                coverage_proof_bytes: coverage_proof_work.bytes,
+                coverage_proof_hash_calls: coverage_proof_work.hash_calls,
                 primitives,
                 selected_generation,
                 continuum_transform_generation,
