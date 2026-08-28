@@ -705,6 +705,24 @@ struct SpectralCycleExecutorState {
     reconstruction_cycle_completion: Option<ReconstructionCyclePhaseCompletion>,
 }
 
+#[derive(Debug)]
+struct SpectralCycleNodeFailure {
+    source: io::Error,
+    measurements: WorkMeasurements,
+}
+
+impl std::fmt::Display for SpectralCycleNodeFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.source.fmt(formatter)
+    }
+}
+
+impl std::error::Error for SpectralCycleNodeFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
 /// One immutable final-model candidate bound to the exact plan node, attempt,
 /// and lease epoch that prepared it.
 struct PreparedFinalModel {
@@ -1098,121 +1116,15 @@ impl SpectralCycleExecutor {
             None => Err(io::Error::other("streaming weighting mode missing")),
         }
     }
-}
 
-impl WorkImplementation for SpectralCycleExecutor {
-    type Error = io::Error;
-
-    fn implementation_id(&self) -> &WorkImplementationId {
-        &self.id
-    }
-
-    fn execute(&self, context: WorkExecutionContext<'_>) -> Result<WorkMeasurements, Self::Error> {
-        let fragment = self.fragment();
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|_| io::Error::other("spectral cycle state poisoned"))?;
+    fn node_measurements(
+        &self,
+        context: WorkExecutionContext<'_>,
+        state: &SpectralCycleExecutorState,
+        fragment: &WeightingPlanFragment<'_>,
+    ) -> Result<WorkMeasurements, io::Error> {
         let final_model_preparation =
             crate::spectral_cycle_plan::pass_node("final-model-preparation", self.pass);
-        if context.node().id == final_model_preparation {
-            Self::prepare_final_model(&mut state, context)?;
-            if let (Some(sink), Some(prepared_model)) =
-                (&self.final_visibility_sink, state.prepared_model.as_ref())
-            {
-                sink.lock()
-                    .map_err(|_| io::Error::other("final visibility sink poisoned"))?
-                    .bind(
-                        self.problem.problem_id(),
-                        prepared_model.preparation.final_model().generation_id(),
-                    )?;
-            }
-        } else if context.node().id == *self.complete_data.preparation_node() {
-            state.prepared = Some(
-                self.complete_data
-                    .prepare(context)
-                    .map_err(io::Error::other)?,
-            );
-        } else if context.node().id == *fragment.source_read_node() {
-            let selected = state
-                .selected
-                .take()
-                .ok_or_else(|| io::Error::other("selected observation already consumed"))?;
-            match fragment.streaming_mode() {
-                Some(crate::WeightingStreamingMode::NaturalInitial) => {
-                    self.run_stream(&mut state, context, &fragment, Some(selected))?;
-                }
-                Some(crate::WeightingStreamingMode::DensityInitial) => {
-                    state.selected_completion = Some(
-                        state
-                            .weighting
-                            .traverse_density_source(context, &fragment, selected, &self.problem)
-                            .map_err(io::Error::other)?,
-                    );
-                }
-                Some(crate::WeightingStreamingMode::Reuse) => {
-                    self.run_stream(&mut state, context, &fragment, Some(selected))?;
-                }
-                None => return Err(io::Error::other("streaming weighting mode missing")),
-            }
-        } else if context.node().id == *fragment.generation_node()
-            && fragment.streaming_mode() == Some(crate::WeightingStreamingMode::DensityInitial)
-        {
-            self.run_stream(&mut state, context, &fragment, None)?;
-        } else if self
-            .complete_data
-            .reconciliation_node()
-            .is_some_and(|node| context.node().id == *node)
-        {
-            let complete = state
-                .complete_data
-                .take()
-                .ok_or_else(|| io::Error::other("complete-data evidence missing"))?;
-            let preparation = state
-                .prepared_model
-                .take()
-                .ok_or_else(|| io::Error::other("final-model preparation missing"))?
-                .into_reconciliation(context)?;
-            let owner =
-                MajorCycleOperatorState::begin(complete, preparation).map_err(io::Error::other)?;
-            let mut lifecycle = state
-                .lifecycle
-                .take()
-                .ok_or_else(|| io::Error::other("model lifecycle missing"))?;
-            state.result = Some(
-                owner
-                    .reconcile(context, &mut lifecycle)
-                    .map_err(io::Error::other)?,
-            );
-            state.lifecycle = Some(lifecycle);
-        } else if self
-            .reconstruction_cycle
-            .as_ref()
-            .is_some_and(|cycle| context.node().id == cycle.node)
-        {
-            let cycle = self
-                .reconstruction_cycle
-                .as_ref()
-                .expect("reconstruction-cycle node matched");
-            let result = state
-                .result
-                .take()
-                .ok_or_else(|| io::Error::other("initial major completion missing"))?;
-            let lifecycle = state
-                .lifecycle
-                .as_ref()
-                .ok_or_else(|| io::Error::other("model lifecycle missing"))?;
-            state.reconstruction_cycle_completion = Some(
-                InitialMajorPhaseCompletion::new(result)
-                    .run_reconstruction_cycle(lifecycle, &cycle.mask, cycle.program.clone())
-                    .map_err(io::Error::other)?,
-            );
-        } else if context.node().id == *fragment.release_node() {
-            state
-                .weighting
-                .release(context, &fragment)
-                .map_err(io::Error::other)?;
-        }
         let traversal_measurements = (context.node().id == *fragment.source_read_node()
             || (context.node().id == *fragment.generation_node()
                 && fragment.streaming_mode()
@@ -1239,6 +1151,13 @@ impl WorkImplementation for SpectralCycleExecutor {
                         LeaseResource::IoBuffer(crate::IoBufferKind::SourceReadAhead),
                         Some(measurements),
                     ) => measurements.peak_live_capacity_bytes(),
+                    (LeaseResource::IoBuffer(crate::IoBufferKind::SourceReadAhead), None)
+                        if stream_measurements.is_some() =>
+                    {
+                        stream_measurements
+                            .expect("stream measurements were checked")
+                            .peak_live_source_capacity_bytes
+                    }
                     (LeaseResource::Queue { .. }, _)
                         if &claim.resource == fragment.source_queue()
                             && stream_queue_high_water.is_some() =>
@@ -1262,6 +1181,15 @@ impl WorkImplementation for SpectralCycleExecutor {
                             measurements.logical_output_bytes(),
                             measurements.source_read_operations(),
                         ),
+                        None if stream_measurements.is_some() => {
+                            let measurements =
+                                stream_measurements.expect("stream measurements were checked");
+                            IoMeasurement::new(
+                                crate::IoBufferKind::SourceReadAhead,
+                                measurements.logical_source_bytes,
+                                measurements.blocks_filled,
+                            )
+                        }
                         None => IoMeasurement::unobserved(crate::IoBufferKind::SourceReadAhead),
                     })
                 }
@@ -1286,12 +1214,159 @@ impl WorkImplementation for SpectralCycleExecutor {
             .collect();
         Ok(WorkMeasurements::new(resources, io, artifacts))
     }
+}
+
+impl WorkImplementation for SpectralCycleExecutor {
+    type Error = io::Error;
+
+    fn implementation_id(&self) -> &WorkImplementationId {
+        &self.id
+    }
+
+    fn execute(&self, context: WorkExecutionContext<'_>) -> Result<WorkMeasurements, Self::Error> {
+        let result = (|| -> Result<WorkMeasurements, io::Error> {
+            let fragment = self.fragment();
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| io::Error::other("spectral cycle state poisoned"))?;
+            let final_model_preparation =
+                crate::spectral_cycle_plan::pass_node("final-model-preparation", self.pass);
+            if context.node().id == final_model_preparation {
+                Self::prepare_final_model(&mut state, context)?;
+                if let (Some(sink), Some(prepared_model)) =
+                    (&self.final_visibility_sink, state.prepared_model.as_ref())
+                {
+                    sink.lock()
+                        .map_err(|_| io::Error::other("final visibility sink poisoned"))?
+                        .bind(
+                            self.problem.problem_id(),
+                            prepared_model.preparation.final_model().generation_id(),
+                        )?;
+                }
+            } else if context.node().id == *self.complete_data.preparation_node() {
+                state.prepared = Some(
+                    self.complete_data
+                        .prepare(context)
+                        .map_err(io::Error::other)?,
+                );
+            } else if context.node().id == *fragment.source_read_node() {
+                let selected = state
+                    .selected
+                    .take()
+                    .ok_or_else(|| io::Error::other("selected observation already consumed"))?;
+                match fragment.streaming_mode() {
+                    Some(crate::WeightingStreamingMode::NaturalInitial) => {
+                        self.run_stream(&mut state, context, &fragment, Some(selected))?;
+                    }
+                    Some(crate::WeightingStreamingMode::DensityInitial) => {
+                        state.selected_completion = Some(
+                            state
+                                .weighting
+                                .traverse_density_source(
+                                    context,
+                                    &fragment,
+                                    selected,
+                                    &self.problem,
+                                )
+                                .map_err(io::Error::other)?,
+                        );
+                    }
+                    Some(crate::WeightingStreamingMode::Reuse) => {
+                        self.run_stream(&mut state, context, &fragment, Some(selected))?;
+                    }
+                    None => return Err(io::Error::other("streaming weighting mode missing")),
+                }
+            } else if context.node().id == *fragment.generation_node()
+                && fragment.streaming_mode() == Some(crate::WeightingStreamingMode::DensityInitial)
+            {
+                self.run_stream(&mut state, context, &fragment, None)?;
+            } else if self
+                .complete_data
+                .reconciliation_node()
+                .is_some_and(|node| context.node().id == *node)
+            {
+                let complete = state
+                    .complete_data
+                    .take()
+                    .ok_or_else(|| io::Error::other("complete-data evidence missing"))?;
+                let preparation = state
+                    .prepared_model
+                    .take()
+                    .ok_or_else(|| io::Error::other("final-model preparation missing"))?
+                    .into_reconciliation(context)?;
+                let owner = MajorCycleOperatorState::begin(complete, preparation)
+                    .map_err(io::Error::other)?;
+                let mut lifecycle = state
+                    .lifecycle
+                    .take()
+                    .ok_or_else(|| io::Error::other("model lifecycle missing"))?;
+                state.result = Some(
+                    owner
+                        .reconcile(context, &mut lifecycle)
+                        .map_err(io::Error::other)?,
+                );
+                state.lifecycle = Some(lifecycle);
+            } else if self
+                .reconstruction_cycle
+                .as_ref()
+                .is_some_and(|cycle| context.node().id == cycle.node)
+            {
+                let cycle = self
+                    .reconstruction_cycle
+                    .as_ref()
+                    .expect("reconstruction-cycle node matched");
+                let result = state
+                    .result
+                    .take()
+                    .ok_or_else(|| io::Error::other("initial major completion missing"))?;
+                let lifecycle = state
+                    .lifecycle
+                    .as_ref()
+                    .ok_or_else(|| io::Error::other("model lifecycle missing"))?;
+                state.reconstruction_cycle_completion = Some(
+                    InitialMajorPhaseCompletion::new(result)
+                        .run_reconstruction_cycle(lifecycle, &cycle.mask, cycle.program.clone())
+                        .map_err(io::Error::other)?,
+                );
+            } else if context.node().id == *fragment.release_node() {
+                state
+                    .weighting
+                    .release(context, &fragment)
+                    .map_err(io::Error::other)?;
+            }
+            self.node_measurements(context, &state, &fragment)
+        })();
+        result.map_err(|source| {
+            let measurements = self.state.lock().ok().and_then(|state| {
+                state
+                    .weighting
+                    .latest_stream_measurements()
+                    .is_some()
+                    .then(|| {
+                        let fragment = self.fragment();
+                        self.node_measurements(context, &state, &fragment).ok()
+                    })
+                    .flatten()
+            });
+            match measurements {
+                Some(measurements) => io::Error::other(SpectralCycleNodeFailure {
+                    source,
+                    measurements,
+                }),
+                None => source,
+            }
+        })
+    }
 
     fn failure_measurements<'error>(
         &'error self,
-        _error: &'error Self::Error,
+        error: &'error Self::Error,
     ) -> Option<&'error WorkMeasurements> {
-        None
+        error
+            .get_ref()?
+            .downcast_ref::<SpectralCycleNodeFailure>()
+            .map(|failure| &failure.measurements)
     }
 
     fn wait_for_fence(

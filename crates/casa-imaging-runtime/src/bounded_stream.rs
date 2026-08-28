@@ -71,7 +71,10 @@ fn fixed_kernel_window_capacity_bytes<Partition, Partial>(
     let vectors = per_worker
         .checked_mul(workers)
         .ok_or(BoundedStreamPlanError::KernelWindowCapacity)?;
-    u64::try_from(vectors).map_err(|_| BoundedStreamPlanError::KernelWindowCapacity)
+    let total = vectors
+        .checked_add(size_of::<Option<(WorkIdentity, KernelPartition<Partition>)>>())
+        .ok_or(BoundedStreamPlanError::KernelWindowCapacity)?;
+    u64::try_from(total).map_err(|_| BoundedStreamPlanError::KernelWindowCapacity)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -317,6 +320,14 @@ where
     let fixed_wave_bytes = vector_capacity_bytes(&wave)
         .and_then(|bytes| bytes.checked_add(vector_capacity_bytes(&completed)?))
         .and_then(|bytes| bytes.checked_add(vector_capacity_bytes(&exclusive_regions)?))
+        .and_then(|bytes| {
+            bytes.checked_add(
+                u64::try_from(size_of::<
+                    Option<(WorkIdentity, KernelPartition<K::Partition>)>,
+                >())
+                .ok()?,
+            )
+        })
         .ok_or(BoundedStreamError::MeasurementOverflow)?;
     if fixed_wave_bytes > plan.kernel_window_capacity_bytes {
         return Err(BoundedStreamError::ResidencyExceeded);
@@ -367,8 +378,13 @@ where
                 .ok_or(BoundedStreamError::MeasurementOverflow)?;
             wave.push((identity, partition));
         }
+        let deferred_dynamic_bytes = deferred
+            .as_ref()
+            .map(|(_, partition)| kernel.partition_dynamic_capacity_bytes(&partition.payload))
+            .unwrap_or(0);
         let partition_window_bytes = fixed_wave_bytes
             .checked_add(dynamic_partition_bytes)
+            .and_then(|bytes| bytes.checked_add(deferred_dynamic_bytes))
             .ok_or(BoundedStreamError::MeasurementOverflow)?;
         if partition_window_bytes > plan.kernel_window_capacity_bytes {
             return Err(BoundedStreamError::ResidencyExceeded);
@@ -708,9 +724,10 @@ where
     let ready_current_high_water = Arc::new(AtomicU64::new(0));
     let ready_capacity_bytes = Arc::new(AtomicU64::new(0));
     let ready_capacity_high_water = Arc::new(AtomicU64::new(0));
+    let ready_queue_capacity = plan.source_slots - 2;
     let overlap = Arc::new(Mutex::new(OverlapState::default()));
     let producer_measurements = Arc::new(Mutex::new(ProducerMeasurements::default()));
-    let (ready_tx, ready_rx) = mpsc::sync_channel(plan.source_slots);
+    let (ready_tx, ready_rx) = mpsc::sync_channel(ready_queue_capacity);
     let (returned_sender, returned_rx) =
         mpsc::sync_channel::<StorageLease<S::Storage>>(plan.source_slots);
     let mut returned_tx = Some(returned_sender);
@@ -870,36 +887,38 @@ where
                                 .max(live_capacity_bytes);
                         lease.resident_current_bytes = resident_current_bytes;
                         lease.resident_capacity_bytes = resident_capacity_bytes;
-                        let current_queued = match producer_ready_current_bytes.fetch_update(
-                            Ordering::AcqRel,
-                            Ordering::Acquire,
-                            |bytes| bytes.checked_add(resident_current_bytes),
-                        ) {
-                            Ok(previous) => previous + resident_current_bytes,
-                            Err(_) => {
-                                let _ = ready_tx.send(ReadyMessage::MeasurementOverflow);
-                                return;
-                            }
-                        };
-                        let capacity_queued = match producer_ready_capacity_bytes.fetch_update(
-                            Ordering::AcqRel,
-                            Ordering::Acquire,
-                            |bytes| bytes.checked_add(resident_capacity_bytes),
-                        ) {
-                            Ok(previous) => previous + resident_capacity_bytes,
-                            Err(_) => {
-                                producer_ready_current_bytes
-                                    .fetch_sub(resident_current_bytes, Ordering::AcqRel);
-                                let _ = ready_tx.send(ReadyMessage::MeasurementOverflow);
-                                return;
-                            }
-                        };
-                        producer_ready_current_high_water
-                            .fetch_max(current_queued, Ordering::AcqRel);
-                        producer_ready_capacity_high_water
-                            .fetch_max(capacity_queued, Ordering::AcqRel);
-                        let queued = producer_ready_count.fetch_add(1, Ordering::AcqRel) + 1;
-                        producer_high_water.fetch_max(queued, Ordering::AcqRel);
+                        if ready_queue_capacity > 0 {
+                            let current_queued = match producer_ready_current_bytes.fetch_update(
+                                Ordering::AcqRel,
+                                Ordering::Acquire,
+                                |bytes| bytes.checked_add(resident_current_bytes),
+                            ) {
+                                Ok(previous) => previous + resident_current_bytes,
+                                Err(_) => {
+                                    let _ = ready_tx.send(ReadyMessage::MeasurementOverflow);
+                                    return;
+                                }
+                            };
+                            let capacity_queued = match producer_ready_capacity_bytes.fetch_update(
+                                Ordering::AcqRel,
+                                Ordering::Acquire,
+                                |bytes| bytes.checked_add(resident_capacity_bytes),
+                            ) {
+                                Ok(previous) => previous + resident_capacity_bytes,
+                                Err(_) => {
+                                    producer_ready_current_bytes
+                                        .fetch_sub(resident_current_bytes, Ordering::AcqRel);
+                                    let _ = ready_tx.send(ReadyMessage::MeasurementOverflow);
+                                    return;
+                                }
+                            };
+                            producer_ready_current_high_water
+                                .fetch_max(current_queued, Ordering::AcqRel);
+                            producer_ready_capacity_high_water
+                                .fetch_max(capacity_queued, Ordering::AcqRel);
+                            let queued = producer_ready_count.fetch_add(1, Ordering::AcqRel) + 1;
+                            producer_high_water.fetch_max(queued, Ordering::AcqRel);
+                        }
                         if ready_tx
                             .send(ReadyMessage::Block {
                                 identity: BlockIdentity {
@@ -911,11 +930,13 @@ where
                             })
                             .is_err()
                         {
-                            producer_ready_count.fetch_sub(1, Ordering::AcqRel);
-                            producer_ready_current_bytes
-                                .fetch_sub(resident_current_bytes, Ordering::AcqRel);
-                            producer_ready_capacity_bytes
-                                .fetch_sub(resident_capacity_bytes, Ordering::AcqRel);
+                            if ready_queue_capacity > 0 {
+                                producer_ready_count.fetch_sub(1, Ordering::AcqRel);
+                                producer_ready_current_bytes
+                                    .fetch_sub(resident_current_bytes, Ordering::AcqRel);
+                                producer_ready_capacity_bytes
+                                    .fetch_sub(resident_capacity_bytes, Ordering::AcqRel);
+                            }
                             return;
                         }
                         let Some(next) = block_ordinal.checked_add(1) else {
@@ -998,6 +1019,7 @@ where
             else {
                 cancelled.store(true, Ordering::Release);
                 returned_tx.take();
+                drop(ready_rx);
                 return Err(BoundedStreamError::MeasurementOverflow);
             };
             measurements.consumer_wait_nanos = consumer_wait_nanos;
@@ -1006,21 +1028,24 @@ where
                     identity,
                     mut lease,
                 }) => {
-                    ready_count.fetch_sub(1, Ordering::AcqRel);
-                    if ready_current_bytes
-                        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |bytes| {
-                            bytes.checked_sub(lease.resident_current_bytes)
-                        })
-                        .is_err()
-                        || ready_capacity_bytes
+                    if ready_queue_capacity > 0 {
+                        ready_count.fetch_sub(1, Ordering::AcqRel);
+                        if ready_current_bytes
                             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |bytes| {
-                                bytes.checked_sub(lease.resident_capacity_bytes)
+                                bytes.checked_sub(lease.resident_current_bytes)
                             })
                             .is_err()
-                    {
-                        cancelled.store(true, Ordering::Release);
-                        returned_tx.take();
-                        return Err(BoundedStreamError::MeasurementOverflow);
+                            || ready_capacity_bytes
+                                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |bytes| {
+                                    bytes.checked_sub(lease.resident_capacity_bytes)
+                                })
+                                .is_err()
+                        {
+                            cancelled.store(true, Ordering::Release);
+                            returned_tx.take();
+                            drop(ready_rx);
+                            return Err(BoundedStreamError::MeasurementOverflow);
+                        }
                     }
                     overlap
                         .lock()
@@ -1040,6 +1065,7 @@ where
                             else {
                                 cancelled.store(true, Ordering::Release);
                                 returned_tx.take();
+                                drop(ready_rx);
                                 return Err(BoundedStreamError::MeasurementOverflow);
                             };
                             let Some(execute_nanos) = measurements
@@ -1048,6 +1074,7 @@ where
                             else {
                                 cancelled.store(true, Ordering::Release);
                                 returned_tx.take();
+                                drop(ready_rx);
                                 return Err(BoundedStreamError::MeasurementOverflow);
                             };
                             let Some(commit_nanos) =
@@ -1055,6 +1082,7 @@ where
                             else {
                                 cancelled.store(true, Ordering::Release);
                                 returned_tx.take();
+                                drop(ready_rx);
                                 return Err(BoundedStreamError::MeasurementOverflow);
                             };
                             measurements.prepare_nanos = prepare_nanos;
@@ -1079,6 +1107,7 @@ where
                         Err(error) => {
                             cancelled.store(true, Ordering::Release);
                             returned_tx.take();
+                            drop(ready_rx);
                             return Err(error);
                         }
                     }
@@ -1087,16 +1116,19 @@ where
                 Ok(ReadyMessage::SourceError(error)) => {
                     cancelled.store(true, Ordering::Release);
                     returned_tx.take();
+                    drop(ready_rx);
                     return Err(BoundedStreamError::Source(error));
                 }
                 Ok(ReadyMessage::MeasurementOverflow) => {
                     cancelled.store(true, Ordering::Release);
                     returned_tx.take();
+                    drop(ready_rx);
                     return Err(BoundedStreamError::MeasurementOverflow);
                 }
                 Ok(ReadyMessage::ResidencyExceeded) => {
                     cancelled.store(true, Ordering::Release);
                     returned_tx.take();
+                    drop(ready_rx);
                     return Err(BoundedStreamError::ResidencyExceeded);
                 }
                 Ok(ReadyMessage::Completed(value, producer_measurements)) => {
@@ -1336,7 +1368,7 @@ mod tests {
         assert_eq!(inline.measurements.ready_queue_high_water, 0);
         assert_eq!(inline.measurements.producer_wait_nanos, 0);
         assert_eq!(inline.measurements.consumer_wait_nanos, 0);
-        assert!(overlapped.measurements.ready_queue_high_water <= 2);
+        assert_eq!(overlapped.measurements.ready_queue_high_water, 0);
         assert!(
             inline.measurements.peak_kernel_window_capacity_bytes
                 <= inline.measurements.planned_kernel_window_capacity_bytes
@@ -1421,14 +1453,10 @@ mod tests {
         assert_eq!(outcome.measurements.peak_live_source_blocks, 2);
         assert!(outcome.measurements.peak_live_source_current_bytes <= 16);
         assert!(outcome.measurements.peak_live_source_capacity_bytes <= 64);
-        assert!(outcome.measurements.ready_queue_current_bytes_high_water > 0);
-        assert!(
-            outcome.measurements.ready_queue_current_bytes_high_water
-                <= outcome.measurements.peak_live_source_current_bytes
-        );
-        assert!(
-            outcome.measurements.ready_queue_capacity_bytes_high_water
-                <= outcome.measurements.peak_live_source_capacity_bytes
+        assert_eq!(outcome.measurements.ready_queue_current_bytes_high_water, 0);
+        assert_eq!(
+            outcome.measurements.ready_queue_capacity_bytes_high_water,
+            0
         );
         assert!(outcome.measurements.lease_return_nanos > 0);
         assert!(outcome.measurements.wall_nanos > 0);
@@ -1653,6 +1681,81 @@ mod tests {
         )
         .unwrap();
         assert_eq!(outcome.kernel_completion, 1);
+    }
+
+    struct DynamicExclusiveKernel;
+
+    impl PartitionedKernel<Vec<u64>> for DynamicExclusiveKernel {
+        type Partition = Vec<u8>;
+        type Partial = ();
+        type Completion = ();
+        type Error = Infallible;
+
+        fn partition_count(
+            &self,
+            _block: BlockIdentity,
+            _storage: &Vec<u64>,
+        ) -> Result<usize, Self::Error> {
+            Ok(2)
+        }
+
+        fn partition(
+            &self,
+            _block: BlockIdentity,
+            _storage: &Vec<u64>,
+            local_ordinal: usize,
+        ) -> Result<KernelPartition<Self::Partition>, Self::Error> {
+            let mut payload = Vec::with_capacity(256);
+            payload.push(local_ordinal as u8);
+            Ok(KernelPartition::exclusive(local_ordinal as u64, 7, payload))
+        }
+
+        fn partition_dynamic_capacity_bytes(&self, partition: &Self::Partition) -> u64 {
+            partition.capacity() as u64
+        }
+
+        fn execute(
+            &self,
+            _work: WorkIdentity,
+            _storage: &Vec<u64>,
+            _partition: &Self::Partition,
+        ) -> Result<Self::Partial, Self::Error> {
+            Ok(())
+        }
+
+        fn commit(
+            &mut self,
+            _work: WorkIdentity,
+            _storage: &Vec<u64>,
+            (): Self::Partial,
+        ) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn complete(self) -> Result<Self::Completion, Self::Error> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn deferred_partition_is_charged_to_the_kernel_window() {
+        let result = execute_bounded(
+            BoundedStreamPlan::new::<Vec<u8>, ()>(1, 2, 32, 2, 256).unwrap(),
+            0,
+            NumberSource {
+                blocks: vec![vec![1]],
+                next: 0,
+                pointers: Arc::new(Mutex::new(Vec::new())),
+                completions: Arc::new(AtomicUsize::new(0)),
+            },
+            DynamicExclusiveKernel,
+        );
+        let failure = result.unwrap_err();
+        assert!(matches!(
+            *failure.cause,
+            BoundedStreamError::ResidencyExceeded
+        ));
+        assert_eq!(failure.measurements.blocks_filled, 1);
     }
 
     const LARGE_GATE_ROWS: usize = 6_709_290;
@@ -2129,7 +2232,7 @@ mod tests {
             measurements.ready_queue_capacity_bytes_high_water
                 <= measurements.planned_source_capacity_bytes
         );
-        assert!(measurements.ready_queue_high_water <= 2);
+        assert_eq!(measurements.ready_queue_high_water, 0);
         assert!(measurements.producer_wait_nanos > 0);
         assert!(measurements.consumer_wait_nanos > 0);
         assert!(measurements.overlap_nanos > 0);

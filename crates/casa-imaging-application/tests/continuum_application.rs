@@ -916,7 +916,7 @@ fn application_commits_exact_final_prediction_to_model_data() {
         Some(2 * 1024 * 1024)
     );
     let model_storage = casa_imaging_runtime::LeaseResource::Storage {
-        demand_id: "serial-model-data-column".to_string(),
+        demand_id: "serial-visibility-write-column".to_string(),
         use_kind: casa_imaging_runtime::StorageUseKind::FinalOutput,
     };
     assert_eq!(

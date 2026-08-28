@@ -60,19 +60,20 @@
       "observation_node": 22.5
     },
     "final_source_refresh": {
-      "execution_receipt": "801742fd99b9a437fb8f60b4b7ea24fd38cc82368cde035f846ce2800cdd083d",
-      "wall_seconds": 2.17,
-      "user_seconds": 1.90,
-      "system_seconds": 0.07,
-      "observation_node_seconds": 1.832049292,
+      "execution_receipt": "fcf2b634ef38e8954d87b77d660f0d45683b37b343b0f730ec5e70b5ac425f07",
+      "wall_seconds": 2.03,
+      "user_seconds": 1.87,
+      "system_seconds": 0.05,
+      "observation_node_seconds": 1.807271083,
       "actual_logical_source_bytes": 10142080,
       "actual_closed_column_read_operations": 19,
       "peak_live_source_current_bytes": 12615040,
+      "ready_queue_high_water": 0,
       "provisional_improvement_percent": {
-        "wall": 24.9,
-        "observation_node": 21.8
+        "wall": 29.8,
+        "observation_node": 22.9
       },
-      "interpretation": "The post-review refresh reproduces the source-stage gain and the initial candidate wall time; timing precision remains intentionally provisional for this short iteration-oriented gate."
+      "interpretation": "The final rendezvous-channel refresh reproduces the source-stage gain, retains no queued block, and improves on the initial candidate wall time; timing precision remains intentionally provisional for this short iteration-oriented gate."
     },
     "scientific_product_comparison": {
       "result": "bit_identical_payloads",
@@ -96,32 +97,32 @@
     },
     "candidate": {
       "result": "terminal_completion",
-      "execution_receipt": "f17419c012e5cbf511af6915a40b661e1c4eb5197ffc557367f1ad0935d63557",
-      "wall_seconds": 336.70,
-      "user_seconds": 338.51,
-      "system_seconds": 6.29,
+      "execution_receipt": "e33a207879c8a41877301240fdc67d49ef6813701421bea2d2cb4c1b2b72af2e",
+      "wall_seconds": 337.58,
+      "user_seconds": 338.88,
+      "system_seconds": 6.97,
       "gridded_samples": 65505024,
       "scientific_ms_passes": 2,
-      "peak_resident_set_bytes": 224739328,
-      "peak_planned_footprint_bytes": 222511848,
+      "peak_resident_set_bytes": 225165312,
+      "peak_planned_footprint_bytes": 221496064,
       "swap_operations": 0,
       "planned_source_capacity_bytes": 67108864,
       "passes": [
         {
           "name": "transaction-read",
-          "elapsed_seconds": 152.628731833,
+          "elapsed_seconds": 153.100955209,
           "actual_logical_source_bytes": 1019421936,
           "actual_closed_column_read_operations": 1102,
           "peak_live_source_current_bytes": 59091402,
-          "ready_queue_high_water": 1
+          "ready_queue_high_water": 0
         },
         {
           "name": "weighting-generation",
-          "elapsed_seconds": 183.207342250,
+          "elapsed_seconds": 183.692518375,
           "actual_logical_source_bytes": 1019421936,
           "actual_closed_column_read_operations": 1102,
           "peak_live_source_current_bytes": 59091402,
-          "ready_queue_high_water": 1
+          "ready_queue_high_water": 0
         }
       ],
       "scientific_product_comparison": {
@@ -142,8 +143,8 @@
     "measurement_set": "/Volumes/GLENDENNING/casa-rs-imperformance/wave1/alma/mosaic-large/large/ms/wave1-alma-mosaic-large.ms",
     "dataset_identity": "2a7def",
     "dataset_disk_bytes": 114807025664,
-    "executor_wall_seconds": 97.227888625,
-    "net_dataset_gib_per_second": 1.099709,
+    "executor_wall_seconds": 95.852743750,
+    "net_dataset_gib_per_second": 1.115490,
     "passes": 1,
     "rows": 6709290,
     "samples": 13740625920,
@@ -153,13 +154,13 @@
       "imaginary": "c1c2e4fdfd889d2d",
       "weight": "420721a68210e413"
     },
-    "source_fill_seconds": 97.201117917,
-    "commit_seconds": 50.766413993,
-    "overlap_seconds": 50.763120188,
-    "wall_below_serial_stage_sum_percent": 34.291,
-    "producer_wait_seconds": 0.015251160,
-    "consumer_wait_seconds": 46.446436956,
-    "lease_return_seconds": 46.398915985,
+    "source_fill_seconds": 95.825877251,
+    "commit_seconds": 48.994155026,
+    "overlap_seconds": 48.991406875,
+    "wall_below_serial_stage_sum_percent": 33.813,
+    "producer_wait_seconds": 0.001692062,
+    "consumer_wait_seconds": 46.841716629,
+    "lease_return_seconds": 46.793652104,
     "fill_operations": 6553,
     "warmup_fills": 2,
     "reused_fills": 6551,
@@ -167,21 +168,21 @@
     "workers": 1,
     "planned_source_capacity_bytes": 134217728,
     "maximum_partitions_per_block": 1,
-    "planned_kernel_window_capacity_bytes": 208,
-    "peak_kernel_window_capacity_bytes": 136,
+    "planned_kernel_window_capacity_bytes": 288,
+    "peak_kernel_window_capacity_bytes": 216,
     "peak_live_source_blocks": 2,
     "peak_live_source_current_bytes": 37865472,
     "peak_live_source_capacity_bytes": 37865472,
-    "ready_queue_high_water": 1,
-    "ready_queue_current_bytes_high_water": 18932736,
-    "ready_queue_capacity_bytes_high_water": 18932736,
+    "ready_queue_high_water": 0,
+    "ready_queue_current_bytes_high_water": 0,
+    "ready_queue_capacity_bytes_high_water": 0,
     "logical_source_bytes": 123994388490,
     "modeled_physical_bytes": 127617405090,
     "named_row_projection_bytes": 53674320,
     "explicit_adaptation_copy_bytes": 382378330,
     "implicit_copy_bytes": 0,
-    "sampled_resident_set_bytes": [92356608, 128745472, 164380672, 170737664, 171786240, 171786240, 171819008, 171835392],
+    "sampled_resident_set_bytes": [92536832, 129286144, 161939456, 171425792, 175259648, 175669248, 175702016, 175734784],
     "terminal": true,
-    "interpretation": "One production-executor pass preserved the accepted serial checksum, kept two reusable source leases and one bounded kernel window within their immutable budgets, named every arrangement copy, overlapped source and ordered commit, and reached a stable resident plateau."
+    "interpretation": "One production-executor pass preserved the accepted serial checksum, kept two reusable source leases and one bounded kernel window within their immutable budgets, retained no queued block in the rendezvous channel, named every arrangement copy, overlapped source and ordered commit, and reached a stable resident plateau."
   }
 }

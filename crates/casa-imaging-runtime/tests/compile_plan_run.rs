@@ -2672,12 +2672,7 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
                 let peak = receipt
                     .actual_resource_peak(node_id, &claim.resource, &claim.lifetime)
                     .expect("bounded source queue reports its actual high-water");
-                if claim.amount == 1 {
-                    assert_eq!(peak, 0, "single-slot traversal allocates no channel queue");
-                } else {
-                    assert!(peak > 0);
-                }
-                assert!(peak <= claim.amount);
+                assert!(peak <= claim.amount.saturating_sub(2));
             }
         }
     }
