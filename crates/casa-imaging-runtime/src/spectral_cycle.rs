@@ -749,6 +749,129 @@ pub struct SpectralCycleExecutor {
     state: Mutex<SpectralCycleExecutorState>,
 }
 
+/// Transient bounded-execution evidence for the most recent complete-data pass.
+///
+/// This diagnostic surface is intentionally separate from the persisted receipt
+/// schema. It reports physical scheduling and residency without exposing
+/// reconstruction state or MeasurementSet contents.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CompleteDataStreamEvidence {
+    planned_workers: u64,
+    actual_workers: u64,
+    active_worker_slots: u64,
+    partitions_executed: u64,
+    commits_completed: u64,
+    peak_partial_dynamic_capacity_bytes: u64,
+    peak_worker_stack_capacity_bytes: u64,
+    peak_kernel_window_capacity_bytes: u64,
+    prepare_nanos: u128,
+    execute_nanos: u128,
+    commit_nanos: u128,
+    executed_work_identity_digest: [u8; 32],
+    committed_work_identity_digest: [u8; 32],
+    source_pass_count: u64,
+    artifact_pass_count: u64,
+    grid_resident_bytes: u64,
+}
+
+impl CompleteDataStreamEvidence {
+    /// Return the worker count bound by the immutable stream plan.
+    #[must_use]
+    pub const fn planned_workers(self) -> u64 {
+        self.planned_workers
+    }
+
+    /// Return the worker count supplied to the shared executor.
+    #[must_use]
+    pub const fn actual_workers(self) -> u64 {
+        self.actual_workers
+    }
+
+    /// Return worker slots that executed at least one partition.
+    #[must_use]
+    pub const fn active_worker_slots(self) -> u64 {
+        self.active_worker_slots
+    }
+
+    /// Return exact partition executions.
+    #[must_use]
+    pub const fn partitions_executed(self) -> u64 {
+        self.partitions_executed
+    }
+
+    /// Return exact deterministic commits.
+    #[must_use]
+    pub const fn commits_completed(self) -> u64 {
+        self.commits_completed
+    }
+
+    /// Return the peak dynamic bytes retained by simultaneous partials.
+    #[must_use]
+    pub const fn peak_partial_dynamic_capacity_bytes(self) -> u64 {
+        self.peak_partial_dynamic_capacity_bytes
+    }
+
+    /// Return the peak explicit scoped-worker stack capacity.
+    #[must_use]
+    pub const fn peak_worker_stack_capacity_bytes(self) -> u64 {
+        self.peak_worker_stack_capacity_bytes
+    }
+
+    /// Return the peak complete prepared/worker/partial window capacity.
+    #[must_use]
+    pub const fn peak_kernel_window_capacity_bytes(self) -> u64 {
+        self.peak_kernel_window_capacity_bytes
+    }
+
+    /// Return reconstruction partition preparation time.
+    #[must_use]
+    pub const fn prepare_nanos(self) -> u128 {
+        self.prepare_nanos
+    }
+
+    /// Return worker execution time, measured by scheduler waves.
+    #[must_use]
+    pub const fn execute_nanos(self) -> u128 {
+        self.execute_nanos
+    }
+
+    /// Return deterministic commit and reduction time.
+    #[must_use]
+    pub const fn commit_nanos(self) -> u128 {
+        self.commit_nanos
+    }
+
+    /// Return the ordered identity digest of executed work.
+    #[must_use]
+    pub const fn executed_work_identity_digest(self) -> [u8; 32] {
+        self.executed_work_identity_digest
+    }
+
+    /// Return the ordered identity digest of committed work.
+    #[must_use]
+    pub const fn committed_work_identity_digest(self) -> [u8; 32] {
+        self.committed_work_identity_digest
+    }
+
+    /// Return exact selected-observation source passes.
+    #[must_use]
+    pub const fn source_pass_count(self) -> u64 {
+        self.source_pass_count
+    }
+
+    /// Return exact gridded-normal artifact passes.
+    #[must_use]
+    pub const fn artifact_pass_count(self) -> u64 {
+        self.artifact_pass_count
+    }
+
+    /// Return bytes in the one shared complete-data grid allocation.
+    #[must_use]
+    pub const fn grid_resident_bytes(self) -> u64 {
+        self.grid_resident_bytes
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SpectralCycleExecutionMode {
     Science,
@@ -775,6 +898,7 @@ struct SpectralCycleExecutorState {
     result: Option<MajorCycleOperatorResult>,
     reconstruction_cycle_completion: Option<ReconstructionCyclePhaseCompletion>,
     output_completion: Option<MajorCycleCompletion>,
+    complete_data_source_pass_count: u64,
 }
 
 #[derive(Debug)]
@@ -925,6 +1049,44 @@ struct SerialReconstructionCycleExecution {
 }
 
 impl SpectralCycleExecutor {
+    /// Return transient scheduling and residency evidence for the latest
+    /// completed complete-data stream.
+    #[must_use]
+    pub fn latest_complete_data_stream_evidence(&self) -> Option<CompleteDataStreamEvidence> {
+        let state = self.state.lock().ok()?;
+        let (stream, artifact_pass_count) = if let Some((replay, stream)) =
+            state.gridded_replay.as_ref().and_then(|replay| {
+                replay
+                    .latest_stream_measurements()
+                    .map(|stream| (replay, stream))
+            }) {
+            (
+                stream,
+                u64::from(replay.latest_read_measurements().is_some()),
+            )
+        } else {
+            (state.weighting.latest_stream_measurements()?, 0)
+        };
+        Some(CompleteDataStreamEvidence {
+            planned_workers: u64::try_from(stream.workers).ok()?,
+            actual_workers: u64::try_from(stream.workers).ok()?,
+            active_worker_slots: u64::try_from(stream.workers_with_nonzero_partitions).ok()?,
+            partitions_executed: stream.partitions_executed,
+            commits_completed: stream.commits_completed,
+            peak_partial_dynamic_capacity_bytes: stream.peak_partial_dynamic_capacity_bytes,
+            peak_worker_stack_capacity_bytes: stream.peak_worker_stack_capacity_bytes,
+            peak_kernel_window_capacity_bytes: stream.peak_kernel_window_capacity_bytes,
+            prepare_nanos: stream.prepare_nanos,
+            execute_nanos: stream.execute_nanos,
+            commit_nanos: stream.commit_nanos,
+            executed_work_identity_digest: stream.executed_work_identity_digest,
+            committed_work_identity_digest: stream.committed_work_identity_digest,
+            source_pass_count: state.complete_data_source_pass_count,
+            artifact_pass_count,
+            grid_resident_bytes: u64::try_from(self.complete_data.residency().grid_bytes()).ok()?,
+        })
+    }
+
     /// Bind exact selected-observation and model owners to a composed pass.
     #[allow(clippy::too_many_arguments)]
     #[must_use]
@@ -980,6 +1142,7 @@ impl SpectralCycleExecutor {
                 result: None,
                 reconstruction_cycle_completion: None,
                 output_completion: None,
+                complete_data_source_pass_count: 0,
             }),
         }
     }
@@ -1041,6 +1204,7 @@ impl SpectralCycleExecutor {
                 result: None,
                 reconstruction_cycle_completion: None,
                 output_completion: None,
+                complete_data_source_pass_count: 0,
             }),
         })
     }
@@ -1092,6 +1256,7 @@ impl SpectralCycleExecutor {
                 result: None,
                 reconstruction_cycle_completion: None,
                 output_completion: Some(completion),
+                complete_data_source_pass_count: 0,
             }),
         }
     }
@@ -1352,6 +1517,7 @@ impl SpectralCycleExecutor {
             weighting,
             operator,
             gridded_compilation,
+            complete_data_source_pass_count,
             ..
         } = state;
         let mut consume = |block: &casa_imaging_reconstruction::WeightingReplayChunk| {
@@ -1389,6 +1555,14 @@ impl SpectralCycleExecutor {
             None => Err(io::Error::other("streaming weighting mode missing")),
         };
         if result.is_ok() {
+            *complete_data_source_pass_count = complete_data_source_pass_count
+                .checked_add(
+                    weighting
+                        .latest_traversal_measurements()
+                        .ok_or_else(|| io::Error::other("source-pass measurements missing"))?
+                        .source_pass_count(),
+                )
+                .ok_or_else(|| io::Error::other("source-pass measurements overflow"))?;
             if let Some(compilation) = gridded_compilation.as_mut() {
                 compilation.seal()?;
                 self.log_gridded_write_measurements(compilation);
@@ -1514,7 +1688,7 @@ impl SpectralCycleExecutor {
             return;
         };
         eprintln!(
-            "imaging_gridded_replay_summary ordinal={} blocks={} artifact_bytes={} payload_bytes={} read_bytes={} read_operations={} payload_copy_bytes={} payload_copy_operations={} buffer_allocations={} buffer_reuses={} source_slots={} workers={} planned_source_capacity_bytes={} peak_live_source_blocks={} peak_live_source_current_bytes={} peak_live_source_capacity_bytes={} ready_queue_high_water={} producer_wait_nanos={} consumer_wait_nanos={} source_starved_nanos={} overlap_nanos={} source_fill_nanos={} commit_nanos={} wall_nanos={}",
+            "imaging_gridded_replay_summary ordinal={} blocks={} artifact_bytes={} payload_bytes={} read_bytes={} read_operations={} payload_copy_bytes={} payload_copy_operations={} buffer_allocations={} buffer_reuses={} source_slots={} workers={} active_worker_slots={} minimum_partitions_per_active_worker={} maximum_partitions_per_active_worker={} worker_slots={:?} partitions_executed={} commits_completed={} executed_work_identity={:x?} committed_work_identity={:x?} planned_source_capacity_bytes={} planned_kernel_window_capacity_bytes={} peak_partial_dynamic_capacity_bytes={} peak_worker_stack_capacity_bytes={} peak_kernel_window_capacity_bytes={} peak_live_source_blocks={} peak_live_source_current_bytes={} peak_live_source_capacity_bytes={} ready_queue_high_water={} producer_wait_nanos={} consumer_wait_nanos={} source_starved_nanos={} overlap_nanos={} source_fill_nanos={} prepare_nanos={} execute_nanos={} commit_nanos={} wall_nanos={}",
             self.pass.ordinal(),
             stream.blocks_filled,
             artifact.artifact_bytes(),
@@ -1527,7 +1701,19 @@ impl SpectralCycleExecutor {
             artifact.buffer_reuses(),
             stream.source_slots,
             stream.workers,
+            stream.workers_with_nonzero_partitions,
+            stream.minimum_partitions_per_active_worker,
+            stream.maximum_partitions_per_active_worker,
+            stream.worker_slots,
+            stream.partitions_executed,
+            stream.commits_completed,
+            stream.executed_work_identity_digest,
+            stream.committed_work_identity_digest,
             stream.planned_source_capacity_bytes,
+            stream.planned_kernel_window_capacity_bytes,
+            stream.peak_partial_dynamic_capacity_bytes,
+            stream.peak_worker_stack_capacity_bytes,
+            stream.peak_kernel_window_capacity_bytes,
             stream.peak_live_source_blocks,
             stream.peak_live_source_current_bytes,
             stream.peak_live_source_capacity_bytes,
@@ -1537,6 +1723,8 @@ impl SpectralCycleExecutor {
             stream.source_starved_nanos,
             stream.overlap_nanos,
             stream.source_fill_nanos,
+            stream.prepare_nanos,
+            stream.execute_nanos,
             stream.commit_nanos,
             stream.wall_nanos,
         );
@@ -1670,7 +1858,7 @@ impl SpectralCycleExecutor {
             || (context.node().id == *fragment.generation_node()
                 && fragment.streaming_mode()
                     == Some(crate::WeightingStreamingMode::DensityInitial)))
-        .then(|| state.weighting.latest_stream_measurements().copied())
+        .then(|| state.weighting.latest_stream_measurements())
         .flatten();
         let gridded_write_measurements = if context.node().id == *fragment.streaming_node() {
             state
@@ -1929,6 +2117,18 @@ impl WorkImplementation for SpectralCycleExecutor {
                                 .traverse_density_source(context, fragment, selected, &self.problem)
                                 .map_err(io::Error::other)?,
                         );
+                        state.complete_data_source_pass_count = state
+                            .complete_data_source_pass_count
+                            .checked_add(
+                                state
+                                    .weighting
+                                    .latest_traversal_measurements()
+                                    .ok_or_else(|| {
+                                        io::Error::other("density source-pass measurements missing")
+                                    })?
+                                    .source_pass_count(),
+                            )
+                            .ok_or_else(|| io::Error::other("source-pass measurements overflow"))?;
                         self.log_stream_measurements(&state.weighting, "density");
                     }
                     Some(crate::WeightingStreamingMode::SelectedOutputOnly) => {

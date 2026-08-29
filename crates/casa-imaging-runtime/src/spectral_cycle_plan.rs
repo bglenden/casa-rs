@@ -14,8 +14,11 @@ use casa_imaging_reconstruction::{
 };
 use casa_ms::{SelectedObservationResidencyCertificate, SelectedVisibilityStoragePlan};
 
-use crate::spectral_cycle::{SelectedVisibilityCellWrite, VISIBILITY_WRITE_WORKER_STACK_BYTES};
 use crate::*;
+use crate::{
+    bounded_stream::BOUNDED_WORKER_STACK_BYTES,
+    spectral_cycle::{SelectedVisibilityCellWrite, VISIBILITY_WRITE_WORKER_STACK_BYTES},
+};
 
 const READ_NODE: &str = "transaction-read";
 const CHECK_NODE: &str = "transaction-check";
@@ -33,6 +36,15 @@ const GRIDDED_SPILL_WRITE_RATE_DEMAND: &str = "gridded-normal-spill-write-rate";
 const GRIDDED_SPILL_QUEUE_DEMAND: &str = "gridded-normal-spill-queue";
 const GRIDDED_SPILL_STORAGE_DEMAND: &str = "gridded-normal-spill-storage";
 
+fn bounded_worker_stack_bytes(workers: u64) -> Result<u64, SpectralCyclePlanError> {
+    if workers == 1 {
+        return Ok(0);
+    }
+    workers
+        .checked_mul(BOUNDED_WORKER_STACK_BYTES as u64)
+        .ok_or(SpectralCyclePlanError::Overflow)
+}
+
 /// Explicit non-scientific limits for one spectral cycle physical plan.
 #[derive(Clone)]
 pub struct SpectralCycleExecutionPolicy {
@@ -45,6 +57,7 @@ pub struct SpectralCycleExecutionPolicy {
     confidence_parts_per_million: u32,
     visibility_write: Option<SelectedVisibilityStoragePlan>,
     gridded_normal_storage: Option<GriddedNormalReplayStorage>,
+    workers: u64,
 }
 
 impl SpectralCycleExecutionPolicy {
@@ -69,7 +82,24 @@ impl SpectralCycleExecutionPolicy {
             confidence_parts_per_million,
             visibility_write: None,
             gridded_normal_storage: None,
+            workers: 1,
         }
+    }
+
+    /// Bind the worker count currently available under the runtime authority.
+    ///
+    /// This keeps host detection and policy interpretation inside the runtime;
+    /// applications only compose the authority and policy they already own.
+    pub fn with_planned_workers(
+        mut self,
+        authority: &ResourceAuthority,
+        policy: &ResourcePolicy,
+    ) -> Result<Self, SpectralCyclePlanError> {
+        self.workers = authority.projected_worker_capacity(policy)?;
+        if self.workers == 0 {
+            return Err(SpectralCyclePlanError::ZeroWorkers);
+        }
+        Ok(self)
     }
 
     /// Bind the runtime-private storage used by planned gridded-normal spill work.
@@ -919,6 +949,19 @@ fn base_gridded_physical<R: ImplementationRegistry>(
     let output_storage_id = format!("{OUTPUT_STORAGE_DEMAND}-final-major-{}", pass.ordinal());
     let publication_lifetime =
         ClaimLifetime::through_fences([FenceKind::Io, FenceKind::Publication]);
+    let worker_stack_bytes = bounded_worker_stack_bytes(policy.workers)?;
+    let mut replay_claims = vec![ResourceClaim {
+        resource: LeaseResource::Workers,
+        amount: policy.workers,
+        lifetime: ClaimLifetime::Work,
+    }];
+    if worker_stack_bytes > 0 {
+        replay_claims.push(ResourceClaim {
+            resource: LeaseResource::RuntimeOverhead(RuntimeOverheadKind::ThreadStack),
+            amount: worker_stack_bytes,
+            lifetime: ClaimLifetime::Work,
+        });
+    }
     let nodes = vec![
         WorkNode {
             id: check.clone(),
@@ -959,11 +1002,7 @@ fn base_gridded_physical<R: ImplementationRegistry>(
                 WorkDependency::Work(check.clone()),
                 WorkDependency::Work(model_preparation.clone()),
             ]),
-            claims: vec![ResourceClaim {
-                resource: LeaseResource::Workers,
-                amount: 1,
-                lifetime: ClaimLifetime::Work,
-            }],
+            claims: replay_claims,
             allocations: vec![],
             fences: BTreeSet::new(),
             quiescence_after: BTreeSet::new(),
@@ -1046,8 +1085,11 @@ fn base_gridded_physical<R: ImplementationRegistry>(
                 preferred_bytes: 1,
                 views: vec![CapacityViewId::new("host-memory")],
             }],
-            workers: CountDemand::new(1, 1),
-            overhead: RuntimeOverheadDemand::zero(),
+            workers: CountDemand::new(policy.workers, policy.workers),
+            overhead: RuntimeOverheadDemand {
+                thread_stack_bytes: worker_stack_bytes,
+                ..RuntimeOverheadDemand::zero()
+            },
             storage: vec![StorageDemand {
                 demand_id: output_storage_id,
                 domain: policy.storage_io.domain().clone(),
@@ -1082,8 +1124,8 @@ fn base_gridded_physical<R: ImplementationRegistry>(
         },
         headroom: ResourceHeadroom::default(),
         scaling: ScalingMetadata {
-            minimum_workers: 1,
-            maximum_workers: 1,
+            minimum_workers: policy.workers,
+            maximum_workers: policy.workers,
             maximum_batch_size: 1,
             maximum_tile_width: 1,
             maximum_tile_height: 1,
@@ -1095,6 +1137,8 @@ fn base_gridded_physical<R: ImplementationRegistry>(
             QuiescencePoint::MajorCycle,
         ]),
     };
+    let mut initial_knobs = ExecutionKnobs::serial();
+    initial_knobs.workers = policy.workers;
     let dag = ExecutionDag::new(ExecutionDagSpecification {
         required_resource_capabilities: BTreeSet::new(),
         resource_alternative: alternative,
@@ -1121,7 +1165,7 @@ fn base_gridded_physical<R: ImplementationRegistry>(
             capacity_bytes: 1,
             compatibility,
         }],
-        initial_knobs: ExecutionKnobs::serial(),
+        initial_knobs,
         adaptations: vec![],
     })?;
     let predictions = dag
@@ -1915,6 +1959,10 @@ fn append_minor<R: ImplementationRegistry>(
 #[derive(Debug)]
 /// Failure to construct a complete spectral cycle physical plan.
 pub enum SpectralCyclePlanError {
+    /// The resource policy admitted no CPU worker for complete-data execution.
+    ZeroWorkers,
+    /// The runtime authority could not project the worker capacity.
+    Resources(ResourceError),
     /// A clean initial-major plan omitted its runtime-private spill storage.
     MissingGriddedNormalStorage,
     /// A later-major plan received replay state outside its retained storage authority.
@@ -1970,5 +2018,10 @@ impl From<ExecutionError> for SpectralCyclePlanError {
 impl From<PhysicalWorkBindingError> for SpectralCyclePlanError {
     fn from(v: PhysicalWorkBindingError) -> Self {
         Self::Physical(v)
+    }
+}
+impl From<ResourceError> for SpectralCyclePlanError {
+    fn from(value: ResourceError) -> Self {
+        Self::Resources(value)
     }
 }

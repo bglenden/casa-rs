@@ -1786,6 +1786,24 @@ impl ResourceAuthority {
         Ok(state.pressure_epoch)
     }
 
+    pub(crate) fn projected_worker_capacity(
+        &self,
+        policy: &ResourcePolicy,
+    ) -> Result<u64, ResourceError> {
+        validate_policy(&self.inner.topology, policy)?;
+        let state = self
+            .inner
+            .state
+            .lock()
+            .map_err(|_| ResourceError::AuthorityPoisoned)?;
+        let pressured = capacity_under_pressure(&self.inner.topology, &state);
+        let policy_capacity =
+            apply_concurrent_policies(&self.inner.topology, &state, policy, &pressured);
+        Ok(available_after_active_leases(&state, policy_capacity)?
+            .hard
+            .workers)
+    }
+
     pub(crate) fn with_inventory(inventory: HostInventory) -> Result<Self, ResourceError> {
         Self::with_inventory_and_storage_profile(inventory, None)
     }

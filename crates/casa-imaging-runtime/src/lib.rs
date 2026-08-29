@@ -113,9 +113,10 @@ pub use serial_product_publication::{
     SerialProductPublicationRegistry, SerialProductPublicationSink,
 };
 pub use spectral_cycle::{
-    FinalMajorPhaseInput, FinalVisibilityReplay, FinalVisibilitySink, InitialMajorPhaseCompletion,
-    ReconstructionCyclePhaseCompletion, ReconstructionCyclePhaseEvidence, SpectralCycleExecutor,
-    SpectralCyclePassInput, SpectralCycleRegistry,
+    CompleteDataStreamEvidence, FinalMajorPhaseInput, FinalVisibilityReplay, FinalVisibilitySink,
+    InitialMajorPhaseCompletion, ReconstructionCyclePhaseCompletion,
+    ReconstructionCyclePhaseEvidence, SpectralCycleExecutor, SpectralCyclePassInput,
+    SpectralCycleRegistry,
 };
 pub use spectral_cycle_plan::{
     PlannedGriddedNormalBinding, SpectralCycleExecutionPolicy, SpectralCyclePlan,

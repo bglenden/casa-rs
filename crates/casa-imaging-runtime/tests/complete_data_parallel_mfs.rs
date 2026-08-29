@@ -66,7 +66,10 @@ struct StreamSummary {
     partitions_executed: u64,
     commits_completed: u64,
     peak_partial_dynamic_capacity_bytes: u64,
+    peak_worker_stack_capacity_bytes: u64,
     peak_kernel_window_capacity_bytes: u64,
+    executed_work_identity_digest: [u8; 32],
+    committed_work_identity_digest: [u8; 32],
     source_pass_count: u64,
     artifact_pass_count: u64,
     grid_resident_bytes: u64,
@@ -81,7 +84,10 @@ impl From<CompleteDataStreamEvidence> for StreamSummary {
             partitions_executed: evidence.partitions_executed(),
             commits_completed: evidence.commits_completed(),
             peak_partial_dynamic_capacity_bytes: evidence.peak_partial_dynamic_capacity_bytes(),
+            peak_worker_stack_capacity_bytes: evidence.peak_worker_stack_capacity_bytes(),
             peak_kernel_window_capacity_bytes: evidence.peak_kernel_window_capacity_bytes(),
+            executed_work_identity_digest: evidence.executed_work_identity_digest(),
+            committed_work_identity_digest: evidence.committed_work_identity_digest(),
             source_pass_count: evidence.source_pass_count(),
             artifact_pass_count: evidence.artifact_pass_count(),
             grid_resident_bytes: evidence.grid_resident_bytes(),
@@ -138,6 +144,16 @@ fn complete_data_mfs_is_equivalent_and_bounded_with_three_workers() {
         "replay deterministic reductions must not depend on worker count",
     );
     assert_eq!(
+        serial.final_stream.executed_work_identity_digest,
+        parallel.final_stream.executed_work_identity_digest,
+        "replay work identities must not depend on worker count",
+    );
+    assert_eq!(
+        serial.final_stream.committed_work_identity_digest,
+        parallel.final_stream.committed_work_identity_digest,
+        "replay commit identities must not depend on worker count",
+    );
+    assert_eq!(
         serial.initial_stream.grid_resident_bytes, parallel.initial_stream.grid_resident_bytes,
         "initial execution must not allocate a full grid per worker",
     );
@@ -165,8 +181,13 @@ fn assert_stream_contract(
     assert_eq!(stream.source_pass_count, source_passes);
     assert_eq!(stream.artifact_pass_count, artifact_passes);
     assert_eq!(stream.partitions_executed, stream.commits_completed);
+    assert_eq!(
+        stream.executed_work_identity_digest, stream.committed_work_identity_digest,
+        "every executed partition must commit in the same stable identity order",
+    );
     if require_partial {
         assert!(stream.peak_partial_dynamic_capacity_bytes > 0);
+        assert!(stream.peak_worker_stack_capacity_bytes > 0);
     }
     assert!(stream.peak_partial_dynamic_capacity_bytes <= stream.peak_kernel_window_capacity_bytes,);
 }

@@ -19,9 +19,11 @@ use casa_imaging_reconstruction::{
     SpectralOperatorSpecification, SpectralPrimitiveCatalog, WeightingAlgorithmState,
     WeightingGenerationId, WeightingReplayCoverageId, WeightingReplayId,
     runtime_adapter::{
-        CompleteDataOwnerResult, CompleteDataOwnerState, GRIDDED_NORMAL_OPERATOR_RECORD_BYTES,
+        CompleteDataOwnerResult, CompleteDataOwnerState,
+        GRIDDED_NORMAL_MAXIMUM_PARTITIONS_PER_BLOCK, GRIDDED_NORMAL_OPERATOR_RECORD_BYTES,
         GriddedNormalOperatorApply, GriddedNormalOperatorBlockMeasurements,
-        GriddedNormalOperatorCompiler, GriddedNormalOperatorProgram, PreparedSpectralOperator,
+        GriddedNormalOperatorCompiler, GriddedNormalOperatorProgram,
+        GriddedNormalPredictionPartial, GriddedNormalPredictionWork, PreparedSpectralOperator,
         SpectralOperatorPass, SpectralOperatorWorkload, prepare_spectral_operator,
         spectral_operator_workload,
     },
@@ -331,8 +333,8 @@ impl FrozenGriddedNormalReplay {
         self.latest_read
     }
 
-    pub(crate) const fn latest_stream_measurements(&self) -> Option<BoundedStreamMeasurements> {
-        self.latest_stream
+    pub(crate) const fn latest_stream_measurements(&self) -> Option<&BoundedStreamMeasurements> {
+        self.latest_stream.as_ref()
     }
 
     pub(crate) fn execute_bounded(
@@ -360,7 +362,40 @@ impl FrozenGriddedNormalReplay {
         }
         let source_slots = usize::try_from(source_capacity_bytes / per_slot)
             .map_err(|_| io::Error::other("gridded-normal replay slot count overflow"))?;
-        let plan = BoundedStreamPlan::new::<(), ()>(source_slots, 1, source_capacity_bytes, 1, 0)
+        let worker_claim = context
+            .node()
+            .claims
+            .iter()
+            .find_map(|claim| (claim.resource == LeaseResource::Workers).then_some(claim.amount))
+            .ok_or_else(|| io::Error::other("gridded-normal worker claim missing"))?;
+        if worker_claim != context.knobs().workers {
+            return Err(io::Error::other(
+                "gridded-normal worker claim disagrees with execution knobs",
+            ));
+        }
+        let workers = usize::try_from(worker_claim)
+            .map_err(|_| io::Error::other("gridded-normal worker count overflow"))?;
+        let maximum_frame_records =
+            budget.maximum_frame_payload_bytes() / GRIDDED_NORMAL_OPERATOR_RECORD_BYTES;
+        let maximum_partitions =
+            maximum_frame_records.clamp(1, GRIDDED_NORMAL_MAXIMUM_PARTITIONS_PER_BLOCK);
+        let maximum_records_per_partition = maximum_frame_records
+            .div_ceil(GRIDDED_NORMAL_MAXIMUM_PARTITIONS_PER_BLOCK)
+            .max(1);
+        let partial_bytes = maximum_records_per_partition
+            .checked_mul(size_of::<num_complex::Complex64>())
+            .and_then(|bytes| bytes.checked_mul(workers.min(maximum_partitions)))
+            .ok_or_else(|| io::Error::other("gridded-normal partial residency overflow"))?;
+        let dynamic_kernel_bytes = u64::try_from(partial_bytes)
+            .map_err(|_| io::Error::other("gridded-normal kernel residency overflow"))?;
+        let plan =
+            BoundedStreamPlan::new::<GriddedNormalPredictionWork, GriddedNormalPredictionPartial>(
+                source_slots,
+                workers,
+                source_capacity_bytes,
+                maximum_partitions,
+                dynamic_kernel_bytes,
+            )
             .map_err(|_| io::Error::other("invalid gridded-normal bounded-stream plan"))?;
         let source = self.spill.block_source().map_err(io::Error::other)?;
         let outcome = execute_bounded(
@@ -405,50 +440,72 @@ struct GriddedNormalReplayKernel {
 }
 
 impl PartitionedKernel<GriddedNormalArtifactFrameStorage> for GriddedNormalReplayKernel {
-    type Partition = ();
-    type Partial = ();
+    type Partition = GriddedNormalPredictionWork;
+    type Partial = GriddedNormalPredictionPartial;
     type Completion = CompleteDataOperatorResult;
     type Error = CompleteDataOperatorError;
 
     fn partition_count(
         &self,
         _block: BlockIdentity,
-        _storage: &GriddedNormalArtifactFrameStorage,
-    ) -> Result<usize, Self::Error> {
-        Ok(1)
-    }
-
-    fn partition(
-        &self,
-        _block: BlockIdentity,
-        _storage: &GriddedNormalArtifactFrameStorage,
-        _local_ordinal: usize,
-    ) -> Result<KernelPartition<Self::Partition>, Self::Error> {
-        Ok(KernelPartition::exclusive(0, 0, ()))
-    }
-
-    fn execute(
-        &self,
-        _work: WorkIdentity,
-        _storage: &GriddedNormalArtifactFrameStorage,
-        _partition: &Self::Partition,
-    ) -> Result<Self::Partial, Self::Error> {
-        Ok(())
-    }
-
-    fn commit(
-        &mut self,
-        _work: WorkIdentity,
         storage: &GriddedNormalArtifactFrameStorage,
-        (): Self::Partial,
-    ) -> Result<(), Self::Error> {
+    ) -> Result<usize, Self::Error> {
         let records = u64::try_from(storage.payload().len() / GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
             .map_err(|_| CompleteDataOperatorError::ExecutionBinding)?;
         if storage.record_count() != records {
             return Err(CompleteDataOperatorError::ExecutionBinding);
         }
         self.state
-            .apply_encoded_block(storage.sequence(), storage.payload())
+            .state
+            .prediction_partition_count(storage.sequence(), storage.payload())
+            .map_err(CompleteDataOperatorError::Owner)
+    }
+
+    fn partition(
+        &self,
+        _block: BlockIdentity,
+        storage: &GriddedNormalArtifactFrameStorage,
+        local_ordinal: usize,
+    ) -> Result<KernelPartition<Self::Partition>, Self::Error> {
+        let partition = self
+            .state
+            .state
+            .prediction_partition(storage.sequence(), storage.payload(), local_ordinal)
+            .map_err(CompleteDataOperatorError::Owner)?;
+        Ok(KernelPartition::ordered(
+            partition.partition_key(),
+            0,
+            partition.partition_key(),
+            partition,
+        ))
+    }
+
+    fn execute(
+        &self,
+        _work: WorkIdentity,
+        storage: &GriddedNormalArtifactFrameStorage,
+        partition: &Self::Partition,
+    ) -> Result<Self::Partial, Self::Error> {
+        self.state
+            .state
+            .predict_partition(storage.payload(), *partition)
+            .map_err(CompleteDataOperatorError::Owner)
+    }
+
+    fn partial_dynamic_capacity_bytes(&self, partial: &Self::Partial) -> u64 {
+        partial.resident_bytes()
+    }
+
+    fn commit(
+        &mut self,
+        _work: WorkIdentity,
+        storage: &GriddedNormalArtifactFrameStorage,
+        partial: Self::Partial,
+    ) -> Result<(), Self::Error> {
+        self.state
+            .state
+            .commit_prediction(storage.payload(), partial)
+            .map_err(CompleteDataOperatorError::Owner)
     }
 
     fn complete(self) -> Result<Self::Completion, Self::Error> {
@@ -1552,16 +1609,6 @@ pub(crate) struct GriddedNormalOperatorState {
 }
 
 impl GriddedNormalOperatorState {
-    fn apply_encoded_block(
-        &mut self,
-        sequence: u64,
-        encoded: &[u8],
-    ) -> Result<(), CompleteDataOperatorError> {
-        self.state
-            .apply_encoded_block(sequence, encoded)
-            .map_err(CompleteDataOperatorError::Owner)
-    }
-
     pub(crate) fn complete(self) -> Result<CompleteDataOperatorResult, CompleteDataOperatorError> {
         let evidence = self
             .state
