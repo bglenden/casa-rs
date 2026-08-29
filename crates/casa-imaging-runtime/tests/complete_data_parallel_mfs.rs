@@ -107,60 +107,55 @@ struct RunEvidence {
 }
 
 #[test]
-fn complete_data_mfs_is_equivalent_and_bounded_with_three_workers() {
+fn complete_data_mfs_is_exact_and_bounded_for_one_two_and_four_workers() {
     let serial = execute_complete_data_mfs(1);
-    let parallel = execute_complete_data_mfs(3);
-
-    assert_normalized_rms_below(&serial.dirty, &parallel.dirty, 1.0e-3, "dirty");
-    assert_normalized_rms_below(&serial.psf, &parallel.psf, 1.0e-3, "PSF");
-    assert_normalized_rms_below(&serial.residual, &parallel.residual, 1.0e-3, "residual");
-    assert_model_samples_equivalent(&serial.model, &parallel.model, 1.0e-3);
-    assert_normalized_rms_below_f64(
-        &serial.sum_weights,
-        &parallel.sum_weights,
-        1.0e-3,
-        "sum weight",
-    );
+    let parallel = [execute_complete_data_mfs(2), execute_complete_data_mfs(4)];
 
     assert_stream_contract(&serial.initial_stream, 1, 1, 2, 0, false);
-    assert_stream_contract(&serial.final_stream, 1, 1, 0, 1, false);
-    assert_stream_contract(&parallel.initial_stream, 1, 1, 2, 0, false);
-    assert_stream_contract(&parallel.final_stream, 3, 2, 0, 1, true);
+    assert_stream_contract(&serial.final_stream, 1, 1, 0, 1, true);
+    for (run, workers) in parallel.iter().zip([2, 4]) {
+        assert_eq!(
+            run.dirty, serial.dirty,
+            "dirty differs for {workers} workers"
+        );
+        assert_eq!(run.psf, serial.psf, "PSF differs for {workers} workers");
+        assert_eq!(
+            run.residual, serial.residual,
+            "residual differs for {workers} workers"
+        );
+        assert_eq!(
+            run.model, serial.model,
+            "model differs for {workers} workers"
+        );
+        assert_eq!(
+            run.sum_weights, serial.sum_weights,
+            "sum weight differs for {workers} workers"
+        );
 
-    assert_eq!(
-        serial.initial_stream.partitions_executed, parallel.initial_stream.partitions_executed,
-        "initial partition identities must not depend on worker count",
-    );
-    assert_eq!(
-        serial.initial_stream.commits_completed, parallel.initial_stream.commits_completed,
-        "initial deterministic reductions must not depend on worker count",
-    );
-    assert_eq!(
-        serial.final_stream.partitions_executed, parallel.final_stream.partitions_executed,
-        "replay partition identities must not depend on worker count",
-    );
-    assert_eq!(
-        serial.final_stream.commits_completed, parallel.final_stream.commits_completed,
-        "replay deterministic reductions must not depend on worker count",
-    );
-    assert_eq!(
-        serial.final_stream.executed_work_identity_digest,
-        parallel.final_stream.executed_work_identity_digest,
-        "replay work identities must not depend on worker count",
-    );
-    assert_eq!(
-        serial.final_stream.committed_work_identity_digest,
-        parallel.final_stream.committed_work_identity_digest,
-        "replay commit identities must not depend on worker count",
-    );
-    assert_eq!(
-        serial.initial_stream.grid_resident_bytes, parallel.initial_stream.grid_resident_bytes,
-        "initial execution must not allocate a full grid per worker",
-    );
-    assert_eq!(
-        serial.final_stream.grid_resident_bytes, parallel.final_stream.grid_resident_bytes,
-        "artifact replay must not allocate a full grid per worker",
-    );
+        assert_stream_contract(&run.initial_stream, 1, 1, 2, 0, false);
+        assert_stream_contract(&run.final_stream, workers, workers, 0, 1, true);
+        assert_eq!(run.initial_stream, serial.initial_stream);
+        assert_eq!(
+            run.final_stream.partitions_executed,
+            serial.final_stream.partitions_executed,
+        );
+        assert_eq!(
+            run.final_stream.commits_completed,
+            serial.final_stream.commits_completed,
+        );
+        assert_eq!(
+            run.final_stream.executed_work_identity_digest,
+            serial.final_stream.executed_work_identity_digest,
+        );
+        assert_eq!(
+            run.final_stream.committed_work_identity_digest,
+            serial.final_stream.committed_work_identity_digest,
+        );
+        assert_eq!(
+            run.final_stream.grid_resident_bytes, serial.final_stream.grid_resident_bytes,
+            "spatial-owner residency must not scale with worker count",
+        );
+    }
 }
 
 fn assert_stream_contract(
@@ -169,7 +164,7 @@ fn assert_stream_contract(
     minimum_active_workers: u64,
     source_passes: u64,
     artifact_passes: u64,
-    require_partial: bool,
+    expect_zero_partial: bool,
 ) {
     assert_eq!(stream.planned_workers, workers);
     assert_eq!(stream.actual_workers, workers);
@@ -185,9 +180,11 @@ fn assert_stream_contract(
         stream.executed_work_identity_digest, stream.committed_work_identity_digest,
         "every executed partition must commit in the same stable identity order",
     );
-    if require_partial {
-        assert!(stream.peak_partial_dynamic_capacity_bytes > 0);
-        assert!(stream.peak_worker_stack_capacity_bytes > 0);
+    if expect_zero_partial {
+        assert_eq!(stream.peak_partial_dynamic_capacity_bytes, 0);
+        if workers > 1 {
+            assert!(stream.peak_worker_stack_capacity_bytes > 0);
+        }
     }
     assert!(stream.peak_partial_dynamic_capacity_bytes <= stream.peak_kernel_window_capacity_bytes,);
 }
@@ -868,74 +865,4 @@ impl ImplementationRegistry for PlanningRegistry {
     ) -> Option<ImplementationContractMetadata> {
         (id == &self.implementation.id).then(|| self.metadata.clone())
     }
-}
-
-fn assert_normalized_rms_below(
-    expected: &[Complex64],
-    actual: &[Complex64],
-    ceiling: f64,
-    label: &str,
-) {
-    assert_eq!(expected.len(), actual.len(), "{label} shape changed");
-    let difference = expected
-        .iter()
-        .zip(actual)
-        .map(|(left, right)| (*left - *right).norm_sqr())
-        .sum::<f64>();
-    let expected_scale = expected.iter().map(|value| value.norm_sqr()).sum::<f64>();
-    let actual_scale = actual.iter().map(|value| value.norm_sqr()).sum::<f64>();
-    let scale = expected_scale.max(actual_scale).max(f64::MIN_POSITIVE);
-    let normalized_rms = (difference / scale).sqrt();
-    assert!(
-        normalized_rms <= ceiling,
-        "{label} normalized RMS {normalized_rms} exceeded {ceiling}",
-    );
-}
-
-fn assert_normalized_rms_below_f64(expected: &[f64], actual: &[f64], ceiling: f64, label: &str) {
-    assert_eq!(expected.len(), actual.len(), "{label} shape changed");
-    let difference = expected
-        .iter()
-        .zip(actual)
-        .map(|(left, right)| (left - right).powi(2))
-        .sum::<f64>();
-    let expected_scale = expected.iter().map(|value| value.powi(2)).sum::<f64>();
-    let actual_scale = actual.iter().map(|value| value.powi(2)).sum::<f64>();
-    let scale = expected_scale.max(actual_scale).max(f64::MIN_POSITIVE);
-    let normalized_rms = (difference / scale).sqrt();
-    assert!(
-        normalized_rms <= ceiling,
-        "{label} normalized RMS {normalized_rms} exceeded {ceiling}",
-    );
-}
-
-fn assert_model_samples_equivalent(
-    expected: &[casa_imaging_model::ModelSample],
-    actual: &[casa_imaging_model::ModelSample],
-    ceiling: f64,
-) {
-    assert_eq!(expected.len(), actual.len(), "model shape changed");
-    assert_eq!(
-        expected
-            .iter()
-            .map(|sample| sample.support())
-            .collect::<Vec<_>>(),
-        actual
-            .iter()
-            .map(|sample| sample.support())
-            .collect::<Vec<_>>(),
-        "model support changed",
-    );
-    assert_normalized_rms_below_f64(
-        &expected
-            .iter()
-            .map(|sample| sample.value().value())
-            .collect::<Vec<_>>(),
-        &actual
-            .iter()
-            .map(|sample| sample.value().value())
-            .collect::<Vec<_>>(),
-        ceiling,
-        "model",
-    );
 }
