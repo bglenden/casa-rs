@@ -1487,6 +1487,34 @@ image_product_write suffix=.image.pbcor role=image.pbcor shape=1024x1024x1x1 ele
             summary["image_product_write_shape_by_suffix"],
         )
 
+    def test_parse_backend_plan_logs_retains_gridded_replay_discriminator(self) -> None:
+        parsed = run_workload.parse_backend_plan_logs(
+            """imaging_gridded_replay_summary ordinal=1 blocks=31985 artifact_bytes=1574840232 payload_bytes=1572537216 read_bytes=1574840232 read_operations=94909 payload_copy_bytes=0 payload_copy_operations=0 buffer_allocations=2 buffer_reuses=31983 source_slots=2 workers=1 worker_threads_started=0 dispatch_waves=127940 active_worker_slots=1 minimum_partitions_per_active_worker=127940 maximum_partitions_per_active_worker=127940 partitions_executed=127940 commits_completed=127940 planned_source_capacity_bytes=262288 planned_kernel_window_capacity_bytes=432 peak_partial_dynamic_capacity_bytes=0 peak_worker_stack_capacity_bytes=0 peak_kernel_window_capacity_bytes=360 peak_live_source_blocks=2 peak_live_source_current_bytes=131216 peak_live_source_capacity_bytes=262288 ready_queue_high_water=0 producer_wait_nanos=1964086 consumer_wait_nanos=142338671 source_starved_nanos=142323713 overlap_nanos=1322028272 source_fill_nanos=1436830268 prepare_nanos=683595493 execute_nanos=4125092333 commit_nanos=3312497 wall_nanos=5008788834
+"""
+        )
+
+        replay = parsed["imaging_gridded_replay"]
+        self.assertEqual(1, len(replay))
+        fields = replay[0]["fields"]
+        self.assertEqual(31985, fields["blocks"])
+        self.assertEqual(1, fields["workers"])
+        self.assertEqual(127940, fields["partitions_executed"])
+        self.assertEqual(127940, fields["commits_completed"])
+        self.assertEqual(0, fields["payload_copy_bytes"])
+        self.assertEqual(0, fields["peak_partial_dynamic_capacity_bytes"])
+        self.assertEqual(683595493, fields["prepare_nanos"])
+        self.assertEqual(4125092333, fields["execute_nanos"])
+        self.assertEqual(3312497, fields["commit_nanos"])
+        self.assertEqual(5008788834, fields["wall_nanos"])
+        self.assertEqual(
+            {
+                "observed_count": 1,
+                "retained_count": 1,
+                "truncated": False,
+            },
+            parsed["collection_stats"]["imaging_gridded_replay"],
+        )
+
     def test_mosaic_resident_product_diagnostic_is_parsed(self) -> None:
         buckets = run_workload.parse_backend_plan_logs(
             "mosaic_dirty_product_gpu_resident products=1 "
