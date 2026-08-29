@@ -62,11 +62,15 @@ const IMAGE_PIXELS: usize = 16 * 16;
 struct StreamSummary {
     planned_workers: u64,
     actual_workers: u64,
+    blocks_filled: u64,
+    worker_threads_started: u64,
+    dispatch_batches: u64,
     active_worker_slots: u64,
     partitions_executed: u64,
     commits_completed: u64,
     peak_partial_dynamic_capacity_bytes: u64,
     peak_worker_stack_capacity_bytes: u64,
+    planned_kernel_window_capacity_bytes: u64,
     peak_kernel_window_capacity_bytes: u64,
     executed_work_identity_digest: [u8; 32],
     committed_work_identity_digest: [u8; 32],
@@ -80,11 +84,15 @@ impl From<CompleteDataStreamEvidence> for StreamSummary {
         Self {
             planned_workers: evidence.planned_workers(),
             actual_workers: evidence.actual_workers(),
+            blocks_filled: evidence.blocks_filled(),
+            worker_threads_started: evidence.worker_threads_started(),
+            dispatch_batches: evidence.dispatch_batches(),
             active_worker_slots: evidence.active_worker_slots(),
             partitions_executed: evidence.partitions_executed(),
             commits_completed: evidence.commits_completed(),
             peak_partial_dynamic_capacity_bytes: evidence.peak_partial_dynamic_capacity_bytes(),
             peak_worker_stack_capacity_bytes: evidence.peak_worker_stack_capacity_bytes(),
+            planned_kernel_window_capacity_bytes: evidence.planned_kernel_window_capacity_bytes(),
             peak_kernel_window_capacity_bytes: evidence.peak_kernel_window_capacity_bytes(),
             executed_work_identity_digest: evidence.executed_work_identity_digest(),
             committed_work_identity_digest: evidence.committed_work_identity_digest(),
@@ -173,6 +181,11 @@ fn assert_stream_contract(
 ) {
     assert_eq!(stream.planned_workers, workers);
     assert_eq!(stream.actual_workers, workers);
+    assert_eq!(stream.dispatch_batches, stream.blocks_filled);
+    assert_eq!(
+        stream.worker_threads_started,
+        if workers == 1 { 0 } else { workers },
+    );
     assert!(
         stream.active_worker_slots >= minimum_active_workers,
         "{workers}-worker stream used only {} worker slots",
@@ -190,6 +203,9 @@ fn assert_stream_contract(
         assert!(stream.peak_worker_stack_capacity_bytes > 0);
     }
     assert!(stream.peak_partial_dynamic_capacity_bytes <= stream.peak_kernel_window_capacity_bytes,);
+    assert!(
+        stream.peak_kernel_window_capacity_bytes <= stream.planned_kernel_window_capacity_bytes,
+    );
 }
 
 fn execute_complete_data_mfs(worker_count: u64) -> RunEvidence {

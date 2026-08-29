@@ -24,6 +24,7 @@ pub(crate) struct BoundedStreamPlan {
     source_capacity_bytes: u64,
     maximum_partitions_per_block: usize,
     dynamic_kernel_window_capacity_bytes: u64,
+    kernel_heap_capacity_bytes: u64,
     kernel_window_capacity_bytes: u64,
 }
 
@@ -47,12 +48,22 @@ impl BoundedStreamPlan {
         if maximum_partitions_per_block == 0 {
             return Err(BoundedStreamPlanError::Partitions);
         }
-        let kernel_window_capacity_bytes =
-            fixed_kernel_window_capacity_bytes::<Partition, Partial>(
-                workers,
-                maximum_partitions_per_block,
-            )?
-            .checked_add(dynamic_kernel_window_capacity_bytes)
+        let kernel_heap_capacity_bytes = fixed_kernel_heap_capacity_bytes::<Partition, Partial>(
+            workers,
+            maximum_partitions_per_block,
+        )?
+        .checked_add(dynamic_kernel_window_capacity_bytes)
+        .ok_or(BoundedStreamPlanError::KernelWindowCapacity)?;
+        let worker_stack_capacity_bytes = if workers == 1 {
+            0
+        } else {
+            u64::try_from(BOUNDED_WORKER_STACK_BYTES)
+                .ok()
+                .and_then(|bytes| bytes.checked_mul(u64::try_from(workers).ok()?))
+                .ok_or(BoundedStreamPlanError::KernelWindowCapacity)?
+        };
+        let kernel_window_capacity_bytes = kernel_heap_capacity_bytes
+            .checked_add(worker_stack_capacity_bytes)
             .ok_or(BoundedStreamPlanError::KernelWindowCapacity)?;
         Ok(Self {
             source_slots,
@@ -60,12 +71,17 @@ impl BoundedStreamPlan {
             source_capacity_bytes,
             maximum_partitions_per_block,
             dynamic_kernel_window_capacity_bytes,
+            kernel_heap_capacity_bytes,
             kernel_window_capacity_bytes,
         })
     }
+
+    pub(crate) const fn kernel_heap_capacity_bytes(self) -> u64 {
+        self.kernel_heap_capacity_bytes
+    }
 }
 
-fn fixed_kernel_window_capacity_bytes<Partition, Partial>(
+fn fixed_kernel_heap_capacity_bytes<Partition, Partial>(
     workers: usize,
     maximum_partitions_per_block: usize,
 ) -> Result<u64, BoundedStreamPlanError> {
@@ -86,16 +102,8 @@ fn fixed_kernel_window_capacity_bytes<Partition, Partial>(
     let worker_metadata = per_worker
         .checked_mul(workers)
         .ok_or(BoundedStreamPlanError::KernelWindowCapacity)?;
-    let worker_stacks = if workers == 1 {
-        0
-    } else {
-        BOUNDED_WORKER_STACK_BYTES
-            .checked_mul(workers)
-            .ok_or(BoundedStreamPlanError::KernelWindowCapacity)?
-    };
     let total = partition_metadata
         .checked_add(worker_metadata)
-        .and_then(|bytes| bytes.checked_add(worker_stacks))
         .ok_or(BoundedStreamPlanError::KernelWindowCapacity)?;
     u64::try_from(total).map_err(|_| BoundedStreamPlanError::KernelWindowCapacity)
 }

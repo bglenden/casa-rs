@@ -375,24 +375,29 @@ impl FrozenGriddedNormalReplay {
         }
         let workers = usize::try_from(worker_claim)
             .map_err(|_| io::Error::other("gridded-normal worker count overflow"))?;
-        let maximum_frame_records =
-            budget.maximum_frame_payload_bytes() / GRIDDED_NORMAL_OPERATOR_RECORD_BYTES;
-        let maximum_partitions =
-            maximum_frame_records.clamp(1, GRIDDED_NORMAL_MAXIMUM_PARTITIONS_PER_BLOCK);
-        let partial_bytes = maximum_frame_records
-            .checked_mul(size_of::<num_complex::Complex64>())
-            .ok_or_else(|| io::Error::other("gridded-normal partial residency overflow"))?;
-        let dynamic_kernel_bytes = u64::try_from(partial_bytes)
-            .map_err(|_| io::Error::other("gridded-normal kernel residency overflow"))?;
-        let plan =
-            BoundedStreamPlan::new::<GriddedNormalPredictionWork, GriddedNormalPredictionPartial>(
-                source_slots,
-                workers,
-                source_capacity_bytes,
-                maximum_partitions,
-                dynamic_kernel_bytes,
-            )
-            .map_err(|_| io::Error::other("invalid gridded-normal bounded-stream plan"))?;
+        let plan = project_gridded_normal_replay_stream_plan(
+            budget,
+            source_slots,
+            workers,
+            source_capacity_bytes,
+        )?;
+        let executor_window = gridded_normal_executor_window_allocation(pass_ordinal);
+        let executor_window_bytes = plan.kernel_heap_capacity_bytes();
+        if context
+            .allocations()
+            .iter()
+            .filter(|capability| {
+                capability.allocation() == &executor_window
+                    && capability.capacity_bytes() == executor_window_bytes
+                    && capability.lifetime() == &ClaimLifetime::through_fence(FenceKind::Io)
+            })
+            .count()
+            != 1
+        {
+            return Err(io::Error::other(
+                "gridded-normal replay lacks its exact bounded executor window capability",
+            ));
+        }
         let source = self.spill.block_source().map_err(io::Error::other)?;
         let outcome = execute_bounded(
             plan,
@@ -507,6 +512,37 @@ impl PartitionedKernel<GriddedNormalArtifactFrameStorage> for GriddedNormalRepla
     fn complete(self) -> Result<Self::Completion, Self::Error> {
         self.state.complete()
     }
+}
+
+pub(crate) fn gridded_normal_executor_window_allocation(pass_ordinal: u32) -> AllocationId {
+    AllocationId::new(format!(
+        "gridded-normal-executor-window-{pass_ordinal}-read"
+    ))
+}
+
+pub(crate) fn project_gridded_normal_replay_stream_plan(
+    budget: GriddedNormalArtifactBudget,
+    source_slots: usize,
+    workers: usize,
+    source_capacity_bytes: u64,
+) -> io::Result<BoundedStreamPlan> {
+    let maximum_frame_records =
+        budget.maximum_frame_payload_bytes() / GRIDDED_NORMAL_OPERATOR_RECORD_BYTES;
+    let maximum_partitions =
+        maximum_frame_records.clamp(1, GRIDDED_NORMAL_MAXIMUM_PARTITIONS_PER_BLOCK);
+    let partial_bytes = maximum_frame_records
+        .checked_mul(size_of::<num_complex::Complex64>())
+        .ok_or_else(|| io::Error::other("gridded-normal partial residency overflow"))?;
+    let dynamic_kernel_bytes = u64::try_from(partial_bytes)
+        .map_err(|_| io::Error::other("gridded-normal kernel residency overflow"))?;
+    BoundedStreamPlan::new::<GriddedNormalPredictionWork, GriddedNormalPredictionPartial>(
+        source_slots,
+        workers,
+        source_capacity_bytes,
+        maximum_partitions,
+        dynamic_kernel_bytes,
+    )
+    .map_err(|_| io::Error::other("invalid gridded-normal bounded-stream plan"))
 }
 
 pub(crate) fn project_gridded_normal_artifact_budget(

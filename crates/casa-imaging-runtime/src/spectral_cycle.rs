@@ -758,11 +758,15 @@ pub struct SpectralCycleExecutor {
 pub struct CompleteDataStreamEvidence {
     planned_workers: u64,
     actual_workers: u64,
+    blocks_filled: u64,
+    worker_threads_started: u64,
+    dispatch_batches: u64,
     active_worker_slots: u64,
     partitions_executed: u64,
     commits_completed: u64,
     peak_partial_dynamic_capacity_bytes: u64,
     peak_worker_stack_capacity_bytes: u64,
+    planned_kernel_window_capacity_bytes: u64,
     peak_kernel_window_capacity_bytes: u64,
     prepare_nanos: u128,
     execute_nanos: u128,
@@ -785,6 +789,24 @@ impl CompleteDataStreamEvidence {
     #[must_use]
     pub const fn actual_workers(self) -> u64 {
         self.actual_workers
+    }
+
+    /// Return exact source blocks admitted to the complete-data executor.
+    #[must_use]
+    pub const fn blocks_filled(self) -> u64 {
+        self.blocks_filled
+    }
+
+    /// Return physical worker threads started by the fixed executor team.
+    #[must_use]
+    pub const fn worker_threads_started(self) -> u64 {
+        self.worker_threads_started
+    }
+
+    /// Return fixed-team dispatches; each nonempty source block is one batch.
+    #[must_use]
+    pub const fn dispatch_batches(self) -> u64 {
+        self.dispatch_batches
     }
 
     /// Return worker slots that executed at least one partition.
@@ -815,6 +837,12 @@ impl CompleteDataStreamEvidence {
     #[must_use]
     pub const fn peak_worker_stack_capacity_bytes(self) -> u64 {
         self.peak_worker_stack_capacity_bytes
+    }
+
+    /// Return the complete heap, worker-stack, and partial window admitted by the plan.
+    #[must_use]
+    pub const fn planned_kernel_window_capacity_bytes(self) -> u64 {
+        self.planned_kernel_window_capacity_bytes
     }
 
     /// Return the peak complete prepared/worker/partial window capacity.
@@ -1070,11 +1098,15 @@ impl SpectralCycleExecutor {
         Some(CompleteDataStreamEvidence {
             planned_workers: u64::try_from(stream.workers).ok()?,
             actual_workers: u64::try_from(stream.workers).ok()?,
+            blocks_filled: stream.blocks_filled,
+            worker_threads_started: stream.worker_threads_started,
+            dispatch_batches: stream.dispatch_batches,
             active_worker_slots: u64::try_from(stream.workers_with_nonzero_partitions).ok()?,
             partitions_executed: stream.partitions_executed,
             commits_completed: stream.commits_completed,
             peak_partial_dynamic_capacity_bytes: stream.peak_partial_dynamic_capacity_bytes,
             peak_worker_stack_capacity_bytes: stream.peak_worker_stack_capacity_bytes,
+            planned_kernel_window_capacity_bytes: stream.planned_kernel_window_capacity_bytes,
             peak_kernel_window_capacity_bytes: stream.peak_kernel_window_capacity_bytes,
             prepare_nanos: stream.prepare_nanos,
             execute_nanos: stream.execute_nanos,
