@@ -829,7 +829,7 @@ impl CompleteDataStreamEvidence {
         self.prepare_nanos
     }
 
-    /// Return worker execution time, measured by scheduler waves.
+    /// Return worker execution time, measured by source-block dispatch batches.
     #[must_use]
     pub const fn execute_nanos(self) -> u128 {
         self.execute_nanos
@@ -1688,7 +1688,7 @@ impl SpectralCycleExecutor {
             return;
         };
         eprintln!(
-            "imaging_gridded_replay_summary ordinal={} blocks={} artifact_bytes={} payload_bytes={} read_bytes={} read_operations={} payload_copy_bytes={} payload_copy_operations={} buffer_allocations={} buffer_reuses={} source_slots={} workers={} worker_threads_started={} dispatch_waves={} active_worker_slots={} minimum_partitions_per_active_worker={} maximum_partitions_per_active_worker={} worker_slots={:?} partitions_executed={} commits_completed={} executed_work_identity={:x?} committed_work_identity={:x?} planned_source_capacity_bytes={} planned_kernel_window_capacity_bytes={} peak_partial_dynamic_capacity_bytes={} peak_worker_stack_capacity_bytes={} peak_kernel_window_capacity_bytes={} peak_live_source_blocks={} peak_live_source_current_bytes={} peak_live_source_capacity_bytes={} ready_queue_high_water={} producer_wait_nanos={} consumer_wait_nanos={} source_starved_nanos={} overlap_nanos={} source_fill_nanos={} prepare_nanos={} execute_nanos={} commit_nanos={} wall_nanos={}",
+            "imaging_gridded_replay_summary ordinal={} blocks={} artifact_bytes={} payload_bytes={} read_bytes={} read_operations={} payload_copy_bytes={} payload_copy_operations={} buffer_allocations={} buffer_reuses={} source_slots={} admitted_worker_lanes={} worker_threads_started={} dispatch_batches={} active_worker_lanes={} minimum_logical_partitions_per_active_lane={} maximum_logical_partitions_per_active_lane={} worker_lanes={:?} logical_partitions_executed={} logical_commits_completed={} executed_work_identity={:x?} committed_work_identity={:x?} planned_source_capacity_bytes={} planned_kernel_window_capacity_bytes={} peak_partial_dynamic_capacity_bytes={} peak_worker_stack_capacity_bytes={} peak_kernel_window_capacity_bytes={} peak_live_source_blocks={} peak_live_source_current_bytes={} peak_live_source_capacity_bytes={} ready_queue_high_water={} producer_wait_nanos={} consumer_wait_nanos={} source_starved_nanos={} overlap_nanos={} source_fill_nanos={} prepare_nanos={} execute_nanos={} commit_nanos={} wall_nanos={}",
             self.pass.ordinal(),
             stream.blocks_filled,
             artifact.artifact_bytes(),
@@ -1702,7 +1702,7 @@ impl SpectralCycleExecutor {
             stream.source_slots,
             stream.workers,
             stream.worker_threads_started,
-            stream.dispatch_waves,
+            stream.dispatch_batches,
             stream.workers_with_nonzero_partitions,
             stream.minimum_partitions_per_active_worker,
             stream.maximum_partitions_per_active_worker,

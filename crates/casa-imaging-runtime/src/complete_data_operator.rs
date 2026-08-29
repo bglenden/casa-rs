@@ -379,12 +379,8 @@ impl FrozenGriddedNormalReplay {
             budget.maximum_frame_payload_bytes() / GRIDDED_NORMAL_OPERATOR_RECORD_BYTES;
         let maximum_partitions =
             maximum_frame_records.clamp(1, GRIDDED_NORMAL_MAXIMUM_PARTITIONS_PER_BLOCK);
-        let maximum_records_per_partition = maximum_frame_records
-            .div_ceil(GRIDDED_NORMAL_MAXIMUM_PARTITIONS_PER_BLOCK)
-            .max(1);
-        let partial_bytes = maximum_records_per_partition
+        let partial_bytes = maximum_frame_records
             .checked_mul(size_of::<num_complex::Complex64>())
-            .and_then(|bytes| bytes.checked_mul(workers.min(maximum_partitions)))
             .ok_or_else(|| io::Error::other("gridded-normal partial residency overflow"))?;
         let dynamic_kernel_bytes = u64::try_from(partial_bytes)
             .map_err(|_| io::Error::other("gridded-normal kernel residency overflow"))?;
