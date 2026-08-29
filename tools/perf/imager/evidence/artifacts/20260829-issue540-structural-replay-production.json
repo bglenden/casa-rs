@@ -19,6 +19,21 @@
       "architecture structural gate"
     ]
   },
+  "approved_receipt_schema_change": {
+    "revision": "1aef9e250",
+    "schema_version": 19,
+    "new_claim_lifetime": "artifact",
+    "compatibility_fallback": false,
+    "approval": "The user explicitly approved this narrow persisted receipt-schema change on 2026-08-29 after independent review identified that no existing lifetime could truthfully represent cross-plan artifact ownership.",
+    "focused_verification": [
+      "127 runtime library tests passed with 3 mounted-data tests ignored",
+      "5 spectral-cycle compile/plan/run tests passed",
+      "14 continuum application tests passed",
+      "runtime and application all-target clippy passed with warnings denied",
+      "documentation and architecture gates passed"
+    ],
+    "excluded_broad_fixture": "The cost-model ProductPublication(MissingProjection) failure reproduces identically at 327d5a9a6 and e3bae022b before schema v19 and this structural tranche; it is a stale successful-publication fixture, not a receipt-schema regression."
+  },
   "workload": {
     "manifest": "tools/perf/imager/workloads/wave3-standard-mfs-single-term-heavy-wave2-serial.json",
     "dataset": "wave1/vla/single/medium/ms/wave1-vla-single-medium.ms",
