@@ -1194,7 +1194,6 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
         "standard_mfs_runtime_plan": [],
         "source_stream_memory_plan": [],
         "imaging_source_read_ahead": [],
-        "imaging_gridded_replay": [],
         "standard_mfs_source_read_ahead": [],
         "dirty_product_fft": [],
         "dirty_product_gpu_resident": [],
@@ -1243,8 +1242,6 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
             buckets["source_stream_memory_plan"].append(parsed)
         elif name == "imaging_source_read_ahead_summary":
             buckets["imaging_source_read_ahead"].append(parsed)
-        elif name == "imaging_gridded_replay_summary":
-            buckets["imaging_gridded_replay"].append(parsed)
         elif name == "standard_mfs_source_read_ahead_summary":
             parsed.setdefault("fields", {})["mode"] = "standard_mfs"
             buckets["imaging_source_read_ahead"].append(parsed)
