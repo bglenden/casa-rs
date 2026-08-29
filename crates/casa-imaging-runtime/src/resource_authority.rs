@@ -2476,6 +2476,44 @@ impl ResourcePermit {
         self.amount
     }
 
+    /// Return unused capacity from this permit while preserving the remaining
+    /// ownership under the same admitted lease.
+    pub(crate) fn narrow_temporary_storage_to(&mut self, amount: u64) -> Result<(), ResourceError> {
+        if !matches!(
+            self.resource,
+            LeaseResource::Storage {
+                use_kind: StorageUseKind::Temporary,
+                ..
+            }
+        ) {
+            return Err(ResourceError::Invalid(
+                "only temporary-storage permits may be narrowed".to_string(),
+            ));
+        }
+        if amount == 0 || amount > self.amount {
+            return Err(ResourceError::Invalid(
+                "a narrowed resource permit must retain a positive amount within its current ownership"
+                    .to_string(),
+            ));
+        }
+        if amount == self.amount {
+            return Ok(());
+        }
+        let returned = self
+            .amount
+            .checked_sub(amount)
+            .ok_or(ResourceError::Overflow("narrowed resource permit"))?;
+        release_permit(
+            &self.inner,
+            self.lease_id,
+            &self.resource,
+            &self.accounting_resource,
+            returned,
+        )?;
+        self.amount = amount;
+        Ok(())
+    }
+
     /// Releases this consumption and any now-quiescent pending lease.
     pub fn release(mut self) -> Result<LeaseRelease, ResourceError> {
         let released = release_permit(

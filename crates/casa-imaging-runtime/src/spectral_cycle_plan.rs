@@ -300,6 +300,7 @@ impl SpectralCyclePlan {
                 weighting.limits().max_block_samples(),
             )
             .map_err(|_| SpectralCyclePlanError::Overflow)?;
+        let retained_artifact_bytes = gridded_replay.map(|descriptor| descriptor.bytes());
         let (physical, source_resources, replay) = match pass.phase() {
             SpectralPassPhase::InitialMajor => {
                 let (base, source_resources) =
@@ -397,7 +398,7 @@ impl SpectralCyclePlan {
         }
         let gridded_normal_reservation_bytes = gridded_normal_storage
             .as_ref()
-            .map(|_| artifact_budget.maximum_artifact_bytes());
+            .map(|_| retained_artifact_bytes.unwrap_or(artifact_budget.maximum_artifact_bytes()));
         Ok(Self {
             physical,
             weighting,

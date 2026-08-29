@@ -69,9 +69,9 @@ impl GriddedNormalArtifactRetention {
         storage: &GriddedNormalReplayStorage,
         bytes: u64,
     ) -> io::Result<Self> {
-        if !permit.covers_temporary_storage(bytes) {
+        if !permit.covers_exact_temporary_storage(bytes) {
             return Err(io::Error::other(
-                "plan-issued artifact permit does not cover replay storage",
+                "plan-issued artifact permit does not exactly match replay storage",
             ));
         }
         Ok(Self {

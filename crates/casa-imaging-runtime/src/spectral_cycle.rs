@@ -2190,11 +2190,20 @@ impl WorkImplementation for SpectralCycleExecutor {
         let maximum_bytes = state
             .gridded_storage_ceiling
             .ok_or_else(|| io::Error::other("artifact retention lacks its planned ceiling"))?;
-        state
+        let replay = state
             .gridded_replay
             .as_mut()
-            .ok_or_else(|| io::Error::other("artifact retention precedes replay sealing"))?
-            .retain_plan_storage(permit, &storage, maximum_bytes)?;
+            .ok_or_else(|| io::Error::other("artifact retention precedes replay sealing"))?;
+        let sealed_bytes = replay.descriptor().bytes();
+        if sealed_bytes > maximum_bytes {
+            return Err(io::Error::other(
+                "sealed replay exceeds its admitted storage ceiling",
+            ));
+        }
+        let permit = permit
+            .narrow_temporary_storage(sealed_bytes)
+            .map_err(io::Error::other)?;
+        replay.retain_plan_storage(permit, &storage, sealed_bytes)?;
         Ok(true)
     }
 

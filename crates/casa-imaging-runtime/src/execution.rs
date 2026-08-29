@@ -259,8 +259,27 @@ impl RetainedArtifactPermit {
         self.lease_epoch
     }
 
+    /// Narrow this capability to the sealed artifact's exact storage bytes.
+    pub(crate) fn narrow_temporary_storage(mut self, amount: u64) -> Result<Self, ResourceError> {
+        if self.permits.len() != 1
+            || !matches!(
+                self.permits[0].resource(),
+                LeaseResource::Storage {
+                    use_kind: StorageUseKind::Temporary,
+                    ..
+                }
+            )
+        {
+            return Err(ResourceError::Invalid(
+                "artifact retention requires exactly one temporary-storage permit".to_string(),
+            ));
+        }
+        self.permits[0].narrow_temporary_storage_to(amount)?;
+        Ok(self)
+    }
+
     /// Return whether this permit contains exactly one matching resource claim.
-    pub(crate) fn covers_temporary_storage(&self, amount: u64) -> bool {
+    pub(crate) fn covers_exact_temporary_storage(&self, amount: u64) -> bool {
         self.permits.len() == 1
             && matches!(
                 self.permits[0].resource(),
@@ -269,7 +288,7 @@ impl RetainedArtifactPermit {
                     ..
                 }
             )
-            && self.permits[0].amount() >= amount
+            && self.permits[0].amount() == amount
     }
 }
 

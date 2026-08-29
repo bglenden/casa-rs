@@ -1648,7 +1648,7 @@ fn storage_transfer_and_accelerator_demands_bind_their_topology_resources() {
         storage: vec![StorageDemand {
             demand_id: "scratch-io".to_string(),
             domain: storage.clone(),
-            temporary_bytes: 100,
+            temporary_bytes: 1_000,
             staged_output_bytes: 0,
             final_output_bytes: 0,
             persistent_cache_bytes: 0,
@@ -1711,15 +1711,18 @@ fn storage_transfer_and_accelerator_demands_bind_their_topology_resources() {
         Some(2)
     );
 
-    let retained = lease
+    let mut retained = lease
         .permit(
             LeaseResource::Storage {
                 demand_id: "scratch-io".to_string(),
                 use_kind: StorageUseKind::Temporary,
             },
-            100,
+            1_000,
         )
         .expect("artifact storage fits the admitted plan");
+    retained
+        .narrow_temporary_storage_to(100)
+        .expect("sealed artifact returns unused planned storage");
     assert!(
         !lease
             .release_retaining_artifact_storage()
