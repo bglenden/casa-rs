@@ -95,9 +95,73 @@ pub struct SpectralCyclePlan {
     source_resources: SelectedObservationSourceResources,
     pass: SpectralPassIdentity,
     minor_cycle_node: Option<WorkNodeId>,
-    gridded_replay: Option<crate::GriddedNormalReplayDescriptor>,
-    gridded_normal_storage: Option<GriddedNormalReplayStorage>,
-    gridded_normal_reservation_bytes: Option<u64>,
+    gridded_normal: Option<PlannedGriddedNormalBinding>,
+}
+
+/// One complete plan-issued capability for gridded-normal compilation or replay.
+pub struct PlannedGriddedNormalBinding {
+    kind: PlannedGriddedNormalKind,
+}
+
+enum PlannedGriddedNormalKind {
+    Compilation {
+        storage: GriddedNormalReplayStorage,
+        maximum_bytes: u64,
+    },
+    Replay {
+        descriptor: crate::GriddedNormalReplayDescriptor,
+        replay: Box<crate::FrozenGriddedNormalReplay>,
+    },
+}
+
+impl PlannedGriddedNormalBinding {
+    fn compilation(storage: GriddedNormalReplayStorage, maximum_bytes: u64) -> Self {
+        Self {
+            kind: PlannedGriddedNormalKind::Compilation {
+                storage,
+                maximum_bytes,
+            },
+        }
+    }
+
+    fn replay(
+        replay: crate::FrozenGriddedNormalReplay,
+        storage: GriddedNormalReplayStorage,
+    ) -> Result<Self, SpectralCyclePlanError> {
+        let descriptor = replay.descriptor();
+        let retained_bytes = descriptor.bytes();
+        if !replay.validates_plan_storage(&storage, retained_bytes) {
+            return Err(SpectralCyclePlanError::InvalidGriddedNormalReplay);
+        }
+        Ok(Self {
+            kind: PlannedGriddedNormalKind::Replay {
+                descriptor,
+                replay: Box::new(replay),
+            },
+        })
+    }
+
+    pub(crate) fn into_compilation(self) -> Option<(GriddedNormalReplayStorage, u64)> {
+        match self.kind {
+            PlannedGriddedNormalKind::Compilation {
+                storage,
+                maximum_bytes,
+            } => Some((storage, maximum_bytes)),
+            PlannedGriddedNormalKind::Replay { .. } => None,
+        }
+    }
+
+    pub(crate) fn into_replay(
+        self,
+    ) -> Option<(
+        crate::GriddedNormalReplayDescriptor,
+        crate::FrozenGriddedNormalReplay,
+    )> {
+        match self.kind {
+            PlannedGriddedNormalKind::Replay { descriptor, replay } => Some((descriptor, *replay)),
+            PlannedGriddedNormalKind::Compilation { .. } => None,
+        }
+    }
 }
 
 /// Named ownership transfer from one sealed spectral-cycle plan to its executor.
@@ -114,12 +178,8 @@ pub struct SpectralCyclePlanParts {
     pub pass: SpectralPassIdentity,
     /// Optional scheduler-accounted minor-cycle node.
     pub minor_cycle_node: Option<WorkNodeId>,
-    /// Optional exact sealed replay identity for later majors.
-    pub gridded_replay: Option<crate::GriddedNormalReplayDescriptor>,
-    /// Optional plan-owned private storage for initial compilation.
-    pub gridded_normal_storage: Option<GriddedNormalReplayStorage>,
-    /// Optional cross-plan temporary-storage ceiling for the sealed replay.
-    pub gridded_normal_reservation_bytes: Option<u64>,
+    /// Complete plan-issued gridded-normal capability, when this pass uses one.
+    pub gridded_normal: Option<PlannedGriddedNormalBinding>,
 }
 
 impl SpectralCyclePlan {
@@ -163,7 +223,7 @@ impl SpectralCyclePlan {
         registry: &R,
         policy: SpectralCycleExecutionPolicy,
         input: &FinalMajorPhaseInput,
-        gridded_replay: crate::GriddedNormalReplayDescriptor,
+        gridded_replay: crate::FrozenGriddedNormalReplay,
     ) -> Result<Self, SpectralCyclePlanError> {
         Self::build(
             problem,
@@ -183,7 +243,7 @@ impl SpectralCyclePlan {
         policy: SpectralCycleExecutionPolicy,
         input: &FinalMajorPhaseInput,
         ordinal: u32,
-        gridded_replay: crate::GriddedNormalReplayDescriptor,
+        gridded_replay: crate::FrozenGriddedNormalReplay,
     ) -> Result<Self, SpectralCyclePlanError> {
         Self::build(
             problem,
@@ -203,7 +263,7 @@ impl SpectralCyclePlan {
         policy: SpectralCycleExecutionPolicy,
         input: &FinalMajorPhaseInput,
         ordinal: u32,
-        gridded_replay: crate::GriddedNormalReplayDescriptor,
+        gridded_replay: crate::FrozenGriddedNormalReplay,
     ) -> Result<Self, SpectralCyclePlanError> {
         Self::build(
             problem,
@@ -268,9 +328,7 @@ impl SpectralCyclePlan {
             source_resources,
             pass,
             minor_cycle_node: None,
-            gridded_replay: None,
-            gridded_normal_storage: None,
-            gridded_normal_reservation_bytes: None,
+            gridded_normal: None,
         })
     }
 
@@ -281,7 +339,7 @@ impl SpectralCyclePlan {
         pass: SpectralPassIdentity,
         include_minor: bool,
         phase_input: Option<ArtifactIdentity>,
-        gridded_replay: Option<crate::GriddedNormalReplayDescriptor>,
+        gridded_replay: Option<crate::FrozenGriddedNormalReplay>,
     ) -> Result<Self, SpectralCyclePlanError> {
         let weighting = plan_weighting(problem, policy.weighting_limits)?;
         let gridded_normal_storage = if include_minor || gridded_replay.is_some() {
@@ -300,7 +358,11 @@ impl SpectralCyclePlan {
                 weighting.limits().max_block_samples(),
             )
             .map_err(|_| SpectralCyclePlanError::Overflow)?;
-        let retained_artifact_bytes = gridded_replay.map(|descriptor| descriptor.bytes());
+        let gridded_replay_descriptor = gridded_replay
+            .as_ref()
+            .map(crate::FrozenGriddedNormalReplay::descriptor);
+        let retained_artifact_bytes =
+            gridded_replay_descriptor.map(|descriptor| descriptor.bytes());
         let (physical, source_resources, replay) = match pass.phase() {
             SpectralPassPhase::InitialMajor => {
                 let (base, source_resources) =
@@ -347,7 +409,8 @@ impl SpectralCyclePlan {
                     return Err(SpectralCyclePlanError::VisibilityWriteCount);
                 }
                 let replay = pass_node(GRIDDED_REPLAY_NODE, pass);
-                let gridded_replay = gridded_replay.ok_or(SpectralCyclePlanError::Overflow)?;
+                let gridded_replay =
+                    gridded_replay_descriptor.ok_or(SpectralCyclePlanError::Overflow)?;
                 let (base, source_resources) = base_gridded_physical(
                     problem,
                     registry,
@@ -396,9 +459,17 @@ impl SpectralCyclePlan {
         if let Some(minor) = &minor_cycle_node {
             physical = append_minor(registry, physical, &policy, minor)?;
         }
-        let gridded_normal_reservation_bytes = gridded_normal_storage
-            .as_ref()
-            .map(|_| retained_artifact_bytes.unwrap_or(artifact_budget.maximum_artifact_bytes()));
+        let gridded_normal = match (gridded_normal_storage, gridded_replay) {
+            (Some(storage), Some(replay)) => {
+                Some(PlannedGriddedNormalBinding::replay(replay, storage)?)
+            }
+            (Some(storage), None) => Some(PlannedGriddedNormalBinding::compilation(
+                storage,
+                retained_artifact_bytes.unwrap_or(artifact_budget.maximum_artifact_bytes()),
+            )),
+            (None, None) => None,
+            (None, Some(_)) => return Err(SpectralCyclePlanError::MissingGriddedNormalStorage),
+        };
         Ok(Self {
             physical,
             weighting,
@@ -406,9 +477,7 @@ impl SpectralCyclePlan {
             source_resources,
             pass,
             minor_cycle_node,
-            gridded_replay,
-            gridded_normal_storage,
-            gridded_normal_reservation_bytes,
+            gridded_normal,
         })
     }
 
@@ -429,9 +498,7 @@ impl SpectralCyclePlan {
             source_resources: self.source_resources,
             pass: self.pass,
             minor_cycle_node: self.minor_cycle_node,
-            gridded_replay: self.gridded_replay,
-            gridded_normal_reservation_bytes: self.gridded_normal_reservation_bytes,
-            gridded_normal_storage: self.gridded_normal_storage,
+            gridded_normal: self.gridded_normal,
         }
     }
 }
@@ -1850,6 +1917,8 @@ fn append_minor<R: ImplementationRegistry>(
 pub enum SpectralCyclePlanError {
     /// A clean initial-major plan omitted its runtime-private spill storage.
     MissingGriddedNormalStorage,
+    /// A later-major plan received replay state outside its retained storage authority.
+    InvalidGriddedNormalReplay,
     /// Visibility-write bounds were supplied without a logical destination.
     VisibilityWriteCount,
     /// A byte, row, or elapsed-time projection overflowed its identity domain.

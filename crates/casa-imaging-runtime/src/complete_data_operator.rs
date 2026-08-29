@@ -290,7 +290,7 @@ impl FrozenGriddedNormalReplay {
         &mut self,
         permit: crate::RetainedArtifactPermit,
         storage: &GriddedNormalReplayStorage,
-        maximum_bytes: u64,
+        retained_bytes: u64,
     ) -> io::Result<()> {
         if self.retention.is_some() {
             return Err(io::Error::other(
@@ -301,7 +301,7 @@ impl FrozenGriddedNormalReplay {
             crate::gridded_normal_artifact::GriddedNormalArtifactRetention::bind(
                 permit,
                 storage,
-                maximum_bytes,
+                retained_bytes,
             )?,
         );
         Ok(())
@@ -310,11 +310,11 @@ impl FrozenGriddedNormalReplay {
     pub(crate) fn validates_plan_storage(
         &self,
         storage: &GriddedNormalReplayStorage,
-        maximum_bytes: u64,
+        retained_bytes: u64,
     ) -> bool {
         self.retention
             .as_ref()
-            .is_some_and(|retention| retention.validates_bytes(storage, maximum_bytes))
+            .is_some_and(|retention| retention.validates_bytes(storage, retained_bytes))
     }
     /// Return the immutable descriptor consumed by later-major planning.
     #[must_use]

@@ -118,7 +118,8 @@ pub use spectral_cycle::{
     SpectralCyclePassInput, SpectralCycleRegistry,
 };
 pub use spectral_cycle_plan::{
-    SpectralCycleExecutionPolicy, SpectralCyclePlan, SpectralCyclePlanError, SpectralCyclePlanParts,
+    PlannedGriddedNormalBinding, SpectralCycleExecutionPolicy, SpectralCyclePlan,
+    SpectralCyclePlanError, SpectralCyclePlanParts,
 };
 pub use weighting::{
     ContinuumDensityCallbackError, ContinuumDensityTraversalError, FrozenWeightingArtifact,

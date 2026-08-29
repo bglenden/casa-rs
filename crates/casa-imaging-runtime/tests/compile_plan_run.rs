@@ -2859,6 +2859,7 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
         implementation_metadata(&problem),
         [implementation(73)],
     );
+    let gridded_storage = artifact_storage();
     let planned = SpectralCyclePlan::initial(
         &problem,
         &planning_registry,
@@ -2871,7 +2872,7 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
             4 * 4 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
             900_000,
         )
-        .with_gridded_normal_storage(artifact_storage()),
+        .with_gridded_normal_storage(gridded_storage.clone()),
     )
     .expect("production initial plan");
     let minor_node = planned.minor_cycle_node().expect("T21 node").clone();
@@ -2881,8 +2882,7 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
         complete_data: complete,
         source_resources: resources,
         pass,
-        gridded_normal_storage: planned_storage,
-        gridded_normal_reservation_bytes,
+        gridded_normal: planned_gridded_normal,
         ..
     } = planned.into_parts();
     // The exact 4x4 density scratch and selected-owner minimum fit the fixture's
@@ -2895,9 +2895,8 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
         replay_proof_bytes,
     )
     .expect("cross-plan frozen weighting reservation");
-    let planned_storage = planned_storage.expect("initial plan retains its artifact storage");
-    let gridded_storage_bytes =
-        gridded_normal_reservation_bytes.expect("initial plan reserves artifact storage");
+    let planned_gridded_normal =
+        planned_gridded_normal.expect("initial plan binds gridded-normal compilation");
     let selected = initial_access
         .open(&problem)
         .expect("owner-validated initial selected observation");
@@ -2914,7 +2913,7 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
         SpectralCyclePassInput::Initial,
     )
     .with_frozen_weighting_reservation(frozen_reservation)
-    .with_planned_gridded_normal_storage(&planned_storage, gridded_storage_bytes)
+    .with_planned_gridded_normal_binding(planned_gridded_normal)
     .expect("gridded-normal compiler and spill writer")
     .with_reconstruction_cycle(
         minor_node.clone(),
@@ -3071,9 +3070,9 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
             4 * 4 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
             900_000,
         )
-        .with_gridded_normal_storage(planned_storage.clone()),
+        .with_gridded_normal_storage(gridded_storage),
         &final_input,
-        replay_descriptor,
+        gridded_replay,
     )
     .expect("production final-major plan");
     let initial_nodes = execution_plan
@@ -3088,9 +3087,7 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
         complete_data: final_complete,
         pass: final_pass,
         minor_cycle_node: final_minor,
-        gridded_replay: planned_replay,
-        gridded_normal_storage: final_storage,
-        gridded_normal_reservation_bytes: final_storage_bytes,
+        gridded_normal: planned_gridded_normal,
         ..
     } = final_planned.into_parts();
     assert!(final_minor.is_none());
@@ -3216,10 +3213,7 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
         final_complete,
         ExecutableModelProblem::from_compiled(problem.clone()).expect("final executable model"),
         SpectralCyclePassInput::FinalMajor(final_input),
-        planned_replay.expect("final plan retains exact gridded replay identity"),
-        &final_storage.expect("final plan binds retained artifact storage"),
-        final_storage_bytes.expect("final plan binds retained storage ceiling"),
-        gridded_replay,
+        planned_gridded_normal.expect("final plan binds retained gridded replay"),
     )
     .expect("final executor accepts its planned replay")
     .with_frozen_weighting(frozen_weighting);
@@ -3329,8 +3323,7 @@ fn execute_initial_reconstruction_cycle(
         complete_data: complete,
         source_resources: resources,
         pass,
-        gridded_normal_storage: planned_storage,
-        gridded_normal_reservation_bytes,
+        gridded_normal: planned_gridded_normal,
         ..
     } = planned.into_parts();
     let reservation = FrozenWeightingReservation::acquire(
@@ -3340,9 +3333,8 @@ fn execute_initial_reconstruction_cycle(
         replay_proof_bytes,
     )
     .expect("frozen weighting reservation");
-    let planned_storage = planned_storage.expect("channel-cycle plan retains artifact storage");
-    let gridded_storage_bytes =
-        gridded_normal_reservation_bytes.expect("channel-cycle plan reserves artifact storage");
+    let planned_gridded_normal =
+        planned_gridded_normal.expect("channel-cycle plan binds gridded-normal compilation");
     let program = casa_imaging_reconstruction::MinorCycleProgram::for_algorithm(
         problem.reconstruction().algorithm().clone(),
         problem.reconstruction().controls(),
@@ -3364,7 +3356,7 @@ fn execute_initial_reconstruction_cycle(
         SpectralCyclePassInput::Initial,
     )
     .with_frozen_weighting_reservation(reservation)
-    .with_planned_gridded_normal_storage(&planned_storage, gridded_storage_bytes)
+    .with_planned_gridded_normal_binding(planned_gridded_normal)
     .expect("channel-cycle gridded-normal compiler")
     .with_reconstruction_cycle(
         cycle_node.clone(),

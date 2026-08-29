@@ -995,21 +995,11 @@ impl SpectralCycleExecutor {
         complete_data: CompleteDataPlanFragment,
         executable: ExecutableModelProblem,
         pass_input: SpectralCyclePassInput,
-        planned_replay: crate::GriddedNormalReplayDescriptor,
-        planned_storage: &crate::GriddedNormalReplayStorage,
-        retained_storage_bytes: u64,
-        replay: FrozenGriddedNormalReplay,
+        planned_gridded_normal: crate::PlannedGriddedNormalBinding,
     ) -> io::Result<Self> {
-        if replay.descriptor() != planned_replay {
-            return Err(io::Error::other(
-                "sealed gridded-normal replay does not match the immutable plan",
-            ));
-        }
-        if !replay.validates_plan_storage(planned_storage, retained_storage_bytes) {
-            return Err(io::Error::other(
-                "sealed gridded-normal replay lacks its plan-issued storage capacity",
-            ));
-        }
+        let (planned_replay, replay) = planned_gridded_normal.into_replay().ok_or_else(|| {
+            io::Error::other("later major requires a plan-issued gridded-normal replay")
+        })?;
         let phase_input_artifact = match &pass_input {
             SpectralCyclePassInput::Initial => None,
             SpectralCyclePassInput::FinalMajor(input) => Some((
@@ -1107,10 +1097,9 @@ impl SpectralCycleExecutor {
     }
 
     /// Attach the initial run's plan-bound gridded-normal storage.
-    pub fn with_planned_gridded_normal_storage(
+    pub fn with_planned_gridded_normal_binding(
         mut self,
-        storage: &crate::GriddedNormalReplayStorage,
-        maximum_bytes: u64,
+        planned_gridded_normal: crate::PlannedGriddedNormalBinding,
     ) -> io::Result<Self> {
         if self.pass.phase() != crate::SpectralPassPhase::InitialMajor {
             return Err(io::Error::other(
@@ -1121,7 +1110,11 @@ impl SpectralCycleExecutor {
             .state
             .get_mut()
             .map_err(|_| io::Error::other("new spectral cycle executor mutex poisoned"))?;
-        state.gridded_storage = Some(storage.clone());
+        let (storage, maximum_bytes) =
+            planned_gridded_normal.into_compilation().ok_or_else(|| {
+                io::Error::other("initial major requires a plan-issued compilation binding")
+            })?;
+        state.gridded_storage = Some(storage);
         state.gridded_storage_ceiling = Some(maximum_bytes);
         Ok(self)
     }
