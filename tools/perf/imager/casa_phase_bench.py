@@ -27,6 +27,10 @@ def env_str(name: str) -> str:
     return os.environ[name]
 
 
+def env_bool(name: str) -> bool:
+    return env_str(name).lower() in ("1", "true", "yes", "on")
+
+
 def millis(seconds: float) -> float:
     return seconds * 1_000.0
 
@@ -211,7 +215,9 @@ def main() -> None:
     cell_arcsec = env_str("CASA_RS_BENCH_CELL_ARCSEC")
     weighting = env_str("CASA_RS_BENCH_WEIGHTING")
     robust = env_float("CASA_RS_BENCH_ROBUST")
+    perchanweightdensity = env_bool("CASA_RS_BENCH_PERCHANWEIGHTDENSITY")
     deconvolver = env_str("CASA_RS_BENCH_DECONVOLVER")
+    nterms = env_int("CASA_RS_BENCH_NTERMS")
     scales_env = env_str("CASA_RS_BENCH_SCALES")
     niter = env_int("CASA_RS_BENCH_NITER")
     nmajor = env_int("CASA_RS_BENCH_NMAJOR")
@@ -226,6 +232,12 @@ def main() -> None:
     minpsffraction = env_float("CASA_RS_BENCH_MIN_PSFFRACTION")
     maxpsffraction = env_float("CASA_RS_BENCH_MAX_PSFFRACTION")
     interpolation = env_str("CASA_RS_BENCH_INTERPOLATION")
+    readonly_ms = os.environ.get("CASA_RS_BENCH_READONLY_MS", "0").lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
 
     scales = [] if scales_env == "" else [int(float(value)) for value in scales_env.split(",")]
     spw_selector = (
@@ -292,6 +304,7 @@ def main() -> None:
                     restart=True,
                     weighting=weighting,
                     robust=robust,
+                    perchanweightdensity=perchanweightdensity,
                     niter=niter,
                     nmajor=nmajor,
                     cycleniter=cycleniter,
@@ -302,6 +315,7 @@ def main() -> None:
                     minpsffraction=minpsffraction,
                     maxpsffraction=maxpsffraction,
                     deconvolver=deconvolver,
+                    nterms=nterms,
                     scales=scales,
                     usemask="user",
                     mask="",
@@ -324,6 +338,10 @@ def main() -> None:
                     )
                 elapsed, param_list = timed(ImagerParameters, **parameter_kwargs)
                 per_stage["parameter_setup"] += elapsed
+                if readonly_ms:
+                    for selection in param_list.allselpars.values():
+                        selection["readonly"] = True
+                        selection["usescratch"] = False
 
                 elapsed, imager = timed(InstrumentedPySynthesisImager, params=param_list)
                 per_stage["construct_imager"] += elapsed
@@ -446,6 +464,7 @@ def main() -> None:
     for name in stage_names:
         print(f"  {name}={millis(median(stage_values[name])):.3f}")
     print("instrumentation notes:")
+    print(f"  readonly_ms={readonly_ms}; savemodel=none")
     print("  select_data wraps synthesisimager.selectdata for each selected MS.")
     print("  define_image wraps synthesisimager.defineimage for each image field.")
     print("  set_weighting_core wraps synthesisimager.setweighting only.")
