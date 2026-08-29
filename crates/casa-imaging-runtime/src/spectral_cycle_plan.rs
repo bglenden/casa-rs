@@ -462,16 +462,24 @@ impl SpectralCyclePlan {
                 (physical, source_resources, replay)
             }
         };
-        let complete_data = CompleteDataPlanFragment::new_with_preparation_node(
-            problem,
-            weighting.limits().max_block_samples(),
-            replay.clone(),
-            pass_node("spectral-operator-fft-plan", pass),
-            match pass.phase() {
-                SpectralPassPhase::InitialMajor => SpectralOperatorPass::InitialMajor,
-                SpectralPassPhase::FinalMajor => SpectralOperatorPass::ResidualRefresh,
-            },
-        )?;
+        let preparation_node = pass_node("spectral-operator-fft-plan", pass);
+        let complete_data = match pass.phase() {
+            SpectralPassPhase::InitialMajor => CompleteDataPlanFragment::new_with_preparation_node(
+                problem,
+                weighting.limits().max_block_samples(),
+                replay.clone(),
+                preparation_node,
+                SpectralOperatorPass::InitialMajor,
+            )?,
+            SpectralPassPhase::FinalMajor => {
+                CompleteDataPlanFragment::gridded_replay_with_preparation_node(
+                    problem,
+                    weighting.limits().max_block_samples(),
+                    replay.clone(),
+                    preparation_node,
+                )?
+            }
+        };
         let (mut physical, complete_data) = complete_data.compose(&physical)?;
         if let Some(bounds) = policy.visibility_write {
             if problem

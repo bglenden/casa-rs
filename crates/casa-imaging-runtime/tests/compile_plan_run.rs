@@ -3188,7 +3188,7 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
         allocation
             .allocation
             .as_str()
-            .starts_with("spectral-operator-primitives-residual-refresh-")
+            .starts_with("spectral-operator-primitives-gridded-residual-refresh-")
     }));
     let residual_grid = final_physical
         .execution_dag()
@@ -3198,12 +3198,64 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
             allocation
                 .id
                 .as_str()
-                .starts_with("spectral-operator-grids-residual-refresh-")
+                .starts_with("spectral-operator-grids-gridded-residual-refresh-")
         })
-        .expect("residual-refresh grid allocation");
+        .expect("gridded residual-refresh grid allocation");
     assert_eq!(
         residual_grid.bytes,
         final_complete.residency().grid_bytes() as u64
+    );
+    assert!(
+        execution_plan
+            .execution_dag()
+            .logical_allocations()
+            .values()
+            .all(|allocation| !allocation
+                .id
+                .as_str()
+                .starts_with("spectral-operator-gridded-route-"))
+    );
+    let route = final_physical
+        .execution_dag()
+        .logical_allocations()
+        .values()
+        .find(|allocation| {
+            allocation
+                .id
+                .as_str()
+                .starts_with("spectral-operator-gridded-route-gridded-residual-refresh-")
+        })
+        .expect("gridded replay route allocation");
+    let expected_route_bytes = 28_u64 + 20;
+    assert_eq!(route.bytes, expected_route_bytes);
+    assert_eq!(
+        route.compatibility.layout,
+        AllocationLayout::new(
+            "spectral-operator-gridded-route-classification-indices-predictions-and-offsets"
+        )
+    );
+    let route_slot = final_physical
+        .execution_dag()
+        .physical_slots()
+        .get(&route.physical_slot)
+        .expect("gridded replay route physical slot");
+    assert_eq!(route_slot.capacity_bytes, expected_route_bytes);
+    let route_demand = final_demand
+        .memory
+        .iter()
+        .find(|demand| demand.allocation_id == route.id.as_str())
+        .expect("gridded replay route memory demand");
+    assert_eq!(route_demand.hard_bytes, expected_route_bytes);
+    assert_eq!(route_demand.preferred_bytes, expected_route_bytes);
+    assert_eq!(
+        final_complete.residency().gridded_route_bytes() as u64,
+        expected_route_bytes
+    );
+    assert!(
+        replay_nodes[0]
+            .allocations
+            .iter()
+            .any(|use_| use_.allocation == route.id)
     );
     let final_executor = SpectralCycleExecutor::new_gridded(
         implementation(73),
@@ -8419,6 +8471,11 @@ fn t37_runtime_residency_tracks_core_and_sampler_halo_depth() {
         "the primitive lease covers prior invariants overlapping the new residual"
     );
     assert_eq!(
+        residual_refresh.residency().gridded_route_bytes(),
+        0,
+        "selected-observation residual work must not inherit artifact-route storage"
+    );
+    assert_eq!(
         two.primitive_output_bytes(),
         one.primitive_output_bytes() * 2
     );
@@ -8441,6 +8498,7 @@ fn t37_runtime_residency_tracks_core_and_sampler_halo_depth() {
                 + residency.fft_resident_bytes()
                 + residency.fft_planning_bytes()
                 + residency.forward_workspace_bytes()
+                + residency.gridded_route_bytes()
                 + residency.primitive_output_bytes()
                 + residency.major_cycle_model_bytes()
         );

@@ -68,6 +68,7 @@ struct StreamSummary {
     peak_partial_dynamic_capacity_bytes: u64,
     peak_worker_stack_capacity_bytes: u64,
     peak_kernel_window_capacity_bytes: u64,
+    planned_gridded_route_capacity_bytes: u64,
     executed_work_identity_digest: [u8; 32],
     committed_work_identity_digest: [u8; 32],
     source_pass_count: u64,
@@ -86,6 +87,7 @@ impl From<CompleteDataStreamEvidence> for StreamSummary {
             peak_partial_dynamic_capacity_bytes: evidence.peak_partial_dynamic_capacity_bytes(),
             peak_worker_stack_capacity_bytes: evidence.peak_worker_stack_capacity_bytes(),
             peak_kernel_window_capacity_bytes: evidence.peak_kernel_window_capacity_bytes(),
+            planned_gridded_route_capacity_bytes: evidence.planned_gridded_route_capacity_bytes(),
             executed_work_identity_digest: evidence.executed_work_identity_digest(),
             committed_work_identity_digest: evidence.committed_work_identity_digest(),
             source_pass_count: evidence.source_pass_count(),
@@ -160,6 +162,34 @@ fn complete_data_mfs_is_equivalent_and_bounded_with_three_workers() {
     assert_eq!(
         serial.final_stream.grid_resident_bytes, parallel.final_stream.grid_resident_bytes,
         "artifact replay must not allocate a full grid per worker",
+    );
+    assert_eq!(
+        serial.initial_stream.planned_gridded_route_capacity_bytes,
+        0
+    );
+    assert_eq!(
+        parallel.initial_stream.planned_gridded_route_capacity_bytes,
+        0
+    );
+    assert_eq!(
+        serial.final_stream.planned_gridded_route_capacity_bytes,
+        28 * 3 + 20,
+        "three-record/three-group constant-basis blocks need one exact reusable route",
+    );
+    assert_eq!(
+        parallel.final_stream.planned_gridded_route_capacity_bytes,
+        serial.final_stream.planned_gridded_route_capacity_bytes,
+        "route residency must not scale with worker count",
+    );
+    assert!(
+        serial.final_stream.peak_partial_dynamic_capacity_bytes
+            <= serial.final_stream.planned_gridded_route_capacity_bytes,
+        "serial replay route residency must remain within its admitted window",
+    );
+    assert!(
+        parallel.final_stream.peak_partial_dynamic_capacity_bytes
+            <= parallel.final_stream.planned_gridded_route_capacity_bytes,
+        "parallel replay route residency must remain within its worker-independent admitted window",
     );
 }
 

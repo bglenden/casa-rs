@@ -342,6 +342,7 @@ impl FrozenGriddedNormalReplay {
         context: WorkExecutionContext<'_>,
         pass_ordinal: u32,
         state: GriddedNormalOperatorState,
+        route_capacity_bytes: u64,
     ) -> io::Result<CompleteDataOperatorResult> {
         let budget = self.spill.budget();
         validate_gridded_artifact_context(context, budget, crate::IoBufferKind::SpillRead)?;
@@ -386,15 +387,20 @@ impl FrozenGriddedNormalReplay {
             .checked_mul(size_of::<num_complex::Complex64>())
             .and_then(|bytes| bytes.checked_mul(workers.min(maximum_partitions)))
             .ok_or_else(|| io::Error::other("gridded-normal partial residency overflow"))?;
-        let dynamic_kernel_bytes = u64::try_from(partial_bytes)
+        let partial_bytes = u64::try_from(partial_bytes)
             .map_err(|_| io::Error::other("gridded-normal kernel residency overflow"))?;
+        if route_capacity_bytes < partial_bytes {
+            return Err(io::Error::other(
+                "gridded-normal route capacity does not cover the transition partial window",
+            ));
+        }
         let plan =
             BoundedStreamPlan::new::<GriddedNormalPredictionWork, GriddedNormalPredictionPartial>(
                 source_slots,
                 workers,
                 source_capacity_bytes,
                 maximum_partitions,
-                dynamic_kernel_bytes,
+                route_capacity_bytes,
             )
             .map_err(|_| io::Error::other("invalid gridded-normal bounded-stream plan"))?;
         let source = self.spill.block_source().map_err(io::Error::other)?;
@@ -513,10 +519,91 @@ impl PartitionedKernel<GriddedNormalArtifactFrameStorage> for GriddedNormalRepla
     }
 }
 
-pub(crate) fn project_gridded_normal_artifact_budget(
+const GRIDDED_NORMAL_ROUTE_CLASSIFICATION_BYTES_PER_RECORD: usize = size_of::<u32>();
+const GRIDDED_NORMAL_ROUTE_INDEX_BYTES_PER_RECORD: usize = size_of::<u64>();
+const GRIDDED_NORMAL_ROUTE_PREDICTION_BYTES_PER_RECORD: usize = size_of::<num_complex::Complex64>();
+const GRIDDED_NORMAL_ROUTE_BYTES_PER_RECORD: usize =
+    GRIDDED_NORMAL_ROUTE_CLASSIFICATION_BYTES_PER_RECORD
+        + GRIDDED_NORMAL_ROUTE_INDEX_BYTES_PER_RECORD
+        + GRIDDED_NORMAL_ROUTE_PREDICTION_BYTES_PER_RECORD;
+const GRIDDED_NORMAL_ROUTE_SECTOR_OFFSET_BYTES: usize = 5 * size_of::<u32>();
+
+/// Exact reusable route scratch admitted for one opaque gridded-normal frame.
+///
+/// Reconstruction routes one bounded frame into four stable sector slices. The
+/// representation retains one packed `u32` classification and one eight-byte
+/// route entry per record. Its prediction vector reserves record capacity even
+/// though only the first `Q <= R` entries are logically occupied. Five `u32`
+/// sector offsets complete the shared storage. The route is shared by all
+/// workers rather than multiplied by the worker count.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct GriddedNormalRouteResidency {
+    maximum_frame_records: usize,
+    maximum_frame_groups: usize,
+    peak_bytes: usize,
+}
+
+impl GriddedNormalRouteResidency {
+    fn new(
+        maximum_frame_records: usize,
+        maximum_frame_groups: usize,
+    ) -> Result<Self, CompleteDataPlanError> {
+        if maximum_frame_groups > maximum_frame_records {
+            return Err(CompleteDataPlanError::ResidencyOverflow);
+        }
+        let peak_bytes = maximum_frame_records
+            .checked_mul(GRIDDED_NORMAL_ROUTE_BYTES_PER_RECORD)
+            .and_then(|bytes| bytes.checked_add(GRIDDED_NORMAL_ROUTE_SECTOR_OFFSET_BYTES))
+            .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
+        Ok(Self {
+            maximum_frame_records,
+            maximum_frame_groups,
+            peak_bytes,
+        })
+    }
+
+    /// Maximum opaque records in one admitted artifact frame.
+    #[must_use]
+    pub(crate) const fn maximum_frame_records(self) -> usize {
+        self.maximum_frame_records
+    }
+
+    /// Maximum prediction groups in one admitted artifact frame.
+    #[must_use]
+    pub(crate) const fn maximum_frame_groups(self) -> usize {
+        self.maximum_frame_groups
+    }
+
+    /// Exact physical reusable route capacity: `28R + 20` bytes.
+    ///
+    /// `Q` remains part of the logical projection and measurements, but the
+    /// prediction vector deliberately reserves capacity for `R` entries.
+    #[must_use]
+    pub(crate) const fn peak_bytes(self) -> usize {
+        self.peak_bytes
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct GriddedNormalFrameBounds {
+    maximum_samples: u64,
+    maximum_frame_groups: usize,
+    maximum_contributions_per_group: usize,
+    maximum_frames: u64,
+}
+
+impl GriddedNormalFrameBounds {
+    fn maximum_frame_records(self) -> io::Result<usize> {
+        self.maximum_frame_groups
+            .checked_mul(self.maximum_contributions_per_group)
+            .ok_or_else(|| io::Error::other("gridded-normal frame record bound overflow"))
+    }
+}
+
+fn project_gridded_normal_frame_bounds(
     problem: &CompiledProblem,
     max_block_samples: usize,
-) -> io::Result<GriddedNormalArtifactBudget> {
+) -> io::Result<GriddedNormalFrameBounds> {
     if max_block_samples == 0 {
         return Err(io::Error::other(
             "gridded-normal replay requires a positive block bound",
@@ -565,19 +652,15 @@ pub(crate) fn project_gridded_normal_artifact_budget(
         .and_then(|samples| samples.checked_div(max_block))
         .ok_or_else(|| io::Error::other("gridded-normal frame bound overflow"))?
         .max(1);
-    let record_bytes = u64::try_from(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
-        .map_err(|_| io::Error::other("gridded-normal record width overflow"))?;
     let maximum_contributions_per_sample = match problem.reconstruction().basis() {
-        ReconstructionBasis::Constant => 1_u64,
+        ReconstructionBasis::Constant => 1_usize,
         ReconstructionBasis::ChannelLocal { .. } => {
-            let terms = match problem.science().spectral().sampling().kernel() {
+            match problem.science().spectral().sampling().kernel() {
                 SpectralKernel::Identity | SpectralKernel::Nearest => 1,
                 SpectralKernel::Linear => 2,
                 SpectralKernel::Cubic => 4,
                 SpectralKernel::ChannelIntegration { maximum_terms } => maximum_terms,
-            };
-            u64::try_from(terms)
-                .map_err(|_| io::Error::other("spectral contribution bound overflow"))?
+            }
         }
         ReconstructionBasis::Taylor { .. } => {
             return Err(io::Error::other(
@@ -585,19 +668,51 @@ pub(crate) fn project_gridded_normal_artifact_budget(
             ));
         }
     };
-    let maximum_payload_bytes = maximum_samples
+    // Compilation contributes at most one prediction group per weighted sample;
+    // BTree reduction can only lower that count. Each group contains at most the
+    // spectral-kernel contribution bound resolved above.
+    let maximum_frame_groups = usize::try_from(maximum_samples.min(max_block))
+        .map_err(|_| io::Error::other("gridded-normal frame group bound overflow"))?
+        .max(1);
+    Ok(GriddedNormalFrameBounds {
+        maximum_samples,
+        maximum_frame_groups,
+        maximum_contributions_per_group: maximum_contributions_per_sample,
+        maximum_frames,
+    })
+}
+
+fn project_gridded_normal_route_residency(
+    problem: &CompiledProblem,
+    max_block_samples: usize,
+) -> Result<GriddedNormalRouteResidency, CompleteDataPlanError> {
+    let bounds = project_gridded_normal_frame_bounds(problem, max_block_samples)
+        .map_err(|_| CompleteDataPlanError::ResidencyOverflow)?;
+    GriddedNormalRouteResidency::new(
+        bounds
+            .maximum_frame_records()
+            .map_err(|_| CompleteDataPlanError::ResidencyOverflow)?,
+        bounds.maximum_frame_groups,
+    )
+}
+
+pub(crate) fn project_gridded_normal_artifact_budget(
+    problem: &CompiledProblem,
+    max_block_samples: usize,
+) -> io::Result<GriddedNormalArtifactBudget> {
+    let bounds = project_gridded_normal_frame_bounds(problem, max_block_samples)?;
+    let record_bytes = u64::try_from(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
+        .map_err(|_| io::Error::other("gridded-normal record width overflow"))?;
+    let maximum_contributions_per_sample = u64::try_from(bounds.maximum_contributions_per_group)
+        .map_err(|_| io::Error::other("spectral contribution bound overflow"))?;
+    let maximum_payload_bytes = bounds
+        .maximum_samples
         .checked_mul(maximum_contributions_per_sample)
         .and_then(|contributions| contributions.checked_mul(record_bytes))
         .ok_or_else(|| io::Error::other("gridded-normal payload bound overflow"))?;
-    let maximum_frame_samples = usize::try_from(maximum_samples.min(max_block))
-        .map_err(|_| io::Error::other("gridded-normal frame sample bound overflow"))?
-        .max(1);
-    let maximum_frame_payload_bytes = maximum_frame_samples
-        .checked_mul(
-            usize::try_from(maximum_contributions_per_sample)
-                .map_err(|_| io::Error::other("spectral contribution bound overflow"))?,
-        )
-        .and_then(|contributions| contributions.checked_mul(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES))
+    let maximum_frame_payload_bytes = bounds
+        .maximum_frame_records()?
+        .checked_mul(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
         .ok_or_else(|| io::Error::other("gridded-normal frame payload overflow"))?;
     GriddedNormalArtifactBudget::for_bounded_stream(
         maximum_payload_bytes.max(
@@ -605,7 +720,7 @@ pub(crate) fn project_gridded_normal_artifact_budget(
                 .map_err(|_| io::Error::other("gridded-normal frame payload overflow"))?,
         ),
         maximum_frame_payload_bytes,
-        maximum_frames,
+        bounds.maximum_frames,
     )
     .map_err(io::Error::other)
 }
@@ -618,6 +733,7 @@ pub struct CompleteDataResidency {
     fft_resident_bytes: usize,
     fft_planning_bytes: usize,
     forward_workspace_bytes: usize,
+    gridded_route_bytes: usize,
     primitive_output_bytes: usize,
     major_cycle_model_bytes: usize,
     peak_bytes: usize,
@@ -654,6 +770,12 @@ impl CompleteDataResidency {
         self.forward_workspace_bytes
     }
 
+    /// Bytes for one reusable opaque-frame route during gridded replay.
+    #[must_use]
+    pub const fn gridded_route_bytes(self) -> usize {
+        self.gridded_route_bytes
+    }
+
     /// Bytes covering retained prior state plus newly produced normal-state primitives.
     #[must_use]
     pub const fn primitive_output_bytes(self) -> usize {
@@ -673,11 +795,19 @@ impl CompleteDataResidency {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CompleteDataExecutionRole {
+    SelectedObservation,
+    GriddedArtifact,
+}
+
 /// Hard physical allocations and FFT preparation bound to one T18 replay.
 #[derive(Debug, Clone)]
 pub struct CompleteDataPlanFragment {
     specification: SpectralOperatorSpecification,
     workload: SpectralOperatorWorkload,
+    execution_role: CompleteDataExecutionRole,
+    gridded_route_residency: Option<GriddedNormalRouteResidency>,
     residency: CompleteDataResidency,
     preparation_node: WorkNodeId,
     replay_node: WorkNodeId,
@@ -710,6 +840,7 @@ impl CompleteDataPlanFragment {
             preparation_node,
             specification,
             pass,
+            CompleteDataExecutionRole::SelectedObservation,
         )
     }
 
@@ -740,6 +871,7 @@ impl CompleteDataPlanFragment {
             preparation_node,
             specification,
             pass,
+            CompleteDataExecutionRole::SelectedObservation,
         )
     }
 
@@ -759,6 +891,25 @@ impl CompleteDataPlanFragment {
             preparation_node,
             specification,
             pass,
+            CompleteDataExecutionRole::SelectedObservation,
+        )
+    }
+
+    pub(crate) fn gridded_replay_with_preparation_node(
+        problem: &CompiledProblem,
+        max_replay_block_samples: usize,
+        replay_node: WorkNodeId,
+        preparation_node: WorkNodeId,
+    ) -> Result<Self, CompleteDataPlanError> {
+        let specification = SpectralOperatorSpecification::new(problem)?;
+        Self::from_specification(
+            problem,
+            max_replay_block_samples,
+            replay_node,
+            preparation_node,
+            specification,
+            SpectralOperatorPass::ResidualRefresh,
+            CompleteDataExecutionRole::GriddedArtifact,
         )
     }
 
@@ -769,12 +920,21 @@ impl CompleteDataPlanFragment {
         preparation_node: WorkNodeId,
         specification: SpectralOperatorSpecification,
         pass: SpectralOperatorPass,
+        execution_role: CompleteDataExecutionRole,
     ) -> Result<Self, CompleteDataPlanError> {
         let workload = spectral_operator_workload(&specification, max_replay_block_samples, pass)?;
-        let residency = project_residency(problem, workload)?;
+        let gridded_route_residency = match execution_role {
+            CompleteDataExecutionRole::SelectedObservation => None,
+            CompleteDataExecutionRole::GriddedArtifact => Some(
+                project_gridded_normal_route_residency(problem, max_replay_block_samples)?,
+            ),
+        };
+        let residency = project_residency(problem, workload, gridded_route_residency)?;
         Ok(Self {
             specification,
             workload,
+            execution_role,
+            gridded_route_residency,
             residency,
             preparation_node,
             replay_node,
@@ -802,6 +962,12 @@ impl CompleteDataPlanFragment {
     #[must_use]
     pub const fn residency(&self) -> CompleteDataResidency {
         self.residency
+    }
+
+    /// Return route bounds only for opaque gridded-artifact replay.
+    #[must_use]
+    pub(crate) const fn gridded_route_residency(&self) -> Option<GriddedNormalRouteResidency> {
+        self.gridded_route_residency
     }
 
     /// Return the exact core/halo channel slab projected by this plan.
@@ -849,7 +1015,9 @@ impl CompleteDataPlanFragment {
             slab.core_range().start,
             slab.core_depth(),
         )?;
-        if context.node().id != self.replay_node {
+        if context.node().id != self.replay_node
+            || self.execution_role != CompleteDataExecutionRole::SelectedObservation
+        {
             return Err(CompleteDataPlanError::WrongExecutionNode);
         }
         if context.compiled().problem_id() != problem.problem_id()
@@ -873,6 +1041,7 @@ impl CompleteDataPlanFragment {
     ) -> Result<GriddedNormalOperatorState, CompleteDataPlanError> {
         if context.node().id != self.replay_node
             || self.workload.pass() != SpectralOperatorPass::ResidualRefresh
+            || self.execution_role != CompleteDataExecutionRole::GriddedArtifact
             || context.compiled().problem_id() != problem.problem_id()
         {
             return Err(CompleteDataPlanError::PlanMismatch);
@@ -892,9 +1061,9 @@ impl CompleteDataPlanFragment {
         &self,
         context: WorkExecutionContext<'_>,
     ) -> Result<(), CompleteDataPlanError> {
-        let suffix = operator_allocation_suffix(self.workload);
+        let suffix = operator_allocation_suffix(self.workload, self.execution_role);
         let residency = self.residency;
-        let required = [
+        let mut required = vec![
             (
                 format!("spectral-operator-grids-{suffix}"),
                 residency.grid_bytes(),
@@ -920,6 +1089,12 @@ impl CompleteDataPlanFragment {
                 residency.major_cycle_model_bytes(),
             ),
         ];
+        if residency.gridded_route_bytes() > 0 {
+            required.push((
+                format!("spectral-operator-gridded-route-{suffix}"),
+                residency.gridded_route_bytes(),
+            ));
+        }
         for (allocation, bytes) in required {
             let bytes =
                 u64::try_from(bytes).map_err(|_| CompleteDataPlanError::ResidencyOverflow)?;
@@ -959,7 +1134,7 @@ impl CompleteDataPlanFragment {
         {
             return Err(CompleteDataPlanError::MissingFftCapability);
         }
-        let suffix = operator_allocation_suffix(self.workload);
+        let suffix = operator_allocation_suffix(self.workload, self.execution_role);
         let allocation = format!("spectral-operator-fft-state-{suffix}");
         let capacity = u64::try_from(self.residency.fft_resident_bytes())
             .map_err(|_| CompleteDataPlanError::ResidencyOverflow)?;
@@ -999,6 +1174,7 @@ impl CompleteDataPlanFragment {
             return Err(CompleteDataPlanError::MissingReplayNode);
         }
         let specs = self.allocation_specs(reconciliation)?;
+        let route_spec = self.route_allocation_spec()?;
         let replay_fence = ClaimLifetime::through_fence(FenceKind::Io);
         let fft_planning_bytes = u64::try_from(self.residency.fft_planning_bytes())
             .map_err(|_| CompleteDataPlanError::ResidencyOverflow)?;
@@ -1058,6 +1234,11 @@ impl CompleteDataPlanFragment {
             specs[4].usage(replay_fence.clone()),
             specs[5].usage(replay_fence),
         ]);
+        if let Some(route) = &route_spec {
+            replay
+                .allocations
+                .push(route.usage(ClaimLifetime::through_fence(FenceKind::Io)));
+        }
         nodes.push(preparation.clone());
         let planned_reconciliation = nodes
             .iter_mut()
@@ -1075,10 +1256,12 @@ impl CompleteDataPlanFragment {
         let mut alternative = base.execution_dag().resource_alternative().clone();
         alternative.id =
             AlternativeId::new(format!("{}-spectral-operator", alternative.id.as_str()));
-        alternative
-            .demand
-            .memory
-            .extend(specs.iter().map(CompleteDataAllocation::memory_demand));
+        alternative.demand.memory.extend(
+            specs
+                .iter()
+                .chain(route_spec.iter())
+                .map(CompleteDataAllocation::memory_demand),
+        );
         alternative.demand.overhead.fft_workspace_bytes = alternative
             .demand
             .overhead
@@ -1096,14 +1279,24 @@ impl CompleteDataPlanFragment {
                 .logical_allocations()
                 .values()
                 .cloned()
-                .chain(specs.iter().map(CompleteDataAllocation::logical_allocation))
+                .chain(
+                    specs
+                        .iter()
+                        .chain(route_spec.iter())
+                        .map(CompleteDataAllocation::logical_allocation),
+                )
                 .collect(),
             physical_slots: base
                 .execution_dag()
                 .physical_slots()
                 .values()
                 .cloned()
-                .chain(specs.iter().map(CompleteDataAllocation::physical_slot))
+                .chain(
+                    specs
+                        .iter()
+                        .chain(route_spec.iter())
+                        .map(CompleteDataAllocation::physical_slot),
+                )
                 .collect(),
             initial_knobs: base.execution_dag().initial_knobs().clone(),
             adaptations: base
@@ -1150,7 +1343,7 @@ impl CompleteDataPlanFragment {
         &self,
         reconciliation: &WorkNodeId,
     ) -> Result<[CompleteDataAllocation; 6], CompleteDataPlanError> {
-        let suffix = operator_allocation_suffix(self.workload);
+        let suffix = operator_allocation_suffix(self.workload, self.execution_role);
         let residency = self.residency;
         let replay_done = BTreeSet::from([WorkDependency::Fence(FenceId::new(
             self.replay_node.clone(),
@@ -1217,16 +1410,42 @@ impl CompleteDataPlanFragment {
             )?,
         ])
     }
+
+    fn route_allocation_spec(
+        &self,
+    ) -> Result<Option<CompleteDataAllocation>, CompleteDataPlanError> {
+        let Some(route) = self.gridded_route_residency else {
+            return Ok(None);
+        };
+        let suffix = operator_allocation_suffix(self.workload, self.execution_role);
+        Ok(Some(CompleteDataAllocation::new(
+            format!("spectral-operator-gridded-route-{suffix}"),
+            route.peak_bytes(),
+            "spectral-operator-gridded-route-classification-indices-predictions-and-offsets",
+            InitializationPolicy::OverwriteBeforeRead,
+            self.replay_node.clone(),
+            BTreeSet::from([WorkDependency::Fence(FenceId::new(
+                self.replay_node.clone(),
+                FenceKind::Io,
+            ))]),
+        )?))
+    }
 }
 
-fn operator_allocation_suffix(workload: SpectralOperatorWorkload) -> String {
+fn operator_allocation_suffix(
+    workload: SpectralOperatorWorkload,
+    execution_role: CompleteDataExecutionRole,
+) -> String {
     let shape = workload.grid_shape();
     let slab = workload.slab();
     format!(
         "{}-{}x{}-ch{}-{}",
-        match workload.pass() {
-            SpectralOperatorPass::InitialMajor => "initial",
-            SpectralOperatorPass::ResidualRefresh => "residual-refresh",
+        match execution_role {
+            CompleteDataExecutionRole::GriddedArtifact => "gridded-residual-refresh",
+            CompleteDataExecutionRole::SelectedObservation => match workload.pass() {
+                SpectralOperatorPass::InitialMajor => "initial",
+                SpectralOperatorPass::ResidualRefresh => "residual-refresh",
+            },
         },
         shape[0],
         shape[1],
@@ -1238,6 +1457,7 @@ fn operator_allocation_suffix(workload: SpectralOperatorWorkload) -> String {
 fn project_residency(
     problem: &CompiledProblem,
     workload: SpectralOperatorWorkload,
+    gridded_route_residency: Option<GriddedNormalRouteResidency>,
 ) -> Result<CompleteDataResidency, CompleteDataPlanError> {
     let complex_bytes = size_of::<num_complex::Complex64>();
     let grid_bytes = workload
@@ -1260,6 +1480,9 @@ fn project_residency(
         .forward_complex_values()
         .checked_mul(complex_bytes)
         .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
+    let gridded_route_bytes = gridded_route_residency
+        .map(GriddedNormalRouteResidency::peak_bytes)
+        .unwrap_or(0);
     let primitive_output_bytes = workload
         .primitive_complex_values()
         .checked_mul(complex_bytes)
@@ -1293,6 +1516,7 @@ fn project_residency(
         .and_then(|bytes| bytes.checked_add(fft_resident_bytes))
         .and_then(|bytes| bytes.checked_add(fft_planning_bytes))
         .and_then(|bytes| bytes.checked_add(forward_workspace_bytes))
+        .and_then(|bytes| bytes.checked_add(gridded_route_bytes))
         .and_then(|bytes| bytes.checked_add(primitive_output_bytes))
         .and_then(|bytes| bytes.checked_add(major_cycle_model_bytes))
         .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
@@ -1302,6 +1526,7 @@ fn project_residency(
         fft_resident_bytes,
         fft_planning_bytes,
         forward_workspace_bytes,
+        gridded_route_bytes,
         primitive_output_bytes,
         major_cycle_model_bytes,
         peak_bytes,
@@ -1955,5 +2180,22 @@ impl Error for CompleteDataOperatorError {}
 impl From<SpectralOperatorError> for CompleteDataOperatorError {
     fn from(error: SpectralOperatorError) -> Self {
         Self::Owner(error)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::GriddedNormalRouteResidency;
+
+    #[test]
+    fn gridded_route_residency_is_exact_and_rejects_invalid_bounds() {
+        let route = GriddedNormalRouteResidency::new(7, 3).expect("valid route bounds");
+        assert_eq!(route.maximum_frame_records(), 7);
+        assert_eq!(route.maximum_frame_groups(), 3);
+        assert_eq!(route.peak_bytes(), 28 * 7 + 20);
+        assert!(route.peak_bytes() <= 32 * route.maximum_frame_records() + 20);
+
+        assert!(GriddedNormalRouteResidency::new(3, 4).is_err());
+        assert!(GriddedNormalRouteResidency::new(usize::MAX, 1).is_err());
     }
 }
