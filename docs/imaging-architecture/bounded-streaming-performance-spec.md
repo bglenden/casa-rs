@@ -955,7 +955,7 @@ The executable full-data gate is
 `tools/perf/imager/workloads/wave3-standard-mfs-single-term-heavy-wave2-serial.json`;
 it pins `parallel = false`, CPU standard-MFS execution, and the RustFFT backend.
 
-The final plan-owned structural production validation completed that exact workload in
+The measured plan-owned structural production run at `b2bc3f7cd` completed that exact workload in
 486.349417 seconds, 40.802298 seconds or 7.74 percent faster than the prior
 Rust candidate and 202.647416 seconds or 29.41 percent below the frozen
 688.996833-second CASA wall. The source was traversed exactly twice: once for
@@ -970,11 +970,15 @@ selected-output traversal. The writer copied 6,291,292,640 payload bytes once
 through one allocated buffer reused 127,939 times. Each later pass allocated
 two read buffers, reused them 127,938 times, and copied zero payload bytes.
 Receipts report the actual 6,300,504,416-byte temporary-storage peak separately
-from the initial plan's 16,778,497,920-byte ceiling. After the artifact is
-sealed, the scheduler narrows that plan-owned lease to the exact
+from the initial plan's 16,778,497,920-byte ceiling. The measured revision
+transferred the plan-owned permit but retained that full ceiling. Post-run
+accounting correction `9bdf0faea` now narrows the permit after sealing to the exact
 6,300,504,416-byte artifact permit and releases its unrelated workers, rates,
 queues, descriptors, and buffers; later plans credit the retained permit and
-declare only their direct replay I/O resources. The
+declare only their direct replay I/O resources. Focused resource, plan/run,
+application, clippy, and architecture gates verify this accounting-only
+correction; the performance numbers above remain the `b2bc3f7cd` observation
+and are not relabeled as a rerun. The
 reconstruction owner also reports exact code-owned allocation requests and
 cumulative vector-capacity growth by source grouping, multiplicity vector,
 encoded buffer, and descriptor vector, plus exact reduction-map entry

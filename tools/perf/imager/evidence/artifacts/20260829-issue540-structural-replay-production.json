@@ -6,6 +6,19 @@
   "recorded_date": "2026-08-29",
   "source_head_revision": "b2bc3f7cd",
   "working_tree_modified": false,
+  "post_run_accounting_correction": {
+    "revision": "9bdf0faea",
+    "performance_rerun": false,
+    "reason": "The correction only returns unused admitted temporary-storage capacity after the already-measured artifact is sealed; it does not alter traversal, scientific kernels, artifact bytes, or replay I/O.",
+    "exact_retained_artifact_storage_bytes": 6300504416,
+    "verification": [
+      "casa-imaging-runtime resource authority unit suite",
+      "five focused spectral-cycle compile/plan/run tests",
+      "fourteen continuum application tests",
+      "runtime and application all-target clippy with warnings denied",
+      "architecture structural gate"
+    ]
+  },
   "workload": {
     "manifest": "tools/perf/imager/workloads/wave3-standard-mfs-single-term-heavy-wave2-serial.json",
     "dataset": "wave1/vla/single/medium/ms/wave1-vla-single-medium.ms",
@@ -74,7 +87,7 @@
     "sealed_bytes": 6300504416,
     "planned_temporary_storage_ceiling_bytes": 16778497920,
     "actual_temporary_storage_peak_bytes": 6300504416,
-    "retained_artifact_storage_bytes": 6300504416,
+    "measured_revision_retained_storage_ceiling_bytes": 16778497920,
     "write_payload_copy_bytes": 6291292640,
     "write_payload_copy_operations": 112261,
     "write_buffer_allocations": 1,
@@ -133,7 +146,7 @@
     "casa_correctness": "passed",
     "bounded_residency": "passed",
     "pass_count": "passed",
-    "structural_contract": "passed",
-    "interpretation": "The clean source revision routes every later major through the sole bounded executor with one worker. The scheduler transfers the initial plan's retained artifact-storage permit into the sealed replay only after execution evidence settles, releases unrelated plan resources, and later plans credit that exact retained storage while declaring only their direct replay I/O resources. The full workload is 7.74 percent faster than the prior Rust candidate, 29.41 percent faster than the frozen single-process CASA wall, and 1.01 percent faster than the previous structural run. The sealed artifact is 6,300,504,416 bytes, the writer copies 6,291,292,640 payload bytes once through one reusable buffer, and each later replay reads exhaustively with two reusable buffers and zero payload copies without reopening the MeasurementSet. This is one observed run, not a repeatability claim."
+    "structural_contract": "passed_after_post_run_accounting_correction",
+    "interpretation": "The measured b2bc3f7cd source routes every later major through the sole bounded executor with one worker. That run transferred the initial plan's artifact permit and released unrelated resources, but retained the 16,778,497,920-byte admitted ceiling rather than narrowing it to the sealed size. Revision 9bdf0faea corrects that accounting-only defect: after sealing, the permit returns unused capacity and retains exactly 6,300,504,416 bytes; later plans credit that exact storage while declaring only their direct replay I/O resources. Focused resource, plan/run, application, clippy, and architecture gates verify the correction without claiming a new performance run. The measured workload is 7.74 percent faster than the prior Rust candidate, 29.41 percent faster than the frozen single-process CASA wall, and 1.01 percent faster than the previous structural run. The writer copies 6,291,292,640 payload bytes once through one reusable buffer, and each later replay reads exhaustively with two reusable buffers and zero payload copies without reopening the MeasurementSet. This is one observed performance run, not a repeatability claim."
   }
 }
