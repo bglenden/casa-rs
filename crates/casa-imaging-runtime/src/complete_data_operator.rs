@@ -7,6 +7,7 @@ use std::{
     error::Error,
     fmt, io,
     mem::{align_of, size_of},
+    sync::Arc,
 };
 
 use casa_imaging_model::{
@@ -20,9 +21,10 @@ use casa_imaging_reconstruction::{
     WeightingGenerationId, WeightingReplayCoverageId, WeightingReplayId,
     runtime_adapter::{
         CompleteDataOwnerResult, CompleteDataOwnerState, GRIDDED_NORMAL_OPERATOR_RECORD_BYTES,
-        GriddedNormalOperatorApply, GriddedNormalOperatorCompiler, GriddedNormalOperatorProgram,
-        PreparedSpectralOperator, SpectralOperatorPass, SpectralOperatorWorkload,
-        prepare_spectral_operator, spectral_operator_workload,
+        GriddedNormalOperatorApply, GriddedNormalOperatorBlockMeasurements,
+        GriddedNormalOperatorCompiler, GriddedNormalOperatorProgram, PreparedSpectralOperator,
+        SpectralOperatorPass, SpectralOperatorWorkload, prepare_spectral_operator,
+        spectral_operator_workload,
     },
 };
 
@@ -54,6 +56,7 @@ use crate::gridded_normal_artifact::{
 pub struct FrozenGriddedNormalReplay {
     program: GriddedNormalOperatorProgram,
     spill: GriddedNormalSpillArtifact,
+    _cross_plan_reservation: Arc<crate::GriddedNormalReplayReservation>,
     latest_read: Option<GriddedNormalArtifactMeasurements>,
     latest_stream: Option<BoundedStreamMeasurements>,
 }
@@ -83,6 +86,66 @@ pub(crate) struct GriddedNormalReplayCompilation {
     compiler: GriddedNormalOperatorCompiler,
     writer: Option<GriddedNormalArtifactWriter>,
     spill: Option<GriddedNormalSpillArtifact>,
+    cross_plan_reservation: Arc<crate::GriddedNormalReplayReservation>,
+    compilation_measurements: GriddedNormalCompilationMeasurements,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct GriddedNormalCompilationMeasurements {
+    pub(crate) blocks: u64,
+    pub(crate) source_group_vector_allocations: u64,
+    pub(crate) source_group_capacity_growth_bytes: u64,
+    pub(crate) reduction_map_node_allocations: u64,
+    pub(crate) multiplicity_vector_allocations: u64,
+    pub(crate) multiplicity_capacity_growth_bytes: u64,
+    pub(crate) encoded_buffer_allocations: u64,
+    pub(crate) encoded_buffer_bytes: u64,
+    pub(crate) descriptor_vector_allocations: u64,
+    pub(crate) descriptor_capacity_growth_bytes: u64,
+}
+
+impl GriddedNormalCompilationMeasurements {
+    fn add_block(&mut self, block: GriddedNormalOperatorBlockMeasurements) -> io::Result<()> {
+        macro_rules! add {
+            ($field:ident, $value:expr) => {
+                self.$field = self.$field.checked_add($value).ok_or_else(|| {
+                    io::Error::other("gridded-normal allocation measurement overflow")
+                })?;
+            };
+        }
+        add!(blocks, 1);
+        add!(
+            source_group_vector_allocations,
+            block.source_group_vector_allocations
+        );
+        add!(
+            source_group_capacity_growth_bytes,
+            block.source_group_capacity_growth_bytes
+        );
+        add!(
+            reduction_map_node_allocations,
+            block.reduction_map_node_allocations
+        );
+        add!(
+            multiplicity_vector_allocations,
+            block.multiplicity_vector_allocations
+        );
+        add!(
+            multiplicity_capacity_growth_bytes,
+            block.multiplicity_capacity_growth_bytes
+        );
+        add!(encoded_buffer_allocations, block.encoded_buffer_allocations);
+        add!(encoded_buffer_bytes, block.encoded_buffer_bytes);
+        add!(
+            descriptor_vector_allocations,
+            block.descriptor_vector_allocations
+        );
+        add!(
+            descriptor_capacity_growth_bytes,
+            block.descriptor_capacity_growth_bytes
+        );
+        Ok(())
+    }
 }
 
 impl GriddedNormalReplayCompilation {
@@ -90,16 +153,24 @@ impl GriddedNormalReplayCompilation {
         problem: &CompiledProblem,
         context: WorkExecutionContext<'_>,
         storage: &GriddedNormalReplayStorage,
+        cross_plan_reservation: Arc<crate::GriddedNormalReplayReservation>,
         max_block_samples: usize,
     ) -> io::Result<Self> {
         let budget = project_gridded_normal_artifact_budget(problem, max_block_samples)?;
         validate_gridded_artifact_context(context, budget, crate::IoBufferKind::SpillWrite)?;
+        if !cross_plan_reservation.validates(storage, budget) {
+            return Err(io::Error::other(
+                "gridded-normal cross-plan reservation does not cover planned storage",
+            ));
+        }
         Ok(Self {
             compiler: GriddedNormalOperatorCompiler::new(problem).map_err(io::Error::other)?,
             writer: Some(
                 GriddedNormalArtifactWriter::create(storage, budget).map_err(io::Error::other)?,
             ),
             spill: None,
+            cross_plan_reservation,
+            compilation_measurements: GriddedNormalCompilationMeasurements::default(),
         })
     }
 
@@ -111,6 +182,8 @@ impl GriddedNormalReplayCompilation {
             .compiler
             .compile_block(block)
             .map_err(io::Error::other)?;
+        self.compilation_measurements
+            .add_block(compiled.measurements())?;
         self.writer
             .as_mut()
             .ok_or_else(|| io::Error::other("gridded-normal writer already sealed"))?
@@ -132,6 +205,10 @@ impl GriddedNormalReplayCompilation {
             },
             GriddedNormalArtifactWriter::measurements,
         )
+    }
+
+    pub(crate) const fn compilation_measurements(&self) -> GriddedNormalCompilationMeasurements {
+        self.compilation_measurements
     }
 
     pub(crate) fn seal(&mut self) -> io::Result<()> {
@@ -171,6 +248,7 @@ impl GriddedNormalReplayCompilation {
         Ok(FrozenGriddedNormalReplay {
             program,
             spill,
+            _cross_plan_reservation: self.cross_plan_reservation,
             latest_read: None,
             latest_stream: None,
         })

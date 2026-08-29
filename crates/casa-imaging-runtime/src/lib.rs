@@ -59,7 +59,7 @@ pub use execution::{
     ResourceClaim, SlotCompatibility, StorageMode, WorkAllocationCapability, WorkDependency,
     WorkDomain, WorkImplementationId, WorkKind, WorkNode, WorkNodeId, WorkResourceCapability,
 };
-pub use gridded_normal_artifact::GriddedNormalReplayStorage;
+pub use gridded_normal_artifact::{GriddedNormalReplayReservation, GriddedNormalReplayStorage};
 pub use major_cycle::{MajorCycleOperatorError, MajorCycleOperatorResult, MajorCycleOperatorState};
 pub use observation_transaction::{
     BoundObservationTransaction, ObservationTransactionPlanError,

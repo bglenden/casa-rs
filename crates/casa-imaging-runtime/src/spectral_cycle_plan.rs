@@ -97,6 +97,7 @@ pub struct SpectralCyclePlan {
     minor_cycle_node: Option<WorkNodeId>,
     gridded_replay: Option<crate::GriddedNormalReplayDescriptor>,
     gridded_normal_storage: Option<GriddedNormalReplayStorage>,
+    gridded_normal_reservation_bytes: Option<u64>,
 }
 
 /// Named ownership transfer from one sealed spectral-cycle plan to its executor.
@@ -117,6 +118,8 @@ pub struct SpectralCyclePlanParts {
     pub gridded_replay: Option<crate::GriddedNormalReplayDescriptor>,
     /// Optional plan-owned private storage for initial compilation.
     pub gridded_normal_storage: Option<GriddedNormalReplayStorage>,
+    /// Optional cross-plan temporary-storage ceiling for the sealed replay.
+    pub gridded_normal_reservation_bytes: Option<u64>,
 }
 
 impl SpectralCyclePlan {
@@ -267,6 +270,7 @@ impl SpectralCyclePlan {
             minor_cycle_node: None,
             gridded_replay: None,
             gridded_normal_storage: None,
+            gridded_normal_reservation_bytes: None,
         })
     }
 
@@ -280,7 +284,7 @@ impl SpectralCyclePlan {
         gridded_replay: Option<crate::GriddedNormalReplayDescriptor>,
     ) -> Result<Self, SpectralCyclePlanError> {
         let weighting = plan_weighting(problem, policy.weighting_limits)?;
-        let gridded_normal_storage = if include_minor {
+        let gridded_normal_storage = if include_minor || gridded_replay.is_some() {
             Some(
                 policy
                     .gridded_normal_storage
@@ -400,6 +404,8 @@ impl SpectralCyclePlan {
             minor_cycle_node,
             gridded_replay,
             gridded_normal_storage,
+            gridded_normal_reservation_bytes: include_minor
+                .then_some(artifact_budget.maximum_artifact_bytes()),
         })
     }
 
@@ -421,6 +427,7 @@ impl SpectralCyclePlan {
             pass: self.pass,
             minor_cycle_node: self.minor_cycle_node,
             gridded_replay: self.gridded_replay,
+            gridded_normal_reservation_bytes: self.gridded_normal_reservation_bytes,
             gridded_normal_storage: self.gridded_normal_storage,
         }
     }
@@ -1123,6 +1130,10 @@ fn append_gridded_spill_resources<R: ImplementationRegistry>(
     budget: crate::gridded_normal_artifact::GriddedNormalArtifactBudget,
     direction: GriddedSpillDirection,
 ) -> Result<PhysicalWorkBinding, SpectralCyclePlanError> {
+    let storage = policy
+        .gridded_normal_storage
+        .as_ref()
+        .ok_or(SpectralCyclePlanError::MissingGriddedNormalStorage)?;
     let suffix = format!(
         "{}-{}",
         pass.ordinal(),
@@ -1144,7 +1155,8 @@ fn append_gridded_spill_resources<R: ImplementationRegistry>(
         .resource_alternative()
         .demand
         .queues
-        .first()
+        .iter()
+        .find(|demand| &demand.resource == storage.resources().queue())
         .map(|demand| demand.demand_id.clone())
         .unwrap_or_else(|| format!("{GRIDDED_SPILL_QUEUE_DEMAND}-{suffix}"));
     let allocation = AllocationId::new(format!("gridded-normal-spill-buffer-{suffix}"));
@@ -1262,7 +1274,7 @@ fn append_gridded_spill_resources<R: ImplementationRegistry>(
     });
     alternative.demand.storage.push(StorageDemand {
         demand_id: storage_id,
-        domain: policy.storage_io.domain().clone(),
+        domain: storage.resources().domain().clone(),
         temporary_bytes: budget.maximum_artifact_bytes(),
         staged_output_bytes: 0,
         final_output_bytes: 0,
@@ -1289,8 +1301,8 @@ fn append_gridded_spill_resources<R: ImplementationRegistry>(
     alternative.demand.rates.push(RateDemand {
         demand_id: rate_id,
         resource: match direction {
-            GriddedSpillDirection::Read => policy.storage_io.read_rate().clone(),
-            GriddedSpillDirection::Write => policy.storage_io.write_rate().clone(),
+            GriddedSpillDirection::Read => storage.resources().read_rate().clone(),
+            GriddedSpillDirection::Write => storage.resources().write_rate().clone(),
         },
         amount: CountDemand::new(1, 1),
     });
@@ -1302,7 +1314,7 @@ fn append_gridded_spill_resources<R: ImplementationRegistry>(
     {
         alternative.demand.queues.push(QueueDemand {
             demand_id: queue_id,
-            resource: policy.storage_io.queue().clone(),
+            resource: storage.resources().queue().clone(),
             slots: CountDemand::new(1, 1),
         });
     }

@@ -42,14 +42,15 @@ use casa_imaging_reconstruction::{
 use casa_imaging_runtime::{
     AttemptBoundObservationCompletion, BuildIdentity, ExecutionAttemptId, ExecutionProvenance,
     ExecutionReceipt, ExecutionReceiptStore, FenceKind, FinalVisibilityReplay,
-    FrozenWeightingReservation, GriddedNormalReplayStorage, ImplementationContractMetadata,
-    ImplementationRegistry, ImplementationRegistryId, ObservationReadCompletionContext,
-    PlannerCostModelProfileBootstrap, PlanningBindings, ResourceAuthority, ResourcePolicy,
-    RunBindings, RunToCompletion, SerialProductPublicationExecutor, SerialProductPublicationPlan,
-    SerialProductPublicationPolicy, SerialProductPublicationRegistry, SerialProductPublicationSink,
-    SpectralCycleExecutionPolicy, SpectralCycleExecutor, SpectralCyclePassInput, SpectralCyclePlan,
-    SpectralCyclePlanParts, SpectralCycleRegistry, StorageIoResourceBinding, WorkExecutionContext,
-    WorkImplementation, WorkImplementationId, WorkMeasurements, plan, run,
+    FrozenWeightingReservation, GriddedNormalReplayReservation, GriddedNormalReplayStorage,
+    ImplementationContractMetadata, ImplementationRegistry, ImplementationRegistryId,
+    ObservationReadCompletionContext, PlannerCostModelProfileBootstrap, PlanningBindings,
+    ResourceAuthority, ResourcePolicy, RunBindings, RunToCompletion,
+    SerialProductPublicationExecutor, SerialProductPublicationPlan, SerialProductPublicationPolicy,
+    SerialProductPublicationRegistry, SerialProductPublicationSink, SpectralCycleExecutionPolicy,
+    SpectralCycleExecutor, SpectralCyclePassInput, SpectralCyclePlan, SpectralCyclePlanParts,
+    SpectralCycleRegistry, StorageIoResourceBinding, WorkExecutionContext, WorkImplementation,
+    WorkImplementationId, WorkMeasurements, plan, run,
 };
 use casa_ms::{
     ResolvedSelectedObservationAccess, SelectedObservationResolutionRequest,
@@ -364,6 +365,7 @@ where
         source_resources: resources,
         pass,
         gridded_normal_storage: planned_storage,
+        gridded_normal_reservation_bytes,
         ..
     } = planned.into_parts();
     let replay_proof_bytes = initial_access.replay_proof_retained_heap_bytes(problem)?;
@@ -375,6 +377,21 @@ where
                 weighting.planned_residency(),
                 replay_proof_bytes,
             )
+        })
+        .transpose()?;
+    let gridded_reservation = (!matches!(algorithm, ReconstructionAlgorithm::Dirty))
+        .then(|| {
+            GriddedNormalReplayReservation::acquire(
+                &runtime.authority,
+                runtime.resource_policy.clone(),
+                planned_storage
+                    .as_ref()
+                    .ok_or_else(|| boxed("clean initial plan omitted gridded replay storage"))?,
+                gridded_normal_reservation_bytes.ok_or_else(|| {
+                    boxed("clean initial plan omitted gridded replay reservation ceiling")
+                })?,
+            )
+            .map_err(ApplicationError::from)
         })
         .transpose()?;
     let initial_source_state = initial_access.source_state().clone();
@@ -397,6 +414,7 @@ where
         executor = executor.with_planned_gridded_normal_storage(
             &planned_storage
                 .ok_or_else(|| boxed("clean initial plan omitted gridded replay storage"))?,
+            gridded_reservation.expect("non-dirty execution reserves gridded replay storage"),
         )?;
         let program = MinorCycleProgram::for_algorithm(
             algorithm.clone(),

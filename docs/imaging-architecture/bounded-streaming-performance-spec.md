@@ -914,6 +914,16 @@ not a persisted public cache contract. The vertical serial slice uses one
 scientific grid and bounded buffers—never one full grid per worker—and must
 delete the displaced later-major route in the same cutover.
 
+This MFS artifact deliberately remains a deletion-owning named temporary file:
+the accepted plan closes the writer descriptor at seal and opens one bounded
+reader descriptor per later-major plan, which cannot be combined with an
+unlinked file on macOS. `TempPath` removes the private name when the final
+artifact owner drops it, and every reopen verifies the sealed device and inode
+before checking length, framing, and hashes. The Resource Authority retains the
+artifact's maximum temporary-storage reservation across the gaps between major
+plans. This is distinct from the still-open, unlinked AWProject spill described
+in `ARCHITECTURE.md`.
+
 Production retention still requires measured full-artifact bytes and peak
 residency, exact MS/artifact pass counts, the complete 32 GiB workload,
 normalized RMS no greater than 0.001 against CASA products, and an explicit

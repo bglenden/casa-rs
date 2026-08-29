@@ -66,15 +66,15 @@ use casa_imaging_runtime::{
     ExecutionEvidenceError, ExecutionKnobs, ExecutionOutcome, ExecutionPlanId, ExecutionProvenance,
     ExecutionReceipt, ExecutionReceiptBinding, ExecutionReceiptStore, ExecutionStatus,
     ExternalPressure, FenceId, FenceKind, FinalVisibilitySink, FrozenWeightingReservation,
-    GriddedNormalReplayStorage, HostInventory, ImplementationContractCatalog,
-    ImplementationContractMetadata, ImplementationRegistry, ImplementationRegistryId,
-    InitializationPolicy, IoBufferDemand, IoBufferKind, IoMeasurement, IoPrediction, LeaseResource,
-    LogicalAllocation, MajorCycleOperatorResult, MajorCycleOperatorState, MemoryCapacityDomain,
-    MemoryCapacityKind, MemoryDemand, MemoryView, MemoryViewKind, ObservationReadCompletionContext,
-    ObservationTransactionWork, PhysicalLayoutId, PhysicalSlot, PhysicalSlotId,
-    PhysicalWorkBinding, PhysicalWorkBindingError, PlanError, PlanPrediction, PlannedArtifact,
-    PlannerCostModelProfileBootstrap, PlannerCostModelProfileId, PlanningBindings,
-    PredictionConfidence, PredictionUncertainty, PreparedArtifactBudget,
+    GriddedNormalReplayReservation, GriddedNormalReplayStorage, HostInventory,
+    ImplementationContractCatalog, ImplementationContractMetadata, ImplementationRegistry,
+    ImplementationRegistryId, InitializationPolicy, IoBufferDemand, IoBufferKind, IoMeasurement,
+    IoPrediction, LeaseResource, LogicalAllocation, MajorCycleOperatorResult,
+    MajorCycleOperatorState, MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand, MemoryView,
+    MemoryViewKind, ObservationReadCompletionContext, ObservationTransactionWork, PhysicalLayoutId,
+    PhysicalSlot, PhysicalSlotId, PhysicalWorkBinding, PhysicalWorkBindingError, PlanError,
+    PlanPrediction, PlannedArtifact, PlannerCostModelProfileBootstrap, PlannerCostModelProfileId,
+    PlanningBindings, PredictionConfidence, PredictionUncertainty, PreparedArtifactBudget,
     PreparedArtifactDescriptor, PreparedArtifactError, PreparedArtifactLoadSource,
     PreparedArtifactOperation, PreparedArtifactOrder, PreparedArtifactPlanFragment,
     PreparedArtifactPlaneDescriptor, PreparedArtifactPrecision, PreparedArtifactRegistration,
@@ -2419,6 +2419,26 @@ fn spectral_cycle_initial_plan_contains_resource_accounted_minor_cycle() {
             .stages()
             .contains_key(minor)
     );
+    let demand = &plan
+        .physical_work()
+        .execution_dag()
+        .resource_alternative()
+        .demand;
+    assert!(demand.rates.iter().any(|rate| {
+        rate.demand_id
+            .starts_with("gridded-normal-spill-write-rate")
+            && rate.resource == RateResourceId::new("io-rate")
+    }));
+    assert!(
+        demand
+            .queues
+            .iter()
+            .any(|queue| queue.resource == QueueResourceId::new("io-queue"))
+    );
+    assert!(!demand.rates.iter().any(|rate| {
+        rate.demand_id.starts_with("gridded-normal-spill")
+            && rate.resource == RateResourceId::new("transaction-io-rate")
+    }));
 }
 
 #[test]
@@ -2862,6 +2882,7 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
         source_resources: resources,
         pass,
         gridded_normal_storage: planned_storage,
+        gridded_normal_reservation_bytes,
         ..
     } = planned.into_parts();
     // The exact 4x4 density scratch and selected-owner minimum fit the fixture's
@@ -2874,6 +2895,14 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
         replay_proof_bytes,
     )
     .expect("cross-plan frozen weighting reservation");
+    let planned_storage = planned_storage.expect("initial plan retains its artifact storage");
+    let gridded_reservation = GriddedNormalReplayReservation::acquire(
+        authority(),
+        resource_policy.clone(),
+        &planned_storage,
+        gridded_normal_reservation_bytes.expect("initial plan reserves artifact storage"),
+    )
+    .expect("cross-plan gridded replay reservation");
     let selected = initial_access
         .open(&problem)
         .expect("owner-validated initial selected observation");
@@ -2890,9 +2919,7 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
         SpectralCyclePassInput::Initial,
     )
     .with_frozen_weighting_reservation(frozen_reservation)
-    .with_planned_gridded_normal_storage(
-        &planned_storage.expect("initial plan retains its artifact storage"),
-    )
+    .with_planned_gridded_normal_storage(&planned_storage, gridded_reservation)
     .expect("gridded-normal compiler and spill writer")
     .with_reconstruction_cycle(
         minor_node.clone(),
@@ -3001,6 +3028,38 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
     let minor_evidence_id = final_input.evidence().reconstruction_cycle().evidence_id();
     let selected_generation = final_input.evidence().normal_state().selected_generation();
     let replay_descriptor = gridded_replay.descriptor();
+    let initial_spill_node = execution_plan
+        .execution_dag()
+        .nodes()
+        .values()
+        .find(|node| {
+            node.claims
+                .iter()
+                .any(|claim| claim.resource == LeaseResource::IoBuffer(IoBufferKind::SpillWrite))
+        })
+        .expect("initial gridded spill node");
+    let initial_storage_claim = initial_spill_node
+        .claims
+        .iter()
+        .find(|claim| {
+            matches!(
+                claim.resource,
+                LeaseResource::Storage {
+                    use_kind: StorageUseKind::Temporary,
+                    ..
+                }
+            )
+        })
+        .expect("initial gridded spill storage claim");
+    assert_eq!(
+        receipt.actual_resource_peak(
+            &initial_spill_node.id,
+            &initial_storage_claim.resource,
+            &initial_storage_claim.lifetime,
+        ),
+        Some(replay_descriptor.bytes()),
+        "receipt records the sealed artifact size, not its planned ceiling"
+    );
 
     drop(resolution);
     let final_planned = SpectralCyclePlan::final_major(
@@ -3014,7 +3073,8 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
             1_000,
             4 * 4 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
             900_000,
-        ),
+        )
+        .with_gridded_normal_storage(planned_storage.clone()),
         &final_input,
         replay_descriptor,
     )
@@ -3201,6 +3261,33 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
     )
     .expect("final ordinary run");
     let final_receipt = receipts.open(final_attempt).expect("final receipt");
+    let final_replay_node = final_plan
+        .execution_dag()
+        .nodes()
+        .get(&replay_node_id)
+        .expect("final gridded replay node");
+    let final_storage_claim = final_replay_node
+        .claims
+        .iter()
+        .find(|claim| {
+            matches!(
+                claim.resource,
+                LeaseResource::Storage {
+                    use_kind: StorageUseKind::Temporary,
+                    ..
+                }
+            )
+        })
+        .expect("final gridded replay storage claim");
+    assert_eq!(
+        final_receipt.actual_resource_peak(
+            &replay_node_id,
+            &final_storage_claim.resource,
+            &final_storage_claim.lifetime,
+        ),
+        Some(replay_descriptor.bytes()),
+        "later-major receipt records the actual retained artifact size"
+    );
     assert_eq!(
         final_receipt.observation_transaction_publication_scope(),
         casa_imaging_runtime::ObservationTransactionPublicationScope::ReconstructionOnly
@@ -3269,6 +3356,7 @@ fn execute_initial_reconstruction_cycle(
         source_resources: resources,
         pass,
         gridded_normal_storage: planned_storage,
+        gridded_normal_reservation_bytes,
         ..
     } = planned.into_parts();
     let reservation = FrozenWeightingReservation::acquire(
@@ -3278,6 +3366,14 @@ fn execute_initial_reconstruction_cycle(
         replay_proof_bytes,
     )
     .expect("frozen weighting reservation");
+    let planned_storage = planned_storage.expect("channel-cycle plan retains artifact storage");
+    let gridded_reservation = GriddedNormalReplayReservation::acquire(
+        authority(),
+        ResourcePolicy::Balanced,
+        &planned_storage,
+        gridded_normal_reservation_bytes.expect("channel-cycle plan reserves artifact storage"),
+    )
+    .expect("channel-cycle gridded replay reservation");
     let program = casa_imaging_reconstruction::MinorCycleProgram::for_algorithm(
         problem.reconstruction().algorithm().clone(),
         problem.reconstruction().controls(),
@@ -3299,9 +3395,7 @@ fn execute_initial_reconstruction_cycle(
         SpectralCyclePassInput::Initial,
     )
     .with_frozen_weighting_reservation(reservation)
-    .with_planned_gridded_normal_storage(
-        &planned_storage.expect("channel-cycle plan retains artifact storage"),
-    )
+    .with_planned_gridded_normal_storage(&planned_storage, gridded_reservation)
     .expect("channel-cycle gridded-normal compiler")
     .with_reconstruction_cycle(
         cycle_node.clone(),

@@ -744,7 +744,7 @@ pub struct SpectralCycleExecutor {
     reconstruction_cycle: Option<SerialReconstructionCycleExecution>,
     final_visibility_sink: Option<Mutex<Box<dyn FinalVisibilitySink>>>,
     phase_input_artifact: Option<(crate::ArtifactIdentity, u64)>,
-    gridded_input_artifact: Option<(crate::ArtifactIdentity, u64)>,
+    gridded_input_artifact: Option<crate::GriddedNormalReplayDescriptor>,
     mode: SpectralCycleExecutionMode,
     state: Mutex<SpectralCycleExecutorState>,
 }
@@ -762,6 +762,7 @@ struct SpectralCycleExecutorState {
     selected_completion: Option<SelectedObservationCompletion>,
     weighting: WeightingExecutionState,
     gridded_storage: Option<crate::GriddedNormalReplayStorage>,
+    pending_gridded_reservation: Option<Arc<crate::GriddedNormalReplayReservation>>,
     gridded_compilation: Option<GriddedNormalReplayCompilation>,
     gridded_replay: Option<FrozenGriddedNormalReplay>,
     pending_frozen_reservation: Option<Arc<crate::FrozenWeightingReservation>>,
@@ -966,6 +967,7 @@ impl SpectralCycleExecutor {
                 selected_completion: None,
                 weighting: WeightingExecutionState::new(),
                 gridded_storage: None,
+                pending_gridded_reservation: None,
                 gridded_compilation: None,
                 gridded_replay: None,
                 pending_frozen_reservation: None,
@@ -1020,7 +1022,7 @@ impl SpectralCycleExecutor {
             reconstruction_cycle: None,
             final_visibility_sink: None,
             phase_input_artifact,
-            gridded_input_artifact: Some((planned_replay.identity(), planned_replay.bytes())),
+            gridded_input_artifact: Some(planned_replay),
             mode: SpectralCycleExecutionMode::Science,
             state: Mutex::new(SpectralCycleExecutorState {
                 executable: Some(executable),
@@ -1029,6 +1031,7 @@ impl SpectralCycleExecutor {
                 selected_completion: None,
                 weighting: WeightingExecutionState::new(),
                 gridded_storage: None,
+                pending_gridded_reservation: None,
                 gridded_compilation: None,
                 gridded_replay: Some(replay),
                 pending_frozen_reservation: None,
@@ -1079,6 +1082,7 @@ impl SpectralCycleExecutor {
                 selected_completion: None,
                 weighting: WeightingExecutionState::with_frozen_artifact(frozen_weighting.clone()),
                 gridded_storage: None,
+                pending_gridded_reservation: None,
                 gridded_compilation: None,
                 gridded_replay: None,
                 pending_frozen_reservation: None,
@@ -1099,16 +1103,19 @@ impl SpectralCycleExecutor {
     pub fn with_planned_gridded_normal_storage(
         mut self,
         storage: &crate::GriddedNormalReplayStorage,
+        reservation: crate::GriddedNormalReplayReservation,
     ) -> io::Result<Self> {
         if self.pass.phase() != crate::SpectralPassPhase::InitialMajor {
             return Err(io::Error::other(
                 "only the initial major can compile gridded-normal replay",
             ));
         }
-        self.state
+        let state = self
+            .state
             .get_mut()
-            .map_err(|_| io::Error::other("new spectral cycle executor mutex poisoned"))?
-            .gridded_storage = Some(storage.clone());
+            .map_err(|_| io::Error::other("new spectral cycle executor mutex poisoned"))?;
+        state.gridded_storage = Some(storage.clone());
+        state.pending_gridded_reservation = Some(Arc::new(reservation));
         Ok(self)
     }
 
@@ -1306,10 +1313,15 @@ impl SpectralCycleExecutor {
         if state.gridded_compilation.is_none()
             && let Some(storage) = state.gridded_storage.as_ref()
         {
+            let reservation = state
+                .pending_gridded_reservation
+                .take()
+                .ok_or_else(|| io::Error::other("gridded-normal reservation missing"))?;
             state.gridded_compilation = Some(GriddedNormalReplayCompilation::new(
                 &self.problem,
                 context,
                 storage,
+                reservation,
                 self.weighting_plan.limits().max_block_samples(),
             )?);
         }
@@ -1384,6 +1396,7 @@ impl SpectralCycleExecutor {
         if result.is_ok() {
             if let Some(compilation) = gridded_compilation.as_mut() {
                 compilation.seal()?;
+                self.log_gridded_write_measurements(compilation);
             }
             self.log_stream_measurements(weighting, "weighted-replay");
         }
@@ -1506,12 +1519,17 @@ impl SpectralCycleExecutor {
             return;
         };
         eprintln!(
-            "imaging_gridded_replay_summary ordinal={} blocks={} payload_bytes={} read_bytes={} read_operations={} source_slots={} workers={} planned_source_capacity_bytes={} peak_live_source_blocks={} peak_live_source_current_bytes={} peak_live_source_capacity_bytes={} ready_queue_high_water={} producer_wait_nanos={} consumer_wait_nanos={} source_starved_nanos={} overlap_nanos={} source_fill_nanos={} commit_nanos={} wall_nanos={}",
+            "imaging_gridded_replay_summary ordinal={} blocks={} artifact_bytes={} payload_bytes={} read_bytes={} read_operations={} payload_copy_bytes={} payload_copy_operations={} buffer_allocations={} buffer_reuses={} source_slots={} workers={} planned_source_capacity_bytes={} peak_live_source_blocks={} peak_live_source_current_bytes={} peak_live_source_capacity_bytes={} ready_queue_high_water={} producer_wait_nanos={} consumer_wait_nanos={} source_starved_nanos={} overlap_nanos={} source_fill_nanos={} commit_nanos={} wall_nanos={}",
             self.pass.ordinal(),
             stream.blocks_filled,
+            artifact.artifact_bytes(),
             stream.logical_source_bytes,
             artifact.transferred_bytes(),
             artifact.operations(),
+            artifact.payload_copy_bytes(),
+            artifact.payload_copy_operations(),
+            artifact.buffer_allocations(),
+            artifact.buffer_reuses(),
             stream.source_slots,
             stream.workers,
             stream.planned_source_capacity_bytes,
@@ -1526,6 +1544,33 @@ impl SpectralCycleExecutor {
             stream.source_fill_nanos,
             stream.commit_nanos,
             stream.wall_nanos,
+        );
+    }
+
+    fn log_gridded_write_measurements(&self, compilation: &GriddedNormalReplayCompilation) {
+        let artifact = compilation.write_measurements();
+        let allocations = compilation.compilation_measurements();
+        eprintln!(
+            "imaging_gridded_compile_summary ordinal={} blocks={} artifact_bytes={} payload_bytes={} write_bytes={} write_operations={} payload_copy_bytes={} payload_copy_operations={} buffer_allocations={} buffer_reuses={} source_group_vector_allocations={} source_group_capacity_growth_bytes={} reduction_map_node_allocations={} multiplicity_vector_allocations={} multiplicity_capacity_growth_bytes={} encoded_buffer_allocations={} encoded_buffer_bytes={} descriptor_vector_allocations={} descriptor_capacity_growth_bytes={}",
+            self.pass.ordinal(),
+            allocations.blocks,
+            artifact.artifact_bytes(),
+            artifact.payload_bytes(),
+            artifact.transferred_bytes(),
+            artifact.operations(),
+            artifact.payload_copy_bytes(),
+            artifact.payload_copy_operations(),
+            artifact.buffer_allocations(),
+            artifact.buffer_reuses(),
+            allocations.source_group_vector_allocations,
+            allocations.source_group_capacity_growth_bytes,
+            allocations.reduction_map_node_allocations,
+            allocations.multiplicity_vector_allocations,
+            allocations.multiplicity_capacity_growth_bytes,
+            allocations.encoded_buffer_allocations,
+            allocations.encoded_buffer_bytes,
+            allocations.descriptor_vector_allocations,
+            allocations.descriptor_capacity_growth_bytes,
         );
     }
 
@@ -1668,6 +1713,15 @@ impl SpectralCycleExecutor {
                             .expect("gridded write measurements were checked")
                             .peak_buffer_bytes()
                     }
+                    (
+                        LeaseResource::Storage {
+                            use_kind: crate::StorageUseKind::Temporary,
+                            ..
+                        },
+                        _,
+                    ) if gridded_write_measurements.is_some() => gridded_write_measurements
+                        .expect("gridded write measurements were checked")
+                        .artifact_bytes(),
                     (LeaseResource::Queue { .. }, _)
                         if &claim.resource == fragment.source_queue()
                             && stream_queue_high_water.is_some() =>
@@ -1756,6 +1810,13 @@ impl SpectralCycleExecutor {
                         &LeaseResource::IoBuffer(crate::IoBufferKind::SpillRead),
                         Some(measurements),
                     ) => measurements.peak_buffer_bytes(),
+                    (
+                        &LeaseResource::Storage {
+                            use_kind: crate::StorageUseKind::Temporary,
+                            ..
+                        },
+                        Some(measurements),
+                    ) => measurements.artifact_bytes(),
                     _ => claim.amount,
                 };
                 ResourceMeasurement::new(claim.resource.clone(), claim.lifetime.clone(), peak)
@@ -1793,12 +1854,13 @@ impl SpectralCycleExecutor {
             .chain(
                 self.gridded_input_artifact
                     .filter(|_| context.node().id == *self.complete_data.replay_node())
-                    .map(|(identity, bytes)| {
+                    .map(|descriptor| {
+                        let identity = descriptor.identity();
                         crate::ArtifactMeasurement::new(
                             identity,
                             Some(identity),
                             crate::ArtifactDisposition::Loaded,
-                            bytes,
+                            descriptor.bytes(),
                             None,
                         )
                         .expect("planned gridded input evidence is implementation-owned")

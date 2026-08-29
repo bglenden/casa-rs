@@ -2,7 +2,11 @@
 
 //! Run-scoped, disk-streamable normal-operator replay for constant and channel-local bases.
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, btree_map::Entry},
+    mem::size_of,
+    sync::Arc,
+};
 
 use casa_imaging_model::{
     CompiledProblem, ContinuumTransformGenerationId, LogicalIdentity, ReconstructionBasis,
@@ -72,6 +76,22 @@ struct BlockDescriptor {
 pub struct GriddedNormalOperatorBlock {
     sequence: u64,
     encoded: Box<[u8]>,
+    measurements: GriddedNormalOperatorBlockMeasurements,
+}
+
+/// Exact code-owned allocation events while compiling one bounded block.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GriddedNormalOperatorBlockMeasurements {
+    pub source_group_vector_allocations: u64,
+    pub source_group_capacity_growth_bytes: u64,
+    pub reduction_map_node_allocations: u64,
+    pub multiplicity_vector_allocations: u64,
+    pub multiplicity_capacity_growth_bytes: u64,
+    pub encoded_buffer_allocations: u64,
+    pub encoded_buffer_bytes: u64,
+    pub descriptor_vector_allocations: u64,
+    pub descriptor_capacity_growth_bytes: u64,
 }
 
 impl GriddedNormalOperatorBlock {
@@ -92,6 +112,12 @@ impl GriddedNormalOperatorBlock {
     #[must_use]
     pub const fn encoded_bytes(&self) -> &[u8] {
         &self.encoded
+    }
+
+    /// Return exact allocation events owned by compilation of this block.
+    #[must_use]
+    pub const fn measurements(&self) -> GriddedNormalOperatorBlockMeasurements {
+        self.measurements
     }
 }
 
@@ -140,6 +166,7 @@ impl GriddedNormalOperatorCompiler {
         }
         self.coverage.adopt(block.coverage_checkpoint());
         let mut groups = BTreeMap::<Vec<ReducedRecordKey>, Vec<f64>>::new();
+        let mut measurements = GriddedNormalOperatorBlockMeasurements::default();
         for weighted in block.samples() {
             let selected = weighted.selected();
             if !accept_weighted_input(selected, self.finite_values)?
@@ -183,6 +210,7 @@ impl GriddedNormalOperatorCompiler {
                     return Err(SpectralOperatorError::GeneratedNonfinite);
                 }
                 has_positive_weight |= spectral.imaging_weight() > 0.0;
+                let old_capacity = group.capacity();
                 group.push(ReducedRecordKey {
                     output_channel: contribution.output_channel(),
                     taps: encode_taps(taps)?,
@@ -190,12 +218,42 @@ impl GriddedNormalOperatorCompiler {
                     forward_imaginary: canonical_zero_bits(forward_scale.im),
                     imaging_weight: canonical_zero_bits(spectral.imaging_weight()),
                 });
+                record_vector_growth(
+                    old_capacity,
+                    group.capacity(),
+                    size_of::<ReducedRecordKey>(),
+                    &mut measurements.source_group_vector_allocations,
+                    &mut measurements.source_group_capacity_growth_bytes,
+                )?;
             }
             if !group.is_empty() && has_positive_weight {
-                groups.entry(group).or_default().push(1.0);
+                let multiplicities = match groups.entry(group) {
+                    Entry::Occupied(entry) => entry.into_mut(),
+                    Entry::Vacant(entry) => {
+                        measurements.reduction_map_node_allocations = measurements
+                            .reduction_map_node_allocations
+                            .checked_add(1)
+                            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+                        entry.insert(Vec::new())
+                    }
+                };
+                let old_capacity = multiplicities.capacity();
+                multiplicities.push(1.0);
+                record_vector_growth(
+                    old_capacity,
+                    multiplicities.capacity(),
+                    size_of::<f64>(),
+                    &mut measurements.multiplicity_vector_allocations,
+                    &mut measurements.multiplicity_capacity_growth_bytes,
+                )?;
             }
         }
         let encoded = encode_reduced(groups)?;
+        if !encoded.is_empty() {
+            measurements.encoded_buffer_allocations = 1;
+        }
+        measurements.encoded_buffer_bytes =
+            u64::try_from(encoded.len()).map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
         let source_samples = u64::try_from(block.samples().len())
             .map_err(|_| SpectralOperatorError::CoverageOverflow)?;
         let record_count = u64::try_from(encoded.len() / GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
@@ -208,14 +266,23 @@ impl GriddedNormalOperatorCompiler {
             .record_count
             .checked_add(record_count)
             .ok_or(SpectralOperatorError::CoverageOverflow)?;
+        let old_descriptor_capacity = self.descriptors.capacity();
         self.descriptors.push(BlockDescriptor {
             source_samples,
             record_count,
             digest: Sha256::digest(&encoded).into(),
         });
+        record_vector_growth(
+            old_descriptor_capacity,
+            self.descriptors.capacity(),
+            size_of::<BlockDescriptor>(),
+            &mut measurements.descriptor_vector_allocations,
+            &mut measurements.descriptor_capacity_growth_bytes,
+        )?;
         let result = GriddedNormalOperatorBlock {
             sequence: self.next_block_sequence,
             encoded,
+            measurements,
         };
         self.next_block_sequence = self
             .next_block_sequence
@@ -268,6 +335,30 @@ impl GriddedNormalOperatorCompiler {
             }),
         })
     }
+}
+
+fn record_vector_growth(
+    old_capacity: usize,
+    new_capacity: usize,
+    element_bytes: usize,
+    allocation_operations: &mut u64,
+    capacity_growth_bytes: &mut u64,
+) -> Result<(), SpectralOperatorError> {
+    if new_capacity == old_capacity {
+        return Ok(());
+    }
+    *allocation_operations = allocation_operations
+        .checked_add(1)
+        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+    let growth = new_capacity
+        .checked_sub(old_capacity)
+        .and_then(|elements| elements.checked_mul(element_bytes))
+        .and_then(|bytes| u64::try_from(bytes).ok())
+        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+    *capacity_growth_bytes = capacity_growth_bytes
+        .checked_add(growth)
+        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+    Ok(())
 }
 
 struct GriddedNormalOperatorManifest {
@@ -822,6 +913,17 @@ mod tests {
         .expect("encode permuted records");
         assert_eq!(left, right);
         assert_eq!(left.len(), 2 * GRIDDED_NORMAL_OPERATOR_RECORD_BYTES);
+    }
+
+    #[test]
+    fn vector_growth_measurements_count_code_owned_allocations_exactly() {
+        let mut operations = 0;
+        let mut bytes = 0;
+        record_vector_growth(0, 4, 48, &mut operations, &mut bytes).expect("first allocation");
+        record_vector_growth(4, 4, 48, &mut operations, &mut bytes).expect("reuse");
+        record_vector_growth(4, 8, 48, &mut operations, &mut bytes).expect("reallocation");
+        assert_eq!(operations, 2);
+        assert_eq!(bytes, 384);
     }
 
     #[test]
