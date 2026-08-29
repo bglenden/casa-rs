@@ -853,12 +853,81 @@ Run only the issue-named and directly affected focused gates, plus
 `just docs-check` and `just arch-check`. Programme #486 does not require routine
 `just verify` for this ticket.
 
+### CASA phase attribution and proposed gridded-replay cutover
+
+The exact 6.7.6.14 source build passed its OFF/ON/OFF observer gate: 133.343391,
+132.328566, and 131.461036 seconds on the full MS geometry with a one-iteration
+turnaround. The traced run was 0.0556 percent faster than the bracketing OFF
+mean, so the aggregate clocks are below run noise. The full 500-iteration run
+completed ten minor cycles and eleven science major cycles in 586.779085
+seconds. This locally built runtime is 14.84 percent faster than the frozen
+official CASA.app anchor, so 688.996833 seconds remains the absolute comparison
+row; the source build supplies causal stage attribution.
+
+| Full-run CASA phase | Source-built CASA seconds | Share |
+| --- | ---: | ---: |
+| selection and image definition | 2.512 | 0.4% |
+| Briggs weighting | 9.680 | 1.6% |
+| PSF | 32.446 | 5.5% |
+| PB | 1.329 | 0.2% |
+| initial residual major | 34.827 | 5.9% |
+| ten minor cycles | 0.849 | 0.1% |
+| ten later major cycles | 504.925 | 86.1% |
+
+Each later CASA major averages 50.484554 seconds: 17.601407 degridding,
+31.091320 gridding, and 1.791826 validation, model-zeroing, finalization, and
+control. The matching Rust later replay is 117.845698 seconds, with only 10.48
+seconds of overlapped source service. Repeated normal-operator construction and
+application, not raw disk reading, is therefore the demonstrated largest
+CASA-relative delta.
+
+The bounded real-shaped discriminator compiled 29,169,920 scalar
+contributions into 14,520,468 deterministic block-local tap/coefficient
+records. Streaming the concrete 232,327,488-byte artifact through the paired
+normal operator took 3.129804 seconds between 7.566052- and 7.589028-second
+current-path baselines, a 58.70-percent point improvement. Linear sample-count
+projection gives 48.674716 seconds per full later replay and 691.711846 seconds
+across ten replays. That projection admits a production candidate; it is not a
+full-run result.
+
+The proposed cutover is one shared seam:
+
+- `casa-ms` performs the selected ordered MS traversal and yields only bounded
+  blocks. It does not know about replay files.
+- reconstruction compiles each weighted block into deterministically sorted
+  normal-operator records and is the only owner that can apply those records
+  to model grids. It also retains the observed dirty grid and scientific
+  completion state.
+- `casa-imaging-runtime` admits a run-scoped ephemeral replay artifact under
+  the existing memory plan, frames and checksums blocks, reuses bounded write
+  and read buffers, applies backpressure/read-ahead, schedules the same worker
+  path for `workers = 1` and larger admitted counts, and reports exact bytes,
+  waits, copies, and residency.
+- the application composes the continuation; frontends perform no replay,
+  weighting, or gridding calculations.
+
+The artifact is sealed only after exhaustive first-pass completion and exact
+identity/count validation. Later major cycles traverse the bounded artifact,
+not the MS. A missing, truncated, corrupt, or mismatched artifact fails the
+run; there is no compatibility fallback. The format is private and run-scoped,
+not a persisted public cache contract. The vertical serial slice uses one
+scientific grid and bounded buffers—never one full grid per worker—and must
+delete the displaced later-major route in the same cutover.
+
+Production retention still requires measured full-artifact bytes and peak
+residency, exact MS/artifact pass counts, the complete 32 GiB workload,
+normalized RMS no greater than 0.001 against CASA products, and an explicit
+pass/fail against the frozen 688.996833-second full CASA runtime. Evidence is
+recorded in `20260828-issue540-casa-instrumented-major-timing.json` and
+`20260828-issue540-gridded-replay-cardinality.json`.
+
 ### Medium and 32 GiB MFS evidence
 
 Use the instrumentation-only commit as the current-Rust control and the frozen
-CASA products/timing as the oracle. Run one matched control/candidate pair on
-the medium workload and one on the directly mounted 32 GiB workload. Do not
-rerun CASA.
+official CASA products/timing as the oracle. Run one matched control/candidate
+pair on the medium workload and one on the directly mounted 32 GiB workload.
+The exact source-built CASA instrumentation above is stage-attribution evidence
+and does not replace or trigger another official CASA timing run.
 
 Each candidate must preserve the pinned product thresholds, including the
 0.001 normalized-RMS CASA ceiling on declared valid support, the exact
@@ -871,6 +940,26 @@ provisional; do not claim repeatability or a statistical speedup distribution.
 The executable full-data gate is
 `tools/perf/imager/workloads/wave3-standard-mfs-single-term-heavy-wave2-serial.json`;
 it pins `parallel = false`, CPU standard-MFS execution, and the RustFFT backend.
+
+The retained production validation completed that exact workload in
+527.151715 seconds, 161.845118 seconds or 23.49 percent below the frozen
+688.996833-second CASA wall. The source was traversed exactly twice: once for
+density and once for initial weighted construction. Both passes visited
+4,094,064 rows and 524,040,192 samples, used two source slots, and remained
+below the admitted 67,108,864-byte source capacity with a 62,272,500-byte peak.
+The sealed 131,144-byte gridded-normal artifact was then read once by each of
+ten later major cycles; no later cycle reopened the MeasurementSet and the
+no-write workload performed no selected-output traversal.
+
+CASA source inspection also repaired a pre-existing correctness confounder.
+Its Högbom kernel applies 51 components for each reported 50-iteration cycle,
+then clamps the controller count to 50. The production run now records 510
+actual components and 500 controller iterations across ten cycles. Against the
+frozen CASA products, normalized RMS is `1.9257e-7` for image, `3.2581e-7` for
+residual, `5.1476e-7` for model, and `6.7869e-7` for PSF; sum weight is exact.
+All pass the `0.001` ceiling. The result, comparison handles, checksums, exact
+passes, artifact bytes, and source bounds are retained in
+`tools/perf/imager/evidence/artifacts/20260829-issue540-gridded-replay-production.json`.
 
 ### Complete 106.9 GiB streaming gate
 

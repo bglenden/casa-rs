@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "record_kind": "issue540_gridded_replay_production_validation",
+  "truth_class": "recorded_observation",
+  "work_issue": 540,
+  "recorded_date": "2026-08-29",
+  "source_head_revision": "d36e9de325ed85a370781660d8b79bbeebc9c872",
+  "working_tree_modified": true,
+  "workload": {
+    "manifest": "tools/perf/imager/workloads/wave3-standard-mfs-single-term-heavy-wave2-serial.json",
+    "dataset": "wave1/vla/single/medium/ms/wave1-vla-single-medium.ms",
+    "selected_channels": 64,
+    "image_pixels": [1024, 1024],
+    "weighting": "briggs",
+    "robust": 0.5,
+    "deconvolver": "hogbom",
+    "niter": 500,
+    "cycleniter": 50,
+    "nmajor": -1,
+    "workers": 1,
+    "fft_backend": "rustfft"
+  },
+  "full_run": {
+    "run_id": "20260829T043750Z-wave3-standard-mfs-single-term-heavy-wave2-serial-4cb4b4fa",
+    "wall_seconds": 527.151715,
+    "frozen_casa_wall_seconds": 688.996833,
+    "seconds_faster_than_casa": 161.845118,
+    "improvement_fraction": 0.234899655,
+    "result": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/issue540-gridded-replay-final/imager/runs/20260829T043750Z-wave3-standard-mfs-single-term-heavy-wave2-serial-4cb4b4fa.json",
+    "result_sha256": "e298921b9b2df3df7a144557eb6218a1ee464ff55debdc8944b83097d993618c",
+    "rust_product_prefix": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/issue540-gridded-replay-final/products/20260829T043750Z-wave3-standard-mfs-single-term-heavy-wave2-serial-4cb4b4fa/rust/rust",
+    "frozen_casa_product_prefix": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/products/20260827T185907Z-wave3-standard-mfs-single-term-heavy-wave2-075607db/casa/casa"
+  },
+  "scientific_execution": {
+    "minor_cycles": 10,
+    "controller_iterations": 500,
+    "actual_components": 510,
+    "actual_components_per_cycle": 51,
+    "controller_iterations_per_cycle": 50,
+    "ms_science_passes": 2,
+    "density_passes": 1,
+    "initial_weighted_passes": 1,
+    "later_gridded_artifact_passes": 10,
+    "selected_output_passes": 0,
+    "artifact_write_bytes": 131144,
+    "artifact_read_bytes_per_later_pass": 131144,
+    "artifact_total_read_bytes": 1311440
+  },
+  "source_bounds": {
+    "rows_per_ms_pass": 4094064,
+    "samples_per_ms_pass": 524040192,
+    "logical_source_bytes_per_ms_pass": 5146238448,
+    "source_read_operations_per_ms_pass": 3572,
+    "source_slots": 2,
+    "workers": 1,
+    "peak_live_source_bytes": 62272500,
+    "planned_source_capacity_bytes": 67108864,
+    "density_source_read_seconds": 10.236883,
+    "initial_weighted_source_read_seconds": 10.401168,
+    "density_effective_read_mib_per_second": 479.427,
+    "initial_weighted_effective_read_mib_per_second": 471.854
+  },
+  "frozen_casa_comparison": {
+    "comparison": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/issue540-gridded-replay-final/comparisons/20260829T043750Z-wave3-standard-mfs-single-term-heavy-wave2-serial-4cb4b4fa-frozen.comparison.json",
+    "comparison_sha256": "14d82a49daa519be0124e073db80808bbba4832b5a11a67a1f0677bef34ec1c1",
+    "normalized_rms_limit": 0.001,
+    "image_normalized_rms": 1.9257072378894879e-7,
+    "model_normalized_rms": 5.147634875695436e-7,
+    "psf_normalized_rms": 6.786874666572818e-7,
+    "residual_normalized_rms": 3.258092831109571e-7,
+    "sumwt_normalized_rms": 0.0,
+    "status": "passed"
+  },
+  "outcome": {
+    "serial_performance": "passed",
+    "casa_correctness": "passed",
+    "bounded_residency": "passed",
+    "pass_count": "passed",
+    "interpretation": "The production niter=500 path applies CASA's 51 physical Högbom updates per reported 50-iteration cycle, reads the MeasurementSet only for density and initial weighted construction, replays the sealed run-scoped gridded operator for all ten later major cycles, stays within the admitted source bound, and beats the frozen single-process CASA wall while exceeding the normalized-RMS correctness requirement by more than three orders of magnitude. This is one observed run, not a repeatability claim."
+  }
+}
