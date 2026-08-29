@@ -1,8 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! End-to-end serial/multi-worker evidence for the bounded complete-data MFS path.
+//! End-to-end serial/multi-worker evidence for bounded complete-data gridded replay.
 
-use std::{collections::BTreeMap, convert::Infallible, fs, io, path::PathBuf, sync::OnceLock};
+use std::{
+    collections::BTreeMap,
+    convert::Infallible,
+    fs, io,
+    path::PathBuf,
+    sync::{Mutex, OnceLock},
+};
 
 use casa_imaging_model::{
     AntennaSelection, AxisOrder, CentreLaws, CorrelationProduct, CorrelationSelection,
@@ -114,8 +120,64 @@ struct RunEvidence {
     final_stream: StreamSummary,
 }
 
+#[derive(Clone, Copy)]
+enum ReplayScenario {
+    ConstantMfs,
+    CrossLaneLinear,
+}
+
+impl ReplayScenario {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::ConstantMfs => "constant-mfs",
+            Self::CrossLaneLinear => "cross-lane-linear",
+        }
+    }
+
+    const fn output_channels(self) -> usize {
+        match self {
+            Self::ConstantMfs => 1,
+            Self::CrossLaneLinear => 2,
+        }
+    }
+
+    const fn basis(self) -> ReconstructionBasis {
+        match self {
+            Self::ConstantMfs => ReconstructionBasis::Constant,
+            Self::CrossLaneLinear => ReconstructionBasis::ChannelLocal { channels: 2 },
+        }
+    }
+
+    const fn sampling(self) -> SpectralSamplingLaw {
+        match self {
+            Self::ConstantMfs => SpectralSamplingLaw::IDENTITY,
+            Self::CrossLaneLinear => SpectralSamplingLaw::LINEAR,
+        }
+    }
+
+    const fn spectral_wcs(self) -> SpectralWcs {
+        match self {
+            Self::ConstantMfs => SpectralWcs::Linear {
+                channels: 1,
+                reference_pixel: 0.0,
+                reference_frequency_hz: 1.4e9,
+                increment_hz: 1.0e6,
+            },
+            Self::CrossLaneLinear => SpectralWcs::Linear {
+                channels: 2,
+                reference_pixel: 0.0,
+                reference_frequency_hz: 43.936e9,
+                increment_hz: 128.0e6,
+            },
+        }
+    }
+}
+
 #[test]
 fn complete_data_mfs_is_equivalent_and_bounded_with_three_workers() {
+    let _guard = execution_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let serial = execute_complete_data_mfs(1);
     let parallel = execute_complete_data_mfs(3);
 
@@ -171,6 +233,62 @@ fn complete_data_mfs_is_equivalent_and_bounded_with_three_workers() {
     );
 }
 
+#[test]
+fn multi_record_group_crosses_partition_and_lane_boundaries_exactly() {
+    let _guard = execution_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    const RECORD_GROUPS: u64 = 3;
+    const RECORDS_PER_GROUP: u64 = 2;
+    const PARTITIONS: u64 = RECORD_GROUPS * RECORDS_PER_GROUP;
+    const PARALLEL_WORKERS: u64 = 2;
+
+    // Three selected baselines each compile one two-term linear record group. Six
+    // records are six logical partitions, while two contiguous lanes split after
+    // record 2: the middle group (records 2 and 3) therefore crosses both seams.
+    let lane_boundary = PARTITIONS / PARALLEL_WORKERS;
+    assert_ne!(lane_boundary % RECORDS_PER_GROUP, 0);
+
+    let serial = execute_cross_lane_linear_replay(1);
+    let parallel = execute_cross_lane_linear_replay(PARALLEL_WORKERS);
+
+    assert_eq!(serial.dirty, parallel.dirty);
+    assert_eq!(serial.psf, parallel.psf);
+    assert_eq!(serial.model, parallel.model);
+    assert_eq!(serial.residual, parallel.residual);
+    assert_eq!(serial.sum_weights, parallel.sum_weights);
+
+    assert_eq!(serial.final_stream.partitions_executed, PARTITIONS);
+    assert_eq!(parallel.final_stream.partitions_executed, PARTITIONS);
+    assert_eq!(parallel.final_stream.active_worker_slots, PARALLEL_WORKERS);
+    assert_eq!(serial.final_stream.artifact_pass_count, 1);
+    assert_eq!(parallel.final_stream.artifact_pass_count, 1);
+    assert_eq!(serial.final_stream.source_pass_count, 0);
+    assert_eq!(parallel.final_stream.source_pass_count, 0);
+    assert_eq!(serial.final_stream.peak_partial_dynamic_capacity_bytes, 96);
+    assert_eq!(
+        parallel.final_stream.peak_partial_dynamic_capacity_bytes,
+        96
+    );
+    assert_eq!(
+        serial.final_stream.executed_work_identity_digest,
+        parallel.final_stream.executed_work_identity_digest,
+    );
+    assert_eq!(
+        serial.final_stream.committed_work_identity_digest,
+        parallel.final_stream.committed_work_identity_digest,
+    );
+    assert_eq!(
+        parallel.final_stream.executed_work_identity_digest,
+        parallel.final_stream.committed_work_identity_digest,
+    );
+}
+
+fn execution_lock() -> &'static Mutex<()> {
+    static EXECUTION_LOCK: Mutex<()> = Mutex::new(());
+    &EXECUTION_LOCK
+}
+
 fn assert_stream_contract(
     stream: &StreamSummary,
     workers: u64,
@@ -209,6 +327,14 @@ fn assert_stream_contract(
 }
 
 fn execute_complete_data_mfs(worker_count: u64) -> RunEvidence {
+    execute_complete_data(worker_count, ReplayScenario::ConstantMfs)
+}
+
+fn execute_cross_lane_linear_replay(worker_count: u64) -> RunEvidence {
+    execute_complete_data(worker_count, ReplayScenario::CrossLaneLinear)
+}
+
+fn execute_complete_data(worker_count: u64, scenario: ReplayScenario) -> RunEvidence {
     let weighting = WeightingContract::new(
         WeightingScheme::Uniform,
         WeightDensityScope::GlobalSelection,
@@ -219,12 +345,12 @@ fn execute_complete_data_mfs(worker_count: u64) -> RunEvidence {
         .into_parts();
     let snapshot = compile_observation(snapshot_input).expect("compile owner snapshot");
     let problem = compile(ImagingRequest::new(
-        problem_specification(weighting),
-        geometry(),
+        problem_specification(weighting, scenario),
+        geometry(scenario),
         ProblemInputIdentities::new(snapshot),
         model_lifecycle(ModelStateIdentity::Empty),
     ))
-    .expect("compile constant-basis MFS problem");
+    .expect("compile complete-data replay problem");
     let residency = initial_access
         .certify_residency(&problem)
         .expect("certify selected-content residency");
@@ -236,7 +362,7 @@ fn execute_complete_data_mfs(worker_count: u64) -> RunEvidence {
         workers: Some(worker_count),
         ..ResourceOverride::default()
     });
-    let gridded_storage = artifact_storage(worker_count);
+    let gridded_storage = artifact_storage(worker_count, scenario);
     let execution_policy = || {
         SpectralCycleExecutionPolicy::new(
             implementation_id(),
@@ -244,7 +370,8 @@ fn execute_complete_data_mfs(worker_count: u64) -> RunEvidence {
             residency.clone(),
             storage_io(),
             1_000,
-            (IMAGE_PIXELS * std::mem::size_of::<Complex64>() * 3) as u64,
+            (IMAGE_PIXELS * scenario.output_channels() * std::mem::size_of::<Complex64>() * 3)
+                as u64,
             900_000,
         )
         .with_planned_workers(authority(), &resource_policy)
@@ -479,7 +606,7 @@ fn observation_resolution() -> SelectedObservationResolutionRequest {
     )
 }
 
-fn geometry() -> GeometryInput {
+fn geometry(scenario: ReplayScenario) -> GeometryInput {
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
         SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
@@ -518,19 +645,17 @@ fn geometry() -> GeometryInput {
             FrequencyFrame::Topocentric,
             FrequencyFrame::Topocentric,
             SpectralFrameAnchor::NotApplicable,
-            SpectralWcs::Linear {
-                channels: 1,
-                reference_pixel: 0.0,
-                reference_frequency_hz: 1.4e9,
-                increment_hz: 1.0e6,
-            },
+            scenario.spectral_wcs(),
             RestFrequency::NotApplicable,
             DopplerConvention::NotApplicable,
         ),
     )
 }
 
-fn problem_specification(weighting: WeightingContract) -> ProblemSpecification {
+fn problem_specification(
+    weighting: WeightingContract,
+    scenario: ReplayScenario,
+) -> ProblemSpecification {
     let numerics = NumericsContract::new(
         vec![NumericPrecision::F64],
         ReductionPolicy::Compensated,
@@ -557,7 +682,7 @@ fn problem_specification(weighting: WeightingContract) -> ProblemSpecification {
     );
     ProblemSpecification::new(
         ScientificContract::new(
-            SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
+            SpectralContract::new(scenario.sampling(), SpectralCoupling::Independent),
             MeasurementEquationContract::new(
                 InstrumentResponse::Scalar,
                 DeclaredInnerProducts::new(
@@ -567,7 +692,7 @@ fn problem_specification(weighting: WeightingContract) -> ProblemSpecification {
             ),
         ),
         ReconstructionContract::new(
-            ReconstructionBasis::Constant,
+            scenario.basis(),
             ReconstructionAlgorithm::Dirty,
             ReconstructionControls::new(0, 1.0, 0.0),
             PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
@@ -667,10 +792,10 @@ fn fixture() -> &'static Fixture {
     })
 }
 
-fn artifact_storage(worker_count: u64) -> GriddedNormalReplayStorage {
+fn artifact_storage(worker_count: u64, scenario: ReplayScenario) -> GriddedNormalReplayStorage {
     let directory = fixture()
         .storage_root
-        .join(format!("workers-{worker_count}"));
+        .join(format!("{}-workers-{worker_count}", scenario.label()));
     fs::create_dir_all(&directory).expect("worker artifact directory");
     GriddedNormalReplayStorage::bind(authority(), artifact_storage_io(), directory)
         .expect("bind gridded-normal storage")
