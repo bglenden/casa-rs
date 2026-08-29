@@ -941,15 +941,19 @@ The executable full-data gate is
 `tools/perf/imager/workloads/wave3-standard-mfs-single-term-heavy-wave2-serial.json`;
 it pins `parallel = false`, CPU standard-MFS execution, and the RustFFT backend.
 
-The retained production validation completed that exact workload in
-527.151715 seconds, 161.845118 seconds or 23.49 percent below the frozen
+The structural production validation completed that exact workload in
+482.343627 seconds, 44.808088 seconds or 8.50 percent faster than the prior
+Rust candidate and 206.653206 seconds or 29.99 percent below the frozen
 688.996833-second CASA wall. The source was traversed exactly twice: once for
 density and once for initial weighted construction. Both passes visited
 4,094,064 rows and 524,040,192 samples, used two source slots, and remained
 below the admitted 67,108,864-byte source capacity with a 62,272,500-byte peak.
-The sealed 131,144-byte gridded-normal artifact was then read once by each of
-ten later major cycles; no later cycle reopened the MeasurementSet and the
-no-write workload performed no selected-output traversal.
+The sealed 6,300,504,416-byte gridded-normal artifact was then read once by each
+of ten later major cycles through two reusable frames, with a 262,288-byte
+planned source capacity and 131,216-byte peak live current residency; no later
+cycle reopened the MeasurementSet and the no-write workload performed no
+selected-output traversal. The earlier 131,144-byte evidence field measured
+one bounded frame buffer, not the artifact, and is explicitly superseded.
 
 CASA source inspection also repaired a pre-existing correctness confounder.
 Its Högbom kernel applies 51 components for each reported 50-iteration cycle,
@@ -959,7 +963,7 @@ frozen CASA products, normalized RMS is `1.9257e-7` for image, `3.2581e-7` for
 residual, `5.1476e-7` for model, and `6.7869e-7` for PSF; sum weight is exact.
 All pass the `0.001` ceiling. The result, comparison handles, checksums, exact
 passes, artifact bytes, and source bounds are retained in
-`tools/perf/imager/evidence/artifacts/20260829-issue540-gridded-replay-production.json`.
+`tools/perf/imager/evidence/artifacts/20260829-issue540-structural-replay-production.json`.
 The source-level mechanism and independent reproductions are recorded in the
 [canonical CASA Högbom bug note](../CASA%20(C%2B%2B)%20bugs.md#casa-hogbom-niter-off-by-one-bug).
 

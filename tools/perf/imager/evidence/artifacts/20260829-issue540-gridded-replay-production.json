@@ -2,6 +2,8 @@
   "schema_version": 1,
   "record_kind": "issue540_gridded_replay_production_validation",
   "truth_class": "recorded_observation",
+  "superseded_by": "20260829-issue540-structural-replay-production.json",
+  "supersession_reason": "The original artifact byte fields recorded one bounded frame-buffer size, not the sealed file/read volume. The structural replay run measures the exhaustive checksummed artifact directly and replaces those byte claims while retaining this historical run record.",
   "work_issue": 540,
   "recorded_date": "2026-08-29",
   "source_head_revision": "d36e9de325ed85a370781660d8b79bbeebc9c872",
