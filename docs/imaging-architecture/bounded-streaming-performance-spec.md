@@ -951,9 +951,9 @@ The executable full-data gate is
 `tools/perf/imager/workloads/wave3-standard-mfs-single-term-heavy-wave2-serial.json`;
 it pins `parallel = false`, CPU standard-MFS execution, and the RustFFT backend.
 
-The structural production validation completed that exact workload in
-482.343627 seconds, 44.808088 seconds or 8.50 percent faster than the prior
-Rust candidate and 206.653206 seconds or 29.99 percent below the frozen
+The final reviewed structural production validation completed that exact workload in
+491.330495 seconds, 35.821220 seconds or 6.79 percent faster than the prior
+Rust candidate and 197.666338 seconds or 28.69 percent below the frozen
 688.996833-second CASA wall. The source was traversed exactly twice: once for
 density and once for initial weighted construction. Both passes visited
 4,094,064 rows and 524,040,192 samples, used two source slots, and remained
@@ -962,7 +962,15 @@ The sealed 6,300,504,416-byte gridded-normal artifact was then read once by each
 of ten later major cycles through two reusable frames, with a 262,288-byte
 planned source capacity and 131,216-byte peak live current residency; no later
 cycle reopened the MeasurementSet and the no-write workload performed no
-selected-output traversal. The earlier 131,144-byte evidence field measured
+selected-output traversal. The writer copied 6,291,292,640 payload bytes once
+through one allocated buffer reused 127,939 times. Each later pass allocated
+two read buffers, reused them 127,938 times, and copied zero payload bytes.
+Receipts report the actual 6,300,504,416-byte temporary-storage peak separately
+from the 16,778,497,920-byte planned and cross-plan-reserved ceiling. The
+reconstruction owner also reports exact code-owned allocation requests and
+cumulative vector-capacity growth by source grouping, reduction map,
+multiplicity vector, encoded buffer, and descriptor vector. The earlier
+131,144-byte evidence field measured
 one bounded frame buffer, not the artifact, and is explicitly superseded.
 
 CASA source inspection also repaired a pre-existing correctness confounder.
