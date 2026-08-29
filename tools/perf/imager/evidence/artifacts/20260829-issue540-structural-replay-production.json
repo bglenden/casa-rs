@@ -4,7 +4,7 @@
   "truth_class": "recorded_observation",
   "work_issue": 540,
   "recorded_date": "2026-08-29",
-  "source_head_revision": "70d9381a1",
+  "source_head_revision": "b2bc3f7cd",
   "working_tree_modified": false,
   "workload": {
     "manifest": "tools/perf/imager/workloads/wave3-standard-mfs-single-term-heavy-wave2-serial.json",
@@ -21,23 +21,23 @@
     "fft_backend": "rustfft"
   },
   "full_run": {
-    "run_id": "20260829T165334Z-wave3-standard-mfs-single-term-heavy-wave2-serial-7f4e0005",
+    "run_id": "20260829T173724Z-wave3-standard-mfs-single-term-heavy-wave2-serial-162497d3",
     "rust_processing_completed": true,
     "harness_status": "failed_comparison",
     "harness_status_reason": "The fresh artifact root intentionally omitted CASA execution and contained no CASA prefix; the retained Rust products were compared separately with the frozen CASA prefix.",
-    "wall_seconds": 491.330495,
+    "wall_seconds": 486.349417,
     "prior_rust_wall_seconds": 527.151715,
-    "seconds_faster_than_prior_rust": 35.82122,
-    "improvement_fraction_over_prior_rust": 0.067952392,
+    "seconds_faster_than_prior_rust": 40.802298,
+    "improvement_fraction_over_prior_rust": 0.077401433,
     "frozen_casa_wall_seconds": 688.996833,
-    "seconds_faster_than_casa": 197.666338,
-    "improvement_fraction_over_casa": 0.286890053,
-    "seconds_slower_than_previous_structural_run": 8.986868,
-    "difference_fraction_from_previous_structural_run": 0.018631671,
-    "result": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/issue540-structural-review-final/results/20260829T165334Z-wave3-standard-mfs-single-term-heavy-wave2-serial-7f4e0005.json",
-    "result_sha256": "c10238709b40c6cb63b848055b65c1e1aba97c6955ebbb435f24f3233e0557ea",
-    "benchmark_log_sha256": "9b51354a10af5815272355ac502250b13d3dad1af01bdd8d763f0d9351e29fc6",
-    "rust_product_prefix": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/issue540-structural-review-final/products/20260829T165334Z-wave3-standard-mfs-single-term-heavy-wave2-serial-7f4e0005/rust/rust",
+    "seconds_faster_than_casa": 202.647416,
+    "improvement_fraction_over_casa": 0.294119517,
+    "seconds_faster_than_previous_structural_run": 4.981078,
+    "improvement_fraction_over_previous_structural_run": 0.010137938,
+    "result": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/issue540-plan-owned-final/results/20260829T173724Z-wave3-standard-mfs-single-term-heavy-wave2-serial-162497d3.json",
+    "result_sha256": "cedd2a31a800e83b672522fbc2a45eb4e366b9f0660ffb1633c115dbdb946c81",
+    "benchmark_log_sha256": "ac487076199aa6b444a8ba88e5d6a7ee3911ac8684a0650ec591a2b673fee310",
+    "rust_product_prefix": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/issue540-plan-owned-final/products/20260829T173724Z-wave3-standard-mfs-single-term-heavy-wave2-serial-162497d3/rust/rust",
     "frozen_casa_product_prefix": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/products/20260827T185907Z-wave3-standard-mfs-single-term-heavy-wave2-075607db/casa/casa"
   },
   "scientific_execution": {
@@ -61,12 +61,12 @@
     "workers": 1,
     "peak_live_source_bytes": 62272500,
     "planned_source_capacity_bytes": 67108864,
-    "density_source_read_seconds": 10.359942,
-    "initial_weighted_source_read_seconds": 10.509112,
-    "density_stage_wall_seconds": 73.922807,
-    "initial_weighted_stage_wall_seconds": 245.932094,
-    "density_effective_read_mib_per_second": 473.732,
-    "initial_weighted_effective_read_mib_per_second": 467.008
+    "density_source_read_seconds": 10.413319,
+    "initial_weighted_source_read_seconds": 10.478710,
+    "density_stage_wall_seconds": 73.514307,
+    "initial_weighted_stage_wall_seconds": 240.281225,
+    "density_effective_read_mib_per_second": 471.304,
+    "initial_weighted_effective_read_mib_per_second": 468.363
   },
   "gridded_artifact": {
     "blocks_per_pass": 127940,
@@ -74,7 +74,7 @@
     "sealed_bytes": 6300504416,
     "planned_temporary_storage_ceiling_bytes": 16778497920,
     "actual_temporary_storage_peak_bytes": 6300504416,
-    "cross_plan_reserved_temporary_storage_bytes": 16778497920,
+    "retained_artifact_storage_bytes": 6300504416,
     "write_payload_copy_bytes": 6291292640,
     "write_payload_copy_operations": 112261,
     "write_buffer_allocations": 1,
@@ -102,21 +102,21 @@
     "peak_live_source_current_bytes": 131216,
     "peak_live_source_capacity_bytes": 262288,
     "wall_seconds_by_pass": [
-      16.577024,
-      16.556856,
-      16.480586,
-      16.444257,
-      16.429023,
-      16.399823,
-      16.615961,
-      16.512974,
-      16.642779,
-      16.812118
+      16.810692,
+      16.545031,
+      16.587242,
+      16.645080,
+      16.578191,
+      16.598723,
+      16.542718,
+      16.591621,
+      16.646434,
+      16.611922
     ]
   },
   "frozen_casa_comparison": {
-    "comparison": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/issue540-structural-review-final/results/20260829T170243Z-wave3-standard-mfs-single-term-heavy-wave2-serial-fafc699f.comparison.json",
-    "comparison_sha256": "18b0b6a11017984082f54706d181b37f07cac51208bc2a1e7f572475b66a7763",
+    "comparison": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/issue540-plan-owned-final/results/20260829T173724Z-wave3-standard-mfs-single-term-heavy-wave2-serial-162497d3-frozen-casa.comparison.json",
+    "comparison_sha256": "9d6303617377a7b8bad1d5ff68a0e2a52778f45c87d0e91a68a827f460263bf9",
     "comparison_artifact_status": "completed",
     "comparison_wrapper_status": "schema_rejected_metadata_parity_null",
     "comparison_wrapper_status_reason": "The comparator completed all products and wrote its immutable artifact, but the outer result validator rejected metadata.parity=null even though metadata parity was explicitly not required.",
@@ -134,6 +134,6 @@
     "bounded_residency": "passed",
     "pass_count": "passed",
     "structural_contract": "passed",
-    "interpretation": "The clean source revision routes every later major through the sole bounded executor with one worker, retains an authority lease for the artifact between plans, charges the exact spill topology, verifies the named private file's device and inode at each reopen, and reports actual rather than planned temporary-storage peaks. The full workload is 6.79 percent faster than the prior Rust candidate and 28.69 percent faster than the frozen single-process CASA wall while preserving the exact prior normalized-RMS result. It is 1.86 percent slower than the immediately preceding structural run, which is reported as single-run variance rather than hidden. The sealed artifact is 6,300,504,416 bytes, the writer copies 6,291,292,640 payload bytes once through one reusable buffer, and each later replay reads exhaustively with two reusable buffers and zero payload copies without reopening the MeasurementSet. This is one observed run, not a repeatability claim."
+    "interpretation": "The clean source revision routes every later major through the sole bounded executor with one worker. The scheduler transfers the initial plan's retained artifact-storage permit into the sealed replay only after execution evidence settles, releases unrelated plan resources, and later plans credit that exact retained storage while declaring only their direct replay I/O resources. The full workload is 7.74 percent faster than the prior Rust candidate, 29.41 percent faster than the frozen single-process CASA wall, and 1.01 percent faster than the previous structural run. The sealed artifact is 6,300,504,416 bytes, the writer copies 6,291,292,640 payload bytes once through one reusable buffer, and each later replay reads exhaustively with two reusable buffers and zero payload copies without reopening the MeasurementSet. This is one observed run, not a repeatability claim."
   }
 }
