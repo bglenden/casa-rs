@@ -394,8 +394,6 @@ pub enum SpectralOperatorPass {
     InitialMajor,
     /// Reuse invariant normal state and produce only the model-dependent residual.
     ResidualRefresh,
-    /// Reuse invariant normal state through the retained gridded replay program.
-    GriddedResidualRefresh,
 }
 
 #[doc(hidden)]
@@ -484,23 +482,13 @@ pub fn spectral_operator_workload(
     }
     let cells = checked_cells(specification.grid_shape)?;
     let image_cells = checked_cells(specification.image_shape)?;
-    let grid_complex_values = match pass {
-        SpectralOperatorPass::InitialMajor => cells
-            .checked_mul(6)
-            .and_then(|values| values.checked_mul(specification.slab.core_depth()))
-            .ok_or(SpectralOperatorError::ResidencyOverflow)?,
-        SpectralOperatorPass::ResidualRefresh => cells
-            .checked_mul(2)
-            .and_then(|values| values.checked_mul(specification.slab.core_depth()))
-            .ok_or(SpectralOperatorError::ResidencyOverflow)?,
-        SpectralOperatorPass::GriddedResidualRefresh => {
-            crate::gridded_normal_operator::gridded_normal_sector_residency(
-                specification.grid_shape,
-                specification.slab.core_depth(),
-            )?
-            .peak_complex_values()
-        }
-    };
+    let grid_complex_values = cells
+        .checked_mul(match pass {
+            SpectralOperatorPass::InitialMajor => 6,
+            SpectralOperatorPass::ResidualRefresh => 2,
+        })
+        .and_then(|values| values.checked_mul(specification.slab.core_depth()))
+        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
     let convolution_f64_values = (OVERSAMPLING + 1)
         .checked_mul(TAP_COUNT)
         .and_then(|values| {
@@ -532,14 +520,9 @@ pub fn spectral_operator_workload(
                 .and_then(|values| total.checked_add(values))
         })
         .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-    let prediction_values = if pass == SpectralOperatorPass::GriddedResidualRefresh {
-        0
-    } else {
-        max_replay_block_samples
-    };
     let forward_complex_values = cells
         .checked_mul(specification.slab.resident_depth())
-        .and_then(|values| values.checked_add(prediction_values))
+        .and_then(|values| values.checked_add(max_replay_block_samples))
         .ok_or(SpectralOperatorError::ResidencyOverflow)?;
     Ok(SpectralOperatorWorkload {
         pass,
@@ -1693,14 +1676,11 @@ impl SpectralSlabOperator {
         self.validate_model_generation(generation)?;
         match (self.workload.pass, reused_normal_state.as_ref()) {
             (SpectralOperatorPass::InitialMajor, None) => {}
-            (
-                SpectralOperatorPass::ResidualRefresh
-                | SpectralOperatorPass::GriddedResidualRefresh,
-                Some(state),
-            ) if self
-                .specification
-                .as_ref()
-                .is_some_and(|specification| state.matches(specification)) => {}
+            (SpectralOperatorPass::ResidualRefresh, Some(state))
+                if self
+                    .specification
+                    .as_ref()
+                    .is_some_and(|specification| state.matches(specification)) => {}
             _ => return Err(SpectralOperatorError::ReusableNormalStateMismatch),
         }
         self.reused_normal_state = reused_normal_state;
@@ -1838,15 +1818,12 @@ impl SpectralSlabOperator {
     ) -> Result<(), SpectralOperatorError> {
         match (self.workload.pass, self.reused_normal_state.as_ref()) {
             (SpectralOperatorPass::InitialMajor, None) => Ok(()),
-            (
-                SpectralOperatorPass::ResidualRefresh
-                | SpectralOperatorPass::GriddedResidualRefresh,
-                Some(state),
-            ) if state.matches_replay(
-                weighting_generation,
-                selected_generation,
-                continuum_transform_generation,
-            ) =>
+            (SpectralOperatorPass::ResidualRefresh, Some(state))
+                if state.matches_replay(
+                    weighting_generation,
+                    selected_generation,
+                    continuum_transform_generation,
+                ) =>
             {
                 Ok(())
             }
@@ -2029,7 +2006,7 @@ impl SpectralSlabOperator {
         mut self,
         residual_model: ModelGenerationId,
     ) -> Result<SpectralOperatorPrimitives, SpectralOperatorError> {
-        if self.workload.pass != SpectralOperatorPass::GriddedResidualRefresh {
+        if self.workload.pass != SpectralOperatorPass::ResidualRefresh {
             return Err(SpectralOperatorError::UnsupportedGriddedReplay);
         }
         let mut normal_grids = self

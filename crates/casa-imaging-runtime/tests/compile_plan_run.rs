@@ -50,8 +50,8 @@ use casa_imaging_reconstruction::{
     WeightingExecutionLimits, WeightingPlan, WeightingReplayChunk, WeightingReplaySummary,
     begin_weighting_generation, plan_weighting,
     runtime_adapter::{
-        CompleteDataOwnerResult, SpectralOperatorPass, gridded_normal_sector_residency,
-        prepare_spectral_operator, spectral_operator_workload,
+        CompleteDataOwnerResult, SpectralOperatorPass, prepare_spectral_operator,
+        spectral_operator_workload,
     },
 };
 use casa_imaging_runtime::{
@@ -3188,7 +3188,7 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
         allocation
             .allocation
             .as_str()
-            .starts_with("spectral-operator-primitives-gridded-residual-refresh-")
+            .starts_with("spectral-operator-primitives-residual-refresh-")
     }));
     let residual_grid = final_physical
         .execution_dag()
@@ -3198,33 +3198,13 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
             allocation
                 .id
                 .as_str()
-                .starts_with("spectral-operator-grids-gridded-residual-refresh-")
+                .starts_with("spectral-operator-grids-residual-refresh-")
         })
-        .expect("gridded residual-refresh allocation");
+        .expect("residual-refresh grid allocation");
     assert_eq!(
         residual_grid.bytes,
         final_complete.residency().grid_bytes() as u64
     );
-    assert_eq!(
-        residual_grid.compatibility.layout,
-        AllocationLayout::new("spectral-operator-spatial-sectors-and-deterministic-merge"),
-    );
-    let residual_slot = final_physical
-        .execution_dag()
-        .physical_slots()
-        .get(&residual_grid.physical_slot)
-        .expect("gridded residual-refresh physical slot");
-    assert_eq!(residual_slot.capacity_bytes, residual_grid.bytes);
-    let residual_demand = final_physical
-        .execution_dag()
-        .resource_alternative()
-        .demand
-        .memory
-        .iter()
-        .find(|demand| demand.allocation_id == residual_grid.id.as_str())
-        .expect("gridded residual-refresh memory demand");
-    assert_eq!(residual_demand.hard_bytes, residual_grid.bytes);
-    assert_eq!(residual_demand.preferred_bytes, residual_grid.bytes);
     let final_executor = SpectralCycleExecutor::new_gridded(
         implementation(73),
         problem.clone(),
@@ -8410,21 +8390,12 @@ fn t37_runtime_residency_tracks_core_and_sampler_halo_depth() {
     let residual_refresh = CompleteDataPlanFragment::for_slab(
         &problem,
         4,
-        replay.clone(),
+        replay,
         3,
         1,
         SpectralOperatorPass::ResidualRefresh,
     )
     .expect("one-channel residual refresh");
-    let gridded_refresh = CompleteDataPlanFragment::for_slab(
-        &problem,
-        4,
-        replay,
-        3,
-        1,
-        SpectralOperatorPass::GriddedResidualRefresh,
-    )
-    .expect("one-channel gridded residual refresh");
 
     assert_eq!(depth_one.slab().core_range(), 3..4);
     assert_eq!(depth_one.slab().resident_range(), 2..5);
@@ -8441,20 +8412,6 @@ fn t37_runtime_residency_tracks_core_and_sampler_halo_depth() {
         residual_refresh.residency().grid_bytes() * 3,
         one.grid_bytes(),
         "later major passes retain only residual plus compensation grids"
-    );
-    let specification = SpectralOperatorSpecification::new(&problem).expect("operator shape");
-    let gridded_values = gridded_normal_sector_residency(specification.grid_shape(), 1)
-        .expect("spatial-owner residency");
-    assert_eq!(
-        gridded_refresh.residency().grid_bytes(),
-        gridded_values.peak_complex_values() * std::mem::size_of::<num_complex::Complex64>(),
-        "gridded replay admits the exact sector plus deterministic-merge peak"
-    );
-    assert_eq!(
-        residual_refresh.residency().forward_workspace_bytes()
-            - gridded_refresh.residency().forward_workspace_bytes(),
-        4 * std::mem::size_of::<num_complex::Complex64>(),
-        "only ordinary replay retains the bounded four-sample prediction buffer"
     );
     assert_eq!(
         residual_refresh.residency().primitive_output_bytes(),

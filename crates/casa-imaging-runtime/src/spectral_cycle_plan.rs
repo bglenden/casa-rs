@@ -469,7 +469,7 @@ impl SpectralCyclePlan {
             pass_node("spectral-operator-fft-plan", pass),
             match pass.phase() {
                 SpectralPassPhase::InitialMajor => SpectralOperatorPass::InitialMajor,
-                SpectralPassPhase::FinalMajor => SpectralOperatorPass::GriddedResidualRefresh,
+                SpectralPassPhase::FinalMajor => SpectralOperatorPass::ResidualRefresh,
             },
         )?;
         let (mut physical, complete_data) = complete_data.compose(&physical)?;

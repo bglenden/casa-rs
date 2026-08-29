@@ -782,7 +782,7 @@ fn sealed_gridded_program_is_reused_across_distinct_model_generations() {
     let workload = spectral_operator_workload(
         &specification,
         max_replay_block_samples,
-        SpectralOperatorPass::GriddedResidualRefresh,
+        SpectralOperatorPass::ResidualRefresh,
     )
     .expect("first residual workload");
     let prepared = prepare_spectral_operator(specification, workload).expect("first operator");
@@ -834,7 +834,7 @@ fn sealed_gridded_program_is_reused_across_distinct_model_generations() {
     let workload = spectral_operator_workload(
         &specification,
         max_replay_block_samples,
-        SpectralOperatorPass::GriddedResidualRefresh,
+        SpectralOperatorPass::ResidualRefresh,
     )
     .expect("second residual workload");
     let prepared = prepare_spectral_operator(specification, workload).expect("second operator");
@@ -966,7 +966,7 @@ fn sealed_gridded_program_replays_channel_local_cross_channel_groups() {
     let workload = spectral_operator_workload(
         &specification,
         plan.limits().max_block_samples(),
-        SpectralOperatorPass::GriddedResidualRefresh,
+        SpectralOperatorPass::ResidualRefresh,
     )
     .expect("residual workload");
     let prepared = prepare_spectral_operator(specification, workload).expect("residual operator");

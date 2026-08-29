@@ -852,7 +852,7 @@ impl CompleteDataPlanFragment {
         artifact: &FrozenGriddedNormalReplay,
     ) -> Result<GriddedNormalOperatorState, CompleteDataPlanError> {
         if context.node().id != self.replay_node
-            || self.workload.pass() != SpectralOperatorPass::GriddedResidualRefresh
+            || self.workload.pass() != SpectralOperatorPass::ResidualRefresh
             || context.compiled().problem_id() != problem.problem_id()
         {
             return Err(CompleteDataPlanError::PlanMismatch);
@@ -1017,7 +1017,7 @@ impl CompleteDataPlanFragment {
             ],
             allocations: [
                 Some(specs[2].usage(ClaimLifetime::Work)),
-                (self.workload.pass() != SpectralOperatorPass::InitialMajor)
+                (self.workload.pass() == SpectralOperatorPass::ResidualRefresh)
                     .then(|| specs[4].usage(ClaimLifetime::Work)),
                 Some(specs[5].usage(ClaimLifetime::Work)),
             ]
@@ -1137,22 +1137,15 @@ impl CompleteDataPlanFragment {
             FenceKind::Io,
         ))]);
         let reconciled = BTreeSet::from([WorkDependency::Work(reconciliation.clone())]);
-        let pass = self.workload.pass();
-        let residual_refresh = pass != SpectralOperatorPass::InitialMajor;
+        let residual_refresh = self.workload.pass() == SpectralOperatorPass::ResidualRefresh;
         Ok([
             CompleteDataAllocation::new(
                 format!("spectral-operator-grids-{suffix}"),
                 residency.grid_bytes(),
-                match pass {
-                    SpectralOperatorPass::InitialMajor => {
-                        "spectral-operator-shared-dirty-psf-residual-grids"
-                    }
-                    SpectralOperatorPass::ResidualRefresh => {
-                        "spectral-operator-shared-residual-refresh-grid"
-                    }
-                    SpectralOperatorPass::GriddedResidualRefresh => {
-                        "spectral-operator-spatial-sectors-and-deterministic-merge"
-                    }
+                if residual_refresh {
+                    "spectral-operator-shared-residual-refresh-grid"
+                } else {
+                    "spectral-operator-shared-dirty-psf-residual-grids"
                 },
                 InitializationPolicy::ZeroBeforeRead,
                 self.replay_node.clone(),
@@ -1214,7 +1207,6 @@ fn operator_allocation_suffix(workload: SpectralOperatorWorkload) -> String {
         match workload.pass() {
             SpectralOperatorPass::InitialMajor => "initial",
             SpectralOperatorPass::ResidualRefresh => "residual-refresh",
-            SpectralOperatorPass::GriddedResidualRefresh => "gridded-residual-refresh",
         },
         shape[0],
         shape[1],

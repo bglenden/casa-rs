@@ -502,7 +502,7 @@ impl GriddedNormalOperatorProgram {
         let (prepared_specification, workload, fft) = prepared.into_parts();
         if problem.problem_id() != self.manifest.specification.problem_id()
             || prepared_specification != self.manifest.specification
-            || workload.pass() != SpectralOperatorPass::GriddedResidualRefresh
+            || workload.pass() != SpectralOperatorPass::ResidualRefresh
             || prior.problem_id() != self.manifest.specification.problem_id()
             || prior.geometry_id() != self.manifest.specification.geometry_id()
             || prior.numerics_id() != self.manifest.specification.numerics_id()
