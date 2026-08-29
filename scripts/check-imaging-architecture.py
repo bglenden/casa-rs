@@ -54,10 +54,10 @@ ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256 = (
     "daafa560c0e941fb3f2cea5c02a46de8a3363c2dd327cb839ef8ab2111f09835"
 )
 ACCEPTED_MATRIX_ROWS_SHA256 = (
-    "0ad645f25cce979824634660a2a4c7ea1be6a06d12869eb9186495d9875c2719"
+    "1bd02e050fb0e83361f02ef43c0eb483c89b61b58efc44a2261fa668e398158b"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "fd1f85be581639ccdc284699342645ffb72cd3419ede1305db3d17e1c70d69fb"
+    "4a5cec9d1a5aac5bb50d0e97dff5f382e4277e238607fae1962592b7a431d299"
 )
 ACCEPTED_MATRIX_CONTRACT_REVISION = 63
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
@@ -1757,7 +1757,7 @@ def validate_t18_global_weighting_transfer(rows: list[dict[str, Any]]) -> None:
         "crates/casa-imaging-runtime/src/weighting.rs::pub struct WeightingExecutionState",
         "crates/casa-imaging-runtime/src/weighting.rs::pub fn traverse_density_source",
         "crates/casa-imaging-runtime/src/weighting.rs::pub(crate) fn traverse_initial_bounded_stream",
-        "crates/casa-imaging-runtime/src/weighting.rs::pub(crate) fn traverse_reuse_bounded_stream",
+        "crates/casa-imaging-runtime/src/weighting.rs::pub(crate) fn traverse_selected_output_bounded_stream",
         "crates/casa-imaging-runtime/src/weighting.rs::pub struct FrozenWeightingArtifact",
         "crates/casa-imaging-runtime/src/weighting.rs::pub fn release",
         "crates/casa-imaging-runtime/src/weighting.rs::pub struct WeightedObservationBlock",
@@ -2083,11 +2083,11 @@ def validate_t18_global_weighting_sources(
         }
         or "pubfntraverse_density_source(" not in compact_runtime
         or "pub(crate)fntraverse_initial_bounded_stream<" not in compact_runtime
-        or "pub(crate)fntraverse_reuse_bounded_stream<" not in compact_runtime
+        or "pub(crate)fntraverse_selected_output_bounded_stream<" not in compact_runtime
         or "pubfnwith_frozen_artifact(" not in compact_runtime
     ):
         raise ArchitectureError(
-            "global weighting must expose one opaque fused-stream lifecycle with frozen reuse"
+            "global weighting must expose one opaque initial stream and bounded selected-output lifecycle"
         )
     density = rust_function_body(
         runtime_weighting, "traverse_density_source", runtime_weighting_path
@@ -2095,8 +2095,10 @@ def validate_t18_global_weighting_sources(
     initial_stream = rust_function_body(
         runtime_weighting, "traverse_initial_bounded_stream", runtime_weighting_path
     )
-    reuse_stream = rust_function_body(
-        runtime_weighting, "traverse_reuse_bounded_stream", runtime_weighting_path
+    selected_output_stream = rust_function_body(
+        runtime_weighting,
+        "traverse_selected_output_bounded_stream",
+        runtime_weighting_path,
     )
     bounded_stream = rust_function_body(
         runtime_weighting, "execute_weighting_block_stream", runtime_weighting_path
@@ -2113,15 +2115,15 @@ def validate_t18_global_weighting_sources(
         initial_stream.count("execute_weighting_block_stream(") != 1
         or "begin_natural_weighting_stream(" not in initial_stream
         or "finish_into_stream(" not in initial_stream
-        or reuse_stream.count("execute_weighting_block_stream(") != 1
-        or ".begin_derived_replay(" not in reuse_stream
-        or ".validate_derived_completion(" not in reuse_stream
+        or selected_output_stream.count("execute_weighting_block_stream(") != 1
+        or ".begin_derived_replay(" not in selected_output_stream
+        or ".validate_derived_completion(" not in selected_output_stream
         or bounded_stream.count("execute_bounded(") != 1
         or bounded_stream.count("selected.into_block_stream(problem)") != 1
         or ".complete(terminal)" not in bounded_stream
     ):
         raise ArchitectureError(
-            "initial and later majors must each use the shared bounded terminal selected-payload traversal"
+            "initial science and terminal visibility output must use the shared bounded selected-payload traversal"
         )
     replay = rust_impl_method_body(
         runtime_weighting, "FrozenWeightingGeneration", "replay", runtime_weighting_path
@@ -2134,7 +2136,7 @@ def validate_t18_global_weighting_sources(
         or "fragment:&WeightingPlanFragment<'_>" not in compact_runtime
     ):
         raise ArchitectureError(
-            "T18 replay must require predecessor authority, its own exhaustive traversal, and exact coverage"
+            "T18 selected-output replay must require predecessor authority, exhaustive traversal, and exact coverage"
         )
     if "IntoIterator" in weighting or "inspect_selected_observation(" in weighting:
         raise ArchitectureError("T18 reconstruction exposes a bypass around T17 callback traversal")
@@ -2396,7 +2398,7 @@ def validate_t18_global_weighting_sources(
         or compose.count("kind: WorkKind::ObservationRead") != 2
         or "WeightingStreamingMode::DensityInitial" not in compose_streaming
         or "WeightingStreamingMode::NaturalInitial" not in compose_streaming
-        or "WeightingStreamingMode::Reuse" not in compose_streaming
+        or "WeightingStreamingMode::SelectedOutputOnly" not in compose_streaming
         or "removed.contains" not in compose_streaming
         or "terminal_fence" not in compose_streaming
         or "kind: WorkKind::Release" not in compose

@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use std::{
+    collections::HashMap,
     error::Error,
+    fs::File,
+    io::{BufReader, BufWriter, Read, Write},
     path::{Path, PathBuf},
     process::Command,
     time::{Duration, Instant},
@@ -22,11 +25,12 @@ use casa_imaging_model::{
     ProductValidityPolicies, Projection, ReconstructionAlgorithm, ReconstructionBasis,
     ReconstructionContract, ReconstructionControls, ReductionPolicy, RestFrequency,
     RestoringBeamPolicy, RowSelection, ScientificContract, SelectedMainRow, SelectedRowsBuilder,
-    SelectionBound, SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling,
-    SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection,
-    StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy, TimeRange, TimeScale,
-    TimeSelection, UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn,
-    WeightDensityScope, WeightingContract, WeightingScheme, compile, compile_observation,
+    SelectedVisibilitySample, SelectionBound, SkyDirection, SpectralContract,
+    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
+    SpectralWcs, SpectralWindowSelection, StageErrorBudget, TaylorSupportReference,
+    TaylorValidityPolicy, TimeRange, TimeScale, TimeSelection, UvwCoordinateLaw, VisibilityColumn,
+    VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract, WeightingScheme,
+    compile, compile_observation,
 };
 use casa_imaging_reconstruction::{
     ExecutableModelProblem, FrozenWeightingCoverageProof, MajorCycleOwner, MajorCyclePreparation,
@@ -44,16 +48,19 @@ use casa_ms::{
 };
 use casa_types::measures::{epoch::EpochRef, frequency::FrequencyRef};
 use serde_json::json;
+use sha2::{Digest, Sha256};
 
 use super::*;
 
 const DATA_ROOT_ENV: &str = "CASA_RS_IMPERF_DATA_ROOT";
+const REPLAY_ARTIFACT_ENV: &str = "CASA_RS_IMPERF_REPLAY_ARTIFACT";
 const DATASET_RELATIVE_PATH: &str = "wave1/vla/single/medium/ms/wave1-vla-single-medium.ms";
 const EXPECTED_FULL_SELECTED_ROWS: u64 = 4_094_064;
 const WINDOW_ROWS: u64 = 65_536;
 const WINDOW_STARTS: [u64; 4] = [0, 1_342_843, 2_685_685, 4_028_528];
 const EXPECTED_SELECTED_ROWS: u64 = 263_250;
 const EXPECTED_SELECTED_SAMPLES: u64 = 33_696_000;
+const FULL_WORKLOAD_SELECTED_SAMPLES: u64 = 524_040_192;
 const CAPTURED_RESIDENCY_BYTES: usize = 1 << 30;
 const CAPTURED_BLOCK_LIMIT: usize = 16;
 const EXPECTED_CAPTURED_BLOCKS: usize = 6;
@@ -65,6 +72,263 @@ const EXPECTED_WEIGHTED_BLOCKS: u64 = 8_227;
 const WEIGHTED_BLOCK_SAMPLES: usize = 4_096;
 const EXPECTED_NORMAL_STATE_IDENTITY: &str =
     "e6368112404a3ce2b3b3b9e988bde85dadd5726e09de8d87ca4499dc27a71b91";
+const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
+const NORMAL_REPLAY_SUPPORT: isize = 3;
+const NORMAL_REPLAY_OVERSAMPLING: isize = 100;
+const NORMAL_REPLAY_RECORD_BYTES: u64 = 16;
+const HLL_PRECISION: u32 = 18;
+
+#[derive(Debug, thiserror::Error)]
+enum ReplayProbeError {
+    #[error("normal-replay artifact I/O failed")]
+    Artifact(#[from] std::io::Error),
+    #[error("normal-replay operator failed")]
+    Operator(#[from] casa_imaging_reconstruction::SpectralOperatorError),
+}
+
+struct ReplayArtifactSink {
+    path: PathBuf,
+    writer: BufWriter<File>,
+    records: u64,
+    bytes: u64,
+    write_elapsed: Duration,
+}
+
+struct ReplayArtifactObservation {
+    path: PathBuf,
+    records: u64,
+    bytes: u64,
+    write_elapsed: Duration,
+    read_elapsed: Duration,
+    read_bytes: u64,
+    sha256: String,
+}
+
+impl ReplayArtifactSink {
+    fn from_environment() -> std::io::Result<Option<Self>> {
+        let Some(path) = std::env::var_os(REPLAY_ARTIFACT_ENV).map(PathBuf::from) else {
+            return Ok(None);
+        };
+        Ok(Some(Self {
+            writer: BufWriter::with_capacity(1 << 20, File::create(&path)?),
+            path,
+            records: 0,
+            bytes: 0,
+            write_elapsed: Duration::ZERO,
+        }))
+    }
+
+    fn write_block(&mut self, records: &[(u64, f64)]) -> std::io::Result<()> {
+        let mut bytes = Vec::with_capacity(records.len() * NORMAL_REPLAY_RECORD_BYTES as usize);
+        for (key, coefficient) in records {
+            bytes.extend_from_slice(&key.to_le_bytes());
+            bytes.extend_from_slice(&coefficient.to_le_bytes());
+        }
+        let started = Instant::now();
+        self.writer.write_all(&bytes)?;
+        self.write_elapsed += started.elapsed();
+        self.records += u64::try_from(records.len()).expect("artifact record count fits u64");
+        self.bytes += u64::try_from(bytes.len()).expect("artifact byte count fits u64");
+        Ok(())
+    }
+
+    fn finish(mut self) -> std::io::Result<ReplayArtifactObservation> {
+        let started = Instant::now();
+        self.writer.flush()?;
+        self.write_elapsed += started.elapsed();
+        drop(self.writer);
+
+        let read_started = Instant::now();
+        let mut reader = BufReader::with_capacity(8 << 20, File::open(&self.path)?);
+        let mut buffer = vec![0_u8; 8 << 20];
+        let mut hasher = Sha256::new();
+        let mut read_bytes = 0_u64;
+        loop {
+            let count = reader.read(&mut buffer)?;
+            if count == 0 {
+                break;
+            }
+            hasher.update(&buffer[..count]);
+            read_bytes += u64::try_from(count).expect("artifact read count fits u64");
+        }
+        Ok(ReplayArtifactObservation {
+            path: self.path,
+            records: self.records,
+            bytes: self.bytes,
+            write_elapsed: self.write_elapsed,
+            read_elapsed: read_started.elapsed(),
+            read_bytes,
+            sha256: format!("{:x}", hasher.finalize()),
+        })
+    }
+}
+
+struct NormalReplayCardinalityProbe {
+    grid_shape: [usize; 2],
+    du_lambda: f64,
+    dv_lambda: f64,
+    registers: Box<[u8]>,
+    raw_records: u64,
+    consecutive_reduced_records: u64,
+    last_key: Option<u64>,
+    block_reduced_records: u64,
+    contributing_blocks: u64,
+    artifact: Option<ReplayArtifactSink>,
+}
+
+impl NormalReplayCardinalityProbe {
+    fn new(problem: &CompiledProblem, grid_shape: [usize; 2]) -> std::io::Result<Self> {
+        assert!(
+            grid_shape.into_iter().all(|extent| extent <= 4_096),
+            "diagnostic tap key reserves 12 bits per grid coordinate"
+        );
+        let increment = problem.geometry().domains()[0].direction().increment_rad();
+        Ok(Self {
+            grid_shape,
+            du_lambda: 1.0 / (grid_shape[0] as f64 * increment[0].abs()),
+            dv_lambda: 1.0 / (grid_shape[1] as f64 * increment[1].abs()),
+            registers: vec![0; 1 << HLL_PRECISION].into_boxed_slice(),
+            raw_records: 0,
+            consecutive_reduced_records: 0,
+            last_key: None,
+            block_reduced_records: 0,
+            contributing_blocks: 0,
+            artifact: ReplayArtifactSink::from_environment()?,
+        })
+    }
+
+    fn observe(&mut self, block: &ReconstructionWeightedBlock) -> std::io::Result<()> {
+        let mut block_coefficients = HashMap::with_capacity(block.samples().len());
+        for weighted in block.samples() {
+            let selected = weighted.selected();
+            let finite_visibility = match selected.visibility() {
+                SelectedVisibilitySample::Float32(value) => value.is_finite(),
+                SelectedVisibilitySample::Complex32(value) => value.into_iter().all(f32::is_finite),
+            };
+            if !selected
+                .address()
+                .correlation_type
+                .contributes_to_stokes_i()
+                || selected.row_flag()
+                || selected.parallel_hand_group_flag()
+                || !selected.address().frequency_centre_hz.is_finite()
+                || !selected.phase_shift_m().is_finite()
+                || !finite_visibility
+                || selected
+                    .transformed_uvw_m()
+                    .iter()
+                    .any(|coordinate| !coordinate.is_finite())
+            {
+                continue;
+            }
+            for spectral in weighted.spectral_values() {
+                let contribution = spectral.contribution();
+                if spectral.imaging_weight() == 0.0 || contribution.output_channel() != 0 {
+                    continue;
+                }
+                let scale = contribution.evaluation_frequency_hz() / SPEED_OF_LIGHT_M_PER_S;
+                let uv = selected.transformed_uvw_m();
+                let Some(key) = self.key([uv[0] * scale, uv[1] * scale]) else {
+                    continue;
+                };
+                self.raw_records = self
+                    .raw_records
+                    .checked_add(1)
+                    .expect("normal replay raw-record count does not overflow");
+                if self.last_key != Some(key) {
+                    self.consecutive_reduced_records = self
+                        .consecutive_reduced_records
+                        .checked_add(1)
+                        .expect("normal replay consecutive-record count does not overflow");
+                    self.last_key = Some(key);
+                }
+                *block_coefficients.entry(key).or_insert(0.0) +=
+                    spectral.imaging_weight() * contribution.factor() * contribution.factor();
+                self.observe_key(key);
+            }
+        }
+        if !block_coefficients.is_empty() {
+            self.contributing_blocks += 1;
+            self.block_reduced_records = self
+                .block_reduced_records
+                .checked_add(
+                    u64::try_from(block_coefficients.len()).expect("block record count fits u64"),
+                )
+                .expect("normal replay block-record count does not overflow");
+            if let Some(artifact) = &mut self.artifact {
+                let mut records = block_coefficients.into_iter().collect::<Vec<_>>();
+                records.sort_unstable_by_key(|(key, _)| *key);
+                artifact.write_block(&records)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn finish_artifact(&mut self) -> std::io::Result<Option<ReplayArtifactObservation>> {
+        self.artifact
+            .take()
+            .map(ReplayArtifactSink::finish)
+            .transpose()
+    }
+
+    fn key(&self, uv_lambda: [f64; 2]) -> Option<u64> {
+        let x = self.tap_span(
+            uv_lambda[0] / self.du_lambda + self.grid_shape[0] as f64 / 2.0,
+            self.grid_shape[0],
+        )?;
+        let y = self.tap_span(
+            -uv_lambda[1] / self.dv_lambda + self.grid_shape[1] as f64 / 2.0,
+            self.grid_shape[1],
+        )?;
+        Some(
+            u64::try_from(x.0).ok()?
+                | (u64::try_from(y.0).ok()? << 12)
+                | (u64::try_from(x.1).ok()? << 24)
+                | (u64::try_from(y.1).ok()? << 31),
+        )
+    }
+
+    fn tap_span(&self, coordinate: f64, size: usize) -> Option<(usize, usize)> {
+        if !coordinate.is_finite() {
+            return None;
+        }
+        let anchor = coordinate.round() as isize;
+        let offset =
+            ((anchor as f64 - coordinate) * NORMAL_REPLAY_OVERSAMPLING as f64).round() as isize;
+        let start = anchor - NORMAL_REPLAY_SUPPORT;
+        let end = anchor + NORMAL_REPLAY_SUPPORT;
+        let index = offset + NORMAL_REPLAY_OVERSAMPLING / 2;
+        (start >= 0 && end < size as isize && (0..=NORMAL_REPLAY_OVERSAMPLING).contains(&index))
+            .then_some((start as usize, index as usize))
+    }
+
+    fn observe_key(&mut self, key: u64) {
+        let hash = mix64(key);
+        let index = (hash >> (64 - HLL_PRECISION)) as usize;
+        let remaining = hash << HLL_PRECISION;
+        let rank = remaining.leading_zeros().saturating_add(1) as u8;
+        self.registers[index] = self.registers[index].max(rank);
+    }
+
+    fn estimated_global_records(&self) -> u64 {
+        let buckets = self.registers.len() as f64;
+        let harmonic = self
+            .registers
+            .iter()
+            .map(|rank| 2.0_f64.powi(-i32::from(*rank)))
+            .sum::<f64>();
+        let alpha = 0.7213 / (1.0 + 1.079 / buckets);
+        (alpha * buckets * buckets / harmonic).round() as u64
+    }
+}
+
+fn mix64(mut value: u64) -> u64 {
+    value ^= value >> 30;
+    value = value.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    value ^= value >> 27;
+    value = value.wrapping_mul(0x94d0_49bb_1331_11eb);
+    value ^ (value >> 31)
+}
 
 struct ProbeProblem {
     problem: CompiledProblem,
@@ -162,6 +426,8 @@ fn medium_vla_64ch_residual_refresh() -> Result<(), Box<dyn Error>> {
 
     let initial_weights = density.finish_into_stream(&problem, &plan)?;
     let specification = SpectralOperatorSpecification::new(&problem)?;
+    let mut normal_replay_probe =
+        NormalReplayCardinalityProbe::new(&problem, specification.grid_shape())?;
     let workload = spectral_operator_workload(
         &specification,
         plan.limits().max_block_samples(),
@@ -230,13 +496,18 @@ fn medium_vla_64ch_residual_refresh() -> Result<(), Box<dyn Error>> {
         replay_consumer,
         replay_elapsed,
         operator_elapsed,
+        normal_replay_probe_elapsed,
         predicted_samples,
         emitted_blocks,
     ) = {
         let mut operator_elapsed = Duration::ZERO;
+        let mut normal_replay_probe_elapsed = Duration::ZERO;
         let mut predicted_samples = 0_u64;
         let mut emitted_blocks = 0_u64;
         let mut emit = |block: &ReconstructionWeightedBlock| {
+            let probe_started = Instant::now();
+            normal_replay_probe.observe(block)?;
+            normal_replay_probe_elapsed += probe_started.elapsed();
             let started = Instant::now();
             let predicted = operator.consume_block(block)?;
             operator_elapsed += started.elapsed();
@@ -246,7 +517,7 @@ fn medium_vla_64ch_residual_refresh() -> Result<(), Box<dyn Error>> {
             emitted_blocks = emitted_blocks
                 .checked_add(1)
                 .expect("block count does not overflow");
-            Ok::<(), casa_imaging_reconstruction::SpectralOperatorError>(())
+            Ok::<(), ReplayProbeError>(())
         };
         let kernel = WeightingBlockKernel {
             problem: &problem,
@@ -268,6 +539,7 @@ fn medium_vla_64ch_residual_refresh() -> Result<(), Box<dyn Error>> {
             consumer,
             replay_started.elapsed(),
             operator_elapsed,
+            normal_replay_probe_elapsed,
             predicted_samples,
             emitted_blocks,
         )
@@ -297,7 +569,74 @@ fn medium_vla_64ch_residual_refresh() -> Result<(), Box<dyn Error>> {
     let checksum = result.primitives().normal_state_content_identity();
     let checksum_text = checksum.to_string();
     let source_revision = source_revision()?;
-    let weighting_exclusive = replay_elapsed.saturating_sub(operator_elapsed);
+    let replay_without_probe = replay_elapsed.saturating_sub(normal_replay_probe_elapsed);
+    let weighting_exclusive = replay_without_probe.saturating_sub(operator_elapsed);
+    let estimated_global_records = normal_replay_probe.estimated_global_records();
+    let replay_artifact = normal_replay_probe.finish_artifact()?;
+    if let Some(artifact) = &replay_artifact {
+        assert_eq!(
+            artifact.bytes,
+            artifact.records * NORMAL_REPLAY_RECORD_BYTES,
+            "normal-replay artifact record width changed"
+        );
+        assert_eq!(
+            artifact.read_bytes, artifact.bytes,
+            "normal-replay artifact readback length changed"
+        );
+    }
+    let replay_artifact_json = replay_artifact.as_ref().map(|artifact| {
+        json!({
+            "path": artifact.path,
+            "records": artifact.records,
+            "bytes": artifact.bytes,
+            "write_ms": milliseconds(artifact.write_elapsed),
+            "sequential_read_ms": milliseconds(artifact.read_elapsed),
+            "sequential_read_bytes": artifact.read_bytes,
+            "sha256": artifact.sha256,
+        })
+    });
+    let projected_full_block_records = normal_replay_probe
+        .block_reduced_records
+        .checked_mul(FULL_WORKLOAD_SELECTED_SAMPLES)
+        .and_then(|records| records.checked_add(EXPECTED_SELECTED_SAMPLES - 1))
+        .map(|records| records / EXPECTED_SELECTED_SAMPLES)
+        .ok_or("normal replay full-workload projection overflowed")?;
+    let projected_full_consecutive_records = normal_replay_probe
+        .consecutive_reduced_records
+        .checked_mul(FULL_WORKLOAD_SELECTED_SAMPLES)
+        .and_then(|records| records.checked_add(EXPECTED_SELECTED_SAMPLES - 1))
+        .map(|records| records / EXPECTED_SELECTED_SAMPLES)
+        .ok_or("normal replay consecutive full-workload projection overflowed")?;
+    let normal_replay_probe_json = json!({
+        "representation": "tap-span-key-plus-f64-coefficient",
+        "record_bytes": NORMAL_REPLAY_RECORD_BYTES,
+        "hll_precision": HLL_PRECISION,
+        "hll_resident_bytes": normal_replay_probe.registers.len(),
+        "probe_ms": milliseconds(normal_replay_probe_elapsed),
+        "raw_contributions": normal_replay_probe.raw_records,
+        "contributing_blocks": normal_replay_probe.contributing_blocks,
+        "consecutive_reduced_records": normal_replay_probe.consecutive_reduced_records,
+        "consecutive_reduction_ratio": normal_replay_probe.raw_records as f64
+            / normal_replay_probe.consecutive_reduced_records as f64,
+        "block_reduced_records": normal_replay_probe.block_reduced_records,
+        "estimated_global_records": estimated_global_records,
+        "block_reduction_ratio": normal_replay_probe.raw_records as f64
+            / normal_replay_probe.block_reduced_records as f64,
+        "estimated_global_reduction_ratio": normal_replay_probe.raw_records as f64
+            / estimated_global_records as f64,
+        "captured_block_reduced_bytes": normal_replay_probe.block_reduced_records
+            * NORMAL_REPLAY_RECORD_BYTES,
+        "captured_consecutive_reduced_bytes": normal_replay_probe.consecutive_reduced_records
+            * NORMAL_REPLAY_RECORD_BYTES,
+        "captured_estimated_global_bytes": estimated_global_records * NORMAL_REPLAY_RECORD_BYTES,
+        "projected_full_block_reduced_records": projected_full_block_records,
+        "projected_full_block_reduced_bytes": projected_full_block_records
+            * NORMAL_REPLAY_RECORD_BYTES,
+        "projected_full_consecutive_reduced_records": projected_full_consecutive_records,
+        "projected_full_consecutive_reduced_bytes": projected_full_consecutive_records
+            * NORMAL_REPLAY_RECORD_BYTES,
+        "artifact": replay_artifact_json,
+    });
     println!(
         "{}",
         serde_json::to_string(&json!({
@@ -319,9 +658,11 @@ fn medium_vla_64ch_residual_refresh() -> Result<(), Box<dyn Error>> {
             "capture_ms": milliseconds(capture_elapsed),
             "setup_ms": milliseconds(setup_elapsed),
             "replay_ms": milliseconds(replay_elapsed),
+            "replay_without_probe_ms": milliseconds(replay_without_probe),
             "operator_consume_ms": milliseconds(operator_elapsed),
             "projection_spectral_weighting_ms": milliseconds(weighting_exclusive),
             "operator_finish_ms": milliseconds(finish_elapsed),
+            "normal_replay_probe": normal_replay_probe_json,
             "selected_generation_proof_bytes": selected_generation_proof_bytes,
             "selected_generation_proof_hash_calls": selected_generation_proof_hash_calls,
             "selected_generation_proof_terminalized": false,
@@ -388,7 +729,7 @@ fn medium_vla_64ch_residual_refresh() -> Result<(), Box<dyn Error>> {
         "weighting and operator coverage derivation must perform the same zero work"
     );
     assert!(
-        replay_elapsed.as_secs_f64() <= 8.919_854_174_7,
+        replay_without_probe.as_secs_f64() <= 8.919_854_174_7,
         "timed candidate replay exceeded the approved discriminator ceiling"
     );
     Ok(())

@@ -6,8 +6,9 @@ use std::time::Instant;
 
 use casa_imaging_application::{
     ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumBeamPolicy, ContinuumImagingRequest,
-    ContinuumMask, ContinuumMaskBox, ContinuumStopReason, ContinuumWeighting, SpectralImagingMode,
-    TaskRequirement, VisibilityContinuumSubtraction, execute_continuum,
+    ContinuumMask, ContinuumMaskBox, ContinuumStopReason, ContinuumWeighting,
+    HogbomIterationAccounting, SpectralImagingMode, TaskRequirement,
+    VisibilityContinuumSubtraction, execute_continuum,
 };
 
 use super::{
@@ -55,6 +56,7 @@ pub(super) fn execute(config: &CliConfig) -> Result<RunSummary, String> {
             .map_err(|_| "native selected-sample count exceeds usize".to_string())?,
         major_cycles: native.major_cycle_count,
         minor_iterations: result.minor_iterations,
+        actual_minor_iterations: result.actual_minor_iterations,
         clean_stop_reason,
         minor_cycles,
         visibility_products,
@@ -83,18 +85,36 @@ fn application_request(config: &CliConfig) -> Result<ContinuumImagingRequest, St
             }
         }
     };
-    let casa_inclusive = config.hogbom_iteration_mode == super::HogbomIterationMode::CasaInclusive;
-    let iterations = if casa_inclusive && config.niter > 0 {
-        config.niter.saturating_add(1)
+    let algorithm = if config.dirty_only || config.niter == 0 {
+        ContinuumAlgorithm::Dirty
     } else {
-        config.niter
+        match config.deconvolver {
+            Deconvolver::Hogbom => ContinuumAlgorithm::Hogbom,
+            Deconvolver::Clark => ContinuumAlgorithm::Clark,
+            Deconvolver::Multiscale => ContinuumAlgorithm::Multiscale {
+                scales_px: config
+                    .multiscale_scales
+                    .iter()
+                    .copied()
+                    .map(f64::from)
+                    .collect(),
+                small_scale_bias: f64::from(config.small_scale_bias),
+            },
+            Deconvolver::Mtmfs => ContinuumAlgorithm::Mtmfs {
+                terms: config.nterms,
+            },
+        }
     };
-    let cycle_iterations = if casa_inclusive {
-        config.minor_cycle_length.saturating_add(1)
+    let hogbom_iteration_accounting = if matches!(&algorithm, ContinuumAlgorithm::Hogbom) {
+        match config.hogbom_iteration_mode {
+            super::HogbomIterationMode::Strict => HogbomIterationAccounting::Strict,
+            super::HogbomIterationMode::CasaInclusive => HogbomIterationAccounting::CasaInclusive,
+        }
     } else {
-        config.minor_cycle_length
-    }
-    .min(iterations.max(1));
+        HogbomIterationAccounting::Strict
+    };
+    let iterations = config.niter;
+    let cycle_iterations = config.minor_cycle_length.min(iterations.max(1));
     Ok(ContinuumImagingRequest {
         measurement_set: config.ms.clone(),
         image_name: config.imagename.clone(),
@@ -118,26 +138,7 @@ fn application_request(config: &CliConfig) -> Result<ContinuumImagingRequest, St
             }
         }),
         data_column: config.datacolumn.clone(),
-        algorithm: if config.dirty_only || config.niter == 0 {
-            ContinuumAlgorithm::Dirty
-        } else {
-            match config.deconvolver {
-                Deconvolver::Hogbom => ContinuumAlgorithm::Hogbom,
-                Deconvolver::Clark => ContinuumAlgorithm::Clark,
-                Deconvolver::Multiscale => ContinuumAlgorithm::Multiscale {
-                    scales_px: config
-                        .multiscale_scales
-                        .iter()
-                        .copied()
-                        .map(f64::from)
-                        .collect(),
-                    small_scale_bias: f64::from(config.small_scale_bias),
-                },
-                Deconvolver::Mtmfs => ContinuumAlgorithm::Mtmfs {
-                    terms: config.nterms,
-                },
-            }
-        },
+        algorithm,
         weighting: match config.weighting {
             WeightingMode::Natural => ContinuumWeighting::Natural,
             WeightingMode::Uniform => ContinuumWeighting::Uniform,
@@ -148,6 +149,7 @@ fn application_request(config: &CliConfig) -> Result<ContinuumImagingRequest, St
         },
         iterations,
         cycle_iterations,
+        hogbom_iteration_accounting,
         maximum_major_cycles: config.nmajor,
         noise_sigma: (config.nsigma > 0.0).then_some(f64::from(config.nsigma)),
         cycle_factor: f64::from(config.cyclefactor),
@@ -304,7 +306,8 @@ mod tests {
     use std::ffi::OsString;
 
     use super::{
-        CliConfig, TaskRequirement, application_request, backend_requirements, task_requirements,
+        CliConfig, HogbomIterationAccounting, TaskRequirement, application_request,
+        backend_requirements, task_requirements,
     };
 
     fn config(extra: &[&str]) -> CliConfig {
@@ -406,19 +409,45 @@ mod tests {
     }
 
     #[test]
-    fn casa_inclusive_hogbom_mode_projects_task_iteration_accounting_once() {
+    fn casa_inclusive_hogbom_mode_preserves_reported_budgets_and_selects_typed_policy() {
         let config = config(&[
             "--niter",
-            "2",
+            "500",
             "--minor-cycle-length",
-            "2",
+            "50",
             "--hogbom-iteration-mode",
             "casa-inclusive",
         ]);
         let request = application_request(&config).expect("native request");
-        assert_eq!(request.iterations, 3);
-        assert_eq!(request.cycle_iterations, 3);
+        assert_eq!(request.iterations, 500);
+        assert_eq!(request.cycle_iterations, 50);
+        assert_eq!(
+            request.hogbom_iteration_accounting,
+            HogbomIterationAccounting::CasaInclusive
+        );
         assert!(!task_requirements(&config).contains(&TaskRequirement::UnsupportedControls));
+    }
+
+    #[test]
+    fn hogbom_iteration_mode_does_not_change_other_algorithm_budgets() {
+        let config = config(&[
+            "--deconvolver",
+            "clark",
+            "--niter",
+            "12",
+            "--minor-cycle-length",
+            "6",
+            "--hogbom-iteration-mode",
+            "casa-inclusive",
+        ]);
+        let request = application_request(&config).expect("native Clark request");
+
+        assert_eq!(request.iterations, 12);
+        assert_eq!(request.cycle_iterations, 6);
+        assert_eq!(
+            request.hogbom_iteration_accounting,
+            HogbomIterationAccounting::Strict
+        );
     }
 
     #[test]

@@ -18,27 +18,28 @@ use casa_imaging_model::{
     AxisOrder, CentreLaws, ContinuumChannelRole, ContinuumChannelUse, ContinuumFitRule,
     CorrelationProduct, CorrelationSelection, CorrelationType, DeclaredInnerProducts,
     DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame, DopplerConvention, Epoch, FacetLayout,
-    FiniteValuePolicy, FrequencyFrame, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
-    InstrumentResponse, ItrfPosition, LogicalIdentity, MeasurementEquationContract, ModelBounds,
-    ModelColumnWrite, ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements,
-    ModelStateIdentity, NumericPrecision, NumericalStage, NumericsContract, ObservationSelection,
-    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PolarizationContract,
-    PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemSpecification, ProductBlankingPolicy,
-    ProductKind, ProductNormalization, ProductRequirements, ProductSupportComparison,
-    ProductValidityPolicies, Projection, ReconstructionAlgorithm, ReconstructionBasis,
-    ReconstructionContract, ReconstructionControls, ReductionPolicy, RestFrequency,
-    RestoringBeamPolicy, ScientificContract, SelectedMainRow, SelectedRowsBuilder,
-    SequentialContinuumTransform, SkyDirection, SpectralContract, SpectralCoordinateSpec,
-    SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs,
-    SpectralWindowSelection, StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy,
-    TimeScale, UvwCoordinateLaw, VisibilityColumn as OwnerVisibilityColumn, VisibilityInnerProduct,
+    FiniteValuePolicy, FrequencyFrame, HogbomIterationAccounting, ImageAxis, ImageDomainRole,
+    ImageDomainSpec, ImageShape, InstrumentResponse, ItrfPosition, LogicalIdentity,
+    MeasurementEquationContract, ModelBounds, ModelColumnWrite, ModelInnerProduct,
+    ModelInputCommitment, ModelLifecycleRequirements, ModelStateIdentity, NumericPrecision,
+    NumericalStage, NumericsContract, ObservationSelection, ObservationTransactionRequirements,
+    PhaseCentreLaw, PointingCentreLaw, PolarizationContract, PolarizationCoordinate,
+    PrimaryBeamValidityPolicy, ProblemSpecification, ProductBlankingPolicy, ProductKind,
+    ProductNormalization, ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
+    Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
+    ReconstructionControls, ReductionPolicy, RestFrequency, RestoringBeamPolicy,
+    ScientificContract, SelectedMainRow, SelectedRowsBuilder, SequentialContinuumTransform,
+    SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
+    SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection, StageErrorBudget,
+    TaylorSupportReference, TaylorValidityPolicy, TimeScale, UvwCoordinateLaw,
+    VisibilityColumn as OwnerVisibilityColumn, VisibilityInnerProduct,
     WeightColumn as OwnerWeightColumn, WeightDensityScope, WeightingContract, WeightingScheme,
 };
 use casa_imaging_reconstruction::{ReconstructionMaskPlan, WeightingExecutionLimits};
 use casa_imaging_runtime::{
-    BuildIdentity, ExecutionAttemptId, ExecutionReceiptStore, ImplementationRegistryId,
-    PlannerCostModelProfileId, ProductionStorageProfile, ReceiptRetention, ResourceAuthority,
-    ResourcePolicy, WorkImplementationId,
+    BuildIdentity, ExecutionAttemptId, ExecutionReceiptStore, GriddedNormalReplayStorage,
+    ImplementationRegistryId, PlannerCostModelProfileId, ProductionStorageProfile,
+    ReceiptRetention, ResourceAuthority, ResourcePolicy, WorkImplementationId,
 };
 use casa_ms::{
     CubeAxisConfig, CubeInterpolation, CubeSpectralSetup, MeasurementSet, MsSelectionIoBudget,
@@ -223,10 +224,12 @@ pub struct ContinuumImagingRequest {
     pub algorithm: ContinuumAlgorithm,
     /// Visibility-weighting law.
     pub weighting: ContinuumWeighting,
-    /// Minor-cycle iteration limit.
+    /// Reported total minor-iteration budget.
     pub iterations: usize,
-    /// Maximum component updates accepted in one minor cycle.
+    /// Reported component budget for one minor cycle.
     pub cycle_iterations: usize,
+    /// Högbom's strict or CASA-inclusive actual-vs-reported accounting policy.
+    pub hogbom_iteration_accounting: HogbomIterationAccounting,
     /// Optional maximum number of major cycles admitted by the controller contract.
     pub maximum_major_cycles: Option<usize>,
     /// Optional robust-RMS stopping multiplier.
@@ -261,8 +264,10 @@ pub struct ContinuumImagingRequest {
 pub struct ContinuumImagingResult {
     /// Authoritative application result.
     pub outcome: ApplicationOutcome,
-    /// Number of accepted minor-cycle component updates.
+    /// Component count charged to the reported task/controller budget.
     pub minor_iterations: usize,
+    /// Number of minor-cycle components actually applied.
+    pub actual_minor_iterations: usize,
     /// Scientific minor-cycle terminal reason, when a solve ran.
     pub minor_stop_reason: Option<ContinuumStopReason>,
     /// Ordered owner diagnostics for every executed minor cycle.
@@ -280,6 +285,7 @@ pub fn execute_continuum(
     let minor_cycles = outcome.output.minor_cycles.clone();
     let minor = minor_cycles.last();
     let minor_iterations = outcome.output.total_minor_iterations;
+    let actual_minor_iterations = outcome.output.total_actual_minor_iterations;
     let product_names = outcome
         .output
         .planned_products
@@ -289,6 +295,7 @@ pub fn execute_continuum(
         .collect();
     Ok(ContinuumImagingResult {
         minor_iterations,
+        actual_minor_iterations,
         minor_stop_reason: minor.map(|value| match value.stop_reason {
             crate::NativeMinorCycleStopReason::ThresholdReached => {
                 ContinuumStopReason::ThresholdReached
@@ -1227,6 +1234,7 @@ fn specification(
                     request.threshold_jy,
                 )
                 .with_cycle_limits(request.cycle_iterations, request.maximum_major_cycles)
+                .with_hogbom_iteration_accounting(request.hogbom_iteration_accounting)
                 .with_cycle_threshold(
                     request.cycle_factor,
                     request.minimum_psf_fraction,
@@ -1362,7 +1370,8 @@ fn production_storage_profile(
         .parent()
         .unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(output_parent)?;
-    let output_root = filesystem_root(&output_parent.canonicalize()?)?;
+    let output_directory = output_parent.canonicalize()?;
+    let output_root = filesystem_root(&output_directory)?;
     let input_root = filesystem_root(&request.measurement_set.canonicalize()?)?;
     if output_root != input_root {
         return Ok(None);
@@ -1386,11 +1395,16 @@ fn runtime(
     profile: &ProductionStorageProfile,
 ) -> Result<ApplicationRuntime, crate::ApplicationError> {
     let digest = request_digest(request, b"attempt");
-    let receipts = request
+    let output_directory = request
         .image_name
         .parent()
         .unwrap_or_else(|| Path::new("."))
-        .join(".casa-rs-imaging-receipts");
+        .canonicalize()?;
+    let receipts = output_directory.join(".casa-rs-imaging-receipts");
+    let authority = ResourceAuthority::production_with_storage_profile(profile)?.clone();
+    let storage_io = profile.io_resources();
+    let gridded_normal_storage =
+        GriddedNormalReplayStorage::bind(&authority, storage_io.clone(), &output_directory)?;
     Ok(ApplicationRuntime {
         registry: ImplementationRegistryId::from_sha256(hash(b"spectral-cycle-registry")),
         implementation: WorkImplementationId::new("spectral-cycle-cpu-v1"),
@@ -1403,12 +1417,13 @@ fn runtime(
                 .saturating_mul(16),
         )
         .unwrap_or(u64::MAX),
-        storage_io: profile.io_resources(),
+        storage_io,
+        gridded_normal_storage,
         confidence_parts_per_million: 900_000,
         resource_policy: ResourcePolicy::Balanced,
         cost_model: PlannerCostModelProfileId::from_sha256(hash(b"spectral-cycle-cost-v1"))
             .bootstrap(),
-        authority: ResourceAuthority::production_with_storage_profile(profile)?.clone(),
+        authority,
         receipts: ExecutionReceiptStore::new(receipts, ReceiptRetention::new(128, 64 << 20)?)?,
         build: BuildIdentity::from_sha256(hash(env!("CARGO_PKG_VERSION").as_bytes())),
         attempts: [

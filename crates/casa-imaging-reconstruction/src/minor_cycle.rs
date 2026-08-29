@@ -22,8 +22,9 @@
 use std::{collections::BTreeMap, fmt};
 
 use casa_imaging_model::{
-    CompiledProblemId, LogicalIdentity, ModelCell, ModelDeltaTerm, ModelExecutionAttemptId,
-    ModelSupport, ModelValue, ReconstructionAlgorithm, ReconstructionControls,
+    CompiledProblemId, HogbomIterationAccounting, LogicalIdentity, ModelCell, ModelDeltaTerm,
+    ModelExecutionAttemptId, ModelSupport, ModelValue, ReconstructionAlgorithm,
+    ReconstructionControls,
 };
 use thiserror::Error;
 
@@ -34,7 +35,7 @@ use crate::{
 };
 
 const MINOR_CYCLE_EVIDENCE_DOMAIN: &[u8] = b"casa-rs-minor-cycle-evidence";
-const MINOR_CYCLE_EVIDENCE_VERSION: u32 = 4;
+const MINOR_CYCLE_EVIDENCE_VERSION: u32 = 5;
 
 macro_rules! minor_cycle_identity {
     ($name:ident, $version:ident, $summary:literal) => {
@@ -95,6 +96,7 @@ pub struct MinorCycleProgram {
     threshold: f64,
     noise_sigma: Option<f64>,
     max_iterations: usize,
+    hogbom_iteration_accounting: HogbomIterationAccounting,
     validity: MinorCycleValidity,
     cycle_threshold: Option<CycleThresholdControls>,
     fixed_cycle_threshold: Option<f64>,
@@ -205,6 +207,12 @@ impl MinorCycleProgram {
         )
         .map(|mut program| {
             program.noise_sigma = controls.noise_sigma();
+            program.hogbom_iteration_accounting =
+                if matches!(&program.algorithm, ReconstructionAlgorithm::Hogbom) {
+                    controls.hogbom_iteration_accounting()
+                } else {
+                    HogbomIterationAccounting::Strict
+                };
             program.cycle_threshold =
                 controls
                     .cycle_factor()
@@ -290,6 +298,7 @@ impl MinorCycleProgram {
             threshold,
             noise_sigma: None,
             max_iterations,
+            hogbom_iteration_accounting: HogbomIterationAccounting::Strict,
             validity,
             cycle_threshold: None,
             fixed_cycle_threshold: None,
@@ -359,10 +368,40 @@ impl MinorCycleProgram {
         Ok(self)
     }
 
-    /// Return the hard iteration bound.
+    /// Return the reported task/controller iteration bound.
     #[must_use]
     pub const fn max_iterations(&self) -> usize {
         self.max_iterations
+    }
+
+    /// Return Högbom's iteration-accounting policy.
+    #[must_use]
+    pub const fn hogbom_iteration_accounting(&self) -> HogbomIterationAccounting {
+        self.hogbom_iteration_accounting
+    }
+
+    fn actual_iteration_limit(&self) -> usize {
+        if matches!(&self.algorithm, ReconstructionAlgorithm::Hogbom)
+            && self.hogbom_iteration_accounting == HogbomIterationAccounting::CasaInclusive
+        {
+            self.max_iterations.saturating_add(1)
+        } else {
+            self.max_iterations
+        }
+    }
+
+    fn controller_iterations(
+        &self,
+        actual_iterations: usize,
+        stop_reason: MinorCycleStopReason,
+    ) -> usize {
+        if self.hogbom_iteration_accounting == HogbomIterationAccounting::CasaInclusive
+            && stop_reason == MinorCycleStopReason::IterationBound
+        {
+            actual_iterations.min(self.max_iterations)
+        } else {
+            actual_iterations
+        }
     }
 
     pub(crate) fn with_fixed_cycle_threshold(mut self, threshold: Option<f64>) -> Self {
@@ -467,7 +506,7 @@ pub enum MinorCycleStopReason {
     /// threshold (the casacore HOGBOM convention; a peak exactly at the
     /// threshold still cleans one component).
     ThresholdReached,
-    /// The hard iteration bound was reached with work potentially remaining.
+    /// The policy-derived loop bound was reached with work potentially remaining.
     IterationBound,
     /// Accepting the next candidate would exceed the reconstruction owner's
     /// proven validity envelope. The rejected candidate left no trace in the
@@ -494,6 +533,7 @@ pub struct MinorCycleEvidence {
     normal_state_completion: FinalNormalStateCompletionId,
     normal_state_content: LogicalIdentity,
     iterations: usize,
+    controller_iterations: usize,
     total_flux: f64,
     initial_peak_flux: f64,
     final_peak_flux: f64,
@@ -550,10 +590,16 @@ impl MinorCycleEvidence {
         self.normal_state_content
     }
 
-    /// Return the number of applied Högbom components.
+    /// Return the number of components actually applied.
     #[must_use]
     pub const fn iterations(&self) -> usize {
         self.iterations
+    }
+
+    /// Return the count charged to the reported task/controller budget.
+    #[must_use]
+    pub const fn controller_iterations(&self) -> usize {
+        self.controller_iterations
     }
 
     /// Return the cumulative absolute component flux.
@@ -965,7 +1011,7 @@ pub(crate) fn run_minor_cycle_plane(
         controls
             .component_sequence_limit()
             .unwrap_or(0)
-            .min(controls.max_iterations()),
+            .min(controls.actual_iteration_limit()),
     );
     let mut iterations = 0_usize;
     let mut total_flux = 0.0_f64;
@@ -976,7 +1022,7 @@ pub(crate) fn run_minor_cycle_plane(
     });
     let mut stop_reason = (!has_valid_support).then_some(MinorCycleStopReason::ThresholdReached);
     let iteration_budget = if has_valid_support {
-        controls.max_iterations()
+        controls.actual_iteration_limit()
     } else {
         0
     };
@@ -1147,6 +1193,7 @@ pub(crate) fn run_minor_cycle_plane(
         }
     }
     let stop_reason = stop_reason.unwrap_or(MinorCycleStopReason::IterationBound);
+    let controller_iterations = controls.controller_iterations(iterations, stop_reason);
     let clark_refreshes = clark_state.as_ref().map_or(0, |state| state.refreshes);
     if multiscale.is_some() && !terms.is_empty() {
         // MatrixCleaner uses finite subregions while selecting a bounded
@@ -1199,6 +1246,7 @@ pub(crate) fn run_minor_cycle_plane(
         mask,
         &controls,
         iterations,
+        controller_iterations,
         total_flux,
         final_peak_flux,
         noise_rms,
@@ -1218,6 +1266,7 @@ pub(crate) fn run_minor_cycle_plane(
             normal_state_completion: view.completion_id(),
             normal_state_content: view.content_identity(),
             iterations,
+            controller_iterations,
             total_flux,
             initial_peak_flux: initial_peak,
             final_peak_flux,
@@ -1773,6 +1822,7 @@ fn minor_cycle_evidence_id(
     mask: &ReconstructionMask,
     controls: &MinorCycleProgram,
     iterations: usize,
+    controller_iterations: usize,
     total_flux: f64,
     final_peak_flux: f64,
     noise_rms: Option<f64>,
@@ -1818,6 +1868,10 @@ fn minor_cycle_evidence_id(
         None => encoder.u8(0),
     }
     encoder.usize(controls.max_iterations());
+    encoder.u8(match controls.hogbom_iteration_accounting() {
+        HogbomIterationAccounting::Strict => 0,
+        HogbomIterationAccounting::CasaInclusive => 1,
+    });
     match controls.validity() {
         MinorCycleValidity::Exact => encoder.u8(0),
         MinorCycleValidity::Bounded {
@@ -1851,6 +1905,7 @@ fn minor_cycle_evidence_id(
         }
     }
     encoder.usize(iterations);
+    encoder.usize(controller_iterations);
     encoder.u64(crate::canonical_f64_bits(total_flux));
     encoder.u64(crate::canonical_f64_bits(final_peak_flux));
     match noise_rms {

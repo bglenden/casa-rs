@@ -786,8 +786,10 @@ pub struct RunSummary {
     pub gridded_samples: usize,
     /// Major-cycle count.
     pub major_cycles: usize,
-    /// Minor-cycle component count.
+    /// Minor-cycle count charged to the reported task/controller budget.
     pub minor_iterations: usize,
+    /// Minor-cycle components actually applied.
+    pub actual_minor_iterations: usize,
     /// Minor-cycle stop reason.
     pub clean_stop_reason: Option<CleanStopReason>,
     /// Ordered owner-calculated minor-cycle diagnostics.
@@ -865,11 +867,12 @@ pub fn run_with_cli_args(args: impl IntoIterator<Item = OsString>) -> Result<(),
             eprintln!("warning: {warning}");
         }
         println!(
-            "Wrote CASA-compatible products at prefix {} ({} gridded samples, {} major cycles, {} minor iterations, stop={:?})",
+            "Wrote CASA-compatible products at prefix {} ({} gridded samples, {} major cycles, {} reported minor iterations, {} actual components, stop={:?})",
             result.request.image_name.display(),
             result.run.gridded_samples,
             result.run.major_cycles,
             result.run.minor_iterations,
+            result.run.actual_minor_iterations,
             result.run.clean_stop_reason,
         );
     }

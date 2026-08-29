@@ -2534,12 +2534,18 @@ pub struct ImagerAutoMaskDiagnostic {
 pub struct ImagerMinorCycleDiagnostic {
     /// One-based cycle ordinal.
     pub cycle: usize,
-    /// Cumulative accepted iterations before this cycle started.
+    /// Cumulative controller iterations before this cycle started.
     pub iterations_entering: usize,
-    /// Accepted component count.
+    /// Component count charged to the reported controller budget.
     pub iterations: usize,
-    /// Cumulative accepted iterations after this cycle completed.
+    /// Cumulative controller iterations after this cycle completed.
     pub total_iterations: usize,
+    /// Cumulative actual component count before this cycle started.
+    pub actual_iterations_entering: usize,
+    /// Number of components actually applied in this cycle.
+    pub actual_iterations: usize,
+    /// Cumulative actual component count after this cycle completed.
+    pub total_actual_iterations: usize,
     /// Cumulative absolute component flux accepted in this cycle.
     pub total_flux: f64,
     /// Normalized residual peak at cycle entry.
@@ -2578,6 +2584,9 @@ fn project_minor_cycle(
         iterations_entering: cycle.iterations_entering,
         iterations: cycle.iterations,
         total_iterations: cycle.total_iterations,
+        actual_iterations_entering: cycle.actual_iterations_entering,
+        actual_iterations: cycle.actual_iterations,
+        total_actual_iterations: cycle.total_actual_iterations,
         total_flux: cycle.total_flux,
         initial_peak_flux: cycle.initial_peak_flux,
         final_peak_flux: cycle.final_peak_flux,
@@ -2638,8 +2647,10 @@ pub struct ImagerRunReport {
     pub gridded_samples: usize,
     /// Total major-cycle count reported by the run.
     pub major_cycles: usize,
-    /// Total minor-cycle component updates executed by the run.
+    /// Total minor-cycle count charged to the reported task/controller budget.
     pub minor_iterations: usize,
+    /// Total minor-cycle components actually applied by the run.
+    pub actual_minor_iterations: usize,
     /// CASA-compatible `iterdone` task-return value.
     pub iterdone: usize,
     /// CASA-compatible `nmajordone` task-return value.
@@ -2759,6 +2770,7 @@ impl ImagerRunTaskResult {
                 gridded_samples: summary.gridded_samples,
                 major_cycles: summary.major_cycles,
                 minor_iterations: summary.minor_iterations,
+                actual_minor_iterations: summary.actual_minor_iterations,
                 iterdone: summary.minor_iterations,
                 nmajordone: summary.major_cycles,
                 stopcode: casa_stop_code(summary.clean_stop_reason),

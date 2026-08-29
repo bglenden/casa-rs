@@ -438,6 +438,7 @@ fn request(
         weighting: ContinuumWeighting::Natural,
         iterations: 1,
         cycle_iterations: 1,
+        hogbom_iteration_accounting: casa_imaging_application::HogbomIterationAccounting::Strict,
         maximum_major_cycles: Some(1),
         noise_sigma: None,
         cycle_factor: 1.0,
@@ -721,28 +722,37 @@ fn application_executes_single_ddid_stokes_i_mfs_hogbom_with_one_iteration() {
             .len(),
         1
     );
-    let visibility = result
-        .outcome
-        .output
-        .visibility_products
-        .expect("final major replay closes visibility products");
-    let normal = result.outcome.output.scientific.normal_state();
-    assert_eq!(visibility.sample_count(), 1);
-    assert_eq!(visibility.problem_id(), normal.problem_id());
-    assert_eq!(
-        visibility.selected_generation(),
-        normal.selected_generation()
+    let output = &result.outcome.output;
+    assert!(
+        output.visibility_products.is_none(),
+        "a no-write clean must not manufacture per-visibility diagnostics"
+    );
+    assert!(
+        output.visibility_write_receipt.is_none(),
+        "a no-write clean must not execute a selected-output traversal"
+    );
+    let final_receipt = output
+        .final_major_receipt
+        .as_ref()
+        .expect("clean retains its terminal artifact-science receipt");
+    let final_nodes = final_receipt.plan_node_identities();
+    assert!(final_nodes.iter().any(|node| {
+        node.as_str()
+            .starts_with("gridded-normal-replay-final-major")
+    }));
+    assert!(
+        final_nodes
+            .iter()
+            .all(|node| !node.as_str().starts_with("transaction-read-final-major")),
+        "terminal artifact science must be the last observation-facing work"
     );
     assert_eq!(
-        visibility.weighting_generation(),
-        normal.weighting_generation()
-    );
-    assert_eq!(visibility.sample_count(), normal.sample_count());
-    assert_eq!(visibility.final_model(), normal.final_model_generation());
-    assert_ne!(
-        visibility.model_product().as_bytes(),
-        visibility.residual_product().as_bytes(),
-        "model and residual visibility products have distinct meanings"
+        final_receipt
+            .selected_alternative_projection()
+            .demand
+            .io_buffers
+            .bytes(casa_imaging_runtime::IoBufferKind::SourceReadAhead),
+        0
     );
     assert_standard_products(&image_name, &result.product_names);
 }
@@ -791,7 +801,9 @@ fn application_reconciles_between_bounded_minor_cycles() {
     let result = execute_continuum(imaging).expect("bounded multi-cycle execution");
 
     assert_eq!(result.minor_iterations, 3);
+    assert_eq!(result.actual_minor_iterations, 3);
     assert_eq!(result.outcome.output.total_minor_iterations, 3);
+    assert_eq!(result.outcome.output.total_actual_minor_iterations, 3);
     assert_eq!(result.outcome.output.major_cycle_count, 4);
     assert_eq!(result.outcome.output.minor_cycles.len(), 3);
     assert_eq!(
@@ -841,7 +853,7 @@ fn application_reconciles_between_bounded_minor_cycles() {
 }
 
 #[test]
-fn application_uses_the_iteration_budget_when_major_cycles_are_unlimited() {
+fn application_uses_reported_iterations_for_casa_inclusive_continuation() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
@@ -853,17 +865,31 @@ fn application_uses_the_iteration_budget_when_major_cycles_are_unlimited() {
     );
     imaging.iterations = 3;
     imaging.cycle_iterations = 1;
+    imaging.hogbom_iteration_accounting =
+        casa_imaging_application::HogbomIterationAccounting::CasaInclusive;
     imaging.maximum_major_cycles = None;
     imaging.gain = 0.37;
     imaging.threshold_jy = 1.0e-12;
     imaging.noise_sigma = Some(1.0e-12);
-    imaging.cycle_factor = 1.4;
+    imaging.cycle_factor = 0.01;
+    imaging.minimum_psf_fraction = 0.0;
+    imaging.maximum_psf_fraction = 0.01;
 
     let result = execute_continuum(imaging).expect("unlimited major-cycle execution");
 
     assert_eq!(result.outcome.output.total_minor_iterations, 3);
+    assert_eq!(result.outcome.output.total_actual_minor_iterations, 6);
     assert_eq!(result.outcome.output.minor_cycles.len(), 3);
     assert_eq!(result.outcome.output.major_cycle_count, 4);
+    assert!(
+        result
+            .outcome
+            .output
+            .minor_cycles
+            .iter()
+            .all(|cycle| cycle.iterations == 1 && cycle.actual_iterations == 2),
+        "every bound-stopped cycle charges one reported iteration after applying two components"
+    );
 }
 
 #[test]
@@ -892,7 +918,7 @@ fn application_commits_exact_final_prediction_to_model_data() {
         .output
         .visibility_write_receipt
         .as_ref()
-        .expect("MODEL_DATA write is receipted by the fused terminal pass");
+        .expect("MODEL_DATA write is receipted by the selected-output traversal");
     assert_eq!(
         model_receipt.observation_transaction_publication_scope(),
         casa_imaging_runtime::ObservationTransactionPublicationScope::ReconstructionOnly
@@ -903,8 +929,8 @@ fn application_commits_exact_final_prediction_to_model_data() {
         .output
         .final_major_receipt
         .as_ref()
-        .expect("save-model execution has a fused terminal-pass receipt");
-    assert_eq!(model_receipt, final_receipt);
+        .expect("save-model execution has a terminal science receipt");
+    assert_ne!(model_receipt, final_receipt);
     let plan_nodes = final_receipt.plan_node_identities();
     let preparation = plan_nodes
         .iter()
@@ -917,25 +943,58 @@ fn application_commits_exact_final_prediction_to_model_data() {
         node.as_str()
             .starts_with("post-replay-reconciliation-final-major")
     }));
+    assert!(plan_nodes.iter().any(|node| {
+        node.as_str()
+            .starts_with("gridded-normal-replay-final-major")
+    }));
+    assert!(
+        plan_nodes
+            .iter()
+            .all(|node| !node.as_str().starts_with("transaction-read-final-major")),
+        "terminal science never reopens the selected observation"
+    );
+    let science_demand = final_receipt.selected_alternative_projection().demand;
+    assert_eq!(science_demand.locks.hard(), 0);
+    assert_eq!(science_demand.file_descriptors.hard(), 0);
+    assert_eq!(
+        science_demand
+            .io_buffers
+            .bytes(casa_imaging_runtime::IoBufferKind::SourceReadAhead),
+        0
+    );
     assert!(
         plan_nodes
             .iter()
             .all(|node| !node.as_str().contains("stage-model")),
         "MODEL_DATA has no physical staging node"
     );
-    let terminal_pass = plan_nodes
+    let output_nodes = model_receipt.plan_node_identities();
+    let terminal_pass = output_nodes
         .iter()
         .find(|node| node.as_str().starts_with("transaction-read-final-major"))
-        .expect("fused terminal observation pass is planned");
+        .expect("the bounded selected-output pass is planned");
+    assert_eq!(
+        output_nodes
+            .iter()
+            .filter(|node| node.as_str().starts_with("transaction-read-final-major"))
+            .count(),
+        1,
+        "MODEL_DATA uses exactly one selected-output traversal"
+    );
+    assert!(output_nodes.iter().all(|node| {
+        !node
+            .as_str()
+            .starts_with("gridded-normal-replay-final-major")
+    }));
     assert_ne!(preparation, terminal_pass);
     assert_eq!(
-        final_receipt
+        model_receipt
             .stage_predicted_io(terminal_pass, casa_imaging_runtime::IoBufferKind::Writeback,),
         Some((16, 1)),
         "first creation writes the zero-initialized column and selected prediction"
     );
     assert_eq!(
-        final_receipt
+        model_receipt
             .stage_actual_io(terminal_pass, casa_imaging_runtime::IoBufferKind::Writeback,),
         None,
         "the table adapter exposes no trustworthy physical byte counter"
@@ -946,11 +1005,11 @@ fn application_commits_exact_final_prediction_to_model_data() {
         casa_imaging_runtime::RuntimeOverheadKind::ThreadStack,
     );
     assert_eq!(
-        final_receipt.planned_resource_amount(terminal_pass, &write_stack, &write_lifetime),
+        model_receipt.planned_resource_amount(terminal_pass, &write_stack, &write_lifetime),
         Some(2 * 1024 * 1024)
     );
     assert_eq!(
-        final_receipt.actual_resource_peak(terminal_pass, &write_stack, &write_lifetime),
+        model_receipt.actual_resource_peak(terminal_pass, &write_stack, &write_lifetime),
         Some(2 * 1024 * 1024)
     );
     let model_storage = casa_imaging_runtime::LeaseResource::Storage {
@@ -958,7 +1017,7 @@ fn application_commits_exact_final_prediction_to_model_data() {
         use_kind: casa_imaging_runtime::StorageUseKind::FinalOutput,
     };
     assert_eq!(
-        final_receipt.planned_resource_amount(terminal_pass, &model_storage, &write_lifetime),
+        model_receipt.planned_resource_amount(terminal_pass, &model_storage, &write_lifetime),
         Some(8),
         "column creation reserves its new persistent capacity"
     );
@@ -995,7 +1054,7 @@ fn application_commits_exact_final_prediction_to_model_data() {
         .plan_node_identities()
         .iter()
         .find(|node| node.as_str().starts_with("transaction-read-final-major"))
-        .expect("overwrite fused terminal pass")
+        .expect("overwrite selected-output traversal")
         .clone();
     assert_eq!(
         overwrite_receipt.stage_predicted_io(
@@ -1305,7 +1364,7 @@ fn application_replaces_every_selected_model_cell_when_flags_and_correlations_di
         .plan_node_identities()
         .into_iter()
         .find(|node| node.as_str().starts_with("transaction-read-final-major"))
-        .expect("single fused terminal pass");
+        .expect("single selected-output traversal");
     assert_eq!(
         receipt.stage_predicted_io(
             &terminal_pass,

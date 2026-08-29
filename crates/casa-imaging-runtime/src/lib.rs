@@ -8,6 +8,8 @@ mod continuum_transform;
 mod cost_model;
 mod execution;
 mod execution_bindings;
+#[allow(dead_code)]
+mod gridded_normal_artifact;
 mod major_cycle;
 mod observation_transaction;
 mod prepared_artifact;
@@ -39,7 +41,7 @@ pub use casa_imaging_reconstruction::{MajorCyclePreparation, SpectralPrimitiveCa
 pub use complete_data_operator::{
     CompleteDataOperatorError, CompleteDataOperatorResult, CompleteDataPlanError,
     CompleteDataPlanFragment, CompleteDataPreparedState, CompleteDataResidency,
-    SpectralOperatorState,
+    FrozenGriddedNormalReplay, SpectralOperatorState,
 };
 pub use continuum_transform::{
     ContinuumTransformCompletion, ContinuumTransformError, ContinuumTransformRowPlan,
@@ -57,6 +59,7 @@ pub use execution::{
     ResourceClaim, SlotCompatibility, StorageMode, WorkAllocationCapability, WorkDependency,
     WorkDomain, WorkImplementationId, WorkKind, WorkNode, WorkNodeId, WorkResourceCapability,
 };
+pub use gridded_normal_artifact::GriddedNormalReplayStorage;
 pub use major_cycle::{MajorCycleOperatorError, MajorCycleOperatorResult, MajorCycleOperatorState};
 pub use observation_transaction::{
     BoundObservationTransaction, ObservationTransactionPlanError,

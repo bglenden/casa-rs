@@ -14,18 +14,19 @@ use casa_imaging_model::{
 };
 use casa_imaging_reconstruction::{
     ChannelCyclePolicy, ExecutableModelProblem, FinalModelCompletion, FinalModelContinuation,
-    FinalNormalState, MajorCyclePreparation, MinorCycleProgram, ModelDeltaId, ModelLifecycle,
-    ReconstructionCycle, ReconstructionCycleError, ReconstructionCycleEvidence,
+    FinalNormalState, MajorCycleCompletion, MajorCyclePreparation, MinorCycleProgram, ModelDeltaId,
+    ModelLifecycle, ReconstructionCycle, ReconstructionCycleError, ReconstructionCycleEvidence,
     ReconstructionMaskPlan,
 };
 
+use crate::complete_data_operator::GriddedNormalReplayCompilation;
 use crate::{
     AttemptBoundObservationCompletion, CompleteDataOperatorResult, CompleteDataPlanFragment,
-    CompleteDataPreparedState, FenceKind, FrozenWeightingArtifact, ImplementationContractMetadata,
-    ImplementationRegistry, ImplementationRegistryId, IoMeasurement, LeaseResource,
-    MajorCycleOperatorResult, MajorCycleOperatorState, ObservationReadCompletionContext,
-    ResourceMeasurement, SelectedObservationSourceResources, SpectralOperatorState,
-    SpectralPassIdentity, WeightingExecutionState, WeightingPlanFragment,
+    CompleteDataPreparedState, FenceKind, FrozenGriddedNormalReplay, FrozenWeightingArtifact,
+    ImplementationContractMetadata, ImplementationRegistry, ImplementationRegistryId,
+    IoMeasurement, LeaseResource, MajorCycleOperatorResult, MajorCycleOperatorState,
+    ObservationReadCompletionContext, ResourceMeasurement, SelectedObservationSourceResources,
+    SpectralOperatorState, SpectralPassIdentity, WeightingExecutionState, WeightingPlanFragment,
     WeightingReplayCompletion, WorkDependency, WorkExecutionContext, WorkImplementation,
     WorkImplementationId, WorkKind, WorkMeasurements, WorkNodeId,
 };
@@ -737,13 +738,20 @@ pub struct SpectralCycleExecutor {
     id: WorkImplementationId,
     problem: CompiledProblem,
     weighting_plan: WeightingPlan,
-    source_resources: SelectedObservationSourceResources,
+    source_resources: Option<SelectedObservationSourceResources>,
     pass: SpectralPassIdentity,
     complete_data: CompleteDataPlanFragment,
     reconstruction_cycle: Option<SerialReconstructionCycleExecution>,
     final_visibility_sink: Option<Mutex<Box<dyn FinalVisibilitySink>>>,
     phase_input_artifact: Option<(crate::ArtifactIdentity, u64)>,
+    mode: SpectralCycleExecutionMode,
     state: Mutex<SpectralCycleExecutorState>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SpectralCycleExecutionMode {
+    Science,
+    SelectedOutputOnly,
 }
 
 struct SpectralCycleExecutorState {
@@ -752,6 +760,8 @@ struct SpectralCycleExecutorState {
     selected: Option<BoundSelectedObservation>,
     selected_completion: Option<SelectedObservationCompletion>,
     weighting: WeightingExecutionState,
+    gridded_compilation: Option<GriddedNormalReplayCompilation>,
+    gridded_replay: Option<FrozenGriddedNormalReplay>,
     pending_frozen_reservation: Option<Arc<crate::FrozenWeightingReservation>>,
     frozen_weighting: Option<FrozenWeightingArtifact>,
     prepared: Option<CompleteDataPreparedState>,
@@ -761,6 +771,7 @@ struct SpectralCycleExecutorState {
     prepared_model: Option<PreparedFinalModel>,
     result: Option<MajorCycleOperatorResult>,
     reconstruction_cycle_completion: Option<ReconstructionCyclePhaseCompletion>,
+    output_completion: Option<MajorCycleCompletion>,
 }
 
 #[derive(Debug)]
@@ -938,18 +949,21 @@ impl SpectralCycleExecutor {
             id,
             problem,
             weighting_plan,
-            source_resources,
+            source_resources: Some(source_resources),
             pass,
             complete_data,
             reconstruction_cycle: None,
             final_visibility_sink: None,
             phase_input_artifact,
+            mode: SpectralCycleExecutionMode::Science,
             state: Mutex::new(SpectralCycleExecutorState {
                 executable: Some(executable),
                 pass_input: Some(pass_input),
                 selected: Some(selected),
                 selected_completion: None,
                 weighting: WeightingExecutionState::new(),
+                gridded_compilation: None,
+                gridded_replay: None,
                 pending_frozen_reservation: None,
                 frozen_weighting: None,
                 prepared: None,
@@ -959,8 +973,139 @@ impl SpectralCycleExecutor {
                 prepared_model: None,
                 result: None,
                 reconstruction_cycle_completion: None,
+                output_completion: None,
             }),
         }
+    }
+
+    /// Bind a later major to the sealed gridded-normal capability, without a
+    /// selected-observation owner or source resource surface.
+    #[allow(clippy::too_many_arguments)]
+    #[must_use]
+    pub fn new_gridded(
+        id: WorkImplementationId,
+        problem: CompiledProblem,
+        weighting_plan: WeightingPlan,
+        pass: SpectralPassIdentity,
+        complete_data: CompleteDataPlanFragment,
+        executable: ExecutableModelProblem,
+        pass_input: SpectralCyclePassInput,
+        replay: FrozenGriddedNormalReplay,
+    ) -> Self {
+        let phase_input_artifact = match &pass_input {
+            SpectralCyclePassInput::Initial => None,
+            SpectralCyclePassInput::FinalMajor(input) => Some((
+                input.identity(),
+                u64::try_from(input.terms.len())
+                    .unwrap_or(u64::MAX)
+                    .saturating_mul(std::mem::size_of::<ModelDeltaTerm>() as u64),
+            )),
+        };
+        Self {
+            id,
+            problem,
+            weighting_plan,
+            source_resources: None,
+            pass,
+            complete_data,
+            reconstruction_cycle: None,
+            final_visibility_sink: None,
+            phase_input_artifact,
+            mode: SpectralCycleExecutionMode::Science,
+            state: Mutex::new(SpectralCycleExecutorState {
+                executable: Some(executable),
+                pass_input: Some(pass_input),
+                selected: None,
+                selected_completion: None,
+                weighting: WeightingExecutionState::new(),
+                gridded_compilation: None,
+                gridded_replay: Some(replay),
+                pending_frozen_reservation: None,
+                frozen_weighting: None,
+                prepared: None,
+                operator: None,
+                complete_data: None,
+                lifecycle: None,
+                prepared_model: None,
+                result: None,
+                reconstruction_cycle_completion: None,
+                output_completion: None,
+            }),
+        }
+    }
+
+    /// Bind a terminal selected-output traversal. This mode may predict and
+    /// write selected visibilities, but cannot accumulate residual science.
+    #[allow(clippy::too_many_arguments)]
+    #[must_use]
+    pub fn new_selected_output(
+        id: WorkImplementationId,
+        problem: CompiledProblem,
+        weighting_plan: WeightingPlan,
+        source_resources: SelectedObservationSourceResources,
+        pass: SpectralPassIdentity,
+        complete_data: CompleteDataPlanFragment,
+        selected: BoundSelectedObservation,
+        completion: MajorCycleCompletion,
+        frozen_weighting: FrozenWeightingArtifact,
+    ) -> Self {
+        Self {
+            id,
+            problem,
+            weighting_plan,
+            source_resources: Some(source_resources),
+            pass,
+            complete_data,
+            reconstruction_cycle: None,
+            final_visibility_sink: None,
+            phase_input_artifact: None,
+            mode: SpectralCycleExecutionMode::SelectedOutputOnly,
+            state: Mutex::new(SpectralCycleExecutorState {
+                executable: None,
+                pass_input: None,
+                selected: Some(selected),
+                selected_completion: None,
+                weighting: WeightingExecutionState::with_frozen_artifact(frozen_weighting.clone()),
+                gridded_compilation: None,
+                gridded_replay: None,
+                pending_frozen_reservation: None,
+                frozen_weighting: Some(frozen_weighting),
+                prepared: None,
+                operator: None,
+                complete_data: None,
+                lifecycle: None,
+                prepared_model: None,
+                result: None,
+                reconstruction_cycle_completion: None,
+                output_completion: Some(completion),
+            }),
+        }
+    }
+
+    /// Attach the initial run's resource-admitted gridded-normal compiler and writer.
+    pub fn with_gridded_normal_compilation(
+        mut self,
+        authority: &crate::ResourceAuthority,
+        policy: crate::ResourcePolicy,
+        storage: &crate::GriddedNormalReplayStorage,
+    ) -> io::Result<Self> {
+        if self.pass.phase() != crate::SpectralPassPhase::InitialMajor {
+            return Err(io::Error::other(
+                "only the initial major can compile gridded-normal replay",
+            ));
+        }
+        let compilation = GriddedNormalReplayCompilation::new(
+            &self.problem,
+            authority,
+            policy,
+            storage,
+            self.weighting_plan.limits().max_block_samples(),
+        )?;
+        self.state
+            .get_mut()
+            .map_err(|_| io::Error::other("new spectral cycle executor mutex poisoned"))?
+            .gridded_compilation = Some(compilation);
+        Ok(self)
     }
 
     /// Attach one resource-accounted shared reconstruction cycle to an initial-major plan.
@@ -992,7 +1137,7 @@ impl SpectralCycleExecutor {
         self.state
             .get_mut()
             .expect("new spectral cycle executor mutex is not poisoned")
-            .weighting = WeightingExecutionState::with_frozen_artifact(artifact);
+            .frozen_weighting = Some(artifact);
         self
     }
 
@@ -1014,6 +1159,16 @@ impl SpectralCycleExecutor {
         self.state.lock().ok()?.frozen_weighting.take()
     }
 
+    /// Consume the sealed normal-operator capability after a successful pass.
+    pub fn take_gridded_normal_replay(&self) -> Option<FrozenGriddedNormalReplay> {
+        self.state.lock().ok()?.gridded_replay.take()
+    }
+
+    /// Consume the unchanged scientific completion after selected-output traversal.
+    pub fn take_selected_output_completion(&self) -> Option<MajorCycleCompletion> {
+        self.state.lock().ok()?.output_completion.take()
+    }
+
     fn abort_final_visibility_replay(&self) -> io::Result<()> {
         let Some(sink) = &self.final_visibility_sink else {
             return Ok(());
@@ -1023,31 +1178,37 @@ impl SpectralCycleExecutor {
             .abort()
     }
 
-    fn fragment(&self) -> WeightingPlanFragment<'_> {
-        let mode = match self.pass.phase() {
-            crate::SpectralPassPhase::FinalMajor => crate::WeightingStreamingMode::Reuse,
-            crate::SpectralPassPhase::InitialMajor => match self.problem.weighting().scheme() {
-                casa_imaging_model::WeightingScheme::Natural => {
-                    crate::WeightingStreamingMode::NaturalInitial
-                }
-                casa_imaging_model::WeightingScheme::Uniform
-                | casa_imaging_model::WeightingScheme::Briggs { .. }
-                | casa_imaging_model::WeightingScheme::BriggsBandwidthTaper { .. } => {
-                    crate::WeightingStreamingMode::DensityInitial
-                }
+    fn fragment(&self) -> Option<WeightingPlanFragment<'_>> {
+        let source_resources = self.source_resources.clone()?;
+        let mode = match self.mode {
+            SpectralCycleExecutionMode::SelectedOutputOnly => {
+                crate::WeightingStreamingMode::SelectedOutputOnly
+            }
+            SpectralCycleExecutionMode::Science => match self.pass.phase() {
+                crate::SpectralPassPhase::FinalMajor => return None,
+                crate::SpectralPassPhase::InitialMajor => match self.problem.weighting().scheme() {
+                    casa_imaging_model::WeightingScheme::Natural => {
+                        crate::WeightingStreamingMode::NaturalInitial
+                    }
+                    casa_imaging_model::WeightingScheme::Uniform
+                    | casa_imaging_model::WeightingScheme::Briggs { .. }
+                    | casa_imaging_model::WeightingScheme::BriggsBandwidthTaper { .. } => {
+                        crate::WeightingStreamingMode::DensityInitial
+                    }
+                },
             },
         };
-        WeightingPlanFragment::streaming_for_pass(
+        Some(WeightingPlanFragment::streaming_for_pass(
             &self.weighting_plan,
             crate::spectral_cycle_plan::pass_node("transaction-read", self.pass),
-            self.source_resources.clone(),
+            source_resources,
             self.id.clone(),
             self.pass,
             mode,
             crate::plan_continuum_transform_row(&self.problem)
                 .expect("compiled transform row plan remains valid")
                 .map(|plan| u64::try_from(plan.bytes()).expect("transform bytes fit u64")),
-        )
+        ))
     }
 
     /// Consume the authoritative phase result after run success.
@@ -1169,6 +1330,7 @@ impl SpectralCycleExecutor {
         let SpectralCycleExecutorState {
             weighting,
             operator,
+            gridded_compilation,
             ..
         } = state;
         let mut consume = |block: &casa_imaging_reconstruction::WeightingReplayChunk| {
@@ -1184,6 +1346,9 @@ impl SpectralCycleExecutor {
                     .map_err(|_| io::Error::other("final visibility sink poisoned"))?
                     .consume(predicted)?;
             }
+            if let Some(compilation) = gridded_compilation.as_mut() {
+                compilation.consume_block(block)?;
+            }
             Ok::<(), io::Error>(())
         };
         let result = match fragment.streaming_mode() {
@@ -1197,25 +1362,122 @@ impl SpectralCycleExecutor {
                     &mut consume,
                 )
                 .map_err(io::Error::other),
-            Some(crate::WeightingStreamingMode::Reuse) => {
-                let selected = selected
-                    .ok_or_else(|| io::Error::other("later-major selected observation missing"))?;
-                weighting
-                    .traverse_reuse_bounded_stream(
-                        context,
-                        fragment,
-                        selected,
-                        &self.problem,
-                        &mut consume,
-                    )
-                    .map_err(io::Error::other)
-            }
+            Some(crate::WeightingStreamingMode::SelectedOutputOnly) => Err(io::Error::other(
+                "selected-output traversal cannot enter residual science streaming",
+            )),
             None => Err(io::Error::other("streaming weighting mode missing")),
         };
         if result.is_ok() {
             self.log_stream_measurements(weighting, "weighted-replay");
         }
         result
+    }
+
+    fn run_selected_output(
+        &self,
+        state: &mut SpectralCycleExecutorState,
+        context: WorkExecutionContext<'_>,
+        fragment: &WeightingPlanFragment<'_>,
+        selected: BoundSelectedObservation,
+    ) -> Result<(), io::Error> {
+        let sink = self
+            .final_visibility_sink
+            .as_ref()
+            .ok_or_else(|| io::Error::other("selected-output sink missing"))?;
+        let prepared = state
+            .prepared
+            .take()
+            .ok_or_else(|| io::Error::other("selected-output FFT preparation did not run"))?;
+        let completion = state
+            .output_completion
+            .as_ref()
+            .ok_or_else(|| io::Error::other("selected-output scientific completion missing"))?;
+        {
+            let mut sink = sink
+                .lock()
+                .map_err(|_| io::Error::other("final visibility sink poisoned"))?;
+            sink.bind(
+                self.problem.problem_id(),
+                completion.final_model().generation_id(),
+            )?;
+            sink.begin_replay()?;
+        }
+        let mut operator = prepared
+            .begin_streaming(context, &self.problem, &self.complete_data)
+            .map_err(io::Error::other)?;
+        operator
+            .bind_selected_output_model(completion.final_model())
+            .map_err(io::Error::other)?;
+        state
+            .weighting
+            .authorize_imported_operator(&mut operator)
+            .map_err(io::Error::other)?;
+        state.operator = Some(operator);
+        let SpectralCycleExecutorState {
+            weighting,
+            operator,
+            ..
+        } = state;
+        let mut consume = |block: &casa_imaging_reconstruction::WeightingReplayChunk| {
+            let predicted = operator
+                .as_mut()
+                .ok_or_else(|| io::Error::other("selected-output operator missing"))?
+                .predict_final_visibility_chunk(block)
+                .map_err(io::Error::other)?;
+            sink.lock()
+                .map_err(|_| io::Error::other("final visibility sink poisoned"))?
+                .consume(predicted)
+        };
+        let result = weighting
+            .traverse_selected_output_bounded_stream(
+                context,
+                fragment,
+                selected,
+                &self.problem,
+                &mut consume,
+            )
+            .map_err(io::Error::other);
+        if result.is_ok() {
+            self.log_stream_measurements(weighting, "selected-output");
+        }
+        result
+    }
+
+    fn run_gridded_replay(
+        &self,
+        state: &mut SpectralCycleExecutorState,
+        context: WorkExecutionContext<'_>,
+    ) -> Result<(), io::Error> {
+        let prepared = state
+            .prepared
+            .take()
+            .ok_or_else(|| io::Error::other("FFT preparation did not run"))?;
+        let (preparation, prior_normal_state) = state
+            .prepared_model
+            .as_mut()
+            .ok_or_else(|| io::Error::other("final-model preparation missing"))?
+            .take_for_replay(context)?;
+        let prior_normal_state = prior_normal_state.ok_or_else(|| {
+            io::Error::other("gridded-normal replay requires the prior normal state")
+        })?;
+        let replay = state
+            .gridded_replay
+            .as_mut()
+            .ok_or_else(|| io::Error::other("sealed gridded-normal replay missing"))?;
+        let mut operator = self
+            .complete_data
+            .begin_gridded_replay(
+                context,
+                &self.problem,
+                preparation,
+                prior_normal_state,
+                prepared,
+                replay,
+            )
+            .map_err(io::Error::other)?;
+        replay.replay(&mut operator)?;
+        state.complete_data = Some(operator.complete().map_err(io::Error::other)?);
+        Ok(())
     }
 
     fn log_stream_measurements(&self, weighting: &WeightingExecutionState, stage: &str) {
@@ -1321,6 +1583,25 @@ impl SpectralCycleExecutor {
                     == Some(crate::WeightingStreamingMode::DensityInitial)))
         .then(|| state.weighting.latest_stream_measurements().copied())
         .flatten();
+        let gridded_write_measurements = if context.node().id == *fragment.streaming_node() {
+            state
+                .gridded_compilation
+                .as_ref()
+                .map(GriddedNormalReplayCompilation::write_measurements)
+        } else if context.node().id
+            == crate::spectral_cycle_plan::pass_node(
+                crate::spectral_cycle_plan::GRIDDED_SEAL_NODE,
+                self.pass,
+            )
+        {
+            state
+                .gridded_replay
+                .as_ref()
+                .map(FrozenGriddedNormalReplay::seal_write_measurements)
+                .transpose()?
+        } else {
+            None
+        };
         let stream_queue_high_water = stream_measurements
             .map(|measurements| u64::try_from(measurements.ready_queue_high_water))
             .transpose()
@@ -1341,6 +1622,13 @@ impl SpectralCycleExecutor {
                         stream_measurements
                             .expect("stream measurements were checked")
                             .peak_live_source_capacity_bytes
+                    }
+                    (LeaseResource::IoBuffer(crate::IoBufferKind::SpillWrite), _)
+                        if gridded_write_measurements.is_some() =>
+                    {
+                        gridded_write_measurements
+                            .expect("gridded write measurements were checked")
+                            .peak_buffer_bytes()
                     }
                     (LeaseResource::Queue { .. }, _)
                         if &claim.resource == fragment.source_queue()
@@ -1376,6 +1664,75 @@ impl SpectralCycleExecutor {
                         }
                         None => IoMeasurement::unobserved(crate::IoBufferKind::SourceReadAhead),
                     })
+                }
+                LeaseResource::IoBuffer(crate::IoBufferKind::SpillWrite) => {
+                    Some(gridded_write_measurements.map_or_else(
+                        || IoMeasurement::unobserved(crate::IoBufferKind::SpillWrite),
+                        |measurements| measurements.io_measurement(),
+                    ))
+                }
+                LeaseResource::IoBuffer(kind) => Some(IoMeasurement::unobserved(kind)),
+                _ => None,
+            })
+            .collect();
+        let artifacts = self
+            .phase_input_artifact
+            .filter(|_| context.node().id == final_model_preparation)
+            .map(|(identity, bytes)| {
+                crate::ArtifactMeasurement::new(
+                    identity,
+                    Some(identity),
+                    crate::ArtifactDisposition::Loaded,
+                    bytes,
+                    None,
+                )
+                .expect("Loaded input evidence is implementation-owned")
+            })
+            .into_iter()
+            .collect();
+        Ok(WorkMeasurements::new(resources, io, artifacts))
+    }
+
+    fn gridded_node_measurements(
+        &self,
+        context: WorkExecutionContext<'_>,
+        state: &SpectralCycleExecutorState,
+    ) -> Result<WorkMeasurements, io::Error> {
+        let final_model_preparation =
+            crate::spectral_cycle_plan::pass_node("final-model-preparation", self.pass);
+        let replay_measurements = (context.node().id == *self.complete_data.replay_node())
+            .then(|| {
+                state
+                    .gridded_replay
+                    .as_ref()
+                    .and_then(FrozenGriddedNormalReplay::latest_read_measurements)
+            })
+            .flatten();
+        let resources = context
+            .node()
+            .claims
+            .iter()
+            .map(|claim| {
+                let peak = match (&claim.resource, replay_measurements) {
+                    (
+                        &LeaseResource::IoBuffer(crate::IoBufferKind::SpillRead),
+                        Some(measurements),
+                    ) => measurements.peak_buffer_bytes(),
+                    _ => claim.amount,
+                };
+                ResourceMeasurement::new(claim.resource.clone(), claim.lifetime.clone(), peak)
+            })
+            .collect();
+        let io = context
+            .node()
+            .claims
+            .iter()
+            .filter_map(|claim| match claim.resource {
+                LeaseResource::IoBuffer(crate::IoBufferKind::SpillRead) => {
+                    Some(replay_measurements.map_or_else(
+                        || IoMeasurement::unobserved(crate::IoBufferKind::SpillRead),
+                        |measurements| measurements.io_measurement(),
+                    ))
                 }
                 LeaseResource::IoBuffer(kind) => Some(IoMeasurement::unobserved(kind)),
                 _ => None,
@@ -1417,16 +1774,18 @@ impl WorkImplementation for SpectralCycleExecutor {
             let final_model_preparation =
                 crate::spectral_cycle_plan::pass_node("final-model-preparation", self.pass);
             if context.node().id == final_model_preparation {
-                Self::prepare_final_model(&mut state, context)?;
-                if let (Some(sink), Some(prepared_model)) =
-                    (&self.final_visibility_sink, state.prepared_model.as_ref())
-                {
-                    sink.lock()
-                        .map_err(|_| io::Error::other("final visibility sink poisoned"))?
-                        .bind(
-                            self.problem.problem_id(),
-                            prepared_model.preparation.final_model().generation_id(),
-                        )?;
+                if self.mode == SpectralCycleExecutionMode::Science {
+                    Self::prepare_final_model(&mut state, context)?;
+                    if let (Some(sink), Some(prepared_model)) =
+                        (&self.final_visibility_sink, state.prepared_model.as_ref())
+                    {
+                        sink.lock()
+                            .map_err(|_| io::Error::other("final visibility sink poisoned"))?
+                            .bind(
+                                self.problem.problem_id(),
+                                prepared_model.preparation.final_model().generation_id(),
+                            )?;
+                    }
                 }
             } else if context.node().id == *self.complete_data.preparation_node() {
                 state.prepared = Some(
@@ -1434,42 +1793,78 @@ impl WorkImplementation for SpectralCycleExecutor {
                         .prepare(context)
                         .map_err(io::Error::other)?,
                 );
-            } else if context.node().id == *fragment.source_read_node() {
+            } else if self.mode == SpectralCycleExecutionMode::Science
+                && self.pass.phase() == crate::SpectralPassPhase::FinalMajor
+                && context.node().id == *self.complete_data.replay_node()
+            {
+                self.run_gridded_replay(&mut state, context)?;
+            } else if context.node().id
+                == crate::spectral_cycle_plan::pass_node(
+                    crate::spectral_cycle_plan::GRIDDED_SEAL_NODE,
+                    self.pass,
+                )
+            {
+                if state.complete_data.is_none() {
+                    return Err(io::Error::other(
+                        "gridded-normal seal preceded complete-data completion",
+                    ));
+                }
+                let compilation = state
+                    .gridded_compilation
+                    .take()
+                    .ok_or_else(|| io::Error::other("gridded-normal compiler missing"))?;
+                let replay = state
+                    .weighting
+                    .replay_completion()
+                    .ok_or_else(|| io::Error::other("weighting replay completion missing"))?;
+                state.gridded_replay = Some(compilation.complete(replay)?);
+            } else if fragment
+                .as_ref()
+                .is_some_and(|fragment| context.node().id == *fragment.source_read_node())
+            {
+                let fragment = fragment
+                    .as_ref()
+                    .expect("selected source branch checked the initial fragment");
                 let selected = state
                     .selected
                     .take()
                     .ok_or_else(|| io::Error::other("selected observation already consumed"))?;
                 match fragment.streaming_mode() {
                     Some(crate::WeightingStreamingMode::NaturalInitial) => {
-                        self.run_stream(&mut state, context, &fragment, Some(selected))?;
+                        self.run_stream(&mut state, context, fragment, Some(selected))?;
                     }
                     Some(crate::WeightingStreamingMode::DensityInitial) => {
                         state.selected_completion = Some(
                             state
                                 .weighting
-                                .traverse_density_source(
-                                    context,
-                                    &fragment,
-                                    selected,
-                                    &self.problem,
-                                )
+                                .traverse_density_source(context, fragment, selected, &self.problem)
                                 .map_err(io::Error::other)?,
                         );
                         self.log_stream_measurements(&state.weighting, "density");
                     }
-                    Some(crate::WeightingStreamingMode::Reuse) => {
-                        self.run_stream(&mut state, context, &fragment, Some(selected))?;
+                    Some(crate::WeightingStreamingMode::SelectedOutputOnly) => {
+                        self.run_selected_output(&mut state, context, fragment, selected)?;
                     }
                     None => return Err(io::Error::other("streaming weighting mode missing")),
                 }
-            } else if context.node().id == *fragment.generation_node()
-                && fragment.streaming_mode() == Some(crate::WeightingStreamingMode::DensityInitial)
-            {
-                self.run_stream(&mut state, context, &fragment, None)?;
+            } else if fragment.as_ref().is_some_and(|fragment| {
+                context.node().id == *fragment.generation_node()
+                    && fragment.streaming_mode()
+                        == Some(crate::WeightingStreamingMode::DensityInitial)
+            }) {
+                self.run_stream(
+                    &mut state,
+                    context,
+                    fragment
+                        .as_ref()
+                        .expect("density generation branch checked the initial fragment"),
+                    None,
+                )?;
             } else if self
                 .complete_data
                 .reconciliation_node()
                 .is_some_and(|node| context.node().id == *node)
+                && self.mode == SpectralCycleExecutionMode::Science
             {
                 let complete = state
                     .complete_data
@@ -1514,25 +1909,40 @@ impl WorkImplementation for SpectralCycleExecutor {
                         .run_reconstruction_cycle(lifecycle, &cycle.mask, cycle.program.clone())
                         .map_err(io::Error::other)?,
                 );
-            } else if context.node().id == *fragment.release_node() {
+            } else if fragment
+                .as_ref()
+                .is_some_and(|fragment| context.node().id == *fragment.release_node())
+            {
+                let fragment = fragment
+                    .as_ref()
+                    .expect("release branch checked the initial fragment");
                 state
                     .weighting
-                    .release(context, &fragment)
+                    .release(context, fragment)
                     .map_err(io::Error::other)?;
             }
-            self.node_measurements(context, &state, &fragment)
+            match fragment.as_ref() {
+                Some(fragment) => self.node_measurements(context, &state, fragment),
+                None => self.gridded_node_measurements(context, &state),
+            }
         })();
         result.map_err(|source| {
             let measurements = self.state.lock().ok().and_then(|state| {
-                state
-                    .weighting
-                    .latest_stream_measurements()
-                    .is_some()
-                    .then(|| {
-                        let fragment = self.fragment();
-                        self.node_measurements(context, &state, &fragment).ok()
-                    })
-                    .flatten()
+                let fragment = self.fragment();
+                match fragment.as_ref() {
+                    Some(fragment) if state.weighting.latest_stream_measurements().is_some() => {
+                        self.node_measurements(context, &state, fragment).ok()
+                    }
+                    None if state
+                        .gridded_replay
+                        .as_ref()
+                        .and_then(FrozenGriddedNormalReplay::latest_read_measurements)
+                        .is_some() =>
+                    {
+                        self.gridded_node_measurements(context, &state).ok()
+                    }
+                    Some(_) | None => None,
+                }
             });
             match measurements {
                 Some(measurements) => io::Error::other(SpectralCycleNodeFailure {
@@ -1566,12 +1976,42 @@ impl WorkImplementation for SpectralCycleExecutor {
         &self,
         completion: ObservationReadCompletionContext,
     ) -> Result<AttemptBoundObservationCompletion, Self::Error> {
-        let fragment = self.fragment();
+        let fragment = self
+            .fragment()
+            .ok_or_else(|| io::Error::other("gridded replay has no observation-read completion"))?;
         let mut state = self
             .state
             .lock()
             .map_err(|_| io::Error::other("spectral cycle state poisoned"))?;
         if completion.owner_node() == fragment.streaming_node() {
+            if self.mode == SpectralCycleExecutionMode::SelectedOutputOnly {
+                let result = (|| {
+                    let predecessor = state
+                        .weighting
+                        .complete_replay(completion)
+                        .map_err(io::Error::other)?;
+                    let _operator = state
+                        .operator
+                        .take()
+                        .ok_or_else(|| io::Error::other("selected-output operator missing"))?;
+                    let replay = state
+                        .weighting
+                        .replay_completion()
+                        .ok_or_else(|| io::Error::other("selected-output completion missing"))?;
+                    self.final_visibility_sink
+                        .as_ref()
+                        .ok_or_else(|| io::Error::other("selected-output sink missing"))?
+                        .lock()
+                        .map_err(|_| io::Error::other("final visibility sink poisoned"))?
+                        .finish(replay)?;
+                    Ok(predecessor)
+                })();
+                if result.is_err() {
+                    drop(state);
+                    let _ = self.abort_final_visibility_replay();
+                }
+                return result;
+            }
             let result = (|| {
                 let predecessor = state
                     .weighting
@@ -1625,7 +2065,11 @@ impl WorkImplementation for SpectralCycleExecutor {
     }
 
     fn abort_observation_read(&self, owner_node: &WorkNodeId) -> Result<(), Self::Error> {
-        if owner_node == self.fragment().streaming_node() {
+        if self
+            .fragment()
+            .as_ref()
+            .is_some_and(|fragment| owner_node == fragment.streaming_node())
+        {
             self.abort_final_visibility_replay()?;
         }
         Ok(())

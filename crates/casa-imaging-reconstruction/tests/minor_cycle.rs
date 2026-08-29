@@ -10,28 +10,28 @@ use casa_imaging_model::{
     CorrelationProduct, CorrelationSelection, CorrelationType, DataDescriptionSelection,
     DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame,
     DopplerConvention, Epoch, FacetLayout, FiniteValuePolicy, FlagPolicy, FrequencyFrame,
-    GeometryInput, IdSelection, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
-    ImagingRequest, InstrumentResponse, IntentSelection, LogicalIdentity,
-    MeasurementEquationContract, MeasurementSetIdentity, MetadataGeneration, MetadataTableKind,
-    ModelBounds, ModelColumnState, ModelColumnWrite, ModelExecutionAttemptId, ModelInnerProduct,
-    ModelInputCommitment, ModelLifecycleRequirements, ModelStateIdentity, ModelSupport,
-    MsColumnKind, NumericPrecision, NumericalStage, NumericsContract, ObservationSelection,
-    ObservationSnapshotInput, ObservationSourceInput, ObservationSourceProvenance,
-    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PolarizationContract,
-    PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInputIdentities,
-    ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
-    ProductRequirements, ProductSupportComparison, ProductValidityPolicies, Projection,
-    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
-    ReductionPolicy, RestFrequency, RestoringBeamPolicy, RowSelection, ScientificContract,
-    SelectedColumns, SelectedMainRow, SelectedObservationGenerationId, SelectedObservationSample,
-    SelectedPredictionTarget, SelectedRows, SelectedSampleAddress, SelectedSampleCoordinates,
-    SelectedSampleMetadata, SelectedSpectralContribution, SelectedSpectralContributions,
-    SelectedVisibilitySample, SkyDirection, SourceGenerations, SpectralContract,
-    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
-    SpectralWcs, SpectralWindowSelection, StageErrorBudget, TaylorSupportReference,
-    TaylorValidityPolicy, TimeScale, TimeSelection, UvSelection, UvwCoordinateLaw,
-    VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract,
-    WeightingScheme, compile, compile_observation,
+    GeometryInput, HogbomIterationAccounting, IdSelection, ImageAxis, ImageDomainRole,
+    ImageDomainSpec, ImageShape, ImagingRequest, InstrumentResponse, IntentSelection,
+    LogicalIdentity, MeasurementEquationContract, MeasurementSetIdentity, MetadataGeneration,
+    MetadataTableKind, ModelBounds, ModelColumnState, ModelColumnWrite, ModelExecutionAttemptId,
+    ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements, ModelStateIdentity,
+    ModelSupport, MsColumnKind, NumericPrecision, NumericalStage, NumericsContract,
+    ObservationSelection, ObservationSnapshotInput, ObservationSourceInput,
+    ObservationSourceProvenance, ObservationTransactionRequirements, PhaseCentreLaw,
+    PointingCentreLaw, PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy,
+    ProblemInputIdentities, ProblemSpecification, ProductBlankingPolicy, ProductKind,
+    ProductNormalization, ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
+    Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
+    ReconstructionControls, ReductionPolicy, RestFrequency, RestoringBeamPolicy, RowSelection,
+    ScientificContract, SelectedColumns, SelectedMainRow, SelectedObservationGenerationId,
+    SelectedObservationSample, SelectedPredictionTarget, SelectedRows, SelectedSampleAddress,
+    SelectedSampleCoordinates, SelectedSampleMetadata, SelectedSpectralContribution,
+    SelectedSpectralContributions, SelectedVisibilitySample, SkyDirection, SourceGenerations,
+    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
+    SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection, StageErrorBudget,
+    TaylorSupportReference, TaylorValidityPolicy, TimeScale, TimeSelection, UvSelection,
+    UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope,
+    WeightingContract, WeightingScheme, compile, compile_observation,
 };
 use casa_imaging_reconstruction::{
     AutoMultithreshControls, ExecutableModelProblem, FinalModelCompletion, FinalNormalState,
@@ -614,6 +614,10 @@ fn controls_are_validated_explicitly() {
     let compiled = HogbomControls::from_compiled(ReconstructionControls::new(8, 0.5, 0.0))
         .expect("exact compiled Högbom view");
     assert_eq!(compiled.validity(), MinorCycleValidity::Exact);
+    assert_eq!(
+        compiled.hogbom_iteration_accounting(),
+        HogbomIterationAccounting::Strict
+    );
     let compiled = HogbomControls::from_compiled(
         ReconstructionControls::new(100, 0.5, 0.0)
             .with_cycle_limits(7, Some(3))
@@ -752,6 +756,7 @@ fn exact_hogbom_view_is_not_stopped_by_cumulative_component_flux() {
     .expect("exact Högbom solve");
 
     assert_eq!(outcome.evidence().iterations(), 50);
+    assert_eq!(outcome.evidence().controller_iterations(), 50);
     assert_eq!(
         outcome.evidence().stop_reason(),
         MinorCycleStopReason::IterationBound
@@ -760,6 +765,52 @@ fn exact_hogbom_view_is_not_stopped_by_cumulative_component_flux() {
         outcome.evidence().total_flux() > 100.0,
         "fixture must cross the displaced arbitrary 100 Jy cap"
     );
+}
+
+#[test]
+fn casa_inclusive_hogbom_executes_51_but_charges_50_per_bound_stopped_cycle() {
+    let round = first_confirm_round_scaled(202, 203, 1_000.0);
+    let continuation = problem_with_model(
+        204,
+        ModelStateIdentity::Generation(round.final_model.generation_id().identity()),
+    );
+    let lifecycle = bind_lifecycle(&continuation, 205, 21);
+    let program = HogbomControls::from_compiled(
+        ReconstructionControls::new(500, 0.1, 0.0)
+            .with_cycle_limits(50, None)
+            .with_hogbom_iteration_accounting(HogbomIterationAccounting::CasaInclusive),
+    )
+    .expect("CASA-inclusive Högbom program")
+    .record_component_sequence(64)
+    .expect("bounded component diagnostics");
+
+    let mut actual_total = 0_usize;
+    let mut controller_total = 0_usize;
+    for _ in 0..10 {
+        let outcome = hogbom_minor_cycle(
+            &lifecycle,
+            &round.final_model,
+            &round.normal_state,
+            &full_mask(&round.normal_state, &round.final_model),
+            program.clone(),
+        )
+        .expect("CASA-inclusive Högbom solve");
+        let evidence = outcome.evidence();
+        assert_eq!(evidence.iterations(), 51);
+        assert_eq!(evidence.controller_iterations(), 50);
+        assert_eq!(evidence.stop_reason(), MinorCycleStopReason::IterationBound);
+        assert_eq!(
+            evidence
+                .recorded_component_sequence()
+                .expect("all inclusive components are retained")
+                .len(),
+            51
+        );
+        actual_total += evidence.iterations();
+        controller_total += evidence.controller_iterations();
+    }
+    assert_eq!(actual_total, 510);
+    assert_eq!(controller_total, 500);
 }
 
 #[test]
@@ -1256,6 +1307,26 @@ fn threshold_boundary_follows_the_casa_hogbom_convention() {
     assert_eq!(equal.evidence().iterations(), 1);
     assert!(equal.delta().is_some());
     assert!(equal.evidence().requests_reconciliation());
+
+    let inclusive_equal = hogbom_minor_cycle(
+        &lifecycle,
+        &round.final_model,
+        &round.normal_state,
+        &full_mask(&round.normal_state, &round.final_model),
+        HogbomControls::from_compiled(
+            ReconstructionControls::new(64, 0.5, strength)
+                .with_hogbom_iteration_accounting(HogbomIterationAccounting::CasaInclusive),
+        )
+        .expect("CASA-inclusive threshold-boundary controls"),
+    )
+    .expect("CASA-inclusive threshold-boundary solve");
+    assert_eq!(inclusive_equal.evidence().iterations(), 1);
+    assert_eq!(inclusive_equal.evidence().controller_iterations(), 1);
+    assert_eq!(
+        inclusive_equal.evidence().stop_reason(),
+        MinorCycleStopReason::ThresholdReached,
+        "an early scientific stop reports the actual count without clamping"
+    );
 
     // Strictly below the peak: the first component is cleaned too.
     let below = solve(strength * 0.99);

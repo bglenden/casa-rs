@@ -3134,7 +3134,9 @@ pub(crate) fn io_buffer_kind_supports_work_kind(
         crate::IoBufferKind::SpillRead => {
             matches!(work_kind, WorkKind::Spill | WorkKind::Prefetch)
         }
-        crate::IoBufferKind::SpillWrite => work_kind == WorkKind::Spill,
+        crate::IoBufferKind::SpillWrite => {
+            matches!(work_kind, WorkKind::Spill | WorkKind::ObservationRead)
+        }
         crate::IoBufferKind::Serialization => work_kind == WorkKind::Serialization,
         crate::IoBufferKind::StorageManager => {
             matches!(

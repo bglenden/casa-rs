@@ -31,7 +31,7 @@ use crate::transaction::{
 };
 
 const COMPILED_PROBLEM_IDENTITY_DOMAIN: &[u8] = b"casa-rs-compiled-problem";
-const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 12;
+const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 13;
 const COMPILED_PROBLEM_BASIS_DOMAIN: &[u8] = b"casa-rs-compiled-problem-basis";
 const COMPILED_PROBLEM_BASIS_VERSION: u32 = 2;
 const NUMERICS_CONTRACT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-numerics-contract";
@@ -505,6 +505,21 @@ pub enum ReconstructionAlgorithm {
     Mtmfs,
 }
 
+/// Accounting policy for Högbom's historical inclusive iteration loop.
+///
+/// Iteration limits remain task/controller budgets under both policies. CASA's
+/// Högbom implementation may apply one additional component when a cycle runs
+/// all the way to that budget; early scientific stops report every component
+/// actually applied.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum HogbomIterationAccounting {
+    /// Apply and report no more components than the requested budget.
+    #[default]
+    Strict,
+    /// Admit CASA's inclusive terminal component while preserving the reported budget.
+    CasaInclusive,
+}
+
 /// Scientific stopping and update controls for reconstruction.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ReconstructionControls {
@@ -517,6 +532,7 @@ pub struct ReconstructionControls {
     cycle_factor: Option<f64>,
     minimum_psf_fraction: Option<f64>,
     maximum_psf_fraction: Option<f64>,
+    hogbom_iteration_accounting: HogbomIterationAccounting,
 }
 
 impl ReconstructionControls {
@@ -533,10 +549,11 @@ impl ReconstructionControls {
             cycle_factor: None,
             minimum_psf_fraction: None,
             maximum_psf_fraction: None,
+            hogbom_iteration_accounting: HogbomIterationAccounting::Strict,
         }
     }
 
-    /// Bind the per-cycle iteration bound and optional total major-cycle bound.
+    /// Bind the reported per-cycle iteration budget and optional total major-cycle bound.
     #[must_use]
     pub const fn with_cycle_limits(
         mut self,
@@ -569,7 +586,17 @@ impl ReconstructionControls {
         self
     }
 
-    /// Return the maximum number of minor-cycle updates.
+    /// Select Högbom's strict or CASA-inclusive iteration accounting.
+    #[must_use]
+    pub const fn with_hogbom_iteration_accounting(
+        mut self,
+        accounting: HogbomIterationAccounting,
+    ) -> Self {
+        self.hogbom_iteration_accounting = accounting;
+        self
+    }
+
+    /// Return the reported total minor-iteration budget.
     #[must_use]
     pub const fn max_minor_iterations(self) -> usize {
         self.max_minor_iterations
@@ -587,7 +614,7 @@ impl ReconstructionControls {
         self.threshold_jy_per_beam
     }
 
-    /// Return the explicit per-cycle iteration bound.
+    /// Return the explicit reported per-cycle iteration budget.
     #[must_use]
     pub const fn cycle_iteration_limit(self) -> Option<usize> {
         self.cycle_iteration_limit
@@ -621,6 +648,12 @@ impl ReconstructionControls {
     #[must_use]
     pub const fn maximum_psf_fraction(self) -> Option<f64> {
         self.maximum_psf_fraction
+    }
+
+    /// Return Högbom's iteration-accounting policy.
+    #[must_use]
+    pub const fn hogbom_iteration_accounting(self) -> HogbomIterationAccounting {
+        self.hogbom_iteration_accounting
     }
 }
 
@@ -1880,6 +1913,13 @@ fn validate_reconstruction(
             reason: "a minor-cycle algorithm requires a positive iteration budget",
         });
     }
+    if !matches!(contract.algorithm, ReconstructionAlgorithm::Hogbom)
+        && contract.controls.hogbom_iteration_accounting != HogbomIterationAccounting::Strict
+    {
+        return Err(CompileProblemError::InvalidCapabilityCombination {
+            reason: "CASA-inclusive iteration accounting is specific to Högbom reconstruction",
+        });
+    }
     if !(contract.controls.gain.is_finite()
         && contract.controls.gain > 0.0
         && contract.controls.gain <= 1.0
@@ -2380,6 +2420,10 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
             None => encoder.u8(0),
         }
     }
+    encoder.u8(match reconstruction.controls.hogbom_iteration_accounting {
+        HogbomIterationAccounting::Strict => 0,
+        HogbomIterationAccounting::CasaInclusive => 1,
+    });
     encoder.usize(reconstruction.polarization.coordinates.len());
     for coordinate in &reconstruction.polarization.coordinates {
         encoder.u8(polarization_tag(*coordinate));

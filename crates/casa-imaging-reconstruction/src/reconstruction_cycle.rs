@@ -153,6 +153,16 @@ impl ReconstructionCycleEvidence {
             .sum()
     }
 
+    /// Return the component count charged to the reported controller budget.
+    #[must_use]
+    pub fn controller_iterations(&self) -> usize {
+        self.channels
+            .iter()
+            .filter_map(ChannelCycleEvidence::minor_cycle)
+            .map(MinorCycleEvidence::controller_iterations)
+            .sum()
+    }
+
     /// Return cumulative absolute accepted component flux across channels.
     #[must_use]
     pub fn total_flux(&self) -> f64 {
@@ -355,7 +365,8 @@ impl ReconstructionCycle {
                     .on_model_plane(MinorCycleModelPlane::new(0, plane.output_channel(), 0));
                 let result = run_minor_cycle_plane(lifecycle, base, plane, mask, program)?;
                 let (delta, evidence) = result.into_parts();
-                remaining_iterations = remaining_iterations.saturating_sub(evidence.iterations());
+                remaining_iterations =
+                    remaining_iterations.saturating_sub(evidence.controller_iterations());
                 if let Some(delta) = delta {
                     terms.extend_from_slice(delta.terms());
                 }

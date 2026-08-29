@@ -66,11 +66,11 @@ use casa_imaging_runtime::{
     ExecutionEvidenceError, ExecutionKnobs, ExecutionOutcome, ExecutionPlanId, ExecutionProvenance,
     ExecutionReceipt, ExecutionReceiptBinding, ExecutionReceiptStore, ExecutionStatus,
     ExternalPressure, FenceId, FenceKind, FinalVisibilitySink, FrozenWeightingReservation,
-    HostInventory, ImplementationContractCatalog, ImplementationContractMetadata,
-    ImplementationRegistry, ImplementationRegistryId, InitializationPolicy, IoBufferDemand,
-    IoBufferKind, IoMeasurement, IoPrediction, LeaseResource, LogicalAllocation,
-    MajorCycleOperatorResult, MajorCycleOperatorState, MemoryCapacityDomain, MemoryCapacityKind,
-    MemoryDemand, MemoryView, MemoryViewKind, ObservationReadCompletionContext,
+    GriddedNormalReplayStorage, HostInventory, ImplementationContractCatalog,
+    ImplementationContractMetadata, ImplementationRegistry, ImplementationRegistryId,
+    InitializationPolicy, IoBufferDemand, IoBufferKind, IoMeasurement, IoPrediction, LeaseResource,
+    LogicalAllocation, MajorCycleOperatorResult, MajorCycleOperatorState, MemoryCapacityDomain,
+    MemoryCapacityKind, MemoryDemand, MemoryView, MemoryViewKind, ObservationReadCompletionContext,
     ObservationTransactionWork, PhysicalLayoutId, PhysicalSlot, PhysicalSlotId,
     PhysicalWorkBinding, PhysicalWorkBindingError, PlanError, PlanPrediction, PlannedArtifact,
     PlannerCostModelProfileBootstrap, PlannerCostModelProfileId, PlanningBindings,
@@ -188,6 +188,22 @@ fn serial_storage_io() -> StorageIoResourceBinding {
         RateResourceId::new("transaction-io-rate"),
         QueueResourceId::new("transaction-io-queue"),
     )
+}
+
+fn artifact_storage_io() -> StorageIoResourceBinding {
+    StorageIoResourceBinding::new(
+        StorageDomainId::new("atomic-output"),
+        RateResourceId::new("io-rate"),
+        RateResourceId::new("io-rate"),
+        QueueResourceId::new("io-queue"),
+    )
+}
+
+fn artifact_storage() -> GriddedNormalReplayStorage {
+    let directory = Path::new("/tmp/casa-rs-imaging-runtime-tests");
+    fs::create_dir_all(directory).expect("create gridded-normal artifact directory");
+    GriddedNormalReplayStorage::bind(authority(), artifact_storage_io(), directory)
+        .expect("bind gridded-normal artifact storage")
 }
 
 fn selected_observation_bindings(
@@ -2840,6 +2856,8 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
         SpectralCyclePassInput::Initial,
     )
     .with_frozen_weighting_reservation(frozen_reservation)
+    .with_gridded_normal_compilation(authority(), resource_policy.clone(), &artifact_storage())
+    .expect("gridded-normal compiler and spill writer")
     .with_reconstruction_cycle(
         minor_node.clone(),
         casa_imaging_reconstruction::ReconstructionMaskPlan::FullPlane {
@@ -2894,6 +2912,12 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
                         .expect("selected source traversal reports actual buffer peak");
                     assert!(peak > 0);
                     assert!(peak <= claim.amount);
+                } else if *kind == IoBufferKind::SpillWrite {
+                    let (bytes, operations) = receipt
+                        .stage_actual_io(node_id, *kind)
+                        .expect("gridded-normal spill reports exact write I/O");
+                    assert!(bytes > 0);
+                    assert!(operations > 0);
                 } else {
                     assert_eq!(
                         receipt.stage_actual_io(node_id, *kind),
@@ -2904,6 +2928,7 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
             }
             if node.kind.reads_observation()
                 && matches!(claim.resource, LeaseResource::Queue { .. })
+                && claim.amount >= 2
             {
                 let peak = receipt
                     .actual_resource_peak(node_id, &claim.resource, &claim.lifetime)
@@ -2929,6 +2954,10 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
         .implementation()
         .take_frozen_weighting()
         .expect("initial major retains frozen weighting");
+    let gridded_replay = runtime_registry
+        .implementation()
+        .take_gridded_normal_replay()
+        .expect("initial major retains sealed gridded-normal replay");
     assert_eq!(minor.evidence().problem_id(), problem.problem_id());
     let final_input = minor.into_final_major_input();
     let source_delta = final_input.source_delta();
@@ -2936,19 +2965,14 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
     let minor_evidence_id = final_input.evidence().reconstruction_cycle().evidence_id();
     let selected_generation = final_input.evidence().normal_state().selected_generation();
 
-    let (_, final_access) = resolve_selected_observation(resolution)
-        .expect("refresh runtime owner fixture")
-        .into_parts();
-    let final_residency = final_access
-        .certify_residency(&problem)
-        .expect("fresh owner-certified selected-content residency");
+    drop(resolution);
     let final_planned = SpectralCyclePlan::final_major(
         &problem,
         &planning_registry,
         SpectralCycleExecutionPolicy::new(
             implementation(73),
             WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
-            final_residency,
+            residency,
             serial_storage_io(),
             1_000,
             4 * 4 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
@@ -2963,8 +2987,14 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
         .keys()
         .cloned()
         .collect::<BTreeSet<_>>();
-    let (final_physical, final_weighting, final_complete, final_resources, final_pass, final_minor) =
-        final_planned.into_parts();
+    let (
+        final_physical,
+        final_weighting,
+        final_complete,
+        _final_resources,
+        final_pass,
+        final_minor,
+    ) = final_planned.into_parts();
     assert!(final_minor.is_none());
     let final_nodes = final_physical
         .execution_dag()
@@ -2982,8 +3012,47 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
                 WorkKind::ObservationRead | WorkKind::ObservationReadWriteback
             ))
             .count(),
-        1,
-        "a later major cycle reuses frozen weighting and traverses selected payload once"
+        0,
+        "a later major cycle must not expose a selected-observation science traversal"
+    );
+    let final_demand = &final_physical.execution_dag().resource_alternative().demand;
+    assert_eq!(final_demand.locks.hard(), 0);
+    assert_eq!(final_demand.file_descriptors.hard(), 0);
+    assert_eq!(
+        final_demand.io_buffers.bytes(IoBufferKind::SourceReadAhead),
+        0
+    );
+    assert!(
+        final_physical
+            .execution_dag()
+            .nodes()
+            .values()
+            .flat_map(|node| &node.claims)
+            .all(|claim| !matches!(
+                claim.resource,
+                LeaseResource::Locks
+                    | LeaseResource::MeasurementSetLock { .. }
+                    | LeaseResource::FileDescriptors
+                    | LeaseResource::IoBuffer(IoBufferKind::SourceReadAhead)
+            ))
+    );
+    let replay_nodes = final_physical
+        .execution_dag()
+        .nodes()
+        .values()
+        .filter(|node| {
+            node.claims
+                .iter()
+                .any(|claim| claim.resource == LeaseResource::IoBuffer(IoBufferKind::SpillRead))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(replay_nodes.len(), 1, "one bounded artifact reader");
+    assert_eq!(replay_nodes[0].kind, WorkKind::Prefetch);
+    assert!(
+        replay_nodes[0]
+            .id
+            .as_str()
+            .starts_with("gridded-normal-replay-final-major")
     );
     let collisions = initial_nodes
         .intersection(&final_nodes)
@@ -3020,19 +3089,15 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
         residual_grid.bytes,
         final_complete.residency().grid_bytes() as u64
     );
-    let final_selected = frozen_weighting
-        .rebind_selected(final_access, &problem)
-        .expect("fresh owner locks rebind frozen selected proof");
-    let final_executor = SpectralCycleExecutor::new(
+    let final_executor = SpectralCycleExecutor::new_gridded(
         implementation(73),
         problem.clone(),
         final_weighting,
-        final_resources,
         final_pass,
         final_complete,
-        final_selected,
         ExecutableModelProblem::from_compiled(problem.clone()).expect("final executable model"),
         SpectralCyclePassInput::FinalMajor(final_input),
+        gridded_replay,
     )
     .with_frozen_weighting(frozen_weighting);
     let final_registry =
@@ -3152,6 +3217,8 @@ fn execute_initial_reconstruction_cycle(
         SpectralCyclePassInput::Initial,
     )
     .with_frozen_weighting_reservation(reservation)
+    .with_gridded_normal_compilation(authority(), ResourcePolicy::Balanced, &artifact_storage())
+    .expect("channel-cycle gridded-normal compiler")
     .with_reconstruction_cycle(
         cycle_node.clone(),
         casa_imaging_reconstruction::ReconstructionMaskPlan::FullPlane {

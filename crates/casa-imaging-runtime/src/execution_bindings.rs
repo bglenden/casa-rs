@@ -5014,6 +5014,7 @@ fn encode_observation_transaction(
         crate::ObservationTransactionPublicationScope::ProductPublication => 1,
         crate::ObservationTransactionPublicationScope::SealedProductPublication => 2,
     });
+    encoder.u8(u8::from(transaction.work().source_free_reconstruction()));
     encoder.digest(transaction.problem_id().as_bytes());
     encoder.digest(transaction.product_graph_id().as_bytes());
     encoder.digest(transaction.transaction_id().as_bytes());

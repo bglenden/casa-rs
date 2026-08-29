@@ -29,6 +29,7 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 mod continuum_transform;
+mod gridded_normal_operator;
 mod major_cycle;
 mod mask;
 mod minor_cycle;
@@ -49,6 +50,10 @@ pub use spectral_operator::{
 /// visibility. Application code should use the runtime's plan-bound T19 API.
 #[doc(hidden)]
 pub mod runtime_adapter {
+    pub use crate::gridded_normal_operator::{
+        GRIDDED_NORMAL_OPERATOR_RECORD_BYTES, GriddedNormalOperatorApply,
+        GriddedNormalOperatorBlock, GriddedNormalOperatorCompiler, GriddedNormalOperatorProgram,
+    };
     pub use crate::spectral_operator::{
         CompleteDataOwnerCompletion, CompleteDataOwnerResult, CompleteDataOwnerState,
         FinalVisibilitySample, PreparedSpectralOperator, SpectralOperatorPass,

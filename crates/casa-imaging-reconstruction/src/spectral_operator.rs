@@ -26,11 +26,11 @@ use crate::{
     },
 };
 
-const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
+pub(crate) const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
 const NORMAL_STATE_CONTENT_DOMAIN: &[u8] = b"casa-rs-normal-state-content";
-const SUPPORT: usize = 3;
+pub(crate) const SUPPORT: usize = 3;
 const TAP_COUNT: usize = SUPPORT * 2 + 1;
-const OVERSAMPLING: usize = 100;
+pub(crate) const OVERSAMPLING: usize = 100;
 // The pinned RustFFT mixed-radix planner stores at most one length-sized table
 // per decomposition level. There are fewer than usize::BITS levels, two
 // directions, and small node headers. Charging four complex values per level
@@ -218,11 +218,11 @@ pub struct SpectralOperatorSpecification {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct SpectralOperatorGeometry {
-    image_shape: [usize; 2],
-    grid_shape: [usize; 2],
-    image_blc: [usize; 2],
-    increment_rad: [f64; 2],
+pub(crate) struct SpectralOperatorGeometry {
+    pub(crate) image_shape: [usize; 2],
+    pub(crate) grid_shape: [usize; 2],
+    pub(crate) image_blc: [usize; 2],
+    pub(crate) increment_rad: [f64; 2],
 }
 
 impl SpectralOperatorSpecification {
@@ -337,13 +337,29 @@ impl SpectralOperatorSpecification {
         self.problem
     }
 
+    pub(crate) const fn geometry_id(&self) -> CompiledGeometryId {
+        self.geometry
+    }
+
+    pub(crate) const fn numerics_id(&self) -> NumericsContractId {
+        self.numerics
+    }
+
+    pub(crate) const fn weighting_commitment_id(&self) -> WeightingCommitmentId {
+        self.weighting_commitment
+    }
+
+    pub(crate) const fn finite_values(&self) -> FiniteValuePolicy {
+        self.finite_values
+    }
+
     /// Return the exact bounded slab compiled into this operator.
     #[must_use]
     pub const fn slab(&self) -> SpectralSlabPlan {
         self.slab
     }
 
-    fn operator_geometry(&self) -> SpectralOperatorGeometry {
+    pub(crate) fn operator_geometry(&self) -> SpectralOperatorGeometry {
         SpectralOperatorGeometry {
             image_shape: self.image_shape,
             grid_shape: self.grid_shape,
@@ -563,6 +579,16 @@ impl PreparedSpectralOperator {
     ) -> Result<CompleteDataOwnerState, SpectralOperatorError> {
         CompleteDataOwnerState::new_streaming(problem, self)
     }
+
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        SpectralOperatorSpecification,
+        SpectralOperatorWorkload,
+        PreparedFft,
+    ) {
+        (self.specification, self.workload, self.fft)
+    }
 }
 
 /// Prepare the reusable FFT implementation under runtime planning authority.
@@ -597,6 +623,7 @@ pub struct SpectralOperatorPrimitives {
     shape: [usize; 2],
     slab: SpectralSlabPlan,
     dirty: Box<[Complex64]>,
+    invariant_dirty: Option<Box<[Complex64]>>,
     psf: Box<[Complex64]>,
     sensitivity: Box<[f64]>,
     sum_weights: Box<[f64]>,
@@ -726,6 +753,7 @@ pub(crate) struct ReusableNormalState {
     continuum_transform_generation: Option<ContinuumTransformGenerationId>,
     shape: [usize; 2],
     slab: SpectralSlabPlan,
+    invariant_dirty: Option<Box<[Complex64]>>,
     psf: Box<[Complex64]>,
     sensitivity: Box<[f64]>,
     sum_weights: Box<[f64]>,
@@ -748,6 +776,7 @@ impl ReusableNormalState {
             shape,
             slab,
             dirty: _,
+            invariant_dirty,
             psf,
             sensitivity,
             sum_weights,
@@ -766,6 +795,7 @@ impl ReusableNormalState {
             continuum_transform_generation,
             shape,
             slab,
+            invariant_dirty,
             psf,
             sensitivity,
             sum_weights,
@@ -818,20 +848,20 @@ pub enum SpectralPrimitiveCatalog {
 #[doc(hidden)]
 #[derive(Debug)]
 pub struct CompleteDataOwnerCompletion {
-    problem: CompiledProblemId,
-    geometry: CompiledGeometryId,
-    numerics: NumericsContractId,
-    weighting_commitment: WeightingCommitmentId,
-    weighting_generation: WeightingGenerationId,
-    replay: WeightingReplayId,
-    coverage: WeightingReplayCoverageId,
-    coverage_proof_bytes: u64,
-    coverage_proof_hash_calls: u64,
-    primitives: SpectralPrimitiveCatalog,
-    selected_generation: SelectedObservationGenerationId,
-    continuum_transform_generation: Option<ContinuumTransformGenerationId>,
-    sample_count: u64,
-    block_count: u64,
+    pub(crate) problem: CompiledProblemId,
+    pub(crate) geometry: CompiledGeometryId,
+    pub(crate) numerics: NumericsContractId,
+    pub(crate) weighting_commitment: WeightingCommitmentId,
+    pub(crate) weighting_generation: WeightingGenerationId,
+    pub(crate) replay: WeightingReplayId,
+    pub(crate) coverage: WeightingReplayCoverageId,
+    pub(crate) coverage_proof_bytes: u64,
+    pub(crate) coverage_proof_hash_calls: u64,
+    pub(crate) primitives: SpectralPrimitiveCatalog,
+    pub(crate) selected_generation: SelectedObservationGenerationId,
+    pub(crate) continuum_transform_generation: Option<ContinuumTransformGenerationId>,
+    pub(crate) sample_count: u64,
+    pub(crate) block_count: u64,
 }
 
 impl CompleteDataOwnerCompletion {
@@ -925,8 +955,8 @@ impl CompleteDataOwnerCompletion {
 #[doc(hidden)]
 #[derive(Debug)]
 pub struct CompleteDataOwnerResult {
-    primitives: SpectralOperatorPrimitives,
-    completion: CompleteDataOwnerCompletion,
+    pub(crate) primitives: SpectralOperatorPrimitives,
+    pub(crate) completion: CompleteDataOwnerCompletion,
 }
 
 impl CompleteDataOwnerResult {
@@ -1097,6 +1127,20 @@ impl CompleteDataOwnerState {
         Ok(())
     }
 
+    /// Bind the terminal model for prediction-only selected output.
+    pub fn bind_selected_output_model(
+        &mut self,
+        generation: &ModelGeneration,
+    ) -> Result<(), SpectralOperatorError> {
+        if self.sample_count != 0 || self.next_block_sequence != 0 || self.residual_model.is_some()
+        {
+            return Err(SpectralOperatorError::MajorCycleAlreadyBound);
+        }
+        self.operator.prepare_selected_output_model(generation)?;
+        self.residual_model = Some(generation.generation_id());
+        Ok(())
+    }
+
     /// Return the sole frozen T18 generation accepted by this owner.
     #[must_use]
     pub const fn weighting_generation(&self) -> Option<WeightingGenerationId> {
@@ -1173,6 +1217,81 @@ impl CompleteDataOwnerState {
                 // CASA degrids and writes the whole selected visibility
                 // buffer. Flags and Stokes-I participation govern gridding,
                 // not whether the selected MODEL_DATA destination is refreshed.
+                let predicted = casa_persistent_complex(predicted_visibility);
+                self.predicted_selected.push(FinalVisibilitySample {
+                    address: selected.address,
+                    observed,
+                    predicted,
+                    residual: observed - predicted,
+                });
+            }
+        }
+        self.sample_count = self
+            .sample_count
+            .checked_add(
+                u64::try_from(block.samples().len())
+                    .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
+            )
+            .ok_or(SpectralOperatorError::CoverageOverflow)?;
+        self.next_block_sequence = self
+            .next_block_sequence
+            .checked_add(1)
+            .ok_or(SpectralOperatorError::CoverageOverflow)?;
+        Ok(&self.predicted_selected)
+    }
+
+    /// Predict one ordered output block without accumulating residual science grids.
+    pub fn predict_final_visibility_block(
+        &mut self,
+        block: &WeightingReplayChunk,
+    ) -> Result<&[FinalVisibilitySample], SpectralOperatorError> {
+        if self.residual_model.is_none() {
+            return Err(SpectralOperatorError::MissingMajorCycleResidual);
+        }
+        if block.sequence() != self.next_block_sequence {
+            return Err(SpectralOperatorError::BlockSequence);
+        }
+        if block.samples().len() > self.operator.workload.max_replay_block_samples {
+            return Err(SpectralOperatorError::IncompleteCoverage);
+        }
+        self.coverage.adopt(block.coverage_checkpoint());
+        self.predicted_selected.clear();
+        for weighted in block.samples() {
+            let selected = weighted.selected();
+            let _ = self.accept_input(selected)?;
+            let visibility = match selected.visibility {
+                SelectedVisibilitySample::Float32(value) => [f64::from(value), 0.0],
+                SelectedVisibilitySample::Complex32([real, imaginary]) => {
+                    [f64::from(real), f64::from(imaginary)]
+                }
+            };
+            let mut predicted_visibility = Complex64::default();
+            let mut touches_core = false;
+            let has_spectral_support = weighted.spectral_values().next().is_some();
+            if selected.address.correlation_type.contributes_to_stokes_i() {
+                let mut stencil = SmallVec::<[SpectralOperatorSample; 4]>::new();
+                for spectral in weighted.spectral_values() {
+                    let contribution = spectral.contribution();
+                    stencil.push(SpectralOperatorSample::new(
+                        usize::try_from(contribution.output_channel())
+                            .map_err(|_| SpectralOperatorError::InvalidSample)?,
+                        selected.transformed_uvw_m,
+                        contribution.evaluation_frequency_hz(),
+                        selected.phase_shift_m,
+                        [0.0, 0.0],
+                        spectral.imaging_weight(),
+                        contribution.factor(),
+                    )?);
+                }
+                touches_core = stencil
+                    .iter()
+                    .any(|sample| self.operator.slab.owns(sample.output_channel));
+                if touches_core {
+                    predicted_visibility = self.operator.predict_stencil(&stencil)?;
+                }
+            }
+            if has_spectral_support && (touches_core || self.operator.slab.total_channels() == 1) {
+                let observed = Complex64::new(visibility[0], visibility[1]);
                 let predicted = casa_persistent_complex(predicted_visibility);
                 self.predicted_selected.push(FinalVisibilitySample {
                     address: selected.address,
@@ -1304,25 +1423,32 @@ impl CompleteDataOwnerState {
         &self,
         sample: &crate::weighting::WeightingSelectedSample,
     ) -> Result<bool, SpectralOperatorError> {
-        let nonfinite = sample
-            .transformed_uvw_m
-            .iter()
-            .any(|value| !value.is_finite())
-            || !sample.phase_shift_m.is_finite()
-            || !sample.address.frequency_centre_hz.is_finite()
-            || !sample.input_weight.is_finite()
-            || match sample.visibility {
-                SelectedVisibilitySample::Float32(value) => !value.is_finite(),
-                SelectedVisibilitySample::Complex32(value) => {
-                    value.into_iter().any(|component| !component.is_finite())
-                }
-            };
-        apply_input_policy(
-            nonfinite,
-            sample.row_flag || sample.parallel_hand_group_flag,
-            self.finite_values,
-        )
+        accept_weighted_input(sample, self.finite_values)
     }
+}
+
+pub(crate) fn accept_weighted_input(
+    sample: &crate::weighting::WeightingSelectedSample,
+    finite_values: FiniteValuePolicy,
+) -> Result<bool, SpectralOperatorError> {
+    let nonfinite = sample
+        .transformed_uvw_m
+        .iter()
+        .any(|value| !value.is_finite())
+        || !sample.phase_shift_m.is_finite()
+        || !sample.address.frequency_centre_hz.is_finite()
+        || !sample.input_weight.is_finite()
+        || match sample.visibility {
+            SelectedVisibilitySample::Float32(value) => !value.is_finite(),
+            SelectedVisibilitySample::Complex32(value) => {
+                value.into_iter().any(|component| !component.is_finite())
+            }
+        };
+    apply_input_policy(
+        nonfinite,
+        sample.row_flag || sample.parallel_hand_group_flag,
+        finite_values,
+    )
 }
 
 fn apply_finite_value_policy(
@@ -1345,7 +1471,7 @@ fn apply_input_policy(
 }
 
 /// Reconstruction-owned serial CPU operator accumulator for one bounded slab.
-struct SpectralSlabOperator {
+pub(crate) struct SpectralSlabOperator {
     specification: Option<SpectralOperatorSpecification>,
     geometry: SpectralOperatorGeometry,
     slab: SpectralSlabPlan,
@@ -1382,7 +1508,7 @@ impl fmt::Debug for SpectralSlabOperator {
 impl SpectralSlabOperator {
     /// Allocate the runtime-projected buffers and no worker-local grid duplicate.
     #[must_use]
-    fn new(
+    pub(crate) fn new(
         specification: SpectralOperatorSpecification,
         workload: SpectralOperatorWorkload,
         fft: PreparedFft,
@@ -1439,7 +1565,7 @@ impl SpectralSlabOperator {
     }
 
     /// Accumulate one already-weighted spectral contribution.
-    pub fn push(&mut self, sample: SpectralOperatorSample) -> Result<(), SpectralOperatorError> {
+    fn push(&mut self, sample: SpectralOperatorSample) -> Result<(), SpectralOperatorError> {
         let Some(plane) = self.slab.core_index(sample.output_channel) else {
             return Ok(());
         };
@@ -1487,20 +1613,12 @@ impl SpectralSlabOperator {
         Ok(())
     }
 
-    fn prepare_residual_model(
+    pub(crate) fn prepare_residual_model(
         &mut self,
         generation: &ModelGeneration,
         reused_normal_state: Option<ReusableNormalState>,
     ) -> Result<(), SpectralOperatorError> {
-        let shape = generation.shape();
-        if shape.domains().len() != 1
-            || shape.coefficients() != self.slab.total_channels()
-            || shape.polarizations() != 1
-            || shape.domains()[0].pixels() != self.geometry.image_shape
-            || generation.samples().len() != shape.sample_count()
-        {
-            return Err(SpectralOperatorError::ModelShape);
-        }
+        self.validate_model_generation(generation)?;
         match (self.workload.pass, reused_normal_state.as_ref()) {
             (SpectralOperatorPass::InitialMajor, None) => {}
             (SpectralOperatorPass::ResidualRefresh, Some(state))
@@ -1511,6 +1629,50 @@ impl SpectralSlabOperator {
             _ => return Err(SpectralOperatorError::ReusableNormalStateMismatch),
         }
         self.reused_normal_state = reused_normal_state;
+        self.prepare_forward_generation(generation)?;
+        let grid_shape = (self.geometry.grid_shape[0], self.geometry.grid_shape[1]);
+        self.residual_grids = Some(
+            (0..self.slab.core_depth())
+                .map(|_| Array2::zeros(grid_shape))
+                .collect(),
+        );
+        self.residual_compensations = Some(
+            (0..self.slab.core_depth())
+                .map(|_| Array2::zeros(grid_shape))
+                .collect(),
+        );
+        Ok(())
+    }
+
+    fn prepare_selected_output_model(
+        &mut self,
+        generation: &ModelGeneration,
+    ) -> Result<(), SpectralOperatorError> {
+        self.validate_model_generation(generation)?;
+        self.reused_normal_state = None;
+        self.prepare_forward_generation(generation)
+    }
+
+    fn validate_model_generation(
+        &self,
+        generation: &ModelGeneration,
+    ) -> Result<(), SpectralOperatorError> {
+        let shape = generation.shape();
+        if shape.domains().len() != 1
+            || shape.coefficients() != self.slab.total_channels()
+            || shape.polarizations() != 1
+            || shape.domains()[0].pixels() != self.geometry.image_shape
+            || generation.samples().len() != shape.sample_count()
+        {
+            return Err(SpectralOperatorError::ModelShape);
+        }
+        Ok(())
+    }
+
+    fn prepare_forward_generation(
+        &mut self,
+        generation: &ModelGeneration,
+    ) -> Result<(), SpectralOperatorError> {
         let width = self.geometry.image_shape[0];
         let height = self.geometry.image_shape[1];
         let cells = width * height;
@@ -1540,17 +1702,6 @@ impl SpectralSlabOperator {
         {
             return Err(SpectralOperatorError::GeneratedNonfinite);
         }
-        let grid_shape = (self.geometry.grid_shape[0], self.geometry.grid_shape[1]);
-        self.residual_grids = Some(
-            (0..self.slab.core_depth())
-                .map(|_| Array2::zeros(grid_shape))
-                .collect(),
-        );
-        self.residual_compensations = Some(
-            (0..self.slab.core_depth())
-                .map(|_| Array2::zeros(grid_shape))
-                .collect(),
-        );
         Ok(())
     }
 
@@ -1638,7 +1789,7 @@ impl SpectralSlabOperator {
 
     /// Predict unweighted selected visibilities with the paired forward operator.
     #[cfg(test)]
-    pub fn predict(
+    fn predict(
         &mut self,
         model: &[Complex64],
         samples: &[SpectralOperatorSample],
@@ -1742,6 +1893,131 @@ impl SpectralSlabOperator {
         Ok(())
     }
 
+    pub(crate) fn predict_gridded_normal(
+        &self,
+        output_channel: usize,
+        taps: SampleTaps,
+        forward_scale: Complex64,
+    ) -> Result<Complex64, SpectralOperatorError> {
+        let resident = self
+            .slab
+            .resident_index(output_channel)
+            .ok_or(SpectralOperatorError::GriddedRecordMismatch)?;
+        if !forward_scale.re.is_finite() || !forward_scale.im.is_finite() {
+            return Err(SpectralOperatorError::GriddedRecordMismatch);
+        }
+        let predicted = self.gridder.degrid(&self.forward_grids[resident], taps) * forward_scale;
+        if !predicted.re.is_finite() || !predicted.im.is_finite() {
+            return Err(SpectralOperatorError::GeneratedNonfinite);
+        }
+        Ok(predicted)
+    }
+
+    pub(crate) fn apply_gridded_normal(
+        &mut self,
+        output_channel: usize,
+        taps: SampleTaps,
+        predicted: Complex64,
+        adjoint_scale: Complex64,
+    ) -> Result<(), SpectralOperatorError> {
+        let plane = self
+            .slab
+            .core_index(output_channel)
+            .ok_or(SpectralOperatorError::GriddedRecordMismatch)?;
+        let gridded = predicted * adjoint_scale;
+        if !gridded.re.is_finite() || !gridded.im.is_finite() {
+            return Err(SpectralOperatorError::GeneratedNonfinite);
+        }
+        self.gridder.grid_compensated(
+            &mut self
+                .residual_grids
+                .as_mut()
+                .ok_or(SpectralOperatorError::MissingMajorCycleResidual)?[plane],
+            &mut self
+                .residual_compensations
+                .as_mut()
+                .ok_or(SpectralOperatorError::MissingMajorCycleResidual)?[plane],
+            taps,
+            gridded,
+        );
+        Ok(())
+    }
+
+    pub(crate) fn finish_gridded_normal(
+        mut self,
+        residual_model: ModelGenerationId,
+    ) -> Result<SpectralOperatorPrimitives, SpectralOperatorError> {
+        if self.workload.pass != SpectralOperatorPass::ResidualRefresh {
+            return Err(SpectralOperatorError::UnsupportedGriddedReplay);
+        }
+        let mut normal_grids = self
+            .residual_grids
+            .take()
+            .ok_or(SpectralOperatorError::MissingMajorCycleResidual)?;
+        if normal_grids.len() != self.slab.core_depth() {
+            return Err(SpectralOperatorError::MissingMajorCycleResidual);
+        }
+        for grid in &mut normal_grids {
+            self.fft.transform(grid, true);
+        }
+        let reused = self
+            .reused_normal_state
+            .take()
+            .ok_or(SpectralOperatorError::ReusableNormalStateMismatch)?;
+        let cells = checked_cells(self.geometry.image_shape)?;
+        let output_cells = cells
+            .checked_mul(self.slab.core_depth())
+            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+        let invariant_dirty = reused
+            .invariant_dirty
+            .ok_or(SpectralOperatorError::ReusableNormalStateMismatch)?;
+        if invariant_dirty.len() != output_cells
+            || reused.psf.len() != output_cells
+            || reused.sensitivity.len() != output_cells
+            || reused.sum_weights.len() != self.slab.core_depth()
+            || reused.validity.len() != self.slab.core_depth()
+        {
+            return Err(SpectralOperatorError::ReusableNormalStateMismatch);
+        }
+        let mut residual = Vec::with_capacity(output_cells);
+        for (plane, normal_grid) in normal_grids.iter().enumerate() {
+            for x in 0..self.geometry.image_shape[0] {
+                for y in 0..self.geometry.image_shape[1] {
+                    let correction = self.gridder.image_correction(x, y);
+                    let normal = normal_grid[(
+                        self.geometry.image_blc[0] + x,
+                        self.geometry.image_blc[1] + y,
+                    )] * correction;
+                    let index = plane * cells + x * self.geometry.image_shape[1] + y;
+                    residual.push(invariant_dirty[index] - normal);
+                }
+            }
+        }
+        if residual
+            .iter()
+            .chain(invariant_dirty.iter())
+            .chain(reused.psf.iter())
+            .any(|value| !value.re.is_finite() || !value.im.is_finite())
+            || reused.sensitivity.iter().any(|value| !value.is_finite())
+            || reused.sum_weights.iter().any(|value| !value.is_finite())
+        {
+            return Err(SpectralOperatorError::GeneratedNonfinite);
+        }
+        Ok(SpectralOperatorPrimitives {
+            shape: self.geometry.image_shape,
+            slab: self.slab,
+            dirty: residual.into_boxed_slice(),
+            invariant_dirty: Some(invariant_dirty),
+            psf: reused.psf,
+            sensitivity: reused.sensitivity,
+            sum_weights: reused.sum_weights,
+            validity: reused.validity,
+            major_cycle_residual: None,
+            major_cycle_residual_promoted: true,
+            residual_model: Some(residual_model),
+        })
+    }
+
     /// Finish the paired inverse transforms and return unnormalized primitives.
     #[cfg(test)]
     pub fn finish(self) -> Result<SpectralOperatorPrimitives, SpectralOperatorError> {
@@ -1769,6 +2045,10 @@ impl SpectralSlabOperator {
             .ok_or(SpectralOperatorError::ResidencyOverflow)?;
         if let Some(reused) = self.reused_normal_state.take() {
             if residual_model.is_none()
+                || reused
+                    .invariant_dirty
+                    .as_ref()
+                    .is_some_and(|dirty| dirty.len() != output_cells)
                 || reused.psf.len() != output_cells
                 || reused.sensitivity.len() != output_cells
                 || reused.sum_weights.len() != self.slab.core_depth()
@@ -1807,6 +2087,7 @@ impl SpectralSlabOperator {
                 shape: self.geometry.image_shape,
                 slab: self.slab,
                 dirty: residual.into_boxed_slice(),
+                invariant_dirty: reused.invariant_dirty,
                 psf: reused.psf,
                 sensitivity: reused.sensitivity,
                 sum_weights: reused.sum_weights,
@@ -1882,10 +2163,13 @@ impl SpectralSlabOperator {
                 }
             })
             .collect::<Vec<_>>();
+        let dirty = dirty.into_boxed_slice();
+        let invariant_dirty = Some(dirty.clone());
         Ok(SpectralOperatorPrimitives {
             shape: self.geometry.image_shape,
             slab: self.slab,
-            dirty: dirty.into_boxed_slice(),
+            invariant_dirty,
+            dirty,
             psf: psf.into_boxed_slice(),
             sensitivity: sensitivity.into_boxed_slice(),
             sum_weights: self.sum_weights.into_boxed_slice(),
@@ -1897,19 +2181,19 @@ impl SpectralSlabOperator {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-struct TapSpan {
-    start: usize,
-    weight_index: usize,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct TapSpan {
+    pub(crate) start: usize,
+    pub(crate) weight_index: usize,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct SampleTaps {
-    x: TapSpan,
-    y: TapSpan,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct SampleTaps {
+    pub(crate) x: TapSpan,
+    pub(crate) y: TapSpan,
 }
 
-struct StandardConvolution {
+pub(crate) struct StandardConvolution {
     grid_shape: [usize; 2],
     image_blc: [usize; 2],
     du_lambda: f64,
@@ -1920,7 +2204,7 @@ struct StandardConvolution {
 }
 
 impl StandardConvolution {
-    fn new(geometry: &SpectralOperatorGeometry) -> Self {
+    pub(crate) fn new(geometry: &SpectralOperatorGeometry) -> Self {
         Self {
             grid_shape: geometry.grid_shape,
             image_blc: geometry.image_blc,
@@ -1932,7 +2216,7 @@ impl StandardConvolution {
         }
     }
 
-    fn taps(&self, uv: [f64; 2]) -> Option<SampleTaps> {
+    pub(crate) fn taps(&self, uv: [f64; 2]) -> Option<SampleTaps> {
         Some(SampleTaps {
             x: self.tap_span(
                 uv[0] / self.du_lambda + self.grid_shape[0] as f64 / 2.0,
@@ -1961,7 +2245,7 @@ impl StandardConvolution {
             })
     }
 
-    fn grid_compensated(
+    pub(crate) fn grid_compensated(
         &self,
         grid: &mut Array2<Complex64>,
         compensation: &mut Array2<Complex64>,
@@ -1993,7 +2277,7 @@ impl StandardConvolution {
         }
     }
 
-    fn degrid(&self, grid: &Array2<Complex64>, taps: SampleTaps) -> Complex64 {
+    pub(crate) fn degrid(&self, grid: &Array2<Complex64>, taps: SampleTaps) -> Complex64 {
         let x_weights = self.weights[taps.x.weight_index];
         let y_weights = self.weights[taps.y.weight_index];
         let mut value = Complex64::new(0.0, 0.0);
@@ -2010,7 +2294,7 @@ impl StandardConvolution {
     }
 }
 
-struct PreparedFft {
+pub(crate) struct PreparedFft {
     forward: [Arc<dyn Fft<f64>>; 2],
     inverse: [Arc<dyn Fft<f64>>; 2],
     lane: Vec<Complex64>,
@@ -2301,23 +2585,38 @@ pub enum SpectralOperatorError {
     /// A later major pass did not carry the exact prior invariant normal state.
     #[error("spectral operator reusable normal state does not match the residual refresh")]
     ReusableNormalStateMismatch,
+    /// The gridded replay seam currently accepts only constant-basis MFS.
+    #[error("gridded normal-operator replay requires constant-basis MFS")]
+    UnsupportedGriddedReplay,
+    /// An opaque record, block, program, or invariant belongs to another replay.
+    #[error("gridded normal-operator record does not match the sealed replay")]
+    GriddedRecordMismatch,
+    /// An opaque record has an unsupported, truncated, or invalid fixed encoding.
+    #[error("gridded normal-operator record encoding is invalid")]
+    InvalidGriddedRecord,
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+    use std::fs::File;
+    use std::io::{BufReader, Read};
+    use std::time::Instant;
+
     use casa_imaging_model::{FiniteValuePolicy, SpectralKernel};
     #[cfg(feature = "cpp-interop-tests")]
     use casa_test_support::gridder_interop::GridderOracle;
     use ndarray::Array2;
     use num_complex::Complex64;
+    use sha2::{Digest, Sha256};
 
     #[cfg(feature = "cpp-interop-tests")]
     use super::{OVERSAMPLING, SPEED_OF_LIGHT_M_PER_S};
     use super::{
-        PreparedFft, SUPPORT, SpectralChannelValidity, SpectralOperatorError,
+        PreparedFft, SUPPORT, SampleTaps, SpectralChannelValidity, SpectralOperatorError,
         SpectralOperatorGeometry, SpectralOperatorPass, SpectralOperatorPrimitives,
         SpectralOperatorSample, SpectralOperatorWorkload, SpectralSlabOperator, SpectralSlabPlan,
-        StandardConvolution, apply_finite_value_policy, apply_input_policy,
+        StandardConvolution, TapSpan, apply_finite_value_policy, apply_input_policy,
         casa_persistent_complex, checked_cells,
     };
 
@@ -2549,6 +2848,145 @@ mod tests {
         assert!(
             (left - right).norm() <= 1.0e-13 * left.norm().max(right.norm()).max(1.0),
             "terminal-support A/A* mismatch: left={left:?} right={right:?}"
+        );
+    }
+
+    #[test]
+    fn deterministic_block_gridded_records_preserve_the_normal_operator() {
+        let geometry = geometry();
+        let gridder = StandardConvolution::new(&geometry);
+        let shape = (geometry.grid_shape[0], geometry.grid_shape[1]);
+        let mut model_grid = Array2::<Complex64>::zeros(shape);
+        for ((x, y), value) in model_grid.indexed_iter_mut() {
+            *value = Complex64::new(
+                (x * shape.1 + y) as f64 * 0.013 - 0.4,
+                x as f64 * -0.017 + y as f64 * 0.009,
+            );
+        }
+        let first = gridder.taps([0.0, 0.0]).expect("central taps");
+        let second = gridder
+            .taps([0.41 * gridder.du_lambda, -0.27 * gridder.dv_lambda])
+            .expect("offset taps");
+        let scalar_records = [
+            (first, 0.75),
+            (first, 1.25),
+            (second, 0.4),
+            (second, 0.6),
+            (first, 0.125),
+            (first, 0.375),
+        ];
+
+        let mut direct = Array2::<Complex64>::zeros(shape);
+        let mut direct_compensation = Array2::<Complex64>::zeros(shape);
+        for (taps, coefficient) in scalar_records {
+            let predicted = gridder.degrid(&model_grid, taps);
+            gridder.grid_compensated(
+                &mut direct,
+                &mut direct_compensation,
+                taps,
+                predicted * coefficient,
+            );
+        }
+
+        let mut grouped = Array2::<Complex64>::zeros(shape);
+        let mut grouped_compensation = Array2::<Complex64>::zeros(shape);
+        let mut block_records = BTreeMap::<SampleTaps, f64>::new();
+        for (taps, coefficient) in scalar_records {
+            *block_records.entry(taps).or_default() += coefficient;
+        }
+        for (taps, coefficient) in &block_records {
+            let predicted = gridder.degrid(&model_grid, *taps);
+            gridder.grid_compensated(
+                &mut grouped,
+                &mut grouped_compensation,
+                *taps,
+                predicted * *coefficient,
+            );
+        }
+
+        let squared_error = direct
+            .iter()
+            .zip(&grouped)
+            .map(|(expected, actual)| (*actual - *expected).norm_sqr())
+            .sum::<f64>();
+        let squared_reference = direct.iter().map(Complex64::norm_sqr).sum::<f64>();
+        let normalized_rms = (squared_error / squared_reference.max(f64::MIN_POSITIVE)).sqrt();
+        assert!(normalized_rms <= 1.0e-15, "normalized RMS {normalized_rms}");
+        assert_eq!(block_records.len(), 2);
+        assert_eq!(scalar_records.len() / block_records.len(), 3);
+    }
+
+    #[test]
+    #[ignore = "requires CASA_RS_IMPERF_REPLAY_ARTIFACT from the mounted replay discriminator"]
+    fn mounted_gridded_replay_artifact_streams_through_the_normal_operator() {
+        let path = std::env::var_os("CASA_RS_IMPERF_REPLAY_ARTIFACT")
+            .expect("CASA_RS_IMPERF_REPLAY_ARTIFACT must name the discriminator artifact");
+        let file = File::open(path).expect("open gridded replay artifact");
+        let bytes = file.metadata().expect("read artifact metadata").len();
+        assert_eq!(
+            bytes % 16,
+            0,
+            "gridded replay artifact has a partial record"
+        );
+        let records = bytes / 16;
+
+        let cell = 0.25 * std::f64::consts::PI / (180.0 * 3600.0);
+        let geometry = SpectralOperatorGeometry {
+            image_shape: [1024, 1024],
+            grid_shape: [1024, 1024],
+            image_blc: [0, 0],
+            increment_rad: [-cell, cell],
+        };
+        let gridder = StandardConvolution::new(&geometry);
+        let shape = (geometry.grid_shape[0], geometry.grid_shape[1]);
+        let mut model_grid = Array2::<Complex64>::zeros(shape);
+        for ((x, y), value) in model_grid.indexed_iter_mut() {
+            *value = Complex64::new(
+                ((x * shape.1 + y) % 997) as f64 * 1.0e-4 - 0.05,
+                (x as f64 - y as f64) * 2.0e-5,
+            );
+        }
+        let mut output = Array2::<Complex64>::zeros(shape);
+        let mut compensation = Array2::<Complex64>::zeros(shape);
+        let mut reader = BufReader::with_capacity(8 << 20, file);
+        let mut record = [0_u8; 16];
+        let started = Instant::now();
+        for _ in 0..records {
+            reader
+                .read_exact(&mut record)
+                .expect("read complete gridded replay record");
+            let key = u64::from_le_bytes(record[..8].try_into().expect("tap key width"));
+            let coefficient =
+                f64::from_le_bytes(record[8..].try_into().expect("coefficient width"));
+            assert!(coefficient.is_finite() && coefficient >= 0.0);
+            let taps = SampleTaps {
+                x: TapSpan {
+                    start: (key & 0x0fff) as usize,
+                    weight_index: ((key >> 24) & 0x7f) as usize,
+                },
+                y: TapSpan {
+                    start: ((key >> 12) & 0x0fff) as usize,
+                    weight_index: ((key >> 31) & 0x7f) as usize,
+                },
+            };
+            let predicted = gridder.degrid(&model_grid, taps);
+            gridder.grid_compensated(
+                &mut output,
+                &mut compensation,
+                taps,
+                predicted * coefficient,
+            );
+        }
+        let elapsed = started.elapsed();
+        let mut hasher = Sha256::new();
+        for value in &output {
+            hasher.update(value.re.to_le_bytes());
+            hasher.update(value.im.to_le_bytes());
+        }
+        println!(
+            "gridded_replay_apply records={records} bytes={bytes} wall_ms={:.6} sha256={:x}",
+            elapsed.as_secs_f64() * 1_000.0,
+            hasher.finalize()
         );
     }
 

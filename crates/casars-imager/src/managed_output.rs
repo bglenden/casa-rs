@@ -86,8 +86,10 @@ pub struct ManagedImagingRun {
     pub gridded_samples: usize,
     /// Total major-cycle count reported by the run.
     pub major_cycles: usize,
-    /// Total minor-cycle component updates reported by the run.
+    /// Total minor-cycle count charged to the reported task/controller budget.
     pub minor_iterations: usize,
+    /// Total minor-cycle components actually applied by the run.
+    pub actual_minor_iterations: usize,
     /// Final CLEAN stop reason when deconvolution ran.
     pub clean_stop_reason: Option<String>,
     /// Ordered owner-calculated solver diagnostics.
@@ -160,6 +162,7 @@ impl ManagedImagingOutput {
                 gridded_samples: summary.gridded_samples,
                 major_cycles: summary.major_cycles,
                 minor_iterations: summary.minor_iterations,
+                actual_minor_iterations: summary.actual_minor_iterations,
                 clean_stop_reason: summary
                     .clean_stop_reason
                     .map(|reason| format!("{reason:?}")),
@@ -240,6 +243,7 @@ impl ManagedImagingOutput {
                 gridded_samples: result.run.gridded_samples,
                 major_cycles: result.run.major_cycles,
                 minor_iterations: result.run.minor_iterations,
+                actual_minor_iterations: result.run.actual_minor_iterations,
                 clean_stop_reason: result
                     .run
                     .clean_stop_reason
@@ -474,6 +478,7 @@ mod tests {
             gridded_samples: 42,
             major_cycles: 3,
             minor_iterations: 9,
+            actual_minor_iterations: 10,
             clean_stop_reason: Some(CleanStopReason::CycleThresholdReached),
             minor_cycles: Vec::new(),
             visibility_products: None,
@@ -667,6 +672,7 @@ mod tests {
                 gridded_samples: 1024,
                 major_cycles: 6,
                 minor_iterations: 24,
+                actual_minor_iterations: 25,
                 iterdone: 24,
                 nmajordone: 6,
                 stopcode: 10,

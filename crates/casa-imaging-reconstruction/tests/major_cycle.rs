@@ -41,8 +41,8 @@ use casa_imaging_reconstruction::{
     WeightingAlgorithmState, WeightingError, WeightingExecutionLimits, WeightingPlan,
     WeightingReplayChunk, WeightingReplaySummary, begin_weighting_generation, plan_weighting,
     runtime_adapter::{
-        CompleteDataOwnerResult, SpectralOperatorPass, prepare_spectral_operator,
-        spectral_operator_workload,
+        CompleteDataOwnerResult, GriddedNormalOperatorCompiler, SpectralOperatorPass,
+        prepare_spectral_operator, spectral_operator_workload,
     },
 };
 
@@ -220,6 +220,26 @@ fn reconstruction_problem(
     algorithm: ReconstructionAlgorithm,
     controls: ReconstructionControls,
 ) -> casa_imaging_model::CompiledProblem {
+    reconstruction_problem_with_sampling(
+        observation,
+        width,
+        channels,
+        basis,
+        algorithm,
+        controls,
+        SpectralSamplingLaw::IDENTITY,
+    )
+}
+
+fn reconstruction_problem_with_sampling(
+    observation: u8,
+    width: usize,
+    channels: usize,
+    basis: ReconstructionBasis,
+    algorithm: ReconstructionAlgorithm,
+    controls: ReconstructionControls,
+    sampling: SpectralSamplingLaw,
+) -> casa_imaging_model::CompiledProblem {
     let centre = width as f64 / 2.0;
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
@@ -271,7 +291,7 @@ fn reconstruction_problem(
     compile(ImagingRequest::new(
         ProblemSpecification::new(
             ScientificContract::new(
-                SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
+                SpectralContract::new(sampling, SpectralCoupling::Independent),
                 MeasurementEquationContract::new(
                     InstrumentResponse::Scalar,
                     DeclaredInnerProducts::new(
@@ -656,6 +676,335 @@ fn residual_refresh_rejects_prior_invariants_from_another_selected_generation() 
 }
 
 #[test]
+fn sealed_gridded_program_is_reused_across_distinct_model_generations() {
+    let problem = t19_compatible_problem(253);
+    let mut initial_lifecycle = bind_lifecycle(&problem, attempt(254));
+    let initial_model = initial_lifecycle.initial_empty().expect("empty model");
+    let initial_preparation =
+        MajorCyclePreparation::prepare(&initial_lifecycle, initial_model, None)
+            .expect("initial preparation");
+
+    let (program, gridded_blocks, initial_complete, max_replay_block_samples) = {
+        let samples = fixture_samples(&problem);
+        let plan = plan_weighting(
+            &problem,
+            WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
+        )
+        .expect("weighting plan");
+        let selected_generation = replay_selected_generation(&problem, &samples);
+        let generation = freeze_weighting_generation_with(
+            &problem,
+            &plan,
+            &samples,
+            constant_basis_contributions,
+        )
+        .expect("freeze constant-basis weighting generation");
+        let (weighted_blocks, summary) = replay_with(
+            &generation,
+            &problem,
+            &plan,
+            &samples,
+            constant_basis_contributions,
+        );
+
+        let mut compiler = GriddedNormalOperatorCompiler::new(&problem).expect("gridded compiler");
+        let gridded_blocks = weighted_blocks
+            .iter()
+            .map(|block| {
+                compiler
+                    .compile_block(block)
+                    .expect("compile gridded block")
+            })
+            .collect::<Vec<_>>();
+        let program = compiler
+            .complete(&summary, selected_generation, None)
+            .expect("seal gridded program");
+
+        let specification =
+            SpectralOperatorSpecification::new(&problem).expect("initial spectral specification");
+        let max_replay_block_samples = plan.limits().max_block_samples();
+        let workload = spectral_operator_workload(
+            &specification,
+            max_replay_block_samples,
+            SpectralOperatorPass::InitialMajor,
+        )
+        .expect("initial workload");
+        let prepared =
+            prepare_spectral_operator(specification, workload).expect("initial operator");
+        let mut owner = prepared
+            .begin(&problem, &generation)
+            .expect("initial complete-data owner");
+        owner
+            .bind_major_cycle_model(initial_preparation.final_model(), None)
+            .expect("bind initial model");
+        for block in &weighted_blocks {
+            owner.consume_block(block).expect("consume selected block");
+        }
+        let initial_complete = owner
+            .complete(&summary, selected_generation, None)
+            .expect("complete initial normal state");
+
+        (
+            program,
+            gridded_blocks,
+            initial_complete,
+            max_replay_block_samples,
+        )
+    };
+    let program_alias = program.clone();
+    assert_eq!(program_alias.identity(), program.identity());
+
+    let initial_join = MajorCycleOwner::from_complete_data(initial_complete, initial_preparation)
+        .expect("initial major owner")
+        .reconcile(&mut initial_lifecycle)
+        .expect("initial normal state");
+    let (initial_normal, initial_continuation) = initial_join.into_continuation();
+
+    let (mut first_lifecycle, first_named) = ModelLifecycle::continue_from(
+        ExecutableModelProblem::from_compiled(problem.clone()).expect("first continued problem"),
+        attempt(255),
+        2,
+        initial_continuation,
+    )
+    .expect("first continued lifecycle");
+    let first_delta = first_lifecycle
+        .compile_delta(
+            &first_named,
+            [ModelDeltaTerm::new(cell(1), delta_value(0.5))],
+        )
+        .expect("first model delta");
+    let first_preparation =
+        MajorCyclePreparation::prepare(&first_lifecycle, first_named, Some(first_delta))
+            .expect("first preparation");
+    let first_model_generation = first_preparation.final_model_generation();
+    let specification =
+        SpectralOperatorSpecification::new(&problem).expect("first spectral specification");
+    let workload = spectral_operator_workload(
+        &specification,
+        max_replay_block_samples,
+        SpectralOperatorPass::ResidualRefresh,
+    )
+    .expect("first residual workload");
+    let prepared = prepare_spectral_operator(specification, workload).expect("first operator");
+    let mut first_apply = program
+        .begin_apply(
+            &problem,
+            first_preparation.final_model(),
+            initial_normal,
+            prepared,
+        )
+        .expect("first gridded apply");
+    for block in &gridded_blocks {
+        first_apply
+            .apply_encoded_block(block.sequence(), block.encoded_bytes())
+            .expect("apply first borrowed gridded block");
+    }
+    let first_complete = first_apply.finish().expect("finish first gridded apply");
+    let first_join = MajorCycleOwner::from_complete_data(first_complete, first_preparation)
+        .expect("first major owner")
+        .reconcile(&mut first_lifecycle)
+        .expect("first independent completion");
+    assert_eq!(
+        first_join.normal_state().final_model_generation(),
+        first_model_generation
+    );
+    let first_completion = first_join.completion_id();
+    let first_content = first_join.normal_state().content_identity();
+    let (first_normal, first_continuation) = first_join.into_continuation();
+
+    let (mut second_lifecycle, second_named) = ModelLifecycle::continue_from(
+        ExecutableModelProblem::from_compiled(problem.clone()).expect("second continued problem"),
+        attempt(1),
+        3,
+        first_continuation,
+    )
+    .expect("second continued lifecycle");
+    let second_delta = second_lifecycle
+        .compile_delta(
+            &second_named,
+            [ModelDeltaTerm::new(cell(2), delta_value(0.75))],
+        )
+        .expect("second model delta");
+    let second_preparation =
+        MajorCyclePreparation::prepare(&second_lifecycle, second_named, Some(second_delta))
+            .expect("second preparation");
+    let second_model_generation = second_preparation.final_model_generation();
+    let specification =
+        SpectralOperatorSpecification::new(&problem).expect("second spectral specification");
+    let workload = spectral_operator_workload(
+        &specification,
+        max_replay_block_samples,
+        SpectralOperatorPass::ResidualRefresh,
+    )
+    .expect("second residual workload");
+    let prepared = prepare_spectral_operator(specification, workload).expect("second operator");
+    let mut second_apply = program
+        .begin_apply(
+            &problem,
+            second_preparation.final_model(),
+            first_normal,
+            prepared,
+        )
+        .expect("second gridded apply from the same program");
+    for block in &gridded_blocks {
+        second_apply
+            .apply_encoded_block(block.sequence(), block.encoded_bytes())
+            .expect("apply second borrowed gridded block");
+    }
+    let second_complete = second_apply.finish().expect("finish second gridded apply");
+    let second_join = MajorCycleOwner::from_complete_data(second_complete, second_preparation)
+        .expect("second major owner")
+        .reconcile(&mut second_lifecycle)
+        .expect("second independent completion");
+
+    assert_ne!(first_model_generation, second_model_generation);
+    assert_ne!(first_completion, second_join.completion_id());
+    assert_ne!(first_content, second_join.normal_state().content_identity());
+    assert_eq!(program.identity(), program_alias.identity());
+}
+
+#[test]
+fn sealed_gridded_program_replays_channel_local_cross_channel_groups() {
+    let problem = reconstruction_problem_with_sampling(
+        247,
+        8,
+        2,
+        ReconstructionBasis::ChannelLocal { channels: 2 },
+        ReconstructionAlgorithm::Dirty,
+        ReconstructionControls::new(0, 1.0, 0.0),
+        SpectralSamplingLaw::LINEAR,
+    );
+    let samples = fixture_samples(&problem);
+    let plan = plan_weighting(
+        &problem,
+        WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
+    )
+    .expect("weighting plan");
+    let selected_generation = replay_selected_generation(&problem, &samples);
+    let generation =
+        freeze_weighting_generation_with(&problem, &plan, &samples, split_channel_contributions)
+            .expect("freeze split-channel weighting generation");
+    let (weighted_blocks, summary) = replay_with(
+        &generation,
+        &problem,
+        &plan,
+        &samples,
+        split_channel_contributions,
+    );
+    let mut compiler = GriddedNormalOperatorCompiler::new(&problem).expect("gridded compiler");
+    let gridded_blocks = weighted_blocks
+        .iter()
+        .map(|block| {
+            compiler
+                .compile_block(block)
+                .expect("compile split-channel gridded block")
+        })
+        .collect::<Vec<_>>();
+    let program = compiler
+        .complete(&summary, selected_generation, None)
+        .expect("seal split-channel gridded program");
+    assert_eq!(
+        program.record_count(),
+        u64::try_from(samples.len() * 2).expect("record count"),
+        "one grouped record is retained for each accepted spectral contribution"
+    );
+
+    let mut initial_lifecycle = bind_lifecycle(&problem, attempt(248));
+    let initial_model = initial_lifecycle.initial_empty().expect("empty model");
+    let initial_preparation =
+        MajorCyclePreparation::prepare(&initial_lifecycle, initial_model, None)
+            .expect("initial preparation");
+    let specification =
+        SpectralOperatorSpecification::new(&problem).expect("initial spectral specification");
+    let workload = spectral_operator_workload(
+        &specification,
+        plan.limits().max_block_samples(),
+        SpectralOperatorPass::InitialMajor,
+    )
+    .expect("initial workload");
+    let prepared = prepare_spectral_operator(specification, workload).expect("initial operator");
+    let mut owner = prepared
+        .begin(&problem, &generation)
+        .expect("initial complete-data owner");
+    owner
+        .bind_major_cycle_model(initial_preparation.final_model(), None)
+        .expect("bind initial model");
+    for block in &weighted_blocks {
+        owner.consume_block(block).expect("consume selected block");
+    }
+    let initial_complete = owner
+        .complete(&summary, selected_generation, None)
+        .expect("complete initial normal state");
+    let initial_join = MajorCycleOwner::from_complete_data(initial_complete, initial_preparation)
+        .expect("initial major owner")
+        .reconcile(&mut initial_lifecycle)
+        .expect("initial channel slab");
+    let initial_sum_weights = initial_join.normal_state().sum_weights().to_vec();
+    let (initial_normal, continuation) = initial_join.into_continuation();
+
+    let (mut lifecycle, named_model) = ModelLifecycle::continue_from(
+        ExecutableModelProblem::from_compiled(problem.clone()).expect("continued problem"),
+        attempt(249),
+        2,
+        continuation,
+    )
+    .expect("continued lifecycle");
+    let delta = lifecycle
+        .compile_delta(
+            &named_model,
+            [
+                ModelDeltaTerm::new(ModelCell::new(0, 0, 0, [1, 0]), delta_value(0.5)),
+                ModelDeltaTerm::new(ModelCell::new(0, 1, 0, [2, 0]), delta_value(0.75)),
+            ],
+        )
+        .expect("two-channel model delta");
+    let preparation = MajorCyclePreparation::prepare(&lifecycle, named_model, Some(delta))
+        .expect("residual preparation");
+    let final_model_generation = preparation.final_model_generation();
+    let specification =
+        SpectralOperatorSpecification::new(&problem).expect("residual spectral specification");
+    let workload = spectral_operator_workload(
+        &specification,
+        plan.limits().max_block_samples(),
+        SpectralOperatorPass::ResidualRefresh,
+    )
+    .expect("residual workload");
+    let prepared = prepare_spectral_operator(specification, workload).expect("residual operator");
+    let mut apply = program
+        .begin_apply(
+            &problem,
+            preparation.final_model(),
+            initial_normal,
+            prepared,
+        )
+        .expect("begin channel-local gridded apply");
+    for block in &gridded_blocks {
+        apply
+            .apply_encoded_block(block.sequence(), block.encoded_bytes())
+            .expect("apply borrowed split-channel block");
+    }
+    let complete = apply.finish().expect("finish channel-local gridded apply");
+    let joined = MajorCycleOwner::from_complete_data(complete, preparation)
+        .expect("channel-local major owner")
+        .reconcile(&mut lifecycle)
+        .expect("reconciled channel-local replay");
+
+    assert_eq!(joined.normal_state().channel_count(), 2);
+    assert_eq!(joined.normal_state().sum_weights(), initial_sum_weights);
+    assert_eq!(
+        joined.normal_state().final_model_generation(),
+        final_model_generation
+    );
+    assert!(
+        joined
+            .normal_state()
+            .residual()
+            .iter()
+            .all(|value| value.re.is_finite() && value.im.is_finite())
+    );
+}
+
+#[test]
 fn t38_independent_channels_share_one_ordered_iteration_budget() {
     let problem = t38_cube_problem_with_controls(244, 2, ReconstructionControls::new(3, 0.5, 0.0));
     let mut lifecycle = ModelLifecycle::bind(
@@ -930,6 +1279,26 @@ fn exact_contributions(sample: &SelectedObservationSample) -> SelectedSpectralCo
     .expect("one exact output contribution")
 }
 
+fn constant_basis_contributions(
+    sample: &SelectedObservationSample,
+) -> SelectedSpectralContributions {
+    SelectedSpectralContributions::new([
+        SelectedSpectralContribution::new(0, 1.0, sample.address.frequency_centre_hz),
+        None,
+    ])
+    .expect("one constant-basis MFS contribution")
+}
+
+fn split_channel_contributions(
+    sample: &SelectedObservationSample,
+) -> SelectedSpectralContributions {
+    SelectedSpectralContributions::new([
+        SelectedSpectralContribution::new(0, 0.25, sample.address.frequency_centre_hz),
+        SelectedSpectralContribution::new(1, 0.75, sample.address.frequency_centre_hz),
+    ])
+    .expect("two linear output contributions")
+}
+
 /// Mint the authoritative T17 observation generation of the fixture stream.
 ///
 /// Production binds this identity through the casa-ms traversal seam; the
@@ -956,13 +1325,22 @@ fn freeze_weighting_generation(
     plan: &WeightingPlan,
     samples: &[SelectedObservationSample],
 ) -> Result<WeightingAlgorithmState, WeightingError> {
+    freeze_weighting_generation_with(problem, plan, samples, exact_contributions)
+}
+
+fn freeze_weighting_generation_with(
+    problem: &casa_imaging_model::CompiledProblem,
+    plan: &WeightingPlan,
+    samples: &[SelectedObservationSample],
+    contributions: impl Fn(&SelectedObservationSample) -> SelectedSpectralContributions + Copy,
+) -> Result<WeightingAlgorithmState, WeightingError> {
     let mut density = begin_weighting_generation(problem, plan)?;
     for sample in samples {
-        density.consume(problem, sample, exact_contributions(sample))?;
+        density.consume(problem, sample, contributions(sample))?;
     }
     let mut sum_weight = density.finish(problem)?;
     for sample in samples {
-        sum_weight.consume(problem, sample, exact_contributions(sample))?;
+        sum_weight.consume(problem, sample, contributions(sample))?;
     }
     sum_weight.finish()
 }
@@ -973,13 +1351,23 @@ fn replay(
     plan: &WeightingPlan,
     samples: &[SelectedObservationSample],
 ) -> (Vec<WeightingReplayChunk>, WeightingReplaySummary) {
+    replay_with(generation, problem, plan, samples, exact_contributions)
+}
+
+fn replay_with(
+    generation: &WeightingAlgorithmState,
+    problem: &casa_imaging_model::CompiledProblem,
+    plan: &WeightingPlan,
+    samples: &[SelectedObservationSample],
+    contributions: impl Fn(&SelectedObservationSample) -> SelectedSpectralContributions,
+) -> (Vec<WeightingReplayChunk>, WeightingReplaySummary) {
     let mut blocks = Vec::new();
     let mut phase = generation
         .begin_replay(problem, plan)
         .expect("begin replay");
     for sample in samples {
         if let Some(block) = phase
-            .consume(problem, sample, exact_contributions(sample))
+            .consume(problem, sample, contributions(sample))
             .expect("weight sample")
         {
             blocks.push(block);

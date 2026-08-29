@@ -881,8 +881,8 @@ pub enum WeightingStreamingMode {
     NaturalInitial,
     /// Density is generated in the transaction read and consumed in one terminal stream.
     DensityInitial,
-    /// A later major consumes a previously frozen weighting state in the transaction read.
-    Reuse,
+    /// A bounded selected-output traversal reuses frozen weighting without gridding science.
+    SelectedOutputOnly,
 }
 
 impl<'a> WeightingPlanFragment<'a> {
@@ -963,9 +963,9 @@ impl<'a> WeightingPlanFragment<'a> {
     pub const fn streaming_node(&self) -> &WorkNodeId {
         match self.streaming {
             Some(WeightingStreamingMode::DensityInitial) => &self.ids.generation_node,
-            Some(WeightingStreamingMode::NaturalInitial | WeightingStreamingMode::Reuse) => {
-                &self.source_read
-            }
+            Some(
+                WeightingStreamingMode::NaturalInitial | WeightingStreamingMode::SelectedOutputOnly,
+            ) => &self.source_read,
             None => &self.ids.replay_node,
         }
     }
@@ -1296,7 +1296,7 @@ impl<'a> WeightingPlanFragment<'a> {
             WeightingStreamingMode::DensityInitial => {
                 BTreeSet::from([self.ids.replay_node.clone()])
             }
-            WeightingStreamingMode::NaturalInitial | WeightingStreamingMode::Reuse => {
+            WeightingStreamingMode::NaturalInitial | WeightingStreamingMode::SelectedOutputOnly => {
                 BTreeSet::from([
                     self.ids.generation_node.clone(),
                     self.ids.replay_node.clone(),
@@ -2090,7 +2090,7 @@ impl WeightingExecutionState {
                     .map_err(WeightingReplayError::Owner)?;
                 (retained.selected, stream, Some(binding))
             }
-            Some(WeightingStreamingMode::Reuse) | None => {
+            Some(WeightingStreamingMode::SelectedOutputOnly) | None => {
                 return Err(WeightingReplayError::Evidence(WeightingEvidenceError));
             }
         };
@@ -2189,7 +2189,7 @@ impl WeightingExecutionState {
         Ok(())
     }
 
-    pub(crate) fn traverse_reuse_bounded_stream<E, F>(
+    pub(crate) fn traverse_selected_output_bounded_stream<E, F>(
         &mut self,
         context: WorkExecutionContext<'_>,
         fragment: &WeightingPlanFragment<'_>,
@@ -2205,7 +2205,7 @@ impl WeightingExecutionState {
         if !matches!(self.phase, WeightingExecutionPhase::Empty)
             || self.retained_observation.is_some()
             || self.density.is_some()
-            || fragment.streaming != Some(WeightingStreamingMode::Reuse)
+            || fragment.streaming != Some(WeightingStreamingMode::SelectedOutputOnly)
         {
             return Err(WeightingReplayError::Evidence(WeightingEvidenceError));
         }
