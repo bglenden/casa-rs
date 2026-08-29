@@ -449,6 +449,7 @@ mod tests {
             w_project_planes: None,
             aw_project: None,
             dirty_only: false,
+            parallel: false,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
             standard_mfs_backend: None,

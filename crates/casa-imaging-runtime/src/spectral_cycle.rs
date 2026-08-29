@@ -672,7 +672,7 @@ impl VisibilityWriteWorker {
     }
 }
 
-/// Runtime-owned immutable registry for one serial CPU implementation bundle.
+/// Runtime-owned immutable registry for one CPU implementation bundle.
 pub struct SpectralCycleRegistry<I> {
     id: ImplementationRegistryId,
     implementation_id: WorkImplementationId,
@@ -733,7 +733,7 @@ impl<I: WorkImplementation> ImplementationRegistry for SpectralCycleRegistry<I> 
     }
 }
 
-/// Runtime-owned serial CPU implementation of one ordinary major-cycle plan.
+/// Runtime-owned CPU implementation of one ordinary major-cycle plan.
 pub struct SpectralCycleExecutor {
     id: WorkImplementationId,
     problem: CompiledProblem,

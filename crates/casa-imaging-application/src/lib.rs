@@ -65,7 +65,7 @@ pub type ApplicationError = Box<dyn Error + Send + Sync>;
 pub struct ApplicationRuntime {
     /// Immutable registry identity used by all phases.
     pub registry: ImplementationRegistryId,
-    /// Sole serial CPU implementation identity.
+    /// CPU implementation identity.
     pub implementation: WorkImplementationId,
     /// Frozen weighting execution limits.
     pub weighting_limits: WeightingExecutionLimits,
@@ -82,6 +82,8 @@ pub struct ApplicationRuntime {
     pub confidence_parts_per_million: u32,
     /// Host-use policy bound at planning and execution.
     pub resource_policy: ResourcePolicy,
+    /// Host-use policy used only to plan bounded spectral-cycle compute workers.
+    pub spectral_cycle_worker_policy: ResourcePolicy,
     /// Deployment-selected cost-model profile.
     pub cost_model: PlannerCostModelProfileBootstrap,
     /// Process resource authority used for admission and execution.
@@ -867,7 +869,7 @@ fn execution_policy(
         runtime.minor_cycle_bytes,
         runtime.confidence_parts_per_million,
     )
-    .with_planned_workers(&runtime.authority, &runtime.resource_policy)?
+    .with_planned_workers(&runtime.authority, &runtime.spectral_cycle_worker_policy)?
     .with_gridded_normal_storage(runtime.gridded_normal_storage.clone()))
 }
 
