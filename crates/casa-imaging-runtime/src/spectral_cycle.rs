@@ -762,7 +762,7 @@ struct SpectralCycleExecutorState {
     selected_completion: Option<SelectedObservationCompletion>,
     weighting: WeightingExecutionState,
     gridded_storage: Option<crate::GriddedNormalReplayStorage>,
-    pending_gridded_reservation: Option<Arc<crate::GriddedNormalReplayReservation>>,
+    gridded_storage_ceiling: Option<u64>,
     gridded_compilation: Option<GriddedNormalReplayCompilation>,
     gridded_replay: Option<FrozenGriddedNormalReplay>,
     pending_frozen_reservation: Option<Arc<crate::FrozenWeightingReservation>>,
@@ -967,7 +967,7 @@ impl SpectralCycleExecutor {
                 selected_completion: None,
                 weighting: WeightingExecutionState::new(),
                 gridded_storage: None,
-                pending_gridded_reservation: None,
+                gridded_storage_ceiling: None,
                 gridded_compilation: None,
                 gridded_replay: None,
                 pending_frozen_reservation: None,
@@ -996,11 +996,18 @@ impl SpectralCycleExecutor {
         executable: ExecutableModelProblem,
         pass_input: SpectralCyclePassInput,
         planned_replay: crate::GriddedNormalReplayDescriptor,
+        planned_storage: &crate::GriddedNormalReplayStorage,
+        retained_storage_bytes: u64,
         replay: FrozenGriddedNormalReplay,
     ) -> io::Result<Self> {
         if replay.descriptor() != planned_replay {
             return Err(io::Error::other(
                 "sealed gridded-normal replay does not match the immutable plan",
+            ));
+        }
+        if !replay.validates_plan_storage(planned_storage, retained_storage_bytes) {
+            return Err(io::Error::other(
+                "sealed gridded-normal replay lacks its plan-issued storage capacity",
             ));
         }
         let phase_input_artifact = match &pass_input {
@@ -1031,7 +1038,7 @@ impl SpectralCycleExecutor {
                 selected_completion: None,
                 weighting: WeightingExecutionState::new(),
                 gridded_storage: None,
-                pending_gridded_reservation: None,
+                gridded_storage_ceiling: None,
                 gridded_compilation: None,
                 gridded_replay: Some(replay),
                 pending_frozen_reservation: None,
@@ -1082,7 +1089,7 @@ impl SpectralCycleExecutor {
                 selected_completion: None,
                 weighting: WeightingExecutionState::with_frozen_artifact(frozen_weighting.clone()),
                 gridded_storage: None,
-                pending_gridded_reservation: None,
+                gridded_storage_ceiling: None,
                 gridded_compilation: None,
                 gridded_replay: None,
                 pending_frozen_reservation: None,
@@ -1103,7 +1110,7 @@ impl SpectralCycleExecutor {
     pub fn with_planned_gridded_normal_storage(
         mut self,
         storage: &crate::GriddedNormalReplayStorage,
-        reservation: crate::GriddedNormalReplayReservation,
+        maximum_bytes: u64,
     ) -> io::Result<Self> {
         if self.pass.phase() != crate::SpectralPassPhase::InitialMajor {
             return Err(io::Error::other(
@@ -1115,7 +1122,7 @@ impl SpectralCycleExecutor {
             .get_mut()
             .map_err(|_| io::Error::other("new spectral cycle executor mutex poisoned"))?;
         state.gridded_storage = Some(storage.clone());
-        state.pending_gridded_reservation = Some(Arc::new(reservation));
+        state.gridded_storage_ceiling = Some(maximum_bytes);
         Ok(self)
     }
 
@@ -1313,15 +1320,10 @@ impl SpectralCycleExecutor {
         if state.gridded_compilation.is_none()
             && let Some(storage) = state.gridded_storage.as_ref()
         {
-            let reservation = state
-                .pending_gridded_reservation
-                .take()
-                .ok_or_else(|| io::Error::other("gridded-normal reservation missing"))?;
             state.gridded_compilation = Some(GriddedNormalReplayCompilation::new(
                 &self.problem,
                 context,
                 storage,
-                reservation,
                 self.weighting_plan.limits().max_block_samples(),
             )?);
         }
@@ -1551,7 +1553,7 @@ impl SpectralCycleExecutor {
         let artifact = compilation.write_measurements();
         let allocations = compilation.compilation_measurements();
         eprintln!(
-            "imaging_gridded_compile_summary ordinal={} blocks={} artifact_bytes={} payload_bytes={} write_bytes={} write_operations={} payload_copy_bytes={} payload_copy_operations={} buffer_allocations={} buffer_reuses={} source_group_vector_allocations={} source_group_capacity_growth_bytes={} reduction_map_node_allocations={} multiplicity_vector_allocations={} multiplicity_capacity_growth_bytes={} encoded_buffer_allocations={} encoded_buffer_bytes={} descriptor_vector_allocations={} descriptor_capacity_growth_bytes={}",
+            "imaging_gridded_compile_summary ordinal={} blocks={} artifact_bytes={} payload_bytes={} write_bytes={} write_operations={} payload_copy_bytes={} payload_copy_operations={} buffer_allocations={} buffer_reuses={} source_group_vector_allocations={} source_group_capacity_growth_bytes={} reduction_map_entry_insertions={} multiplicity_vector_allocations={} multiplicity_capacity_growth_bytes={} encoded_buffer_allocations={} encoded_buffer_bytes={} descriptor_vector_allocations={} descriptor_capacity_growth_bytes={}",
             self.pass.ordinal(),
             allocations.blocks,
             artifact.artifact_bytes(),
@@ -1564,7 +1566,7 @@ impl SpectralCycleExecutor {
             artifact.buffer_reuses(),
             allocations.source_group_vector_allocations,
             allocations.source_group_capacity_growth_bytes,
-            allocations.reduction_map_node_allocations,
+            allocations.reduction_map_entry_insertions,
             allocations.multiplicity_vector_allocations,
             allocations.multiplicity_capacity_growth_bytes,
             allocations.encoded_buffer_allocations,
@@ -2161,6 +2163,39 @@ impl WorkImplementation for SpectralCycleExecutor {
             .take()
             .ok_or_else(|| io::Error::other("selected-observation completion missing"))?;
         completion.bind(selected).map_err(io::Error::other)
+    }
+
+    fn retain_artifact_resources(
+        &self,
+        owner_node: &WorkNodeId,
+        permit: crate::RetainedArtifactPermit,
+    ) -> Result<bool, Self::Error> {
+        let fragment = self
+            .fragment()
+            .ok_or_else(|| io::Error::other("artifact retention requires a streaming plan"))?;
+        if owner_node != fragment.streaming_node() {
+            return Err(io::Error::other(
+                "artifact retention was issued to the wrong plan node",
+            ));
+        }
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| io::Error::other("spectral-cycle state poisoned"))?;
+        let storage = state
+            .gridded_storage
+            .as_ref()
+            .ok_or_else(|| io::Error::other("artifact retention lacks planned storage"))?
+            .clone();
+        let maximum_bytes = state
+            .gridded_storage_ceiling
+            .ok_or_else(|| io::Error::other("artifact retention lacks its planned ceiling"))?;
+        state
+            .gridded_replay
+            .as_mut()
+            .ok_or_else(|| io::Error::other("artifact retention precedes replay sealing"))?
+            .retain_plan_storage(permit, &storage, maximum_bytes)?;
+        Ok(true)
     }
 
     fn abort_observation_read(&self, owner_node: &WorkNodeId) -> Result<(), Self::Error> {

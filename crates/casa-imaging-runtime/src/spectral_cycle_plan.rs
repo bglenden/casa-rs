@@ -395,6 +395,9 @@ impl SpectralCyclePlan {
         if let Some(minor) = &minor_cycle_node {
             physical = append_minor(registry, physical, &policy, minor)?;
         }
+        let gridded_normal_reservation_bytes = gridded_normal_storage
+            .as_ref()
+            .map(|_| artifact_budget.maximum_artifact_bytes());
         Ok(Self {
             physical,
             weighting,
@@ -404,8 +407,7 @@ impl SpectralCyclePlan {
             minor_cycle_node,
             gridded_replay,
             gridded_normal_storage,
-            gridded_normal_reservation_bytes: include_minor
-                .then_some(artifact_budget.maximum_artifact_bytes()),
+            gridded_normal_reservation_bytes,
         })
     }
 
@@ -1238,14 +1240,16 @@ fn append_gridded_spill_resources<R: ImplementationRegistry>(
         amount: buffer_bytes,
         lifetime: lifetime.clone(),
     });
-    owner.claims.push(ResourceClaim {
-        resource: LeaseResource::Storage {
-            demand_id: storage_id.clone(),
-            use_kind: StorageUseKind::Temporary,
-        },
-        amount: budget.maximum_artifact_bytes(),
-        lifetime: lifetime.clone(),
-    });
+    if matches!(direction, GriddedSpillDirection::Write) {
+        owner.claims.push(ResourceClaim {
+            resource: LeaseResource::Storage {
+                demand_id: storage_id.clone(),
+                use_kind: StorageUseKind::Temporary,
+            },
+            amount: budget.maximum_artifact_bytes(),
+            lifetime: ClaimLifetime::Artifact,
+        });
+    }
     owner.claims.push(ResourceClaim {
         resource: LeaseResource::FileDescriptors,
         amount: 1,
@@ -1275,7 +1279,11 @@ fn append_gridded_spill_resources<R: ImplementationRegistry>(
     alternative.demand.storage.push(StorageDemand {
         demand_id: storage_id,
         domain: storage.resources().domain().clone(),
-        temporary_bytes: budget.maximum_artifact_bytes(),
+        temporary_bytes: if matches!(direction, GriddedSpillDirection::Write) {
+            budget.maximum_artifact_bytes()
+        } else {
+            0
+        },
         staged_output_bytes: 0,
         final_output_bytes: 0,
         persistent_cache_bytes: 0,

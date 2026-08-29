@@ -7,7 +7,6 @@ use std::{
     error::Error,
     fmt, io,
     mem::{align_of, size_of},
-    sync::Arc,
 };
 
 use casa_imaging_model::{
@@ -56,7 +55,7 @@ use crate::gridded_normal_artifact::{
 pub struct FrozenGriddedNormalReplay {
     program: GriddedNormalOperatorProgram,
     spill: GriddedNormalSpillArtifact,
-    _cross_plan_reservation: Arc<crate::GriddedNormalReplayReservation>,
+    retention: Option<crate::gridded_normal_artifact::GriddedNormalArtifactRetention>,
     latest_read: Option<GriddedNormalArtifactMeasurements>,
     latest_stream: Option<BoundedStreamMeasurements>,
 }
@@ -86,7 +85,6 @@ pub(crate) struct GriddedNormalReplayCompilation {
     compiler: GriddedNormalOperatorCompiler,
     writer: Option<GriddedNormalArtifactWriter>,
     spill: Option<GriddedNormalSpillArtifact>,
-    cross_plan_reservation: Arc<crate::GriddedNormalReplayReservation>,
     compilation_measurements: GriddedNormalCompilationMeasurements,
 }
 
@@ -95,7 +93,7 @@ pub(crate) struct GriddedNormalCompilationMeasurements {
     pub(crate) blocks: u64,
     pub(crate) source_group_vector_allocations: u64,
     pub(crate) source_group_capacity_growth_bytes: u64,
-    pub(crate) reduction_map_node_allocations: u64,
+    pub(crate) reduction_map_entry_insertions: u64,
     pub(crate) multiplicity_vector_allocations: u64,
     pub(crate) multiplicity_capacity_growth_bytes: u64,
     pub(crate) encoded_buffer_allocations: u64,
@@ -123,8 +121,8 @@ impl GriddedNormalCompilationMeasurements {
             block.source_group_capacity_growth_bytes
         );
         add!(
-            reduction_map_node_allocations,
-            block.reduction_map_node_allocations
+            reduction_map_entry_insertions,
+            block.reduction_map_entry_insertions
         );
         add!(
             multiplicity_vector_allocations,
@@ -153,23 +151,16 @@ impl GriddedNormalReplayCompilation {
         problem: &CompiledProblem,
         context: WorkExecutionContext<'_>,
         storage: &GriddedNormalReplayStorage,
-        cross_plan_reservation: Arc<crate::GriddedNormalReplayReservation>,
         max_block_samples: usize,
     ) -> io::Result<Self> {
         let budget = project_gridded_normal_artifact_budget(problem, max_block_samples)?;
         validate_gridded_artifact_context(context, budget, crate::IoBufferKind::SpillWrite)?;
-        if !cross_plan_reservation.validates(storage, budget) {
-            return Err(io::Error::other(
-                "gridded-normal cross-plan reservation does not cover planned storage",
-            ));
-        }
         Ok(Self {
             compiler: GriddedNormalOperatorCompiler::new(problem).map_err(io::Error::other)?,
             writer: Some(
                 GriddedNormalArtifactWriter::create(storage, budget).map_err(io::Error::other)?,
             ),
             spill: None,
-            cross_plan_reservation,
             compilation_measurements: GriddedNormalCompilationMeasurements::default(),
         })
     }
@@ -248,7 +239,7 @@ impl GriddedNormalReplayCompilation {
         Ok(FrozenGriddedNormalReplay {
             program,
             spill,
-            _cross_plan_reservation: self.cross_plan_reservation,
+            retention: None,
             latest_read: None,
             latest_stream: None,
         })
@@ -265,15 +256,17 @@ fn validate_gridded_artifact_context(
         claim.resource == LeaseResource::IoBuffer(io_kind)
             && claim.amount >= budget.io_buffer_bytes()
     });
-    let has_storage = claims.iter().any(|claim| {
-        matches!(
-            claim.resource,
-            LeaseResource::Storage {
-                use_kind: crate::StorageUseKind::Temporary,
-                ..
-            }
-        ) && claim.amount >= budget.maximum_artifact_bytes()
-    });
+    let has_storage = io_kind == crate::IoBufferKind::SpillRead
+        || claims.iter().any(|claim| {
+            matches!(
+                claim.resource,
+                LeaseResource::Storage {
+                    use_kind: crate::StorageUseKind::Temporary,
+                    ..
+                }
+            ) && claim.amount >= budget.maximum_artifact_bytes()
+                && claim.lifetime == ClaimLifetime::Artifact
+        });
     let has_file = claims
         .iter()
         .any(|claim| claim.resource == LeaseResource::FileDescriptors && claim.amount >= 1);
@@ -293,6 +286,36 @@ fn validate_gridded_artifact_context(
 }
 
 impl FrozenGriddedNormalReplay {
+    pub(crate) fn retain_plan_storage(
+        &mut self,
+        permit: crate::RetainedArtifactPermit,
+        storage: &GriddedNormalReplayStorage,
+        maximum_bytes: u64,
+    ) -> io::Result<()> {
+        if self.retention.is_some() {
+            return Err(io::Error::other(
+                "gridded-normal artifact storage was retained more than once",
+            ));
+        }
+        self.retention = Some(
+            crate::gridded_normal_artifact::GriddedNormalArtifactRetention::bind(
+                permit,
+                storage,
+                maximum_bytes,
+            )?,
+        );
+        Ok(())
+    }
+
+    pub(crate) fn validates_plan_storage(
+        &self,
+        storage: &GriddedNormalReplayStorage,
+        maximum_bytes: u64,
+    ) -> bool {
+        self.retention
+            .as_ref()
+            .is_some_and(|retention| retention.validates_bytes(storage, maximum_bytes))
+    }
     /// Return the immutable descriptor consumed by later-major planning.
     #[must_use]
     pub fn descriptor(&self) -> GriddedNormalReplayDescriptor {

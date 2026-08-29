@@ -9,11 +9,11 @@ use crate::{
     CapabilityId, CapacityDomainId, CapacityViewId, DemandAlternative, DemandAlternatives,
     LeaseResource, MemoryCapacityKind, MemoryViewKind, PhysicalWorkId, QuiescencePoint,
     ResourceAuthority, ResourceError, ResourceFence, ResourceLease, ResourcePermit,
-    ResourceTopology,
+    ResourceTopology, StorageUseKind,
 };
 
 const PHYSICAL_WORK_IDENTITY_DOMAIN: &[u8] = b"casa-rs-physical-work-dag";
-const PHYSICAL_WORK_IDENTITY_VERSION: u32 = 6;
+const PHYSICAL_WORK_IDENTITY_VERSION: u32 = 7;
 
 macro_rules! execution_identity {
     ($name:ident, $summary:literal) => {
@@ -209,6 +209,12 @@ pub enum ClaimLifetime {
     /// Ordered intermediate nodes borrow the same scheduler-held permit; they
     /// never reacquire or double-charge the underlying resource.
     RetainedUntil(WorkNodeId),
+    /// Transfer the permit to the immutable artifact produced by this work.
+    ///
+    /// The plan's sole admitted lease remains charged until the artifact drops
+    /// the opaque permit. This lifetime is valid only for resource claims, not
+    /// logical allocations.
+    Artifact,
 }
 
 impl ClaimLifetime {
@@ -233,6 +239,37 @@ impl ClaimLifetime {
     fn retains_fence(&self, kind: FenceKind) -> bool {
         matches!(self, Self::Fences(kinds) if kinds.contains(&kind))
             || matches!(self, Self::RetainedUntil(_))
+    }
+}
+
+/// Opaque plan-issued resources retained by one immutable output artifact.
+///
+/// This capability can only be minted by the execution scheduler from the
+/// plan's admitted lease. Dropping it releases the retained capacity.
+#[derive(Debug)]
+pub struct RetainedArtifactPermit {
+    lease_epoch: u64,
+    permits: Vec<ResourcePermit>,
+}
+
+impl RetainedArtifactPermit {
+    /// Return the lease epoch that admitted the artifact resources.
+    #[must_use]
+    pub const fn lease_epoch(&self) -> u64 {
+        self.lease_epoch
+    }
+
+    /// Return whether this permit contains exactly one matching resource claim.
+    pub(crate) fn covers_temporary_storage(&self, amount: u64) -> bool {
+        self.permits.len() == 1
+            && matches!(
+                self.permits[0].resource(),
+                LeaseResource::Storage {
+                    use_kind: StorageUseKind::Temporary,
+                    ..
+                }
+            )
+            && self.permits[0].amount() >= amount
     }
 }
 
@@ -898,6 +935,8 @@ pub(crate) struct ExecutionScheduler<'plan> {
     failed_cleanup_fences: BTreeSet<FenceId>,
     deferred_permits: Vec<DeferredPermit>,
     retained_permits: BTreeMap<RetainedPermitId, RetainedPermit>,
+    artifact_permits: BTreeMap<WorkNodeId, Vec<ResourcePermit>>,
+    transferred_artifact_permits: bool,
     observation_completion_permits: BTreeMap<WorkNodeId, Vec<ResourcePermit>>,
     terminal_publication: Option<WorkNodeId>,
     publication_permits: Vec<ResourcePermit>,
@@ -974,6 +1013,8 @@ impl<'plan> ExecutionScheduler<'plan> {
             failed_cleanup_fences: BTreeSet::new(),
             deferred_permits: Vec::new(),
             retained_permits: BTreeMap::new(),
+            artifact_permits: BTreeMap::new(),
+            transferred_artifact_permits: false,
             observation_completion_permits: BTreeMap::new(),
             terminal_publication: terminal_publication.cloned(),
             publication_permits: Vec::new(),
@@ -1160,6 +1201,11 @@ impl<'plan> ExecutionScheduler<'plan> {
                     "completed work retained a resource beyond its explicit release node",
                 ));
             }
+            if !self.artifact_permits.is_empty() {
+                return Err(ExecutionError::invalid_state(
+                    "completed work retained an artifact permit that was not transferred",
+                ));
+            }
             if !self.observation_completion_permits.is_empty() {
                 return Err(ExecutionError::invalid_state(
                     "completed observation retained its terminal MeasurementSet permit",
@@ -1183,6 +1229,7 @@ impl<'plan> ExecutionScheduler<'plan> {
         self.states.insert(node_id.clone(), NodeState::WorkComplete);
         let terminal_publication = self.terminal_publication.as_ref() == Some(&node_id);
         let observation_read = self.dag.nodes[&node_id].kind.reads_observation();
+        let succeeded = matches!(result, WorkResult::Succeeded);
         for held in active.permits {
             if terminal_publication {
                 self.publication_permits.push(held.permit);
@@ -1236,6 +1283,16 @@ impl<'plan> ExecutionScheduler<'plan> {
                         ));
                     }
                 }
+                ClaimLifetime::Artifact => {
+                    if succeeded {
+                        self.artifact_permits
+                            .entry(node_id.clone())
+                            .or_default()
+                            .push(held.permit);
+                    } else {
+                        held.permit.release()?;
+                    }
+                }
             }
         }
         let fences = active.fences.keys().cloned().collect::<BTreeSet<_>>();
@@ -1256,6 +1313,27 @@ impl<'plan> ExecutionScheduler<'plan> {
             self.settle_node(&node_id)?;
         }
         Ok(fences)
+    }
+
+    /// Transfer this settled node's artifact-retained permits to its output.
+    pub(crate) fn take_artifact_permit(
+        &mut self,
+        node_id: &WorkNodeId,
+    ) -> Result<Option<RetainedArtifactPermit>, ExecutionError> {
+        if self.states.get(node_id) != Some(&NodeState::Settled) {
+            return Ok(None);
+        }
+        let Some(permits) = self.artifact_permits.remove(node_id) else {
+            return Ok(None);
+        };
+        self.transferred_artifact_permits = true;
+        let lease_epoch = self.lease_epoch().ok_or_else(|| {
+            ExecutionError::invalid_state("artifact permit lost its Resource Authority lease")
+        })?;
+        Ok(Some(RetainedArtifactPermit {
+            lease_epoch,
+            permits,
+        }))
     }
 
     /// Complete one exact device, I/O, writeback, or publication fence and
@@ -1785,11 +1863,29 @@ impl<'plan> ExecutionScheduler<'plan> {
         Ok(())
     }
 
+    pub(crate) fn complete_publication(&mut self) -> Result<(), ExecutionError> {
+        self.release_all_allocations()?;
+        self.publication_allocations.clear();
+        self.release_publication_permits()?;
+        match self.finish(SchedulerTerminal::Succeeded)? {
+            SchedulerAction::Complete(SchedulerTerminal::Succeeded) => Ok(()),
+            _ => Err(ExecutionError::invalid_state(
+                "publication completion did not terminate the scheduler",
+            )),
+        }
+    }
+
     fn release_all_retained_permits(&mut self) -> Result<(), ExecutionError> {
         for (_, retained) in std::mem::take(&mut self.retained_permits) {
             retained.permit.release()?;
         }
         for permit in std::mem::take(&mut self.observation_completion_permits)
+            .into_values()
+            .flatten()
+        {
+            permit.release()?;
+        }
+        for permit in std::mem::take(&mut self.artifact_permits)
             .into_values()
             .flatten()
         {
@@ -1853,6 +1949,7 @@ impl<'plan> ExecutionScheduler<'plan> {
             || !self.deferred_permits.is_empty()
             || !self.retained_permits.is_empty()
             || !self.observation_completion_permits.is_empty()
+            || !self.artifact_permits.is_empty()
             || !self.publication_permits.is_empty()
             || !self.active_allocations.is_empty()
             || !self.active_slots.is_empty()
@@ -1958,7 +2055,13 @@ impl<'plan> ExecutionScheduler<'plan> {
             .lease
             .take()
             .ok_or_else(|| ExecutionError::invalid_state("execution lease was already released"))?;
-        if !lease.release()?.is_released() {
+        if self.transferred_artifact_permits {
+            if lease.release_retaining_artifact_storage()?.is_released() {
+                return Err(ExecutionError::invalid_state(
+                    "artifact-retained execution lease released prematurely",
+                ));
+            }
+        } else if !lease.release()?.is_released() {
             return Err(ExecutionError::invalid_state(
                 "terminal scheduler retained a resource permit or fence",
             ));
@@ -2511,6 +2614,7 @@ fn encode_lifetime(encoder: &mut CanonicalEncoder, lifetime: &ClaimLifetime) {
             encoder.u8(2);
             encoder.string(release.as_str());
         }
+        ClaimLifetime::Artifact => encoder.u8(3),
     }
 }
 
@@ -2757,6 +2861,12 @@ fn validate_nodes(
                     allocation_use.allocation.as_str()
                 )));
             }
+            if matches!(allocation_use.lifetime, ClaimLifetime::Artifact) {
+                return Err(ExecutionError::invalid_plan(format!(
+                    "work node {} cannot retain a logical allocation in an artifact",
+                    node.id.as_str()
+                )));
+            }
             validate_lifetime(node, &allocation_use.lifetime)?;
             if matches!(allocation_use.lifetime, ClaimLifetime::RetainedUntil(_)) {
                 return Err(ExecutionError::invalid_plan(format!(
@@ -2787,9 +2897,24 @@ fn validate_claims(node: &WorkNode) -> Result<(), ExecutionError> {
             )));
         }
         validate_lifetime(node, &claim.lifetime)?;
+        if matches!(claim.lifetime, ClaimLifetime::Artifact)
+            && !matches!(
+                claim.resource,
+                LeaseResource::Storage {
+                    use_kind: StorageUseKind::Temporary,
+                    ..
+                }
+            )
+        {
+            return Err(ExecutionError::invalid_plan(format!(
+                "work node {} retains a non-temporary-storage resource in an artifact",
+                node.id.as_str()
+            )));
+        }
         if claim_requires_domain_lifetime(node, &claim.resource)
             && claim.lifetime != required_payload_lifetime(node)
             && !matches!(claim.lifetime, ClaimLifetime::RetainedUntil(_))
+            && !matches!(claim.lifetime, ClaimLifetime::Artifact)
         {
             return Err(ExecutionError::invalid_plan(format!(
                 "work node {} has a payload claim without its exact asynchronous lifetime",
@@ -3672,6 +3797,9 @@ fn local_use_end_events(node: &WorkNode, lifetime: &ClaimLifetime) -> Vec<WorkDe
             .collect(),
         ClaimLifetime::RetainedUntil(release) => {
             vec![WorkDependency::Work(release.clone())]
+        }
+        ClaimLifetime::Artifact => {
+            unreachable!("artifact lifetime is rejected for logical allocations")
         }
     }
 }

@@ -85,7 +85,7 @@
     "read_buffer_reuses_per_later_pass": 127938,
     "compile_source_group_vector_allocation_requests": 395038080,
     "compile_source_group_capacity_growth_bytes_cumulative": 63206092800,
-    "compile_reduction_map_node_allocations": 196602895,
+    "compile_reduction_map_entry_insertions": 196602895,
     "compile_multiplicity_vector_allocation_requests": 196612108,
     "compile_multiplicity_capacity_growth_bytes_cumulative": 6291587456,
     "compile_encoded_buffer_allocations": 112261,

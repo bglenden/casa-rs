@@ -502,7 +502,10 @@ fn demand_is_admitted_against_named_storage_rate_and_queue_domains() {
     };
 
     let lease = authority
-        .acquire(ResourcePolicy::Exclusive, single_alternative(demand))
+        .acquire(
+            ResourcePolicy::Exclusive,
+            single_alternative(demand.clone()),
+        )
         .expect("named storage and I/O resources fit their domains");
     assert_eq!(lease.hard_ceilings().storage_bytes(&storage), 1_000);
     assert_eq!(lease.hard_ceilings().rate_per_second(&read_rate), 100);
@@ -1675,7 +1678,10 @@ fn storage_transfer_and_accelerator_demands_bind_their_topology_resources() {
     };
 
     let lease = authority
-        .acquire(ResourcePolicy::Exclusive, single_alternative(demand))
+        .acquire(
+            ResourcePolicy::Exclusive,
+            single_alternative(demand.clone()),
+        )
         .expect("linked storage, transfer, and accelerator demands fit");
     assert_eq!(lease.hard_ceilings().memory_bytes(&memory), 100);
     assert_eq!(lease.hard_ceilings().rate_per_second(&read), 100);
@@ -1704,6 +1710,32 @@ fn storage_transfer_and_accelerator_demands_bind_their_topology_resources() {
         }),
         Some(2)
     );
+
+    let retained = lease
+        .permit(
+            LeaseResource::Storage {
+                demand_id: "scratch-io".to_string(),
+                use_kind: StorageUseKind::Temporary,
+            },
+            100,
+        )
+        .expect("artifact storage fits the admitted plan");
+    assert!(
+        !lease
+            .release_retaining_artifact_storage()
+            .expect("plan narrows to its artifact storage permit")
+            .is_released()
+    );
+    let mut competing = demand;
+    competing.memory.clear();
+    competing.storage[0].temporary_bytes = 9_900;
+    competing.storage[0].queue_slots = CountDemand::new(8, 8);
+    competing.transfers.clear();
+    competing.accelerators.clear();
+    authority
+        .acquire(ResourcePolicy::Exclusive, single_alternative(competing))
+        .expect("artifact retention releases the plan's unrelated queues, rates, and workers");
+    drop(retained);
 }
 
 #[test]

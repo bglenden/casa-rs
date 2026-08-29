@@ -5356,6 +5356,9 @@ fn io_buffer_is_valid(value: &str) -> bool {
 }
 
 fn claim_lifetime_is_valid(value: &str) -> bool {
+    if value == "artifact" {
+        return true;
+    }
     if let Some(release) = value.strip_prefix("retained_until:") {
         return is_redacted_text(release);
     }
@@ -7776,12 +7779,16 @@ fn claim_lifetime(lifetime: &ClaimLifetime) -> String {
         ClaimLifetime::RetainedUntil(release) => {
             format!("retained_until:{}", stable_text(release.as_str()))
         }
+        ClaimLifetime::Artifact => "artifact".to_string(),
     }
 }
 
 fn parse_claim_lifetime(value: &str) -> ClaimLifetime {
     if value == "work" {
         return ClaimLifetime::Work;
+    }
+    if value == "artifact" {
+        return ClaimLifetime::Artifact;
     }
     if let Some(release) = value.strip_prefix("retained_until:") {
         return ClaimLifetime::retained_until(WorkNodeId::new(release.to_string()));

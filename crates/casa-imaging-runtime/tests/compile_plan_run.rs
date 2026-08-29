@@ -66,15 +66,15 @@ use casa_imaging_runtime::{
     ExecutionEvidenceError, ExecutionKnobs, ExecutionOutcome, ExecutionPlanId, ExecutionProvenance,
     ExecutionReceipt, ExecutionReceiptBinding, ExecutionReceiptStore, ExecutionStatus,
     ExternalPressure, FenceId, FenceKind, FinalVisibilitySink, FrozenWeightingReservation,
-    GriddedNormalReplayReservation, GriddedNormalReplayStorage, HostInventory,
-    ImplementationContractCatalog, ImplementationContractMetadata, ImplementationRegistry,
-    ImplementationRegistryId, InitializationPolicy, IoBufferDemand, IoBufferKind, IoMeasurement,
-    IoPrediction, LeaseResource, LogicalAllocation, MajorCycleOperatorResult,
-    MajorCycleOperatorState, MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand, MemoryView,
-    MemoryViewKind, ObservationReadCompletionContext, ObservationTransactionWork, PhysicalLayoutId,
-    PhysicalSlot, PhysicalSlotId, PhysicalWorkBinding, PhysicalWorkBindingError, PlanError,
-    PlanPrediction, PlannedArtifact, PlannerCostModelProfileBootstrap, PlannerCostModelProfileId,
-    PlanningBindings, PredictionConfidence, PredictionUncertainty, PreparedArtifactBudget,
+    GriddedNormalReplayStorage, HostInventory, ImplementationContractCatalog,
+    ImplementationContractMetadata, ImplementationRegistry, ImplementationRegistryId,
+    InitializationPolicy, IoBufferDemand, IoBufferKind, IoMeasurement, IoPrediction, LeaseResource,
+    LogicalAllocation, MajorCycleOperatorResult, MajorCycleOperatorState, MemoryCapacityDomain,
+    MemoryCapacityKind, MemoryDemand, MemoryView, MemoryViewKind, ObservationReadCompletionContext,
+    ObservationTransactionWork, PhysicalLayoutId, PhysicalSlot, PhysicalSlotId,
+    PhysicalWorkBinding, PhysicalWorkBindingError, PlanError, PlanPrediction, PlannedArtifact,
+    PlannerCostModelProfileBootstrap, PlannerCostModelProfileId, PlanningBindings,
+    PredictionConfidence, PredictionUncertainty, PreparedArtifactBudget,
     PreparedArtifactDescriptor, PreparedArtifactError, PreparedArtifactLoadSource,
     PreparedArtifactOperation, PreparedArtifactOrder, PreparedArtifactPlanFragment,
     PreparedArtifactPlaneDescriptor, PreparedArtifactPrecision, PreparedArtifactRegistration,
@@ -2896,13 +2896,8 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
     )
     .expect("cross-plan frozen weighting reservation");
     let planned_storage = planned_storage.expect("initial plan retains its artifact storage");
-    let gridded_reservation = GriddedNormalReplayReservation::acquire(
-        authority(),
-        resource_policy.clone(),
-        &planned_storage,
-        gridded_normal_reservation_bytes.expect("initial plan reserves artifact storage"),
-    )
-    .expect("cross-plan gridded replay reservation");
+    let gridded_storage_bytes =
+        gridded_normal_reservation_bytes.expect("initial plan reserves artifact storage");
     let selected = initial_access
         .open(&problem)
         .expect("owner-validated initial selected observation");
@@ -2919,7 +2914,7 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
         SpectralCyclePassInput::Initial,
     )
     .with_frozen_weighting_reservation(frozen_reservation)
-    .with_planned_gridded_normal_storage(&planned_storage, gridded_reservation)
+    .with_planned_gridded_normal_storage(&planned_storage, gridded_storage_bytes)
     .expect("gridded-normal compiler and spill writer")
     .with_reconstruction_cycle(
         minor_node.clone(),
@@ -3092,6 +3087,8 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
         pass: final_pass,
         minor_cycle_node: final_minor,
         gridded_replay: planned_replay,
+        gridded_normal_storage: final_storage,
+        gridded_normal_reservation_bytes: final_storage_bytes,
         ..
     } = final_planned.into_parts();
     assert!(final_minor.is_none());
@@ -3121,7 +3118,7 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
         final_demand
             .storage
             .iter()
-            .any(|demand| demand.temporary_bytes >= replay_descriptor.bytes())
+            .all(|demand| demand.temporary_bytes == 0)
     );
     assert_eq!(
         final_demand.io_buffers.bytes(IoBufferKind::SourceReadAhead),
@@ -3165,14 +3162,14 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
             .iter()
             .any(|claim| { claim.resource == LeaseResource::FileDescriptors && claim.amount == 1 })
     );
-    assert!(replay_nodes[0].claims.iter().any(|claim| {
-        matches!(
+    assert!(replay_nodes[0].claims.iter().all(|claim| {
+        !matches!(
             claim.resource,
             LeaseResource::Storage {
                 use_kind: StorageUseKind::Temporary,
                 ..
             }
-        ) && claim.amount >= replay_descriptor.bytes()
+        )
     }));
     let collisions = initial_nodes
         .intersection(&final_nodes)
@@ -3218,6 +3215,8 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
         ExecutableModelProblem::from_compiled(problem.clone()).expect("final executable model"),
         SpectralCyclePassInput::FinalMajor(final_input),
         planned_replay.expect("final plan retains exact gridded replay identity"),
+        &final_storage.expect("final plan binds retained artifact storage"),
+        final_storage_bytes.expect("final plan binds retained storage ceiling"),
         gridded_replay,
     )
     .expect("final executor accepts its planned replay")
@@ -3261,33 +3260,6 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
     )
     .expect("final ordinary run");
     let final_receipt = receipts.open(final_attempt).expect("final receipt");
-    let final_replay_node = final_plan
-        .execution_dag()
-        .nodes()
-        .get(&replay_node_id)
-        .expect("final gridded replay node");
-    let final_storage_claim = final_replay_node
-        .claims
-        .iter()
-        .find(|claim| {
-            matches!(
-                claim.resource,
-                LeaseResource::Storage {
-                    use_kind: StorageUseKind::Temporary,
-                    ..
-                }
-            )
-        })
-        .expect("final gridded replay storage claim");
-    assert_eq!(
-        final_receipt.actual_resource_peak(
-            &replay_node_id,
-            &final_storage_claim.resource,
-            &final_storage_claim.lifetime,
-        ),
-        Some(replay_descriptor.bytes()),
-        "later-major receipt records the actual retained artifact size"
-    );
     assert_eq!(
         final_receipt.observation_transaction_publication_scope(),
         casa_imaging_runtime::ObservationTransactionPublicationScope::ReconstructionOnly
@@ -3367,13 +3339,8 @@ fn execute_initial_reconstruction_cycle(
     )
     .expect("frozen weighting reservation");
     let planned_storage = planned_storage.expect("channel-cycle plan retains artifact storage");
-    let gridded_reservation = GriddedNormalReplayReservation::acquire(
-        authority(),
-        ResourcePolicy::Balanced,
-        &planned_storage,
-        gridded_normal_reservation_bytes.expect("channel-cycle plan reserves artifact storage"),
-    )
-    .expect("channel-cycle gridded replay reservation");
+    let gridded_storage_bytes =
+        gridded_normal_reservation_bytes.expect("channel-cycle plan reserves artifact storage");
     let program = casa_imaging_reconstruction::MinorCycleProgram::for_algorithm(
         problem.reconstruction().algorithm().clone(),
         problem.reconstruction().controls(),
@@ -3395,7 +3362,7 @@ fn execute_initial_reconstruction_cycle(
         SpectralCyclePassInput::Initial,
     )
     .with_frozen_weighting_reservation(reservation)
-    .with_planned_gridded_normal_storage(&planned_storage, gridded_reservation)
+    .with_planned_gridded_normal_storage(&planned_storage, gridded_storage_bytes)
     .expect("channel-cycle gridded-normal compiler")
     .with_reconstruction_cycle(
         cycle_node.clone(),

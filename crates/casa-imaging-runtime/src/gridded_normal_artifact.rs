@@ -12,13 +12,7 @@ use thiserror::Error;
 
 use crate::bounded_stream::{OrderedBlockSource, SourceFillCancellation, SourcePoll};
 use crate::execution_bindings::IoMeasurement;
-use crate::resource_authority::{
-    AlternativeId, CacheDemand, CapabilityPredicate, CapacityViewId, CountDemand,
-    DemandAlternative, DemandAlternatives, DemandEnvelope, IoBufferDemand, IoBufferKind,
-    QuiescencePoint, ResourceAuthority, ResourceError, ResourceHeadroom, ResourceLease,
-    ResourcePolicy, RuntimeOverheadDemand, ScalingMetadata, StorageDemand,
-    StorageIoResourceBinding,
-};
+use crate::resource_authority::{IoBufferKind, ResourceAuthority, StorageIoResourceBinding};
 
 const FORMAT_VERSION: u32 = 1;
 const FILE_HEADER_MAGIC: [u8; 8] = *b"CGNRHDR\0";
@@ -61,94 +55,38 @@ impl GriddedNormalReplayStorage {
     }
 }
 
-/// Resource Authority lease retaining one replay artifact between major plans.
-///
-/// Per-plan storage demands still account the plan's direct I/O. This longer
-/// lease closes the interval between plans and remains owned by the sealed
-/// artifact until its final consumer drops it.
+/// Plan-issued temporary-storage capacity retained by one sealed replay artifact.
 #[derive(Debug)]
-pub struct GriddedNormalReplayReservation {
-    _lease: ResourceLease,
+pub(crate) struct GriddedNormalArtifactRetention {
+    _permit: crate::RetainedArtifactPermit,
     resources: StorageIoResourceBinding,
     bytes: u64,
 }
 
-impl GriddedNormalReplayReservation {
-    /// Reserve the planner-projected maximum private artifact size.
-    pub fn acquire(
-        authority: &ResourceAuthority,
-        policy: ResourcePolicy,
+impl GriddedNormalArtifactRetention {
+    pub(crate) fn bind(
+        permit: crate::RetainedArtifactPermit,
         storage: &GriddedNormalReplayStorage,
         bytes: u64,
-    ) -> Result<Self, ResourceError> {
-        let demand = StorageDemand {
-            demand_id: "cross-plan-gridded-normal-replay".to_string(),
-            domain: storage.resources().domain().clone(),
-            temporary_bytes: bytes,
-            staged_output_bytes: 0,
-            final_output_bytes: 0,
-            persistent_cache_bytes: 0,
-            read_rate: CountDemand::zero(),
-            write_rate: CountDemand::zero(),
-            operations_rate: CountDemand::zero(),
-            queue_slots: CountDemand::zero(),
-        };
-        let alternative = DemandAlternative {
-            id: AlternativeId::new("cross-plan-gridded-normal-replay"),
-            capabilities: CapabilityPredicate::default(),
-            demand: DemandEnvelope {
-                host_memory_view: CapacityViewId::new("host-memory"),
-                memory: vec![],
-                workers: CountDemand::zero(),
-                overhead: RuntimeOverheadDemand::zero(),
-                storage: vec![demand],
-                rates: vec![],
-                caches: CacheDemand::zero(),
-                locks: CountDemand::zero(),
-                file_descriptors: CountDemand::zero(),
-                queues: vec![],
-                transfers: vec![],
-                accelerators: vec![],
-                io_buffers: IoBufferDemand::zero(),
-            },
-            headroom: ResourceHeadroom::default(),
-            scaling: ScalingMetadata {
-                minimum_workers: 0,
-                maximum_workers: 0,
-                maximum_batch_size: 1,
-                maximum_tile_width: 1,
-                maximum_tile_height: 1,
-                maximum_slab_depth: 1,
-                memory_bytes_per_worker: Default::default(),
-            },
-            quiescence_points: [QuiescencePoint::MajorCycle].into_iter().collect(),
-        };
-        let lease = authority.acquire(
-            policy,
-            DemandAlternatives {
-                required_capabilities: Default::default(),
-                alternatives: vec![alternative],
-            },
-        )?;
+    ) -> io::Result<Self> {
+        if !permit.covers_temporary_storage(bytes) {
+            return Err(io::Error::other(
+                "plan-issued artifact permit does not cover replay storage",
+            ));
+        }
         Ok(Self {
-            _lease: lease,
+            _permit: permit,
             resources: storage.resources().clone(),
             bytes,
         })
     }
 
-    pub(crate) fn validates(
+    pub(crate) fn validates_bytes(
         &self,
         storage: &GriddedNormalReplayStorage,
-        budget: GriddedNormalArtifactBudget,
+        maximum_bytes: u64,
     ) -> bool {
-        self.resources == *storage.resources() && self.bytes >= budget.maximum_artifact_bytes()
-    }
-
-    /// Return the retained temporary-storage ceiling.
-    #[must_use]
-    pub const fn bytes(&self) -> u64 {
-        self.bytes
+        self.resources == *storage.resources() && self.bytes >= maximum_bytes
     }
 }
 
@@ -1766,37 +1704,6 @@ mod tests {
             artifact.block_source(),
             Err(GriddedNormalArtifactError::FileIdentityMismatch)
         ));
-    }
-
-    #[test]
-    fn cross_plan_reservation_prevents_storage_over_admission_until_drop() {
-        let root = tempfile::tempdir().expect("artifact root");
-        let (authority, storage) = test_authority(root.path(), TEST_CAPACITY_BYTES);
-        let first = GriddedNormalReplayReservation::acquire(
-            &authority,
-            ResourcePolicy::Exclusive,
-            &storage,
-            2_500,
-        )
-        .expect("first cross-plan reservation");
-        assert!(
-            GriddedNormalReplayReservation::acquire(
-                &authority,
-                ResourcePolicy::Exclusive,
-                &storage,
-                2_500,
-            )
-            .is_err(),
-            "a live artifact reservation must remain visible between plans"
-        );
-        drop(first);
-        GriddedNormalReplayReservation::acquire(
-            &authority,
-            ResourcePolicy::Exclusive,
-            &storage,
-            2_500,
-        )
-        .expect("capacity returns after the artifact owner drops");
     }
 
     #[test]

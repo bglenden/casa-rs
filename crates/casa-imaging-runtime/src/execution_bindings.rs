@@ -3347,6 +3347,19 @@ pub trait WorkImplementation {
         completion: ObservationReadCompletionContext,
     ) -> Result<AttemptBoundObservationCompletion, Self::Error>;
 
+    /// Bind scheduler-issued resources retained by this node's immutable artifact.
+    ///
+    /// The runner invokes this only after the node and all of its fences settle
+    /// successfully. Implementations that do not declare artifact-lifetime
+    /// claims retain the default rejection.
+    fn retain_artifact_resources(
+        &self,
+        _owner_node: &WorkNodeId,
+        _permit: crate::RetainedArtifactPermit,
+    ) -> Result<bool, Self::Error> {
+        Ok(false)
+    }
+
     /// Abort one incomplete observation read and synchronously settle any
     /// storage worker owned by it.
     ///
@@ -3574,6 +3587,33 @@ fn terminal_drain_error<E>(
 ) -> RunError<E> {
     let _ = scheduler.quarantine();
     pending.take().expect(invariant).into_run_error()
+}
+
+fn transfer_artifact_resources<I: WorkImplementation>(
+    scheduler: &mut ExecutionScheduler<'_>,
+    implementation: &I,
+    node: &WorkNodeId,
+) -> Result<(), PendingRunError<I::Error>> {
+    let permit = scheduler
+        .take_artifact_permit(node)
+        .map_err(PendingRunError::Scheduler)?;
+    if let Some(permit) = permit {
+        let retained = implementation
+            .retain_artifact_resources(node, permit)
+            .map_err(|source| PendingRunError::Execution {
+                node: node.clone(),
+                source,
+            })?;
+        if !retained {
+            return Err(PendingRunError::Scheduler(ExecutionError::InvalidState(
+                format!(
+                    "implementation did not retain artifact resources for {}",
+                    node.as_str()
+                ),
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn validate_work_measurements(
@@ -4226,6 +4266,7 @@ where
                                 let synchronous_observation_read =
                                     work.node().kind.reads_observation()
                                         && work.node().fences.is_empty();
+                                let synchronous_work = work.node().fences.is_empty();
                                 let work_lease_epoch = context.lease_epoch();
                                 launched.insert(node_id.clone(), work);
                                 match scheduler.finish_work(node_id.clone(), WorkResult::Succeeded)
@@ -4271,8 +4312,23 @@ where
                                                 .complete_observation_read(completion)
                                             {
                                                 Ok(completion) => {
-                                                    completed_observation_reads
-                                                        .insert(node_id.clone(), completion);
+                                                    match transfer_artifact_resources(
+                                                        &mut scheduler,
+                                                        implementation,
+                                                        &node_id,
+                                                    ) {
+                                                        Ok(()) => {
+                                                            completed_observation_reads.insert(
+                                                                node_id.clone(),
+                                                                completion,
+                                                            );
+                                                        }
+                                                        Err(error) => {
+                                                            pending = Some(error);
+                                                            controller_stopped = true;
+                                                            scheduler.cancel_after_error();
+                                                        }
+                                                    }
                                                 }
                                                 Err(source) => {
                                                     let _ = implementation
@@ -4298,7 +4354,20 @@ where
                                             controller_stopped = true;
                                         }
                                     }
-                                    Ok(_) => {}
+                                    Ok(_) => {
+                                        if !synchronous_observation_read
+                                            && synchronous_work
+                                            && let Err(error) = transfer_artifact_resources(
+                                                &mut scheduler,
+                                                implementation,
+                                                &node_id,
+                                            )
+                                        {
+                                            pending = Some(error);
+                                            controller_stopped = true;
+                                            scheduler.cancel_after_error();
+                                        }
+                                    }
                                     Err(error) => {
                                         if synchronous_observation_read {
                                             let _ = implementation.abort_observation_read(&node_id);
@@ -4617,7 +4686,21 @@ where
                         } else {
                             match implementation.complete_observation_read(completion) {
                                 Ok(completion) => {
-                                    completed_observation_reads.insert(node.clone(), completion);
+                                    match transfer_artifact_resources(
+                                        &mut scheduler,
+                                        implementation,
+                                        &node,
+                                    ) {
+                                        Ok(()) => {
+                                            completed_observation_reads
+                                                .insert(node.clone(), completion);
+                                        }
+                                        Err(error) => {
+                                            pending = Some(error);
+                                            controller_stopped = true;
+                                            scheduler.cancel_after_error();
+                                        }
+                                    }
                                 }
                                 Err(source) => {
                                     let _ = implementation.abort_observation_read(&node);
@@ -4636,6 +4719,18 @@ where
                             defer_scheduler_error(&mut scheduler, &mut pending, error);
                             controller_stopped = true;
                         }
+                    } else if !work.node().kind.reads_observation()
+                        && fence_transition_succeeded
+                        && pending.is_none()
+                        && let Err(error) = transfer_artifact_resources(
+                            &mut scheduler,
+                            implementation,
+                            &work.node().id,
+                        )
+                    {
+                        pending = Some(error);
+                        controller_stopped = true;
+                        scheduler.cancel_after_error();
                     }
                 }
             }
@@ -4760,12 +4855,18 @@ where
                     receipt
                         .complete_independent_product_publication()
                         .map_err(RunError::Receipt)?;
+                    scheduler
+                        .complete_publication()
+                        .map_err(RunError::Scheduler)?;
                     return Ok(ExecutionOutcome::Succeeded);
                 }
                 let prepared = receipt.prepare_publication().map_err(RunError::Receipt)?;
                 match implementation.publish(context) {
                     Ok(()) => {
                         receipt.complete_publication(prepared);
+                        scheduler
+                            .complete_publication()
+                            .map_err(RunError::Scheduler)?;
                         return Ok(ExecutionOutcome::Succeeded);
                     }
                     Err(source) => {

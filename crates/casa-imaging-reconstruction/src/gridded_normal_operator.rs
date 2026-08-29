@@ -79,13 +79,13 @@ pub struct GriddedNormalOperatorBlock {
     measurements: GriddedNormalOperatorBlockMeasurements,
 }
 
-/// Exact code-owned allocation events while compiling one bounded block.
+/// Exact code-owned allocation requests, capacity growth, and map insertions.
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct GriddedNormalOperatorBlockMeasurements {
     pub source_group_vector_allocations: u64,
     pub source_group_capacity_growth_bytes: u64,
-    pub reduction_map_node_allocations: u64,
+    pub reduction_map_entry_insertions: u64,
     pub multiplicity_vector_allocations: u64,
     pub multiplicity_capacity_growth_bytes: u64,
     pub encoded_buffer_allocations: u64,
@@ -114,7 +114,7 @@ impl GriddedNormalOperatorBlock {
         &self.encoded
     }
 
-    /// Return exact allocation events owned by compilation of this block.
+    /// Return exact measured events owned by compilation of this block.
     #[must_use]
     pub const fn measurements(&self) -> GriddedNormalOperatorBlockMeasurements {
         self.measurements
@@ -230,8 +230,8 @@ impl GriddedNormalOperatorCompiler {
                 let multiplicities = match groups.entry(group) {
                     Entry::Occupied(entry) => entry.into_mut(),
                     Entry::Vacant(entry) => {
-                        measurements.reduction_map_node_allocations = measurements
-                            .reduction_map_node_allocations
+                        measurements.reduction_map_entry_insertions = measurements
+                            .reduction_map_entry_insertions
                             .checked_add(1)
                             .ok_or(SpectralOperatorError::ResidencyOverflow)?;
                         entry.insert(Vec::new())
@@ -916,7 +916,7 @@ mod tests {
     }
 
     #[test]
-    fn vector_growth_measurements_count_code_owned_allocations_exactly() {
+    fn compilation_measurements_distinguish_allocations_from_map_insertions() {
         let mut operations = 0;
         let mut bytes = 0;
         record_vector_growth(0, 4, 48, &mut operations, &mut bytes).expect("first allocation");

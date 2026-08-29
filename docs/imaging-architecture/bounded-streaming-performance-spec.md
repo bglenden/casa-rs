@@ -919,10 +919,14 @@ the accepted plan closes the writer descriptor at seal and opens one bounded
 reader descriptor per later-major plan, which cannot be combined with an
 unlinked file on macOS. `TempPath` removes the private name when the final
 artifact owner drops it, and every reopen verifies the sealed device and inode
-before checking length, framing, and hashes. The Resource Authority retains the
-artifact's maximum temporary-storage reservation across the gaps between major
-plans. This is distinct from the still-open, unlinked AWProject spill described
-in `ARCHITECTURE.md`.
+before checking length, framing, and hashes. The initial plan marks its one
+temporary-storage claim as artifact-retained; after successful seal and
+evidence, the scheduler transfers that exact permit from the plan's admitted
+lease into the sealed replay. Later plans bind the retained artifact by
+identity, storage domain, and ceiling, and therefore charge only their direct
+read rate, queue, descriptor, and bounded-buffer resources. The application
+moves the opaque artifact and never acquires a second lease. This is distinct
+from the still-open, unlinked AWProject spill described in `ARCHITECTURE.md`.
 
 Production retention still requires measured full-artifact bytes and peak
 residency, exact MS/artifact pass counts, the complete 32 GiB workload,
@@ -968,8 +972,9 @@ two read buffers, reused them 127,938 times, and copied zero payload bytes.
 Receipts report the actual 6,300,504,416-byte temporary-storage peak separately
 from the 16,778,497,920-byte planned and cross-plan-reserved ceiling. The
 reconstruction owner also reports exact code-owned allocation requests and
-cumulative vector-capacity growth by source grouping, reduction map,
-multiplicity vector, encoded buffer, and descriptor vector. The earlier
+cumulative vector-capacity growth by source grouping, multiplicity vector,
+encoded buffer, and descriptor vector, plus exact reduction-map entry
+insertions. It does not claim allocator-internal `BTreeMap` node counts. The earlier
 131,144-byte evidence field measured
 one bounded frame buffer, not the artifact, and is explicitly superseded.
 

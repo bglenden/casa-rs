@@ -42,15 +42,14 @@ use casa_imaging_reconstruction::{
 use casa_imaging_runtime::{
     AttemptBoundObservationCompletion, BuildIdentity, ExecutionAttemptId, ExecutionProvenance,
     ExecutionReceipt, ExecutionReceiptStore, FenceKind, FinalVisibilityReplay,
-    FrozenWeightingReservation, GriddedNormalReplayReservation, GriddedNormalReplayStorage,
-    ImplementationContractMetadata, ImplementationRegistry, ImplementationRegistryId,
-    ObservationReadCompletionContext, PlannerCostModelProfileBootstrap, PlanningBindings,
-    ResourceAuthority, ResourcePolicy, RunBindings, RunToCompletion,
-    SerialProductPublicationExecutor, SerialProductPublicationPlan, SerialProductPublicationPolicy,
-    SerialProductPublicationRegistry, SerialProductPublicationSink, SpectralCycleExecutionPolicy,
-    SpectralCycleExecutor, SpectralCyclePassInput, SpectralCyclePlan, SpectralCyclePlanParts,
-    SpectralCycleRegistry, StorageIoResourceBinding, WorkExecutionContext, WorkImplementation,
-    WorkImplementationId, WorkMeasurements, plan, run,
+    FrozenWeightingReservation, GriddedNormalReplayStorage, ImplementationContractMetadata,
+    ImplementationRegistry, ImplementationRegistryId, ObservationReadCompletionContext,
+    PlannerCostModelProfileBootstrap, PlanningBindings, ResourceAuthority, ResourcePolicy,
+    RunBindings, RunToCompletion, SerialProductPublicationExecutor, SerialProductPublicationPlan,
+    SerialProductPublicationPolicy, SerialProductPublicationRegistry, SerialProductPublicationSink,
+    SpectralCycleExecutionPolicy, SpectralCycleExecutor, SpectralCyclePassInput, SpectralCyclePlan,
+    SpectralCyclePlanParts, SpectralCycleRegistry, StorageIoResourceBinding, WorkExecutionContext,
+    WorkImplementation, WorkImplementationId, WorkMeasurements, plan, run,
 };
 use casa_ms::{
     ResolvedSelectedObservationAccess, SelectedObservationResolutionRequest,
@@ -379,21 +378,6 @@ where
             )
         })
         .transpose()?;
-    let gridded_reservation = (!matches!(algorithm, ReconstructionAlgorithm::Dirty))
-        .then(|| {
-            GriddedNormalReplayReservation::acquire(
-                &runtime.authority,
-                runtime.resource_policy.clone(),
-                planned_storage
-                    .as_ref()
-                    .ok_or_else(|| boxed("clean initial plan omitted gridded replay storage"))?,
-                gridded_normal_reservation_bytes.ok_or_else(|| {
-                    boxed("clean initial plan omitted gridded replay reservation ceiling")
-                })?,
-            )
-            .map_err(ApplicationError::from)
-        })
-        .transpose()?;
     let initial_source_state = initial_access.source_state().clone();
     let selected = initial_access.open(problem)?;
     let mut executor = SpectralCycleExecutor::new(
@@ -414,7 +398,9 @@ where
         executor = executor.with_planned_gridded_normal_storage(
             &planned_storage
                 .ok_or_else(|| boxed("clean initial plan omitted gridded replay storage"))?,
-            gridded_reservation.expect("non-dirty execution reserves gridded replay storage"),
+            gridded_normal_reservation_bytes.ok_or_else(|| {
+                boxed("clean initial plan omitted gridded replay reservation ceiling")
+            })?,
         )?;
         let program = MinorCycleProgram::for_algorithm(
             algorithm.clone(),
@@ -625,6 +611,8 @@ where
                     pass,
                     minor_cycle_node: minor_node,
                     gridded_replay: planned_replay,
+                    gridded_normal_storage: planned_storage,
+                    gridded_normal_reservation_bytes: retained_storage_bytes,
                     ..
                 } = final_planned.into_parts();
                 let mut executor = SpectralCycleExecutor::new_gridded(
@@ -637,6 +625,11 @@ where
                     SpectralCyclePassInput::FinalMajor(final_input),
                     planned_replay
                         .ok_or_else(|| boxed("later-major plan omitted gridded replay identity"))?,
+                    &planned_storage
+                        .ok_or_else(|| boxed("later-major plan omitted gridded replay storage"))?,
+                    retained_storage_bytes.ok_or_else(|| {
+                        boxed("later-major plan omitted retained replay storage ceiling")
+                    })?,
                     gridded_replay,
                 )?
                 .with_frozen_weighting(frozen_weighting);
