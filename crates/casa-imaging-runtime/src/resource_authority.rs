@@ -2269,6 +2269,59 @@ impl ResourceLease {
         Ok(LeaseRelease { released })
     }
 
+    /// Release the execution lease while retaining only consumed temporary
+    /// storage transferred to a sealed artifact.
+    pub(crate) fn release_retaining_artifact_storage(
+        mut self,
+    ) -> Result<LeaseRelease, ResourceError> {
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .map_err(|_| ResourceError::AuthorityPoisoned)?;
+        let record = state.leases.get_mut(&self.lease_id).ok_or_else(|| {
+            ResourceError::Invalid("cannot narrow an absent resource lease".to_string())
+        })?;
+        if record.outstanding_fences != 0 || record.consumed.is_empty() {
+            return Err(ResourceError::Invalid(
+                "artifact retention requires settled work and a consumed storage permit"
+                    .to_string(),
+            ));
+        }
+        let mut retained = ResourceGrant::default();
+        for (resource, amount) in &record.consumed {
+            let LeaseResource::Storage {
+                demand_id,
+                use_kind: StorageUseKind::Temporary,
+            } = resource
+            else {
+                return Err(ResourceError::Invalid(
+                    "artifact retention may keep only temporary storage".to_string(),
+                ));
+            };
+            let domain = self
+                .alternative
+                .demand
+                .storage
+                .iter()
+                .find(|demand| &demand.demand_id == demand_id)
+                .map(|demand| demand.domain.clone())
+                .ok_or_else(|| {
+                    ResourceError::Invalid(format!(
+                        "artifact storage permit references unknown demand {demand_id}"
+                    ))
+                })?;
+            let retained_bytes = retained.storage_bytes.entry(domain).or_default();
+            *retained_bytes = retained_bytes
+                .checked_add(*amount)
+                .ok_or(ResourceError::Overflow("artifact-retained storage"))?;
+        }
+        record.reserved = retained;
+        record.release_requested = true;
+        self.release_requested = true;
+        Ok(LeaseRelease { released: false })
+    }
+
     /// Retains only physical memory and source-handle permits whose external
     /// release could not be proven, while releasing every other reservation.
     pub(crate) fn quarantine_external_permits(
@@ -2421,6 +2474,44 @@ impl ResourcePermit {
     /// Returns the amount owned by this permit.
     pub const fn amount(&self) -> u64 {
         self.amount
+    }
+
+    /// Return unused capacity from this permit while preserving the remaining
+    /// ownership under the same admitted lease.
+    pub(crate) fn narrow_temporary_storage_to(&mut self, amount: u64) -> Result<(), ResourceError> {
+        if !matches!(
+            self.resource,
+            LeaseResource::Storage {
+                use_kind: StorageUseKind::Temporary,
+                ..
+            }
+        ) {
+            return Err(ResourceError::Invalid(
+                "only temporary-storage permits may be narrowed".to_string(),
+            ));
+        }
+        if amount == 0 || amount > self.amount {
+            return Err(ResourceError::Invalid(
+                "a narrowed resource permit must retain a positive amount within its current ownership"
+                    .to_string(),
+            ));
+        }
+        if amount == self.amount {
+            return Ok(());
+        }
+        let returned = self
+            .amount
+            .checked_sub(amount)
+            .ok_or(ResourceError::Overflow("narrowed resource permit"))?;
+        release_permit(
+            &self.inner,
+            self.lease_id,
+            &self.resource,
+            &self.accounting_resource,
+            returned,
+        )?;
+        self.amount = amount;
+        Ok(())
     }
 
     /// Releases this consumption and any now-quiescent pending lease.

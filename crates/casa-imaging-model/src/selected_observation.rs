@@ -12,13 +12,15 @@ use crate::{
     geometry::CompiledGeometryId,
     measurement_equation::VisibilityInnerProduct,
     observation::{
-        CorrelationSelection, DataDescriptionSelection, MeasurementSetIdentity,
+        CorrelationSelection, CorrelationType, DataDescriptionSelection, MeasurementSetIdentity,
         ObservationSnapshotId, SelectedMainRow, SelectedRowSequenceAccumulator,
         SelectedRowSequenceError, SpectralWindowSelection, VisibilityColumn, WeightColumn,
     },
     selected_observation_sample::{
         SelectedObservationGenerationEncoder, SelectedObservationGenerationId,
-        SelectedObservationSample, SelectedPredictionTarget, SelectedVisibilitySample,
+        SelectedObservationRunChannel, SelectedObservationRunCorrelation,
+        SelectedObservationRunRow, SelectedObservationSample, SelectedObservationSampleView,
+        SelectedPredictionTarget, SelectedVisibilitySample,
     },
     transaction::{
         MeasurementSetReadAccess, ObservationReadSet, ObservationTransactionContract,
@@ -284,7 +286,12 @@ impl<E: std::error::Error + 'static> std::error::Error for SelectedObservationPa
     }
 }
 
-struct SelectedObservationInspection<'a> {
+/// Incremental validator and content-identity encoder for one canonical
+/// selected-observation pass.
+///
+/// This state supports bounded block transports without materializing the
+/// pass. It does not prove retained source access or mint storage completion.
+pub struct SelectedObservationInspection<'a> {
     expected_sources: &'a [MeasurementSetReadAccess],
     write_set: &'a ObservationWriteSet,
     source_index: usize,
@@ -302,24 +309,72 @@ impl<'a> SelectedObservationInspection<'a> {
             expected_sources,
             write_set,
             source_index: 0,
-            source: SourceInspection::new(&expected_sources[0]),
+            source: SourceInspection::new(
+                &expected_sources[0],
+                prediction_target(write_set, expected_sources[0].measurement_set()),
+            ),
             generation: SelectedObservationGenerationEncoder::new(),
         }
     }
 
-    /// Validate the next sample in canonical source/row/channel/correlation order.
-    fn push(
+    /// Validate and record the next canonical sample.
+    pub fn push(
         &mut self,
         sample: &SelectedObservationSample,
     ) -> Result<(), SelectedObservationInspectionError> {
-        while sample.address.measurement_set != self.source.expected.measurement_set() {
+        self.push_view(sample.as_view())
+    }
+
+    /// Validate and record one borrowed scalar or run member.
+    pub fn push_view(
+        &mut self,
+        sample: SelectedObservationSampleView<'_>,
+    ) -> Result<(), SelectedObservationInspectionError> {
+        let address = sample.address();
+        self.advance_to_source(address.measurement_set, address.physical_row)?;
+        self.source.push(sample)?;
+        self.generation.push_view(sample);
+        Ok(())
+    }
+
+    /// Validate and record one borrowed row/channel run in canonical correlation order.
+    pub fn push_run(
+        &mut self,
+        row: &SelectedObservationRunRow,
+        channel: &SelectedObservationRunChannel,
+        correlations: &[SelectedObservationRunCorrelation],
+    ) -> Result<(), SelectedObservationInspectionError> {
+        self.advance_to_source(row.measurement_set, row.physical_row)?;
+        self.source.push_run(row, channel, correlations)?;
+        self.generation.push_run(row, channel, correlations);
+        Ok(())
+    }
+
+    /// Return bytes handed to the selected-generation identity hasher so far.
+    #[must_use]
+    pub const fn generation_proof_bytes(&self) -> u64 {
+        self.generation.proof_bytes()
+    }
+
+    /// Return selected-generation identity hasher update calls so far.
+    #[must_use]
+    pub const fn generation_proof_hash_calls(&self) -> u64 {
+        self.generation.proof_hash_calls()
+    }
+
+    fn advance_to_source(
+        &mut self,
+        measurement_set: MeasurementSetIdentity,
+        physical_row: u64,
+    ) -> Result<(), SelectedObservationInspectionError> {
+        while measurement_set != self.source.expected.measurement_set() {
             if self.source.observed_row_count() == 0
                 && self.source.expected.selection().rows().selected_row_count() > 0
             {
                 return Err(
                     SelectedObservationInspectionError::NonCanonicalSampleOrder {
-                        measurement_set: sample.address.measurement_set,
-                        physical_row: sample.address.physical_row,
+                        measurement_set,
+                        physical_row,
                     },
                 );
             }
@@ -327,56 +382,102 @@ impl<'a> SelectedObservationInspection<'a> {
             let Some(expected) = self.expected_sources.get(next_index) else {
                 return Err(
                     SelectedObservationInspectionError::NonCanonicalSampleOrder {
-                        measurement_set: sample.address.measurement_set,
-                        physical_row: sample.address.physical_row,
+                        measurement_set,
+                        physical_row,
                     },
                 );
             };
-            let prior = std::mem::replace(&mut self.source, SourceInspection::new(expected));
+            let prior = std::mem::replace(
+                &mut self.source,
+                SourceInspection::new(
+                    expected,
+                    prediction_target(self.write_set, expected.measurement_set()),
+                ),
+            );
             prior.finish()?;
             self.source_index = next_index;
         }
-        let expected_prediction_target =
-            if self.write_set.visibility_columns().iter().any(|write| {
-                write.column() == MsColumnKind::ModelData
-                    && write.measurement_set() == self.source.expected.measurement_set()
-            }) {
-                SelectedPredictionTarget::ModelData
-            } else {
-                SelectedPredictionTarget::NotRequested
-            };
-        self.source.push(sample, expected_prediction_target)?;
-        self.generation.push(sample);
         Ok(())
     }
 
-    /// Finish exhaustive coverage validation and return content identity/count.
-    fn finish(
+    /// Finish exhaustive coverage validation and return content identity and count.
+    pub fn finish(
         self,
     ) -> Result<(SelectedObservationGenerationId, u64), SelectedObservationInspectionError> {
         self.source.finish()?;
         for expected in &self.expected_sources[self.source_index + 1..] {
-            SourceInspection::new(expected).finish()?;
+            SourceInspection::new(
+                expected,
+                prediction_target(self.write_set, expected.measurement_set()),
+            )
+            .finish()?;
         }
         Ok(self.generation.finish())
     }
 }
 
+fn prediction_target(
+    write_set: &ObservationWriteSet,
+    measurement_set: MeasurementSetIdentity,
+) -> SelectedPredictionTarget {
+    if write_set.visibility_columns().iter().any(|write| {
+        write.column() == MsColumnKind::ModelData && write.measurement_set() == measurement_set
+    }) {
+        SelectedPredictionTarget::ModelData
+    } else {
+        SelectedPredictionTarget::NotRequested
+    }
+}
+
 struct SourceInspection<'a> {
     expected: &'a MeasurementSetReadAccess,
+    prediction_target: SelectedPredictionTarget,
     rows: SelectedRowSequenceAccumulator,
     row: Option<RowInspection<'a>>,
 }
 
+#[derive(Clone, Copy)]
+struct InspectionRow {
+    measurement_set: MeasurementSetIdentity,
+    physical_row: u64,
+    data_description_id: i32,
+    spectral_window_id: u32,
+    polarization_id: u32,
+}
+
+impl InspectionRow {
+    fn from_view(sample: SelectedObservationSampleView<'_>) -> Self {
+        let address = sample.address();
+        Self {
+            measurement_set: address.measurement_set,
+            physical_row: address.physical_row,
+            data_description_id: address.data_description_id,
+            spectral_window_id: address.spectral_window_id,
+            polarization_id: address.polarization_id,
+        }
+    }
+
+    const fn from_run(row: &SelectedObservationRunRow) -> Self {
+        Self {
+            measurement_set: row.measurement_set,
+            physical_row: row.physical_row,
+            data_description_id: row.data_description_id,
+            spectral_window_id: row.spectral_window_id,
+            polarization_id: row.polarization_id,
+        }
+    }
+}
+
 impl<'a> SourceInspection<'a> {
-    fn new(expected: &'a MeasurementSetReadAccess) -> Self {
+    fn new(
+        expected: &'a MeasurementSetReadAccess,
+        prediction_target: SelectedPredictionTarget,
+    ) -> Self {
         let selected_rows = expected.selection().rows();
         Self {
             expected,
-            rows: SelectedRowSequenceAccumulator::new(
-                selected_rows.source_row_count(),
-                selected_rows.selected_row_count(),
-            ),
+            prediction_target,
+            rows: SelectedRowSequenceAccumulator::new(selected_rows.source_row_count()),
             row: None,
         }
     }
@@ -387,22 +488,59 @@ impl<'a> SourceInspection<'a> {
 
     fn push(
         &mut self,
-        sample: &SelectedObservationSample,
-        expected_prediction_target: SelectedPredictionTarget,
+        sample: SelectedObservationSampleView<'_>,
     ) -> Result<(), SelectedObservationInspectionError> {
-        if sample.prediction_target != expected_prediction_target {
+        let row = InspectionRow::from_view(sample);
+        self.validate_prediction_target(row, sample.prediction_target())?;
+        self.validate_visibility(row, sample.visibility())?;
+        self.begin_row(row)?;
+        self.row
+            .as_mut()
+            .expect("row inspection starts before sample validation")
+            .push(sample)
+    }
+
+    fn push_run(
+        &mut self,
+        row: &SelectedObservationRunRow,
+        channel: &SelectedObservationRunChannel,
+        correlations: &[SelectedObservationRunCorrelation],
+    ) -> Result<(), SelectedObservationInspectionError> {
+        let inspection_row = InspectionRow::from_run(row);
+        self.validate_prediction_target(inspection_row, row.prediction_target)?;
+        for correlation in correlations {
+            self.validate_visibility(inspection_row, correlation.visibility)?;
+        }
+        self.begin_row(inspection_row)?;
+        self.row
+            .as_mut()
+            .expect("row inspection starts before run validation")
+            .push_run(inspection_row, channel, correlations)
+    }
+
+    fn validate_prediction_target(
+        &self,
+        row: InspectionRow,
+        target: SelectedPredictionTarget,
+    ) -> Result<(), SelectedObservationInspectionError> {
+        if target != self.prediction_target {
             return Err(
                 SelectedObservationInspectionError::PredictionTargetMismatch {
-                    measurement_set: sample.address.measurement_set,
-                    physical_row: sample.address.physical_row,
+                    measurement_set: row.measurement_set,
+                    physical_row: row.physical_row,
                 },
             );
         }
-        let visibility_matches = matches!(
-            (
-                self.expected.selected_columns().visibility(),
-                sample.visibility
-            ),
+        Ok(())
+    }
+
+    fn validate_visibility(
+        &self,
+        row: InspectionRow,
+        visibility: SelectedVisibilitySample,
+    ) -> Result<(), SelectedObservationInspectionError> {
+        let matches = matches!(
+            (self.expected.selected_columns().visibility(), visibility),
             (
                 VisibilityColumn::FloatData,
                 SelectedVisibilitySample::Float32(_)
@@ -411,61 +549,58 @@ impl<'a> SourceInspection<'a> {
                 SelectedVisibilitySample::Complex32(_)
             )
         );
-        if !visibility_matches {
+        if !matches {
             return Err(
                 SelectedObservationInspectionError::VisibilityStorageMismatch {
-                    measurement_set: sample.address.measurement_set,
-                    physical_row: sample.address.physical_row,
+                    measurement_set: row.measurement_set,
+                    physical_row: row.physical_row,
                 },
             );
         }
+        Ok(())
+    }
+
+    fn begin_row(&mut self, row: InspectionRow) -> Result<(), SelectedObservationInspectionError> {
         let start_new_row = self
             .row
             .as_ref()
-            .is_none_or(|row| row.physical_row != sample.address.physical_row);
+            .is_none_or(|current| current.physical_row != row.physical_row);
         if start_new_row {
-            if let Some(row) = self.row.take() {
-                let previous_row = row.physical_row;
-                row.finish()?;
-                if sample.address.physical_row < previous_row {
+            if let Some(current) = self.row.take() {
+                let previous_row = current.physical_row;
+                current.finish()?;
+                if row.physical_row < previous_row {
                     return Err(
                         SelectedObservationInspectionError::NonCanonicalSampleOrder {
-                            measurement_set: sample.address.measurement_set,
-                            physical_row: sample.address.physical_row,
+                            measurement_set: row.measurement_set,
+                            physical_row: row.physical_row,
                         },
                     );
                 }
             }
-            let data_description_id =
-                u32::try_from(sample.address.data_description_id).map_err(|_| {
-                    SelectedObservationInspectionError::DataDescriptionCoordinateMismatch {
-                        measurement_set: sample.address.measurement_set,
-                        physical_row: sample.address.physical_row,
-                    }
-                })?;
+            let data_description_id = u32::try_from(row.data_description_id).map_err(|_| {
+                SelectedObservationInspectionError::DataDescriptionCoordinateMismatch {
+                    measurement_set: row.measurement_set,
+                    physical_row: row.physical_row,
+                }
+            })?;
             self.rows
-                .push(SelectedMainRow::new(
-                    sample.address.physical_row,
-                    data_description_id,
-                ))
+                .push(SelectedMainRow::new(row.physical_row, data_description_id))
                 .map_err(|error| match error {
                     SelectedRowSequenceError::DuplicatePhysicalRow { .. }
                     | SelectedRowSequenceError::DescendingPhysicalRow { .. } => {
                         SelectedObservationInspectionError::NonCanonicalSampleOrder {
-                            measurement_set: sample.address.measurement_set,
-                            physical_row: sample.address.physical_row,
+                            measurement_set: row.measurement_set,
+                            physical_row: row.physical_row,
                         }
                     }
                     _ => SelectedObservationInspectionError::SelectedRowSequenceMismatch {
-                        measurement_set: sample.address.measurement_set,
+                        measurement_set: row.measurement_set,
                     },
                 })?;
-            self.row = Some(RowInspection::new(self.expected, sample)?);
+            self.row = Some(RowInspection::new(self.expected, row)?);
         }
-        self.row
-            .as_mut()
-            .expect("row inspection starts before sample validation")
-            .push(sample)
+        Ok(())
     }
 
     fn finish(self) -> Result<(), SelectedObservationInspectionError> {
@@ -502,14 +637,13 @@ struct RowInspection<'a> {
 impl<'a> RowInspection<'a> {
     fn new(
         expected: &'a MeasurementSetReadAccess,
-        sample: &SelectedObservationSample,
+        row: InspectionRow,
     ) -> Result<Self, SelectedObservationInspectionError> {
-        let address = sample.address;
-        let Ok(data_description_id) = u32::try_from(address.data_description_id) else {
+        let Ok(data_description_id) = u32::try_from(row.data_description_id) else {
             return Err(
                 SelectedObservationInspectionError::DataDescriptionCoordinateMismatch {
-                    measurement_set: address.measurement_set,
-                    physical_row: address.physical_row,
+                    measurement_set: row.measurement_set,
+                    physical_row: row.physical_row,
                 },
             );
         };
@@ -522,8 +656,8 @@ impl<'a> RowInspection<'a> {
         else {
             return Err(
                 SelectedObservationInspectionError::DataDescriptionCoordinateMismatch {
-                    measurement_set: address.measurement_set,
-                    physical_row: address.physical_row,
+                    measurement_set: row.measurement_set,
+                    physical_row: row.physical_row,
                 },
             );
         };
@@ -542,8 +676,8 @@ impl<'a> RowInspection<'a> {
             .find(|selection| selection.polarization_id() == data_description.polarization_id())
             .expect("compiled DATA_DESCRIPTION references an exact polarization");
         Ok(Self {
-            measurement_set: address.measurement_set,
-            physical_row: address.physical_row,
+            measurement_set: row.measurement_set,
+            physical_row: row.physical_row,
             data_description,
             spectral_window,
             correlation,
@@ -556,22 +690,61 @@ impl<'a> RowInspection<'a> {
 
     fn push(
         &mut self,
-        sample: &SelectedObservationSample,
+        sample: SelectedObservationSampleView<'_>,
     ) -> Result<(), SelectedObservationInspectionError> {
-        let address = sample.address;
-        if address.data_description_id
+        let address = sample.address();
+        let row = InspectionRow::from_view(sample);
+        self.validate_row(row)?;
+        self.push_member(
+            address.channel_index,
+            address.correlation_index,
+            address.correlation_type,
+            sample.input_weight(),
+        )
+    }
+
+    fn push_run(
+        &mut self,
+        row: InspectionRow,
+        channel: &SelectedObservationRunChannel,
+        correlations: &[SelectedObservationRunCorrelation],
+    ) -> Result<(), SelectedObservationInspectionError> {
+        self.validate_row(row)?;
+        for correlation in correlations {
+            self.push_member(
+                channel.channel_index,
+                correlation.correlation_index,
+                correlation.correlation_type,
+                correlation.input_weight,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn validate_row(&self, row: InspectionRow) -> Result<(), SelectedObservationInspectionError> {
+        if row.data_description_id
             != i32::try_from(self.data_description.data_description_id())
                 .expect("compiled DATA_DESC_ID fits the MeasurementSet Int domain")
-            || address.spectral_window_id != self.data_description.spectral_window_id()
-            || address.polarization_id != self.data_description.polarization_id()
+            || row.spectral_window_id != self.data_description.spectral_window_id()
+            || row.polarization_id != self.data_description.polarization_id()
         {
             return Err(
                 SelectedObservationInspectionError::DataDescriptionCoordinateMismatch {
-                    measurement_set: address.measurement_set,
-                    physical_row: address.physical_row,
+                    measurement_set: row.measurement_set,
+                    physical_row: row.physical_row,
                 },
             );
         }
+        Ok(())
+    }
+
+    fn push_member(
+        &mut self,
+        channel_index: u32,
+        correlation_index: u32,
+        correlation_type: CorrelationType,
+        input_weight: f32,
+    ) -> Result<(), SelectedObservationInspectionError> {
         let products = self.correlation.products();
         let expected_count = self
             .spectral_window
@@ -581,41 +754,41 @@ impl<'a> RowInspection<'a> {
             .expect("compiled selected-sample count fits usize");
         if self.next_ordinal >= expected_count {
             return Err(SelectedObservationInspectionError::DuplicateSample {
-                measurement_set: address.measurement_set,
-                physical_row: address.physical_row,
+                measurement_set: self.measurement_set,
+                physical_row: self.physical_row,
             });
         }
         let channel = self.spectral_window.channel_indices()[self.next_ordinal / products.len()];
         let product = products[self.next_ordinal % products.len()];
-        let actual = (address.channel_index, address.correlation_index);
+        let actual = (channel_index, correlation_index);
         if self.previous == Some(actual) {
             return Err(SelectedObservationInspectionError::DuplicateSample {
-                measurement_set: address.measurement_set,
-                physical_row: address.physical_row,
+                measurement_set: self.measurement_set,
+                physical_row: self.physical_row,
             });
         }
         if actual != (channel, product.correlation_index())
-            || address.correlation_type != product.correlation_type()
+            || correlation_type != product.correlation_type()
         {
             return Err(SelectedObservationInspectionError::UnexpectedSample {
-                measurement_set: address.measurement_set,
-                physical_row: address.physical_row,
+                measurement_set: self.measurement_set,
+                physical_row: self.physical_row,
             });
         }
         if self.weight_column == WeightColumn::Weight {
             let correlation_ordinal = self.next_ordinal % products.len();
             let observed = &mut self.broadcast_weights[correlation_ordinal];
             if let Some(expected) = observed {
-                if !canonical_f32_eq(*expected, sample.input_weight) {
+                if !canonical_f32_eq(*expected, input_weight) {
                     return Err(
                         SelectedObservationInspectionError::WeightBroadcastMismatch {
-                            measurement_set: address.measurement_set,
-                            physical_row: address.physical_row,
+                            measurement_set: self.measurement_set,
+                            physical_row: self.physical_row,
                         },
                     );
                 }
             } else {
-                *observed = Some(sample.input_weight);
+                *observed = Some(input_weight);
             }
         }
         self.previous = Some(actual);

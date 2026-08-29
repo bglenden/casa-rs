@@ -27,7 +27,7 @@ use crate::{
     ModelGenerationId, ModelLifecycle, ModelLifecycleError, PreparedFinalModel,
     SpectralOperatorError, SpectralOperatorPrimitives, SpectralPrimitiveCatalog,
     WeightingGenerationId, WeightingReplayCoverageId, WeightingReplayId,
-    runtime_adapter::CompleteDataOwnerResult,
+    runtime_adapter::CompleteDataOwnerResult, spectral_operator::ReusableNormalState,
 };
 
 /// Versioned Normal State Generation catalog minted by a Major Cycle.
@@ -77,6 +77,19 @@ pub struct FinalNormalState {
 }
 
 impl FinalNormalState {
+    pub(crate) fn into_reusable(self) -> ReusableNormalState {
+        ReusableNormalState::new(
+            self.problem,
+            self.geometry,
+            self.numerics,
+            self.weighting_commitment,
+            self.weighting_generation,
+            self.selected_generation,
+            self.continuum_transform_generation,
+            self.primitives,
+        )
+    }
+
     /// Return the completion identity.
     #[must_use]
     pub const fn completion_id(&self) -> FinalNormalStateCompletionId {

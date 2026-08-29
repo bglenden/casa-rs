@@ -10,13 +10,16 @@ use crate::{
 };
 use casa_imaging_model::{
     CompiledProblem, CorrelationProduct, ObservationSource, PointingCentreLaw,
-    SelectedPointingDirections, VisibilityColumn, WeightColumn,
+    SelectedObservationRunCorrelation, SelectedPointingDirections, SelectedSpectralEvaluation,
+    VisibilityColumn, WeightColumn,
 };
 use thiserror::Error;
 
 use super::access::{
-    BufferedObservationBlock, EvaluatedRowGeometry, SelectedChannel, SelectedCoordinates,
+    BoundObservationSource, BufferedObservationBlock, EvaluatedRowGeometry, SelectedChannel,
+    SelectedCoordinates,
 };
+use super::maximum_selected_correlations;
 use super::row_selection::CompiledRowPredicate;
 
 /// Once-only allocations shared by one bound selected-observation owner.
@@ -260,6 +263,17 @@ pub(crate) fn selected_content_plan(
         .selected_observation()
         .inspection_scratch_bytes()
         .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
+    let run_scratch_bytes = maximum_selected_correlations(problem)
+        .checked_mul(
+            size_of::<SelectedObservationRunCorrelation>()
+                .checked_add(size_of::<SelectedSpectralEvaluation>())
+                .ok_or(SelectedObservationContentPlanError::ByteOverflow)?,
+        )
+        .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
+    let row_replay_fixed_bytes = BoundObservationSource::row_replay_fixed_bytes(
+        source.selection().data_descriptions().len(),
+    )
+    .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
     // VecDeque retains storage for every ready block while Option retains the
     // active block inline. Heap payloads are charged separately below.
     let block_container_bytes = budget
@@ -269,7 +283,9 @@ pub(crate) fn selected_content_plan(
         .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
     let traversal_base_bytes = retained_bytes
         .checked_add(inspection_bytes)
+        .and_then(|bytes| bytes.checked_add(run_scratch_bytes))
         .and_then(|bytes| bytes.checked_add(block_container_bytes))
+        .and_then(|bytes| bytes.checked_add(row_replay_fixed_bytes))
         .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
     if traversal_base_bytes >= budget.available_bytes {
         return Err(
@@ -395,9 +411,11 @@ pub(crate) fn selected_content_plan(
     let traversal_bytes = budget.available_bytes - traversal_base_bytes;
     let fill_denominator = prior_resident_bytes_per_row
         .checked_add(fill_bytes_per_row)
+        .and_then(|bytes| bytes.checked_add(BoundObservationSource::row_replay_bytes_per_row()))
         .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
     let preparation_denominator = prior_resident_bytes_per_row
         .checked_add(preparation_bytes_per_row)
+        .and_then(|bytes| bytes.checked_add(BoundObservationSource::row_replay_bytes_per_row()))
         .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
     let rows_by_fill = traversal_bytes
         .checked_sub(fill_fixed_bytes)

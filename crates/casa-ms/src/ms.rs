@@ -13,8 +13,9 @@ use std::mem::size_of;
 use std::path::{Path, PathBuf};
 
 use casa_tables::{
-    ColumnBinding, ColumnOverrides, DataManagerKind, RequiredScalarColumnValues, Table, TableError,
-    TableInfo, TableOptions,
+    ColumnBinding, ColumnOverrides, DataManagerKind, RequiredScalarColumnDestination,
+    RequiredScalarColumnValuesMut, SelectedArray1DCellsMut, Table, TableError, TableInfo,
+    TableOptions,
 };
 #[cfg(unix)]
 use casa_tables::{LockMode, LockOptions};
@@ -136,10 +137,30 @@ pub(crate) struct MainRowSelectionBlock {
     observation_ids: Vec<i32>,
     array_ids: Vec<i32>,
     flag_rows: Vec<bool>,
-    uvw_m: Vec<[f64; 3]>,
+    uvw_m: Vec<f64>,
 }
 
 impl MainRowSelectionBlock {
+    fn with_capacity(rows: usize) -> MsResult<Self> {
+        let uvw_values = rows.checked_mul(3).ok_or_else(|| {
+            MsError::InvalidInput("MAIN row-selection UVW capacity overflow".to_string())
+        })?;
+        Ok(Self {
+            first_row: 0,
+            data_description_ids: Vec::with_capacity(rows),
+            field_ids: Vec::with_capacity(rows),
+            antenna1: Vec::with_capacity(rows),
+            antenna2: Vec::with_capacity(rows),
+            times_mjd_seconds: Vec::with_capacity(rows),
+            scan_numbers: Vec::with_capacity(rows),
+            state_ids: Vec::with_capacity(rows),
+            observation_ids: Vec::with_capacity(rows),
+            array_ids: Vec::with_capacity(rows),
+            flag_rows: Vec::with_capacity(rows),
+            uvw_m: Vec::with_capacity(uvw_values),
+        })
+    }
+
     /// Number of MAIN rows represented by this block.
     #[must_use]
     pub(crate) fn len(&self) -> usize {
@@ -161,7 +182,11 @@ impl MainRowSelectionBlock {
             observation_id: self.observation_ids[offset],
             array_id: self.array_ids[offset],
             flag_row: self.flag_rows[offset],
-            uvw_m: self.uvw_m[offset],
+            uvw_m: [
+                self.uvw_m[offset * 3],
+                self.uvw_m[offset * 3 + 1],
+                self.uvw_m[offset * 3 + 2],
+            ],
         })
     }
 
@@ -172,79 +197,119 @@ impl MainRowSelectionBlock {
     }
 }
 
-/// Fallible bounded iterator over contiguous MAIN row-selection blocks.
-pub(crate) struct MainRowSelectionBlocks<'a> {
-    table: &'a Table,
+/// Pull cursor over bounded reusable MAIN row-selection storage.
+pub(crate) struct MainRowSelectionCursor {
+    plan: crate::MsReadPlan,
     next_row: usize,
-    row_count: usize,
-    rows_per_block: usize,
+    offset: usize,
+    row_indices: Vec<usize>,
+    block: MainRowSelectionBlock,
 }
 
-impl Iterator for MainRowSelectionBlocks<'_> {
-    type Item = MsResult<MainRowSelectionBlock>;
+impl MainRowSelectionCursor {
+    pub(crate) const fn retained_bytes_per_row() -> usize {
+        MainRowSelectionFact::STORAGE_BYTES_PER_ROW + size_of::<usize>()
+    }
 
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.next_row == self.row_count {
-            return None;
+    pub(crate) fn next(
+        &mut self,
+        measurement_set: &MeasurementSet,
+    ) -> MsResult<Option<MainRowSelectionFact>> {
+        if self.offset < self.block.len() {
+            let fact = self
+                .block
+                .row(self.offset)
+                .expect("offset is bounded by MAIN selection block length");
+            self.offset += 1;
+            return Ok(Some(fact));
+        }
+        if self.next_row == self.plan.row_count {
+            return Ok(None);
         }
         let first_row = self.next_row;
         let end = first_row
-            .saturating_add(self.rows_per_block)
-            .min(self.row_count);
+            .saturating_add(self.plan.rows_per_block)
+            .min(self.plan.row_count);
+        self.row_indices.clear();
+        self.row_indices.extend(first_row..end);
+        fill_main_row_selection_block(
+            &measurement_set.main,
+            first_row,
+            &self.row_indices,
+            &mut self.block,
+        )?;
         self.next_row = end;
-        let row_indices = (first_row..end).collect::<Vec<_>>();
-        let result = read_main_row_selection_block(self.table, first_row, &row_indices);
-        if result.is_err() {
-            self.next_row = self.row_count;
-        }
-        Some(result)
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let remaining_rows = self.row_count - self.next_row;
-        let remaining_blocks = remaining_rows.div_ceil(self.rows_per_block);
-        (remaining_blocks, Some(remaining_blocks))
+        self.offset = 1;
+        Ok(self.block.row(0))
     }
 }
 
-impl ExactSizeIterator for MainRowSelectionBlocks<'_> {}
-
-fn read_main_row_selection_block(
+fn fill_main_row_selection_block(
     table: &Table,
     first_row: usize,
     row_indices: &[usize],
-) -> MsResult<MainRowSelectionBlock> {
-    let mut columns = table
-        .required_scalar_columns_owned_for_rows(
-            &[
+    block: &mut MainRowSelectionBlock,
+) -> MsResult<()> {
+    block.first_row = first_row;
+    {
+        let mut scalar_destinations = [
+            RequiredScalarColumnDestination::new(
                 "DATA_DESC_ID",
+                RequiredScalarColumnValuesMut::Int32(&mut block.data_description_ids),
+            ),
+            RequiredScalarColumnDestination::new(
                 "FIELD_ID",
+                RequiredScalarColumnValuesMut::Int32(&mut block.field_ids),
+            ),
+            RequiredScalarColumnDestination::new(
                 "ANTENNA1",
+                RequiredScalarColumnValuesMut::Int32(&mut block.antenna1),
+            ),
+            RequiredScalarColumnDestination::new(
                 "ANTENNA2",
+                RequiredScalarColumnValuesMut::Int32(&mut block.antenna2),
+            ),
+            RequiredScalarColumnDestination::new(
                 "TIME",
+                RequiredScalarColumnValuesMut::Float64(&mut block.times_mjd_seconds),
+            ),
+            RequiredScalarColumnDestination::new(
                 "SCAN_NUMBER",
+                RequiredScalarColumnValuesMut::Int32(&mut block.scan_numbers),
+            ),
+            RequiredScalarColumnDestination::new(
                 "STATE_ID",
+                RequiredScalarColumnValuesMut::Int32(&mut block.state_ids),
+            ),
+            RequiredScalarColumnDestination::new(
                 "OBSERVATION_ID",
+                RequiredScalarColumnValuesMut::Int32(&mut block.observation_ids),
+            ),
+            RequiredScalarColumnDestination::new(
                 "ARRAY_ID",
+                RequiredScalarColumnValuesMut::Int32(&mut block.array_ids),
+            ),
+            RequiredScalarColumnDestination::new(
                 "FLAG_ROW",
-            ],
+                RequiredScalarColumnValuesMut::Bool(&mut block.flag_rows),
+            ),
+        ];
+        table.required_scalar_columns_for_rows_into(row_indices, &mut scalar_destinations)?;
+    }
+    let uvw_shape = table
+        .column_accessor("UVW")?
+        .fill_array_cells_1d_typed_uncached(
             row_indices,
-        )
-        .map_err(MsError::from)?;
-    let block = MainRowSelectionBlock {
-        first_row,
-        data_description_ids: take_required_i32(&mut columns, "DATA_DESC_ID")?,
-        field_ids: take_required_i32(&mut columns, "FIELD_ID")?,
-        antenna1: take_required_i32(&mut columns, "ANTENNA1")?,
-        antenna2: take_required_i32(&mut columns, "ANTENNA2")?,
-        times_mjd_seconds: take_required_f64(&mut columns, "TIME")?,
-        scan_numbers: take_required_i32(&mut columns, "SCAN_NUMBER")?,
-        state_ids: take_required_i32(&mut columns, "STATE_ID")?,
-        observation_ids: take_required_i32(&mut columns, "OBSERVATION_ID")?,
-        array_ids: take_required_i32(&mut columns, "ARRAY_ID")?,
-        flag_rows: take_required_bool(&mut columns, "FLAG_ROW")?,
-        uvw_m: crate::selection::load_uvw_column(table, row_indices)?,
-    };
+            SelectedArray1DCellsMut::Float64(&mut block.uvw_m),
+        )?;
+    if uvw_shape.row_count != row_indices.len() || uvw_shape.axis0_count != 3 {
+        return Err(MsError::ColumnTypeMismatch {
+            column: "UVW".to_string(),
+            table: "MAIN".to_string(),
+            expected: "f64[3]".to_string(),
+            found: format!("f64[{}]", uvw_shape.axis0_count),
+        });
+    }
     let expected = row_indices.len();
     let lengths = [
         block.data_description_ids.len(),
@@ -257,63 +322,14 @@ fn read_main_row_selection_block(
         block.observation_ids.len(),
         block.array_ids.len(),
         block.flag_rows.len(),
-        block.uvw_m.len(),
+        block.uvw_m.len() / 3,
     ];
     if lengths.into_iter().any(|actual| actual != expected) {
         return Err(MsError::InvalidInput(
             "MAIN row-selection column lengths do not match the requested block".to_string(),
         ));
     }
-    Ok(block)
-}
-
-fn take_required_i32(
-    columns: &mut HashMap<String, RequiredScalarColumnValues>,
-    column: &str,
-) -> MsResult<Vec<i32>> {
-    match columns.remove(column) {
-        Some(RequiredScalarColumnValues::Int32(values)) => Ok(values),
-        Some(_) => Err(required_scalar_type_error(column, "Int32")),
-        None => Err(required_scalar_missing_error(column)),
-    }
-}
-
-fn take_required_f64(
-    columns: &mut HashMap<String, RequiredScalarColumnValues>,
-    column: &str,
-) -> MsResult<Vec<f64>> {
-    match columns.remove(column) {
-        Some(RequiredScalarColumnValues::Float64(values)) => Ok(values),
-        Some(_) => Err(required_scalar_type_error(column, "Float64")),
-        None => Err(required_scalar_missing_error(column)),
-    }
-}
-
-fn take_required_bool(
-    columns: &mut HashMap<String, RequiredScalarColumnValues>,
-    column: &str,
-) -> MsResult<Vec<bool>> {
-    match columns.remove(column) {
-        Some(RequiredScalarColumnValues::Bool(values)) => Ok(values),
-        Some(_) => Err(required_scalar_type_error(column, "Bool")),
-        None => Err(required_scalar_missing_error(column)),
-    }
-}
-
-fn required_scalar_type_error(column: &str, expected: &str) -> MsError {
-    MsError::ColumnTypeMismatch {
-        column: column.to_string(),
-        table: "MAIN".to_string(),
-        expected: expected.to_string(),
-        found: "different stored scalar type".to_string(),
-    }
-}
-
-fn required_scalar_missing_error(column: &str) -> MsError {
-    MsError::MissingColumn {
-        column: column.to_string(),
-        table: "MAIN".to_string(),
-    }
+    Ok(())
 }
 
 /// A MeasurementSet: main table + subtables.
@@ -598,11 +614,36 @@ impl MeasurementSet {
         self.main.row_count()
     }
 
-    /// Read the stored MAIN facts needed by row selection in bounded blocks.
-    pub(crate) fn main_row_selection_blocks(
+    /// Visit the stored MAIN facts needed by row selection in bounded reusable blocks.
+    pub(crate) fn visit_main_row_selection_blocks(
         &self,
         plan: crate::MsReadPlan,
-    ) -> MsResult<MainRowSelectionBlocks<'_>> {
+        mut visit: impl FnMut(&MainRowSelectionBlock),
+    ) -> MsResult<()> {
+        let mut cursor = self.main_row_selection_cursor(plan)?;
+        while cursor.next_row < cursor.plan.row_count {
+            let first_row = cursor.next_row;
+            let end = first_row
+                .saturating_add(cursor.plan.rows_per_block)
+                .min(cursor.plan.row_count);
+            cursor.row_indices.clear();
+            cursor.row_indices.extend(first_row..end);
+            fill_main_row_selection_block(
+                &self.main,
+                first_row,
+                &cursor.row_indices,
+                &mut cursor.block,
+            )?;
+            cursor.next_row = end;
+            visit(&cursor.block);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn main_row_selection_cursor(
+        &self,
+        plan: crate::MsReadPlan,
+    ) -> MsResult<MainRowSelectionCursor> {
         if plan.row_count != self.row_count() {
             return Err(MsError::InvalidInput(format!(
                 "MAIN row plan covers {} rows but the table has {}",
@@ -611,11 +652,12 @@ impl MeasurementSet {
             )));
         }
         if plan.row_count == 0 {
-            return Ok(MainRowSelectionBlocks {
-                table: &self.main,
+            return Ok(MainRowSelectionCursor {
+                plan,
                 next_row: 0,
-                row_count: 0,
-                rows_per_block: 1,
+                offset: 0,
+                row_indices: Vec::new(),
+                block: MainRowSelectionBlock::with_capacity(0)?,
             });
         }
         if plan.rows_per_block == 0 {
@@ -635,11 +677,12 @@ impl MeasurementSet {
                 plan.bytes_per_block
             )));
         }
-        Ok(MainRowSelectionBlocks {
-            table: &self.main,
+        Ok(MainRowSelectionCursor {
+            plan,
             next_row: 0,
-            row_count: plan.row_count,
-            rows_per_block: plan.rows_per_block,
+            offset: 0,
+            row_indices: Vec::with_capacity(plan.rows_per_block),
+            block: MainRowSelectionBlock::with_capacity(plan.rows_per_block)?,
         })
     }
 
@@ -1564,7 +1607,7 @@ mod tests {
     }
 
     #[test]
-    fn main_row_selection_blocks_follow_the_explicit_read_plan() {
+    fn main_row_selection_blocks_follow_the_explicit_read_plan_and_reuse_storage() {
         let mut ms = MeasurementSet::create_memory(MeasurementSetBuilder::new()).unwrap();
         let schema = ms.main_table().schema().unwrap().clone();
         for (row, data_description_id) in [2, 5, 5, 7, 11].into_iter().enumerate() {
@@ -1599,6 +1642,10 @@ mod tests {
                 .add_row(RecordValue::new(fields))
                 .unwrap();
         }
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("selection.ms");
+        ms.save_as(&path).unwrap();
+        let ms = MeasurementSet::open(&path).unwrap();
         let plan = crate::MsReadPlan::new(
             ms.row_count(),
             crate::MsSelectionIoBudget {
@@ -1609,27 +1656,32 @@ mod tests {
             },
         )
         .unwrap();
+        let mut block_count = 0;
+        let mut storage = None;
+        let mut facts = Vec::new();
+        let mut last = None;
+        ms.visit_main_row_selection_blocks(plan, |block| {
+            block_count += 1;
+            assert!(block.len() <= 2);
+            let current = (
+                block.data_description_ids.as_ptr(),
+                block.field_ids.as_ptr(),
+                block.uvw_m.as_ptr(),
+            );
+            match storage {
+                Some(expected) => assert_eq!(current, expected),
+                None => storage = Some(current),
+            }
+            for fact in block.rows() {
+                facts.push((fact.physical_row(), fact.data_description_id()));
+                last = Some(fact);
+            }
+        })
+        .expect("bounded reusable DATA_DESC_ID scan");
 
-        let blocks = ms
-            .main_row_selection_blocks(plan)
-            .expect("exact plan belongs to this MAIN table")
-            .collect::<MsResult<Vec<_>>>()
-            .expect("bounded DATA_DESC_ID scan");
-
-        assert_eq!(blocks.len(), 3);
-        assert!(blocks.iter().all(|block| block.len() <= 2));
-        assert_eq!(
-            blocks
-                .iter()
-                .flat_map(|block| {
-                    block
-                        .rows()
-                        .map(|fact| (fact.physical_row(), fact.data_description_id()))
-                })
-                .collect::<Vec<_>>(),
-            vec![(0, 2), (1, 5), (2, 5), (3, 7), (4, 11)]
-        );
-        let last = blocks[2].rows().next().unwrap();
+        assert_eq!(block_count, 3);
+        assert_eq!(facts, vec![(0, 2), (1, 5), (2, 5), (3, 7), (4, 11)]);
+        let last = last.unwrap();
         assert_eq!(last.field_id(), 14);
         assert_eq!(last.antenna1(), 24);
         assert_eq!(last.antenna2(), 34);

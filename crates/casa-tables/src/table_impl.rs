@@ -12,7 +12,11 @@ use crate::storage::{
     CompositeStorage, RequiredScalarColumnData, RetainedTableReadMetadata, StorageProfiler,
     TABLE_CONTROL_FILE, TableDatContents, TableDatResult, read_table_dat_dispatch,
 };
-use crate::table::{SelectedArray1DCells, SelectedArray2DCells, TableError};
+use crate::table::{
+    RequiredScalarColumnDestination, SelectedArray1DCells, SelectedArray1DCellsMut,
+    SelectedArray1DShape, SelectedArray2DCells, SelectedArray2DCellsMut, SelectedArray2DShape,
+    TableError,
+};
 
 type ScalarColumnValueMap = HashMap<String, Vec<Option<ScalarValue>>>;
 type RequiredScalarColumnValueMap = HashMap<String, RequiredScalarColumnData>;
@@ -594,6 +598,35 @@ impl TableImpl {
         Ok(values)
     }
 
+    fn fill_array_column_rows_2d_channel_range_typed_now(
+        source: &LazyRowsSource,
+        column: &str,
+        row_indices: &[usize],
+        channel_start: usize,
+        channel_count: usize,
+        destination: SelectedArray2DCellsMut<'_>,
+    ) -> Result<Option<SelectedArray2DShape>, TableError> {
+        let storage = CompositeStorage;
+        let read_metadata = source.read_metadata()?;
+        storage
+            .fill_array_column_rows_2d_channel_range_typed_from_plain(
+                &source.path,
+                &read_metadata.table_dat,
+                &read_metadata.tiled,
+                column,
+                row_indices,
+                channel_start,
+                channel_count,
+                destination,
+            )
+            .map_err(|err| {
+                TableError::Storage(format!(
+                    "failed to fill typed selected channel range for array column '{column}' from table {}: {err}",
+                    source.path.display()
+                ))
+            })
+    }
+
     fn load_array_column_rows_1d_typed_now(
         source: &LazyRowsSource,
         column: &str,
@@ -631,6 +664,31 @@ impl TableImpl {
             );
         }
         Ok(values)
+    }
+
+    fn fill_array_column_rows_1d_typed_now(
+        source: &LazyRowsSource,
+        column: &str,
+        row_indices: &[usize],
+        destination: SelectedArray1DCellsMut<'_>,
+    ) -> Result<SelectedArray1DShape, TableError> {
+        let storage = CompositeStorage;
+        let read_metadata = source.read_metadata()?;
+        storage
+            .fill_array_column_rows_1d_typed_from_plain(
+                &source.path,
+                &read_metadata.table_dat,
+                &read_metadata.tiled,
+                column,
+                row_indices,
+                destination,
+            )
+            .map_err(|err| {
+                TableError::Storage(format!(
+                    "failed to fill typed selected 1-D rows for array column '{column}' from table {}: {err}",
+                    source.path.display()
+                ))
+            })
     }
 
     fn load_scalar_column_rows_now(
@@ -1207,6 +1265,45 @@ impl TableImpl {
         Ok(Some(values_by_column))
     }
 
+    pub(crate) fn required_scalar_columns_for_rows_into(
+        &self,
+        row_indices: &[usize],
+        destinations: &mut [RequiredScalarColumnDestination<'_>],
+    ) -> Result<(), TableError> {
+        if self.loaded_rows.get().is_some() || self.lazy_rows.is_none() {
+            return Err(TableError::Storage(
+                "required scalar reusable fills require a lazy disk-backed table".to_string(),
+            ));
+        }
+        if destinations.iter().any(|destination| {
+            self.pending_scalar_cells
+                .by_column
+                .contains_key(destination.column())
+        }) {
+            return Err(TableError::Storage(
+                "required scalar reusable fills do not support pending scalar-cell overrides"
+                    .to_string(),
+            ));
+        }
+        let source = self
+            .lazy_rows
+            .as_ref()
+            .expect("lazy source checked before reusable selected scalar load");
+        CompositeStorage
+            .fill_named_required_scalar_column_rows_from_plain(
+                &source.path,
+                source.plain_table_dat()?,
+                row_indices,
+                destinations,
+            )
+            .map_err(|err| {
+                TableError::Storage(format!(
+                    "failed to fill required selected scalar columns from table {}: {err}",
+                    source.path.display()
+                ))
+            })
+    }
+
     pub(crate) fn array_cell(
         &self,
         row_index: usize,
@@ -1415,6 +1512,39 @@ impl TableImpl {
         )
     }
 
+    pub(crate) fn array_cells_2d_channel_range_typed_uncached_into(
+        &self,
+        row_indices: &[usize],
+        column: &str,
+        channel_start: usize,
+        channel_count: usize,
+        destination: SelectedArray2DCellsMut<'_>,
+    ) -> Result<Option<SelectedArray2DShape>, TableError> {
+        if self.loaded_rows.get().is_some() {
+            return Err(TableError::Storage(format!(
+                "{column} typed selected channel reads require a lazy disk-backed table"
+            )));
+        }
+        if self.pending_array_cells.by_column.contains_key(column) {
+            return Err(TableError::Storage(format!(
+                "{column} typed selected channel reads do not support pending array-cell overrides"
+            )));
+        }
+        let Some(source) = &self.lazy_rows else {
+            return Err(TableError::Storage(format!(
+                "{column} typed selected channel reads require a lazy disk-backed table"
+            )));
+        };
+        Self::fill_array_column_rows_2d_channel_range_typed_now(
+            source,
+            column,
+            row_indices,
+            channel_start,
+            channel_count,
+            destination,
+        )
+    }
+
     pub(crate) fn array_cells_1d_typed_uncached(
         &self,
         row_indices: &[usize],
@@ -1437,6 +1567,30 @@ impl TableImpl {
             )));
         };
         Self::load_array_column_rows_1d_typed_now(source, column, row_indices)
+    }
+
+    pub(crate) fn array_cells_1d_typed_uncached_into(
+        &self,
+        row_indices: &[usize],
+        column: &str,
+        destination: SelectedArray1DCellsMut<'_>,
+    ) -> Result<SelectedArray1DShape, TableError> {
+        if self.loaded_rows.get().is_some() {
+            return Err(TableError::Storage(format!(
+                "{column} typed selected 1-D reads require a lazy disk-backed table"
+            )));
+        }
+        if self.pending_array_cells.by_column.contains_key(column) {
+            return Err(TableError::Storage(format!(
+                "{column} typed selected 1-D reads do not support pending array-cell overrides"
+            )));
+        }
+        let Some(source) = &self.lazy_rows else {
+            return Err(TableError::Storage(format!(
+                "{column} typed selected 1-D reads require a lazy disk-backed table"
+            )));
+        };
+        Self::fill_array_column_rows_1d_typed_now(source, column, row_indices, destination)
     }
 
     pub(crate) fn row_mut(

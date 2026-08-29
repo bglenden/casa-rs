@@ -1225,6 +1225,31 @@ real 1.145408
         )
         self.assertEqual("1", env["CASA_RS_STANDARD_MFS_PROFILE_DETAIL"])
 
+    def test_casa_unlimited_nmajor_flows_to_the_matched_benchmark(self) -> None:
+        manifest = {
+            "id": "unlimited-major-cycles",
+            "mode_id": "standard-mfs-clean",
+            "dataset": {"key": "medium.ms", "path": "/tmp/medium.ms"},
+            "imaging": {
+                "mode": "clean",
+                "specmode": "mfs",
+                "gridder": "standard",
+                "nmajor": -1,
+            },
+        }
+
+        plan = run_workload.build_plan(
+            manifest_path=Path("manifest.json"),
+            manifest=manifest,
+            repeats_override=1,
+            run_label_override=None,
+            storage_label_override=None,
+            dry_run=True,
+        )
+
+        self.assertEqual("-1", plan["command"]["env"]["IMAGER_BENCH_NMAJOR"])
+        self.assertEqual(-1, plan["mode"]["nmajor"])
+
     def test_imaging_overrides_support_backend_sweeps(self) -> None:
         manifest = {
             "id": "backend-sweep",

@@ -39,6 +39,7 @@ pub enum ObservationTransactionPublicationScope {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ObservationTransactionWork {
     publication_scope: ObservationTransactionPublicationScope,
+    source_free_reconstruction: bool,
     initial_consistency_check: WorkNodeId,
     observation_reads: BTreeSet<WorkDependency>,
     final_model_preparation: Option<WorkNodeId>,
@@ -61,6 +62,28 @@ impl ObservationTransactionWork {
     ) -> Self {
         Self {
             publication_scope: ObservationTransactionPublicationScope::ReconstructionOnly,
+            source_free_reconstruction: false,
+            initial_consistency_check,
+            observation_reads: BTreeSet::new(),
+            final_model_preparation: None,
+            post_replay_reconciliation: Some(post_replay_reconciliation),
+            product_staging: BTreeSet::new(),
+            visibility_writeback: None,
+            commit,
+        }
+    }
+
+    /// Name reconstruction checkpoints whose scientific input is an already
+    /// sealed runtime artifact rather than the selected observation.
+    #[must_use]
+    pub(crate) const fn new_source_free_reconstruction(
+        initial_consistency_check: WorkNodeId,
+        post_replay_reconciliation: WorkNodeId,
+        commit: WorkNodeId,
+    ) -> Self {
+        Self {
+            publication_scope: ObservationTransactionPublicationScope::ReconstructionOnly,
+            source_free_reconstruction: true,
             initial_consistency_check,
             observation_reads: BTreeSet::new(),
             final_model_preparation: None,
@@ -80,6 +103,7 @@ impl ObservationTransactionWork {
     ) -> Self {
         Self {
             publication_scope: ObservationTransactionPublicationScope::ProductPublication,
+            source_free_reconstruction: false,
             initial_consistency_check,
             observation_reads: BTreeSet::new(),
             final_model_preparation: None,
@@ -98,6 +122,7 @@ impl ObservationTransactionWork {
     ) -> Self {
         Self {
             publication_scope: ObservationTransactionPublicationScope::SealedProductPublication,
+            source_free_reconstruction: false,
             initial_consistency_check: publication_check,
             observation_reads: BTreeSet::new(),
             final_model_preparation: None,
@@ -124,6 +149,10 @@ impl ObservationTransactionWork {
     #[must_use]
     pub const fn publication_scope(&self) -> ObservationTransactionPublicationScope {
         self.publication_scope
+    }
+
+    pub(crate) const fn source_free_reconstruction(&self) -> bool {
+        self.source_free_reconstruction
     }
 
     /// Return the consistency check that must precede observation reads.
@@ -356,13 +385,16 @@ pub(crate) fn bind_observation_transaction(
     } else {
         0
     };
-    work.observation_reads = validate_transaction_nodes(
-        contract.read_set().sources().len(),
-        phase_visibility_columns,
-        dag.nodes(),
-        &work,
-    )?;
-    if work.publication_scope != ObservationTransactionPublicationScope::SealedProductPublication {
+    let read_sources = if work.source_free_reconstruction {
+        0
+    } else {
+        contract.read_set().sources().len()
+    };
+    work.observation_reads =
+        validate_transaction_nodes(read_sources, phase_visibility_columns, dag.nodes(), &work)?;
+    if work.publication_scope != ObservationTransactionPublicationScope::SealedProductPublication
+        && !work.source_free_reconstruction
+    {
         validate_measurement_set_lock_identities(&measurement_sets, dag.nodes(), &work)?;
     }
     Ok(BoundObservationTransaction {
@@ -408,8 +440,11 @@ fn validate_transaction_nodes(
         &work.commit,
         work.visibility_writeback.as_ref(),
     )?;
-    if observation_reads.is_empty() {
+    if observation_reads.is_empty() && !work.source_free_reconstruction {
         return invalid("observation read event set is empty");
+    }
+    if !observation_reads.is_empty() && work.source_free_reconstruction {
+        return invalid("source-free reconstruction declares an observation read");
     }
     let read_nodes =
         require_exact_completion_events(nodes, &observation_reads, "observation read")?;

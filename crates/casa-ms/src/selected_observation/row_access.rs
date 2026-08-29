@@ -230,8 +230,7 @@ impl MeasurementSet {
         })?;
         let plan = MsReadPlan::new(self.row_count(), io)
             .map_err(|error| MsError::InvalidInput(error.to_string()))?;
-        for block in self.main_row_selection_blocks(plan)? {
-            let block = block?;
+        self.visit_main_row_selection_blocks(plan, |block| {
             for offset in 0..block.len() {
                 let fact = block
                     .row(offset)
@@ -248,8 +247,7 @@ impl MeasurementSet {
                     });
                 }
             }
-        }
-        Ok(())
+        })
     }
 }
 

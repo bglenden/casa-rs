@@ -15,6 +15,7 @@ pub use availability::{
     ImplementationUnavailable, TaskRequirement, UnsupportedRequirement,
     validate_installed_implementation,
 };
+pub use casa_imaging_model::HogbomIterationAccounting;
 pub use casa_product_sink::CasaImageProductSink;
 pub use continuum_request::{
     ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumBeamPolicy, ContinuumImagingRequest,
@@ -41,14 +42,14 @@ use casa_imaging_reconstruction::{
 use casa_imaging_runtime::{
     AttemptBoundObservationCompletion, BuildIdentity, ExecutionAttemptId, ExecutionProvenance,
     ExecutionReceipt, ExecutionReceiptStore, FenceKind, FinalVisibilityReplay,
-    FrozenWeightingReservation, ImplementationContractMetadata, ImplementationRegistry,
-    ImplementationRegistryId, ObservationReadCompletionContext, PlannerCostModelProfileBootstrap,
-    PlanningBindings, ResourceAuthority, ResourcePolicy, RunBindings, RunToCompletion,
-    SerialProductPublicationExecutor, SerialProductPublicationPlan, SerialProductPublicationPolicy,
-    SerialProductPublicationRegistry, SerialProductPublicationSink, SpectralCycleExecutionPolicy,
-    SpectralCycleExecutor, SpectralCyclePassInput, SpectralCyclePlan, SpectralCycleRegistry,
-    StorageIoResourceBinding, WorkExecutionContext, WorkImplementation, WorkImplementationId,
-    WorkMeasurements, plan, run,
+    FrozenWeightingReservation, GriddedNormalReplayStorage, ImplementationContractMetadata,
+    ImplementationRegistry, ImplementationRegistryId, ObservationReadCompletionContext,
+    PlannerCostModelProfileBootstrap, PlanningBindings, ResourceAuthority, ResourcePolicy,
+    RunBindings, RunToCompletion, SerialProductPublicationExecutor, SerialProductPublicationPlan,
+    SerialProductPublicationPolicy, SerialProductPublicationRegistry, SerialProductPublicationSink,
+    SpectralCycleExecutionPolicy, SpectralCycleExecutor, SpectralCyclePassInput, SpectralCyclePlan,
+    SpectralCyclePlanParts, SpectralCycleRegistry, StorageIoResourceBinding, WorkExecutionContext,
+    WorkImplementation, WorkImplementationId, WorkMeasurements, plan, run,
 };
 use casa_ms::{
     ResolvedSelectedObservationAccess, SelectedObservationResolutionRequest,
@@ -75,6 +76,8 @@ pub struct ApplicationRuntime {
     /// Exact profiled storage resources shared by selected-observation reads,
     /// receipt commits, and product publication.
     pub storage_io: StorageIoResourceBinding,
+    /// Writable run-local directory capability for the private normal-operator spill.
+    pub gridded_normal_storage: GriddedNormalReplayStorage,
     /// Fixed-point confidence in parts per million.
     pub confidence_parts_per_million: u32,
     /// Host-use policy bound at planning and execution.
@@ -141,9 +144,11 @@ pub struct NativeApplicationOutcome {
     pub minor_cycles: Vec<NativeMinorCycleOutcome>,
     /// Number of executed major passes, including the initial pass.
     pub major_cycle_count: usize,
-    /// Total accepted component updates across all minor cycles.
+    /// Total component count charged to the reported task/controller budget.
     pub total_minor_iterations: usize,
-    /// Final model/residual visibility product identities and provenance.
+    /// Total number of components actually applied across all minor cycles.
+    pub total_actual_minor_iterations: usize,
+    /// Final per-visibility product identities and provenance, when requested.
     pub visibility_products: Option<VisibilityProductCompletion>,
     /// Atomic product-publication receipt.
     pub publication_receipt: ExecutionReceipt,
@@ -162,22 +167,38 @@ pub struct NativeApplicationOutcome {
 pub struct NativeMinorCycleOutcome {
     /// One-based minor-cycle ordinal within this reconstruction.
     pub cycle: usize,
-    /// Number of accepted component updates.
+    /// Cumulative controller iterations before this cycle started.
+    pub iterations_entering: usize,
+    /// Component count charged to the reported controller budget.
     pub iterations: usize,
+    /// Cumulative controller iterations after this cycle completed.
+    pub total_iterations: usize,
+    /// Cumulative actual component count before this cycle started.
+    pub actual_iterations_entering: usize,
+    /// Number of components actually applied in this cycle.
+    pub actual_iterations: usize,
+    /// Cumulative actual component count after this cycle completed.
+    pub total_actual_iterations: usize,
     /// Cumulative absolute component flux accepted in this cycle.
     pub total_flux: f64,
+    /// Normalized residual peak at entry to this cycle.
+    pub initial_peak_flux: f64,
     /// Final normalized residual peak.
     pub final_peak_flux: f64,
     /// Robust RMS used for `nsigma` stopping, when enabled.
     pub noise_rms: Option<f64>,
     /// Effective absolute/noise/cycle threshold used by the owner.
     pub effective_threshold: f64,
+    /// Global absolute/noise threshold before applying the cycle threshold.
+    pub global_threshold: f64,
     /// PSF-derived cycle threshold, when enabled.
     pub cycle_threshold: Option<f64>,
     /// Scientific terminal reason.
     pub stop_reason: NativeMinorCycleStopReason,
     /// Number of exact Clark residual refreshes.
     pub clark_refreshes: usize,
+    /// One-based major replay ordinal associated with this cycle's accepted update.
+    pub associated_replay_ordinal: usize,
     /// Bounded leading component sequence for CASA/Rust first-divergence diagnostics.
     pub recorded_components: Vec<casa_imaging_reconstruction::MinorCycleComponent>,
     /// Exact x-major reconstruction support used for component placement.
@@ -310,12 +331,13 @@ where
         publication,
     } = input.native?;
     let algorithm = problem.reconstruction().algorithm().clone();
-    let initial_access = input.initial_access.with_minimum_content_budget(problem)?;
+    let initial_access = input.initial_access;
     let residency = initial_access.certify_residency(problem)?;
     let write_targets =
         SelectedVisibilityWriteTargets::new(input.write_model_column, input.write_corrected_data);
-    let initial_write = matches!(algorithm, ReconstructionAlgorithm::Dirty)
-        && (write_targets.model_data() || write_targets.corrected_data());
+    let visibility_write_requested = write_targets.model_data() || write_targets.corrected_data();
+    let initial_write =
+        matches!(algorithm, ReconstructionAlgorithm::Dirty) && visibility_write_requested;
     let planning_registry =
         PlanningRegistry::new(runtime.registry, runtime.implementation.clone(), problem);
     let mut policy = execution_policy(&runtime, residency.clone());
@@ -335,13 +357,24 @@ where
         _ => unreachable!("native validation admits only continuum minor-cycle solvers"),
     };
     let minor_node = planned.minor_cycle_node().cloned();
-    let (physical, weighting, complete, resources, pass, _) = planned.into_parts();
+    let SpectralCyclePlanParts {
+        physical,
+        weighting,
+        complete_data: complete,
+        source_resources: resources,
+        pass,
+        gridded_normal_storage: planned_storage,
+        gridded_normal_reservation_bytes,
+        ..
+    } = planned.into_parts();
+    let replay_proof_bytes = initial_access.replay_proof_retained_heap_bytes(problem)?;
     let frozen_reservation = (!matches!(algorithm, ReconstructionAlgorithm::Dirty))
         .then(|| {
             FrozenWeightingReservation::acquire(
                 &runtime.authority,
                 runtime.resource_policy.clone(),
                 weighting.planned_residency(),
+                replay_proof_bytes,
             )
         })
         .transpose()?;
@@ -362,6 +395,13 @@ where
         executor = executor.with_frozen_weighting_reservation(
             frozen_reservation.expect("non-dirty execution reserves frozen weighting"),
         );
+        executor = executor.with_planned_gridded_normal_storage(
+            &planned_storage
+                .ok_or_else(|| boxed("clean initial plan omitted gridded replay storage"))?,
+            gridded_normal_reservation_bytes.ok_or_else(|| {
+                boxed("clean initial plan omitted gridded replay reservation ceiling")
+            })?,
+        )?;
         let program = MinorCycleProgram::for_algorithm(
             algorithm.clone(),
             problem.reconstruction().controls(),
@@ -418,8 +458,10 @@ where
         minor_cycles,
         major_cycle_count,
         total_minor_iterations,
+        total_actual_minor_iterations,
         visibility_products,
         visibility_replay,
+        visibility_output_receipt,
     ) = match algorithm {
         ReconstructionAlgorithm::Dirty => {
             let result = registry
@@ -437,8 +479,10 @@ where
                 Vec::new(),
                 1,
                 0,
+                0,
                 visibility_products,
                 initial_terminal_replay,
+                None,
             )
         }
         ReconstructionAlgorithm::Hogbom
@@ -448,30 +492,54 @@ where
                 .implementation()
                 .take_frozen_weighting()
                 .ok_or_else(|| boxed("initial major omitted frozen weighting"))?;
+            let mut gridded_replay = registry
+                .implementation()
+                .take_gridded_normal_replay()
+                .ok_or_else(|| boxed("initial major omitted sealed gridded-normal replay"))?;
             let mut minor = registry
                 .implementation()
                 .take_reconstruction_cycle_completion()
                 .ok_or_else(|| boxed("reconstruction cycle omitted scientific evidence"))?;
             let controls = problem.reconstruction().controls();
-            let maximum_cycles = controls.maximum_major_cycles().unwrap_or(1);
+            // CASA's `nmajor=-1` leaves the major-cycle count unbounded, but
+            // every productive cycle consumes at least one of the total
+            // minor-iteration budget. That budget is therefore the finite
+            // execution ceiling when no explicit major-cycle limit exists.
+            let maximum_cycles = controls
+                .maximum_major_cycles()
+                .unwrap_or(controls.max_minor_iterations());
             let mut cycle = 1_usize;
             let mut total_iterations = 0_usize;
+            let mut total_actual_iterations = 0_usize;
             let mut mask_plan = input.mask.clone();
             let mut minor_outcomes = Vec::new();
             loop {
+                let iterations_entering = total_iterations;
+                let actual_iterations_entering = total_actual_iterations;
                 total_iterations = total_iterations
-                    .checked_add(minor.evidence().iterations())
+                    .checked_add(minor.evidence().controller_iterations())
                     .ok_or_else(|| boxed("minor-cycle iteration count overflowed"))?;
+                total_actual_iterations = total_actual_iterations
+                    .checked_add(minor.evidence().iterations())
+                    .ok_or_else(|| boxed("actual minor-cycle iteration count overflowed"))?;
                 let minor_outcome = NativeMinorCycleOutcome {
                     cycle,
-                    iterations: minor.evidence().iterations(),
+                    iterations_entering,
+                    iterations: minor.evidence().controller_iterations(),
+                    total_iterations,
+                    actual_iterations_entering,
+                    actual_iterations: minor.evidence().iterations(),
+                    total_actual_iterations,
                     total_flux: minor.evidence().total_flux(),
+                    initial_peak_flux: minor.evidence().initial_peak_flux(),
                     final_peak_flux: minor.evidence().final_peak_flux(),
                     noise_rms: minor.evidence().noise_rms(),
                     effective_threshold: minor.evidence().effective_threshold(),
+                    global_threshold: minor.evidence().global_threshold(),
                     cycle_threshold: minor.evidence().cycle_threshold(),
                     stop_reason: minor.evidence().stop_reason().into(),
                     clark_refreshes: minor.evidence().clark_refreshes(),
+                    associated_replay_ordinal: cycle,
                     recorded_components: minor.evidence().recorded_components().copied().collect(),
                     mask_support: minor.mask().support().to_vec(),
                     mask_generation: minor.mask().generation_id(),
@@ -479,6 +547,27 @@ where
                     mask_normal_state: minor.mask().normal_state_completion(),
                     auto_mask: minor.auto_mask_evidence(),
                 };
+                eprintln!(
+                    "imaging_minor_cycle_summary cycle={} associated_replay_ordinal={} controller_iterations_entering={} controller_iterations={} controller_iterations_total={} actual_iterations_entering={} actual_iterations={} actual_iterations_total={} initial_peak_flux={} final_peak_flux={} model_update_abs_flux={} global_threshold={} effective_threshold={} cycle_threshold={} stop_reason={:?} clark_refreshes={}",
+                    minor_outcome.cycle,
+                    minor_outcome.associated_replay_ordinal,
+                    minor_outcome.iterations_entering,
+                    minor_outcome.iterations,
+                    minor_outcome.total_iterations,
+                    minor_outcome.actual_iterations_entering,
+                    minor_outcome.actual_iterations,
+                    minor_outcome.total_actual_iterations,
+                    minor_outcome.initial_peak_flux,
+                    minor_outcome.final_peak_flux,
+                    minor_outcome.total_flux,
+                    minor_outcome.global_threshold,
+                    minor_outcome.effective_threshold,
+                    minor_outcome
+                        .cycle_threshold
+                        .map_or_else(|| "none".to_owned(), |value| value.to_string()),
+                    minor_outcome.stop_reason,
+                    minor_outcome.clark_refreshes,
+                );
                 let continue_cleaning = cycle < maximum_cycles
                     && total_iterations < controls.max_minor_iterations()
                     && minor.evidence().requests_reconciliation();
@@ -493,19 +582,7 @@ where
                 let applied_mask = minor.mask().clone();
                 minor_outcomes.push(minor_outcome);
                 let final_input = minor.into_final_major_input();
-                let resolved = resolve_selected_observation(input.observation.clone())?;
-                let (_, access) = resolved.into_parts();
-                let access = access.with_minimum_content_budget(problem)?;
-                let final_residency = access.certify_residency(problem)?;
-                let source_state = access.source_state().clone();
-                let mut final_policy = execution_policy(&runtime, final_residency);
-                if !continue_cleaning
-                    && (write_targets.model_data() || write_targets.corrected_data())
-                {
-                    final_policy = final_policy.with_visibility_write(
-                        access.selected_visibility_storage_plan(write_targets)?,
-                    );
-                }
+                let final_policy = execution_policy(&runtime, residency.clone());
                 let ordinal =
                     u32::try_from(cycle).map_err(|_| boxed("major-cycle ordinal exceeds u32"))?;
                 let final_planned = if continue_cleaning {
@@ -515,6 +592,7 @@ where
                         final_policy,
                         &final_input,
                         ordinal,
+                        gridded_replay.descriptor(),
                     )?
                 } else {
                     SpectralCyclePlan::final_major_at(
@@ -523,23 +601,38 @@ where
                         final_policy,
                         &final_input,
                         ordinal,
+                        gridded_replay.descriptor(),
                     )?
                 };
-                let (physical, weighting, complete, resources, pass, minor_node) =
-                    final_planned.into_parts();
-                let mut executor = SpectralCycleExecutor::new(
+                let SpectralCyclePlanParts {
+                    physical,
+                    weighting,
+                    complete_data: complete,
+                    pass,
+                    minor_cycle_node: minor_node,
+                    gridded_replay: planned_replay,
+                    gridded_normal_storage: planned_storage,
+                    gridded_normal_reservation_bytes: retained_storage_bytes,
+                    ..
+                } = final_planned.into_parts();
+                let mut executor = SpectralCycleExecutor::new_gridded(
                     runtime.implementation.clone(),
                     problem.clone(),
                     weighting,
-                    resources,
                     pass,
                     complete,
-                    access.open(problem)?,
                     ExecutableModelProblem::from_compiled(problem.clone())?,
                     SpectralCyclePassInput::FinalMajor(final_input),
-                )
+                    planned_replay
+                        .ok_or_else(|| boxed("later-major plan omitted gridded replay identity"))?,
+                    &planned_storage
+                        .ok_or_else(|| boxed("later-major plan omitted gridded replay storage"))?,
+                    retained_storage_bytes.ok_or_else(|| {
+                        boxed("later-major plan omitted retained replay storage ceiling")
+                    })?,
+                    gridded_replay,
+                )?
                 .with_frozen_weighting(frozen_weighting);
-                let mut terminal_replay = None;
                 if continue_cleaning {
                     let remaining = controls
                         .max_minor_iterations()
@@ -552,20 +645,6 @@ where
                         next_mask.clone(),
                         program,
                     );
-                } else {
-                    let (replay, sink) =
-                        if write_targets.model_data() || write_targets.corrected_data() {
-                            FinalVisibilityReplay::with_visibility_write(
-                                std::path::PathBuf::from(input.observation.locator()),
-                                source_state,
-                                visibility_write_selection(problem, input.observation.selection())?,
-                                write_targets,
-                            )?
-                        } else {
-                            FinalVisibilityReplay::new()
-                        };
-                    executor = executor.with_final_visibility_sink(sink);
-                    terminal_replay = Some(replay);
                 }
                 let registry = SpectralCycleRegistry::new(
                     runtime.registry,
@@ -592,6 +671,10 @@ where
                     .implementation()
                     .take_frozen_weighting()
                     .ok_or_else(|| boxed("later major omitted reusable frozen weighting"))?;
+                gridded_replay = registry
+                    .implementation()
+                    .take_gridded_normal_replay()
+                    .ok_or_else(|| boxed("later major omitted reusable gridded-normal replay"))?;
                 if continue_cleaning {
                     minor = registry
                         .implementation()
@@ -606,7 +689,90 @@ where
                     .take_completion()
                     .ok_or_else(|| boxed("final-major execution omitted scientific evidence"))?
                     .into_completion();
-                let replay = terminal_replay.expect("terminal pass creates visibility replay");
+                if !visibility_write_requested {
+                    break (
+                        completion,
+                        Some(applied_mask),
+                        Some(receipt),
+                        minor_outcomes,
+                        cycle + 1,
+                        total_iterations,
+                        total_actual_iterations,
+                        None,
+                        None,
+                        None,
+                    );
+                }
+                let resolved = resolve_selected_observation(input.observation.clone())?;
+                let (_, access) = resolved.into_parts();
+                let output_residency = access.certify_residency(problem)?;
+                let source_state = access.source_state().clone();
+                let output_policy = execution_policy(&runtime, output_residency)
+                    .with_visibility_write(access.selected_visibility_storage_plan(write_targets)?);
+                let output_planned = SpectralCyclePlan::selected_output(
+                    problem,
+                    &planning_registry,
+                    output_policy,
+                    ordinal,
+                )?;
+                let SpectralCyclePlanParts {
+                    physical: output_physical,
+                    weighting: output_weighting,
+                    complete_data: output_complete,
+                    source_resources: output_resources,
+                    pass: output_pass,
+                    ..
+                } = output_planned.into_parts();
+                let selected = frozen_weighting.rebind_selected(access, problem)?;
+                let (visibility_replay, sink) = FinalVisibilityReplay::with_visibility_write(
+                    std::path::PathBuf::from(input.observation.locator()),
+                    source_state,
+                    visibility_write_selection(problem, input.observation.selection())?,
+                    write_targets,
+                )?;
+                let output_executor = SpectralCycleExecutor::new_selected_output(
+                    runtime.implementation.clone(),
+                    problem.clone(),
+                    output_weighting,
+                    output_resources,
+                    output_pass,
+                    output_complete,
+                    selected,
+                    completion,
+                    frozen_weighting,
+                )
+                .with_final_visibility_sink(sink);
+                let output_registry = SpectralCycleRegistry::new(
+                    runtime.registry,
+                    runtime.implementation.clone(),
+                    problem,
+                    output_executor,
+                );
+                let output_plan = plan(
+                    problem,
+                    PlanningBindings::new(
+                        runtime.registry,
+                        runtime.resource_policy.clone(),
+                        runtime.cost_model,
+                    ),
+                    &runtime.authority,
+                    &output_registry,
+                    &runtime.receipts,
+                    move |_, _| Ok::<_, std::convert::Infallible>(vec![output_physical]),
+                )?;
+                let output_attempt = selected_output_attempt(attempt);
+                run_phase(
+                    problem,
+                    &output_plan,
+                    &output_registry,
+                    &runtime,
+                    output_attempt,
+                )?;
+                let output_receipt = runtime.receipts.open(output_attempt)?;
+                let completion = output_registry
+                    .implementation()
+                    .take_selected_output_completion()
+                    .ok_or_else(|| boxed("selected-output traversal omitted scientific state"))?;
                 break (
                     completion,
                     Some(applied_mask),
@@ -614,8 +780,10 @@ where
                     minor_outcomes,
                     cycle + 1,
                     total_iterations,
-                    Some(replay.completion()?),
-                    Some(replay),
+                    total_actual_iterations,
+                    Some(visibility_replay.completion()?),
+                    Some(visibility_replay),
+                    Some(output_receipt),
                 );
             }
         }
@@ -634,8 +802,10 @@ where
             minor_cycles,
             major_cycle_count,
             total_minor_iterations,
+            total_actual_minor_iterations,
             visibility_products,
             visibility_replay,
+            visibility_output_receipt,
         },
     )
 }
@@ -690,8 +860,10 @@ struct PriorPhaseOutcome {
     minor_cycles: Vec<NativeMinorCycleOutcome>,
     major_cycle_count: usize,
     total_minor_iterations: usize,
+    total_actual_minor_iterations: usize,
     visibility_products: Option<VisibilityProductCompletion>,
     visibility_replay: Option<FinalVisibilityReplay>,
+    visibility_output_receipt: Option<ExecutionReceipt>,
 }
 
 fn execution_policy(
@@ -707,6 +879,7 @@ fn execution_policy(
         runtime.minor_cycle_bytes,
         runtime.confidence_parts_per_million,
     )
+    .with_gridded_normal_storage(runtime.gridded_normal_storage.clone())
 }
 
 fn run_phase(
@@ -748,6 +921,13 @@ fn major_cycle_attempt(base: ExecutionAttemptId, ordinal: u32) -> ExecutionAttem
     ExecutionAttemptId::from_sha256(hash.finalize().into())
 }
 
+fn selected_output_attempt(science: ExecutionAttemptId) -> ExecutionAttemptId {
+    let mut hash = Sha256::new();
+    hash.update(b"casa-rs:imaging:selected-output-attempt:v1");
+    hash.update(science.as_bytes());
+    ExecutionAttemptId::from_sha256(hash.finalize().into())
+}
+
 fn publish_products<S>(
     problem: &CompiledProblem,
     scientific: MajorCycleCompletion,
@@ -774,8 +954,9 @@ where
         .is_some_and(FinalVisibilityReplay::has_visibility_write)
         .then(|| {
             prior
-                .final_major_receipt
+                .visibility_output_receipt
                 .clone()
+                .or_else(|| prior.final_major_receipt.clone())
                 .unwrap_or_else(|| prior.initial_receipt.clone())
         });
     let planning_registry =
@@ -854,6 +1035,7 @@ where
         minor_cycles: prior.minor_cycles,
         major_cycle_count: prior.major_cycle_count,
         total_minor_iterations: prior.total_minor_iterations,
+        total_actual_minor_iterations: prior.total_actual_minor_iterations,
         visibility_products: prior.visibility_products,
         publication_receipt,
         visibility_write_receipt,

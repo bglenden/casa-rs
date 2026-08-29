@@ -29,6 +29,7 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 mod continuum_transform;
+mod gridded_normal_operator;
 mod major_cycle;
 mod mask;
 mod minor_cycle;
@@ -49,12 +50,20 @@ pub use spectral_operator::{
 /// visibility. Application code should use the runtime's plan-bound T19 API.
 #[doc(hidden)]
 pub mod runtime_adapter {
+    pub use crate::gridded_normal_operator::{
+        GRIDDED_NORMAL_OPERATOR_RECORD_BYTES, GriddedNormalOperatorApply,
+        GriddedNormalOperatorBlock, GriddedNormalOperatorBlockMeasurements,
+        GriddedNormalOperatorCompiler, GriddedNormalOperatorProgram,
+    };
     pub use crate::spectral_operator::{
         CompleteDataOwnerCompletion, CompleteDataOwnerResult, CompleteDataOwnerState,
-        FinalVisibilitySample, PreparedSpectralOperator, SpectralOperatorWorkload,
-        SpectralSlabPlan, prepare_spectral_operator, spectral_operator_workload,
+        FinalVisibilitySample, PreparedSpectralOperator, SpectralOperatorPass,
+        SpectralOperatorWorkload, SpectralSlabPlan, prepare_spectral_operator,
+        spectral_operator_workload,
     };
-    pub use crate::weighting::{FusedWeightingPhase, begin_natural_weighting_stream};
+    pub use crate::weighting::{
+        FusedWeightingPhase, WeightingReplayPhase, begin_natural_weighting_stream,
+    };
 }
 
 pub use continuum_transform::{
@@ -73,7 +82,7 @@ pub use mask::{
 pub use minor_cycle::{
     ClarkApproximation, ComponentDivergence, MinorCycleComponent, MinorCycleError,
     MinorCycleEvidence, MinorCycleEvidenceId, MinorCycleModelPlane, MinorCycleProgram,
-    MinorCycleResult, MinorCycleStopReason, run_minor_cycle,
+    MinorCycleResult, MinorCycleStopReason, MinorCycleValidity, run_minor_cycle,
 };
 pub use psf_beam::{
     DEFAULT_PSF_FIT_CUTOFF, PsfBeamFitError, RestoringBeam, fit_restoring_beam,
@@ -88,11 +97,12 @@ pub use spectral_sampling::{
     SpectralStencilError, SpectralStencilReceipt, SpectralStencilValidity, compile_spectral_stencil,
 };
 pub use weighting::{
-    FusedWeightingPhase, WeightingAlgorithmState, WeightingDensityPhase, WeightingError,
-    WeightingExecutionLimits, WeightingGenerationId, WeightingPlan, WeightingReplayChunk,
-    WeightingReplayCoverageId, WeightingReplayId, WeightingReplaySummary, WeightingResidency,
-    WeightingSampleValue, WeightingSpectralValue, begin_natural_weighting_stream,
-    begin_weighting_generation, plan_weighting,
+    FrozenWeightingCoverageProof, FusedWeightingPhase, WeightingAlgorithmState,
+    WeightingDensityPhase, WeightingError, WeightingExecutionLimits, WeightingGenerationId,
+    WeightingPlan, WeightingReplayChunk, WeightingReplayCoverageId, WeightingReplayId,
+    WeightingReplaySummary, WeightingResidency, WeightingSampleValue, WeightingSelectedSample,
+    WeightingSpectralValue, begin_natural_weighting_stream, begin_weighting_generation,
+    plan_weighting,
 };
 
 const AUTHORITY_DOMAIN: &[u8] = b"casa-rs-model-lifecycle-authority";
@@ -111,7 +121,7 @@ const REPROJECTED_PROOF_VERSION: u32 = 1;
 const FINAL_COMPLETION_DOMAIN: &[u8] = b"casa-rs-final-model-completion";
 const FINAL_COMPLETION_VERSION: u32 = 2;
 const FINAL_NORMAL_STATE_DOMAIN: &[u8] = b"casa-rs-final-normal-state";
-const FINAL_NORMAL_STATE_VERSION: u32 = 3;
+const FINAL_NORMAL_STATE_VERSION: u32 = 2;
 const MAJOR_CYCLE_DOMAIN: &[u8] = b"casa-rs-major-cycle-completion";
 const MAJOR_CYCLE_VERSION: u32 = 2;
 

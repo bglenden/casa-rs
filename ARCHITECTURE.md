@@ -207,11 +207,13 @@ SPW/DDID/channel selection, correlation coordinate, selected data/flag/weight
 column, coordinate and metadata generation, independent optional `MODEL_DATA`
 state, consistency token, reference-data identity, and input-model identity.
 Selected MAIN rows retain source and selected counts, the exact used-DDID set,
-the canonical ordered `(physical row, DATA_DESC_ID)` manifest, and its
-content-derived identity. Visibility samples, stored MAIN facts, content
-blocks, and execution order remain absent. The exact manifest lets retained
-access seek directly to sparse selected rows without reading the intervening
-physical row span. The snapshot is the
+and the content-derived identity of the canonical ordered
+`(physical row, DATA_DESC_ID)` sequence. They do not retain the row corpus.
+Visibility samples, stored MAIN facts, content blocks, and execution order
+remain absent. Retained access re-evaluates the row predicate in physical MAIN
+order, validates the resulting sequence against that compact commitment, and
+keeps only the current bounded source block; a sparse selection therefore reads
+but never materializes the intervening physical row span. The snapshot is the
 storage owner's logical-manifest commitment, not an intrinsic digest of all
 MeasurementSet science bytes. Its identity is independent of source location
 and request order, while a separate provenance identity retains both.
@@ -265,8 +267,12 @@ provider state and never discover runtime data inside the selected-observation
 path.
 `casa-imaging-model` owns the closed backend-free sample schema,
 compiler commitment, a closed validation pass, and a distinct content-derived
-generation computed from the actual canonical sample stream. Incremental
-inspection state and generation encoding never cross its public boundary. The storage
+generation computed from the actual canonical sample stream. Its affine
+incremental inspection cursor is an opaque workspace coordination type: only a
+compiled problem can construct it, its fields and generation encoder remain
+private, and applications and frontends cannot mint or complete one. This lets
+`casa-ms` validate bounded blocks without moving model semantics into the
+storage owner. The storage
 completion binds logical snapshot identity, provenance, physical access,
 content generation, and retained-access traversal. After synchronous work
 completion and every declared fence, if any, of the owning typed observation-read node

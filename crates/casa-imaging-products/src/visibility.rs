@@ -16,7 +16,10 @@ use thiserror::Error;
 
 const MODEL_VISIBILITY_DOMAIN: &[u8] = b"casa-rs-final-model-visibility-product";
 const RESIDUAL_VISIBILITY_DOMAIN: &[u8] = b"casa-rs-final-residual-visibility-product";
-const VISIBILITY_PRODUCT_VERSION: u32 = 2;
+const VISIBILITY_ADDRESS_DOMAIN: &[u8] = b"casa-rs-final-visibility-address-stream";
+const MODEL_VALUE_DOMAIN: &[u8] = b"casa-rs-final-model-visibility-values";
+const RESIDUAL_VALUE_DOMAIN: &[u8] = b"casa-rs-final-residual-visibility-values";
+const VISIBILITY_PRODUCT_VERSION: u32 = 3;
 
 macro_rules! visibility_identity {
     ($name:ident, $summary:literal) => {
@@ -63,8 +66,9 @@ visibility_identity!(
 pub struct VisibilityProductAuthority {
     problem: CompiledProblemId,
     final_model: ModelGenerationId,
-    model_hasher: Sha256,
-    residual_hasher: Sha256,
+    address_hasher: Sha256,
+    model_value_hasher: Sha256,
+    residual_value_hasher: Sha256,
     sample_count: u64,
     last_address: Option<(u64, u32, u32)>,
 }
@@ -73,21 +77,21 @@ impl VisibilityProductAuthority {
     /// Begin product projection for one exact problem and final model.
     #[must_use]
     pub fn new(problem: CompiledProblemId, final_model: ModelGenerationId) -> Self {
-        let mut model_hasher = Sha256::new();
-        model_hasher.update(MODEL_VISIBILITY_DOMAIN);
-        model_hasher.update(VISIBILITY_PRODUCT_VERSION.to_le_bytes());
-        model_hasher.update(problem.as_bytes());
-        model_hasher.update(final_model.as_bytes());
-        let mut residual_hasher = Sha256::new();
-        residual_hasher.update(RESIDUAL_VISIBILITY_DOMAIN);
-        residual_hasher.update(VISIBILITY_PRODUCT_VERSION.to_le_bytes());
-        residual_hasher.update(problem.as_bytes());
-        residual_hasher.update(final_model.as_bytes());
+        let mut address_hasher = Sha256::new();
+        address_hasher.update(VISIBILITY_ADDRESS_DOMAIN);
+        address_hasher.update(VISIBILITY_PRODUCT_VERSION.to_le_bytes());
+        let mut model_value_hasher = Sha256::new();
+        model_value_hasher.update(MODEL_VALUE_DOMAIN);
+        model_value_hasher.update(VISIBILITY_PRODUCT_VERSION.to_le_bytes());
+        let mut residual_value_hasher = Sha256::new();
+        residual_value_hasher.update(RESIDUAL_VALUE_DOMAIN);
+        residual_value_hasher.update(VISIBILITY_PRODUCT_VERSION.to_le_bytes());
         Self {
             problem,
             final_model,
-            model_hasher,
-            residual_hasher,
+            address_hasher,
+            model_value_hasher,
+            residual_value_hasher,
             sample_count: 0,
             last_address: None,
         }
@@ -108,10 +112,9 @@ impl VisibilityProductAuthority {
             if self.last_address.is_some_and(|previous| order <= previous) {
                 return Err(VisibilityProductError::NoncanonicalAddress);
             }
-            encode_address(&mut self.model_hasher, address);
-            encode_address(&mut self.residual_hasher, address);
-            encode_complex(&mut self.model_hasher, sample.predicted());
-            encode_complex(&mut self.residual_hasher, sample.residual());
+            encode_address(&mut self.address_hasher, address);
+            encode_complex(&mut self.model_value_hasher, sample.predicted());
+            encode_complex(&mut self.residual_value_hasher, sample.residual());
             self.last_address = Some(order);
             self.sample_count = self
                 .sample_count
@@ -124,23 +127,14 @@ impl VisibilityProductAuthority {
     /// Close both products against the terminal selected/weighting generations.
     #[must_use]
     pub fn finish(
-        mut self,
+        self,
         selected_generation: SelectedObservationGenerationId,
         continuum_transform_generation: Option<ContinuumTransformGenerationId>,
         weighting_generation: WeightingGenerationId,
     ) -> VisibilityProductCompletion {
-        for hasher in [&mut self.model_hasher, &mut self.residual_hasher] {
-            hasher.update(selected_generation.as_bytes());
-            match continuum_transform_generation {
-                Some(generation) => {
-                    hasher.update([1]);
-                    hasher.update(generation.as_bytes());
-                }
-                None => hasher.update([0]),
-            }
-            hasher.update(weighting_generation.as_bytes());
-            hasher.update(self.sample_count.to_le_bytes());
-        }
+        let address_digest: [u8; 32] = self.address_hasher.finalize().into();
+        let model_value_digest: [u8; 32] = self.model_value_hasher.finalize().into();
+        let residual_value_digest: [u8; 32] = self.residual_value_hasher.finalize().into();
         VisibilityProductCompletion {
             problem: self.problem,
             final_model: self.final_model,
@@ -148,11 +142,27 @@ impl VisibilityProductAuthority {
             continuum_transform_generation,
             weighting_generation,
             sample_count: self.sample_count,
-            model: ModelVisibilityProductId(LogicalIdentity::from_sha256(
-                self.model_hasher.finalize().into(),
+            model: ModelVisibilityProductId(product_identity(
+                MODEL_VISIBILITY_DOMAIN,
+                self.problem,
+                self.final_model,
+                selected_generation,
+                continuum_transform_generation,
+                weighting_generation,
+                self.sample_count,
+                address_digest,
+                model_value_digest,
             )),
-            residual: ResidualVisibilityProductId(LogicalIdentity::from_sha256(
-                self.residual_hasher.finalize().into(),
+            residual: ResidualVisibilityProductId(product_identity(
+                RESIDUAL_VISIBILITY_DOMAIN,
+                self.problem,
+                self.final_model,
+                selected_generation,
+                continuum_transform_generation,
+                weighting_generation,
+                self.sample_count,
+                address_digest,
+                residual_value_digest,
             )),
         }
     }
@@ -244,4 +254,36 @@ fn encode_address(hasher: &mut Sha256, address: SelectedSampleAddress) {
 fn encode_complex(hasher: &mut Sha256, value: num_complex::Complex64) {
     hasher.update(value.re.to_bits().to_le_bytes());
     hasher.update(value.im.to_bits().to_le_bytes());
+}
+
+#[allow(clippy::too_many_arguments)]
+fn product_identity(
+    domain: &[u8],
+    problem: CompiledProblemId,
+    final_model: ModelGenerationId,
+    selected_generation: SelectedObservationGenerationId,
+    continuum_transform_generation: Option<ContinuumTransformGenerationId>,
+    weighting_generation: WeightingGenerationId,
+    sample_count: u64,
+    address_digest: [u8; 32],
+    value_digest: [u8; 32],
+) -> LogicalIdentity {
+    let mut hasher = Sha256::new();
+    hasher.update(domain);
+    hasher.update(VISIBILITY_PRODUCT_VERSION.to_le_bytes());
+    hasher.update(problem.as_bytes());
+    hasher.update(final_model.as_bytes());
+    hasher.update(selected_generation.as_bytes());
+    match continuum_transform_generation {
+        Some(generation) => {
+            hasher.update([1]);
+            hasher.update(generation.as_bytes());
+        }
+        None => hasher.update([0]),
+    }
+    hasher.update(weighting_generation.as_bytes());
+    hasher.update(sample_count.to_le_bytes());
+    hasher.update(address_digest);
+    hasher.update(value_digest);
+    LogicalIdentity::from_sha256(hasher.finalize().into())
 }

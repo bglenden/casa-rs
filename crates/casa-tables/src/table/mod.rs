@@ -368,6 +368,37 @@ impl SelectedArray1DCells {
     }
 }
 
+/// Caller-owned typed vectors for selected 1-D array-cell reads.
+///
+/// The storage manager resizes and fills the supplied vector directly. This
+/// is the reusable-buffer counterpart to [`SelectedArray1DCells`].
+#[derive(Debug)]
+pub enum SelectedArray1DCellsMut<'a> {
+    /// Boolean destination, packed as `[row][axis0]`.
+    Bool(&'a mut Vec<bool>),
+    /// 32-bit float destination, packed as `[row][axis0]`.
+    Float32(&'a mut Vec<f32>),
+    /// 64-bit float destination, packed as `[row][axis0]`.
+    Float64(&'a mut Vec<f64>),
+    /// 32-bit complex destination, packed as `[row][axis0]`.
+    Complex32(&'a mut Vec<Complex32>),
+    /// 64-bit complex destination, packed as `[row][axis0]`.
+    Complex64(&'a mut Vec<Complex64>),
+}
+
+impl SelectedArray1DCellsMut<'_> {
+    /// Primitive type accepted by this destination.
+    pub fn primitive_type(&self) -> PrimitiveType {
+        match self {
+            Self::Bool(_) => PrimitiveType::Bool,
+            Self::Float32(_) => PrimitiveType::Float32,
+            Self::Float64(_) => PrimitiveType::Float64,
+            Self::Complex32(_) => PrimitiveType::Complex32,
+            Self::Complex64(_) => PrimitiveType::Complex64,
+        }
+    }
+}
+
 /// Typed selected 2-D array cells for MS visibility-column primitive types.
 #[derive(Clone, Debug, PartialEq)]
 pub enum SelectedArray2DCells {
@@ -427,6 +458,57 @@ impl SelectedArray2DCells {
             Self::Complex64(values) => values.channel_count(),
         }
     }
+}
+
+/// Caller-owned typed vectors for selected 2-D array-cell reads.
+///
+/// The storage manager resizes and fills the supplied vector directly. This
+/// is the reusable-buffer counterpart to [`SelectedArray2DCells`].
+#[derive(Debug)]
+pub enum SelectedArray2DCellsMut<'a> {
+    /// Boolean destination, packed as `[channel][row][axis0]`.
+    Bool(&'a mut Vec<bool>),
+    /// 32-bit float destination, packed as `[channel][row][axis0]`.
+    Float32(&'a mut Vec<f32>),
+    /// 64-bit float destination, packed as `[channel][row][axis0]`.
+    Float64(&'a mut Vec<f64>),
+    /// 32-bit complex destination, packed as `[channel][row][axis0]`.
+    Complex32(&'a mut Vec<Complex32>),
+    /// 64-bit complex destination, packed as `[channel][row][axis0]`.
+    Complex64(&'a mut Vec<Complex64>),
+}
+
+impl SelectedArray2DCellsMut<'_> {
+    /// Primitive type accepted by this destination.
+    pub fn primitive_type(&self) -> PrimitiveType {
+        match self {
+            Self::Bool(_) => PrimitiveType::Bool,
+            Self::Float32(_) => PrimitiveType::Float32,
+            Self::Float64(_) => PrimitiveType::Float64,
+            Self::Complex32(_) => PrimitiveType::Complex32,
+            Self::Complex64(_) => PrimitiveType::Complex64,
+        }
+    }
+}
+
+/// Shape of one packed selected 1-D array-cell read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SelectedArray1DShape {
+    /// Number of selected rows.
+    pub row_count: usize,
+    /// Size of axis 0 in every selected cell.
+    pub axis0_count: usize,
+}
+
+/// Shape of one packed selected 2-D array-cell read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SelectedArray2DShape {
+    /// Number of selected rows.
+    pub row_count: usize,
+    /// Size of axis 0 in every selected cell.
+    pub axis0_count: usize,
+    /// Number of selected axis-1 channels.
+    pub channel_count: usize,
 }
 
 /// A scalar value that starts at `start_row` and remains active until the next
@@ -1452,6 +1534,42 @@ impl RequiredScalarColumnValues {
     /// Returns true when this column vector is empty.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+}
+
+/// Caller-owned typed vector for one required scalar-column read.
+#[derive(Debug)]
+pub enum RequiredScalarColumnValuesMut<'a> {
+    /// Boolean scalar destination.
+    Bool(&'a mut Vec<bool>),
+    /// 32-bit signed integer scalar destination.
+    Int32(&'a mut Vec<i32>),
+    /// 32-bit floating-point scalar destination.
+    Float32(&'a mut Vec<f32>),
+    /// 64-bit floating-point scalar destination.
+    Float64(&'a mut Vec<f64>),
+}
+
+/// Named caller-owned destination for a required scalar-column batch read.
+#[derive(Debug)]
+pub struct RequiredScalarColumnDestination<'a> {
+    column: &'a str,
+    values: RequiredScalarColumnValuesMut<'a>,
+}
+
+impl<'a> RequiredScalarColumnDestination<'a> {
+    /// Bind one column name to its typed reusable vector.
+    pub const fn new(column: &'a str, values: RequiredScalarColumnValuesMut<'a>) -> Self {
+        Self { column, values }
+    }
+
+    /// Column name bound to this destination.
+    pub const fn column(&self) -> &str {
+        self.column
+    }
+
+    pub(crate) fn values_mut(&mut self) -> &mut RequiredScalarColumnValuesMut<'a> {
+        &mut self.values
     }
 }
 

@@ -1,0 +1,126 @@
+{
+  "schema_version": 1,
+  "record_kind": "issue540_full_run_evidence_ledger",
+  "truth_class": "recorded_observation",
+  "work_issue": 540,
+  "recorded_date": "2026-08-28",
+  "host": {
+    "operating_system": "macOS 26.5.2 (25F84)",
+    "architecture": "arm64",
+    "memory_bytes": 34359738368,
+    "data_volume": "/Volumes/GLENDENNING"
+  },
+  "workload": {
+    "manifest": "tools/perf/imager/workloads/wave3-standard-mfs-single-term-heavy-wave2-serial.json",
+    "manifest_sha256": "4f636b23046455c085b2926c4eafff15d0d9e45a81ebc2efea308f0b5e4046d1",
+    "selected_channels": 64,
+    "image_pixels": [1024, 1024],
+    "cell_arcsec": 0.25,
+    "weighting": "briggs",
+    "robust": 0.5,
+    "deconvolver": "hogbom",
+    "niter": 500,
+    "cycleniter": 50,
+    "nmajor": -1,
+    "workers": 1,
+    "fft_backend": "rustfft"
+  },
+  "frozen_casa": {
+    "wall_seconds": 688.996833,
+    "parallel": false,
+    "rerun_permitted": false,
+    "product_prefix": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/products/20260827T185907Z-wave3-standard-mfs-single-term-heavy-wave2-075607db/casa/casa",
+    "embedded_log_records": 94,
+    "fullsummary": false,
+    "cycle_trace_status": "recovered_from_run_bound_global_logger",
+    "major_cycles": 11,
+    "minor_cycles": 10,
+    "iterations": 500,
+    "stop_reason": "iteration limit",
+    "stage_timing_status": "not_retained",
+    "forensics": "tools/perf/imager/evidence/artifacts/20260828-issue540-casa-cycle-forensics.md"
+  },
+  "historical_casa_observation": {
+    "wall_seconds": 733.660,
+    "status": "historical_only_source_receipt_not_retained"
+  },
+  "rust_control": {
+    "revision": "b8c050ac92284ffc53548381a953c00b62c19bbb",
+    "binary_retention": "not_retained_as_a_verified_standalone_artifact",
+    "wall_seconds": 3011.981146,
+    "result_log": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/issue540-proof-control-b8c050ac9/results/20260828T194042Z-wave3-standard-mfs-single-term-heavy-wave2-serial-095537bb.log",
+    "result_log_sha256": "933f0ca97d45ca36d781fa3b321f121fe9d9670be05644757e9dd8f5d6286f59",
+    "comparison": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/issue540-proof-control-b8c050ac9/results/20260828T194042Z-wave3-standard-mfs-single-term-heavy-wave2-serial-095537bb.comparison.json",
+    "comparison_sha256": "3d3b3f0f21d64fd1ac8a87f3d8cf02e55dbed6664c6290d9ca9cad967aec7940"
+  },
+  "rust_candidate": {
+    "implementation_revision": "271b4e106227b5b4bfe313cffd41c236b17e0157",
+    "evidence_revision": "b978778a02805942c82f41a28b5a759842aafe6a",
+    "binary_retention": "not_retained_as_a_verified_standalone_artifact",
+    "wall_seconds": 2227.762623,
+    "result_log": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/issue540-proof-candidate-271b4e106/results/20260828T203321Z-wave3-standard-mfs-single-term-heavy-wave2-serial-2473f1dc.log",
+    "result_log_sha256": "4166c16de51ee36a42ef8aa6481f65ae04d5b5e0276c865782d0b366355c92c7",
+    "comparison": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/issue540-proof-candidate-271b4e106/results/20260828T203321Z-wave3-standard-mfs-single-term-heavy-wave2-serial-2473f1dc.comparison.json",
+    "comparison_sha256": "72f877791f5409e9dffbc01c108e4941d92c95b37e701e1da430c8ffef63d194"
+  },
+  "scientific_control_candidate": {
+    "status": "focused_niter_50_discriminator_passed_full_product_gate_pending",
+    "change": "remove unmatched 100 Jy cumulative update cap and assign exact view validity in reconstruction",
+    "run_id": "20260828T224434Z-wave3-standard-mfs-single-term-heavy-wave2-serial-d4d588ff",
+    "wall_seconds": 515.065332,
+    "passes": {
+      "density": 1,
+      "initial_weighted_replay": 1,
+      "final_weighted_replay": 1
+    },
+    "first_cycle_stop": "IterationBound",
+    "staleness_bound_observed": false,
+    "result": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/issue540-exact-view-first-cycle/results/20260828T224434Z-wave3-standard-mfs-single-term-heavy-wave2-serial-d4d588ff.json",
+    "log_sha256": "0cebb38427f1280480cb2c15efe5db84d54dbbd1e3aa8ef6319296620ee5b4ef",
+    "checked_in_evidence": "tools/perf/imager/evidence/artifacts/20260828-issue540-exact-minor-cycle-view.md",
+    "scientific_acceptance": "intermediate cycle values are diagnostic only; final products require normalized RMS <= 0.001 on declared valid support"
+  },
+  "shared_execution_shape": {
+    "density_passes": 1,
+    "initial_weighted_replays": 1,
+    "later_weighted_replays": 16,
+    "row_blocks_per_pass": 188,
+    "rows_per_pass": 4094064,
+    "samples_per_pass": 524040192,
+    "logical_source_bytes_per_pass": 5146238448,
+    "source_reads_per_pass": 3572,
+    "source_slots": 2,
+    "workers": 1,
+    "peak_live_source_bytes": 62272500
+  },
+  "outcomes": {
+    "candidate_control_wall_saved_seconds": 784.218523,
+    "candidate_control_improvement_fraction": 0.260366345,
+    "candidate_to_casa_wall_ratio": 3.233342327,
+    "performance": "fail",
+    "candidate_control_products": "bit_identical",
+    "casa_image_normalized_rms": 0.0021506409602029064,
+    "casa_model_normalized_rms": 0.0504555781,
+    "casa_residual_normalized_rms": 0.0110697379,
+    "casa_psf_normalized_rms": 0.00000067869,
+    "casa_sumwt_difference": 0.0,
+    "correctness": "fail"
+  },
+  "existing_checked_in_evidence": {
+    "control": {
+      "path": "tools/perf/imager/evidence/artifacts/20260827-issue540-instrumented-current-rust-control.json",
+      "sha256": "7bc348429794afdc12ae816ccf51275b1648eaba6f5dbc6186f07040f5be60c7"
+    },
+    "proof_candidate": {
+      "path": "tools/perf/imager/evidence/artifacts/20260828-issue540-proof-derivation-candidate.json",
+      "sha256": "daa53869dc03c4f76fce556434f560931b43528e8436d55759c0efb50f971d43"
+    }
+  },
+  "measurement_limitations": [
+    "The retained benchmark comparisons used sampled product comparison.",
+    "A separate full control-versus-candidate comparison reported exact arrays but remains a temporary artifact rather than a retained benchmark bundle.",
+    "The benchmark wrapper exited after imaging because metadata.parity is null when metadata parity is not required; this is a reporting-schema defect, not an imaging failure.",
+    "CASA cycle history survives in the run-bound global logger, but literal task-return fields and CASA stage timings were not retained.",
+    "The historical 97.81-second and 41.790-second runs are mechanism clues until source and binary provenance is verified."
+  ]
+}

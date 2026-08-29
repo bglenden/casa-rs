@@ -1,0 +1,189 @@
+{
+  "artifact_kind": "issue-540-bounded-streaming-candidate",
+  "recorded_date": "2026-08-27",
+  "truth_class": "single_observation_provisional",
+  "work_issue": 540,
+  "git": {
+    "base_revision": "5ef9f4729e4ffa787c30dfffed38c1e7eaf69d6b",
+    "instrumentation_revision": "aaf0de271",
+    "bounded_execution_seam_revision": "d3e6cfaf1",
+    "candidate_revision": "commit containing this artifact"
+  },
+  "calibration": {
+    "status": "synthetic_provisional_planner_input",
+    "spill_read_bytes_per_second": 1000000000,
+    "spill_write_bytes_per_second": 1000000000,
+    "note": "These values admit the resident plan and are not measured disk rates."
+  },
+  "frozen_casa_oracle": {
+    "rerun": false,
+    "wall_seconds": 733.660,
+    "workload": "64 channels, 1024 pixels, 0.25 arcsec, Briggs, niter=500",
+    "maximum_normalized_rms_ratio": {
+      "image": 0.0000172,
+      "residual": 0.0000353,
+      "model": 0.0000102,
+      "psf": 0.0000304
+    }
+  },
+  "medium_matched_pair": {
+    "measurement_set": "/private/tmp/casa-rs-perf-probe-main-x40.ms",
+    "selection": {
+      "source_main_rows": 42320,
+      "selected_rows": 14720,
+      "selected_samples": 942080,
+      "field": 1,
+      "spectral_window": 1,
+      "channel_start": 0,
+      "channel_count": 16,
+      "correlations": 4
+    },
+    "control": {
+      "artifact": "20260827-issue540-instrumented-current-rust-control.json",
+      "wall_seconds": 2.89,
+      "observation_node_seconds": 2.344019708,
+      "actual_logical_source_bytes": 10142080,
+      "actual_closed_column_read_operations": 279680
+    },
+    "candidate": {
+      "wall_seconds": 2.15,
+      "user_seconds": 1.86,
+      "system_seconds": 0.08,
+      "observation_node_seconds": 1.816689917,
+      "actual_logical_source_bytes": 10142080,
+      "actual_closed_column_read_operations": 19,
+      "peak_live_source_current_bytes": 12615040,
+      "ready_queue_high_water": 1
+    },
+    "provisional_improvement_percent": {
+      "wall": 25.6,
+      "observation_node": 22.5
+    },
+    "final_source_refresh": {
+      "execution_receipt": "fcf2b634ef38e8954d87b77d660f0d45683b37b343b0f730ec5e70b5ac425f07",
+      "wall_seconds": 2.03,
+      "user_seconds": 1.87,
+      "system_seconds": 0.05,
+      "observation_node_seconds": 1.807271083,
+      "actual_logical_source_bytes": 10142080,
+      "actual_closed_column_read_operations": 19,
+      "peak_live_source_current_bytes": 12615040,
+      "ready_queue_high_water": 0,
+      "provisional_improvement_percent": {
+        "wall": 29.8,
+        "observation_node": 22.9
+      },
+      "interpretation": "The final rendezvous-channel refresh reproduces the source-stage gain, retains no queued block, and improves on the initial candidate wall time; timing precision remains intentionally provisional for this short iteration-oriented gate."
+    },
+    "scientific_product_comparison": {
+      "result": "bit_identical_payloads",
+      "sha256": {
+        "image": "1cb5bb08c979056c6d6a7b98fdf4e71a197cdd5e6ac258e5c3db8f5170e49096",
+        "mask": "17faa485f5409354c6aed458c8cc8dfad1922c98532b3e0349c26f9349388261",
+        "model": "8a39d2abd3999ab73c34db2476849cddf303ce389b35826850f9a700589b4a90",
+        "psf": "cc7bfcaf982ce7ef66b70c4f4b0aa421ca2285cac93d66e67f0607f7663bbba6",
+        "residual": "1cb5bb08c979056c6d6a7b98fdf4e71a197cdd5e6ac258e5c3db8f5170e49096",
+        "sumwt": "c9bcd7d233ae102cba29f12ad64268a0fedf22ff5de191d0612e5236a87cbef0"
+      }
+    }
+  },
+  "directly_mounted_32_gib": {
+    "measurement_set": "/Volumes/GLENDENNING/casa-rs-imperformance/wave1/vla/single/medium/ms/wave1-vla-single-medium.ms",
+    "dataset_identity": "4353a26",
+    "control": {
+      "result": "out_of_memory",
+      "wall_seconds_before_failure": 135.77,
+      "compressed_memory_gib_before_failure": 58.491
+    },
+    "candidate": {
+      "result": "terminal_completion",
+      "execution_receipt": "e33a207879c8a41877301240fdc67d49ef6813701421bea2d2cb4c1b2b72af2e",
+      "wall_seconds": 337.58,
+      "user_seconds": 338.88,
+      "system_seconds": 6.97,
+      "gridded_samples": 65505024,
+      "scientific_ms_passes": 2,
+      "peak_resident_set_bytes": 225165312,
+      "peak_planned_footprint_bytes": 221496064,
+      "swap_operations": 0,
+      "planned_source_capacity_bytes": 67108864,
+      "passes": [
+        {
+          "name": "transaction-read",
+          "elapsed_seconds": 153.100955209,
+          "actual_logical_source_bytes": 1019421936,
+          "actual_closed_column_read_operations": 1102,
+          "peak_live_source_current_bytes": 59091402,
+          "ready_queue_high_water": 0
+        },
+        {
+          "name": "weighting-generation",
+          "elapsed_seconds": 183.692518375,
+          "actual_logical_source_bytes": 1019421936,
+          "actual_closed_column_read_operations": 1102,
+          "peak_live_source_current_bytes": 59091402,
+          "ready_queue_high_water": 0
+        }
+      ],
+      "scientific_product_comparison": {
+        "result": "bit_identical_to_pre_review_candidate",
+        "sha256": {
+          "image": "d2d49152498bf50ad87d83281b4659884d3c72348bef315976867c95974ec900",
+          "mask": "17faa485f5409354c6aed458c8cc8dfad1922c98532b3e0349c26f9349388261",
+          "model": "8a39d2abd3999ab73c34db2476849cddf303ce389b35826850f9a700589b4a90",
+          "psf": "6a4c74a0a55847541d614cc67c614b9ac5d6e2c678b8a9d67dafb38ef2714064",
+          "residual": "d2d49152498bf50ad87d83281b4659884d3c72348bef315976867c95974ec900",
+          "sumwt": "eaff4c96e75c8c87ca06ee8a8ed0bea3ef1417542eac2ece549d21d319f3ee14"
+        }
+      }
+    },
+    "comparison": "The control did not complete, so this observation proves bounded feasibility rather than a wall-time speedup ratio."
+  },
+  "complete_106_9_gib_gate": {
+    "measurement_set": "/Volumes/GLENDENNING/casa-rs-imperformance/wave1/alma/mosaic-large/large/ms/wave1-alma-mosaic-large.ms",
+    "dataset_identity": "2a7def",
+    "dataset_disk_bytes": 114807025664,
+    "executor_wall_seconds": 97.634964333,
+    "net_dataset_gib_per_second": 1.095120,
+    "passes": 1,
+    "rows": 6709290,
+    "samples": 13740625920,
+    "accepted_samples": 12412252160,
+    "digest_bits": {
+      "real": "423bdb13113a47c7",
+      "imaginary": "c1c2e4fdfd889d2d",
+      "weight": "420721a68210e413"
+    },
+    "source_fill_seconds": 97.614903298,
+    "commit_seconds": 50.762650063,
+    "overlap_seconds": 50.764431586,
+    "wall_below_serial_stage_sum_percent": 34.198,
+    "producer_wait_seconds": 0.001285802,
+    "consumer_wait_seconds": 46.857853516,
+    "lease_return_seconds": 46.808325575,
+    "fill_operations": 6553,
+    "warmup_fills": 2,
+    "reused_fills": 6551,
+    "source_slots": 2,
+    "workers": 1,
+    "planned_source_capacity_bytes": 134217728,
+    "maximum_partitions_per_block": 1,
+    "planned_kernel_window_capacity_bytes": 288,
+    "peak_kernel_window_capacity_bytes": 216,
+    "peak_live_source_blocks": 2,
+    "peak_live_source_current_bytes": 37865472,
+    "peak_live_source_capacity_bytes": 37865472,
+    "ready_queue_high_water": 0,
+    "ready_queue_current_bytes_high_water": 0,
+    "ready_queue_capacity_bytes_high_water": 0,
+    "logical_source_bytes": 123994388490,
+    "source_read_operations": 58977,
+    "modeled_physical_bytes": 127617405090,
+    "named_row_projection_bytes": 53674320,
+    "explicit_adaptation_copy_bytes": 382378330,
+    "implicit_copy_bytes": 0,
+    "sampled_resident_set_bytes": [92504064, 129204224, 163201024, 168574976, 169492480, 170541056, 172654592, 172654592],
+    "terminal": true,
+    "interpretation": "One production-executor pass preserved the accepted serial checksum, kept two reusable source leases and one bounded kernel window within their immutable budgets, retained no queued block in the rendezvous channel, named every arrangement copy, overlapped source and ordered commit, and reached a stable resident plateau."
+  }
+}

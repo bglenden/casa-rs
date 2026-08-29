@@ -43,7 +43,8 @@ use casa_imaging_reconstruction::{
     WeightingAlgorithmState, WeightingError, WeightingExecutionLimits, WeightingPlan,
     WeightingReplayChunk, WeightingReplaySummary, begin_weighting_generation, plan_weighting,
     runtime_adapter::{
-        CompleteDataOwnerResult, prepare_spectral_operator, spectral_operator_workload,
+        CompleteDataOwnerResult, SpectralOperatorPass, prepare_spectral_operator,
+        spectral_operator_workload,
     },
 };
 
@@ -448,14 +449,18 @@ fn run_round_with_samples(
 
     let specification =
         SpectralOperatorSpecification::new(problem).expect("spectral operator specification");
-    let workload = spectral_operator_workload(&specification, plan.limits().max_block_samples())
-        .expect("workload");
+    let workload = spectral_operator_workload(
+        &specification,
+        plan.limits().max_block_samples(),
+        SpectralOperatorPass::InitialMajor,
+    )
+    .expect("workload");
     let prepared = prepare_spectral_operator(specification, workload).expect("prepare operator");
     let mut state = prepared
         .begin(problem, &generation)
         .expect("begin complete-data owner");
     state
-        .bind_major_cycle_model(preparation.final_model())
+        .bind_major_cycle_model(preparation.final_model(), None)
         .expect("bind exact final model before replay");
     for block in &blocks {
         state.consume_block(block).expect("consume weighted block");
@@ -477,11 +482,11 @@ fn freeze_weighting_generation(
 ) -> Result<WeightingAlgorithmState, WeightingError> {
     let mut density = begin_weighting_generation(problem, plan)?;
     for sample in samples {
-        density.consume(problem, *sample, exact_contributions(sample))?;
+        density.consume(problem, sample, exact_contributions(sample))?;
     }
     let mut sum_weight = density.finish(problem)?;
     for sample in samples {
-        sum_weight.consume(problem, *sample, exact_contributions(sample))?;
+        sum_weight.consume(problem, sample, exact_contributions(sample))?;
     }
     sum_weight.finish()
 }
@@ -498,7 +503,7 @@ fn replay(
         .expect("begin replay");
     for sample in samples {
         if let Some(block) = phase
-            .consume(problem, *sample, exact_contributions(sample))
+            .consume(problem, sample, exact_contributions(sample))
             .expect("weight sample")
         {
             blocks.push(block);

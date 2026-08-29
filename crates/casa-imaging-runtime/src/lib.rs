@@ -2,11 +2,14 @@
 #![warn(missing_docs)]
 //! Plan-bound imaging execution, process resource arbitration, and leases.
 
+mod bounded_stream;
 mod complete_data_operator;
 mod continuum_transform;
 mod cost_model;
 mod execution;
 mod execution_bindings;
+#[allow(dead_code)]
+mod gridded_normal_artifact;
 mod major_cycle;
 mod observation_transaction;
 mod prepared_artifact;
@@ -38,7 +41,7 @@ pub use casa_imaging_reconstruction::{MajorCyclePreparation, SpectralPrimitiveCa
 pub use complete_data_operator::{
     CompleteDataOperatorError, CompleteDataOperatorResult, CompleteDataPlanError,
     CompleteDataPlanFragment, CompleteDataPreparedState, CompleteDataResidency,
-    SpectralOperatorState,
+    FrozenGriddedNormalReplay, GriddedNormalReplayDescriptor, SpectralOperatorState,
 };
 pub use continuum_transform::{
     ContinuumTransformCompletion, ContinuumTransformError, ContinuumTransformRowPlan,
@@ -53,9 +56,11 @@ pub use execution::{
     AllocationLifetime, AllocationPurpose, AllocationUse, ClaimLifetime, ExecutionDag,
     ExecutionDagSpecification, ExecutionError, ExecutionKnobs, ExecutionOutcome, FenceId,
     FenceKind, InitializationPolicy, LogicalAllocation, PhysicalSlot, PhysicalSlotId,
-    ResourceClaim, SlotCompatibility, StorageMode, WorkAllocationCapability, WorkDependency,
-    WorkDomain, WorkImplementationId, WorkKind, WorkNode, WorkNodeId, WorkResourceCapability,
+    ResourceClaim, RetainedArtifactPermit, SlotCompatibility, StorageMode,
+    WorkAllocationCapability, WorkDependency, WorkDomain, WorkImplementationId, WorkKind, WorkNode,
+    WorkNodeId, WorkResourceCapability,
 };
+pub use gridded_normal_artifact::GriddedNormalReplayStorage;
 pub use major_cycle::{MajorCycleOperatorError, MajorCycleOperatorResult, MajorCycleOperatorState};
 pub use observation_transaction::{
     BoundObservationTransaction, ObservationTransactionPlanError,
@@ -113,7 +118,7 @@ pub use spectral_cycle::{
     SpectralCyclePassInput, SpectralCycleRegistry,
 };
 pub use spectral_cycle_plan::{
-    SpectralCycleExecutionPolicy, SpectralCyclePlan, SpectralCyclePlanError,
+    SpectralCycleExecutionPolicy, SpectralCyclePlan, SpectralCyclePlanError, SpectralCyclePlanParts,
 };
 pub use weighting::{
     ContinuumDensityCallbackError, ContinuumDensityTraversalError, FrozenWeightingArtifact,

@@ -62,6 +62,9 @@ This directory holds stable project documentation.
 - [`agent-reference.md`](agent-reference.md)
   - situational workstation, CASA/C++, shared-data, release, install, and TUI
     evidence guidance kept out of the always-loaded root `AGENTS.md`
+- [`CASA (C++) bugs.md`](CASA%20(C%2B%2B)%20bugs.md)
+  - canonical CASA parity defect notes, including the
+    [Hogbom `niter` off-by-one](CASA%20(C%2B%2B)%20bugs.md#casa-hogbom-niter-off-by-one-bug)
 - [`apps/casars-mac/AGENTS.md`](https://github.com/bglenden/casa-rs/blob/main/apps/casars-mac/AGENTS.md)
   - scoped native macOS workbench contract
 

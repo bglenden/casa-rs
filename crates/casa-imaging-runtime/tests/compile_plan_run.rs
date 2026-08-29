@@ -29,14 +29,15 @@ use casa_imaging_model::{
     PointingExtrapolation, PointingInterpolation, PointingTimeSampling, PolarizationContract,
     PolarizationCoordinate, PreparedArtifactAwInterpretation, PreparedArtifactCellSemantics,
     PreparedArtifactKernelAlgorithm, PreparedArtifactKernelSemantics,
-    PreparedArtifactScientificIdentity, PreparedArtifactSpectralMapSemantics, ProblemSpecification,
-    ProductKind, ProductNormalization, ProductRequirements, Projection, ReconstructionAlgorithm,
-    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
-    ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract,
-    SelectedVisibilitySample, SequentialContinuumTransform, SkyDirection, SpectralContract,
-    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
-    SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct, WeightDensityScope,
-    WeightingContract, WeightingScheme, compile,
+    PreparedArtifactScientificIdentity, PreparedArtifactSpectralMapSemantics,
+    ProblemInputIdentities, ProblemSpecification, ProductKind, ProductNormalization,
+    ProductRequirements, Projection, ReconstructionAlgorithm, ReconstructionBasis,
+    ReconstructionContract, ReconstructionControls, ReductionPolicy, ReferenceDataKind,
+    RestFrequency, RestoringBeamPolicy, ScientificContract, SelectedVisibilitySample,
+    SequentialContinuumTransform, SkyDirection, SpectralContract, SpectralCoordinateSpec,
+    SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, StageErrorBudget,
+    UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope,
+    WeightingContract, WeightingScheme, compile, compile_observation,
 };
 use casa_imaging_products::{
     ContinuumProductControls, ContinuumProductInputs, ContinuumSourceCatalog,
@@ -49,7 +50,8 @@ use casa_imaging_reconstruction::{
     WeightingExecutionLimits, WeightingPlan, WeightingReplayChunk, WeightingReplaySummary,
     begin_weighting_generation, plan_weighting,
     runtime_adapter::{
-        CompleteDataOwnerResult, prepare_spectral_operator, spectral_operator_workload,
+        CompleteDataOwnerResult, SpectralOperatorPass, prepare_spectral_operator,
+        spectral_operator_workload,
     },
 };
 use casa_imaging_runtime::{
@@ -63,15 +65,16 @@ use casa_imaging_runtime::{
     DemandAlternative, DemandEnvelope, ExecutionDag, ExecutionDagSpecification, ExecutionError,
     ExecutionEvidenceError, ExecutionKnobs, ExecutionOutcome, ExecutionPlanId, ExecutionProvenance,
     ExecutionReceipt, ExecutionReceiptBinding, ExecutionReceiptStore, ExecutionStatus,
-    ExternalPressure, FenceId, FenceKind, FrozenWeightingReservation, HostInventory,
-    ImplementationContractCatalog, ImplementationContractMetadata, ImplementationRegistry,
-    ImplementationRegistryId, InitializationPolicy, IoBufferDemand, IoBufferKind, IoMeasurement,
-    IoPrediction, LeaseResource, LogicalAllocation, MajorCycleOperatorResult,
-    MajorCycleOperatorState, MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand, MemoryView,
-    MemoryViewKind, ObservationReadCompletionContext, ObservationTransactionWork, PhysicalLayoutId,
-    PhysicalSlot, PhysicalSlotId, PhysicalWorkBinding, PhysicalWorkBindingError, PlanError,
-    PlanPrediction, PlannedArtifact, PlannerCostModelProfileBootstrap, PlannerCostModelProfileId,
-    PlanningBindings, PredictionConfidence, PredictionUncertainty, PreparedArtifactBudget,
+    ExternalPressure, FenceId, FenceKind, FinalVisibilitySink, FrozenWeightingReservation,
+    GriddedNormalReplayStorage, HostInventory, ImplementationContractCatalog,
+    ImplementationContractMetadata, ImplementationRegistry, ImplementationRegistryId,
+    InitializationPolicy, IoBufferDemand, IoBufferKind, IoMeasurement, IoPrediction, LeaseResource,
+    LogicalAllocation, MajorCycleOperatorResult, MajorCycleOperatorState, MemoryCapacityDomain,
+    MemoryCapacityKind, MemoryDemand, MemoryView, MemoryViewKind, ObservationReadCompletionContext,
+    ObservationTransactionWork, PhysicalLayoutId, PhysicalSlot, PhysicalSlotId,
+    PhysicalWorkBinding, PhysicalWorkBindingError, PlanError, PlanPrediction, PlannedArtifact,
+    PlannerCostModelProfileBootstrap, PlannerCostModelProfileId, PlanningBindings,
+    PredictionConfidence, PredictionUncertainty, PreparedArtifactBudget,
     PreparedArtifactDescriptor, PreparedArtifactError, PreparedArtifactLoadSource,
     PreparedArtifactOperation, PreparedArtifactOrder, PreparedArtifactPlanFragment,
     PreparedArtifactPlaneDescriptor, PreparedArtifactPrecision, PreparedArtifactRegistration,
@@ -89,17 +92,18 @@ use casa_imaging_runtime::{
     SerialProductPublicationExecutor, SerialProductPublicationPlan, SerialProductPublicationPolicy,
     SerialProductPublicationRegistry, SerialProductPublicationSink, SlotCompatibility,
     SpectralCycleExecutionPolicy, SpectralCycleExecutor, SpectralCyclePassInput, SpectralCyclePlan,
-    SpectralCycleRegistry, SpectralOperatorState, SpectralPassIdentity, SpectralPassPhase,
-    StagePrediction, StorageDomain, StorageDomainId, StorageIoResourceBinding, StorageMode,
-    StorageUseKind, WeightedObservationBlock, WeightingExecutionState, WeightingPlanFragment,
-    WorkDependency, WorkDomain, WorkExecutionContext, WorkImplementation, WorkImplementationId,
-    WorkKind, WorkMeasurements, WorkNode, WorkNodeId, plan as runtime_plan,
-    plan_continuum_transform_row, run as runtime_run,
+    SpectralCyclePlanParts, SpectralCycleRegistry, SpectralOperatorState, SpectralPassIdentity,
+    SpectralPassPhase, StagePrediction, StorageDomain, StorageDomainId, StorageIoResourceBinding,
+    StorageMode, StorageUseKind, WeightedObservationBlock, WeightingExecutionState,
+    WeightingPlanFragment, WeightingReplayCompletion, WorkDependency, WorkDomain,
+    WorkExecutionContext, WorkImplementation, WorkImplementationId, WorkKind, WorkMeasurements,
+    WorkNode, WorkNodeId, plan as runtime_plan, plan_continuum_transform_row, run as runtime_run,
 };
 use casa_ms::{
-    BoundSelectedObservation, ObservationSourceBinding, SelectedObservationCompletion,
-    SelectedObservationContentBudget, SelectedObservationMeasures,
-    SelectedObservationResidencyCertificate,
+    BoundSelectedObservation, ObservationSourceBinding, ResolvedSelectedObservationAccess,
+    SelectedObservationCompletion, SelectedObservationContentBudget, SelectedObservationMeasures,
+    SelectedObservationResidencyCertificate, SelectedObservationResolutionRequest,
+    initialize_measurement_set_owner_manifest, resolve_selected_observation,
 };
 
 fn implementation_catalog(
@@ -161,7 +165,7 @@ use common::{
     problem_inputs_with_source_count,
 };
 
-const SELECTED_CONTENT_BYTES: usize = 128 * 1024;
+const SELECTED_CONTENT_BYTES: usize = 160 * 1024;
 
 const fn selected_content_budget() -> SelectedObservationContentBudget {
     SelectedObservationContentBudget::new(SELECTED_CONTENT_BYTES, 1, 4)
@@ -184,6 +188,22 @@ fn serial_storage_io() -> StorageIoResourceBinding {
         RateResourceId::new("transaction-io-rate"),
         QueueResourceId::new("transaction-io-queue"),
     )
+}
+
+fn artifact_storage_io() -> StorageIoResourceBinding {
+    StorageIoResourceBinding::new(
+        StorageDomainId::new("atomic-output"),
+        RateResourceId::new("io-rate"),
+        RateResourceId::new("io-rate"),
+        QueueResourceId::new("io-queue"),
+    )
+}
+
+fn artifact_storage() -> GriddedNormalReplayStorage {
+    let directory = Path::new("/tmp/casa-rs-imaging-runtime-tests");
+    fs::create_dir_all(directory).expect("create gridded-normal artifact directory");
+    GriddedNormalReplayStorage::bind(authority(), artifact_storage_io(), directory)
+        .expect("bind gridded-normal artifact storage")
 }
 
 fn selected_observation_bindings(
@@ -686,7 +706,7 @@ fn channel_local_hogbom_request(
         output_channels,
         selected_channels,
         ReconstructionAlgorithm::Hogbom,
-        ReconstructionControls::new(2, 0.5, 0.0).with_maximum_model_update(1.0e6),
+        ReconstructionControls::new(2, 0.5, 0.0),
     )
 }
 
@@ -711,6 +731,27 @@ fn channel_local_request_with_reconstruction_and_transform(
     observation: u8,
     channels: usize,
     selected_channels: usize,
+    algorithm: ReconstructionAlgorithm,
+    controls: ReconstructionControls,
+    visibility_transform: Option<SequentialContinuumTransform>,
+) -> ImagingRequest {
+    channel_local_request_with_inputs(
+        problem_inputs_with_channels(
+            observation,
+            default_references(),
+            ModelStateIdentity::Empty,
+            selected_channels,
+        ),
+        channels,
+        algorithm,
+        controls,
+        visibility_transform,
+    )
+}
+
+fn channel_local_request_with_inputs(
+    inputs: ProblemInputIdentities,
+    channels: usize,
     algorithm: ReconstructionAlgorithm,
     controls: ReconstructionControls,
     visibility_transform: Option<SequentialContinuumTransform>,
@@ -769,12 +810,7 @@ fn channel_local_request_with_reconstruction_and_transform(
     ImagingRequest::new(
         specification,
         geometry,
-        problem_inputs_with_channels(
-            observation,
-            default_references(),
-            ModelStateIdentity::Empty,
-            selected_channels,
-        ),
+        inputs,
         model_lifecycle(ModelStateIdentity::Empty),
     )
 }
@@ -932,6 +968,20 @@ fn request_with_geometry_references_weighting_products_model_write_input_and_sou
     model: ModelStateIdentity,
     source_count: usize,
 ) -> ImagingRequest {
+    let specification = standard_problem_specification(weighting, products, model_column_write);
+    ImagingRequest::new(
+        specification,
+        geometry,
+        problem_inputs_with_source_count(observation, references, model, source_count),
+        model_lifecycle(model),
+    )
+}
+
+fn standard_problem_specification(
+    weighting: WeightingContract,
+    products: Vec<ProductKind>,
+    model_column_write: ModelColumnWrite,
+) -> ProblemSpecification {
     let numerics = NumericsContract::new(
         vec![NumericPrecision::F64],
         ReductionPolicy::Compensated,
@@ -941,7 +991,7 @@ fn request_with_geometry_references_weighting_products_model_write_input_and_sou
             .map(|stage| (stage, StageErrorBudget::new(1.0e-7, 1.0e-3)))
             .collect(),
     );
-    let specification = ProblemSpecification::new(
+    ProblemSpecification::new(
         ScientificContract::new(
             SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
             MeasurementEquationContract::new(
@@ -967,12 +1017,6 @@ fn request_with_geometry_references_weighting_products_model_write_input_and_sou
         ),
         ObservationTransactionRequirements::new(model_column_write),
         numerics,
-    );
-    ImagingRequest::new(
-        specification,
-        geometry,
-        problem_inputs_with_source_count(observation, references, model, source_count),
-        model_lifecycle(model),
     )
 }
 
@@ -1203,13 +1247,13 @@ impl CompleteDataLawEvidence {
         let mut weighted_visibility = Vec::new();
         for weighted in block.samples() {
             let selected = weighted.selected();
-            if selected.row_flag
-                || selected.channel_flag
-                || !complete_data_parallel_hand(selected.address.correlation_type)
+            if selected.row_flag()
+                || selected.channel_flag()
+                || !complete_data_parallel_hand(selected.address().correlation_type)
             {
                 continue;
             }
-            let visibility = match selected.visibility {
+            let visibility = match selected.visibility() {
                 SelectedVisibilitySample::Float32(value) => {
                     num_complex::Complex64::new(f64::from(value), 0.0)
                 }
@@ -1220,8 +1264,8 @@ impl CompleteDataLawEvidence {
             let phase = num_complex::Complex64::from_polar(
                 1.0,
                 std::f64::consts::TAU
-                    * selected.coordinates.phase_shift_m
-                    * selected.address.frequency_centre_hz
+                    * selected.phase_shift_m()
+                    * selected.address().frequency_centre_hz
                     / 299_792_458.0,
             );
             for spectral in weighted.spectral_values() {
@@ -1698,7 +1742,7 @@ impl WorkImplementation for RecordingExecutor {
                     if self.major_cycle_problem.is_some() {
                         let preparation = self.prepare_major_cycle(context)?;
                         operator
-                            .bind_major_cycle_model(&preparation)
+                            .bind_major_cycle_model(&preparation, None)
                             .map_err(io::Error::other)?;
                         *self
                             .major_cycle_preparation
@@ -2356,7 +2400,8 @@ fn spectral_cycle_initial_plan_contains_resource_accounted_minor_cycle() {
         1_000,
         8 * 8 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
         900_000,
-    );
+    )
+    .with_gridded_normal_storage(artifact_storage());
     let plan = SpectralCyclePlan::initial(&problem, &registry, policy)
         .expect("production initial-major plan");
     let minor = plan.minor_cycle_node().expect("initial plan owns T21");
@@ -2374,6 +2419,26 @@ fn spectral_cycle_initial_plan_contains_resource_accounted_minor_cycle() {
             .stages()
             .contains_key(minor)
     );
+    let demand = &plan
+        .physical_work()
+        .execution_dag()
+        .resource_alternative()
+        .demand;
+    assert!(demand.rates.iter().any(|rate| {
+        rate.demand_id
+            .starts_with("gridded-normal-spill-write-rate")
+            && rate.resource == RateResourceId::new("io-rate")
+    }));
+    assert!(
+        demand
+            .queues
+            .iter()
+            .any(|queue| queue.resource == QueueResourceId::new("io-queue"))
+    );
+    assert!(!demand.rates.iter().any(|rate| {
+        rate.demand_id.starts_with("gridded-normal-spill")
+            && rate.resource == RateResourceId::new("transaction-io-rate")
+    }));
 }
 
 #[test]
@@ -2539,14 +2604,256 @@ fn spectral_cycle_initial_plan_bounds_selected_payload_traversals_by_weighting_s
 
 #[test]
 fn spectral_cycle_executes_initial_major_and_shared_reconstruction_cycle() {
-    let problem = compile(request_with_geometry(
-        1,
-        geometry_with_shape_and_increment([4.0, 4.0], ImageShape::new(8, 8), [-1.0e-6, 1.0e-6]),
-    ))
-    .expect("logical continuum compilation");
+    for weighting in [
+        WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
+        WeightingContract::new(
+            WeightingScheme::Uniform,
+            WeightDensityScope::GlobalSelection,
+        ),
+    ] {
+        execute_spectral_cycle_with_weighting(weighting);
+    }
+}
+
+struct RejectFirstVisibilityBlock {
+    worker_sender: Option<std::sync::mpsc::SyncSender<()>>,
+    worker: Option<std::thread::JoinHandle<()>>,
+    worker_stopped: Arc<AtomicBool>,
+}
+
+impl RejectFirstVisibilityBlock {
+    fn new(worker_stopped: Arc<AtomicBool>) -> Self {
+        Self {
+            worker_sender: None,
+            worker: None,
+            worker_stopped,
+        }
+    }
+}
+
+impl FinalVisibilitySink for RejectFirstVisibilityBlock {
+    fn bind(
+        &mut self,
+        _problem: casa_imaging_model::CompiledProblemId,
+        _final_model: casa_imaging_reconstruction::ModelGenerationId,
+    ) -> io::Result<()> {
+        Ok(())
+    }
+
+    fn begin_replay(&mut self) -> io::Result<()> {
+        if self.worker.is_some() {
+            return Ok(());
+        }
+        let (sender, receiver) = std::sync::mpsc::sync_channel(0);
+        let stopped = Arc::clone(&self.worker_stopped);
+        self.worker_sender = Some(sender);
+        self.worker = Some(std::thread::spawn(move || {
+            let _ = receiver.recv();
+            stopped.store(true, Ordering::SeqCst);
+        }));
+        Ok(())
+    }
+
+    fn consume(
+        &mut self,
+        _samples: &[casa_imaging_reconstruction::runtime_adapter::FinalVisibilitySample],
+    ) -> io::Result<()> {
+        Err(io::Error::other("injected terminal visibility failure"))
+    }
+
+    fn finish(&mut self, _replay: &WeightingReplayCompletion) -> io::Result<()> {
+        Err(io::Error::other("visibility failure was not observed"))
+    }
+
+    fn abort(&mut self) -> io::Result<()> {
+        self.worker_sender.take();
+        if let Some(worker) = self.worker.take() {
+            worker
+                .join()
+                .map_err(|_| io::Error::other("injected visibility worker panicked"))?;
+        }
+        Ok(())
+    }
+}
+
+#[test]
+fn failed_density_generation_receipt_uses_current_partial_stream_measurements() {
+    let problem = compile(
+        request_with_geometry_references_weighting_products_model_write_input_and_source_count(
+            74,
+            geometry_with_shape_and_increment([2.0, 2.0], ImageShape::new(4, 4), [-1.0e-6, 1.0e-6]),
+            default_references(),
+            WeightingContract::new(
+                WeightingScheme::Uniform,
+                WeightDensityScope::GlobalSelection,
+            ),
+            vec![ProductKind::Psf],
+            ModelColumnWrite::Disabled,
+            ModelStateIdentity::Empty,
+            2,
+        ),
+    )
+    .expect("two-source density fixture");
     let residency = selected_content_residency_with(&problem, |_| {
-        SelectedObservationContentBudget::new(256 * 1024, 1, 4)
+        SelectedObservationContentBudget::new(160 * 1024, 1, 4)
     });
+    let planning_registry = ContractOnlyRegistry::new(
+        registry(74),
+        implementation_metadata(&problem),
+        [implementation(74)],
+    );
+    let planned = SpectralCyclePlan::dirty(
+        &problem,
+        &planning_registry,
+        SpectralCycleExecutionPolicy::new(
+            implementation(74),
+            WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
+            residency.clone(),
+            serial_storage_io(),
+            1_000,
+            4 * 4 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
+            900_000,
+        ),
+    )
+    .expect("dirty density plan");
+    let SpectralCyclePlanParts {
+        physical,
+        weighting,
+        complete_data: complete,
+        source_resources: resources,
+        pass,
+        minor_cycle_node: minor,
+        ..
+    } = planned.into_parts();
+    assert!(minor.is_none());
+    let visibility_worker_stopped = Arc::new(AtomicBool::new(false));
+    let executor = SpectralCycleExecutor::new(
+        implementation(74),
+        problem.clone(),
+        weighting,
+        resources,
+        pass,
+        complete,
+        open_selected_observation(&problem, &residency).expect("selected owner"),
+        ExecutableModelProblem::from_compiled(problem.clone()).expect("executable model"),
+        SpectralCyclePassInput::Initial,
+    )
+    .with_final_visibility_sink(Box::new(RejectFirstVisibilityBlock::new(Arc::clone(
+        &visibility_worker_stopped,
+    ))));
+    let runtime_registry =
+        SpectralCycleRegistry::new(registry(74), implementation(74), &problem, executor);
+    let directory = tempfile::tempdir().expect("receipt directory");
+    let receipts = ExecutionReceiptStore::new(
+        directory.path(),
+        ReceiptRetention::new(4, 1_048_576).expect("retention"),
+    )
+    .expect("receipt store");
+    let resource_policy = ResourcePolicy::Exclusive;
+    let execution_plan = runtime_plan(
+        &problem,
+        PlanningBindings::new(registry(74), resource_policy.clone(), planning_profile(4)),
+        authority(),
+        &runtime_registry,
+        &receipts,
+        move |_, _| Ok::<_, io::Error>(vec![physical]),
+    )
+    .expect("runtime plan");
+    let current = RunBindings::new(problem.inputs().clone(), &resource_policy, cost_model(4));
+    let executable = ExecutableModelProblem::from_compiled(problem.clone()).expect("executable");
+    let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([74; 32]);
+    runtime_run(
+        &executable,
+        &execution_plan,
+        &current,
+        &runtime_registry,
+        authority(),
+        &mut RunToCompletion,
+        receipts.bind(execution_provenance(
+            attempt,
+            BuildIdentity::from_sha256([75; 32]),
+        )),
+    )
+    .expect_err("injected generation failure");
+    let receipt = receipts.open(attempt).expect("failed receipt");
+    let density_source = execution_plan
+        .execution_dag()
+        .nodes()
+        .values()
+        .find(|node| node.id.as_str().starts_with("transaction-read"))
+        .expect("density source node");
+    let generation = execution_plan
+        .execution_dag()
+        .nodes()
+        .values()
+        .find(|node| node.id.as_str().starts_with("weighting-generation"))
+        .expect("density generation node");
+    assert_eq!(
+        receipt.node_status(&generation.id),
+        Some(ReceiptStatus::Failed)
+    );
+    assert_eq!(
+        receipt.stage_actual_io(&density_source.id, IoBufferKind::SourceReadAhead),
+        Some((220, 38))
+    );
+    assert_eq!(
+        receipt.stage_actual_io(&generation.id, IoBufferKind::SourceReadAhead),
+        Some((110, 19)),
+        "the failed generation reports only its current partial pass"
+    );
+    assert!(
+        visibility_worker_stopped.load(Ordering::SeqCst),
+        "terminal visibility failure must synchronously abort and join its worker"
+    );
+}
+
+fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
+    let geometry =
+        geometry_with_shape_and_increment([2.0, 2.0], ImageShape::new(4, 4), [-1.0e-6, 1.0e-6]);
+    let fixture_problem = compile(request_with_geometry_references_and_weighting(
+        1,
+        geometry.clone(),
+        default_references(),
+        weighting,
+    ))
+    .expect("fixture continuum compilation");
+    let fixture_source = &fixture_problem.inputs().observation_snapshot().sources()[0];
+    match initialize_measurement_set_owner_manifest(fixture_source.provenance().locator()) {
+        Ok(_) | Err(casa_ms::ObservationOwnerError::AlreadyInitialized) => {}
+        Err(error) => panic!("initialize runtime owner fixture: {error}"),
+    }
+    let resolution = SelectedObservationResolutionRequest::new(
+        fixture_source.provenance().locator(),
+        fixture_source.provenance().selection_request_identity(),
+        fixture_source.selection().clone(),
+        VisibilityColumn::Data,
+        WeightColumn::Weight,
+        Vec::new(),
+        ModelStateIdentity::Empty,
+        SelectedObservationContentBudget::new(160 * 1024, 1, 4),
+        casa_test_support::deterministic_measures_provider_for_identity([90; 32]),
+    );
+    let (snapshot_input, initial_access) = resolve_selected_observation(resolution.clone())
+        .expect("resolve runtime owner fixture")
+        .into_parts();
+    let snapshot = compile_observation(snapshot_input).expect("compile runtime owner snapshot");
+    let problem = compile(ImagingRequest::new(
+        standard_problem_specification(
+            weighting,
+            vec![ProductKind::Psf],
+            ModelColumnWrite::Disabled,
+        ),
+        geometry,
+        ProblemInputIdentities::new(snapshot),
+        model_lifecycle(ModelStateIdentity::Empty),
+    ))
+    .expect("owner-resolved continuum compilation");
+    let residency = initial_access
+        .certify_residency(&problem)
+        .expect("owner-certified selected-content residency");
+    let replay_proof_bytes = initial_access
+        .replay_proof_retained_heap_bytes(&problem)
+        .expect("bounded replay-proof residency");
     let planning_registry = ContractOnlyRegistry::new(
         registry(73),
         implementation_metadata(&problem),
@@ -2561,19 +2868,39 @@ fn spectral_cycle_executes_initial_major_and_shared_reconstruction_cycle() {
             residency.clone(),
             serial_storage_io(),
             1_000,
-            8 * 8 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
+            4 * 4 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
             900_000,
-        ),
+        )
+        .with_gridded_normal_storage(artifact_storage()),
     )
     .expect("production initial plan");
     let minor_node = planned.minor_cycle_node().expect("T21 node").clone();
-    let (physical, weighting, complete, resources, pass, _) = planned.into_parts();
+    let SpectralCyclePlanParts {
+        physical,
+        weighting,
+        complete_data: complete,
+        source_resources: resources,
+        pass,
+        gridded_normal_storage: planned_storage,
+        gridded_normal_reservation_bytes,
+        ..
+    } = planned.into_parts();
+    // The exact 4x4 density scratch and selected-owner minimum fit the fixture's
+    // physical 1 MiB capacity but intentionally exceed Balanced's 75% ceiling.
+    let resource_policy = ResourcePolicy::Exclusive;
     let frozen_reservation = FrozenWeightingReservation::acquire(
         authority(),
-        ResourcePolicy::Balanced,
+        resource_policy.clone(),
         weighting.planned_residency(),
+        replay_proof_bytes,
     )
     .expect("cross-plan frozen weighting reservation");
+    let planned_storage = planned_storage.expect("initial plan retains its artifact storage");
+    let gridded_storage_bytes =
+        gridded_normal_reservation_bytes.expect("initial plan reserves artifact storage");
+    let selected = initial_access
+        .open(&problem)
+        .expect("owner-validated initial selected observation");
     let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([73; 32]);
     let executor = SpectralCycleExecutor::new(
         implementation(73),
@@ -2582,17 +2909,19 @@ fn spectral_cycle_executes_initial_major_and_shared_reconstruction_cycle() {
         resources,
         pass,
         complete,
-        open_selected_observation(&problem, &residency).expect("selected owner"),
+        selected,
         ExecutableModelProblem::from_compiled(problem.clone()).expect("executable model"),
         SpectralCyclePassInput::Initial,
     )
     .with_frozen_weighting_reservation(frozen_reservation)
+    .with_planned_gridded_normal_storage(&planned_storage, gridded_storage_bytes)
+    .expect("gridded-normal compiler and spill writer")
     .with_reconstruction_cycle(
         minor_node.clone(),
         casa_imaging_reconstruction::ReconstructionMaskPlan::FullPlane {
             coordinate: problem.geometry().domains()[0].direction(),
         },
-        casa_imaging_reconstruction::MinorCycleProgram::new(0.1, 0.0, 2, 1.0e6).expect("controls"),
+        casa_imaging_reconstruction::MinorCycleProgram::new(0.1, 0.0, 2).expect("controls"),
     );
     let runtime_registry =
         SpectralCycleRegistry::new(registry(73), implementation(73), &problem, executor);
@@ -2604,18 +2933,14 @@ fn spectral_cycle_executes_initial_major_and_shared_reconstruction_cycle() {
     .expect("receipt store");
     let execution_plan = runtime_plan(
         &problem,
-        PlanningBindings::new(registry(73), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(73), resource_policy.clone(), planning_profile(4)),
         authority(),
         &runtime_registry,
         &receipts,
         move |_, _| Ok::<_, io::Error>(vec![physical]),
     )
     .expect("ordinary initial plan");
-    let current = RunBindings::new(
-        problem.inputs().clone(),
-        &ResourcePolicy::Balanced,
-        cost_model(4),
-    );
+    let current = RunBindings::new(problem.inputs().clone(), &resource_policy, cost_model(4));
     let executable = ExecutableModelProblem::from_compiled(problem.clone()).expect("executable");
     runtime_run(
         &executable,
@@ -2634,11 +2959,39 @@ fn spectral_cycle_executes_initial_major_and_shared_reconstruction_cycle() {
     for (node_id, node) in execution_plan.execution_dag().nodes() {
         for claim in &node.claims {
             if let LeaseResource::IoBuffer(kind) = &claim.resource {
-                assert_eq!(
-                    receipt.stage_actual_io(node_id, *kind),
-                    None,
-                    "capacity claim for {node_id:?} must not become fabricated actual I/O"
-                );
+                if node.kind.reads_observation() && *kind == IoBufferKind::SourceReadAhead {
+                    let (bytes, operations) = receipt
+                        .stage_actual_io(node_id, *kind)
+                        .expect("selected source traversal reports actual logical I/O");
+                    assert!(bytes > 0);
+                    assert!(operations > 0);
+                    let peak = receipt
+                        .actual_resource_peak(node_id, &claim.resource, &claim.lifetime)
+                        .expect("selected source traversal reports actual buffer peak");
+                    assert!(peak > 0);
+                    assert!(peak <= claim.amount);
+                } else if *kind == IoBufferKind::SpillWrite {
+                    let (bytes, operations) = receipt
+                        .stage_actual_io(node_id, *kind)
+                        .expect("gridded-normal spill reports exact write I/O");
+                    assert!(bytes > 0);
+                    assert!(operations > 0);
+                } else {
+                    assert_eq!(
+                        receipt.stage_actual_io(node_id, *kind),
+                        None,
+                        "unobserved capacity claim for {node_id:?} must not become fabricated actual I/O"
+                    );
+                }
+            }
+            if node.kind.reads_observation()
+                && matches!(claim.resource, LeaseResource::Queue { .. })
+                && claim.amount >= 2
+            {
+                let peak = receipt
+                    .actual_resource_peak(node_id, &claim.resource, &claim.lifetime)
+                    .expect("bounded source queue reports its actual high-water");
+                assert!(peak <= claim.amount.saturating_sub(2));
             }
         }
     }
@@ -2659,26 +3012,68 @@ fn spectral_cycle_executes_initial_major_and_shared_reconstruction_cycle() {
         .implementation()
         .take_frozen_weighting()
         .expect("initial major retains frozen weighting");
+    let gridded_replay = runtime_registry
+        .implementation()
+        .take_gridded_normal_replay()
+        .expect("initial major retains sealed gridded-normal replay");
     assert_eq!(minor.evidence().problem_id(), problem.problem_id());
     let final_input = minor.into_final_major_input();
     let source_delta = final_input.source_delta();
     let accepted_update = final_input.identity();
     let minor_evidence_id = final_input.evidence().reconstruction_cycle().evidence_id();
     let selected_generation = final_input.evidence().normal_state().selected_generation();
+    let replay_descriptor = gridded_replay.descriptor();
+    let initial_spill_node = execution_plan
+        .execution_dag()
+        .nodes()
+        .values()
+        .find(|node| {
+            node.claims
+                .iter()
+                .any(|claim| claim.resource == LeaseResource::IoBuffer(IoBufferKind::SpillWrite))
+        })
+        .expect("initial gridded spill node");
+    let initial_storage_claim = initial_spill_node
+        .claims
+        .iter()
+        .find(|claim| {
+            matches!(
+                claim.resource,
+                LeaseResource::Storage {
+                    use_kind: StorageUseKind::Temporary,
+                    ..
+                }
+            )
+        })
+        .expect("initial gridded spill storage claim");
+    assert_eq!(receipt.schema_version(), 19);
+    assert_eq!(initial_storage_claim.lifetime, ClaimLifetime::Artifact);
+    assert_eq!(
+        receipt.actual_resource_peak(
+            &initial_spill_node.id,
+            &initial_storage_claim.resource,
+            &initial_storage_claim.lifetime,
+        ),
+        Some(replay_descriptor.bytes()),
+        "receipt records the sealed artifact size, not its planned ceiling"
+    );
 
+    drop(resolution);
     let final_planned = SpectralCyclePlan::final_major(
         &problem,
         &planning_registry,
         SpectralCycleExecutionPolicy::new(
             implementation(73),
             WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
-            residency.clone(),
+            residency,
             serial_storage_io(),
             1_000,
-            8 * 8 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
+            4 * 4 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
             900_000,
-        ),
+        )
+        .with_gridded_normal_storage(planned_storage.clone()),
         &final_input,
+        replay_descriptor,
     )
     .expect("production final-major plan");
     let initial_nodes = execution_plan
@@ -2687,8 +3082,17 @@ fn spectral_cycle_executes_initial_major_and_shared_reconstruction_cycle() {
         .keys()
         .cloned()
         .collect::<BTreeSet<_>>();
-    let (final_physical, final_weighting, final_complete, final_resources, final_pass, final_minor) =
-        final_planned.into_parts();
+    let SpectralCyclePlanParts {
+        physical: final_physical,
+        weighting: final_weighting,
+        complete_data: final_complete,
+        pass: final_pass,
+        minor_cycle_node: final_minor,
+        gridded_replay: planned_replay,
+        gridded_normal_storage: final_storage,
+        gridded_normal_reservation_bytes: final_storage_bytes,
+        ..
+    } = final_planned.into_parts();
     assert!(final_minor.is_none());
     let final_nodes = final_physical
         .execution_dag()
@@ -2706,9 +3110,69 @@ fn spectral_cycle_executes_initial_major_and_shared_reconstruction_cycle() {
                 WorkKind::ObservationRead | WorkKind::ObservationReadWriteback
             ))
             .count(),
-        1,
-        "a later major cycle reuses frozen weighting and traverses selected payload once"
+        0,
+        "a later major cycle must not expose a selected-observation science traversal"
     );
+    let final_demand = &final_physical.execution_dag().resource_alternative().demand;
+    assert_eq!(final_demand.locks.hard(), 0);
+    assert_eq!(final_demand.file_descriptors.hard(), 1);
+    assert!(
+        final_demand
+            .storage
+            .iter()
+            .all(|demand| demand.temporary_bytes == 0)
+    );
+    assert_eq!(
+        final_demand.io_buffers.bytes(IoBufferKind::SourceReadAhead),
+        0
+    );
+    assert!(
+        final_physical
+            .execution_dag()
+            .nodes()
+            .values()
+            .flat_map(|node| &node.claims)
+            .all(|claim| !matches!(
+                claim.resource,
+                LeaseResource::Locks
+                    | LeaseResource::MeasurementSetLock { .. }
+                    | LeaseResource::IoBuffer(IoBufferKind::SourceReadAhead)
+            ))
+    );
+    let replay_nodes = final_physical
+        .execution_dag()
+        .nodes()
+        .values()
+        .filter(|node| {
+            node.claims
+                .iter()
+                .any(|claim| claim.resource == LeaseResource::IoBuffer(IoBufferKind::SpillRead))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(replay_nodes.len(), 1, "one bounded artifact reader");
+    let replay_node_id = replay_nodes[0].id.clone();
+    assert_eq!(replay_nodes[0].kind, WorkKind::Prefetch);
+    assert!(
+        replay_nodes[0]
+            .id
+            .as_str()
+            .starts_with("gridded-normal-replay-final-major")
+    );
+    assert!(
+        replay_nodes[0]
+            .claims
+            .iter()
+            .any(|claim| { claim.resource == LeaseResource::FileDescriptors && claim.amount == 1 })
+    );
+    assert!(replay_nodes[0].claims.iter().all(|claim| {
+        !matches!(
+            claim.resource,
+            LeaseResource::Storage {
+                use_kind: StorageUseKind::Temporary,
+                ..
+            }
+        )
+    }));
     let collisions = initial_nodes
         .intersection(&final_nodes)
         .cloned()
@@ -2717,23 +3181,53 @@ fn spectral_cycle_executes_initial_major_and_shared_reconstruction_cycle() {
         collisions.is_empty(),
         "ordinary pass node identities collide: {collisions:?}"
     );
-    let final_executor = SpectralCycleExecutor::new(
+    let final_preparation = final_complete.preparation_node().clone();
+    let final_preparation_node = final_physical
+        .execution_dag()
+        .nodes()
+        .get(&final_preparation)
+        .expect("final FFT preparation node");
+    assert!(final_preparation_node.allocations.iter().any(|allocation| {
+        allocation
+            .allocation
+            .as_str()
+            .starts_with("spectral-operator-primitives-residual-refresh-")
+    }));
+    let residual_grid = final_physical
+        .execution_dag()
+        .logical_allocations()
+        .values()
+        .find(|allocation| {
+            allocation
+                .id
+                .as_str()
+                .starts_with("spectral-operator-grids-residual-refresh-")
+        })
+        .expect("residual-refresh grid allocation");
+    assert_eq!(
+        residual_grid.bytes,
+        final_complete.residency().grid_bytes() as u64
+    );
+    let final_executor = SpectralCycleExecutor::new_gridded(
         implementation(73),
         problem.clone(),
         final_weighting,
-        final_resources,
         final_pass,
         final_complete,
-        open_selected_observation(&problem, &residency).expect("final selected owner"),
         ExecutableModelProblem::from_compiled(problem.clone()).expect("final executable model"),
         SpectralCyclePassInput::FinalMajor(final_input),
+        planned_replay.expect("final plan retains exact gridded replay identity"),
+        &final_storage.expect("final plan binds retained artifact storage"),
+        final_storage_bytes.expect("final plan binds retained storage ceiling"),
+        gridded_replay,
     )
+    .expect("final executor accepts its planned replay")
     .with_frozen_weighting(frozen_weighting);
     let final_registry =
         SpectralCycleRegistry::new(registry(73), implementation(73), &problem, final_executor);
     let final_plan = runtime_plan(
         &problem,
-        PlanningBindings::new(registry(73), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(73), resource_policy, planning_profile(4)),
         authority(),
         &final_registry,
         &receipts,
@@ -2748,6 +3242,11 @@ fn spectral_cycle_executes_initial_major_and_shared_reconstruction_cycle() {
             .any(|artifact| artifact.identity() == accepted_update
                 && artifact.role() == ArtifactRole::Input)
     );
+    assert!(final_plan.artifacts().iter().any(|artifact| {
+        artifact.identity() == replay_descriptor.identity()
+            && artifact.role() == ArtifactRole::Input
+            && artifact.node() == &replay_node_id
+    }));
     let final_attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([75; 32]);
     runtime_run(
         &executable,
@@ -2794,10 +3293,14 @@ fn spectral_cycle_executes_initial_major_and_shared_reconstruction_cycle() {
 fn execute_initial_reconstruction_cycle(
     problem: &casa_imaging_model::CompiledProblem,
     byte: u8,
+    initial_access: ResolvedSelectedObservationAccess,
 ) -> ReconstructionCyclePhaseCompletion {
-    let residency = selected_content_residency_with(problem, |_| {
-        SelectedObservationContentBudget::new(256 * 1024, 1, 4)
-    });
+    let residency = initial_access
+        .certify_residency(problem)
+        .expect("owner-certified channel-cycle residency");
+    let replay_proof_bytes = initial_access
+        .replay_proof_retained_heap_bytes(problem)
+        .expect("bounded channel-cycle replay-proof residency");
     let planning_registry = ContractOnlyRegistry::new(
         registry(byte),
         implementation_metadata(problem),
@@ -2812,20 +3315,34 @@ fn execute_initial_reconstruction_cycle(
         1_000,
         (channel_count * 8 * 8 * std::mem::size_of::<num_complex::Complex64>() * 3) as u64,
         900_000,
-    );
+    )
+    .with_gridded_normal_storage(artifact_storage());
     let planned = SpectralCyclePlan::initial(problem, &planning_registry, policy)
         .expect("channel-cycle initial plan");
     let cycle_node = planned
         .minor_cycle_node()
         .expect("initial plan owns reconstruction cycle")
         .clone();
-    let (physical, weighting, complete, resources, pass, _) = planned.into_parts();
+    let SpectralCyclePlanParts {
+        physical,
+        weighting,
+        complete_data: complete,
+        source_resources: resources,
+        pass,
+        gridded_normal_storage: planned_storage,
+        gridded_normal_reservation_bytes,
+        ..
+    } = planned.into_parts();
     let reservation = FrozenWeightingReservation::acquire(
         authority(),
         ResourcePolicy::Balanced,
         weighting.planned_residency(),
+        replay_proof_bytes,
     )
     .expect("frozen weighting reservation");
+    let planned_storage = planned_storage.expect("channel-cycle plan retains artifact storage");
+    let gridded_storage_bytes =
+        gridded_normal_reservation_bytes.expect("channel-cycle plan reserves artifact storage");
     let program = casa_imaging_reconstruction::MinorCycleProgram::for_algorithm(
         problem.reconstruction().algorithm().clone(),
         problem.reconstruction().controls(),
@@ -2840,11 +3357,15 @@ fn execute_initial_reconstruction_cycle(
         resources,
         pass,
         complete,
-        open_selected_observation(problem, &residency).expect("selected owner"),
+        initial_access
+            .open(problem)
+            .expect("owner-validated channel-cycle observation"),
         ExecutableModelProblem::from_compiled(problem.clone()).expect("executable model"),
         SpectralCyclePassInput::Initial,
     )
     .with_frozen_weighting_reservation(reservation)
+    .with_planned_gridded_normal_storage(&planned_storage, gridded_storage_bytes)
+    .expect("channel-cycle gridded-normal compiler")
     .with_reconstruction_cycle(
         cycle_node.clone(),
         casa_imaging_reconstruction::ReconstructionMaskPlan::FullPlane {
@@ -2901,11 +3422,56 @@ fn execute_initial_reconstruction_cycle(
         .expect("channel-cycle completion")
 }
 
+fn owner_resolved_channel_local_hogbom_problem(
+    observation: u8,
+    output_channels: usize,
+    selected_channels: usize,
+) -> (
+    casa_imaging_model::CompiledProblem,
+    ResolvedSelectedObservationAccess,
+) {
+    let fixture = compile(channel_local_hogbom_request(
+        observation,
+        output_channels,
+        selected_channels,
+    ))
+    .expect("channel-cycle fixture compilation");
+    let fixture_source = &fixture.inputs().observation_snapshot().sources()[0];
+    match initialize_measurement_set_owner_manifest(fixture_source.provenance().locator()) {
+        Ok(_) | Err(casa_ms::ObservationOwnerError::AlreadyInitialized) => {}
+        Err(error) => panic!("initialize channel-cycle owner fixture: {error}"),
+    }
+    let resolution = SelectedObservationResolutionRequest::new(
+        fixture_source.provenance().locator(),
+        fixture_source.provenance().selection_request_identity(),
+        fixture_source.selection().clone(),
+        VisibilityColumn::Data,
+        WeightColumn::Weight,
+        Vec::new(),
+        ModelStateIdentity::Empty,
+        SelectedObservationContentBudget::new(256 * 1024, 1, 4),
+        casa_test_support::deterministic_measures_provider_for_identity([90; 32]),
+    );
+    let (snapshot_input, initial_access) = resolve_selected_observation(resolution)
+        .expect("resolve channel-cycle owner fixture")
+        .into_parts();
+    let snapshot =
+        compile_observation(snapshot_input).expect("compile channel-cycle owner snapshot");
+    let problem = compile(channel_local_request_with_inputs(
+        ProblemInputIdentities::new(snapshot),
+        output_channels,
+        ReconstructionAlgorithm::Hogbom,
+        ReconstructionControls::new(2, 0.5, 0.0),
+        None,
+    ))
+    .expect("owner-resolved channel-cycle compilation");
+    (problem, initial_access)
+}
+
 #[test]
 fn t38_runtime_runs_one_shared_cycle_with_combined_channel_evidence() {
-    let problem = compile(channel_local_hogbom_request(238, 3, 2))
-        .expect("two selected channels and one unmapped output");
-    let completion = execute_initial_reconstruction_cycle(&problem, 78);
+    let (problem, initial_access) = owner_resolved_channel_local_hogbom_problem(238, 3, 2);
+    let completion = execute_initial_reconstruction_cycle(&problem, 78, initial_access);
     let evidence = completion.evidence();
     assert_eq!(
         evidence.channel_policy(),
@@ -6639,7 +7205,7 @@ fn later_member_failure_retains_terminal_prefix_and_suffix_evidence() {
     ));
     assert!(publication_launched.load(Ordering::SeqCst));
     assert_eq!(visible_generation.load(Ordering::SeqCst), 1);
-    assert_eq!(receipt.schema_version(), 18);
+    assert_eq!(receipt.schema_version(), 19);
     assert_eq!(receipt.status(), ReceiptStatus::Failed);
     let dispositions = execution_plan
         .publication_layouts()
@@ -7048,7 +7614,11 @@ fn actual_bound_observation_traversals_drive_both_weighting_generation_passes() 
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let mut executor = recording_executor(6, None, None);
+    let mut executor = product_publication_recording_executor(
+        &problem,
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(AtomicUsize::new(0)),
+    );
     executor.weighting_source_residency = Some(selected_content_residency(&problem));
     executor.weighting_plan = Some(weighting_plan);
     let registry = TestRegistry {
@@ -7470,7 +8040,7 @@ fn weighting_generation_rejects_missing_direct_predecessor_before_state_exists()
 }
 
 #[test]
-fn weighting_generation_rejects_mismatched_allocation_capabilities_before_state_exists() {
+fn weighting_replay_rejects_mismatched_block_allocation_before_samples_emit() {
     let problem = compile(request(198)).expect("logical weighting compilation");
     let planned_weighting = plan_weighting(
         &problem,
@@ -7485,7 +8055,7 @@ fn weighting_generation_rejects_mismatched_allocation_capabilities_before_state_
         implementation(6),
         implementation(6),
     );
-    let generation = fragment.generation_node().clone();
+    let replay = fragment.replay_node().clone();
     let physical = fragment
         .compose(&physical_work_for_weighting_problem(&problem, 6))
         .expect("production weighting physical work");
@@ -7523,9 +8093,9 @@ fn weighting_generation_rejects_mismatched_allocation_capabilities_before_state_
         authority(),
         &mut controller,
     )
-    .expect_err("generation must not begin with different allocation capacities");
+    .expect_err("replay must not begin with different block allocation capacities");
 
-    assert!(matches!(error, RunError::Execution { node, .. } if node == generation));
+    assert!(matches!(error, RunError::Execution { node, .. } if node == replay));
     let executor = &registry.executors[&implementation(6)];
     assert!(
         executor
@@ -7798,12 +8368,42 @@ fn multi_source_weighting_receipts_certified_aggregate_residency_through_release
 fn t37_runtime_residency_tracks_core_and_sampler_halo_depth() {
     let problem = compile(channel_local_request(237, 8)).expect("channel-local problem");
     let replay = WorkNodeId::new("t37-weighted-replay");
-    let depth_one = CompleteDataPlanFragment::for_slab(&problem, 4, replay.clone(), 3, 1)
-        .expect("one-channel core slab");
-    let depth_two = CompleteDataPlanFragment::for_slab(&problem, 4, replay.clone(), 3, 2)
-        .expect("two-channel core slab");
-    let full =
-        CompleteDataPlanFragment::for_slab(&problem, 4, replay, 0, 8).expect("full channel slab");
+    let depth_one = CompleteDataPlanFragment::for_slab(
+        &problem,
+        4,
+        replay.clone(),
+        3,
+        1,
+        SpectralOperatorPass::InitialMajor,
+    )
+    .expect("one-channel core slab");
+    let depth_two = CompleteDataPlanFragment::for_slab(
+        &problem,
+        4,
+        replay.clone(),
+        3,
+        2,
+        SpectralOperatorPass::InitialMajor,
+    )
+    .expect("two-channel core slab");
+    let full = CompleteDataPlanFragment::for_slab(
+        &problem,
+        4,
+        replay.clone(),
+        0,
+        8,
+        SpectralOperatorPass::InitialMajor,
+    )
+    .expect("full channel slab");
+    let residual_refresh = CompleteDataPlanFragment::for_slab(
+        &problem,
+        4,
+        replay,
+        3,
+        1,
+        SpectralOperatorPass::ResidualRefresh,
+    )
+    .expect("one-channel residual refresh");
 
     assert_eq!(depth_one.slab().core_range(), 3..4);
     assert_eq!(depth_one.slab().resident_range(), 2..5);
@@ -7816,6 +8416,16 @@ fn t37_runtime_residency_tracks_core_and_sampler_halo_depth() {
     let all = full.residency();
     assert_eq!(two.grid_bytes(), one.grid_bytes() * 2);
     assert_eq!(all.grid_bytes(), one.grid_bytes() * 8);
+    assert_eq!(
+        residual_refresh.residency().grid_bytes() * 3,
+        one.grid_bytes(),
+        "later major passes retain only residual plus compensation grids"
+    );
+    assert_eq!(
+        residual_refresh.residency().primitive_output_bytes(),
+        one.primitive_output_bytes(),
+        "the primitive lease covers prior invariants overlapping the new residual"
+    );
     assert_eq!(
         two.primitive_output_bytes(),
         one.primitive_output_bytes() * 2
@@ -7882,11 +8492,13 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
         &problem,
         weighting_plan.limits().max_block_samples(),
         replay.clone(),
+        SpectralOperatorPass::InitialMajor,
     )
     .expect("spectral operator runtime plan");
     let preparation = operator_plan.preparation_node().clone();
     let reconciliation = WorkNodeId::new("post-replay-reconciliation");
-    let major_cycle_model = AllocationId::new("spectral-operator-major-cycle-model-10x10-ch0-1");
+    let major_cycle_model =
+        AllocationId::new("spectral-operator-major-cycle-model-initial-10x10-ch0-1");
     let (physical, operator_plan) = operator_plan
         .compose(&physical)
         .expect("T19 resources compose onto T18 replay");
@@ -8639,7 +9251,7 @@ fn run_persists_a_reopenable_receipt_with_exact_identities_and_every_plan_node()
         .expect("reopen durable receipt");
 
     assert_eq!(outcome, ExecutionOutcome::Succeeded);
-    assert_eq!(receipt.schema_version(), 16);
+    assert_eq!(receipt.schema_version(), 19);
     assert_eq!(receipt.status(), ReceiptStatus::Completed);
     assert_eq!(receipt.plan_identity(), execution_plan.plan_id().as_bytes());
     assert_eq!(receipt.problem_identity(), problem.problem_id().as_bytes());
@@ -9782,6 +10394,7 @@ fn t20_major_cycle_harness(
         &problem,
         weighting_plan.limits().max_block_samples(),
         replay.clone(),
+        SpectralOperatorPass::InitialMajor,
     )
     .expect("spectral operator runtime plan");
     let (physical, operator_plan) = operator_plan
@@ -10176,11 +10789,11 @@ fn freeze_sealed_products_weighting(
 ) -> Result<WeightingAlgorithmState, WeightingError> {
     let mut density = begin_weighting_generation(problem, plan)?;
     for sample in samples {
-        density.consume(problem, *sample, exact_sample_contributions(sample))?;
+        density.consume(problem, sample, exact_sample_contributions(sample))?;
     }
     let mut sum_weight = density.finish(problem)?;
     for sample in samples {
-        sum_weight.consume(problem, *sample, exact_sample_contributions(sample))?;
+        sum_weight.consume(problem, sample, exact_sample_contributions(sample))?;
     }
     sum_weight.finish()
 }
@@ -10197,7 +10810,7 @@ fn replay_sealed_products_weighting(
         .expect("begin replay");
     for sample in samples {
         if let Some(block) = phase
-            .consume(problem, *sample, exact_sample_contributions(sample))
+            .consume(problem, sample, exact_sample_contributions(sample))
             .expect("weight sample")
         {
             blocks.push(block);
@@ -10256,14 +10869,18 @@ fn sealed_products_round(
 
     let specification =
         SpectralOperatorSpecification::new(problem).expect("spectral operator specification");
-    let workload = spectral_operator_workload(&specification, plan.limits().max_block_samples())
-        .expect("workload");
+    let workload = spectral_operator_workload(
+        &specification,
+        plan.limits().max_block_samples(),
+        SpectralOperatorPass::InitialMajor,
+    )
+    .expect("workload");
     let prepared = prepare_spectral_operator(specification, workload).expect("prepare operator");
     let mut state = prepared
         .begin(problem, &generation)
         .expect("begin complete-data owner");
     state
-        .bind_major_cycle_model(preparation.final_model())
+        .bind_major_cycle_model(preparation.final_model(), None)
         .expect("bind final model");
     for block in &blocks {
         state.consume_block(block).expect("consume block");
@@ -10644,7 +11261,7 @@ fn production_storage_profile_admits_serial_scientific_and_publication_plans() {
         ),
     )
     .expect("production scientific plan");
-    let (scientific, _, _, _, _, _) = scientific.into_parts();
+    let scientific = scientific.into_parts().physical;
     let planned_runtime = SerialProductPublicationPlan::new(
         &problem,
         &planned,
@@ -10778,7 +11395,7 @@ fn profiled_serial_plans_bind_only_their_used_storage_identities() {
             ),
         )
         .expect("scientific plan construction");
-        reject(scientific.into_parts().0);
+        reject(scientific.into_parts().physical);
 
         let publication = SerialProductPublicationPlan::new(
             &problem,

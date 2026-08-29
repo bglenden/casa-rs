@@ -621,17 +621,23 @@ def compare_one(
     left_path = rust_path
     right_path = casa_path
     if not os.path.isdir(left_path) or not os.path.isdir(right_path):
-        return {
+        result = {
             "status": "missing",
             "left_path": left_path,
             "right_path": right_path,
             "left_exists": os.path.isdir(left_path),
             "right_exists": os.path.isdir(right_path),
-            "rust_path": left_path,
-            "casa_path": right_path,
-            "rust_exists": os.path.isdir(left_path),
-            "casa_exists": os.path.isdir(right_path),
         }
+        if legacy_operand_aliases:
+            result.update(
+                {
+                    "rust_path": left_path,
+                    "casa_path": right_path,
+                    "rust_exists": result["left_exists"],
+                    "casa_exists": result["right_exists"],
+                }
+            )
+        return result
     left = load_image(left_path, max_elements)
     right = load_image(right_path, max_elements)
     if left["shape"] != right["shape"]:

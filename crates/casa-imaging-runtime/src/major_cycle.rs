@@ -16,7 +16,8 @@ use casa_imaging_reconstruction::{
 };
 
 use crate::{
-    CompleteDataOperatorResult, ExecutionAttemptId, WorkExecutionContext, WorkKind, WorkNodeId,
+    CompleteDataOperatorResult, ExecutionAttemptId, FenceId, FenceKind, WorkDependency,
+    WorkExecutionContext, WorkKind, WorkNodeId,
 };
 
 /// Runtime-bound owner of one attempt's pending Major-Cycle reconciliation.
@@ -31,6 +32,7 @@ pub struct MajorCycleOperatorState {
     replay_node: WorkNodeId,
     reconciliation_node: WorkNodeId,
     lease_epoch: u64,
+    observation_predecessor_required: bool,
 }
 
 impl MajorCycleOperatorState {
@@ -48,6 +50,7 @@ impl MajorCycleOperatorState {
             replay_node: result.replay_node().clone(),
             reconciliation_node: result.reconciliation_node().clone(),
             lease_epoch: result.lease_epoch(),
+            observation_predecessor_required: result.observation_predecessor_required(),
             owner: MajorCycleOwner::from_complete_data(result.into_evidence(), preparation)?,
         };
         Ok(state)
@@ -83,16 +86,28 @@ impl MajorCycleOperatorState {
         if context.attempt_id() != self.attempt || context.lease_epoch() != self.lease_epoch {
             return Err(MajorCycleOperatorError::ExecutionBinding);
         }
-        let predecessor = context
-            .predecessor_observation_completion(&self.replay_node)
-            .ok_or(MajorCycleOperatorError::MissingReplayPredecessor)?;
-        if predecessor.attempt_id() != self.attempt
-            || predecessor.owner_node() != &self.replay_node
-            || predecessor.lease_epoch() != self.lease_epoch
-            || predecessor.owner_completion().generation_id() != self.owner.selected_generation()
-            || predecessor.owner_completion().sample_count() != self.owner.sample_count()
+        if self.observation_predecessor_required {
+            let predecessor = context
+                .predecessor_observation_completion(&self.replay_node)
+                .ok_or(MajorCycleOperatorError::MissingReplayPredecessor)?;
+            if predecessor.attempt_id() != self.attempt
+                || predecessor.owner_node() != &self.replay_node
+                || predecessor.lease_epoch() != self.lease_epoch
+                || predecessor.owner_completion().generation_id()
+                    != self.owner.selected_generation()
+                || predecessor.owner_completion().sample_count() != self.owner.sample_count()
+            {
+                return Err(MajorCycleOperatorError::ExecutionBinding);
+            }
+        } else if !context
+            .node()
+            .dependencies
+            .contains(&WorkDependency::Fence(FenceId::new(
+                self.replay_node.clone(),
+                FenceKind::Io,
+            )))
         {
-            return Err(MajorCycleOperatorError::ExecutionBinding);
+            return Err(MajorCycleOperatorError::MissingReplayPredecessor);
         }
         if lifecycle.problem() != self.owner.problem_id()
             || context.compiled().problem_id() != self.owner.problem_id()

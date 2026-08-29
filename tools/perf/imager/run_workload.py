@@ -599,6 +599,7 @@ def build_plan(
         "IMAGER_BENCH_WPROJPLANES": wprojplanes,
         "IMAGER_BENCH_CASA_WPROJPLANES": casa_wprojplanes,
         "IMAGER_BENCH_NITER": str(int_value(imaging, "niter", 4)),
+        "IMAGER_BENCH_NMAJOR": str(int_value(imaging, "nmajor", -1)),
         "IMAGER_BENCH_GAIN": str(float_value(imaging, "gain", 0.1)),
         "IMAGER_BENCH_THRESHOLD_JY": str(float_value(imaging, "threshold_jy", 0.0)),
         "IMAGER_BENCH_NSIGMA": str(float_value(imaging, "nsigma", 0.0)),
@@ -733,6 +734,7 @@ def build_plan(
             "hogbom_iteration_mode": hogbom_iteration_mode,
             "nterms": int_value(imaging, "nterms", 1),
             "niter": int_value(imaging, "niter", 4),
+            "nmajor": int_value(imaging, "nmajor", -1),
             "wprojplanes": optional_int_string(imaging, "wprojplanes") or None,
         },
         "run": {

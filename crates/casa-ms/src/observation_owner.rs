@@ -19,7 +19,8 @@ use casa_imaging_model::{
     MeasurementSetIdentity, MetadataGeneration, MetadataTableKind, ModelColumnState,
     ModelStateIdentity, MsColumnKind, ObservationSelection, ObservationSnapshotInput,
     ObservationSourceInput, ObservationSourceProvenance, ObservationSourceState, ReferenceDataKind,
-    SelectedColumns, SourceGenerations, VisibilityColumn, WeightColumn,
+    SelectedColumns, SelectedMainRow, SelectedRowsBuilder, SourceGenerations, VisibilityColumn,
+    WeightColumn,
 };
 use casa_tables::{ColumnSchema, LockType, Table};
 use casa_types::{
@@ -30,7 +31,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::selected_observation::{BoundObservationSource, validate_selected_coordinates};
+use crate::selected_observation::validate_selected_coordinates;
 use crate::{
     BoundObservationSourceError, BoundSelectedObservation, BoundSelectedObservationError,
     MeasurementSet, MsError, MsSelectionIoBudget, ObservationSourceBinding,
@@ -527,8 +528,13 @@ impl ResolvedSelectedObservation {
 pub struct ResolvedSelectedObservationAccess {
     binding: ObservationSourceBinding,
     measures: SelectedObservationMeasures,
-    model_column_storage: SelectedVisibilityStoragePlan,
-    corrected_column_storage: Option<SelectedVisibilityStoragePlan>,
+    visibility_storage: SelectedVisibilityStoragePlanner,
+}
+
+struct SelectedVisibilityStoragePlanner {
+    locator: String,
+    selection: Arc<ObservationSelection>,
+    content_budget: SelectedObservationContentBudget,
 }
 
 impl ResolvedSelectedObservationAccess {
@@ -552,30 +558,42 @@ impl ResolvedSelectedObservationAccess {
         if !targets.model_data && !targets.corrected_data {
             return Err(ObservationOwnerError::EmptyWriteTargets);
         }
-        let corrected = targets
-            .corrected_data
-            .then_some(self.corrected_column_storage)
-            .flatten()
-            .ok_or(ObservationOwnerError::MissingCorrectedDataDestination)
-            .or_else(|error| {
-                if targets.corrected_data {
-                    Err(error)
-                } else {
-                    Ok(SelectedVisibilityStoragePlan {
-                        additional_persistent_bytes: 0,
-                        write_bytes: 0,
-                        maximum_cell_bytes: 0,
-                    })
-                }
-            })?;
-        let model = if targets.model_data {
-            self.model_column_storage
-        } else {
-            SelectedVisibilityStoragePlan {
-                additional_persistent_bytes: 0,
-                write_bytes: 0,
-                maximum_cell_bytes: 0,
+        let measurement_set = MeasurementSet::open_retained_read(&self.visibility_storage.locator)?;
+        let manifest = OwnerManifest::read(measurement_set.main_table().keywords())?;
+        validate_transaction_precondition(&manifest, &measurement_set, self.source_state())?;
+        let empty = SelectedVisibilityStoragePlan {
+            additional_persistent_bytes: 0,
+            write_bytes: 0,
+            maximum_cell_bytes: 0,
+        };
+        let corrected = if targets.corrected_data {
+            if !measurement_set
+                .main_table()
+                .schema()
+                .is_some_and(|schema| schema.contains_column("CORRECTED_DATA"))
+            {
+                return Err(ObservationOwnerError::MissingCorrectedDataDestination);
             }
+            derive_column_storage_plan(
+                &measurement_set,
+                &self.visibility_storage.selection,
+                "CORRECTED_DATA",
+                false,
+                self.visibility_storage.content_budget,
+            )?
+        } else {
+            empty
+        };
+        let model = if targets.model_data {
+            derive_column_storage_plan(
+                &measurement_set,
+                &self.visibility_storage.selection,
+                "MODEL_DATA",
+                true,
+                self.visibility_storage.content_budget,
+            )?
+        } else {
+            empty
         };
         Ok(SelectedVisibilityStoragePlan {
             additional_persistent_bytes: model.additional_persistent_bytes,
@@ -590,48 +608,6 @@ impl ResolvedSelectedObservationAccess {
         })
     }
 
-    /// Replace the caller's upper-bound content budget with the smallest budget
-    /// that the MeasurementSet owner can prove admits one complete selected row.
-    ///
-    /// The owner derives this value from the same retained metadata, Measures
-    /// state, shared allocation charges, and content planner used by [`Self::open`].
-    /// The caller's live-block and POINTING polynomial ceilings are preserved;
-    /// an upper bound too small to admit one row fails closed.
-    #[cfg(unix)]
-    pub fn with_minimum_content_budget(
-        mut self,
-        problem: &casa_imaging_model::CompiledProblem,
-    ) -> Result<Self, BoundSelectedObservationError> {
-        BoundSelectedObservation::certify_residency(problem, std::slice::from_ref(&self.binding))?;
-        let source = problem
-            .inputs()
-            .observation_snapshot()
-            .sources()
-            .first()
-            .ok_or(BoundSelectedObservationError::BindingSetMismatch)?;
-        let shared_bytes = BoundSelectedObservation::single_source_shared_bytes(
-            problem,
-            &self.measures,
-            &self.binding,
-        )?;
-        let measurement_set = self.binding.measurement_set();
-        let content_budget = BoundObservationSource::minimum_content_budget_with_measures(
-            problem,
-            source,
-            self.binding.current_state(),
-            &self.measures,
-            shared_bytes,
-            self.binding.content_budget(),
-        )
-        .map_err(|error| BoundSelectedObservationError::Source {
-            measurement_set,
-            error: Box::new(error),
-        })?;
-        self.binding =
-            ObservationSourceBinding::new(self.binding.current_state().clone(), content_budget);
-        Ok(self)
-    }
-
     /// Mint the scheduler-visible residency certificate for the compiled problem.
     pub fn certify_residency(
         &self,
@@ -640,13 +616,36 @@ impl ResolvedSelectedObservationAccess {
         BoundSelectedObservation::certify_residency(problem, std::slice::from_ref(&self.binding))
     }
 
+    /// Return the exact shared replay-proof heap that must remain reserved
+    /// between major plans if this access completes exhaustively.
+    pub fn replay_proof_retained_heap_bytes(
+        &self,
+        problem: &casa_imaging_model::CompiledProblem,
+    ) -> Result<usize, BoundSelectedObservationError> {
+        BoundSelectedObservation::replay_proof_retained_heap_bytes(
+            problem,
+            std::slice::from_ref(&self.binding),
+        )
+    }
+
     /// Consume this exact owner probe and open bounded retained observation access.
     #[cfg(unix)]
     pub fn open(
         self,
         problem: &casa_imaging_model::CompiledProblem,
     ) -> Result<BoundSelectedObservation, BoundSelectedObservationError> {
-        BoundSelectedObservation::open(problem, self.measures, vec![self.binding])
+        BoundSelectedObservation::open_owner_validated(problem, self.measures, vec![self.binding])
+    }
+
+    /// Consume this fresh owner probe and authorize a prior exhaustive proof
+    /// under newly acquired retained locks.
+    #[cfg(unix)]
+    pub fn rebind(
+        self,
+        problem: &casa_imaging_model::CompiledProblem,
+        proof: &crate::SelectedObservationReplayProof,
+    ) -> Result<BoundSelectedObservation, BoundSelectedObservationError> {
+        BoundSelectedObservation::rebind(problem, self.measures, vec![self.binding], proof)
     }
 }
 
@@ -720,21 +719,11 @@ pub fn resolve_selected_observation(
     let manifest = OwnerManifest::read(measurement_set.main_table().keywords())?;
     manifest.validate_physical_state(&measurement_set)?;
     validate_physical_selection(&measurement_set, &request.selection, request.content_budget)?;
-    let model_column_storage =
-        derive_column_storage_plan(&measurement_set, &request.selection, "MODEL_DATA", true)?;
-    let corrected_column_storage = measurement_set
-        .main_table()
-        .schema()
-        .is_some_and(|schema| schema.contains_column("CORRECTED_DATA"))
-        .then(|| {
-            derive_column_storage_plan(
-                &measurement_set,
-                &request.selection,
-                "CORRECTED_DATA",
-                false,
-            )
-        })
-        .transpose()?;
+    let visibility_storage = SelectedVisibilityStoragePlanner {
+        locator: request.locator.clone(),
+        selection: Arc::clone(&request.selection),
+        content_budget: request.content_budget,
+    };
     let generations =
         manifest.source_generations(&measurement_set, request.visibility, request.weights)?;
     let identity = MeasurementSetIdentity::new(parse_identity(
@@ -762,10 +751,41 @@ pub fn resolve_selected_observation(
         access: ResolvedSelectedObservationAccess {
             binding,
             measures,
-            model_column_storage,
-            corrected_column_storage,
+            visibility_storage,
         },
     })
+}
+
+/// Rederive one compiled source's selected read state while its newly opened
+/// retained read locks are held.
+///
+/// This is deliberately crate-private: cross-plan replay must pass through the
+/// selected-observation owner, which combines this physical validation with an
+/// opaque prior completion proof before exposing any blocks.
+#[cfg(unix)]
+pub(crate) fn validate_reopened_selected_observation_source(
+    measurement_set: &MeasurementSet,
+    source: &casa_imaging_model::ObservationSource,
+    content_budget: SelectedObservationContentBudget,
+) -> Result<ObservationSourceState, ObservationOwnerError> {
+    let manifest = OwnerManifest::read(measurement_set.main_table().keywords())?;
+    manifest.validate_physical_state(measurement_set)?;
+    validate_physical_selection(measurement_set, source.selection(), content_budget)?;
+    let selected_columns = source.generations().columns();
+    let generations = manifest.source_generations(
+        measurement_set,
+        selected_columns.visibility(),
+        selected_columns.weights(),
+    )?;
+    let identity = MeasurementSetIdentity::new(parse_identity(
+        &manifest.measurement_set_identity,
+        "MeasurementSet identity",
+    )?);
+    Ok(ObservationSourceState::new(
+        identity,
+        source.selection().rows().clone(),
+        generations,
+    ))
 }
 
 /// Failure to initialize, read, or bind a MeasurementSet owner manifest.
@@ -1116,24 +1136,28 @@ fn validate_physical_selection(
     content_budget: SelectedObservationContentBudget,
 ) -> Result<(), ObservationOwnerError> {
     validate_selected_coordinates(measurement_set, selection)?;
-    let expected = selection.rows().ordered_main_rows();
     let row_selection = SelectedObservationRowSelection::from_compiled(selection);
-    let mut visited = 0_usize;
-    let mut mismatch = false;
+    let mut actual = SelectedRowsBuilder::with_data_description_capacity(
+        u64::try_from(measurement_set.row_count())
+            .map_err(|_| ObservationOwnerError::PhysicalSelectionMismatch)?,
+        selection.data_descriptions().len(),
+    );
+    let mut invalid = false;
     measurement_set.visit_selected_observation_rows(
         &row_selection,
         physical_selection_io_budget(content_budget),
         |row| {
-            let matches = expected.get(visited).is_some_and(|planned| {
-                planned.physical_row() == row.physical_row() as u64
-                    && i32::try_from(planned.data_description_id()).ok()
-                        == Some(row.data_description_id())
-            });
-            mismatch |= !matches;
-            visited += 1;
+            if !invalid {
+                invalid = actual
+                    .push(SelectedMainRow::new(
+                        row.physical_row() as u64,
+                        u32::try_from(row.data_description_id()).unwrap_or(u32::MAX),
+                    ))
+                    .is_err();
+            }
         },
     )?;
-    if mismatch || visited != expected.len() {
+    if invalid || &actual.finish() != selection.rows() {
         return Err(ObservationOwnerError::PhysicalSelectionMismatch);
     }
     Ok(())
@@ -1276,35 +1300,66 @@ fn derive_column_storage_plan(
     selection: &ObservationSelection,
     column: &str,
     create_if_absent: bool,
+    content_budget: SelectedObservationContentBudget,
 ) -> Result<SelectedVisibilityStoragePlan, ObservationOwnerError> {
     let has_column = measurement_set
         .main_table()
         .schema()
         .is_some_and(|schema| schema.contains_column(column));
+    let data_description_count = measurement_set.data_description()?.row_count();
+    let mut bytes_by_data_description = Vec::with_capacity(data_description_count);
+    for data_description_id in 0..data_description_count {
+        bytes_by_data_description.push(model_cell_bytes(measurement_set, data_description_id)?);
+    }
     let mut selected_write_bytes = 0_u64;
     let mut maximum_cell_bytes = 0_u64;
-    for selected_row in selection.rows().ordered_main_rows() {
-        let bytes = model_cell_bytes(
-            measurement_set,
-            usize::try_from(selected_row.data_description_id())
-                .map_err(|_| ObservationOwnerError::PredictionAddress)?,
-        )?;
-        selected_write_bytes = selected_write_bytes
-            .checked_add(bytes)
-            .ok_or(ObservationOwnerError::PredictionAddress)?;
-        maximum_cell_bytes = maximum_cell_bytes.max(bytes);
+    let mut selected_error = false;
+    measurement_set.visit_selected_observation_rows(
+        &SelectedObservationRowSelection::from_compiled(selection),
+        physical_selection_io_budget(content_budget),
+        |row| {
+            let Some(bytes) = usize::try_from(row.data_description_id())
+                .ok()
+                .and_then(|id| bytes_by_data_description.get(id))
+                .copied()
+            else {
+                selected_error = true;
+                return;
+            };
+            selected_write_bytes = selected_write_bytes.saturating_add(bytes);
+            maximum_cell_bytes = maximum_cell_bytes.max(bytes);
+        },
+    )?;
+    if selected_error || selected_write_bytes == u64::MAX {
+        return Err(ObservationOwnerError::PredictionAddress);
     }
     let mut additional_persistent_bytes = 0_u64;
     if create_if_absent && !has_column {
-        for row in 0..measurement_set.main_table().row_count() {
-            let bytes = model_cell_bytes(
-                measurement_set,
-                main_data_description_id(measurement_set, row)?,
-            )?;
-            additional_persistent_bytes = additional_persistent_bytes
-                .checked_add(bytes)
-                .ok_or(ObservationOwnerError::PredictionAddress)?;
-            maximum_cell_bytes = maximum_cell_bytes.max(bytes);
+        let mut invalid_data_description = false;
+        let plan = crate::MsReadPlan::new(
+            measurement_set.row_count(),
+            physical_selection_io_budget(content_budget),
+        )
+        .map_err(|_| ObservationOwnerError::PredictionAddress)?;
+        measurement_set.visit_main_row_selection_blocks(plan, |block| {
+            for offset in 0..block.len() {
+                let fact = block
+                    .row(offset)
+                    .expect("offset is bounded by MAIN selection block length");
+                let Some(bytes) = usize::try_from(fact.data_description_id())
+                    .ok()
+                    .and_then(|id| bytes_by_data_description.get(id))
+                    .copied()
+                else {
+                    invalid_data_description = true;
+                    continue;
+                };
+                additional_persistent_bytes = additional_persistent_bytes.saturating_add(bytes);
+                maximum_cell_bytes = maximum_cell_bytes.max(bytes);
+            }
+        })?;
+        if invalid_data_description || additional_persistent_bytes == u64::MAX {
+            return Err(ObservationOwnerError::PredictionAddress);
         }
     }
     let write_bytes = additional_persistent_bytes
@@ -1836,6 +1891,84 @@ mod tests {
         assert_eq!(existing_plan.additional_persistent_bytes(), 0);
         assert_eq!(existing_plan.write_bytes(), 8);
         assert_eq!(existing_plan.maximum_cell_bytes(), 8);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn read_only_resolution_does_not_traverse_unselected_rows_for_a_write_plan() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("read-only-plan.ms");
+        create_ms(&path, false);
+
+        let mut measurement_set = MeasurementSet::open(&path).expect("reopen test MS");
+        let schema = measurement_set
+            .main_table()
+            .schema()
+            .expect("MAIN schema")
+            .clone();
+        let second_row = schema
+            .columns()
+            .iter()
+            .map(|column| {
+                let value = match column.name() {
+                    "DATA_DESC_ID" => Value::Scalar(ScalarValue::Int32(99)),
+                    "FIELD_ID" => Value::Scalar(ScalarValue::Int32(1)),
+                    "DATA" => Value::Array(ArrayValue::Complex32(
+                        ArrayD::from_shape_vec(vec![1, 1], vec![Complex32::new(1.0, 0.0)])
+                            .expect("one visibility"),
+                    )),
+                    "FLAG" => Value::Array(ArrayValue::Bool(
+                        ArrayD::from_shape_vec(vec![1, 1], vec![false]).expect("one flag"),
+                    )),
+                    "WEIGHT" => Value::Array(ArrayValue::Float32(
+                        ArrayD::from_shape_vec(vec![1], vec![1.0]).expect("one weight"),
+                    )),
+                    _ => crate::test_helpers::default_value(column.name()),
+                };
+                RecordField::new(column.name(), value)
+            })
+            .collect();
+        measurement_set
+            .main_table_mut()
+            .add_row(RecordValue::new(second_row))
+            .expect("add unselected row");
+        measurement_set.save().expect("save two-row MS");
+        initialize_measurement_set_owner_manifest(&path).expect("initialize owner manifest");
+
+        let selection = ObservationSelection::new(
+            SelectedRows::from_ordered_main_rows(2, [SelectedMainRow::new(0, 0)])
+                .expect("selected row manifest"),
+            RowSelection::new(
+                IdSelection::Only(vec![0]),
+                TimeSelection::All,
+                UvSelection::All,
+                AntennaSelection::All,
+                IdSelection::All,
+                IdSelection::All,
+                IntentSelection::All,
+                IdSelection::All,
+            ),
+            vec![DataDescriptionSelection::new(0, 0, 0)],
+            vec![SpectralWindowSelection::new(0, vec![0])],
+            vec![CorrelationSelection::new(
+                0,
+                vec![CorrelationProduct::new(0, CorrelationType::CircularRr)],
+            )],
+        );
+        let request = SelectedObservationResolutionRequest::new(
+            path.display().to_string(),
+            identity(2),
+            selection,
+            VisibilityColumn::Data,
+            WeightColumn::Weight,
+            Vec::new(),
+            ModelStateIdentity::Empty,
+            SelectedObservationContentBudget::new(1 << 20, 1, 4),
+            casa_test_support::deterministic_measures_provider_for_identity([90; 32]),
+        );
+
+        resolve_selected_observation(request)
+            .expect("read-only resolution must not plan an unrequested MODEL_DATA write");
     }
 
     #[test]

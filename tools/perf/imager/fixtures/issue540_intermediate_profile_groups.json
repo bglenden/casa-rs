@@ -1,0 +1,35 @@
+{
+  "compensated_gridding": [
+    "StandardConvolution::grid_compensated"
+  ],
+  "prediction_and_stencil": [
+    "SpectralSlabOperator::predict_stencil",
+    "compile_spectral_stencil",
+    "spectral_sampling::one_term",
+    "smallvec.*(?:Extend|Clone)",
+    "(?:^|::)sin$",
+    "(?:^|::)__sincos_stret$"
+  ],
+  "selected_traversal_and_projection": [
+    "SelectedObservationBuffer::sample",
+    "SpectralEvaluationProjector::project",
+    "SelectedObservationBlock::visit_selected_samples",
+    "SelectedObservationTraversalRun::samples",
+    "project_stored_run_row"
+  ],
+  "weighting_generation_and_coverage": [
+    "WeightingReplayPhase.*consume_sample",
+    "weighting::consume_weighting_sample",
+    "weight_from_state",
+    "sha2::sha256::compress256",
+    "CoverageEncoder::push",
+    "SelectedObservationGenerationEncoder::push_run",
+    "encode_generation_correlation_content",
+    "GenerationRowContent.*PartialEq",
+    "SelectedObservationInspection",
+    "RowInspection::push_member",
+    "WeightingAlgorithmState::weight",
+    "density_lookup_cell",
+    "SelectedSpectralContributions"
+  ]
+}

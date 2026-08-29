@@ -1,0 +1,113 @@
+{
+  "affected_fraction": 0.17422911492094262,
+  "approval_status": "approved",
+  "artifact_retention_class": "immutable",
+  "attribution": {
+    "instrumented_replay_seconds": 10.229,
+    "operator_coverage_proof_bytes": 2864160146,
+    "operator_coverage_proof_hash_calls": 33696007,
+    "selected_generation_proof_bytes": 1565284533,
+    "selected_generation_proof_hash_calls": 467005498,
+    "terminalized_selected_generation": false,
+    "total_proof_bytes": 7293604825,
+    "total_proof_hash_calls": 534397512,
+    "weighting_coverage_proof_bytes": 2864160146,
+    "weighting_coverage_proof_hash_calls": 33696007
+  },
+  "candidate_id": "later-major-owner-rebound-proof-derivation",
+  "discriminator": {
+    "baseline_seconds": 9.910949083,
+    "command": "CARGO_INCREMENTAL=0 CASA_RS_IMPERF_DATA_ROOT=/Volumes/GLENDENNING/casa-rs-imperformance cargo test --release -p casa-imaging-runtime --lib weighting::serial_compute_probe::medium_vla_64ch_residual_refresh -- --ignored --exact --nocapture --test-threads=1",
+    "exact_checksum": "e6368112404a3ce2b3b3b9e988bde85dadd5726e09de8d87ca4499dc27a71b91",
+    "maximum_candidate_seconds": 8.9198541747,
+    "required_invariants": [
+      "workers=1 and partitions=1",
+      "one selected-observation pass",
+      "263250 rows, 33696000 samples, and six bounded blocks",
+      "unchanged source-copy and residency measurements",
+      "zero later-pass selected-generation proof bytes",
+      "zero later-pass weighting-coverage proof bytes",
+      "zero later-pass operator-coverage proof bytes"
+    ]
+  },
+  "discriminator_result": {
+    "candidate_replay_seconds": 7.405217709,
+    "command": "CARGO_INCREMENTAL=0 CASA_RS_IMPERF_DATA_ROOT=/Volumes/GLENDENNING/casa-rs-imperformance cargo test --release -p casa-imaging-runtime --lib weighting::serial_compute_probe::medium_vla_64ch_residual_refresh -- --ignored --exact --nocapture --test-threads=1",
+    "date": "2026-08-28",
+    "dataset": "wave1/vla/single/medium/ms/wave1-vla-single-medium.ms",
+    "initial_failure": {
+      "classification": "mechanical lazy-cache zero-sentinel ordering regression",
+      "diagnosis": "The proof-eligible fresh-lock open validated physical owner state before selected_content_plan initialized the exact retained-read scalar cache, so the cache's zero sentinel was reported as ContentPlan(ByteOverflow) before timing began.",
+      "failure": "ContentPlan(ByteOverflow)",
+      "fix": "Derive selected_content_plan under the same fresh retained locks before physical owner validation, preserving the single scientific selected-payload pass and adding no fallback.",
+      "narrow_reproducer_command": "CARGO_INCREMENTAL=0 CASA_RS_IMPERF_DATA_ROOT=/Volumes/GLENDENNING/casa-rs-imperformance cargo test --release -p casa-imaging-runtime --lib weighting::serial_compute_probe::medium_vla_64ch_owner_validated_open -- --ignored --exact --nocapture --test-threads=1",
+      "narrow_reproducer_result": "passed in 0.93 seconds"
+    },
+    "invariants": {
+      "captured_blocks": 6,
+      "captured_capacity_bytes": 378169650,
+      "captured_current_bytes": 375131250,
+      "captured_logical_bytes": 330905250,
+      "captured_read_operations": 114,
+      "normal_state_identity": "e6368112404a3ce2b3b3b9e988bde85dadd5726e09de8d87ca4499dc27a71b91",
+      "operator_coverage_proof_bytes": 0,
+      "operator_coverage_proof_hash_calls": 0,
+      "partitions_per_block": 1,
+      "predicted_samples": 33696000,
+      "selected_generation_proof_bytes": 0,
+      "selected_generation_proof_hash_calls": 0,
+      "selected_generation_proof_terminalized": false,
+      "selected_rows": 263250,
+      "selected_samples": 33696000,
+      "total_coverage_proof_bytes": 0,
+      "total_coverage_proof_hash_calls": 0,
+      "weighted_blocks": 8227,
+      "weighting_coverage_proof_bytes": 0,
+      "weighting_coverage_proof_hash_calls": 0,
+      "workers": 1
+    },
+    "maximum_candidate_seconds": 8.9198541747,
+    "precommit_observation": {
+      "candidate_replay_seconds": 7.421470958,
+      "provenance": "uncommitted implementation worktree atop 76967c738e5335927b49cbe361d35de770e64ce9; retained only as the bounded retry observation, not as durable source identity"
+    },
+    "problem_id": "b9db8b4a5b454c7b9804285d7d9cb56c07e7a663b9ec01ad723b37b2ae706faa",
+    "run_kind": "exact committed-revision confirmation",
+    "source_revision": "271b4e106227b5b4bfe313cffd41c236b17e0157",
+    "status": "exact_confirmation_passed",
+    "timings_ms": {
+      "capture": 1378.489083,
+      "operator_consume": 2774.11887,
+      "operator_finish": 31.014208,
+      "projection_spectral_weighting": 4631.098839,
+      "replay": 7405.217709,
+      "setup": 18217.560834,
+      "total": 28460.412042
+    }
+  },
+  "falsifier": "Revert unless the median candidate replay is at most 8.9198541747 seconds with the exact checksum and every required invariant; any nonzero later-pass proof hashing also falsifies the candidate.",
+  "hypothesis": "A freshly locked casa-ms owner can rebind first-pass selected-generation evidence, allowing reconstruction to derive unchanged later-major coverage and remove redundant proof hashing without weakening traversal, science, or resource checks.",
+  "limits": {
+    "maximum_resident_bytes": 1073741824,
+    "maximum_stage_seconds": 20.0,
+    "maximum_swap_operations": 0,
+    "maximum_wall_seconds": 60.0
+  },
+  "parent_revision": "b8c050ac92284ffc53548381a953c00b62c19bbb",
+  "phase": {
+    "name": "ordinary_intermediate_later_major",
+    "occurrence_count": 9,
+    "seconds_per_occurrence": 152.966
+  },
+  "projected_total_seconds": 1814.446,
+  "record_kind": "implementation",
+  "removable_fraction": 1.0,
+  "reversion": "Restore b8c050ac92284ffc53548381a953c00b62c19bbb and retain no runtime fallback or alternate proof path.",
+  "schema_version": 1,
+  "seam": {
+    "application": "Compose and carry one opaque runtime continuation; perform no proof calculation.",
+    "casa_imaging_reconstruction": "Derive later replay coverage only from rebound selected proof, frozen weighting identity, transform identity, exact counts, and deterministic replay completion.",
+    "casa_imaging_runtime": "Retain the bounded proof beside frozen weighting and preserve per-plan leases, cancellation, measurements, and terminal writer cleanup.",
+    "casa_ms": "Mint the proof after exhaustive traversal and exclusively rebind it under fresh retained locks after manifest, modify-counter, physical-selection, and selected-read-state validation."
+  }
+}

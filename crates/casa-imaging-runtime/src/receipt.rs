@@ -53,7 +53,7 @@ use crate::{
 };
 
 const RECEIPT_SCHEMA: &str = "casa-rs-imaging-execution-receipt";
-const RECEIPT_SCHEMA_VERSION: u32 = 18;
+const RECEIPT_SCHEMA_VERSION: u32 = 19;
 const COMPILED_PROBLEM_EVIDENCE_VERSION: u32 = 9;
 const RECEIPT_SUFFIX: &str = ".receipt.json";
 const RECEIPT_STAGING_PREFIX: &str = ".casa-rs-receipt-staging-";
@@ -5356,6 +5356,9 @@ fn io_buffer_is_valid(value: &str) -> bool {
 }
 
 fn claim_lifetime_is_valid(value: &str) -> bool {
+    if value == "artifact" {
+        return true;
+    }
     if let Some(release) = value.strip_prefix("retained_until:") {
         return is_redacted_text(release);
     }
@@ -5756,13 +5759,6 @@ fn project_reconstruction(fields: &mut BTreeMap<String, String>, problem: &Compi
         "reconstruction.controls.threshold_jy_per_beam",
         stable_float(controls.threshold_jy_per_beam()),
     );
-    if let Some(bound) = controls.maximum_model_update() {
-        evidence_field(
-            fields,
-            "reconstruction.controls.maximum_model_update",
-            stable_float(bound),
-        );
-    }
     if let Some(limit) = controls.cycle_iteration_limit() {
         evidence_field(
             fields,
@@ -7783,12 +7779,16 @@ fn claim_lifetime(lifetime: &ClaimLifetime) -> String {
         ClaimLifetime::RetainedUntil(release) => {
             format!("retained_until:{}", stable_text(release.as_str()))
         }
+        ClaimLifetime::Artifact => "artifact".to_string(),
     }
 }
 
 fn parse_claim_lifetime(value: &str) -> ClaimLifetime {
     if value == "work" {
         return ClaimLifetime::Work;
+    }
+    if value == "artifact" {
+        return ClaimLifetime::Artifact;
     }
     if let Some(release) = value.strip_prefix("retained_until:") {
         return ClaimLifetime::retained_until(WorkNodeId::new(release.to_string()));

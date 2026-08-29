@@ -306,8 +306,6 @@ pub struct CliConfig {
     pub niter: usize,
     /// Major-cycle limit.
     pub nmajor: Option<usize>,
-    /// Required cumulative model-update envelope for an active solver.
-    pub maximum_model_update_jy: Option<f32>,
     /// Long-form minor summary toggle.
     pub fullsummary: bool,
     /// Minor-cycle gain.
@@ -498,9 +496,6 @@ impl CliConfig {
                         0.. => Some(limit as usize),
                         _ => return Err("--nmajor expects -1 or a non-negative value".to_string()),
                     };
-                }
-                "--maximum-model-update-jy" => {
-                    config.maximum_model_update_jy = Some(parse(value(1)?, flag)?)
                 }
                 "--fullsummary" => {
                     config.fullsummary = true;
@@ -736,7 +731,6 @@ impl CliConfig {
             small_scale_bias: 0.0,
             niter: 0,
             nmajor: None,
-            maximum_model_update_jy: None,
             fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
@@ -792,8 +786,10 @@ pub struct RunSummary {
     pub gridded_samples: usize,
     /// Major-cycle count.
     pub major_cycles: usize,
-    /// Minor-cycle component count.
+    /// Minor-cycle count charged to the reported task/controller budget.
     pub minor_iterations: usize,
+    /// Minor-cycle components actually applied.
+    pub actual_minor_iterations: usize,
     /// Minor-cycle stop reason.
     pub clean_stop_reason: Option<CleanStopReason>,
     /// Ordered owner-calculated minor-cycle diagnostics.
@@ -871,11 +867,12 @@ pub fn run_with_cli_args(args: impl IntoIterator<Item = OsString>) -> Result<(),
             eprintln!("warning: {warning}");
         }
         println!(
-            "Wrote CASA-compatible products at prefix {} ({} gridded samples, {} major cycles, {} minor iterations, stop={:?})",
+            "Wrote CASA-compatible products at prefix {} ({} gridded samples, {} major cycles, {} reported minor iterations, {} actual components, stop={:?})",
             result.request.image_name.display(),
             result.run.gridded_samples,
             result.run.major_cycles,
             result.run.minor_iterations,
+            result.run.actual_minor_iterations,
             result.run.clean_stop_reason,
         );
     }
@@ -888,9 +885,6 @@ pub(crate) fn apply_parallel_runtime_control(
 ) -> Result<(), String> {
     if parallel == Some(false) {
         config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Cpu;
-        config.standard_mfs_grid_threads = Some("1".to_string());
-        config.imaging_prepare_workers = Some(1);
-        config.imaging_read_ahead_blocks = Some(1);
     }
     Ok(())
 }

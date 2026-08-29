@@ -10,39 +10,40 @@ use casa_imaging_model::{
     CorrelationProduct, CorrelationSelection, CorrelationType, DataDescriptionSelection,
     DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame,
     DopplerConvention, Epoch, FacetLayout, FiniteValuePolicy, FlagPolicy, FrequencyFrame,
-    GeometryInput, IdSelection, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
-    ImagingRequest, InstrumentResponse, IntentSelection, LogicalIdentity,
-    MeasurementEquationContract, MeasurementSetIdentity, MetadataGeneration, MetadataTableKind,
-    ModelBounds, ModelColumnState, ModelColumnWrite, ModelExecutionAttemptId, ModelInnerProduct,
-    ModelInputCommitment, ModelLifecycleRequirements, ModelStateIdentity, ModelSupport,
-    MsColumnKind, NumericPrecision, NumericalStage, NumericsContract, ObservationSelection,
-    ObservationSnapshotInput, ObservationSourceInput, ObservationSourceProvenance,
-    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PolarizationContract,
-    PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInputIdentities,
-    ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
-    ProductRequirements, ProductSupportComparison, ProductValidityPolicies, Projection,
-    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
-    ReductionPolicy, RestFrequency, RestoringBeamPolicy, RowSelection, ScientificContract,
-    SelectedColumns, SelectedMainRow, SelectedObservationGenerationId, SelectedObservationSample,
-    SelectedPredictionTarget, SelectedRows, SelectedSampleAddress, SelectedSampleCoordinates,
-    SelectedSampleMetadata, SelectedSpectralContribution, SelectedSpectralContributions,
-    SelectedVisibilitySample, SkyDirection, SourceGenerations, SpectralContract,
-    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
-    SpectralWcs, SpectralWindowSelection, StageErrorBudget, TaylorSupportReference,
-    TaylorValidityPolicy, TimeScale, TimeSelection, UvSelection, UvwCoordinateLaw,
-    VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract,
-    WeightingScheme, compile, compile_observation,
+    GeometryInput, HogbomIterationAccounting, IdSelection, ImageAxis, ImageDomainRole,
+    ImageDomainSpec, ImageShape, ImagingRequest, InstrumentResponse, IntentSelection,
+    LogicalIdentity, MeasurementEquationContract, MeasurementSetIdentity, MetadataGeneration,
+    MetadataTableKind, ModelBounds, ModelColumnState, ModelColumnWrite, ModelExecutionAttemptId,
+    ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements, ModelStateIdentity,
+    ModelSupport, MsColumnKind, NumericPrecision, NumericalStage, NumericsContract,
+    ObservationSelection, ObservationSnapshotInput, ObservationSourceInput,
+    ObservationSourceProvenance, ObservationTransactionRequirements, PhaseCentreLaw,
+    PointingCentreLaw, PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy,
+    ProblemInputIdentities, ProblemSpecification, ProductBlankingPolicy, ProductKind,
+    ProductNormalization, ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
+    Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
+    ReconstructionControls, ReductionPolicy, RestFrequency, RestoringBeamPolicy, RowSelection,
+    ScientificContract, SelectedColumns, SelectedMainRow, SelectedObservationGenerationId,
+    SelectedObservationSample, SelectedPredictionTarget, SelectedRows, SelectedSampleAddress,
+    SelectedSampleCoordinates, SelectedSampleMetadata, SelectedSpectralContribution,
+    SelectedSpectralContributions, SelectedVisibilitySample, SkyDirection, SourceGenerations,
+    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
+    SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection, StageErrorBudget,
+    TaylorSupportReference, TaylorValidityPolicy, TimeScale, TimeSelection, UvSelection,
+    UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope,
+    WeightingContract, WeightingScheme, compile, compile_observation,
 };
 use casa_imaging_reconstruction::{
     AutoMultithreshControls, ExecutableModelProblem, FinalModelCompletion, FinalNormalState,
     MajorCycleOwner, MajorCyclePreparation, MaskBox, MinorCycleError, MinorCycleModelPlane,
-    MinorCycleProgram as HogbomControls, MinorCycleStopReason, ModelGeneration, ModelLifecycle,
-    ModelLifecycleError, ReconstructionMask, SpectralOperatorSpecification,
+    MinorCycleProgram as HogbomControls, MinorCycleStopReason, MinorCycleValidity, ModelGeneration,
+    ModelLifecycle, ModelLifecycleError, ReconstructionMask, SpectralOperatorSpecification,
     WeightingAlgorithmState, WeightingError, WeightingExecutionLimits, WeightingPlan,
     WeightingReplayChunk, WeightingReplaySummary, auto_multithresh, begin_weighting_generation,
     model_support_identity, plan_weighting, run_minor_cycle as hogbom_minor_cycle,
     runtime_adapter::{
-        CompleteDataOwnerResult, prepare_spectral_operator, spectral_operator_workload,
+        CompleteDataOwnerResult, SpectralOperatorPass, prepare_spectral_operator,
+        spectral_operator_workload,
     },
 };
 
@@ -338,6 +339,13 @@ fn compile_problem(
 fn fixture_samples(
     problem: &casa_imaging_model::CompiledProblem,
 ) -> Vec<SelectedObservationSample> {
+    fixture_samples_scaled(problem, 1.0)
+}
+
+fn fixture_samples_scaled(
+    problem: &casa_imaging_model::CompiledProblem,
+    visibility_scale: f32,
+) -> Vec<SelectedObservationSample> {
     let mut samples = Vec::new();
     for (source_index, source) in problem
         .selected_observation()
@@ -365,8 +373,8 @@ fn fixture_samples(
                     correlation_type: CorrelationType::StokesI,
                 },
                 visibility: SelectedVisibilitySample::Complex32([
-                    1.0 + source_index as f32,
-                    row_index as f32,
+                    (1.0 + source_index as f32) * visibility_scale,
+                    row_index as f32 * visibility_scale,
                 ]),
                 prediction_target: SelectedPredictionTarget::NotRequested,
                 channel_flag: false,
@@ -426,11 +434,11 @@ fn freeze_weighting_generation(
 ) -> Result<WeightingAlgorithmState, WeightingError> {
     let mut density = begin_weighting_generation(problem, plan)?;
     for sample in samples {
-        density.consume(problem, *sample, exact_contributions(sample))?;
+        density.consume(problem, sample, exact_contributions(sample))?;
     }
     let mut sum_weight = density.finish(problem)?;
     for sample in samples {
-        sum_weight.consume(problem, *sample, exact_contributions(sample))?;
+        sum_weight.consume(problem, sample, exact_contributions(sample))?;
     }
     sum_weight.finish()
 }
@@ -447,7 +455,7 @@ fn replay(
         .expect("begin replay");
     for sample in samples {
         if let Some(block) = phase
-            .consume(problem, *sample, exact_contributions(sample))
+            .consume(problem, sample, exact_contributions(sample))
             .expect("weight sample")
         {
             blocks.push(block);
@@ -479,15 +487,19 @@ fn run_t19_complete_data(
 
     let specification =
         SpectralOperatorSpecification::new(problem).expect("spectral operator specification");
-    let workload = spectral_operator_workload(&specification, plan.limits().max_block_samples())
-        .expect("workload");
+    let workload = spectral_operator_workload(
+        &specification,
+        plan.limits().max_block_samples(),
+        SpectralOperatorPass::InitialMajor,
+    )
+    .expect("workload");
     let prepared = prepare_spectral_operator(specification, workload).expect("prepare operator");
     let mut state = prepared
         .begin(problem, &generation)
         .expect("begin complete-data owner");
     if let Some(preparation) = preparation {
         state
-            .bind_major_cycle_model(preparation.final_model())
+            .bind_major_cycle_model(preparation.final_model(), None)
             .expect("bind exact final model before replay");
     }
     for block in &blocks {
@@ -529,7 +541,7 @@ fn bind_lifecycle(
 }
 
 fn controls() -> HogbomControls {
-    HogbomControls::new(0.5, 1.0e-30, 64, 1.0e30)
+    HogbomControls::new(0.5, 1.0e-30, 64)
         .expect("valid controls")
         .record_component_sequence(64)
         .expect("recording limit")
@@ -599,64 +611,69 @@ fn static_and_auto_masks_share_explicit_geometry_and_generation_lineage() {
 
 #[test]
 fn controls_are_validated_explicitly() {
-    assert!(matches!(
-        HogbomControls::from_compiled(ReconstructionControls::new(8, 0.5, 0.0)),
-        Err(MinorCycleError::MissingMaximumModelUpdate)
-    ));
-    let compiled = HogbomControls::from_compiled(
-        ReconstructionControls::new(8, 0.5, 0.0).with_maximum_model_update(2.5),
-    )
-    .expect("explicit compiled staleness envelope");
-    assert_eq!(compiled.maximum_model_update(), 2.5);
+    let compiled = HogbomControls::from_compiled(ReconstructionControls::new(8, 0.5, 0.0))
+        .expect("exact compiled Högbom view");
+    assert_eq!(compiled.validity(), MinorCycleValidity::Exact);
+    assert_eq!(
+        compiled.hogbom_iteration_accounting(),
+        HogbomIterationAccounting::Strict
+    );
     let compiled = HogbomControls::from_compiled(
         ReconstructionControls::new(100, 0.5, 0.0)
-            .with_maximum_model_update(2.5)
-            .with_cycle_limits(7, 3)
+            .with_cycle_limits(7, Some(3))
             .with_noise_sigma(4.5),
     )
     .expect("cycle and nsigma controls");
     assert_eq!(compiled.max_iterations(), 7);
     assert_eq!(compiled.noise_sigma(), Some(4.5));
     assert!(matches!(
-        HogbomControls::new(0.0, 1.0, 8, 1.0),
+        HogbomControls::new(0.0, 1.0, 8),
         Err(MinorCycleError::InvalidGain)
     ));
     assert!(matches!(
-        HogbomControls::new(1.25, 1.0, 8, 1.0),
+        HogbomControls::new(1.25, 1.0, 8),
         Err(MinorCycleError::InvalidGain)
     ));
     assert!(matches!(
-        HogbomControls::new(0.5, -1.0, 8, 1.0),
+        HogbomControls::new(0.5, -1.0, 8),
         Err(MinorCycleError::InvalidThreshold)
     ));
     assert!(matches!(
-        HogbomControls::new(0.5, f64::NAN, 8, 1.0),
+        HogbomControls::new(0.5, f64::NAN, 8),
         Err(MinorCycleError::InvalidThreshold)
     ));
     assert!(matches!(
-        HogbomControls::new(0.5, 0.0, 0, 1.0),
+        HogbomControls::new(0.5, 0.0, 0),
         Err(MinorCycleError::InvalidIterationBound)
     ));
     assert!(matches!(
-        HogbomControls::new(0.5, 0.0, 8, 0.0),
-        Err(MinorCycleError::InvalidMaximumModelUpdate)
+        HogbomControls::new_bounded(0.5, 0.0, 8, 0.0),
+        Err(MinorCycleError::InvalidValidityBound)
     ));
     assert!(matches!(
-        HogbomControls::new(0.5, 0.0, 8, 1.0)
+        HogbomControls::new(0.5, 0.0, 8)
             .expect("controls")
             .record_component_sequence(0),
         Err(MinorCycleError::InvalidRecordingLimit)
     ));
-    let valid = HogbomControls::new(0.1, 0.5, 7, 3.25).expect("valid controls");
+    let valid = HogbomControls::new_bounded(0.1, 0.5, 7, 3.25).expect("valid controls");
     assert_eq!(
         (
             valid.gain(),
             valid.threshold(),
             valid.max_iterations(),
-            valid.maximum_model_update(),
+            valid.validity(),
             valid.component_sequence_limit()
         ),
-        (0.1, 0.5, 7, 3.25, None)
+        (
+            0.1,
+            0.5,
+            7,
+            MinorCycleValidity::Bounded {
+                maximum_absolute_update: 3.25
+            },
+            None
+        )
     );
     let reused_plane = valid
         .on_model_plane(MinorCycleModelPlane::new(2, 3, 1))
@@ -682,8 +699,16 @@ struct FirstRound {
 }
 
 fn first_confirm_round(observation: u8, attempt_byte: u8) -> FirstRound {
+    first_confirm_round_scaled(observation, attempt_byte, 1.0)
+}
+
+fn first_confirm_round_scaled(
+    observation: u8,
+    attempt_byte: u8,
+    visibility_scale: f32,
+) -> FirstRound {
     let problem = problem_with_model(observation, ModelStateIdentity::Empty);
-    let samples = fixture_samples(&problem);
+    let samples = fixture_samples_scaled(&problem, visibility_scale);
     let mut lifecycle = bind_lifecycle(&problem, attempt_byte, 7);
     let named = lifecycle.initial_empty().expect("empty named generation");
     let preparation =
@@ -706,6 +731,86 @@ fn first_confirm_round(observation: u8, attempt_byte: u8) -> FirstRound {
         final_model,
         residual_peak,
     }
+}
+
+#[test]
+fn exact_hogbom_view_is_not_stopped_by_cumulative_component_flux() {
+    let round = first_confirm_round_scaled(198, 199, 1_000.0);
+    let continuation = problem_with_model(
+        200,
+        ModelStateIdentity::Generation(round.final_model.generation_id().identity()),
+    );
+    let lifecycle = bind_lifecycle(&continuation, 201, 20);
+    let program = HogbomControls::from_compiled(
+        ReconstructionControls::new(50, 0.1, 0.0).with_cycle_limits(50, None),
+    )
+    .expect("exact Högbom program");
+
+    let outcome = hogbom_minor_cycle(
+        &lifecycle,
+        &round.final_model,
+        &round.normal_state,
+        &full_mask(&round.normal_state, &round.final_model),
+        program,
+    )
+    .expect("exact Högbom solve");
+
+    assert_eq!(outcome.evidence().iterations(), 50);
+    assert_eq!(outcome.evidence().controller_iterations(), 50);
+    assert_eq!(
+        outcome.evidence().stop_reason(),
+        MinorCycleStopReason::IterationBound
+    );
+    assert!(
+        outcome.evidence().total_flux() > 100.0,
+        "fixture must cross the displaced arbitrary 100 Jy cap"
+    );
+}
+
+#[test]
+fn casa_inclusive_hogbom_executes_51_but_charges_50_per_bound_stopped_cycle() {
+    let round = first_confirm_round_scaled(202, 203, 1_000.0);
+    let continuation = problem_with_model(
+        204,
+        ModelStateIdentity::Generation(round.final_model.generation_id().identity()),
+    );
+    let lifecycle = bind_lifecycle(&continuation, 205, 21);
+    let program = HogbomControls::from_compiled(
+        ReconstructionControls::new(500, 0.1, 0.0)
+            .with_cycle_limits(50, None)
+            .with_hogbom_iteration_accounting(HogbomIterationAccounting::CasaInclusive),
+    )
+    .expect("CASA-inclusive Högbom program")
+    .record_component_sequence(64)
+    .expect("bounded component diagnostics");
+
+    let mut actual_total = 0_usize;
+    let mut controller_total = 0_usize;
+    for _ in 0..10 {
+        let outcome = hogbom_minor_cycle(
+            &lifecycle,
+            &round.final_model,
+            &round.normal_state,
+            &full_mask(&round.normal_state, &round.final_model),
+            program.clone(),
+        )
+        .expect("CASA-inclusive Högbom solve");
+        let evidence = outcome.evidence();
+        assert_eq!(evidence.iterations(), 51);
+        assert_eq!(evidence.controller_iterations(), 50);
+        assert_eq!(evidence.stop_reason(), MinorCycleStopReason::IterationBound);
+        assert_eq!(
+            evidence
+                .recorded_component_sequence()
+                .expect("all inclusive components are retained")
+                .len(),
+            51
+        );
+        actual_total += evidence.iterations();
+        controller_total += evidence.controller_iterations();
+    }
+    assert_eq!(actual_total, 510);
+    assert_eq!(controller_total, 500);
 }
 
 #[test]
@@ -959,7 +1064,7 @@ fn threshold_stop_converges_without_a_delta_or_a_reconciliation_request() {
         ModelStateIdentity::Generation(round.final_model.generation_id().identity()),
     );
     let lifecycle = bind_lifecycle(&continuation, 48, 9);
-    let converging_controls = HogbomControls::new(0.5, 1.0e12, 32, 1.0e30)
+    let converging_controls = HogbomControls::new(0.5, 1.0e12, 32)
         .expect("valid controls")
         .record_component_sequence(8)
         .expect("recording limit");
@@ -1010,8 +1115,7 @@ fn nsigma_and_cycle_iteration_limits_are_solver_evidence_not_frontend_policy() {
     let lifecycle = bind_lifecycle(&continuation, 173, 17);
     let program = HogbomControls::from_compiled(
         ReconstructionControls::new(64, 0.5, 0.0)
-            .with_maximum_model_update(1.0e30)
-            .with_cycle_limits(2, 4)
+            .with_cycle_limits(2, Some(4))
             .with_noise_sigma(1.0)
             .with_cycle_threshold(1.0, 0.05, 0.8),
     )
@@ -1046,7 +1150,7 @@ fn iteration_bound_stops_with_an_explicit_reconciliation_request() {
         ModelStateIdentity::Generation(round.final_model.generation_id().identity()),
     );
     let lifecycle = bind_lifecycle(&continuation, 52, 10);
-    let bounded = HogbomControls::new(0.5, 0.0, 1, 1.0e30)
+    let bounded = HogbomControls::new(0.5, 0.0, 1)
         .expect("valid controls")
         .record_component_sequence(8)
         .expect("recording limit");
@@ -1076,7 +1180,7 @@ fn staleness_bound_rejects_the_candidate_before_any_state_advances() {
     let lifecycle = bind_lifecycle(&continuation, 56, 11);
     // The very first candidate already exceeds the cumulative update
     // ceiling, so nothing may be applied at all.
-    let tight = HogbomControls::new(0.5, 0.0, 64, 1.0e-300)
+    let tight = HogbomControls::new_bounded(0.5, 0.0, 64, 1.0e-300)
         .expect("valid controls")
         .record_component_sequence(8)
         .expect("recording limit");
@@ -1112,7 +1216,7 @@ fn returned_deltas_never_exceed_the_accepted_view_envelope() {
     );
     let lifecycle = bind_lifecycle(&continuation, 64, 12);
     let envelope = residual_peak(round.normal_state.residual()) * 0.75;
-    let bounded = HogbomControls::new(0.5, 0.0, 64, envelope)
+    let bounded = HogbomControls::new_bounded(0.5, 0.0, 64, envelope)
         .expect("valid controls")
         .record_component_sequence(64)
         .expect("recording limit");
@@ -1126,11 +1230,17 @@ fn returned_deltas_never_exceed_the_accepted_view_envelope() {
     )
     .expect("bounded Högbom solve");
     let evidence = outcome.evidence();
+    let MinorCycleValidity::Bounded {
+        maximum_absolute_update,
+    } = bounded.validity()
+    else {
+        panic!("test program must be bounded");
+    };
     assert!(
-        evidence.total_flux() <= bounded.maximum_model_update(),
+        evidence.total_flux() <= maximum_absolute_update,
         "cumulative flux {} exceeded the accepted envelope {}",
         evidence.total_flux(),
-        bounded.maximum_model_update()
+        maximum_absolute_update
     );
     if let Some(delta) = outcome.delta() {
         let delta_flux: f64 = delta
@@ -1139,12 +1249,11 @@ fn returned_deltas_never_exceed_the_accepted_view_envelope() {
             .map(|term| term.increment().value().abs())
             .sum();
         assert!(
-            delta_flux <= bounded.maximum_model_update() + f64::EPSILON * delta_flux.abs(),
+            delta_flux <= maximum_absolute_update + f64::EPSILON * delta_flux.abs(),
             "delta terms sum to {delta_flux}, beyond the accepted envelope"
         );
     }
-    // Whatever stopped the solve, the accepted envelope bound held.
-    assert_eq!(evidence.stop_reason(), MinorCycleStopReason::IterationBound);
+    assert_eq!(evidence.stop_reason(), MinorCycleStopReason::StalenessBound);
 }
 
 #[test]
@@ -1174,7 +1283,7 @@ fn threshold_boundary_follows_the_casa_hogbom_convention() {
             &round.final_model,
             &round.normal_state,
             &full_mask(&round.normal_state, &round.final_model),
-            HogbomControls::new(0.5, threshold, 64, 1.0e30).expect("valid controls"),
+            HogbomControls::new(0.5, threshold, 64).expect("valid controls"),
         )
         .expect("boundary solve")
     };
@@ -1198,6 +1307,26 @@ fn threshold_boundary_follows_the_casa_hogbom_convention() {
     assert_eq!(equal.evidence().iterations(), 1);
     assert!(equal.delta().is_some());
     assert!(equal.evidence().requests_reconciliation());
+
+    let inclusive_equal = hogbom_minor_cycle(
+        &lifecycle,
+        &round.final_model,
+        &round.normal_state,
+        &full_mask(&round.normal_state, &round.final_model),
+        HogbomControls::from_compiled(
+            ReconstructionControls::new(64, 0.5, strength)
+                .with_hogbom_iteration_accounting(HogbomIterationAccounting::CasaInclusive),
+        )
+        .expect("CASA-inclusive threshold-boundary controls"),
+    )
+    .expect("CASA-inclusive threshold-boundary solve");
+    assert_eq!(inclusive_equal.evidence().iterations(), 1);
+    assert_eq!(inclusive_equal.evidence().controller_iterations(), 1);
+    assert_eq!(
+        inclusive_equal.evidence().stop_reason(),
+        MinorCycleStopReason::ThresholdReached,
+        "an early scientific stop reports the actual count without clamping"
+    );
 
     // Strictly below the peak: the first component is cleaned too.
     let below = solve(strength * 0.99);
@@ -1226,7 +1355,7 @@ fn clark_uses_a_derived_bounded_patch_and_stops_at_threshold_equality() {
     let strength = residual_peak(round.normal_state.residual()) / psf_peak;
     let program = casa_imaging_reconstruction::MinorCycleProgram::for_algorithm(
         ReconstructionAlgorithm::Clark,
-        ReconstructionControls::new(8, 0.5, strength).with_maximum_model_update(1.0e30),
+        ReconstructionControls::new(8, 0.5, strength),
     )
     .expect("Clark program");
 
@@ -1262,7 +1391,7 @@ fn multiscale_zero_scale_matches_the_point_component_and_extended_scale_spreads_
     let point_lifecycle = bind_lifecycle(&continuation, 178, 14);
     let scale_lifecycle = bind_lifecycle(&continuation, 178, 14);
     let extended_lifecycle = bind_lifecycle(&continuation, 178, 14);
-    let compiled = ReconstructionControls::new(1, 0.5, 0.0).with_maximum_model_update(1.0e30);
+    let compiled = ReconstructionControls::new(1, 0.5, 0.0);
     let point = hogbom_minor_cycle(
         &point_lifecycle,
         &round.final_model,
@@ -1370,7 +1499,7 @@ fn window_and_valid_support_constrain_component_placement() {
     );
     let open = bind_lifecycle(&continuation, 61, 13);
 
-    let solving_controls = HogbomControls::new(0.5, 1.0e-30, 64, 1.0e30)
+    let solving_controls = HogbomControls::new(0.5, 1.0e-30, 64)
         .expect("valid controls")
         .record_component_sequence(64)
         .expect("recording limit");
@@ -1401,7 +1530,7 @@ fn window_and_valid_support_constrain_component_placement() {
         &final_model,
         &normal_state,
         &invalid_only,
-        HogbomControls::new(0.5, 0.0, 8, 1.0e30).expect("valid controls"),
+        HogbomControls::new(0.5, 0.0, 8).expect("valid controls"),
     )
     .expect("an empty effective mask is a converged channel, not a solver failure");
     assert_eq!(empty_support.evidence().iterations(), 0);
@@ -1506,7 +1635,7 @@ fn component_sequence_divergence_is_informational_only() {
         controls(),
     )
     .expect("baseline solve");
-    let halved_gain = HogbomControls::new(0.25, 1.0e-30, 64, 1.0e30)
+    let halved_gain = HogbomControls::new(0.25, 1.0e-30, 64)
         .expect("valid controls")
         .record_component_sequence(64)
         .expect("recording limit");
@@ -1534,7 +1663,7 @@ fn component_sequence_divergence_is_informational_only() {
     assert!((c.flux() - b.flux() / 2.0).abs() <= 1.0e-12 * b.flux().abs());
 
     // Sequence-length differences report the terminal divergence.
-    let shorter_controls = HogbomControls::new(0.5, 1.0e-30, 64, 1.0e30)
+    let shorter_controls = HogbomControls::new(0.5, 1.0e-30, 64)
         .expect("valid controls")
         .record_component_sequence(1)
         .expect("recording limit");
@@ -1556,7 +1685,7 @@ fn component_sequence_divergence_is_informational_only() {
     assert!(terminal.candidate().is_none());
 
     // Unrecorded sequences simply cannot be compared.
-    let unrecorded_controls = HogbomControls::new(0.5, 1.0e-30, 64, 1.0e30).expect("no recording");
+    let unrecorded_controls = HogbomControls::new(0.5, 1.0e-30, 64).expect("no recording");
     let fourth = bind_lifecycle(&continuation, 73, 16);
     let unrecorded = hogbom_minor_cycle(
         &fourth,

@@ -7,8 +7,11 @@ use super::{
 };
 use crate::subtables::SubTable;
 use crate::{
-    MeasurementSet, MsSelectionIoBudget, SyntheticObservationRequest, SyntheticSpectralSetup,
-    SyntheticWorkerPolicy, generate_synthetic_observation_ms, tutorial_vla_a_antennas,
+    MeasurementSet, MsSelectionIoBudget, ResolvedSelectedObservationAccess,
+    SelectedObservationResolutionRequest, SyntheticObservationRequest, SyntheticSpectralSetup,
+    SyntheticWorkerPolicy, generate_synthetic_observation_ms,
+    initialize_measurement_set_owner_manifest, resolve_selected_observation,
+    tutorial_vla_a_antennas,
 };
 use casa_imaging_model::{
     AntennaSelection, AxisOrder, CentreLaws, ColumnGeneration, ConsistencyToken,
@@ -31,7 +34,8 @@ use casa_imaging_model::{
     ReconstructionControls, ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy,
     RowSelection, ScientificContract, SelectedColumns, SelectedMainRow,
     SelectedObservationGenerationId, SelectedObservationInspectionError,
-    SelectedObservationPassError, SelectedObservationSample, SelectedRows,
+    SelectedObservationPassError, SelectedObservationRunChannel, SelectedObservationRunCorrelation,
+    SelectedObservationRunRow, SelectedObservationSample, SelectedRows, SelectedSpectralEvaluation,
     SelectedVisibilitySample, SelectionBound, SkyDirection, SourceGenerations, SpectralContract,
     SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
     SpectralWcs, SpectralWindowSelection, StageErrorBudget, TaylorSupportReference,
@@ -40,7 +44,7 @@ use casa_imaging_model::{
     WeightingScheme, compile, compile_observation,
 };
 use casa_imaging_reconstruction::compile_spectral_stencil;
-use casa_tables::ColumnSchema;
+use casa_tables::{ColumnSchema, LockMode, LockOptions, LockType, Table, TableOptions};
 use casa_types::measures::{
     EopValues, MeasuresProvider, MeasuresProviderState,
     direction::{DirectionRef, MDirection},
@@ -590,7 +594,7 @@ fn real_ms_cube_traversal_compiles_source_backed_casa_cubic_stencils() {
                     .collect::<Vec<_>>(),
             );
             values.push((
-                sample.address.channel_index,
+                sample.address().channel_index,
                 evaluation.native(),
                 evaluation.output_frame(),
                 evaluation.effective_weight(),
@@ -810,15 +814,15 @@ fn real_ms_cube_traversal_maps_contributions_into_the_transformed_output_frame()
     let completion = observation
         .traverse(&problem, |reported| {
             assert_eq!(
-                reported.selected().address.frequency_frame,
+                reported.selected().address().frequency_frame,
                 FrequencyFrame::Topocentric
             );
             let sample = reported.selected();
             let frame = expected_source
                 .geometry_engine()
                 .spectral_frame_observatory(
-                    sample.coordinates.time.mjd_days() * 86_400.0,
-                    usize::try_from(sample.metadata.field_id).expect("non-negative FIELD_ID"),
+                    sample.coordinates().time.mjd_days() * 86_400.0,
+                    usize::try_from(sample.metadata().field_id).expect("non-negative FIELD_ID"),
                 )
                 .expect("independent row frame");
             let transform_to_output = |frequency_hz| {
@@ -831,13 +835,13 @@ fn real_ms_cube_traversal_maps_contributions_into_the_transformed_output_frame()
                     .expect("BARY to LSRK")
                     .hz()
             };
-            let transformed_hz = transform_to_output(sample.address.frequency_centre_hz);
+            let transformed_hz = transform_to_output(sample.address().frequency_centre_hz);
             let transformed_boundaries = [
-                transform_to_output(sample.address.frequency_lower_hz),
-                transform_to_output(sample.address.frequency_upper_hz),
+                transform_to_output(sample.address().frequency_lower_hz),
+                transform_to_output(sample.address().frequency_upper_hz),
             ];
             let source_only_hz =
-                MFrequency::new(sample.address.frequency_centre_hz, FrequencyRef::TOPO)
+                MFrequency::new(sample.address().frequency_centre_hz, FrequencyRef::TOPO)
                     .convert_to(FrequencyRef::GEO, &frame)
                     .expect("source-only TOPO to GEO")
                     .convert_to(FrequencyRef::BARY, &frame)
@@ -849,13 +853,13 @@ fn real_ms_cube_traversal_maps_contributions_into_the_transformed_output_frame()
             let evaluation = reported.spectral_evaluation();
             assert_eq!(
                 evaluation.native().centre_hz().to_bits(),
-                sample.address.frequency_centre_hz.to_bits()
+                sample.address().frequency_centre_hz.to_bits()
             );
             assert_eq!(
                 evaluation.native().boundaries_hz(),
                 [
-                    sample.address.frequency_lower_hz,
-                    sample.address.frequency_upper_hz,
+                    sample.address().frequency_lower_hz,
+                    sample.address().frequency_upper_hz,
                 ]
             );
             assert_eq!(
@@ -869,7 +873,7 @@ fn real_ms_cube_traversal_maps_contributions_into_the_transformed_output_frame()
             assert_eq!(evaluation.effective_weight(), 1.0);
             assert!(evaluation.is_valid());
             values.push((
-                sample.address.channel_index,
+                sample.address().channel_index,
                 transformed_hz,
                 source_only_hz,
                 transformed_boundaries,
@@ -934,7 +938,7 @@ fn real_ms_cubedata_traversal_compiles_source_backed_casa_cubic_stencils() {
                     .collect::<Vec<_>>(),
             );
             values.push((
-                sample.address.channel_index,
+                sample.address().channel_index,
                 evaluation.native(),
                 evaluation.output_frame(),
                 evaluation.effective_weight(),
@@ -1628,11 +1632,6 @@ fn retained_predicate_catalog_is_charged_before_construction() {
         content_budget_for_rows(&problem, source, 1, 1),
     )
     .expect("bind source with predicate allowance");
-    assert_eq!(
-        admitted.predicate_row_manifest_ptr(),
-        Some(source.selection().rows().ordered_main_rows().as_ptr()),
-        "the retained predicate must share the compiler-owned row manifest"
-    );
     let predicate_bytes =
         super::row_selection::CompiledRowPredicate::shared_retained_heap_bytes(source)
             .expect("finite predicate projection");
@@ -1945,6 +1944,78 @@ fn terminal_poll_failure_prevents_owner_minted_completion() {
 }
 
 #[test]
+#[cfg(unix)]
+fn owner_rebound_requires_exhaustive_proof_and_fresh_locked_state() {
+    let directory = tempfile::tempdir().expect("temporary owner-rebound fixture");
+    let path = directory.path().join("owner-rebound.ms");
+    generate_fixture(&path);
+    initialize_measurement_set_owner_manifest(&path).expect("initialize selected owner");
+    let request = owner_resolution_request(&path, 2);
+    let (problem, access) = owner_problem_and_access(request.clone());
+    let mut selected = access.open(&problem).expect("open owner-validated source");
+    let mut consumed = 0_usize;
+
+    let partial = selected
+        .traverse(&problem, |_| {
+            consumed += 1;
+            Err::<(), _>(std::io::Error::other("stop before exhaustive completion"))
+        })
+        .expect_err("partial traversal cannot mint completion or replay proof");
+    assert_eq!(consumed, 1);
+    assert!(matches!(
+        partial,
+        SelectedObservationTraversalError::Consumer(_)
+    ));
+
+    let initial = selected
+        .traverse(&problem, |_| Ok::<_, Infallible>(()))
+        .expect("exhaustive owner traversal");
+    let proof = initial
+        .replay_proof()
+        .expect("exhaustive owner traversal mints replay proof");
+    assert!(
+        proof.authorize_rebound_completion(&initial).is_none(),
+        "the durable proof alone cannot authorize its original completion"
+    );
+    drop(selected);
+
+    let (fresh_problem, fresh_access) = owner_problem_and_access(request.clone());
+    assert_eq!(fresh_problem.problem_id(), problem.problem_id());
+    let mut rebound = fresh_access
+        .rebind(&problem, &proof)
+        .expect("fresh locked owner state authorizes the opaque proof");
+    assert!(
+        !rebound.can_resume_after(&initial),
+        "rebind must mint a fresh attempt-local access binding"
+    );
+    let rebound_completion = rebound
+        .traverse(&problem, |_| Ok::<_, Infallible>(()))
+        .expect("freshly rebound traversal remains exhaustive");
+    assert!(!initial.same_access_binding(&rebound_completion));
+    let authorization = proof
+        .authorize_rebound_completion(&rebound_completion)
+        .expect("only the freshly rebound terminal completion authorizes generation and count");
+    assert_eq!(authorization.generation_id(), initial.generation_id());
+    assert_eq!(authorization.sample_count(), initial.sample_count());
+    drop(rebound);
+
+    let (_, stale_access) = owner_problem_and_access(request);
+    external_locked_keyword_mutation(&path);
+    let error = match stale_access.rebind(&problem, &proof) {
+        Ok(_) => panic!("fresh-lock rebind must close the resolve/open mutation gap"),
+        Err(error) => error,
+    };
+    let super::BoundSelectedObservationError::Source { error, .. } = error else {
+        panic!("unexpected rebound failure: {error:?}")
+    };
+    assert!(matches!(
+        error.as_ref(),
+        super::BoundObservationSourceError::OwnerState(owner)
+            if matches!(owner.as_ref(), crate::ObservationOwnerError::ModificationCounterMismatch { table, .. } if table == "MAIN")
+    ));
+}
+
+#[test]
 fn row_manifest_validation_occurs_in_the_sole_value_traversal() {
     let directory = tempfile::tempdir().expect("temporary one-pass fixture");
     let path = directory.path().join("one-pass.ms");
@@ -2014,7 +2085,7 @@ fn row_manifest_validation_occurs_in_the_sole_value_traversal() {
 }
 
 #[test]
-fn selected_observation_residency_charges_cardinality_and_is_schedule_invariant() {
+fn selected_observation_residency_is_cardinality_independent_and_schedule_invariant() {
     let directory = tempfile::tempdir().expect("temporary residency fixtures");
     let small_path = directory.path().join("small.ms");
     let large_path = directory.path().join("large.ms");
@@ -2156,38 +2227,45 @@ fn selected_observation_residency_charges_cardinality_and_is_schedule_invariant(
         large.content_plan().bytes_per_block(),
         synchronous.content_plan().bytes_per_block()
     );
-    assert!(
+    assert_eq!(
         large_source
             .selection()
             .rows()
             .retained_manifest_bytes()
-            .expect("large retained row manifest byte count")
-            > small_source
-                .selection()
-                .rows()
-                .retained_manifest_bytes()
-                .expect("small retained row manifest byte count")
+            .expect("large retained row manifest byte count"),
+        small_source
+            .selection()
+            .rows()
+            .retained_manifest_bytes()
+            .expect("small retained row manifest byte count"),
+        "selected-row cardinality is encoded without retaining a row-sized corpus"
     );
-    assert!(large.content_plan().retained_bytes() > synchronous.content_plan().retained_bytes());
+    assert_eq!(
+        large.content_plan().retained_bytes(),
+        synchronous.content_plan().retained_bytes(),
+        "source cardinality does not increase retained selection state"
+    );
     assert_eq!(
         large.content_plan().initialization_scratch_bytes(),
         synchronous.content_plan().initialization_scratch_bytes(),
         "shared selected-row allocations are retained once, not recharged as validation scratch"
     );
-    assert!(large_budget.available_bytes() > synchronous_budget.available_bytes());
+    assert_eq!(
+        large_budget.available_bytes(),
+        synchronous_budget.available_bytes()
+    );
     assert!(large.content_plan().maximum_resident_bytes() <= large_budget.available_bytes());
-    assert!(matches!(
-        BoundObservationSource::open(
-            &large_problem,
-            large_source,
-            &source_state(large_source),
-            synchronous_budget,
-        ),
-        Err(super::BoundObservationSourceError::ContentPlan(
-            super::content_plan::SelectedObservationContentPlanError::InsufficientRetainedBudget { .. }
-                | super::content_plan::SelectedObservationContentPlanError::InsufficientBudget { .. }
-        ))
-    ));
+    let large_with_small_budget = BoundObservationSource::open(
+        &large_problem,
+        large_source,
+        &source_state(large_source),
+        synchronous_budget,
+    )
+    .expect("compact selection admits the larger source under the same one-row budget");
+    assert_eq!(
+        large_with_small_budget.content_plan().rows_per_block(),
+        synchronous.content_plan().rows_per_block()
+    );
     assert_eq!(
         large
             .selected_samples(&large_problem)
@@ -2196,6 +2274,101 @@ fn selected_observation_residency_charges_cardinality_and_is_schedule_invariant(
             .expect("read large bounded replay"),
         64 * 2 * 2
     );
+}
+
+#[test]
+fn refillable_block_stream_matches_scalar_traversal_and_returns_the_owner() {
+    let directory = tempfile::tempdir().expect("temporary block-stream fixture");
+    let path = directory.path().join("block-stream.ms");
+    generate_fixture_with_rows(&path, 4);
+    let problem = compiled_problem(&path, 4);
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let binding = ObservationSourceBinding::new(
+        source_state(source),
+        bound_content_budget_for_rows(&problem, source, 1, 1),
+    );
+    let mut scalar =
+        BoundSelectedObservation::open(&problem, test_measures(&problem), vec![binding.clone()])
+            .expect("bind scalar traversal");
+    let mut scalar_samples = Vec::new();
+    let scalar_completion = scalar
+        .traverse(&problem, |sample| {
+            scalar_samples.push((sample.selected().to_owned(), sample.spectral_evaluation()));
+            Ok::<_, Infallible>(())
+        })
+        .expect("complete scalar traversal");
+
+    let block = BoundSelectedObservation::open(&problem, test_measures(&problem), vec![binding])
+        .expect("bind block traversal");
+    let (mut source, mut consumer) = block
+        .into_block_stream(&problem)
+        .expect("split block traversal");
+    let mut storage = source.create_storage(0);
+    let mut block_samples = Vec::new();
+    let mut peak_current = 0_u64;
+    let mut peak_capacity = 0_u64;
+    while source
+        .fill_next(&mut storage)
+        .expect("fill canonical block")
+        .is_some()
+    {
+        peak_current = peak_current.max(
+            storage
+                .resident_current_bytes()
+                .expect("measure block current bytes"),
+        );
+        peak_capacity = peak_capacity.max(
+            storage
+                .resident_capacity_bytes()
+                .expect("measure block capacity bytes"),
+        );
+        consumer
+            .consume(&storage, |run| {
+                block_samples
+                    .extend(run.samples().map(|sample| {
+                        (sample.selected().to_owned(), sample.spectral_evaluation())
+                    }));
+                Ok::<_, Infallible>(())
+            })
+            .expect("consume canonical block");
+    }
+    let mut terminal = source.complete().expect("complete terminal source poll");
+    terminal
+        .record_runtime_residency(1, peak_current, peak_capacity)
+        .expect("record one-slot residency");
+    let (block, block_completion) = consumer
+        .complete(terminal)
+        .expect("combine source and inspection completion");
+
+    assert_eq!(block_samples, scalar_samples);
+    assert_eq!(
+        block_completion.generation_id(),
+        scalar_completion.generation_id()
+    );
+    assert_eq!(
+        block_completion.sample_count(),
+        scalar_completion.sample_count()
+    );
+    let measurements = block_completion.measurements();
+    assert_eq!(measurements.peak_live_blocks(), 1);
+    assert_eq!(measurements.selected_sample_count(), 16);
+    assert_eq!(measurements.selected_channel_run_count(), 8);
+    assert_eq!(
+        measurements.selected_sample_handoff_bytes(),
+        (4 * size_of::<SelectedObservationRunRow>()
+            + 8 * size_of::<SelectedObservationRunChannel>()
+            + 16 * (size_of::<SelectedObservationRunCorrelation>()
+                + size_of::<SelectedSpectralEvaluation>())) as u64
+    );
+    let expected_scratch = 2
+        * (size_of::<SelectedObservationRunCorrelation>()
+            + size_of::<SelectedSpectralEvaluation>());
+    assert_eq!(
+        measurements.peak_consumer_scratch_current_bytes(),
+        expected_scratch as u64
+    );
+    assert!(measurements.consumer_scratch_capacity_bytes() >= expected_scratch as u64);
+    assert!(block.can_resume_after(&block_completion));
 }
 
 #[test]
@@ -2331,14 +2504,14 @@ fn retained_selected_observation_owns_canonical_multi_source_order() {
     let mut one_row_samples = Vec::new();
     let one_row_completion = one_row
         .traverse(&problem, |sample| {
-            one_row_samples.push(sample);
+            one_row_samples.push((sample.selected().to_owned(), sample.spectral_evaluation()));
             Ok::<_, Infallible>(())
         })
         .expect("complete canonical multi-source traversal");
     let mut two_row_samples = Vec::new();
     let two_row_completion = two_rows
         .traverse(&problem, |sample| {
-            two_row_samples.push(sample);
+            two_row_samples.push((sample.selected().to_owned(), sample.spectral_evaluation()));
             Ok::<_, Infallible>(())
         })
         .expect("complete repartitioned multi-source traversal");
@@ -2346,6 +2519,41 @@ fn retained_selected_observation_owns_canonical_multi_source_order() {
     assert_eq!(one_row_samples.len(), 16);
     assert_eq!(one_row_samples, two_row_samples);
     assert_eq!(one_row_completion.sample_count(), 16);
+    let one_row_measurements = one_row_completion.measurements();
+    assert_eq!(one_row_measurements.source_pass_count(), 2);
+    assert_eq!(one_row_measurements.block_count(), 4);
+    assert_eq!(one_row_measurements.stored_row_count(), 4);
+    assert_eq!(one_row_measurements.stored_sample_count(), 24);
+    assert_eq!(one_row_measurements.logical_output_bytes(), 636);
+    assert_eq!(one_row_measurements.modeled_physical_read_bytes(), None);
+    assert_eq!(one_row_measurements.source_read_operations(), 76);
+    assert_eq!(one_row_measurements.request_handoff_bytes(), 32);
+    assert_eq!(one_row_measurements.selected_sample_count(), 16);
+    assert_eq!(one_row_measurements.selected_channel_run_count(), 0);
+    assert_eq!(
+        one_row_measurements.selected_sample_handoff_bytes(),
+        16 * size_of::<super::SelectedObservationTraversalSample<'static>>() as u64
+    );
+    assert_eq!(one_row_measurements.allocated_storage_buffers(), 38);
+    assert_eq!(one_row_measurements.reused_storage_buffers(), 38);
+    assert_eq!(one_row_measurements.peak_live_blocks(), 1);
+    assert!(
+        one_row_measurements.peak_live_capacity_bytes()
+            >= one_row_measurements.peak_live_current_bytes()
+    );
+    assert!(one_row_measurements.source_read_nanos() > 0);
+    assert!(one_row_measurements.source_fill_nanos() >= one_row_measurements.source_read_nanos());
+    assert!(one_row_measurements.source_arrangement_nanos() > 0);
+    let two_row_measurements = two_row_completion.measurements();
+    assert_eq!(two_row_measurements.source_pass_count(), 2);
+    assert_eq!(two_row_measurements.block_count(), 2);
+    assert_eq!(two_row_measurements.stored_row_count(), 4);
+    assert_eq!(two_row_measurements.stored_sample_count(), 24);
+    assert_eq!(two_row_measurements.logical_output_bytes(), 636);
+    assert_eq!(two_row_measurements.source_read_operations(), 38);
+    assert_eq!(two_row_measurements.request_handoff_bytes(), 32);
+    assert_eq!(two_row_measurements.allocated_storage_buffers(), 38);
+    assert_eq!(two_row_measurements.reused_storage_buffers(), 0);
     assert_eq!(
         one_row_completion.generation_id(),
         two_row_completion.generation_id(),
@@ -2366,7 +2574,7 @@ fn retained_selected_observation_owns_canonical_multi_source_order() {
     assert_eq!(
         one_row_samples
             .chunks_exact(8)
-            .map(|samples| samples[0].selected().address.measurement_set)
+            .map(|samples| samples[0].0.address.measurement_set)
             .collect::<Vec<_>>(),
         problem
             .selected_observation()
@@ -3064,6 +3272,81 @@ fn generate_fixture_with_rows(path: &std::path::Path, row_count: usize) {
     generate_synthetic_observation_ms(&request).expect("generate bounded disk fixture");
 }
 
+#[cfg(unix)]
+fn owner_resolution_request(
+    path: &std::path::Path,
+    row_count: usize,
+) -> SelectedObservationResolutionRequest {
+    let selected_rows = SelectedRows::from_ordered_main_rows(
+        row_count as u64,
+        (0..row_count).map(|row| SelectedMainRow::new(row as u64, 0)),
+    )
+    .expect("owner selected-row manifest");
+    SelectedObservationResolutionRequest::new(
+        path.display().to_string(),
+        identity(2),
+        fixture_selection(
+            selected_rows,
+            RowSelection::new(
+                IdSelection::All,
+                TimeSelection::All,
+                UvSelection::All,
+                AntennaSelection::All,
+                IdSelection::All,
+                IdSelection::All,
+                IntentSelection::All,
+                IdSelection::All,
+            ),
+        ),
+        VisibilityColumn::Data,
+        WeightColumn::Weight,
+        Vec::new(),
+        ModelStateIdentity::Empty,
+        SelectedObservationContentBudget::new(64 << 20, 1, 4),
+        Arc::new(AccountedTestMeasures::with_identity(90, 0)),
+    )
+}
+
+#[cfg(unix)]
+fn owner_problem_and_access(
+    request: SelectedObservationResolutionRequest,
+) -> (
+    casa_imaging_model::CompiledProblem,
+    ResolvedSelectedObservationAccess,
+) {
+    let (snapshot_input, access) = resolve_selected_observation(request)
+        .expect("resolve selected owner")
+        .into_parts();
+    let snapshot = compile_observation(snapshot_input).expect("compile owner snapshot");
+    let problem = compile(ImagingRequest::new(
+        specification(),
+        geometry(),
+        ProblemInputIdentities::new(snapshot.clone()),
+        model_lifecycle(snapshot.model()),
+    ))
+    .expect("compile owner problem");
+    (problem, access)
+}
+
+#[cfg(unix)]
+fn external_locked_keyword_mutation(path: &std::path::Path) {
+    let mut table = Table::open_with_lock(
+        TableOptions::new(path),
+        LockOptions::new(LockMode::UserLocking),
+    )
+    .expect("open external owner writer");
+    assert!(
+        table
+            .lock(LockType::Write, 0)
+            .expect("acquire external owner write lock")
+    );
+    table.keywords_mut().upsert(
+        "EXTERNAL_OWNER_REBOUND_MUTATION",
+        Value::Scalar(ScalarValue::Bool(true)),
+    );
+    table.unlock().expect("commit external owner mutation");
+}
+
 fn main_time_mjd_seconds(measurement_set: &MeasurementSet, row: usize) -> f64 {
     match measurement_set
         .main_table()
@@ -3107,22 +3390,9 @@ fn source_state_with_generation_capacity(
                 .and_then(|metadata| bytes.checked_add(metadata))
         })
         .expect("finite oversized generation allocations");
-    let selected_rows = SelectedRows::from_ordered_main_rows(
-        source.selection().rows().source_row_count(),
-        source
-            .selection()
-            .rows()
-            .ordered_main_rows()
-            .iter()
-            .copied(),
-    )
-    .expect("rebuild an independently allocated current row manifest");
-    let selected_row_bytes = selected_rows
-        .retained_manifest_bytes()
-        .expect("finite independent current row manifest");
     let state = ObservationSourceState::new(
         source.identity(),
-        selected_rows,
+        source.selection().rows().clone(),
         SourceGenerations::new(
             source_generations.consistency_token(),
             SelectedColumns::new(
@@ -3137,8 +3407,8 @@ fn source_state_with_generation_capacity(
     );
     assert_eq!(
         state.additional_retained_heap_bytes([source.selection().rows()]),
-        selected_row_bytes.checked_add(retained_generation_bytes),
-        "independent rows and generation vectors are both binding-owned"
+        Some(retained_generation_bytes),
+        "the compact row manifest is shared while generation vectors remain binding-owned"
     );
     (state, retained_generation_bytes)
 }
@@ -3452,19 +3722,7 @@ fn source_input_with_selected_rows_filter_and_request(
     rows_filter: RowSelection,
     selection_request: LogicalIdentity,
 ) -> ObservationSourceInput {
-    let selection = ObservationSelection::new(
-        selected_rows,
-        rows_filter,
-        vec![DataDescriptionSelection::new(0, 0, 0)],
-        vec![SpectralWindowSelection::new(0, vec![0, 2])],
-        vec![CorrelationSelection::new(
-            0,
-            vec![
-                CorrelationProduct::new(0, CorrelationType::CircularRr),
-                CorrelationProduct::new(1, CorrelationType::CircularLl),
-            ],
-        )],
-    );
+    let selection = fixture_selection(selected_rows, rows_filter);
     let columns = [
         MsColumnKind::Data,
         MsColumnKind::Flag,
@@ -3520,6 +3778,25 @@ fn source_input_with_selected_rows_filter_and_request(
             metadata,
             ModelColumnState::Absent,
         ),
+    )
+}
+
+fn fixture_selection(
+    selected_rows: SelectedRows,
+    rows_filter: RowSelection,
+) -> ObservationSelection {
+    ObservationSelection::new(
+        selected_rows,
+        rows_filter,
+        vec![DataDescriptionSelection::new(0, 0, 0)],
+        vec![SpectralWindowSelection::new(0, vec![0, 2])],
+        vec![CorrelationSelection::new(
+            0,
+            vec![
+                CorrelationProduct::new(0, CorrelationType::CircularRr),
+                CorrelationProduct::new(1, CorrelationType::CircularLl),
+            ],
+        )],
     )
 }
 

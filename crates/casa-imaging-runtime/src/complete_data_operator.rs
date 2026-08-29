@@ -5,24 +5,32 @@
 use std::{
     collections::BTreeSet,
     error::Error,
-    fmt,
+    fmt, io,
     mem::{align_of, size_of},
 };
 
 use casa_imaging_model::{
     CompiledGeometryId, CompiledProblem, CompiledProblemId, ModelDeltaTerm, ModelSample,
-    NumericsContractId, SelectedObservationGenerationId, WeightingCommitmentId,
+    NumericsContractId, ReconstructionBasis, SelectedObservationGenerationId, SpectralKernel,
+    WeightingCommitmentId,
 };
 use casa_imaging_reconstruction::{
-    MajorCyclePreparation, SpectralOperatorError, SpectralOperatorPrimitives,
+    FinalNormalState, MajorCyclePreparation, SpectralOperatorError, SpectralOperatorPrimitives,
     SpectralOperatorSpecification, SpectralPrimitiveCatalog, WeightingAlgorithmState,
     WeightingGenerationId, WeightingReplayCoverageId, WeightingReplayId,
     runtime_adapter::{
-        CompleteDataOwnerResult, CompleteDataOwnerState, PreparedSpectralOperator,
-        SpectralOperatorWorkload, prepare_spectral_operator, spectral_operator_workload,
+        CompleteDataOwnerResult, CompleteDataOwnerState, GRIDDED_NORMAL_OPERATOR_RECORD_BYTES,
+        GriddedNormalOperatorApply, GriddedNormalOperatorBlockMeasurements,
+        GriddedNormalOperatorCompiler, GriddedNormalOperatorProgram, PreparedSpectralOperator,
+        SpectralOperatorPass, SpectralOperatorWorkload, prepare_spectral_operator,
+        spectral_operator_workload,
     },
 };
 
+use crate::bounded_stream::{
+    BlockIdentity, BoundedStreamError, BoundedStreamMeasurements, BoundedStreamPlan,
+    KernelPartition, PartitionedKernel, WorkIdentity, execute_bounded,
+};
 use crate::{
     AllocationAccess, AllocationId, AllocationLayout, AllocationLifetime, AllocationPurpose,
     AllocationUse, AlternativeId, CapacityDomainId, CapacityViewId, ClaimLifetime,
@@ -33,6 +41,517 @@ use crate::{
     WeightingReplayCompletion, WorkDependency, WorkDomain, WorkExecutionContext, WorkKind,
     WorkNode, WorkNodeId,
 };
+
+use crate::gridded_normal_artifact::{
+    GriddedNormalArtifactBudget, GriddedNormalArtifactFrameStorage,
+    GriddedNormalArtifactMeasurements, GriddedNormalArtifactWriter,
+    GriddedNormalReplayArtifact as GriddedNormalSpillArtifact, GriddedNormalReplayStorage,
+};
+
+/// Opaque run-scoped normal-operator program and its checksummed spill storage.
+///
+/// The application may move this capability between major-cycle executors, but
+/// cannot inspect records, reopen the selected observation, or apply science.
+pub struct FrozenGriddedNormalReplay {
+    program: GriddedNormalOperatorProgram,
+    spill: GriddedNormalSpillArtifact,
+    retention: Option<crate::gridded_normal_artifact::GriddedNormalArtifactRetention>,
+    latest_read: Option<GriddedNormalArtifactMeasurements>,
+    latest_stream: Option<BoundedStreamMeasurements>,
+}
+
+/// Plan-visible identity and sealed size of one private gridded-normal replay.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GriddedNormalReplayDescriptor {
+    identity: crate::ArtifactIdentity,
+    bytes: u64,
+}
+
+impl GriddedNormalReplayDescriptor {
+    /// Exact reconstruction-minted identity of the encoded operator program.
+    #[must_use]
+    pub const fn identity(self) -> crate::ArtifactIdentity {
+        self.identity
+    }
+
+    /// Exact sealed artifact size.
+    #[must_use]
+    pub const fn bytes(self) -> u64 {
+        self.bytes
+    }
+}
+
+pub(crate) struct GriddedNormalReplayCompilation {
+    compiler: GriddedNormalOperatorCompiler,
+    writer: Option<GriddedNormalArtifactWriter>,
+    spill: Option<GriddedNormalSpillArtifact>,
+    compilation_measurements: GriddedNormalCompilationMeasurements,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct GriddedNormalCompilationMeasurements {
+    pub(crate) blocks: u64,
+    pub(crate) source_group_vector_allocations: u64,
+    pub(crate) source_group_capacity_growth_bytes: u64,
+    pub(crate) reduction_map_entry_insertions: u64,
+    pub(crate) multiplicity_vector_allocations: u64,
+    pub(crate) multiplicity_capacity_growth_bytes: u64,
+    pub(crate) encoded_buffer_allocations: u64,
+    pub(crate) encoded_buffer_bytes: u64,
+    pub(crate) descriptor_vector_allocations: u64,
+    pub(crate) descriptor_capacity_growth_bytes: u64,
+}
+
+impl GriddedNormalCompilationMeasurements {
+    fn add_block(&mut self, block: GriddedNormalOperatorBlockMeasurements) -> io::Result<()> {
+        macro_rules! add {
+            ($field:ident, $value:expr) => {
+                self.$field = self.$field.checked_add($value).ok_or_else(|| {
+                    io::Error::other("gridded-normal allocation measurement overflow")
+                })?;
+            };
+        }
+        add!(blocks, 1);
+        add!(
+            source_group_vector_allocations,
+            block.source_group_vector_allocations
+        );
+        add!(
+            source_group_capacity_growth_bytes,
+            block.source_group_capacity_growth_bytes
+        );
+        add!(
+            reduction_map_entry_insertions,
+            block.reduction_map_entry_insertions
+        );
+        add!(
+            multiplicity_vector_allocations,
+            block.multiplicity_vector_allocations
+        );
+        add!(
+            multiplicity_capacity_growth_bytes,
+            block.multiplicity_capacity_growth_bytes
+        );
+        add!(encoded_buffer_allocations, block.encoded_buffer_allocations);
+        add!(encoded_buffer_bytes, block.encoded_buffer_bytes);
+        add!(
+            descriptor_vector_allocations,
+            block.descriptor_vector_allocations
+        );
+        add!(
+            descriptor_capacity_growth_bytes,
+            block.descriptor_capacity_growth_bytes
+        );
+        Ok(())
+    }
+}
+
+impl GriddedNormalReplayCompilation {
+    pub(crate) fn new(
+        problem: &CompiledProblem,
+        context: WorkExecutionContext<'_>,
+        storage: &GriddedNormalReplayStorage,
+        max_block_samples: usize,
+    ) -> io::Result<Self> {
+        let budget = project_gridded_normal_artifact_budget(problem, max_block_samples)?;
+        validate_gridded_artifact_context(context, budget, crate::IoBufferKind::SpillWrite)?;
+        Ok(Self {
+            compiler: GriddedNormalOperatorCompiler::new(problem).map_err(io::Error::other)?,
+            writer: Some(
+                GriddedNormalArtifactWriter::create(storage, budget).map_err(io::Error::other)?,
+            ),
+            spill: None,
+            compilation_measurements: GriddedNormalCompilationMeasurements::default(),
+        })
+    }
+
+    pub(crate) fn consume_block(
+        &mut self,
+        block: &casa_imaging_reconstruction::WeightingReplayChunk,
+    ) -> io::Result<()> {
+        let compiled = self
+            .compiler
+            .compile_block(block)
+            .map_err(io::Error::other)?;
+        self.compilation_measurements
+            .add_block(compiled.measurements())?;
+        self.writer
+            .as_mut()
+            .ok_or_else(|| io::Error::other("gridded-normal writer already sealed"))?
+            .append_frame(
+                compiled.sequence(),
+                compiled.record_count(),
+                compiled.encoded_bytes(),
+            )
+            .map_err(io::Error::other)
+    }
+
+    pub(crate) fn write_measurements(&self) -> GriddedNormalArtifactMeasurements {
+        self.writer.as_ref().map_or_else(
+            || {
+                self.spill
+                    .as_ref()
+                    .expect("sealed compilation retains its spill")
+                    .write_measurements()
+            },
+            GriddedNormalArtifactWriter::measurements,
+        )
+    }
+
+    pub(crate) const fn compilation_measurements(&self) -> GriddedNormalCompilationMeasurements {
+        self.compilation_measurements
+    }
+
+    pub(crate) fn seal(&mut self) -> io::Result<()> {
+        let writer = self
+            .writer
+            .take()
+            .ok_or_else(|| io::Error::other("gridded-normal writer already sealed"))?;
+        self.spill = Some(writer.seal().map_err(io::Error::other)?);
+        Ok(())
+    }
+
+    pub(crate) fn complete(
+        self,
+        replay: &WeightingReplayCompletion,
+    ) -> io::Result<FrozenGriddedNormalReplay> {
+        let spill = self
+            .spill
+            .ok_or_else(|| io::Error::other("gridded-normal writer was not sealed"))?;
+        let program = self
+            .compiler
+            .complete(
+                replay.reconstruction_summary(),
+                replay.selected_generation(),
+                replay
+                    .continuum_transform()
+                    .map(|completion| completion.generation_id()),
+            )
+            .map_err(io::Error::other)?;
+        let seal = spill.seal();
+        if seal.frame_count() != program.block_count()
+            || seal.record_count() != program.record_count()
+        {
+            return Err(io::Error::other(
+                "sealed gridded-normal spill disagrees with reconstruction program",
+            ));
+        }
+        Ok(FrozenGriddedNormalReplay {
+            program,
+            spill,
+            retention: None,
+            latest_read: None,
+            latest_stream: None,
+        })
+    }
+}
+
+fn validate_gridded_artifact_context(
+    context: WorkExecutionContext<'_>,
+    budget: GriddedNormalArtifactBudget,
+    io_kind: crate::IoBufferKind,
+) -> io::Result<()> {
+    let claims = &context.node().claims;
+    let has_buffer = claims.iter().any(|claim| {
+        claim.resource == LeaseResource::IoBuffer(io_kind)
+            && claim.amount >= budget.io_buffer_bytes()
+    });
+    let has_storage = io_kind == crate::IoBufferKind::SpillRead
+        || claims.iter().any(|claim| {
+            matches!(
+                claim.resource,
+                LeaseResource::Storage {
+                    use_kind: crate::StorageUseKind::Temporary,
+                    ..
+                }
+            ) && claim.amount >= budget.maximum_artifact_bytes()
+                && claim.lifetime == ClaimLifetime::Artifact
+        });
+    let has_file = claims
+        .iter()
+        .any(|claim| claim.resource == LeaseResource::FileDescriptors && claim.amount >= 1);
+    let has_rate = claims
+        .iter()
+        .any(|claim| matches!(claim.resource, LeaseResource::Rate { .. }));
+    let has_queue = claims
+        .iter()
+        .any(|claim| matches!(claim.resource, LeaseResource::Queue { .. }));
+    if has_buffer && has_storage && has_file && has_rate && has_queue {
+        Ok(())
+    } else {
+        Err(io::Error::other(
+            "gridded-normal artifact work lacks its complete planned resource claims",
+        ))
+    }
+}
+
+impl FrozenGriddedNormalReplay {
+    pub(crate) fn retain_plan_storage(
+        &mut self,
+        permit: crate::RetainedArtifactPermit,
+        storage: &GriddedNormalReplayStorage,
+        maximum_bytes: u64,
+    ) -> io::Result<()> {
+        if self.retention.is_some() {
+            return Err(io::Error::other(
+                "gridded-normal artifact storage was retained more than once",
+            ));
+        }
+        self.retention = Some(
+            crate::gridded_normal_artifact::GriddedNormalArtifactRetention::bind(
+                permit,
+                storage,
+                maximum_bytes,
+            )?,
+        );
+        Ok(())
+    }
+
+    pub(crate) fn validates_plan_storage(
+        &self,
+        storage: &GriddedNormalReplayStorage,
+        maximum_bytes: u64,
+    ) -> bool {
+        self.retention
+            .as_ref()
+            .is_some_and(|retention| retention.validates_bytes(storage, maximum_bytes))
+    }
+    /// Return the immutable descriptor consumed by later-major planning.
+    #[must_use]
+    pub fn descriptor(&self) -> GriddedNormalReplayDescriptor {
+        GriddedNormalReplayDescriptor {
+            identity: crate::ArtifactIdentity::from_logical_identity(self.program.identity()),
+            bytes: self.spill.seal().artifact_bytes(),
+        }
+    }
+
+    pub(crate) const fn latest_read_measurements(
+        &self,
+    ) -> Option<GriddedNormalArtifactMeasurements> {
+        self.latest_read
+    }
+
+    pub(crate) const fn latest_stream_measurements(&self) -> Option<BoundedStreamMeasurements> {
+        self.latest_stream
+    }
+
+    pub(crate) fn execute_bounded(
+        &mut self,
+        context: WorkExecutionContext<'_>,
+        pass_ordinal: u32,
+        state: GriddedNormalOperatorState,
+    ) -> io::Result<CompleteDataOperatorResult> {
+        let budget = self.spill.budget();
+        validate_gridded_artifact_context(context, budget, crate::IoBufferKind::SpillRead)?;
+        let source_capacity_bytes = context
+            .node()
+            .claims
+            .iter()
+            .find_map(|claim| {
+                (claim.resource == LeaseResource::IoBuffer(crate::IoBufferKind::SpillRead))
+                    .then_some(claim.amount)
+            })
+            .ok_or_else(|| io::Error::other("gridded-normal replay buffer claim missing"))?;
+        let per_slot = budget.io_buffer_bytes();
+        if source_capacity_bytes % per_slot != 0 {
+            return Err(io::Error::other(
+                "gridded-normal replay buffer claim is not an exact frame-slot multiple",
+            ));
+        }
+        let source_slots = usize::try_from(source_capacity_bytes / per_slot)
+            .map_err(|_| io::Error::other("gridded-normal replay slot count overflow"))?;
+        let plan = BoundedStreamPlan::new::<(), ()>(source_slots, 1, source_capacity_bytes, 1, 0)
+            .map_err(|_| io::Error::other("invalid gridded-normal bounded-stream plan"))?;
+        let source = self.spill.block_source().map_err(io::Error::other)?;
+        let outcome = execute_bounded(
+            plan,
+            pass_ordinal,
+            source,
+            GriddedNormalReplayKernel { state },
+        )
+        .map_err(|failure| match *failure.cause {
+            BoundedStreamError::Source(error) => io::Error::other(error),
+            BoundedStreamError::Kernel(error) => io::Error::other(error),
+            BoundedStreamError::MeasurementOverflow => {
+                io::Error::other("gridded-normal stream measurement overflow")
+            }
+            BoundedStreamError::InvalidKernelPlan => {
+                io::Error::other("invalid gridded-normal kernel plan")
+            }
+            BoundedStreamError::ResidencyExceeded => {
+                io::Error::other("gridded-normal stream exceeded planned residency")
+            }
+            BoundedStreamError::ProducerPanicked => {
+                io::Error::other("gridded-normal source producer panicked")
+            }
+            BoundedStreamError::ProducerDisconnected => {
+                io::Error::other("gridded-normal source producer disconnected")
+            }
+        })?;
+        let completion = outcome.source_completion;
+        if completion.seal() != self.spill.seal() {
+            return Err(io::Error::other(
+                "gridded-normal read completion changed the sealed artifact",
+            ));
+        }
+        self.latest_read = Some(completion.measurements());
+        self.latest_stream = Some(outcome.measurements);
+        Ok(outcome.kernel_completion)
+    }
+}
+
+struct GriddedNormalReplayKernel {
+    state: GriddedNormalOperatorState,
+}
+
+impl PartitionedKernel<GriddedNormalArtifactFrameStorage> for GriddedNormalReplayKernel {
+    type Partition = ();
+    type Partial = ();
+    type Completion = CompleteDataOperatorResult;
+    type Error = CompleteDataOperatorError;
+
+    fn partition_count(
+        &self,
+        _block: BlockIdentity,
+        _storage: &GriddedNormalArtifactFrameStorage,
+    ) -> Result<usize, Self::Error> {
+        Ok(1)
+    }
+
+    fn partition(
+        &self,
+        _block: BlockIdentity,
+        _storage: &GriddedNormalArtifactFrameStorage,
+        _local_ordinal: usize,
+    ) -> Result<KernelPartition<Self::Partition>, Self::Error> {
+        Ok(KernelPartition::exclusive(0, 0, ()))
+    }
+
+    fn execute(
+        &self,
+        _work: WorkIdentity,
+        _storage: &GriddedNormalArtifactFrameStorage,
+        _partition: &Self::Partition,
+    ) -> Result<Self::Partial, Self::Error> {
+        Ok(())
+    }
+
+    fn commit(
+        &mut self,
+        _work: WorkIdentity,
+        storage: &GriddedNormalArtifactFrameStorage,
+        (): Self::Partial,
+    ) -> Result<(), Self::Error> {
+        let records = u64::try_from(storage.payload().len() / GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
+            .map_err(|_| CompleteDataOperatorError::ExecutionBinding)?;
+        if storage.record_count() != records {
+            return Err(CompleteDataOperatorError::ExecutionBinding);
+        }
+        self.state
+            .apply_encoded_block(storage.sequence(), storage.payload())
+    }
+
+    fn complete(self) -> Result<Self::Completion, Self::Error> {
+        self.state.complete()
+    }
+}
+
+pub(crate) fn project_gridded_normal_artifact_budget(
+    problem: &CompiledProblem,
+    max_block_samples: usize,
+) -> io::Result<GriddedNormalArtifactBudget> {
+    if max_block_samples == 0 {
+        return Err(io::Error::other(
+            "gridded-normal replay requires a positive block bound",
+        ));
+    }
+    let maximum_samples = problem
+        .inputs()
+        .observation_snapshot()
+        .sources()
+        .iter()
+        .try_fold(0_u64, |total, source| {
+            let selection = source.selection();
+            let channels = selection
+                .spectral_windows()
+                .iter()
+                .map(|window| window.channel_indices().len())
+                .max()
+                .unwrap_or(0);
+            let correlations = selection
+                .correlations()
+                .iter()
+                .map(|selection| selection.products().len())
+                .max()
+                .unwrap_or(0);
+            let per_row = u64::try_from(channels)
+                .ok()
+                .and_then(|channels| {
+                    u64::try_from(correlations)
+                        .ok()
+                        .and_then(|correlations| channels.checked_mul(correlations))
+                })
+                .ok_or_else(|| io::Error::other("selected sample bound overflow"))?;
+            let source_samples = selection
+                .rows()
+                .selected_row_count()
+                .checked_mul(per_row)
+                .ok_or_else(|| io::Error::other("selected sample bound overflow"))?;
+            total
+                .checked_add(source_samples)
+                .ok_or_else(|| io::Error::other("selected sample bound overflow"))
+        })?;
+    let max_block = u64::try_from(max_block_samples)
+        .map_err(|_| io::Error::other("gridded-normal block bound overflow"))?;
+    let maximum_frames = maximum_samples
+        .checked_add(max_block - 1)
+        .and_then(|samples| samples.checked_div(max_block))
+        .ok_or_else(|| io::Error::other("gridded-normal frame bound overflow"))?
+        .max(1);
+    let record_bytes = u64::try_from(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
+        .map_err(|_| io::Error::other("gridded-normal record width overflow"))?;
+    let maximum_contributions_per_sample = match problem.reconstruction().basis() {
+        ReconstructionBasis::Constant => 1_u64,
+        ReconstructionBasis::ChannelLocal { .. } => {
+            let terms = match problem.science().spectral().sampling().kernel() {
+                SpectralKernel::Identity | SpectralKernel::Nearest => 1,
+                SpectralKernel::Linear => 2,
+                SpectralKernel::Cubic => 4,
+                SpectralKernel::ChannelIntegration { maximum_terms } => maximum_terms,
+            };
+            u64::try_from(terms)
+                .map_err(|_| io::Error::other("spectral contribution bound overflow"))?
+        }
+        ReconstructionBasis::Taylor { .. } => {
+            return Err(io::Error::other(
+                "gridded-normal replay does not support Taylor reconstruction",
+            ));
+        }
+    };
+    let maximum_payload_bytes = maximum_samples
+        .checked_mul(maximum_contributions_per_sample)
+        .and_then(|contributions| contributions.checked_mul(record_bytes))
+        .ok_or_else(|| io::Error::other("gridded-normal payload bound overflow"))?;
+    let maximum_frame_samples = usize::try_from(maximum_samples.min(max_block))
+        .map_err(|_| io::Error::other("gridded-normal frame sample bound overflow"))?
+        .max(1);
+    let maximum_frame_payload_bytes = maximum_frame_samples
+        .checked_mul(
+            usize::try_from(maximum_contributions_per_sample)
+                .map_err(|_| io::Error::other("spectral contribution bound overflow"))?,
+        )
+        .and_then(|contributions| contributions.checked_mul(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES))
+        .ok_or_else(|| io::Error::other("gridded-normal frame payload overflow"))?;
+    GriddedNormalArtifactBudget::for_bounded_stream(
+        maximum_payload_bytes.max(
+            u64::try_from(maximum_frame_payload_bytes)
+                .map_err(|_| io::Error::other("gridded-normal frame payload overflow"))?,
+        ),
+        maximum_frame_payload_bytes,
+        maximum_frames,
+    )
+    .map_err(io::Error::other)
+}
 
 /// Runtime-owned physical residency for one serial complete-data operator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,7 +567,7 @@ pub struct CompleteDataResidency {
 }
 
 impl CompleteDataResidency {
-    /// Bytes for dirty, PSF, and exact residual accumulation plus compensation grids.
+    /// Bytes for pass-required accumulation and compensation grids.
     #[must_use]
     pub const fn grid_bytes(self) -> usize {
         self.grid_bytes
@@ -78,7 +597,7 @@ impl CompleteDataResidency {
         self.forward_workspace_bytes
     }
 
-    /// Bytes retained by dirty, PSF, exact residual, and sensitivity primitives.
+    /// Bytes covering retained prior state plus newly produced normal-state primitives.
     #[must_use]
     pub const fn primitive_output_bytes(self) -> usize {
         self.primitive_output_bytes
@@ -114,9 +633,10 @@ impl CompleteDataPlanFragment {
         problem: &CompiledProblem,
         max_replay_block_samples: usize,
         replay_node: WorkNodeId,
+        pass: SpectralOperatorPass,
     ) -> Result<Self, CompleteDataPlanError> {
         let specification = SpectralOperatorSpecification::new(problem)?;
-        let workload = spectral_operator_workload(&specification, max_replay_block_samples)?;
+        let workload = spectral_operator_workload(&specification, max_replay_block_samples, pass)?;
         let shape = workload.grid_shape();
         let slab = specification.slab();
         let preparation_node = WorkNodeId::new(format!(
@@ -132,6 +652,7 @@ impl CompleteDataPlanFragment {
             replay_node,
             preparation_node,
             specification,
+            pass,
         )
     }
 
@@ -142,6 +663,7 @@ impl CompleteDataPlanFragment {
         replay_node: WorkNodeId,
         core_start: usize,
         core_depth: usize,
+        pass: SpectralOperatorPass,
     ) -> Result<Self, CompleteDataPlanError> {
         let specification =
             SpectralOperatorSpecification::for_slab(problem, core_start, core_depth)?;
@@ -160,6 +682,7 @@ impl CompleteDataPlanFragment {
             replay_node,
             preparation_node,
             specification,
+            pass,
         )
     }
 
@@ -169,6 +692,7 @@ impl CompleteDataPlanFragment {
         max_replay_block_samples: usize,
         replay_node: WorkNodeId,
         preparation_node: WorkNodeId,
+        pass: SpectralOperatorPass,
     ) -> Result<Self, CompleteDataPlanError> {
         let specification = SpectralOperatorSpecification::new(problem)?;
         Self::from_specification(
@@ -177,6 +701,7 @@ impl CompleteDataPlanFragment {
             replay_node,
             preparation_node,
             specification,
+            pass,
         )
     }
 
@@ -186,8 +711,9 @@ impl CompleteDataPlanFragment {
         replay_node: WorkNodeId,
         preparation_node: WorkNodeId,
         specification: SpectralOperatorSpecification,
+        pass: SpectralOperatorPass,
     ) -> Result<Self, CompleteDataPlanError> {
-        let workload = spectral_operator_workload(&specification, max_replay_block_samples)?;
+        let workload = spectral_operator_workload(&specification, max_replay_block_samples, pass)?;
         let residency = project_residency(problem, workload)?;
         Ok(Self {
             specification,
@@ -203,6 +729,10 @@ impl CompleteDataPlanFragment {
     #[must_use]
     pub const fn preparation_node(&self) -> &WorkNodeId {
         &self.preparation_node
+    }
+
+    pub(crate) const fn replay_node(&self) -> &WorkNodeId {
+        &self.replay_node
     }
 
     /// Return the final-reconciliation node after composition.
@@ -273,6 +803,32 @@ impl CompleteDataPlanFragment {
         }
         self.validate_allocations(context)?;
         prepared.begin(context, problem, weighting, self)
+    }
+
+    pub(crate) fn begin_gridded_replay(
+        &self,
+        context: WorkExecutionContext<'_>,
+        problem: &CompiledProblem,
+        preparation: &MajorCyclePreparation,
+        prior: FinalNormalState,
+        prepared: CompleteDataPreparedState,
+        artifact: &FrozenGriddedNormalReplay,
+    ) -> Result<GriddedNormalOperatorState, CompleteDataPlanError> {
+        if context.node().id != self.replay_node
+            || self.workload.pass() != SpectralOperatorPass::ResidualRefresh
+            || context.compiled().problem_id() != problem.problem_id()
+        {
+            return Err(CompleteDataPlanError::PlanMismatch);
+        }
+        self.validate_allocations(context)?;
+        prepared.begin_gridded(
+            context,
+            problem,
+            preparation,
+            prior,
+            &artifact.program,
+            self,
+        )
     }
 
     fn validate_allocations(
@@ -422,10 +978,15 @@ impl CompleteDataPlanFragment {
                     lifetime: ClaimLifetime::Work,
                 },
             ],
-            allocations: vec![
-                specs[2].usage(ClaimLifetime::Work),
-                specs[5].usage(ClaimLifetime::Work),
-            ],
+            allocations: [
+                Some(specs[2].usage(ClaimLifetime::Work)),
+                (self.workload.pass() == SpectralOperatorPass::ResidualRefresh)
+                    .then(|| specs[4].usage(ClaimLifetime::Work)),
+                Some(specs[5].usage(ClaimLifetime::Work)),
+            ]
+            .into_iter()
+            .flatten()
+            .collect(),
             fences: BTreeSet::new(),
             quiescence_after: BTreeSet::new(),
         };
@@ -539,11 +1100,16 @@ impl CompleteDataPlanFragment {
             FenceKind::Io,
         ))]);
         let reconciled = BTreeSet::from([WorkDependency::Work(reconciliation.clone())]);
+        let residual_refresh = self.workload.pass() == SpectralOperatorPass::ResidualRefresh;
         Ok([
             CompleteDataAllocation::new(
                 format!("spectral-operator-grids-{suffix}"),
                 residency.grid_bytes(),
-                "spectral-operator-shared-dirty-psf-residual-grids",
+                if residual_refresh {
+                    "spectral-operator-shared-residual-refresh-grid"
+                } else {
+                    "spectral-operator-shared-dirty-psf-residual-grids"
+                },
                 InitializationPolicy::ZeroBeforeRead,
                 self.replay_node.clone(),
                 replay_done.clone(),
@@ -577,7 +1143,11 @@ impl CompleteDataPlanFragment {
                 residency.primitive_output_bytes(),
                 "spectral-operator-unnormalized-dirty-psf-residual-primitives",
                 InitializationPolicy::OverwriteBeforeRead,
-                self.replay_node.clone(),
+                if residual_refresh {
+                    self.preparation_node.clone()
+                } else {
+                    self.replay_node.clone()
+                },
                 reconciled,
             )?,
             CompleteDataAllocation::new(
@@ -596,7 +1166,11 @@ fn operator_allocation_suffix(workload: SpectralOperatorWorkload) -> String {
     let shape = workload.grid_shape();
     let slab = workload.slab();
     format!(
-        "{}x{}-ch{}-{}",
+        "{}-{}x{}-ch{}-{}",
+        match workload.pass() {
+            SpectralOperatorPass::InitialMajor => "initial",
+            SpectralOperatorPass::ResidualRefresh => "residual-refresh",
+        },
         shape[0],
         shape[1],
         slab.core_range().start,
@@ -891,6 +1465,7 @@ impl CompleteDataPreparedState {
                 replay_node: context.node().id.clone(),
                 reconciliation_node,
                 lease_epoch: context.lease_epoch(),
+                observation_predecessor_required: true,
             },
         })
     }
@@ -925,7 +1500,83 @@ impl CompleteDataPreparedState {
                 replay_node: context.node().id.clone(),
                 reconciliation_node,
                 lease_epoch: context.lease_epoch(),
+                observation_predecessor_required: true,
             },
+        })
+    }
+
+    fn begin_gridded(
+        self,
+        context: WorkExecutionContext<'_>,
+        problem: &CompiledProblem,
+        preparation: &MajorCyclePreparation,
+        prior: FinalNormalState,
+        program: &GriddedNormalOperatorProgram,
+        fragment: &CompleteDataPlanFragment,
+    ) -> Result<GriddedNormalOperatorState, CompleteDataPlanError> {
+        if self.problem != problem.problem_id()
+            || self.attempt != context.attempt_id()
+            || self.preparation_node != fragment.preparation_node
+            || self.replay_node != fragment.replay_node
+            || self.reconciliation_node != fragment.reconciliation_node
+            || self.replay_node != context.node().id
+            || self.lease_epoch != context.lease_epoch()
+        {
+            return Err(CompleteDataPlanError::PlanMismatch);
+        }
+        let reconciliation_node = self
+            .reconciliation_node
+            .ok_or(CompleteDataPlanError::MissingReconciliationNode)?;
+        let state = program
+            .begin_apply(problem, preparation.final_model(), prior, self.owner)
+            .map_err(|error| {
+                CompleteDataPlanError::Operator(CompleteDataOperatorError::Owner(error))
+            })?;
+        Ok(GriddedNormalOperatorState {
+            state,
+            binding: CompleteDataExecutionBinding {
+                problem: problem.problem_id(),
+                attempt: context.attempt_id(),
+                replay_node: context.node().id.clone(),
+                reconciliation_node,
+                lease_epoch: context.lease_epoch(),
+                observation_predecessor_required: false,
+            },
+        })
+    }
+}
+
+pub(crate) struct GriddedNormalOperatorState {
+    state: GriddedNormalOperatorApply,
+    binding: CompleteDataExecutionBinding,
+}
+
+impl GriddedNormalOperatorState {
+    fn apply_encoded_block(
+        &mut self,
+        sequence: u64,
+        encoded: &[u8],
+    ) -> Result<(), CompleteDataOperatorError> {
+        self.state
+            .apply_encoded_block(sequence, encoded)
+            .map_err(CompleteDataOperatorError::Owner)
+    }
+
+    pub(crate) fn complete(self) -> Result<CompleteDataOperatorResult, CompleteDataOperatorError> {
+        let evidence = self
+            .state
+            .finish()
+            .map_err(CompleteDataOperatorError::Owner)?;
+        if evidence.completion().problem_id() != self.binding.problem {
+            return Err(CompleteDataOperatorError::ExecutionBinding);
+        }
+        Ok(CompleteDataOperatorResult {
+            evidence,
+            attempt: self.binding.attempt,
+            replay_node: self.binding.replay_node,
+            reconciliation_node: self.binding.reconciliation_node,
+            lease_epoch: self.binding.lease_epoch,
+            observation_predecessor_required: self.binding.observation_predecessor_required,
         })
     }
 }
@@ -970,6 +1621,7 @@ pub struct CompleteDataOperatorResult {
     replay_node: WorkNodeId,
     reconciliation_node: WorkNodeId,
     lease_epoch: u64,
+    observation_predecessor_required: bool,
 }
 
 impl CompleteDataOperatorResult {
@@ -1057,6 +1709,10 @@ impl CompleteDataOperatorResult {
         self.lease_epoch
     }
 
+    pub(crate) const fn observation_predecessor_required(&self) -> bool {
+        self.observation_predecessor_required
+    }
+
     /// Return the exhaustive selected-sample count.
     #[must_use]
     pub const fn sample_count(&self) -> u64 {
@@ -1106,9 +1762,19 @@ struct CompleteDataExecutionBinding {
     replay_node: WorkNodeId,
     reconciliation_node: WorkNodeId,
     lease_epoch: u64,
+    observation_predecessor_required: bool,
 }
 
 impl SpectralOperatorState {
+    pub(crate) fn authorize_derived_coverage(
+        &mut self,
+        proof: casa_imaging_reconstruction::FrozenWeightingCoverageProof,
+    ) -> Result<(), CompleteDataOperatorError> {
+        self.state
+            .authorize_derived_coverage(proof)
+            .map_err(CompleteDataOperatorError::Owner)
+    }
+
     /// Request final selected visibility samples from this bounded replay.
     pub(crate) fn enable_final_visibility_samples(&mut self) {
         self.state.enable_final_visibility_samples();
@@ -1118,9 +1784,19 @@ impl SpectralOperatorState {
     pub fn bind_major_cycle_model(
         &mut self,
         preparation: &MajorCyclePreparation,
+        prior_normal_state: Option<FinalNormalState>,
     ) -> Result<(), CompleteDataOperatorError> {
         self.state
-            .bind_major_cycle_model(preparation.final_model())
+            .bind_major_cycle_model(preparation.final_model(), prior_normal_state)
+            .map_err(CompleteDataOperatorError::Owner)
+    }
+
+    pub(crate) fn bind_selected_output_model(
+        &mut self,
+        model: &casa_imaging_reconstruction::ModelGeneration,
+    ) -> Result<(), CompleteDataOperatorError> {
+        self.state
+            .bind_selected_output_model(model)
             .map_err(CompleteDataOperatorError::Owner)
     }
 
@@ -1152,7 +1828,7 @@ impl SpectralOperatorState {
             .predict_block(model, block.reconstruction_block())?)
     }
 
-    pub(crate) fn consume_streaming_block(
+    pub(crate) fn consume_bounded_replay_chunk(
         &mut self,
         block: &casa_imaging_reconstruction::WeightingReplayChunk,
     ) -> Result<
@@ -1160,6 +1836,16 @@ impl SpectralOperatorState {
         CompleteDataOperatorError,
     > {
         Ok(self.state.consume_block(block)?)
+    }
+
+    pub(crate) fn predict_final_visibility_chunk(
+        &mut self,
+        block: &casa_imaging_reconstruction::WeightingReplayChunk,
+    ) -> Result<
+        &[casa_imaging_reconstruction::runtime_adapter::FinalVisibilitySample],
+        CompleteDataOperatorError,
+    > {
+        Ok(self.state.predict_final_visibility_block(block)?)
     }
 
     /// Consume terminal T18 proof and mint the runtime complete-data envelope.
@@ -1191,6 +1877,7 @@ impl SpectralOperatorState {
             replay_node: self.binding.replay_node,
             reconciliation_node: self.binding.reconciliation_node,
             lease_epoch: self.binding.lease_epoch,
+            observation_predecessor_required: self.binding.observation_predecessor_required,
         })
     }
 }

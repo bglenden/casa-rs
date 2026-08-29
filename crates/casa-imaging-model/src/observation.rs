@@ -15,7 +15,7 @@ const OBSERVATION_SNAPSHOT_IDENTITY_VERSION: u32 = 5;
 const OBSERVATION_PROVENANCE_IDENTITY_DOMAIN: &[u8] = b"casa-rs-observation-provenance";
 const OBSERVATION_PROVENANCE_IDENTITY_VERSION: u32 = 1;
 const SELECTED_ROW_SEQUENCE_IDENTITY_DOMAIN: &[u8] = b"casa-rs-selected-row-sequence";
-const SELECTED_ROW_SEQUENCE_IDENTITY_VERSION: u32 = 2;
+const SELECTED_ROW_SEQUENCE_IDENTITY_VERSION: u32 = 3;
 
 const REQUIRED_COORDINATE_COLUMNS: [MsColumnKind; 15] = [
     MsColumnKind::Uvw,
@@ -657,17 +657,17 @@ where
     },
 }
 
-/// Exact manifest of selected MAIN row/DDID coordinates in physical row order.
+/// Compact identity of selected MAIN row/DDID coordinates in physical row order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SelectedRows {
     source_row_count: u64,
-    ordered_main_rows: Arc<[SelectedMainRow]>,
+    selected_row_count: u64,
     sequence_id: SelectedRowSequenceId,
     used_data_description_ids: Arc<[u32]>,
 }
 
 impl SelectedRows {
-    /// Validate, retain, and identify the canonical MAIN row/DDID coordinates.
+    /// Validate and identify the canonical MAIN row/DDID coordinates without retaining them.
     ///
     /// Validation reports the first encountered invalid row.
     /// Each row is checked for range, then adjacent duplication, then descending
@@ -681,36 +681,21 @@ impl SelectedRows {
         I: IntoIterator<Item = SelectedMainRow>,
         I::IntoIter: ExactSizeIterator,
     {
-        Self::from_ordered_main_row_vec(source_row_count, rows.into_iter().collect())
-    }
-
-    /// Validate and retain an already-compact ordered MAIN row manifest
-    /// without allocating a second selection-sized row buffer.
-    pub fn from_ordered_main_row_vec(
-        source_row_count: u64,
-        ordered_main_rows: Vec<SelectedMainRow>,
-    ) -> Result<Self, SelectedRowSequenceError> {
-        let rows = ordered_main_rows.iter().copied();
-        let selected_row_count =
+        let rows = rows.into_iter();
+        let declared_row_count =
             u64::try_from(rows.len()).map_err(|_| SelectedRowSequenceError::RowCountOverflow)?;
-        let mut accumulator =
-            SelectedRowSequenceAccumulator::new(source_row_count, selected_row_count);
+        let mut builder = SelectedRowsBuilder::new(source_row_count);
         for row in rows {
-            accumulator.push(row)?;
+            builder.push(row)?;
         }
-        let (observed_row_count, sequence_id, used_data_description_ids) = accumulator.finish();
-        if observed_row_count != selected_row_count {
+        let selected = builder.finish();
+        if selected.selected_row_count != declared_row_count {
             return Err(SelectedRowSequenceError::DeclaredRowCountMismatch {
-                declared_row_count: selected_row_count,
-                observed_row_count,
+                declared_row_count,
+                observed_row_count: selected.selected_row_count,
             });
         }
-        Ok(Self {
-            source_row_count,
-            ordered_main_rows: ordered_main_rows.into(),
-            sequence_id,
-            used_data_description_ids: used_data_description_ids.into(),
-        })
+        Ok(selected)
     }
 
     /// Validate a fallible storage replay against this exact row/DDID manifest.
@@ -726,8 +711,7 @@ impl SelectedRows {
         I: IntoIterator<Item = Result<SelectedMainRow, E>>,
         E: std::error::Error + 'static,
     {
-        let mut accumulator =
-            SelectedRowSequenceAccumulator::new(self.source_row_count, self.selected_row_count());
+        let mut accumulator = SelectedRowSequenceAccumulator::new(self.source_row_count);
         for row in rows {
             accumulator
                 .push(row.map_err(SelectedRowManifestValidationError::Source)?)
@@ -755,15 +739,8 @@ impl SelectedRows {
 
     /// Return the number of selected MAIN rows.
     #[must_use]
-    pub fn selected_row_count(&self) -> u64 {
-        u64::try_from(self.ordered_main_rows.len())
-            .expect("validated selected MAIN row count fits u64")
-    }
-
-    /// Return exact selected MAIN row/DDID coordinates in canonical physical order.
-    #[must_use]
-    pub fn ordered_main_rows(&self) -> &[SelectedMainRow] {
-        &self.ordered_main_rows
+    pub const fn selected_row_count(&self) -> u64 {
+        self.selected_row_count
     }
 
     /// Return heap bytes owned by the shared canonical row/DDID manifest.
@@ -780,24 +757,14 @@ impl SelectedRows {
         &self,
         already_accounted: impl IntoIterator<Item = &'a Self>,
     ) -> Option<usize> {
-        let mut ordered_main_rows_accounted = false;
         let mut used_data_description_ids_accounted = false;
         for rows in already_accounted {
-            ordered_main_rows_accounted |=
-                Arc::ptr_eq(&self.ordered_main_rows, &rows.ordered_main_rows);
             used_data_description_ids_accounted |= Arc::ptr_eq(
                 &self.used_data_description_ids,
                 &rows.used_data_description_ids,
             );
         }
         let mut bytes = 0_usize;
-        if !ordered_main_rows_accounted {
-            bytes = bytes.checked_add(2 * size_of::<usize>())?.checked_add(
-                self.ordered_main_rows
-                    .len()
-                    .checked_mul(size_of::<SelectedMainRow>())?,
-            )?;
-        }
         if !used_data_description_ids_accounted {
             bytes = bytes.checked_add(2 * size_of::<usize>())?.checked_add(
                 self.used_data_description_ids
@@ -819,26 +786,78 @@ impl SelectedRows {
     }
 }
 
+/// Streaming builder for one compact selected-row manifest.
+pub struct SelectedRowsBuilder {
+    accumulator: SelectedRowSequenceAccumulator,
+}
+
+impl SelectedRowsBuilder {
+    /// Begin one physical-order selected-row capture for a fixed MAIN cardinality.
+    #[must_use]
+    pub fn new(source_row_count: u64) -> Self {
+        Self::with_data_description_capacity(source_row_count, 0)
+    }
+
+    /// Begin one capture with bounded storage for the selected DATA_DESCRIPTION identifiers.
+    #[must_use]
+    pub fn with_data_description_capacity(
+        source_row_count: u64,
+        data_description_capacity: usize,
+    ) -> Self {
+        Self {
+            accumulator: SelectedRowSequenceAccumulator::with_data_description_capacity(
+                source_row_count,
+                data_description_capacity,
+            ),
+        }
+    }
+
+    /// Add one selected MAIN row in canonical physical order.
+    pub fn push(&mut self, row: SelectedMainRow) -> Result<(), SelectedRowSequenceError> {
+        self.accumulator.push(row)
+    }
+
+    /// Finish the compact manifest without retaining the captured row corpus.
+    #[must_use]
+    pub fn finish(self) -> SelectedRows {
+        let source_row_count = self.accumulator.source_row_count;
+        let (selected_row_count, sequence_id, used_data_description_ids) =
+            self.accumulator.finish();
+        SelectedRows {
+            source_row_count,
+            selected_row_count,
+            sequence_id,
+            used_data_description_ids: used_data_description_ids.into(),
+        }
+    }
+}
+
 pub(crate) struct SelectedRowSequenceAccumulator {
     source_row_count: u64,
     encoder: CanonicalEncoder,
     observed_row_count: u64,
     previous_row: Option<u64>,
-    used_data_description_ids: BTreeSet<u32>,
+    used_data_description_ids: Vec<u32>,
 }
 
 impl SelectedRowSequenceAccumulator {
-    pub(crate) fn new(source_row_count: u64, expected_row_count: u64) -> Self {
+    pub(crate) fn new(source_row_count: u64) -> Self {
+        Self::with_data_description_capacity(source_row_count, 0)
+    }
+
+    fn with_data_description_capacity(
+        source_row_count: u64,
+        data_description_capacity: usize,
+    ) -> Self {
         let mut encoder = CanonicalEncoder::new();
         encoder.bytes(SELECTED_ROW_SEQUENCE_IDENTITY_DOMAIN);
         encoder.u32(SELECTED_ROW_SEQUENCE_IDENTITY_VERSION);
-        encoder.u64(expected_row_count);
         Self {
             source_row_count,
             encoder,
             observed_row_count: 0,
             previous_row: None,
-            used_data_description_ids: BTreeSet::new(),
+            used_data_description_ids: Vec::with_capacity(data_description_capacity),
         }
     }
 
@@ -867,13 +886,20 @@ impl SelectedRowSequenceAccumulator {
         }
         self.encoder.u64(row);
         self.encoder.u32(selected.data_description_id);
-        self.used_data_description_ids
-            .insert(selected.data_description_id);
+        if !self
+            .used_data_description_ids
+            .contains(&selected.data_description_id)
+        {
+            self.used_data_description_ids
+                .push(selected.data_description_id);
+        }
         self.previous_row = Some(row);
         Ok(())
     }
 
-    pub(crate) fn finish(self) -> (u64, SelectedRowSequenceId, Vec<u32>) {
+    pub(crate) fn finish(mut self) -> (u64, SelectedRowSequenceId, Vec<u32>) {
+        self.encoder.u64(self.observed_row_count);
+        self.used_data_description_ids.sort_unstable();
         (
             self.observed_row_count,
             SelectedRowSequenceId(LogicalIdentity::from_sha256(self.encoder.finish())),

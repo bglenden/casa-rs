@@ -90,8 +90,8 @@ pub use listobs::{
     ListObsUvPoint as MeasurementSetUvPoint, ListObsUvTrack as MeasurementSetUvTrack,
 };
 pub(crate) use listobs::{ListObsOptions, ListObsSummary, ListObsUvCoverage};
-pub(crate) use ms::MainRowSelectionFact;
 pub use ms::MeasurementSet;
+pub(crate) use ms::{MainRowSelectionCursor, MainRowSelectionFact};
 pub use msexplore::task_contract::{
     MSEXPLORE_TASK_PROTOCOL_NAME, MSEXPLORE_TASK_PROTOCOL_VERSION, MsExploreFlagEditRequest,
     MsExplorePlotArtifact, MsExplorePlotExportRequest, MsExploreRunTaskRequest,
@@ -145,11 +145,14 @@ pub use schema::SubtableId;
 pub use schema::main_table::{OptionalMainColumn, VisibilityDataColumn};
 pub use selected_observation::{
     BoundObservationSourceError, BoundSelectedObservation, BoundSelectedObservationError,
-    ObservationSourceBinding, SelectedObservationCompletion, SelectedObservationContentBudget,
-    SelectedObservationMeasures, SelectedObservationMeasuresError,
-    SelectedObservationResidencyCertificate, SelectedObservationRow,
-    SelectedObservationRowSelection, SelectedObservationTraversalError,
-    SelectedObservationTraversalSample,
+    ObservationSourceBinding, SelectedObservationBlock, SelectedObservationBlockConsumer,
+    SelectedObservationBlockSource, SelectedObservationCompletion,
+    SelectedObservationContentBudget, SelectedObservationMeasures,
+    SelectedObservationMeasuresError, SelectedObservationReplayAuthorization,
+    SelectedObservationReplayProof, SelectedObservationResidencyCertificate,
+    SelectedObservationRow, SelectedObservationRowSelection, SelectedObservationTerminal,
+    SelectedObservationTraversalError, SelectedObservationTraversalMeasurements,
+    SelectedObservationTraversalRun, SelectedObservationTraversalSample,
 };
 pub(crate) use selected_observation_buffer::{
     SelectedObservationBuffer, SelectedObservationBufferRequest, SelectedStoredSample,

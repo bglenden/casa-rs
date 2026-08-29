@@ -151,6 +151,29 @@ def _legacy_casa_tclean_result() -> dict[str, object]:
 
 
 class SchemaTests(unittest.TestCase):
+    def test_current_comparison_product_accepts_neutral_existence_evidence(self) -> None:
+        product = {
+            "status": "missing",
+            "left_path": "/tmp/left.image",
+            "right_path": "/tmp/right.image",
+            "left_exists": True,
+            "right_exists": False,
+        }
+
+        schema_contract._validate_comparison_product(
+            product,
+            protocol_variant=schema_contract.COMPARISON_SCHEMA_VERSION,
+            source="comparison product",
+        )
+
+        product["right_exists"] = "no"
+        with self.assertRaisesRegex(ContractError, "right_exists must be boolean"):
+            schema_contract._validate_comparison_product(
+                product,
+                protocol_variant=schema_contract.COMPARISON_SCHEMA_VERSION,
+                source="comparison product",
+            )
+
     def test_current_product_contract_accepts_bound_source_region_evidence(
         self,
     ) -> None:
@@ -808,6 +831,15 @@ class SchemaTests(unittest.TestCase):
             comparison = loaded[name]["comparison"]
             self.assertEqual("full", comparison["mode"])
             self.assertTrue(comparison["tolerances"]["require_full_array"])
+
+    def test_nmajor_accepts_casa_unlimited_and_rejects_lower_values(self) -> None:
+        workload = explicit_aw_workload()
+        workload["imaging"]["nmajor"] = -1
+        validate_workload_manifest(workload)
+
+        workload["imaging"]["nmajor"] = -2
+        with self.assertRaisesRegex(ContractError, "nmajor must be -1 or nonnegative"):
+            validate_workload_manifest(workload)
 
     def test_casa_recipe_requires_path_and_lowercase_sha256(self) -> None:
         workload = explicit_aw_workload()

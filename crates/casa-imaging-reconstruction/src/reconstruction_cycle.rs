@@ -153,6 +153,16 @@ impl ReconstructionCycleEvidence {
             .sum()
     }
 
+    /// Return the component count charged to the reported controller budget.
+    #[must_use]
+    pub fn controller_iterations(&self) -> usize {
+        self.channels
+            .iter()
+            .filter_map(ChannelCycleEvidence::minor_cycle)
+            .map(MinorCycleEvidence::controller_iterations)
+            .sum()
+    }
+
     /// Return cumulative absolute accepted component flux across channels.
     #[must_use]
     pub fn total_flux(&self) -> f64 {
@@ -161,6 +171,16 @@ impl ReconstructionCycleEvidence {
             .filter_map(ChannelCycleEvidence::minor_cycle)
             .map(MinorCycleEvidence::total_flux)
             .sum()
+    }
+
+    /// Return the maximum normalized entry peak across valid channels.
+    #[must_use]
+    pub fn initial_peak_flux(&self) -> f64 {
+        self.channels
+            .iter()
+            .filter_map(ChannelCycleEvidence::minor_cycle)
+            .map(MinorCycleEvidence::initial_peak_flux)
+            .fold(0.0, f64::max)
     }
 
     /// Return the maximum final normalized peak across valid channels.
@@ -190,6 +210,16 @@ impl ReconstructionCycleEvidence {
             .iter()
             .filter_map(ChannelCycleEvidence::minor_cycle)
             .map(MinorCycleEvidence::effective_threshold)
+            .fold(0.0, f64::max)
+    }
+
+    /// Return the maximum global absolute/noise threshold across valid channels.
+    #[must_use]
+    pub fn global_threshold(&self) -> f64 {
+        self.channels
+            .iter()
+            .filter_map(ChannelCycleEvidence::minor_cycle)
+            .map(MinorCycleEvidence::global_threshold)
             .fold(0.0, f64::max)
     }
 
@@ -335,7 +365,8 @@ impl ReconstructionCycle {
                     .on_model_plane(MinorCycleModelPlane::new(0, plane.output_channel(), 0));
                 let result = run_minor_cycle_plane(lifecycle, base, plane, mask, program)?;
                 let (delta, evidence) = result.into_parts();
-                remaining_iterations = remaining_iterations.saturating_sub(evidence.iterations());
+                remaining_iterations =
+                    remaining_iterations.saturating_sub(evidence.controller_iterations());
                 if let Some(delta) = delta {
                     terms.extend_from_slice(delta.terms());
                 }

@@ -209,30 +209,21 @@ fn selected_model_column_writes_have_a_pinned_schema_three_identity() {
     );
     assert_eq!(
         writable.transaction_id().to_string(),
-        "8c19e7793436ece7313d98c5f19bd8391ab515f0ea05419984569a8f7909eded"
+        "b618683b850ebaddc2632a495a401266048f9b3caa2f6dd6aaed6cb8dd28d6b7"
     );
     assert_eq!(writable.write_set().visibility_columns().len(), 1);
     let write = &writable.write_set().visibility_columns()[0];
     assert_eq!(write.measurement_set(), snapshot.sources()[0].identity());
     assert_eq!(write.selection(), snapshot.sources()[0].selection());
-    let snapshot_rows = snapshot.sources()[0]
-        .selection()
-        .rows()
-        .ordered_main_rows()
-        .as_ptr();
     assert_eq!(
-        writable.read_set().sources()[0]
-            .selection()
-            .rows()
-            .ordered_main_rows()
-            .as_ptr(),
-        snapshot_rows,
-        "the transaction read contract must share the compiler-owned row manifest"
+        writable.read_set().sources()[0].selection().rows(),
+        snapshot.sources()[0].selection().rows(),
+        "the transaction read contract must retain the compact row identity"
     );
     assert_eq!(
-        write.selection().rows().ordered_main_rows().as_ptr(),
-        snapshot_rows,
-        "MODEL_DATA write access must not deep-clone the selected row vector"
+        write.selection().rows(),
+        snapshot.sources()[0].selection().rows(),
+        "MODEL_DATA write access must retain the compact row identity"
     );
     assert_eq!(write.column(), MsColumnKind::ModelData);
     assert_eq!(

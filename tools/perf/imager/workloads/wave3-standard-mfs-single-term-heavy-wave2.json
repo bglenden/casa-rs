@@ -24,6 +24,7 @@
     "hogbom_iteration_mode": "casa",
     "nterms": 1,
     "niter": 500,
+    "nmajor": -1,
     "gain": 0.1,
     "threshold_jy": 0.0,
     "minor_cycle_length": 50
@@ -34,6 +35,10 @@
     "storage_label": "external-ssd-wave1",
     "ms_staging": "direct",
     "phase_probe": "0",
+    "env": {
+      "CASA_RS_IMAGING_SPILL_READ_BYTES_PER_SECOND": "1000000000",
+      "CASA_RS_IMAGING_SPILL_WRITE_BYTES_PER_SECOND": "1000000000"
+    },
     "evidence_role": "after_multi_worker_cpu"
   },
   "review": {

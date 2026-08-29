@@ -1,0 +1,78 @@
+{
+  "artifact_kind": "issue-540-instrumented-current-rust-control",
+  "recorded_date": "2026-08-27",
+  "truth_class": "single_observation_provisional",
+  "work_issue": 540,
+  "git": {
+    "base_revision": "5ef9f4729e4ffa787c30dfffed38c1e7eaf69d6b",
+    "instrumentation_source_diff_sha256": "c65dcf88521491658e5f669579ca0ff93f646123fabd3dc5f2446a023d8403b0",
+    "checkpoint_branch": "codex/checkpoint-imaging-performance-20260827"
+  },
+  "candidate_contract": {
+    "hypothesis": "Two admitted reusable source leases can overlap exact selected-observation fill and ordered consumption, reducing total wall time without changing scientific results or growing residency with MeasurementSet size.",
+    "predicted_terminal_effect": "The candidate is faster than this control on the same medium command and on the directly mounted 32 GiB workload, while the full 106.9 GiB gate remains bounded and shows useful producer-consumer overlap.",
+    "automatic_falsifiers": [
+      "scientific products exceed the pinned CASA thresholds or differ from the accepted serial Rust result",
+      "the medium or directly mounted 32 GiB candidate is not faster than its matched control",
+      "the candidate adds a hidden MeasurementSet pass, implicit copy, unplanned allocation, unbounded queue, full grid per worker, fallback, or alternate MFS path",
+      "the full 106.9 GiB gate does not complete with stable bounded residency and useful two-lease overlap"
+    ],
+    "memory_limit": "the immutable Resource Authority lease",
+    "swap_limit": "no sustained swap growth",
+    "wall_limit": "30 minutes for turnaround or medium work; runs projected beyond 90 minutes are final evidence only",
+    "retention": "retain compact JSON receipts and product-comparison results; external image products are generated evidence"
+  },
+  "frozen_casa_oracle": {
+    "rerun": false,
+    "wall_seconds": 733.660,
+    "workload": "64 channels, 1024 pixels, 0.25 arcsec, Briggs, niter=500",
+    "maximum_normalized_rms_ratio": {
+      "image": 0.0000172,
+      "residual": 0.0000353,
+      "model": 0.0000102,
+      "psf": 0.0000304
+    }
+  },
+  "medium_control": {
+    "measurement_set": "/private/tmp/casa-rs-perf-probe-main-x40.ms",
+    "source_main_rows": 42320,
+    "selected_rows": 14720,
+    "selected_samples": 942080,
+    "selection": {
+      "field": 1,
+      "spectral_window": 1,
+      "channel_start": 0,
+      "channel_count": 16,
+      "correlations": 4
+    },
+    "imaging": {
+      "image_pixels": 256,
+      "cell_arcsec": 0.02,
+      "weighting": "natural",
+      "dirty_only": true,
+      "gridder": "standard",
+      "standard_mfs_acceleration": "cpu",
+      "fft_backend": "rustfft"
+    },
+    "command": "target/release/casars-imager --ms /private/tmp/casa-rs-perf-probe-main-x40.ms --imagename OUTPUT/rust --imsize 256 --cell-arcsec 0.02 --field 1 --spw 1 --channel-start 0 --channel-count 16 --weighting natural --dirty-only --standard-mfs-acceleration cpu --imaging-fft-backend rustfft --no-preview-pngs --gridder standard --deconvolver hogbom --specmode mfs --stokes I --datacolumn DATA",
+    "wall_seconds": 2.89,
+    "user_seconds": 2.31,
+    "system_seconds": 0.41,
+    "receipt": {
+      "schema_name": "casa-rs-imaging-execution-receipt",
+      "schema_version": 18,
+      "attempt_identity": "282e359629b062707b285fe24947fd4934f7e02c31893276036ecc2855bed637",
+      "build_identity": "05aa09254256e5b0dd57677dcbaeb1af3f831b9041b9ea0fb3feeeff5856d792",
+      "plan_identity": "09f074f17ee28470391bf0b8f85558001be4db1f3095d22fe086bcad1e667d64",
+      "observation_node_elapsed_nanos": 2344019708,
+      "actual_logical_source_bytes": 10142080,
+      "actual_closed_column_read_operations": 279680
+    },
+    "scientific_result": {
+      "gridded_samples": 942080,
+      "major_cycles": 1,
+      "minor_iterations": 0,
+      "products_written": true
+    }
+  }
+}

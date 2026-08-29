@@ -750,8 +750,7 @@ def rust_case(
         "--minor-cycle-length", str(cycle_iterations), "--nmajor", str(nmajor),
         "--gain", str(gain), "--threshold-jy", str(threshold_jy),
         "--nsigma", str(nsigma), "--cyclefactor", str(cyclefactor),
-        "--minpsffraction", "0.05", "--maxpsffraction", "0.8",
-        "--maximum-model-update-jy", "100", "--savemodel",
+        "--minpsffraction", "0.05", "--maxpsffraction", "0.8", "--savemodel",
         "modelcolumn" if save_model else "none",
         "--managed-output", "true",
     ]

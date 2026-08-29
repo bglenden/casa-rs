@@ -3347,6 +3347,29 @@ pub trait WorkImplementation {
         completion: ObservationReadCompletionContext,
     ) -> Result<AttemptBoundObservationCompletion, Self::Error>;
 
+    /// Bind scheduler-issued resources retained by this node's immutable artifact.
+    ///
+    /// The runner invokes this only after the node and all of its fences settle
+    /// successfully. Implementations that do not declare artifact-lifetime
+    /// claims retain the default rejection.
+    fn retain_artifact_resources(
+        &self,
+        _owner_node: &WorkNodeId,
+        _permit: crate::RetainedArtifactPermit,
+    ) -> Result<bool, Self::Error> {
+        Ok(false)
+    }
+
+    /// Abort one incomplete observation read and synchronously settle any
+    /// storage worker owned by it.
+    ///
+    /// The runner invokes this before releasing the observation's logical
+    /// MeasurementSet permits on error or cancellation. Implementations whose
+    /// observation reads cannot escape synchronous work retain the default.
+    fn abort_observation_read(&self, _owner_node: &WorkNodeId) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
     /// Return the Product Generation seal produced by this completed publication node.
     ///
     /// The runtime invokes this after synchronous work and every declared fence
@@ -3564,6 +3587,33 @@ fn terminal_drain_error<E>(
 ) -> RunError<E> {
     let _ = scheduler.quarantine();
     pending.take().expect(invariant).into_run_error()
+}
+
+fn transfer_artifact_resources<I: WorkImplementation>(
+    scheduler: &mut ExecutionScheduler<'_>,
+    implementation: &I,
+    node: &WorkNodeId,
+) -> Result<(), PendingRunError<I::Error>> {
+    let permit = scheduler
+        .take_artifact_permit(node)
+        .map_err(PendingRunError::Scheduler)?;
+    if let Some(permit) = permit {
+        let retained = implementation
+            .retain_artifact_resources(node, permit)
+            .map_err(|source| PendingRunError::Execution {
+                node: node.clone(),
+                source,
+            })?;
+        if !retained {
+            return Err(PendingRunError::Scheduler(ExecutionError::InvalidState(
+                format!(
+                    "implementation did not retain artifact resources for {}",
+                    node.as_str()
+                ),
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn validate_work_measurements(
@@ -4063,6 +4113,21 @@ where
             match controller.directive(&status) {
                 RunDirective::Continue => {}
                 RunDirective::Cancel => {
+                    for (node, work) in &launched {
+                        if work.node().kind.reads_observation()
+                            && !completed_observation_reads.contains_key(node)
+                            && let Err(source) = implementations[&work.node().implementation]
+                                .abort_observation_read(node)
+                        {
+                            if pending.is_none() {
+                                pending = Some(PendingRunError::Execution {
+                                    node: node.clone(),
+                                    source,
+                                });
+                            }
+                            break;
+                        }
+                    }
                     if let Err(error) = scheduler.cancel() {
                         defer_scheduler_error(&mut scheduler, &mut pending, error);
                     }
@@ -4091,6 +4156,16 @@ where
                         defer_receipt_error(&mut scheduler, &mut pending, error);
                         controller_stopped = true;
                     }
+                }
+            }
+        }
+        if pending.is_some() || controller_stopped {
+            for (node, work) in &launched {
+                if work.node().kind.reads_observation()
+                    && !completed_observation_reads.contains_key(node)
+                {
+                    let _ =
+                        implementations[&work.node().implementation].abort_observation_read(node);
                 }
             }
         }
@@ -4178,18 +4253,27 @@ where
                                 {
                                     receipt_error = Some(error);
                                 }
+                                let receipt_transition_succeeded = receipt_error.is_none();
                                 if let Some(error) = receipt_error {
                                     defer_receipt_error(&mut scheduler, &mut pending, error);
                                     controller_stopped = true;
                                 }
+                                if !receipt_transition_succeeded
+                                    && work.node().kind.reads_observation()
+                                {
+                                    let _ = implementation.abort_observation_read(&node_id);
+                                }
                                 let synchronous_observation_read =
                                     work.node().kind.reads_observation()
                                         && work.node().fences.is_empty();
+                                let synchronous_work = work.node().fences.is_empty();
                                 let work_lease_epoch = context.lease_epoch();
                                 launched.insert(node_id.clone(), work);
                                 match scheduler.finish_work(node_id.clone(), WorkResult::Succeeded)
                                 {
                                     Ok(_) if synchronous_observation_read => {
+                                        let permits =
+                                            scheduler.take_observation_completion_permits(&node_id);
                                         let completion = ObservationReadCompletionContext {
                                             attempt_id: receipt.attempt_id(),
                                             owner_node: node_id.clone(),
@@ -4208,43 +4292,96 @@ where
                                                 .selected_observation()
                                                 .commitment_id(),
                                         };
-                                        match implementation.complete_observation_read(completion) {
-                                            Ok(completion) => {
-                                                if completed_observation_reads
-                                                    .insert(node_id.clone(), completion)
-                                                    .is_some()
-                                                {
-                                                    defer_scheduler_error(
+                                        let duplicate =
+                                            completed_observation_reads.contains_key(&node_id);
+                                        if duplicate {
+                                            defer_scheduler_error(
+                                                &mut scheduler,
+                                                &mut pending,
+                                                ExecutionError::InvalidState(format!(
+                                                    "observation read {} completed more than once",
+                                                    node_id.as_str()
+                                                )),
+                                            );
+                                            controller_stopped = true;
+                                        }
+                                        if !receipt_transition_succeeded || duplicate {
+                                            let _ = implementation.abort_observation_read(&node_id);
+                                        } else {
+                                            match implementation
+                                                .complete_observation_read(completion)
+                                            {
+                                                Ok(completion) => {
+                                                    match transfer_artifact_resources(
                                                         &mut scheduler,
-                                                        &mut pending,
-                                                        ExecutionError::InvalidState(format!(
-                                                            "observation read {} completed more than once",
-                                                            node_id.as_str()
-                                                        )),
-                                                    );
+                                                        implementation,
+                                                        &node_id,
+                                                    ) {
+                                                        Ok(()) => {
+                                                            completed_observation_reads.insert(
+                                                                node_id.clone(),
+                                                                completion,
+                                                            );
+                                                        }
+                                                        Err(error) => {
+                                                            pending = Some(error);
+                                                            controller_stopped = true;
+                                                            scheduler.cancel_after_error();
+                                                        }
+                                                    }
+                                                }
+                                                Err(source) => {
+                                                    let _ = implementation
+                                                        .abort_observation_read(&node_id);
+                                                    if pending.is_none() {
+                                                        pending =
+                                                            Some(PendingRunError::Execution {
+                                                                node: node_id.clone(),
+                                                                source,
+                                                            });
+                                                    }
                                                     controller_stopped = true;
+                                                    scheduler.cancel_after_error();
                                                 }
-                                            }
-                                            Err(source) => {
-                                                if pending.is_none() {
-                                                    pending = Some(PendingRunError::Execution {
-                                                        node: node_id,
-                                                        source,
-                                                    });
-                                                }
-                                                controller_stopped = true;
-                                                scheduler.cancel_after_error();
                                             }
                                         }
+                                        if let Err(error) = permits.release() {
+                                            defer_scheduler_error(
+                                                &mut scheduler,
+                                                &mut pending,
+                                                error,
+                                            );
+                                            controller_stopped = true;
+                                        }
                                     }
-                                    Ok(_) => {}
+                                    Ok(_) => {
+                                        if !synchronous_observation_read
+                                            && synchronous_work
+                                            && let Err(error) = transfer_artifact_resources(
+                                                &mut scheduler,
+                                                implementation,
+                                                &node_id,
+                                            )
+                                        {
+                                            pending = Some(error);
+                                            controller_stopped = true;
+                                            scheduler.cancel_after_error();
+                                        }
+                                    }
                                     Err(error) => {
+                                        if synchronous_observation_read {
+                                            let _ = implementation.abort_observation_read(&node_id);
+                                            let _ = scheduler
+                                                .take_observation_completion_permits(&node_id)
+                                                .release();
+                                        }
                                         defer_scheduler_error(&mut scheduler, &mut pending, error);
                                         controller_stopped = true;
                                     }
                                 }
                             }
                             Err(error) => {
+                                let observation_read = work.node().kind.reads_observation();
                                 let record_failed_measurements = matches!(
                                     &error,
                                     ExecutionEvidenceError::RejectedArtifact { .. }
@@ -4275,16 +4412,32 @@ where
                                 if let Some(error) = receipt_error {
                                     defer_receipt_error(&mut scheduler, &mut pending, error);
                                 }
+                                if observation_read {
+                                    let _ = implementation.abort_observation_read(&node_id);
+                                }
                                 launched.insert(node_id.clone(), work);
-                                if scheduler
-                                    .finish_work(node_id, WorkResult::Succeeded)
-                                    .is_err()
+                                match scheduler.finish_work(node_id.clone(), WorkResult::Succeeded)
                                 {
-                                    return Err(terminal_drain_error(
-                                        &mut scheduler,
-                                        &mut pending,
-                                        "evidence failure is retained",
-                                    ));
+                                    Ok(fences) if fences.is_empty() && observation_read => {
+                                        if let Err(error) = scheduler
+                                            .take_observation_completion_permits(&node_id)
+                                            .release()
+                                        {
+                                            defer_scheduler_error(
+                                                &mut scheduler,
+                                                &mut pending,
+                                                error,
+                                            );
+                                        }
+                                    }
+                                    Ok(_) => {}
+                                    Err(_) => {
+                                        return Err(terminal_drain_error(
+                                            &mut scheduler,
+                                            &mut pending,
+                                            "evidence failure is retained",
+                                        ));
+                                    }
                                 }
                                 scheduler.cancel_after_error();
                             }
@@ -4292,6 +4445,9 @@ where
                     }
                     Err(source) => {
                         let diagnostic = source.to_string();
+                        if work.node().kind.reads_observation() {
+                            let _ = implementation.abort_observation_read(&node_id);
+                        }
                         match implementation
                             .failure_measurements(&source)
                             .map(|measurements| {
@@ -4347,6 +4503,8 @@ where
                             continue;
                         }
                         controller_stopped = true;
+                        let failed_node = node_id.clone();
+                        let observation_read = work.node().kind.reads_observation();
                         match scheduler.finish_work(
                             node_id,
                             WorkResult::Failed {
@@ -4362,6 +4520,18 @@ where
                                             "executor failure is retained",
                                         ));
                                     }
+                                }
+                                if observation_read
+                                    && scheduler
+                                        .take_observation_completion_permits(&failed_node)
+                                        .release()
+                                        .is_err()
+                                {
+                                    return Err(terminal_drain_error(
+                                        &mut scheduler,
+                                        &mut pending,
+                                        "observation abort completed before permit release failure",
+                                    ));
                                 }
                             }
                             Err(_) => {
@@ -4416,6 +4586,9 @@ where
                     }
                     let _ = receipt.fence_failed(&fence);
                     controller_stopped = true;
+                    if work.node().kind.reads_observation() {
+                        let _ = implementation.abort_observation_read(fence.node());
+                    }
                     if work.node().kind == WorkKind::Release {
                         if scheduler.fail_release_fence(fence).is_err() {
                             return Err(terminal_drain_error(
@@ -4435,6 +4608,18 @@ where
                             &mut scheduler,
                             &mut pending,
                             "fence failure is retained",
+                        ));
+                    }
+                    if work.node().kind.reads_observation()
+                        && scheduler
+                            .take_observation_completion_permits(&work.node().id)
+                            .release()
+                            .is_err()
+                    {
+                        return Err(terminal_drain_error(
+                            &mut scheduler,
+                            &mut pending,
+                            "observation abort completed before permit release failure",
                         ));
                     }
                 } else {
@@ -4477,35 +4662,75 @@ where
                         controller_stopped = true;
                         fence_transition_succeeded = false;
                     }
-                    if fence_transition_succeeded && let Some(completion) = observation_completion {
-                        match implementation.complete_observation_read(completion) {
-                            Ok(completion) => {
-                                if completed_observation_reads
-                                    .insert(work.node().id.clone(), completion)
-                                    .is_some()
-                                {
-                                    defer_scheduler_error(
+                    if let Some(completion) = observation_completion {
+                        let node = work.node().id.clone();
+                        let permits = scheduler.take_observation_completion_permits(&node);
+                        let duplicate = completed_observation_reads.contains_key(&node);
+                        if duplicate {
+                            defer_scheduler_error(
+                                &mut scheduler,
+                                &mut pending,
+                                ExecutionError::InvalidState(format!(
+                                    "observation read {} completed more than once",
+                                    node.as_str()
+                                )),
+                            );
+                            controller_stopped = true;
+                        }
+                        if !fence_transition_succeeded
+                            || duplicate
+                            || pending.is_some()
+                            || controller_stopped
+                        {
+                            let _ = implementation.abort_observation_read(&node);
+                        } else {
+                            match implementation.complete_observation_read(completion) {
+                                Ok(completion) => {
+                                    match transfer_artifact_resources(
                                         &mut scheduler,
-                                        &mut pending,
-                                        ExecutionError::InvalidState(format!(
-                                            "observation read {} completed more than once",
-                                            work.node().id.as_str()
-                                        )),
-                                    );
+                                        implementation,
+                                        &node,
+                                    ) {
+                                        Ok(()) => {
+                                            completed_observation_reads
+                                                .insert(node.clone(), completion);
+                                        }
+                                        Err(error) => {
+                                            pending = Some(error);
+                                            controller_stopped = true;
+                                            scheduler.cancel_after_error();
+                                        }
+                                    }
+                                }
+                                Err(source) => {
+                                    let _ = implementation.abort_observation_read(&node);
+                                    if pending.is_none() {
+                                        pending = Some(PendingRunError::Execution {
+                                            node: node.clone(),
+                                            source,
+                                        });
+                                    }
                                     controller_stopped = true;
+                                    scheduler.cancel_after_error();
                                 }
-                            }
-                            Err(source) => {
-                                if pending.is_none() {
-                                    pending = Some(PendingRunError::Execution {
-                                        node: work.node().id.clone(),
-                                        source,
-                                    });
-                                }
-                                controller_stopped = true;
-                                scheduler.cancel_after_error();
                             }
                         }
+                        if let Err(error) = permits.release() {
+                            defer_scheduler_error(&mut scheduler, &mut pending, error);
+                            controller_stopped = true;
+                        }
+                    } else if !work.node().kind.reads_observation()
+                        && fence_transition_succeeded
+                        && pending.is_none()
+                        && let Err(error) = transfer_artifact_resources(
+                            &mut scheduler,
+                            implementation,
+                            &work.node().id,
+                        )
+                    {
+                        pending = Some(error);
+                        controller_stopped = true;
+                        scheduler.cancel_after_error();
                     }
                 }
             }
@@ -4630,12 +4855,18 @@ where
                     receipt
                         .complete_independent_product_publication()
                         .map_err(RunError::Receipt)?;
+                    scheduler
+                        .complete_publication()
+                        .map_err(RunError::Scheduler)?;
                     return Ok(ExecutionOutcome::Succeeded);
                 }
                 let prepared = receipt.prepare_publication().map_err(RunError::Receipt)?;
                 match implementation.publish(context) {
                     Ok(()) => {
                         receipt.complete_publication(prepared);
+                        scheduler
+                            .complete_publication()
+                            .map_err(RunError::Scheduler)?;
                         return Ok(ExecutionOutcome::Succeeded);
                     }
                     Err(source) => {
@@ -4884,6 +5115,7 @@ fn encode_observation_transaction(
         crate::ObservationTransactionPublicationScope::ProductPublication => 1,
         crate::ObservationTransactionPublicationScope::SealedProductPublication => 2,
     });
+    encoder.u8(u8::from(transaction.work().source_free_reconstruction()));
     encoder.digest(transaction.problem_id().as_bytes());
     encoder.digest(transaction.product_graph_id().as_bytes());
     encoder.digest(transaction.transaction_id().as_bytes());

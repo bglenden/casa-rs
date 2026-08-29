@@ -857,33 +857,61 @@ pub(crate) fn read_ism_required_scalar_columns_rows(
     requested_col_descs: &[(usize, &ColumnDescContents)],
     selected_rows: &[usize],
 ) -> Result<HashMap<String, RequiredScalarColumnData>, StorageError> {
-    let _dm_name = parse_ism_dm_blob(dm_blob)?;
     let mut outputs = HashMap::with_capacity(requested_col_descs.len());
+    read_ism_required_scalar_columns_rows_reusing(
+        file_path,
+        dm_blob,
+        all_col_descs,
+        requested_col_descs,
+        selected_rows,
+        &mut outputs,
+    )?;
+    Ok(outputs)
+}
+
+pub(crate) fn read_ism_required_scalar_columns_rows_reusing(
+    file_path: &Path,
+    dm_blob: &[u8],
+    all_col_descs: &[&ColumnDescContents],
+    requested_col_descs: &[(usize, &ColumnDescContents)],
+    selected_rows: &[usize],
+    outputs: &mut HashMap<String, RequiredScalarColumnData>,
+) -> Result<(), StorageError> {
+    let _dm_name = parse_ism_dm_blob(dm_blob)?;
     for (_, col_desc) in requested_col_descs {
-        let values = match col_desc.data_type {
-            CasacoreDataType::TpBool => {
-                RequiredScalarColumnData::Bool(vec![false; selected_rows.len()])
+        let values =
+            outputs
+                .entry(col_desc.col_name.clone())
+                .or_insert_with(|| match col_desc.data_type {
+                    CasacoreDataType::TpBool => RequiredScalarColumnData::Bool(Vec::new()),
+                    CasacoreDataType::TpInt => RequiredScalarColumnData::Int32(Vec::new()),
+                    CasacoreDataType::TpFloat => RequiredScalarColumnData::Float32(Vec::new()),
+                    CasacoreDataType::TpDouble => RequiredScalarColumnData::Float64(Vec::new()),
+                    _ => RequiredScalarColumnData::Bool(Vec::new()),
+                });
+        match (col_desc.data_type, values) {
+            (CasacoreDataType::TpBool, RequiredScalarColumnData::Bool(values)) => {
+                values.resize(selected_rows.len(), false);
             }
-            CasacoreDataType::TpInt => {
-                RequiredScalarColumnData::Int32(vec![0; selected_rows.len()])
+            (CasacoreDataType::TpInt, RequiredScalarColumnData::Int32(values)) => {
+                values.resize(selected_rows.len(), 0);
             }
-            CasacoreDataType::TpFloat => {
-                RequiredScalarColumnData::Float32(vec![0.0; selected_rows.len()])
+            (CasacoreDataType::TpFloat, RequiredScalarColumnData::Float32(values)) => {
+                values.resize(selected_rows.len(), 0.0);
             }
-            CasacoreDataType::TpDouble => {
-                RequiredScalarColumnData::Float64(vec![0.0; selected_rows.len()])
+            (CasacoreDataType::TpDouble, RequiredScalarColumnData::Float64(values)) => {
+                values.resize(selected_rows.len(), 0.0);
             }
             other => {
                 return Err(StorageError::FormatMismatch(format!(
-                    "required selected-row ISM column '{}' has unsupported type {other:?}",
+                    "required selected-row ISM column '{}' has incompatible type {other:?}",
                     col_desc.col_name
                 )));
             }
-        };
-        outputs.insert(col_desc.col_name.clone(), values);
+        }
     }
     if selected_rows.is_empty() || outputs.is_empty() {
-        return Ok(outputs);
+        return Ok(());
     }
 
     let mut file = File::open(file_path)?;
@@ -942,7 +970,7 @@ pub(crate) fn read_ism_required_scalar_columns_rows(
             row_index = bucket_end;
             output_start += row_count;
         }
-        return Ok(outputs);
+        return Ok(());
     }
     let mut requests: Vec<(usize, usize)> = selected_rows
         .iter()
@@ -1029,7 +1057,7 @@ pub(crate) fn read_ism_required_scalar_columns_rows(
             }
         }
     }
-    Ok(outputs)
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]

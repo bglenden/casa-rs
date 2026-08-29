@@ -16,14 +16,17 @@ mod spectral_evaluation;
 #[cfg(test)]
 mod tests;
 
-pub use access::BoundObservationSourceError;
 pub(crate) use access::{
     BoundObservationSamples, BoundObservationSource, validate_selected_coordinates,
 };
+pub use access::{BoundObservationSourceError, SelectedObservationBlock};
 pub use bound_observation::{
     BoundSelectedObservation, BoundSelectedObservationError, ObservationSourceBinding,
-    SelectedObservationCompletion, SelectedObservationResidencyCertificate,
-    SelectedObservationTraversalError,
+    SelectedObservationBlockConsumer, SelectedObservationBlockSource,
+    SelectedObservationCompletion, SelectedObservationReplayAuthorization,
+    SelectedObservationReplayProof, SelectedObservationResidencyCertificate,
+    SelectedObservationTerminal, SelectedObservationTraversalError,
+    SelectedObservationTraversalMeasurements,
 };
 pub use content_plan::SelectedObservationContentBudget;
 pub(crate) use content_plan::{
@@ -31,4 +34,18 @@ pub(crate) use content_plan::{
 };
 pub use measures::{SelectedObservationMeasures, SelectedObservationMeasuresError};
 pub use row_access::{SelectedObservationRow, SelectedObservationRowSelection};
-pub use spectral_evaluation::SelectedObservationTraversalSample;
+pub use spectral_evaluation::{
+    SelectedObservationTraversalRun, SelectedObservationTraversalSample,
+};
+
+fn maximum_selected_correlations(problem: &casa_imaging_model::CompiledProblem) -> usize {
+    problem
+        .selected_observation()
+        .read_set()
+        .sources()
+        .iter()
+        .flat_map(|source| source.selection().correlations())
+        .map(|selection| selection.products().len())
+        .max()
+        .unwrap_or(0)
+}

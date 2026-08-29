@@ -900,6 +900,32 @@ impl Table {
         )
     }
 
+    pub(crate) fn fill_array_cells_2d_channel_range_typed_uncached(
+        &self,
+        column: &str,
+        row_indices: &[usize],
+        channel_start: usize,
+        channel_count: usize,
+        destination: SelectedArray2DCellsMut<'_>,
+    ) -> Result<Option<SelectedArray2DShape>, TableError> {
+        self.require_column(column)?;
+        for &row_index in row_indices {
+            if row_index >= self.row_count() {
+                return Err(TableError::RowOutOfBounds {
+                    row_index,
+                    row_count: self.row_count(),
+                });
+            }
+        }
+        self.inner.array_cells_2d_channel_range_typed_uncached_into(
+            row_indices,
+            column,
+            channel_start,
+            channel_count,
+            destination,
+        )
+    }
+
     pub(crate) fn get_array_cells_1d_typed_uncached(
         &self,
         column: &str,
@@ -916,6 +942,25 @@ impl Table {
         }
         self.inner
             .array_cells_1d_typed_uncached(row_indices, column)
+    }
+
+    pub(crate) fn fill_array_cells_1d_typed_uncached(
+        &self,
+        column: &str,
+        row_indices: &[usize],
+        destination: SelectedArray1DCellsMut<'_>,
+    ) -> Result<SelectedArray1DShape, TableError> {
+        self.require_column(column)?;
+        for &row_index in row_indices {
+            if row_index >= self.row_count() {
+                return Err(TableError::RowOutOfBounds {
+                    row_index,
+                    row_count: self.row_count(),
+                });
+            }
+        }
+        self.inner
+            .array_cells_1d_typed_uncached_into(row_indices, column, destination)
     }
 
     /// Returns owned scalar values for every row in `column`.
@@ -1036,6 +1081,35 @@ impl Table {
                     .map(|values| (column.to_string(), values))
             })
             .collect()
+    }
+
+    /// Fill caller-owned typed vectors for required scalar values at selected
+    /// rows while preserving storage-manager grouped I/O.
+    pub fn required_scalar_columns_for_rows_into(
+        &self,
+        row_indices: &[usize],
+        destinations: &mut [RequiredScalarColumnDestination<'_>],
+    ) -> Result<(), TableError> {
+        let mut names = HashSet::with_capacity(destinations.len());
+        for destination in destinations.iter() {
+            self.require_column(destination.column())?;
+            if !names.insert(destination.column()) {
+                return Err(TableError::Storage(format!(
+                    "required scalar reusable fill contains duplicate column '{}'",
+                    destination.column()
+                )));
+            }
+        }
+        for &row_index in row_indices {
+            if row_index >= self.row_count() {
+                return Err(TableError::RowOutOfBounds {
+                    row_index,
+                    row_count: self.row_count(),
+                });
+            }
+        }
+        self.inner
+            .required_scalar_columns_for_rows_into(row_indices, destinations)
     }
 
     pub(crate) fn get_scalar_cells_owned_for_rows(
@@ -1858,6 +1932,24 @@ impl<'a> TableColumn<'a> {
         )
     }
 
+    /// Fill a caller-owned typed 2-D selected-channel vector without
+    /// populating the table-level row cache.
+    pub fn fill_array_cells_2d_channel_range_typed_uncached(
+        &self,
+        row_indices: &[usize],
+        channel_start: usize,
+        channel_count: usize,
+        destination: SelectedArray2DCellsMut<'_>,
+    ) -> Result<Option<SelectedArray2DShape>, TableError> {
+        self.table.fill_array_cells_2d_channel_range_typed_uncached(
+            &self.column,
+            row_indices,
+            channel_start,
+            channel_count,
+            destination,
+        )
+    }
+
     /// Returns typed 1-D array cells for selected rows without populating the
     /// table-level row cache.
     ///
@@ -1868,6 +1960,17 @@ impl<'a> TableColumn<'a> {
     ) -> Result<SelectedArray1DCells, TableError> {
         self.table
             .get_array_cells_1d_typed_uncached(&self.column, row_indices)
+    }
+
+    /// Fill a caller-owned typed 1-D selected-row vector without populating
+    /// the table-level row cache.
+    pub fn fill_array_cells_1d_typed_uncached(
+        &self,
+        row_indices: &[usize],
+        destination: SelectedArray1DCellsMut<'_>,
+    ) -> Result<SelectedArray1DShape, TableError> {
+        self.table
+            .fill_array_cells_1d_typed_uncached(&self.column, row_indices, destination)
     }
 }
 

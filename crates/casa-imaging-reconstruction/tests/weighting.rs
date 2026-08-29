@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use std::{convert::Infallible, mem::size_of};
+
 use casa_imaging_model::{
     AntennaSelection, AxisOrder, CentreLaws, ColumnGeneration, ConsistencyToken,
-    CorrelationProduct, CorrelationSelection, CorrelationType, DataDescriptionSelection,
-    DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame,
-    DopplerConvention, Epoch, FacetLayout, FiniteValuePolicy, FlagPolicy, FrequencyFrame,
-    GeometryInput, IdSelection, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
-    ImagingRequest, InstrumentResponse, IntentSelection, LogicalIdentity,
+    ContinuumTransformGenerationId, CorrelationProduct, CorrelationSelection, CorrelationType,
+    DataDescriptionSelection, DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec,
+    DirectionFrame, DopplerConvention, Epoch, FacetLayout, FiniteValuePolicy, FlagPolicy,
+    FrequencyFrame, GeometryInput, IdSelection, ImageAxis, ImageDomainRole, ImageDomainSpec,
+    ImageShape, ImagingRequest, InstrumentResponse, IntentSelection, LogicalIdentity,
     MeasurementEquationContract, MeasurementSetIdentity, MetadataGeneration, MetadataTableKind,
     ModelBounds, ModelColumnState, ModelColumnWrite, ModelInputCommitment,
     ModelLifecycleRequirements, ModelStateIdentity, MsColumnKind, NumericPrecision, NumericalStage,
@@ -17,19 +19,20 @@ use casa_imaging_model::{
     ProductNormalization, ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
     Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
     ReconstructionControls, ReductionPolicy, RestFrequency, RestoringBeamPolicy, RowSelection,
-    ScientificContract, SelectedColumns, SelectedMainRow, SelectedObservationSample,
-    SelectedPredictionTarget, SelectedRows, SelectedSampleAddress, SelectedSampleCoordinates,
-    SelectedSampleMetadata, SelectedSpectralContribution, SelectedSpectralContributions,
-    SelectedVisibilitySample, SkyDirection, SourceGenerations, SpectralContract,
-    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
-    SpectralWcs, SpectralWindowSelection, StageErrorBudget, TaylorSupportReference,
-    TaylorValidityPolicy, TimeScale, TimeSelection, UvSelection, UvTaper, UvwCoordinateLaw,
-    VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract,
-    WeightingScheme, compile, compile_observation,
+    ScientificContract, SelectedColumns, SelectedMainRow, SelectedObservationGenerationId,
+    SelectedObservationSample, SelectedPredictionTarget, SelectedRows, SelectedSampleAddress,
+    SelectedSampleCoordinates, SelectedSampleMetadata, SelectedSpectralContribution,
+    SelectedSpectralContributions, SelectedVisibilitySample, SkyDirection, SourceGenerations,
+    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
+    SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection, StageErrorBudget,
+    TaylorSupportReference, TaylorValidityPolicy, TimeScale, TimeSelection, UvSelection, UvTaper,
+    UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope,
+    WeightingContract, WeightingScheme, compile, compile_observation,
 };
 use casa_imaging_reconstruction::{
-    WeightingAlgorithmState, WeightingExecutionLimits, WeightingReplayChunk,
-    WeightingReplaySummary, begin_natural_weighting_stream, begin_weighting_generation,
+    FrozenWeightingCoverageProof, WeightingAlgorithmState, WeightingError,
+    WeightingExecutionLimits, WeightingReplayChunk, WeightingReplaySummary,
+    WeightingSelectedSample, begin_natural_weighting_stream, begin_weighting_generation,
     plan_weighting,
 };
 
@@ -149,10 +152,21 @@ fn problem(
     scope: WeightDensityScope,
     taper: Option<UvTaper>,
 ) -> casa_imaging_model::CompiledProblem {
+    problem_with_image_size(scheme, scope, taper, 32)
+}
+
+fn problem_with_image_size(
+    scheme: WeightingScheme,
+    scope: WeightDensityScope,
+    taper: Option<UvTaper>,
+    image_size: usize,
+) -> casa_imaging_model::CompiledProblem {
+    let reference_pixel = image_size as f64 / 2.0;
+    let model_samples = image_size * image_size * 2;
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
         SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
-        [16.0, 16.0],
+        [reference_pixel, reference_pixel],
         [-0.01, 0.01],
         [[1.0, 0.0], [0.0, 1.0]],
         [180.0, 0.0],
@@ -160,7 +174,7 @@ fn problem(
     let geometry = GeometryInput::new(
         vec![ImageDomainSpec::new(
             ImageDomainRole::Main,
-            ImageShape::new(32, 32),
+            ImageShape::new(image_size, image_size),
             direction,
             FacetLayout::Single,
             AxisOrder::new([
@@ -237,7 +251,15 @@ fn problem(
         geometry,
         ProblemInputIdentities::new(snapshot),
         ModelLifecycleRequirements::new(
-            ModelBounds::new(4_096, 4_096, 4_096, 4_096, 1.0e30, 1.0e30).expect("valid bounds"),
+            ModelBounds::new(
+                model_samples.max(4_096),
+                model_samples.max(4_096),
+                4_096,
+                4_096,
+                1.0e30,
+                1.0e30,
+            )
+            .expect("valid bounds"),
             NumericPrecision::F64,
             ModelInputCommitment::Empty,
         ),
@@ -330,6 +352,26 @@ fn exact_contributions(sample: &SelectedObservationSample) -> SelectedSpectralCo
     .expect("one exact output contribution")
 }
 
+fn selected_generation(
+    problem: &casa_imaging_model::CompiledProblem,
+    samples: &[SelectedObservationSample],
+) -> SelectedObservationGenerationId {
+    problem
+        .inspect_selected_observation(samples.iter().copied().map(Ok::<_, Infallible>), |_| {
+            Ok::<_, Infallible>(())
+        })
+        .expect("inspect fixture selected stream")
+        .0
+}
+
+#[test]
+fn bounded_replay_retains_a_compact_kernel_projection() {
+    assert!(
+        size_of::<WeightingSelectedSample>() < size_of::<SelectedObservationSample>() / 2,
+        "replay must not retain the complete validated source record"
+    );
+}
+
 fn freeze_weighting_generation(
     problem: &casa_imaging_model::CompiledProblem,
     plan: &casa_imaging_reconstruction::WeightingPlan,
@@ -337,11 +379,11 @@ fn freeze_weighting_generation(
 ) -> Result<WeightingAlgorithmState, casa_imaging_reconstruction::WeightingError> {
     let mut density = begin_weighting_generation(problem, plan)?;
     for sample in samples {
-        density.consume(problem, *sample, exact_contributions(sample))?;
+        density.consume(problem, sample, exact_contributions(sample))?;
     }
     let mut sum_weight = density.finish(problem)?;
     for sample in samples {
-        sum_weight.consume(problem, *sample, exact_contributions(sample))?;
+        sum_weight.consume(problem, sample, exact_contributions(sample))?;
     }
     sum_weight.finish()
 }
@@ -358,7 +400,7 @@ fn replay(
         .expect("begin replay");
     for sample in samples {
         if let Some(block) = phase
-            .consume(problem, *sample, exact_contributions(sample))
+            .consume(problem, sample, exact_contributions(sample))
             .expect("weight sample")
         {
             blocks.push(block);
@@ -392,7 +434,7 @@ fn replay_with_evaluation_frequency(
         ])
         .expect("one shifted-frame contribution");
         phase
-            .consume(problem, *sample, contributions)
+            .consume(problem, sample, contributions)
             .expect("weight shifted-frame sample");
     }
     phase.finish().expect("finish shifted-frame replay").1
@@ -428,7 +470,7 @@ fn fused_stream(
         let mut density = begin_weighting_generation(problem, plan).expect("begin density pass");
         for sample in samples {
             density
-                .consume(problem, *sample, exact_contributions(sample))
+                .consume(problem, sample, exact_contributions(sample))
                 .expect("density sample");
         }
         density
@@ -438,7 +480,7 @@ fn fused_stream(
     let mut blocks = Vec::new();
     for sample in samples {
         if let Some(block) = stream
-            .consume(problem, *sample, exact_contributions(sample))
+            .consume(problem, sample, exact_contributions(sample))
             .expect("fused weighted sample")
         {
             blocks.push(block);
@@ -562,26 +604,26 @@ fn fit_only_samples_cannot_change_density_dependent_output_weights() {
     let output_weight = |include_fit_only: bool| {
         let mut density = begin_weighting_generation(&problem, &plan).expect("density");
         density
-            .consume(&problem, target, exact_contributions(&target))
+            .consume(&problem, &target, exact_contributions(&target))
             .expect("target density");
         if include_fit_only {
             density
-                .consume(&problem, fit_only, SelectedSpectralContributions::empty())
+                .consume(&problem, &fit_only, SelectedSpectralContributions::empty())
                 .expect("fit-only density exclusion");
         }
         let mut sum_weight = density.finish(&problem).expect("sum-weight phase");
         sum_weight
-            .consume(&problem, target, exact_contributions(&target))
+            .consume(&problem, &target, exact_contributions(&target))
             .expect("target sum weight");
         if include_fit_only {
             sum_weight
-                .consume(&problem, fit_only, SelectedSpectralContributions::empty())
+                .consume(&problem, &fit_only, SelectedSpectralContributions::empty())
                 .expect("fit-only sum-weight exclusion");
         }
         let generation = sum_weight.finish().expect("freeze weighting");
         let mut replay = generation.begin_replay(&problem, &plan).expect("replay");
         replay
-            .consume(&problem, target, exact_contributions(&target))
+            .consume(&problem, &target, exact_contributions(&target))
             .expect("target replay")
             .expect("single-sample block")
             .samples()[0]
@@ -668,6 +710,25 @@ fn partition_block_worker_and_repeated_replay_choices_are_invariant() {
     let (_, repeated_serial_completion) = replay(&serial, &problem, &serial_plan, &samples);
     let (partitioned_blocks, partitioned_completion) =
         replay(&partitioned, &problem, &partitioned_plan, &samples);
+    assert_eq!(
+        (
+            serial_completion.coverage_proof_bytes(),
+            serial_completion.coverage_proof_hash_calls(),
+        ),
+        (486, 11),
+        "proof diagnostics must count every encoded byte and SHA update"
+    );
+    assert_eq!(
+        (
+            partitioned_completion.coverage_proof_bytes(),
+            partitioned_completion.coverage_proof_hash_calls(),
+        ),
+        (
+            serial_completion.coverage_proof_bytes(),
+            serial_completion.coverage_proof_hash_calls(),
+        ),
+        "physical block choices must not change proof work"
+    );
     assert_eq!(serial_blocks.len(), samples.len());
     assert_eq!(partitioned_blocks.len(), 2);
     assert_eq!(
@@ -695,6 +756,201 @@ fn partition_block_worker_and_repeated_replay_choices_are_invariant() {
         .into_samples();
     assert_eq!(terminal.len(), 1);
     assert_eq!(terminal.capacity(), 3);
+}
+
+#[test]
+fn derived_coverage_preserves_encoded_identity_across_block_shapes_and_rejects_mismatch() {
+    let problem = problem(
+        WeightingScheme::Uniform,
+        WeightDensityScope::GlobalSelection,
+        None,
+    );
+    let samples = exact_samples(&problem);
+    let encoded_plan = plan_weighting(
+        &problem,
+        WeightingExecutionLimits::new(3, 1).expect("encoded limits"),
+    )
+    .expect("encoded plan");
+    let generation =
+        freeze_weighting_generation(&problem, &encoded_plan, &samples).expect("frozen weighting");
+    let (_, encoded) = replay(&generation, &problem, &encoded_plan, &samples);
+    let selected_generation_id = selected_generation(&problem, &samples);
+    let mut changed_samples = samples.clone();
+    changed_samples[0].visibility = SelectedVisibilitySample::Complex32([2.0, 0.0]);
+    let changed_selected_generation = selected_generation(&problem, &changed_samples);
+    let transform = ContinuumTransformGenerationId::from_owner_digest([0x40; 32]);
+    let proof = FrozenWeightingCoverageProof::seal(
+        &problem,
+        &generation,
+        &encoded,
+        selected_generation_id,
+        samples.len() as u64,
+        Some(transform),
+    )
+    .expect("seal first exhaustive encoded coverage");
+
+    let mut derived = Vec::new();
+    for block_samples in [1, 3, samples.len()] {
+        let plan = plan_weighting(
+            &problem,
+            WeightingExecutionLimits::new(block_samples, 1).expect("derived limits"),
+        )
+        .expect("derived plan");
+        let mut phase = generation
+            .begin_derived_replay(&problem, &plan, proof, Some(transform))
+            .expect("authorize matching frozen state and transform");
+        for sample in &samples {
+            phase
+                .consume(&problem, sample, exact_contributions(sample))
+                .expect("derive weighted sample");
+        }
+        let (_, summary) = phase.finish().expect("finish derived replay");
+        proof
+            .validate_derived_replay(
+                selected_generation_id,
+                samples.len() as u64,
+                Some(transform),
+                &summary,
+            )
+            .expect("validate rebound generation and exact terminal count");
+        assert_eq!(summary.coverage(), encoded.coverage());
+        assert_eq!(summary.coverage_proof_bytes(), 0);
+        assert_eq!(summary.coverage_proof_hash_calls(), 0);
+        derived.push(summary);
+    }
+    assert_eq!(
+        derived
+            .iter()
+            .map(WeightingReplaySummary::coverage)
+            .collect::<Vec<_>>(),
+        vec![encoded.coverage(); 3]
+    );
+    assert_eq!(
+        derived
+            .iter()
+            .map(WeightingReplaySummary::block_count)
+            .collect::<Vec<_>>(),
+        vec![samples.len() as u64, 2, 1]
+    );
+    assert_ne!(derived[0].replay_id(), derived[1].replay_id());
+    assert_ne!(derived[1].replay_id(), derived[2].replay_id());
+
+    assert_eq!(
+        proof.validate_derived_replay(
+            changed_selected_generation,
+            samples.len() as u64,
+            Some(transform),
+            &derived[0],
+        ),
+        Err(WeightingError::CoverageMismatch)
+    );
+    assert_eq!(
+        proof.validate_derived_replay(
+            selected_generation_id,
+            samples.len() as u64 - 1,
+            Some(transform),
+            &derived[0],
+        ),
+        Err(WeightingError::CoverageMismatch)
+    );
+    assert!(matches!(
+        generation.begin_derived_replay(&problem, &encoded_plan, proof, None),
+        Err(WeightingError::CoverageMismatch)
+    ));
+
+    let foreign_problem = problem_with_image_size(
+        WeightingScheme::Briggs { robust: 0.5 },
+        WeightDensityScope::GlobalSelection,
+        None,
+        64,
+    );
+    let foreign_samples = exact_samples(&foreign_problem);
+    let foreign_plan = plan_weighting(
+        &foreign_problem,
+        WeightingExecutionLimits::new(3, 1).expect("foreign limits"),
+    )
+    .expect("foreign plan");
+    let foreign_generation =
+        freeze_weighting_generation(&foreign_problem, &foreign_plan, &foreign_samples)
+            .expect("foreign weighting");
+    assert!(matches!(
+        foreign_generation.begin_derived_replay(
+            &foreign_problem,
+            &foreign_plan,
+            proof,
+            Some(transform),
+        ),
+        Err(WeightingError::CoverageMismatch)
+    ));
+}
+
+#[test]
+fn fused_and_replay_streams_reuse_returned_weighted_block_storage() {
+    let problem = problem(
+        WeightingScheme::Natural,
+        WeightDensityScope::NotApplicable,
+        None,
+    );
+    let samples = exact_samples(&problem);
+    let plan = plan_weighting(
+        &problem,
+        WeightingExecutionLimits::new(2, 1).expect("limits"),
+    )
+    .expect("plan");
+
+    let mut fused = begin_natural_weighting_stream(&problem, &plan).expect("fused stream");
+    let first = samples[..2]
+        .iter()
+        .find_map(|sample| {
+            fused
+                .consume(&problem, sample, exact_contributions(sample))
+                .expect("first fused block")
+        })
+        .expect("full first fused block");
+    let fused_pointer = first.samples().as_ptr();
+    fused
+        .reuse_emitted_block(first)
+        .expect("reuse first fused block");
+    let second = samples[2..]
+        .iter()
+        .find_map(|sample| {
+            fused
+                .consume(&problem, sample, exact_contributions(sample))
+                .expect("second fused block")
+        })
+        .expect("full second fused block");
+    assert_eq!(second.samples().as_ptr(), fused_pointer);
+    fused
+        .reuse_emitted_block(second)
+        .expect("reuse second fused block");
+    let (_, generation, _) = fused.finish().expect("finish fused stream");
+
+    let mut replay = generation.begin_replay(&problem, &plan).expect("replay");
+    let first = samples[..2]
+        .iter()
+        .find_map(|sample| {
+            replay
+                .consume(&problem, sample, exact_contributions(sample))
+                .expect("first replay block")
+        })
+        .expect("full first replay block");
+    let replay_pointer = first.samples().as_ptr();
+    replay
+        .reuse_emitted_block(first)
+        .expect("reuse first replay block");
+    let second = samples[2..]
+        .iter()
+        .find_map(|sample| {
+            replay
+                .consume(&problem, sample, exact_contributions(sample))
+                .expect("second replay block")
+        })
+        .expect("full second replay block");
+    assert_eq!(second.samples().as_ptr(), replay_pointer);
+    replay
+        .reuse_emitted_block(second)
+        .expect("reuse second replay block");
+    replay.finish().expect("finish replay");
 }
 
 #[test]
@@ -783,16 +1039,16 @@ fn linear_contribution_coefficients_drive_per_output_density_and_replay() {
     .expect("plan");
     let mut density = begin_weighting_generation(&problem, &plan).expect("density");
     density
-        .consume(&problem, sample, contributions.clone())
+        .consume(&problem, &sample, contributions.clone())
         .expect("accumulate split density");
     let mut sum_weight = density.finish(&problem).expect("sum-weight phase");
     sum_weight
-        .consume(&problem, sample, contributions.clone())
+        .consume(&problem, &sample, contributions.clone())
         .expect("accumulate split sum weights");
     let generation = sum_weight.finish().expect("freeze split generation");
     let mut replay = generation.begin_replay(&problem, &plan).expect("replay");
     let block = replay
-        .consume(&problem, sample, contributions)
+        .consume(&problem, &sample, contributions)
         .expect("weight split sample")
         .expect("one-sample block");
     let weighted = block.samples()[0].spectral_values().collect::<Vec<_>>();
@@ -980,11 +1236,14 @@ fn planned_and_receipted_residency_cover_every_weighting_buffer_class() {
     let replayed = replay.residency();
 
     assert!(generated.density_grid_bytes() <= planned.density_grid_bytes());
-    assert!(generated.deterministic_partial_bytes() <= planned.deterministic_partial_bytes());
-    assert!(generated.reduction_scratch_bytes() <= planned.reduction_scratch_bytes());
+    assert!(
+        generated.shared_density_accumulator_bytes() <= planned.shared_density_accumulator_bytes()
+    );
+    assert!(generated.sum_weight_accumulator_bytes() <= planned.sum_weight_accumulator_bytes());
     assert!(generated.robust_factor_bytes() <= planned.robust_factor_bytes());
     assert!(generated.sum_weight_bytes() <= planned.sum_weight_bytes());
     assert_eq!(replayed.replay_read_bytes(), planned.replay_read_bytes());
+    assert_eq!(replayed.replay_read_bytes(), 0);
     assert_eq!(
         replayed.weighted_block_bytes(),
         planned.weighted_block_bytes()
@@ -992,10 +1251,52 @@ fn planned_and_receipted_residency_cover_every_weighting_buffer_class() {
     assert_eq!(
         replayed.simultaneous_selected_weighted_bytes(),
         planned.simultaneous_selected_weighted_bytes(),
-        "the real replay-input block and weighted-output block coexist at the declared peak"
+        "direct weighting retains only the bounded weighted-output block"
     );
     assert!(generated.peak_bytes() <= planned.peak_bytes());
     assert!(replayed.peak_bytes() <= planned.peak_bytes());
+}
+
+#[test]
+fn casa_anchor_grid_plans_one_shared_bounded_exact_accumulator() {
+    let image_size = 1_024;
+    let problem = problem_with_image_size(
+        WeightingScheme::Briggs { robust: 0.5 },
+        WeightDensityScope::GlobalSelection,
+        None,
+        image_size,
+    );
+    let plan = plan_weighting(
+        &problem,
+        WeightingExecutionLimits::new(4_096, 1).expect("anchor limits"),
+    )
+    .expect("anchor plan");
+    let partitioned = plan_weighting(
+        &problem,
+        WeightingExecutionLimits::new(4_096, 4).expect("partitioned anchor limits"),
+    )
+    .expect("partitioned anchor plan");
+    let planned = plan.planned_residency();
+    let density_cells = image_size * image_size;
+    let exact_f32_state_bytes = density_cells * 6 * size_of::<u64>() + 3 * size_of::<usize>();
+
+    assert_eq!(
+        planned.shared_density_accumulator_bytes(),
+        exact_f32_state_bytes,
+        "worker count must not multiply the shared exact density grid"
+    );
+    assert_eq!(
+        partitioned
+            .planned_residency()
+            .shared_density_accumulator_bytes(),
+        exact_f32_state_bytes,
+        "density partitions must use the same shared exact grid"
+    );
+    assert_eq!(
+        planned.sum_weight_accumulator_bytes(),
+        2_047 * 64,
+        "one output plane needs one bounded exact-f64 sum-weight accumulator"
+    );
 }
 
 #[test]
@@ -1014,13 +1315,13 @@ fn incomplete_callback_phase_cannot_finalize_weighting_state() {
     let mut density = begin_weighting_generation(&problem, &plan).expect("density phase");
     for sample in &samples {
         density
-            .consume(&problem, *sample, exact_contributions(sample))
+            .consume(&problem, sample, exact_contributions(sample))
             .expect("density sample");
     }
     let mut sum_weight = density.finish(&problem).expect("sum-weight phase");
     for sample in &samples[..samples.len() - 1] {
         sum_weight
-            .consume(&problem, *sample, exact_contributions(sample))
+            .consume(&problem, sample, exact_contributions(sample))
             .expect("sum-weight sample");
     }
     assert!(matches!(

@@ -29,15 +29,19 @@ const PRODUCT_SUFFIXES: [&str; 6] = [".psf", ".residual", ".model", ".image", ".
 static EXECUTION_LOCK: Mutex<()> = Mutex::new(());
 
 fn tiny_measurement_set(root: &Path) -> PathBuf {
-    measurement_set_fixture(root, "input.ms", false, 1)
+    measurement_set_fixture(root, "input.ms", false, 1, 1)
+}
+
+fn multi_row_measurement_set(root: &Path) -> PathBuf {
+    measurement_set_fixture(root, "multi-row-input.ms", false, 1, 8)
 }
 
 fn flagged_polarized_measurement_set(root: &Path) -> PathBuf {
-    measurement_set_fixture(root, "polarized-input.ms", true, 2)
+    measurement_set_fixture(root, "polarized-input.ms", true, 2, 1)
 }
 
 fn spectral_line_measurement_set(root: &Path) -> PathBuf {
-    measurement_set_fixture(root, "line-input.ms", true, 4)
+    measurement_set_fixture(root, "line-input.ms", true, 4, 1)
 }
 
 fn measurement_set_fixture(
@@ -45,6 +49,7 @@ fn measurement_set_fixture(
     name: &str,
     polarized: bool,
     channel_count: usize,
+    main_row_count: usize,
 ) -> PathBuf {
     let output = root.join(name);
     let mut builder = MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data);
@@ -56,7 +61,12 @@ fn measurement_set_fixture(
     }
     let mut measurement_set =
         MeasurementSet::create_memory(builder).expect("create in-memory application fixture");
-    populate_fixture(&mut measurement_set, polarized, channel_count);
+    populate_fixture(
+        &mut measurement_set,
+        polarized,
+        channel_count,
+        main_row_count,
+    );
     measurement_set
         .save_as(&output)
         .expect("persist fixture with production tiled bindings");
@@ -81,7 +91,12 @@ fn measurement_set_fixture(
     output
 }
 
-fn populate_fixture(measurement_set: &mut MeasurementSet, polarized: bool, channel_count: usize) {
+fn populate_fixture(
+    measurement_set: &mut MeasurementSet,
+    polarized: bool,
+    channel_count: usize,
+    main_row_count: usize,
+) {
     {
         let mut antennas = measurement_set.antenna_mut().expect("ANTENNA");
         antennas
@@ -288,7 +303,9 @@ fn populate_fixture(measurement_set: &mut MeasurementSet, polarized: bool, chann
             )),
         ));
     }
-    add_main_row(measurement_set, &overrides);
+    for _ in 0..main_row_count {
+        add_main_row(measurement_set, &overrides);
+    }
 }
 
 fn add_main_row(measurement_set: &mut MeasurementSet, overrides: &[(&str, Value)]) {
@@ -421,8 +438,8 @@ fn request(
         weighting: ContinuumWeighting::Natural,
         iterations: 1,
         cycle_iterations: 1,
-        maximum_major_cycles: 1,
-        maximum_model_update_jy: 100.0,
+        hogbom_iteration_accounting: casa_imaging_application::HogbomIterationAccounting::Strict,
+        maximum_major_cycles: Some(1),
         noise_sigma: None,
         cycle_factor: 1.0,
         minimum_psf_fraction: 0.05,
@@ -516,6 +533,49 @@ fn application_executes_single_ddid_stokes_i_mfs_dirty_and_publishes_products() 
         PagedImage::<f32>::open(PathBuf::from(format!("{}.mask", image_name.display())))
             .expect("reopen numeric CLEAN mask");
     assert_eq!(clean_mask.default_mask_name(), None);
+}
+
+#[test]
+fn application_preserves_the_bounded_source_budget_across_multiple_rows() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = multi_row_measurement_set(root.path());
+    let image_name = root.path().join("multi-row-dirty");
+
+    let result = execute_continuum(request(
+        measurement_set,
+        image_name,
+        ContinuumAlgorithm::Dirty,
+    ))
+    .expect("native multi-row dirty execution");
+    let receipt = result.outcome.output.initial_receipt;
+    let source_read = receipt
+        .plan_node_identities()
+        .into_iter()
+        .find(|node| node.as_str().starts_with("transaction-read-initial-major"))
+        .expect("initial source-read node");
+    let source_buffer = casa_imaging_runtime::LeaseResource::IoBuffer(
+        casa_imaging_runtime::IoBufferKind::SourceReadAhead,
+    );
+    let io_lifetime =
+        casa_imaging_runtime::ClaimLifetime::through_fence(casa_imaging_runtime::FenceKind::Io);
+    assert_eq!(
+        receipt.planned_resource_amount(&source_read, &source_buffer, &io_lifetime),
+        Some(64 << 20),
+        "the application must preserve the admitted caller-owned source budget"
+    );
+    let (_, operations) = receipt
+        .stage_actual_io(
+            &source_read,
+            casa_imaging_runtime::IoBufferKind::SourceReadAhead,
+        )
+        .expect("measured selected-observation source reads");
+
+    assert_eq!(
+        operations, 19,
+        "the caller's admitted content budget should fill all eight rows in one bounded block"
+    );
 }
 
 #[test]
@@ -662,58 +722,59 @@ fn application_executes_single_ddid_stokes_i_mfs_hogbom_with_one_iteration() {
             .len(),
         1
     );
-    let visibility = result
-        .outcome
-        .output
-        .visibility_products
-        .expect("final major replay closes visibility products");
-    let normal = result.outcome.output.scientific.normal_state();
-    assert_eq!(visibility.sample_count(), 1);
-    assert_eq!(visibility.problem_id(), normal.problem_id());
-    assert_eq!(
-        visibility.selected_generation(),
-        normal.selected_generation()
+    let output = &result.outcome.output;
+    assert!(
+        output.visibility_products.is_none(),
+        "a no-write clean must not manufacture per-visibility diagnostics"
+    );
+    assert!(
+        output.visibility_write_receipt.is_none(),
+        "a no-write clean must not execute a selected-output traversal"
+    );
+    let final_receipt = output
+        .final_major_receipt
+        .as_ref()
+        .expect("clean retains its terminal artifact-science receipt");
+    let final_nodes = final_receipt.plan_node_identities();
+    assert!(final_nodes.iter().any(|node| {
+        node.as_str()
+            .starts_with("gridded-normal-replay-final-major")
+    }));
+    assert!(
+        final_nodes
+            .iter()
+            .all(|node| !node.as_str().starts_with("transaction-read-final-major")),
+        "terminal artifact science must be the last observation-facing work"
     );
     assert_eq!(
-        visibility.weighting_generation(),
-        normal.weighting_generation()
-    );
-    assert_eq!(visibility.sample_count(), normal.sample_count());
-    assert_eq!(visibility.final_model(), normal.final_model_generation());
-    assert_ne!(
-        visibility.model_product().as_bytes(),
-        visibility.residual_product().as_bytes(),
-        "model and residual visibility products have distinct meanings"
+        final_receipt
+            .selected_alternative_projection()
+            .demand
+            .io_buffers
+            .bytes(casa_imaging_runtime::IoBufferKind::SourceReadAhead),
+        0
     );
     assert_standard_products(&image_name, &result.product_names);
 }
 
 #[test]
-fn application_enforces_requested_model_update_envelope_before_mutation() {
+fn application_algorithms_do_not_invent_a_flux_staleness_bound() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = tiny_measurement_set(root.path());
     let image_name = root.path().join("model-envelope");
-    let mut imaging = request(measurement_set, image_name, ContinuumAlgorithm::Clark);
-    imaging.maximum_model_update_jy = f64::EPSILON;
+    let imaging = request(measurement_set, image_name, ContinuumAlgorithm::Clark);
 
-    let result = execute_continuum(imaging).expect("bounded Clark execution");
+    let result = execute_continuum(imaging).expect("exact Clark execution");
 
-    assert_eq!(result.minor_iterations, 0);
-    assert_eq!(
+    assert!(
+        result.minor_iterations > 0,
+        "active Clark execution must make scientific progress"
+    );
+    assert_ne!(
         result.minor_stop_reason,
         Some(ContinuumStopReason::StalenessBound)
-    );
-    assert!(
-        result
-            .outcome
-            .output
-            .minor_cycles
-            .last()
-            .expect("minor diagnostic")
-            .recorded_components
-            .is_empty()
     );
 }
 
@@ -731,7 +792,7 @@ fn application_reconciles_between_bounded_minor_cycles() {
     );
     imaging.iterations = 3;
     imaging.cycle_iterations = 1;
-    imaging.maximum_major_cycles = 3;
+    imaging.maximum_major_cycles = Some(3);
     imaging.gain = 0.37;
     imaging.threshold_jy = 1.0e-12;
     imaging.noise_sigma = Some(1.0e-12);
@@ -740,7 +801,9 @@ fn application_reconciles_between_bounded_minor_cycles() {
     let result = execute_continuum(imaging).expect("bounded multi-cycle execution");
 
     assert_eq!(result.minor_iterations, 3);
+    assert_eq!(result.actual_minor_iterations, 3);
     assert_eq!(result.outcome.output.total_minor_iterations, 3);
+    assert_eq!(result.outcome.output.total_actual_minor_iterations, 3);
     assert_eq!(result.outcome.output.major_cycle_count, 4);
     assert_eq!(result.outcome.output.minor_cycles.len(), 3);
     assert_eq!(
@@ -762,10 +825,71 @@ fn application_reconciles_between_bounded_minor_cycles() {
             .all(|cycle| cycle.iterations == 1)
     );
     assert_eq!(
+        result
+            .outcome
+            .output
+            .minor_cycles
+            .iter()
+            .map(|cycle| (
+                cycle.iterations_entering,
+                cycle.iterations,
+                cycle.total_iterations,
+                cycle.associated_replay_ordinal,
+            ))
+            .collect::<Vec<_>>(),
+        vec![(0, 1, 1, 1), (1, 1, 2, 2), (2, 1, 3, 3)]
+    );
+    assert!(result.outcome.output.minor_cycles.iter().all(|cycle| {
+        cycle.initial_peak_flux.is_finite()
+            && cycle.final_peak_flux.is_finite()
+            && cycle.global_threshold.is_finite()
+            && cycle.effective_threshold.is_finite()
+    }));
+    assert_eq!(
         result.minor_stop_reason,
         Some(ContinuumStopReason::IterationBound)
     );
     assert_standard_products(&image_name, &result.product_names);
+}
+
+#[test]
+fn application_uses_reported_iterations_for_casa_inclusive_continuation() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = tiny_measurement_set(root.path());
+    let mut imaging = request(
+        measurement_set,
+        root.path().join("unlimited-major-cycles"),
+        ContinuumAlgorithm::Hogbom,
+    );
+    imaging.iterations = 3;
+    imaging.cycle_iterations = 1;
+    imaging.hogbom_iteration_accounting =
+        casa_imaging_application::HogbomIterationAccounting::CasaInclusive;
+    imaging.maximum_major_cycles = None;
+    imaging.gain = 0.37;
+    imaging.threshold_jy = 1.0e-12;
+    imaging.noise_sigma = Some(1.0e-12);
+    imaging.cycle_factor = 0.01;
+    imaging.minimum_psf_fraction = 0.0;
+    imaging.maximum_psf_fraction = 0.01;
+
+    let result = execute_continuum(imaging).expect("unlimited major-cycle execution");
+
+    assert_eq!(result.outcome.output.total_minor_iterations, 3);
+    assert_eq!(result.outcome.output.total_actual_minor_iterations, 6);
+    assert_eq!(result.outcome.output.minor_cycles.len(), 3);
+    assert_eq!(result.outcome.output.major_cycle_count, 4);
+    assert!(
+        result
+            .outcome
+            .output
+            .minor_cycles
+            .iter()
+            .all(|cycle| cycle.iterations == 1 && cycle.actual_iterations == 2),
+        "every bound-stopped cycle charges one reported iteration after applying two components"
+    );
 }
 
 #[test]
@@ -794,7 +918,7 @@ fn application_commits_exact_final_prediction_to_model_data() {
         .output
         .visibility_write_receipt
         .as_ref()
-        .expect("MODEL_DATA write is receipted by the fused terminal pass");
+        .expect("MODEL_DATA write is receipted by the selected-output traversal");
     assert_eq!(
         model_receipt.observation_transaction_publication_scope(),
         casa_imaging_runtime::ObservationTransactionPublicationScope::ReconstructionOnly
@@ -805,8 +929,8 @@ fn application_commits_exact_final_prediction_to_model_data() {
         .output
         .final_major_receipt
         .as_ref()
-        .expect("save-model execution has a fused terminal-pass receipt");
-    assert_eq!(model_receipt, final_receipt);
+        .expect("save-model execution has a terminal science receipt");
+    assert_ne!(model_receipt, final_receipt);
     let plan_nodes = final_receipt.plan_node_identities();
     let preparation = plan_nodes
         .iter()
@@ -819,25 +943,62 @@ fn application_commits_exact_final_prediction_to_model_data() {
         node.as_str()
             .starts_with("post-replay-reconciliation-final-major")
     }));
+    assert!(plan_nodes.iter().any(|node| {
+        node.as_str()
+            .starts_with("gridded-normal-replay-final-major")
+    }));
+    assert!(
+        plan_nodes
+            .iter()
+            .all(|node| !node.as_str().starts_with("transaction-read-final-major")),
+        "terminal science never reopens the selected observation"
+    );
+    let science_demand = final_receipt.selected_alternative_projection().demand;
+    assert_eq!(science_demand.locks.hard(), 0);
+    assert_eq!(
+        science_demand.file_descriptors.hard(),
+        1,
+        "the later-major plan owns exactly its private replay artifact handle"
+    );
+    assert_eq!(
+        science_demand
+            .io_buffers
+            .bytes(casa_imaging_runtime::IoBufferKind::SourceReadAhead),
+        0
+    );
     assert!(
         plan_nodes
             .iter()
             .all(|node| !node.as_str().contains("stage-model")),
         "MODEL_DATA has no physical staging node"
     );
-    let terminal_pass = plan_nodes
+    let output_nodes = model_receipt.plan_node_identities();
+    let terminal_pass = output_nodes
         .iter()
         .find(|node| node.as_str().starts_with("transaction-read-final-major"))
-        .expect("fused terminal observation pass is planned");
+        .expect("the bounded selected-output pass is planned");
+    assert_eq!(
+        output_nodes
+            .iter()
+            .filter(|node| node.as_str().starts_with("transaction-read-final-major"))
+            .count(),
+        1,
+        "MODEL_DATA uses exactly one selected-output traversal"
+    );
+    assert!(output_nodes.iter().all(|node| {
+        !node
+            .as_str()
+            .starts_with("gridded-normal-replay-final-major")
+    }));
     assert_ne!(preparation, terminal_pass);
     assert_eq!(
-        final_receipt
+        model_receipt
             .stage_predicted_io(terminal_pass, casa_imaging_runtime::IoBufferKind::Writeback,),
         Some((16, 1)),
         "first creation writes the zero-initialized column and selected prediction"
     );
     assert_eq!(
-        final_receipt
+        model_receipt
             .stage_actual_io(terminal_pass, casa_imaging_runtime::IoBufferKind::Writeback,),
         None,
         "the table adapter exposes no trustworthy physical byte counter"
@@ -848,19 +1009,19 @@ fn application_commits_exact_final_prediction_to_model_data() {
         casa_imaging_runtime::RuntimeOverheadKind::ThreadStack,
     );
     assert_eq!(
-        final_receipt.planned_resource_amount(terminal_pass, &write_stack, &write_lifetime),
+        model_receipt.planned_resource_amount(terminal_pass, &write_stack, &write_lifetime),
         Some(2 * 1024 * 1024)
     );
     assert_eq!(
-        final_receipt.actual_resource_peak(terminal_pass, &write_stack, &write_lifetime),
+        model_receipt.actual_resource_peak(terminal_pass, &write_stack, &write_lifetime),
         Some(2 * 1024 * 1024)
     );
     let model_storage = casa_imaging_runtime::LeaseResource::Storage {
-        demand_id: "serial-model-data-column".to_string(),
+        demand_id: "serial-visibility-write-column".to_string(),
         use_kind: casa_imaging_runtime::StorageUseKind::FinalOutput,
     };
     assert_eq!(
-        final_receipt.planned_resource_amount(terminal_pass, &model_storage, &write_lifetime),
+        model_receipt.planned_resource_amount(terminal_pass, &model_storage, &write_lifetime),
         Some(8),
         "column creation reserves its new persistent capacity"
     );
@@ -897,7 +1058,7 @@ fn application_commits_exact_final_prediction_to_model_data() {
         .plan_node_identities()
         .iter()
         .find(|node| node.as_str().starts_with("transaction-read-final-major"))
-        .expect("overwrite fused terminal pass")
+        .expect("overwrite selected-output traversal")
         .clone();
     assert_eq!(
         overwrite_receipt.stage_predicted_io(
@@ -1207,7 +1368,7 @@ fn application_replaces_every_selected_model_cell_when_flags_and_correlations_di
         .plan_node_identities()
         .into_iter()
         .find(|node| node.as_str().starts_with("transaction-read-final-major"))
-        .expect("single fused terminal pass");
+        .expect("single selected-output traversal");
     assert_eq!(
         receipt.stage_predicted_io(
             &terminal_pass,
@@ -1322,7 +1483,7 @@ fn application_materializes_static_and_auto_masks_at_the_normal_state_boundary()
     });
     auto_request.iterations = 2;
     auto_request.cycle_iterations = 1;
-    auto_request.maximum_major_cycles = 2;
+    auto_request.maximum_major_cycles = Some(2);
     auto_request.gain = 0.1;
     let auto_result = execute_continuum(auto_request).expect("auto-mask solve");
     let cycles = &auto_result.outcome.output.minor_cycles;

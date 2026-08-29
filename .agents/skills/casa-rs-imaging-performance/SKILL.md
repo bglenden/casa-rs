@@ -63,7 +63,14 @@ dependency direction merely to recover speed.
 8. Never full-materialize large imaging inputs.
    A path that requires materializing all visibilities or cube planes for a large MS is an architecture bug. Fix bounded streaming once in shared I/O/prepare code and remove redundant misleading paths.
 9. Compare serial, multi-worker, and Metal honestly.
-   Keep serial CPU as a baseline. Do not assume fixed-tile, central quadrants, more workers, or Metal wins without total runtime and stage evidence.
+   Keep serial CPU as a required performance gate, not merely a comparison
+   row. On a matched workload whose CASA oracle is single-process, the
+   `workers = 1` production path must independently meet the accepted CASA
+   serial target before a multi-worker or device result can count as a
+   performance success. More workers, Metal, or another accelerator may prove
+   scaling, but may never compensate for or conceal a serial miss. Do not
+   assume fixed-tile, central quadrants, more workers, or Metal wins without
+   total runtime and stage evidence.
 10. Make `auto` usable.
    Explicit parameters are good for debugging, but user-facing defaults should choose reasonable worker counts, buffers, strategies, and Metal eligibility.
 11. Prefer explicit parameters over environment variables.
@@ -90,10 +97,28 @@ discriminating metric, scientific ceiling, memory and swap limits, wall and
 stage limits, automatic falsifier, known-correct fallback, and artifact
 retention class.
 
+Before admitting that candidate to production code, compute its optimistic
+repeat-weighted end-to-end ceiling. Record the affected phase's measured wall
+share, how often it occurs in the matched full workload, the fraction actually
+touched, and the maximum removable fraction. A probe whose optimistic ceiling
+is below the campaign's declared materiality threshold remains diagnostic
+evidence; it is not an implementation candidate. Do not infer removable cost
+from an inclusive profiler stack or apply a terminal-only percentage to every
+major cycle.
+
 - Maintain one active candidate at a time. A failed candidate must have its
   falsifier recorded and its code reverted or preserved as an immutable commit
   before another candidate begins. Do not stack a new hypothesis on a rejected
   implementation.
+- Build and run a fast stage-local discriminator before a medium or large
+  end-to-end candidate run. It must exercise the production kernel seam, retain
+  the mode's load-bearing shape, and verify an exact or accepted scientific
+  checksum. Setup or source capture may be outside the timed interval, but the
+  resulting harness must never become a production fast path.
+- Profile the phase paid most often by the full workload. Separate common
+  intermediate work from terminal-only products, publication, and writeback,
+  and prefer exclusive samples or coarse block-level timing over per-sample
+  clocks that perturb the hot loop.
 - Separate correctness, resource feasibility, and performance. Once a slow
   path passes the accepted scientific contract, freeze and land that baseline
   before optimizing it in a separate wave unless the approved scope explicitly

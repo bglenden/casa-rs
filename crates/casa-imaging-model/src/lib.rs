@@ -15,12 +15,13 @@ mod transaction;
 mod visibility_transform;
 
 pub use compiled_problem::{
-    CompileProblemError, CompiledProblem, CompiledProblemId, FiniteValuePolicy, ImagingRequest,
-    ImagingRequestVersion, InstrumentResponse, LogicalIdentity, MeasurementEquationContract,
-    ModelStateIdentity, NumericPrecision, NumericalStage, NumericsContract, NumericsContractId,
-    PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy,
-    ProblemInputIdentities, ProblemSpecification, ProductBlankingPolicy, ProductKind,
-    ProductNormalization, ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
+    CompileProblemError, CompiledProblem, CompiledProblemId, FiniteValuePolicy,
+    HogbomIterationAccounting, ImagingRequest, ImagingRequestVersion, InstrumentResponse,
+    LogicalIdentity, MeasurementEquationContract, ModelStateIdentity, NumericPrecision,
+    NumericalStage, NumericsContract, NumericsContractId, PolarizationContract,
+    PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInputIdentities,
+    ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
+    ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
     ProductValidityPolicyError, ReconstructionAlgorithm, ReconstructionBasis,
     ReconstructionContract, ReconstructionControls, ReductionPolicy, ReferenceDataKind,
     RequiredCapability, RestoringBeamPolicy, ScientificContract, SpectralContract,
@@ -69,9 +70,9 @@ pub use observation::{
     ObservationSourceInput, ObservationSourceProvenance, ObservationSourceState, ObservationState,
     ResolvedIntent, RowSelection, SelectedColumns, SelectedMainRow,
     SelectedRowManifestValidationError, SelectedRowSequenceError, SelectedRowSequenceId,
-    SelectedRows, SelectionBound, SourceGenerations, SpectralWindowSelection, TimeRange,
-    TimeSelection, UvDistanceRange, UvDistanceUnit, UvSelection, VisibilityColumn, WeightColumn,
-    compile_observation,
+    SelectedRows, SelectedRowsBuilder, SelectionBound, SourceGenerations, SpectralWindowSelection,
+    TimeRange, TimeSelection, UvDistanceRange, UvDistanceUnit, UvSelection, VisibilityColumn,
+    WeightColumn, compile_observation,
 };
 
 pub use prepared_artifact::{
@@ -82,15 +83,17 @@ pub use prepared_artifact::{
 };
 
 pub use selected_observation::{
-    SelectedObservationCommitment, SelectedObservationCommitmentId,
+    SelectedObservationCommitment, SelectedObservationCommitmentId, SelectedObservationInspection,
     SelectedObservationInspectionError, SelectedObservationPassError, SelectedSampleEvaluation,
 };
 
 pub use selected_observation_sample::{
-    SelectedObservationGenerationId, SelectedObservationSample, SelectedPointingDirections,
-    SelectedPredictionTarget, SelectedSampleAddress, SelectedSampleCoordinates,
-    SelectedSampleMetadata, SelectedSpectralContribution, SelectedSpectralContributions,
-    SelectedSpectralEvaluation, SelectedSpectralInterval, SelectedVisibilitySample,
+    SelectedObservationGenerationId, SelectedObservationRunChannel,
+    SelectedObservationRunCorrelation, SelectedObservationRunRow, SelectedObservationSample,
+    SelectedObservationSampleView, SelectedPointingDirections, SelectedPredictionTarget,
+    SelectedSampleAddress, SelectedSampleCoordinates, SelectedSampleMetadata,
+    SelectedSpectralContribution, SelectedSpectralContributions, SelectedSpectralEvaluation,
+    SelectedSpectralInterval, SelectedVisibilitySample,
 };
 
 pub use product_graph::{

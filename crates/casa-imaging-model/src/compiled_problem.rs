@@ -19,7 +19,7 @@ use crate::model_state::{
 use crate::observation::{FlagPolicy, ObservationSnapshot, ObservationSnapshotId, WeightColumn};
 use crate::product_graph::{ProductGraph, compile_product_graph};
 use crate::selected_observation::{
-    SelectedObservationCommitment, SelectedObservationPassError,
+    SelectedObservationCommitment, SelectedObservationInspection, SelectedObservationPassError,
     compile_selected_observation_commitment, inspect_selected_observation,
 };
 use crate::selected_observation_sample::{
@@ -31,7 +31,7 @@ use crate::transaction::{
 };
 
 const COMPILED_PROBLEM_IDENTITY_DOMAIN: &[u8] = b"casa-rs-compiled-problem";
-const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 12;
+const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 13;
 const COMPILED_PROBLEM_BASIS_DOMAIN: &[u8] = b"casa-rs-compiled-problem-basis";
 const COMPILED_PROBLEM_BASIS_VERSION: u32 = 2;
 const NUMERICS_CONTRACT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-numerics-contract";
@@ -505,19 +505,34 @@ pub enum ReconstructionAlgorithm {
     Mtmfs,
 }
 
+/// Accounting policy for Högbom's historical inclusive iteration loop.
+///
+/// Iteration limits remain task/controller budgets under both policies. CASA's
+/// Högbom implementation may apply one additional component when a cycle runs
+/// all the way to that budget; early scientific stops report every component
+/// actually applied.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum HogbomIterationAccounting {
+    /// Apply and report no more components than the requested budget.
+    #[default]
+    Strict,
+    /// Admit CASA's inclusive terminal component while preserving the reported budget.
+    CasaInclusive,
+}
+
 /// Scientific stopping and update controls for reconstruction.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ReconstructionControls {
     max_minor_iterations: usize,
     gain: f64,
     threshold_jy_per_beam: f64,
-    maximum_model_update: Option<f64>,
     cycle_iteration_limit: Option<usize>,
     maximum_major_cycles: Option<usize>,
     noise_sigma: Option<f64>,
     cycle_factor: Option<f64>,
     minimum_psf_fraction: Option<f64>,
     maximum_psf_fraction: Option<f64>,
+    hogbom_iteration_accounting: HogbomIterationAccounting,
 }
 
 impl ReconstructionControls {
@@ -528,32 +543,25 @@ impl ReconstructionControls {
             max_minor_iterations,
             gain,
             threshold_jy_per_beam,
-            maximum_model_update: None,
             cycle_iteration_limit: None,
             maximum_major_cycles: None,
             noise_sigma: None,
             cycle_factor: None,
             minimum_psf_fraction: None,
             maximum_psf_fraction: None,
+            hogbom_iteration_accounting: HogbomIterationAccounting::Strict,
         }
     }
 
-    /// Bind the explicit linear-view staleness envelope for a minor cycle.
-    #[must_use]
-    pub const fn with_maximum_model_update(mut self, maximum_model_update: f64) -> Self {
-        self.maximum_model_update = Some(maximum_model_update);
-        self
-    }
-
-    /// Bind the per-cycle iteration bound and total major-cycle bound.
+    /// Bind the reported per-cycle iteration budget and optional total major-cycle bound.
     #[must_use]
     pub const fn with_cycle_limits(
         mut self,
         cycle_iteration_limit: usize,
-        maximum_major_cycles: usize,
+        maximum_major_cycles: Option<usize>,
     ) -> Self {
         self.cycle_iteration_limit = Some(cycle_iteration_limit);
-        self.maximum_major_cycles = Some(maximum_major_cycles);
+        self.maximum_major_cycles = maximum_major_cycles;
         self
     }
 
@@ -578,7 +586,17 @@ impl ReconstructionControls {
         self
     }
 
-    /// Return the maximum number of minor-cycle updates.
+    /// Select Högbom's strict or CASA-inclusive iteration accounting.
+    #[must_use]
+    pub const fn with_hogbom_iteration_accounting(
+        mut self,
+        accounting: HogbomIterationAccounting,
+    ) -> Self {
+        self.hogbom_iteration_accounting = accounting;
+        self
+    }
+
+    /// Return the reported total minor-iteration budget.
     #[must_use]
     pub const fn max_minor_iterations(self) -> usize {
         self.max_minor_iterations
@@ -596,13 +614,7 @@ impl ReconstructionControls {
         self.threshold_jy_per_beam
     }
 
-    /// Return the explicit cumulative model-update envelope, when supplied.
-    #[must_use]
-    pub const fn maximum_model_update(self) -> Option<f64> {
-        self.maximum_model_update
-    }
-
-    /// Return the explicit per-cycle iteration bound.
+    /// Return the explicit reported per-cycle iteration budget.
     #[must_use]
     pub const fn cycle_iteration_limit(self) -> Option<usize> {
         self.cycle_iteration_limit
@@ -636,6 +648,12 @@ impl ReconstructionControls {
     #[must_use]
     pub const fn maximum_psf_fraction(self) -> Option<f64> {
         self.maximum_psf_fraction
+    }
+
+    /// Return Högbom's iteration-accounting policy.
+    #[must_use]
+    pub const fn hogbom_iteration_accounting(self) -> HogbomIterationAccounting {
+        self.hogbom_iteration_accounting
     }
 }
 
@@ -1616,6 +1634,15 @@ impl CompiledProblem {
         )
     }
 
+    /// Begin incremental validation for one bounded canonical selected-observation pass.
+    #[must_use]
+    pub fn begin_selected_observation_inspection(&self) -> SelectedObservationInspection<'_> {
+        SelectedObservationInspection::new(
+            &self.selected_observation,
+            self.observation_transaction.write_set(),
+        )
+    }
+
     /// Return numerical requirements.
     #[must_use]
     pub const fn numerics(&self) -> &NumericsContract {
@@ -1886,6 +1913,13 @@ fn validate_reconstruction(
             reason: "a minor-cycle algorithm requires a positive iteration budget",
         });
     }
+    if !matches!(contract.algorithm, ReconstructionAlgorithm::Hogbom)
+        && contract.controls.hogbom_iteration_accounting != HogbomIterationAccounting::Strict
+    {
+        return Err(CompileProblemError::InvalidCapabilityCombination {
+            reason: "CASA-inclusive iteration accounting is specific to Högbom reconstruction",
+        });
+    }
     if !(contract.controls.gain.is_finite()
         && contract.controls.gain > 0.0
         && contract.controls.gain <= 1.0
@@ -1894,15 +1928,6 @@ fn validate_reconstruction(
     {
         return Err(CompileProblemError::InvalidCapabilityCombination {
             reason: "reconstruction gain and threshold must be finite and in their valid domains",
-        });
-    }
-    if contract
-        .controls
-        .maximum_model_update
-        .is_some_and(|bound| !bound.is_finite() || bound <= 0.0)
-    {
-        return Err(CompileProblemError::InvalidCapabilityCombination {
-            reason: "maximum model update must be finite and positive when supplied",
         });
     }
     if contract.controls.cycle_iteration_limit == Some(0)
@@ -2363,13 +2388,6 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
     encoder.usize(reconstruction.controls.max_minor_iterations);
     encoder.f64(reconstruction.controls.gain);
     encoder.f64(reconstruction.controls.threshold_jy_per_beam);
-    match reconstruction.controls.maximum_model_update {
-        Some(bound) => {
-            encoder.u8(1);
-            encoder.f64(bound);
-        }
-        None => encoder.u8(0),
-    }
     for value in [
         reconstruction.controls.cycle_iteration_limit,
         reconstruction.controls.maximum_major_cycles,
@@ -2402,6 +2420,10 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
             None => encoder.u8(0),
         }
     }
+    encoder.u8(match reconstruction.controls.hogbom_iteration_accounting {
+        HogbomIterationAccounting::Strict => 0,
+        HogbomIterationAccounting::CasaInclusive => 1,
+    });
     encoder.usize(reconstruction.polarization.coordinates.len());
     for coordinate in &reconstruction.polarization.coordinates {
         encoder.u8(polarization_tag(*coordinate));
@@ -2598,58 +2620,87 @@ fn encode_numerics(encoder: &mut CanonicalEncoder, numerics: &NumericsContract) 
     }
 }
 
-pub(crate) struct CanonicalEncoder(Sha256);
+pub(crate) struct CanonicalEncoder {
+    hasher: Sha256,
+    proof_bytes: u64,
+    proof_hash_calls: u64,
+}
 
 impl CanonicalEncoder {
     pub(crate) fn new() -> Self {
-        Self(Sha256::new())
+        Self {
+            hasher: Sha256::new(),
+            proof_bytes: 0,
+            proof_hash_calls: 0,
+        }
+    }
+
+    fn update(&mut self, value: impl AsRef<[u8]>) {
+        let value = value.as_ref();
+        self.proof_bytes = self
+            .proof_bytes
+            .checked_add(u64::try_from(value.len()).expect("encoded identity chunk fits u64"))
+            .expect("encoded identity byte count fits u64");
+        self.proof_hash_calls = self
+            .proof_hash_calls
+            .checked_add(1)
+            .expect("encoded identity hash-call count fits u64");
+        self.hasher.update(value);
     }
 
     pub(crate) fn u8(&mut self, value: u8) {
-        self.0.update([value]);
+        self.update([value]);
     }
 
     pub(crate) fn u32(&mut self, value: u32) {
-        self.0.update(value.to_le_bytes());
+        self.update(value.to_le_bytes());
     }
 
     pub(crate) fn i32(&mut self, value: i32) {
-        self.0.update(value.to_le_bytes());
+        self.update(value.to_le_bytes());
     }
 
     pub(crate) fn u64(&mut self, value: u64) {
-        self.0.update(value.to_le_bytes());
+        self.update(value.to_le_bytes());
     }
 
     pub(crate) fn usize(&mut self, value: usize) {
-        self.0.update((value as u128).to_le_bytes());
+        self.update((value as u128).to_le_bytes());
     }
 
     pub(crate) fn bytes(&mut self, value: &[u8]) {
         self.usize(value.len());
-        self.0.update(value);
+        self.update(value);
     }
 
     pub(crate) fn identity(&mut self, identity: LogicalIdentity) {
-        self.0.update(identity.0);
+        self.update(identity.0);
     }
 
     pub(crate) fn digest(&mut self, digest: [u8; 32]) {
-        self.0.update(digest);
+        self.update(digest);
     }
 
     pub(crate) fn f64(&mut self, value: f64) {
         let bits = if value == 0.0 { 0 } else { value.to_bits() };
-        self.0.update(bits.to_le_bytes());
+        self.update(bits.to_le_bytes());
     }
 
     pub(crate) fn f32(&mut self, value: f32) {
         let bits = if value == 0.0 { 0 } else { value.to_bits() };
-        self.0.update(bits.to_le_bytes());
+        self.update(bits.to_le_bytes());
+    }
+
+    pub(crate) const fn proof_bytes(&self) -> u64 {
+        self.proof_bytes
+    }
+
+    pub(crate) const fn proof_hash_calls(&self) -> u64 {
+        self.proof_hash_calls
     }
 
     pub(crate) fn finish(self) -> [u8; 32] {
-        self.0.finalize().into()
+        self.hasher.finalize().into()
     }
 }
 
