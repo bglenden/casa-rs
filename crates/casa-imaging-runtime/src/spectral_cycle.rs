@@ -744,6 +744,7 @@ pub struct SpectralCycleExecutor {
     reconstruction_cycle: Option<SerialReconstructionCycleExecution>,
     final_visibility_sink: Option<Mutex<Box<dyn FinalVisibilitySink>>>,
     phase_input_artifact: Option<(crate::ArtifactIdentity, u64)>,
+    gridded_input_artifact: Option<(crate::ArtifactIdentity, u64)>,
     mode: SpectralCycleExecutionMode,
     state: Mutex<SpectralCycleExecutorState>,
 }
@@ -760,6 +761,7 @@ struct SpectralCycleExecutorState {
     selected: Option<BoundSelectedObservation>,
     selected_completion: Option<SelectedObservationCompletion>,
     weighting: WeightingExecutionState,
+    gridded_storage: Option<crate::GriddedNormalReplayStorage>,
     gridded_compilation: Option<GriddedNormalReplayCompilation>,
     gridded_replay: Option<FrozenGriddedNormalReplay>,
     pending_frozen_reservation: Option<Arc<crate::FrozenWeightingReservation>>,
@@ -955,6 +957,7 @@ impl SpectralCycleExecutor {
             reconstruction_cycle: None,
             final_visibility_sink: None,
             phase_input_artifact,
+            gridded_input_artifact: None,
             mode: SpectralCycleExecutionMode::Science,
             state: Mutex::new(SpectralCycleExecutorState {
                 executable: Some(executable),
@@ -962,6 +965,7 @@ impl SpectralCycleExecutor {
                 selected: Some(selected),
                 selected_completion: None,
                 weighting: WeightingExecutionState::new(),
+                gridded_storage: None,
                 gridded_compilation: None,
                 gridded_replay: None,
                 pending_frozen_reservation: None,
@@ -981,7 +985,6 @@ impl SpectralCycleExecutor {
     /// Bind a later major to the sealed gridded-normal capability, without a
     /// selected-observation owner or source resource surface.
     #[allow(clippy::too_many_arguments)]
-    #[must_use]
     pub fn new_gridded(
         id: WorkImplementationId,
         problem: CompiledProblem,
@@ -990,8 +993,14 @@ impl SpectralCycleExecutor {
         complete_data: CompleteDataPlanFragment,
         executable: ExecutableModelProblem,
         pass_input: SpectralCyclePassInput,
+        planned_replay: crate::GriddedNormalReplayDescriptor,
         replay: FrozenGriddedNormalReplay,
-    ) -> Self {
+    ) -> io::Result<Self> {
+        if replay.descriptor() != planned_replay {
+            return Err(io::Error::other(
+                "sealed gridded-normal replay does not match the immutable plan",
+            ));
+        }
         let phase_input_artifact = match &pass_input {
             SpectralCyclePassInput::Initial => None,
             SpectralCyclePassInput::FinalMajor(input) => Some((
@@ -1001,7 +1010,7 @@ impl SpectralCycleExecutor {
                     .saturating_mul(std::mem::size_of::<ModelDeltaTerm>() as u64),
             )),
         };
-        Self {
+        Ok(Self {
             id,
             problem,
             weighting_plan,
@@ -1011,6 +1020,7 @@ impl SpectralCycleExecutor {
             reconstruction_cycle: None,
             final_visibility_sink: None,
             phase_input_artifact,
+            gridded_input_artifact: Some((planned_replay.identity(), planned_replay.bytes())),
             mode: SpectralCycleExecutionMode::Science,
             state: Mutex::new(SpectralCycleExecutorState {
                 executable: Some(executable),
@@ -1018,6 +1028,7 @@ impl SpectralCycleExecutor {
                 selected: None,
                 selected_completion: None,
                 weighting: WeightingExecutionState::new(),
+                gridded_storage: None,
                 gridded_compilation: None,
                 gridded_replay: Some(replay),
                 pending_frozen_reservation: None,
@@ -1031,7 +1042,7 @@ impl SpectralCycleExecutor {
                 reconstruction_cycle_completion: None,
                 output_completion: None,
             }),
-        }
+        })
     }
 
     /// Bind a terminal selected-output traversal. This mode may predict and
@@ -1059,6 +1070,7 @@ impl SpectralCycleExecutor {
             reconstruction_cycle: None,
             final_visibility_sink: None,
             phase_input_artifact: None,
+            gridded_input_artifact: None,
             mode: SpectralCycleExecutionMode::SelectedOutputOnly,
             state: Mutex::new(SpectralCycleExecutorState {
                 executable: None,
@@ -1066,6 +1078,7 @@ impl SpectralCycleExecutor {
                 selected: Some(selected),
                 selected_completion: None,
                 weighting: WeightingExecutionState::with_frozen_artifact(frozen_weighting.clone()),
+                gridded_storage: None,
                 gridded_compilation: None,
                 gridded_replay: None,
                 pending_frozen_reservation: None,
@@ -1082,11 +1095,9 @@ impl SpectralCycleExecutor {
         }
     }
 
-    /// Attach the initial run's resource-admitted gridded-normal compiler and writer.
-    pub fn with_gridded_normal_compilation(
+    /// Attach the initial run's plan-bound gridded-normal storage.
+    pub fn with_planned_gridded_normal_storage(
         mut self,
-        authority: &crate::ResourceAuthority,
-        policy: crate::ResourcePolicy,
         storage: &crate::GriddedNormalReplayStorage,
     ) -> io::Result<Self> {
         if self.pass.phase() != crate::SpectralPassPhase::InitialMajor {
@@ -1094,17 +1105,10 @@ impl SpectralCycleExecutor {
                 "only the initial major can compile gridded-normal replay",
             ));
         }
-        let compilation = GriddedNormalReplayCompilation::new(
-            &self.problem,
-            authority,
-            policy,
-            storage,
-            self.weighting_plan.limits().max_block_samples(),
-        )?;
         self.state
             .get_mut()
             .map_err(|_| io::Error::other("new spectral cycle executor mutex poisoned"))?
-            .gridded_compilation = Some(compilation);
+            .gridded_storage = Some(storage.clone());
         Ok(self)
     }
 
@@ -1299,6 +1303,16 @@ impl SpectralCycleExecutor {
         fragment: &WeightingPlanFragment<'_>,
         selected: Option<BoundSelectedObservation>,
     ) -> Result<(), io::Error> {
+        if state.gridded_compilation.is_none()
+            && let Some(storage) = state.gridded_storage.as_ref()
+        {
+            state.gridded_compilation = Some(GriddedNormalReplayCompilation::new(
+                &self.problem,
+                context,
+                storage,
+                self.weighting_plan.limits().max_block_samples(),
+            )?);
+        }
         if let Some(sink) = &self.final_visibility_sink {
             sink.lock()
                 .map_err(|_| io::Error::other("final visibility sink poisoned"))?
@@ -1368,6 +1382,9 @@ impl SpectralCycleExecutor {
             None => Err(io::Error::other("streaming weighting mode missing")),
         };
         if result.is_ok() {
+            if let Some(compilation) = gridded_compilation.as_mut() {
+                compilation.seal()?;
+            }
             self.log_stream_measurements(weighting, "weighted-replay");
         }
         result
@@ -1464,7 +1481,7 @@ impl SpectralCycleExecutor {
             .gridded_replay
             .as_mut()
             .ok_or_else(|| io::Error::other("sealed gridded-normal replay missing"))?;
-        let mut operator = self
+        let operator = self
             .complete_data
             .begin_gridded_replay(
                 context,
@@ -1475,9 +1492,41 @@ impl SpectralCycleExecutor {
                 replay,
             )
             .map_err(io::Error::other)?;
-        replay.replay(&mut operator)?;
-        state.complete_data = Some(operator.complete().map_err(io::Error::other)?);
+        state.complete_data =
+            Some(replay.execute_bounded(context, self.pass.ordinal(), operator)?);
+        self.log_gridded_replay_measurements(replay);
         Ok(())
+    }
+
+    fn log_gridded_replay_measurements(&self, replay: &FrozenGriddedNormalReplay) {
+        let (Some(stream), Some(artifact)) = (
+            replay.latest_stream_measurements(),
+            replay.latest_read_measurements(),
+        ) else {
+            return;
+        };
+        eprintln!(
+            "imaging_gridded_replay_summary ordinal={} blocks={} payload_bytes={} read_bytes={} read_operations={} source_slots={} workers={} planned_source_capacity_bytes={} peak_live_source_blocks={} peak_live_source_current_bytes={} peak_live_source_capacity_bytes={} ready_queue_high_water={} producer_wait_nanos={} consumer_wait_nanos={} source_starved_nanos={} overlap_nanos={} source_fill_nanos={} commit_nanos={} wall_nanos={}",
+            self.pass.ordinal(),
+            stream.blocks_filled,
+            stream.logical_source_bytes,
+            artifact.transferred_bytes(),
+            artifact.operations(),
+            stream.source_slots,
+            stream.workers,
+            stream.planned_source_capacity_bytes,
+            stream.peak_live_source_blocks,
+            stream.peak_live_source_current_bytes,
+            stream.peak_live_source_capacity_bytes,
+            stream.ready_queue_high_water,
+            stream.producer_wait_nanos,
+            stream.consumer_wait_nanos,
+            stream.source_starved_nanos,
+            stream.overlap_nanos,
+            stream.source_fill_nanos,
+            stream.commit_nanos,
+            stream.wall_nanos,
+        );
     }
 
     fn log_stream_measurements(&self, weighting: &WeightingExecutionState, stage: &str) {
@@ -1588,17 +1637,6 @@ impl SpectralCycleExecutor {
                 .gridded_compilation
                 .as_ref()
                 .map(GriddedNormalReplayCompilation::write_measurements)
-        } else if context.node().id
-            == crate::spectral_cycle_plan::pass_node(
-                crate::spectral_cycle_plan::GRIDDED_SEAL_NODE,
-                self.pass,
-            )
-        {
-            state
-                .gridded_replay
-                .as_ref()
-                .map(FrozenGriddedNormalReplay::seal_write_measurements)
-                .transpose()?
         } else {
             None
         };
@@ -1752,6 +1790,20 @@ impl SpectralCycleExecutor {
                 .expect("Loaded input evidence is implementation-owned")
             })
             .into_iter()
+            .chain(
+                self.gridded_input_artifact
+                    .filter(|_| context.node().id == *self.complete_data.replay_node())
+                    .map(|(identity, bytes)| {
+                        crate::ArtifactMeasurement::new(
+                            identity,
+                            Some(identity),
+                            crate::ArtifactDisposition::Loaded,
+                            bytes,
+                            None,
+                        )
+                        .expect("planned gridded input evidence is implementation-owned")
+                    }),
+            )
             .collect();
         Ok(WorkMeasurements::new(resources, io, artifacts))
     }
@@ -1798,26 +1850,6 @@ impl WorkImplementation for SpectralCycleExecutor {
                 && context.node().id == *self.complete_data.replay_node()
             {
                 self.run_gridded_replay(&mut state, context)?;
-            } else if context.node().id
-                == crate::spectral_cycle_plan::pass_node(
-                    crate::spectral_cycle_plan::GRIDDED_SEAL_NODE,
-                    self.pass,
-                )
-            {
-                if state.complete_data.is_none() {
-                    return Err(io::Error::other(
-                        "gridded-normal seal preceded complete-data completion",
-                    ));
-                }
-                let compilation = state
-                    .gridded_compilation
-                    .take()
-                    .ok_or_else(|| io::Error::other("gridded-normal compiler missing"))?;
-                let replay = state
-                    .weighting
-                    .replay_completion()
-                    .ok_or_else(|| io::Error::other("weighting replay completion missing"))?;
-                state.gridded_replay = Some(compilation.complete(replay)?);
             } else if fragment
                 .as_ref()
                 .is_some_and(|fragment| context.node().id == *fragment.source_read_node())
@@ -2035,6 +2067,7 @@ impl WorkImplementation for SpectralCycleExecutor {
                     }
                     None => None,
                 };
+                let compilation = state.gridded_compilation.take();
                 let replay = state
                     .weighting
                     .replay_completion()
@@ -2042,12 +2075,16 @@ impl WorkImplementation for SpectralCycleExecutor {
                 // All fallible scientific validation precedes the in-place
                 // visibility writer's durable completion boundary.
                 let complete_data = operator.complete(replay).map_err(io::Error::other)?;
+                let gridded_replay = compilation
+                    .map(|compilation| compilation.complete(replay))
+                    .transpose()?;
                 if let Some(sink) = &self.final_visibility_sink {
                     sink.lock()
                         .map_err(|_| io::Error::other("final visibility sink poisoned"))?
                         .finish(replay)?;
                 }
                 state.frozen_weighting = frozen_weighting;
+                state.gridded_replay = gridded_replay;
                 state.complete_data = Some(complete_data);
                 Ok(predecessor)
             })();

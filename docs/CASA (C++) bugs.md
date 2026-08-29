@@ -2,6 +2,8 @@
 
 Notes on bugs or likely bugs observed while doing Rust/C++ parity work against CASA.
 
+Known imaging parity defect: [CASA Högbom `niter` off-by-one](#casa-hogbom-niter-off-by-one-bug).
+
 ## `importvla` stale `VLACDA` cache crash on old VLA export data
 
 - Date noted: 2026-04-15
@@ -68,7 +70,7 @@ construction policy in `mstransform`.
 Those casacore links are not the same bug, but they came out of the same cross-checking and
 parity work that surfaced this CASA-side issue.
 
-## Hogbom `niter` off-by-one bug
+## CASA Hogbom `niter` off-by-one bug
 
 - Date noted: 2026-04-05
 - Status: likely CASA bug / legacy interface mismatch

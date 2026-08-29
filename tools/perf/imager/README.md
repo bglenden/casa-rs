@@ -620,7 +620,8 @@ It does not add personal workstation data fallbacks.
 - `IMAGER_BENCH_HOGBOM_ITERATION_MODE`
   - `strict` uses casa-rs' corrected Hogbom component accounting
   - `casa` reproduces CASA's documented inclusive Hogbom off-by-one behavior;
-    use this for Rust-vs-CASA Hogbom product comparisons
+    use this for Rust-vs-CASA Hogbom product comparisons; see the canonical
+    [CASA bug record](../../../docs/CASA%20(C%2B%2B)%20bugs.md#casa-hogbom-niter-off-by-one-bug)
 - `IMAGER_BENCH_GAIN`
 - `IMAGER_BENCH_THRESHOLD_JY`
 - `IMAGER_BENCH_NSIGMA`

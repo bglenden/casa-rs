@@ -955,7 +955,11 @@ fn application_commits_exact_final_prediction_to_model_data() {
     );
     let science_demand = final_receipt.selected_alternative_projection().demand;
     assert_eq!(science_demand.locks.hard(), 0);
-    assert_eq!(science_demand.file_descriptors.hard(), 0);
+    assert_eq!(
+        science_demand.file_descriptors.hard(),
+        1,
+        "the later-major plan owns exactly its private replay artifact handle"
+    );
     assert_eq!(
         science_demand
             .io_buffers

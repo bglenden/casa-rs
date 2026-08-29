@@ -41,7 +41,7 @@ pub use casa_imaging_reconstruction::{MajorCyclePreparation, SpectralPrimitiveCa
 pub use complete_data_operator::{
     CompleteDataOperatorError, CompleteDataOperatorResult, CompleteDataPlanError,
     CompleteDataPlanFragment, CompleteDataPreparedState, CompleteDataResidency,
-    FrozenGriddedNormalReplay, SpectralOperatorState,
+    FrozenGriddedNormalReplay, GriddedNormalReplayDescriptor, SpectralOperatorState,
 };
 pub use continuum_transform::{
     ContinuumTransformCompletion, ContinuumTransformError, ContinuumTransformRowPlan,
@@ -117,7 +117,7 @@ pub use spectral_cycle::{
     SpectralCyclePassInput, SpectralCycleRegistry,
 };
 pub use spectral_cycle_plan::{
-    SpectralCycleExecutionPolicy, SpectralCyclePlan, SpectralCyclePlanError,
+    SpectralCycleExecutionPolicy, SpectralCyclePlan, SpectralCyclePlanError, SpectralCyclePlanParts,
 };
 pub use weighting::{
     ContinuumDensityCallbackError, ContinuumDensityTraversalError, FrozenWeightingArtifact,

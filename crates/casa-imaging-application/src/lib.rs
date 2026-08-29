@@ -48,8 +48,8 @@ use casa_imaging_runtime::{
     RunBindings, RunToCompletion, SerialProductPublicationExecutor, SerialProductPublicationPlan,
     SerialProductPublicationPolicy, SerialProductPublicationRegistry, SerialProductPublicationSink,
     SpectralCycleExecutionPolicy, SpectralCycleExecutor, SpectralCyclePassInput, SpectralCyclePlan,
-    SpectralCycleRegistry, StorageIoResourceBinding, WorkExecutionContext, WorkImplementation,
-    WorkImplementationId, WorkMeasurements, plan, run,
+    SpectralCyclePlanParts, SpectralCycleRegistry, StorageIoResourceBinding, WorkExecutionContext,
+    WorkImplementation, WorkImplementationId, WorkMeasurements, plan, run,
 };
 use casa_ms::{
     ResolvedSelectedObservationAccess, SelectedObservationResolutionRequest,
@@ -357,7 +357,15 @@ where
         _ => unreachable!("native validation admits only continuum minor-cycle solvers"),
     };
     let minor_node = planned.minor_cycle_node().cloned();
-    let (physical, weighting, complete, resources, pass, _) = planned.into_parts();
+    let SpectralCyclePlanParts {
+        physical,
+        weighting,
+        complete_data: complete,
+        source_resources: resources,
+        pass,
+        gridded_normal_storage: planned_storage,
+        ..
+    } = planned.into_parts();
     let replay_proof_bytes = initial_access.replay_proof_retained_heap_bytes(problem)?;
     let frozen_reservation = (!matches!(algorithm, ReconstructionAlgorithm::Dirty))
         .then(|| {
@@ -386,10 +394,9 @@ where
         executor = executor.with_frozen_weighting_reservation(
             frozen_reservation.expect("non-dirty execution reserves frozen weighting"),
         );
-        executor = executor.with_gridded_normal_compilation(
-            &runtime.authority,
-            runtime.resource_policy.clone(),
-            &runtime.gridded_normal_storage,
+        executor = executor.with_planned_gridded_normal_storage(
+            &planned_storage
+                .ok_or_else(|| boxed("clean initial plan omitted gridded replay storage"))?,
         )?;
         let program = MinorCycleProgram::for_algorithm(
             algorithm.clone(),
@@ -581,6 +588,7 @@ where
                         final_policy,
                         &final_input,
                         ordinal,
+                        gridded_replay.descriptor(),
                     )?
                 } else {
                     SpectralCyclePlan::final_major_at(
@@ -589,10 +597,18 @@ where
                         final_policy,
                         &final_input,
                         ordinal,
+                        gridded_replay.descriptor(),
                     )?
                 };
-                let (physical, weighting, complete, _resources, pass, minor_node) =
-                    final_planned.into_parts();
+                let SpectralCyclePlanParts {
+                    physical,
+                    weighting,
+                    complete_data: complete,
+                    pass,
+                    minor_cycle_node: minor_node,
+                    gridded_replay: planned_replay,
+                    ..
+                } = final_planned.into_parts();
                 let mut executor = SpectralCycleExecutor::new_gridded(
                     runtime.implementation.clone(),
                     problem.clone(),
@@ -601,8 +617,10 @@ where
                     complete,
                     ExecutableModelProblem::from_compiled(problem.clone())?,
                     SpectralCyclePassInput::FinalMajor(final_input),
+                    planned_replay
+                        .ok_or_else(|| boxed("later-major plan omitted gridded replay identity"))?,
                     gridded_replay,
-                )
+                )?
                 .with_frozen_weighting(frozen_weighting);
                 if continue_cleaning {
                     let remaining = controls
@@ -686,14 +704,14 @@ where
                     output_policy,
                     ordinal,
                 )?;
-                let (
-                    output_physical,
-                    output_weighting,
-                    output_complete,
-                    output_resources,
-                    output_pass,
-                    _,
-                ) = output_planned.into_parts();
+                let SpectralCyclePlanParts {
+                    physical: output_physical,
+                    weighting: output_weighting,
+                    complete_data: output_complete,
+                    source_resources: output_resources,
+                    pass: output_pass,
+                    ..
+                } = output_planned.into_parts();
                 let selected = frozen_weighting.rebind_selected(access, problem)?;
                 let (visibility_replay, sink) = FinalVisibilityReplay::with_visibility_write(
                     std::path::PathBuf::from(input.observation.locator()),
@@ -850,6 +868,7 @@ fn execution_policy(
         runtime.minor_cycle_bytes,
         runtime.confidence_parts_per_million,
     )
+    .with_gridded_normal_storage(runtime.gridded_normal_storage.clone())
 }
 
 fn run_phase(

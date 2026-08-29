@@ -1,23 +1,18 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{self, Write};
 use std::os::unix::fs::{FileExt, MetadataExt};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use sha2::{Digest, Sha256};
-use tempfile::Builder;
+use tempfile::{Builder, NamedTempFile, TempPath};
 use thiserror::Error;
 
+use crate::bounded_stream::{OrderedBlockSource, SourceFillCancellation, SourcePoll};
 use crate::execution_bindings::IoMeasurement;
-use crate::resource_authority::{
-    AlternativeId, CacheDemand, CapabilityPredicate, CountDemand, DemandAlternative,
-    DemandAlternatives, DemandEnvelope, IoBufferDemand, IoBufferKind, MemoryDemand, MemoryViewKind,
-    QuiescencePoint, ResourceAuthority, ResourceError, ResourceHeadroom, ResourceLease,
-    ResourcePolicy, RuntimeOverheadDemand, ScalingMetadata, StorageDemand,
-    StorageIoResourceBinding,
-};
+use crate::resource_authority::{IoBufferKind, ResourceAuthority, StorageIoResourceBinding};
 
 const FORMAT_VERSION: u32 = 1;
 const FILE_HEADER_MAGIC: [u8; 8] = *b"CGNRHDR\0";
@@ -26,14 +21,12 @@ const FOOTER_MAGIC: [u8; 8] = *b"CGNRFTR\0";
 const FILE_HEADER_BYTES: usize = 16;
 const FRAME_HEADER_BYTES: usize = 72;
 const FOOTER_BYTES: usize = 80;
-const STORAGE_DEMAND_ID: &str = "cross-plan-gridded-normal-replay";
-const BUFFER_ALLOCATION_ID: &str = "cross-plan-gridded-normal-replay-buffer";
 
 /// Authority-validated writable location for one run's private replay spill.
 ///
 /// The directory is deliberately opaque outside runtime. Planning can inspect
 /// only the typed storage resources while the artifact owner retains the exact
-/// location needed to create its unlinked temporary file.
+/// location needed to create its deletion-owning private temporary file.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GriddedNormalReplayStorage {
     resources: StorageIoResourceBinding,
@@ -294,8 +287,6 @@ pub(crate) enum GriddedNormalArtifactError {
     StorageBindingMismatch,
     #[error("gridded-normal artifact storage root is not an absolute directory")]
     InvalidStorageRoot,
-    #[error("gridded-normal artifact resource admission failed: {0}")]
-    Resource(#[from] ResourceError),
     #[error("{operation} for the gridded-normal artifact failed: {source}")]
     Io {
         operation: &'static str,
@@ -401,8 +392,7 @@ fn validate_storage_directory(
 
 #[derive(Debug)]
 pub(crate) struct GriddedNormalArtifactWriter {
-    file: File,
-    _lease: ResourceLease,
+    file: NamedTempFile,
     budget: GriddedNormalArtifactBudget,
     buffer: Vec<u8>,
     global_hasher: Sha256,
@@ -416,94 +406,21 @@ pub(crate) struct GriddedNormalArtifactWriter {
 
 impl GriddedNormalArtifactWriter {
     pub(crate) fn create(
-        authority: &ResourceAuthority,
-        policy: ResourcePolicy,
         storage: &GriddedNormalReplayStorage,
         budget: GriddedNormalArtifactBudget,
     ) -> Result<Self, GriddedNormalArtifactError> {
-        let directory =
-            validate_storage_directory(authority, &storage.resources, &storage.directory)?;
-        let host_view = authority
-            .topology()
-            .memory_views
-            .iter()
-            .find(|view| view.kind == MemoryViewKind::Host)
-            .map(|view| view.id.clone())
-            .ok_or_else(|| {
-                GriddedNormalArtifactError::Resource(ResourceError::Invalid(
-                    "gridded-normal replay requires one host-memory view".to_string(),
-                ))
-            })?;
-        let lease = authority.acquire(
-            policy,
-            DemandAlternatives {
-                required_capabilities: BTreeSet::new(),
-                alternatives: vec![DemandAlternative {
-                    id: AlternativeId::new(STORAGE_DEMAND_ID),
-                    capabilities: CapabilityPredicate::default(),
-                    demand: DemandEnvelope {
-                        host_memory_view: host_view.clone(),
-                        memory: vec![MemoryDemand {
-                            allocation_id: BUFFER_ALLOCATION_ID.to_string(),
-                            hard_bytes: budget.io_buffer_bytes,
-                            preferred_bytes: budget.io_buffer_bytes,
-                            views: vec![host_view],
-                        }],
-                        workers: CountDemand::zero(),
-                        overhead: RuntimeOverheadDemand::zero(),
-                        storage: vec![StorageDemand {
-                            demand_id: STORAGE_DEMAND_ID.to_string(),
-                            domain: storage.resources.domain().clone(),
-                            temporary_bytes: budget.maximum_artifact_bytes,
-                            staged_output_bytes: 0,
-                            final_output_bytes: 0,
-                            persistent_cache_bytes: 0,
-                            read_rate: CountDemand::zero(),
-                            write_rate: CountDemand::zero(),
-                            operations_rate: CountDemand::zero(),
-                            queue_slots: CountDemand::zero(),
-                        }],
-                        rates: Vec::new(),
-                        caches: CacheDemand::zero(),
-                        locks: CountDemand::zero(),
-                        file_descriptors: CountDemand::new(1, 1),
-                        queues: Vec::new(),
-                        transfers: Vec::new(),
-                        accelerators: Vec::new(),
-                        io_buffers: IoBufferDemand {
-                            spill_read_bytes: budget.io_buffer_bytes,
-                            spill_write_bytes: budget.io_buffer_bytes,
-                            ..IoBufferDemand::zero()
-                        },
-                    },
-                    headroom: ResourceHeadroom::default(),
-                    scaling: ScalingMetadata {
-                        minimum_workers: 0,
-                        maximum_workers: 0,
-                        maximum_batch_size: 1,
-                        maximum_tile_width: 1,
-                        maximum_tile_height: 1,
-                        maximum_slab_depth: 1,
-                        memory_bytes_per_worker: BTreeMap::new(),
-                    },
-                    quiescence_points: BTreeSet::from([QuiescencePoint::MajorCycle]),
-                }],
-            },
-        )?;
         let file = Builder::new()
             .prefix(".casars-gridded-normal-replay-")
-            .tempfile_in(directory)
+            .tempfile_in(&storage.directory)
             .map_err(|source| GriddedNormalArtifactError::Io {
                 operation: "create private temporary file",
                 source,
-            })?
-            .into_file();
+            })?;
         let buffer_len = usize::try_from(budget.io_buffer_bytes).map_err(|_| {
             GriddedNormalArtifactError::ArithmeticOverflow("artifact I/O buffer allocation")
         })?;
         let mut writer = Self {
             file,
-            _lease: lease,
             budget,
             buffer: vec![0; buffer_len],
             global_hasher: Sha256::new(),
@@ -610,7 +527,7 @@ impl GriddedNormalArtifactWriter {
         self.buffer[..FRAME_HEADER_BYTES].copy_from_slice(&header);
         self.buffer[FRAME_HEADER_BYTES..encoded_bytes].copy_from_slice(payload);
         write_bytes(
-            &mut self.file,
+            self.file.as_file_mut(),
             &self.buffer[..encoded_bytes],
             &mut self.bytes_written,
             &mut self.write_operations,
@@ -650,6 +567,7 @@ impl GriddedNormalArtifactWriter {
         );
         self.write_bytes(&footer, "write artifact footer")?;
         self.file
+            .as_file_mut()
             .flush()
             .map_err(|source| GriddedNormalArtifactError::Io {
                 operation: "flush sealed artifact",
@@ -657,6 +575,7 @@ impl GriddedNormalArtifactWriter {
             })?;
         let actual_bytes = self
             .file
+            .as_file()
             .metadata()
             .map_err(|source| GriddedNormalArtifactError::Io {
                 operation: "inspect sealed artifact",
@@ -704,11 +623,10 @@ impl GriddedNormalArtifactWriter {
             sha256_calls,
             peak_buffer_bytes: self.budget.io_buffer_bytes,
         };
+        let path = self.file.into_temp_path();
         Ok(GriddedNormalReplayArtifact {
-            file: self.file,
-            _lease: self._lease,
+            path,
             budget: self.budget,
-            buffer: self.buffer,
             seal,
             write_measurements,
         })
@@ -720,7 +638,7 @@ impl GriddedNormalArtifactWriter {
         operation: &'static str,
     ) -> Result<(), GriddedNormalArtifactError> {
         write_bytes(
-            &mut self.file,
+            self.file.as_file_mut(),
             bytes,
             &mut self.bytes_written,
             &mut self.write_operations,
@@ -731,10 +649,8 @@ impl GriddedNormalArtifactWriter {
 
 #[derive(Debug)]
 pub(crate) struct GriddedNormalReplayArtifact {
-    file: File,
-    _lease: ResourceLease,
+    path: TempPath,
     budget: GriddedNormalArtifactBudget,
-    buffer: Vec<u8>,
     seal: GriddedNormalArtifactSeal,
     write_measurements: GriddedNormalArtifactMeasurements,
 }
@@ -744,15 +660,22 @@ impl GriddedNormalReplayArtifact {
         self.seal
     }
 
+    pub(crate) const fn budget(&self) -> GriddedNormalArtifactBudget {
+        self.budget
+    }
+
     pub(crate) const fn write_measurements(&self) -> GriddedNormalArtifactMeasurements {
         self.write_measurements
     }
 
-    pub(crate) fn reader(
-        &mut self,
-    ) -> Result<GriddedNormalArtifactReader<'_>, GriddedNormalArtifactError> {
-        let actual_bytes = self
-            .file
+    pub(crate) fn block_source(
+        &self,
+    ) -> Result<GriddedNormalArtifactBlockSource, GriddedNormalArtifactError> {
+        let file = File::open(&self.path).map_err(|source| GriddedNormalArtifactError::Io {
+            operation: "open artifact for replay",
+            source,
+        })?;
+        let actual_bytes = file
             .metadata()
             .map_err(|source| GriddedNormalArtifactError::Io {
                 operation: "inspect artifact before replay",
@@ -771,57 +694,33 @@ impl GriddedNormalReplayArtifact {
                 actual: actual_bytes,
             });
         }
-        let mut measurements = MutableReadMeasurements {
-            transferred_bytes: 0,
-            operations: 0,
-        };
-        let mut header = [0_u8; FILE_HEADER_BYTES];
-        read_exact_at(
-            &self.file,
-            &mut header,
-            0,
-            &mut measurements,
-            "read artifact header",
-        )?;
-        if !valid_file_header(&header) {
-            return Err(GriddedNormalArtifactError::InvalidFormat {
-                kind: "file header",
-            });
-        }
-        let mut global_hasher = Sha256::new();
-        global_hasher.update(header);
-        Ok(GriddedNormalArtifactReader {
-            file: &self.file,
-            buffer: &mut self.buffer,
+        Ok(GriddedNormalArtifactBlockSource {
+            file,
             budget: self.budget,
             seal: self.seal,
-            offset: FILE_HEADER_BYTES as u64,
-            global_hasher,
+            offset: 0,
+            global_hasher: Sha256::new(),
             frame_count: 0,
             record_count: 0,
             payload_bytes: 0,
-            measurements,
+            measurements: MutableReadMeasurements::default(),
+            created_slots: AtomicUsize::new(0),
+            initialized: false,
             finished: false,
             poisoned: false,
         })
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-struct FrameMetadata {
+#[derive(Debug)]
+pub(crate) struct GriddedNormalArtifactFrameStorage {
+    bytes: Vec<u8>,
     sequence: u64,
     record_count: u64,
     payload_len: usize,
 }
 
-#[derive(Debug)]
-pub(crate) struct GriddedNormalReplayFrame<'a> {
-    sequence: u64,
-    record_count: u64,
-    payload: &'a [u8],
-}
-
-impl GriddedNormalReplayFrame<'_> {
+impl GriddedNormalArtifactFrameStorage {
     pub(crate) const fn sequence(&self) -> u64 {
         self.sequence
     }
@@ -830,8 +729,17 @@ impl GriddedNormalReplayFrame<'_> {
         self.record_count
     }
 
-    pub(crate) const fn payload(&self) -> &[u8] {
-        self.payload
+    pub(crate) fn payload(&self) -> &[u8] {
+        let start = FRAME_HEADER_BYTES;
+        &self.bytes[start..start + self.payload_len]
+    }
+
+    pub(crate) fn resident_current_bytes(&self) -> u64 {
+        u64::try_from(FRAME_HEADER_BYTES + self.payload_len).unwrap_or(u64::MAX)
+    }
+
+    pub(crate) fn resident_capacity_bytes(&self) -> u64 {
+        u64::try_from(self.bytes.capacity()).unwrap_or(u64::MAX)
     }
 }
 
@@ -842,9 +750,8 @@ struct MutableReadMeasurements {
 }
 
 #[derive(Debug)]
-pub(crate) struct GriddedNormalArtifactReader<'a> {
-    file: &'a File,
-    buffer: &'a mut Vec<u8>,
+pub(crate) struct GriddedNormalArtifactBlockSource {
+    file: File,
     budget: GriddedNormalArtifactBudget,
     seal: GriddedNormalArtifactSeal,
     offset: u64,
@@ -853,43 +760,58 @@ pub(crate) struct GriddedNormalArtifactReader<'a> {
     record_count: u64,
     payload_bytes: u64,
     measurements: MutableReadMeasurements,
+    created_slots: AtomicUsize,
+    initialized: bool,
     finished: bool,
     poisoned: bool,
 }
 
-impl<'a> GriddedNormalArtifactReader<'a> {
-    pub(crate) fn next_frame(
+impl GriddedNormalArtifactBlockSource {
+    fn initialize(&mut self) -> Result<(), GriddedNormalArtifactError> {
+        if self.initialized {
+            return Ok(());
+        }
+        let mut header = [0_u8; FILE_HEADER_BYTES];
+        read_exact_at(
+            &self.file,
+            &mut header,
+            0,
+            &mut self.measurements,
+            "read artifact header",
+        )?;
+        if !valid_file_header(&header) {
+            return Err(GriddedNormalArtifactError::InvalidFormat {
+                kind: "file header",
+            });
+        }
+        self.global_hasher.update(header);
+        self.offset = FILE_HEADER_BYTES as u64;
+        self.initialized = true;
+        Ok(())
+    }
+
+    fn read_next(
         &mut self,
-    ) -> Result<Option<GriddedNormalReplayFrame<'_>>, GriddedNormalArtifactError> {
+        storage: &mut GriddedNormalArtifactFrameStorage,
+    ) -> Result<Option<(u64, u64)>, GriddedNormalArtifactError> {
         if self.poisoned {
             return Err(GriddedNormalArtifactError::ReaderPoisoned);
         }
         if self.finished {
             return Ok(None);
         }
-        match self.read_next() {
-            Ok(Some(metadata)) => Ok(Some(GriddedNormalReplayFrame {
-                sequence: metadata.sequence,
-                record_count: metadata.record_count,
-                payload: &self.buffer[..metadata.payload_len],
-            })),
-            Ok(None) => Ok(None),
-            Err(error) => {
-                self.poisoned = true;
-                Err(error)
-            }
-        }
-    }
-
-    fn read_next(&mut self) -> Result<Option<FrameMetadata>, GriddedNormalArtifactError> {
-        let mut marker = [0_u8; 8];
+        self.initialize()?;
+        let operations_before = self.measurements.operations;
         read_exact_at(
-            self.file,
-            &mut marker,
+            &self.file,
+            &mut storage.bytes[..8],
             self.offset,
             &mut self.measurements,
             "read artifact entry marker",
         )?;
+        let marker: [u8; 8] = storage.bytes[..8]
+            .try_into()
+            .expect("fixed artifact marker slice");
         if marker == FOOTER_MAGIC {
             self.read_footer(marker)?;
             self.finished = true;
@@ -898,21 +820,20 @@ impl<'a> GriddedNormalArtifactReader<'a> {
         if marker != FRAME_MAGIC {
             return Err(GriddedNormalArtifactError::InvalidFormat { kind: "frame" });
         }
-        let mut header = [0_u8; FRAME_HEADER_BYTES];
-        header[..marker.len()].copy_from_slice(&marker);
         read_exact_at(
-            self.file,
-            &mut header[marker.len()..],
+            &self.file,
+            &mut storage.bytes[marker.len()..FRAME_HEADER_BYTES],
             self.offset + marker.len() as u64,
             &mut self.measurements,
             "read artifact frame header",
         )?;
-        if !valid_version_and_length(&header, FRAME_HEADER_BYTES) {
+        let header: &[u8] = &storage.bytes[..FRAME_HEADER_BYTES];
+        if !valid_version_and_length(header, FRAME_HEADER_BYTES) {
             return Err(GriddedNormalArtifactError::InvalidFormat {
                 kind: "frame header",
             });
         }
-        let sequence = decode_u64(&header, 16);
+        let sequence = decode_u64(header, 16);
         if sequence < self.frame_count {
             return Err(GriddedNormalArtifactError::DuplicateFrame {
                 expected: self.frame_count,
@@ -925,8 +846,10 @@ impl<'a> GriddedNormalArtifactReader<'a> {
                 actual: sequence,
             });
         }
-        let record_count = decode_u64(&header, 24);
-        let payload_bytes = decode_u64(&header, 32);
+        let record_count = decode_u64(header, 24);
+        let payload_bytes = decode_u64(header, 32);
+        let expected_sha256: [u8; 32] =
+            header[40..72].try_into().expect("fixed frame digest slice");
         let payload_len = usize::try_from(payload_bytes).map_err(|_| {
             GriddedNormalArtifactError::FramePayloadTooLarge {
                 actual: usize::MAX,
@@ -961,15 +884,14 @@ impl<'a> GriddedNormalArtifactReader<'a> {
             });
         }
         read_exact_at(
-            self.file,
-            &mut self.buffer[..payload_len],
+            &self.file,
+            &mut storage.bytes[FRAME_HEADER_BYTES..FRAME_HEADER_BYTES + payload_len],
             payload_offset,
             &mut self.measurements,
             "read artifact frame payload",
         )?;
-        let expected_sha256: [u8; 32] =
-            header[40..72].try_into().expect("fixed frame digest slice");
-        let actual_sha256: [u8; 32] = Sha256::digest(&self.buffer[..payload_len]).into();
+        let payload = &storage.bytes[FRAME_HEADER_BYTES..FRAME_HEADER_BYTES + payload_len];
+        let actual_sha256: [u8; 32] = Sha256::digest(payload).into();
         if actual_sha256 != expected_sha256 {
             return Err(GriddedNormalArtifactError::FrameChecksumMismatch { sequence });
         }
@@ -982,24 +904,30 @@ impl<'a> GriddedNormalArtifactReader<'a> {
         let next_payload_bytes = self.payload_bytes.checked_add(payload_bytes).ok_or(
             GriddedNormalArtifactError::ArithmeticOverflow("replayed payload bytes"),
         )?;
-        self.global_hasher.update(header);
-        self.global_hasher.update(&self.buffer[..payload_len]);
+        self.global_hasher
+            .update(&storage.bytes[..FRAME_HEADER_BYTES + payload_len]);
         self.offset = next_offset;
         self.frame_count = next_frame_count;
         self.record_count = next_record_count;
         self.payload_bytes = next_payload_bytes;
-        Ok(Some(FrameMetadata {
-            sequence,
-            record_count,
-            payload_len,
-        }))
+        storage.sequence = sequence;
+        storage.record_count = record_count;
+        storage.payload_len = payload_len;
+        let operations = self
+            .measurements
+            .operations
+            .checked_sub(operations_before)
+            .ok_or(GriddedNormalArtifactError::ArithmeticOverflow(
+                "artifact frame read operations",
+            ))?;
+        Ok(Some((payload_bytes, operations)))
     }
 
     fn read_footer(&mut self, marker: [u8; 8]) -> Result<(), GriddedNormalArtifactError> {
         let mut footer = [0_u8; FOOTER_BYTES];
         footer[..marker.len()].copy_from_slice(&marker);
         read_exact_at(
-            self.file,
+            &self.file,
             &mut footer[marker.len()..],
             self.offset + marker.len() as u64,
             &mut self.measurements,
@@ -1065,7 +993,7 @@ impl<'a> GriddedNormalArtifactReader<'a> {
         Ok(())
     }
 
-    pub(crate) fn complete(
+    fn complete_read(
         self,
     ) -> Result<GriddedNormalArtifactReadCompletion, GriddedNormalArtifactError> {
         if self.poisoned {
@@ -1085,6 +1013,11 @@ impl<'a> GriddedNormalArtifactReader<'a> {
         let sha256_calls = self.frame_count.checked_add(1).ok_or(
             GriddedNormalArtifactError::ArithmeticOverflow("artifact checksum calls"),
         )?;
+        let slots = u64::try_from(self.created_slots.load(Ordering::Acquire))
+            .map_err(|_| GriddedNormalArtifactError::ArithmeticOverflow("artifact source slots"))?;
+        let peak_buffer_bytes = self.budget.io_buffer_bytes.checked_mul(slots).ok_or(
+            GriddedNormalArtifactError::ArithmeticOverflow("artifact source buffer residency"),
+        )?;
         Ok(GriddedNormalArtifactReadCompletion {
             seal: self.seal,
             measurements: GriddedNormalArtifactMeasurements {
@@ -1097,9 +1030,64 @@ impl<'a> GriddedNormalArtifactReader<'a> {
                 operations: self.measurements.operations,
                 sha256_bytes,
                 sha256_calls,
-                peak_buffer_bytes: self.budget.io_buffer_bytes,
+                peak_buffer_bytes,
             },
         })
+    }
+}
+
+impl OrderedBlockSource for GriddedNormalArtifactBlockSource {
+    type Storage = GriddedNormalArtifactFrameStorage;
+    type Completion = GriddedNormalArtifactReadCompletion;
+    type Error = GriddedNormalArtifactError;
+
+    fn create_storage(&self, slot: usize) -> Self::Storage {
+        self.created_slots.fetch_max(slot + 1, Ordering::AcqRel);
+        let bytes = usize::try_from(self.budget.io_buffer_bytes)
+            .expect("validated gridded-normal buffer capacity fits usize");
+        GriddedNormalArtifactFrameStorage {
+            bytes: vec![0; bytes],
+            sequence: 0,
+            record_count: 0,
+            payload_len: 0,
+        }
+    }
+
+    fn fill(
+        &mut self,
+        _block_ordinal: u64,
+        storage: &mut Self::Storage,
+        cancellation: SourceFillCancellation<'_>,
+    ) -> Result<SourcePoll, Self::Error> {
+        if cancellation.is_cancelled() {
+            return Ok(SourcePoll::Exhausted);
+        }
+        // Finish an admitted frame once its positional read has started so
+        // offset, checksum, and measurement state stay atomic. The executor
+        // checks cancellation again after fill and discards that frame before
+        // publishing it when cancellation arrived during the bounded read.
+        let result = self.read_next(storage);
+        let result = match result {
+            Ok(result) => result,
+            Err(error) => {
+                self.poisoned = true;
+                return Err(error);
+            }
+        };
+        let Some((logical_bytes, source_read_operations)) = result else {
+            return Ok(SourcePoll::Exhausted);
+        };
+        Ok(SourcePoll::Ready {
+            source_ordinal: 0,
+            logical_bytes,
+            source_read_operations,
+            resident_current_bytes: storage.resident_current_bytes(),
+            resident_capacity_bytes: storage.resident_capacity_bytes(),
+        })
+    }
+
+    fn complete(self) -> Result<Self::Completion, Self::Error> {
+        self.complete_read()
     }
 }
 
@@ -1291,14 +1279,22 @@ fn write_bytes(
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::{
+        collections::{BTreeMap, BTreeSet},
+        convert::Infallible,
+        fs::OpenOptions,
+        path::Path,
+    };
 
     use super::*;
+    use crate::bounded_stream::{
+        BlockIdentity, BoundedStreamError, BoundedStreamPlan, KernelPartition, PartitionedKernel,
+        WorkIdentity, execute_bounded,
+    };
     use crate::resource_authority::{
-        CapacityDomainId, CpuClassCapacity, ExternalPressure, HostInventory, LeaseResource,
-        MemoryCapacityDomain, MemoryCapacityKind, MemoryView, QueueResource, QueueResourceId,
+        CapacityDomainId, CpuClassCapacity, ExternalPressure, HostInventory, MemoryCapacityDomain,
+        MemoryCapacityKind, MemoryView, MemoryViewKind, QueueResource, QueueResourceId,
         RateResource, RateResourceId, RateUnit, ResourceTopology, StorageDomain, StorageDomainId,
-        StorageUseKind,
     };
 
     const TEST_CAPACITY_BYTES: u64 = 4_096;
@@ -1377,33 +1373,32 @@ mod tests {
             .expect("valid artifact budget")
     }
 
-    fn sealed_two_frame_artifact() -> (
-        tempfile::TempDir,
-        ResourceAuthority,
-        GriddedNormalReplayArtifact,
-    ) {
+    fn sealed_two_frame_artifact() -> (tempfile::TempDir, GriddedNormalReplayArtifact) {
         let root = tempfile::tempdir().expect("artifact root");
-        let (authority, storage) = test_authority(root.path(), TEST_CAPACITY_BYTES);
-        let mut writer = GriddedNormalArtifactWriter::create(
-            &authority,
-            ResourcePolicy::Exclusive,
-            &storage,
-            budget(TEST_CAPACITY_BYTES),
-        )
-        .expect("artifact writer");
+        let (_authority, storage) = test_authority(root.path(), TEST_CAPACITY_BYTES);
+        let mut writer = GriddedNormalArtifactWriter::create(&storage, budget(TEST_CAPACITY_BYTES))
+            .expect("artifact writer");
         writer
             .append_frame(0, 2, b"first-frame")
             .expect("first frame");
         writer.append_frame(1, 1, b"second").expect("second frame");
         let artifact = writer.seal().expect("sealed artifact");
-        (root, authority, artifact)
+        (root, artifact)
     }
 
-    fn assert_root_is_unlinked(root: &Path) {
+    fn assert_private_file_count(root: &Path, expected: usize) {
         assert_eq!(
             std::fs::read_dir(root).expect("read artifact root").count(),
-            0
+            expected
         );
+    }
+
+    fn artifact_file(artifact: &GriddedNormalReplayArtifact) -> File {
+        OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&artifact.path)
+            .expect("open private artifact for test mutation")
     }
 
     fn write_all_at(file: &File, mut bytes: &[u8], mut offset: u64) {
@@ -1415,10 +1410,110 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Default)]
+    struct CollectKernel {
+        payloads: Vec<(u64, u64, Vec<u8>)>,
+        storage_addresses: BTreeSet<usize>,
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct CollectCompletion {
+        payloads: Vec<(u64, u64, Vec<u8>)>,
+        storage_addresses: BTreeSet<usize>,
+    }
+
+    impl PartitionedKernel<GriddedNormalArtifactFrameStorage> for CollectKernel {
+        type Partition = ();
+        type Partial = ();
+        type Completion = CollectCompletion;
+        type Error = Infallible;
+
+        fn partition_count(
+            &self,
+            _block: BlockIdentity,
+            _storage: &GriddedNormalArtifactFrameStorage,
+        ) -> Result<usize, Self::Error> {
+            Ok(1)
+        }
+
+        fn partition(
+            &self,
+            _block: BlockIdentity,
+            _storage: &GriddedNormalArtifactFrameStorage,
+            _local_ordinal: usize,
+        ) -> Result<KernelPartition<Self::Partition>, Self::Error> {
+            Ok(KernelPartition::exclusive(0, 0, ()))
+        }
+
+        fn execute(
+            &self,
+            _work: WorkIdentity,
+            _storage: &GriddedNormalArtifactFrameStorage,
+            _partition: &Self::Partition,
+        ) -> Result<Self::Partial, Self::Error> {
+            Ok(())
+        }
+
+        fn commit(
+            &mut self,
+            _work: WorkIdentity,
+            storage: &GriddedNormalArtifactFrameStorage,
+            (): Self::Partial,
+        ) -> Result<(), Self::Error> {
+            self.storage_addresses
+                .insert(storage.bytes.as_ptr() as usize);
+            self.payloads.push((
+                storage.sequence(),
+                storage.record_count(),
+                storage.payload().to_vec(),
+            ));
+            Ok(())
+        }
+
+        fn complete(self) -> Result<Self::Completion, Self::Error> {
+            Ok(CollectCompletion {
+                payloads: self.payloads,
+                storage_addresses: self.storage_addresses,
+            })
+        }
+    }
+
+    fn execute_artifact(
+        artifact: &GriddedNormalReplayArtifact,
+        slots: usize,
+    ) -> Result<
+        crate::bounded_stream::BoundedStreamOutcome<
+            GriddedNormalArtifactReadCompletion,
+            CollectCompletion,
+        >,
+        crate::bounded_stream::BoundedStreamFailure<GriddedNormalArtifactError, Infallible>,
+    > {
+        let capacity = artifact
+            .budget
+            .io_buffer_bytes()
+            .checked_mul(u64::try_from(slots).expect("slot count fits u64"))
+            .expect("source capacity");
+        execute_bounded(
+            BoundedStreamPlan::new::<(), ()>(slots, 1, capacity, 1, 0)
+                .expect("bounded artifact plan"),
+            0,
+            artifact.block_source().expect("artifact source"),
+            CollectKernel::default(),
+        )
+    }
+
+    fn artifact_source_error(artifact: &GriddedNormalReplayArtifact) -> GriddedNormalArtifactError {
+        let failure = execute_artifact(artifact, 1).expect_err("artifact source must fail");
+        match *failure.cause {
+            BoundedStreamError::Source(error) => error,
+            other => panic!("unexpected bounded-stream failure: {other:?}"),
+        }
+    }
+
     #[test]
     fn opaque_frames_round_trip_with_exact_integrity_and_io_measurements() {
-        let (root, _authority, mut artifact) = sealed_two_frame_artifact();
-        assert_root_is_unlinked(root.path());
+        let (root, artifact) = sealed_two_frame_artifact();
+        assert_private_file_count(root.path(), 1);
         let seal = artifact.seal();
         assert_eq!(seal.frame_count(), 2);
         assert_eq!(seal.record_count(), 3);
@@ -1449,24 +1544,13 @@ mod tests {
             Some((expected_artifact_bytes, 4))
         );
 
-        let buffer_address = artifact.buffer.as_ptr();
-        let mut reader = artifact.reader().expect("artifact reader");
-        let first = reader
-            .next_frame()
-            .expect("first frame read")
-            .expect("first frame present");
-        assert_eq!(first.sequence(), 0);
-        assert_eq!(first.record_count(), 2);
-        assert_eq!(first.payload(), b"first-frame");
-        let second = reader
-            .next_frame()
-            .expect("second frame read")
-            .expect("second frame present");
-        assert_eq!(second.sequence(), 1);
-        assert_eq!(second.record_count(), 1);
-        assert_eq!(second.payload(), b"second");
-        assert!(reader.next_frame().expect("terminal footer").is_none());
-        let completion = reader.complete().expect("complete artifact read");
+        let outcome = execute_artifact(&artifact, 1).expect("bounded artifact replay");
+        assert_eq!(
+            outcome.kernel_completion.payloads,
+            vec![(0, 2, b"first-frame".to_vec()), (1, 1, b"second".to_vec())]
+        );
+        assert_eq!(outcome.kernel_completion.storage_addresses.len(), 1);
+        let completion = outcome.source_completion;
         assert_eq!(completion.seal(), seal);
         let read = completion.measurements();
         assert_eq!(read.artifact_bytes(), expected_artifact_bytes);
@@ -1482,195 +1566,149 @@ mod tests {
             read.io_measurement().actual(),
             Some((expected_artifact_bytes, 10))
         );
-        assert_eq!(artifact.buffer.as_ptr(), buffer_address);
-
-        let mut second_reader = artifact.reader().expect("second replay reader");
-        while second_reader
-            .next_frame()
-            .expect("second replay frame")
-            .is_some()
-        {}
-        second_reader.complete().expect("second replay completion");
-        assert_eq!(artifact.buffer.as_ptr(), buffer_address);
-        assert_root_is_unlinked(root.path());
+        let second = execute_artifact(&artifact, 1).expect("second bounded replay");
+        assert_eq!(second.kernel_completion.payloads.len(), 2);
+        assert_private_file_count(root.path(), 1);
     }
 
     #[test]
-    fn capacity_and_file_descriptor_lease_remain_until_artifact_drop() {
-        let root = tempfile::tempdir().expect("artifact root");
-        let retained_bytes = 700;
-        let (authority, storage) = test_authority(root.path(), 1_000);
-        let writer = GriddedNormalArtifactWriter::create(
-            &authority,
-            ResourcePolicy::Exclusive,
-            &storage,
-            budget(retained_bytes),
-        )
-        .expect("first writer");
-        assert_eq!(
-            writer._lease.declared_limit(&LeaseResource::Storage {
-                demand_id: STORAGE_DEMAND_ID.to_string(),
-                use_kind: StorageUseKind::Temporary,
-            }),
-            Some(retained_bytes)
-        );
-        assert_eq!(
-            writer
-                ._lease
-                .declared_limit(&LeaseResource::FileDescriptors),
-            Some(1)
-        );
-        assert_eq!(
-            writer._lease.declared_limit(&LeaseResource::Memory {
-                allocation_id: BUFFER_ALLOCATION_ID.to_string(),
-            }),
-            Some((FRAME_HEADER_BYTES + TEST_FRAME_PAYLOAD_BYTES) as u64)
-        );
-        assert_eq!(
-            writer
-                ._lease
-                .declared_limit(&LeaseResource::IoBuffer(IoBufferKind::SpillRead)),
-            Some((FRAME_HEADER_BYTES + TEST_FRAME_PAYLOAD_BYTES) as u64)
-        );
-        assert_root_is_unlinked(root.path());
-        let artifact = writer.seal().expect("sealed empty artifact");
-        let rejection = GriddedNormalArtifactWriter::create(
-            &authority,
-            ResourcePolicy::Exclusive,
-            &storage,
-            budget(retained_bytes),
-        )
-        .expect_err("retained temporary capacity must prevent over-admission");
-        let GriddedNormalArtifactError::Resource(resource) = rejection else {
-            panic!("unexpected second admission error: {rejection}");
-        };
-        assert_eq!(resource.required(), Some(retained_bytes));
-        assert_eq!(resource.available(), Some(300));
+    fn sealed_artifact_owns_only_a_private_deletion_path() {
+        let (root, artifact) = sealed_two_frame_artifact();
+        assert_private_file_count(root.path(), 1);
+        execute_artifact(&artifact, 1).expect("first plan-scoped open");
+        execute_artifact(&artifact, 2).expect("second plan-scoped open");
         drop(artifact);
+        assert_private_file_count(root.path(), 0);
+    }
 
-        let replacement = GriddedNormalArtifactWriter::create(
-            &authority,
-            ResourcePolicy::Exclusive,
-            &storage,
-            budget(retained_bytes),
-        )
-        .expect("synchronous drop releases retained resources");
-        drop(replacement);
-        assert_root_is_unlinked(root.path());
+    #[test]
+    fn one_and_two_slot_sources_are_equivalent_and_reuse_bounded_storage() {
+        let (_root, artifact) = sealed_two_frame_artifact();
+        let inline = execute_artifact(&artifact, 1).expect("one-slot replay");
+        let overlapped = execute_artifact(&artifact, 2).expect("two-slot replay");
+        assert_eq!(
+            inline.kernel_completion.payloads,
+            overlapped.kernel_completion.payloads
+        );
+        assert_eq!(inline.kernel_completion.storage_addresses.len(), 1);
+        assert!(overlapped.kernel_completion.storage_addresses.len() <= 2);
+        assert_eq!(inline.measurements.source_slots, 1);
+        assert_eq!(overlapped.measurements.source_slots, 2);
+        assert_eq!(
+            inline.source_completion.measurements().peak_buffer_bytes(),
+            artifact.budget.io_buffer_bytes()
+        );
+        assert_eq!(
+            overlapped
+                .source_completion
+                .measurements()
+                .peak_buffer_bytes(),
+            artifact.budget.io_buffer_bytes() * 2
+        );
     }
 
     #[test]
     fn partial_read_cannot_mint_completion() {
-        let (_root, _authority, mut artifact) = sealed_two_frame_artifact();
-        let mut reader = artifact.reader().expect("artifact reader");
-        assert!(reader.next_frame().expect("first frame").is_some());
+        let (_root, artifact) = sealed_two_frame_artifact();
+        let mut source = artifact.block_source().expect("artifact source");
+        let mut storage = source.create_storage(0);
+        assert!(
+            source
+                .read_next(&mut storage)
+                .expect("first frame")
+                .is_some()
+        );
         assert!(matches!(
-            reader.complete(),
+            source.complete_read(),
             Err(GriddedNormalArtifactError::IncompleteRead)
         ));
     }
 
     #[test]
     fn frame_corruption_is_rejected_before_payload_emission() {
-        let (_root, _authority, mut artifact) = sealed_two_frame_artifact();
+        let (_root, artifact) = sealed_two_frame_artifact();
         let payload_offset = (FILE_HEADER_BYTES + FRAME_HEADER_BYTES) as u64;
-        write_all_at(&artifact.file, b"X", payload_offset);
-        let mut reader = artifact.reader().expect("artifact reader");
+        write_all_at(&artifact_file(&artifact), b"X", payload_offset);
         assert!(matches!(
-            reader.next_frame(),
-            Err(GriddedNormalArtifactError::FrameChecksumMismatch { sequence: 0 })
-        ));
-        assert!(matches!(
-            reader.next_frame(),
-            Err(GriddedNormalArtifactError::ReaderPoisoned)
+            artifact_source_error(&artifact),
+            GriddedNormalArtifactError::FrameChecksumMismatch { sequence: 0 }
         ));
     }
 
     #[test]
     fn truncation_and_trailing_bytes_are_rejected() {
-        let (_root, _authority, mut truncated) = sealed_two_frame_artifact();
-        truncated
-            .file
+        let (_root, truncated) = sealed_two_frame_artifact();
+        artifact_file(&truncated)
             .set_len(truncated.seal.artifact_bytes - 1)
             .expect("truncate artifact");
         assert!(matches!(
-            truncated.reader(),
+            truncated.block_source(),
             Err(GriddedNormalArtifactError::TruncatedFile { .. })
         ));
 
-        let (_root, _authority, mut trailing) = sealed_two_frame_artifact();
-        trailing
-            .file
+        let (_root, trailing) = sealed_two_frame_artifact();
+        artifact_file(&trailing)
             .set_len(trailing.seal.artifact_bytes + 1)
             .expect("extend artifact");
         assert!(matches!(
-            trailing.reader(),
+            trailing.block_source(),
             Err(GriddedNormalArtifactError::TrailingData { .. })
         ));
     }
 
     #[test]
     fn duplicate_and_reordered_frames_are_rejected() {
-        let (_root, _authority, mut duplicate) = sealed_two_frame_artifact();
+        let (_root, duplicate) = sealed_two_frame_artifact();
         let second_frame_offset =
             (FILE_HEADER_BYTES + FRAME_HEADER_BYTES + b"first-frame".len()) as u64;
         write_all_at(
-            &duplicate.file,
+            &artifact_file(&duplicate),
             &0_u64.to_le_bytes(),
             second_frame_offset + 16,
         );
-        let mut reader = duplicate.reader().expect("duplicate reader");
-        assert!(reader.next_frame().expect("first frame").is_some());
         assert!(matches!(
-            reader.next_frame(),
-            Err(GriddedNormalArtifactError::DuplicateFrame {
+            artifact_source_error(&duplicate),
+            GriddedNormalArtifactError::DuplicateFrame {
                 expected: 1,
                 actual: 0
-            })
+            }
         ));
 
-        let (_root, _authority, mut reordered) = sealed_two_frame_artifact();
+        let (_root, reordered) = sealed_two_frame_artifact();
         write_all_at(
-            &reordered.file,
+            &artifact_file(&reordered),
             &1_u64.to_le_bytes(),
             FILE_HEADER_BYTES as u64 + 16,
         );
-        let mut reader = reordered.reader().expect("reordered reader");
         assert!(matches!(
-            reader.next_frame(),
-            Err(GriddedNormalArtifactError::ReorderedFrame {
+            artifact_source_error(&reordered),
+            GriddedNormalArtifactError::ReorderedFrame {
                 expected: 0,
                 actual: 1
-            })
+            }
         ));
     }
 
     #[test]
     fn footer_counts_and_global_integrity_are_required() {
-        let (_root, _authority, mut wrong_count) = sealed_two_frame_artifact();
+        let (_root, wrong_count) = sealed_two_frame_artifact();
         let footer_frame_count_offset = wrong_count.seal.artifact_bytes - FOOTER_BYTES as u64 + 16;
         write_all_at(
-            &wrong_count.file,
+            &artifact_file(&wrong_count),
             &3_u64.to_le_bytes(),
             footer_frame_count_offset,
         );
-        let mut reader = wrong_count.reader().expect("wrong-count reader");
-        assert!(reader.next_frame().expect("first frame").is_some());
-        assert!(reader.next_frame().expect("second frame").is_some());
         assert!(matches!(
-            reader.next_frame(),
-            Err(GriddedNormalArtifactError::FooterCountMismatch)
+            artifact_source_error(&wrong_count),
+            GriddedNormalArtifactError::FooterCountMismatch
         ));
 
-        let (_root, _authority, mut artifact) = sealed_two_frame_artifact();
+        let (_root, artifact) = sealed_two_frame_artifact();
         let footer_digest_offset = artifact.seal.artifact_bytes - 32;
-        write_all_at(&artifact.file, &[0; 32], footer_digest_offset);
-        let mut reader = artifact.reader().expect("artifact reader");
-        assert!(reader.next_frame().expect("first frame").is_some());
-        assert!(reader.next_frame().expect("second frame").is_some());
+        write_all_at(&artifact_file(&artifact), &[0; 32], footer_digest_offset);
         assert!(matches!(
-            reader.next_frame(),
-            Err(GriddedNormalArtifactError::GlobalChecksumMismatch)
+            artifact_source_error(&artifact),
+            GriddedNormalArtifactError::GlobalChecksumMismatch
         ));
     }
 
@@ -1684,27 +1722,10 @@ mod tests {
             storage.resources().write_rate().clone(),
             QueueResourceId::new("foreign-queue"),
         );
-        let wrong_storage = GriddedNormalReplayStorage {
-            resources: wrong_binding,
-            directory: root.path().to_path_buf(),
-        };
-        assert!(matches!(
-            GriddedNormalArtifactWriter::create(
-                &authority,
-                ResourcePolicy::Exclusive,
-                &wrong_storage,
-                budget(TEST_CAPACITY_BYTES),
-            ),
-            Err(GriddedNormalArtifactError::StorageBindingMismatch)
-        ));
+        assert!(GriddedNormalReplayStorage::bind(&authority, wrong_binding, root.path()).is_err());
 
-        let mut writer = GriddedNormalArtifactWriter::create(
-            &authority,
-            ResourcePolicy::Exclusive,
-            &storage,
-            budget(TEST_CAPACITY_BYTES),
-        )
-        .expect("artifact writer");
+        let mut writer = GriddedNormalArtifactWriter::create(&storage, budget(TEST_CAPACITY_BYTES))
+            .expect("artifact writer");
         let oversized = vec![0; TEST_FRAME_PAYLOAD_BYTES + 1];
         assert!(matches!(
             writer.append_frame(0, 1, &oversized),
@@ -1714,7 +1735,7 @@ mod tests {
             writer.seal(),
             Err(GriddedNormalArtifactError::WriterPoisoned)
         ));
-        assert_root_is_unlinked(root.path());
+        assert_private_file_count(root.path(), 0);
     }
 
     #[test]
@@ -1723,14 +1744,9 @@ mod tests {
         let minimum_capacity =
             (FILE_HEADER_BYTES + FRAME_HEADER_BYTES + TEST_FRAME_PAYLOAD_BYTES + FOOTER_BYTES)
                 as u64;
-        let (authority, storage) = test_authority(root.path(), minimum_capacity);
-        let mut writer = GriddedNormalArtifactWriter::create(
-            &authority,
-            ResourcePolicy::Exclusive,
-            &storage,
-            budget(minimum_capacity),
-        )
-        .expect("capacity-bounded writer");
+        let (_authority, storage) = test_authority(root.path(), minimum_capacity);
+        let mut writer = GriddedNormalArtifactWriter::create(&storage, budget(minimum_capacity))
+            .expect("capacity-bounded writer");
         writer
             .append_frame(0, 4, &[7; TEST_FRAME_PAYLOAD_BYTES])
             .expect("one maximum frame fits exactly");
@@ -1744,25 +1760,14 @@ mod tests {
             writer.seal(),
             Err(GriddedNormalArtifactError::WriterPoisoned)
         ));
-        GriddedNormalArtifactWriter::create(
-            &authority,
-            ResourcePolicy::Exclusive,
-            &storage,
-            budget(minimum_capacity),
-        )
-        .expect("failed writer synchronously releases its lease");
-        assert_root_is_unlinked(root.path());
+        GriddedNormalArtifactWriter::create(&storage, budget(minimum_capacity))
+            .expect("failed writer deletes its private temporary file");
+        assert_private_file_count(root.path(), 0);
     }
 
     #[test]
-    fn artifact_error_is_a_standard_error_with_resource_conversion() {
+    fn artifact_error_is_a_standard_send_sync_error() {
         fn assert_error<T: std::error::Error + Send + Sync + 'static>() {}
         assert_error::<GriddedNormalArtifactError>();
-        let converted =
-            GriddedNormalArtifactError::from(ResourceError::Invalid("test admission".to_string()));
-        assert!(matches!(
-            converted,
-            GriddedNormalArtifactError::Resource(ResourceError::Invalid(_))
-        ));
     }
 }

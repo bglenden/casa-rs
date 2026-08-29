@@ -960,6 +960,8 @@ residual, `5.1476e-7` for model, and `6.7869e-7` for PSF; sum weight is exact.
 All pass the `0.001` ceiling. The result, comparison handles, checksums, exact
 passes, artifact bytes, and source bounds are retained in
 `tools/perf/imager/evidence/artifacts/20260829-issue540-gridded-replay-production.json`.
+The source-level mechanism and independent reproductions are recorded in the
+[canonical CASA Högbom bug note](../CASA%20(C%2B%2B)%20bugs.md#casa-hogbom-niter-off-by-one-bug).
 
 ### Complete 106.9 GiB streaming gate
 

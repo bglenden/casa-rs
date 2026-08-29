@@ -26,6 +26,10 @@ use casa_imaging_reconstruction::{
     },
 };
 
+use crate::bounded_stream::{
+    BlockIdentity, BoundedStreamError, BoundedStreamMeasurements, BoundedStreamPlan,
+    KernelPartition, PartitionedKernel, WorkIdentity, execute_bounded,
+};
 use crate::{
     AllocationAccess, AllocationId, AllocationLayout, AllocationLifetime, AllocationPurpose,
     AllocationUse, AlternativeId, CapacityDomainId, CapacityViewId, ClaimLifetime,
@@ -38,7 +42,8 @@ use crate::{
 };
 
 use crate::gridded_normal_artifact::{
-    GriddedNormalArtifactBudget, GriddedNormalArtifactMeasurements, GriddedNormalArtifactWriter,
+    GriddedNormalArtifactBudget, GriddedNormalArtifactFrameStorage,
+    GriddedNormalArtifactMeasurements, GriddedNormalArtifactWriter,
     GriddedNormalReplayArtifact as GriddedNormalSpillArtifact, GriddedNormalReplayStorage,
 };
 
@@ -49,28 +54,52 @@ use crate::gridded_normal_artifact::{
 pub struct FrozenGriddedNormalReplay {
     program: GriddedNormalOperatorProgram,
     spill: GriddedNormalSpillArtifact,
-    pre_seal_write: GriddedNormalArtifactMeasurements,
     latest_read: Option<GriddedNormalArtifactMeasurements>,
+    latest_stream: Option<BoundedStreamMeasurements>,
+}
+
+/// Plan-visible identity and sealed size of one private gridded-normal replay.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GriddedNormalReplayDescriptor {
+    identity: crate::ArtifactIdentity,
+    bytes: u64,
+}
+
+impl GriddedNormalReplayDescriptor {
+    /// Exact reconstruction-minted identity of the encoded operator program.
+    #[must_use]
+    pub const fn identity(self) -> crate::ArtifactIdentity {
+        self.identity
+    }
+
+    /// Exact sealed artifact size.
+    #[must_use]
+    pub const fn bytes(self) -> u64 {
+        self.bytes
+    }
 }
 
 pub(crate) struct GriddedNormalReplayCompilation {
     compiler: GriddedNormalOperatorCompiler,
-    writer: GriddedNormalArtifactWriter,
+    writer: Option<GriddedNormalArtifactWriter>,
+    spill: Option<GriddedNormalSpillArtifact>,
 }
 
 impl GriddedNormalReplayCompilation {
     pub(crate) fn new(
         problem: &CompiledProblem,
-        authority: &crate::ResourceAuthority,
-        policy: crate::ResourcePolicy,
+        context: WorkExecutionContext<'_>,
         storage: &GriddedNormalReplayStorage,
         max_block_samples: usize,
     ) -> io::Result<Self> {
         let budget = project_gridded_normal_artifact_budget(problem, max_block_samples)?;
+        validate_gridded_artifact_context(context, budget, crate::IoBufferKind::SpillWrite)?;
         Ok(Self {
             compiler: GriddedNormalOperatorCompiler::new(problem).map_err(io::Error::other)?,
-            writer: GriddedNormalArtifactWriter::create(authority, policy, storage, budget)
-                .map_err(io::Error::other)?,
+            writer: Some(
+                GriddedNormalArtifactWriter::create(storage, budget).map_err(io::Error::other)?,
+            ),
+            spill: None,
         })
     }
 
@@ -83,6 +112,8 @@ impl GriddedNormalReplayCompilation {
             .compile_block(block)
             .map_err(io::Error::other)?;
         self.writer
+            .as_mut()
+            .ok_or_else(|| io::Error::other("gridded-normal writer already sealed"))?
             .append_frame(
                 compiled.sequence(),
                 compiled.record_count(),
@@ -92,14 +123,33 @@ impl GriddedNormalReplayCompilation {
     }
 
     pub(crate) fn write_measurements(&self) -> GriddedNormalArtifactMeasurements {
-        self.writer.measurements()
+        self.writer.as_ref().map_or_else(
+            || {
+                self.spill
+                    .as_ref()
+                    .expect("sealed compilation retains its spill")
+                    .write_measurements()
+            },
+            GriddedNormalArtifactWriter::measurements,
+        )
+    }
+
+    pub(crate) fn seal(&mut self) -> io::Result<()> {
+        let writer = self
+            .writer
+            .take()
+            .ok_or_else(|| io::Error::other("gridded-normal writer already sealed"))?;
+        self.spill = Some(writer.seal().map_err(io::Error::other)?);
+        Ok(())
     }
 
     pub(crate) fn complete(
         self,
         replay: &WeightingReplayCompletion,
     ) -> io::Result<FrozenGriddedNormalReplay> {
-        let pre_seal_write = self.writer.measurements();
+        let spill = self
+            .spill
+            .ok_or_else(|| io::Error::other("gridded-normal writer was not sealed"))?;
         let program = self
             .compiler
             .complete(
@@ -110,7 +160,6 @@ impl GriddedNormalReplayCompilation {
                     .map(|completion| completion.generation_id()),
             )
             .map_err(io::Error::other)?;
-        let spill = self.writer.seal().map_err(io::Error::other)?;
         let seal = spill.seal();
         if seal.frame_count() != program.block_count()
             || seal.record_count() != program.record_count()
@@ -122,18 +171,57 @@ impl GriddedNormalReplayCompilation {
         Ok(FrozenGriddedNormalReplay {
             program,
             spill,
-            pre_seal_write,
             latest_read: None,
+            latest_stream: None,
         })
     }
 }
 
+fn validate_gridded_artifact_context(
+    context: WorkExecutionContext<'_>,
+    budget: GriddedNormalArtifactBudget,
+    io_kind: crate::IoBufferKind,
+) -> io::Result<()> {
+    let claims = &context.node().claims;
+    let has_buffer = claims.iter().any(|claim| {
+        claim.resource == LeaseResource::IoBuffer(io_kind)
+            && claim.amount >= budget.io_buffer_bytes()
+    });
+    let has_storage = claims.iter().any(|claim| {
+        matches!(
+            claim.resource,
+            LeaseResource::Storage {
+                use_kind: crate::StorageUseKind::Temporary,
+                ..
+            }
+        ) && claim.amount >= budget.maximum_artifact_bytes()
+    });
+    let has_file = claims
+        .iter()
+        .any(|claim| claim.resource == LeaseResource::FileDescriptors && claim.amount >= 1);
+    let has_rate = claims
+        .iter()
+        .any(|claim| matches!(claim.resource, LeaseResource::Rate { .. }));
+    let has_queue = claims
+        .iter()
+        .any(|claim| matches!(claim.resource, LeaseResource::Queue { .. }));
+    if has_buffer && has_storage && has_file && has_rate && has_queue {
+        Ok(())
+    } else {
+        Err(io::Error::other(
+            "gridded-normal artifact work lacks its complete planned resource claims",
+        ))
+    }
+}
+
 impl FrozenGriddedNormalReplay {
-    pub(crate) fn seal_write_measurements(&self) -> io::Result<GriddedNormalArtifactMeasurements> {
-        self.spill
-            .write_measurements()
-            .difference_since(self.pre_seal_write)
-            .map_err(io::Error::other)
+    /// Return the immutable descriptor consumed by later-major planning.
+    #[must_use]
+    pub fn descriptor(&self) -> GriddedNormalReplayDescriptor {
+        GriddedNormalReplayDescriptor {
+            identity: crate::ArtifactIdentity::from_logical_identity(self.program.identity()),
+            bytes: self.spill.seal().artifact_bytes(),
+        }
     }
 
     pub(crate) const fn latest_read_measurements(
@@ -142,30 +230,128 @@ impl FrozenGriddedNormalReplay {
         self.latest_read
     }
 
-    pub(crate) fn replay(&mut self, state: &mut GriddedNormalOperatorState) -> io::Result<()> {
-        let mut reader = self.spill.reader().map_err(io::Error::other)?;
-        while let Some(frame) = reader.next_frame().map_err(io::Error::other)? {
-            let sequence = frame.sequence();
-            if frame.record_count()
-                != u64::try_from(frame.payload().len() / GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
-                    .map_err(|_| io::Error::other("gridded-normal frame count overflow"))?
-            {
-                return Err(io::Error::other(
-                    "gridded-normal frame record count disagrees with payload",
-                ));
-            }
-            state
-                .apply_encoded_block(sequence, frame.payload())
-                .map_err(io::Error::other)?;
+    pub(crate) const fn latest_stream_measurements(&self) -> Option<BoundedStreamMeasurements> {
+        self.latest_stream
+    }
+
+    pub(crate) fn execute_bounded(
+        &mut self,
+        context: WorkExecutionContext<'_>,
+        pass_ordinal: u32,
+        state: GriddedNormalOperatorState,
+    ) -> io::Result<CompleteDataOperatorResult> {
+        let budget = self.spill.budget();
+        validate_gridded_artifact_context(context, budget, crate::IoBufferKind::SpillRead)?;
+        let source_capacity_bytes = context
+            .node()
+            .claims
+            .iter()
+            .find_map(|claim| {
+                (claim.resource == LeaseResource::IoBuffer(crate::IoBufferKind::SpillRead))
+                    .then_some(claim.amount)
+            })
+            .ok_or_else(|| io::Error::other("gridded-normal replay buffer claim missing"))?;
+        let per_slot = budget.io_buffer_bytes();
+        if source_capacity_bytes % per_slot != 0 {
+            return Err(io::Error::other(
+                "gridded-normal replay buffer claim is not an exact frame-slot multiple",
+            ));
         }
-        let completion = reader.complete().map_err(io::Error::other)?;
+        let source_slots = usize::try_from(source_capacity_bytes / per_slot)
+            .map_err(|_| io::Error::other("gridded-normal replay slot count overflow"))?;
+        let plan = BoundedStreamPlan::new::<(), ()>(source_slots, 1, source_capacity_bytes, 1, 0)
+            .map_err(|_| io::Error::other("invalid gridded-normal bounded-stream plan"))?;
+        let source = self.spill.block_source().map_err(io::Error::other)?;
+        let outcome = execute_bounded(
+            plan,
+            pass_ordinal,
+            source,
+            GriddedNormalReplayKernel { state },
+        )
+        .map_err(|failure| match *failure.cause {
+            BoundedStreamError::Source(error) => io::Error::other(error),
+            BoundedStreamError::Kernel(error) => io::Error::other(error),
+            BoundedStreamError::MeasurementOverflow => {
+                io::Error::other("gridded-normal stream measurement overflow")
+            }
+            BoundedStreamError::InvalidKernelPlan => {
+                io::Error::other("invalid gridded-normal kernel plan")
+            }
+            BoundedStreamError::ResidencyExceeded => {
+                io::Error::other("gridded-normal stream exceeded planned residency")
+            }
+            BoundedStreamError::ProducerPanicked => {
+                io::Error::other("gridded-normal source producer panicked")
+            }
+            BoundedStreamError::ProducerDisconnected => {
+                io::Error::other("gridded-normal source producer disconnected")
+            }
+        })?;
+        let completion = outcome.source_completion;
         if completion.seal() != self.spill.seal() {
             return Err(io::Error::other(
                 "gridded-normal read completion changed the sealed artifact",
             ));
         }
         self.latest_read = Some(completion.measurements());
+        self.latest_stream = Some(outcome.measurements);
+        Ok(outcome.kernel_completion)
+    }
+}
+
+struct GriddedNormalReplayKernel {
+    state: GriddedNormalOperatorState,
+}
+
+impl PartitionedKernel<GriddedNormalArtifactFrameStorage> for GriddedNormalReplayKernel {
+    type Partition = ();
+    type Partial = ();
+    type Completion = CompleteDataOperatorResult;
+    type Error = CompleteDataOperatorError;
+
+    fn partition_count(
+        &self,
+        _block: BlockIdentity,
+        _storage: &GriddedNormalArtifactFrameStorage,
+    ) -> Result<usize, Self::Error> {
+        Ok(1)
+    }
+
+    fn partition(
+        &self,
+        _block: BlockIdentity,
+        _storage: &GriddedNormalArtifactFrameStorage,
+        _local_ordinal: usize,
+    ) -> Result<KernelPartition<Self::Partition>, Self::Error> {
+        Ok(KernelPartition::exclusive(0, 0, ()))
+    }
+
+    fn execute(
+        &self,
+        _work: WorkIdentity,
+        _storage: &GriddedNormalArtifactFrameStorage,
+        _partition: &Self::Partition,
+    ) -> Result<Self::Partial, Self::Error> {
         Ok(())
+    }
+
+    fn commit(
+        &mut self,
+        _work: WorkIdentity,
+        storage: &GriddedNormalArtifactFrameStorage,
+        (): Self::Partial,
+    ) -> Result<(), Self::Error> {
+        let records = u64::try_from(storage.payload().len() / GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
+            .map_err(|_| CompleteDataOperatorError::ExecutionBinding)?;
+        if storage.record_count() != records {
+            return Err(CompleteDataOperatorError::ExecutionBinding);
+        }
+        self.state
+            .apply_encoded_block(storage.sequence(), storage.payload())
+    }
+
+    fn complete(self) -> Result<Self::Completion, Self::Error> {
+        self.state.complete()
     }
 }
 
