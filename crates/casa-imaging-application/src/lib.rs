@@ -363,8 +363,7 @@ where
         complete_data: complete,
         source_resources: resources,
         pass,
-        gridded_normal_storage: planned_storage,
-        gridded_normal_reservation_bytes,
+        gridded_normal: planned_gridded_normal,
         ..
     } = planned.into_parts();
     let replay_proof_bytes = initial_access.replay_proof_retained_heap_bytes(problem)?;
@@ -395,12 +394,9 @@ where
         executor = executor.with_frozen_weighting_reservation(
             frozen_reservation.expect("non-dirty execution reserves frozen weighting"),
         );
-        executor = executor.with_planned_gridded_normal_storage(
-            &planned_storage
-                .ok_or_else(|| boxed("clean initial plan omitted gridded replay storage"))?,
-            gridded_normal_reservation_bytes.ok_or_else(|| {
-                boxed("clean initial plan omitted gridded replay reservation ceiling")
-            })?,
+        executor = executor.with_planned_gridded_normal_binding(
+            planned_gridded_normal
+                .ok_or_else(|| boxed("clean initial plan omitted gridded replay binding"))?,
         )?;
         let program = MinorCycleProgram::for_algorithm(
             algorithm.clone(),
@@ -592,7 +588,7 @@ where
                         final_policy,
                         &final_input,
                         ordinal,
-                        gridded_replay.descriptor(),
+                        gridded_replay,
                     )?
                 } else {
                     SpectralCyclePlan::final_major_at(
@@ -601,7 +597,7 @@ where
                         final_policy,
                         &final_input,
                         ordinal,
-                        gridded_replay.descriptor(),
+                        gridded_replay,
                     )?
                 };
                 let SpectralCyclePlanParts {
@@ -610,9 +606,7 @@ where
                     complete_data: complete,
                     pass,
                     minor_cycle_node: minor_node,
-                    gridded_replay: planned_replay,
-                    gridded_normal_storage: planned_storage,
-                    gridded_normal_reservation_bytes: retained_storage_bytes,
+                    gridded_normal: planned_gridded_normal,
                     ..
                 } = final_planned.into_parts();
                 let mut executor = SpectralCycleExecutor::new_gridded(
@@ -623,14 +617,8 @@ where
                     complete,
                     ExecutableModelProblem::from_compiled(problem.clone())?,
                     SpectralCyclePassInput::FinalMajor(final_input),
-                    planned_replay
-                        .ok_or_else(|| boxed("later-major plan omitted gridded replay identity"))?,
-                    &planned_storage
-                        .ok_or_else(|| boxed("later-major plan omitted gridded replay storage"))?,
-                    retained_storage_bytes.ok_or_else(|| {
-                        boxed("later-major plan omitted retained replay storage ceiling")
-                    })?,
-                    gridded_replay,
+                    planned_gridded_normal
+                        .ok_or_else(|| boxed("later-major plan omitted gridded replay binding"))?,
                 )?
                 .with_frozen_weighting(frozen_weighting);
                 if continue_cleaning {

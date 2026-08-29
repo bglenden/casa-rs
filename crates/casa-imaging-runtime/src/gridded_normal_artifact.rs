@@ -59,7 +59,7 @@ impl GriddedNormalReplayStorage {
 #[derive(Debug)]
 pub(crate) struct GriddedNormalArtifactRetention {
     _permit: crate::RetainedArtifactPermit,
-    resources: StorageIoResourceBinding,
+    storage: GriddedNormalReplayStorage,
     bytes: u64,
 }
 
@@ -76,17 +76,13 @@ impl GriddedNormalArtifactRetention {
         }
         Ok(Self {
             _permit: permit,
-            resources: storage.resources().clone(),
+            storage: storage.clone(),
             bytes,
         })
     }
 
-    pub(crate) fn validates_bytes(
-        &self,
-        storage: &GriddedNormalReplayStorage,
-        maximum_bytes: u64,
-    ) -> bool {
-        self.resources == *storage.resources() && self.bytes >= maximum_bytes
+    pub(crate) fn validates_bytes(&self, storage: &GriddedNormalReplayStorage, bytes: u64) -> bool {
+        self.storage == *storage && self.bytes == bytes
     }
 }
 
