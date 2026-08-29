@@ -1289,23 +1289,6 @@ fn append_gridded_spill_resources<R: ImplementationRegistry>(
         .checked_mul(source_slots)
         .ok_or(SpectralCyclePlanError::Overflow)?;
     let lifetime = ClaimLifetime::through_fence(FenceKind::Io);
-    let executor_window = if matches!(direction, GriddedSpillDirection::Read) {
-        let plan = crate::complete_data_operator::project_gridded_normal_replay_stream_plan(
-            budget,
-            usize::try_from(source_slots).map_err(|_| SpectralCyclePlanError::Overflow)?,
-            usize::try_from(policy.workers).map_err(|_| SpectralCyclePlanError::Overflow)?,
-            buffer_bytes,
-        )
-        .map_err(|_| SpectralCyclePlanError::Overflow)?;
-        Some((
-            crate::complete_data_operator::gridded_normal_executor_window_allocation(
-                pass.ordinal(),
-            ),
-            plan.kernel_heap_capacity_bytes(),
-        ))
-    } else {
-        None
-    };
     let mut nodes = base
         .execution_dag()
         .nodes()
@@ -1388,12 +1371,6 @@ fn append_gridded_spill_resources<R: ImplementationRegistry>(
         allocation: allocation.clone(),
         lifetime: lifetime.clone(),
     });
-    if let Some((executor_allocation, _)) = &executor_window {
-        owner.allocations.push(AllocationUse {
-            allocation: executor_allocation.clone(),
-            lifetime: lifetime.clone(),
-        });
-    }
     let compatibility = SlotCompatibility {
         memory_domain: CapacityDomainId::new("host-memory"),
         views: BTreeSet::from([CapacityViewId::new("host-memory")]),
@@ -1411,14 +1388,6 @@ fn append_gridded_spill_resources<R: ImplementationRegistry>(
         preferred_bytes: buffer_bytes,
         views: vec![CapacityViewId::new("host-memory")],
     });
-    if let Some((executor_allocation, executor_bytes)) = &executor_window {
-        alternative.demand.memory.push(MemoryDemand {
-            allocation_id: executor_allocation.as_str().to_string(),
-            hard_bytes: *executor_bytes,
-            preferred_bytes: *executor_bytes,
-            views: vec![CapacityViewId::new("host-memory")],
-        });
-    }
     alternative.demand.storage.push(StorageDemand {
         demand_id: storage_id,
         domain: storage.resources().domain().clone(),
@@ -1477,74 +1446,6 @@ fn append_gridded_spill_resources<R: ImplementationRegistry>(
             alternative.demand.io_buffers.spill_write_bytes = buffer_bytes;
         }
     }
-    let mut logical_allocations = base
-        .execution_dag()
-        .logical_allocations()
-        .values()
-        .cloned()
-        .chain([LogicalAllocation {
-            id: allocation.clone(),
-            bytes: buffer_bytes,
-            purpose: AllocationPurpose::IoBuffer(io_kind),
-            compatibility: compatibility.clone(),
-            physical_slot: slot.clone(),
-            lifetime: AllocationLifetime {
-                acquire_at: node.clone(),
-                release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
-                    node.clone(),
-                    FenceKind::Io,
-                ))]),
-            },
-        }])
-        .collect::<Vec<_>>();
-    let mut physical_slots = base
-        .execution_dag()
-        .physical_slots()
-        .values()
-        .cloned()
-        .chain([PhysicalSlot {
-            id: slot,
-            lease_resource: LeaseResource::Memory {
-                allocation_id: allocation.as_str().to_string(),
-            },
-            capacity_bytes: buffer_bytes,
-            compatibility,
-        }])
-        .collect::<Vec<_>>();
-    if let Some((executor_allocation, executor_bytes)) = executor_window {
-        let executor_slot = PhysicalSlotId::new(format!("{}-slot", executor_allocation.as_str()));
-        let executor_compatibility = SlotCompatibility {
-            memory_domain: CapacityDomainId::new("host-memory"),
-            views: BTreeSet::from([CapacityViewId::new("host-memory")]),
-            alignment_bytes: 64,
-            storage_mode: StorageMode::Host,
-            layout: AllocationLayout::new("gridded-normal-bounded-executor-window"),
-            initialization: InitializationPolicy::OverwriteBeforeRead,
-            access: AllocationAccess::ReadWrite,
-        };
-        logical_allocations.push(LogicalAllocation {
-            id: executor_allocation.clone(),
-            bytes: executor_bytes,
-            purpose: AllocationPurpose::Data,
-            compatibility: executor_compatibility.clone(),
-            physical_slot: executor_slot.clone(),
-            lifetime: AllocationLifetime {
-                acquire_at: node.clone(),
-                release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
-                    node.clone(),
-                    FenceKind::Io,
-                ))]),
-            },
-        });
-        physical_slots.push(PhysicalSlot {
-            id: executor_slot,
-            lease_resource: LeaseResource::Memory {
-                allocation_id: executor_allocation.as_str().to_string(),
-            },
-            capacity_bytes: executor_bytes,
-            compatibility: executor_compatibility,
-        });
-    }
     let dag = ExecutionDag::new(ExecutionDagSpecification {
         required_resource_capabilities: base
             .execution_dag()
@@ -1552,8 +1453,40 @@ fn append_gridded_spill_resources<R: ImplementationRegistry>(
             .clone(),
         resource_alternative: alternative,
         nodes,
-        logical_allocations,
-        physical_slots,
+        logical_allocations: base
+            .execution_dag()
+            .logical_allocations()
+            .values()
+            .cloned()
+            .chain([LogicalAllocation {
+                id: allocation.clone(),
+                bytes: buffer_bytes,
+                purpose: AllocationPurpose::IoBuffer(io_kind),
+                compatibility: compatibility.clone(),
+                physical_slot: slot.clone(),
+                lifetime: AllocationLifetime {
+                    acquire_at: node.clone(),
+                    release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
+                        node.clone(),
+                        FenceKind::Io,
+                    ))]),
+                },
+            }])
+            .collect(),
+        physical_slots: base
+            .execution_dag()
+            .physical_slots()
+            .values()
+            .cloned()
+            .chain([PhysicalSlot {
+                id: slot,
+                lease_resource: LeaseResource::Memory {
+                    allocation_id: allocation.as_str().to_string(),
+                },
+                capacity_bytes: buffer_bytes,
+                compatibility,
+            }])
+            .collect(),
         initial_knobs: base.execution_dag().initial_knobs().clone(),
         adaptations: base
             .execution_dag()

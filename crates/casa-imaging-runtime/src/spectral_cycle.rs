@@ -758,15 +758,11 @@ pub struct SpectralCycleExecutor {
 pub struct CompleteDataStreamEvidence {
     planned_workers: u64,
     actual_workers: u64,
-    blocks_filled: u64,
-    worker_threads_started: u64,
-    dispatch_batches: u64,
     active_worker_slots: u64,
     partitions_executed: u64,
     commits_completed: u64,
     peak_partial_dynamic_capacity_bytes: u64,
     peak_worker_stack_capacity_bytes: u64,
-    planned_kernel_window_capacity_bytes: u64,
     peak_kernel_window_capacity_bytes: u64,
     prepare_nanos: u128,
     execute_nanos: u128,
@@ -789,24 +785,6 @@ impl CompleteDataStreamEvidence {
     #[must_use]
     pub const fn actual_workers(self) -> u64 {
         self.actual_workers
-    }
-
-    /// Return exact source blocks admitted to the complete-data executor.
-    #[must_use]
-    pub const fn blocks_filled(self) -> u64 {
-        self.blocks_filled
-    }
-
-    /// Return physical worker threads started by the fixed executor team.
-    #[must_use]
-    pub const fn worker_threads_started(self) -> u64 {
-        self.worker_threads_started
-    }
-
-    /// Return fixed-team dispatches; each nonempty source block is one batch.
-    #[must_use]
-    pub const fn dispatch_batches(self) -> u64 {
-        self.dispatch_batches
     }
 
     /// Return worker slots that executed at least one partition.
@@ -839,12 +817,6 @@ impl CompleteDataStreamEvidence {
         self.peak_worker_stack_capacity_bytes
     }
 
-    /// Return the complete heap, worker-stack, and partial window admitted by the plan.
-    #[must_use]
-    pub const fn planned_kernel_window_capacity_bytes(self) -> u64 {
-        self.planned_kernel_window_capacity_bytes
-    }
-
     /// Return the peak complete prepared/worker/partial window capacity.
     #[must_use]
     pub const fn peak_kernel_window_capacity_bytes(self) -> u64 {
@@ -857,7 +829,7 @@ impl CompleteDataStreamEvidence {
         self.prepare_nanos
     }
 
-    /// Return worker execution time, measured by source-block dispatch batches.
+    /// Return worker execution time, measured by scheduler waves.
     #[must_use]
     pub const fn execute_nanos(self) -> u128 {
         self.execute_nanos
@@ -1098,15 +1070,11 @@ impl SpectralCycleExecutor {
         Some(CompleteDataStreamEvidence {
             planned_workers: u64::try_from(stream.workers).ok()?,
             actual_workers: u64::try_from(stream.workers).ok()?,
-            blocks_filled: stream.blocks_filled,
-            worker_threads_started: stream.worker_threads_started,
-            dispatch_batches: stream.dispatch_batches,
             active_worker_slots: u64::try_from(stream.workers_with_nonzero_partitions).ok()?,
             partitions_executed: stream.partitions_executed,
             commits_completed: stream.commits_completed,
             peak_partial_dynamic_capacity_bytes: stream.peak_partial_dynamic_capacity_bytes,
             peak_worker_stack_capacity_bytes: stream.peak_worker_stack_capacity_bytes,
-            planned_kernel_window_capacity_bytes: stream.planned_kernel_window_capacity_bytes,
             peak_kernel_window_capacity_bytes: stream.peak_kernel_window_capacity_bytes,
             prepare_nanos: stream.prepare_nanos,
             execute_nanos: stream.execute_nanos,
@@ -1720,7 +1688,7 @@ impl SpectralCycleExecutor {
             return;
         };
         eprintln!(
-            "imaging_gridded_replay_summary ordinal={} blocks={} artifact_bytes={} payload_bytes={} read_bytes={} read_operations={} payload_copy_bytes={} payload_copy_operations={} buffer_allocations={} buffer_reuses={} source_slots={} admitted_worker_lanes={} worker_threads_started={} dispatch_batches={} active_worker_lanes={} minimum_logical_partitions_per_active_lane={} maximum_logical_partitions_per_active_lane={} worker_lanes={:?} logical_partitions_executed={} logical_commits_completed={} executed_work_identity={:x?} committed_work_identity={:x?} planned_source_capacity_bytes={} planned_kernel_window_capacity_bytes={} peak_partial_dynamic_capacity_bytes={} peak_worker_stack_capacity_bytes={} peak_kernel_window_capacity_bytes={} peak_live_source_blocks={} peak_live_source_current_bytes={} peak_live_source_capacity_bytes={} ready_queue_high_water={} producer_wait_nanos={} consumer_wait_nanos={} source_starved_nanos={} overlap_nanos={} source_fill_nanos={} prepare_nanos={} execute_nanos={} commit_nanos={} wall_nanos={}",
+            "imaging_gridded_replay_summary ordinal={} blocks={} artifact_bytes={} payload_bytes={} read_bytes={} read_operations={} payload_copy_bytes={} payload_copy_operations={} buffer_allocations={} buffer_reuses={} source_slots={} workers={} worker_threads_started={} dispatch_waves={} active_worker_slots={} minimum_partitions_per_active_worker={} maximum_partitions_per_active_worker={} worker_slots={:?} partitions_executed={} commits_completed={} executed_work_identity={:x?} committed_work_identity={:x?} planned_source_capacity_bytes={} planned_kernel_window_capacity_bytes={} peak_partial_dynamic_capacity_bytes={} peak_worker_stack_capacity_bytes={} peak_kernel_window_capacity_bytes={} peak_live_source_blocks={} peak_live_source_current_bytes={} peak_live_source_capacity_bytes={} ready_queue_high_water={} producer_wait_nanos={} consumer_wait_nanos={} source_starved_nanos={} overlap_nanos={} source_fill_nanos={} prepare_nanos={} execute_nanos={} commit_nanos={} wall_nanos={}",
             self.pass.ordinal(),
             stream.blocks_filled,
             artifact.artifact_bytes(),
@@ -1734,7 +1702,7 @@ impl SpectralCycleExecutor {
             stream.source_slots,
             stream.workers,
             stream.worker_threads_started,
-            stream.dispatch_batches,
+            stream.dispatch_waves,
             stream.workers_with_nonzero_partitions,
             stream.minimum_partitions_per_active_worker,
             stream.maximum_partitions_per_active_worker,

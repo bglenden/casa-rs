@@ -3170,48 +3170,6 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
             }
         )
     }));
-    let executor_window_uses = replay_nodes[0]
-        .allocations
-        .iter()
-        .filter(|usage| {
-            usage
-                .allocation
-                .as_str()
-                .starts_with("gridded-normal-executor-window-")
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        executor_window_uses.len(),
-        1,
-        "later-major replay owns one bounded executor heap window",
-    );
-    assert_eq!(
-        executor_window_uses[0].lifetime,
-        ClaimLifetime::through_fence(FenceKind::Io),
-    );
-    let executor_window = final_physical
-        .execution_dag()
-        .logical_allocations()
-        .get(&executor_window_uses[0].allocation)
-        .expect("executor window is a plan-owned logical allocation");
-    assert_eq!(executor_window.purpose, AllocationPurpose::Data);
-    assert!(executor_window.bytes > 0);
-    assert_eq!(
-        executor_window.lifetime.acquire_at, replay_node_id,
-        "executor heap is acquired by the replay node",
-    );
-    assert_eq!(
-        executor_window.lifetime.release_after,
-        BTreeSet::from([WorkDependency::Fence(FenceId::new(
-            replay_node_id.clone(),
-            FenceKind::Io,
-        ))]),
-    );
-    assert!(final_demand.memory.iter().any(|demand| {
-        demand.allocation_id == executor_window.id.as_str()
-            && demand.hard_bytes == executor_window.bytes
-            && demand.preferred_bytes == executor_window.bytes
-    }));
     let collisions = initial_nodes
         .intersection(&final_nodes)
         .cloned()
