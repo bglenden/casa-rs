@@ -51,11 +51,10 @@ pub use spectral_operator::{
 #[doc(hidden)]
 pub mod runtime_adapter {
     pub use crate::gridded_normal_operator::{
-        GRIDDED_NORMAL_OPERATOR_RECORD_BYTES, GRIDDED_NORMAL_SECTOR_COUNT,
+        GRIDDED_NORMAL_MAXIMUM_PARTITIONS_PER_BLOCK, GRIDDED_NORMAL_OPERATOR_RECORD_BYTES,
         GriddedNormalOperatorApply, GriddedNormalOperatorBlock,
         GriddedNormalOperatorBlockMeasurements, GriddedNormalOperatorCompiler,
-        GriddedNormalOperatorProgram, GriddedNormalSectorPartial, GriddedNormalSectorResidency,
-        GriddedNormalSectorWork, gridded_normal_sector_residency,
+        GriddedNormalOperatorProgram, GriddedNormalPredictionPartial, GriddedNormalPredictionWork,
     };
     pub use crate::spectral_operator::{
         CompleteDataOwnerCompletion, CompleteDataOwnerResult, CompleteDataOwnerState,
