@@ -1515,7 +1515,26 @@ impl SpectralSlabOperator {
     ) -> Self {
         let geometry = specification.operator_geometry();
         let slab = specification.slab;
-        Self::new_inner(Some(specification), geometry, slab, workload, fft)
+        Self::new_inner(
+            Some(specification),
+            geometry,
+            slab,
+            workload,
+            fft,
+            workload.max_replay_block_samples,
+        )
+    }
+
+    /// Allocate the gridded replay operator without the ordinary per-record prediction buffer.
+    #[must_use]
+    pub(crate) fn new_gridded_normal(
+        specification: SpectralOperatorSpecification,
+        workload: SpectralOperatorWorkload,
+        fft: PreparedFft,
+    ) -> Self {
+        let geometry = specification.operator_geometry();
+        let slab = specification.slab;
+        Self::new_inner(Some(specification), geometry, slab, workload, fft, 0)
     }
 
     #[cfg(test)]
@@ -1525,7 +1544,14 @@ impl SpectralSlabOperator {
         workload: SpectralOperatorWorkload,
         fft: PreparedFft,
     ) -> Self {
-        Self::new_inner(None, geometry, slab, workload, fft)
+        Self::new_inner(
+            None,
+            geometry,
+            slab,
+            workload,
+            fft,
+            workload.max_replay_block_samples,
+        )
     }
 
     fn new_inner(
@@ -1534,6 +1560,7 @@ impl SpectralSlabOperator {
         slab: SpectralSlabPlan,
         workload: SpectralOperatorWorkload,
         fft: PreparedFft,
+        prediction_capacity: usize,
     ) -> Self {
         let gridder = StandardConvolution::new(&geometry);
         let shape = (geometry.grid_shape[0], geometry.grid_shape[1]);
@@ -1555,8 +1582,7 @@ impl SpectralSlabOperator {
             residual_compensations: None,
             reused_normal_state: None,
             forward_grids: plane_grids(slab.resident_depth()),
-            predictions: vec![Complex64::default(); workload.max_replay_block_samples]
-                .into_boxed_slice(),
+            predictions: vec![Complex64::default(); prediction_capacity].into_boxed_slice(),
             prediction_len: 0,
             sum_weights: vec![0.0; slab.core_depth()],
             sum_weight_compensations: vec![0.0; slab.core_depth()],
@@ -1618,6 +1644,35 @@ impl SpectralSlabOperator {
         generation: &ModelGeneration,
         reused_normal_state: Option<ReusableNormalState>,
     ) -> Result<(), SpectralOperatorError> {
+        self.bind_residual_model(generation, reused_normal_state)?;
+        let grid_shape = (self.geometry.grid_shape[0], self.geometry.grid_shape[1]);
+        self.residual_grids = Some(
+            (0..self.slab.core_depth())
+                .map(|_| Array2::zeros(grid_shape))
+                .collect(),
+        );
+        self.residual_compensations = Some(
+            (0..self.slab.core_depth())
+                .map(|_| Array2::zeros(grid_shape))
+                .collect(),
+        );
+        Ok(())
+    }
+
+    /// Bind a gridded replay model while deferring its residual accumulator to sector owners.
+    pub(crate) fn prepare_gridded_normal_model(
+        &mut self,
+        generation: &ModelGeneration,
+        reused_normal_state: ReusableNormalState,
+    ) -> Result<(), SpectralOperatorError> {
+        self.bind_residual_model(generation, Some(reused_normal_state))
+    }
+
+    fn bind_residual_model(
+        &mut self,
+        generation: &ModelGeneration,
+        reused_normal_state: Option<ReusableNormalState>,
+    ) -> Result<(), SpectralOperatorError> {
         self.validate_model_generation(generation)?;
         match (self.workload.pass, reused_normal_state.as_ref()) {
             (SpectralOperatorPass::InitialMajor, None) => {}
@@ -1630,17 +1685,6 @@ impl SpectralSlabOperator {
         }
         self.reused_normal_state = reused_normal_state;
         self.prepare_forward_generation(generation)?;
-        let grid_shape = (self.geometry.grid_shape[0], self.geometry.grid_shape[1]);
-        self.residual_grids = Some(
-            (0..self.slab.core_depth())
-                .map(|_| Array2::zeros(grid_shape))
-                .collect(),
-        );
-        self.residual_compensations = Some(
-            (0..self.slab.core_depth())
-                .map(|_| Array2::zeros(grid_shape))
-                .collect(),
-        );
         Ok(())
     }
 
@@ -1913,10 +1957,12 @@ impl SpectralSlabOperator {
         Ok(predicted)
     }
 
-    pub(crate) fn apply_gridded_normal(
-        &mut self,
+    pub(crate) fn grid_gridded_normal_sector(
+        &self,
+        grids: &mut [Array2<Complex64>],
+        compensations: &mut [Array2<Complex64>],
+        local_taps: SampleTaps,
         output_channel: usize,
-        taps: SampleTaps,
         predicted: Complex64,
         adjoint_scale: Complex64,
     ) -> Result<(), SpectralOperatorError> {
@@ -1924,23 +1970,36 @@ impl SpectralSlabOperator {
             .slab
             .core_index(output_channel)
             .ok_or(SpectralOperatorError::GriddedRecordMismatch)?;
+        if grids.len() != self.slab.core_depth() || compensations.len() != self.slab.core_depth() {
+            return Err(SpectralOperatorError::GriddedRecordMismatch);
+        }
         let gridded = predicted * adjoint_scale;
         if !gridded.re.is_finite() || !gridded.im.is_finite() {
             return Err(SpectralOperatorError::GeneratedNonfinite);
         }
         self.gridder.grid_compensated(
-            &mut self
-                .residual_grids
-                .as_mut()
-                .ok_or(SpectralOperatorError::MissingMajorCycleResidual)?[plane],
-            &mut self
-                .residual_compensations
-                .as_mut()
-                .ok_or(SpectralOperatorError::MissingMajorCycleResidual)?[plane],
-            taps,
+            &mut grids[plane],
+            &mut compensations[plane],
+            local_taps,
             gridded,
         );
         Ok(())
+    }
+
+    pub(crate) fn finish_gridded_normal_from_grids(
+        mut self,
+        residual_model: ModelGenerationId,
+        normal_grids: Vec<Array2<Complex64>>,
+    ) -> Result<SpectralOperatorPrimitives, SpectralOperatorError> {
+        let expected_shape = (self.geometry.grid_shape[0], self.geometry.grid_shape[1]);
+        if self.residual_grids.is_some()
+            || normal_grids.len() != self.slab.core_depth()
+            || normal_grids.iter().any(|grid| grid.dim() != expected_shape)
+        {
+            return Err(SpectralOperatorError::GriddedRecordMismatch);
+        }
+        self.residual_grids = Some(normal_grids);
+        self.finish_gridded_normal(residual_model)
     }
 
     pub(crate) fn finish_gridded_normal(
@@ -2594,6 +2653,9 @@ pub enum SpectralOperatorError {
     /// An opaque record has an unsupported, truncated, or invalid fixed encoding.
     #[error("gridded normal-operator record encoding is invalid")]
     InvalidGriddedRecord,
+    /// A worker panicked while mutating one exclusive gridded-normal sector.
+    #[error("gridded normal-operator sector state was poisoned")]
+    GriddedSectorPoisoned,
 }
 
 #[cfg(test)]

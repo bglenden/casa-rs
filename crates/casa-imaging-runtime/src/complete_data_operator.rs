@@ -19,13 +19,12 @@ use casa_imaging_reconstruction::{
     SpectralOperatorSpecification, SpectralPrimitiveCatalog, WeightingAlgorithmState,
     WeightingGenerationId, WeightingReplayCoverageId, WeightingReplayId,
     runtime_adapter::{
-        CompleteDataOwnerResult, CompleteDataOwnerState,
-        GRIDDED_NORMAL_MAXIMUM_PARTITIONS_PER_BLOCK, GRIDDED_NORMAL_OPERATOR_RECORD_BYTES,
-        GriddedNormalOperatorApply, GriddedNormalOperatorBlockMeasurements,
-        GriddedNormalOperatorCompiler, GriddedNormalOperatorProgram,
-        GriddedNormalPredictionPartial, GriddedNormalPredictionWork, PreparedSpectralOperator,
-        SpectralOperatorPass, SpectralOperatorWorkload, prepare_spectral_operator,
-        spectral_operator_workload,
+        CompleteDataOwnerResult, CompleteDataOwnerState, GRIDDED_NORMAL_OPERATOR_RECORD_BYTES,
+        GRIDDED_NORMAL_SECTOR_COUNT, GriddedNormalOperatorApply,
+        GriddedNormalOperatorBlockMeasurements, GriddedNormalOperatorCompiler,
+        GriddedNormalOperatorProgram, GriddedNormalSectorPartial, GriddedNormalSectorWork,
+        PreparedSpectralOperator, SpectralOperatorPass, SpectralOperatorWorkload,
+        prepare_spectral_operator, spectral_operator_workload,
     },
 };
 
@@ -375,28 +374,14 @@ impl FrozenGriddedNormalReplay {
         }
         let workers = usize::try_from(worker_claim)
             .map_err(|_| io::Error::other("gridded-normal worker count overflow"))?;
-        let maximum_frame_records =
-            budget.maximum_frame_payload_bytes() / GRIDDED_NORMAL_OPERATOR_RECORD_BYTES;
-        let maximum_partitions =
-            maximum_frame_records.clamp(1, GRIDDED_NORMAL_MAXIMUM_PARTITIONS_PER_BLOCK);
-        let maximum_records_per_partition = maximum_frame_records
-            .div_ceil(GRIDDED_NORMAL_MAXIMUM_PARTITIONS_PER_BLOCK)
-            .max(1);
-        let partial_bytes = maximum_records_per_partition
-            .checked_mul(size_of::<num_complex::Complex64>())
-            .and_then(|bytes| bytes.checked_mul(workers.min(maximum_partitions)))
-            .ok_or_else(|| io::Error::other("gridded-normal partial residency overflow"))?;
-        let dynamic_kernel_bytes = u64::try_from(partial_bytes)
-            .map_err(|_| io::Error::other("gridded-normal kernel residency overflow"))?;
-        let plan =
-            BoundedStreamPlan::new::<GriddedNormalPredictionWork, GriddedNormalPredictionPartial>(
-                source_slots,
-                workers,
-                source_capacity_bytes,
-                maximum_partitions,
-                dynamic_kernel_bytes,
-            )
-            .map_err(|_| io::Error::other("invalid gridded-normal bounded-stream plan"))?;
+        let plan = BoundedStreamPlan::new::<GriddedNormalSectorWork, GriddedNormalSectorPartial>(
+            source_slots,
+            workers,
+            source_capacity_bytes,
+            GRIDDED_NORMAL_SECTOR_COUNT,
+            0,
+        )
+        .map_err(|_| io::Error::other("invalid gridded-normal bounded-stream plan"))?;
         let source = self.spill.block_source().map_err(io::Error::other)?;
         let outcome = execute_bounded(
             plan,
@@ -440,8 +425,8 @@ struct GriddedNormalReplayKernel {
 }
 
 impl PartitionedKernel<GriddedNormalArtifactFrameStorage> for GriddedNormalReplayKernel {
-    type Partition = GriddedNormalPredictionWork;
-    type Partial = GriddedNormalPredictionPartial;
+    type Partition = GriddedNormalSectorWork;
+    type Partial = GriddedNormalSectorPartial;
     type Completion = CompleteDataOperatorResult;
     type Error = CompleteDataOperatorError;
 
@@ -457,7 +442,7 @@ impl PartitionedKernel<GriddedNormalArtifactFrameStorage> for GriddedNormalRepla
         }
         self.state
             .state
-            .prediction_partition_count(storage.sequence(), storage.payload())
+            .sector_partition_count(storage.sequence(), storage.payload())
             .map_err(CompleteDataOperatorError::Owner)
     }
 
@@ -470,12 +455,11 @@ impl PartitionedKernel<GriddedNormalArtifactFrameStorage> for GriddedNormalRepla
         let partition = self
             .state
             .state
-            .prediction_partition(storage.sequence(), storage.payload(), local_ordinal)
+            .sector_partition(storage.sequence(), storage.payload(), local_ordinal)
             .map_err(CompleteDataOperatorError::Owner)?;
-        Ok(KernelPartition::ordered(
+        Ok(KernelPartition::exclusive(
             partition.partition_key(),
-            0,
-            partition.partition_key(),
+            partition.sector_id(),
             partition,
         ))
     }
@@ -488,23 +472,19 @@ impl PartitionedKernel<GriddedNormalArtifactFrameStorage> for GriddedNormalRepla
     ) -> Result<Self::Partial, Self::Error> {
         self.state
             .state
-            .predict_partition(storage.payload(), *partition)
+            .execute_sector(storage.payload(), *partition)
             .map_err(CompleteDataOperatorError::Owner)
-    }
-
-    fn partial_dynamic_capacity_bytes(&self, partial: &Self::Partial) -> u64 {
-        partial.resident_bytes()
     }
 
     fn commit(
         &mut self,
         _work: WorkIdentity,
-        storage: &GriddedNormalArtifactFrameStorage,
+        _storage: &GriddedNormalArtifactFrameStorage,
         partial: Self::Partial,
     ) -> Result<(), Self::Error> {
         self.state
             .state
-            .commit_prediction(storage.payload(), partial)
+            .commit_sector(partial)
             .map_err(CompleteDataOperatorError::Owner)
     }
 
