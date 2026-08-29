@@ -1,0 +1,1282 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>First imaging-performance source study - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#first-imaging-performance-source-study" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              First imaging-performance source study
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Task Parameters
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Task Parameters
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generated Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scientific Workbench
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Scientific Workbench
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../scientific-notebooks-and-assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Notebooks, Tutorials, Python, and AI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mac-native-gui-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Native macOS Product Spec
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#decision-summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision summary
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#source-availability-and-constraints" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Source availability and constraints
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#current-path-before-optimization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current path before optimization
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#old-to-current-mechanism-map" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Old-to-current mechanism map
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#exact-source-buffer-reuse-seam" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Exact source-buffer reuse seam
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#proposed-shared-execution-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Proposed shared execution contract
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#measurement-contract-before-optimization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Measurement contract before optimization
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#searches-and-commands-used" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Searches and commands used
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="first-imaging-performance-source-study">First imaging-performance source study<a class="headerlink" href="#first-imaging-performance-source-study" title="Permanent link">&para;</a></h1>
+<p>Truth class: primary-source implementation-boundary research
+Date: 2026-08-27
+Scope: complete-data, constant-basis MFS first slice</p>
+<h2 id="decision-summary">Decision summary<a class="headerlink" href="#decision-summary" title="Permanent link">&para;</a></h2>
+<p>The current architecture already has the right scientific owners, but it does
+not yet have one shared bounded streaming execution seam. The first slice
+should add that seam without reviving the pre-cutover whole-run imager:</p>
+<div class="codehilite"><pre><span></span><code>casa-ms selected ordered block traversal
+    -&gt; casa-imaging-runtime bounded execution
+       (budget, reusable buffers, backpressure, optional read-ahead,
+        workers, deterministic-work coordination, measurements)
+    -&gt; reconstruction/gridding kernel
+       (sample semantics, grid partition, mergeable partial state,
+        deterministic reduction, scientific completion)
+</code></pre></div>
+
+<p><code>workers = 1</code> must use this same scheduler, buffer-pool, kernel, and reduction
+path. Applications compose the source, plan, executor, kernel, and product
+sink. Frontends supply parameters and units only. The seam must not retain the
+MeasurementSet, allocate a full grid per worker, introduce an MFS-only fast
+path, or preserve the displaced pre-cutover runner as a fallback.</p>
+<p>No optimization should follow from this study alone. Before an implementation
+change, freeze one matched current casa-rs/CASA MFS workload and record CASA
+products and timings. Then instrument the current casa-rs path. The historical
+results below show which mechanisms once worked; they are not a current
+baseline.</p>
+<h2 id="source-availability-and-constraints">Source availability and constraints<a class="headerlink" href="#source-availability-and-constraints" title="Permanent link">&para;</a></h2>
+<ul>
+<li>casa-rs current checkout: <code>5ef9f4729e4ffa787c30dfffed38c1e7eaf69d6b</code>
+  on <code>codex/imaging-performance-pass</code>; clean when the study began.</li>
+<li>Requested historical objects are available locally:</li>
+<li><code>7fd6e9d422b0a76ab34fc8cd820b93e0fb6b3a40</code>, 2026-08-18,
+    immediately before the imaging programme refactor.</li>
+<li><code>009745a080c90c92bffb07de2603136852ab0630</code>, 2026-08-25,
+    the transition checkpoint. The supplied shorter object name resolves to
+    this full commit.</li>
+<li><code>fff9c2d553eace4b6a57b1df9ded4773f2263ceb</code>, 2026-08-25,
+    the native continuum cutover.</li>
+<li>CASA source is available at committed <code>61020062cee290f5466cffed5ec5032e0c7a3434</code>.
+  Its worktree contains unrelated tracked and untracked changes, including
+  GridFT-related files, so every CASA citation and inspection used
+  <code>git show HEAD:&lt;path&gt;</code> rather than the working tree.</li>
+<li>casacore source is available at committed
+  <code>3dd6f3f23417b9cf42314f8967fc84d0dd29dc49</code>. Its worktree has unrelated
+  untracked notes; committed blobs were inspected.</li>
+<li>libRA source is available at committed
+  <code>0ab99e261878334d6588eafa360cef3b673e897f</code>. Its worktree has one unrelated
+  deleted generated Python cache file; committed blobs were inspected.</li>
+<li>The study did not execute CASA, casa-rs, the medium dataset, or the directly
+  mounted 32 GB dataset. It therefore provides no new timing, correctness,
+  pass-count, copy-count, or peak-residency measurement.</li>
+</ul>
+<p>The transition matters only as an ownership map. At <code>009745...</code>, the new
+<code>casa-imaging-reconstruction</code> and <code>casa-imaging-runtime</code> crates already existed
+beside the old application implementation. Commit <code>fff9c2...</code> completed the
+cutover, added runtime serial-continuum composition, and deleted roughly
+104,000 lines from the old application path (<code>git show --stat
+fff9c2...</code>). Mechanisms below should move into those accepted owners, not back
+across that deletion boundary.</p>
+<h2 id="current-path-before-optimization">Current path before optimization<a class="headerlink" href="#current-path-before-optimization" title="Permanent link">&para;</a></h2>
+<p>The present implementation has several pieces worth preserving:</p>
+<ul>
+<li><code>casa-ms</code> retains the read-locked source and states that its sole MAIN
+  traversal occurs as selected samples are consumed
+  (<code>crates/casa-ms/src/selected_observation/access.rs:36-40</code>). It emits canonical
+  physical-row, channel, correlation order and admits bounded physical row
+  blocking (<code>access.rs:203-243</code>).</li>
+<li>Its block residency is explicit: available bytes and maximum live blocks are
+  authority inputs, while retained, per-row, per-block, preparation, and peak
+  bytes are planned (<code>content_plan.rs:46-109</code>). The active block plus
+  <code>VecDeque</code> container is charged (<code>content_plan.rs:263-273</code>).</li>
+<li>Block wrappers are recycled synchronously. Exhausting a block refills the
+  former active wrapper on the consumer thread, <code>prefetch_to_capacity</code> fills
+  additional wrappers on that same thread, and a live-block high-water counter
+  is maintained (<code>access.rs:337-345</code>, <code>access.rs:378-429</code>). This is bounded
+  wrapper scheduling, not producer/consumer read-ahead or proof of storage
+  allocation reuse.</li>
+<li>The wrapper retains its slot and <code>row_geometry</code> allocation: construction
+  reserves <code>rows_per_block</code>, and refill calls <code>clear()</code> before pushing new
+  geometry (<code>access.rs:629-669</code>). Its <code>SelectedObservationBuffer</code> does <strong>not</strong>
+  retain allocations. Every fill assigns <code>SelectedObservationBuffer::default()</code>
+  over the old value, then constructs a replacement from newly returned vectors
+  (<code>crates/casa-ms/src/selected_observation_buffer.rs:403-446</code>, <code>475-539</code>). The
+  current live-block accounting is therefore a logical-residency bound, not an
+  observed allocation/reuse count.</li>
+<li>The outward stream is scalar and owned: each buffered row/channel/correlation
+  becomes a <code>SelectedObservationSample</code> (<code>access.rs:267-334</code>,
+  <code>access.rs:431-513</code>). Whether that scalarization or its downstream copies are
+  material on the target workload is unmeasured.</li>
+<li><code>BoundSelectedObservation::traverse</code> validates and consumes the exhaustive
+  canonical stream in one bounded pass and mints completion only after terminal
+  validation (<code>bound_observation.rs:388-452</code>). The callback, projection, and
+  consumer are synchronous (<code>bound_observation.rs:467-493</code>).</li>
+<li>Weighting already owns the scientific pass shape. Natural weighting performs
+  its final weighting and bounded replay in one traversal
+  (<code>crates/casa-imaging-reconstruction/src/weighting.rs:509-523</code>). Other
+  schemes finish an exact density prepass before the terminal weighted stream
+  (<code>weighting.rs:602-664</code>).</li>
+<li>Weighting also plans bounded replay input/output, deterministic worker
+  partials, and reduction scratch (<code>weighting.rs:120-185</code>,
+  <code>weighting.rs:220-283</code>). Replay input and output vectors are allocated once
+  per replay phase and reused (<code>weighting.rs:372-397</code>,
+  <code>weighting.rs:1024-1071</code>).</li>
+<li>The complete-data operator accounts for its grids, convolution cache, FFT
+  residency/planning, forward workspace, products, and major-cycle model
+  (<code>crates/casa-imaging-runtime/src/complete_data_operator.rs:37-98</code>), but its
+  public streaming state currently consumes each weighted block synchronously
+  (<code>complete_data_operator.rs:1080-1139</code>).</li>
+</ul>
+<p>This means the missing capability is not another observation iterator or
+another scientific runner. It is a runtime-owned executor that connects the
+existing bounded source and scientific block phases while making overlap,
+workers, buffer leases, and actual measurements explicit.</p>
+<h2 id="old-to-current-mechanism-map">Old-to-current mechanism map<a class="headerlink" href="#old-to-current-mechanism-map" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Historical/upstream mechanism</th>
+<th>Measured or documented evidence</th>
+<th>Current equivalent or absence</th>
+<th>Shared owner</th>
+<th>Decision</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Bounded, canonical VisibilityBuffer/row-block traversal</td>
+<td>CASA reuses one <code>VisBuffer2</code> while looping chunks/subchunks and grids each buffer (<code>SynthesisImagerVi2.cc:1408-1490</code>). VI2 applies row blocking and advances bounded row ranges (<code>VisibilityIteratorImpl2.cc:2187-2215</code>, <code>2255-2264</code>, <code>2303-2329</code>).</td>
+<td><code>casa-ms</code> already owns canonical selected traversal and exact live-block budgets.</td>
+<td><code>casa-ms</code></td>
+<td><strong>Retain.</strong> Expose ordered reusable blocks/leases to the runtime; do not move MS interpretation into the executor.</td>
+</tr>
+<tr>
+<td>Interleaved tiled-bucket reuse</td>
+<td>casacore <code>TSMCube</code> caches a whole interleaved bucket by tile number, and <code>TSMDataColumn</code> copies each requested column section from that shared bucket (<code>TSMCube.cc:374-378</code>, <code>905-1005</code>; <code>TSMDataColumn.cc:205-288</code>). CASA and LibRA obtain their standard visibility cubes through that common table/visibility-buffer path.</td>
+<td>The Rust typed selected-channel reader restricts access to intersecting channel tiles and uses 16 MiB sequential read-ahead, but creates a column-local tile session. On the measured one-channel row it returned 65,505,024 DATA bytes from 1,353,381,120 DATA tile bytes per pass; tile load, not copying, dominated.</td>
+<td><code>casa-tables</code> for physical bucket reads and accounting; <code>casa-ms</code> for the closed selected column set.</td>
+<td><strong>Instrument before adapting.</strong> Preserve exact physical-byte/read accounting and consider grouped interleaved-column fills only if a matched full-shape source stage remains material. The 64-channel scientific discriminator is compute-bound, so this is not the active optimization candidate.</td>
+</tr>
+<tr>
+<td>Exact one-pass natural and two-pass global density/weighted execution</td>
+<td>Pre-cutover contract records natural streaming and exact density then weighted passes (<code>7fd6e9...:docs/tutorial-parity/imperformance-wave-2-experiment-summary.md:70-72</code>).</td>
+<td>Reconstruction already represents this exact pass shape. Actual MS pass count is not yet a runtime measurement.</td>
+<td>Reconstruction defines; runtime executes and counts.</td>
+<td><strong>Retain and instrument.</strong> Do not fuse away a scientific pass or hide an extra pass.</td>
+</tr>
+<tr>
+<td>Residual-only later major passes</td>
+<td>CASA separates PSF construction (<code>dopsf=true</code>) from ordinary model-degrid/residual major cycles (<code>dopsf=false</code>) (<code>SynthesisImagerVi2.cc:1392-1428</code>, <code>1447-1475</code>, <code>1488-1489</code>). The last optimized pre-cutover implementation had dedicated bounded residual-refresh construction and accumulation (<code>fff9c2...:crates/casa-imaging/src/execution.rs:870-969</code>, <code>7332-7388</code>).</td>
+<td>Candidate <code>77c5a6ccf</code> transplanted invariant normal-state reuse into reconstruction/runtime. On the pre-compact 64-channel baseline it reduced total serial wall by only 2.39% and final-major replay by 5.05%, despite bit-exact products, so <code>d49cca7d5</code> removed it. After the compact handoff changed the bottleneck, <code>5a3be7eeb</code> reduced final-major replay from 204.455013 to 183.448796 s (10.27%) and total wall from 487.939629 to 465.766714 s (4.54%). All 5,242,881 elements of all six products were bit-identical, with exact inventory and metadata. Production-shaped intermediate refreshes improved from about 179.8 to 159.6-160.0 s, but the full run still crossed CASA's 733.660 s wall during the third of ten later-major replays.</td>
+<td>Reconstruction for scientific invariants; runtime for carried lifetime and residency.</td>
+<td><strong>Adapted and retained.</strong> Carry validated invariant normal state through the shared lifecycle with unchanged pass count, worker count, and bounded source residency. Treat it as one serial kernel improvement, not a substitute for removing the remaining scalar handoff cost.</td>
+</tr>
+<tr>
+<td>Disk-backed gridded residual replay</td>
+<td>The pre-cutover AW path sealed checksummed, source-major replay programs into unlinked temporary files and streamed them with bounded prefetch; mmap and partial-atlas variants were rejected after measured thrashing. CASA's <code>SIImageStore</code> uses disk-backed <code>TempImage&lt;Complex&gt;</code> forward/backward grids above a small memory allowance, while <code>GridFT</code> pages larger lattices through <code>LatticeCache</code>. LibRA can persist the device gridded state with <code>saveGriddedData</code>.</td>
+<td>Current later passes rebuild spectral/weighting records and repeat degrid plus compensated grid for every selected correlation. Across six distributed real-shaped windows, the 263,250-row discriminator found 29,169,920 contributing scalar records but only 14,520,468 deterministically sorted block-local gridded tap records (2.0089x reduction); a constant-memory global estimate was 13,359,087 (2.1835x). The concrete 232,327,488-byte artifact was written in 29.24 ms, read sequentially in 100.90 ms, and verified by SHA-256. Streaming grouped application took 3.130 s between stable 7.566- and 7.589-second current-path baselines, a 58.70% point improvement. Linear extrapolation gives a 3,613,157,104-byte full artifact and a 48.67-second later replay, but neither is yet a full-MeasurementSet measurement. The unchanged replay retained normal-state identity <code>e636811...</code>, and the grouped normal-operator test agrees within <code>1e-15</code> normalized RMS.</td>
+<td>Reconstruction defines and applies the gridded normal-operator record; runtime owns the run-scoped disk artifact, buffer budget, checksums, read-ahead, backpressure, and measurements.</td>
+<td><strong>Apply gate passed; production seam requires explicit cutover approval.</strong> Preserve deterministic bounded block reduction and one scientific path; retain the observed dirty grid and compile only model-dependent normal-operator records. Do not persist ungridded visibility records, expose a public cache format, mmap the artifact, or create an MFS-only application path. Evidence: <code>20260828-issue540-gridded-replay-cardinality.json</code>.</td>
+</tr>
+<tr>
+<td>Reusable grid/workspace across bounded batches</td>
+<td>Old dirty CPU executor owned its gridder and workspace across <code>accumulate_batches</code> (<code>7fd6e9...:crates/casa-imaging/src/execution.rs:59-72</code>). libRA moves a fixed bucket to HPG then resets/reuses it (<code>AWVisResamplerHPG.cc:625-677</code>).</td>
+<td>Weighting replay vectors and selected-observation block wrappers/row geometry are reused. Selected-observation column vectors are dropped and replaced on every fill; complete-data block handoff remains serial.</td>
+<td>Runtime owns pool/lifetimes; <code>casa-ms</code> owns exact source-vector fill; kernel owns workspace contents.</td>
+<td><strong>Adapt.</strong> One budgeted pool of source, prepared, and output block slots; add real allocation/reuse measurements rather than inferring them from wrapper identity.</td>
+</tr>
+<tr>
+<td>Row/channel run payloads instead of scalar inbox items</td>
+<td>Historical tests found row/channel runs removed scalar synchronization; scalar direct inbox took 258.34 s wall, 1020.53 s system, and 14.4 M drains (<code>imperformance-wave-2-experiment-summary.md:138-143</code>, <code>155-156</code>). CASA and LibRA likewise preserve row/channel/correlation buffer shape through their visibility-buffer and resampler seams.</td>
+<td>The realistic 64-channel serial profile proved that the old callback expanded 5.15 GB of logical source data into 230.58 GB of 440-byte scalar handoffs per pass. Commit <code>bb9c24ac2</code> now lends a 72-byte traversal envelope, projects the compact reconstruction record once, reuses channel/correlation spectral contributions, and advances coverage at block boundaries. Handoff fell to 37.73 GB per pass while source bytes and reads stayed fixed. The same one-worker discriminator improved from 584.974955 s to 487.939629 s (16.59%); a full-native six-product comparison was bit-identical.</td>
+<td><code>casa-ms</code> owns the borrowed traversal lifetime; reconstruction owns the compact retained record, scientific cache keys, and evidence; runtime transports the existing bounded block lease.</td>
+<td><strong>Adapted and retained in Delivery 1.</strong> Preserve canonical traversal, deterministic reduction, block-boundary evidence, and the same <code>workers=1</code> path. A future typed row/channel run view may remove more scalar iteration overhead, but is not an implemented production payload in this result.</td>
+</tr>
+<tr>
+<td>Bounded tile inboxes, ready-work scheduling, producer/worker overlap</td>
+<td>Old scheduler tracked queued/pending high-water bytes, producer activity, overlap, worker active time, waits, and drains (<code>7fd6e9...:crates/casa-imaging/src/execution.rs:2450-2529</code>, <code>2634-2681</code>, <code>2775-2816</code>, <code>2887-2995</code>). Largest-ready scheduling was a retained winner (<code>imperformance-wave-2-experiment-summary.md:141</code>).</td>
+<td>No shared runtime producer/worker executor exists.</td>
+<td>Runtime scheduler and measurements; reconstruction supplies work keys/cost and kernel.</td>
+<td><strong>Adapt, do not copy API.</strong> General bounded ready-work scheduling, admitted from resource plans, with <code>workers=1</code> on the same path.</td>
+</tr>
+<tr>
+<td>Shared grid divided into disjoint sectors</td>
+<td>Active CASA GridFT2 allocates one grid (<code>GridFT.cc:430-460</code>), prepares per-buffer coordinates in parallel (<code>GridFT.cc:720-816</code>), then lets workers update grid sectors and reduces sector sumweights in fixed index order (<code>GridFT.cc:850-983</code>).</td>
+<td>Current complete-data owner has shared grids but serial consumption.</td>
+<td>Reconstruction/gridding chooses partition and owns grid safety; runtime schedules work.</td>
+<td><strong>Adapt.</strong> Prefer exclusive/tiled grid ownership or bounded partials; preserve deterministic halo/overlap semantics.</td>
+</tr>
+<tr>
+<td>Fixed-order reduction</td>
+<td>CASA reduces sector sumweights in sector order (<code>GridFT.cc:928-930</code>, <code>976-978</code>). libRA gathers worker grids and sumweights in worker-index order (<code>MultiThreadedVisResampler.cc:326-381</code>).</td>
+<td>Weighting has deterministic partials and exact reductions; complete-data multi-worker merge is absent.</td>
+<td>Reconstruction/gridding</td>
+<td><strong>Retain concept.</strong> The kernel defines stable partition IDs and reduction order; runtime only enforces that order and records it.</td>
+</tr>
+<tr>
+<td>Bounded tile cache with explicit eviction and statistics</td>
+<td>casacore divides a lattice into a fixed number of tiles derived from cache bytes, uses LRU, flushes dirty tiles, and records hits/misses/reads/writes (<code>LatticeCache.h:43-77</code>; <code>LatticeCache.tcc:84-175</code>, <code>196-213</code>). GridFT's class contract describes paging when the grid exceeds its cache (<code>GridFT.h:73-106</code>).</td>
+<td>Runtime plans full complete-data grids; no shared bounded partial-grid cache exists. The inspected active GridFT2 implementation allocates a full grid, so its header is mechanism evidence, not proof that this path pages.</td>
+<td>Runtime budgets/cache lifetime; reconstruction defines tile/halo merge.</td>
+<td><strong>Adapt only when the measured residency requires it.</strong> Do not add spill or paging speculatively to the first resident MFS slice.</td>
+</tr>
+<tr>
+<td>Bounded visibility bucket preserving order and spillover</td>
+<td>libRA's HPG bucket has fixed main capacity, preserves input order, carries overflow to the next fill, and supports reset/shrink (<code>HPGVisBufferBucket.h:43-61</code>, <code>110-188</code>). HPG raises capacity to at least one VB and sends/reset batches (<code>AWVisResamplerHPG.cc:541-553</code>, <code>625-685</code>).</td>
+<td>casa-ms has bounded ordered blocks; no generic runtime backpressure handoff.</td>
+<td>Runtime buffer pool/queue</td>
+<td><strong>Adapt.</strong> Use lease return for backpressure rather than mode-specific spillover.</td>
+</tr>
+<tr>
+<td>Conditional read-ahead with exact queue telemetry</td>
+<td>Historical standard-MFS one-block control disabled the queue entirely and made no speedup claim (<code>7fd6e9...:tools/perf/imager/imaging_performance_ledger.json:967-1028</code>). A later 6.06 M-row mosaic MT-MFS pair improved 119.20 s to 111.82 s (6.19%) with two live blocks, 4.38 s overlap, and 92.03 s producer blocking (<code>...ledger.json:727-817</code>).</td>
+<td>casa-ms eagerly fills admitted blocks synchronously; no overlap.</td>
+<td>Runtime</td>
+<td><strong>Gate on baseline evidence.</strong> Add depth-two read-ahead only if source/consumer wait measurements show starvation; otherwise keep depth one through the same executor.</td>
+</tr>
+<tr>
+<td>Prepared-artifact look-ahead coordinated with compute</td>
+<td>libRA asynchronously prepares the next convolution-function set while the main thread grids, with explicit ready/sent coordination (<code>DataIterations.h:180-211</code>; <code>roadrunner.cc:677-800</code>).</td>
+<td>Current runtime owns prepared artifacts but the first standard-MFS slice does not need CF paging.</td>
+<td>Runtime, if a later kernel declares the artifact dependency.</td>
+<td><strong>Reject for this slice.</strong> The coordination pattern is reusable; the AW/HPG-specific server is not.</td>
+</tr>
+<tr>
+<td>Per-worker full grids with row-range scatter and a barrier per VB</td>
+<td>libRA scatters VB row ranges by reference (<code>MultiThreadedVisResampler.cc:310-321</code>), but creates/copies full grids per worker (<code>MultiThreadedVisResampler.cc:188-211</code>, <code>385-445</code>) and waits for all workers on every VB (<code>453-505</code>).</td>
+<td>No current multi-worker complete-data path.</td>
+<td>None for the full-grid design</td>
+<td><strong>Reject.</strong> Retain only borrowed row-range partitioning, fixed-order merge, and stage timing. Never allocate a full grid per worker or force a per-block global barrier unless the measured dependency requires it.</td>
+</tr>
+<tr>
+<td>Mapper-outer traversal to cap image memory</td>
+<td>CASA has a separate mapper-outer major cycle specifically for images large relative to RAM when data I/O is minor (<code>SynthesisImagerVi2.cc:1523-1525</code>, <code>1582-1669</code>).</td>
+<td>Current architecture requires one production engine and bounded streams.</td>
+<td>None</td>
+<td><strong>Reject for the first seam.</strong> It multiplies source traversals and is an explicit alternate execution architecture. If future memory evidence demands decomposition, express it as a runtime plan under the shared seam.</td>
+</tr>
+<tr>
+<td>Old standard-MFS-specific memory planner and whole-run executor</td>
+<td>Old plan charged source/prepared bytes, worker scratch, live row blocks, resident tiles, and queue entries (<code>7fd6e9...:crates/casa-imaging/src/execution_plan.rs:17-75</code>, <code>228-250</code>, <code>747-785</code>, <code>872-900</code>). It also accumulated backend and application decisions.</td>
+<td>ADR-0010 and current runtime are the accepted resource authority; the cutover deleted the old runner.</td>
+<td>Runtime for physical facts only</td>
+<td><strong>Extract formulas and measurements; reject the owner/API.</strong> No compatibility fallback or mode-specific planner.</td>
+</tr>
+</tbody>
+</table>
+<p>Historical timing results are workload- and implementation-specific. The most
+relevant retained old CPU results are a 512-channel, 2048-pixel Briggs run at
+328.937 s frontend/10.27 GB peak with saved-CASA product parity, and a
+64-channel, 1024-pixel Briggs four-worker run at 97.81 s frontend/9.55 GB peak
+(<code>imperformance-wave-2-experiment-summary.md:106-120</code>). A later paired 1k run
+reported CASA 733.660 s versus casa-rs 41.790 s, but the same record explicitly
+rejects an earlier faster result for scientific divergence
+(<code>imperformance-wave-2-experiment-summary.md:122-130</code>). These results justify
+re-testing bounded runs, tile ownership, and deterministic merge; they do not
+justify restoring the old executor or claiming current speed.</p>
+<p>The old negative results are equally important: deeper queues slowed the heavy
+case to 118.99 s; a roughly 6.10 GB metadata cache was noisy; broad MS storage
+read and specialized packing were not dominant on that workload
+(<code>imperformance-wave-2-experiment-summary.md:148-167</code>). Therefore read-ahead,
+packing, and caching remain hypotheses until current stage timing and wait data
+support them.</p>
+<h2 id="exact-source-buffer-reuse-seam">Exact source-buffer reuse seam<a class="headerlink" href="#exact-source-buffer-reuse-seam" title="Permanent link">&para;</a></h2>
+<p>The public <code>VisibilityBuffer</code> is not a correct direct replacement for the
+private selected-observation buffer:</p>
+<ul>
+<li>The private buffer is the closed compiler-owned column contract, including
+  <code>FEED1</code>, <code>FEED2</code>, <code>TIME_CENTROID</code>, exact visibility/weight variants, and the
+  other selection/provenance scalars
+  (<code>crates/casa-ms/src/selected_observation_buffer.rs:69-115</code>). The public
+  <code>VisibilityBuffer</code> has a different, optional analysis/probe surface and omits
+  parts of that contract (<code>crates/casa-ms/src/visibility_buffer.rs:272-317</code>).</li>
+<li>The public fill explicitly drops <code>DATA</code>, <code>FLAG</code>, and <code>WEIGHT_SPECTRUM</code> before
+  reading (<code>visibility_buffer.rs:598-612</code>). Its channel readers then obtain new
+  typed blocks and move newly allocated vectors into the buffer
+  (<code>visibility_buffer.rs:1154-1271</code>). Row indices, row weights, UVW, and selected
+  scalar vectors do retain or receive their prior vectors for possible reuse
+  (<code>visibility_buffer.rs:325-331</code>, <code>613-704</code>, <code>1274-1293</code>).</li>
+<li>Its allocation report compares only capacity values before and after fill and
+  labels a buffer reused when the old capacity is at least the new capacity
+  (<code>visibility_buffer.rs:1816-1907</code>). For channel arrays this can report
+  “reused” after the old allocation was dropped and an unrelated equal-or-smaller
+  allocation was installed. That report is not allocation-identity evidence.</li>
+</ul>
+<p>The mechanism to adapt is the private exact selected-observation fill, not the
+public probe API. <code>fill_selected_observation_buffer</code> already enforces the closed
+column set and forbids whole-cell fallback
+(<code>selected_observation_buffer.rs:403-415</code>, <code>565-619</code>). Beneath it, casa-tables
+already separates allocation from typed filling: the tiled reader allocates a
+typed destination and then calls cores that fill caller-owned mutable slices
+(<code>crates/casa-tables/src/storage/tiled_stman.rs:3119-3203</code>). The decode core
+accepts <code>&amp;mut [T]</code> (<code>tiled_stman.rs:3277-3293</code>), as do the direct-copy 2-D and
+1-D cores (<code>tiled_stman.rs:3442-3456</code>, <code>2880-2885</code>, <code>2959-2965</code>).</p>
+<p>Adapt that existing core with private typed <code>*_into</code> entry points through
+casa-tables and the private <code>SelectedObservationBuffer</code> fill. They should resize
+and fill the exact type-compatible vectors already owned by a leased block,
+replace only on insufficient capacity or type/shape change, and report those
+events explicitly. Keep this API private to the selected-observation owner; do
+not widen the public <code>VisibilityBuffer</code>, duplicate selection semantics, or make
+the runtime understand MS columns. The runtime may own the block lease and
+budget, but <code>casa-ms</code> must remain the only component that fills and validates
+its source storage.</p>
+<h2 id="proposed-shared-execution-contract">Proposed shared execution contract<a class="headerlink" href="#proposed-shared-execution-contract" title="Permanent link">&para;</a></h2>
+<p>The contract should be expressed as capabilities rather than an old MFS runner:</p>
+<ol>
+<li><strong>Ordered block source, owned by <code>casa-ms</code>.</strong> It binds one selected
+   observation and yields reusable block leases in compiler order. Its private
+   exact fill path uses typed <code>*_into</code> operations to refill the lease's retained
+   vectors. The lease carries stable traversal/block ordinals and exact logical
+   source bytes. The source alone interprets MeasurementSet rows, columns,
+   flags, coordinates, selection, and completion.</li>
+<li><strong>Physical execution plan, owned by <code>casa-imaging-runtime</code>.</strong> It admits exact
+   live source/prepared/result slots, per-worker scratch, bounded partial state,
+   queue depth, read-ahead depth, workers, and reduction scratch under one
+   resource lease. No dataset identity or mode-specific threshold selects the
+   plan.</li>
+<li><strong>Bounded executor, owned by <code>casa-imaging-runtime</code>.</strong> A producer obtains an
+   empty lease, asks <code>casa-ms</code> to fill it, and publishes it to a bounded queue.
+   Workers borrow published blocks and kernel scratch. Returning the lease is
+   the backpressure signal. Depth one and <code>workers = 1</code> remain the same state
+   machine, with no thread/queue overhead required when the plan proves only one
+   block can exist.</li>
+<li><strong>Streaming scientific kernel, owned by reconstruction/gridding.</strong> It
+   converts a source block into kernel work, applies flags/weights/operator
+   semantics, declares bounded partial state, and exposes stable reduction
+   keys. It—not the runtime—defines tile ownership, halos, accumulation
+   precision, and deterministic merge.</li>
+<li><strong>Deterministic bounded reduction.</strong> Runtime schedules ready work but commits
+   partials only in the kernel's stable order. A worker may directly update an
+   exclusively owned resident tile; otherwise it emits a bounded tile/sector
+   partial. Neither case permits a complete grid per worker.</li>
+<li><strong>Composition only above the seam.</strong> The application requests the plan,
+   connects source/kernel/sink, and publishes receipts. Frontends do not read
+   the MS, build scientific buffers, schedule workers, or merge grids.</li>
+</ol>
+<p>This follows the accepted architecture: selected observation bulk remains a
+bounded stream (<code>docs/adr/0009-mathematical-imaging-architecture.md:132</code>), while
+ADR-0010 assigns buffers, workers, queues, leases, and receipts to the unified
+resource authority (<code>docs/adr/0010-unified-imaging-resource-authority.md:67-78</code>,
+<code>121-148</code>). ADR-0010 also explicitly treats a duplicated full grid per worker
+as an architecture violation (<code>docs/adr/0010-unified-imaging-resource-authority.md:182-198</code>).</p>
+<h2 id="measurement-contract-before-optimization">Measurement contract before optimization<a class="headerlink" href="#measurement-contract-before-optimization" title="Permanent link">&para;</a></h2>
+<p>The instrumentation commit should leave scientific output unchanged and record
+at least:</p>
+<ul>
+<li>logical selected-observation traversals and physical MAIN reads, separately;</li>
+<li>row blocks, selected rows/samples, raw column bytes, logical selected bytes,
+  and bytes copied at each named handoff;</li>
+<li>allocation count, reuse count, capacity, current residency, and high-water
+  residency for source, prepared, weighted, worker scratch, partial, reduction,
+  grid, FFT, and product buffers;</li>
+<li>stage wall/CPU time for source read, source projection, weighting density,
+  weighting finalization, preparation/conversion, queue wait, gridding,
+  deterministic reduction, FFT/scientific completion, and writing;</li>
+<li>producer active/blocked time, consumer receive wait, overlap, queue
+  high-water blocks/bytes, and lease-return latency;</li>
+<li>per-worker work units, samples/taps, active time, ready wait, backpressure
+  wait, reduction time, and stable partition/reduction IDs;</li>
+<li>planned versus actual workers, queue depth, live blocks, scratch, partial
+  bytes, and peak resident bytes.</li>
+</ul>
+<p>The matched baseline should freeze parameters, selected row/channel/correlation
+content, CASA version/commit, machine/storage location, product comparison
+thresholds, and warm/cold-cache policy. Record <code>workers = 1</code> first, then the
+same path with the admitted worker count. Run the focused workload on the
+medium dataset and the directly mounted 32 GB dataset before retaining
+read-ahead, multiple workers, or a new partial-grid representation.</p>
+<h2 id="searches-and-commands-used">Searches and commands used<a class="headerlink" href="#searches-and-commands-used" title="Permanent link">&para;</a></h2>
+<p>All commands were read-only except creation of this note. Representative exact
+commands:</p>
+<div class="codehilite"><pre><span></span><code>git<span class="w"> </span>cat-file<span class="w"> </span>-t<span class="w"> </span>7fd6e9d422b0a76ab34fc8cd820b93e0fb6b3a40
+git<span class="w"> </span>cat-file<span class="w"> </span>-t<span class="w"> </span>fff9c2d553eace4b6a57b1df9ded4773f2263ceb
+git<span class="w"> </span>cat-file<span class="w"> </span>-t<span class="w"> </span>009745a080c90c92bffb07de2603136852
+git<span class="w"> </span>show<span class="w"> </span>-s<span class="w"> </span>--format<span class="o">=</span><span class="s1">'%H %cs %s'</span><span class="w"> </span>&lt;revision&gt;
+git<span class="w"> </span>show<span class="w"> </span>--stat<span class="w"> </span>--oneline<span class="w"> </span>--summary<span class="w"> </span>fff9c2d553eace4b6a57b1df9ded4773f2263ceb
+git<span class="w"> </span>ls-tree<span class="w"> </span>-r<span class="w"> </span>--name-only<span class="w"> </span>&lt;revision&gt;<span class="w"> </span><span class="p">|</span><span class="w"> </span>rg<span class="w"> </span><span class="s1">'casa-(ms|imaging)'</span>
+
+git<span class="w"> </span>show<span class="w"> </span>7fd6e9d422b0a76ab34fc8cd820b93e0fb6b3a40:docs/tutorial-parity/imperformance-wave-2-experiment-summary.md<span class="w"> </span><span class="p">|</span><span class="w"> </span>nl<span class="w"> </span>-ba
+git<span class="w"> </span>show<span class="w"> </span>7fd6e9d422b0a76ab34fc8cd820b93e0fb6b3a40:tools/perf/imager/imaging_performance_ledger.json<span class="w"> </span><span class="p">|</span><span class="w"> </span>nl<span class="w"> </span>-ba
+git<span class="w"> </span>show<span class="w"> </span>7fd6e9d422b0a76ab34fc8cd820b93e0fb6b3a40:crates/casa-imaging/src/execution.rs<span class="w"> </span><span class="p">|</span><span class="w"> </span>nl<span class="w"> </span>-ba
+git<span class="w"> </span>show<span class="w"> </span>7fd6e9d422b0a76ab34fc8cd820b93e0fb6b3a40:crates/casa-imaging/src/execution_plan.rs<span class="w"> </span><span class="p">|</span><span class="w"> </span>nl<span class="w"> </span>-ba
+
+rg<span class="w"> </span>-n<span class="w"> </span><span class="s1">'BoundObservation|maximum_live_blocks|prefetch|replay|Residency|consume_weighted_block'</span><span class="w"> </span>crates/casa-ms<span class="w"> </span>crates/casa-imaging-reconstruction<span class="w"> </span>crates/casa-imaging-runtime
+nl<span class="w"> </span>-ba<span class="w"> </span>crates/casa-ms/src/selected_observation/access.rs
+nl<span class="w"> </span>-ba<span class="w"> </span>crates/casa-ms/src/selected_observation_buffer.rs
+nl<span class="w"> </span>-ba<span class="w"> </span>crates/casa-ms/src/visibility_buffer.rs
+nl<span class="w"> </span>-ba<span class="w"> </span>crates/casa-ms/src/selected_observation/content_plan.rs
+nl<span class="w"> </span>-ba<span class="w"> </span>crates/casa-ms/src/selected_observation/bound_observation.rs
+nl<span class="w"> </span>-ba<span class="w"> </span>crates/casa-imaging-reconstruction/src/weighting.rs
+nl<span class="w"> </span>-ba<span class="w"> </span>crates/casa-imaging-runtime/src/complete_data_operator.rs
+nl<span class="w"> </span>-ba<span class="w"> </span>crates/casa-tables/src/storage/tiled_stman.rs
+
+git<span class="w"> </span>-C<span class="w"> </span>/Users/brianglendenning/SoftwareProjects/casa<span class="w"> </span>show<span class="w"> </span>HEAD:casatools/src/code/synthesis/ImagerObjects/SynthesisImagerVi2.cc<span class="w"> </span><span class="p">|</span><span class="w"> </span>nl<span class="w"> </span>-ba
+git<span class="w"> </span>-C<span class="w"> </span>/Users/brianglendenning/SoftwareProjects/casa<span class="w"> </span>show<span class="w"> </span>HEAD:casatools/src/code/msvis/MSVis/VisibilityIteratorImpl2.cc<span class="w"> </span><span class="p">|</span><span class="w"> </span>nl<span class="w"> </span>-ba
+git<span class="w"> </span>-C<span class="w"> </span>/Users/brianglendenning/SoftwareProjects/casa<span class="w"> </span>show<span class="w"> </span>HEAD:casatools/src/code/synthesis/TransformMachines2/GridFT.cc<span class="w"> </span><span class="p">|</span><span class="w"> </span>nl<span class="w"> </span>-ba
+git<span class="w"> </span>-C<span class="w"> </span>/Users/brianglendenning/SoftwareProjects/casacore<span class="w"> </span>show<span class="w"> </span>HEAD:lattices/Lattices/LatticeCache.tcc<span class="w"> </span><span class="p">|</span><span class="w"> </span>nl<span class="w"> </span>-ba
+
+git<span class="w"> </span>-C<span class="w"> </span>/Users/brianglendenning/SoftwareProjects/libRA<span class="w"> </span>show<span class="w"> </span>HEAD:src/libracore/DataIterations.h<span class="w"> </span><span class="p">|</span><span class="w"> </span>nl<span class="w"> </span>-ba
+git<span class="w"> </span>-C<span class="w"> </span>/Users/brianglendenning/SoftwareProjects/libRA<span class="w"> </span>show<span class="w"> </span>HEAD:src/synthesis/TransformMachines2/HPGVisBufferBucket.h<span class="w"> </span><span class="p">|</span><span class="w"> </span>nl<span class="w"> </span>-ba
+git<span class="w"> </span>-C<span class="w"> </span>/Users/brianglendenning/SoftwareProjects/libRA<span class="w"> </span>show<span class="w"> </span>HEAD:src/synthesis/TransformMachines2/AWVisResamplerHPG.cc<span class="w"> </span><span class="p">|</span><span class="w"> </span>nl<span class="w"> </span>-ba
+git<span class="w"> </span>-C<span class="w"> </span>/Users/brianglendenning/SoftwareProjects/libRA<span class="w"> </span>show<span class="w"> </span>HEAD:src/synthesis/MeasurementComponents/MultiThreadedVisResampler.cc<span class="w"> </span><span class="p">|</span><span class="w"> </span>nl<span class="w"> </span>-ba
+</code></pre></div>
+
+<p>Search terms included <code>row block</code>, <code>VisBuffer</code>, <code>originChunks</code>, <code>prefetch</code>,
+<code>read_ahead</code>, <code>bucket</code>, <code>spillover</code>, <code>resident tile</code>, <code>queue high water</code>,
+<code>producer</code>, <code>worker</code>, <code>scatter</code>, <code>gather</code>, <code>sumwt</code>, <code>LatticeCache</code>, and
+<code>deterministic</code>.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
