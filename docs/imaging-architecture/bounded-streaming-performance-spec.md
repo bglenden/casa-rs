@@ -617,6 +617,13 @@ Neither delivery may:
 - change a versioned receipt schema without a separate explicit approval; or
 - implement cube, mosaic, W/AW-projection, MT-MFS, or device-specific kernels.
 
+The user explicitly approved one narrow exception on 2026-08-29 after the
+independent structural review: execution receipt schema version 19 adds the
+`artifact` resource-claim lifetime needed to represent a plan-owned permit
+that transfers into an immutable cross-plan artifact. Version 18 receipts are
+rejected rather than interpreted through a compatibility fallback. This
+approval does not authorize another persisted-format or receipt-schema change.
+
 ## Ownership and Interface
 
 ### `casa-ms`: ordered source owner
