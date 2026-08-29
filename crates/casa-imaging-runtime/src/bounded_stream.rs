@@ -12,17 +12,20 @@ use std::{
     time::Instant,
 };
 
+pub(crate) const BOUNDED_WORKER_STACK_BYTES: usize = 2 * 1024 * 1024;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct BoundedStreamPlan {
     source_slots: usize,
     workers: usize,
     source_capacity_bytes: u64,
     maximum_partitions_per_block: usize,
+    dynamic_kernel_window_capacity_bytes: u64,
     kernel_window_capacity_bytes: u64,
 }
 
 impl BoundedStreamPlan {
-    pub(crate) fn new<Partition, Partial>(
+    pub(crate) fn new<Prepared, Partition, Partial>(
         source_slots: usize,
         workers: usize,
         source_capacity_bytes: u64,
@@ -42,7 +45,7 @@ impl BoundedStreamPlan {
             return Err(BoundedStreamPlanError::Partitions);
         }
         let kernel_window_capacity_bytes =
-            fixed_kernel_window_capacity_bytes::<Partition, Partial>(workers)?
+            fixed_kernel_window_capacity_bytes::<Prepared, Partition, Partial>(workers)?
                 .checked_add(dynamic_kernel_window_capacity_bytes)
                 .ok_or(BoundedStreamPlanError::KernelWindowCapacity)?;
         Ok(Self {
@@ -50,16 +53,18 @@ impl BoundedStreamPlan {
             workers,
             source_capacity_bytes,
             maximum_partitions_per_block,
+            dynamic_kernel_window_capacity_bytes,
             kernel_window_capacity_bytes,
         })
     }
 }
 
-fn fixed_kernel_window_capacity_bytes<Partition, Partial>(
+fn fixed_kernel_window_capacity_bytes<Prepared, Partition, Partial>(
     workers: usize,
 ) -> Result<u64, BoundedStreamPlanError> {
     let per_worker = size_of::<(WorkIdentity, KernelPartition<Partition>)>()
         .checked_add(size_of::<(WorkIdentity, Partial)>())
+        .and_then(|bytes| bytes.checked_add(size_of::<u64>()))
         .and_then(|bytes| bytes.checked_add(size_of::<u64>()))
         .and_then(|bytes| {
             bytes.checked_add(size_of::<(
@@ -71,8 +76,19 @@ fn fixed_kernel_window_capacity_bytes<Partition, Partial>(
     let vectors = per_worker
         .checked_mul(workers)
         .ok_or(BoundedStreamPlanError::KernelWindowCapacity)?;
+    let worker_stacks = if workers == 1 {
+        0
+    } else {
+        BOUNDED_WORKER_STACK_BYTES
+            .checked_mul(workers)
+            .ok_or(BoundedStreamPlanError::KernelWindowCapacity)?
+    };
     let total = vectors
-        .checked_add(size_of::<Option<(WorkIdentity, KernelPartition<Partition>)>>())
+        .checked_add(size_of::<Prepared>())
+        .and_then(|bytes| {
+            bytes.checked_add(size_of::<Option<(WorkIdentity, KernelPartition<Partition>)>>())
+        })
+        .and_then(|bytes| bytes.checked_add(worker_stacks))
         .ok_or(BoundedStreamPlanError::KernelWindowCapacity)?;
     u64::try_from(total).map_err(|_| BoundedStreamPlanError::KernelWindowCapacity)
 }
@@ -201,35 +217,63 @@ impl<P> KernelPartition<P> {
 }
 
 pub(crate) trait PartitionedKernel<S>: Sync {
+    type Prepared: Send + Sync;
     type Partition: Send + Sync;
     type Partial: Send;
     type Completion;
     type Error: Error + Send + 'static;
 
-    fn partition_count(&self, block: BlockIdentity, storage: &S) -> Result<usize, Self::Error>;
+    fn prepare(&mut self, block: BlockIdentity, storage: &S)
+    -> Result<Self::Prepared, Self::Error>;
+    fn prepared_dynamic_capacity_bytes(&self, _prepared: &Self::Prepared) -> u64 {
+        0
+    }
+    fn partition_count(
+        &self,
+        block: BlockIdentity,
+        storage: &S,
+        prepared: &Self::Prepared,
+    ) -> Result<usize, Self::Error>;
     fn partition(
         &self,
         block: BlockIdentity,
         storage: &S,
+        prepared: &Self::Prepared,
         local_ordinal: usize,
     ) -> Result<KernelPartition<Self::Partition>, Self::Error>;
-    fn partition_dynamic_capacity_bytes(&self, _partition: &Self::Partition) -> u64 {
+    fn partition_dynamic_capacity_bytes(
+        &self,
+        _prepared: &Self::Prepared,
+        _partition: &Self::Partition,
+    ) -> u64 {
         0
     }
     fn execute(
         &self,
         work: WorkIdentity,
         storage: &S,
+        prepared: &Self::Prepared,
         partition: &Self::Partition,
     ) -> Result<Self::Partial, Self::Error>;
-    fn partial_dynamic_capacity_bytes(&self, _partial: &Self::Partial) -> u64 {
+    fn partial_dynamic_capacity_bytes(
+        &self,
+        _prepared: &Self::Prepared,
+        _partial: &Self::Partial,
+    ) -> u64 {
         0
     }
     fn commit(
         &mut self,
         work: WorkIdentity,
         storage: &S,
+        prepared: &Self::Prepared,
         partial: Self::Partial,
+    ) -> Result<(), Self::Error>;
+    fn finish_block(
+        &mut self,
+        block: BlockIdentity,
+        storage: &S,
+        prepared: Self::Prepared,
     ) -> Result<(), Self::Error>;
     fn complete(self) -> Result<Self::Completion, Self::Error>;
 }
@@ -243,6 +287,11 @@ pub(crate) struct BoundedStreamMeasurements {
     pub(crate) prepare_nanos: u128,
     pub(crate) execute_nanos: u128,
     pub(crate) commit_nanos: u128,
+    pub(crate) partitions_executed: u64,
+    pub(crate) commits_completed: u64,
+    pub(crate) workers_with_nonzero_partitions: usize,
+    pub(crate) minimum_partitions_per_active_worker: u64,
+    pub(crate) maximum_partitions_per_active_worker: u64,
     pub(crate) producer_wait_nanos: u128,
     pub(crate) consumer_wait_nanos: u128,
     pub(crate) source_starved_nanos: u128,
@@ -257,7 +306,11 @@ pub(crate) struct BoundedStreamMeasurements {
     pub(crate) workers: usize,
     pub(crate) planned_source_capacity_bytes: u64,
     pub(crate) maximum_partitions_per_block: usize,
+    pub(crate) planned_kernel_dynamic_capacity_bytes: u64,
     pub(crate) planned_kernel_window_capacity_bytes: u64,
+    pub(crate) peak_prepared_dynamic_capacity_bytes: u64,
+    pub(crate) peak_partial_dynamic_capacity_bytes: u64,
+    pub(crate) peak_worker_stack_capacity_bytes: u64,
     pub(crate) peak_kernel_window_capacity_bytes: u64,
     pub(crate) lease_return_nanos: u128,
     pub(crate) overlap_nanos: u128,
@@ -297,7 +350,76 @@ struct ProcessMeasurements {
     prepare_nanos: u128,
     execute_nanos: u128,
     commit_nanos: u128,
+    partitions_executed: u64,
+    commits_completed: u64,
+    peak_prepared_dynamic_capacity_bytes: u64,
+    peak_partial_dynamic_capacity_bytes: u64,
+    peak_worker_stack_capacity_bytes: u64,
     peak_kernel_window_capacity_bytes: u64,
+}
+
+impl BoundedStreamMeasurements {
+    fn record_process(
+        &mut self,
+        process: ProcessMeasurements,
+        worker_partition_executions: &[u64],
+    ) -> Option<()> {
+        let prepare_nanos = self.prepare_nanos.checked_add(process.prepare_nanos)?;
+        let execute_nanos = self.execute_nanos.checked_add(process.execute_nanos)?;
+        let commit_nanos = self.commit_nanos.checked_add(process.commit_nanos)?;
+        let partitions_executed = self
+            .partitions_executed
+            .checked_add(process.partitions_executed)?;
+        let commits_completed = self
+            .commits_completed
+            .checked_add(process.commits_completed)?;
+        let mut workers_with_nonzero_partitions = 0usize;
+        let mut minimum_partitions_per_active_worker = u64::MAX;
+        let mut maximum_partitions_per_active_worker = 0u64;
+        for executions in worker_partition_executions
+            .iter()
+            .copied()
+            .filter(|count| *count > 0)
+        {
+            workers_with_nonzero_partitions += 1;
+            minimum_partitions_per_active_worker =
+                minimum_partitions_per_active_worker.min(executions);
+            maximum_partitions_per_active_worker =
+                maximum_partitions_per_active_worker.max(executions);
+        }
+        if workers_with_nonzero_partitions == 0 {
+            minimum_partitions_per_active_worker = 0;
+        }
+        self.prepare_nanos = prepare_nanos;
+        self.execute_nanos = execute_nanos;
+        self.commit_nanos = commit_nanos;
+        self.partitions_executed = partitions_executed;
+        self.commits_completed = commits_completed;
+        self.workers_with_nonzero_partitions = workers_with_nonzero_partitions;
+        self.minimum_partitions_per_active_worker = minimum_partitions_per_active_worker;
+        self.maximum_partitions_per_active_worker = maximum_partitions_per_active_worker;
+        self.peak_prepared_dynamic_capacity_bytes = self
+            .peak_prepared_dynamic_capacity_bytes
+            .max(process.peak_prepared_dynamic_capacity_bytes);
+        self.peak_partial_dynamic_capacity_bytes = self
+            .peak_partial_dynamic_capacity_bytes
+            .max(process.peak_partial_dynamic_capacity_bytes);
+        self.peak_worker_stack_capacity_bytes = self
+            .peak_worker_stack_capacity_bytes
+            .max(process.peak_worker_stack_capacity_bytes);
+        self.peak_kernel_window_capacity_bytes = self
+            .peak_kernel_window_capacity_bytes
+            .max(process.peak_kernel_window_capacity_bytes);
+        Some(())
+    }
+}
+
+fn zeroed_worker_partition_executions(workers: usize) -> Option<(Vec<u64>, u64)> {
+    let mut counts = Vec::new();
+    counts.try_reserve_exact(workers).ok()?;
+    counts.resize(workers, 0);
+    let capacity_bytes = vector_capacity_bytes(&counts)?;
+    Some((counts, capacity_bytes))
 }
 
 fn process_block<S, K>(
@@ -305,22 +427,34 @@ fn process_block<S, K>(
     block: BlockIdentity,
     storage: &S,
     kernel: &mut K,
+    worker_partition_executions: &mut [u64],
+    worker_partition_execution_capacity_bytes: u64,
 ) -> Result<ProcessMeasurements, BoundedStreamError<InfallibleSource, K::Error>>
 where
     S: Sync,
     K: PartitionedKernel<S>,
 {
-    let count_started = Instant::now();
+    if worker_partition_executions.len() != plan.workers {
+        return Err(BoundedStreamError::InvalidKernelPlan);
+    }
+    let prepare_started = Instant::now();
+    let prepared = kernel
+        .prepare(block, storage)
+        .map_err(BoundedStreamError::Kernel)?;
+    let prepared_dynamic_capacity_bytes = kernel.prepared_dynamic_capacity_bytes(&prepared);
     let partition_count = kernel
-        .partition_count(block, storage)
+        .partition_count(block, storage, &prepared)
         .map_err(BoundedStreamError::Kernel)?;
     if partition_count > plan.maximum_partitions_per_block {
         return Err(BoundedStreamError::InvalidKernelPlan);
     }
-    let mut prepare_nanos = count_started.elapsed().as_nanos();
+    let mut prepare_nanos = prepare_started.elapsed().as_nanos();
     let mut execute_nanos = 0_u128;
     let mut commit_nanos = 0_u128;
-    let mut peak_kernel_window_capacity_bytes = 0_u64;
+    let mut partitions_executed = 0_u64;
+    let mut commits_completed = 0_u64;
+    let mut peak_partial_dynamic_capacity_bytes = 0_u64;
+    let mut peak_worker_stack_capacity_bytes = 0_u64;
     let mut wave = Vec::<(WorkIdentity, KernelPartition<K::Partition>)>::new();
     let mut completed = Vec::<(WorkIdentity, K::Partial)>::new();
     let mut exclusive_regions = Vec::<u64>::new();
@@ -335,6 +469,8 @@ where
     let fixed_wave_bytes = vector_capacity_bytes(&wave)
         .and_then(|bytes| bytes.checked_add(vector_capacity_bytes(&completed)?))
         .and_then(|bytes| bytes.checked_add(vector_capacity_bytes(&exclusive_regions)?))
+        .and_then(|bytes| bytes.checked_add(worker_partition_execution_capacity_bytes))
+        .and_then(|bytes| bytes.checked_add(u64::try_from(size_of::<K::Prepared>()).ok()?))
         .and_then(|bytes| {
             bytes.checked_add(
                 u64::try_from(size_of::<
@@ -344,9 +480,16 @@ where
             )
         })
         .ok_or(BoundedStreamError::MeasurementOverflow)?;
-    if fixed_wave_bytes > plan.kernel_window_capacity_bytes {
+    if prepared_dynamic_capacity_bytes > plan.dynamic_kernel_window_capacity_bytes {
         return Err(BoundedStreamError::ResidencyExceeded);
     }
+    let prepared_window_bytes = fixed_wave_bytes
+        .checked_add(prepared_dynamic_capacity_bytes)
+        .ok_or(BoundedStreamError::MeasurementOverflow)?;
+    if prepared_window_bytes > plan.kernel_window_capacity_bytes {
+        return Err(BoundedStreamError::ResidencyExceeded);
+    }
+    let mut peak_kernel_window_capacity_bytes = prepared_window_bytes;
 
     let mut next_ordinal = 0usize;
     let mut deferred: Option<(WorkIdentity, KernelPartition<K::Partition>)> = None;
@@ -360,13 +503,14 @@ where
             if let Accumulation::Exclusive { region } = partition.accumulation {
                 exclusive_regions.push(region);
             }
-            dynamic_partition_bytes = kernel.partition_dynamic_capacity_bytes(&partition.payload);
+            dynamic_partition_bytes =
+                kernel.partition_dynamic_capacity_bytes(&prepared, &partition.payload);
             wave.push((identity, partition));
         }
         while wave.len() < plan.workers && next_ordinal < partition_count {
             let prepare_started = Instant::now();
             let partition = kernel
-                .partition(block, storage, next_ordinal)
+                .partition(block, storage, &prepared, next_ordinal)
                 .map_err(BoundedStreamError::Kernel)?;
             let identity = partition.identity(block, next_ordinal as u64);
             prepare_nanos = prepare_nanos
@@ -389,17 +533,25 @@ where
                 exclusive_regions.push(region);
             }
             dynamic_partition_bytes = dynamic_partition_bytes
-                .checked_add(kernel.partition_dynamic_capacity_bytes(&partition.payload))
+                .checked_add(kernel.partition_dynamic_capacity_bytes(&prepared, &partition.payload))
                 .ok_or(BoundedStreamError::MeasurementOverflow)?;
             wave.push((identity, partition));
         }
         let deferred_dynamic_bytes = deferred
             .as_ref()
-            .map(|(_, partition)| kernel.partition_dynamic_capacity_bytes(&partition.payload))
+            .map(|(_, partition)| {
+                kernel.partition_dynamic_capacity_bytes(&prepared, &partition.payload)
+            })
             .unwrap_or(0);
-        let partition_window_bytes = fixed_wave_bytes
+        let dynamic_partition_window_bytes = prepared_dynamic_capacity_bytes
             .checked_add(dynamic_partition_bytes)
             .and_then(|bytes| bytes.checked_add(deferred_dynamic_bytes))
+            .ok_or(BoundedStreamError::MeasurementOverflow)?;
+        if dynamic_partition_window_bytes > plan.dynamic_kernel_window_capacity_bytes {
+            return Err(BoundedStreamError::ResidencyExceeded);
+        }
+        let partition_window_bytes = fixed_wave_bytes
+            .checked_add(dynamic_partition_window_bytes)
             .ok_or(BoundedStreamError::MeasurementOverflow)?;
         if partition_window_bytes > plan.kernel_window_capacity_bytes {
             return Err(BoundedStreamError::ResidencyExceeded);
@@ -409,14 +561,25 @@ where
 
         let execute_started = Instant::now();
         let mut handle_capacity_bytes = 0_u64;
+        let worker_stack_capacity_bytes = if wave.len() == 1 {
+            0
+        } else {
+            u64::try_from(BOUNDED_WORKER_STACK_BYTES)
+                .ok()
+                .and_then(|bytes| bytes.checked_mul(u64::try_from(wave.len()).ok()?))
+                .ok_or(BoundedStreamError::MeasurementOverflow)?
+        };
+        peak_worker_stack_capacity_bytes =
+            peak_worker_stack_capacity_bytes.max(worker_stack_capacity_bytes);
         if wave.len() == 1 {
             let (identity, partition) = &wave[0];
             let partial = kernel
-                .execute(*identity, storage, &partition.payload)
+                .execute(*identity, storage, &prepared, &partition.payload)
                 .map_err(BoundedStreamError::Kernel)?;
             completed.push((*identity, partial));
         } else {
             let kernel_ref = &*kernel;
+            let prepared_ref = &prepared;
             handle_capacity_bytes = std::thread::scope(|scope| {
                 let mut handles = Vec::new();
                 handles
@@ -425,9 +588,17 @@ where
                 for (identity, partition) in &wave {
                     handles.push((
                         *identity,
-                        scope.spawn(move || {
-                            kernel_ref.execute(*identity, storage, &partition.payload)
-                        }),
+                        std::thread::Builder::new()
+                            .stack_size(BOUNDED_WORKER_STACK_BYTES)
+                            .spawn_scoped(scope, move || {
+                                kernel_ref.execute(
+                                    *identity,
+                                    storage,
+                                    prepared_ref,
+                                    &partition.payload,
+                                )
+                            })
+                            .map_err(|_| BoundedStreamError::InvalidKernelPlan)?,
                     ));
                 }
                 let capacity_bytes = vector_capacity_bytes(&handles)
@@ -445,12 +616,34 @@ where
         execute_nanos = execute_nanos
             .checked_add(execute_started.elapsed().as_nanos())
             .ok_or(BoundedStreamError::MeasurementOverflow)?;
+        if worker_partition_executions[..wave.len()].contains(&u64::MAX) {
+            return Err(BoundedStreamError::MeasurementOverflow);
+        }
+        for executions in &mut worker_partition_executions[..wave.len()] {
+            *executions += 1;
+        }
+        partitions_executed = partitions_executed
+            .checked_add(
+                u64::try_from(wave.len()).map_err(|_| BoundedStreamError::MeasurementOverflow)?,
+            )
+            .ok_or(BoundedStreamError::MeasurementOverflow)?;
         let dynamic_partial_bytes = completed.iter().try_fold(0_u64, |total, (_, partial)| {
-            total.checked_add(kernel.partial_dynamic_capacity_bytes(partial))
+            total.checked_add(kernel.partial_dynamic_capacity_bytes(&prepared, partial))
         });
+        let dynamic_partial_bytes =
+            dynamic_partial_bytes.ok_or(BoundedStreamError::MeasurementOverflow)?;
+        peak_partial_dynamic_capacity_bytes =
+            peak_partial_dynamic_capacity_bytes.max(dynamic_partial_bytes);
+        let dynamic_live_window_bytes = dynamic_partition_window_bytes
+            .checked_add(dynamic_partial_bytes)
+            .ok_or(BoundedStreamError::MeasurementOverflow)?;
+        if dynamic_live_window_bytes > plan.dynamic_kernel_window_capacity_bytes {
+            return Err(BoundedStreamError::ResidencyExceeded);
+        }
         let live_window_bytes = partition_window_bytes
             .checked_add(handle_capacity_bytes)
-            .and_then(|bytes| bytes.checked_add(dynamic_partial_bytes?))
+            .and_then(|bytes| bytes.checked_add(worker_stack_capacity_bytes))
+            .and_then(|bytes| bytes.checked_add(dynamic_partial_bytes))
             .ok_or(BoundedStreamError::MeasurementOverflow)?;
         if live_window_bytes > plan.kernel_window_capacity_bytes {
             return Err(BoundedStreamError::ResidencyExceeded);
@@ -461,17 +654,32 @@ where
         let commit_started = Instant::now();
         for (identity, partial) in completed.drain(..) {
             kernel
-                .commit(identity, storage, partial)
+                .commit(identity, storage, &prepared, partial)
                 .map_err(BoundedStreamError::Kernel)?;
+            commits_completed = commits_completed
+                .checked_add(1)
+                .ok_or(BoundedStreamError::MeasurementOverflow)?;
         }
         commit_nanos = commit_nanos
             .checked_add(commit_started.elapsed().as_nanos())
             .ok_or(BoundedStreamError::MeasurementOverflow)?;
     }
+    let finish_started = Instant::now();
+    kernel
+        .finish_block(block, storage, prepared)
+        .map_err(BoundedStreamError::Kernel)?;
+    commit_nanos = commit_nanos
+        .checked_add(finish_started.elapsed().as_nanos())
+        .ok_or(BoundedStreamError::MeasurementOverflow)?;
     Ok(ProcessMeasurements {
         prepare_nanos,
         execute_nanos,
         commit_nanos,
+        partitions_executed,
+        commits_completed,
+        peak_prepared_dynamic_capacity_bytes: prepared_dynamic_capacity_bytes,
+        peak_partial_dynamic_capacity_bytes,
+        peak_worker_stack_capacity_bytes,
         peak_kernel_window_capacity_bytes,
     })
 }
@@ -636,10 +844,14 @@ where
         workers: plan.workers,
         planned_source_capacity_bytes: plan.source_capacity_bytes,
         maximum_partitions_per_block: plan.maximum_partitions_per_block,
+        planned_kernel_dynamic_capacity_bytes: plan.dynamic_kernel_window_capacity_bytes,
         planned_kernel_window_capacity_bytes: plan.kernel_window_capacity_bytes,
         ..BoundedStreamMeasurements::default()
     };
     let result = (|| {
+        let (mut worker_partition_executions, worker_partition_execution_capacity_bytes) =
+            zeroed_worker_partition_executions(plan.workers)
+                .ok_or(BoundedStreamError::InvalidKernelPlan)?;
         let mut storage = source.create_storage(0);
         let mut block_ordinal = 0_u64;
         loop {
@@ -692,23 +904,13 @@ where
                         },
                         &storage,
                         &mut kernel,
+                        &mut worker_partition_executions,
+                        worker_partition_execution_capacity_bytes,
                     )
                     .map_err(map_process_error)?;
-                    measurements.prepare_nanos = measurements
-                        .prepare_nanos
-                        .checked_add(process.prepare_nanos)
+                    measurements
+                        .record_process(process, &worker_partition_executions)
                         .ok_or(BoundedStreamError::MeasurementOverflow)?;
-                    measurements.execute_nanos = measurements
-                        .execute_nanos
-                        .checked_add(process.execute_nanos)
-                        .ok_or(BoundedStreamError::MeasurementOverflow)?;
-                    measurements.commit_nanos = measurements
-                        .commit_nanos
-                        .checked_add(process.commit_nanos)
-                        .ok_or(BoundedStreamError::MeasurementOverflow)?;
-                    measurements.peak_kernel_window_capacity_bytes = measurements
-                        .peak_kernel_window_capacity_bytes
-                        .max(process.peak_kernel_window_capacity_bytes);
                     block_ordinal = block_ordinal
                         .checked_add(1)
                         .ok_or(BoundedStreamError::MeasurementOverflow)?;
@@ -762,10 +964,14 @@ where
         workers: plan.workers,
         planned_source_capacity_bytes: plan.source_capacity_bytes,
         maximum_partitions_per_block: plan.maximum_partitions_per_block,
+        planned_kernel_dynamic_capacity_bytes: plan.dynamic_kernel_window_capacity_bytes,
         planned_kernel_window_capacity_bytes: plan.kernel_window_capacity_bytes,
         ..BoundedStreamMeasurements::default()
     };
     let source_completion = std::thread::scope(|scope| {
+        let (mut worker_partition_executions, worker_partition_execution_capacity_bytes) =
+            zeroed_worker_partition_executions(plan.workers)
+                .ok_or(BoundedStreamError::InvalidKernelPlan)?;
         let producer_cancelled = Arc::clone(&cancelled);
         let producer_ready_count = Arc::clone(&ready_count);
         let producer_high_water = Arc::clone(&ready_high_water);
@@ -1111,46 +1317,30 @@ where
                         .lock()
                         .unwrap_or_else(|poisoned| poisoned.into_inner())
                         .set_consumer(true);
-                    let process = process_block(plan, identity, &lease.storage, &mut kernel)
-                        .map_err(map_process_error);
+                    let process = process_block(
+                        plan,
+                        identity,
+                        &lease.storage,
+                        &mut kernel,
+                        &mut worker_partition_executions,
+                        worker_partition_execution_capacity_bytes,
+                    )
+                    .map_err(map_process_error);
                     overlap
                         .lock()
                         .unwrap_or_else(|poisoned| poisoned.into_inner())
                         .set_consumer(false);
                     match process {
                         Ok(process) => {
-                            let Some(prepare_nanos) = measurements
-                                .prepare_nanos
-                                .checked_add(process.prepare_nanos)
-                            else {
+                            if measurements
+                                .record_process(process, &worker_partition_executions)
+                                .is_none()
+                            {
                                 cancelled.store(true, Ordering::Release);
                                 returned_tx.take();
                                 drop(ready_rx);
                                 return Err(BoundedStreamError::MeasurementOverflow);
-                            };
-                            let Some(execute_nanos) = measurements
-                                .execute_nanos
-                                .checked_add(process.execute_nanos)
-                            else {
-                                cancelled.store(true, Ordering::Release);
-                                returned_tx.take();
-                                drop(ready_rx);
-                                return Err(BoundedStreamError::MeasurementOverflow);
-                            };
-                            let Some(commit_nanos) =
-                                measurements.commit_nanos.checked_add(process.commit_nanos)
-                            else {
-                                cancelled.store(true, Ordering::Release);
-                                returned_tx.take();
-                                drop(ready_rx);
-                                return Err(BoundedStreamError::MeasurementOverflow);
-                            };
-                            measurements.prepare_nanos = prepare_nanos;
-                            measurements.execute_nanos = execute_nanos;
-                            measurements.commit_nanos = commit_nanos;
-                            measurements.peak_kernel_window_capacity_bytes = measurements
-                                .peak_kernel_window_capacity_bytes
-                                .max(process.peak_kernel_window_capacity_bytes);
+                            }
                             lease.returned_at = Some(Instant::now());
                             if returned_tx
                                 .as_ref()
@@ -1355,15 +1545,25 @@ mod tests {
     }
 
     impl PartitionedKernel<Vec<u64>> for SumKernel {
+        type Prepared = ();
         type Partition = usize;
         type Partial = u64;
         type Completion = Vec<(WorkIdentity, u64)>;
         type Error = Infallible;
 
+        fn prepare(
+            &mut self,
+            _block: BlockIdentity,
+            _values: &Vec<u64>,
+        ) -> Result<Self::Prepared, Self::Error> {
+            Ok(())
+        }
+
         fn partition_count(
             &self,
             _block: BlockIdentity,
             values: &Vec<u64>,
+            _prepared: &Self::Prepared,
         ) -> Result<usize, Self::Error> {
             Ok(values.len())
         }
@@ -1372,6 +1572,7 @@ mod tests {
             &self,
             _block: BlockIdentity,
             _values: &Vec<u64>,
+            _prepared: &Self::Prepared,
             local_ordinal: usize,
         ) -> Result<KernelPartition<Self::Partition>, Self::Error> {
             Ok(KernelPartition::ordered(
@@ -1386,6 +1587,7 @@ mod tests {
             &self,
             _work: WorkIdentity,
             values: &Vec<u64>,
+            _prepared: &Self::Prepared,
             partition: &Self::Partition,
         ) -> Result<Self::Partial, Self::Error> {
             Ok(values[*partition])
@@ -1395,9 +1597,19 @@ mod tests {
             &mut self,
             work: WorkIdentity,
             _values: &Vec<u64>,
+            _prepared: &Self::Prepared,
             partial: Self::Partial,
         ) -> Result<(), Self::Error> {
             self.commits.push((work, partial));
+            Ok(())
+        }
+
+        fn finish_block(
+            &mut self,
+            _block: BlockIdentity,
+            _values: &Vec<u64>,
+            (): Self::Prepared,
+        ) -> Result<(), Self::Error> {
             Ok(())
         }
 
@@ -1414,7 +1626,7 @@ mod tests {
             completions: Arc::new(AtomicUsize::new(0)),
         };
         execute_bounded(
-            BoundedStreamPlan::new::<usize, u64>(slots, workers, 64, 4, 0).unwrap(),
+            BoundedStreamPlan::new::<(), usize, u64>(slots, workers, 64, 4, 0).unwrap(),
             3,
             source,
             SumKernel::default(),
@@ -1451,13 +1663,258 @@ mod tests {
 
     #[test]
     fn worker_count_does_not_change_stable_commit_order() {
-        assert_eq!(run(2, 1).kernel_completion, run(2, 3).kernel_completion);
+        let serial = run(2, 1);
+        let parallel = run(2, 2);
+        assert_eq!(serial.kernel_completion, parallel.kernel_completion);
+        assert_eq!(serial.measurements.partitions_executed, 9);
+        assert_eq!(serial.measurements.commits_completed, 9);
+        assert_eq!(serial.measurements.workers_with_nonzero_partitions, 1);
+        assert_eq!(serial.measurements.minimum_partitions_per_active_worker, 9);
+        assert_eq!(serial.measurements.maximum_partitions_per_active_worker, 9);
+        assert_eq!(serial.measurements.peak_worker_stack_capacity_bytes, 0);
+        assert_eq!(parallel.measurements.partitions_executed, 9);
+        assert_eq!(parallel.measurements.commits_completed, 9);
+        assert_eq!(parallel.measurements.workers_with_nonzero_partitions, 2);
+        assert_eq!(
+            parallel.measurements.minimum_partitions_per_active_worker,
+            4
+        );
+        assert_eq!(
+            parallel.measurements.maximum_partitions_per_active_worker,
+            5
+        );
+        assert_eq!(
+            parallel.measurements.peak_worker_stack_capacity_bytes,
+            2 * BOUNDED_WORKER_STACK_BYTES as u64
+        );
+    }
+
+    #[derive(Default)]
+    struct PreparingKernel {
+        preparations: usize,
+        finished_blocks: usize,
+    }
+
+    impl PartitionedKernel<Vec<u64>> for PreparingKernel {
+        type Prepared = Vec<u8>;
+        type Partition = usize;
+        type Partial = (u64, usize);
+        type Completion = (usize, usize);
+        type Error = Infallible;
+
+        fn prepare(
+            &mut self,
+            _block: BlockIdentity,
+            _values: &Vec<u64>,
+        ) -> Result<Self::Prepared, Self::Error> {
+            self.preparations += 1;
+            Ok(Vec::with_capacity(80))
+        }
+
+        fn prepared_dynamic_capacity_bytes(&self, prepared: &Self::Prepared) -> u64 {
+            prepared.capacity() as u64
+        }
+
+        fn partition_count(
+            &self,
+            _block: BlockIdentity,
+            values: &Vec<u64>,
+            _prepared: &Self::Prepared,
+        ) -> Result<usize, Self::Error> {
+            Ok(values.len())
+        }
+
+        fn partition(
+            &self,
+            _block: BlockIdentity,
+            _values: &Vec<u64>,
+            _prepared: &Self::Prepared,
+            local_ordinal: usize,
+        ) -> Result<KernelPartition<Self::Partition>, Self::Error> {
+            Ok(KernelPartition::ordered(
+                local_ordinal as u64,
+                0,
+                local_ordinal as u64,
+                local_ordinal,
+            ))
+        }
+
+        fn execute(
+            &self,
+            _work: WorkIdentity,
+            values: &Vec<u64>,
+            prepared: &Self::Prepared,
+            partition: &Self::Partition,
+        ) -> Result<Self::Partial, Self::Error> {
+            Ok((values[*partition], prepared.capacity()))
+        }
+
+        fn commit(
+            &mut self,
+            _work: WorkIdentity,
+            _values: &Vec<u64>,
+            prepared: &Self::Prepared,
+            (_value, prepared_capacity): Self::Partial,
+        ) -> Result<(), Self::Error> {
+            assert_eq!(prepared_capacity, prepared.capacity());
+            Ok(())
+        }
+
+        fn finish_block(
+            &mut self,
+            _block: BlockIdentity,
+            _values: &Vec<u64>,
+            _prepared: Self::Prepared,
+        ) -> Result<(), Self::Error> {
+            self.finished_blocks += 1;
+            Ok(())
+        }
+
+        fn complete(self) -> Result<Self::Completion, Self::Error> {
+            Ok((self.preparations, self.finished_blocks))
+        }
+    }
+
+    #[test]
+    fn block_preparation_runs_once_and_remains_inside_the_planned_window() {
+        let outcome = execute_bounded(
+            BoundedStreamPlan::new::<Vec<u8>, usize, (u64, usize)>(1, 2, 64, 4, 80).unwrap(),
+            0,
+            NumberSource {
+                blocks: vec![vec![1, 2, 3]],
+                next: 0,
+                pointers: Arc::new(Mutex::new(Vec::new())),
+                completions: Arc::new(AtomicUsize::new(0)),
+            },
+            PreparingKernel::default(),
+        )
+        .unwrap();
+        assert_eq!(outcome.kernel_completion, (1, 1));
+        assert_eq!(
+            outcome.measurements.peak_prepared_dynamic_capacity_bytes,
+            80
+        );
+        assert!(
+            outcome.measurements.peak_kernel_window_capacity_bytes
+                <= outcome.measurements.planned_kernel_window_capacity_bytes
+        );
+    }
+
+    #[derive(Default)]
+    struct DynamicPartialKernel {
+        committed_capacities: Vec<u64>,
+    }
+
+    impl PartitionedKernel<Vec<u64>> for DynamicPartialKernel {
+        type Prepared = ();
+        type Partition = usize;
+        type Partial = Vec<u8>;
+        type Completion = Vec<u64>;
+        type Error = Infallible;
+
+        fn prepare(
+            &mut self,
+            _block: BlockIdentity,
+            _values: &Vec<u64>,
+        ) -> Result<Self::Prepared, Self::Error> {
+            Ok(())
+        }
+
+        fn partition_count(
+            &self,
+            _block: BlockIdentity,
+            _values: &Vec<u64>,
+            _prepared: &Self::Prepared,
+        ) -> Result<usize, Self::Error> {
+            Ok(2)
+        }
+
+        fn partition(
+            &self,
+            _block: BlockIdentity,
+            _values: &Vec<u64>,
+            _prepared: &Self::Prepared,
+            local_ordinal: usize,
+        ) -> Result<KernelPartition<Self::Partition>, Self::Error> {
+            Ok(KernelPartition::ordered(
+                local_ordinal as u64,
+                0,
+                local_ordinal as u64,
+                local_ordinal,
+            ))
+        }
+
+        fn execute(
+            &self,
+            _work: WorkIdentity,
+            _values: &Vec<u64>,
+            _prepared: &Self::Prepared,
+            partition: &Self::Partition,
+        ) -> Result<Self::Partial, Self::Error> {
+            Ok(Vec::with_capacity((partition + 1) * 64))
+        }
+
+        fn partial_dynamic_capacity_bytes(
+            &self,
+            _prepared: &Self::Prepared,
+            partial: &Self::Partial,
+        ) -> u64 {
+            partial.capacity() as u64
+        }
+
+        fn commit(
+            &mut self,
+            _work: WorkIdentity,
+            _values: &Vec<u64>,
+            _prepared: &Self::Prepared,
+            partial: Self::Partial,
+        ) -> Result<(), Self::Error> {
+            self.committed_capacities.push(partial.capacity() as u64);
+            Ok(())
+        }
+
+        fn finish_block(
+            &mut self,
+            _block: BlockIdentity,
+            _values: &Vec<u64>,
+            (): Self::Prepared,
+        ) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn complete(self) -> Result<Self::Completion, Self::Error> {
+            Ok(self.committed_capacities)
+        }
+    }
+
+    #[test]
+    fn partial_peak_is_measured_inside_the_planned_kernel_window() {
+        let outcome = execute_bounded(
+            BoundedStreamPlan::new::<(), usize, Vec<u8>>(1, 2, 64, 2, 192).unwrap(),
+            0,
+            NumberSource {
+                blocks: vec![vec![1]],
+                next: 0,
+                pointers: Arc::new(Mutex::new(Vec::new())),
+                completions: Arc::new(AtomicUsize::new(0)),
+            },
+            DynamicPartialKernel::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            outcome.measurements.peak_partial_dynamic_capacity_bytes,
+            outcome.kernel_completion.iter().sum::<u64>()
+        );
+        assert!(
+            outcome.measurements.peak_kernel_window_capacity_bytes
+                <= outcome.measurements.planned_kernel_window_capacity_bytes
+        );
     }
 
     #[test]
     fn kernel_partition_count_must_fit_the_planned_window() {
         let result = execute_bounded(
-            BoundedStreamPlan::new::<usize, u64>(1, 1, 64, 2, 0).unwrap(),
+            BoundedStreamPlan::new::<(), usize, u64>(1, 1, 64, 2, 0).unwrap(),
             0,
             NumberSource {
                 blocks: vec![vec![1, 2, 3]],
@@ -1479,23 +1936,23 @@ mod tests {
     #[test]
     fn plan_rejects_unbounded_or_empty_execution() {
         assert_eq!(
-            BoundedStreamPlan::new::<usize, u64>(0, 1, 64, 4, 0),
+            BoundedStreamPlan::new::<(), usize, u64>(0, 1, 64, 4, 0),
             Err(BoundedStreamPlanError::SourceSlots)
         );
         assert_eq!(
-            BoundedStreamPlan::new::<usize, u64>(3, 1, 64, 4, 0),
+            BoundedStreamPlan::new::<(), usize, u64>(3, 1, 64, 4, 0),
             Err(BoundedStreamPlanError::SourceSlots)
         );
         assert_eq!(
-            BoundedStreamPlan::new::<usize, u64>(1, 0, 64, 4, 0),
+            BoundedStreamPlan::new::<(), usize, u64>(1, 0, 64, 4, 0),
             Err(BoundedStreamPlanError::Workers)
         );
         assert_eq!(
-            BoundedStreamPlan::new::<usize, u64>(1, 1, 0, 4, 0),
+            BoundedStreamPlan::new::<(), usize, u64>(1, 1, 0, 4, 0),
             Err(BoundedStreamPlanError::SourceCapacity)
         );
         assert_eq!(
-            BoundedStreamPlan::new::<usize, u64>(1, 1, 64, 0, 0),
+            BoundedStreamPlan::new::<(), usize, u64>(1, 1, 64, 0, 0),
             Err(BoundedStreamPlanError::Partitions)
         );
     }
@@ -1505,7 +1962,7 @@ mod tests {
         let pointers = Arc::new(Mutex::new(Vec::new()));
         let completions = Arc::new(AtomicUsize::new(0));
         let outcome = execute_bounded(
-            BoundedStreamPlan::new::<usize, u64>(2, 1, 64, 4, 0).unwrap(),
+            BoundedStreamPlan::new::<(), usize, u64>(2, 1, 64, 4, 0).unwrap(),
             0,
             NumberSource {
                 blocks: vec![vec![1], vec![2], vec![3], vec![4]],
@@ -1550,15 +2007,25 @@ mod tests {
     struct FailingKernel;
 
     impl PartitionedKernel<Vec<u64>> for FailingKernel {
+        type Prepared = ();
         type Partition = ();
         type Partial = ();
         type Completion = ();
         type Error = TestFailure;
 
+        fn prepare(
+            &mut self,
+            _block: BlockIdentity,
+            _storage: &Vec<u64>,
+        ) -> Result<Self::Prepared, Self::Error> {
+            Ok(())
+        }
+
         fn partition_count(
             &self,
             _block: BlockIdentity,
             _storage: &Vec<u64>,
+            _prepared: &Self::Prepared,
         ) -> Result<usize, Self::Error> {
             Ok(1)
         }
@@ -1567,6 +2034,7 @@ mod tests {
             &self,
             _block: BlockIdentity,
             _storage: &Vec<u64>,
+            _prepared: &Self::Prepared,
             local_ordinal: usize,
         ) -> Result<KernelPartition<Self::Partition>, Self::Error> {
             debug_assert_eq!(local_ordinal, 0);
@@ -1577,6 +2045,7 @@ mod tests {
             &self,
             _work: WorkIdentity,
             _storage: &Vec<u64>,
+            _prepared: &Self::Prepared,
             _partition: &Self::Partition,
         ) -> Result<Self::Partial, Self::Error> {
             Ok(())
@@ -1586,9 +2055,19 @@ mod tests {
             &mut self,
             _work: WorkIdentity,
             _storage: &Vec<u64>,
+            _prepared: &Self::Prepared,
             (): Self::Partial,
         ) -> Result<(), Self::Error> {
             Err(TestFailure)
+        }
+
+        fn finish_block(
+            &mut self,
+            _block: BlockIdentity,
+            _storage: &Vec<u64>,
+            (): Self::Prepared,
+        ) -> Result<(), Self::Error> {
+            Ok(())
         }
 
         fn complete(self) -> Result<Self::Completion, Self::Error> {
@@ -1600,7 +2079,7 @@ mod tests {
     fn consumer_failure_cancels_without_source_completion() {
         let completions = Arc::new(AtomicUsize::new(0));
         let result = execute_bounded(
-            BoundedStreamPlan::new::<(), ()>(2, 1, 64, 1, 0).unwrap(),
+            BoundedStreamPlan::new::<(), (), ()>(2, 1, 64, 1, 0).unwrap(),
             0,
             NumberSource {
                 blocks: (0..100).map(|value| vec![value]).collect(),
@@ -1678,15 +2157,25 @@ mod tests {
     }
 
     impl PartitionedKernel<Vec<u64>> for FailAfterReadAheadStarts {
+        type Prepared = ();
         type Partition = ();
         type Partial = ();
         type Completion = ();
         type Error = TestFailure;
 
+        fn prepare(
+            &mut self,
+            _block: BlockIdentity,
+            _storage: &Vec<u64>,
+        ) -> Result<Self::Prepared, Self::Error> {
+            Ok(())
+        }
+
         fn partition_count(
             &self,
             _block: BlockIdentity,
             _storage: &Vec<u64>,
+            _prepared: &Self::Prepared,
         ) -> Result<usize, Self::Error> {
             Ok(1)
         }
@@ -1695,6 +2184,7 @@ mod tests {
             &self,
             _block: BlockIdentity,
             _storage: &Vec<u64>,
+            _prepared: &Self::Prepared,
             _local_ordinal: usize,
         ) -> Result<KernelPartition<Self::Partition>, Self::Error> {
             Ok(KernelPartition::exclusive(0, 0, ()))
@@ -1704,6 +2194,7 @@ mod tests {
             &self,
             _work: WorkIdentity,
             _storage: &Vec<u64>,
+            _prepared: &Self::Prepared,
             _partition: &Self::Partition,
         ) -> Result<Self::Partial, Self::Error> {
             Ok(())
@@ -1713,12 +2204,22 @@ mod tests {
             &mut self,
             _work: WorkIdentity,
             _storage: &Vec<u64>,
+            _prepared: &Self::Prepared,
             (): Self::Partial,
         ) -> Result<(), Self::Error> {
             while !self.second_fill_started.load(Ordering::Acquire) {
                 std::thread::yield_now();
             }
             Err(TestFailure)
+        }
+
+        fn finish_block(
+            &mut self,
+            _block: BlockIdentity,
+            _storage: &Vec<u64>,
+            (): Self::Prepared,
+        ) -> Result<(), Self::Error> {
+            Ok(())
         }
 
         fn complete(self) -> Result<Self::Completion, Self::Error> {
@@ -1731,7 +2232,7 @@ mod tests {
         let second_fill_started = Arc::new(AtomicBool::new(false));
         let completions = Arc::new(AtomicUsize::new(0));
         let result = execute_bounded(
-            BoundedStreamPlan::new::<(), ()>(2, 1, 16, 1, 0).unwrap(),
+            BoundedStreamPlan::new::<(), (), ()>(2, 1, 16, 1, 0).unwrap(),
             0,
             CancellationDelayedSource {
                 next: 0,
@@ -1799,7 +2300,7 @@ mod tests {
     fn source_failure_is_retained_without_source_completion() {
         let completions = Arc::new(AtomicUsize::new(0));
         let result = execute_bounded(
-            BoundedStreamPlan::new::<usize, u64>(2, 1, 64, 4, 0).unwrap(),
+            BoundedStreamPlan::new::<(), usize, u64>(2, 1, 64, 4, 0).unwrap(),
             0,
             FailingSource {
                 emitted: false,
@@ -1825,15 +2326,25 @@ mod tests {
     }
 
     impl PartitionedKernel<Vec<u64>> for ExclusiveProbe {
+        type Prepared = ();
         type Partition = ();
         type Partial = ();
         type Completion = usize;
         type Error = Infallible;
 
+        fn prepare(
+            &mut self,
+            _block: BlockIdentity,
+            _storage: &Vec<u64>,
+        ) -> Result<Self::Prepared, Self::Error> {
+            Ok(())
+        }
+
         fn partition_count(
             &self,
             _block: BlockIdentity,
             _storage: &Vec<u64>,
+            _prepared: &Self::Prepared,
         ) -> Result<usize, Self::Error> {
             Ok(8)
         }
@@ -1842,6 +2353,7 @@ mod tests {
             &self,
             _block: BlockIdentity,
             _storage: &Vec<u64>,
+            _prepared: &Self::Prepared,
             local_ordinal: usize,
         ) -> Result<KernelPartition<Self::Partition>, Self::Error> {
             Ok(KernelPartition::exclusive(local_ordinal as u64, 7, ()))
@@ -1851,6 +2363,7 @@ mod tests {
             &self,
             _work: WorkIdentity,
             _storage: &Vec<u64>,
+            _prepared: &Self::Prepared,
             _partition: &Self::Partition,
         ) -> Result<Self::Partial, Self::Error> {
             let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
@@ -1866,7 +2379,17 @@ mod tests {
             &mut self,
             _work: WorkIdentity,
             _storage: &Vec<u64>,
+            _prepared: &Self::Prepared,
             (): Self::Partial,
+        ) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn finish_block(
+            &mut self,
+            _block: BlockIdentity,
+            _storage: &Vec<u64>,
+            (): Self::Prepared,
         ) -> Result<(), Self::Error> {
             Ok(())
         }
@@ -1885,7 +2408,7 @@ mod tests {
             completions: Arc::new(AtomicUsize::new(0)),
         };
         let outcome = execute_bounded(
-            BoundedStreamPlan::new::<(), ()>(1, 8, 32, 8, 0).unwrap(),
+            BoundedStreamPlan::new::<(), (), ()>(1, 8, 32, 8, 0).unwrap(),
             0,
             source,
             ExclusiveProbe::default(),
@@ -1897,15 +2420,25 @@ mod tests {
     struct DynamicExclusiveKernel;
 
     impl PartitionedKernel<Vec<u64>> for DynamicExclusiveKernel {
+        type Prepared = ();
         type Partition = Vec<u8>;
         type Partial = ();
         type Completion = ();
         type Error = Infallible;
 
+        fn prepare(
+            &mut self,
+            _block: BlockIdentity,
+            _storage: &Vec<u64>,
+        ) -> Result<Self::Prepared, Self::Error> {
+            Ok(())
+        }
+
         fn partition_count(
             &self,
             _block: BlockIdentity,
             _storage: &Vec<u64>,
+            _prepared: &Self::Prepared,
         ) -> Result<usize, Self::Error> {
             Ok(2)
         }
@@ -1914,6 +2447,7 @@ mod tests {
             &self,
             _block: BlockIdentity,
             _storage: &Vec<u64>,
+            _prepared: &Self::Prepared,
             local_ordinal: usize,
         ) -> Result<KernelPartition<Self::Partition>, Self::Error> {
             let mut payload = Vec::with_capacity(256);
@@ -1921,7 +2455,11 @@ mod tests {
             Ok(KernelPartition::exclusive(local_ordinal as u64, 7, payload))
         }
 
-        fn partition_dynamic_capacity_bytes(&self, partition: &Self::Partition) -> u64 {
+        fn partition_dynamic_capacity_bytes(
+            &self,
+            _prepared: &Self::Prepared,
+            partition: &Self::Partition,
+        ) -> u64 {
             partition.capacity() as u64
         }
 
@@ -1929,6 +2467,7 @@ mod tests {
             &self,
             _work: WorkIdentity,
             _storage: &Vec<u64>,
+            _prepared: &Self::Prepared,
             _partition: &Self::Partition,
         ) -> Result<Self::Partial, Self::Error> {
             Ok(())
@@ -1938,7 +2477,17 @@ mod tests {
             &mut self,
             _work: WorkIdentity,
             _storage: &Vec<u64>,
+            _prepared: &Self::Prepared,
             (): Self::Partial,
+        ) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn finish_block(
+            &mut self,
+            _block: BlockIdentity,
+            _storage: &Vec<u64>,
+            (): Self::Prepared,
         ) -> Result<(), Self::Error> {
             Ok(())
         }
@@ -1951,7 +2500,7 @@ mod tests {
     #[test]
     fn deferred_partition_is_charged_to_the_kernel_window() {
         let result = execute_bounded(
-            BoundedStreamPlan::new::<Vec<u8>, ()>(1, 2, 32, 2, 256).unwrap(),
+            BoundedStreamPlan::new::<(), Vec<u8>, ()>(1, 2, 32, 2, 256).unwrap(),
             0,
             NumberSource {
                 blocks: vec![vec![1]],
@@ -2186,15 +2735,25 @@ mod tests {
     }
 
     impl PartitionedKernel<LargeGateStorage> for LargeGateKernel {
+        type Prepared = ();
         type Partition = ();
         type Partial = ();
         type Completion = (LargeGateDigest, u64);
         type Error = LargeGateKernelError;
 
+        fn prepare(
+            &mut self,
+            _block: BlockIdentity,
+            _storage: &LargeGateStorage,
+        ) -> Result<Self::Prepared, Self::Error> {
+            Ok(())
+        }
+
         fn partition_count(
             &self,
             _block: BlockIdentity,
             _storage: &LargeGateStorage,
+            _prepared: &Self::Prepared,
         ) -> Result<usize, Self::Error> {
             Ok(1)
         }
@@ -2203,6 +2762,7 @@ mod tests {
             &self,
             _block: BlockIdentity,
             _storage: &LargeGateStorage,
+            _prepared: &Self::Prepared,
             local_ordinal: usize,
         ) -> Result<KernelPartition<Self::Partition>, Self::Error> {
             debug_assert_eq!(local_ordinal, 0);
@@ -2213,6 +2773,7 @@ mod tests {
             &self,
             _work: WorkIdentity,
             _storage: &LargeGateStorage,
+            _prepared: &Self::Prepared,
             _partition: &Self::Partition,
         ) -> Result<Self::Partial, Self::Error> {
             Ok(())
@@ -2222,6 +2783,7 @@ mod tests {
             &mut self,
             _work: WorkIdentity,
             storage: &LargeGateStorage,
+            _prepared: &Self::Prepared,
             (): Self::Partial,
         ) -> Result<(), Self::Error> {
             let samples = consume_large_gate_block(&storage.buffer, &mut self.digest)?;
@@ -2229,6 +2791,15 @@ mod tests {
                 .samples
                 .checked_add(samples)
                 .ok_or(LargeGateKernelError("sample count overflow"))?;
+            Ok(())
+        }
+
+        fn finish_block(
+            &mut self,
+            _block: BlockIdentity,
+            _storage: &LargeGateStorage,
+            (): Self::Prepared,
+        ) -> Result<(), Self::Error> {
             Ok(())
         }
 
@@ -2401,7 +2972,7 @@ mod tests {
         let source = LargeGateSource::new(path).expect("open large MeasurementSet");
         assert_eq!(source.measurement_set.row_count(), LARGE_GATE_ROWS);
         let outcome = execute_bounded(
-            BoundedStreamPlan::new::<(), ()>(2, 1, LARGE_GATE_SOURCE_CAPACITY_BYTES, 1, 0)
+            BoundedStreamPlan::new::<(), (), ()>(2, 1, LARGE_GATE_SOURCE_CAPACITY_BYTES, 1, 0)
                 .expect("valid large gate plan"),
             0,
             source,
