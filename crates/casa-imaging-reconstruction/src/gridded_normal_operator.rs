@@ -5,13 +5,17 @@
 use std::{
     collections::{BTreeMap, btree_map::Entry},
     mem::size_of,
-    sync::Arc,
+    sync::{
+        Arc, Mutex, RwLock,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use casa_imaging_model::{
     CompiledProblem, ContinuumTransformGenerationId, LogicalIdentity, ReconstructionBasis,
     SelectedObservationGenerationId,
 };
+use ndarray::Array2;
 use num_complex::Complex64;
 use sha2::{Digest, Sha256};
 
@@ -42,11 +46,90 @@ const RECORD_KEY_MASK: u64 = (GROUP_END_BIT << 1) - 1;
 /// Width of every opaque gridded normal-operator record.
 pub const GRIDDED_NORMAL_OPERATOR_RECORD_BYTES: usize = 32;
 
-/// Stable maximum work fanout for one bounded gridded-normal block.
+/// Stable spatial work fanout for every bounded gridded-normal block.
 ///
-/// This is reconstruction-owned and independent of the admitted worker count;
-/// changing schedules therefore cannot change work identities or reduction order.
-pub const GRIDDED_NORMAL_MAXIMUM_PARTITIONS_PER_BLOCK: usize = 64;
+/// The four identities are the center-owned quadrants of the reconstruction
+/// grid. They do not vary with record count or admitted worker count.
+pub const GRIDDED_NORMAL_SECTOR_COUNT: usize = 4;
+
+/// Exact reconstruction-owned work performed while routing gridded replay.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GriddedNormalRoutingMeasurements {
+    pub frames_routed: u64,
+    pub encoded_records: u64,
+    pub routed_record_memberships: u64,
+    pub prediction_groups: u64,
+    pub degrid_records: u64,
+    pub grid_records: u64,
+    pub sector_rescans: u64,
+    pub peak_physical_route_capacity_bytes: u64,
+}
+
+/// Exact reconstruction-owned complex-value residency of sector accumulation.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GriddedNormalSectorResidency {
+    sector_accumulator_complex_values: usize,
+    merge_complex_values: usize,
+    peak_complex_values: usize,
+}
+
+impl GriddedNormalSectorResidency {
+    /// Return persistent sector grid plus compensation values.
+    #[must_use]
+    pub const fn sector_accumulator_complex_values(self) -> usize {
+        self.sector_accumulator_complex_values
+    }
+
+    /// Return contiguous grid plus compensation values allocated for final merge.
+    #[must_use]
+    pub const fn merge_complex_values(self) -> usize {
+        self.merge_complex_values
+    }
+
+    /// Return the exact peak while all sectors and final merge buffers coexist.
+    #[must_use]
+    pub const fn peak_complex_values(self) -> usize {
+        self.peak_complex_values
+    }
+}
+
+/// Project exact worker-independent sector and final-merge complex-value residency.
+#[doc(hidden)]
+pub fn gridded_normal_sector_residency(
+    grid_shape: [usize; 2],
+    core_depth: usize,
+) -> Result<GriddedNormalSectorResidency, SpectralOperatorError> {
+    if core_depth == 0 {
+        return Err(SpectralOperatorError::InvalidSlab);
+    }
+    let sector_halo_cells =
+        (0..GRIDDED_NORMAL_SECTOR_COUNT).try_fold(0_usize, |total, sector_id| {
+            let geometry = GriddedNormalSectorGeometry::new(grid_shape, sector_id)?;
+            geometry
+                .cell_count()
+                .and_then(|cells| total.checked_add(cells))
+                .ok_or(SpectralOperatorError::ResidencyOverflow)
+        })?;
+    let sector_accumulator_complex_values = sector_halo_cells
+        .checked_mul(core_depth)
+        .and_then(|values| values.checked_mul(2))
+        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+    let merge_complex_values = grid_shape[0]
+        .checked_mul(grid_shape[1])
+        .and_then(|cells| cells.checked_mul(core_depth))
+        .and_then(|values| values.checked_mul(2))
+        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+    let peak_complex_values = sector_accumulator_complex_values
+        .checked_add(merge_complex_values)
+        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+    Ok(GriddedNormalSectorResidency {
+        sector_accumulator_complex_values,
+        merge_complex_values,
+        peak_complex_values,
+    })
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct ReducedRecordKey {
@@ -461,15 +544,27 @@ impl GriddedNormalOperatorProgram {
             return Err(SpectralOperatorError::GriddedRecordMismatch);
         }
         let model_generation = model.generation_id();
-        let mut operator = SpectralSlabOperator::new(prepared_specification, workload, fft);
-        operator.prepare_residual_model(model, Some(prior.into_reusable()))?;
+        let mut operator =
+            SpectralSlabOperator::new_gridded_normal(prepared_specification, workload, fft);
+        operator.prepare_gridded_normal_model(model, prior.into_reusable())?;
+        let sector_shape = self.manifest.specification.grid_shape();
+        let sector_depth = self.manifest.specification.slab().core_depth();
         Ok(GriddedNormalOperatorApply {
             program: self.clone(),
             operator,
             model_generation,
             next_block_sequence: 0,
             applied_records: 0,
-            active_block: None,
+            next_sector_commit: 0,
+            prepared: RwLock::new(PreparedGriddedNormalBlock::default()),
+            routing: GriddedNormalRoutingCounters::default(),
+            sectors: std::array::from_fn(|sector_id| {
+                Mutex::new(GriddedNormalSectorAccumulator::new(
+                    sector_shape,
+                    sector_depth,
+                    sector_id,
+                ))
+            }),
         })
     }
 }
@@ -482,64 +577,445 @@ pub struct GriddedNormalOperatorApply {
     model_generation: crate::ModelGenerationId,
     next_block_sequence: u64,
     applied_records: u64,
-    active_block: Option<ActiveGriddedNormalBlock>,
+    next_sector_commit: usize,
+    prepared: RwLock<PreparedGriddedNormalBlock>,
+    routing: GriddedNormalRoutingCounters,
+    sectors: [Mutex<GriddedNormalSectorAccumulator>; GRIDDED_NORMAL_SECTOR_COUNT],
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct ActiveGriddedNormalBlock {
-    sequence: u64,
-    next_record_ordinal: u64,
-    group_start_record: u64,
-    group_prediction: Complex64,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(C)]
+struct GriddedNormalRoute {
+    record_ordinal: u32,
+    group_ordinal: u32,
 }
 
-/// One stable record-range partition prepared by reconstruction.
+#[derive(Default)]
+struct PreparedGriddedNormalBlock {
+    sequence: Option<u64>,
+    record_count: u64,
+    predictions: Vec<Complex64>,
+    classifications: Vec<u32>,
+    routes: Vec<GriddedNormalRoute>,
+    sector_offsets: [u32; GRIDDED_NORMAL_SECTOR_COUNT + 1],
+}
+
+impl PreparedGriddedNormalBlock {
+    fn prepare<P>(
+        &mut self,
+        sequence: u64,
+        encoded: &[u8],
+        grid_shape: [usize; 2],
+        output_channels: usize,
+        mut predict: P,
+    ) -> Result<(), SpectralOperatorError>
+    where
+        P: FnMut(DecodedRecord) -> Result<Complex64, SpectralOperatorError>,
+    {
+        if self.sequence.is_some() {
+            return Err(SpectralOperatorError::BlockSequence);
+        }
+        if encoded.len() % GRIDDED_NORMAL_OPERATOR_RECORD_BYTES != 0 {
+            return Err(SpectralOperatorError::InvalidGriddedRecord);
+        }
+        let record_count = encoded.len() / GRIDDED_NORMAL_OPERATOR_RECORD_BYTES;
+        let record_count_u32 =
+            u32::try_from(record_count).map_err(|_| SpectralOperatorError::CoverageOverflow)?;
+        self.predictions.clear();
+        self.classifications.clear();
+        self.routes.clear();
+        self.sector_offsets.fill(0);
+
+        let prepared = (|| {
+            self.predictions
+                .try_reserve_exact(record_count)
+                .map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
+            self.classifications
+                .try_reserve_exact(record_count)
+                .map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
+            self.routes
+                .try_reserve_exact(record_count)
+                .map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
+
+            let mut prediction = Complex64::default();
+            let mut group_open = false;
+            let mut sector_counts = [0_u32; GRIDDED_NORMAL_SECTOR_COUNT];
+            for bytes in encoded.chunks_exact(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES) {
+                let record = decode_record(bytes, grid_shape, output_channels)?;
+                let group_ordinal = u32::try_from(self.predictions.len())
+                    .map_err(|_| SpectralOperatorError::CoverageOverflow)?;
+                if group_ordinal > u32::MAX >> 2 {
+                    return Err(SpectralOperatorError::CoverageOverflow);
+                }
+                let sector_id = sector_for_taps(record.taps, grid_shape)?;
+                self.classifications
+                    .push((group_ordinal << 2) | sector_id as u32);
+                sector_counts[sector_id] = sector_counts[sector_id]
+                    .checked_add(1)
+                    .ok_or(SpectralOperatorError::CoverageOverflow)?;
+                prediction += predict(record)?;
+                group_open = !record.group_end;
+                if record.group_end {
+                    if !prediction.re.is_finite() || !prediction.im.is_finite() {
+                        return Err(SpectralOperatorError::GeneratedNonfinite);
+                    }
+                    self.predictions.push(prediction);
+                    prediction = Complex64::default();
+                }
+            }
+            if group_open {
+                return Err(SpectralOperatorError::InvalidGriddedRecord);
+            }
+
+            for (sector_id, sector_count) in sector_counts.into_iter().enumerate() {
+                self.sector_offsets[sector_id + 1] = self.sector_offsets[sector_id]
+                    .checked_add(sector_count)
+                    .ok_or(SpectralOperatorError::CoverageOverflow)?;
+            }
+            if self.sector_offsets[GRIDDED_NORMAL_SECTOR_COUNT] != record_count_u32 {
+                return Err(SpectralOperatorError::IncompleteCoverage);
+            }
+            self.routes.resize(
+                record_count,
+                GriddedNormalRoute {
+                    record_ordinal: 0,
+                    group_ordinal: 0,
+                },
+            );
+            let mut sector_cursors = [
+                self.sector_offsets[0],
+                self.sector_offsets[1],
+                self.sector_offsets[2],
+                self.sector_offsets[3],
+            ];
+            for (record_ordinal, classification) in self.classifications.iter().copied().enumerate()
+            {
+                let sector_id = usize::try_from(classification & 0b11)
+                    .map_err(|_| SpectralOperatorError::CoverageOverflow)?;
+                let route_ordinal = usize::try_from(sector_cursors[sector_id])
+                    .map_err(|_| SpectralOperatorError::CoverageOverflow)?;
+                self.routes[route_ordinal] = GriddedNormalRoute {
+                    record_ordinal: u32::try_from(record_ordinal)
+                        .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
+                    group_ordinal: classification >> 2,
+                };
+                sector_cursors[sector_id] = sector_cursors[sector_id]
+                    .checked_add(1)
+                    .ok_or(SpectralOperatorError::CoverageOverflow)?;
+            }
+            for (sector_id, sector_cursor) in sector_cursors.into_iter().enumerate() {
+                if sector_cursor != self.sector_offsets[sector_id + 1] {
+                    return Err(SpectralOperatorError::IncompleteCoverage);
+                }
+            }
+            self.classifications.clear();
+            self.record_count =
+                u64::try_from(record_count).map_err(|_| SpectralOperatorError::CoverageOverflow)?;
+            self.sequence = Some(sequence);
+            Ok(())
+        })();
+        if prepared.is_err() {
+            self.record_count = 0;
+            self.predictions.clear();
+            self.classifications.clear();
+            self.routes.clear();
+            self.sector_offsets.fill(0);
+        }
+        prepared
+    }
+
+    fn capacity_bytes(&self) -> Result<u64, SpectralOperatorError> {
+        let prediction_bytes = capacity_bytes::<Complex64>(self.predictions.capacity())?;
+        let classification_bytes = capacity_bytes::<u32>(self.classifications.capacity())?;
+        let route_bytes = capacity_bytes::<GriddedNormalRoute>(self.routes.capacity())?;
+        prediction_bytes
+            .checked_add(classification_bytes)
+            .and_then(|total| total.checked_add(route_bytes))
+            .and_then(|total| {
+                total.checked_add(size_of::<[u32; GRIDDED_NORMAL_SECTOR_COUNT + 1]>() as u64)
+            })
+            .ok_or(SpectralOperatorError::ResidencyOverflow)
+    }
+
+    fn routes_for_sector(
+        &self,
+        sector_id: usize,
+    ) -> Result<&[GriddedNormalRoute], SpectralOperatorError> {
+        let start = usize::try_from(
+            *self
+                .sector_offsets
+                .get(sector_id)
+                .ok_or(SpectralOperatorError::IncompleteCoverage)?,
+        )
+        .map_err(|_| SpectralOperatorError::CoverageOverflow)?;
+        let end = usize::try_from(
+            *self
+                .sector_offsets
+                .get(sector_id + 1)
+                .ok_or(SpectralOperatorError::IncompleteCoverage)?,
+        )
+        .map_err(|_| SpectralOperatorError::CoverageOverflow)?;
+        self.routes
+            .get(start..end)
+            .ok_or(SpectralOperatorError::IncompleteCoverage)
+    }
+
+    fn finish_block(
+        &mut self,
+        sequence: u64,
+        record_count: u64,
+    ) -> Result<(), SpectralOperatorError> {
+        if self.sequence != Some(sequence) || self.record_count != record_count {
+            return Err(SpectralOperatorError::BlockSequence);
+        }
+        self.sequence = None;
+        self.record_count = 0;
+        self.predictions.clear();
+        self.classifications.clear();
+        self.routes.clear();
+        self.sector_offsets.fill(0);
+        Ok(())
+    }
+}
+
+fn capacity_bytes<T>(capacity: usize) -> Result<u64, SpectralOperatorError> {
+    u64::try_from(capacity)
+        .ok()
+        .and_then(|capacity| capacity.checked_mul(size_of::<T>() as u64))
+        .ok_or(SpectralOperatorError::ResidencyOverflow)
+}
+
+#[derive(Default)]
+struct GriddedNormalRoutingCounters {
+    frames_routed: AtomicU64,
+    encoded_records: AtomicU64,
+    routed_record_memberships: AtomicU64,
+    prediction_groups: AtomicU64,
+    degrid_records: AtomicU64,
+    grid_records: AtomicU64,
+    sector_rescans: AtomicU64,
+    peak_physical_route_capacity_bytes: AtomicU64,
+}
+
+impl GriddedNormalRoutingCounters {
+    fn record_routing(
+        &self,
+        encoded_records: u64,
+        routed_record_memberships: u64,
+        prediction_groups: u64,
+        physical_capacity_bytes: u64,
+    ) {
+        self.frames_routed.fetch_add(1, Ordering::Relaxed);
+        self.encoded_records
+            .fetch_add(encoded_records, Ordering::Relaxed);
+        self.routed_record_memberships
+            .fetch_add(routed_record_memberships, Ordering::Relaxed);
+        self.prediction_groups
+            .fetch_add(prediction_groups, Ordering::Relaxed);
+        self.degrid_records
+            .fetch_add(encoded_records, Ordering::Relaxed);
+        self.peak_physical_route_capacity_bytes
+            .fetch_max(physical_capacity_bytes, Ordering::Relaxed);
+    }
+
+    fn record_grid(&self, records: u64) {
+        self.grid_records.fetch_add(records, Ordering::Relaxed);
+    }
+
+    fn snapshot(&self) -> GriddedNormalRoutingMeasurements {
+        GriddedNormalRoutingMeasurements {
+            frames_routed: self.frames_routed.load(Ordering::Relaxed),
+            encoded_records: self.encoded_records.load(Ordering::Relaxed),
+            routed_record_memberships: self.routed_record_memberships.load(Ordering::Relaxed),
+            prediction_groups: self.prediction_groups.load(Ordering::Relaxed),
+            degrid_records: self.degrid_records.load(Ordering::Relaxed),
+            grid_records: self.grid_records.load(Ordering::Relaxed),
+            sector_rescans: self.sector_rescans.load(Ordering::Relaxed),
+            peak_physical_route_capacity_bytes: self
+                .peak_physical_route_capacity_bytes
+                .load(Ordering::Relaxed),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct GriddedNormalSectorGeometry {
+    sector_id: usize,
+    origin: [usize; 2],
+    shape: [usize; 2],
+}
+
+impl GriddedNormalSectorGeometry {
+    fn new(grid_shape: [usize; 2], sector_id: usize) -> Result<Self, SpectralOperatorError> {
+        if sector_id >= GRIDDED_NORMAL_SECTOR_COUNT
+            || grid_shape.into_iter().any(|extent| extent < 2)
+        {
+            return Err(SpectralOperatorError::UnsupportedGeometry);
+        }
+        let split = [grid_shape[0] / 2, grid_shape[1] / 2];
+        let upper = [sector_id / 2 != 0, sector_id % 2 != 0];
+        let core_start = [
+            if upper[0] { split[0] } else { 0 },
+            if upper[1] { split[1] } else { 0 },
+        ];
+        let core_end = [
+            if upper[0] { grid_shape[0] } else { split[0] },
+            if upper[1] { grid_shape[1] } else { split[1] },
+        ];
+        let origin = [
+            core_start[0].saturating_sub(SUPPORT),
+            core_start[1].saturating_sub(SUPPORT),
+        ];
+        let halo_end = [
+            core_end[0].saturating_add(SUPPORT).min(grid_shape[0]),
+            core_end[1].saturating_add(SUPPORT).min(grid_shape[1]),
+        ];
+        let shape = [
+            halo_end[0]
+                .checked_sub(origin[0])
+                .ok_or(SpectralOperatorError::ResidencyOverflow)?,
+            halo_end[1]
+                .checked_sub(origin[1])
+                .ok_or(SpectralOperatorError::ResidencyOverflow)?,
+        ];
+        Ok(Self {
+            sector_id,
+            origin,
+            shape,
+        })
+    }
+
+    fn cell_count(self) -> Option<usize> {
+        self.shape[0].checked_mul(self.shape[1])
+    }
+
+    fn translated_taps(self, taps: SampleTaps) -> Result<SampleTaps, SpectralOperatorError> {
+        let translated = SampleTaps {
+            x: TapSpan {
+                start: taps
+                    .x
+                    .start
+                    .checked_sub(self.origin[0])
+                    .ok_or(SpectralOperatorError::InvalidGriddedRecord)?,
+                weight_index: taps.x.weight_index,
+            },
+            y: TapSpan {
+                start: taps
+                    .y
+                    .start
+                    .checked_sub(self.origin[1])
+                    .ok_or(SpectralOperatorError::InvalidGriddedRecord)?,
+                weight_index: taps.y.weight_index,
+            },
+        };
+        if translated
+            .x
+            .start
+            .checked_add(2 * SUPPORT)
+            .is_none_or(|end| end >= self.shape[0])
+            || translated
+                .y
+                .start
+                .checked_add(2 * SUPPORT)
+                .is_none_or(|end| end >= self.shape[1])
+        {
+            return Err(SpectralOperatorError::InvalidGriddedRecord);
+        }
+        Ok(translated)
+    }
+}
+
+struct GriddedNormalSectorAccumulator {
+    geometry: GriddedNormalSectorGeometry,
+    grids: Vec<Array2<Complex64>>,
+    compensations: Vec<Array2<Complex64>>,
+}
+
+impl GriddedNormalSectorAccumulator {
+    fn new(grid_shape: [usize; 2], core_depth: usize, sector_id: usize) -> Self {
+        let geometry = GriddedNormalSectorGeometry::new(grid_shape, sector_id)
+            .expect("validated gridded-normal geometry admits four sectors");
+        let shape = (geometry.shape[0], geometry.shape[1]);
+        let planes = || (0..core_depth).map(|_| Array2::zeros(shape)).collect();
+        Self {
+            geometry,
+            grids: planes(),
+            compensations: planes(),
+        }
+    }
+
+    fn grid(
+        &mut self,
+        operator: &SpectralSlabOperator,
+        record: DecodedRecord,
+        predicted: Complex64,
+    ) -> Result<(), SpectralOperatorError> {
+        operator.grid_gridded_normal_sector(
+            &mut self.grids,
+            &mut self.compensations,
+            self.geometry.translated_taps(record.taps)?,
+            record.output_channel,
+            predicted,
+            record.forward_scale.conj() * record.imaging_weight,
+        )
+    }
+}
+
+/// One stable center-owned spatial partition prepared by reconstruction.
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct GriddedNormalPredictionWork {
+pub struct GriddedNormalSectorWork {
     block_sequence: u64,
-    partition_key: u64,
-    first_record: u64,
-    record_count: u64,
+    sector_id: usize,
     block_record_count: u64,
-    encoded_start: usize,
-    encoded_end: usize,
+    shared_route_capacity_bytes: u64,
 }
 
-impl GriddedNormalPredictionWork {
-    /// Return the worker-count-independent key of this ordered partition.
+impl GriddedNormalSectorWork {
+    /// Return the worker-count-independent spatial-sector key.
     #[must_use]
     pub const fn partition_key(self) -> u64 {
-        self.partition_key
+        self.sector_id as u64
     }
 
-    /// Return the exact number of encoded records borrowed by this work item.
+    /// Return the exclusive reconstruction accumulation region.
     #[must_use]
-    pub const fn record_count(self) -> u64 {
-        self.record_count
+    pub const fn sector_id(self) -> u64 {
+        self.sector_id as u64
+    }
+
+    /// Return shared reusable route capacity exactly once across the four works.
+    #[must_use]
+    pub const fn shared_route_capacity_bytes(self) -> u64 {
+        if self.sector_id == 0 {
+            self.shared_route_capacity_bytes
+        } else {
+            0
+        }
     }
 }
 
-/// Read-only predictions for one ordered record-group partition.
+fn validate_sector_partition_ordinal(
+    next_sector_commit: usize,
+    local_ordinal: usize,
+) -> Result<(), SpectralOperatorError> {
+    if local_ordinal >= GRIDDED_NORMAL_SECTOR_COUNT || local_ordinal < next_sector_commit {
+        Err(SpectralOperatorError::IncompleteCoverage)
+    } else {
+        Ok(())
+    }
+}
+
+/// Fixed-size evidence that one sector applied a complete borrowed block.
 #[doc(hidden)]
 #[derive(Debug)]
-pub struct GriddedNormalPredictionPartial {
-    work: GriddedNormalPredictionWork,
-    predictions: Box<[Complex64]>,
-    resident_bytes: u64,
-}
-
-impl GriddedNormalPredictionPartial {
-    /// Return exact heap bytes retained by this partial prediction payload.
-    #[must_use]
-    pub const fn resident_bytes(&self) -> u64 {
-        self.resident_bytes
-    }
+pub struct GriddedNormalSectorPartial {
+    work: GriddedNormalSectorWork,
 }
 
 impl GriddedNormalOperatorApply {
-    /// Validate one borrowed frame and return its stable bounded work count.
-    pub fn prediction_partition_count(
+    /// Validate one borrowed frame and return the four stable spatial owners.
+    pub fn sector_partition_count(
         &self,
         sequence: u64,
         encoded: &[u8],
@@ -553,23 +1029,49 @@ impl GriddedNormalOperatorApply {
                     .map_err(|_| SpectralOperatorError::GriddedRecordMismatch)?,
             )
             .ok_or(SpectralOperatorError::GriddedRecordMismatch)?;
-        if sequence != self.next_block_sequence || self.active_block.is_some() {
+        if sequence != self.next_block_sequence || self.next_sector_commit != 0 {
             return Err(SpectralOperatorError::BlockSequence);
         }
         validate_encoded_block(descriptor, encoded)?;
-        prediction_partition_count(
-            usize::try_from(descriptor.record_count)
+        let mut prepared = self
+            .prepared
+            .write()
+            .map_err(|_| SpectralOperatorError::GriddedSectorPoisoned)?;
+        prepared.prepare(
+            sequence,
+            encoded,
+            self.program.manifest.specification.grid_shape(),
+            self.program.manifest.specification.slab().total_channels(),
+            |record| {
+                self.operator.predict_gridded_normal(
+                    record.output_channel,
+                    record.taps,
+                    record.forward_scale,
+                )
+            },
+        )?;
+        let routed_record_memberships = u64::try_from(prepared.routes.len())
+            .map_err(|_| SpectralOperatorError::CoverageOverflow)?;
+        if routed_record_memberships != descriptor.record_count {
+            return Err(SpectralOperatorError::IncompleteCoverage);
+        }
+        self.routing.record_routing(
+            descriptor.record_count,
+            routed_record_memberships,
+            u64::try_from(prepared.predictions.len())
                 .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
-        )
+            prepared.capacity_bytes()?,
+        );
+        Ok(GRIDDED_NORMAL_SECTOR_COUNT)
     }
 
-    /// Return one worker-count-independent record partition by local ordinal.
-    pub fn prediction_partition(
+    /// Return one worker-count-independent spatial partition by local ordinal.
+    pub fn sector_partition(
         &self,
         sequence: u64,
         encoded: &[u8],
         local_ordinal: usize,
-    ) -> Result<GriddedNormalPredictionWork, SpectralOperatorError> {
+    ) -> Result<GriddedNormalSectorWork, SpectralOperatorError> {
         let descriptor = self
             .program
             .manifest
@@ -591,311 +1093,294 @@ impl GriddedNormalOperatorApply {
         {
             return Err(SpectralOperatorError::GriddedRecordMismatch);
         }
-        prediction_work(sequence, record_count, local_ordinal)
+        validate_sector_partition_ordinal(self.next_sector_commit, local_ordinal)?;
+        let prepared = self
+            .prepared
+            .read()
+            .map_err(|_| SpectralOperatorError::GriddedSectorPoisoned)?;
+        if prepared.sequence != Some(sequence) || prepared.record_count != descriptor.record_count {
+            return Err(SpectralOperatorError::BlockSequence);
+        }
+        Ok(GriddedNormalSectorWork {
+            block_sequence: sequence,
+            sector_id: local_ordinal,
+            block_record_count: descriptor.record_count,
+            shared_route_capacity_bytes: prepared.capacity_bytes()?,
+        })
     }
 
-    /// Predict one prepared partition without mutating gridded normal state.
-    pub fn predict_partition(
+    /// Fuse full-group prediction and compensated gridding into one spatial owner.
+    pub fn execute_sector(
         &self,
         encoded: &[u8],
-        work: GriddedNormalPredictionWork,
-    ) -> Result<GriddedNormalPredictionPartial, SpectralOperatorError> {
-        if work.block_sequence != self.next_block_sequence
-            || self
-                .active_block
-                .is_some_and(|active| work.first_record < active.next_record_ordinal)
+        work: GriddedNormalSectorWork,
+    ) -> Result<GriddedNormalSectorPartial, SpectralOperatorError> {
+        if work.block_sequence != self.next_block_sequence {
+            return Err(SpectralOperatorError::BlockSequence);
+        }
+        let expected_bytes = usize::try_from(work.block_record_count)
+            .ok()
+            .and_then(|records| records.checked_mul(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES))
+            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+        if encoded.len() != expected_bytes {
+            return Err(SpectralOperatorError::GriddedRecordMismatch);
+        }
+        let prepared = self
+            .prepared
+            .read()
+            .map_err(|_| SpectralOperatorError::GriddedSectorPoisoned)?;
+        if prepared.sequence != Some(work.block_sequence)
+            || prepared.record_count != work.block_record_count
         {
             return Err(SpectralOperatorError::BlockSequence);
         }
-        predict_partition_records(
+        let route_count = u64::try_from(prepared.routes_for_sector(work.sector_id)?.len())
+            .map_err(|_| SpectralOperatorError::CoverageOverflow)?;
+        let mut sector = self.sectors[work.sector_id]
+            .lock()
+            .map_err(|_| SpectralOperatorError::GriddedSectorPoisoned)?;
+        let operator = &self.operator;
+        execute_sector_routes(
             encoded,
-            work,
             self.program.manifest.specification.grid_shape(),
             self.program.manifest.specification.slab().total_channels(),
-            |record| {
-                self.operator.predict_gridded_normal(
-                    record.output_channel,
-                    record.taps,
-                    record.forward_scale,
-                )
-            },
-        )
+            work.sector_id,
+            &prepared,
+            |record, predicted| sector.grid(operator, record, predicted),
+        )?;
+        self.routing.record_grid(route_count);
+        Ok(GriddedNormalSectorPartial { work })
     }
 
-    /// Commit one prediction partial in canonical record-group order.
-    pub fn commit_prediction(
+    /// Commit fixed-size coverage bookkeeping after sector-owned science completed.
+    pub fn commit_sector(
         &mut self,
-        encoded: &[u8],
-        partial: GriddedNormalPredictionPartial,
+        partial: GriddedNormalSectorPartial,
     ) -> Result<(), SpectralOperatorError> {
         let work = partial.work;
-        let mut active = self.active_block.unwrap_or(ActiveGriddedNormalBlock {
-            sequence: work.block_sequence,
-            next_record_ordinal: 0,
-            group_start_record: 0,
-            group_prediction: Complex64::default(),
-        });
         if work.block_sequence != self.next_block_sequence
-            || active.sequence != work.block_sequence
-            || work.first_record != active.next_record_ordinal
+            || work.sector_id != self.next_sector_commit
         {
             return Err(SpectralOperatorError::BlockSequence);
         }
-        let grid_shape = self.program.manifest.specification.grid_shape();
-        let output_channels = self.program.manifest.specification.slab().total_channels();
-        commit_prediction_records(
-            encoded,
-            partial,
-            grid_shape,
-            output_channels,
-            &mut active,
-            |record, predicted| {
-                self.operator.apply_gridded_normal(
-                    record.output_channel,
-                    record.taps,
-                    predicted,
-                    record.forward_scale.conj() * record.imaging_weight,
-                )
-            },
-        )?;
-        if active.next_record_ordinal > work.block_record_count {
-            return Err(SpectralOperatorError::InvalidGriddedRecord);
-        }
-        if active.next_record_ordinal == work.block_record_count {
-            if active.group_start_record != work.block_record_count
-                || active.group_prediction != Complex64::default()
-            {
-                return Err(SpectralOperatorError::InvalidGriddedRecord);
-            }
-            self.applied_records = self
+        if self.next_sector_commit + 1 == GRIDDED_NORMAL_SECTOR_COUNT {
+            let applied_records = self
                 .applied_records
                 .checked_add(work.block_record_count)
                 .ok_or(SpectralOperatorError::CoverageOverflow)?;
-            self.next_block_sequence = self
+            let next_block_sequence = self
                 .next_block_sequence
                 .checked_add(1)
                 .ok_or(SpectralOperatorError::CoverageOverflow)?;
-            self.active_block = None;
+            self.prepared
+                .write()
+                .map_err(|_| SpectralOperatorError::GriddedSectorPoisoned)?
+                .finish_block(work.block_sequence, work.block_record_count)?;
+            self.applied_records = applied_records;
+            self.next_block_sequence = next_block_sequence;
+            self.next_sector_commit = 0;
         } else {
-            self.active_block = Some(active);
+            self.next_sector_commit += 1;
         }
         Ok(())
     }
 
-    /// Validate and apply one borrowed frame through the ordered partial path.
+    /// Validate and apply one borrowed frame through the spatial-owner path.
     pub fn apply_encoded_block(
         &mut self,
         sequence: u64,
         encoded: &[u8],
     ) -> Result<(), SpectralOperatorError> {
-        let partition_count = self.prediction_partition_count(sequence, encoded)?;
+        let partition_count = self.sector_partition_count(sequence, encoded)?;
         for ordinal in 0..partition_count {
-            let work = self.prediction_partition(sequence, encoded, ordinal)?;
-            let partial = self.predict_partition(encoded, work)?;
-            self.commit_prediction(encoded, partial)?;
+            let work = self.sector_partition(sequence, encoded, ordinal)?;
+            let partial = self.execute_sector(encoded, work)?;
+            self.commit_sector(partial)?;
         }
         Ok(())
     }
 
+    /// Snapshot exact route-once measurements without changing execution state.
+    #[must_use]
+    pub fn routing_measurements(&self) -> GriddedNormalRoutingMeasurements {
+        self.routing.snapshot()
+    }
+
     /// Finish `dirty - A* W A x` and return ordinary Major-Cycle input.
     pub fn finish(self) -> Result<CompleteDataOwnerResult, SpectralOperatorError> {
+        self.finish_with_routing_measurements()
+            .map(|(result, _measurements)| result)
+    }
+
+    /// Finish and return the final immutable route-once measurement snapshot.
+    pub fn finish_with_routing_measurements(
+        self,
+    ) -> Result<(CompleteDataOwnerResult, GriddedNormalRoutingMeasurements), SpectralOperatorError>
+    {
         if self.next_block_sequence != self.program.block_count()
             || self.applied_records != self.program.manifest.record_count
-            || self.active_block.is_some()
+            || self.next_sector_commit != 0
+            || self
+                .prepared
+                .read()
+                .map_err(|_| SpectralOperatorError::GriddedSectorPoisoned)?
+                .sequence
+                .is_some()
         {
             return Err(SpectralOperatorError::IncompleteCoverage);
         }
-        let primitives = self.operator.finish_gridded_normal(self.model_generation)?;
-        let primitive_catalog = if self.program.manifest.specification.slab().total_channels() == 1
-        {
+        let measurements = self.routing_measurements();
+        let Self {
+            program,
+            operator,
+            model_generation,
+            sectors,
+            ..
+        } = self;
+        let normal_grids = merge_sector_accumulators(
+            sectors,
+            program.manifest.specification.grid_shape(),
+            program.manifest.specification.slab().core_depth(),
+        )?;
+        let primitives =
+            operator.finish_gridded_normal_from_grids(model_generation, normal_grids)?;
+        let primitive_catalog = if program.manifest.specification.slab().total_channels() == 1 {
             SpectralPrimitiveCatalog::UnnormalizedPlaneV1
         } else {
             SpectralPrimitiveCatalog::UnnormalizedChannelSlabV1
         };
-        Ok(CompleteDataOwnerResult {
-            primitives,
-            completion: CompleteDataOwnerCompletion {
-                problem: self.program.manifest.specification.problem_id(),
-                geometry: self.program.manifest.specification.geometry_id(),
-                numerics: self.program.manifest.specification.numerics_id(),
-                weighting_commitment: self
-                    .program
-                    .manifest
-                    .specification
-                    .weighting_commitment_id(),
-                weighting_generation: self.program.manifest.weighting_generation,
-                replay: self.program.manifest.replay,
-                coverage: self.program.manifest.coverage,
-                coverage_proof_bytes: 0,
-                coverage_proof_hash_calls: 0,
-                primitives: primitive_catalog,
-                selected_generation: self.program.manifest.selected_generation,
-                continuum_transform_generation: self
-                    .program
-                    .manifest
-                    .continuum_transform_generation,
-                sample_count: self.program.manifest.sample_count,
-                block_count: self.program.block_count(),
+        Ok((
+            CompleteDataOwnerResult {
+                primitives,
+                completion: CompleteDataOwnerCompletion {
+                    problem: program.manifest.specification.problem_id(),
+                    geometry: program.manifest.specification.geometry_id(),
+                    numerics: program.manifest.specification.numerics_id(),
+                    weighting_commitment: program.manifest.specification.weighting_commitment_id(),
+                    weighting_generation: program.manifest.weighting_generation,
+                    replay: program.manifest.replay,
+                    coverage: program.manifest.coverage,
+                    coverage_proof_bytes: 0,
+                    coverage_proof_hash_calls: 0,
+                    primitives: primitive_catalog,
+                    selected_generation: program.manifest.selected_generation,
+                    continuum_transform_generation: program.manifest.continuum_transform_generation,
+                    sample_count: program.manifest.sample_count,
+                    block_count: program.block_count(),
+                },
             },
-        })
+            measurements,
+        ))
     }
 }
 
-fn prediction_partition_count(record_count: usize) -> Result<usize, SpectralOperatorError> {
-    Ok(record_count.clamp(1, GRIDDED_NORMAL_MAXIMUM_PARTITIONS_PER_BLOCK))
-}
-
-fn prediction_work(
-    block_sequence: u64,
-    record_count: usize,
-    local_ordinal: usize,
-) -> Result<GriddedNormalPredictionWork, SpectralOperatorError> {
-    let partition_count = prediction_partition_count(record_count)?;
-    if local_ordinal >= partition_count {
-        return Err(SpectralOperatorError::IncompleteCoverage);
-    }
-    let start_record = local_ordinal
-        .checked_mul(record_count)
-        .and_then(|records| records.checked_div(partition_count))
-        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-    let end_record = local_ordinal
-        .checked_add(1)
-        .and_then(|ordinal| ordinal.checked_mul(record_count))
-        .and_then(|records| records.checked_div(partition_count))
-        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-    let encoded_start = start_record
-        .checked_mul(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
-        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-    let encoded_end = end_record
-        .checked_mul(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
-        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-    Ok(GriddedNormalPredictionWork {
-        block_sequence,
-        partition_key: u64::try_from(start_record)
-            .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
-        first_record: u64::try_from(start_record)
-            .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
-        record_count: u64::try_from(
-            end_record
-                .checked_sub(start_record)
-                .ok_or(SpectralOperatorError::CoverageOverflow)?,
-        )
-        .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
-        block_record_count: u64::try_from(record_count)
-            .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
-        encoded_start,
-        encoded_end,
-    })
-}
-
-fn predict_partition_records<F>(
+fn execute_sector_routes<A>(
     encoded: &[u8],
-    work: GriddedNormalPredictionWork,
     grid_shape: [usize; 2],
     output_channels: usize,
-    mut predict: F,
-) -> Result<GriddedNormalPredictionPartial, SpectralOperatorError>
-where
-    F: FnMut(DecodedRecord) -> Result<Complex64, SpectralOperatorError>,
-{
-    let partition = encoded
-        .get(work.encoded_start..work.encoded_end)
-        .ok_or(SpectralOperatorError::InvalidGriddedRecord)?;
-    let prediction_count =
-        usize::try_from(work.record_count).map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
-    let mut predictions = Vec::new();
-    predictions
-        .try_reserve_exact(prediction_count)
-        .map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
-    for bytes in partition.chunks_exact(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES) {
-        let record = decode_record(bytes, grid_shape, output_channels)?;
-        let predicted = predict(record)?;
-        if !predicted.re.is_finite() || !predicted.im.is_finite() {
-            return Err(SpectralOperatorError::GeneratedNonfinite);
-        }
-        predictions.push(predicted);
-    }
-    if predictions.len() != prediction_count {
-        return Err(SpectralOperatorError::InvalidGriddedRecord);
-    }
-    let resident_bytes = prediction_count
-        .checked_mul(size_of::<Complex64>())
-        .and_then(|bytes| u64::try_from(bytes).ok())
-        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-    Ok(GriddedNormalPredictionPartial {
-        work,
-        predictions: predictions.into_boxed_slice(),
-        resident_bytes,
-    })
-}
-
-fn commit_prediction_records<F>(
-    encoded: &[u8],
-    partial: GriddedNormalPredictionPartial,
-    grid_shape: [usize; 2],
-    output_channels: usize,
-    active: &mut ActiveGriddedNormalBlock,
-    mut apply: F,
+    sector_id: usize,
+    prepared: &PreparedGriddedNormalBlock,
+    mut apply: A,
 ) -> Result<(), SpectralOperatorError>
 where
-    F: FnMut(DecodedRecord, Complex64) -> Result<(), SpectralOperatorError>,
+    A: FnMut(DecodedRecord, Complex64) -> Result<(), SpectralOperatorError>,
 {
-    let partition = encoded
-        .get(partial.work.encoded_start..partial.work.encoded_end)
-        .ok_or(SpectralOperatorError::InvalidGriddedRecord)?;
-    let prediction_count = usize::try_from(partial.work.record_count)
-        .map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
-    if partial.predictions.len() != prediction_count {
+    if sector_id >= GRIDDED_NORMAL_SECTOR_COUNT
+        || encoded.len() % GRIDDED_NORMAL_OPERATOR_RECORD_BYTES != 0
+    {
         return Err(SpectralOperatorError::InvalidGriddedRecord);
     }
-    for (offset, (bytes, predicted)) in partition
-        .chunks_exact(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
-        .zip(partial.predictions.iter().copied())
-        .enumerate()
-    {
-        let record = decode_record(bytes, grid_shape, output_channels)?;
-        active.group_prediction += predicted;
-        if record.group_end {
-            if !active.group_prediction.re.is_finite() || !active.group_prediction.im.is_finite() {
-                return Err(SpectralOperatorError::GeneratedNonfinite);
+    for route in prepared.routes_for_sector(sector_id)? {
+        let start = usize::try_from(route.record_ordinal)
+            .map_err(|_| SpectralOperatorError::CoverageOverflow)?
+            .checked_mul(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
+            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+        let end = start
+            .checked_add(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
+            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+        let record = decode_record(
+            encoded
+                .get(start..end)
+                .ok_or(SpectralOperatorError::InvalidGriddedRecord)?,
+            grid_shape,
+            output_channels,
+        )?;
+        if sector_for_taps(record.taps, grid_shape)? != sector_id {
+            return Err(SpectralOperatorError::GriddedRecordMismatch);
+        }
+        let predicted = *prepared
+            .predictions
+            .get(
+                usize::try_from(route.group_ordinal)
+                    .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
+            )
+            .ok_or(SpectralOperatorError::IncompleteCoverage)?;
+        apply(record, predicted)?;
+    }
+    Ok(())
+}
+
+fn sector_for_taps(
+    taps: SampleTaps,
+    grid_shape: [usize; 2],
+) -> Result<usize, SpectralOperatorError> {
+    let center = [
+        taps.x
+            .start
+            .checked_add(SUPPORT)
+            .ok_or(SpectralOperatorError::InvalidGriddedRecord)?,
+        taps.y
+            .start
+            .checked_add(SUPPORT)
+            .ok_or(SpectralOperatorError::InvalidGriddedRecord)?,
+    ];
+    if center[0] >= grid_shape[0] || center[1] >= grid_shape[1] {
+        return Err(SpectralOperatorError::InvalidGriddedRecord);
+    }
+    Ok(usize::from(center[0] >= grid_shape[0] / 2) * 2
+        + usize::from(center[1] >= grid_shape[1] / 2))
+}
+
+fn merge_sector_accumulators(
+    sectors: [Mutex<GriddedNormalSectorAccumulator>; GRIDDED_NORMAL_SECTOR_COUNT],
+    grid_shape: [usize; 2],
+    core_depth: usize,
+) -> Result<Vec<Array2<Complex64>>, SpectralOperatorError> {
+    let shape = (grid_shape[0], grid_shape[1]);
+    let mut grids: Vec<Array2<Complex64>> = (0..core_depth).map(|_| Array2::zeros(shape)).collect();
+    let mut compensations: Vec<Array2<Complex64>> =
+        (0..core_depth).map(|_| Array2::zeros(shape)).collect();
+    for (sector_id, sector) in sectors.into_iter().enumerate() {
+        let sector = sector
+            .into_inner()
+            .map_err(|_| SpectralOperatorError::GriddedSectorPoisoned)?;
+        if sector.geometry.sector_id != sector_id
+            || sector.grids.len() != core_depth
+            || sector.compensations.len() != core_depth
+        {
+            return Err(SpectralOperatorError::GriddedRecordMismatch);
+        }
+        for plane in 0..core_depth {
+            for ((local_x, local_y), value) in sector.grids[plane].indexed_iter() {
+                if *value == Complex64::default() {
+                    continue;
+                }
+                let cell = &mut grids[plane][(
+                    sector.geometry.origin[0] + local_x,
+                    sector.geometry.origin[1] + local_y,
+                )];
+                let compensation = &mut compensations[plane][(
+                    sector.geometry.origin[0] + local_x,
+                    sector.geometry.origin[1] + local_y,
+                )];
+                let contribution = *value - *compensation;
+                let updated = *cell + contribution;
+                *compensation = (updated - *cell) - contribution;
+                *cell = updated;
             }
-            let record_ordinal = usize::try_from(active.next_record_ordinal)
-                .ok()
-                .and_then(|first| first.checked_add(offset))
-                .ok_or(SpectralOperatorError::CoverageOverflow)?;
-            let group_start = usize::try_from(active.group_start_record)
-                .map_err(|_| SpectralOperatorError::CoverageOverflow)?;
-            let group_end = record_ordinal
-                .checked_add(1)
-                .ok_or(SpectralOperatorError::CoverageOverflow)?;
-            let group_start = group_start
-                .checked_mul(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
-                .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-            let group_end = group_end
-                .checked_mul(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
-                .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-            for bytes in encoded
-                .get(group_start..group_end)
-                .ok_or(SpectralOperatorError::InvalidGriddedRecord)?
-                .chunks_exact(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
-            {
-                apply(
-                    decode_record(bytes, grid_shape, output_channels)?,
-                    active.group_prediction,
-                )?;
-            }
-            active.group_start_record = u64::try_from(record_ordinal)
-                .ok()
-                .and_then(|record| record.checked_add(1))
-                .ok_or(SpectralOperatorError::CoverageOverflow)?;
-            active.group_prediction = Complex64::default();
         }
     }
-    active.next_record_ordinal = active
-        .next_record_ordinal
-        .checked_add(partial.work.record_count)
-        .ok_or(SpectralOperatorError::CoverageOverflow)?;
-    Ok(())
+    Ok(grids)
 }
 
 fn require_supported_basis(basis: &ReconstructionBasis) -> Result<(), SpectralOperatorError> {
@@ -1277,7 +1762,7 @@ mod tests {
     }
 
     #[test]
-    fn prediction_partitions_are_stable_and_schedule_independent() {
+    fn spatial_sectors_preserve_group_boundaries_and_schedule_independent_products() {
         let geometry = geometry();
         let gridder = StandardConvolution::new(&geometry);
         let shape = (geometry.grid_shape[0], geometry.grid_shape[1]);
@@ -1288,132 +1773,269 @@ mod tests {
                 x as f64 * -0.017 + y as f64 * 0.009,
             );
         }
-        let mut distinct_taps = BTreeMap::new();
-        for x in -30..=30 {
-            for y in -30..=30 {
+        let mut taps_by_sector = BTreeMap::new();
+        for x in -100..=100 {
+            for y in -100..=100 {
                 if let Some(taps) = gridder.taps([f64::from(x), f64::from(y)]) {
-                    distinct_taps
-                        .entry(encode_taps(taps).expect("encode taps"))
-                        .or_insert(taps);
+                    let sector = sector_for_taps(taps, geometry.grid_shape).expect("sector");
+                    taps_by_sector.entry(sector).or_insert(taps);
                 }
             }
         }
-        let contributions = distinct_taps
-            .into_values()
-            .take(6)
+        assert_eq!(taps_by_sector.len(), GRIDDED_NORMAL_SECTOR_COUNT);
+        let cross_sector_group = taps_by_sector
+            .values()
+            .copied()
             .enumerate()
-            .map(|(index, taps)| (taps, 0.5 + index as f64 * 0.125))
+            .map(|(index, taps)| ReducedRecordKey {
+                output_channel: 0,
+                taps: encode_taps(taps).expect("encode grouped taps"),
+                forward_real: (1.0 + index as f64 * 0.125).to_bits(),
+                forward_imaginary: (index as f64 * -0.025).to_bits(),
+                imaging_weight: (0.5 + index as f64 * 0.125).to_bits(),
+            })
             .collect::<Vec<_>>();
-        assert_eq!(contributions.len(), 6);
         let mut groups = BTreeMap::new();
+        groups.insert(cross_sector_group, vec![1.0]);
+        let second_taps = *taps_by_sector.get(&0).expect("lower sector taps");
         groups.insert(
-            contributions
-                .into_iter()
-                .map(|(taps, imaging_weight)| ReducedRecordKey {
-                    output_channel: 0,
-                    taps: encode_taps(taps).expect("encode grouped taps"),
-                    forward_real: 1.0_f64.to_bits(),
-                    forward_imaginary: 0,
-                    imaging_weight: imaging_weight.to_bits(),
-                })
-                .collect::<Vec<_>>(),
+            vec![ReducedRecordKey {
+                output_channel: 0,
+                taps: encode_taps(second_taps).expect("encode scalar taps"),
+                forward_real: 0.75_f64.to_bits(),
+                forward_imaginary: 0.125_f64.to_bits(),
+                imaging_weight: 0.25_f64.to_bits(),
+            }],
             vec![1.0],
         );
-        let encoded = encode_reduced(groups).expect("encode one multi-record group");
+        let encoded = encode_reduced(groups).expect("encode two groups");
 
         let mut expected = Array2::<Complex64>::zeros(shape);
         let mut expected_compensation = Array2::<Complex64>::zeros(shape);
-        let records = encoded
-            .chunks_exact(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
-            .map(|bytes| decode_record(bytes, geometry.grid_shape, 1).expect("decode record"))
-            .collect::<Vec<_>>();
-        let predicted = records
-            .iter()
-            .try_fold(
-                Complex64::default(),
-                |sum, record| -> Result<_, SpectralOperatorError> {
-                    Ok(sum + gridder.degrid(&model_grid, record.taps) * record.forward_scale)
-                },
-            )
-            .expect("predict group");
-        for record in &records {
-            gridder.grid_compensated(
-                &mut expected,
-                &mut expected_compensation,
-                record.taps,
-                predicted * record.forward_scale.conj() * record.imaging_weight,
-            );
-        }
-
-        let run = |workers: usize| {
-            let partition_count =
-                prediction_partition_count(records.len()).expect("partition count");
-            let identities = (0..partition_count)
-                .map(|ordinal| prediction_work(7, records.len(), ordinal).expect("partition work"))
-                .map(GriddedNormalPredictionWork::partition_key)
-                .collect::<Vec<_>>();
-            let mut grid = Array2::<Complex64>::zeros(shape);
-            let mut compensation = Array2::<Complex64>::zeros(shape);
-            let mut active = ActiveGriddedNormalBlock {
-                sequence: 7,
-                next_record_ordinal: 0,
-                group_start_record: 0,
-                group_prediction: Complex64::default(),
-            };
-            for wave_start in (0..partition_count).step_by(workers) {
-                let wave_end = (wave_start + workers).min(partition_count);
-                let partials = (wave_start..wave_end)
-                    .map(|ordinal| {
-                        let work =
-                            prediction_work(7, records.len(), ordinal).expect("partition work");
-                        predict_partition_records(
-                            &encoded,
-                            work,
-                            geometry.grid_shape,
-                            1,
-                            |record| {
-                                Ok(gridder.degrid(&model_grid, record.taps) * record.forward_scale)
-                            },
-                        )
-                        .expect("predict partition")
-                    })
-                    .collect::<Vec<_>>();
-                for partial in partials {
-                    assert_eq!(
-                        partial.resident_bytes(),
-                        u64::try_from(size_of::<Complex64>()).expect("partial bytes fit u64")
-                    );
-                    commit_prediction_records(
-                        &encoded,
-                        partial,
-                        geometry.grid_shape,
-                        1,
-                        &mut active,
-                        |record, predicted| {
-                            gridder.grid_compensated(
-                                &mut grid,
-                                &mut compensation,
-                                record.taps,
-                                predicted * record.forward_scale.conj() * record.imaging_weight,
-                            );
-                            Ok(())
-                        },
-                    )
-                    .expect("commit partition");
+        let mut group_start = 0;
+        let mut group_count = 0;
+        while group_start < encoded.len() {
+            let mut group_end = group_start;
+            loop {
+                group_end += GRIDDED_NORMAL_OPERATOR_RECORD_BYTES;
+                let record = decode_record(
+                    &encoded[group_end - GRIDDED_NORMAL_OPERATOR_RECORD_BYTES..group_end],
+                    geometry.grid_shape,
+                    1,
+                )
+                .expect("decode group record");
+                if record.group_end {
+                    break;
                 }
             }
-            assert_eq!(active.next_record_ordinal, records.len() as u64);
-            assert_eq!(active.group_start_record, records.len() as u64);
-            assert_eq!(active.group_prediction, Complex64::default());
-            (identities, grid)
+            let records = encoded[group_start..group_end]
+                .chunks_exact(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
+                .map(|bytes| decode_record(bytes, geometry.grid_shape, 1).expect("decode record"))
+                .collect::<Vec<_>>();
+            let predicted = records.iter().fold(Complex64::default(), |sum, record| {
+                sum + gridder.degrid(&model_grid, record.taps) * record.forward_scale
+            });
+            for record in records {
+                gridder.grid_compensated(
+                    &mut expected,
+                    &mut expected_compensation,
+                    record.taps,
+                    predicted * record.forward_scale.conj() * record.imaging_weight,
+                );
+            }
+            group_count += 1;
+            group_start = group_end;
+        }
+        assert_eq!(group_count, 2);
+
+        let run = |execution_order: [usize; GRIDDED_NORMAL_SECTOR_COUNT]| {
+            let mut degrid_records = 0_u64;
+            let mut prepared = PreparedGriddedNormalBlock::default();
+            prepared
+                .prepare(7, &encoded, geometry.grid_shape, 1, |record| {
+                    degrid_records += 1;
+                    Ok(gridder.degrid(&model_grid, record.taps) * record.forward_scale)
+                })
+                .expect("route encoded frame once");
+            let route_capacity_bytes = prepared.capacity_bytes().expect("route capacity");
+            let identities = (0..GRIDDED_NORMAL_SECTOR_COUNT)
+                .map(|sector_id| GriddedNormalSectorWork {
+                    block_sequence: 7,
+                    sector_id,
+                    block_record_count: u64::try_from(
+                        encoded.len() / GRIDDED_NORMAL_OPERATOR_RECORD_BYTES,
+                    )
+                    .expect("record count fits"),
+                    shared_route_capacity_bytes: route_capacity_bytes,
+                })
+                .map(GriddedNormalSectorWork::partition_key)
+                .collect::<Vec<_>>();
+            let mut sectors: [GriddedNormalSectorAccumulator; GRIDDED_NORMAL_SECTOR_COUNT] =
+                std::array::from_fn(|sector_id| {
+                    GriddedNormalSectorAccumulator::new(geometry.grid_shape, 1, sector_id)
+                });
+            for sector_id in execution_order {
+                let sector = &mut sectors[sector_id];
+                execute_sector_routes(
+                    &encoded,
+                    geometry.grid_shape,
+                    1,
+                    sector_id,
+                    &prepared,
+                    |record, predicted| {
+                        let local_taps = sector.geometry.translated_taps(record.taps)?;
+                        gridder.grid_compensated(
+                            &mut sector.grids[0],
+                            &mut sector.compensations[0],
+                            local_taps,
+                            predicted * record.forward_scale.conj() * record.imaging_weight,
+                        );
+                        Ok(())
+                    },
+                )
+                .expect("execute sector");
+            }
+            let [grid] = merge_sector_accumulators(sectors.map(Mutex::new), geometry.grid_shape, 1)
+                .expect("merge sectors")
+                .try_into()
+                .expect("one output channel");
+            (
+                identities,
+                grid,
+                degrid_records,
+                prepared.predictions.len(),
+                prepared.routes.len(),
+                route_capacity_bytes,
+            )
         };
 
-        let (serial_identities, serial_grid) = run(1);
-        let (parallel_identities, parallel_grid) = run(3);
-        assert_eq!(serial_identities, vec![0, 1, 2, 3, 4, 5]);
-        assert_eq!(parallel_identities, serial_identities);
-        assert_eq!(serial_grid, expected);
-        assert_eq!(parallel_grid, serial_grid);
+        let (
+            serial_identities,
+            serial_grid,
+            degrid_records,
+            prediction_groups,
+            routed_records,
+            route_capacity_bytes,
+        ) = run([0, 1, 2, 3]);
+        let (permuted_identities, permuted_grid, ..) = run([3, 1, 0, 2]);
+        assert_eq!(serial_identities, vec![0, 1, 2, 3]);
+        assert_eq!(permuted_identities, serial_identities);
+        assert_eq!(permuted_grid, serial_grid);
+        let record_count = encoded.len() / GRIDDED_NORMAL_OPERATOR_RECORD_BYTES;
+        assert_eq!(degrid_records, u64::try_from(record_count).unwrap());
+        assert_eq!(prediction_groups, 2);
+        assert_eq!(routed_records, record_count);
+        assert_eq!(size_of::<GriddedNormalRoute>(), 8);
+        assert!(route_capacity_bytes <= (28 * record_count + 20) as u64);
+        let squared_error = expected
+            .iter()
+            .zip(&serial_grid)
+            .map(|(expected, actual)| (*actual - *expected).norm_sqr())
+            .sum::<f64>();
+        let squared_reference = expected.iter().map(Complex64::norm_sqr).sum::<f64>();
+        let normalized_rms = (squared_error / squared_reference.max(f64::MIN_POSITIVE)).sqrt();
+        assert!(normalized_rms <= 0.001, "normalized RMS {normalized_rms}");
+    }
+
+    #[test]
+    fn sector_partitions_remain_available_after_one_and_two_worker_waves() {
+        for worker_count in [1, 2, 4] {
+            let mut next_sector_commit = 0;
+            while next_sector_commit < GRIDDED_NORMAL_SECTOR_COUNT {
+                let wave_end = (next_sector_commit + worker_count).min(GRIDDED_NORMAL_SECTOR_COUNT);
+                for ordinal in next_sector_commit..wave_end {
+                    validate_sector_partition_ordinal(next_sector_commit, ordinal)
+                        .expect("uncommitted sector remains partitionable");
+                }
+                next_sector_commit = wave_end;
+            }
+        }
+        assert_eq!(
+            validate_sector_partition_ordinal(2, 1),
+            Err(SpectralOperatorError::IncompleteCoverage)
+        );
+    }
+
+    #[test]
+    fn routing_measurements_report_exact_work_and_physical_peak() {
+        let counters = GriddedNormalRoutingCounters::default();
+        counters.record_routing(5, 5, 2, 160);
+        counters.record_grid(3);
+        counters.record_grid(2);
+        counters.record_routing(2, 2, 1, 96);
+        assert_eq!(
+            counters.snapshot(),
+            GriddedNormalRoutingMeasurements {
+                frames_routed: 2,
+                encoded_records: 7,
+                routed_record_memberships: 7,
+                prediction_groups: 3,
+                degrid_records: 7,
+                grid_records: 5,
+                sector_rescans: 0,
+                peak_physical_route_capacity_bytes: 160,
+            }
+        );
+    }
+
+    #[test]
+    fn prepared_routes_are_immutable_until_completion_and_reuse_capacity() {
+        let geometry = geometry();
+        let gridder = StandardConvolution::new(&geometry);
+        let taps = gridder.taps([0.0, 0.0]).expect("central taps");
+        let encoded = encode_reduced(scalar_groups([(taps, 1.0)])).expect("encode record");
+        let mut prepared = PreparedGriddedNormalBlock::default();
+        prepared
+            .prepare(0, &encoded, geometry.grid_shape, 1, |_| {
+                Ok(Complex64::new(1.0, 0.0))
+            })
+            .expect("prepare first frame");
+        let capacity = prepared.capacity_bytes().expect("physical capacity");
+        assert_eq!(
+            prepared
+                .prepare(0, &encoded, geometry.grid_shape, 1, |_| {
+                    Ok(Complex64::new(2.0, 0.0))
+                })
+                .expect_err("active routes cannot be overwritten"),
+            SpectralOperatorError::BlockSequence
+        );
+        assert_eq!(prepared.predictions, vec![Complex64::new(1.0, 0.0)]);
+        prepared.finish_block(0, 1).expect("finish all sector work");
+        prepared
+            .prepare(1, &encoded, geometry.grid_shape, 1, |_| {
+                Ok(Complex64::new(2.0, 0.0))
+            })
+            .expect("reuse storage for next frame");
+        assert_eq!(prepared.capacity_bytes().unwrap(), capacity);
+        assert_eq!(prepared.predictions, vec![Complex64::new(2.0, 0.0)]);
+    }
+
+    #[test]
+    fn sector_residency_formula_is_exact_and_worker_independent() {
+        let projected = gridded_normal_sector_residency([10, 10], 3).expect("project residency");
+        let sectors: [GriddedNormalSectorAccumulator; GRIDDED_NORMAL_SECTOR_COUNT] =
+            std::array::from_fn(|sector_id| {
+                GriddedNormalSectorAccumulator::new([10, 10], 3, sector_id)
+            });
+        let actual_sector_values = sectors.iter().fold(0, |total, sector| {
+            total
+                + sector.grids.iter().map(Array2::len).sum::<usize>()
+                + sector.compensations.iter().map(Array2::len).sum::<usize>()
+        });
+        assert_eq!(actual_sector_values, 1_536);
+        assert_eq!(projected.sector_accumulator_complex_values(), 1_536);
+        assert_eq!(projected.merge_complex_values(), 600);
+        assert_eq!(projected.peak_complex_values(), 2_136);
+
+        let production =
+            gridded_normal_sector_residency([1024, 1024], 1).expect("project 1024 grid");
+        assert_eq!(production.sector_accumulator_complex_values(), 2_121_800);
+        assert_eq!(production.merge_complex_values(), 2_097_152);
+        assert_eq!(production.peak_complex_values(), 4_218_952);
+        assert_eq!(
+            production.peak_complex_values() * size_of::<Complex64>(),
+            67_503_232
+        );
     }
 
     #[test]
