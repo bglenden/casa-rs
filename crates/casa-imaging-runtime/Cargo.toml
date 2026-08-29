@@ -15,6 +15,7 @@ casa-imaging-model = { path = "../casa-imaging-model" }
 casa-imaging-products = { path = "../casa-imaging-products" }
 casa-imaging-reconstruction = { path = "../casa-imaging-reconstruction" }
 num-complex.workspace = true
+rayon = "1"
 casa-ms = { path = "../casa-ms" }
 fs2 = "0.4"
 serde = { version = "1", features = ["derive"] }

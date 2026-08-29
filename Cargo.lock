@@ -654,6 +654,7 @@ dependencies = [
  "libc",
  "num-complex",
  "objc2-metal",
+ "rayon",
  "serde",
  "serde_json",
  "sha2",
