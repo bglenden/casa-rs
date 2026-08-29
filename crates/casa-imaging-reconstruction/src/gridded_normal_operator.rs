@@ -42,6 +42,12 @@ const RECORD_KEY_MASK: u64 = (GROUP_END_BIT << 1) - 1;
 /// Width of every opaque gridded normal-operator record.
 pub const GRIDDED_NORMAL_OPERATOR_RECORD_BYTES: usize = 32;
 
+/// Stable maximum work fanout for one bounded gridded-normal block.
+///
+/// This is reconstruction-owned and independent of the admitted worker count;
+/// changing schedules therefore cannot change work identities or reduction order.
+pub const GRIDDED_NORMAL_MAXIMUM_PARTITIONS_PER_BLOCK: usize = 64;
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct ReducedRecordKey {
     output_channel: u32,
@@ -463,6 +469,7 @@ impl GriddedNormalOperatorProgram {
             model_generation,
             next_block_sequence: 0,
             applied_records: 0,
+            active_block: None,
         })
     }
 }
@@ -475,15 +482,94 @@ pub struct GriddedNormalOperatorApply {
     model_generation: crate::ModelGenerationId,
     next_block_sequence: u64,
     applied_records: u64,
+    active_block: Option<ActiveGriddedNormalBlock>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ActiveGriddedNormalBlock {
+    sequence: u64,
+    next_record_ordinal: u64,
+    group_start_record: u64,
+    group_prediction: Complex64,
+}
+
+/// One stable record-range partition prepared by reconstruction.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GriddedNormalPredictionWork {
+    block_sequence: u64,
+    partition_key: u64,
+    first_record: u64,
+    record_count: u64,
+    block_record_count: u64,
+    encoded_start: usize,
+    encoded_end: usize,
+}
+
+impl GriddedNormalPredictionWork {
+    /// Return the worker-count-independent key of this ordered partition.
+    #[must_use]
+    pub const fn partition_key(self) -> u64 {
+        self.partition_key
+    }
+
+    /// Return the exact number of encoded records borrowed by this work item.
+    #[must_use]
+    pub const fn record_count(self) -> u64 {
+        self.record_count
+    }
+}
+
+/// Read-only predictions for one ordered record-group partition.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct GriddedNormalPredictionPartial {
+    work: GriddedNormalPredictionWork,
+    predictions: Box<[Complex64]>,
+    resident_bytes: u64,
+}
+
+impl GriddedNormalPredictionPartial {
+    /// Return exact heap bytes retained by this partial prediction payload.
+    #[must_use]
+    pub const fn resident_bytes(&self) -> u64 {
+        self.resident_bytes
+    }
 }
 
 impl GriddedNormalOperatorApply {
-    /// Validate and apply one borrowed runtime frame without copying its payload.
-    pub fn apply_encoded_block(
-        &mut self,
+    /// Validate one borrowed frame and return its stable bounded work count.
+    pub fn prediction_partition_count(
+        &self,
         sequence: u64,
         encoded: &[u8],
-    ) -> Result<(), SpectralOperatorError> {
+    ) -> Result<usize, SpectralOperatorError> {
+        let descriptor = self
+            .program
+            .manifest
+            .descriptors
+            .get(
+                usize::try_from(sequence)
+                    .map_err(|_| SpectralOperatorError::GriddedRecordMismatch)?,
+            )
+            .ok_or(SpectralOperatorError::GriddedRecordMismatch)?;
+        if sequence != self.next_block_sequence || self.active_block.is_some() {
+            return Err(SpectralOperatorError::BlockSequence);
+        }
+        validate_encoded_block(descriptor, encoded)?;
+        prediction_partition_count(
+            usize::try_from(descriptor.record_count)
+                .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
+        )
+    }
+
+    /// Return one worker-count-independent record partition by local ordinal.
+    pub fn prediction_partition(
+        &self,
+        sequence: u64,
+        encoded: &[u8],
+        local_ordinal: usize,
+    ) -> Result<GriddedNormalPredictionWork, SpectralOperatorError> {
         let descriptor = self
             .program
             .manifest
@@ -496,74 +582,118 @@ impl GriddedNormalOperatorApply {
         if sequence != self.next_block_sequence {
             return Err(SpectralOperatorError::BlockSequence);
         }
-        validate_encoded_block(descriptor, encoded)?;
-        self.apply_validated_encoded(sequence, encoded)
+        let record_count = usize::try_from(descriptor.record_count)
+            .map_err(|_| SpectralOperatorError::CoverageOverflow)?;
+        if encoded.len()
+            != record_count
+                .checked_mul(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
+                .ok_or(SpectralOperatorError::ResidencyOverflow)?
+        {
+            return Err(SpectralOperatorError::GriddedRecordMismatch);
+        }
+        prediction_work(sequence, record_count, local_ordinal)
     }
 
-    fn apply_validated_encoded(
-        &mut self,
-        sequence: u64,
+    /// Predict one prepared partition without mutating gridded normal state.
+    pub fn predict_partition(
+        &self,
         encoded: &[u8],
-    ) -> Result<(), SpectralOperatorError> {
-        if sequence != self.next_block_sequence {
+        work: GriddedNormalPredictionWork,
+    ) -> Result<GriddedNormalPredictionPartial, SpectralOperatorError> {
+        if work.block_sequence != self.next_block_sequence
+            || self
+                .active_block
+                .is_some_and(|active| work.first_record < active.next_record_ordinal)
+        {
             return Err(SpectralOperatorError::BlockSequence);
         }
-        let mut group_start = 0;
-        while group_start < encoded.len() {
-            let mut group_end = None;
-            let mut predicted = Complex64::default();
-            for (record_offset, bytes) in encoded[group_start..]
-                .chunks_exact(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
-                .enumerate()
-            {
-                let record = decode_record(
-                    bytes,
-                    self.program.manifest.specification.grid_shape(),
-                    self.program.manifest.specification.slab().total_channels(),
-                )?;
-                predicted += self.operator.predict_gridded_normal(
+        predict_partition_records(
+            encoded,
+            work,
+            self.program.manifest.specification.grid_shape(),
+            self.program.manifest.specification.slab().total_channels(),
+            |record| {
+                self.operator.predict_gridded_normal(
                     record.output_channel,
                     record.taps,
                     record.forward_scale,
-                )?;
-                if record.group_end {
-                    group_end = Some(
-                        group_start + (record_offset + 1) * GRIDDED_NORMAL_OPERATOR_RECORD_BYTES,
-                    );
-                    break;
-                }
-            }
-            let group_end = group_end.ok_or(SpectralOperatorError::InvalidGriddedRecord)?;
-            if !predicted.re.is_finite() || !predicted.im.is_finite() {
-                return Err(SpectralOperatorError::GeneratedNonfinite);
-            }
-            for bytes in
-                encoded[group_start..group_end].chunks_exact(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
-            {
-                let record = decode_record(
-                    bytes,
-                    self.program.manifest.specification.grid_shape(),
-                    self.program.manifest.specification.slab().total_channels(),
-                )?;
+                )
+            },
+        )
+    }
+
+    /// Commit one prediction partial in canonical record-group order.
+    pub fn commit_prediction(
+        &mut self,
+        encoded: &[u8],
+        partial: GriddedNormalPredictionPartial,
+    ) -> Result<(), SpectralOperatorError> {
+        let work = partial.work;
+        let mut active = self.active_block.unwrap_or(ActiveGriddedNormalBlock {
+            sequence: work.block_sequence,
+            next_record_ordinal: 0,
+            group_start_record: 0,
+            group_prediction: Complex64::default(),
+        });
+        if work.block_sequence != self.next_block_sequence
+            || active.sequence != work.block_sequence
+            || work.first_record != active.next_record_ordinal
+        {
+            return Err(SpectralOperatorError::BlockSequence);
+        }
+        let grid_shape = self.program.manifest.specification.grid_shape();
+        let output_channels = self.program.manifest.specification.slab().total_channels();
+        commit_prediction_records(
+            encoded,
+            partial,
+            grid_shape,
+            output_channels,
+            &mut active,
+            |record, predicted| {
                 self.operator.apply_gridded_normal(
                     record.output_channel,
                     record.taps,
                     predicted,
                     record.forward_scale.conj() * record.imaging_weight,
-                )?;
-            }
-            group_start = group_end;
+                )
+            },
+        )?;
+        if active.next_record_ordinal > work.block_record_count {
+            return Err(SpectralOperatorError::InvalidGriddedRecord);
         }
-        let record_count = u64::try_from(encoded.len() / GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
-            .map_err(|_| SpectralOperatorError::CoverageOverflow)?;
-        self.applied_records = self
-            .applied_records
-            .checked_add(record_count)
-            .ok_or(SpectralOperatorError::CoverageOverflow)?;
-        self.next_block_sequence = self
-            .next_block_sequence
-            .checked_add(1)
-            .ok_or(SpectralOperatorError::CoverageOverflow)?;
+        if active.next_record_ordinal == work.block_record_count {
+            if active.group_start_record != work.block_record_count
+                || active.group_prediction != Complex64::default()
+            {
+                return Err(SpectralOperatorError::InvalidGriddedRecord);
+            }
+            self.applied_records = self
+                .applied_records
+                .checked_add(work.block_record_count)
+                .ok_or(SpectralOperatorError::CoverageOverflow)?;
+            self.next_block_sequence = self
+                .next_block_sequence
+                .checked_add(1)
+                .ok_or(SpectralOperatorError::CoverageOverflow)?;
+            self.active_block = None;
+        } else {
+            self.active_block = Some(active);
+        }
+        Ok(())
+    }
+
+    /// Validate and apply one borrowed frame through the ordered partial path.
+    pub fn apply_encoded_block(
+        &mut self,
+        sequence: u64,
+        encoded: &[u8],
+    ) -> Result<(), SpectralOperatorError> {
+        let partition_count = self.prediction_partition_count(sequence, encoded)?;
+        for ordinal in 0..partition_count {
+            let work = self.prediction_partition(sequence, encoded, ordinal)?;
+            let partial = self.predict_partition(encoded, work)?;
+            self.commit_prediction(encoded, partial)?;
+        }
         Ok(())
     }
 
@@ -571,6 +701,7 @@ impl GriddedNormalOperatorApply {
     pub fn finish(self) -> Result<CompleteDataOwnerResult, SpectralOperatorError> {
         if self.next_block_sequence != self.program.block_count()
             || self.applied_records != self.program.manifest.record_count
+            || self.active_block.is_some()
         {
             return Err(SpectralOperatorError::IncompleteCoverage);
         }
@@ -608,6 +739,163 @@ impl GriddedNormalOperatorApply {
             },
         })
     }
+}
+
+fn prediction_partition_count(record_count: usize) -> Result<usize, SpectralOperatorError> {
+    Ok(record_count.clamp(1, GRIDDED_NORMAL_MAXIMUM_PARTITIONS_PER_BLOCK))
+}
+
+fn prediction_work(
+    block_sequence: u64,
+    record_count: usize,
+    local_ordinal: usize,
+) -> Result<GriddedNormalPredictionWork, SpectralOperatorError> {
+    let partition_count = prediction_partition_count(record_count)?;
+    if local_ordinal >= partition_count {
+        return Err(SpectralOperatorError::IncompleteCoverage);
+    }
+    let start_record = local_ordinal
+        .checked_mul(record_count)
+        .and_then(|records| records.checked_div(partition_count))
+        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+    let end_record = local_ordinal
+        .checked_add(1)
+        .and_then(|ordinal| ordinal.checked_mul(record_count))
+        .and_then(|records| records.checked_div(partition_count))
+        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+    let encoded_start = start_record
+        .checked_mul(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
+        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+    let encoded_end = end_record
+        .checked_mul(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
+        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+    Ok(GriddedNormalPredictionWork {
+        block_sequence,
+        partition_key: u64::try_from(start_record)
+            .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
+        first_record: u64::try_from(start_record)
+            .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
+        record_count: u64::try_from(
+            end_record
+                .checked_sub(start_record)
+                .ok_or(SpectralOperatorError::CoverageOverflow)?,
+        )
+        .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
+        block_record_count: u64::try_from(record_count)
+            .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
+        encoded_start,
+        encoded_end,
+    })
+}
+
+fn predict_partition_records<F>(
+    encoded: &[u8],
+    work: GriddedNormalPredictionWork,
+    grid_shape: [usize; 2],
+    output_channels: usize,
+    mut predict: F,
+) -> Result<GriddedNormalPredictionPartial, SpectralOperatorError>
+where
+    F: FnMut(DecodedRecord) -> Result<Complex64, SpectralOperatorError>,
+{
+    let partition = encoded
+        .get(work.encoded_start..work.encoded_end)
+        .ok_or(SpectralOperatorError::InvalidGriddedRecord)?;
+    let prediction_count =
+        usize::try_from(work.record_count).map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
+    let mut predictions = Vec::new();
+    predictions
+        .try_reserve_exact(prediction_count)
+        .map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
+    for bytes in partition.chunks_exact(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES) {
+        let record = decode_record(bytes, grid_shape, output_channels)?;
+        let predicted = predict(record)?;
+        if !predicted.re.is_finite() || !predicted.im.is_finite() {
+            return Err(SpectralOperatorError::GeneratedNonfinite);
+        }
+        predictions.push(predicted);
+    }
+    if predictions.len() != prediction_count {
+        return Err(SpectralOperatorError::InvalidGriddedRecord);
+    }
+    let resident_bytes = prediction_count
+        .checked_mul(size_of::<Complex64>())
+        .and_then(|bytes| u64::try_from(bytes).ok())
+        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+    Ok(GriddedNormalPredictionPartial {
+        work,
+        predictions: predictions.into_boxed_slice(),
+        resident_bytes,
+    })
+}
+
+fn commit_prediction_records<F>(
+    encoded: &[u8],
+    partial: GriddedNormalPredictionPartial,
+    grid_shape: [usize; 2],
+    output_channels: usize,
+    active: &mut ActiveGriddedNormalBlock,
+    mut apply: F,
+) -> Result<(), SpectralOperatorError>
+where
+    F: FnMut(DecodedRecord, Complex64) -> Result<(), SpectralOperatorError>,
+{
+    let partition = encoded
+        .get(partial.work.encoded_start..partial.work.encoded_end)
+        .ok_or(SpectralOperatorError::InvalidGriddedRecord)?;
+    let prediction_count = usize::try_from(partial.work.record_count)
+        .map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
+    if partial.predictions.len() != prediction_count {
+        return Err(SpectralOperatorError::InvalidGriddedRecord);
+    }
+    for (offset, (bytes, predicted)) in partition
+        .chunks_exact(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
+        .zip(partial.predictions.iter().copied())
+        .enumerate()
+    {
+        let record = decode_record(bytes, grid_shape, output_channels)?;
+        active.group_prediction += predicted;
+        if record.group_end {
+            if !active.group_prediction.re.is_finite() || !active.group_prediction.im.is_finite() {
+                return Err(SpectralOperatorError::GeneratedNonfinite);
+            }
+            let record_ordinal = usize::try_from(active.next_record_ordinal)
+                .ok()
+                .and_then(|first| first.checked_add(offset))
+                .ok_or(SpectralOperatorError::CoverageOverflow)?;
+            let group_start = usize::try_from(active.group_start_record)
+                .map_err(|_| SpectralOperatorError::CoverageOverflow)?;
+            let group_end = record_ordinal
+                .checked_add(1)
+                .ok_or(SpectralOperatorError::CoverageOverflow)?;
+            let group_start = group_start
+                .checked_mul(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
+                .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+            let group_end = group_end
+                .checked_mul(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
+                .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+            for bytes in encoded
+                .get(group_start..group_end)
+                .ok_or(SpectralOperatorError::InvalidGriddedRecord)?
+                .chunks_exact(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
+            {
+                apply(
+                    decode_record(bytes, grid_shape, output_channels)?,
+                    active.group_prediction,
+                )?;
+            }
+            active.group_start_record = u64::try_from(record_ordinal)
+                .ok()
+                .and_then(|record| record.checked_add(1))
+                .ok_or(SpectralOperatorError::CoverageOverflow)?;
+            active.group_prediction = Complex64::default();
+        }
+    }
+    active.next_record_ordinal = active
+        .next_record_ordinal
+        .checked_add(partial.work.record_count)
+        .ok_or(SpectralOperatorError::CoverageOverflow)?;
+    Ok(())
 }
 
 fn require_supported_basis(basis: &ReconstructionBasis) -> Result<(), SpectralOperatorError> {
@@ -986,6 +1274,146 @@ mod tests {
         let dirty = Complex64::new(4.0, -0.5);
         let normal = Complex64::new(1.25, 0.75);
         assert_eq!(dirty - normal, Complex64::new(2.75, -1.25));
+    }
+
+    #[test]
+    fn prediction_partitions_are_stable_and_schedule_independent() {
+        let geometry = geometry();
+        let gridder = StandardConvolution::new(&geometry);
+        let shape = (geometry.grid_shape[0], geometry.grid_shape[1]);
+        let mut model_grid = Array2::<Complex64>::zeros(shape);
+        for ((x, y), value) in model_grid.indexed_iter_mut() {
+            *value = Complex64::new(
+                (x * shape.1 + y) as f64 * 0.013 - 0.4,
+                x as f64 * -0.017 + y as f64 * 0.009,
+            );
+        }
+        let mut distinct_taps = BTreeMap::new();
+        for x in -30..=30 {
+            for y in -30..=30 {
+                if let Some(taps) = gridder.taps([f64::from(x), f64::from(y)]) {
+                    distinct_taps
+                        .entry(encode_taps(taps).expect("encode taps"))
+                        .or_insert(taps);
+                }
+            }
+        }
+        let contributions = distinct_taps
+            .into_values()
+            .take(6)
+            .enumerate()
+            .map(|(index, taps)| (taps, 0.5 + index as f64 * 0.125))
+            .collect::<Vec<_>>();
+        assert_eq!(contributions.len(), 6);
+        let mut groups = BTreeMap::new();
+        groups.insert(
+            contributions
+                .into_iter()
+                .map(|(taps, imaging_weight)| ReducedRecordKey {
+                    output_channel: 0,
+                    taps: encode_taps(taps).expect("encode grouped taps"),
+                    forward_real: 1.0_f64.to_bits(),
+                    forward_imaginary: 0,
+                    imaging_weight: imaging_weight.to_bits(),
+                })
+                .collect::<Vec<_>>(),
+            vec![1.0],
+        );
+        let encoded = encode_reduced(groups).expect("encode one multi-record group");
+
+        let mut expected = Array2::<Complex64>::zeros(shape);
+        let mut expected_compensation = Array2::<Complex64>::zeros(shape);
+        let records = encoded
+            .chunks_exact(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
+            .map(|bytes| decode_record(bytes, geometry.grid_shape, 1).expect("decode record"))
+            .collect::<Vec<_>>();
+        let predicted = records
+            .iter()
+            .try_fold(
+                Complex64::default(),
+                |sum, record| -> Result<_, SpectralOperatorError> {
+                    Ok(sum + gridder.degrid(&model_grid, record.taps) * record.forward_scale)
+                },
+            )
+            .expect("predict group");
+        for record in &records {
+            gridder.grid_compensated(
+                &mut expected,
+                &mut expected_compensation,
+                record.taps,
+                predicted * record.forward_scale.conj() * record.imaging_weight,
+            );
+        }
+
+        let run = |workers: usize| {
+            let partition_count =
+                prediction_partition_count(records.len()).expect("partition count");
+            let identities = (0..partition_count)
+                .map(|ordinal| prediction_work(7, records.len(), ordinal).expect("partition work"))
+                .map(GriddedNormalPredictionWork::partition_key)
+                .collect::<Vec<_>>();
+            let mut grid = Array2::<Complex64>::zeros(shape);
+            let mut compensation = Array2::<Complex64>::zeros(shape);
+            let mut active = ActiveGriddedNormalBlock {
+                sequence: 7,
+                next_record_ordinal: 0,
+                group_start_record: 0,
+                group_prediction: Complex64::default(),
+            };
+            for wave_start in (0..partition_count).step_by(workers) {
+                let wave_end = (wave_start + workers).min(partition_count);
+                let partials = (wave_start..wave_end)
+                    .map(|ordinal| {
+                        let work =
+                            prediction_work(7, records.len(), ordinal).expect("partition work");
+                        predict_partition_records(
+                            &encoded,
+                            work,
+                            geometry.grid_shape,
+                            1,
+                            |record| {
+                                Ok(gridder.degrid(&model_grid, record.taps) * record.forward_scale)
+                            },
+                        )
+                        .expect("predict partition")
+                    })
+                    .collect::<Vec<_>>();
+                for partial in partials {
+                    assert_eq!(
+                        partial.resident_bytes(),
+                        u64::try_from(size_of::<Complex64>()).expect("partial bytes fit u64")
+                    );
+                    commit_prediction_records(
+                        &encoded,
+                        partial,
+                        geometry.grid_shape,
+                        1,
+                        &mut active,
+                        |record, predicted| {
+                            gridder.grid_compensated(
+                                &mut grid,
+                                &mut compensation,
+                                record.taps,
+                                predicted * record.forward_scale.conj() * record.imaging_weight,
+                            );
+                            Ok(())
+                        },
+                    )
+                    .expect("commit partition");
+                }
+            }
+            assert_eq!(active.next_record_ordinal, records.len() as u64);
+            assert_eq!(active.group_start_record, records.len() as u64);
+            assert_eq!(active.group_prediction, Complex64::default());
+            (identities, grid)
+        };
+
+        let (serial_identities, serial_grid) = run(1);
+        let (parallel_identities, parallel_grid) = run(3);
+        assert_eq!(serial_identities, vec![0, 1, 2, 3, 4, 5]);
+        assert_eq!(parallel_identities, serial_identities);
+        assert_eq!(serial_grid, expected);
+        assert_eq!(parallel_grid, serial_grid);
     }
 
     #[test]
