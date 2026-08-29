@@ -1489,7 +1489,7 @@ image_product_write suffix=.image.pbcor role=image.pbcor shape=1024x1024x1x1 ele
 
     def test_parse_backend_plan_logs_retains_gridded_replay_discriminator(self) -> None:
         parsed = run_workload.parse_backend_plan_logs(
-            """imaging_gridded_replay_summary ordinal=1 blocks=31985 artifact_bytes=1574840232 payload_bytes=1572537216 read_bytes=1574840232 read_operations=94909 payload_copy_bytes=0 payload_copy_operations=0 buffer_allocations=2 buffer_reuses=31983 source_slots=2 workers=1 worker_threads_started=0 dispatch_waves=127940 active_worker_slots=1 minimum_partitions_per_active_worker=127940 maximum_partitions_per_active_worker=127940 partitions_executed=127940 commits_completed=127940 planned_source_capacity_bytes=262288 planned_kernel_window_capacity_bytes=432 peak_partial_dynamic_capacity_bytes=0 peak_worker_stack_capacity_bytes=0 peak_kernel_window_capacity_bytes=360 peak_live_source_blocks=2 peak_live_source_current_bytes=131216 peak_live_source_capacity_bytes=262288 ready_queue_high_water=0 producer_wait_nanos=1964086 consumer_wait_nanos=142338671 source_starved_nanos=142323713 overlap_nanos=1322028272 source_fill_nanos=1436830268 prepare_nanos=683595493 execute_nanos=4125092333 commit_nanos=3312497 wall_nanos=5008788834
+            """imaging_gridded_replay_summary ordinal=1 blocks=31985 artifact_bytes=1574840232 payload_bytes=1572537216 read_bytes=1574840232 read_operations=94909 payload_copy_bytes=0 payload_copy_operations=0 buffer_allocations=2 buffer_reuses=31983 source_slots=2 workers=1 worker_threads_started=0 dispatch_waves=127940 active_worker_slots=1 minimum_partitions_per_active_worker=127940 maximum_partitions_per_active_worker=127940 partitions_executed=127940 commits_completed=127940 planned_source_capacity_bytes=262288 planned_kernel_window_capacity_bytes=115140 planned_gridded_route_maximum_frame_records=4096 planned_gridded_route_maximum_frame_groups=4096 planned_gridded_route_capacity_bytes=114708 frames_routed=31985 encoded_records=49141788 routed_record_memberships=49141788 prediction_groups=49141788 degrid_records=49141788 grid_records=49141788 sector_rescans=0 peak_physical_route_capacity_bytes=114708 peak_partial_dynamic_capacity_bytes=0 peak_worker_stack_capacity_bytes=0 peak_kernel_window_capacity_bytes=115068 peak_live_source_blocks=2 peak_live_source_current_bytes=131216 peak_live_source_capacity_bytes=262288 ready_queue_high_water=0 producer_wait_nanos=1964086 consumer_wait_nanos=142338671 source_starved_nanos=142323713 overlap_nanos=1322028272 source_fill_nanos=1436830268 prepare_nanos=683595493 execute_nanos=4125092333 commit_nanos=3312497 wall_nanos=5008788834
 """
         )
 
@@ -1501,6 +1501,21 @@ image_product_write suffix=.image.pbcor role=image.pbcor shape=1024x1024x1x1 ele
         self.assertEqual(127940, fields["partitions_executed"])
         self.assertEqual(127940, fields["commits_completed"])
         self.assertEqual(0, fields["payload_copy_bytes"])
+        self.assertEqual(4096, fields["planned_gridded_route_maximum_frame_records"])
+        self.assertEqual(4096, fields["planned_gridded_route_maximum_frame_groups"])
+        self.assertEqual(114708, fields["planned_gridded_route_capacity_bytes"])
+        self.assertEqual(31985, fields["frames_routed"])
+        self.assertEqual(49141788, fields["encoded_records"])
+        self.assertEqual(49141788, fields["routed_record_memberships"])
+        self.assertEqual(49141788, fields["prediction_groups"])
+        self.assertEqual(49141788, fields["degrid_records"])
+        self.assertEqual(49141788, fields["grid_records"])
+        self.assertEqual(0, fields["sector_rescans"])
+        self.assertEqual(114708, fields["peak_physical_route_capacity_bytes"])
+        self.assertLessEqual(
+            fields["peak_physical_route_capacity_bytes"],
+            fields["planned_gridded_route_capacity_bytes"],
+        )
         self.assertEqual(0, fields["peak_partial_dynamic_capacity_bytes"])
         self.assertEqual(683595493, fields["prepare_nanos"])
         self.assertEqual(4125092333, fields["execute_nanos"])
