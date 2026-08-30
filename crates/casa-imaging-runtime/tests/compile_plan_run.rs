@@ -50,8 +50,8 @@ use casa_imaging_reconstruction::{
     WeightingExecutionLimits, WeightingPlan, WeightingReplayChunk, WeightingReplaySummary,
     begin_weighting_generation, plan_weighting,
     runtime_adapter::{
-        CompleteDataOwnerResult, SpectralOperatorPass, prepare_spectral_operator,
-        spectral_operator_workload,
+        CompleteDataOwnerResult, SpectralOperatorPass, gridded_normal_route_window_capacity_bytes,
+        prepare_spectral_operator, spectral_operator_workload,
     },
 };
 use casa_imaging_runtime::{
@@ -3149,6 +3149,22 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
     assert_eq!(replay_nodes.len(), 1, "one bounded artifact reader");
     let replay_node_id = replay_nodes[0].id.clone();
     assert_eq!(replay_nodes[0].kind, WorkKind::Prefetch);
+    assert_eq!(
+        final_physical.execution_dag().initial_knobs().batch_size,
+        64
+    );
+    assert_eq!(
+        final_physical
+            .execution_dag()
+            .resource_alternative()
+            .scaling
+            .maximum_batch_size,
+        64
+    );
+    assert!(replay_nodes[0].claims.iter().any(|claim| {
+        claim.resource == LeaseResource::IoBuffer(IoBufferKind::SpillRead)
+            && claim.amount == 2 * 64 * (72 + 32)
+    }));
     assert!(
         replay_nodes[0]
             .id
@@ -3226,12 +3242,12 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
                 .starts_with("spectral-operator-gridded-route-gridded-residual-refresh-")
         })
         .expect("gridded replay route allocation");
-    let expected_route_bytes = 28_u64 + 20;
+    let expected_route_bytes = gridded_normal_route_window_capacity_bytes(1, 64).unwrap();
     assert_eq!(route.bytes, expected_route_bytes);
     assert_eq!(
         route.compatibility.layout,
         AllocationLayout::new(
-            "spectral-operator-gridded-route-classification-indices-predictions-and-offsets"
+            "spectral-operator-gridded-route-window-record-vectors-and-frame-metadata"
         )
     );
     let route_slot = final_physical

@@ -24,7 +24,8 @@ use casa_imaging_reconstruction::{
         GriddedNormalOperatorBlockMeasurements, GriddedNormalOperatorCompiler,
         GriddedNormalOperatorProgram, GriddedNormalRoutingMeasurements, GriddedNormalSectorPartial,
         GriddedNormalSectorWork, PreparedSpectralOperator, SpectralOperatorPass,
-        SpectralOperatorWorkload, prepare_spectral_operator, spectral_operator_workload,
+        SpectralOperatorWorkload, gridded_normal_route_window_capacity_bytes,
+        prepare_spectral_operator, spectral_operator_workload,
     },
 };
 
@@ -44,10 +45,12 @@ use crate::{
 };
 
 use crate::gridded_normal_artifact::{
-    GriddedNormalArtifactBudget, GriddedNormalArtifactFrameStorage,
-    GriddedNormalArtifactMeasurements, GriddedNormalArtifactWriter,
+    GriddedNormalArtifactBudget, GriddedNormalArtifactMeasurements,
+    GriddedNormalArtifactWindowStorage, GriddedNormalArtifactWriter,
     GriddedNormalReplayArtifact as GriddedNormalSpillArtifact, GriddedNormalReplayStorage,
 };
+
+pub(crate) const GRIDDED_NORMAL_REPLAY_WINDOW_FRAMES: usize = 64;
 
 /// Opaque run-scoped normal-operator program and its checksummed spill storage.
 ///
@@ -362,7 +365,16 @@ impl FrozenGriddedNormalReplay {
                     .then_some(claim.amount)
             })
             .ok_or_else(|| io::Error::other("gridded-normal replay buffer claim missing"))?;
-        let per_slot = budget.io_buffer_bytes();
+        let maximum_frames_per_block = usize::try_from(context.knobs().batch_size)
+            .map_err(|_| io::Error::other("gridded-normal replay window overflow"))?;
+        if maximum_frames_per_block != GRIDDED_NORMAL_REPLAY_WINDOW_FRAMES {
+            return Err(io::Error::other(
+                "gridded-normal replay window disagrees with the compiled plan",
+            ));
+        }
+        let per_slot = budget
+            .source_slot_bytes(maximum_frames_per_block)
+            .map_err(io::Error::other)?;
         if source_capacity_bytes % per_slot != 0 {
             return Err(io::Error::other(
                 "gridded-normal replay buffer claim is not an exact frame-slot multiple",
@@ -370,6 +382,11 @@ impl FrozenGriddedNormalReplay {
         }
         let source_slots = usize::try_from(source_capacity_bytes / per_slot)
             .map_err(|_| io::Error::other("gridded-normal replay slot count overflow"))?;
+        if source_slots != 2 {
+            return Err(io::Error::other(
+                "gridded-normal replay requires exactly two source slots",
+            ));
+        }
         let worker_claim = context
             .node()
             .claims
@@ -390,8 +407,13 @@ impl FrozenGriddedNormalReplay {
             GRIDDED_NORMAL_SECTOR_COUNT,
             route_capacity_bytes,
         )
-        .map_err(|_| io::Error::other("invalid gridded-normal bounded-stream plan"))?;
-        let source = self.spill.block_source().map_err(io::Error::other)?;
+        .map_err(|_| io::Error::other("invalid gridded-normal bounded-stream plan"))?
+        .with_maximum_logical_units_per_block(maximum_frames_per_block)
+        .map_err(|_| io::Error::other("invalid gridded-normal replay window plan"))?;
+        let source = self
+            .spill
+            .block_source(maximum_frames_per_block)
+            .map_err(io::Error::other)?;
         let outcome = execute_bounded(
             plan,
             pass_ordinal,
@@ -435,7 +457,7 @@ struct GriddedNormalReplayKernel {
     state: GriddedNormalOperatorState,
 }
 
-impl PartitionedKernel<GriddedNormalArtifactFrameStorage> for GriddedNormalReplayKernel {
+impl PartitionedKernel<GriddedNormalArtifactWindowStorage> for GriddedNormalReplayKernel {
     type Partition = GriddedNormalSectorWork;
     type Partial = GriddedNormalSectorPartial;
     type Completion = (CompleteDataOperatorResult, GriddedNormalRoutingMeasurements);
@@ -444,29 +466,47 @@ impl PartitionedKernel<GriddedNormalArtifactFrameStorage> for GriddedNormalRepla
     fn partition_count(
         &self,
         _block: BlockIdentity,
-        storage: &GriddedNormalArtifactFrameStorage,
+        storage: &GriddedNormalArtifactWindowStorage,
     ) -> Result<usize, Self::Error> {
-        let records = u64::try_from(storage.payload().len() / GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
-            .map_err(|_| CompleteDataOperatorError::ExecutionBinding)?;
-        if storage.record_count() != records {
+        let records = storage.frames().try_fold(0_u64, |total, frame| {
+            let records =
+                u64::try_from(frame.payload().len() / GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
+                    .map_err(|_| CompleteDataOperatorError::ExecutionBinding)?;
+            if frame.record_count() != records {
+                return Err(CompleteDataOperatorError::ExecutionBinding);
+            }
+            total
+                .checked_add(records)
+                .ok_or(CompleteDataOperatorError::ExecutionBinding)
+        })?;
+        if storage.frame_count() == 0 || storage.record_count() != records {
             return Err(CompleteDataOperatorError::ExecutionBinding);
         }
         self.state
             .state
-            .sector_partition_count(storage.sequence(), storage.payload())
+            .sector_window_partition_count(
+                storage
+                    .frames()
+                    .map(|frame| (frame.sequence(), frame.payload())),
+            )
             .map_err(CompleteDataOperatorError::Owner)
     }
 
     fn partition(
         &self,
         _block: BlockIdentity,
-        storage: &GriddedNormalArtifactFrameStorage,
+        storage: &GriddedNormalArtifactWindowStorage,
         local_ordinal: usize,
     ) -> Result<KernelPartition<Self::Partition>, Self::Error> {
+        let first_sequence = storage
+            .frames()
+            .next()
+            .ok_or(CompleteDataOperatorError::ExecutionBinding)?
+            .sequence();
         let partition = self
             .state
             .state
-            .sector_partition(storage.sequence(), storage.payload(), local_ordinal)
+            .sector_window_partition(first_sequence, storage.frame_count(), local_ordinal)
             .map_err(CompleteDataOperatorError::Owner)?;
         Ok(KernelPartition::exclusive(
             partition.partition_key(),
@@ -482,12 +522,17 @@ impl PartitionedKernel<GriddedNormalArtifactFrameStorage> for GriddedNormalRepla
     fn execute(
         &self,
         _work: WorkIdentity,
-        storage: &GriddedNormalArtifactFrameStorage,
+        storage: &GriddedNormalArtifactWindowStorage,
         partition: &Self::Partition,
     ) -> Result<Self::Partial, Self::Error> {
         self.state
             .state
-            .execute_sector(storage.payload(), *partition)
+            .execute_sector_window(
+                storage
+                    .frames()
+                    .map(|frame| (frame.sequence(), frame.payload())),
+                *partition,
+            )
             .map_err(CompleteDataOperatorError::Owner)
     }
 
@@ -498,7 +543,7 @@ impl PartitionedKernel<GriddedNormalArtifactFrameStorage> for GriddedNormalRepla
     fn commit(
         &mut self,
         _work: WorkIdentity,
-        _storage: &GriddedNormalArtifactFrameStorage,
+        _storage: &GriddedNormalArtifactWindowStorage,
         partial: Self::Partial,
     ) -> Result<(), Self::Error> {
         self.state
@@ -512,16 +557,7 @@ impl PartitionedKernel<GriddedNormalArtifactFrameStorage> for GriddedNormalRepla
     }
 }
 
-const GRIDDED_NORMAL_ROUTE_CLASSIFICATION_BYTES_PER_RECORD: usize = size_of::<u32>();
-const GRIDDED_NORMAL_ROUTE_INDEX_BYTES_PER_RECORD: usize = size_of::<u64>();
-const GRIDDED_NORMAL_ROUTE_PREDICTION_BYTES_PER_RECORD: usize = size_of::<num_complex::Complex64>();
-const GRIDDED_NORMAL_ROUTE_BYTES_PER_RECORD: usize =
-    GRIDDED_NORMAL_ROUTE_CLASSIFICATION_BYTES_PER_RECORD
-        + GRIDDED_NORMAL_ROUTE_INDEX_BYTES_PER_RECORD
-        + GRIDDED_NORMAL_ROUTE_PREDICTION_BYTES_PER_RECORD;
-const GRIDDED_NORMAL_ROUTE_SECTOR_OFFSET_BYTES: usize = 5 * size_of::<u32>();
-
-/// Exact reusable route scratch admitted for one opaque gridded-normal frame.
+/// Exact reusable route scratch admitted for one opaque gridded-normal window.
 ///
 /// Reconstruction routes one bounded frame into four stable sector slices. The
 /// representation retains one packed `u32` classification and one eight-byte
@@ -533,6 +569,7 @@ const GRIDDED_NORMAL_ROUTE_SECTOR_OFFSET_BYTES: usize = 5 * size_of::<u32>();
 pub(crate) struct GriddedNormalRouteResidency {
     maximum_frame_records: usize,
     maximum_frame_groups: usize,
+    maximum_frames: usize,
     peak_bytes: usize,
 }
 
@@ -540,17 +577,20 @@ impl GriddedNormalRouteResidency {
     fn new(
         maximum_frame_records: usize,
         maximum_frame_groups: usize,
+        maximum_frames: usize,
     ) -> Result<Self, CompleteDataPlanError> {
-        if maximum_frame_groups > maximum_frame_records {
+        if maximum_frame_groups > maximum_frame_records || maximum_frames == 0 {
             return Err(CompleteDataPlanError::ResidencyOverflow);
         }
-        let peak_bytes = maximum_frame_records
-            .checked_mul(GRIDDED_NORMAL_ROUTE_BYTES_PER_RECORD)
-            .and_then(|bytes| bytes.checked_add(GRIDDED_NORMAL_ROUTE_SECTOR_OFFSET_BYTES))
-            .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
+        let peak_bytes = usize::try_from(
+            gridded_normal_route_window_capacity_bytes(maximum_frame_records, maximum_frames)
+                .ok_or(CompleteDataPlanError::ResidencyOverflow)?,
+        )
+        .map_err(|_| CompleteDataPlanError::ResidencyOverflow)?;
         Ok(Self {
             maximum_frame_records,
             maximum_frame_groups,
+            maximum_frames,
             peak_bytes,
         })
     }
@@ -567,7 +607,12 @@ impl GriddedNormalRouteResidency {
         self.maximum_frame_groups
     }
 
-    /// Exact physical reusable route capacity: `28R + 20` bytes.
+    #[must_use]
+    pub(crate) const fn maximum_frames(self) -> usize {
+        self.maximum_frames
+    }
+
+    /// Exact physical reusable route and metadata capacity for the window.
     ///
     /// `Q` remains part of the logical projection and measurements, but the
     /// prediction vector deliberately reserves capacity for `R` entries.
@@ -686,6 +731,7 @@ fn project_gridded_normal_route_residency(
             .maximum_frame_records()
             .map_err(|_| CompleteDataPlanError::ResidencyOverflow)?,
         bounds.maximum_frame_groups,
+        GRIDDED_NORMAL_REPLAY_WINDOW_FRAMES,
     )
 }
 
@@ -1414,7 +1460,7 @@ impl CompleteDataPlanFragment {
         Ok(Some(CompleteDataAllocation::new(
             format!("spectral-operator-gridded-route-{suffix}"),
             route.peak_bytes(),
-            "spectral-operator-gridded-route-classification-indices-predictions-and-offsets",
+            "spectral-operator-gridded-route-window-record-vectors-and-frame-metadata",
             InitializationPolicy::OverwriteBeforeRead,
             self.replay_node.clone(),
             BTreeSet::from([WorkDependency::Fence(FenceId::new(
@@ -2187,16 +2233,21 @@ impl From<SpectralOperatorError> for CompleteDataOperatorError {
 #[cfg(test)]
 mod tests {
     use super::GriddedNormalRouteResidency;
+    use casa_imaging_reconstruction::runtime_adapter::gridded_normal_route_window_capacity_bytes;
 
     #[test]
     fn gridded_route_residency_is_exact_and_rejects_invalid_bounds() {
-        let route = GriddedNormalRouteResidency::new(7, 3).expect("valid route bounds");
+        let route = GriddedNormalRouteResidency::new(7, 3, 5).expect("valid route bounds");
         assert_eq!(route.maximum_frame_records(), 7);
         assert_eq!(route.maximum_frame_groups(), 3);
-        assert_eq!(route.peak_bytes(), 28 * 7 + 20);
-        assert!(route.peak_bytes() <= 32 * route.maximum_frame_records() + 20);
+        assert_eq!(route.maximum_frames(), 5);
+        assert_eq!(
+            u64::try_from(route.peak_bytes()).unwrap(),
+            gridded_normal_route_window_capacity_bytes(7, 5).unwrap()
+        );
 
-        assert!(GriddedNormalRouteResidency::new(3, 4).is_err());
-        assert!(GriddedNormalRouteResidency::new(usize::MAX, 1).is_err());
+        assert!(GriddedNormalRouteResidency::new(3, 4, 1).is_err());
+        assert!(GriddedNormalRouteResidency::new(3, 3, 0).is_err());
+        assert!(GriddedNormalRouteResidency::new(usize::MAX, 1, 1).is_err());
     }
 }

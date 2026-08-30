@@ -55,7 +55,8 @@ pub mod runtime_adapter {
         GriddedNormalOperatorApply, GriddedNormalOperatorBlock,
         GriddedNormalOperatorBlockMeasurements, GriddedNormalOperatorCompiler,
         GriddedNormalOperatorProgram, GriddedNormalRoutingMeasurements, GriddedNormalSectorPartial,
-        GriddedNormalSectorResidency, GriddedNormalSectorWork, gridded_normal_sector_residency,
+        GriddedNormalSectorResidency, GriddedNormalSectorWork,
+        gridded_normal_route_window_capacity_bytes, gridded_normal_sector_residency,
     };
     pub use crate::spectral_operator::{
         CompleteDataOwnerCompletion, CompleteDataOwnerResult, CompleteDataOwnerState,

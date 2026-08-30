@@ -17,6 +17,7 @@ use casa_ms::{SelectedObservationResidencyCertificate, SelectedVisibilityStorage
 use crate::*;
 use crate::{
     bounded_stream::BOUNDED_WORKER_STACK_BYTES,
+    complete_data_operator::GRIDDED_NORMAL_REPLAY_WINDOW_FRAMES,
     spectral_cycle::{SelectedVisibilityCellWrite, VISIBILITY_WRITE_WORKER_STACK_BYTES},
 };
 
@@ -1134,7 +1135,7 @@ fn base_gridded_physical<R: ImplementationRegistry>(
         scaling: ScalingMetadata {
             minimum_workers: policy.workers,
             maximum_workers: policy.workers,
-            maximum_batch_size: 1,
+            maximum_batch_size: GRIDDED_NORMAL_REPLAY_WINDOW_FRAMES as u64,
             maximum_tile_width: 1,
             maximum_tile_height: 1,
             maximum_slab_depth: 1,
@@ -1147,6 +1148,7 @@ fn base_gridded_physical<R: ImplementationRegistry>(
     };
     let mut initial_knobs = ExecutionKnobs::serial();
     initial_knobs.workers = policy.workers;
+    initial_knobs.batch_size = GRIDDED_NORMAL_REPLAY_WINDOW_FRAMES as u64;
     let dag = ExecutionDag::new(ExecutionDagSpecification {
         required_resource_capabilities: BTreeSet::new(),
         resource_alternative: alternative,
@@ -1288,12 +1290,16 @@ fn append_gridded_spill_resources<R: ImplementationRegistry>(
         GriddedSpillDirection::Write => IoBufferKind::SpillWrite,
     };
     let source_slots = match direction {
-        GriddedSpillDirection::Read => u64::try_from(policy.selected_residency.peak_live_blocks())
-            .map_err(|_| SpectralCyclePlanError::Overflow)?,
+        GriddedSpillDirection::Read => 2,
         GriddedSpillDirection::Write => 1,
     };
-    let buffer_bytes = budget
-        .io_buffer_bytes()
+    let bytes_per_slot = match direction {
+        GriddedSpillDirection::Read => budget
+            .source_slot_bytes(GRIDDED_NORMAL_REPLAY_WINDOW_FRAMES)
+            .map_err(|_| SpectralCyclePlanError::Overflow)?,
+        GriddedSpillDirection::Write => budget.io_buffer_bytes(),
+    };
+    let buffer_bytes = bytes_per_slot
         .checked_mul(source_slots)
         .ok_or(SpectralCyclePlanError::Overflow)?;
     let lifetime = ClaimLifetime::through_fence(FenceKind::Io);

@@ -27,7 +27,10 @@ use casa_imaging_model::{
     WeightColumn, WeightDensityScope, WeightingContract, WeightingScheme, compile,
     compile_observation,
 };
-use casa_imaging_reconstruction::{ExecutableModelProblem, WeightingExecutionLimits};
+use casa_imaging_reconstruction::{
+    ExecutableModelProblem, WeightingExecutionLimits,
+    runtime_adapter::gridded_normal_route_window_capacity_bytes,
+};
 use casa_imaging_runtime::{
     AttemptBoundObservationCompletion, BuildIdentity, CapacityDomainId, CapacityViewId,
     CompleteDataStreamEvidence, CpuClassCapacity, ExecutionAttemptId, ExecutionProvenance,
@@ -142,8 +145,8 @@ fn complete_data_mfs_products_and_identities_are_exact_for_one_two_and_four_work
         assert_eq!(run.initial_stream.planned_gridded_route_capacity_bytes, 0);
         assert_eq!(
             run.final_stream.planned_gridded_route_capacity_bytes,
-            28 * 3 + 20,
-            "three-record constant-basis blocks need one reusable route window",
+            gridded_normal_route_window_capacity_bytes(1, 64).unwrap(),
+            "the shared route window must cover 64 one-record frames",
         );
         assert_eq!(
             run.final_stream.peak_partial_dynamic_capacity_bytes, 0,
@@ -151,8 +154,13 @@ fn complete_data_mfs_products_and_identities_are_exact_for_one_two_and_four_work
         );
         assert!(
             run.final_stream.peak_kernel_window_capacity_bytes
-                >= run.final_stream.planned_gridded_route_capacity_bytes,
-            "the measured kernel window must include the shared route",
+                >= gridded_normal_route_window_capacity_bytes(1, 3).unwrap(),
+            "the measured kernel window must include all three live frame routes",
+        );
+        assert!(
+            run.final_stream.planned_gridded_route_capacity_bytes
+                >= gridded_normal_route_window_capacity_bytes(1, 3).unwrap(),
+            "the 64-frame route plan must bound the live three-frame window",
         );
     }
 }
@@ -236,7 +244,7 @@ fn execute_complete_data_mfs(worker_count: u64) -> RunEvidence {
     let execution_policy = || {
         SpectralCycleExecutionPolicy::new(
             implementation_id(),
-            WeightingExecutionLimits::new(3, 1).expect("three-sample weighting blocks"),
+            WeightingExecutionLimits::new(1, 1).expect("one-sample artifact frames"),
             residency.clone(),
             storage_io(),
             1_000,

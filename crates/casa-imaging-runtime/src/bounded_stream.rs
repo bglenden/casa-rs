@@ -22,6 +22,7 @@ pub(crate) struct BoundedStreamPlan {
     source_slots: usize,
     workers: usize,
     source_capacity_bytes: u64,
+    maximum_logical_units_per_block: usize,
     maximum_partitions_per_block: usize,
     dynamic_kernel_window_capacity_bytes: u64,
     kernel_window_capacity_bytes: u64,
@@ -55,10 +56,22 @@ impl BoundedStreamPlan {
             source_slots,
             workers,
             source_capacity_bytes,
+            maximum_logical_units_per_block: 1,
             maximum_partitions_per_block,
             dynamic_kernel_window_capacity_bytes,
             kernel_window_capacity_bytes,
         })
+    }
+
+    pub(crate) fn with_maximum_logical_units_per_block(
+        mut self,
+        maximum: usize,
+    ) -> Result<Self, BoundedStreamPlanError> {
+        if maximum == 0 {
+            return Err(BoundedStreamPlanError::LogicalUnits);
+        }
+        self.maximum_logical_units_per_block = maximum;
+        Ok(self)
     }
 }
 
@@ -99,6 +112,7 @@ pub(crate) enum BoundedStreamPlanError {
     Workers,
     SourceCapacity,
     Partitions,
+    LogicalUnits,
     KernelWindowCapacity,
 }
 
@@ -106,6 +120,7 @@ pub(crate) enum BoundedStreamPlanError {
 pub(crate) enum SourcePoll {
     Ready {
         source_ordinal: u32,
+        logical_units: usize,
         logical_bytes: u64,
         source_read_operations: u64,
         resident_current_bytes: u64,
@@ -263,6 +278,8 @@ pub(crate) struct BoundedWorkerMeasurements {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct BoundedStreamMeasurements {
     pub(crate) blocks_filled: u64,
+    pub(crate) logical_units_filled: u64,
+    pub(crate) peak_logical_units_per_block: usize,
     pub(crate) logical_source_bytes: u64,
     pub(crate) source_read_operations: u64,
     pub(crate) source_fill_nanos: u128,
@@ -291,6 +308,7 @@ pub(crate) struct BoundedStreamMeasurements {
     pub(crate) peak_live_source_capacity_bytes: u64,
     pub(crate) source_slots: usize,
     pub(crate) workers: usize,
+    pub(crate) maximum_logical_units_per_block: usize,
     pub(crate) worker_threads_started: u64,
     pub(crate) dispatch_waves: u64,
     pub(crate) planned_source_capacity_bytes: u64,
@@ -835,6 +853,8 @@ struct StorageLease<S> {
 #[derive(Clone, Copy, Default)]
 struct ProducerMeasurements {
     blocks_filled: u64,
+    logical_units_filled: u64,
+    peak_logical_units_per_block: usize,
     logical_source_bytes: u64,
     source_read_operations: u64,
     source_fill_nanos: u128,
@@ -964,6 +984,7 @@ fn measurements_for_plan(plan: BoundedStreamPlan) -> BoundedStreamMeasurements {
     BoundedStreamMeasurements {
         source_slots: plan.source_slots,
         workers: plan.workers,
+        maximum_logical_units_per_block: plan.maximum_logical_units_per_block,
         planned_source_capacity_bytes: plan.source_capacity_bytes,
         maximum_partitions_per_block: plan.maximum_partitions_per_block,
         planned_kernel_dynamic_capacity_bytes: plan.dynamic_kernel_window_capacity_bytes,
@@ -1006,18 +1027,31 @@ where
             match poll.map_err(BoundedStreamError::Source)? {
                 SourcePoll::Ready {
                     source_ordinal,
+                    logical_units,
                     logical_bytes,
                     source_read_operations,
                     resident_current_bytes,
                     resident_capacity_bytes,
                 } => {
-                    if resident_capacity_bytes > plan.source_capacity_bytes {
+                    if logical_units == 0
+                        || logical_units > plan.maximum_logical_units_per_block
+                        || resident_capacity_bytes > plan.source_capacity_bytes
+                    {
                         return Err(BoundedStreamError::ResidencyExceeded);
                     }
                     measurements.blocks_filled = measurements
                         .blocks_filled
                         .checked_add(1)
                         .ok_or(BoundedStreamError::MeasurementOverflow)?;
+                    measurements.logical_units_filled = measurements
+                        .logical_units_filled
+                        .checked_add(
+                            u64::try_from(logical_units)
+                                .map_err(|_| BoundedStreamError::MeasurementOverflow)?,
+                        )
+                        .ok_or(BoundedStreamError::MeasurementOverflow)?;
+                    measurements.peak_logical_units_per_block =
+                        measurements.peak_logical_units_per_block.max(logical_units);
                     measurements.logical_source_bytes = measurements
                         .logical_source_bytes
                         .checked_add(logical_bytes)
@@ -1204,13 +1238,33 @@ where
                 match poll {
                     Ok(SourcePoll::Ready {
                         source_ordinal,
+                        logical_units,
                         logical_bytes,
                         source_read_operations,
                         resident_current_bytes,
                         resident_capacity_bytes,
                     }) => {
+                        if logical_units == 0
+                            || logical_units > plan.maximum_logical_units_per_block
+                        {
+                            let _ = ready_tx.send(ReadyMessage::ResidencyExceeded);
+                            return;
+                        }
                         let Some(blocks_filled) =
                             producer_measurements.blocks_filled.checked_add(1)
+                        else {
+                            let _ = ready_tx.send(ReadyMessage::MeasurementOverflow);
+                            return;
+                        };
+                        let Some(logical_units_filled) = producer_measurements
+                            .logical_units_filled
+                            .checked_add(match u64::try_from(logical_units) {
+                                Ok(units) => units,
+                                Err(_) => {
+                                    let _ = ready_tx.send(ReadyMessage::MeasurementOverflow);
+                                    return;
+                                }
+                            })
                         else {
                             let _ = ready_tx.send(ReadyMessage::MeasurementOverflow);
                             return;
@@ -1246,6 +1300,10 @@ where
                             return;
                         }
                         producer_measurements.blocks_filled = blocks_filled;
+                        producer_measurements.logical_units_filled = logical_units_filled;
+                        producer_measurements.peak_logical_units_per_block = producer_measurements
+                            .peak_logical_units_per_block
+                            .max(logical_units);
                         producer_measurements.logical_source_bytes = logical_source_bytes;
                         producer_measurements.source_read_operations = total_source_read_operations;
                         live_current_bytes = current_bytes;
@@ -1519,6 +1577,9 @@ where
                 }
                 Ok(ReadyMessage::Completed(value, producer_measurements)) => {
                     measurements.blocks_filled = producer_measurements.blocks_filled;
+                    measurements.logical_units_filled = producer_measurements.logical_units_filled;
+                    measurements.peak_logical_units_per_block =
+                        producer_measurements.peak_logical_units_per_block;
                     measurements.logical_source_bytes = producer_measurements.logical_source_bytes;
                     measurements.source_read_operations =
                         producer_measurements.source_read_operations;
@@ -1551,6 +1612,8 @@ where
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     measurements.blocks_filled = producer_measurements.blocks_filled;
+    measurements.logical_units_filled = producer_measurements.logical_units_filled;
+    measurements.peak_logical_units_per_block = producer_measurements.peak_logical_units_per_block;
     measurements.logical_source_bytes = producer_measurements.logical_source_bytes;
     measurements.source_read_operations = producer_measurements.source_read_operations;
     measurements.source_fill_nanos = producer_measurements.source_fill_nanos;
@@ -1636,6 +1699,47 @@ mod tests {
         completions: Arc<AtomicUsize>,
     }
 
+    struct LogicalUnitSource {
+        logical_units: usize,
+        emitted: bool,
+    }
+
+    impl OrderedBlockSource for LogicalUnitSource {
+        type Storage = Vec<u64>;
+        type Completion = ();
+        type Error = Infallible;
+
+        fn create_storage(&self, _slot: usize) -> Self::Storage {
+            Vec::with_capacity(1)
+        }
+
+        fn fill(
+            &mut self,
+            _block_ordinal: u64,
+            storage: &mut Self::Storage,
+            _cancellation: SourceFillCancellation<'_>,
+        ) -> Result<SourcePoll, Self::Error> {
+            if self.emitted {
+                return Ok(SourcePoll::Exhausted);
+            }
+            self.emitted = true;
+            storage.clear();
+            storage.push(1);
+            Ok(SourcePoll::Ready {
+                source_ordinal: 0,
+                logical_units: self.logical_units,
+                logical_bytes: size_of::<u64>() as u64,
+                source_read_operations: 1,
+                resident_current_bytes: size_of::<u64>() as u64,
+                resident_capacity_bytes: size_of::<u64>() as u64,
+            })
+        }
+
+        fn complete(self) -> Result<Self::Completion, Self::Error> {
+            Ok(())
+        }
+    }
+
     impl OrderedBlockSource for NumberSource {
         type Storage = Vec<u64>;
         type Completion = usize;
@@ -1663,6 +1767,7 @@ mod tests {
             self.next += 1;
             Ok(SourcePoll::Ready {
                 source_ordinal: 0,
+                logical_units: 1,
                 logical_bytes: (storage.len() * size_of::<u64>()) as u64,
                 source_read_operations: 1,
                 resident_current_bytes: (storage.len() * size_of::<u64>()) as u64,
@@ -2023,6 +2128,43 @@ mod tests {
     }
 
     #[test]
+    fn source_logical_units_are_bounded_and_measured_independently_of_blocks() {
+        let plan = BoundedStreamPlan::new::<usize, u64>(1, 1, size_of::<u64>() as u64, 1, 0)
+            .unwrap()
+            .with_maximum_logical_units_per_block(2)
+            .unwrap();
+        let outcome = execute_bounded(
+            plan,
+            0,
+            LogicalUnitSource {
+                logical_units: 2,
+                emitted: false,
+            },
+            SumKernel::default(),
+        )
+        .unwrap();
+        assert_eq!(outcome.measurements.blocks_filled, 1);
+        assert_eq!(outcome.measurements.logical_units_filled, 2);
+        assert_eq!(outcome.measurements.peak_logical_units_per_block, 2);
+
+        let failure = execute_bounded(
+            plan,
+            0,
+            LogicalUnitSource {
+                logical_units: 3,
+                emitted: false,
+            },
+            SumKernel::default(),
+        )
+        .expect_err("logical-unit overrun must fail closed");
+        assert!(matches!(
+            *failure.cause,
+            BoundedStreamError::ResidencyExceeded
+        ));
+        assert_eq!(failure.measurements.blocks_filled, 0);
+    }
+
+    #[test]
     fn overlapped_source_reuses_only_the_planned_storage_slots() {
         let pointers = Arc::new(Mutex::new(Vec::new()));
         let completions = Arc::new(AtomicUsize::new(0));
@@ -2182,6 +2324,7 @@ mod tests {
             self.next += 1;
             Ok(SourcePoll::Ready {
                 source_ordinal: 0,
+                logical_units: 1,
                 logical_bytes: 8,
                 source_read_operations,
                 resident_current_bytes: 8,
@@ -2304,6 +2447,7 @@ mod tests {
             storage.push(1);
             Ok(SourcePoll::Ready {
                 source_ordinal: 0,
+                logical_units: 1,
                 logical_bytes: 8,
                 source_read_operations: 1,
                 resident_current_bytes: 8,
@@ -2662,6 +2806,7 @@ mod tests {
                 large_gate_residency(&storage.buffer);
             Ok(SourcePoll::Ready {
                 source_ordinal: 0,
+                logical_units: 1,
                 logical_bytes: fill.logical_output_bytes,
                 source_read_operations: u64::try_from(fill.columns.len())
                     .expect("large-gate column count fits u64"),
