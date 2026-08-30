@@ -101,6 +101,10 @@ impl SpectralCycleExecutionPolicy {
         if self.workers == 0 {
             return Err(SpectralCyclePlanError::ZeroWorkers);
         }
+        self.gridded_replay_working_set_bytes = match authority.topology().cpu_data_working_set {
+            CpuDataWorkingSetCapacity::Known(bytes) => Some(bytes),
+            CpuDataWorkingSetCapacity::Unknown => None,
+        };
         Ok(self)
     }
 

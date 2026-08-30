@@ -3150,21 +3150,17 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
     assert_eq!(replay_nodes.len(), 1, "one bounded artifact reader");
     let replay_node_id = replay_nodes[0].id.clone();
     assert_eq!(replay_nodes[0].kind, WorkKind::Prefetch);
-    assert_eq!(
-        final_physical.execution_dag().initial_knobs().batch_size,
-        64
-    );
+    assert_eq!(final_physical.execution_dag().initial_knobs().batch_size, 1);
     assert_eq!(
         final_physical
             .execution_dag()
             .resource_alternative()
             .scaling
             .maximum_batch_size,
-        64
+        1
     );
     assert!(replay_nodes[0].claims.iter().any(|claim| {
-        claim.resource == LeaseResource::IoBuffer(IoBufferKind::SpillRead)
-            && claim.amount == 2 * 64 * (72 + 32)
+        claim.resource == LeaseResource::IoBuffer(IoBufferKind::SpillRead) && claim.amount == 2 * 72
     }));
     assert!(
         replay_nodes[0]
@@ -3243,7 +3239,7 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
                 .starts_with("spectral-operator-gridded-route-gridded-residual-refresh-")
         })
         .expect("gridded replay route allocation");
-    let expected_route_bytes = gridded_normal_route_capacity_bytes(64, 64).unwrap();
+    let expected_route_bytes = gridded_normal_route_capacity_bytes(0, 1).unwrap();
     assert_eq!(route.bytes, expected_route_bytes);
     assert_eq!(
         route.compatibility.layout,
@@ -5658,7 +5654,7 @@ fn runtime_inventory(available_locks: u64) -> HostInventory {
             ],
             logical_cpu_threads: 4,
             performance_cpu_cores: CpuClassCapacity::Known(4),
-            cpu_data_working_set: CpuDataWorkingSetCapacity::Unknown,
+            cpu_data_working_set: CpuDataWorkingSetCapacity::Known(1 << 20),
             cache_capacity_bytes: 1_048_576,
             lock_capacity: 4,
             file_descriptor_capacity: 16,

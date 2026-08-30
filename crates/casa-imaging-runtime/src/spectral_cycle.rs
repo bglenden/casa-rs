@@ -1699,18 +1699,21 @@ impl SpectralCycleExecutor {
     }
 
     fn log_gridded_replay_measurements(&self, replay: &FrozenGriddedNormalReplay) {
-        let (Some(stream), Some(artifact), Some(routing)) = (
+        let (Some(stream), Some(artifact), Some(routing), Some(window)) = (
             replay.latest_stream_measurements(),
             replay.latest_read_measurements(),
             replay.latest_routing_measurements(),
+            replay.window_plan(),
         ) else {
             return;
         };
         eprintln!(
-            "imaging_gridded_replay_summary ordinal={} blocks={} logical_frames={} maximum_frames_per_window={} peak_frames_per_window={} artifact_bytes={} payload_bytes={} read_bytes={} read_operations={} payload_copy_bytes={} payload_copy_operations={} buffer_allocations={} buffer_reuses={} source_slots={} workers={} worker_threads_started={} dispatch_waves={} active_worker_slots={} minimum_partitions_per_active_worker={} maximum_partitions_per_active_worker={} worker_slots={:?} partitions_executed={} commits_completed={} executed_work_identity={:x?} committed_work_identity={:x?} planned_source_capacity_bytes={} planned_kernel_window_capacity_bytes={} planned_gridded_route_maximum_frame_records={} planned_gridded_route_maximum_frame_groups={} planned_gridded_route_maximum_frames={} planned_gridded_route_capacity_bytes={} frames_routed={} encoded_records={} routed_record_memberships={} prediction_groups={} degrid_records={} grid_records={} sector_rescans={} peak_physical_route_capacity_bytes={} peak_partial_dynamic_capacity_bytes={} peak_worker_stack_capacity_bytes={} peak_kernel_window_capacity_bytes={} peak_live_source_blocks={} peak_live_source_current_bytes={} peak_live_source_capacity_bytes={} ready_queue_high_water={} producer_wait_nanos={} consumer_wait_nanos={} source_starved_nanos={} overlap_nanos={} source_fill_nanos={} prepare_nanos={} execute_nanos={} commit_nanos={} wall_nanos={}",
+            "imaging_gridded_replay_summary ordinal={} blocks={} logical_frames={} planned_windows={} planned_working_set_bytes={} maximum_frames_per_window={} peak_frames_per_window={} artifact_bytes={} payload_bytes={} read_bytes={} read_operations={} payload_copy_bytes={} payload_copy_operations={} buffer_allocations={} buffer_reuses={} source_slots={} workers={} worker_threads_started={} dispatch_waves={} active_worker_slots={} minimum_partitions_per_active_worker={} maximum_partitions_per_active_worker={} worker_slots={:?} partitions_executed={} commits_completed={} executed_work_identity={:x?} committed_work_identity={:x?} planned_source_capacity_bytes={} planned_kernel_window_capacity_bytes={} planned_gridded_route_maximum_window_records={} planned_gridded_route_maximum_frame_groups={} planned_gridded_route_maximum_frames={} planned_gridded_route_capacity_bytes={} frames_routed={} encoded_records={} routed_record_memberships={} prediction_groups={} degrid_records={} grid_records={} sector_rescans={} peak_physical_route_capacity_bytes={} peak_partial_dynamic_capacity_bytes={} peak_worker_stack_capacity_bytes={} peak_kernel_window_capacity_bytes={} peak_live_source_blocks={} peak_live_source_current_bytes={} peak_live_source_capacity_bytes={} ready_queue_high_water={} producer_wait_nanos={} consumer_wait_nanos={} source_starved_nanos={} overlap_nanos={} source_fill_nanos={} prepare_nanos={} execute_nanos={} commit_nanos={} wall_nanos={}",
             self.pass.ordinal(),
             stream.blocks_filled,
             stream.logical_units_filled,
+            window.frame_counts().len(),
+            window.working_set_bytes(),
             stream.maximum_logical_units_per_block,
             stream.peak_logical_units_per_block,
             artifact.artifact_bytes(),

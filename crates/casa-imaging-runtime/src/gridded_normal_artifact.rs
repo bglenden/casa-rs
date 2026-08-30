@@ -1330,14 +1330,17 @@ impl OrderedBlockSource for GriddedNormalArtifactBlockSource {
         storage.used_len = 0;
         let mut logical_bytes = 0_u64;
         let mut source_read_operations = 0_u64;
-        let maximum_frames = *self
-            .frame_counts
-            .get(usize::try_from(self.blocks_filled).map_err(|_| {
-                GriddedNormalArtifactError::ArithmeticOverflow("artifact source block index")
-            })?)
-            .ok_or(GriddedNormalArtifactError::InvalidBudget(
-                "the source window plan ended before the sealed artifact",
-            ))?;
+        let block_index = usize::try_from(self.blocks_filled).map_err(|_| {
+            GriddedNormalArtifactError::ArithmeticOverflow("artifact source block index")
+        })?;
+        let Some(&maximum_frames) = self.frame_counts.get(block_index) else {
+            return match self.read_next(storage)? {
+                None => Ok(SourcePoll::Exhausted),
+                Some(_) => Err(GriddedNormalArtifactError::InvalidBudget(
+                    "the source window plan ended before the sealed artifact",
+                )),
+            };
+        };
         while storage.frame_count < maximum_frames && !cancellation.is_cancelled() {
             // Finish one admitted frame once its positional read has started so
             // offset, checksum, and measurement state stay atomic. A later

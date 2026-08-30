@@ -555,6 +555,10 @@ impl FrozenGriddedNormalReplay {
         self.latest_routing
     }
 
+    pub(crate) const fn window_plan(&self) -> Option<&GriddedNormalReplayWindowPlan> {
+        self.window_plan.as_ref()
+    }
+
     pub(crate) fn execute_bounded(
         &mut self,
         context: WorkExecutionContext<'_>,
@@ -796,7 +800,7 @@ impl GriddedNormalRouteResidency {
         maximum_frame_groups: usize,
         maximum_frames: usize,
     ) -> Result<Self, CompleteDataPlanError> {
-        if maximum_frame_groups > maximum_window_records || maximum_frames == 0 {
+        if maximum_frames == 0 {
             return Err(CompleteDataPlanError::ResidencyOverflow);
         }
         let peak_bytes = usize::try_from(
@@ -938,15 +942,13 @@ fn project_gridded_normal_frame_bounds(
 }
 
 fn project_gridded_normal_route_residency(
-    problem: &CompiledProblem,
-    max_block_samples: usize,
+    _problem: &CompiledProblem,
+    _max_block_samples: usize,
     window_plan: &GriddedNormalReplayWindowPlan,
 ) -> Result<GriddedNormalRouteResidency, CompleteDataPlanError> {
-    let bounds = project_gridded_normal_frame_bounds(problem, max_block_samples)
-        .map_err(|_| CompleteDataPlanError::ResidencyOverflow)?;
     GriddedNormalRouteResidency::new(
         window_plan.maximum_records(),
-        bounds.maximum_frame_groups,
+        window_plan.maximum_records(),
         window_plan.maximum_frames(),
     )
 }
@@ -2488,7 +2490,6 @@ mod tests {
             gridded_normal_route_capacity_bytes(7, 5).unwrap()
         );
 
-        assert!(GriddedNormalRouteResidency::new(3, 4, 1).is_err());
         assert!(GriddedNormalRouteResidency::new(3, 3, 0).is_err());
         assert!(GriddedNormalRouteResidency::new(usize::MAX, 1, 1).is_err());
     }

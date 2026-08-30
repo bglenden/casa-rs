@@ -146,8 +146,8 @@ fn complete_data_mfs_products_and_identities_are_exact_for_one_two_and_four_work
         assert_eq!(run.initial_stream.planned_gridded_route_capacity_bytes, 0);
         assert_eq!(
             run.final_stream.planned_gridded_route_capacity_bytes,
-            gridded_normal_route_capacity_bytes(64, 64).unwrap(),
-            "the shared route window must cover 64 one-record frames",
+            gridded_normal_route_capacity_bytes(3, 3).unwrap(),
+            "the shared route window must cover the three exact one-record frames",
         );
         assert_eq!(
             run.final_stream.peak_partial_dynamic_capacity_bytes, 0,
@@ -161,7 +161,7 @@ fn complete_data_mfs_products_and_identities_are_exact_for_one_two_and_four_work
         assert!(
             run.final_stream.planned_gridded_route_capacity_bytes
                 >= gridded_normal_route_capacity_bytes(3, 3).unwrap(),
-            "the 64-frame route plan must bound the live three-frame window",
+            "the variable route plan must bound the live three-frame window",
         );
     }
 }
@@ -748,7 +748,7 @@ fn runtime_inventory() -> HostInventory {
             ],
             logical_cpu_threads: 4,
             performance_cpu_cores: CpuClassCapacity::Known(4),
-            cpu_data_working_set: CpuDataWorkingSetCapacity::Unknown,
+            cpu_data_working_set: CpuDataWorkingSetCapacity::Known(1 << 20),
             cache_capacity_bytes: 1 << 20,
             lock_capacity: 4,
             file_descriptor_capacity: 16,
