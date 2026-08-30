@@ -348,24 +348,53 @@ struct CapturedBlocks<'a> {
     elapsed: Duration,
 }
 
-#[test]
-#[ignore = "requires the mounted VLA medium performance dataset"]
-fn medium_vla_64ch_owner_validated_open() -> Result<(), Box<dyn Error>> {
-    let probe = build_problem(&dataset_path()?)?;
-    assert_eq!(probe.selected_rows, EXPECTED_SELECTED_ROWS);
-    Ok(())
+#[derive(Clone, Copy)]
+struct CapturedReplayMeasurements {
+    logical_bytes: u64,
+    read_operations: u64,
+    current_bytes: u64,
+    capacity_bytes: u64,
+    elapsed: Duration,
 }
 
-#[test]
-#[ignore = "requires the mounted VLA medium performance dataset"]
-fn medium_vla_64ch_residual_refresh() -> Result<(), Box<dyn Error>> {
-    let total_start = Instant::now();
+struct CapturedReplayData {
+    problem: CompiledProblem,
+    request: SelectedObservationResolutionRequest,
+    plan: casa_imaging_reconstruction::WeightingPlan,
+    blocks: Vec<SelectedObservationBlock>,
+    selected_rows: u64,
+    selected_samples: u64,
+    selected_generation: SelectedObservationGenerationId,
+    selected_replay_proof: SelectedObservationReplayProof,
+    density: casa_imaging_reconstruction::WeightingDensityPhase,
+    density_setup_elapsed: Duration,
+    measurements: CapturedReplayMeasurements,
+}
+
+struct PreparedReplayCohort {
+    problem: CompiledProblem,
+    request: SelectedObservationResolutionRequest,
+    plan: casa_imaging_reconstruction::WeightingPlan,
+    blocks: Vec<SelectedObservationBlock>,
+    selected_rows: u64,
+    selected_samples: u64,
+    selected_generation: SelectedObservationGenerationId,
+    selected_replay_proof: SelectedObservationReplayProof,
+    weighting: casa_imaging_reconstruction::WeightingAlgorithmState,
+    coverage_proof: FrozenWeightingCoverageProof,
+    prior_normal_state: casa_imaging_reconstruction::FinalNormalState,
+    preparation: MajorCyclePreparation,
+    capture: CapturedReplayMeasurements,
+    setup_elapsed: Duration,
+}
+
+fn capture_mounted_replay_data(path: &Path) -> Result<CapturedReplayData, Box<dyn Error>> {
     let ProbeProblem {
         problem,
         request,
         selected,
         selected_rows,
-    } = build_problem(&dataset_path()?)?;
+    } = build_problem(path)?;
     let selected_samples = selected_rows
         .checked_mul(64 * 2)
         .ok_or("selected sample count overflowed")?;
@@ -374,40 +403,93 @@ fn medium_vla_64ch_residual_refresh() -> Result<(), Box<dyn Error>> {
         WeightingExecutionLimits::new(WEIGHTED_BLOCK_SAMPLES, 1)?,
     )?;
     let captured = capture_blocks(selected, &problem)?;
-    assert!(
-        captured.blocks.len() <= CAPTURED_BLOCK_LIMIT,
-        "captured block count exceeded the fixed residency bound"
-    );
-    assert_eq!(
-        captured.blocks.len(),
-        EXPECTED_CAPTURED_BLOCKS,
-        "bounded source block shape changed"
-    );
-    assert!(
-        usize::try_from(captured.capacity_bytes)? <= CAPTURED_RESIDENCY_BYTES,
-        "captured block capacity exceeded the fixed residency bound"
-    );
-
+    if captured.blocks.len() > CAPTURED_BLOCK_LIMIT {
+        return Err("captured block count exceeded the fixed residency bound".into());
+    }
+    if captured.blocks.len() != EXPECTED_CAPTURED_BLOCKS {
+        return Err(format!(
+            "bounded source block shape changed: expected {EXPECTED_CAPTURED_BLOCKS}, got {}",
+            captured.blocks.len()
+        )
+        .into());
+    }
+    if usize::try_from(captured.capacity_bytes)? > CAPTURED_RESIDENCY_BYTES {
+        return Err("captured block capacity exceeded the fixed residency bound".into());
+    }
     let CapturedBlocks {
         blocks,
-        consumer: density_consumer,
+        consumer,
         terminal,
         logical_bytes,
         read_operations,
         current_bytes,
         capacity_bytes,
-        elapsed: capture_elapsed,
+        elapsed,
     } = captured;
-    let setup_start = Instant::now();
+    let density_started = Instant::now();
     let (selected_generation, selected_replay_proof, density) = freeze_density(
         &problem,
         &plan,
         &blocks,
-        density_consumer,
+        consumer,
         terminal,
         [current_bytes, capacity_bytes],
         selected_samples,
     )?;
+    let density_setup_elapsed = density_started.elapsed();
+    Ok(CapturedReplayData {
+        problem,
+        request,
+        plan,
+        blocks,
+        selected_rows,
+        selected_samples,
+        selected_generation,
+        selected_replay_proof,
+        density,
+        density_setup_elapsed,
+        measurements: CapturedReplayMeasurements {
+            logical_bytes,
+            read_operations,
+            current_bytes,
+            capacity_bytes,
+            elapsed,
+        },
+    })
+}
+
+/// Build all affine science state needed by one replay-only cohort.
+///
+/// The callback is the narrow integration handoff for the current private
+/// gridded artifact. Once the production window seam exposes its existing
+/// execution context and replay completion, the diagnostic constructs
+/// `GriddedNormalReplayCompilation` before calling this helper and passes
+/// `|block| compilation.consume_block(block).map_err(ReplayProbeError::from)`.
+/// It seals after this helper's initial replay and completes at the existing
+/// runtime completion boundary, all before starting the replay-only timer.
+/// The captured selected blocks remain the sole input to both owners; this
+/// helper does not duplicate runtime authority or the artifact format.
+fn prepare_mounted_replay_cohort<F>(
+    captured: CapturedReplayData,
+    mut consume_current_format: F,
+) -> Result<PreparedReplayCohort, Box<dyn Error>>
+where
+    F: FnMut(&ReconstructionWeightedBlock) -> Result<(), ReplayProbeError> + Sync,
+{
+    let CapturedReplayData {
+        problem,
+        request,
+        plan,
+        blocks,
+        selected_rows,
+        selected_samples,
+        selected_generation,
+        selected_replay_proof,
+        density,
+        density_setup_elapsed,
+        measurements,
+    } = captured;
+    let setup_start = Instant::now();
     let mut lifecycle = ModelLifecycle::bind(
         ExecutableModelProblem::from_compiled(problem.clone())?,
         attempt(1),
@@ -426,8 +508,6 @@ fn medium_vla_64ch_residual_refresh() -> Result<(), Box<dyn Error>> {
 
     let initial_weights = density.finish_into_stream(&problem, &plan)?;
     let specification = SpectralOperatorSpecification::new(&problem)?;
-    let mut normal_replay_probe =
-        NormalReplayCardinalityProbe::new(&problem, specification.grid_shape())?;
     let workload = spectral_operator_workload(
         &specification,
         plan.limits().max_block_samples(),
@@ -440,7 +520,8 @@ fn medium_vla_64ch_residual_refresh() -> Result<(), Box<dyn Error>> {
     let (weighting, initial_summary) = {
         let mut initial_emit = |block: &ReconstructionWeightedBlock| {
             initial_operator.consume_block(block)?;
-            Ok::<(), casa_imaging_reconstruction::SpectralOperatorError>(())
+            consume_current_format(block)?;
+            Ok::<(), ReplayProbeError>(())
         };
         let initial_kernel = WeightingBlockKernel {
             problem: &problem,
@@ -477,9 +558,70 @@ fn medium_vla_64ch_residual_refresh() -> Result<(), Box<dyn Error>> {
         continuation,
     )?;
     let preparation = MajorCyclePreparation::prepare(&continued_lifecycle, carried_model, None)?;
-    let setup_elapsed = setup_start.elapsed();
+    Ok(PreparedReplayCohort {
+        problem,
+        request,
+        plan,
+        blocks,
+        selected_rows,
+        selected_samples,
+        selected_generation,
+        selected_replay_proof,
+        weighting,
+        coverage_proof,
+        prior_normal_state,
+        preparation,
+        capture: measurements,
+        setup_elapsed: density_setup_elapsed.saturating_add(setup_start.elapsed()),
+    })
+}
 
+#[test]
+#[ignore = "requires the mounted VLA medium performance dataset"]
+fn medium_vla_64ch_owner_validated_open() -> Result<(), Box<dyn Error>> {
+    let probe = build_problem(&dataset_path()?)?;
+    assert_eq!(probe.selected_rows, EXPECTED_SELECTED_ROWS);
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires the mounted VLA medium performance dataset"]
+fn medium_vla_64ch_residual_refresh() -> Result<(), Box<dyn Error>> {
+    let total_start = Instant::now();
+    let captured = capture_mounted_replay_data(&dataset_path()?)?;
+    let mut current_format_handoff_blocks = 0_u64;
+    let prepared = prepare_mounted_replay_cohort(captured, |_| {
+        current_format_handoff_blocks = current_format_handoff_blocks
+            .checked_add(1)
+            .ok_or_else(|| std::io::Error::other("current-format block count overflowed"))?;
+        Ok(())
+    })?;
+    let PreparedReplayCohort {
+        problem,
+        request,
+        plan,
+        blocks,
+        selected_rows,
+        selected_samples,
+        selected_generation,
+        selected_replay_proof,
+        weighting,
+        coverage_proof,
+        prior_normal_state,
+        preparation,
+        capture,
+        setup_elapsed,
+    } = prepared;
+    let CapturedReplayMeasurements {
+        logical_bytes,
+        read_operations,
+        current_bytes,
+        capacity_bytes,
+        elapsed: capture_elapsed,
+    } = capture;
     let specification = SpectralOperatorSpecification::new(&problem)?;
+    let mut normal_replay_probe =
+        NormalReplayCardinalityProbe::new(&problem, specification.grid_shape())?;
     let workload = spectral_operator_workload(
         &specification,
         plan.limits().max_block_samples(),
@@ -653,6 +795,7 @@ fn medium_vla_64ch_residual_refresh() -> Result<(), Box<dyn Error>> {
             "captured_read_operations": read_operations,
             "captured_current_bytes": current_bytes,
             "captured_capacity_bytes": capacity_bytes,
+            "current_format_handoff_blocks": current_format_handoff_blocks,
             "weighted_blocks": emitted_blocks,
             "predicted_samples": predicted_samples,
             "capture_ms": milliseconds(capture_elapsed),
@@ -701,9 +844,17 @@ fn medium_vla_64ch_residual_refresh() -> Result<(), Box<dyn Error>> {
         "captured source I/O or residency invariants changed"
     );
     assert_eq!(
-        [emitted_blocks, predicted_samples],
-        [EXPECTED_WEIGHTED_BLOCKS, EXPECTED_SELECTED_SAMPLES],
-        "weighted block shape or prediction count changed"
+        [
+            current_format_handoff_blocks,
+            emitted_blocks,
+            predicted_samples
+        ],
+        [
+            EXPECTED_WEIGHTED_BLOCKS,
+            EXPECTED_WEIGHTED_BLOCKS,
+            EXPECTED_SELECTED_SAMPLES,
+        ],
+        "setup handoff, weighted block shape, or prediction count changed"
     );
     assert_eq!(
         checksum_text, EXPECTED_NORMAL_STATE_IDENTITY,
