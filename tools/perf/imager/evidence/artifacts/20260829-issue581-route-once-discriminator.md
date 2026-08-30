@@ -482,3 +482,64 @@ Full native comparison:
 
 CASA was not rerun. The workload, saved CASA products, selection, comparator,
 and 688.996833-second oracle are unchanged.
+
+## Full-run repeatability correction and campaign stop
+
+The provisional full-run multicore result above did not repeat after the
+runtime ownership and exact resource-accounting review. The amended tree added
+physical worker utilization, wait conservation, modeled MeasurementSet bytes,
+process peak RSS, exact schedule residency, and private topology ownership; it
+did not change the reconstruction arithmetic. A fresh serial observation and
+two four-worker observations used the same complete 64-channel, 1024-pixel,
+Briggs 0.5, Högbom `niter=500`, CASA-inclusive 11-major workload.
+
+| Full-run measurement | Serial | Four workers | Four-worker retry |
+| --- | ---: | ---: | ---: |
+| Total wall | 443.898842 s | 444.408166 s | 447.737563 s |
+| Sum of ten replay walls | 127.582070 s | 128.383066 s | 130.524384 s |
+| Sum of ten prepare stages | 66.212106 s | 70.347996 s | 71.581460 s |
+| Sum of ten execute stages | 58.211023 s | 54.564622 s | 55.414189 s |
+| Sum of ten commit stages | 0.205492 s | 0.237693 s | 0.239365 s |
+| Peak process RSS | 549,109,760 B | 548,814,848 B | 547,028,992 B |
+
+Four workers reduced the measured execute stage by 4.8 to 6.3 percent but
+increased preparation enough to lose end to end. The first observation was
+0.115 percent slower than serial and the focused retry was 0.865 percent
+slower. System time rose from 15.87 seconds to about 70.4 seconds and
+involuntary context switches rose from 0.912 million to about 12.6 million.
+The existing fixed Rayon team still performs 78,516 external four-sector
+rendezvous per replay, or 785,160 across the ten later majors.
+
+All three runs completed exactly two selected MeasurementSet passes and each
+pass modeled 6,325,328,880 physical bytes. Each replay retained two source
+slots, zero payload copies, zero dynamic partial bytes, the same planned and
+observed kernel-window capacity, and stable execution and commit identities.
+Both parallel observations selected four workers and observed all four worker
+slots. The prior complete product comparator remains the scientific baseline;
+the repeatability runs were stopped at the performance falsifier and were not
+promoted as new product-acceptance evidence.
+
+The serial result remains 35.57 percent faster than the frozen
+688.996833-second CASA wall. The multicore acceptance does not pass: the single
+earlier 2.02-percent improvement is superseded by two negative observations.
+Production automatic worker activation is therefore not retained. The bounded
+sector kernel and its correctness evidence remain useful groundwork, but the
+default production plan stays serial until a later candidate demonstrates a
+repeatable matched full-wall improvement.
+
+The next performance campaign moves to the measured dominant initial work:
+72.588 seconds of density plus 238.393 seconds of initial weighted gridded-
+artifact construction, 70.1 percent of the 443.899-second serial run. That
+campaign requires its own focused issue and stage-local discriminator; no
+additional full run is authorized by this record.
+
+Serial log: `/private/tmp/issue581-final-amended-serial.log` (SHA-256
+`bcaa6fae70fb5b14fda5b20da2b33c3388c581e65d42ca05c9059491931b9b7d`).
+
+First four-worker log: `/private/tmp/issue581-final-amended-balanced.log`
+(SHA-256
+`6777fa5a7862485380983fa1def24e2d9ccdfe2c19a0ac19d33b980c74042e57`).
+
+Four-worker retry log:
+`/private/tmp/issue581-final-amended-balanced-retry.log` (SHA-256
+`4af40315f5b7fb7b0efea0a754589b11bd4f191ed069d3614d3e589784cab4b3`).
