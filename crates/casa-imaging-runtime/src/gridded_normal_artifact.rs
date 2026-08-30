@@ -817,27 +817,23 @@ impl GriddedNormalReplayArtifact {
             frame_counts.push(count);
             remaining -= count;
         }
-        let maximum_payload_bytes = u64::try_from(self.budget.maximum_frame_payload_bytes)
-            .map_err(|_| GriddedNormalArtifactError::ArithmeticOverflow("source payload bytes"))?
-            .checked_mul(u64::try_from(maximum_frames_per_block).map_err(|_| {
-                GriddedNormalArtifactError::ArithmeticOverflow("source window frame count")
-            })?)
-            .ok_or(GriddedNormalArtifactError::ArithmeticOverflow(
-                "source window payload bytes",
-            ))?;
-        self.planned_block_source(frame_counts.into_boxed_slice(), maximum_payload_bytes)
+        let source_slot_bytes = self.budget.source_slot_bytes(maximum_frames_per_block)?;
+        self.planned_block_source(frame_counts.into_boxed_slice(), source_slot_bytes)
     }
 
     pub(crate) fn planned_block_source(
         &self,
         frame_counts: Box<[usize]>,
-        maximum_payload_bytes_per_block: u64,
+        source_slot_bytes: u64,
     ) -> Result<GriddedNormalArtifactBlockSource, GriddedNormalArtifactError> {
         let maximum_frames_per_block = frame_counts.iter().copied().max().unwrap_or(0);
-        let source_slot_bytes = self.budget.source_slot_bytes_for_payload(
-            maximum_payload_bytes_per_block,
-            maximum_frames_per_block,
-        )?;
+        if maximum_frames_per_block == 0 {
+            return Err(GriddedNormalArtifactError::InvalidBudget(
+                "the source window must contain at least one frame",
+            ));
+        }
+        usize::try_from(source_slot_bytes)
+            .map_err(|_| GriddedNormalArtifactError::ArithmeticOverflow("source slot bytes"))?;
         let file = File::open(&self.path).map_err(|source| GriddedNormalArtifactError::Io {
             operation: "open artifact for replay",
             source,
@@ -1698,6 +1694,26 @@ mod tests {
         (root, artifact)
     }
 
+    fn sealed_heterogeneous_window_artifact() -> (tempfile::TempDir, GriddedNormalReplayArtifact) {
+        let root = tempfile::tempdir().expect("artifact root");
+        let capacity = 8 * 1_024;
+        let (_authority, storage) = test_authority(root.path(), capacity);
+        let artifact_budget = GriddedNormalArtifactBudget::for_bounded_stream(3_328, 3_200, 5)
+            .expect("heterogeneous artifact budget");
+        let mut writer = GriddedNormalArtifactWriter::create(&storage, artifact_budget)
+            .expect("artifact writer");
+        writer
+            .append_frame(0, 100, &[0; 3_200])
+            .expect("large frame");
+        for sequence in 1..5 {
+            writer
+                .append_frame(sequence, 1, &[sequence as u8; 32])
+                .expect("small frame");
+        }
+        let artifact = writer.seal().expect("sealed heterogeneous artifact");
+        (root, artifact)
+    }
+
     fn assert_private_file_count(root: &Path, expected: usize) {
         assert_eq!(
             std::fs::read_dir(root).expect("read artifact root").count(),
@@ -1943,6 +1959,61 @@ mod tests {
             outcome.measurements.peak_live_source_capacity_bytes,
             artifact.budget.source_slot_bytes(2).unwrap()
         );
+    }
+
+    #[test]
+    fn heterogeneous_window_schedule_uses_two_exact_source_slots() {
+        let (_root, artifact) = sealed_heterogeneous_window_artifact();
+        let source_slot_bytes = 3_200 + FRAME_HEADER_BYTES as u64;
+        let source = artifact
+            .planned_block_source(Box::new([1, 4]), source_slot_bytes)
+            .expect("planned heterogeneous source");
+        let outcome = execute_bounded(
+            BoundedStreamPlan::new::<(), ()>(2, 1, source_slot_bytes * 2, 1, 0)
+                .expect("bounded heterogeneous plan")
+                .with_maximum_logical_units_per_block(4)
+                .expect("heterogeneous window plan"),
+            0,
+            source,
+            CollectKernel::default(),
+        )
+        .expect("heterogeneous replay must stay within exact source residency");
+
+        assert_eq!(outcome.measurements.blocks_filled, 2);
+        assert_eq!(outcome.measurements.logical_units_filled, 5);
+        assert_eq!(outcome.measurements.peak_logical_units_per_block, 4);
+        assert_eq!(
+            outcome.measurements.peak_live_source_capacity_bytes,
+            source_slot_bytes * 2
+        );
+        assert_eq!(outcome.kernel_completion.payloads.len(), 5);
+    }
+
+    #[test]
+    fn exact_source_slot_rejects_an_underplanned_heterogeneous_window() {
+        let (_root, artifact) = sealed_heterogeneous_window_artifact();
+        let source_slot_bytes = 3_200 + FRAME_HEADER_BYTES as u64 - 1;
+        let source = artifact
+            .planned_block_source(Box::new([1, 4]), source_slot_bytes)
+            .expect("underplanned source opens before reading");
+        let failure = execute_bounded(
+            BoundedStreamPlan::new::<(), ()>(2, 1, source_slot_bytes * 2, 1, 0)
+                .expect("bounded underplanned source")
+                .with_maximum_logical_units_per_block(4)
+                .expect("heterogeneous window plan"),
+            0,
+            source,
+            CollectKernel::default(),
+        )
+        .expect_err("underplanned exact source slot must fail closed");
+
+        assert!(matches!(
+            *failure.cause,
+            BoundedStreamError::Source(GriddedNormalArtifactError::ArtifactCapacityExceeded {
+                required: 3_272,
+                capacity: 3_271
+            })
+        ));
     }
 
     #[test]
