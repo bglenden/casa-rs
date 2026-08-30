@@ -1079,20 +1079,57 @@ impl GriddedNormalSectorAccumulator {
         }
     }
 
-    fn grid(
+    #[inline(never)]
+    fn execute_routes(
         &mut self,
         operator: &SpectralSlabOperator,
-        record: DecodedRecord,
-        predicted: Complex64,
+        encoded: &[u8],
+        grid_shape: [usize; 2],
+        output_channels: usize,
+        sector_id: usize,
+        prepared: &PreparedGriddedNormalBlock,
     ) -> Result<(), SpectralOperatorError> {
-        operator.grid_gridded_normal_sector(
-            &mut self.grids,
-            &mut self.compensations,
-            self.geometry.translated_taps(record.taps)?,
-            record.output_channel,
-            predicted,
-            record.forward_scale.conj() * record.imaging_weight,
-        )
+        if sector_id >= GRIDDED_NORMAL_SECTOR_COUNT
+            || encoded.len() % GRIDDED_NORMAL_OPERATOR_RECORD_BYTES != 0
+        {
+            return Err(SpectralOperatorError::InvalidGriddedRecord);
+        }
+        let routes = prepared.routes_for_sector(sector_id)?;
+        for route in routes {
+            let start = usize::try_from(route.record_ordinal)
+                .map_err(|_| SpectralOperatorError::CoverageOverflow)?
+                .checked_mul(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
+                .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+            let end = start
+                .checked_add(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
+                .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+            let record = decode_record(
+                encoded
+                    .get(start..end)
+                    .ok_or(SpectralOperatorError::InvalidGriddedRecord)?,
+                grid_shape,
+                output_channels,
+            )?;
+            if sector_for_taps(record.taps, grid_shape)? != sector_id {
+                return Err(SpectralOperatorError::GriddedRecordMismatch);
+            }
+            let predicted = *prepared
+                .predictions
+                .get(
+                    usize::try_from(route.group_ordinal)
+                        .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
+                )
+                .ok_or(SpectralOperatorError::IncompleteCoverage)?;
+            operator.grid_gridded_normal_sector(
+                &mut self.grids,
+                &mut self.compensations,
+                self.geometry.translated_taps(record.taps)?,
+                record.output_channel,
+                predicted,
+                record.forward_scale.conj() * record.imaging_weight,
+            )?;
+        }
+        Ok(())
     }
 }
 
@@ -1369,13 +1406,13 @@ impl GriddedNormalOperatorApply {
                         .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
                 )
                 .ok_or(SpectralOperatorError::CoverageOverflow)?;
-            execute_sector_routes(
+            sector.execute_routes(
+                operator,
                 encoded,
                 self.program.manifest.specification.grid_shape(),
                 self.program.manifest.specification.slab().total_channels(),
                 work.sector_id,
                 block,
-                |record, predicted| sector.grid(operator, record, predicted),
             )?;
             frame_count = ordinal + 1;
         }
@@ -1510,7 +1547,8 @@ impl GriddedNormalOperatorApply {
     }
 }
 
-fn execute_sector_routes<A>(
+#[cfg(test)]
+fn execute_sector_routes_for_test<A>(
     encoded: &[u8],
     grid_shape: [usize; 2],
     output_channels: usize,
@@ -2115,7 +2153,7 @@ mod tests {
                 });
             for sector_id in execution_order {
                 let sector = &mut sectors[sector_id];
-                execute_sector_routes(
+                execute_sector_routes_for_test(
                     &encoded,
                     geometry.grid_shape,
                     1,
