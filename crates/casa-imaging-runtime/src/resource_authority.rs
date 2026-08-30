@@ -208,6 +208,15 @@ pub enum CpuClassCapacity {
     Unknown,
 }
 
+/// Knowledge available about the effective CPU data working set per sharing lane.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CpuDataWorkingSetCapacity {
+    /// Effective resident data bytes available to one CPU sharing lane.
+    Known(u64),
+    /// The host did not expose enough reliable CPU-cache topology.
+    Unknown,
+}
+
 /// Accelerator implementation class.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AcceleratorKind {
@@ -332,6 +341,8 @@ pub struct ResourceTopology {
     pub logical_cpu_threads: u64,
     /// Performance-oriented CPU cores available to the process.
     pub performance_cpu_cores: CpuClassCapacity,
+    /// Effective CPU data working-set bytes per sharing lane.
+    pub cpu_data_working_set: CpuDataWorkingSetCapacity,
     /// Process-wide resident-cache capacity.
     pub cache_capacity_bytes: u64,
     /// Simultaneously held table or synchronization locks.
@@ -548,6 +559,7 @@ impl HostInventory {
         let performance_cpu_cores = detect_performance_cpu_cores()
             .map(|cores| CpuClassCapacity::Known(cores.clamp(1, logical_cpu_threads)))
             .unwrap_or(CpuClassCapacity::Unknown);
+        let cpu_data_working_set = detect_cpu_data_working_set(performance_cpu_cores);
         let unified_metal_available = detect_unified_metal_device();
         let host_domain = CapacityDomainId::new("host-memory");
         let host_view = CapacityViewId::new("host-memory");
@@ -611,6 +623,7 @@ impl HostInventory {
             queue_resources,
             logical_cpu_threads,
             performance_cpu_cores,
+            cpu_data_working_set,
             cache_capacity_bytes: physical_memory_bytes,
             // Table and synchronization capacity has no portable detector.
             // Zero fails closed until the embedding runtime supplies a profile.
@@ -3817,6 +3830,14 @@ fn validate_inventory(inventory: &HostInventory) -> Result<(), ResourceError> {
             ));
         }
     }
+    if matches!(
+        topology.cpu_data_working_set,
+        CpuDataWorkingSetCapacity::Known(0)
+    ) {
+        return Err(ResourceError::Invalid(
+            "known CPU data working-set capacity must be nonzero".to_string(),
+        ));
+    }
     let mut domains = BTreeMap::new();
     for domain in &topology.memory_domains {
         if domain.id.as_str().is_empty()
@@ -4221,6 +4242,40 @@ fn detect_performance_cpu_cores() -> Option<u64> {
 #[cfg(not(target_os = "macos"))]
 fn detect_performance_cpu_cores() -> Option<u64> {
     None
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn cpu_data_working_set_capacity(
+    l2_cache_bytes: Option<u64>,
+    performance_cpu_cores: CpuClassCapacity,
+) -> CpuDataWorkingSetCapacity {
+    let (Some(l2_cache_bytes), CpuClassCapacity::Known(performance_cpu_cores)) =
+        (l2_cache_bytes, performance_cpu_cores)
+    else {
+        return CpuDataWorkingSetCapacity::Unknown;
+    };
+    let bytes_per_sharing_lane = l2_cache_bytes.checked_div(performance_cpu_cores);
+    match bytes_per_sharing_lane {
+        Some(bytes) if bytes > 0 => CpuDataWorkingSetCapacity::Known(bytes),
+        _ => CpuDataWorkingSetCapacity::Unknown,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn detect_cpu_data_working_set(
+    performance_cpu_cores: CpuClassCapacity,
+) -> CpuDataWorkingSetCapacity {
+    cpu_data_working_set_capacity(
+        command_u64("/usr/sbin/sysctl", &["-n", "hw.perflevel0.l2cachesize"]).ok(),
+        performance_cpu_cores,
+    )
+}
+
+#[cfg(not(target_os = "macos"))]
+fn detect_cpu_data_working_set(
+    _performance_cpu_cores: CpuClassCapacity,
+) -> CpuDataWorkingSetCapacity {
+    CpuDataWorkingSetCapacity::Unknown
 }
 
 #[cfg(target_os = "macos")]

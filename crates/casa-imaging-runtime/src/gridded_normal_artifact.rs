@@ -1582,9 +1582,10 @@ mod tests {
         WorkIdentity, execute_bounded,
     };
     use crate::resource_authority::{
-        CapacityDomainId, CpuClassCapacity, ExternalPressure, HostInventory, MemoryCapacityDomain,
-        MemoryCapacityKind, MemoryView, MemoryViewKind, QueueResource, QueueResourceId,
-        RateResource, RateResourceId, RateUnit, ResourceTopology, StorageDomain, StorageDomainId,
+        CapacityDomainId, CpuClassCapacity, CpuDataWorkingSetCapacity, ExternalPressure,
+        HostInventory, MemoryCapacityDomain, MemoryCapacityKind, MemoryView, MemoryViewKind,
+        QueueResource, QueueResourceId, RateResource, RateResourceId, RateUnit, ResourceTopology,
+        StorageDomain, StorageDomainId,
     };
 
     const TEST_CAPACITY_BYTES: u64 = 4_096;
@@ -1629,6 +1630,7 @@ mod tests {
             queue_resources: vec![QueueResource::new(queue.clone(), 1)],
             logical_cpu_threads: 1,
             performance_cpu_cores: CpuClassCapacity::Known(1),
+            cpu_data_working_set: CpuDataWorkingSetCapacity::Unknown,
             cache_capacity_bytes: 1 << 20,
             lock_capacity: 0,
             file_descriptor_capacity: 4,
