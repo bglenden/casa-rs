@@ -1895,6 +1895,99 @@ fn empty_origin_residual_refresh_uses_the_general_operator() {
 }
 
 #[test]
+fn chained_no_delta_final_major_cycles_reauthorize_the_carried_generation() {
+    let problem = t19_compatible_problem(13);
+    let mut initial_lifecycle = bind_lifecycle(&problem, attempt(23));
+    let initial_named = initial_lifecycle
+        .initial_empty()
+        .expect("initial empty generation");
+    let initial_samples = initial_named.samples().to_vec();
+    let initial_id = initial_named.generation_id();
+    let (initial_evidence, initial_preparation) =
+        prepare_reconciliation(&problem, &initial_lifecycle, initial_named, None);
+    let initial_join = MajorCycleOwner::from_complete_data(initial_evidence, initial_preparation)
+        .expect("initial major-cycle owner")
+        .reconcile(&mut initial_lifecycle)
+        .expect("initial no-delta reconciliation");
+    let (initial_normal, initial_continuation) = initial_join.into_continuation();
+
+    let (mut first_lifecycle, first_named) = ModelLifecycle::continue_from(
+        ExecutableModelProblem::from_compiled(problem.clone())
+            .expect("first continued executable problem"),
+        attempt(24),
+        8,
+        initial_continuation,
+    )
+    .expect("continue the initial no-delta generation");
+    assert_eq!(first_named.generation_id(), initial_id);
+    let first_preparation = MajorCyclePreparation::prepare(&first_lifecycle, first_named, None)
+        .expect("prepare the first no-delta final major cycle");
+    let first_evidence = run_t19_complete_data_for_pass(
+        &problem,
+        Some(&first_preparation),
+        &fixture_samples(&problem),
+        None,
+        SpectralOperatorPass::ResidualRefresh,
+        Some(initial_normal),
+    );
+    let first_join = MajorCycleOwner::from_complete_data(first_evidence, first_preparation)
+        .expect("first final-major owner")
+        .reconcile(&mut first_lifecycle)
+        .expect("first no-delta final-major reconciliation");
+    assert_eq!(first_join.model_completion().base(), initial_id);
+    assert_eq!(first_join.model_completion().delta(), None);
+    assert_eq!(first_join.final_model().samples(), initial_samples);
+    let first_id = first_join.final_model().generation_id();
+    assert_ne!(
+        first_id, initial_id,
+        "the first continued attempt must own its confirmed generation"
+    );
+    let (first_normal, first_continuation) = first_join.into_continuation();
+
+    let (mut second_lifecycle, second_named) = ModelLifecycle::continue_from(
+        ExecutableModelProblem::from_compiled(problem.clone())
+            .expect("second continued executable problem"),
+        attempt(25),
+        9,
+        first_continuation,
+    )
+    .expect("continue the first no-delta final-major generation");
+    assert_eq!(second_named.generation_id(), first_id);
+    let second_preparation = MajorCyclePreparation::prepare(&second_lifecycle, second_named, None)
+        .expect("prepare the second no-delta final major cycle");
+    let second_evidence = run_t19_complete_data_for_pass(
+        &problem,
+        Some(&second_preparation),
+        &fixture_samples(&problem),
+        None,
+        SpectralOperatorPass::ResidualRefresh,
+        Some(first_normal),
+    );
+    let second_join = MajorCycleOwner::from_complete_data(second_evidence, second_preparation)
+        .expect("second final-major owner")
+        .reconcile(&mut second_lifecycle)
+        .expect("second no-delta final-major reconciliation");
+    assert_eq!(second_join.model_completion().base(), first_id);
+    assert_eq!(second_join.model_completion().delta(), None);
+    assert_eq!(second_join.final_model().samples(), initial_samples);
+    let second_id = second_join.final_model().generation_id();
+    assert_ne!(
+        second_id, first_id,
+        "each continued attempt must own its confirmed generation"
+    );
+    let (_, second_continuation) = second_join.into_continuation();
+
+    let (_, third_named) = ModelLifecycle::continue_from(
+        ExecutableModelProblem::from_compiled(problem).expect("third continued executable problem"),
+        attempt(26),
+        10,
+        second_continuation,
+    )
+    .expect("continue the second no-delta final-major generation");
+    assert_eq!(third_named.generation_id(), second_id);
+}
+
+#[test]
 fn residual_content_depends_on_the_exact_final_model() {
     let problem = t19_compatible_problem(27);
     // The same T19 evidence reconciled against two different final models.

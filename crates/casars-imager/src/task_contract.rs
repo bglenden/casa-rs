@@ -3480,6 +3480,20 @@ mod tests {
         assert!(!config.per_channel_weight_density);
         assert!(!config.use_pointing);
 
+        let mut parallel = request.clone();
+        parallel.parallel = Some(true);
+        assert_eq!(
+            parallel.to_cli_config().unwrap().standard_mfs_acceleration,
+            StandardMfsAccelerationPolicy::MultiCpu
+        );
+        let mut serial = request.clone();
+        serial.parallel = Some(false);
+        serial.standard_mfs_acceleration = StandardMfsAccelerationPolicy::MultiCpu;
+        assert_eq!(
+            serial.to_cli_config().unwrap().standard_mfs_acceleration,
+            StandardMfsAccelerationPolicy::Cpu
+        );
+
         let cube = ImagerRunTaskRequest {
             spectral_mode: ImagerSpectralMode::Cube,
             ..request

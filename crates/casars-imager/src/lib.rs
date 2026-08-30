@@ -883,8 +883,12 @@ pub(crate) fn apply_parallel_runtime_control(
     parallel: Option<bool>,
     config: &mut CliConfig,
 ) -> Result<(), String> {
-    if parallel == Some(false) {
-        config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Cpu;
+    if let Some(parallel) = parallel {
+        config.standard_mfs_acceleration = if parallel {
+            StandardMfsAccelerationPolicy::MultiCpu
+        } else {
+            StandardMfsAccelerationPolicy::Cpu
+        };
     }
     Ok(())
 }

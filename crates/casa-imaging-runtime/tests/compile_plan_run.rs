@@ -50,8 +50,8 @@ use casa_imaging_reconstruction::{
     WeightingExecutionLimits, WeightingPlan, WeightingReplayChunk, WeightingReplaySummary,
     begin_weighting_generation, plan_weighting,
     runtime_adapter::{
-        CompleteDataOwnerResult, SpectralOperatorPass, prepare_spectral_operator,
-        spectral_operator_workload,
+        CompleteDataOwnerResult, SpectralOperatorPass, gridded_normal_execution_residency,
+        gridded_normal_route_capacity_bytes, prepare_spectral_operator, spectral_operator_workload,
     },
 };
 use casa_imaging_runtime::{
@@ -3149,6 +3149,18 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
     assert_eq!(replay_nodes.len(), 1, "one bounded artifact reader");
     let replay_node_id = replay_nodes[0].id.clone();
     assert_eq!(replay_nodes[0].kind, WorkKind::Prefetch);
+    assert_eq!(final_physical.execution_dag().initial_knobs().batch_size, 1);
+    assert_eq!(
+        final_physical
+            .execution_dag()
+            .resource_alternative()
+            .scaling
+            .maximum_batch_size,
+        1
+    );
+    assert!(replay_nodes[0].claims.iter().any(|claim| {
+        claim.resource == LeaseResource::IoBuffer(IoBufferKind::SpillRead) && claim.amount == 2 * 72
+    }));
     assert!(
         replay_nodes[0]
             .id
@@ -3188,7 +3200,7 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
         allocation
             .allocation
             .as_str()
-            .starts_with("spectral-operator-primitives-residual-refresh-")
+            .starts_with("spectral-operator-primitives-gridded-residual-refresh-")
     }));
     let residual_grid = final_physical
         .execution_dag()
@@ -3198,12 +3210,112 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
             allocation
                 .id
                 .as_str()
-                .starts_with("spectral-operator-grids-residual-refresh-")
+                .starts_with("spectral-operator-grids-gridded-residual-refresh-")
         })
-        .expect("residual-refresh grid allocation");
+        .expect("gridded residual-refresh grid allocation");
+    let final_specification =
+        SpectralOperatorSpecification::new(&problem).expect("final spectral specification");
+    let execution_residency = gridded_normal_execution_residency(
+        final_specification.grid_shape(),
+        final_complete.slab().core_depth(),
+    )
+    .expect("gridded two-domain residency");
+    let expected_grid_bytes = execution_residency.peak_complex_values()
+        * std::mem::size_of::<num_complex::Complex64>()
+        + execution_residency.metadata_bytes();
     assert_eq!(
         residual_grid.bytes,
         final_complete.residency().grid_bytes() as u64
+    );
+    assert_eq!(
+        final_complete.residency().grid_bytes(),
+        expected_grid_bytes,
+        "the admitted grid allocation must cover resident tile/shard plus merge grids"
+    );
+    assert!(
+        execution_plan
+            .execution_dag()
+            .logical_allocations()
+            .values()
+            .all(|allocation| !allocation
+                .id
+                .as_str()
+                .starts_with("spectral-operator-gridded-route-"))
+    );
+    let route = final_physical
+        .execution_dag()
+        .logical_allocations()
+        .values()
+        .find(|allocation| {
+            allocation
+                .id
+                .as_str()
+                .starts_with("spectral-operator-gridded-route-gridded-residual-refresh-")
+        })
+        .expect("gridded replay route allocation");
+    let expected_route_bytes = gridded_normal_route_capacity_bytes(0, 1).unwrap();
+    assert_eq!(route.bytes, expected_route_bytes);
+    assert_eq!(
+        route.compatibility.layout,
+        AllocationLayout::new(
+            "spectral-operator-gridded-route-window-record-vectors-and-frame-metadata"
+        )
+    );
+    let route_slot = final_physical
+        .execution_dag()
+        .physical_slots()
+        .get(&route.physical_slot)
+        .expect("gridded replay route physical slot");
+    assert_eq!(route_slot.capacity_bytes, expected_route_bytes);
+    let route_demand = final_demand
+        .memory
+        .iter()
+        .find(|demand| demand.allocation_id == route.id.as_str())
+        .expect("gridded replay route memory demand");
+    assert_eq!(route_demand.hard_bytes, expected_route_bytes);
+    assert_eq!(route_demand.preferred_bytes, expected_route_bytes);
+    assert!(
+        replay_nodes[0]
+            .allocations
+            .iter()
+            .any(|use_| use_.allocation == route.id)
+    );
+    let schedule = final_physical
+        .execution_dag()
+        .logical_allocations()
+        .values()
+        .find(|allocation| {
+            allocation
+                .id
+                .as_str()
+                .starts_with("spectral-operator-gridded-replay-schedule-gridded-residual-refresh-")
+        })
+        .expect("gridded replay schedule allocation");
+    assert!(schedule.bytes > 0);
+    assert_eq!(
+        schedule.compatibility.layout,
+        AllocationLayout::new(
+            "spectral-operator-gridded-replay-window-counts-and-route-slot-capacities"
+        )
+    );
+    let schedule_slot = final_physical
+        .execution_dag()
+        .physical_slots()
+        .get(&schedule.physical_slot)
+        .expect("gridded replay schedule physical slot");
+    assert_eq!(schedule_slot.capacity_bytes, schedule.bytes);
+    let schedule_demand = final_demand
+        .memory
+        .iter()
+        .find(|demand| demand.allocation_id == schedule.id.as_str())
+        .expect("gridded replay schedule memory demand");
+    assert_eq!(schedule_demand.hard_bytes, schedule.bytes);
+    assert_eq!(schedule_demand.preferred_bytes, schedule.bytes);
+    assert!(
+        replay_nodes[0]
+            .allocations
+            .iter()
+            .any(|use_| use_.allocation == schedule.id)
     );
     let final_executor = SpectralCycleExecutor::new_gridded(
         implementation(73),

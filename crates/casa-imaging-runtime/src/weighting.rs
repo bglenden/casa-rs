@@ -169,6 +169,7 @@ impl OrderedBlockSource for SelectedBlockSource<'_> {
         };
         Ok(SourcePoll::Ready {
             source_ordinal,
+            logical_units: 1,
             logical_bytes: storage.logical_bytes(),
             source_read_operations: storage.source_read_operations(),
             resident_current_bytes: storage.resident_current_bytes()?,
@@ -181,8 +182,8 @@ impl OrderedBlockSource for SelectedBlockSource<'_> {
     }
 }
 
-trait StreamingWeightPhase {
-    type Finish;
+trait StreamingWeightPhase: Send {
+    type Finish: Send;
 
     fn consume_sample(
         &mut self,
@@ -505,7 +506,7 @@ where
 impl<'a, W, F, E> PartitionedKernel<SelectedObservationBlock> for WeightingBlockKernel<'a, W, F>
 where
     W: StreamingWeightPhase + Sync,
-    F: FnMut(&ReconstructionWeightedBlock) -> Result<(), E> + Sync,
+    F: FnMut(&ReconstructionWeightedBlock) -> Result<(), E> + Send + Sync,
     E: Error + Send + 'static,
 {
     type Partition = ();
@@ -729,7 +730,7 @@ fn execute_weighting_block_stream<'a, W, F, E>(
 ) -> Result<CompletedWeightingBlockStream<'a, W::Finish>, WeightingBlockStreamFailure<E>>
 where
     W: StreamingWeightPhase + Sync,
-    F: FnMut(&ReconstructionWeightedBlock) -> Result<(), E> + Sync,
+    F: FnMut(&ReconstructionWeightedBlock) -> Result<(), E> + Send + Sync,
     E: Error + Send + 'static,
 {
     let (source, consumer) = selected.into_block_stream(problem).map_err(|error| {
@@ -2041,7 +2042,7 @@ impl WeightingExecutionState {
     ) -> Result<(), WeightingReplayError<E>>
     where
         E: Error + Send + 'static,
-        F: FnMut(&ReconstructionWeightedBlock) -> Result<(), E> + Sync,
+        F: FnMut(&ReconstructionWeightedBlock) -> Result<(), E> + Send + Sync,
     {
         self.begin_measurement_scope();
         if !matches!(self.phase, WeightingExecutionPhase::Empty) {
@@ -2199,7 +2200,7 @@ impl WeightingExecutionState {
     ) -> Result<(), WeightingReplayError<E>>
     where
         E: Error + Send + 'static,
-        F: FnMut(&ReconstructionWeightedBlock) -> Result<(), E> + Sync,
+        F: FnMut(&ReconstructionWeightedBlock) -> Result<(), E> + Send + Sync,
     {
         self.begin_measurement_scope();
         if !matches!(self.phase, WeightingExecutionPhase::Empty)

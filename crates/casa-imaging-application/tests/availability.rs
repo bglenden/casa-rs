@@ -57,6 +57,20 @@ fn installed_spectral_cycle_accepts_its_compiled_contract() {
 }
 
 #[test]
+fn installed_spectral_cycle_accepts_planned_multi_cpu_execution() {
+    let problem = compile(standard_dirty_request()).expect("compile spectral cycle request");
+    require_installed_implementation(
+        &problem,
+        [
+            TaskRequirement::SerialCpu,
+            TaskRequirement::FixedTileCpu,
+            TaskRequirement::RustFft,
+        ],
+    )
+    .expect("installed spectral cycle supports planned multi-CPU execution");
+}
+
+#[test]
 fn moving_source_fails_typed_before_execution() {
     let problem = compile(moving_source_request()).expect("compile moving-source request");
     let error = require_installed_implementation(&problem, [])

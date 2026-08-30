@@ -4,6 +4,8 @@
 
 mod bounded_stream;
 mod complete_data_operator;
+#[cfg(test)]
+mod complete_data_parallel_mfs_tests;
 mod continuum_transform;
 mod cost_model;
 mod execution;

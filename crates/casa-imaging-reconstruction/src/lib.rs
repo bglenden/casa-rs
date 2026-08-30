@@ -51,11 +51,14 @@ pub use spectral_operator::{
 #[doc(hidden)]
 pub mod runtime_adapter {
     pub use crate::gridded_normal_operator::{
-        GRIDDED_NORMAL_OPERATOR_RECORD_BYTES, GriddedNormalOperatorApply,
-        GriddedNormalOperatorBlock, GriddedNormalOperatorBlockMeasurements,
-        GriddedNormalOperatorCompiler, GriddedNormalOperatorProgram,
-        GriddedNormalOperatorStageTimings, GriddedNormalSourceCardinality,
-        SourceCardinalityObservation,
+        GRIDDED_NORMAL_LANE_COUNT, GRIDDED_NORMAL_OPERATOR_RECORD_BYTES,
+        GRIDDED_NORMAL_PARTITION_COUNT, GriddedNormalExecutionResidency,
+        GriddedNormalOperatorApply, GriddedNormalOperatorBlock,
+        GriddedNormalOperatorBlockMeasurements, GriddedNormalOperatorCompiler,
+        GriddedNormalOperatorProgram, GriddedNormalOperatorStageTimings, GriddedNormalPartial,
+        GriddedNormalRoutingMeasurements, GriddedNormalSourceCardinality, GriddedNormalWork,
+        SourceCardinalityObservation, gridded_normal_execution_residency,
+        gridded_normal_route_capacity_bytes,
     };
     pub use crate::spectral_operator::{
         CompleteDataOwnerCompletion, CompleteDataOwnerResult, CompleteDataOwnerState,
@@ -512,9 +515,11 @@ impl ModelDelta {
 
 /// Opaque proof that one affine final-model update completed through the owner.
 ///
-/// `delta` is `None` exactly when the named input generation was confirmed
-/// unchanged as final. This is reconstruction evidence, not a Product
-/// Generation seal.
+/// `delta` is `None` exactly when the named input generation's samples and
+/// support were confirmed unchanged as final. A generation carried from an
+/// earlier attempt is still rebound to the completing lifecycle, so its final
+/// identity may differ from `base` without a Model Delta. This is
+/// reconstruction evidence, not a Product Generation seal.
 #[derive(Debug)]
 pub struct FinalModelCompletion {
     completion_id: FinalModelCompletionId,
@@ -996,7 +1001,9 @@ impl ModelLifecycle {
     ///
     /// This is the first phase of the Major-Cycle transaction. All model and
     /// delta validation and arithmetic happen here, while the lifecycle remains
-    /// open if later complete-data reconciliation fails.
+    /// open if later complete-data reconciliation fails. A named generation
+    /// carried from an earlier attempt is rebound in place to this lifecycle
+    /// even when no Model Delta changes its samples.
     pub fn prepare_final_model(
         &self,
         named: ModelGeneration,
@@ -1010,8 +1017,8 @@ impl ModelLifecycle {
                 (self.apply_delta_inner(named, delta)?, Some(delta_id))
             }
             None => {
-                self.validate_named_generation(&named)?;
-                (named, None)
+                let generation = self.adopt_generation(named)?;
+                (generation, None)
             }
         };
         Ok(PreparedFinalModel {
@@ -1065,8 +1072,9 @@ impl ModelLifecycle {
         })
     }
 
-    /// Confirm one validated named generation as the final model without a
-    /// pending Model Delta and mint distinct opaque completion evidence.
+    /// Confirm one validated named generation's unchanged values as the final
+    /// model without a pending Model Delta and mint distinct opaque completion
+    /// evidence under this lifecycle.
     pub fn confirm_final_model(
         &mut self,
         named: ModelGeneration,
@@ -1154,6 +1162,20 @@ impl ModelLifecycle {
         };
         base.generation_id = generation_id(self.authority, &base.samples, base.origin);
         Ok(base)
+    }
+
+    fn adopt_generation(
+        &self,
+        mut generation: ModelGeneration,
+    ) -> Result<ModelGeneration, ModelLifecycleError> {
+        self.validate_base(&generation)?;
+        if generation.authority != self.authority || generation.seal != self.seal {
+            generation.authority = self.authority;
+            generation.seal = self.seal;
+            generation.generation_id =
+                generation_id(self.authority, &generation.samples, generation.origin);
+        }
+        Ok(generation)
     }
 
     fn validate_base(&self, generation: &ModelGeneration) -> Result<(), ModelLifecycleError> {
