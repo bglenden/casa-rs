@@ -156,6 +156,91 @@ formatting, and `git diff --check` were green. The broader pre-existing test
 this tree and baseline `81556dbc5`, with the identical 0.7500004989529645
 versus 0.75 tolerance mismatch.
 
+## Matched 16-channel production gate
+
+The candidate then ran the directly mounted medium VLA MeasurementSet with 16
+selected channels, 1024 pixels, Briggs 0.5, RustFFT, Hogbom 50 iterations, and
+one worker. It completed in 83.619787 seconds. Exact structure remained two MS
+passes, two source slots, 31,985 gridded frames, 49,141,788 records, and a
+1,574,840,232-byte artifact.
+
+Two observations at the untouched pre-candidate commit recorded initial
+weighted consumer intervals of 62.172974 and 62.491394 seconds. The candidate
+recorded 57.317897 seconds, a stable 4.855-to-5.173-second or 7.81-to-8.28
+percent reduction in the affected production pass. Both baseline density
+passes were externally I/O-starved at 50-to-55 MiB/s while the candidate read
+at 198.6 MiB/s, so their 102.739749- and 99.701812-second total walls are not
+used to inflate the candidate speedup.
+
+Image, residual, PSF, and model products were bit-identical to the frozen
+16-channel reference: normalized RMS and maximum normalized difference were
+zero for all four. The recovered comparison receipt is
+`/private/tmp/issue586-ch16-recovered/20260830T160636Z-wave3-standard-mfs-single-term-turnaround-c43999f9.json`.
+The timed candidate log is
+`/private/tmp/issue586-ch16-candidate/20260830T160214Z-wave3-standard-mfs-single-term-turnaround-62dc0894.log`.
+
+Receipt publication initially exposed a schema mismatch: the comparator's
+canonical unrequested-metadata sentinel is `{status: not_required, parity:
+null}`, while the outer run schema required a boolean whenever `parity` was
+present. The repaired schema accepts only that null sentinel and retains the
+boolean requirement for evaluated metadata. Seventy-five directly affected
+schema and comparator tests passed. Receipt recovery reused both product
+prefixes and reran neither Rust science nor CASA.
+
+## Complete 64-channel CASA gate
+
+The admitted complete run used the directly mounted medium VLA MeasurementSet,
+64 selected channels, 1024 pixels, Briggs 0.5, RustFFT, Hogbom 500 iterations,
+and one worker. It reused the frozen CASA products and 688.996833-second timing;
+CASA was not rerun.
+
+The candidate completed in 462.066116 seconds: 226.930717 seconds less than
+CASA, or a 1.491122x speedup and 32.936 percent lower wall time. Its measured
+serial phase envelope was:
+
+| Phase | Wall | Fraction of Rust wall | Relevant detail |
+| --- | ---: | ---: | --- |
+| Density MS pass | 75.029541 s | 16.24% | 33.411245 s source read |
+| Initial weighted/artifact MS pass | 213.434899 s | 46.19% | 213.360251 s consumer; 10.720705 s source read |
+| Ten later gridded replays | 166.288195 s | 35.99% | 161.587185 s kernel commit; 55.445386 s artifact fill overlapped |
+| Minor-cycle, completion, and product-write remainder | 7.313481 s | 1.58% | Derived exclusive remainder |
+
+The prior accepted complete observation recorded 238.392987 seconds for
+initial weighted construction. The candidate therefore removes 24.958088
+seconds, or 10.47 percent, from the affected complete-data pass. That is 5.62
+percent of its 443.898842-second reference wall and confirms the stage-local
+projection. The 443.898842-second observation included unmerged #581 serial
+route experiments, so it is not used as a direct total-wall before/after
+control for this current-main candidate. The valid cross-implementation total
+comparison is the candidate's 462.066116 seconds against frozen CASA; the valid
+candidate attribution is the interleaved local gate plus the affected-pass
+reduction.
+
+Correctness passed far inside the agreed 0.001 normalized-RMS threshold:
+
+| Product | Normalized RMS |
+| --- | ---: |
+| Image | 1.925707e-7 |
+| Residual | 3.258093e-7 |
+| PSF | 6.786875e-7 |
+| Model | 5.147635e-7 |
+| Sum weights | 0.0 |
+
+The run retained exactly two ordered MeasurementSet passes, two source slots,
+one worker, 62,272,500 bytes peak source-buffer capacity in each pass, and the
+pinned compiler/artifact work signature: 395,038,080 source records,
+196,602,895 emitted records, 6,300,504,416 artifact bytes, and 6,291,292,640
+payload bytes. The receipt is
+`/private/tmp/issue586-full-candidate/20260830T161408Z-wave3-standard-mfs-single-term-heavy-wave2-serial-c16928ac.json`.
+
+This full gate retains the empty-model candidate. It also selects the next
+serial discriminator, if this ticket continues: weighting and contribution
+formation is still the largest exclusive initial-pass bucket. Coverage-proof
+hash batching is the first bounded hypothesis because the six-block cohort
+made 33,696,007 SHA-256 update calls for 2,864,160,146 canonical bytes while
+emitting 8,227 blocks. It must prove its own wall saving locally before another
+production run.
+
 ## Fixed constraints
 
 - Frozen CASA remains 688.996833 seconds; do not rerun it.
