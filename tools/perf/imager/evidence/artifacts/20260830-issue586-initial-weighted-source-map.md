@@ -125,6 +125,37 @@ Focused verification was green: five reconstruction compiler tests, twelve
 runtime artifact tests, the ignored mounted discriminator, warnings-denied
 Clippy, formatting, and `git diff --check`.
 
+## Retained empty-model candidate
+
+The implementation uses one private reconstruction binding with two states:
+an initial owner-certified zero generation and an evaluated model. Only an
+`InitialMajor` pass with `ModelGenerationOrigin::Empty` selects the former.
+Ingested zero samples, delta generations, and an empty generation carried into
+`ResidualRefresh` retain the evaluated path. Explicit final-visibility output
+still emits ordered zero predictions and observed residuals; a replay without
+a sink no longer builds unused output samples.
+
+The interleaved release observation was:
+
+| Measurement | Baseline mean | Candidate | Saving |
+| --- | ---: | ---: | ---: |
+| Stage-local wall | 14.9068 s | 12.6916 s | 2.2152 s / 14.86% |
+| Initial science consumption | 4.3451 s | 2.1846 s | 2.1605 s / 49.72% |
+
+The stage-local saving exceeds both the 1.427-second projected-value gate and
+the ten-percent total-wall gate. The linear full-data projection is 34.45
+seconds, or 7.76 percent of the 443.898842-second serial baseline. This is a
+projection only; no complete run has yet been admitted.
+
+All pinned weighting-generation, replay, coverage, normal-state, artifact, and
+artifact-SHA identities remained unchanged. Focused private work/correctness
+tests passed 3/3, major-cycle integration passed 20/20, the release
+discriminator passed, and reconstruction/runtime warnings-denied Clippy,
+formatting, and `git diff --check` were green. The broader pre-existing test
+`forward_is_linear_and_a_unit_centre_source_is_constant` remains red at both
+this tree and baseline `81556dbc5`, with the identical 0.7500004989529645
+versus 0.75 tolerance mismatch.
+
 ## Fixed constraints
 
 - Frozen CASA remains 688.996833 seconds; do not rerun it.

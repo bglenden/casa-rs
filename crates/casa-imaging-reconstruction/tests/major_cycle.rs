@@ -240,6 +240,35 @@ fn reconstruction_problem_with_sampling(
     controls: ReconstructionControls,
     sampling: SpectralSamplingLaw,
 ) -> casa_imaging_model::CompiledProblem {
+    reconstruction_problem_with_sampling_and_model(
+        observation,
+        width,
+        channels,
+        basis,
+        algorithm,
+        controls,
+        (
+            sampling,
+            ModelStateIdentity::Empty,
+            ModelInputCommitment::Empty,
+        ),
+    )
+}
+
+fn reconstruction_problem_with_sampling_and_model(
+    observation: u8,
+    width: usize,
+    channels: usize,
+    basis: ReconstructionBasis,
+    algorithm: ReconstructionAlgorithm,
+    controls: ReconstructionControls,
+    model: (
+        SpectralSamplingLaw,
+        ModelStateIdentity,
+        ModelInputCommitment,
+    ),
+) -> casa_imaging_model::CompiledProblem {
+    let (sampling, model_state, model_input) = model;
     let centre = width as f64 / 2.0;
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
@@ -285,7 +314,7 @@ fn reconstruction_problem_with_sampling(
     let snapshot = compile_observation(ObservationSnapshotInput::new(
         vec![source(observation)],
         Vec::new(),
-        ModelStateIdentity::Empty,
+        model_state,
     ))
     .expect("compile observation snapshot");
     compile(ImagingRequest::new(
@@ -329,7 +358,7 @@ fn reconstruction_problem_with_sampling(
         ModelLifecycleRequirements::new(
             ModelBounds::new(4_096, 4_096, 4_096, 4_096, 1.0e30, 1.0e30).expect("valid bounds"),
             NumericPrecision::F64,
-            ModelInputCommitment::Empty,
+            model_input,
         ),
     ))
     .expect("compile T20 reconciliation problem")
@@ -1468,7 +1497,13 @@ fn run_t19_complete_data_for_pass_result(
             .expect("bind exact final model before replay");
     }
     for block in &blocks {
-        state.consume_block(block).expect("consume weighted block");
+        assert!(
+            state
+                .consume_block(block)
+                .expect("consume weighted block")
+                .is_empty(),
+            "a complete-data replay without a final-visibility sink must not emit samples"
+        );
     }
     state.complete(&summary, selected_generation, transform_generation)
 }
@@ -1676,6 +1711,183 @@ fn reconciliation_without_a_pending_delta_confirms_the_named_generation_final() 
     assert_eq!(joined.normal_state().normal_approximation().len(), 8 * 8);
     assert_eq!(joined.normal_state().sensitivity().len(), 8 * 8);
     assert!(joined.normal_state().sum_weight() > 0.0);
+}
+
+#[test]
+fn empty_initial_model_emits_zero_predictions_only_for_an_explicit_sink() {
+    let problem = t19_compatible_problem(66);
+    let lifecycle = bind_lifecycle(&problem, attempt(67));
+    let named = lifecycle.initial_empty().expect("empty named generation");
+    let preparation =
+        MajorCyclePreparation::prepare(&lifecycle, named, None).expect("empty preparation");
+    let samples = fixture_samples(&problem);
+    let plan = plan_weighting(
+        &problem,
+        WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
+    )
+    .expect("weighting plan");
+    let selected_generation = replay_selected_generation(&problem, &samples);
+    let weighting =
+        freeze_weighting_generation(&problem, &plan, &samples).expect("weighting generation");
+    let (blocks, summary) = replay(&weighting, &problem, &plan, &samples);
+    let specification =
+        SpectralOperatorSpecification::new(&problem).expect("spectral specification");
+    let workload = spectral_operator_workload(
+        &specification,
+        plan.limits().max_block_samples(),
+        SpectralOperatorPass::InitialMajor,
+    )
+    .expect("initial workload");
+    let mut state = prepare_spectral_operator(specification, workload)
+        .expect("prepare operator")
+        .begin(&problem, &weighting)
+        .expect("begin owner");
+    state
+        .bind_major_cycle_model(preparation.final_model(), None)
+        .expect("bind certified empty model");
+    state.enable_final_visibility_samples();
+
+    let mut emitted = 0_usize;
+    for block in &blocks {
+        let output = state.consume_block(block).expect("consume weighted block");
+        emitted += output.len();
+        assert!(output.iter().all(|sample| {
+            sample.predicted() == num_complex::Complex64::default()
+                && sample.residual() == sample.observed()
+        }));
+    }
+    assert_eq!(emitted, samples.len());
+    state
+        .complete(&summary, selected_generation, None)
+        .expect("complete empty sink-enabled replay");
+}
+
+#[test]
+fn all_zero_ingested_model_uses_the_general_operator_and_matches_empty_science() {
+    let seed = identity(68, 1);
+    let support = casa_imaging_reconstruction::model_support_identity(std::iter::repeat_n(
+        casa_imaging_model::ModelSupport::Valid,
+        8 * 8,
+    ));
+    let problem = reconstruction_problem_with_sampling_and_model(
+        69,
+        8,
+        1,
+        ReconstructionBasis::Constant,
+        ReconstructionAlgorithm::Dirty,
+        ReconstructionControls::new(0, 1.0, 0.0),
+        (
+            SpectralSamplingLaw::IDENTITY,
+            ModelStateIdentity::Seed(seed),
+            ModelInputCommitment::AlignedSeed {
+                source: seed,
+                support,
+            },
+        ),
+    );
+    let lifecycle = ModelLifecycle::bind(
+        ExecutableModelProblem::from_compiled(problem.clone()).expect("ingested problem"),
+        attempt(70),
+        1,
+    )
+    .expect("ingested lifecycle");
+    let target = lifecycle.contract().target().clone();
+    let zeros = (0..target.sample_count()).map(|_| {
+        Ok::<_, Infallible>(casa_imaging_model::ModelSample::valid(
+            casa_imaging_model::ModelValue::new(0.0).expect("zero model value"),
+        ))
+    });
+    let ingested = lifecycle
+        .ingest_aligned(seed, &target, zeros)
+        .expect("read aligned zero model")
+        .expect("ingest aligned zero model");
+    assert!(matches!(
+        ingested.origin(),
+        casa_imaging_reconstruction::ModelGenerationOrigin::Ingested { .. }
+    ));
+    let preparation = MajorCyclePreparation::prepare(&lifecycle, ingested, None)
+        .expect("prepare ingested zero model");
+    let ingested_evidence = run_t19_complete_data(&problem, Some(&preparation));
+
+    let empty_problem = t19_compatible_problem(69);
+    let empty_lifecycle = bind_lifecycle(&empty_problem, attempt(71));
+    let empty = empty_lifecycle
+        .initial_empty()
+        .expect("empty reference model");
+    let empty_preparation = MajorCyclePreparation::prepare(&empty_lifecycle, empty, None)
+        .expect("prepare empty reference");
+    let empty_evidence = run_t19_complete_data(&empty_problem, Some(&empty_preparation));
+
+    assert_eq!(
+        ingested_evidence.primitives().dirty(),
+        empty_evidence.primitives().dirty()
+    );
+    assert_eq!(
+        ingested_evidence.primitives().psf(),
+        empty_evidence.primitives().psf()
+    );
+    assert_eq!(
+        ingested_evidence.primitives().sensitivity(),
+        empty_evidence.primitives().sensitivity()
+    );
+    assert_eq!(
+        ingested_evidence.primitives().sum_weights(),
+        empty_evidence.primitives().sum_weights()
+    );
+    assert_eq!(
+        ingested_evidence.primitives().channel_validity(),
+        empty_evidence.primitives().channel_validity()
+    );
+    assert_eq!(
+        ingested_evidence
+            .primitives()
+            .normal_state_content_identity(),
+        empty_evidence.primitives().normal_state_content_identity()
+    );
+}
+
+#[test]
+fn empty_origin_residual_refresh_uses_the_general_operator() {
+    let problem = t19_compatible_problem(72);
+    let mut initial_lifecycle = bind_lifecycle(&problem, attempt(73));
+    let initial_model = initial_lifecycle.initial_empty().expect("empty model");
+    let initial_preparation =
+        MajorCyclePreparation::prepare(&initial_lifecycle, initial_model, None)
+            .expect("initial preparation");
+    let initial_complete = run_t19_complete_data(&problem, Some(&initial_preparation));
+    let initial_join = MajorCycleOwner::from_complete_data(initial_complete, initial_preparation)
+        .expect("initial major owner")
+        .reconcile(&mut initial_lifecycle)
+        .expect("initial normal state");
+    let initial_content = initial_join.normal_state().content_identity();
+    let (initial_normal, continuation) = initial_join.into_continuation();
+    let (mut continued_lifecycle, carried_model) = ModelLifecycle::continue_from(
+        ExecutableModelProblem::from_compiled(problem.clone()).expect("continued problem"),
+        attempt(74),
+        2,
+        continuation,
+    )
+    .expect("continue empty model");
+    assert_eq!(
+        carried_model.origin(),
+        casa_imaging_reconstruction::ModelGenerationOrigin::Empty
+    );
+    let refresh_preparation =
+        MajorCyclePreparation::prepare(&continued_lifecycle, carried_model, None)
+            .expect("refresh preparation");
+    let refresh_complete = run_t19_complete_data_for_pass(
+        &problem,
+        Some(&refresh_preparation),
+        &fixture_samples(&problem),
+        None,
+        SpectralOperatorPass::ResidualRefresh,
+        Some(initial_normal),
+    );
+    let refreshed = MajorCycleOwner::from_complete_data(refresh_complete, refresh_preparation)
+        .expect("refresh major owner")
+        .reconcile(&mut continued_lifecycle)
+        .expect("refresh normal state");
+    assert_eq!(refreshed.normal_state().content_identity(), initial_content);
 }
 
 #[test]

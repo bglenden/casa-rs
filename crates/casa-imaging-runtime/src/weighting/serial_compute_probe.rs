@@ -416,7 +416,7 @@ struct InitialWeightedSignature {
     maximum_artifact_bytes: u64,
     io_buffer_bytes: u64,
     emitted_blocks: u64,
-    predicted_samples: u64,
+    final_visibility_samples: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -539,7 +539,7 @@ impl InitialWeightedProbe<'_> {
 
         let mut science_consume = Duration::ZERO;
         let mut callback_elapsed = Duration::ZERO;
-        let mut predicted_samples = 0_u64;
+        let mut final_visibility_samples = 0_u64;
         let mut emitted_blocks = 0_u64;
         let stream_started = Instant::now();
         let WeightingBlockKernelCompletion {
@@ -555,7 +555,7 @@ impl InitialWeightedProbe<'_> {
                     science_consume += started.elapsed();
                 }
                 compilation.consume_block(block)?;
-                predicted_samples = predicted_samples
+                final_visibility_samples = final_visibility_samples
                     .checked_add(u64::try_from(predicted.len()).expect("prediction count fits u64"))
                     .expect("prediction count does not overflow");
                 emitted_blocks = emitted_blocks
@@ -631,7 +631,7 @@ impl InitialWeightedProbe<'_> {
             maximum_artifact_bytes: replay_storage.maximum_artifact_bytes,
             io_buffer_bytes: replay_storage.io_buffer_bytes,
             emitted_blocks,
-            predicted_samples,
+            final_visibility_samples,
         };
         Ok(InitialWeightedObservation {
             signature,
@@ -755,9 +755,9 @@ fn medium_vla_64ch_initial_weighted_construction_discriminator() -> Result<(), B
         "fixture cardinality changed"
     );
     assert_eq!(
-        [signature.emitted_blocks, signature.predicted_samples],
-        [EXPECTED_WEIGHTED_BLOCKS, EXPECTED_SELECTED_SAMPLES],
-        "weighted block shape or prediction count changed"
+        [signature.emitted_blocks, signature.final_visibility_samples,],
+        [EXPECTED_WEIGHTED_BLOCKS, 0],
+        "weighted block shape changed or sink-free replay emitted final visibilities"
     );
     assert_eq!(compilation.blocks, EXPECTED_WEIGHTED_BLOCKS);
     assert!(
