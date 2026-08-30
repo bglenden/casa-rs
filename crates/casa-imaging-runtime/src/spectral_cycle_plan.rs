@@ -448,8 +448,7 @@ impl SpectralCyclePlan {
                         &replay,
                         pass,
                         artifact_budget,
-                        GriddedSpillDirection::Write,
-                        None,
+                        GriddedSpillMode::Write,
                     )?;
                 }
                 (physical, source_resources, replay)
@@ -467,11 +466,13 @@ impl SpectralCyclePlan {
                     &policy,
                     pass,
                     phase_input,
-                    gridded_replay,
                     &replay,
-                    gridded_window_plan
-                        .as_ref()
-                        .ok_or(SpectralCyclePlanError::Overflow)?,
+                    GriddedReplayPlanning {
+                        descriptor: gridded_replay,
+                        window: gridded_window_plan
+                            .as_ref()
+                            .ok_or(SpectralCyclePlanError::Overflow)?,
+                    },
                 )?;
                 let physical = append_gridded_spill_resources(
                     registry,
@@ -480,8 +481,11 @@ impl SpectralCyclePlan {
                     &replay,
                     pass,
                     artifact_budget,
-                    GriddedSpillDirection::Read,
-                    gridded_window_plan.as_ref(),
+                    GriddedSpillMode::Read(
+                        gridded_window_plan
+                            .as_ref()
+                            .ok_or(SpectralCyclePlanError::Overflow)?,
+                    ),
                 )?;
                 (physical, source_resources, replay)
             }
@@ -961,15 +965,19 @@ fn base_physical<R: ImplementationRegistry>(
     ))
 }
 
+struct GriddedReplayPlanning<'a> {
+    descriptor: crate::GriddedNormalReplayDescriptor,
+    window: &'a crate::complete_data_operator::GriddedNormalReplayWindowPlan,
+}
+
 fn base_gridded_physical<R: ImplementationRegistry>(
     _problem: &CompiledProblem,
     registry: &R,
     policy: &SpectralCycleExecutionPolicy,
     pass: SpectralPassIdentity,
     phase_input: Option<ArtifactIdentity>,
-    gridded_replay: crate::GriddedNormalReplayDescriptor,
     replay: &WorkNodeId,
-    window_plan: &crate::complete_data_operator::GriddedNormalReplayWindowPlan,
+    gridded: GriddedReplayPlanning<'_>,
 ) -> Result<(PhysicalWorkBinding, SelectedObservationSourceResources), SpectralCyclePlanError> {
     let check = pass_node(CHECK_NODE, pass);
     let model_preparation = pass_node(FINAL_MODEL_PREPARATION_NODE, pass);
@@ -1162,7 +1170,7 @@ fn base_gridded_physical<R: ImplementationRegistry>(
         scaling: ScalingMetadata {
             minimum_workers: policy.workers,
             maximum_workers: policy.workers,
-            maximum_batch_size: u64::try_from(window_plan.maximum_frames())
+            maximum_batch_size: u64::try_from(gridded.window.maximum_frames())
                 .map_err(|_| SpectralCyclePlanError::Overflow)?,
             maximum_tile_width: 1,
             maximum_tile_height: 1,
@@ -1176,7 +1184,7 @@ fn base_gridded_physical<R: ImplementationRegistry>(
     };
     let mut initial_knobs = ExecutionKnobs::serial();
     initial_knobs.workers = policy.workers;
-    initial_knobs.batch_size = u64::try_from(window_plan.maximum_frames())
+    initial_knobs.batch_size = u64::try_from(gridded.window.maximum_frames())
         .map_err(|_| SpectralCyclePlanError::Overflow)?;
     let dag = ExecutionDag::new(ExecutionDagSpecification {
         required_resource_capabilities: BTreeSet::new(),
@@ -1241,7 +1249,7 @@ fn base_gridded_physical<R: ImplementationRegistry>(
         })
         .into_iter()
         .chain([PlannedArtifact::new(
-            gridded_replay.identity(),
+            gridded.descriptor.identity(),
             replay.clone(),
             ArtifactRole::Input,
             None,
@@ -1269,8 +1277,8 @@ fn base_gridded_physical<R: ImplementationRegistry>(
 }
 
 #[derive(Clone, Copy)]
-enum GriddedSpillDirection {
-    Read,
+enum GriddedSpillMode<'a> {
+    Read(&'a crate::complete_data_operator::GriddedNormalReplayWindowPlan),
     Write,
 }
 
@@ -1281,8 +1289,7 @@ fn append_gridded_spill_resources<R: ImplementationRegistry>(
     node: &WorkNodeId,
     pass: SpectralPassIdentity,
     budget: crate::gridded_normal_artifact::GriddedNormalArtifactBudget,
-    direction: GriddedSpillDirection,
-    window_plan: Option<&crate::complete_data_operator::GriddedNormalReplayWindowPlan>,
+    mode: GriddedSpillMode<'_>,
 ) -> Result<PhysicalWorkBinding, SpectralCyclePlanError> {
     let storage = policy
         .gridded_normal_storage
@@ -1291,16 +1298,16 @@ fn append_gridded_spill_resources<R: ImplementationRegistry>(
     let suffix = format!(
         "{}-{}",
         pass.ordinal(),
-        match direction {
-            GriddedSpillDirection::Read => "read",
-            GriddedSpillDirection::Write => "write",
+        match mode {
+            GriddedSpillMode::Read(_) => "read",
+            GriddedSpillMode::Write => "write",
         }
     );
     let rate_id = format!(
         "{}-{suffix}",
-        match direction {
-            GriddedSpillDirection::Read => GRIDDED_SPILL_READ_RATE_DEMAND,
-            GriddedSpillDirection::Write => GRIDDED_SPILL_WRITE_RATE_DEMAND,
+        match mode {
+            GriddedSpillMode::Read(_) => GRIDDED_SPILL_READ_RATE_DEMAND,
+            GriddedSpillMode::Write => GRIDDED_SPILL_WRITE_RATE_DEMAND,
         }
     );
     let storage_id = format!("{GRIDDED_SPILL_STORAGE_DEMAND}-{suffix}");
@@ -1315,19 +1322,17 @@ fn append_gridded_spill_resources<R: ImplementationRegistry>(
         .unwrap_or_else(|| format!("{GRIDDED_SPILL_QUEUE_DEMAND}-{suffix}"));
     let allocation = AllocationId::new(format!("gridded-normal-spill-buffer-{suffix}"));
     let slot = PhysicalSlotId::new(format!("{}-slot", allocation.as_str()));
-    let io_kind = match direction {
-        GriddedSpillDirection::Read => IoBufferKind::SpillRead,
-        GriddedSpillDirection::Write => IoBufferKind::SpillWrite,
+    let io_kind = match mode {
+        GriddedSpillMode::Read(_) => IoBufferKind::SpillRead,
+        GriddedSpillMode::Write => IoBufferKind::SpillWrite,
     };
-    let source_slots = match direction {
-        GriddedSpillDirection::Read => 2,
-        GriddedSpillDirection::Write => 1,
+    let source_slots = match mode {
+        GriddedSpillMode::Read(_) => 2,
+        GriddedSpillMode::Write => 1,
     };
-    let bytes_per_slot = match direction {
-        GriddedSpillDirection::Read => window_plan
-            .ok_or(SpectralCyclePlanError::Overflow)?
-            .source_slot_bytes(),
-        GriddedSpillDirection::Write => budget.io_buffer_bytes(),
+    let bytes_per_slot = match mode {
+        GriddedSpillMode::Read(window) => window.source_slot_bytes(),
+        GriddedSpillMode::Write => budget.io_buffer_bytes(),
     };
     let buffer_bytes = bytes_per_slot
         .checked_mul(source_slots)
@@ -1339,7 +1344,7 @@ fn append_gridded_spill_resources<R: ImplementationRegistry>(
         .values()
         .cloned()
         .collect::<Vec<_>>();
-    if matches!(direction, GriddedSpillDirection::Read) {
+    if matches!(mode, GriddedSpillMode::Read(_)) {
         let owner = nodes
             .iter_mut()
             .find(|candidate| candidate.id == *node)
@@ -1396,7 +1401,7 @@ fn append_gridded_spill_resources<R: ImplementationRegistry>(
         amount: buffer_bytes,
         lifetime: lifetime.clone(),
     });
-    if matches!(direction, GriddedSpillDirection::Write) {
+    if matches!(mode, GriddedSpillMode::Write) {
         owner.claims.push(ResourceClaim {
             resource: LeaseResource::Storage {
                 demand_id: storage_id.clone(),
@@ -1435,7 +1440,7 @@ fn append_gridded_spill_resources<R: ImplementationRegistry>(
     alternative.demand.storage.push(StorageDemand {
         demand_id: storage_id,
         domain: storage.resources().domain().clone(),
-        temporary_bytes: if matches!(direction, GriddedSpillDirection::Write) {
+        temporary_bytes: if matches!(mode, GriddedSpillMode::Write) {
             budget.maximum_artifact_bytes()
         } else {
             0
@@ -1464,9 +1469,9 @@ fn append_gridded_spill_resources<R: ImplementationRegistry>(
     );
     alternative.demand.rates.push(RateDemand {
         demand_id: rate_id,
-        resource: match direction {
-            GriddedSpillDirection::Read => storage.resources().read_rate().clone(),
-            GriddedSpillDirection::Write => storage.resources().write_rate().clone(),
+        resource: match mode {
+            GriddedSpillMode::Read(_) => storage.resources().read_rate().clone(),
+            GriddedSpillMode::Write => storage.resources().write_rate().clone(),
         },
         amount: CountDemand::new(1, 1),
     });
@@ -1482,11 +1487,11 @@ fn append_gridded_spill_resources<R: ImplementationRegistry>(
             slots: CountDemand::new(1, 1),
         });
     }
-    match direction {
-        GriddedSpillDirection::Read => {
+    match mode {
+        GriddedSpillMode::Read(_) => {
             alternative.demand.io_buffers.spill_read_bytes = buffer_bytes;
         }
-        GriddedSpillDirection::Write => {
+        GriddedSpillMode::Write => {
             alternative.demand.io_buffers.spill_write_bytes = buffer_bytes;
         }
     }

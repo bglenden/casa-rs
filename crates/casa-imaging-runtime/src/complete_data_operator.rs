@@ -1058,6 +1058,11 @@ enum CompleteDataExecutionRole {
     GriddedArtifact,
 }
 
+enum CompleteDataExecution<'a> {
+    Selected(SpectralOperatorPass),
+    Gridded(&'a GriddedNormalReplayWindowPlan),
+}
+
 /// Hard physical allocations and FFT preparation bound to one T18 replay.
 #[derive(Debug, Clone)]
 pub struct CompleteDataPlanFragment {
@@ -1096,9 +1101,7 @@ impl CompleteDataPlanFragment {
             replay_node,
             preparation_node,
             specification,
-            pass,
-            CompleteDataExecutionRole::SelectedObservation,
-            None,
+            CompleteDataExecution::Selected(pass),
         )
     }
 
@@ -1128,9 +1131,7 @@ impl CompleteDataPlanFragment {
             replay_node,
             preparation_node,
             specification,
-            pass,
-            CompleteDataExecutionRole::SelectedObservation,
-            None,
+            CompleteDataExecution::Selected(pass),
         )
     }
 
@@ -1149,9 +1150,7 @@ impl CompleteDataPlanFragment {
             replay_node,
             preparation_node,
             specification,
-            pass,
-            CompleteDataExecutionRole::SelectedObservation,
-            None,
+            CompleteDataExecution::Selected(pass),
         )
     }
 
@@ -1169,9 +1168,7 @@ impl CompleteDataPlanFragment {
             replay_node,
             preparation_node,
             specification,
-            SpectralOperatorPass::ResidualRefresh,
-            CompleteDataExecutionRole::GriddedArtifact,
-            Some(window_plan),
+            CompleteDataExecution::Gridded(window_plan),
         )
     }
 
@@ -1181,10 +1178,18 @@ impl CompleteDataPlanFragment {
         replay_node: WorkNodeId,
         preparation_node: WorkNodeId,
         specification: SpectralOperatorSpecification,
-        pass: SpectralOperatorPass,
-        execution_role: CompleteDataExecutionRole,
-        window_plan: Option<&GriddedNormalReplayWindowPlan>,
+        execution: CompleteDataExecution<'_>,
     ) -> Result<Self, CompleteDataPlanError> {
+        let (pass, execution_role, window_plan) = match execution {
+            CompleteDataExecution::Selected(pass) => {
+                (pass, CompleteDataExecutionRole::SelectedObservation, None)
+            }
+            CompleteDataExecution::Gridded(window_plan) => (
+                SpectralOperatorPass::ResidualRefresh,
+                CompleteDataExecutionRole::GriddedArtifact,
+                Some(window_plan),
+            ),
+        };
         let workload = spectral_operator_workload(&specification, max_replay_block_samples, pass)?;
         let gridded_route_residency = match execution_role {
             CompleteDataExecutionRole::SelectedObservation => None,
