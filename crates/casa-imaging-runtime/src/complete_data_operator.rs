@@ -795,23 +795,15 @@ pub(crate) struct GriddedNormalRouteResidency {
 }
 
 impl GriddedNormalRouteResidency {
-    fn new(
-        maximum_window_records: usize,
-        maximum_frame_groups: usize,
-        maximum_frames: usize,
+    fn from_window_plan(
+        window_plan: &GriddedNormalReplayWindowPlan,
     ) -> Result<Self, CompleteDataPlanError> {
-        if maximum_frames == 0 {
-            return Err(CompleteDataPlanError::ResidencyOverflow);
-        }
-        let peak_bytes = usize::try_from(
-            gridded_normal_route_capacity_bytes(maximum_window_records, maximum_frames)
-                .ok_or(CompleteDataPlanError::ResidencyOverflow)?,
-        )
-        .map_err(|_| CompleteDataPlanError::ResidencyOverflow)?;
+        let peak_bytes = usize::try_from(window_plan.route_capacity_bytes())
+            .map_err(|_| CompleteDataPlanError::ResidencyOverflow)?;
         Ok(Self {
-            maximum_window_records,
-            maximum_frame_groups,
-            maximum_frames,
+            maximum_window_records: window_plan.maximum_records(),
+            maximum_frame_groups: window_plan.maximum_records(),
+            maximum_frames: window_plan.maximum_frames(),
             peak_bytes,
         })
     }
@@ -946,11 +938,7 @@ fn project_gridded_normal_route_residency(
     _max_block_samples: usize,
     window_plan: &GriddedNormalReplayWindowPlan,
 ) -> Result<GriddedNormalRouteResidency, CompleteDataPlanError> {
-    GriddedNormalRouteResidency::new(
-        window_plan.maximum_records(),
-        window_plan.maximum_records(),
-        window_plan.maximum_frames(),
-    )
+    GriddedNormalRouteResidency::from_window_plan(window_plan)
 }
 
 pub(crate) fn project_gridded_normal_artifact_budget(
@@ -2482,21 +2470,19 @@ mod tests {
     use super::{
         CompleteDataPlanError, GriddedNormalReplayWindowPlan, GriddedNormalRouteResidency,
     };
-    use casa_imaging_reconstruction::runtime_adapter::gridded_normal_route_capacity_bytes;
-
     #[test]
-    fn gridded_route_residency_is_exact_and_rejects_invalid_bounds() {
-        let route = GriddedNormalRouteResidency::new(7, 3, 5).expect("valid route bounds");
-        assert_eq!(route.maximum_window_records(), 7);
-        assert_eq!(route.maximum_frame_groups(), 3);
-        assert_eq!(route.maximum_frames(), 5);
-        assert_eq!(
-            u64::try_from(route.peak_bytes()).unwrap(),
-            gridded_normal_route_capacity_bytes(7, 5).unwrap()
-        );
+    fn gridded_route_residency_retains_the_exact_observed_window_peak() {
+        let frames = [(3_200, 100), (32, 1), (32, 1), (32, 1), (32, 1)];
+        let plan = GriddedNormalReplayWindowPlan::for_frame_payloads(&frames, Some(9_464))
+            .expect("heterogeneous byte plan");
+        let route = GriddedNormalRouteResidency::from_window_plan(&plan)
+            .expect("route residency from the planned windows");
 
-        assert!(GriddedNormalRouteResidency::new(3, 3, 0).is_err());
-        assert!(GriddedNormalRouteResidency::new(usize::MAX, 1, 1).is_err());
+        assert_eq!(plan.frame_counts(), &[1, 4]);
+        assert_eq!(route.maximum_window_records(), 100);
+        assert_eq!(route.maximum_frame_groups(), 100);
+        assert_eq!(route.maximum_frames(), 4);
+        assert_eq!(route.peak_bytes(), 2_920);
     }
 
     #[test]
