@@ -85,3 +85,47 @@ During the serial run, an attempted new `backend_plan_logs` bucket was rejected
 by the strict receipt schema after science completed. Commit `d68d49af5` keeps
 the exact route summary in the immutable benchmark log while leaving the
 persisted receipt schema unchanged.
+
+## Rejected pool-residency discriminator
+
+The user approved one bounded continuation: keep the existing source slots,
+route, four sector partitions, per-frame barriers, deterministic commit order,
+memory plan, and public runtime API, but enter the runtime-owned Rayon pool once
+around the complete bounded consumer lifecycle. Candidate `85da4b156` made the
+already-cross-thread kernel and completion state explicitly `Send` and added an
+exact pool-entry counter. The candidate was rejected and reverted by
+`42bdaf14c` after the predeclared performance falsifier fired.
+
+The frozen route serial replay of `3.580817` seconds remained the acceptance
+baseline; the four-worker ceiling was `3.401776` seconds. CASA was not rerun.
+
+| Measurement | Pool-resident serial | Pool-resident four workers |
+| --- | ---: | ---: |
+| Full Rust wall | 89.929650 s | 94.990008 s |
+| Gridded replay wall | 3.756633 s | 4.424651 s |
+| Source fill | 1.443440 s | 1.866870 s |
+| Prepare | 1.762016 s | 2.341838 s |
+| Execute | 1.777211 s | 1.816739 s |
+| Commit | 0.003510 s | 0.004813 s |
+| Pool entries | 0 | 1 |
+| Dispatch waves | 127,940 inline | 31,985 parallel |
+
+Both observations retained 31,985 frames, 49,141,788 encoded, routed,
+degridded, and gridded records, zero sector rescans, zero dynamic partial bytes,
+the same work and commit identity digests, two source slots, and the same route
+and source residency. Focused production tests separately proved bit-exact MFS
+products for one, two, and four workers.
+
+One pool entry reduced parallel execute wall by 13.71% from the prior
+2.105506-second observation, but prepare rose 33.79% and source fill rose
+25.64%. Total replay was 23.57% slower than the frozen route serial baseline,
+17.78% slower than the matched candidate serial observation, and 8.82% slower
+than the prior four-worker route observation. The hypothesis is therefore
+falsified. Medium and full gates were not run, and the campaign stops before a
+multi-frame window, extra source slots, or wider executor-lifecycle change.
+
+Serial result:
+`/private/tmp/issue581-pool-resident-ch16-serial/20260830T000633Z-wave3-standard-mfs-single-term-turnaround-4e8b6915.json`
+
+Four-worker result:
+`/private/tmp/issue581-pool-resident-ch16-parallel/20260830T000836Z-wave3-standard-mfs-single-term-turnaround-563580d5.json`
