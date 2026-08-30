@@ -58,7 +58,8 @@ pub struct SpectralCycleExecutionPolicy {
     visibility_write: Option<SelectedVisibilityStoragePlan>,
     gridded_normal_storage: Option<GriddedNormalReplayStorage>,
     workers: u64,
-    gridded_replay_working_set_bytes: Option<u64>,
+    gridded_replay_capacity:
+        Option<crate::complete_data_operator::GriddedNormalReplayPlanningCapacity>,
 }
 
 impl SpectralCycleExecutionPolicy {
@@ -84,7 +85,7 @@ impl SpectralCycleExecutionPolicy {
             visibility_write: None,
             gridded_normal_storage: None,
             workers: 1,
-            gridded_replay_working_set_bytes: None,
+            gridded_replay_capacity: None,
         }
     }
 
@@ -101,20 +102,22 @@ impl SpectralCycleExecutionPolicy {
         if self.workers == 0 {
             return Err(SpectralCyclePlanError::ZeroWorkers);
         }
-        self.gridded_replay_working_set_bytes = match authority.topology().cpu_data_working_set {
-            CpuDataWorkingSetCapacity::Known(bytes) => Some(bytes),
-            CpuDataWorkingSetCapacity::Unknown => None,
+        self.gridded_replay_capacity = match (
+            authority.topology().cpu_data_working_set,
+            authority.topology().performance_cpu_cores,
+        ) {
+            (
+                CpuDataWorkingSetCapacity::Known(cpu_data_working_set_bytes),
+                CpuClassCapacity::Known(performance_cpu_cores),
+            ) if cpu_data_working_set_bytes > 0 && performance_cpu_cores > 0 => Some(
+                crate::complete_data_operator::GriddedNormalReplayPlanningCapacity::Topology {
+                    cpu_data_working_set_bytes,
+                    performance_cpu_cores,
+                },
+            ),
+            _ => None,
         };
         Ok(self)
-    }
-
-    #[cfg(test)]
-    pub(crate) const fn with_gridded_replay_working_set_bytes_for_test(
-        mut self,
-        bytes: u64,
-    ) -> Self {
-        self.gridded_replay_working_set_bytes = Some(bytes);
-        self
     }
 
     /// Bind the runtime-private storage used by planned gridded-normal spill work.
@@ -408,10 +411,18 @@ impl SpectralCyclePlan {
             .map(crate::FrozenGriddedNormalReplay::descriptor);
         let retained_artifact_bytes =
             gridded_replay_descriptor.map(|descriptor| descriptor.bytes());
-        let gridded_window_plan = gridded_replay
-            .as_mut()
-            .map(|replay| replay.plan_windows(policy.gridded_replay_working_set_bytes))
-            .transpose()?;
+        let gridded_window_plan = match gridded_replay.as_mut() {
+            Some(replay) => {
+                let capacity = policy.gridded_replay_capacity.ok_or_else(|| {
+                    SpectralCyclePlanError::Resources(ResourceError::Invalid(
+                        "gridded replay requires known CPU working-set and performance-core topology"
+                            .to_string(),
+                    ))
+                })?;
+                Some(replay.plan_windows(capacity)?)
+            }
+            None => None,
+        };
         let (physical, source_resources, replay) = match pass.phase() {
             SpectralPassPhase::InitialMajor => {
                 let (base, source_resources) =

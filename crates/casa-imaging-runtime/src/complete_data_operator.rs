@@ -52,6 +52,40 @@ use crate::gridded_normal_artifact::{
 
 const GRIDDED_NORMAL_SOURCE_SLOTS: u64 = 2;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum GriddedNormalReplayPlanningCapacity {
+    Topology {
+        cpu_data_working_set_bytes: u64,
+        performance_cpu_cores: u64,
+    },
+}
+
+impl GriddedNormalReplayPlanningCapacity {
+    fn working_set_bytes(
+        self,
+        minimum_working_set_bytes: u64,
+    ) -> Result<u64, CompleteDataPlanError> {
+        match self {
+            Self::Topology {
+                cpu_data_working_set_bytes,
+                performance_cpu_cores,
+            } => {
+                let useful_lanes = performance_cpu_cores.min(
+                    u64::try_from(GRIDDED_NORMAL_SECTOR_COUNT)
+                        .map_err(|_| CompleteDataPlanError::ResidencyOverflow)?,
+                );
+                if useful_lanes == 0 || cpu_data_working_set_bytes == 0 {
+                    return Err(CompleteDataPlanError::PlanMismatch);
+                }
+                let useful_lane_bytes = minimum_working_set_bytes
+                    .checked_mul(useful_lanes)
+                    .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
+                Ok(cpu_data_working_set_bytes.min(useful_lane_bytes))
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct GriddedNormalReplayWindowPlan {
     frame_counts: Box<[usize]>,
@@ -66,7 +100,7 @@ pub(crate) struct GriddedNormalReplayWindowPlan {
 impl GriddedNormalReplayWindowPlan {
     fn for_program(
         program: &GriddedNormalOperatorProgram,
-        preferred_working_set_bytes: Option<u64>,
+        capacity: GriddedNormalReplayPlanningCapacity,
     ) -> Result<Self, CompleteDataPlanError> {
         let record_bytes = u64::try_from(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
             .map_err(|_| CompleteDataPlanError::ResidencyOverflow)?;
@@ -84,12 +118,39 @@ impl GriddedNormalReplayWindowPlan {
                 Ok((payload_bytes, payload_bytes / record_bytes))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        Self::for_frame_payloads(&frames, preferred_working_set_bytes)
+        let minimum_working_set_bytes = Self::minimum_working_set_bytes(&frames)?;
+        Self::for_frame_payloads(
+            &frames,
+            capacity.working_set_bytes(minimum_working_set_bytes)?,
+        )
+    }
+
+    fn minimum_working_set_bytes(frames: &[(u64, u64)]) -> Result<u64, CompleteDataPlanError> {
+        let Some((maximum_payload, maximum_records)) = frames
+            .iter()
+            .copied()
+            .max_by_key(|(payload, records)| (*payload, *records))
+        else {
+            return Err(CompleteDataPlanError::PlanMismatch);
+        };
+        let minimum_source = maximum_payload
+            .checked_add(FRAME_HEADER_BYTES as u64)
+            .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
+        let minimum_route = gridded_normal_route_capacity_bytes(
+            usize::try_from(maximum_records)
+                .map_err(|_| CompleteDataPlanError::ResidencyOverflow)?,
+            1,
+        )
+        .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
+        minimum_source
+            .checked_mul(GRIDDED_NORMAL_SOURCE_SLOTS)
+            .and_then(|bytes| bytes.checked_add(minimum_route))
+            .ok_or(CompleteDataPlanError::ResidencyOverflow)
     }
 
     fn for_frame_payloads(
         frames: &[(u64, u64)],
-        preferred_working_set_bytes: Option<u64>,
+        working_set_bytes: u64,
     ) -> Result<Self, CompleteDataPlanError> {
         let Some((maximum_payload, maximum_records)) = frames
             .iter()
@@ -107,11 +168,7 @@ impl GriddedNormalReplayWindowPlan {
             1,
         )
         .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
-        let minimum_working_set = minimum_source
-            .checked_mul(GRIDDED_NORMAL_SOURCE_SLOTS)
-            .and_then(|bytes| bytes.checked_add(minimum_route))
-            .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
-        let working_set_bytes = preferred_working_set_bytes.unwrap_or(minimum_working_set);
+        let minimum_working_set = Self::minimum_working_set_bytes(frames)?;
         if working_set_bytes < minimum_working_set {
             return Err(CompleteDataPlanError::InsufficientReplayWorkingSet {
                 required: minimum_working_set,
@@ -551,13 +608,12 @@ fn validate_gridded_artifact_context(
 impl FrozenGriddedNormalReplay {
     pub(crate) fn plan_windows(
         &mut self,
-        preferred_working_set_bytes: Option<u64>,
+        capacity: GriddedNormalReplayPlanningCapacity,
     ) -> Result<GriddedNormalReplayWindowPlan, CompleteDataPlanError> {
         if self.window_plan.is_some() {
             return Err(CompleteDataPlanError::PlanMismatch);
         }
-        let plan =
-            GriddedNormalReplayWindowPlan::for_program(&self.program, preferred_working_set_bytes)?;
+        let plan = GriddedNormalReplayWindowPlan::for_program(&self.program, capacity)?;
         self.window_plan = Some(plan.clone());
         Ok(plan)
     }
@@ -2534,12 +2590,13 @@ impl From<SpectralOperatorError> for CompleteDataOperatorError {
 #[cfg(test)]
 mod tests {
     use super::{
-        CompleteDataPlanError, GriddedNormalReplayWindowPlan, GriddedNormalRouteResidency,
+        CompleteDataPlanError, GriddedNormalReplayPlanningCapacity, GriddedNormalReplayWindowPlan,
+        GriddedNormalRouteResidency,
     };
     #[test]
     fn gridded_route_residency_retains_exact_schedule_ordinal_capacities() {
         let frames = [(3_200, 100), (32, 1), (32, 1), (32, 1), (32, 1)];
-        let plan = GriddedNormalReplayWindowPlan::for_frame_payloads(&frames, Some(9_908))
+        let plan = GriddedNormalReplayWindowPlan::for_frame_payloads(&frames, 9_908)
             .expect("heterogeneous byte plan");
         let route = GriddedNormalRouteResidency::from_window_plan(&plan)
             .expect("route residency from the planned windows");
@@ -2557,7 +2614,7 @@ mod tests {
     #[test]
     fn replay_window_plan_packs_heterogeneous_frames_by_exact_bytes() {
         let frames = [(32, 1), (96, 3), (32, 1)];
-        let plan = GriddedNormalReplayWindowPlan::for_frame_payloads(&frames, Some(1_030))
+        let plan = GriddedNormalReplayWindowPlan::for_frame_payloads(&frames, 1_030)
             .expect("heterogeneous byte plan");
 
         assert_eq!(plan.frame_counts(), &[2, 1]);
@@ -2572,7 +2629,7 @@ mod tests {
     #[test]
     fn replay_window_plan_keeps_a_feasible_singleton_tail() {
         let frames = [(32, 1), (32, 1), (32, 1), (32, 1), (3_200, 100)];
-        let plan = GriddedNormalReplayWindowPlan::for_frame_payloads(&frames, Some(9_908))
+        let plan = GriddedNormalReplayWindowPlan::for_frame_payloads(&frames, 9_908)
             .expect("future-safe heterogeneous plan");
 
         assert_eq!(plan.frame_counts(), &[4, 1]);
@@ -2584,7 +2641,7 @@ mod tests {
     #[test]
     fn replay_window_plan_fails_one_byte_below_the_two_slot_minimum() {
         let frames = [(96, 3), (32, 1)];
-        let error = GriddedNormalReplayWindowPlan::for_frame_payloads(&frames, Some(539))
+        let error = GriddedNormalReplayWindowPlan::for_frame_payloads(&frames, 539)
             .expect_err("one byte below the minimum must fail");
 
         assert!(matches!(
@@ -2597,14 +2654,74 @@ mod tests {
     }
 
     #[test]
-    fn replay_window_plan_unknown_capability_uses_the_same_one_frame_path() {
-        let frames = [(32, 1), (32, 1), (32, 1)];
-        let plan = GriddedNormalReplayWindowPlan::for_frame_payloads(&frames, None)
-            .expect("one-frame minimum plan");
+    fn replay_window_budget_uses_exact_data_and_topology_quantum() {
+        let frames = [(65_536, 2_048), (32, 1)];
+        let minimum = GriddedNormalReplayWindowPlan::minimum_working_set_bytes(&frames)
+            .expect("measured-shape singleton minimum");
+        let four_lane = GriddedNormalReplayPlanningCapacity::Topology {
+            cpu_data_working_set_bytes: 4 * 1_024 * 1_024,
+            performance_cpu_cores: 4,
+        };
+        let sector_capped = GriddedNormalReplayPlanningCapacity::Topology {
+            cpu_data_working_set_bytes: 16 * 1_024 * 1_024,
+            performance_cpu_cores: 8,
+        };
 
-        assert_eq!(plan.frame_counts(), &[1, 1, 1]);
-        assert_eq!(plan.route_slot_record_capacities(), &[1]);
-        assert_eq!(plan.maximum_frames(), 1);
-        assert_eq!(plan.working_set_bytes(), 356);
+        assert_eq!(minimum, 188_680);
+        assert_eq!(four_lane.working_set_bytes(minimum).unwrap(), 754_720);
+        assert_eq!(sector_capped.working_set_bytes(minimum).unwrap(), 754_720);
+    }
+
+    #[test]
+    fn replay_window_budget_caps_to_the_machine_working_set() {
+        let capacity = GriddedNormalReplayPlanningCapacity::Topology {
+            cpu_data_working_set_bytes: 500_000,
+            performance_cpu_cores: 4,
+        };
+
+        assert_eq!(capacity.working_set_bytes(188_680).unwrap(), 500_000);
+    }
+
+    #[test]
+    fn replay_window_budget_rejects_unknown_or_overflowed_topology() {
+        let unknown = GriddedNormalReplayPlanningCapacity::Topology {
+            cpu_data_working_set_bytes: 0,
+            performance_cpu_cores: 0,
+        };
+        let overflow = GriddedNormalReplayPlanningCapacity::Topology {
+            cpu_data_working_set_bytes: u64::MAX,
+            performance_cpu_cores: 4,
+        };
+
+        assert!(matches!(
+            unknown.working_set_bytes(188_680),
+            Err(CompleteDataPlanError::PlanMismatch)
+        ));
+        assert!(matches!(
+            overflow.working_set_bytes(u64::MAX),
+            Err(CompleteDataPlanError::ResidencyOverflow)
+        ));
+    }
+
+    #[test]
+    fn replay_window_budget_fails_below_the_singleton_minimum() {
+        let frames = [(65_536, 2_048)];
+        let capacity = GriddedNormalReplayPlanningCapacity::Topology {
+            cpu_data_working_set_bytes: 188_679,
+            performance_cpu_cores: 4,
+        };
+        let error = GriddedNormalReplayWindowPlan::for_frame_payloads(
+            &frames,
+            capacity.working_set_bytes(188_680).unwrap(),
+        )
+        .expect_err("topology below the exact singleton must fail");
+
+        assert!(matches!(
+            error,
+            CompleteDataPlanError::InsufficientReplayWorkingSet {
+                required: 188_680,
+                available: 188_679,
+            }
+        ));
     }
 }
