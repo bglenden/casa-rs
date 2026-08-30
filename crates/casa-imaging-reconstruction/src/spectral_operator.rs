@@ -18,7 +18,7 @@ use smallvec::SmallVec;
 use thiserror::Error;
 
 use crate::{
-    ModelGeneration, ModelGenerationId, ModelSupport, canonical_f64_bits,
+    ModelGeneration, ModelGenerationId, ModelGenerationOrigin, ModelSupport, canonical_f64_bits,
     weighting::{
         CoverageEncoder, FrozenWeightingCoverageProof, WeightingAlgorithmState,
         WeightingGenerationId, WeightingReplayChunk, WeightingReplayCoverageId, WeightingReplayId,
@@ -30,6 +30,8 @@ pub(crate) const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
 const NORMAL_STATE_CONTENT_DOMAIN: &[u8] = b"casa-rs-normal-state-content";
 pub(crate) const SUPPORT: usize = 3;
 const TAP_COUNT: usize = SUPPORT * 2 + 1;
+#[cfg(test)]
+const TAP_VISITS_PER_SAMPLE: u64 = (TAP_COUNT * TAP_COUNT) as u64;
 pub(crate) const OVERSAMPLING: usize = 100;
 // The pinned RustFFT mixed-radix planner stores at most one length-sized table
 // per decomposition level. There are fewer than usize::BITS levels, two
@@ -396,6 +398,58 @@ pub enum SpectralOperatorPass {
     ResidualRefresh,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReconstructionModelBinding {
+    InitialCertifiedZero(ModelGenerationId),
+    Evaluated(ModelGenerationId),
+}
+
+impl ReconstructionModelBinding {
+    const fn generation(self) -> ModelGenerationId {
+        match self {
+            Self::InitialCertifiedZero(generation) | Self::Evaluated(generation) => generation,
+        }
+    }
+
+    const fn is_evaluated(self) -> bool {
+        matches!(self, Self::Evaluated(_))
+    }
+}
+
+const fn reconstruction_model_binding(
+    pass: SpectralOperatorPass,
+    generation: ModelGenerationId,
+    origin: ModelGenerationOrigin,
+) -> ReconstructionModelBinding {
+    match (pass, origin) {
+        (SpectralOperatorPass::InitialMajor, ModelGenerationOrigin::Empty) => {
+            ReconstructionModelBinding::InitialCertifiedZero(generation)
+        }
+        _ => ReconstructionModelBinding::Evaluated(generation),
+    }
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct SpectralOperatorMeasurements {
+    forward_fft_planes: u64,
+    prediction_degrid_tap_visits: u64,
+    dirty_grid_tap_visits: u64,
+    residual_grid_tap_visits: u64,
+    psf_grid_tap_visits: u64,
+    final_visibility_samples: u64,
+    inverse_dirty_fft_planes: u64,
+    inverse_residual_fft_planes: u64,
+    inverse_psf_fft_planes: u64,
+}
+
+#[cfg(test)]
+fn record_measurement(counter: &mut u64, amount: u64) {
+    *counter = counter
+        .checked_add(amount)
+        .expect("spectral operator test measurement overflowed");
+}
+
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SpectralOperatorWorkload {
@@ -631,6 +685,8 @@ pub struct SpectralOperatorPrimitives {
     major_cycle_residual: Option<Box<[Complex64]>>,
     major_cycle_residual_promoted: bool,
     residual_model: Option<ModelGenerationId>,
+    #[cfg(test)]
+    measurements: SpectralOperatorMeasurements,
 }
 
 impl SpectralOperatorPrimitives {
@@ -775,15 +831,12 @@ impl ReusableNormalState {
         let SpectralOperatorPrimitives {
             shape,
             slab,
-            dirty: _,
             invariant_dirty,
             psf,
             sensitivity,
             sum_weights,
             validity,
-            major_cycle_residual: _,
-            major_cycle_residual_promoted: _,
-            residual_model: _,
+            ..
         } = primitives;
         Self {
             problem,
@@ -1033,7 +1086,7 @@ pub struct CompleteDataOwnerState {
     sample_count: u64,
     coverage: CoverageEncoder,
     finite_values: FiniteValuePolicy,
-    residual_model: Option<ModelGenerationId>,
+    model_binding: Option<ReconstructionModelBinding>,
     emit_final_visibilities: bool,
     predicted_selected: Vec<FinalVisibilitySample>,
     operator: SpectralSlabOperator,
@@ -1059,7 +1112,7 @@ impl CompleteDataOwnerState {
             sample_count: 0,
             coverage: CoverageEncoder::new(),
             finite_values: specification.finite_values,
-            residual_model: None,
+            model_binding: None,
             emit_final_visibilities: false,
             predicted_selected: Vec::with_capacity(prepared.workload.max_replay_block_samples),
             operator: SpectralSlabOperator::new(specification, prepared.workload, prepared.fft),
@@ -1084,7 +1137,7 @@ impl CompleteDataOwnerState {
             sample_count: 0,
             coverage: CoverageEncoder::new(),
             finite_values: specification.finite_values,
-            residual_model: None,
+            model_binding: None,
             emit_final_visibilities: false,
             predicted_selected: Vec::with_capacity(prepared.workload.max_replay_block_samples),
             operator: SpectralSlabOperator::new(specification, prepared.workload, prepared.fft),
@@ -1115,15 +1168,13 @@ impl CompleteDataOwnerState {
         generation: &ModelGeneration,
         prior_normal_state: Option<crate::FinalNormalState>,
     ) -> Result<(), SpectralOperatorError> {
-        if self.sample_count != 0 || self.next_block_sequence != 0 || self.residual_model.is_some()
-        {
+        if self.sample_count != 0 || self.next_block_sequence != 0 || self.model_binding.is_some() {
             return Err(SpectralOperatorError::MajorCycleAlreadyBound);
         }
-        self.operator.prepare_residual_model(
+        self.model_binding = Some(self.operator.prepare_bound_residual_model(
             generation,
             prior_normal_state.map(crate::FinalNormalState::into_reusable),
-        )?;
-        self.residual_model = Some(generation.generation_id());
+        )?);
         Ok(())
     }
 
@@ -1132,12 +1183,13 @@ impl CompleteDataOwnerState {
         &mut self,
         generation: &ModelGeneration,
     ) -> Result<(), SpectralOperatorError> {
-        if self.sample_count != 0 || self.next_block_sequence != 0 || self.residual_model.is_some()
-        {
+        if self.sample_count != 0 || self.next_block_sequence != 0 || self.model_binding.is_some() {
             return Err(SpectralOperatorError::MajorCycleAlreadyBound);
         }
         self.operator.prepare_selected_output_model(generation)?;
-        self.residual_model = Some(generation.generation_id());
+        self.model_binding = Some(ReconstructionModelBinding::Evaluated(
+            generation.generation_id(),
+        ));
         Ok(())
     }
 
@@ -1195,12 +1247,15 @@ impl CompleteDataOwnerState {
                 touches_core = stencil
                     .iter()
                     .any(|sample| self.operator.slab.owns(sample.output_channel));
-                if self.residual_model.is_some() && touches_core {
+                let predicts_residual = self
+                    .model_binding
+                    .is_some_and(ReconstructionModelBinding::is_evaluated);
+                if predicts_residual && touches_core {
                     predicted_visibility = self.operator.predict_stencil(&stencil)?;
                 }
                 if grids {
                     for sample in stencil {
-                        if self.residual_model.is_some() {
+                        if predicts_residual {
                             self.operator
                                 .push_with_residual(sample, predicted_visibility)?;
                         } else {
@@ -1209,7 +1264,7 @@ impl CompleteDataOwnerState {
                     }
                 }
             }
-            if (self.residual_model.is_some() || self.emit_final_visibilities)
+            if self.emit_final_visibilities
                 && has_spectral_support
                 && (touches_core || self.operator.slab.total_channels() == 1)
             {
@@ -1224,6 +1279,8 @@ impl CompleteDataOwnerState {
                     predicted,
                     residual: observed - predicted,
                 });
+                #[cfg(test)]
+                record_measurement(&mut self.operator.measurements.final_visibility_samples, 1);
             }
         }
         self.sample_count = self
@@ -1245,7 +1302,7 @@ impl CompleteDataOwnerState {
         &mut self,
         block: &WeightingReplayChunk,
     ) -> Result<&[FinalVisibilitySample], SpectralOperatorError> {
-        if self.residual_model.is_none() {
+        if self.model_binding.is_none() {
             return Err(SpectralOperatorError::MissingMajorCycleResidual);
         }
         if block.sequence() != self.next_block_sequence {
@@ -1286,7 +1343,11 @@ impl CompleteDataOwnerState {
                 touches_core = stencil
                     .iter()
                     .any(|sample| self.operator.slab.owns(sample.output_channel));
-                if touches_core {
+                if touches_core
+                    && self
+                        .model_binding
+                        .is_some_and(ReconstructionModelBinding::is_evaluated)
+                {
                     predicted_visibility = self.operator.predict_stencil(&stencil)?;
                 }
             }
@@ -1299,6 +1360,8 @@ impl CompleteDataOwnerState {
                     predicted,
                     residual: observed - predicted,
                 });
+                #[cfg(test)]
+                record_measurement(&mut self.operator.measurements.final_visibility_samples, 1);
             }
         }
         self.sample_count = self
@@ -1321,7 +1384,7 @@ impl CompleteDataOwnerState {
         model: &[Complex64],
         block: &WeightingReplayChunk,
     ) -> Result<&[Complex64], SpectralOperatorError> {
-        if self.residual_model.is_some() {
+        if self.model_binding.is_some() {
             return Err(SpectralOperatorError::PredictionAfterMajorCycleBinding);
         }
         if block.samples().len() > self.operator.workload.max_replay_block_samples {
@@ -1399,7 +1462,7 @@ impl CompleteDataOwnerState {
             SpectralPrimitiveCatalog::UnnormalizedChannelSlabV1
         };
         Ok(CompleteDataOwnerResult {
-            primitives: self.operator.finish_bound(self.residual_model)?,
+            primitives: self.operator.finish_bound(self.model_binding)?,
             completion: CompleteDataOwnerCompletion {
                 problem: self.problem,
                 geometry: self.geometry,
@@ -1491,6 +1554,8 @@ pub(crate) struct SpectralSlabOperator {
     sum_weights: Vec<f64>,
     sum_weight_compensations: Vec<f64>,
     mapped_samples: Vec<u64>,
+    #[cfg(test)]
+    measurements: SpectralOperatorMeasurements,
 }
 
 impl fmt::Debug for SpectralSlabOperator {
@@ -1561,6 +1626,8 @@ impl SpectralSlabOperator {
             sum_weights: vec![0.0; slab.core_depth()],
             sum_weight_compensations: vec![0.0; slab.core_depth()],
             mapped_samples: vec![0; slab.core_depth()],
+            #[cfg(test)]
+            measurements: SpectralOperatorMeasurements::default(),
         }
     }
 
@@ -1593,6 +1660,11 @@ impl SpectralSlabOperator {
             taps,
             weighted_visibility,
         );
+        #[cfg(test)]
+        record_measurement(
+            &mut self.measurements.dirty_grid_tap_visits,
+            TAP_VISITS_PER_SAMPLE,
+        );
         let psf_weight = sample.imaging_weight * factor * factor;
         self.gridder.grid_compensated(
             &mut self
@@ -1606,6 +1678,11 @@ impl SpectralSlabOperator {
             taps,
             Complex64::new(psf_weight, 0.0),
         );
+        #[cfg(test)]
+        record_measurement(
+            &mut self.measurements.psf_grid_tap_visits,
+            TAP_VISITS_PER_SAMPLE,
+        );
         let corrected = psf_weight - self.sum_weight_compensations[plane];
         let updated = self.sum_weights[plane] + corrected;
         self.sum_weight_compensations[plane] = (updated - self.sum_weights[plane]) - corrected;
@@ -1613,11 +1690,11 @@ impl SpectralSlabOperator {
         Ok(())
     }
 
-    pub(crate) fn prepare_residual_model(
+    fn prepare_bound_residual_model(
         &mut self,
         generation: &ModelGeneration,
         reused_normal_state: Option<ReusableNormalState>,
-    ) -> Result<(), SpectralOperatorError> {
+    ) -> Result<ReconstructionModelBinding, SpectralOperatorError> {
         self.validate_model_generation(generation)?;
         match (self.workload.pass, reused_normal_state.as_ref()) {
             (SpectralOperatorPass::InitialMajor, None) => {}
@@ -1629,6 +1706,14 @@ impl SpectralSlabOperator {
             _ => return Err(SpectralOperatorError::ReusableNormalStateMismatch),
         }
         self.reused_normal_state = reused_normal_state;
+        let binding = reconstruction_model_binding(
+            self.workload.pass,
+            generation.generation_id(),
+            generation.origin(),
+        );
+        if !binding.is_evaluated() {
+            return Ok(binding);
+        }
         self.prepare_forward_generation(generation)?;
         let grid_shape = (self.geometry.grid_shape[0], self.geometry.grid_shape[1]);
         self.residual_grids = Some(
@@ -1641,6 +1726,20 @@ impl SpectralSlabOperator {
                 .map(|_| Array2::zeros(grid_shape))
                 .collect(),
         );
+        Ok(binding)
+    }
+
+    pub(crate) fn prepare_residual_model(
+        &mut self,
+        generation: &ModelGeneration,
+        reused_normal_state: Option<ReusableNormalState>,
+    ) -> Result<(), SpectralOperatorError> {
+        if !self
+            .prepare_bound_residual_model(generation, reused_normal_state)?
+            .is_evaluated()
+        {
+            return Err(SpectralOperatorError::ReusableNormalStateMismatch);
+        }
         Ok(())
     }
 
@@ -1693,6 +1792,8 @@ impl SpectralSlabOperator {
                 }
             }
             self.fft.transform(grid, false);
+            #[cfg(test)]
+            record_measurement(&mut self.measurements.forward_fft_planes, 1);
         }
         if self
             .forward_grids
@@ -1734,6 +1835,11 @@ impl SpectralSlabOperator {
                 taps,
                 weighted_visibility,
             );
+            #[cfg(test)]
+            record_measurement(
+                &mut self.measurements.dirty_grid_tap_visits,
+                TAP_VISITS_PER_SAMPLE,
+            );
         }
         let residual_visibility =
             (sample.visibility - predicted) * sample.phase() * (sample.imaging_weight * factor);
@@ -1749,6 +1855,11 @@ impl SpectralSlabOperator {
             taps,
             residual_visibility,
         );
+        #[cfg(test)]
+        record_measurement(
+            &mut self.measurements.residual_grid_tap_visits,
+            TAP_VISITS_PER_SAMPLE,
+        );
         if let (Some(psf), Some(compensation)) = (&mut self.psf_grids, &mut self.psf_compensations)
         {
             let psf_weight = sample.imaging_weight * factor * factor;
@@ -1757,6 +1868,11 @@ impl SpectralSlabOperator {
                 &mut compensation[plane],
                 taps,
                 Complex64::new(psf_weight, 0.0),
+            );
+            #[cfg(test)]
+            record_measurement(
+                &mut self.measurements.psf_grid_tap_visits,
+                TAP_VISITS_PER_SAMPLE,
             );
             let corrected = psf_weight - self.sum_weight_compensations[plane];
             let updated = self.sum_weights[plane] + corrected;
@@ -1828,6 +1944,8 @@ impl SpectralSlabOperator {
                 }
             }
             self.fft.transform(grid, false);
+            #[cfg(test)]
+            record_measurement(&mut self.measurements.forward_fft_planes, 1);
         }
         if self
             .forward_grids
@@ -1841,7 +1959,7 @@ impl SpectralSlabOperator {
     }
 
     fn predict_one(
-        &self,
+        &mut self,
         sample: SpectralOperatorSample,
     ) -> Result<Complex64, SpectralOperatorError> {
         let resident = self
@@ -1855,7 +1973,7 @@ impl SpectralSlabOperator {
     }
 
     fn predict_one_with_taps(
-        &self,
+        &mut self,
         resident: usize,
         sample: SpectralOperatorSample,
         taps: SampleTaps,
@@ -1863,6 +1981,11 @@ impl SpectralSlabOperator {
         let predicted = self.gridder.degrid(&self.forward_grids[resident], taps)
             * sample.phase().conj()
             * sample.spectral_factor;
+        #[cfg(test)]
+        record_measurement(
+            &mut self.measurements.prediction_degrid_tap_visits,
+            TAP_VISITS_PER_SAMPLE,
+        );
         if predicted.re.is_finite() && predicted.im.is_finite() {
             Ok(predicted)
         } else {
@@ -1871,7 +1994,7 @@ impl SpectralSlabOperator {
     }
 
     fn predict_stencil(
-        &self,
+        &mut self,
         samples: &[SpectralOperatorSample],
     ) -> Result<Complex64, SpectralOperatorError> {
         samples
@@ -2015,6 +2138,8 @@ impl SpectralSlabOperator {
             major_cycle_residual: None,
             major_cycle_residual_promoted: true,
             residual_model: Some(residual_model),
+            #[cfg(test)]
+            measurements: self.measurements,
         })
     }
 
@@ -2026,17 +2151,35 @@ impl SpectralSlabOperator {
 
     fn finish_bound(
         mut self,
-        residual_model: Option<ModelGenerationId>,
+        model_binding: Option<ReconstructionModelBinding>,
     ) -> Result<SpectralOperatorPrimitives, SpectralOperatorError> {
+        let residual_model = model_binding.map(ReconstructionModelBinding::generation);
+        let initial_empty = model_binding.is_some_and(|binding| {
+            matches!(binding, ReconstructionModelBinding::InitialCertifiedZero(_))
+        });
+        if initial_empty
+            && (self.workload.pass != SpectralOperatorPass::InitialMajor
+                || self.reused_normal_state.is_some()
+                || self.residual_grids.is_some()
+                || self.residual_compensations.is_some())
+        {
+            return Err(SpectralOperatorError::ReusableNormalStateMismatch);
+        }
         for plane in 0..self.slab.core_depth() {
             if let Some(dirty) = self.dirty_grids.as_mut() {
                 self.fft.transform(&mut dirty[plane], true);
+                #[cfg(test)]
+                record_measurement(&mut self.measurements.inverse_dirty_fft_planes, 1);
             }
             if let Some(psf) = self.psf_grids.as_mut() {
                 self.fft.transform(&mut psf[plane], true);
+                #[cfg(test)]
+                record_measurement(&mut self.measurements.inverse_psf_fft_planes, 1);
             }
             if let Some(residual) = self.residual_grids.as_mut() {
                 self.fft.transform(&mut residual[plane], true);
+                #[cfg(test)]
+                record_measurement(&mut self.measurements.inverse_residual_fft_planes, 1);
             }
         }
         let cells = self.geometry.image_shape[0] * self.geometry.image_shape[1];
@@ -2095,6 +2238,8 @@ impl SpectralSlabOperator {
                 major_cycle_residual: None,
                 major_cycle_residual_promoted: true,
                 residual_model,
+                #[cfg(test)]
+                measurements: self.measurements,
             });
         }
         let dirty_grids = self
@@ -2175,8 +2320,10 @@ impl SpectralSlabOperator {
             sum_weights: self.sum_weights.into_boxed_slice(),
             validity: validity.into_boxed_slice(),
             major_cycle_residual: residual.map(Vec::into_boxed_slice),
-            major_cycle_residual_promoted: false,
+            major_cycle_residual_promoted: initial_empty,
             residual_model,
+            #[cfg(test)]
+            measurements: self.measurements,
         })
     }
 }
@@ -2603,7 +2750,7 @@ mod tests {
     use std::io::{BufReader, Read};
     use std::time::Instant;
 
-    use casa_imaging_model::{FiniteValuePolicy, SpectralKernel};
+    use casa_imaging_model::{FiniteValuePolicy, LogicalIdentity, SpectralKernel};
     #[cfg(feature = "cpp-interop-tests")]
     use casa_test_support::gridder_interop::GridderOracle;
     use ndarray::Array2;
@@ -2613,12 +2760,14 @@ mod tests {
     #[cfg(feature = "cpp-interop-tests")]
     use super::{OVERSAMPLING, SPEED_OF_LIGHT_M_PER_S};
     use super::{
-        PreparedFft, SUPPORT, SampleTaps, SpectralChannelValidity, SpectralOperatorError,
-        SpectralOperatorGeometry, SpectralOperatorPass, SpectralOperatorPrimitives,
-        SpectralOperatorSample, SpectralOperatorWorkload, SpectralSlabOperator, SpectralSlabPlan,
-        StandardConvolution, TapSpan, apply_finite_value_policy, apply_input_policy,
-        casa_persistent_complex, checked_cells,
+        PreparedFft, ReconstructionModelBinding, SUPPORT, SampleTaps, SpectralChannelValidity,
+        SpectralOperatorError, SpectralOperatorGeometry, SpectralOperatorPass,
+        SpectralOperatorPrimitives, SpectralOperatorSample, SpectralOperatorWorkload,
+        SpectralSlabOperator, SpectralSlabPlan, StandardConvolution, TapSpan,
+        apply_finite_value_policy, apply_input_policy, casa_persistent_complex, checked_cells,
+        reconstruction_model_binding,
     };
+    use crate::{ModelDeltaId, ModelGenerationId, ModelGenerationOrigin};
 
     fn geometry() -> SpectralOperatorGeometry {
         SpectralOperatorGeometry {
@@ -3583,6 +3732,127 @@ mod tests {
             Some(primitives.dirty()),
             "an empty model must reproduce the data-side adjoint bit exactly"
         );
+    }
+
+    #[test]
+    fn empty_initial_binding_matches_the_explicit_zero_operator_with_less_work() {
+        let values = samples(&[[1.0, 0.0], [2.0, -1.0], [0.5, 0.25]]);
+        let zero_model = vec![Complex64::default(); checked_cells(geometry().image_shape).unwrap()];
+        let model = ModelGenerationId(LogicalIdentity::from_sha256([0; 32]));
+
+        let mut explicit = operator();
+        let predicted = explicit
+            .predict(&zero_model, &values)
+            .expect("explicit zero forward prediction");
+        let shape = (geometry().grid_shape[0], geometry().grid_shape[1]);
+        explicit.residual_grids = Some(vec![Array2::zeros(shape)]);
+        explicit.residual_compensations = Some(vec![Array2::zeros(shape)]);
+        for (sample, prediction) in values.iter().copied().zip(predicted) {
+            explicit
+                .push_with_residual(sample, prediction)
+                .expect("explicit zero residual");
+        }
+        let explicit = explicit
+            .finish_bound(Some(ReconstructionModelBinding::Evaluated(model)))
+            .expect("explicit primitives");
+
+        let mut optimized = operator();
+        for sample in values {
+            optimized.push(sample).expect("initial data and PSF");
+        }
+        let optimized = optimized
+            .finish_bound(Some(ReconstructionModelBinding::InitialCertifiedZero(
+                model,
+            )))
+            .expect("optimized primitives");
+
+        assert_eq!(
+            optimized.measurements,
+            super::SpectralOperatorMeasurements {
+                dirty_grid_tap_visits: 3 * 49,
+                psf_grid_tap_visits: 3 * 49,
+                inverse_dirty_fft_planes: 1,
+                inverse_psf_fft_planes: 1,
+                ..super::SpectralOperatorMeasurements::default()
+            },
+            "empty initial binding must perform only one dirty and one PSF adjoint"
+        );
+        assert_eq!(
+            explicit.measurements,
+            super::SpectralOperatorMeasurements {
+                forward_fft_planes: 1,
+                prediction_degrid_tap_visits: 3 * 49,
+                dirty_grid_tap_visits: 3 * 49,
+                residual_grid_tap_visits: 3 * 49,
+                psf_grid_tap_visits: 3 * 49,
+                inverse_dirty_fft_planes: 1,
+                inverse_residual_fft_planes: 1,
+                inverse_psf_fft_planes: 1,
+                ..super::SpectralOperatorMeasurements::default()
+            },
+            "explicit zero evaluation is the independent work-count reference"
+        );
+        assert!(optimized.major_cycle_residual_promoted);
+        assert!(optimized.major_cycle_residual.is_none());
+        assert_eq!(optimized.residual_model, Some(model));
+        assert_eq!(explicit.residual_model, Some(model));
+
+        let explicit = explicit
+            .promote_major_cycle_residual(model)
+            .expect("promote explicit zero residual");
+        let optimized = optimized
+            .promote_major_cycle_residual(model)
+            .expect("empty residual is already the dirty plane");
+        assert_eq!(optimized.dirty(), explicit.dirty());
+        assert_eq!(optimized.psf(), explicit.psf());
+        assert_eq!(optimized.sensitivity(), explicit.sensitivity());
+        assert_eq!(optimized.sum_weights(), explicit.sum_weights());
+        assert_eq!(optimized.channel_validity(), explicit.channel_validity());
+        assert_eq!(
+            optimized.normal_state_content_identity(),
+            explicit.normal_state_content_identity()
+        );
+    }
+
+    #[test]
+    fn only_empty_origin_on_the_initial_pass_is_certified_zero() {
+        let generation = ModelGenerationId(LogicalIdentity::from_sha256([1; 32]));
+        let source = LogicalIdentity::from_sha256([2; 32]);
+        let delta = ModelDeltaId(LogicalIdentity::from_sha256([3; 32]));
+
+        assert_eq!(
+            reconstruction_model_binding(
+                SpectralOperatorPass::InitialMajor,
+                generation,
+                ModelGenerationOrigin::Empty,
+            ),
+            ReconstructionModelBinding::InitialCertifiedZero(generation)
+        );
+        for (pass, origin) in [
+            (
+                SpectralOperatorPass::InitialMajor,
+                ModelGenerationOrigin::Ingested {
+                    source,
+                    reprojection: None,
+                },
+            ),
+            (
+                SpectralOperatorPass::InitialMajor,
+                ModelGenerationOrigin::Delta {
+                    base: generation,
+                    delta,
+                },
+            ),
+            (
+                SpectralOperatorPass::ResidualRefresh,
+                ModelGenerationOrigin::Empty,
+            ),
+        ] {
+            assert_eq!(
+                reconstruction_model_binding(pass, generation, origin),
+                ReconstructionModelBinding::Evaluated(generation)
+            );
+        }
     }
 
     #[test]

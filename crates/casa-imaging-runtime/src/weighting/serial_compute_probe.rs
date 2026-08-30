@@ -37,7 +37,8 @@ use casa_imaging_reconstruction::{
     ModelLifecycle, SpectralOperatorSpecification, WeightingExecutionLimits,
     begin_weighting_generation, plan_weighting,
     runtime_adapter::{
-        SpectralOperatorPass, prepare_spectral_operator, spectral_operator_workload,
+        GRIDDED_NORMAL_OPERATOR_RECORD_BYTES, SpectralOperatorPass, prepare_spectral_operator,
+        spectral_operator_workload,
     },
 };
 use casa_ms::{
@@ -49,8 +50,17 @@ use casa_ms::{
 use casa_types::measures::{epoch::EpochRef, frequency::FrequencyRef};
 use serde_json::json;
 use sha2::{Digest, Sha256};
+use tempfile::TempDir;
 
 use super::*;
+use crate::{
+    GriddedNormalReplayStorage, ProductionStorageProfile, ResourceAuthority,
+    complete_data_operator::{
+        GriddedNormalCompilationMeasurements, GriddedNormalReplayCompilation,
+        project_gridded_normal_artifact_budget,
+    },
+    gridded_normal_artifact::{GriddedNormalArtifactMeasurements, GriddedNormalArtifactSeal},
+};
 
 const DATA_ROOT_ENV: &str = "CASA_RS_IMPERF_DATA_ROOT";
 const REPLAY_ARTIFACT_ENV: &str = "CASA_RS_IMPERF_REPLAY_ARTIFACT";
@@ -72,6 +82,25 @@ const EXPECTED_WEIGHTED_BLOCKS: u64 = 8_227;
 const WEIGHTED_BLOCK_SAMPLES: usize = 4_096;
 const EXPECTED_NORMAL_STATE_IDENTITY: &str =
     "e6368112404a3ce2b3b3b9e988bde85dadd5726e09de8d87ca4499dc27a71b91";
+const EXPECTED_INITIAL_WEIGHTED_NORMAL_STATE_IDENTITY: &str =
+    "29697a529f90bfa832a45461469fd7a20ddbb0688ec4f4cb52ec5ce816807f8a";
+const EXPECTED_INITIAL_WEIGHTED_ARTIFACT_IDENTITY: &str =
+    "e622ef9bd43c09136f8bd58953beaec608326232001a29c111bc405f71647404";
+const EXPECTED_INITIAL_WEIGHTED_ARTIFACT_SHA256: &str =
+    "8ba96df08553820c4441f3a87fd84d90f324b21d14c8d8c7985e6164934ce154";
+const EXPECTED_INITIAL_WEIGHTING_GENERATION: &str =
+    "7c777736897881dc952ad18ec490d23f70351f8b78419ba0e960cb59c22e8808";
+const EXPECTED_INITIAL_WEIGHTING_REPLAY: &str =
+    "3fa31ee1ebe5c4fbf9c8a42a445dd14901efb8ff1cb9280e600f7c5e9085e1e4";
+const EXPECTED_INITIAL_WEIGHTING_COVERAGE: &str =
+    "68125bafbe2e1a53cd3dfac4b5198997687f61fefefc1264604d26546537bacb";
+const EXPECTED_INITIAL_WEIGHTING_RESIDENCY_BYTES: usize = 60_031_360;
+const EXPECTED_INITIAL_ARTIFACT_MAXIMUM_BYTES: u64 = 1_078_864_440;
+const EXPECTED_INITIAL_ARTIFACT_IO_BUFFER_BYTES: u64 = 131_144;
+const EXPECTED_INITIAL_COVERAGE_PROOF_BYTES: u64 = 2_864_160_146;
+const EXPECTED_INITIAL_COVERAGE_PROOF_HASH_CALLS: u64 = 33_696_007;
+const BASELINE_REPEATABILITY_LIMIT: f64 = 0.03;
+const OBSERVER_OVERHEAD_LIMIT: f64 = 0.02;
 const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
 const NORMAL_REPLAY_SUPPORT: isize = 3;
 const NORMAL_REPLAY_OVERSAMPLING: isize = 100;
@@ -348,11 +377,719 @@ struct CapturedBlocks<'a> {
     elapsed: Duration,
 }
 
+struct StageLocalReplayStorage {
+    _root: TempDir,
+    storage: GriddedNormalReplayStorage,
+    resource_signature: [String; 4],
+    maximum_artifact_bytes: u64,
+    io_buffer_bytes: u64,
+}
+
+struct InitialWeightedProbe<'a> {
+    problem: &'a CompiledProblem,
+    request: &'a SelectedObservationResolutionRequest,
+    plan: &'a casa_imaging_reconstruction::WeightingPlan,
+    blocks: &'a [SelectedObservationBlock],
+    selected_generation: SelectedObservationGenerationId,
+    selected_replay_proof: &'a SelectedObservationReplayProof,
+    replay_storage: &'a StageLocalReplayStorage,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct InitialWeightedSignature {
+    weighting_generation: String,
+    weighting_replay: String,
+    weighting_coverage: String,
+    weighting_residency_bytes: usize,
+    selected_generation_proof_bytes: u64,
+    selected_generation_proof_hash_calls: u64,
+    weighting_coverage_proof_bytes: u64,
+    weighting_coverage_proof_hash_calls: u64,
+    operator_coverage_proof_bytes: u64,
+    operator_coverage_proof_hash_calls: u64,
+    normal_state_identity: String,
+    artifact_identity: String,
+    artifact_seal: GriddedNormalArtifactSeal,
+    compilation: GriddedNormalCompilationMeasurements,
+    write: GriddedNormalArtifactMeasurements,
+    resource_signature: [String; 4],
+    maximum_artifact_bytes: u64,
+    io_buffer_bytes: u64,
+    emitted_blocks: u64,
+    final_visibility_samples: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct InitialWeightedTimings {
+    stream: Duration,
+    weighting_and_contributions: Duration,
+    science_consume: Duration,
+    record_key_construction: Duration,
+    grouping_reduction: Duration,
+    encoding_checksum: Duration,
+    payload_movement: Duration,
+    artifact_writes: Duration,
+    completion: Duration,
+    stream_orchestration: Duration,
+    finish_seal: Duration,
+    science_finish: Duration,
+}
+
+impl InitialWeightedTimings {
+    fn total(self) -> Duration {
+        self.stream.saturating_add(self.finish_seal)
+    }
+}
+
+struct InitialWeightedObservation {
+    signature: InitialWeightedSignature,
+    timings: InitialWeightedTimings,
+}
+
+impl StageLocalReplayStorage {
+    fn new(problem: &CompiledProblem, max_block_samples: usize) -> Result<Self, Box<dyn Error>> {
+        let budget = project_gridded_normal_artifact_budget(problem, max_block_samples)?;
+        let root = tempfile::tempdir()?;
+        let profile = ProductionStorageProfile::new(
+            root.path(),
+            budget.maximum_artifact_bytes(),
+            budget.maximum_artifact_bytes(),
+            1 << 30,
+            1 << 30,
+            1,
+            1,
+        )?;
+        let authority = ResourceAuthority::detected_with_storage_profile(&profile)?;
+        let resources = profile.io_resources();
+        let resource_signature = [
+            resources.domain().as_str().to_string(),
+            resources.read_rate().as_str().to_string(),
+            resources.write_rate().as_str().to_string(),
+            resources.queue().as_str().to_string(),
+        ];
+        let storage = GriddedNormalReplayStorage::bind(&authority, resources, root.path())?;
+        Ok(Self {
+            _root: root,
+            storage,
+            resource_signature,
+            maximum_artifact_bytes: budget.maximum_artifact_bytes(),
+            io_buffer_bytes: budget.io_buffer_bytes(),
+        })
+    }
+}
+
+fn rebuild_density_for_stage_local_probe(
+    problem: &CompiledProblem,
+    plan: &casa_imaging_reconstruction::WeightingPlan,
+    blocks: &[SelectedObservationBlock],
+    request: &SelectedObservationResolutionRequest,
+    proof: &SelectedObservationReplayProof,
+) -> Result<casa_imaging_reconstruction::WeightingDensityPhase, Box<dyn Error>> {
+    let consumer = fresh_rebound_consumer(request, problem, proof)?;
+    let mut kernel = DensityBlockKernel {
+        problem,
+        consumer,
+        density: begin_weighting_generation(problem, plan)?,
+        spectral_contributions: SpectralContributionCache::new(),
+    };
+    for block in blocks {
+        kernel.consume_selected_block(block)?;
+    }
+    Ok(kernel.complete()?.density)
+}
+
+impl InitialWeightedProbe<'_> {
+    fn observe(&self, observe_timings: bool) -> Result<InitialWeightedObservation, Box<dyn Error>> {
+        let problem = self.problem;
+        let request = self.request;
+        let plan = self.plan;
+        let blocks = self.blocks;
+        let selected_generation = self.selected_generation;
+        let selected_replay_proof = self.selected_replay_proof;
+        let replay_storage = self.replay_storage;
+        let density = rebuild_density_for_stage_local_probe(
+            problem,
+            plan,
+            blocks,
+            request,
+            selected_replay_proof,
+        )?;
+        let initial_weights = density.finish_into_stream(problem, plan)?;
+        let lifecycle = ModelLifecycle::bind(
+            ExecutableModelProblem::from_compiled(problem.clone())?,
+            attempt(3),
+            3,
+        )?;
+        let initial_model = lifecycle.initial_empty()?;
+        let initial_preparation = MajorCyclePreparation::prepare(&lifecycle, initial_model, None)?;
+        let specification = SpectralOperatorSpecification::new(problem)?;
+        let workload = spectral_operator_workload(
+            &specification,
+            plan.limits().max_block_samples(),
+            SpectralOperatorPass::InitialMajor,
+        )?;
+        let mut operator =
+            prepare_spectral_operator(specification, workload)?.begin_streaming(problem)?;
+        operator.bind_major_cycle_model(initial_preparation.final_model(), None)?;
+        let consumer = fresh_rebound_consumer(request, problem, selected_replay_proof)?;
+        let mut compilation = GriddedNormalReplayCompilation::new_stage_local_probe(
+            problem,
+            &replay_storage.storage,
+            plan.limits().max_block_samples(),
+            observe_timings,
+        )?;
+
+        let mut science_consume = Duration::ZERO;
+        let mut callback_elapsed = Duration::ZERO;
+        let mut final_visibility_samples = 0_u64;
+        let mut emitted_blocks = 0_u64;
+        let stream_started = Instant::now();
+        let WeightingBlockKernelCompletion {
+            consumer: replay_consumer,
+            weights: (_weighting, replay_summary),
+            ..
+        } = {
+            let mut emit = |block: &ReconstructionWeightedBlock| {
+                let callback_started = observe_timings.then(Instant::now);
+                let science_started = observe_timings.then(Instant::now);
+                let predicted = operator.consume_block(block)?;
+                if let Some(started) = science_started {
+                    science_consume += started.elapsed();
+                }
+                compilation.consume_block(block)?;
+                final_visibility_samples = final_visibility_samples
+                    .checked_add(u64::try_from(predicted.len()).expect("prediction count fits u64"))
+                    .expect("prediction count does not overflow");
+                emitted_blocks = emitted_blocks
+                    .checked_add(1)
+                    .expect("block count does not overflow");
+                if let Some(started) = callback_started {
+                    callback_elapsed += started.elapsed();
+                }
+                Ok::<(), ReplayProbeError>(())
+            };
+            replay_weighting_kernel(
+                WeightingBlockKernel {
+                    problem,
+                    consumer,
+                    weights: initial_weights,
+                    continuum: None,
+                    spectral_support_sample_count: 0,
+                    spectral_contributions: SpectralContributionCache::new(),
+                    emit: &mut emit,
+                },
+                blocks,
+            )?
+        };
+        let stream = stream_started.elapsed();
+
+        let finish_started = Instant::now();
+        let science_finish_started = observe_timings.then(Instant::now);
+        let result = operator.complete(&replay_summary, selected_generation, None)?;
+        let science_finish =
+            science_finish_started.map_or(Duration::ZERO, |started| started.elapsed());
+        let callback_compilation_timings = compilation.stage_timings().unwrap_or_default();
+        compilation.seal()?;
+        let compilation_timings = compilation.stage_timings().unwrap_or_default();
+        let compilation_measurements = compilation.compilation_measurements();
+        let write_measurements = compilation.write_measurements();
+        let compiler_finish_started = observe_timings.then(Instant::now);
+        let frozen =
+            compilation.complete_stage_local_probe(&replay_summary, selected_generation)?;
+        let compiler_finish =
+            compiler_finish_started.map_or(Duration::ZERO, |started| started.elapsed());
+        let finish_seal = finish_started.elapsed();
+
+        let measured_callback = science_consume
+            .saturating_add(callback_compilation_timings.record_key_construction)
+            .saturating_add(callback_compilation_timings.grouping_reduction)
+            .saturating_add(callback_compilation_timings.encoding_checksum)
+            .saturating_add(callback_compilation_timings.payload_movement)
+            .saturating_add(callback_compilation_timings.artifact_writes)
+            .saturating_add(callback_compilation_timings.completion);
+        let weighting_and_contributions = if observe_timings {
+            stream.saturating_sub(callback_elapsed)
+        } else {
+            Duration::ZERO
+        };
+        let stream_orchestration = callback_elapsed.saturating_sub(measured_callback);
+        let descriptor = frozen.descriptor();
+        let artifact_seal = frozen.stage_local_artifact_seal();
+        let signature = InitialWeightedSignature {
+            weighting_generation: replay_summary.weighting_generation().to_string(),
+            weighting_replay: replay_summary.replay_id().to_string(),
+            weighting_coverage: replay_summary.coverage().to_string(),
+            weighting_residency_bytes: replay_summary.residency().peak_bytes(),
+            selected_generation_proof_bytes: replay_consumer.generation_proof_bytes(),
+            selected_generation_proof_hash_calls: replay_consumer.generation_proof_hash_calls(),
+            weighting_coverage_proof_bytes: replay_summary.coverage_proof_bytes(),
+            weighting_coverage_proof_hash_calls: replay_summary.coverage_proof_hash_calls(),
+            operator_coverage_proof_bytes: result.completion().coverage_proof_bytes(),
+            operator_coverage_proof_hash_calls: result.completion().coverage_proof_hash_calls(),
+            normal_state_identity: result
+                .primitives()
+                .normal_state_content_identity()
+                .to_string(),
+            artifact_identity: descriptor.identity().to_string(),
+            artifact_seal,
+            compilation: compilation_measurements,
+            write: write_measurements,
+            resource_signature: replay_storage.resource_signature.clone(),
+            maximum_artifact_bytes: replay_storage.maximum_artifact_bytes,
+            io_buffer_bytes: replay_storage.io_buffer_bytes,
+            emitted_blocks,
+            final_visibility_samples,
+        };
+        Ok(InitialWeightedObservation {
+            signature,
+            timings: InitialWeightedTimings {
+                stream,
+                weighting_and_contributions,
+                science_consume,
+                record_key_construction: compilation_timings.record_key_construction,
+                grouping_reduction: compilation_timings.grouping_reduction,
+                encoding_checksum: compilation_timings.encoding_checksum,
+                payload_movement: compilation_timings.payload_movement,
+                artifact_writes: compilation_timings.artifact_writes,
+                completion: compilation_timings
+                    .completion
+                    .saturating_add(compiler_finish),
+                stream_orchestration,
+                finish_seal,
+                science_finish,
+            },
+        })
+    }
+}
+
 #[test]
 #[ignore = "requires the mounted VLA medium performance dataset"]
 fn medium_vla_64ch_owner_validated_open() -> Result<(), Box<dyn Error>> {
     let probe = build_problem(&dataset_path()?)?;
     assert_eq!(probe.selected_rows, EXPECTED_SELECTED_ROWS);
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires the mounted VLA medium performance dataset"]
+fn medium_vla_64ch_initial_weighted_construction_discriminator() -> Result<(), Box<dyn Error>> {
+    let ProbeProblem {
+        problem,
+        request,
+        selected,
+        selected_rows,
+    } = build_problem(&dataset_path()?)?;
+    let selected_samples = selected_rows
+        .checked_mul(64 * 2)
+        .ok_or("selected sample count overflowed")?;
+    let plan = plan_weighting(
+        &problem,
+        WeightingExecutionLimits::new(WEIGHTED_BLOCK_SAMPLES, 1)?,
+    )?;
+    let CapturedBlocks {
+        blocks,
+        consumer,
+        terminal,
+        logical_bytes,
+        read_operations,
+        current_bytes,
+        capacity_bytes,
+        elapsed: capture_elapsed,
+    } = capture_blocks(selected, &problem)?;
+    assert_eq!(
+        blocks.len(),
+        EXPECTED_CAPTURED_BLOCKS,
+        "bounded source block shape changed"
+    );
+    assert!(
+        blocks.len() <= CAPTURED_BLOCK_LIMIT
+            && usize::try_from(capacity_bytes)? <= CAPTURED_RESIDENCY_BYTES,
+        "captured source residency exceeded its fixed bound"
+    );
+    assert_eq!(
+        [
+            logical_bytes,
+            read_operations,
+            current_bytes,
+            capacity_bytes,
+        ],
+        [
+            EXPECTED_CAPTURED_LOGICAL_BYTES,
+            EXPECTED_CAPTURED_READ_OPERATIONS,
+            EXPECTED_CAPTURED_CURRENT_BYTES,
+            EXPECTED_CAPTURED_CAPACITY_BYTES,
+        ],
+        "captured source I/O or residency invariants changed"
+    );
+
+    // This owner-validated traversal only mints the replay capability used by
+    // all three measurements. Density reconstruction and artifact admission
+    // are intentionally outside the timed stage-local discriminator.
+    let (selected_generation, selected_replay_proof, _density) = freeze_density(
+        &problem,
+        &plan,
+        &blocks,
+        consumer,
+        terminal,
+        [current_bytes, capacity_bytes],
+        selected_samples,
+    )?;
+    let replay_storage = StageLocalReplayStorage::new(&problem, plan.limits().max_block_samples())?;
+    let probe = InitialWeightedProbe {
+        problem: &problem,
+        request: &request,
+        plan: &plan,
+        blocks: &blocks,
+        selected_generation,
+        selected_replay_proof: &selected_replay_proof,
+        replay_storage: &replay_storage,
+    };
+    let baseline_before = probe.observe(false)?;
+    let observed = probe.observe(true)?;
+    let baseline_after = probe.observe(false)?;
+
+    assert_eq!(
+        baseline_before.signature, observed.signature,
+        "enabling observation changed scientific, allocation, or resource identity"
+    );
+    assert_eq!(
+        baseline_before.signature, baseline_after.signature,
+        "the repeated baseline changed scientific, allocation, or resource identity"
+    );
+    let signature = &observed.signature;
+    let compilation = signature.compilation;
+    let source_cardinality = compilation
+        .source_cardinality
+        .expect("stage-local probe enables source-cardinality observation");
+    let reduced_group_count = compilation.reduced_group_count();
+    let reduced_record_count = compilation.reduced_record_count();
+    let write = signature.write;
+    let seal = signature.artifact_seal;
+    assert_eq!(
+        [selected_rows, selected_samples],
+        [EXPECTED_SELECTED_ROWS, EXPECTED_SELECTED_SAMPLES],
+        "fixture cardinality changed"
+    );
+    assert_eq!(
+        [signature.emitted_blocks, signature.final_visibility_samples,],
+        [EXPECTED_WEIGHTED_BLOCKS, 0],
+        "weighted block shape changed or sink-free replay emitted final visibilities"
+    );
+    assert_eq!(compilation.blocks, EXPECTED_WEIGHTED_BLOCKS);
+    assert!(
+        source_cardinality.groups >= reduced_group_count
+            && source_cardinality.records >= reduced_record_count,
+        "block-local reduction increased group or record cardinality"
+    );
+    assert_eq!(
+        reduced_group_count, compilation.reduction_map_entry_insertions,
+        "one map insertion must mint each reduced group"
+    );
+    assert_eq!(
+        reduced_record_count,
+        write.record_count(),
+        "compiled and written record counts differ"
+    );
+    assert_eq!(
+        compilation.encoded_buffer_bytes,
+        write.payload_bytes(),
+        "compiled and written payload bytes differ"
+    );
+    assert_eq!(
+        reduced_record_count * u64::try_from(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)?,
+        compilation.encoded_buffer_bytes,
+        "fixed-width encoded record accounting changed"
+    );
+    assert_eq!(
+        [
+            seal.frame_count(),
+            seal.record_count(),
+            seal.payload_bytes()
+        ],
+        [
+            write.frame_count(),
+            write.record_count(),
+            write.payload_bytes()
+        ],
+        "sealed artifact and writer counters differ"
+    );
+    assert_eq!(seal.artifact_bytes(), write.artifact_bytes());
+    assert_ne!(seal.global_sha256(), [0; 32]);
+    assert_eq!(write.frame_count(), EXPECTED_WEIGHTED_BLOCKS);
+    assert_eq!(write.transferred_bytes(), write.artifact_bytes());
+    assert_eq!(write.operations(), write.frame_count() + 2);
+    assert_eq!(write.sha256_calls(), write.frame_count() + 1);
+    assert_eq!(write.payload_copy_bytes(), write.payload_bytes());
+    assert_eq!(
+        write.payload_copy_operations(),
+        compilation.encoded_buffer_allocations,
+        "one writer copy must correspond to each non-empty encoded block"
+    );
+    assert_eq!(write.buffer_allocations(), 1);
+    assert_eq!(write.buffer_reuses(), write.frame_count() - 1);
+    assert_eq!(write.peak_buffer_bytes(), signature.io_buffer_bytes);
+    assert!(write.artifact_bytes() <= signature.maximum_artifact_bytes);
+    assert_eq!(
+        [
+            signature.selected_generation_proof_bytes,
+            signature.selected_generation_proof_hash_calls,
+        ],
+        [0, 0],
+        "rebound selected-generation proof must perform zero replay hashing"
+    );
+    assert_eq!(
+        [
+            signature.weighting_coverage_proof_bytes,
+            signature.weighting_coverage_proof_hash_calls,
+        ],
+        [
+            signature.operator_coverage_proof_bytes,
+            signature.operator_coverage_proof_hash_calls,
+        ],
+        "weighting and science owners must account for the same initial coverage work"
+    );
+    assert_eq!(
+        [
+            signature.weighting_generation.as_str(),
+            signature.weighting_replay.as_str(),
+            signature.weighting_coverage.as_str(),
+            signature.normal_state_identity.as_str(),
+            signature.artifact_identity.as_str(),
+            sha256_hex(seal.global_sha256()).as_str(),
+        ],
+        [
+            EXPECTED_INITIAL_WEIGHTING_GENERATION,
+            EXPECTED_INITIAL_WEIGHTING_REPLAY,
+            EXPECTED_INITIAL_WEIGHTING_COVERAGE,
+            EXPECTED_INITIAL_WEIGHTED_NORMAL_STATE_IDENTITY,
+            EXPECTED_INITIAL_WEIGHTED_ARTIFACT_IDENTITY,
+            EXPECTED_INITIAL_WEIGHTED_ARTIFACT_SHA256,
+        ],
+        "initial weighted scientific or artifact identity changed"
+    );
+    assert_eq!(
+        [
+            compilation.blocks,
+            source_cardinality.groups,
+            source_cardinality.records,
+            reduced_group_count,
+            reduced_record_count,
+            compilation.source_group_vector_allocations,
+            compilation.source_group_capacity_growth_bytes,
+            compilation.reduction_map_entry_insertions,
+            compilation.multiplicity_vector_allocations,
+            compilation.multiplicity_capacity_growth_bytes,
+            compilation.encoded_buffer_allocations,
+            compilation.encoded_buffer_bytes,
+            compilation.descriptor_vector_allocations,
+            compilation.descriptor_capacity_growth_bytes,
+        ],
+        [
+            8_227,
+            29_169_920,
+            29_169_920,
+            14_520_731,
+            14_520_731,
+            29_169_920,
+            4_667_187_200,
+            14_520_731,
+            14_521_550,
+            464_689_600,
+            8_137,
+            464_663_392,
+            13,
+            786_432,
+        ],
+        "initial weighted compiler allocation or cardinality signature changed"
+    );
+    assert_eq!(
+        [
+            write.artifact_bytes(),
+            write.payload_bytes(),
+            write.frame_count(),
+            write.record_count(),
+            write.transferred_bytes(),
+            write.operations(),
+            write.sha256_bytes(),
+            write.sha256_calls(),
+            write.peak_buffer_bytes(),
+            write.payload_copy_bytes(),
+            write.payload_copy_operations(),
+            write.buffer_allocations(),
+            write.buffer_reuses(),
+        ],
+        [
+            465_255_832,
+            464_663_392,
+            8_227,
+            14_520_731,
+            465_255_832,
+            8_229,
+            929_919_144,
+            8_228,
+            EXPECTED_INITIAL_ARTIFACT_IO_BUFFER_BYTES,
+            464_663_392,
+            8_137,
+            1,
+            8_226,
+        ],
+        "initial weighted artifact write/copy signature changed"
+    );
+    assert_eq!(
+        [
+            signature.weighting_coverage_proof_bytes,
+            signature.weighting_coverage_proof_hash_calls,
+            signature.operator_coverage_proof_bytes,
+            signature.operator_coverage_proof_hash_calls,
+        ],
+        [
+            EXPECTED_INITIAL_COVERAGE_PROOF_BYTES,
+            EXPECTED_INITIAL_COVERAGE_PROOF_HASH_CALLS,
+            EXPECTED_INITIAL_COVERAGE_PROOF_BYTES,
+            EXPECTED_INITIAL_COVERAGE_PROOF_HASH_CALLS,
+        ],
+        "initial weighted proof-work signature changed"
+    );
+    assert_eq!(
+        [
+            signature.weighting_residency_bytes,
+            usize::try_from(signature.maximum_artifact_bytes)?,
+            usize::try_from(signature.io_buffer_bytes)?,
+        ],
+        [
+            EXPECTED_INITIAL_WEIGHTING_RESIDENCY_BYTES,
+            usize::try_from(EXPECTED_INITIAL_ARTIFACT_MAXIMUM_BYTES)?,
+            usize::try_from(EXPECTED_INITIAL_ARTIFACT_IO_BUFFER_BYTES)?,
+        ],
+        "initial weighted residency or artifact budget signature changed"
+    );
+
+    let baseline_mean_seconds = (baseline_before.timings.total().as_secs_f64()
+        + baseline_after.timings.total().as_secs_f64())
+        / 2.0;
+    let repeatability = (baseline_before.timings.total().as_secs_f64()
+        - baseline_after.timings.total().as_secs_f64())
+    .abs()
+        / baseline_mean_seconds;
+    let observer_overhead = (observed.timings.total().as_secs_f64() - baseline_mean_seconds)
+        .max(0.0)
+        / baseline_mean_seconds;
+    let measured_stages = observed
+        .timings
+        .weighting_and_contributions
+        .saturating_add(observed.timings.science_consume)
+        .saturating_add(observed.timings.record_key_construction)
+        .saturating_add(observed.timings.grouping_reduction)
+        .saturating_add(observed.timings.encoding_checksum)
+        .saturating_add(observed.timings.payload_movement)
+        .saturating_add(observed.timings.artifact_writes)
+        .saturating_add(observed.timings.completion)
+        .saturating_add(observed.timings.stream_orchestration)
+        .saturating_add(observed.timings.science_finish);
+    let orchestration = observed.timings.total().saturating_sub(measured_stages);
+
+    println!(
+        "{}",
+        serde_json::to_string(&json!({
+            "schema": "casa-rs-initial-weighted-discriminator-v1",
+            "source_revision": source_revision()?,
+            "dataset": DATASET_RELATIVE_PATH,
+            "problem_id": problem.problem_id().to_string(),
+            "workers": 1,
+            "partitions_per_block": 1,
+            "selected_rows": selected_rows,
+            "selected_samples": selected_samples,
+            "captured_blocks": blocks.len(),
+            "captured_logical_bytes": logical_bytes,
+            "captured_read_operations": read_operations,
+            "captured_current_bytes": current_bytes,
+            "captured_capacity_bytes": capacity_bytes,
+            "capture_ms": milliseconds(capture_elapsed),
+            "baseline_before_ms": milliseconds(baseline_before.timings.total()),
+            "observed_ms": milliseconds(observed.timings.total()),
+            "baseline_after_ms": milliseconds(baseline_after.timings.total()),
+            "baseline_repeatability_fraction": repeatability,
+            "observer_overhead_fraction": observer_overhead,
+            "stages_ms": {
+                "weighting_and_contribution_formation": milliseconds(observed.timings.weighting_and_contributions),
+                "initial_science_operator_consume": milliseconds(observed.timings.science_consume),
+                "record_key_construction": milliseconds(observed.timings.record_key_construction),
+                "grouping_reduction": milliseconds(observed.timings.grouping_reduction),
+                "encoding_checksum": milliseconds(observed.timings.encoding_checksum),
+                "payload_movement": milliseconds(observed.timings.payload_movement),
+                "artifact_writes": milliseconds(observed.timings.artifact_writes),
+                "completion": milliseconds(observed.timings.completion),
+                "stream_callback_orchestration": milliseconds(observed.timings.stream_orchestration),
+                "science_operator_finish": milliseconds(observed.timings.science_finish),
+                "stage_orchestration": milliseconds(orchestration),
+            },
+            "timing_boundaries_ms": {
+                "stream": milliseconds(observed.timings.stream),
+                "finish_seal": milliseconds(observed.timings.finish_seal),
+            },
+            "identity": {
+                "weighting_generation": signature.weighting_generation,
+                "weighting_replay": signature.weighting_replay,
+                "weighting_coverage": signature.weighting_coverage,
+                "normal_state": signature.normal_state_identity,
+                "artifact": signature.artifact_identity,
+                "artifact_sha256": sha256_hex(seal.global_sha256()),
+            },
+            "residency": {
+                "weighting_peak_bytes": signature.weighting_residency_bytes,
+                "artifact_maximum_bytes": signature.maximum_artifact_bytes,
+                "artifact_io_buffer_bytes": signature.io_buffer_bytes,
+                "artifact_peak_buffer_bytes": write.peak_buffer_bytes(),
+            },
+            "resource_signature": signature.resource_signature,
+            "compilation_counters": {
+                "blocks": compilation.blocks,
+                "source_groups": source_cardinality.groups,
+                "source_records": source_cardinality.records,
+                "reduced_groups": reduced_group_count,
+                "reduced_records": reduced_record_count,
+                "source_group_vector_allocations": compilation.source_group_vector_allocations,
+                "source_group_capacity_growth_bytes": compilation.source_group_capacity_growth_bytes,
+                "reduction_map_entry_insertions": compilation.reduction_map_entry_insertions,
+                "multiplicity_vector_allocations": compilation.multiplicity_vector_allocations,
+                "multiplicity_capacity_growth_bytes": compilation.multiplicity_capacity_growth_bytes,
+                "encoded_buffer_allocations": compilation.encoded_buffer_allocations,
+                "encoded_buffer_bytes": compilation.encoded_buffer_bytes,
+                "descriptor_vector_allocations": compilation.descriptor_vector_allocations,
+                "descriptor_capacity_growth_bytes": compilation.descriptor_capacity_growth_bytes,
+            },
+            "write_counters": {
+                "artifact_bytes": write.artifact_bytes(),
+                "payload_bytes": write.payload_bytes(),
+                "frames": write.frame_count(),
+                "records": write.record_count(),
+                "transferred_bytes": write.transferred_bytes(),
+                "operations": write.operations(),
+                "sha256_bytes": write.sha256_bytes(),
+                "sha256_calls": write.sha256_calls(),
+                "payload_copy_bytes": write.payload_copy_bytes(),
+                "payload_copy_operations": write.payload_copy_operations(),
+                "buffer_allocations": write.buffer_allocations(),
+                "buffer_reuses": write.buffer_reuses(),
+            },
+            "proof_counters": {
+                "selected_generation_bytes": signature.selected_generation_proof_bytes,
+                "selected_generation_hash_calls": signature.selected_generation_proof_hash_calls,
+                "weighting_coverage_bytes": signature.weighting_coverage_proof_bytes,
+                "weighting_coverage_hash_calls": signature.weighting_coverage_proof_hash_calls,
+                "operator_coverage_bytes": signature.operator_coverage_proof_bytes,
+                "operator_coverage_hash_calls": signature.operator_coverage_proof_hash_calls,
+            },
+        }))?
+    );
+    assert!(
+        repeatability <= BASELINE_REPEATABILITY_LIMIT,
+        "OFF/OFF baseline repeatability exceeded the three-percent bound: {repeatability:.6}"
+    );
+    assert!(
+        observer_overhead <= OBSERVER_OVERHEAD_LIMIT,
+        "stage observation exceeded the two-percent overhead bound: {observer_overhead:.6}"
+    );
     Ok(())
 }
 
@@ -1241,4 +1978,8 @@ fn source_revision() -> Result<String, Box<dyn Error>> {
 
 fn milliseconds(duration: Duration) -> f64 {
     duration.as_secs_f64() * 1_000.0
+}
+
+fn sha256_hex(bytes: [u8; 32]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }

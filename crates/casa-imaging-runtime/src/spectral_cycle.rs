@@ -1546,9 +1546,11 @@ impl SpectralCycleExecutor {
         let artifact = compilation.write_measurements();
         let allocations = compilation.compilation_measurements();
         eprintln!(
-            "imaging_gridded_compile_summary ordinal={} blocks={} artifact_bytes={} payload_bytes={} write_bytes={} write_operations={} payload_copy_bytes={} payload_copy_operations={} buffer_allocations={} buffer_reuses={} source_group_vector_allocations={} source_group_capacity_growth_bytes={} reduction_map_entry_insertions={} multiplicity_vector_allocations={} multiplicity_capacity_growth_bytes={} encoded_buffer_allocations={} encoded_buffer_bytes={} descriptor_vector_allocations={} descriptor_capacity_growth_bytes={}",
+            "imaging_gridded_compile_summary ordinal={} blocks={} reduced_groups={} reduced_records={} artifact_bytes={} payload_bytes={} write_bytes={} write_operations={} payload_copy_bytes={} payload_copy_operations={} buffer_allocations={} buffer_reuses={} source_group_vector_allocations={} source_group_capacity_growth_bytes={} reduction_map_entry_insertions={} multiplicity_vector_allocations={} multiplicity_capacity_growth_bytes={} encoded_buffer_allocations={} encoded_buffer_bytes={} descriptor_vector_allocations={} descriptor_capacity_growth_bytes={}",
             self.pass.ordinal(),
             allocations.blocks,
+            allocations.reduced_group_count(),
+            allocations.reduced_record_count(),
             artifact.artifact_bytes(),
             artifact.payload_bytes(),
             artifact.transferred_bytes(),

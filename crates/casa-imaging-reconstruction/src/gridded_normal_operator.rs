@@ -6,6 +6,7 @@ use std::{
     collections::{BTreeMap, btree_map::Entry},
     mem::size_of,
     sync::Arc,
+    time::{Duration, Instant},
 };
 
 use casa_imaging_model::{
@@ -51,6 +52,11 @@ struct ReducedRecordKey {
     imaging_weight: u64,
 }
 
+struct ReducedRecordGroup {
+    records: Vec<ReducedRecordKey>,
+    multiplicity: f64,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct DecodedRecord {
     output_channel: usize,
@@ -79,10 +85,39 @@ pub struct GriddedNormalOperatorBlock {
     measurements: GriddedNormalOperatorBlockMeasurements,
 }
 
-/// Exact code-owned allocation requests, capacity growth, and map insertions.
+/// Whether compilation should derive diagnostic source cardinality.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SourceCardinalityObservation {
+    /// Compile without cardinality accounting in the record hot path.
+    Disabled,
+    /// Derive exact cardinality while traversing grouped records for encoding.
+    Enabled,
+}
+
+/// Exact source cardinality derived by an explicitly observed compilation.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GriddedNormalSourceCardinality {
+    pub groups: u64,
+    pub records: u64,
+}
+
+/// Mutually exclusive timings from one explicitly observed compiler block.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GriddedNormalOperatorStageTimings {
+    pub record_key_construction: Duration,
+    pub grouping_reduction: Duration,
+    pub encoding_checksum: Duration,
+    pub completion: Duration,
+}
+
+/// Exact code-owned cardinality, allocation, growth, and insertion measurements.
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct GriddedNormalOperatorBlockMeasurements {
+    pub source_cardinality: Option<GriddedNormalSourceCardinality>,
     pub source_group_vector_allocations: u64,
     pub source_group_capacity_growth_bytes: u64,
     pub reduction_map_entry_insertions: u64,
@@ -133,11 +168,15 @@ pub struct GriddedNormalOperatorCompiler {
     record_count: u64,
     coverage: CoverageEncoder,
     descriptors: Vec<BlockDescriptor>,
+    source_cardinality_observation: SourceCardinalityObservation,
 }
 
 impl GriddedNormalOperatorCompiler {
     /// Compile the first vertical record owner for a supported reconstruction basis.
-    pub fn new(problem: &CompiledProblem) -> Result<Self, SpectralOperatorError> {
+    pub fn new(
+        problem: &CompiledProblem,
+        source_cardinality_observation: SourceCardinalityObservation,
+    ) -> Result<Self, SpectralOperatorError> {
         require_supported_basis(&problem.reconstruction().basis())?;
         let specification = SpectralOperatorSpecification::new(problem)?;
         validate_record_geometry(&specification)?;
@@ -153,6 +192,7 @@ impl GriddedNormalOperatorCompiler {
             record_count: 0,
             coverage: CoverageEncoder::new(),
             descriptors: Vec::new(),
+            source_cardinality_observation,
         })
     }
 
@@ -161,11 +201,83 @@ impl GriddedNormalOperatorCompiler {
         &mut self,
         block: &WeightingReplayChunk,
     ) -> Result<GriddedNormalOperatorBlock, SpectralOperatorError> {
+        match self.source_cardinality_observation {
+            SourceCardinalityObservation::Disabled => self.compile_block_inner::<false>(block),
+            SourceCardinalityObservation::Enabled => self.compile_block_inner::<true>(block),
+        }
+    }
+
+    /// Compile one block while timing mutually exclusive owner phases.
+    #[doc(hidden)]
+    pub fn compile_block_observed(
+        &mut self,
+        block: &WeightingReplayChunk,
+    ) -> Result<
+        (
+            GriddedNormalOperatorBlock,
+            GriddedNormalOperatorStageTimings,
+        ),
+        SpectralOperatorError,
+    > {
+        debug_assert_eq!(
+            self.source_cardinality_observation,
+            SourceCardinalityObservation::Enabled
+        );
+        let mut timings = GriddedNormalOperatorStageTimings::default();
+
+        let started = Instant::now();
+        self.begin_block(block)?;
+        let (source_groups, mut measurements) = self.construct_record_keys(block)?;
+        timings.record_key_construction = started.elapsed();
+
+        let started = Instant::now();
+        let (groups, source_cardinality) =
+            group_and_reduce::<true>(source_groups, &mut measurements)?;
+        measurements.source_cardinality = source_cardinality;
+        timings.grouping_reduction = started.elapsed();
+
+        let started = Instant::now();
+        let (encoded, digest) = encode_and_checksum(groups, &mut measurements)?;
+        timings.encoding_checksum = started.elapsed();
+
+        let started = Instant::now();
+        let result = self.commit_block(block, encoded, digest, measurements)?;
+        timings.completion = started.elapsed();
+        Ok((result, timings))
+    }
+
+    fn compile_block_inner<const OBSERVE_SOURCE_CARDINALITY: bool>(
+        &mut self,
+        block: &WeightingReplayChunk,
+    ) -> Result<GriddedNormalOperatorBlock, SpectralOperatorError> {
+        self.begin_block(block)?;
+        let (source_groups, mut measurements) = self.construct_record_keys(block)?;
+        let (groups, source_cardinality) =
+            group_and_reduce::<OBSERVE_SOURCE_CARDINALITY>(source_groups, &mut measurements)?;
+        measurements.source_cardinality = source_cardinality;
+        let (encoded, digest) = encode_and_checksum(groups, &mut measurements)?;
+        self.commit_block(block, encoded, digest, measurements)
+    }
+
+    fn begin_block(&mut self, block: &WeightingReplayChunk) -> Result<(), SpectralOperatorError> {
         if block.sequence() != self.next_block_sequence {
             return Err(SpectralOperatorError::BlockSequence);
         }
         self.coverage.adopt(block.coverage_checkpoint());
-        let mut groups = BTreeMap::<Vec<ReducedRecordKey>, Vec<f64>>::new();
+        Ok(())
+    }
+
+    fn construct_record_keys(
+        &self,
+        block: &WeightingReplayChunk,
+    ) -> Result<
+        (
+            Vec<Vec<ReducedRecordKey>>,
+            GriddedNormalOperatorBlockMeasurements,
+        ),
+        SpectralOperatorError,
+    > {
+        let mut source_groups = Vec::new();
         let mut measurements = GriddedNormalOperatorBlockMeasurements::default();
         for weighted in block.samples() {
             let selected = weighted.selected();
@@ -227,33 +339,19 @@ impl GriddedNormalOperatorCompiler {
                 )?;
             }
             if !group.is_empty() && has_positive_weight {
-                let multiplicities = match groups.entry(group) {
-                    Entry::Occupied(entry) => entry.into_mut(),
-                    Entry::Vacant(entry) => {
-                        measurements.reduction_map_entry_insertions = measurements
-                            .reduction_map_entry_insertions
-                            .checked_add(1)
-                            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-                        entry.insert(Vec::new())
-                    }
-                };
-                let old_capacity = multiplicities.capacity();
-                multiplicities.push(1.0);
-                record_vector_growth(
-                    old_capacity,
-                    multiplicities.capacity(),
-                    size_of::<f64>(),
-                    &mut measurements.multiplicity_vector_allocations,
-                    &mut measurements.multiplicity_capacity_growth_bytes,
-                )?;
+                source_groups.push(group);
             }
         }
-        let encoded = encode_reduced(groups)?;
-        if !encoded.is_empty() {
-            measurements.encoded_buffer_allocations = 1;
-        }
-        measurements.encoded_buffer_bytes =
-            u64::try_from(encoded.len()).map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
+        Ok((source_groups, measurements))
+    }
+
+    fn commit_block(
+        &mut self,
+        block: &WeightingReplayChunk,
+        encoded: Box<[u8]>,
+        digest: [u8; 32],
+        mut measurements: GriddedNormalOperatorBlockMeasurements,
+    ) -> Result<GriddedNormalOperatorBlock, SpectralOperatorError> {
         let source_samples = u64::try_from(block.samples().len())
             .map_err(|_| SpectralOperatorError::CoverageOverflow)?;
         let record_count = u64::try_from(encoded.len() / GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
@@ -270,7 +368,7 @@ impl GriddedNormalOperatorCompiler {
         self.descriptors.push(BlockDescriptor {
             source_samples,
             record_count,
-            digest: Sha256::digest(&encoded).into(),
+            digest,
         });
         record_vector_growth(
             old_descriptor_capacity,
@@ -682,26 +780,105 @@ fn program_identity(
     LogicalIdentity::from_sha256(encoder.finish())
 }
 
-fn encode_reduced(
+fn group_and_reduce<const OBSERVE_SOURCE_CARDINALITY: bool>(
+    source_groups: Vec<Vec<ReducedRecordKey>>,
+    measurements: &mut GriddedNormalOperatorBlockMeasurements,
+) -> Result<
+    (
+        Vec<ReducedRecordGroup>,
+        Option<GriddedNormalSourceCardinality>,
+    ),
+    SpectralOperatorError,
+> {
+    let mut groups = BTreeMap::<Vec<ReducedRecordKey>, Vec<f64>>::new();
+    for group in source_groups {
+        let multiplicities = match groups.entry(group) {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => {
+                measurements.reduction_map_entry_insertions = measurements
+                    .reduction_map_entry_insertions
+                    .checked_add(1)
+                    .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+                entry.insert(Vec::new())
+            }
+        };
+        let old_capacity = multiplicities.capacity();
+        multiplicities.push(1.0);
+        record_vector_growth(
+            old_capacity,
+            multiplicities.capacity(),
+            size_of::<f64>(),
+            &mut measurements.multiplicity_vector_allocations,
+            &mut measurements.multiplicity_capacity_growth_bytes,
+        )?;
+    }
+    reduce_groups::<OBSERVE_SOURCE_CARDINALITY>(groups)
+}
+
+fn reduce_groups<const OBSERVE_SOURCE_CARDINALITY: bool>(
     groups: BTreeMap<Vec<ReducedRecordKey>, Vec<f64>>,
-) -> Result<Box<[u8]>, SpectralOperatorError> {
-    let record_count = groups.keys().try_fold(0_usize, |total, records| {
+) -> Result<
+    (
+        Vec<ReducedRecordGroup>,
+        Option<GriddedNormalSourceCardinality>,
+    ),
+    SpectralOperatorError,
+> {
+    let mut source_groups = 0_usize;
+    let mut source_records = 0_usize;
+    let mut reduced = Vec::with_capacity(groups.len());
+    for (records, mut multiplicities) in groups {
+        if records.is_empty() {
+            return Err(SpectralOperatorError::InvalidGriddedRecord);
+        }
+        if OBSERVE_SOURCE_CARDINALITY {
+            source_groups = source_groups
+                .checked_add(multiplicities.len())
+                .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+            source_records = source_records
+                .checked_add(
+                    records
+                        .len()
+                        .checked_mul(multiplicities.len())
+                        .ok_or(SpectralOperatorError::ResidencyOverflow)?,
+                )
+                .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+        }
+        multiplicities.sort_by(f64::total_cmp);
+        reduced.push(ReducedRecordGroup {
+            records,
+            multiplicity: compensated_sum(&multiplicities)?,
+        });
+    }
+    let source_cardinality = if OBSERVE_SOURCE_CARDINALITY {
+        Some(GriddedNormalSourceCardinality {
+            groups: u64::try_from(source_groups)
+                .map_err(|_| SpectralOperatorError::ResidencyOverflow)?,
+            records: u64::try_from(source_records)
+                .map_err(|_| SpectralOperatorError::ResidencyOverflow)?,
+        })
+    } else {
+        None
+    };
+    Ok((reduced, source_cardinality))
+}
+
+fn encode_and_checksum(
+    groups: Vec<ReducedRecordGroup>,
+    measurements: &mut GriddedNormalOperatorBlockMeasurements,
+) -> Result<(Box<[u8]>, [u8; 32]), SpectralOperatorError> {
+    let record_count = groups.iter().try_fold(0_usize, |total, group| {
         total
-            .checked_add(records.len())
+            .checked_add(group.records.len())
             .ok_or(SpectralOperatorError::ResidencyOverflow)
     })?;
     let capacity = record_count
         .checked_mul(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
         .ok_or(SpectralOperatorError::ResidencyOverflow)?;
     let mut encoded = Vec::with_capacity(capacity);
-    for (records, mut multiplicities) in groups {
-        if records.is_empty() {
-            return Err(SpectralOperatorError::InvalidGriddedRecord);
-        }
-        multiplicities.sort_by(f64::total_cmp);
-        let multiplicity = compensated_sum(&multiplicities)?;
-        let last = records.len() - 1;
-        for (index, record) in records.into_iter().enumerate() {
+    for group in groups {
+        let last = group.records.len() - 1;
+        for (index, record) in group.records.into_iter().enumerate() {
             let output_channel = u64::from(record.output_channel);
             if output_channel > CHANNEL_KEY_MASK || record.taps & !TAP_KEY_MASK != 0 {
                 return Err(SpectralOperatorError::InvalidGriddedRecord);
@@ -711,7 +888,7 @@ fn encode_reduced(
                 | if index == last { GROUP_END_BIT } else { 0 };
             let forward_real = f64::from_bits(record.forward_real);
             let forward_imaginary = f64::from_bits(record.forward_imaginary);
-            let imaging_weight = f64::from_bits(record.imaging_weight) * multiplicity;
+            let imaging_weight = f64::from_bits(record.imaging_weight) * group.multiplicity;
             if !forward_real.is_finite()
                 || !forward_imaginary.is_finite()
                 || (forward_real == 0.0 && forward_imaginary == 0.0)
@@ -726,7 +903,26 @@ fn encode_reduced(
             encoded.extend_from_slice(&imaging_weight.to_le_bytes());
         }
     }
-    Ok(encoded.into_boxed_slice())
+    let encoded = encoded.into_boxed_slice();
+    if !encoded.is_empty() {
+        measurements.encoded_buffer_allocations = 1;
+    }
+    measurements.encoded_buffer_bytes =
+        u64::try_from(encoded.len()).map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
+    let digest = Sha256::digest(&encoded).into();
+    Ok((encoded, digest))
+}
+
+#[cfg(test)]
+fn encode_reduced<const OBSERVE_SOURCE_CARDINALITY: bool>(
+    groups: BTreeMap<Vec<ReducedRecordKey>, Vec<f64>>,
+) -> Result<(Box<[u8]>, Option<GriddedNormalSourceCardinality>), SpectralOperatorError> {
+    let (groups, source_cardinality) = reduce_groups::<OBSERVE_SOURCE_CARDINALITY>(groups)?;
+    let (encoded, _) = encode_and_checksum(
+        groups,
+        &mut GriddedNormalOperatorBlockMeasurements::default(),
+    )?;
+    Ok((encoded, source_cardinality))
 }
 
 fn canonical_zero_bits(value: f64) -> u64 {
@@ -897,14 +1093,14 @@ mod tests {
         let second = gridder
             .taps([20.0, -14.0])
             .expect("offset taps remain on grid");
-        let left = encode_reduced(scalar_groups([
+        let (left, _) = encode_reduced::<false>(scalar_groups([
             (first, 0.75),
             (second, 0.4),
             (first, 1.25),
             (second, 0.6),
         ]))
         .expect("encode records");
-        let right = encode_reduced(scalar_groups([
+        let (right, _) = encode_reduced::<false>(scalar_groups([
             (second, 0.6),
             (first, 1.25),
             (second, 0.4),
@@ -961,7 +1157,8 @@ mod tests {
                 predicted * coefficient,
             );
         }
-        let encoded = encode_reduced(scalar_groups(contributions)).expect("reduce records");
+        let (encoded, _) =
+            encode_reduced::<false>(scalar_groups(contributions)).expect("reduce records");
         let mut grouped = Array2::<Complex64>::zeros(shape);
         let mut grouped_compensation = Array2::<Complex64>::zeros(shape);
         for record in encoded.chunks_exact(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES) {
@@ -992,7 +1189,8 @@ mod tests {
     fn corrupt_truncated_and_reserved_records_fail_closed() {
         let gridder = StandardConvolution::new(&geometry());
         let taps = gridder.taps([0.0, 0.0]).expect("central taps");
-        let encoded = encode_reduced(scalar_groups([(taps, 1.0)])).expect("encode record");
+        let (encoded, _) =
+            encode_reduced::<false>(scalar_groups([(taps, 1.0)])).expect("encode record");
         let descriptor = BlockDescriptor {
             source_samples: 1,
             record_count: 1,

@@ -54,6 +54,8 @@ pub mod runtime_adapter {
         GRIDDED_NORMAL_OPERATOR_RECORD_BYTES, GriddedNormalOperatorApply,
         GriddedNormalOperatorBlock, GriddedNormalOperatorBlockMeasurements,
         GriddedNormalOperatorCompiler, GriddedNormalOperatorProgram,
+        GriddedNormalOperatorStageTimings, GriddedNormalSourceCardinality,
+        SourceCardinalityObservation,
     };
     pub use crate::spectral_operator::{
         CompleteDataOwnerCompletion, CompleteDataOwnerResult, CompleteDataOwnerState,

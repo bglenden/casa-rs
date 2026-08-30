@@ -1980,7 +1980,7 @@ mod exact_f32_accumulator_tests {
     #[test]
     fn fixed_width_proves_the_u64_sample_domain_and_overflow_fails_closed() {
         assert!(
-            F32_SUPERACCUMULATOR_LIMBS * u64::BITS as usize >= 277 + u64::BITS as usize + 1,
+            F32_SUPERACCUMULATOR_LIMBS * u64::BITS as usize > 277 + u64::BITS as usize,
             "one f32 needs 277 magnitude bits and at most two density adds occur per sample"
         );
         let mut full = [u64::MAX; F32_SUPERACCUMULATOR_LIMBS];

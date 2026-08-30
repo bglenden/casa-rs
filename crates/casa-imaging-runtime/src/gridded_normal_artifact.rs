@@ -5,6 +5,7 @@ use std::io::{self, Write};
 use std::os::unix::fs::{FileExt, MetadataExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
 use sha2::{Digest, Sha256};
 use tempfile::{Builder, NamedTempFile, TempPath};
@@ -21,6 +22,23 @@ const FOOTER_MAGIC: [u8; 8] = *b"CGNRFTR\0";
 const FILE_HEADER_BYTES: usize = 16;
 const FRAME_HEADER_BYTES: usize = 72;
 const FOOTER_BYTES: usize = 80;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct GriddedNormalArtifactStageTimings {
+    pub(crate) encoding_checksum: Duration,
+    pub(crate) payload_movement: Duration,
+    pub(crate) artifact_writes: Duration,
+    pub(crate) completion: Duration,
+}
+
+struct PreparedFrame {
+    header: [u8; FRAME_HEADER_BYTES],
+    encoded_bytes: usize,
+    prospective_payload_bytes: u64,
+    prospective_record_count: u64,
+    prospective_frame_count: u64,
+    prospective_payload_copy_operations: u64,
+}
 
 /// Authority-validated writable location for one run's private replay spill.
 ///
@@ -530,6 +548,22 @@ impl GriddedNormalArtifactWriter {
         result
     }
 
+    pub(crate) fn append_frame_observed(
+        &mut self,
+        sequence: u64,
+        record_count: u64,
+        payload: &[u8],
+    ) -> Result<GriddedNormalArtifactStageTimings, GriddedNormalArtifactError> {
+        if self.poisoned {
+            return Err(GriddedNormalArtifactError::WriterPoisoned);
+        }
+        let result = self.append_frame_observed_inner(sequence, record_count, payload);
+        if result.is_err() {
+            self.poisoned = true;
+        }
+        result
+    }
+
     pub(crate) fn measurements(&self) -> GriddedNormalArtifactMeasurements {
         GriddedNormalArtifactMeasurements {
             direction: GriddedNormalIoDirection::Write,
@@ -555,6 +589,41 @@ impl GriddedNormalArtifactWriter {
         record_count: u64,
         payload: &[u8],
     ) -> Result<(), GriddedNormalArtifactError> {
+        let prepared = self.prepare_frame(sequence, record_count, payload)?;
+        self.copy_frame_payload(&prepared, payload);
+        self.write_prepared_frame(&prepared)?;
+        self.commit_prepared_frame(&prepared);
+        Ok(())
+    }
+
+    fn append_frame_observed_inner(
+        &mut self,
+        sequence: u64,
+        record_count: u64,
+        payload: &[u8],
+    ) -> Result<GriddedNormalArtifactStageTimings, GriddedNormalArtifactError> {
+        let mut timings = GriddedNormalArtifactStageTimings::default();
+        let started = Instant::now();
+        let prepared = self.prepare_frame(sequence, record_count, payload)?;
+        timings.encoding_checksum = started.elapsed();
+        let started = Instant::now();
+        self.copy_frame_payload(&prepared, payload);
+        timings.payload_movement = started.elapsed();
+        let started = Instant::now();
+        self.write_prepared_frame(&prepared)?;
+        timings.artifact_writes = started.elapsed();
+        let started = Instant::now();
+        self.commit_prepared_frame(&prepared);
+        timings.completion = started.elapsed();
+        Ok(timings)
+    }
+
+    fn prepare_frame(
+        &self,
+        sequence: u64,
+        record_count: u64,
+        payload: &[u8],
+    ) -> Result<PreparedFrame, GriddedNormalArtifactError> {
         if sequence != self.frame_count {
             return Err(GriddedNormalArtifactError::WriterSequenceMismatch {
                 expected: self.frame_count,
@@ -608,21 +677,41 @@ impl GriddedNormalArtifactWriter {
         let encoded_bytes = FRAME_HEADER_BYTES.checked_add(payload.len()).ok_or(
             GriddedNormalArtifactError::ArithmeticOverflow("encoded frame buffer bytes"),
         )?;
-        self.buffer[..FRAME_HEADER_BYTES].copy_from_slice(&header);
-        self.buffer[FRAME_HEADER_BYTES..encoded_bytes].copy_from_slice(payload);
+        Ok(PreparedFrame {
+            header,
+            encoded_bytes,
+            prospective_payload_bytes,
+            prospective_record_count,
+            prospective_frame_count,
+            prospective_payload_copy_operations,
+        })
+    }
+
+    fn copy_frame_payload(&mut self, prepared: &PreparedFrame, payload: &[u8]) {
+        self.buffer[..FRAME_HEADER_BYTES].copy_from_slice(&prepared.header);
+        self.buffer[FRAME_HEADER_BYTES..prepared.encoded_bytes].copy_from_slice(payload);
+    }
+
+    fn write_prepared_frame(
+        &mut self,
+        prepared: &PreparedFrame,
+    ) -> Result<(), GriddedNormalArtifactError> {
         write_bytes(
             self.file.as_file_mut(),
-            &self.buffer[..encoded_bytes],
+            &self.buffer[..prepared.encoded_bytes],
             &mut self.bytes_written,
             &mut self.write_operations,
             "write artifact frame",
-        )?;
-        self.global_hasher.update(&self.buffer[..encoded_bytes]);
-        self.payload_bytes = prospective_payload_bytes;
-        self.record_count = prospective_record_count;
-        self.frame_count = prospective_frame_count;
-        self.payload_copy_operations = prospective_payload_copy_operations;
-        Ok(())
+        )
+    }
+
+    fn commit_prepared_frame(&mut self, prepared: &PreparedFrame) {
+        self.global_hasher
+            .update(&self.buffer[..prepared.encoded_bytes]);
+        self.payload_bytes = prepared.prospective_payload_bytes;
+        self.record_count = prepared.prospective_record_count;
+        self.frame_count = prepared.prospective_frame_count;
+        self.payload_copy_operations = prepared.prospective_payload_copy_operations;
     }
 
     pub(crate) fn seal(
