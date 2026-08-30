@@ -168,24 +168,6 @@ impl GriddedNormalArtifactBudget {
     pub(crate) const fn io_buffer_bytes(self) -> u64 {
         self.io_buffer_bytes
     }
-
-    pub(crate) fn source_slot_bytes(
-        self,
-        maximum_frames: usize,
-    ) -> Result<u64, GriddedNormalArtifactError> {
-        if maximum_frames == 0 {
-            return Err(GriddedNormalArtifactError::InvalidBudget(
-                "the source window must contain at least one frame",
-            ));
-        }
-        self.io_buffer_bytes
-            .checked_mul(u64::try_from(maximum_frames).map_err(|_| {
-                GriddedNormalArtifactError::ArithmeticOverflow("source window frame count")
-            })?)
-            .ok_or(GriddedNormalArtifactError::ArithmeticOverflow(
-                "source window bytes",
-            ))
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -781,9 +763,7 @@ impl GriddedNormalReplayArtifact {
 
     pub(crate) fn block_source(
         &self,
-        maximum_frames_per_block: usize,
     ) -> Result<GriddedNormalArtifactBlockSource, GriddedNormalArtifactError> {
-        let source_slot_bytes = self.budget.source_slot_bytes(maximum_frames_per_block)?;
         let file = File::open(&self.path).map_err(|source| GriddedNormalArtifactError::Io {
             operation: "open artifact for replay",
             source,
@@ -821,9 +801,6 @@ impl GriddedNormalReplayArtifact {
             payload_bytes: 0,
             measurements: MutableReadMeasurements::default(),
             created_slots: AtomicUsize::new(0),
-            maximum_frames_per_block,
-            source_slot_bytes,
-            blocks_filled: 0,
             initialized: false,
             finished: false,
             poisoned: false,
@@ -832,89 +809,29 @@ impl GriddedNormalReplayArtifact {
 }
 
 #[derive(Debug)]
-pub(crate) struct GriddedNormalArtifactWindowStorage {
+pub(crate) struct GriddedNormalArtifactFrameStorage {
     bytes: Vec<u8>,
-    frame_count: usize,
-    record_count: u64,
-    used_len: usize,
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct GriddedNormalArtifactFrame<'a> {
     sequence: u64,
     record_count: u64,
-    payload: &'a [u8],
+    payload_len: usize,
 }
 
-impl<'a> GriddedNormalArtifactFrame<'a> {
-    pub(crate) const fn sequence(self) -> u64 {
+impl GriddedNormalArtifactFrameStorage {
+    pub(crate) const fn sequence(&self) -> u64 {
         self.sequence
-    }
-
-    pub(crate) const fn record_count(self) -> u64 {
-        self.record_count
-    }
-
-    pub(crate) const fn payload(self) -> &'a [u8] {
-        self.payload
-    }
-}
-
-pub(crate) struct GriddedNormalArtifactFrames<'a> {
-    bytes: &'a [u8],
-    remaining: usize,
-    offset: usize,
-}
-
-impl<'a> Iterator for GriddedNormalArtifactFrames<'a> {
-    type Item = GriddedNormalArtifactFrame<'a>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.remaining == 0 {
-            return None;
-        }
-        let header_end = self.offset.checked_add(FRAME_HEADER_BYTES)?;
-        let header = self.bytes.get(self.offset..header_end)?;
-        debug_assert_eq!(header.get(..8), Some(FRAME_MAGIC.as_slice()));
-        let payload_len = usize::try_from(decode_u64(header, 32)).ok()?;
-        let payload_end = header_end.checked_add(payload_len)?;
-        let payload = self.bytes.get(header_end..payload_end)?;
-        let frame = GriddedNormalArtifactFrame {
-            sequence: decode_u64(header, 16),
-            record_count: decode_u64(header, 24),
-            payload,
-        };
-        self.offset = payload_end;
-        self.remaining -= 1;
-        Some(frame)
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        (self.remaining, Some(self.remaining))
-    }
-}
-
-impl ExactSizeIterator for GriddedNormalArtifactFrames<'_> {}
-
-impl GriddedNormalArtifactWindowStorage {
-    pub(crate) const fn frame_count(&self) -> usize {
-        self.frame_count
     }
 
     pub(crate) const fn record_count(&self) -> u64 {
         self.record_count
     }
 
-    pub(crate) fn frames(&self) -> GriddedNormalArtifactFrames<'_> {
-        GriddedNormalArtifactFrames {
-            bytes: &self.bytes[..self.used_len],
-            remaining: self.frame_count,
-            offset: 0,
-        }
+    pub(crate) fn payload(&self) -> &[u8] {
+        let start = FRAME_HEADER_BYTES;
+        &self.bytes[start..start + self.payload_len]
     }
 
     pub(crate) fn resident_current_bytes(&self) -> u64 {
-        u64::try_from(self.used_len).unwrap_or(u64::MAX)
+        u64::try_from(FRAME_HEADER_BYTES + self.payload_len).unwrap_or(u64::MAX)
     }
 
     pub(crate) fn resident_capacity_bytes(&self) -> u64 {
@@ -940,9 +857,6 @@ pub(crate) struct GriddedNormalArtifactBlockSource {
     payload_bytes: u64,
     measurements: MutableReadMeasurements,
     created_slots: AtomicUsize,
-    maximum_frames_per_block: usize,
-    source_slot_bytes: u64,
-    blocks_filled: u64,
     initialized: bool,
     finished: bool,
     poisoned: bool,
@@ -974,7 +888,7 @@ impl GriddedNormalArtifactBlockSource {
 
     fn read_next(
         &mut self,
-        storage: &mut GriddedNormalArtifactWindowStorage,
+        storage: &mut GriddedNormalArtifactFrameStorage,
     ) -> Result<Option<(u64, u64)>, GriddedNormalArtifactError> {
         if self.poisoned {
             return Err(GriddedNormalArtifactError::ReaderPoisoned);
@@ -984,24 +898,14 @@ impl GriddedNormalArtifactBlockSource {
         }
         self.initialize()?;
         let operations_before = self.measurements.operations;
-        let frame_start = storage.used_len;
-        let header_end = frame_start.checked_add(FRAME_HEADER_BYTES).ok_or(
-            GriddedNormalArtifactError::ArithmeticOverflow("source window frame header"),
-        )?;
-        if header_end > storage.bytes.len() {
-            return Err(GriddedNormalArtifactError::ArtifactCapacityExceeded {
-                required: u64::try_from(header_end).unwrap_or(u64::MAX),
-                capacity: u64::try_from(storage.bytes.len()).unwrap_or(u64::MAX),
-            });
-        }
         read_exact_at(
             &self.file,
-            &mut storage.bytes[frame_start..frame_start + 8],
+            &mut storage.bytes[..8],
             self.offset,
             &mut self.measurements,
             "read artifact entry marker",
         )?;
-        let marker: [u8; 8] = storage.bytes[frame_start..frame_start + 8]
+        let marker: [u8; 8] = storage.bytes[..8]
             .try_into()
             .expect("fixed artifact marker slice");
         if marker == FOOTER_MAGIC {
@@ -1014,12 +918,12 @@ impl GriddedNormalArtifactBlockSource {
         }
         read_exact_at(
             &self.file,
-            &mut storage.bytes[frame_start + marker.len()..header_end],
+            &mut storage.bytes[marker.len()..FRAME_HEADER_BYTES],
             self.offset + marker.len() as u64,
             &mut self.measurements,
             "read artifact frame header",
         )?;
-        let header: &[u8] = &storage.bytes[frame_start..header_end];
+        let header: &[u8] = &storage.bytes[..FRAME_HEADER_BYTES];
         if !valid_version_and_length(header, FRAME_HEADER_BYTES) {
             return Err(GriddedNormalArtifactError::InvalidFormat {
                 kind: "frame header",
@@ -1054,15 +958,6 @@ impl GriddedNormalArtifactBlockSource {
                 maximum: self.budget.maximum_frame_payload_bytes,
             });
         }
-        let payload_end = header_end.checked_add(payload_len).ok_or(
-            GriddedNormalArtifactError::ArithmeticOverflow("source window frame payload"),
-        )?;
-        if payload_end > storage.bytes.len() {
-            return Err(GriddedNormalArtifactError::ArtifactCapacityExceeded {
-                required: u64::try_from(payload_end).unwrap_or(u64::MAX),
-                capacity: u64::try_from(storage.bytes.len()).unwrap_or(u64::MAX),
-            });
-        }
         let payload_offset = self.offset.checked_add(FRAME_HEADER_BYTES as u64).ok_or(
             GriddedNormalArtifactError::ArithmeticOverflow("frame payload offset"),
         )?;
@@ -1086,12 +981,12 @@ impl GriddedNormalArtifactBlockSource {
         }
         read_exact_at(
             &self.file,
-            &mut storage.bytes[header_end..payload_end],
+            &mut storage.bytes[FRAME_HEADER_BYTES..FRAME_HEADER_BYTES + payload_len],
             payload_offset,
             &mut self.measurements,
             "read artifact frame payload",
         )?;
-        let payload = &storage.bytes[header_end..payload_end];
+        let payload = &storage.bytes[FRAME_HEADER_BYTES..FRAME_HEADER_BYTES + payload_len];
         let actual_sha256: [u8; 32] = Sha256::digest(payload).into();
         if actual_sha256 != expected_sha256 {
             return Err(GriddedNormalArtifactError::FrameChecksumMismatch { sequence });
@@ -1106,18 +1001,14 @@ impl GriddedNormalArtifactBlockSource {
             GriddedNormalArtifactError::ArithmeticOverflow("replayed payload bytes"),
         )?;
         self.global_hasher
-            .update(&storage.bytes[frame_start..payload_end]);
+            .update(&storage.bytes[..FRAME_HEADER_BYTES + payload_len]);
         self.offset = next_offset;
         self.frame_count = next_frame_count;
         self.record_count = next_record_count;
         self.payload_bytes = next_payload_bytes;
-        storage.frame_count = storage.frame_count.checked_add(1).ok_or(
-            GriddedNormalArtifactError::ArithmeticOverflow("source window frame count"),
-        )?;
-        storage.record_count = storage.record_count.checked_add(record_count).ok_or(
-            GriddedNormalArtifactError::ArithmeticOverflow("source window record count"),
-        )?;
-        storage.used_len = payload_end;
+        storage.sequence = sequence;
+        storage.record_count = record_count;
+        storage.payload_len = payload_len;
         let operations = self
             .measurements
             .operations
@@ -1220,7 +1111,7 @@ impl GriddedNormalArtifactBlockSource {
         )?;
         let slots = u64::try_from(self.created_slots.load(Ordering::Acquire))
             .map_err(|_| GriddedNormalArtifactError::ArithmeticOverflow("artifact source slots"))?;
-        let peak_buffer_bytes = self.source_slot_bytes.checked_mul(slots).ok_or(
+        let peak_buffer_bytes = self.budget.io_buffer_bytes.checked_mul(slots).ok_or(
             GriddedNormalArtifactError::ArithmeticOverflow("artifact source buffer residency"),
         )?;
         Ok(GriddedNormalArtifactReadCompletion {
@@ -1239,26 +1130,26 @@ impl GriddedNormalArtifactBlockSource {
                 payload_copy_bytes: 0,
                 payload_copy_operations: 0,
                 buffer_allocations: slots,
-                buffer_reuses: self.blocks_filled.saturating_sub(slots),
+                buffer_reuses: self.frame_count.saturating_sub(slots),
             },
         })
     }
 }
 
 impl OrderedBlockSource for GriddedNormalArtifactBlockSource {
-    type Storage = GriddedNormalArtifactWindowStorage;
+    type Storage = GriddedNormalArtifactFrameStorage;
     type Completion = GriddedNormalArtifactReadCompletion;
     type Error = GriddedNormalArtifactError;
 
     fn create_storage(&self, slot: usize) -> Self::Storage {
         self.created_slots.fetch_max(slot + 1, Ordering::AcqRel);
-        let bytes = usize::try_from(self.source_slot_bytes)
+        let bytes = usize::try_from(self.budget.io_buffer_bytes)
             .expect("validated gridded-normal buffer capacity fits usize");
-        GriddedNormalArtifactWindowStorage {
+        GriddedNormalArtifactFrameStorage {
             bytes: vec![0; bytes],
-            frame_count: 0,
+            sequence: 0,
             record_count: 0,
-            used_len: 0,
+            payload_len: 0,
         }
     }
 
@@ -1271,42 +1162,23 @@ impl OrderedBlockSource for GriddedNormalArtifactBlockSource {
         if cancellation.is_cancelled() {
             return Ok(SourcePoll::Exhausted);
         }
-        storage.frame_count = 0;
-        storage.record_count = 0;
-        storage.used_len = 0;
-        let mut logical_bytes = 0_u64;
-        let mut source_read_operations = 0_u64;
-        while storage.frame_count < self.maximum_frames_per_block && !cancellation.is_cancelled() {
-            // Finish one admitted frame once its positional read has started so
-            // offset, checksum, and measurement state stay atomic. A later
-            // frame failure poisons the reader and publishes none of this
-            // partially filled window.
-            let result = match self.read_next(storage) {
-                Ok(result) => result,
-                Err(error) => {
-                    self.poisoned = true;
-                    return Err(error);
-                }
-            };
-            let Some((frame_bytes, frame_operations)) = result else {
-                break;
-            };
-            logical_bytes = logical_bytes.checked_add(frame_bytes).ok_or(
-                GriddedNormalArtifactError::ArithmeticOverflow("source window logical bytes"),
-            )?;
-            source_read_operations = source_read_operations.checked_add(frame_operations).ok_or(
-                GriddedNormalArtifactError::ArithmeticOverflow("source window read operations"),
-            )?;
-        }
-        if storage.frame_count == 0 {
+        // Finish an admitted frame once its positional read has started so
+        // offset, checksum, and measurement state stay atomic. The executor
+        // checks cancellation again after fill and discards that frame before
+        // publishing it when cancellation arrived during the bounded read.
+        let result = self.read_next(storage);
+        let result = match result {
+            Ok(result) => result,
+            Err(error) => {
+                self.poisoned = true;
+                return Err(error);
+            }
+        };
+        let Some((logical_bytes, source_read_operations)) = result else {
             return Ok(SourcePoll::Exhausted);
-        }
-        self.blocks_filled = self.blocks_filled.checked_add(1).ok_or(
-            GriddedNormalArtifactError::ArithmeticOverflow("artifact source blocks"),
-        )?;
+        };
         Ok(SourcePoll::Ready {
             source_ordinal: 0,
-            logical_units: storage.frame_count,
             logical_bytes,
             source_read_operations,
             resident_current_bytes: storage.resident_current_bytes(),
@@ -1614,23 +1486,6 @@ mod tests {
         (root, artifact)
     }
 
-    fn sealed_numbered_artifact(
-        frame_count: u64,
-    ) -> (tempfile::TempDir, GriddedNormalReplayArtifact) {
-        let root = tempfile::tempdir().expect("artifact root");
-        let capacity = 64 * 1_024;
-        let (_authority, storage) = test_authority(root.path(), capacity);
-        let mut writer = GriddedNormalArtifactWriter::create(&storage, budget(capacity))
-            .expect("artifact writer");
-        for sequence in 0..frame_count {
-            writer
-                .append_frame(sequence, 1, &[sequence as u8])
-                .expect("numbered frame");
-        }
-        let artifact = writer.seal().expect("sealed numbered artifact");
-        (root, artifact)
-    }
-
     fn assert_private_file_count(root: &Path, expected: usize) {
         assert_eq!(
             std::fs::read_dir(root).expect("read artifact root").count(),
@@ -1667,7 +1522,7 @@ mod tests {
         storage_addresses: BTreeSet<usize>,
     }
 
-    impl PartitionedKernel<GriddedNormalArtifactWindowStorage> for CollectKernel {
+    impl PartitionedKernel<GriddedNormalArtifactFrameStorage> for CollectKernel {
         type Partition = ();
         type Partial = ();
         type Completion = CollectCompletion;
@@ -1676,7 +1531,7 @@ mod tests {
         fn partition_count(
             &self,
             _block: BlockIdentity,
-            _storage: &GriddedNormalArtifactWindowStorage,
+            _storage: &GriddedNormalArtifactFrameStorage,
         ) -> Result<usize, Self::Error> {
             Ok(1)
         }
@@ -1684,7 +1539,7 @@ mod tests {
         fn partition(
             &self,
             _block: BlockIdentity,
-            _storage: &GriddedNormalArtifactWindowStorage,
+            _storage: &GriddedNormalArtifactFrameStorage,
             _local_ordinal: usize,
         ) -> Result<KernelPartition<Self::Partition>, Self::Error> {
             Ok(KernelPartition::exclusive(0, 0, ()))
@@ -1693,7 +1548,7 @@ mod tests {
         fn execute(
             &self,
             _work: WorkIdentity,
-            _storage: &GriddedNormalArtifactWindowStorage,
+            _storage: &GriddedNormalArtifactFrameStorage,
             _partition: &Self::Partition,
         ) -> Result<Self::Partial, Self::Error> {
             Ok(())
@@ -1702,18 +1557,16 @@ mod tests {
         fn commit(
             &mut self,
             _work: WorkIdentity,
-            storage: &GriddedNormalArtifactWindowStorage,
+            storage: &GriddedNormalArtifactFrameStorage,
             (): Self::Partial,
         ) -> Result<(), Self::Error> {
             self.storage_addresses
                 .insert(storage.bytes.as_ptr() as usize);
-            self.payloads.extend(storage.frames().map(|frame| {
-                (
-                    frame.sequence(),
-                    frame.record_count(),
-                    frame.payload().to_vec(),
-                )
-            }));
+            self.payloads.push((
+                storage.sequence(),
+                storage.record_count(),
+                storage.payload().to_vec(),
+            ));
             Ok(())
         }
 
@@ -1735,35 +1588,16 @@ mod tests {
         >,
         crate::bounded_stream::BoundedStreamFailure<GriddedNormalArtifactError, Infallible>,
     > {
-        execute_artifact_window(artifact, slots, 1)
-    }
-
-    fn execute_artifact_window(
-        artifact: &GriddedNormalReplayArtifact,
-        slots: usize,
-        maximum_frames_per_block: usize,
-    ) -> Result<
-        crate::bounded_stream::BoundedStreamOutcome<
-            GriddedNormalArtifactReadCompletion,
-            CollectCompletion,
-        >,
-        crate::bounded_stream::BoundedStreamFailure<GriddedNormalArtifactError, Infallible>,
-    > {
         let capacity = artifact
             .budget
-            .source_slot_bytes(maximum_frames_per_block)
-            .expect("window slot capacity")
+            .io_buffer_bytes()
             .checked_mul(u64::try_from(slots).expect("slot count fits u64"))
             .expect("source capacity");
         execute_bounded(
             BoundedStreamPlan::new::<(), ()>(slots, 1, capacity, 1, 0)
-                .expect("bounded artifact plan")
-                .with_maximum_logical_units_per_block(maximum_frames_per_block)
-                .expect("bounded frame-window plan"),
+                .expect("bounded artifact plan"),
             0,
-            artifact
-                .block_source(maximum_frames_per_block)
-                .expect("artifact source"),
+            artifact.block_source().expect("artifact source"),
             CollectKernel::default(),
         )
     }
@@ -1846,66 +1680,6 @@ mod tests {
     }
 
     #[test]
-    fn bounded_window_reads_original_frames_in_order_without_payload_copies() {
-        let (_root, artifact) = sealed_two_frame_artifact();
-        let outcome = execute_artifact_window(&artifact, 2, 2).expect("window replay");
-        assert_eq!(
-            outcome.kernel_completion.payloads,
-            vec![(0, 2, b"first-frame".to_vec()), (1, 1, b"second".to_vec()),]
-        );
-        assert_eq!(outcome.measurements.blocks_filled, 1);
-        assert_eq!(outcome.measurements.logical_units_filled, 2);
-        assert_eq!(outcome.measurements.maximum_logical_units_per_block, 2);
-        assert_eq!(outcome.measurements.peak_logical_units_per_block, 2);
-        assert_eq!(outcome.measurements.source_slots, 2);
-        assert_eq!(
-            outcome
-                .source_completion
-                .measurements()
-                .payload_copy_bytes(),
-            0
-        );
-        assert_eq!(
-            outcome
-                .source_completion
-                .measurements()
-                .payload_copy_operations(),
-            0
-        );
-        assert_eq!(
-            outcome.measurements.peak_live_source_capacity_bytes,
-            artifact.budget.source_slot_bytes(2).unwrap()
-        );
-    }
-
-    #[test]
-    fn fixed_window_bound_reuses_two_slots_and_preserves_the_partial_tail() {
-        let (_root, artifact) = sealed_numbered_artifact(65);
-        let outcome = execute_artifact_window(&artifact, 2, 64).expect("65-frame replay");
-        assert_eq!(outcome.measurements.blocks_filled, 2);
-        assert_eq!(outcome.measurements.logical_units_filled, 65);
-        assert_eq!(outcome.measurements.peak_logical_units_per_block, 64);
-        assert_eq!(outcome.measurements.source_slots, 2);
-        assert_eq!(outcome.kernel_completion.payloads.len(), 65);
-        assert_eq!(outcome.kernel_completion.payloads[0], (0, 1, vec![0]));
-        assert_eq!(outcome.kernel_completion.payloads[64], (64, 1, vec![64]));
-        assert_eq!(
-            outcome
-                .source_completion
-                .measurements()
-                .buffer_allocations(),
-            2
-        );
-        assert_eq!(
-            outcome
-                .source_completion
-                .measurements()
-                .payload_copy_bytes(),
-            0
-        );
-    }
-
-    #[test]
     fn sealed_artifact_owns_only_a_private_deletion_path() {
         let (root, artifact) = sealed_two_frame_artifact();
         assert_private_file_count(root.path(), 1);
@@ -1923,7 +1697,7 @@ mod tests {
         std::fs::rename(&artifact.path, &displaced).expect("displace sealed inode");
         std::fs::write(&artifact.path, replacement_bytes).expect("replace private path");
         assert!(matches!(
-            artifact.block_source(1),
+            artifact.block_source(),
             Err(GriddedNormalArtifactError::FileIdentityMismatch)
         ));
     }
@@ -1957,7 +1731,7 @@ mod tests {
     #[test]
     fn partial_read_cannot_mint_completion() {
         let (_root, artifact) = sealed_two_frame_artifact();
-        let mut source = artifact.block_source(1).expect("artifact source");
+        let mut source = artifact.block_source().expect("artifact source");
         let mut storage = source.create_storage(0);
         assert!(
             source
@@ -1983,33 +1757,13 @@ mod tests {
     }
 
     #[test]
-    fn later_frame_failure_publishes_none_of_the_partial_window() {
-        let (_root, artifact) = sealed_two_frame_artifact();
-        let second_payload_offset =
-            (FILE_HEADER_BYTES + FRAME_HEADER_BYTES + b"first-frame".len() + FRAME_HEADER_BYTES)
-                as u64;
-        write_all_at(&artifact_file(&artifact), b"X", second_payload_offset);
-        let failure = execute_artifact_window(&artifact, 2, 2)
-            .expect_err("corrupt second frame must reject the whole window");
-        assert!(matches!(
-            *failure.cause,
-            BoundedStreamError::Source(GriddedNormalArtifactError::FrameChecksumMismatch {
-                sequence: 1
-            })
-        ));
-        assert_eq!(failure.measurements.blocks_filled, 0);
-        assert_eq!(failure.measurements.logical_units_filled, 0);
-        assert_eq!(failure.measurements.commits_completed, 0);
-    }
-
-    #[test]
     fn truncation_and_trailing_bytes_are_rejected() {
         let (_root, truncated) = sealed_two_frame_artifact();
         artifact_file(&truncated)
             .set_len(truncated.seal.artifact_bytes - 1)
             .expect("truncate artifact");
         assert!(matches!(
-            truncated.block_source(1),
+            truncated.block_source(),
             Err(GriddedNormalArtifactError::TruncatedFile { .. })
         ));
 
@@ -2018,7 +1772,7 @@ mod tests {
             .set_len(trailing.seal.artifact_bytes + 1)
             .expect("extend artifact");
         assert!(matches!(
-            trailing.block_source(1),
+            trailing.block_source(),
             Err(GriddedNormalArtifactError::TrailingData { .. })
         ));
     }

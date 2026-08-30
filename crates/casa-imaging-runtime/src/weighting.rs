@@ -169,7 +169,6 @@ impl OrderedBlockSource for SelectedBlockSource<'_> {
         };
         Ok(SourcePoll::Ready {
             source_ordinal,
-            logical_units: 1,
             logical_bytes: storage.logical_bytes(),
             source_read_operations: storage.source_read_operations(),
             resident_current_bytes: storage.resident_current_bytes()?,
