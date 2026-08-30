@@ -10,7 +10,7 @@ use casa_images::PagedImage;
 use casa_imaging_application::{
     ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumBeamPolicy, ContinuumImagingRequest,
     ContinuumMask, ContinuumMaskBox, ContinuumStopReason, ContinuumWeighting, SpectralImagingMode,
-    VisibilityContinuumSubtraction, execute_continuum,
+    TaskRequirement, VisibilityContinuumSubtraction, execute_continuum,
 };
 use casa_ms::{
     CubeAxisConfig, CubeAxisValue, MeasurementSet, MeasurementSetBuilder, OptionalMainColumn,
@@ -698,13 +698,14 @@ fn application_executes_single_ddid_stokes_i_mfs_hogbom_with_one_iteration() {
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = tiny_measurement_set(root.path());
     let image_name = root.path().join("hogbom");
-
-    let result = execute_continuum(request(
+    let mut imaging = request(
         measurement_set,
         image_name.clone(),
         ContinuumAlgorithm::Hogbom,
-    ))
-    .expect("native Högbom application execution");
+    );
+    imaging.task_requirements = vec![TaskRequirement::SerialCpu, TaskRequirement::FixedTileCpu];
+
+    let result = execute_continuum(imaging).expect("native Högbom application execution");
 
     assert_eq!(result.minor_iterations, 1);
     assert_eq!(
@@ -735,6 +736,10 @@ fn application_executes_single_ddid_stokes_i_mfs_hogbom_with_one_iteration() {
         .final_major_receipt
         .as_ref()
         .expect("clean retains its terminal artifact-science receipt");
+    assert_eq!(
+        final_receipt.projected_resource_policy(),
+        casa_imaging_runtime::ResourcePolicy::Balanced
+    );
     let final_nodes = final_receipt.plan_node_identities();
     assert!(final_nodes.iter().any(|node| {
         node.as_str()
@@ -754,7 +759,57 @@ fn application_executes_single_ddid_stokes_i_mfs_hogbom_with_one_iteration() {
             .bytes(casa_imaging_runtime::IoBufferKind::SourceReadAhead),
         0
     );
+    let selected = final_receipt.selected_alternative_projection();
+    let planned_workers = selected.demand.workers.hard();
+    assert!((1..=4).contains(&planned_workers));
+    assert!(
+        selected
+            .id
+            .as_str()
+            .ends_with(&format!("-workers-{planned_workers}")),
+        "normal application composition must submit the scalable replay template to the planner",
+    );
+    if std::thread::available_parallelism().is_ok_and(|threads| threads.get() > 1) {
+        assert!(
+            planned_workers > 1,
+            "normal production planning must not pin replay to the serial baseline on a parallel host",
+        );
+    }
     assert_standard_products(&image_name, &result.product_names);
+}
+
+#[test]
+fn application_serial_cpu_requirement_caps_replay_to_one_worker() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = tiny_measurement_set(root.path());
+    let image_name = root.path().join("serial-hogbom");
+    let mut imaging = request(measurement_set, image_name, ContinuumAlgorithm::Hogbom);
+    imaging.task_requirements = vec![TaskRequirement::SerialCpu];
+
+    let result = execute_continuum(imaging).expect("serial native Högbom execution");
+    let final_receipt = result
+        .outcome
+        .output
+        .final_major_receipt
+        .as_ref()
+        .expect("serial clean retains its terminal replay receipt");
+    assert_eq!(
+        final_receipt.projected_resource_policy(),
+        casa_imaging_runtime::ResourcePolicy::Explicit(casa_imaging_runtime::ResourceOverride {
+            workers: Some(1),
+            ..casa_imaging_runtime::ResourceOverride::default()
+        })
+    );
+    assert_eq!(
+        final_receipt
+            .selected_alternative_projection()
+            .demand
+            .workers
+            .hard(),
+        1
+    );
 }
 
 #[test]

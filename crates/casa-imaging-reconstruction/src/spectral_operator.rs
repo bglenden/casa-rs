@@ -2,7 +2,11 @@
 
 //! Serial CPU basis-neutral spectral measurement operator and normal-state primitives.
 
-use std::{fmt, sync::Arc};
+use std::{
+    fmt,
+    sync::{Arc, OnceLock},
+    time::Instant,
+};
 
 use casa_imaging_model::{
     CompiledGeometryId, CompiledProblem, CompiledProblemId, ContinuumTransformGenerationId,
@@ -33,6 +37,27 @@ const TAP_COUNT: usize = SUPPORT * 2 + 1;
 #[cfg(test)]
 const TAP_VISITS_PER_SAMPLE: u64 = (TAP_COUNT * TAP_COUNT) as u64;
 pub(crate) const OVERSAMPLING: usize = 100;
+
+fn imaging_stage_timing_started() -> Option<Instant> {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    ENABLED
+        .get_or_init(|| std::env::var_os("CASA_RS_TRACE_IMAGING_STAGE_TIMING").is_some())
+        .then(Instant::now)
+}
+
+fn log_imaging_stage_timing(
+    stage: &'static str,
+    operator_path: &'static str,
+    planes: usize,
+    started: Option<Instant>,
+) {
+    if let Some(started) = started {
+        eprintln!(
+            "imaging_science_stage_timing stage={stage} operator_path={operator_path} planes={planes} elapsed_nanos={}",
+            started.elapsed().as_nanos(),
+        );
+    }
+}
 // The pinned RustFFT mixed-radix planner stores at most one length-sized table
 // per decomposition level. There are fewer than usize::BITS levels, two
 // directions, and small node headers. Charging four complex values per level
@@ -1580,7 +1605,26 @@ impl SpectralSlabOperator {
     ) -> Self {
         let geometry = specification.operator_geometry();
         let slab = specification.slab;
-        Self::new_inner(Some(specification), geometry, slab, workload, fft)
+        Self::new_inner(
+            Some(specification),
+            geometry,
+            slab,
+            workload,
+            fft,
+            workload.max_replay_block_samples,
+        )
+    }
+
+    /// Allocate gridded replay state without an ordinary per-record prediction buffer.
+    #[must_use]
+    pub(crate) fn new_gridded_normal(
+        specification: SpectralOperatorSpecification,
+        workload: SpectralOperatorWorkload,
+        fft: PreparedFft,
+    ) -> Self {
+        let geometry = specification.operator_geometry();
+        let slab = specification.slab;
+        Self::new_inner(Some(specification), geometry, slab, workload, fft, 0)
     }
 
     #[cfg(test)]
@@ -1590,7 +1634,14 @@ impl SpectralSlabOperator {
         workload: SpectralOperatorWorkload,
         fft: PreparedFft,
     ) -> Self {
-        Self::new_inner(None, geometry, slab, workload, fft)
+        Self::new_inner(
+            None,
+            geometry,
+            slab,
+            workload,
+            fft,
+            workload.max_replay_block_samples,
+        )
     }
 
     fn new_inner(
@@ -1599,6 +1650,7 @@ impl SpectralSlabOperator {
         slab: SpectralSlabPlan,
         workload: SpectralOperatorWorkload,
         fft: PreparedFft,
+        prediction_capacity: usize,
     ) -> Self {
         let gridder = StandardConvolution::new(&geometry);
         let shape = (geometry.grid_shape[0], geometry.grid_shape[1]);
@@ -1620,8 +1672,7 @@ impl SpectralSlabOperator {
             residual_compensations: None,
             reused_normal_state: None,
             forward_grids: plane_grids(slab.resident_depth()),
-            predictions: vec![Complex64::default(); workload.max_replay_block_samples]
-                .into_boxed_slice(),
+            predictions: vec![Complex64::default(); prediction_capacity].into_boxed_slice(),
             prediction_len: 0,
             sum_weights: vec![0.0; slab.core_depth()],
             sum_weight_compensations: vec![0.0; slab.core_depth()],
@@ -1695,6 +1746,44 @@ impl SpectralSlabOperator {
         generation: &ModelGeneration,
         reused_normal_state: Option<ReusableNormalState>,
     ) -> Result<ReconstructionModelBinding, SpectralOperatorError> {
+        let binding = self.bind_residual_model(generation, reused_normal_state)?;
+        if !binding.is_evaluated() {
+            return Ok(binding);
+        }
+        let grid_shape = (self.geometry.grid_shape[0], self.geometry.grid_shape[1]);
+        self.residual_grids = Some(
+            (0..self.slab.core_depth())
+                .map(|_| Array2::zeros(grid_shape))
+                .collect(),
+        );
+        self.residual_compensations = Some(
+            (0..self.slab.core_depth())
+                .map(|_| Array2::zeros(grid_shape))
+                .collect(),
+        );
+        Ok(binding)
+    }
+
+    /// Bind a gridded replay model while sector owners hold residual accumulators.
+    pub(crate) fn prepare_gridded_normal_model(
+        &mut self,
+        generation: &ModelGeneration,
+        reused_normal_state: ReusableNormalState,
+    ) -> Result<(), SpectralOperatorError> {
+        if !self
+            .bind_residual_model(generation, Some(reused_normal_state))?
+            .is_evaluated()
+        {
+            return Err(SpectralOperatorError::ReusableNormalStateMismatch);
+        }
+        Ok(())
+    }
+
+    fn bind_residual_model(
+        &mut self,
+        generation: &ModelGeneration,
+        reused_normal_state: Option<ReusableNormalState>,
+    ) -> Result<ReconstructionModelBinding, SpectralOperatorError> {
         self.validate_model_generation(generation)?;
         match (self.workload.pass, reused_normal_state.as_ref()) {
             (SpectralOperatorPass::InitialMajor, None) => {}
@@ -1711,36 +1800,10 @@ impl SpectralSlabOperator {
             generation.generation_id(),
             generation.origin(),
         );
-        if !binding.is_evaluated() {
-            return Ok(binding);
+        if binding.is_evaluated() {
+            self.prepare_forward_generation(generation)?;
         }
-        self.prepare_forward_generation(generation)?;
-        let grid_shape = (self.geometry.grid_shape[0], self.geometry.grid_shape[1]);
-        self.residual_grids = Some(
-            (0..self.slab.core_depth())
-                .map(|_| Array2::zeros(grid_shape))
-                .collect(),
-        );
-        self.residual_compensations = Some(
-            (0..self.slab.core_depth())
-                .map(|_| Array2::zeros(grid_shape))
-                .collect(),
-        );
         Ok(binding)
-    }
-
-    pub(crate) fn prepare_residual_model(
-        &mut self,
-        generation: &ModelGeneration,
-        reused_normal_state: Option<ReusableNormalState>,
-    ) -> Result<(), SpectralOperatorError> {
-        if !self
-            .prepare_bound_residual_model(generation, reused_normal_state)?
-            .is_evaluated()
-        {
-            return Err(SpectralOperatorError::ReusableNormalStateMismatch);
-        }
-        Ok(())
     }
 
     fn prepare_selected_output_model(
@@ -2036,10 +2099,12 @@ impl SpectralSlabOperator {
         Ok(predicted)
     }
 
-    pub(crate) fn apply_gridded_normal(
-        &mut self,
+    pub(crate) fn grid_gridded_normal_local(
+        &self,
+        grids: &mut [Array2<Complex64>],
+        compensations: &mut [Array2<Complex64>],
+        local_taps: SampleTaps,
         output_channel: usize,
-        taps: SampleTaps,
         predicted: Complex64,
         adjoint_scale: Complex64,
     ) -> Result<(), SpectralOperatorError> {
@@ -2047,23 +2112,36 @@ impl SpectralSlabOperator {
             .slab
             .core_index(output_channel)
             .ok_or(SpectralOperatorError::GriddedRecordMismatch)?;
+        if grids.len() != self.slab.core_depth() || compensations.len() != self.slab.core_depth() {
+            return Err(SpectralOperatorError::GriddedRecordMismatch);
+        }
         let gridded = predicted * adjoint_scale;
         if !gridded.re.is_finite() || !gridded.im.is_finite() {
             return Err(SpectralOperatorError::GeneratedNonfinite);
         }
         self.gridder.grid_compensated(
-            &mut self
-                .residual_grids
-                .as_mut()
-                .ok_or(SpectralOperatorError::MissingMajorCycleResidual)?[plane],
-            &mut self
-                .residual_compensations
-                .as_mut()
-                .ok_or(SpectralOperatorError::MissingMajorCycleResidual)?[plane],
-            taps,
+            &mut grids[plane],
+            &mut compensations[plane],
+            local_taps,
             gridded,
         );
         Ok(())
+    }
+
+    pub(crate) fn finish_gridded_normal_from_grids(
+        mut self,
+        residual_model: ModelGenerationId,
+        normal_grids: Vec<Array2<Complex64>>,
+    ) -> Result<SpectralOperatorPrimitives, SpectralOperatorError> {
+        let expected_shape = (self.geometry.grid_shape[0], self.geometry.grid_shape[1]);
+        if self.residual_grids.is_some()
+            || normal_grids.len() != self.slab.core_depth()
+            || normal_grids.iter().any(|grid| grid.dim() != expected_shape)
+        {
+            return Err(SpectralOperatorError::GriddedRecordMismatch);
+        }
+        self.residual_grids = Some(normal_grids);
+        self.finish_gridded_normal(residual_model)
     }
 
     pub(crate) fn finish_gridded_normal(
@@ -2080,9 +2158,13 @@ impl SpectralSlabOperator {
         if normal_grids.len() != self.slab.core_depth() {
             return Err(SpectralOperatorError::MissingMajorCycleResidual);
         }
+        let planes = self.slab.core_depth();
+        let fft_started = imaging_stage_timing_started();
         for grid in &mut normal_grids {
             self.fft.transform(grid, true);
         }
+        log_imaging_stage_timing("residual_fft", "gridded", planes, fft_started);
+        let formation_started = imaging_stage_timing_started();
         let reused = self
             .reused_normal_state
             .take()
@@ -2126,7 +2208,7 @@ impl SpectralSlabOperator {
         {
             return Err(SpectralOperatorError::GeneratedNonfinite);
         }
-        Ok(SpectralOperatorPrimitives {
+        let primitives = SpectralOperatorPrimitives {
             shape: self.geometry.image_shape,
             slab: self.slab,
             dirty: residual.into_boxed_slice(),
@@ -2140,7 +2222,9 @@ impl SpectralSlabOperator {
             residual_model: Some(residual_model),
             #[cfg(test)]
             measurements: self.measurements,
-        })
+        };
+        log_imaging_stage_timing("residual_formation", "gridded", planes, formation_started);
+        Ok(primitives)
     }
 
     /// Finish the paired inverse transforms and return unnormalized primitives.
@@ -2165,6 +2249,13 @@ impl SpectralSlabOperator {
         {
             return Err(SpectralOperatorError::ReusableNormalStateMismatch);
         }
+        let operator_path = if self.reused_normal_state.is_some() {
+            "streaming_residual"
+        } else {
+            "streaming_initial"
+        };
+        let planes = self.slab.core_depth();
+        let fft_started = imaging_stage_timing_started();
         for plane in 0..self.slab.core_depth() {
             if let Some(dirty) = self.dirty_grids.as_mut() {
                 self.fft.transform(&mut dirty[plane], true);
@@ -2182,6 +2273,17 @@ impl SpectralSlabOperator {
                 record_measurement(&mut self.measurements.inverse_residual_fft_planes, 1);
             }
         }
+        log_imaging_stage_timing(
+            if self.reused_normal_state.is_some() {
+                "residual_fft"
+            } else {
+                "initial_fft"
+            },
+            operator_path,
+            planes,
+            fft_started,
+        );
+        let formation_started = imaging_stage_timing_started();
         let cells = self.geometry.image_shape[0] * self.geometry.image_shape[1];
         let output_cells = cells
             .checked_mul(self.slab.core_depth())
@@ -2226,7 +2328,7 @@ impl SpectralSlabOperator {
             {
                 return Err(SpectralOperatorError::GeneratedNonfinite);
             }
-            return Ok(SpectralOperatorPrimitives {
+            let primitives = SpectralOperatorPrimitives {
                 shape: self.geometry.image_shape,
                 slab: self.slab,
                 dirty: residual.into_boxed_slice(),
@@ -2240,7 +2342,14 @@ impl SpectralSlabOperator {
                 residual_model,
                 #[cfg(test)]
                 measurements: self.measurements,
-            });
+            };
+            log_imaging_stage_timing(
+                "residual_formation",
+                operator_path,
+                planes,
+                formation_started,
+            );
+            return Ok(primitives);
         }
         let dirty_grids = self
             .dirty_grids
@@ -2310,7 +2419,7 @@ impl SpectralSlabOperator {
             .collect::<Vec<_>>();
         let dirty = dirty.into_boxed_slice();
         let invariant_dirty = Some(dirty.clone());
-        Ok(SpectralOperatorPrimitives {
+        let primitives = SpectralOperatorPrimitives {
             shape: self.geometry.image_shape,
             slab: self.slab,
             invariant_dirty,
@@ -2324,7 +2433,14 @@ impl SpectralSlabOperator {
             residual_model,
             #[cfg(test)]
             measurements: self.measurements,
-        })
+        };
+        log_imaging_stage_timing(
+            "initial_primitive_formation",
+            operator_path,
+            planes,
+            formation_started,
+        );
+        Ok(primitives)
     }
 }
 
@@ -2741,6 +2857,9 @@ pub enum SpectralOperatorError {
     /// An opaque record has an unsupported, truncated, or invalid fixed encoding.
     #[error("gridded normal-operator record encoding is invalid")]
     InvalidGriddedRecord,
+    /// A worker panicked while mutating one exclusive gridded-normal sector.
+    #[error("gridded normal-operator sector state was poisoned")]
+    GriddedSectorPoisoned,
 }
 
 #[cfg(test)]

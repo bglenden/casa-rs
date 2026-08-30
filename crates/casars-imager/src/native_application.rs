@@ -306,8 +306,8 @@ mod tests {
     use std::ffi::OsString;
 
     use super::{
-        CliConfig, HogbomIterationAccounting, TaskRequirement, application_request,
-        backend_requirements, task_requirements,
+        CliConfig, HogbomIterationAccounting, StandardMfsAccelerationPolicy, TaskRequirement,
+        application_request, backend_requirements, task_requirements,
     };
 
     fn config(extra: &[&str]) -> CliConfig {
@@ -341,6 +341,31 @@ mod tests {
     #[test]
     fn default_backend_choices_select_the_installed_native_cpu_implementation() {
         assert!(backend_requirements(&config(&[])).is_empty());
+    }
+
+    #[test]
+    fn parallel_flags_select_serial_or_planned_multi_cpu_requirements() {
+        let serial = config(&["--no-parallel"]);
+        assert_eq!(
+            serial.standard_mfs_acceleration,
+            StandardMfsAccelerationPolicy::Cpu
+        );
+        assert_eq!(task_requirements(&serial), vec![TaskRequirement::SerialCpu]);
+
+        let parallel = config(&["--parallel"]);
+        assert_eq!(
+            parallel.standard_mfs_acceleration,
+            StandardMfsAccelerationPolicy::MultiCpu
+        );
+        assert_eq!(
+            task_requirements(&parallel),
+            vec![TaskRequirement::SerialCpu, TaskRequirement::FixedTileCpu,]
+        );
+
+        assert_eq!(
+            config(&["--parallel", "--no-parallel"]).standard_mfs_acceleration,
+            StandardMfsAccelerationPolicy::Cpu
+        );
     }
 
     #[test]

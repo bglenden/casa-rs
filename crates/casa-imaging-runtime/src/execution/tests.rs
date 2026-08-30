@@ -416,6 +416,10 @@ fn io_authority() -> ResourceAuthority {
 }
 
 fn io_authority_with_workers(workers: u64) -> ResourceAuthority {
+    io_authority_with_workers_and_memory(workers, 1_024)
+}
+
+fn io_authority_with_workers_and_memory(workers: u64, memory_bytes: u64) -> ResourceAuthority {
     let domain = CapacityDomainId::new("host-memory");
     let view = CapacityViewId::new("host-memory");
     let rate = RateResourceId::new("io-rate");
@@ -428,7 +432,7 @@ fn io_authority_with_workers(workers: u64) -> ResourceAuthority {
             memory_domains: vec![MemoryCapacityDomain {
                 id: domain.clone(),
                 kind: MemoryCapacityKind::Host,
-                capacity_bytes: 1_024,
+                capacity_bytes: memory_bytes,
             }],
             memory_views: vec![MemoryView {
                 id: view,
@@ -456,18 +460,18 @@ fn io_authority_with_workers(workers: u64) -> ResourceAuthority {
             ],
             logical_cpu_threads: workers,
             performance_cpu_cores: CpuClassCapacity::Known(workers),
-            cache_capacity_bytes: 1_024,
+            cache_capacity_bytes: memory_bytes,
             lock_capacity: 8,
             file_descriptor_capacity: 8,
         },
         pressure: ExternalPressure {
-            memory_available_bytes: BTreeMap::from([(domain, 1_024)]),
+            memory_available_bytes: BTreeMap::from([(domain, memory_bytes)]),
             available_cpu_threads: workers,
             storage_available_bytes: BTreeMap::from([(transaction_storage, 1_024)]),
             rate_available_per_second: BTreeMap::from([(rate, 100), (transaction_rate, 100)]),
             queue_available_slots: BTreeMap::from([(queue, 1), (transaction_queue, 1)]),
             accelerator_available_slots: BTreeMap::new(),
-            cache_available_bytes: 1_024,
+            cache_available_bytes: memory_bytes,
             available_locks: 8,
             available_file_descriptors: 8,
         },
@@ -1777,6 +1781,72 @@ fn planning_seals_the_first_resource_authority_feasible_candidate() {
     assert_eq!(
         plan.execution_dag().resource_alternative().id,
         AlternativeId::new("serial")
+    );
+}
+
+#[test]
+fn planning_selects_the_largest_feasible_exact_worker_variant() {
+    let problem = compiled_problem();
+    let registry = ContractOnlyRegistry::new(
+        ImplementationRegistryId::from_sha256([7; 32]),
+        ImplementationContractMetadata::new(
+            problem.problem_id(),
+            problem.numerics_id(),
+            problem.required_capabilities().clone(),
+        ),
+        [WorkImplementationId::new("cpu-reference")],
+    );
+    let maximum_workers = 4;
+    let stack_bytes = u64::try_from(crate::bounded_stream::BOUNDED_WORKER_STACK_BYTES)
+        .expect("worker stack bytes fit u64");
+    let maximum_stack_bytes = maximum_workers * stack_bytes;
+    let mut work = cpu_node("work", BTreeSet::new());
+    work.claims[0].amount = maximum_workers;
+    work.claims.push(ResourceClaim {
+        resource: crate::LeaseResource::RuntimeOverhead(crate::RuntimeOverheadKind::ThreadStack),
+        amount: maximum_stack_bytes,
+        lifetime: ClaimLifetime::Work,
+    });
+    let mut specification = plan_spec(vec![work]);
+    specification.resource_alternative.id = AlternativeId::new("scalable");
+    specification.resource_alternative.demand.workers =
+        CountDemand::new(maximum_workers, maximum_workers);
+    specification
+        .resource_alternative
+        .demand
+        .overhead
+        .thread_stack_bytes = maximum_stack_bytes;
+    specification.resource_alternative.scaling.minimum_workers = 1;
+    specification.resource_alternative.scaling.maximum_workers = maximum_workers;
+    specification.initial_knobs.workers = maximum_workers;
+    let candidate = physical_work_binding(
+        ExecutionDag::new(specification).expect("worker-scalable candidate template"),
+    );
+
+    let plan = authority_plan(
+        &problem,
+        PlanningBindings::new(
+            ImplementationRegistryId::from_sha256([7; 32]),
+            ResourcePolicy::Exclusive,
+            PlannerCostModelProfileRecord::initial(PlannerCostModelProfileId::from_sha256([8; 32])),
+        ),
+        &io_authority_with_workers_and_memory(3, 64 << 20),
+        &registry,
+        &empty_receipt_store(),
+        |_, _| Ok::<_, std::convert::Infallible>(vec![candidate]),
+    )
+    .expect("three-worker exact variant is feasible");
+
+    let selected = plan.execution_dag().resource_alternative();
+    assert_eq!(selected.id, AlternativeId::new("scalable-workers-3"));
+    assert_eq!(selected.demand.workers, CountDemand::new(3, 3));
+    assert_eq!(selected.demand.overhead.thread_stack_bytes, 3 * stack_bytes);
+    assert_eq!(plan.execution_dag().initial_knobs().workers, 3);
+    let work = &plan.execution_dag().nodes()[&WorkNodeId::new("work")];
+    assert!(
+        work.claims
+            .iter()
+            .any(|claim| { claim.resource == crate::LeaseResource::Workers && claim.amount == 3 })
     );
 }
 

@@ -24,6 +24,7 @@ use crate::{
     LeaseResource, PhysicalSlotId, PublicationLayoutLedger, ReceiptError, ReceiptFailureKind,
     ReceiptStatus, ResourceAuthority, ResourceError, ResourceIdentity, ResourceOverride,
     ResourcePolicy, WorkImplementationId, WorkKind, WorkNodeId,
+    bounded_stream::BOUNDED_WORKER_STACK_BYTES,
     cost_model::PlannerCostModelProfileRecord,
     execution::{
         ExecutionDag, ExecutionScheduler, PublicationReservation, SchedulerAction,
@@ -1689,6 +1690,37 @@ impl PhysicalWorkBinding {
         self.product_publication.clone()
     }
 
+    pub(crate) fn with_fixed_worker_count(self, workers: u64) -> Result<Self, ExecutionError> {
+        let thread_stack_bytes = if workers == 1 {
+            0
+        } else {
+            workers
+                .checked_mul(BOUNDED_WORKER_STACK_BYTES as u64)
+                .ok_or_else(|| {
+                    ExecutionError::InvalidPlan(
+                        "bounded worker stack projection overflowed".to_string(),
+                    )
+                })?
+        };
+        let execution_dag = self
+            .execution_dag
+            .fixed_worker_variant(workers, thread_stack_bytes)?;
+        let implementation_contract = self
+            .implementation_contract
+            .for_execution_dag(&execution_dag)
+            .map_err(|error| ExecutionError::InvalidPlan(error.to_string()))?;
+        Self::with_implementation_contract(
+            implementation_contract,
+            execution_dag,
+            self.prediction,
+            self.artifacts,
+            self.observation_transaction,
+            self.publication_layouts,
+            self.product_publication,
+        )
+        .map_err(|error| ExecutionError::InvalidPlan(error.to_string()))
+    }
+
     fn bind_registry<R: ImplementationRegistry>(
         self,
         registry: &R,
@@ -2458,6 +2490,8 @@ where
     let recorded_infeasibility =
         RecordedInfeasibility::from_store(receipts).map_err(PlanError::Receipt)?;
     let emitted_candidates = planner(problem, &bindings).map_err(PlanError::Planner)?;
+    let emitted_candidates = expand_worker_scalable_candidates(emitted_candidates)
+        .map_err(PlanError::InvalidCandidate)?;
     let mut candidates = Vec::with_capacity(emitted_candidates.len());
     for candidate in emitted_candidates {
         candidates.push(candidate.bind_registry(registry).map_err(|error| {
@@ -2616,6 +2650,31 @@ where
     };
     plan.plan_id = execution_plan_id(&plan);
     Ok(plan)
+}
+
+fn expand_worker_scalable_candidates(
+    emitted: Vec<PhysicalWorkBinding>,
+) -> Result<Vec<PhysicalWorkBinding>, ExecutionError> {
+    let mut candidates = Vec::new();
+    for candidate in emitted {
+        let scaling = candidate
+            .execution_dag
+            .resource_alternative()
+            .scaling
+            .clone();
+        if scaling.minimum_workers == scaling.maximum_workers {
+            candidates.push(candidate);
+            continue;
+        }
+        // The sealed template names its maximum-worker knobs as the preferred
+        // configuration. Descending exact variants preserve that preference
+        // when the reviewed predictions tie; Resource Authority rejects every
+        // variant that the active policy and pressure cannot admit.
+        for workers in (scaling.minimum_workers..=scaling.maximum_workers).rev() {
+            candidates.push(candidate.clone().with_fixed_worker_count(workers)?);
+        }
+    }
+    Ok(candidates)
 }
 
 /// The science- and product-bearing surface one physical candidate commits to.

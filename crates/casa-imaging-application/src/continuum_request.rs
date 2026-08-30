@@ -39,7 +39,7 @@ use casa_imaging_reconstruction::{ReconstructionMaskPlan, WeightingExecutionLimi
 use casa_imaging_runtime::{
     BuildIdentity, ExecutionAttemptId, ExecutionReceiptStore, GriddedNormalReplayStorage,
     ImplementationRegistryId, PlannerCostModelProfileId, ProductionStorageProfile,
-    ReceiptRetention, ResourceAuthority, ResourcePolicy, WorkImplementationId,
+    ReceiptRetention, ResourceAuthority, ResourceOverride, ResourcePolicy, WorkImplementationId,
 };
 use casa_ms::{
     CubeAxisConfig, CubeInterpolation, CubeSpectralSetup, MeasurementSet, MsSelectionIoBudget,
@@ -1420,7 +1420,7 @@ fn runtime(
         storage_io,
         gridded_normal_storage,
         confidence_parts_per_million: 900_000,
-        resource_policy: ResourcePolicy::Balanced,
+        resource_policy: resource_policy(&request.task_requirements),
         cost_model: PlannerCostModelProfileId::from_sha256(hash(b"spectral-cycle-cost-v1"))
             .bootstrap(),
         authority,
@@ -1432,6 +1432,24 @@ fn runtime(
             ExecutionAttemptId::from_sha256(scoped(digest, 2)),
         ],
     })
+}
+
+fn resource_policy(task_requirements: &[TaskRequirement]) -> ResourcePolicy {
+    let serial_cpu = task_requirements.contains(&TaskRequirement::SerialCpu);
+    let planner_selected_parallelism = task_requirements.iter().any(|requirement| {
+        matches!(
+            requirement,
+            TaskRequirement::ExecutionAuto | TaskRequirement::FixedTileCpu
+        )
+    });
+    if serial_cpu && !planner_selected_parallelism {
+        ResourcePolicy::Explicit(ResourceOverride {
+            workers: Some(1),
+            ..ResourceOverride::default()
+        })
+    } else {
+        ResourcePolicy::Balanced
+    }
 }
 
 #[cfg(unix)]
@@ -1523,7 +1541,9 @@ fn boxed(message: impl Into<String>) -> crate::ApplicationError {
 
 #[cfg(test)]
 mod tests {
-    use super::{image_reference_pixel, model_plane_samples};
+    use casa_imaging_runtime::{ResourceOverride, ResourcePolicy};
+
+    use super::{TaskRequirement, image_reference_pixel, model_plane_samples, resource_policy};
 
     #[test]
     fn casa_direction_reference_pixel_uses_half_the_image_extent() {
@@ -1534,5 +1554,25 @@ mod tests {
     #[test]
     fn model_delta_bound_covers_one_complete_multiscale_plane() {
         assert_eq!(model_plane_samples(64), 4096);
+    }
+
+    #[test]
+    fn explicit_serial_cpu_requirement_caps_the_application_to_one_worker() {
+        assert_eq!(
+            resource_policy(&[TaskRequirement::SerialCpu]),
+            ResourcePolicy::Explicit(ResourceOverride {
+                workers: Some(1),
+                ..ResourceOverride::default()
+            })
+        );
+    }
+
+    #[test]
+    fn fixed_tile_cpu_requirement_uses_balanced_application_planning() {
+        assert_eq!(
+            resource_policy(&[TaskRequirement::SerialCpu, TaskRequirement::FixedTileCpu,]),
+            ResourcePolicy::Balanced
+        );
+        assert_eq!(resource_policy(&[]), ResourcePolicy::Balanced);
     }
 }

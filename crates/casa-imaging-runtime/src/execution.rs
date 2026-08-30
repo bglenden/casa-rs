@@ -6,10 +6,10 @@ use std::fmt;
 
 use crate::execution_bindings::CanonicalEncoder;
 use crate::{
-    CapabilityId, CapacityDomainId, CapacityViewId, DemandAlternative, DemandAlternatives,
-    LeaseResource, MemoryCapacityKind, MemoryViewKind, PhysicalWorkId, QuiescencePoint,
-    ResourceAuthority, ResourceError, ResourceFence, ResourceLease, ResourcePermit,
-    ResourceTopology, StorageUseKind,
+    AlternativeId, CapabilityId, CapacityDomainId, CapacityViewId, CountDemand, DemandAlternative,
+    DemandAlternatives, LeaseResource, MemoryCapacityKind, MemoryViewKind, PhysicalWorkId,
+    QuiescencePoint, ResourceAuthority, ResourceError, ResourceFence, ResourceLease,
+    ResourcePermit, ResourceTopology, RuntimeOverheadKind, StorageUseKind,
 };
 
 const PHYSICAL_WORK_IDENTITY_DOMAIN: &[u8] = b"casa-rs-physical-work-dag";
@@ -637,6 +637,78 @@ impl ExecutionDag {
     #[must_use]
     pub const fn adaptations(&self) -> &BTreeMap<AdaptationId, AdaptationTransition> {
         &self.adaptations
+    }
+
+    pub(crate) fn fixed_worker_variant(
+        &self,
+        workers: u64,
+        thread_stack_bytes: u64,
+    ) -> Result<Self, ExecutionError> {
+        let scaling = &self.resource_alternative.scaling;
+        if workers < scaling.minimum_workers
+            || workers > scaling.maximum_workers
+            || scaling.minimum_workers == scaling.maximum_workers
+            || !self.adaptations.is_empty()
+            || self.initial_knobs.workers != scaling.maximum_workers
+            || self.resource_alternative.demand.workers
+                != CountDemand::new(scaling.maximum_workers, scaling.maximum_workers)
+        {
+            return Err(ExecutionError::invalid_plan(
+                "worker-scalable template is inconsistent with its sealed scaling range",
+            ));
+        }
+        let template_workers = scaling.maximum_workers;
+        let template_stack_bytes = self.resource_alternative.demand.overhead.thread_stack_bytes;
+        let mut worker_claim_updated = false;
+        let mut stack_claim_updated = template_stack_bytes == 0;
+        let mut nodes = self.nodes.values().cloned().collect::<Vec<_>>();
+        for node in &mut nodes {
+            let mut claims = Vec::with_capacity(node.claims.len());
+            for mut claim in std::mem::take(&mut node.claims) {
+                match claim.resource {
+                    LeaseResource::Workers if claim.amount == template_workers => {
+                        claim.amount = workers;
+                        worker_claim_updated = true;
+                        claims.push(claim);
+                    }
+                    LeaseResource::RuntimeOverhead(RuntimeOverheadKind::ThreadStack)
+                        if claim.amount == template_stack_bytes =>
+                    {
+                        stack_claim_updated = true;
+                        if thread_stack_bytes > 0 {
+                            claim.amount = thread_stack_bytes;
+                            claims.push(claim);
+                        }
+                    }
+                    _ => claims.push(claim),
+                }
+            }
+            node.claims = claims;
+        }
+        if !worker_claim_updated || !stack_claim_updated {
+            return Err(ExecutionError::invalid_plan(
+                "worker-scalable template lacks its exact worker or stack claim",
+            ));
+        }
+
+        let mut alternative = self.resource_alternative.clone();
+        alternative.id =
+            AlternativeId::new(format!("{}-workers-{workers}", alternative.id.as_str()));
+        alternative.demand.workers = CountDemand::new(workers, workers);
+        alternative.demand.overhead.thread_stack_bytes = thread_stack_bytes;
+        alternative.scaling.minimum_workers = workers;
+        alternative.scaling.maximum_workers = workers;
+        let mut initial_knobs = self.initial_knobs.clone();
+        initial_knobs.workers = workers;
+        Self::new(ExecutionDagSpecification {
+            required_resource_capabilities: self.required_resource_capabilities.clone(),
+            resource_alternative: alternative,
+            nodes,
+            logical_allocations: self.logical_allocations.values().cloned().collect(),
+            physical_slots: self.physical_slots.values().cloned().collect(),
+            initial_knobs,
+            adaptations: Vec::new(),
+        })
     }
 }
 

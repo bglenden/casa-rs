@@ -179,6 +179,7 @@ const fn supports_task(requirement: TaskRequirement) -> bool {
             | TaskRequirement::MaskProduct
             | TaskRequirement::ModelColumnWrite
             | TaskRequirement::SerialCpu
+            | TaskRequirement::FixedTileCpu
             | TaskRequirement::RustFft
     )
 }

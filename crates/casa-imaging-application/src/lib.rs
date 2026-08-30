@@ -65,7 +65,7 @@ pub type ApplicationError = Box<dyn Error + Send + Sync>;
 pub struct ApplicationRuntime {
     /// Immutable registry identity used by all phases.
     pub registry: ImplementationRegistryId,
-    /// Sole serial CPU implementation identity.
+    /// CPU implementation identity.
     pub implementation: WorkImplementationId,
     /// Frozen weighting execution limits.
     pub weighting_limits: WeightingExecutionLimits,
