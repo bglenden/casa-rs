@@ -41,8 +41,8 @@ use casa_imaging_reconstruction::{
     WeightingAlgorithmState, WeightingError, WeightingExecutionLimits, WeightingPlan,
     WeightingReplayChunk, WeightingReplaySummary, begin_weighting_generation, plan_weighting,
     runtime_adapter::{
-        CompleteDataOwnerResult, GriddedNormalOperatorCompiler, SpectralOperatorPass,
-        prepare_spectral_operator, spectral_operator_workload,
+        CompleteDataOwnerResult, GriddedNormalOperatorCompiler, SourceCardinalityObservation,
+        SpectralOperatorPass, prepare_spectral_operator, spectral_operator_workload,
     },
 };
 
@@ -736,7 +736,9 @@ fn sealed_gridded_program_is_reused_across_distinct_model_generations() {
             constant_basis_contributions,
         );
 
-        let mut compiler = GriddedNormalOperatorCompiler::new(&problem).expect("gridded compiler");
+        let mut compiler =
+            GriddedNormalOperatorCompiler::new(&problem, SourceCardinalityObservation::Disabled)
+                .expect("gridded compiler");
         let gridded_blocks = weighted_blocks
             .iter()
             .map(|block| {
@@ -920,7 +922,9 @@ fn sealed_gridded_program_replays_channel_local_cross_channel_groups() {
         &samples,
         split_channel_contributions,
     );
-    let mut compiler = GriddedNormalOperatorCompiler::new(&problem).expect("gridded compiler");
+    let mut compiler =
+        GriddedNormalOperatorCompiler::new(&problem, SourceCardinalityObservation::Disabled)
+            .expect("gridded compiler");
     let gridded_blocks = weighted_blocks
         .iter()
         .map(|block| {

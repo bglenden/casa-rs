@@ -10,7 +10,7 @@ use std::{
 };
 
 #[cfg(test)]
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use casa_imaging_model::{
     CompiledGeometryId, CompiledProblem, CompiledProblemId, ContinuumTransformGenerationId,
@@ -24,11 +24,15 @@ use casa_imaging_reconstruction::{
     runtime_adapter::{
         CompleteDataOwnerResult, CompleteDataOwnerState, GRIDDED_NORMAL_OPERATOR_RECORD_BYTES,
         GriddedNormalOperatorApply, GriddedNormalOperatorBlockMeasurements,
-        GriddedNormalOperatorCompiler, GriddedNormalOperatorProgram, PreparedSpectralOperator,
+        GriddedNormalOperatorCompiler, GriddedNormalOperatorProgram,
+        GriddedNormalSourceCardinality, PreparedSpectralOperator, SourceCardinalityObservation,
         SpectralOperatorPass, SpectralOperatorWorkload, prepare_spectral_operator,
         spectral_operator_workload,
     },
 };
+
+#[cfg(test)]
+use casa_imaging_reconstruction::runtime_adapter::GriddedNormalOperatorStageTimings;
 
 use crate::bounded_stream::{
     BlockIdentity, BoundedStreamError, BoundedStreamMeasurements, BoundedStreamPlan,
@@ -96,10 +100,7 @@ pub(crate) struct GriddedNormalReplayCompilation {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct GriddedNormalCompilationMeasurements {
     pub(crate) blocks: u64,
-    pub(crate) source_group_count: u64,
-    pub(crate) source_record_count: u64,
-    pub(crate) reduced_group_count: u64,
-    pub(crate) reduced_record_count: u64,
+    pub(crate) source_cardinality: Option<GriddedNormalSourceCardinality>,
     pub(crate) source_group_vector_allocations: u64,
     pub(crate) source_group_capacity_growth_bytes: u64,
     pub(crate) reduction_map_entry_insertions: u64,
@@ -114,12 +115,46 @@ pub(crate) struct GriddedNormalCompilationMeasurements {
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct GriddedNormalCompilationStageTimings {
-    pub(crate) compile_block: Duration,
-    pub(crate) append_frame: Duration,
-    pub(crate) seal: Duration,
+    pub(crate) record_key_construction: Duration,
+    pub(crate) grouping_reduction: Duration,
+    pub(crate) encoding_checksum: Duration,
+    pub(crate) payload_movement: Duration,
+    pub(crate) artifact_writes: Duration,
+    pub(crate) completion: Duration,
+}
+
+#[cfg(test)]
+fn add_compiler_stage_timings(
+    total: &mut GriddedNormalCompilationStageTimings,
+    block: GriddedNormalOperatorStageTimings,
+) {
+    total.record_key_construction += block.record_key_construction;
+    total.grouping_reduction += block.grouping_reduction;
+    total.encoding_checksum += block.encoding_checksum;
+    total.completion += block.completion;
 }
 
 impl GriddedNormalCompilationMeasurements {
+    fn new(observation: SourceCardinalityObservation) -> Self {
+        Self {
+            source_cardinality: match observation {
+                SourceCardinalityObservation::Disabled => None,
+                SourceCardinalityObservation::Enabled => {
+                    Some(GriddedNormalSourceCardinality::default())
+                }
+            },
+            ..Self::default()
+        }
+    }
+
+    pub(crate) const fn reduced_group_count(self) -> u64 {
+        self.reduction_map_entry_insertions
+    }
+
+    pub(crate) const fn reduced_record_count(self) -> u64 {
+        self.encoded_buffer_bytes / GRIDDED_NORMAL_OPERATOR_RECORD_BYTES as u64
+    }
+
     fn add_block(&mut self, block: GriddedNormalOperatorBlockMeasurements) -> io::Result<()> {
         macro_rules! add {
             ($field:ident, $value:expr) => {
@@ -129,10 +164,18 @@ impl GriddedNormalCompilationMeasurements {
             };
         }
         add!(blocks, 1);
-        add!(source_group_count, block.source_group_count);
-        add!(source_record_count, block.source_record_count);
-        add!(reduced_group_count, block.reduced_group_count);
-        add!(reduced_record_count, block.reduced_record_count);
+        match (&mut self.source_cardinality, block.source_cardinality) {
+            (Some(total), Some(block)) => {
+                total.groups = total.groups.checked_add(block.groups).ok_or_else(|| {
+                    io::Error::other("gridded-normal source group measurement overflow")
+                })?;
+                total.records = total.records.checked_add(block.records).ok_or_else(|| {
+                    io::Error::other("gridded-normal source record measurement overflow")
+                })?;
+            }
+            (None, None) => {}
+            _ => return Err(io::Error::other("gridded-normal observation mode changed")),
+        }
         add!(
             source_group_vector_allocations,
             block.source_group_vector_allocations
@@ -176,21 +219,28 @@ impl GriddedNormalReplayCompilation {
     ) -> io::Result<Self> {
         let budget = project_gridded_normal_artifact_budget(problem, max_block_samples)?;
         validate_gridded_artifact_context(context, budget, crate::IoBufferKind::SpillWrite)?;
-        Self::create(problem, storage, budget)
+        Self::create(
+            problem,
+            storage,
+            budget,
+            SourceCardinalityObservation::Disabled,
+        )
     }
 
     fn create(
         problem: &CompiledProblem,
         storage: &GriddedNormalReplayStorage,
         budget: GriddedNormalArtifactBudget,
+        observation: SourceCardinalityObservation,
     ) -> io::Result<Self> {
         Ok(Self {
-            compiler: GriddedNormalOperatorCompiler::new(problem).map_err(io::Error::other)?,
+            compiler: GriddedNormalOperatorCompiler::new(problem, observation)
+                .map_err(io::Error::other)?,
             writer: Some(
                 GriddedNormalArtifactWriter::create(storage, budget).map_err(io::Error::other)?,
             ),
             spill: None,
-            compilation_measurements: GriddedNormalCompilationMeasurements::default(),
+            compilation_measurements: GriddedNormalCompilationMeasurements::new(observation),
             #[cfg(test)]
             stage_timings: None,
         })
@@ -204,7 +254,12 @@ impl GriddedNormalReplayCompilation {
         observe_timings: bool,
     ) -> io::Result<Self> {
         let budget = project_gridded_normal_artifact_budget(problem, max_block_samples)?;
-        let mut compilation = Self::create(problem, storage, budget)?;
+        let mut compilation = Self::create(
+            problem,
+            storage,
+            budget,
+            SourceCardinalityObservation::Enabled,
+        )?;
         compilation.stage_timings =
             observe_timings.then_some(GriddedNormalCompilationStageTimings::default());
         Ok(compilation)
@@ -215,21 +270,55 @@ impl GriddedNormalReplayCompilation {
         block: &casa_imaging_reconstruction::WeightingReplayChunk,
     ) -> io::Result<()> {
         #[cfg(test)]
-        let compile_started = self.stage_timings.as_ref().map(|_| Instant::now());
+        let compiled = if let Some(timings) = self.stage_timings.as_mut() {
+            let (compiled, measured) = self
+                .compiler
+                .compile_block_observed(block)
+                .map_err(io::Error::other)?;
+            add_compiler_stage_timings(timings, measured);
+            compiled
+        } else {
+            self.compiler
+                .compile_block(block)
+                .map_err(io::Error::other)?
+        };
+        #[cfg(not(test))]
         let compiled = self
             .compiler
             .compile_block(block)
             .map_err(io::Error::other)?;
-        #[cfg(test)]
-        if let (Some(started), Some(timings)) = (compile_started, self.stage_timings.as_mut()) {
-            timings.compile_block += started.elapsed();
-        }
         self.compilation_measurements
             .add_block(compiled.measurements())?;
         #[cfg(test)]
-        let append_started = self.stage_timings.as_ref().map(|_| Instant::now());
-        let result = self
-            .writer
+        if let Some(timings) = self.stage_timings.as_mut() {
+            let measured = self
+                .writer
+                .as_mut()
+                .ok_or_else(|| io::Error::other("gridded-normal writer already sealed"))?
+                .append_frame_observed(
+                    compiled.sequence(),
+                    compiled.record_count(),
+                    compiled.encoded_bytes(),
+                )
+                .map_err(io::Error::other)?;
+            timings.encoding_checksum += measured.encoding_checksum;
+            timings.payload_movement += measured.payload_movement;
+            timings.artifact_writes += measured.artifact_writes;
+            timings.completion += measured.completion;
+            Ok(())
+        } else {
+            self.writer
+                .as_mut()
+                .ok_or_else(|| io::Error::other("gridded-normal writer already sealed"))?
+                .append_frame(
+                    compiled.sequence(),
+                    compiled.record_count(),
+                    compiled.encoded_bytes(),
+                )
+                .map_err(io::Error::other)
+        }
+        #[cfg(not(test))]
+        self.writer
             .as_mut()
             .ok_or_else(|| io::Error::other("gridded-normal writer already sealed"))?
             .append_frame(
@@ -237,12 +326,7 @@ impl GriddedNormalReplayCompilation {
                 compiled.record_count(),
                 compiled.encoded_bytes(),
             )
-            .map_err(io::Error::other);
-        #[cfg(test)]
-        if let (Some(started), Some(timings)) = (append_started, self.stage_timings.as_mut()) {
-            timings.append_frame += started.elapsed();
-        }
-        result
+            .map_err(io::Error::other)
     }
 
     pub(crate) fn write_measurements(&self) -> GriddedNormalArtifactMeasurements {
@@ -268,7 +352,10 @@ impl GriddedNormalReplayCompilation {
 
     pub(crate) fn seal(&mut self) -> io::Result<()> {
         #[cfg(test)]
-        let started = self.stage_timings.as_ref().map(|_| Instant::now());
+        let started = self
+            .stage_timings
+            .as_ref()
+            .map(|_| std::time::Instant::now());
         let writer = self
             .writer
             .take()
@@ -276,7 +363,7 @@ impl GriddedNormalReplayCompilation {
         self.spill = Some(writer.seal().map_err(io::Error::other)?);
         #[cfg(test)]
         if let (Some(started), Some(timings)) = (started, self.stage_timings.as_mut()) {
-            timings.seal += started.elapsed();
+            timings.completion += started.elapsed();
         }
         Ok(())
     }

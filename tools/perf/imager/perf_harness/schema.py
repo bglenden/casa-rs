@@ -2570,13 +2570,8 @@ def _validate_comparison_metadata(value: Any, *, source: str) -> None:
     metadata = _require_dict(value, source)
     _allowed_fields(metadata, COMPARISON_METADATA_FIELDS, source)
     _nonempty_string(metadata, "status", source)
-    if "parity" in metadata:
-        parity = metadata["parity"]
-        if metadata["status"] == "not_required":
-            if parity is not None:
-                raise ContractError(f"{source}: unused parity must be null")
-        elif not isinstance(parity, bool):
-            raise ContractError(f"{source}: parity must be boolean")
+    if "parity" in metadata and not isinstance(metadata["parity"], bool):
+        raise ContractError(f"{source}: parity must be boolean")
     if "field_parity" in metadata:
         parity = _require_dict(metadata["field_parity"], f"{source}: field_parity")
         allowed = {"shape", "unit", "masks", "coordinates", "restoring_beam"}

@@ -174,18 +174,17 @@ used to inflate the candidate speedup.
 
 Image, residual, PSF, and model products were bit-identical to the frozen
 16-channel reference: normalized RMS and maximum normalized difference were
-zero for all four. The recovered comparison receipt is
-`/private/tmp/issue586-ch16-recovered/20260830T160636Z-wave3-standard-mfs-single-term-turnaround-c43999f9.json`.
+zero for all four. The raw comparison artifact is
+`/private/tmp/issue586-ch16-recovered/20260830T160636Z-wave3-standard-mfs-single-term-turnaround-c43999f9.comparison.json`.
 The timed candidate log is
 `/private/tmp/issue586-ch16-candidate/20260830T160214Z-wave3-standard-mfs-single-term-turnaround-62dc0894.log`.
 
-Receipt publication initially exposed a schema mismatch: the comparator's
+Receipt publication exposed a pre-existing schema mismatch: the comparator's
 canonical unrequested-metadata sentinel is `{status: not_required, parity:
-null}`, while the outer run schema required a boolean whenever `parity` was
-present. The repaired schema accepts only that null sentinel and retains the
-boolean requirement for evaluated metadata. Seventy-five directly affected
-schema and comparator tests passed. Receipt recovery reused both product
-prefixes and reran neither Rust science nor CASA.
+null}`, while the outer run schema requires a boolean whenever `parity` is
+present. Repairing that versioned receipt contract is outside this issue's
+explicit scope. The raw product comparison completed and reused both product
+prefixes; neither Rust science nor CASA was rerun.
 
 ## Complete 64-channel CASA gate
 
@@ -230,8 +229,8 @@ The run retained exactly two ordered MeasurementSet passes, two source slots,
 one worker, 62,272,500 bytes peak source-buffer capacity in each pass, and the
 pinned compiler/artifact work signature: 395,038,080 source records,
 196,602,895 emitted records, 6,300,504,416 artifact bytes, and 6,291,292,640
-payload bytes. The receipt is
-`/private/tmp/issue586-full-candidate/20260830T161408Z-wave3-standard-mfs-single-term-heavy-wave2-serial-c16928ac.json`.
+payload bytes. The raw comparison artifact is
+`/private/tmp/issue586-full-candidate/20260830T161408Z-wave3-standard-mfs-single-term-heavy-wave2-serial-c16928ac.comparison.json`.
 
 This full gate retains the empty-model candidate. It also selects the next
 serial discriminator, if this ticket continues: weighting and contribution
@@ -240,6 +239,46 @@ hash batching is the first bounded hypothesis because the six-block cohort
 made 33,696,007 SHA-256 update calls for 2,864,160,146 canonical bytes while
 emitting 8,227 blocks. It must prove its own wall saving locally before another
 production run.
+
+## Review-blocker closeout
+
+The final stage-local seam dispatches once per block. Normal production uses an
+unobserved compiler specialization: source cardinality is not counted in its
+sample loop, reduced groups are derived from map insertions, and reduced
+records are derived from encoded fixed-width bytes. The ignored discriminator
+selects the observed specialization and derives source groups and records while
+traversing the already-grouped records for reduction. Both specializations use
+the same scientific phase functions and encoding.
+
+The fresh OFF/ON/OFF release discriminator passed with exact pinned science,
+artifact, proof, allocation, copy, write, residency, and cardinality
+identities. OFF observations were 13.025766 and 13.087971 seconds, differing by
+0.476 percent. The observed run was 12.850460 seconds, so measured observer
+overhead was zero. Its mutually exclusive buckets were:
+
+| Bucket | Captured seconds |
+| --- | ---: |
+| Weighting and contribution formation | 6.923604 |
+| Initial science-operator consumption | 2.230914 |
+| Record-key construction | 0.595339 |
+| Grouping and reduction | 2.094396 |
+| Encoding and checksums | 0.511992 |
+| Payload movement | 0.004147 |
+| Artifact writes | 0.247914 |
+| Completion | 0.177958 |
+| Science finish | 0.061814 |
+| Callback and residual timing orchestration | 0.003006 |
+
+The artifact retained SHA-256
+`8ba96df08553820c4441f3a87fd84d90f324b21d14c8d8c7985e6164934ce154`,
+14,520,731 records, and 464,663,392 payload bytes. The split identifies
+weighting as the largest remaining bucket but authorizes no additional
+optimization in this ticket.
+
+The comparison-metadata null-sentinel repair was removed from this change
+because #586 explicitly excludes versioned receipt-schema changes. Raw product
+comparison artifacts retain the accepted CASA NRMS evidence. The harness
+contract mismatch is recorded separately.
 
 ## Fixed constraints
 

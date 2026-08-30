@@ -424,13 +424,15 @@ struct InitialWeightedTimings {
     stream: Duration,
     weighting_and_contributions: Duration,
     science_consume: Duration,
-    compile_block: Duration,
-    append_write: Duration,
+    record_key_construction: Duration,
+    grouping_reduction: Duration,
+    encoding_checksum: Duration,
+    payload_movement: Duration,
+    artifact_writes: Duration,
+    completion: Duration,
     stream_orchestration: Duration,
     finish_seal: Duration,
     science_finish: Duration,
-    artifact_seal: Duration,
-    compiler_finish: Duration,
 }
 
 impl InitialWeightedTimings {
@@ -586,6 +588,7 @@ impl InitialWeightedProbe<'_> {
         let result = operator.complete(&replay_summary, selected_generation, None)?;
         let science_finish =
             science_finish_started.map_or(Duration::ZERO, |started| started.elapsed());
+        let callback_compilation_timings = compilation.stage_timings().unwrap_or_default();
         compilation.seal()?;
         let compilation_timings = compilation.stage_timings().unwrap_or_default();
         let compilation_measurements = compilation.compilation_measurements();
@@ -598,8 +601,12 @@ impl InitialWeightedProbe<'_> {
         let finish_seal = finish_started.elapsed();
 
         let measured_callback = science_consume
-            .saturating_add(compilation_timings.compile_block)
-            .saturating_add(compilation_timings.append_frame);
+            .saturating_add(callback_compilation_timings.record_key_construction)
+            .saturating_add(callback_compilation_timings.grouping_reduction)
+            .saturating_add(callback_compilation_timings.encoding_checksum)
+            .saturating_add(callback_compilation_timings.payload_movement)
+            .saturating_add(callback_compilation_timings.artifact_writes)
+            .saturating_add(callback_compilation_timings.completion);
         let weighting_and_contributions = if observe_timings {
             stream.saturating_sub(callback_elapsed)
         } else {
@@ -639,13 +646,17 @@ impl InitialWeightedProbe<'_> {
                 stream,
                 weighting_and_contributions,
                 science_consume,
-                compile_block: compilation_timings.compile_block,
-                append_write: compilation_timings.append_frame,
+                record_key_construction: compilation_timings.record_key_construction,
+                grouping_reduction: compilation_timings.grouping_reduction,
+                encoding_checksum: compilation_timings.encoding_checksum,
+                payload_movement: compilation_timings.payload_movement,
+                artifact_writes: compilation_timings.artifact_writes,
+                completion: compilation_timings
+                    .completion
+                    .saturating_add(compiler_finish),
                 stream_orchestration,
                 finish_seal,
                 science_finish,
-                artifact_seal: compilation_timings.seal,
-                compiler_finish,
             },
         })
     }
@@ -747,6 +758,11 @@ fn medium_vla_64ch_initial_weighted_construction_discriminator() -> Result<(), B
     );
     let signature = &observed.signature;
     let compilation = signature.compilation;
+    let source_cardinality = compilation
+        .source_cardinality
+        .expect("stage-local probe enables source-cardinality observation");
+    let reduced_group_count = compilation.reduced_group_count();
+    let reduced_record_count = compilation.reduced_record_count();
     let write = signature.write;
     let seal = signature.artifact_seal;
     assert_eq!(
@@ -761,16 +777,16 @@ fn medium_vla_64ch_initial_weighted_construction_discriminator() -> Result<(), B
     );
     assert_eq!(compilation.blocks, EXPECTED_WEIGHTED_BLOCKS);
     assert!(
-        compilation.source_group_count >= compilation.reduced_group_count
-            && compilation.source_record_count >= compilation.reduced_record_count,
+        source_cardinality.groups >= reduced_group_count
+            && source_cardinality.records >= reduced_record_count,
         "block-local reduction increased group or record cardinality"
     );
     assert_eq!(
-        compilation.reduced_group_count, compilation.reduction_map_entry_insertions,
+        reduced_group_count, compilation.reduction_map_entry_insertions,
         "one map insertion must mint each reduced group"
     );
     assert_eq!(
-        compilation.reduced_record_count,
+        reduced_record_count,
         write.record_count(),
         "compiled and written record counts differ"
     );
@@ -780,7 +796,7 @@ fn medium_vla_64ch_initial_weighted_construction_discriminator() -> Result<(), B
         "compiled and written payload bytes differ"
     );
     assert_eq!(
-        compilation.reduced_record_count * u64::try_from(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)?,
+        reduced_record_count * u64::try_from(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)?,
         compilation.encoded_buffer_bytes,
         "fixed-width encoded record accounting changed"
     );
@@ -854,10 +870,10 @@ fn medium_vla_64ch_initial_weighted_construction_discriminator() -> Result<(), B
     assert_eq!(
         [
             compilation.blocks,
-            compilation.source_group_count,
-            compilation.source_record_count,
-            compilation.reduced_group_count,
-            compilation.reduced_record_count,
+            source_cardinality.groups,
+            source_cardinality.records,
+            reduced_group_count,
+            reduced_record_count,
             compilation.source_group_vector_allocations,
             compilation.source_group_capacity_growth_bytes,
             compilation.reduction_map_entry_insertions,
@@ -962,12 +978,14 @@ fn medium_vla_64ch_initial_weighted_construction_discriminator() -> Result<(), B
         .timings
         .weighting_and_contributions
         .saturating_add(observed.timings.science_consume)
-        .saturating_add(observed.timings.compile_block)
-        .saturating_add(observed.timings.append_write)
+        .saturating_add(observed.timings.record_key_construction)
+        .saturating_add(observed.timings.grouping_reduction)
+        .saturating_add(observed.timings.encoding_checksum)
+        .saturating_add(observed.timings.payload_movement)
+        .saturating_add(observed.timings.artifact_writes)
+        .saturating_add(observed.timings.completion)
         .saturating_add(observed.timings.stream_orchestration)
-        .saturating_add(observed.timings.science_finish)
-        .saturating_add(observed.timings.artifact_seal)
-        .saturating_add(observed.timings.compiler_finish);
+        .saturating_add(observed.timings.science_finish);
     let orchestration = observed.timings.total().saturating_sub(measured_stages);
 
     println!(
@@ -995,12 +1013,14 @@ fn medium_vla_64ch_initial_weighted_construction_discriminator() -> Result<(), B
             "stages_ms": {
                 "weighting_and_contribution_formation": milliseconds(observed.timings.weighting_and_contributions),
                 "initial_science_operator_consume": milliseconds(observed.timings.science_consume),
-                "reconstruction_compile_block": milliseconds(observed.timings.compile_block),
-                "runtime_artifact_append_write": milliseconds(observed.timings.append_write),
+                "record_key_construction": milliseconds(observed.timings.record_key_construction),
+                "grouping_reduction": milliseconds(observed.timings.grouping_reduction),
+                "encoding_checksum": milliseconds(observed.timings.encoding_checksum),
+                "payload_movement": milliseconds(observed.timings.payload_movement),
+                "artifact_writes": milliseconds(observed.timings.artifact_writes),
+                "completion": milliseconds(observed.timings.completion),
                 "stream_callback_orchestration": milliseconds(observed.timings.stream_orchestration),
                 "science_operator_finish": milliseconds(observed.timings.science_finish),
-                "runtime_artifact_finish_seal": milliseconds(observed.timings.artifact_seal),
-                "reconstruction_compiler_finish": milliseconds(observed.timings.compiler_finish),
                 "stage_orchestration": milliseconds(orchestration),
             },
             "timing_boundaries_ms": {
@@ -1024,10 +1044,10 @@ fn medium_vla_64ch_initial_weighted_construction_discriminator() -> Result<(), B
             "resource_signature": signature.resource_signature,
             "compilation_counters": {
                 "blocks": compilation.blocks,
-                "source_groups": compilation.source_group_count,
-                "source_records": compilation.source_record_count,
-                "reduced_groups": compilation.reduced_group_count,
-                "reduced_records": compilation.reduced_record_count,
+                "source_groups": source_cardinality.groups,
+                "source_records": source_cardinality.records,
+                "reduced_groups": reduced_group_count,
+                "reduced_records": reduced_record_count,
                 "source_group_vector_allocations": compilation.source_group_vector_allocations,
                 "source_group_capacity_growth_bytes": compilation.source_group_capacity_growth_bytes,
                 "reduction_map_entry_insertions": compilation.reduction_map_entry_insertions,
