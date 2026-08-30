@@ -85,3 +85,28 @@ During the serial run, an attempted new `backend_plan_logs` bucket was rejected
 by the strict receipt schema after science completed. Commit `d68d49af5` keeps
 the exact route summary in the immutable benchmark log while leaving the
 persisted receipt schema unchanged.
+
+## Approved pool-residency discriminator
+
+The user subsequently approved one bounded continuation: keep the existing
+source slots, route, four sector partitions, per-frame barriers, deterministic
+commit order, memory plan, and public runtime API, but enter the runtime-owned
+Rayon pool once around the complete bounded consumer lifecycle. The generic
+bounded-stream contract therefore makes its already-cross-thread kernel and
+completion state explicitly `Send`. Serial execution still has no Rayon pool
+and records zero pool entries; multi-worker execution records exactly one.
+
+The causal hypothesis is that repeated pool entry, rather than source I/O or
+commit work, accounts for enough of the four-worker regression to make the
+unchanged four-sector scientific work useful. The immutable route serial result
+of `3.580817` seconds remains the baseline. The candidate is rejected unless:
+
+- serial products, identities, passes, route counters, and residency remain
+  unchanged;
+- four-worker execution records exactly one pool entry and the same 31,985
+  logical per-frame dispatch waves;
+- four-worker replay wall is at most `3.401776` seconds, at least 5% faster
+  than the route serial baseline.
+
+Failure stops the campaign before any multi-frame window, extra source slots,
+or wider executor-lifecycle change.
