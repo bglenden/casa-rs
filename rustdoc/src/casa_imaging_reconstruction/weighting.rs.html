@@ -1980,7 +1980,7 @@
 <a href=#1980 id=1980 data-nosnippet>1980</a>    <span class="attr">#[test]
 <a href=#1981 id=1981 data-nosnippet>1981</a>    </span><span class="kw">fn </span>fixed_width_proves_the_u64_sample_domain_and_overflow_fails_closed() {
 <a href=#1982 id=1982 data-nosnippet>1982</a>        <span class="macro">assert!</span>(
-<a href=#1983 id=1983 data-nosnippet>1983</a>            F32_SUPERACCUMULATOR_LIMBS * u64::BITS <span class="kw">as </span>usize &gt;= <span class="number">277 </span>+ u64::BITS <span class="kw">as </span>usize + <span class="number">1</span>,
+<a href=#1983 id=1983 data-nosnippet>1983</a>            F32_SUPERACCUMULATOR_LIMBS * u64::BITS <span class="kw">as </span>usize &gt; <span class="number">277 </span>+ u64::BITS <span class="kw">as </span>usize,
 <a href=#1984 id=1984 data-nosnippet>1984</a>            <span class="string">"one f32 needs 277 magnitude bits and at most two density adds occur per sample"
 <a href=#1985 id=1985 data-nosnippet>1985</a>        </span>);
 <a href=#1986 id=1986 data-nosnippet>1986</a>        <span class="kw">let </span><span class="kw-2">mut </span>full = [u64::MAX; F32_SUPERACCUMULATOR_LIMBS];
