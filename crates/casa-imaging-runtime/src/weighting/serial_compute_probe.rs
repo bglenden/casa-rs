@@ -1168,7 +1168,7 @@ fn replay_weighting_kernel<'a, W, F, E>(
 ) -> Result<WeightingBlockKernelCompletion<'a, W::Finish>, WeightingBlockKernelError<E>>
 where
     W: StreamingWeightPhase + Sync,
-    F: FnMut(&ReconstructionWeightedBlock) -> Result<(), E> + Send + Sync,
+    F: FnMut(&ReconstructionWeightedBlock) -> Result<(), E> + Sync,
     E: Error + Send + 'static,
 {
     for block in blocks {

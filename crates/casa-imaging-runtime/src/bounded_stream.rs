@@ -219,7 +219,7 @@ impl<P> KernelPartition<P> {
 pub(crate) trait PartitionedKernel<S>: Sync {
     type Partition: Send + Sync;
     type Partial: Send;
-    type Completion: Send;
+    type Completion;
     type Error: Error + Send + 'static;
 
     fn partition_count(&self, block: BlockIdentity, storage: &S) -> Result<usize, Self::Error>;
@@ -292,7 +292,6 @@ pub(crate) struct BoundedStreamMeasurements {
     pub(crate) source_slots: usize,
     pub(crate) workers: usize,
     pub(crate) worker_threads_started: u64,
-    pub(crate) worker_pool_entries: u64,
     pub(crate) dispatch_waves: u64,
     pub(crate) planned_source_capacity_bytes: u64,
     pub(crate) maximum_partitions_per_block: usize,
@@ -445,17 +444,6 @@ impl FixedWorkerTeam {
 
     const fn stack_capacity_bytes(&self) -> u64 {
         self.stack_capacity_bytes
-    }
-
-    fn install<R: Send>(&self, operation: impl FnOnce() -> R + Send) -> R {
-        match &self.pool {
-            Some(pool) => pool.install(operation),
-            None => operation(),
-        }
-    }
-
-    fn pool_entries(&self) -> u64 {
-        u64::from(self.pool.is_some())
     }
 
     fn shutdown(self) -> u64 {
@@ -941,7 +929,7 @@ pub(crate) fn execute_bounded<S, K>(
 ) -> BoundedStreamResult<S::Completion, K::Completion, S::Error, K::Error>
 where
     S: OrderedBlockSource,
-    K: PartitionedKernel<S::Storage> + Send,
+    K: PartitionedKernel<S::Storage>,
 {
     let started = Instant::now();
     let worker_team = match FixedWorkerTeam::new(plan.workers) {
@@ -955,25 +943,11 @@ where
             });
         }
     };
-    let worker_pool_entries = worker_team.pool_entries();
-    let mut result = worker_team.install(|| {
-        if plan.source_slots == 1 {
-            execute_inline(plan, pass_ordinal, source, kernel, &worker_team)
-        } else {
-            execute_overlapped(plan, pass_ordinal, source, kernel, &worker_team)
-        }
-    });
-    let worker_threads_started = worker_team.shutdown();
-    match &mut result {
-        Ok(outcome) => {
-            outcome.measurements.worker_threads_started = worker_threads_started;
-            outcome.measurements.worker_pool_entries = worker_pool_entries;
-        }
-        Err(failure) => {
-            failure.measurements.worker_threads_started = worker_threads_started;
-            failure.measurements.worker_pool_entries = worker_pool_entries;
-        }
-    }
+    let result = if plan.source_slots == 1 {
+        execute_inline(plan, pass_ordinal, source, kernel, worker_team)
+    } else {
+        execute_overlapped(plan, pass_ordinal, source, kernel, worker_team)
+    };
     match result {
         Ok(mut outcome) => {
             outcome.measurements.wall_nanos = started.elapsed().as_nanos();
@@ -1003,7 +977,7 @@ fn execute_inline<S, K>(
     pass_ordinal: u32,
     mut source: S,
     mut kernel: K,
-    worker_team: &FixedWorkerTeam,
+    worker_team: FixedWorkerTeam,
 ) -> BoundedStreamResult<S::Completion, K::Completion, S::Error, K::Error>
 where
     S: OrderedBlockSource,
@@ -1068,7 +1042,7 @@ where
                         },
                         &storage,
                         &mut kernel,
-                        worker_team,
+                        &worker_team,
                         &mut measurements.worker_slots,
                         worker_measurement_capacity_bytes,
                     )
@@ -1085,6 +1059,7 @@ where
         }
         source.complete().map_err(BoundedStreamError::Source)
     })();
+    measurements.worker_threads_started = worker_team.shutdown();
     let result = source_result.and_then(|source_completion| {
         kernel
             .complete()
@@ -1109,7 +1084,7 @@ fn execute_overlapped<S, K>(
     pass_ordinal: u32,
     source: S,
     mut kernel: K,
-    worker_team: &FixedWorkerTeam,
+    worker_team: FixedWorkerTeam,
 ) -> BoundedStreamResult<S::Completion, K::Completion, S::Error, K::Error>
 where
     S: OrderedBlockSource,
@@ -1485,7 +1460,7 @@ where
                         identity,
                         &lease.storage,
                         &mut kernel,
-                        worker_team,
+                        &worker_team,
                         &mut measurements.worker_slots,
                         worker_measurement_capacity_bytes,
                     )
@@ -1571,6 +1546,7 @@ where
         }
         completion.ok_or(BoundedStreamError::ProducerDisconnected)
     });
+    measurements.worker_threads_started = worker_team.shutdown();
     let producer_measurements = *producer_measurements
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -1896,8 +1872,6 @@ mod tests {
         assert_eq!(parallel.measurements.commits_completed, 12);
         assert_eq!(parallel.measurements.dispatch_waves, 4);
         assert_eq!(parallel.measurements.worker_threads_started, 3);
-        assert_eq!(serial.measurements.worker_pool_entries, 0);
-        assert_eq!(parallel.measurements.worker_pool_entries, 1);
         assert_eq!(
             parallel
                 .measurements
