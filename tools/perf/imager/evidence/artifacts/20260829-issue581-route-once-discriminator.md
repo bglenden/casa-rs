@@ -300,3 +300,185 @@ commit identity, and final normal-state identity
 This automatic-budget result admits the matched 16-channel production serial
 gate before any four-worker production comparison. It does not admit the
 all-channel, full CLEAN, or 32 GB gates, and CASA was not rerun.
+
+## Failed 16-channel automatic-budget serial gate
+
+The admitted production serial run traversed all 4,094,064 selected rows of
+the directly mounted 32 GiB MeasurementSet with the frozen 16-channel,
+1024-pixel, Briggs, 50-iteration workload. The automatic planner requested
+754,720 bytes and admitted 17,306 windows with a five-frame high-water and
+754,708-byte actual dynamic replay working set.
+
+| Measurement | Frozen route serial | Automatic-budget serial | Delta |
+| --- | ---: | ---: | ---: |
+| Full Rust wall | 86.970694 s | 85.935620 s | -1.19% |
+| Gridded replay wall | 3.580817 s | 3.830524 s | +6.97% |
+| Source fill | 1.431155 s | 1.378463 s | -3.68% |
+| Prepare | 1.744951 s | 1.710450 s | -1.98% |
+| Execute | 1.619612 s | 2.008592 s | +24.02% |
+| Commit | 0.003330 s | 0.001862 s | -44.07% |
+
+The full-wall improvement does not override the issue's serial replay gate.
+Replay and prepare-plus-execute-plus-commit both regressed, so no four-worker
+production run followed. The run preserved two source slots, zero payload
+copies, zero dynamic partial bytes, 49,141,788 routed/degridded/gridded
+records, 69,224 deterministic partitions and commits, and exact work and
+commit identity.
+
+Two isolated full-row boundary runs reduced the topology lane multiplier while
+leaving workers equal to one. A two-lane request admitted three-frame windows
+and measured 3.804572-second replay with 2.024383-second execute. A one-lane
+request admitted exactly one frame per window and measured 4.016344-second
+replay with 2.035679-second execute. Their initial MS passes ran at about 51
+MiB/s rather than the earlier approximately 200 MiB/s, so their full-wall
+times are not comparable; the separately measured replay execution stayed
+near 2.0 seconds across all three window widths.
+
+A same-day refresh of the unchanged route-once commit was also invalidated by
+host-state drift: its execute timer rose from the frozen 1.619612 seconds to
+5.272604 seconds while the weighted-replay consumer envelope rose from about
+61 seconds to 109 seconds. macOS reported no thermal or low-power warning, and
+no sustained disk load remained after the run. This refresh is retained as an
+invalid timing observation, not a replacement baseline.
+
+Production serial bundle:
+`/private/tmp/issue581-auto-window-ch16-serial/20260830T044855Z-wave3-standard-mfs-single-term-turnaround-9bbab21f.json`
+
+Two-lane boundary bundle:
+`/private/tmp/issue581-window-q2-ch16-serial/20260830T045207Z-wave3-standard-mfs-single-term-turnaround-8e507faf.json`
+
+One-lane boundary bundle:
+`/private/tmp/issue581-window-q1-ch16-serial/20260830T045537Z-wave3-standard-mfs-single-term-turnaround-91a58eff.json`
+
+Invalid route-once refresh bundle:
+`/private/tmp/issue581-route-refresh-ch16-serial/20260830T050039Z-wave3-standard-mfs-single-term-turnaround-9c86d4ad.json`
+
+CASA was not rerun. The failed production serial gate does not admit the
+four-worker, all-channel, full CLEAN, or 32 GB acceptance runs.
+
+## Concrete reconstruction-owned route leaf
+
+Disassembly isolated the automatic-budget serial regression to the generic
+per-record callback boundary in `execute_sector_routes`. The frozen route leaf
+called only compensated gridding in its normal record loop; the generic form
+outlined both record decoding and accumulator dispatch, adding two calls for
+each of 49,141,788 records. One-, three-, and five-frame runs all retained the
+same approximately two-second execute time, which rejected window width as the
+cause.
+
+The retained implementation moves route lookup, record decoding, validation,
+prediction lookup, tap translation, and compensated accumulation into one
+private `GriddedNormalSectorAccumulator::execute_routes` leaf. It returns
+`Result<()>`; the caller accounts the already-borrowed route length. Release
+disassembly measures the leaf at 844 bytes and confirms that its normal loop
+calls only compensated gridding. The generic helper remains test-only as an
+oracle. This transplants the concrete owner-controlled borrowed-batch mechanism
+shared by pre-cutover casa-rs, CASA GridFT, and LibRA without restoring their
+whole-run ownership, full-grid-per-worker, or per-buffer barrier designs.
+
+The automatic-budget medium discriminator then used the production planner,
+one warmup per configuration, and three alternating matched pairs:
+
+| Measurement | Matched serial | Four workers | Delta |
+| --- | ---: | ---: | ---: |
+| Median replay wall | 0.986964 s | 0.932492 s | -5.52% |
+| Median execute | 0.436906 s | 0.382260 s | -12.51% |
+| Planned/actual working set | 754,720 / 754,664 B | 754,720 / 754,664 B | exact |
+| Maximum frames per window | 5 | 5 | unchanged |
+| Source slots | 2 | 2 | unchanged |
+
+All observations preserved the same final normal-state identity, execution
+identity, commit identity, 14,520,731 routed/degridded/gridded records, zero
+payload copies, and zero dynamic partial bytes. Four worker threads and all
+four worker slots were observed in every parallel measurement.
+
+The admitted 16-channel production pair then traversed all 4,094,064 selected
+rows of the directly mounted 32 GiB MeasurementSet:
+
+| Measurement | Frozen route serial | Concrete-leaf serial | Four workers |
+| --- | ---: | ---: | ---: |
+| Full Rust wall | 86.970694 s | 86.932774 s | 86.944891 s |
+| Gridded replay wall | 3.580817 s | 3.515263 s | 3.222406 s |
+| Prepare | 1.744951 s | 1.720182 s | 1.727845 s |
+| Execute | 1.619612 s | 1.682566 s | 1.373451 s |
+| Commit | 0.003330 s | 0.001865 s | 0.002274 s |
+
+The serial full wall and replay both pass their frozen gates. Four workers
+reduce replay by 8.33 percent relative to the matched serial observation while
+full wall remains effectively tied because only this approximately 3.5-second
+slice is parallelized. The repository semantic comparator reports normalized
+RMS zero for image, residual, PSF, model, and sum weight.
+
+Medium command:
+`CARGO_INCREMENTAL=0 CASA_RS_IMPERF_DATA_ROOT=/Volumes/GLENDENNING/casa-rs-imperformance cargo test -p casa-imaging-runtime --release --lib weighting::serial_compute_probe::medium_vla_64ch_gridded_replay_automatic_budget_four_worker -- --exact --ignored --nocapture`
+
+16-channel serial bundle:
+`/private/tmp/issue581-unit-hotleaf-ch16-serial/20260830T052516Z-wave3-standard-mfs-single-term-turnaround-e77aa5a9.json`
+
+16-channel four-worker bundle:
+`/private/tmp/issue581-unit-hotleaf-ch16-parallel/20260830T052719Z-wave3-standard-mfs-single-term-turnaround-29ea3c71.json`
+
+16-channel comparison:
+`/private/tmp/issue581-unit-hotleaf-science.comparison.json`
+
+## Full all-channel acceptance
+
+The first exact 64-channel, 1024-pixel, Briggs, Hogbom `niter=500` serial run
+exposed a lifecycle defect after replay ordinal one: the retained artifact's
+identical topology-derived window plan was treated as a mismatch when the next
+major cycle reauthorized it. A detached reproduction without the concrete leaf
+failed at the same boundary, rejecting the leaf and model-generation lifecycle
+as causes. The retained fix reauthorizes an exactly equal complete window plan
+and continues to reject any changed schedule, capacities, maxima, or working
+set. The existing production-path application test now completes three replay
+ordinals, and a focused unit test proves that a changed plan remains rejected.
+
+The one permitted full retry completed all ten later-major replays. Its density
+read reached 472.513 MiB/s; the failed attempt's 146.724 MiB/s density pass is
+retained as an I/O outlier rather than timing evidence. The matched four-worker
+run measured 467.600 MiB/s for density and 471.836 MiB/s for initial weighted
+construction, so its initial I/O condition is comparable to serial.
+
+| Full-run measurement | Serial | Four workers | Delta |
+| --- | ---: | ---: | ---: |
+| Total wall | 454.855400 s | 445.680669 s | -2.02% |
+| Sum of ten replay walls | 130.153387 s | 124.754156 s | -4.15% |
+| Sum of ten prepare stages | 68.753372 s | 69.101514 s | +0.51% |
+| Sum of ten execute stages | 58.482955 s | 52.614424 s | -10.04% |
+| Sum of ten commit stages | 0.083652 s | 0.102748 s | +22.83% |
+| Replay dispatch waves per major | 314,064 | 78,516 | -75.00% |
+| Active worker slots | 1 | 4 | expected |
+
+The four-worker full run is 243.316164 seconds, or 35.31 percent, faster than
+the frozen 688.996833-second single-process CASA wall. The serial run is
+234.141433 seconds, or 33.98 percent, faster than CASA, so worker count does not
+mask a serial deficit. This is one matched pair and the performance result is
+provisional, not a repeatability distribution.
+
+Both runs perform exactly two selected MeasurementSet passes: density and
+initial weighted construction. Each pass visits 4,094,064 rows and 524,040,192
+samples through two source slots. The sealed artifact is 6,300,504,416 bytes;
+each later major reads it once using two reusable buffers and zero payload
+copies. Every replay routes, degrids, and grids 196,602,895 records, executes
+and commits 314,064 stable partitions, and preserves matched per-cycle work and
+commit identities. The replay plan's dynamic source-plus-route working set is
+754,712 bytes with a seven-frame high-water. Four workers add exactly 8,388,608
+planned stack bytes; peak dynamic partial bytes remain zero, and no worker owns
+a complete grid.
+
+The full native comparator visited every stored element of image, residual,
+PSF, model, mask, and sum weight. Exact product inventory and metadata match;
+every product has `diff_rms=0`, `diff_abs_max=0`, and normalized RMS zero.
+
+Full serial bundle:
+`/private/tmp/issue581-unit-hotleaf-full-serial-retry/20260830T054030Z-wave3-standard-mfs-single-term-heavy-wave2-serial-150cd526.json`
+
+Full four-worker bundle:
+`/private/tmp/issue581-unit-hotleaf-full-parallel/20260830T054837Z-wave3-standard-mfs-single-term-heavy-wave2-serial-a74698ca.json`
+
+Full native comparison:
+`/private/tmp/issue581-full-science.comparison.json` (SHA-256
+`71f940d765cc5ed2b8dbc6ed565d7bee6c2b363818b6c3cd2dd7c325a9f7362e`)
+
+CASA was not rerun. The workload, saved CASA products, selection, comparator,
+and 688.996833-second oracle are unchanged.
