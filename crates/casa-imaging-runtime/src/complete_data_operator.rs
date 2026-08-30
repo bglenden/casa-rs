@@ -9,10 +9,13 @@ use std::{
     mem::{align_of, size_of},
 };
 
+#[cfg(test)]
+use std::time::{Duration, Instant};
+
 use casa_imaging_model::{
-    CompiledGeometryId, CompiledProblem, CompiledProblemId, ModelDeltaTerm, ModelSample,
-    NumericsContractId, ReconstructionBasis, SelectedObservationGenerationId, SpectralKernel,
-    WeightingCommitmentId,
+    CompiledGeometryId, CompiledProblem, CompiledProblemId, ContinuumTransformGenerationId,
+    ModelDeltaTerm, ModelSample, NumericsContractId, ReconstructionBasis,
+    SelectedObservationGenerationId, SpectralKernel, WeightingCommitmentId,
 };
 use casa_imaging_reconstruction::{
     FinalNormalState, MajorCyclePreparation, SpectralOperatorError, SpectralOperatorPrimitives,
@@ -86,11 +89,17 @@ pub(crate) struct GriddedNormalReplayCompilation {
     writer: Option<GriddedNormalArtifactWriter>,
     spill: Option<GriddedNormalSpillArtifact>,
     compilation_measurements: GriddedNormalCompilationMeasurements,
+    #[cfg(test)]
+    stage_timings: Option<GriddedNormalCompilationStageTimings>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct GriddedNormalCompilationMeasurements {
     pub(crate) blocks: u64,
+    pub(crate) source_group_count: u64,
+    pub(crate) source_record_count: u64,
+    pub(crate) reduced_group_count: u64,
+    pub(crate) reduced_record_count: u64,
     pub(crate) source_group_vector_allocations: u64,
     pub(crate) source_group_capacity_growth_bytes: u64,
     pub(crate) reduction_map_entry_insertions: u64,
@@ -100,6 +109,14 @@ pub(crate) struct GriddedNormalCompilationMeasurements {
     pub(crate) encoded_buffer_bytes: u64,
     pub(crate) descriptor_vector_allocations: u64,
     pub(crate) descriptor_capacity_growth_bytes: u64,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct GriddedNormalCompilationStageTimings {
+    pub(crate) compile_block: Duration,
+    pub(crate) append_frame: Duration,
+    pub(crate) seal: Duration,
 }
 
 impl GriddedNormalCompilationMeasurements {
@@ -112,6 +129,10 @@ impl GriddedNormalCompilationMeasurements {
             };
         }
         add!(blocks, 1);
+        add!(source_group_count, block.source_group_count);
+        add!(source_record_count, block.source_record_count);
+        add!(reduced_group_count, block.reduced_group_count);
+        add!(reduced_record_count, block.reduced_record_count);
         add!(
             source_group_vector_allocations,
             block.source_group_vector_allocations
@@ -155,6 +176,14 @@ impl GriddedNormalReplayCompilation {
     ) -> io::Result<Self> {
         let budget = project_gridded_normal_artifact_budget(problem, max_block_samples)?;
         validate_gridded_artifact_context(context, budget, crate::IoBufferKind::SpillWrite)?;
+        Self::create(problem, storage, budget)
+    }
+
+    fn create(
+        problem: &CompiledProblem,
+        storage: &GriddedNormalReplayStorage,
+        budget: GriddedNormalArtifactBudget,
+    ) -> io::Result<Self> {
         Ok(Self {
             compiler: GriddedNormalOperatorCompiler::new(problem).map_err(io::Error::other)?,
             writer: Some(
@@ -162,20 +191,45 @@ impl GriddedNormalReplayCompilation {
             ),
             spill: None,
             compilation_measurements: GriddedNormalCompilationMeasurements::default(),
+            #[cfg(test)]
+            stage_timings: None,
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_stage_local_probe(
+        problem: &CompiledProblem,
+        storage: &GriddedNormalReplayStorage,
+        max_block_samples: usize,
+        observe_timings: bool,
+    ) -> io::Result<Self> {
+        let budget = project_gridded_normal_artifact_budget(problem, max_block_samples)?;
+        let mut compilation = Self::create(problem, storage, budget)?;
+        compilation.stage_timings =
+            observe_timings.then_some(GriddedNormalCompilationStageTimings::default());
+        Ok(compilation)
     }
 
     pub(crate) fn consume_block(
         &mut self,
         block: &casa_imaging_reconstruction::WeightingReplayChunk,
     ) -> io::Result<()> {
+        #[cfg(test)]
+        let compile_started = self.stage_timings.as_ref().map(|_| Instant::now());
         let compiled = self
             .compiler
             .compile_block(block)
             .map_err(io::Error::other)?;
+        #[cfg(test)]
+        if let (Some(started), Some(timings)) = (compile_started, self.stage_timings.as_mut()) {
+            timings.compile_block += started.elapsed();
+        }
         self.compilation_measurements
             .add_block(compiled.measurements())?;
-        self.writer
+        #[cfg(test)]
+        let append_started = self.stage_timings.as_ref().map(|_| Instant::now());
+        let result = self
+            .writer
             .as_mut()
             .ok_or_else(|| io::Error::other("gridded-normal writer already sealed"))?
             .append_frame(
@@ -183,7 +237,12 @@ impl GriddedNormalReplayCompilation {
                 compiled.record_count(),
                 compiled.encoded_bytes(),
             )
-            .map_err(io::Error::other)
+            .map_err(io::Error::other);
+        #[cfg(test)]
+        if let (Some(started), Some(timings)) = (append_started, self.stage_timings.as_mut()) {
+            timings.append_frame += started.elapsed();
+        }
+        result
     }
 
     pub(crate) fn write_measurements(&self) -> GriddedNormalArtifactMeasurements {
@@ -202,12 +261,23 @@ impl GriddedNormalReplayCompilation {
         self.compilation_measurements
     }
 
+    #[cfg(test)]
+    pub(crate) const fn stage_timings(&self) -> Option<GriddedNormalCompilationStageTimings> {
+        self.stage_timings
+    }
+
     pub(crate) fn seal(&mut self) -> io::Result<()> {
+        #[cfg(test)]
+        let started = self.stage_timings.as_ref().map(|_| Instant::now());
         let writer = self
             .writer
             .take()
             .ok_or_else(|| io::Error::other("gridded-normal writer already sealed"))?;
         self.spill = Some(writer.seal().map_err(io::Error::other)?);
+        #[cfg(test)]
+        if let (Some(started), Some(timings)) = (started, self.stage_timings.as_mut()) {
+            timings.seal += started.elapsed();
+        }
         Ok(())
     }
 
@@ -215,18 +285,36 @@ impl GriddedNormalReplayCompilation {
         self,
         replay: &WeightingReplayCompletion,
     ) -> io::Result<FrozenGriddedNormalReplay> {
+        self.complete_parts(
+            replay.reconstruction_summary(),
+            replay.selected_generation(),
+            replay
+                .continuum_transform()
+                .map(|completion| completion.generation_id()),
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn complete_stage_local_probe(
+        self,
+        replay: &casa_imaging_reconstruction::WeightingReplaySummary,
+        selected_generation: SelectedObservationGenerationId,
+    ) -> io::Result<FrozenGriddedNormalReplay> {
+        self.complete_parts(replay, selected_generation, None)
+    }
+
+    fn complete_parts(
+        self,
+        replay: &casa_imaging_reconstruction::WeightingReplaySummary,
+        selected_generation: SelectedObservationGenerationId,
+        continuum_transform_generation: Option<ContinuumTransformGenerationId>,
+    ) -> io::Result<FrozenGriddedNormalReplay> {
         let spill = self
             .spill
             .ok_or_else(|| io::Error::other("gridded-normal writer was not sealed"))?;
         let program = self
             .compiler
-            .complete(
-                replay.reconstruction_summary(),
-                replay.selected_generation(),
-                replay
-                    .continuum_transform()
-                    .map(|completion| completion.generation_id()),
-            )
+            .complete(replay, selected_generation, continuum_transform_generation)
             .map_err(io::Error::other)?;
         let seal = spill.seal();
         if seal.frame_count() != program.block_count()
@@ -286,6 +374,13 @@ fn validate_gridded_artifact_context(
 }
 
 impl FrozenGriddedNormalReplay {
+    #[cfg(test)]
+    pub(crate) const fn stage_local_artifact_seal(
+        &self,
+    ) -> crate::gridded_normal_artifact::GriddedNormalArtifactSeal {
+        self.spill.seal()
+    }
+
     pub(crate) fn retain_plan_storage(
         &mut self,
         permit: crate::RetainedArtifactPermit,

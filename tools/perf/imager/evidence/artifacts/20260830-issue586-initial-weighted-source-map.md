@@ -1,0 +1,138 @@
+# Issue 586 initial-weighted construction source map
+
+Truth class: pre-implementation mechanism and discriminator record
+Date: 2026-08-30
+Work issue: #586
+Parent: #541 / programme #486
+
+## Measured target
+
+The complete frozen-shape serial observation at the issue #581 amended tree
+took 443.898842 seconds. Its density pass took 72.588401 seconds and its second
+MeasurementSet pass, which performs weighting, initial science accumulation,
+gridded-artifact compilation, and artifact writing, took 238.392987 seconds.
+Source service was about 10.4 seconds and overlapped 99.43 percent of its
+12.669-second fill envelope; the 238.319-second consumer interval is therefore
+the attribution target. The compiler body is byte-identical on current
+`origin/main`.
+
+The same pass produced a 6,300,504,416-byte gridded artifact and reported
+395,038,080 source-group vector allocations, 196,602,895 reduction-map
+insertions, 196,612,108 multiplicity-vector allocations, about 63.2 GB of
+source-group capacity growth, and 6.29 GB of multiplicity capacity growth. It
+emitted 196,602,895 records, so this real workload obtained effectively no
+block-local record reduction. These counters establish a candidate family;
+they do not attribute elapsed time by themselves.
+
+## Mechanism map
+
+| Source | Proven mechanism | Current equivalent or gap | Decision and owner |
+| --- | --- | --- | --- |
+| Pre-cutover casa-rs `fff9c2d...`, `casa-imaging/src/execution.rs:18190-18370` | Borrowed row-shaped batches, one planned tap representation, direct paired PSF/residual accumulation, and reusable workspace | Current weighting emits bounded blocks, but the gridded compiler independently rebuilds taps/phase and allocates a vector/map value for nearly every accepted sample | Adapt only after attribution. Reconstruction owns reusable flat group/record scratch and scientific equivalence; runtime owns its admitted lifetime. Do not restore the old runner. |
+| Pre-cutover AW replay, `fff9c2d...`, `casa-imaging/src/lib.rs:31206-31412,32010-32075,40871-40985` | Compile bounded source-block programs once, spill under an explicit ceiling, prefetch one ordered segment, and replay without rebuilding routing | Current main already owns a private disk-backed gridded artifact, but its initial compiler uses allocation-heavy tree grouping | Retain the compile-once disk artifact and bounded streaming. Optimize compilation representation, not the artifact ownership or a new cache path. |
+| CASA `VisImagingWeight.cc:320-375,760-815` | Retain density lattices and compute imaging weights from bulk visibility-buffer arrays | Current density is already frozen and reused; second-pass source I/O is not dominant | Retain exact two-pass weighting. No extra pass or ungridded cache. |
+| CASA `GridFT.cc:715-785,930-985` | Prepare bulk buffer arrays, grid into one shared lattice by disjoint sectors, and reduce small sum-weight states deterministically | Current initial pass calls the science owner and artifact compiler serially per emitted block | Use as bulk/sector evidence only. First determine science-versus-compiler wall; do not add workers before serial improvement. |
+| casacore `ArrayColumn.tcc:171+`, `LatticeCache.h:93+` | Caller-provided bulk arrays and bounded lattice caching | Current selected source already refills bounded caller-owned buffers; gridded artifact writing already reuses one I/O buffer | Retain. More read-ahead is rejected by the measured overlap. |
+| LibRA `MultiThreadedVisResampler.cc:175-225,300-350` | Persistent workers borrow row ranges | LibRA also allocates a complete grid per worker and gathers whole grids | Reject full-grid replication and gather. Persistent-worker evidence does not authorize threading this serial campaign. |
+
+## Stage-local discriminator
+
+Extend the ignored mounted-medium probe on current `origin/main`. It captures
+six bounded blocks spanning 263,250 rows and 33,696,000 selected samples, or
+6.43 percent of the full sample count, below its fixed one-GiB residency limit.
+Capture and density setup remain outside timing. Through the ordinary private
+runtime/reconstruction seam, measure mutually exclusive:
+
+1. weighting and contribution formation plus bounded block emission;
+2. initial science-operator consumption;
+3. reconstruction `compile_block`;
+4. artifact append, checksum, copy, and write; and
+5. finish and seal.
+
+Record group/record counts, reduction ratio, every compiler allocation/growth
+counter, encoded/copied/written bytes, peak residency, source/work identities,
+artifact validation, and final scientific identity. Run baseline-candidate-
+baseline interleaved on the same captured cohort. Instrumentation is rejected
+if OFF observations differ by more than three percent or observer overhead
+exceeds two percent of their mean.
+
+The captured/full sample scale is 15.552. A five-percent full-wall improvement
+requires 22.195 seconds, or at least 1.427 seconds saved by the captured
+exclusive stage under linear scaling. The whole initial consumer has an
+absolute ceiling of 225.724 seconds after retaining its source-fill envelope;
+this is not attributed to the compiler.
+
+## Conditional candidate
+
+If `compile_block` is material, replace its per-sample
+`BTreeMap<Vec<Record>, Vec<f64>>` with one planner-bounded reusable flat group
+buffer, lexical sort, and run-length reduction. Inline the common small
+spectral group and count repeated literal-one multiplicities with a bounded
+integer. Preserve canonical lexical output and deterministic scientific
+meaning. This is a generic reconstruction representation, not an MFS fast
+path.
+
+If initial science accumulation dominates instead, test the scientific
+property of an empty initial model: skip zero forward prediction and perform
+the already-proven identical dirty/residual accumulation once. Do not select
+this candidate from mode name or benchmark parameters.
+
+If neither exclusive stage projects conservatively to five percent of full
+wall, retire the family. Do not run the 16-channel or complete workload.
+
+## Accepted discriminator baseline
+
+The final current-code release observation used the production compiler and
+artifact writer over the six captured blocks. The OFF/ON/OFF totals were
+14.805, 14.973, and 15.089 seconds. The two OFF observations differed by
+1.903 percent, below the three-percent bound, and the observer added 0.176
+percent, below the two-percent bound. Its mutually exclusive ON buckets were:
+
+| Bucket | Captured seconds | Linear full-data ceiling |
+| --- | ---: | ---: |
+| Weighting and contribution formation | 6.921 | 107.6 |
+| Initial science-operator consumption | 4.392 | 68.3 |
+| Reconstruction `compile_block` | 3.114 | 48.4 |
+| Artifact append, copy, and write | 0.453 | 7.0 |
+| Science finish | 0.091 | 1.4 |
+| Artifact seal and compiler finish | <0.001 | <0.1 |
+
+All three observations reproduced the weighting identities, normal-state
+identity, artifact identity and SHA-256, proof bytes and calls, compiler
+allocation counters, payload copies and writes, and residency signatures.
+The artifact contained 14,520,731 reduced records and 464,663,392 payload
+bytes with SHA-256
+`8ba96df08553820c4441f3a87fd84d90f324b21d14c8d8c7985e6164934ce154`.
+
+The baseline changes the candidate order. Artifact I/O is retired as a first
+target, and compiler allocation churn is only the third-largest exclusive
+bucket. The first implementation candidate is the generic empty-model science
+identity already used by CASA and the optimized pre-cutover casa-rs path:
+owner-certified `A(0) = 0` permits skipping zero degridding, the duplicate
+residual-grid accumulation, and unused final-visibility emission while keeping
+the observed-data/PSF accumulation and deterministic identities unchanged.
+For this cohort it removes 2,858,652,160 tap-cell visits and 33,696,000 unused
+visibility-buffer pushes. Removing half of the convolution visits projects to
+about 2.196 captured seconds, above the 1.427-second admission threshold.
+
+Coverage-proof hash batching remains the next measured candidate if the
+empty-model identity fails its gate: the current weighting owner makes
+33,696,007 SHA-256 updates for 2,864,160,146 canonical bytes although it emits
+only 8,227 weighted blocks. Any batching must preserve the exact byte stream
+and coverage identity and must independently clear the same admission gate.
+
+Focused verification was green: five reconstruction compiler tests, twelve
+runtime artifact tests, the ignored mounted discriminator, warnings-denied
+Clippy, formatting, and `git diff --check`.
+
+## Fixed constraints
+
+- Frozen CASA remains 688.996833 seconds; do not rerun it.
+- Exactly two ordered MeasurementSet passes and two source slots.
+- No MeasurementSet materialization, ungridded cache, extra source copy,
+  per-worker grid, second executor, mode-specific path, fallback, public
+  performance selector, or application/frontend calculation.
+- Serial performance is the admission gate. Workers cannot mask a serial miss.
+- Product acceptance is normalized RMS no greater than 0.001; exact artifact
+  identity is diagnostic unless the candidate is representation-only.
+- A red stage-local gate vetoes medium and full runs.

@@ -83,6 +83,10 @@ pub struct GriddedNormalOperatorBlock {
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct GriddedNormalOperatorBlockMeasurements {
+    pub source_group_count: u64,
+    pub source_record_count: u64,
+    pub reduced_group_count: u64,
+    pub reduced_record_count: u64,
     pub source_group_vector_allocations: u64,
     pub source_group_capacity_growth_bytes: u64,
     pub reduction_map_entry_insertions: u64,
@@ -227,9 +231,27 @@ impl GriddedNormalOperatorCompiler {
                 )?;
             }
             if !group.is_empty() && has_positive_weight {
+                let group_record_count = u64::try_from(group.len())
+                    .map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
+                measurements.source_group_count = measurements
+                    .source_group_count
+                    .checked_add(1)
+                    .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+                measurements.source_record_count = measurements
+                    .source_record_count
+                    .checked_add(group_record_count)
+                    .ok_or(SpectralOperatorError::ResidencyOverflow)?;
                 let multiplicities = match groups.entry(group) {
                     Entry::Occupied(entry) => entry.into_mut(),
                     Entry::Vacant(entry) => {
+                        measurements.reduced_group_count = measurements
+                            .reduced_group_count
+                            .checked_add(1)
+                            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+                        measurements.reduced_record_count = measurements
+                            .reduced_record_count
+                            .checked_add(group_record_count)
+                            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
                         measurements.reduction_map_entry_insertions = measurements
                             .reduction_map_entry_insertions
                             .checked_add(1)
@@ -258,6 +280,11 @@ impl GriddedNormalOperatorCompiler {
             .map_err(|_| SpectralOperatorError::CoverageOverflow)?;
         let record_count = u64::try_from(encoded.len() / GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
             .map_err(|_| SpectralOperatorError::CoverageOverflow)?;
+        if measurements.reduced_group_count != measurements.reduction_map_entry_insertions
+            || measurements.reduced_record_count != record_count
+        {
+            return Err(SpectralOperatorError::CoverageOverflow);
+        }
         self.sample_count = self
             .sample_count
             .checked_add(source_samples)
