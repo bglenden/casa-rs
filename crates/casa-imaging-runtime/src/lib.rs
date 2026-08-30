@@ -4,6 +4,8 @@
 
 mod bounded_stream;
 mod complete_data_operator;
+#[cfg(test)]
+mod complete_data_parallel_mfs_tests;
 mod continuum_transform;
 mod cost_model;
 mod execution;
@@ -95,16 +97,16 @@ pub use resource_authority::{
     Accelerator, AcceleratorDemand, AcceleratorId, AcceleratorKind,
     AdmissionInfeasibilityCertificate, AlternativeId, AlternativeRejection,
     AlternativeRejectionReason, CacheDemand, CapabilityId, CapabilityPredicate, CapacityDomainId,
-    CapacityViewId, CountDemand, CpuClassCapacity, CpuDataWorkingSetCapacity, DemandAlternative,
-    DemandAlternatives, DemandEnvelope, ExternalPressure, HostInventory, IoBufferDemand,
-    IoBufferKind, LeaseRelease, LeaseResource, MemoryCapacityDomain, MemoryCapacityKind,
-    MemoryDemand, MemoryView, MemoryViewKind, PressureUpdate, ProductionStorageProfile,
-    QueueDemand, QueueResource, QueueResourceId, QuiescencePoint, RateDemand, RateResource,
-    RateResourceId, RateUnit, ResourceAuthority, ResourceError, ResourceFence, ResourceGrant,
-    ResourceHeadroom, ResourceIdentity, ResourceLease, ResourceOverride, ResourcePermit,
-    ResourcePolicy, ResourceTopology, RuntimeOverheadDemand, RuntimeOverheadKind, ScalingMetadata,
-    StorageDemand, StorageDomain, StorageDomainId, StorageIoResourceBinding, StorageUseKind,
-    TransferDemand, TransferLink, TransferLinkId,
+    CapacityViewId, CountDemand, CpuClassCapacity, DemandAlternative, DemandAlternatives,
+    DemandEnvelope, ExternalPressure, HostInventory, IoBufferDemand, IoBufferKind, LeaseRelease,
+    LeaseResource, MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand, MemoryView,
+    MemoryViewKind, PressureUpdate, ProductionStorageProfile, QueueDemand, QueueResource,
+    QueueResourceId, QuiescencePoint, RateDemand, RateResource, RateResourceId, RateUnit,
+    ResourceAuthority, ResourceError, ResourceFence, ResourceGrant, ResourceHeadroom,
+    ResourceIdentity, ResourceLease, ResourceOverride, ResourcePermit, ResourcePolicy,
+    ResourceTopology, RuntimeOverheadDemand, RuntimeOverheadKind, ScalingMetadata, StorageDemand,
+    StorageDomain, StorageDomainId, StorageIoResourceBinding, StorageUseKind, TransferDemand,
+    TransferLink, TransferLinkId,
 };
 pub use serial_product_publication::{
     MemberPromotionFailure, MemberPromotionFailureKind, SerialProductPublicationExecutionError,
@@ -113,10 +115,9 @@ pub use serial_product_publication::{
     SerialProductPublicationRegistry, SerialProductPublicationSink,
 };
 pub use spectral_cycle::{
-    CompleteDataStreamEvidence, FinalMajorPhaseInput, FinalVisibilityReplay, FinalVisibilitySink,
-    InitialMajorPhaseCompletion, ReconstructionCyclePhaseCompletion,
-    ReconstructionCyclePhaseEvidence, SpectralCycleExecutor, SpectralCyclePassInput,
-    SpectralCycleRegistry,
+    FinalMajorPhaseInput, FinalVisibilityReplay, FinalVisibilitySink, InitialMajorPhaseCompletion,
+    ReconstructionCyclePhaseCompletion, ReconstructionCyclePhaseEvidence, SpectralCycleExecutor,
+    SpectralCyclePassInput, SpectralCycleRegistry,
 };
 pub use spectral_cycle_plan::{
     PlannedGriddedNormalBinding, SpectralCycleExecutionPolicy, SpectralCyclePlan,

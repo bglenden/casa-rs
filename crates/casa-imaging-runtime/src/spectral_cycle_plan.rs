@@ -10,7 +10,8 @@ use std::{
 
 use casa_imaging_model::CompiledProblem;
 use casa_imaging_reconstruction::{
-    WeightingExecutionLimits, WeightingPlan, plan_weighting, runtime_adapter::SpectralOperatorPass,
+    WeightingExecutionLimits, WeightingPlan, plan_weighting,
+    runtime_adapter::{GRIDDED_NORMAL_SECTOR_COUNT, SpectralOperatorPass},
 };
 use casa_ms::{SelectedObservationResidencyCertificate, SelectedVisibilityStoragePlan};
 
@@ -57,9 +58,7 @@ pub struct SpectralCycleExecutionPolicy {
     confidence_parts_per_million: u32,
     visibility_write: Option<SelectedVisibilityStoragePlan>,
     gridded_normal_storage: Option<GriddedNormalReplayStorage>,
-    workers: u64,
-    gridded_replay_capacity:
-        Option<crate::complete_data_operator::GriddedNormalReplayPlanningCapacity>,
+    gridded_replay_workers: u64,
 }
 
 impl SpectralCycleExecutionPolicy {
@@ -84,46 +83,21 @@ impl SpectralCycleExecutionPolicy {
             confidence_parts_per_million,
             visibility_write: None,
             gridded_normal_storage: None,
-            workers: 1,
-            gridded_replay_capacity: None,
+            gridded_replay_workers: 1,
         }
-    }
-
-    /// Bind the worker count currently available under the runtime authority.
-    ///
-    /// This keeps host detection and policy interpretation inside the runtime;
-    /// applications only compose the authority and policy they already own.
-    pub fn with_planned_workers(
-        mut self,
-        authority: &ResourceAuthority,
-        policy: &ResourcePolicy,
-    ) -> Result<Self, SpectralCyclePlanError> {
-        self.workers = authority.projected_worker_capacity(policy)?;
-        if self.workers == 0 {
-            return Err(SpectralCyclePlanError::ZeroWorkers);
-        }
-        self.gridded_replay_capacity = match (
-            authority.topology().cpu_data_working_set,
-            authority.topology().performance_cpu_cores,
-        ) {
-            (
-                CpuDataWorkingSetCapacity::Known(cpu_data_working_set_bytes),
-                CpuClassCapacity::Known(performance_cpu_cores),
-            ) if cpu_data_working_set_bytes > 0 && performance_cpu_cores > 0 => Some(
-                crate::complete_data_operator::GriddedNormalReplayPlanningCapacity::Topology {
-                    cpu_data_working_set_bytes,
-                    performance_cpu_cores,
-                },
-            ),
-            _ => None,
-        };
-        Ok(self)
     }
 
     /// Bind the runtime-private storage used by planned gridded-normal spill work.
     #[must_use]
     pub fn with_gridded_normal_storage(mut self, storage: GriddedNormalReplayStorage) -> Self {
         self.gridded_normal_storage = Some(storage);
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_test_gridded_replay_workers(mut self, workers: u64) -> Self {
+        assert!((1..=GRIDDED_NORMAL_SECTOR_COUNT as u64).contains(&workers));
+        self.gridded_replay_workers = workers;
         self
     }
 
@@ -413,12 +387,18 @@ impl SpectralCyclePlan {
             gridded_replay_descriptor.map(|descriptor| descriptor.bytes());
         let gridded_window_plan = match gridded_replay.as_mut() {
             Some(replay) => {
-                let capacity = policy.gridded_replay_capacity.ok_or_else(|| {
-                    SpectralCyclePlanError::Resources(ResourceError::Invalid(
-                        "gridded replay requires known CPU working-set and performance-core topology"
-                            .to_string(),
-                    ))
-                })?;
+                let capacity = gridded_normal_storage
+                    .as_ref()
+                    .and_then(GriddedNormalReplayStorage::cpu_replay_capacity)
+                    .map_or(
+                        crate::complete_data_operator::GriddedNormalReplayPlanningCapacity::Unknown,
+                        |(cpu_data_working_set_bytes, performance_cpu_cores)| {
+                            crate::complete_data_operator::GriddedNormalReplayPlanningCapacity::Topology {
+                                cpu_data_working_set_bytes,
+                                performance_cpu_cores,
+                            }
+                        },
+                    );
                 Some(replay.plan_windows(capacity)?)
             }
             None => None,
@@ -538,6 +518,9 @@ impl SpectralCyclePlan {
         let minor_cycle_node = include_minor.then(|| WorkNodeId::new(MINOR_NODE));
         if let Some(minor) = &minor_cycle_node {
             physical = append_minor(registry, physical, &policy, minor)?;
+        }
+        if pass.phase() == SpectralPassPhase::FinalMajor {
+            physical = physical.with_fixed_worker_count(policy.gridded_replay_workers)?;
         }
         let gridded_normal = match (gridded_normal_storage, gridded_replay) {
             (Some(storage), Some(replay)) => {
@@ -1004,10 +987,12 @@ fn base_gridded_physical<R: ImplementationRegistry>(
     let output_storage_id = format!("{OUTPUT_STORAGE_DEMAND}-final-major-{}", pass.ordinal());
     let publication_lifetime =
         ClaimLifetime::through_fences([FenceKind::Io, FenceKind::Publication]);
-    let worker_stack_bytes = bounded_worker_stack_bytes(policy.workers)?;
+    let maximum_workers =
+        u64::try_from(GRIDDED_NORMAL_SECTOR_COUNT).map_err(|_| SpectralCyclePlanError::Overflow)?;
+    let worker_stack_bytes = bounded_worker_stack_bytes(maximum_workers)?;
     let mut replay_claims = vec![ResourceClaim {
         resource: LeaseResource::Workers,
-        amount: policy.workers,
+        amount: maximum_workers,
         lifetime: ClaimLifetime::Work,
     }];
     if worker_stack_bytes > 0 {
@@ -1140,7 +1125,7 @@ fn base_gridded_physical<R: ImplementationRegistry>(
                 preferred_bytes: 1,
                 views: vec![CapacityViewId::new("host-memory")],
             }],
-            workers: CountDemand::new(policy.workers, policy.workers),
+            workers: CountDemand::new(maximum_workers, maximum_workers),
             overhead: RuntimeOverheadDemand {
                 thread_stack_bytes: worker_stack_bytes,
                 ..RuntimeOverheadDemand::zero()
@@ -1179,8 +1164,8 @@ fn base_gridded_physical<R: ImplementationRegistry>(
         },
         headroom: ResourceHeadroom::default(),
         scaling: ScalingMetadata {
-            minimum_workers: policy.workers,
-            maximum_workers: policy.workers,
+            minimum_workers: 1,
+            maximum_workers,
             maximum_batch_size: u64::try_from(gridded.window.maximum_frames())
                 .map_err(|_| SpectralCyclePlanError::Overflow)?,
             maximum_tile_width: 1,
@@ -1194,7 +1179,7 @@ fn base_gridded_physical<R: ImplementationRegistry>(
         ]),
     };
     let mut initial_knobs = ExecutionKnobs::serial();
-    initial_knobs.workers = policy.workers;
+    initial_knobs.workers = maximum_workers;
     initial_knobs.batch_size = u64::try_from(gridded.window.maximum_frames())
         .map_err(|_| SpectralCyclePlanError::Overflow)?;
     let dag = ExecutionDag::new(ExecutionDagSpecification {
@@ -2019,10 +2004,6 @@ fn append_minor<R: ImplementationRegistry>(
 #[derive(Debug)]
 /// Failure to construct a complete spectral cycle physical plan.
 pub enum SpectralCyclePlanError {
-    /// The resource policy admitted no CPU worker for complete-data execution.
-    ZeroWorkers,
-    /// The runtime authority could not project the worker capacity.
-    Resources(ResourceError),
     /// A clean initial-major plan omitted its runtime-private spill storage.
     MissingGriddedNormalStorage,
     /// A later-major plan received replay state outside its retained storage authority.
@@ -2078,10 +2059,5 @@ impl From<ExecutionError> for SpectralCyclePlanError {
 impl From<PhysicalWorkBindingError> for SpectralCyclePlanError {
     fn from(v: PhysicalWorkBindingError) -> Self {
         Self::Physical(v)
-    }
-}
-impl From<ResourceError> for SpectralCyclePlanError {
-    fn from(value: ResourceError) -> Self {
-        Self::Resources(value)
     }
 }

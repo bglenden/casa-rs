@@ -3,9 +3,9 @@
 use std::collections::BTreeMap;
 
 use casa_imaging_runtime::{
-    CapacityDomainId, CapacityViewId, CpuClassCapacity, CpuDataWorkingSetCapacity,
-    ExternalPressure, HostInventory, MemoryCapacityDomain, MemoryCapacityKind, MemoryView,
-    MemoryViewKind, ResourceAuthority, ResourceError, ResourceTopology,
+    CapacityDomainId, CapacityViewId, CpuClassCapacity, ExternalPressure, HostInventory,
+    MemoryCapacityDomain, MemoryCapacityKind, MemoryView, MemoryViewKind, ResourceAuthority,
+    ResourceError, ResourceTopology,
 };
 
 #[test]
@@ -30,7 +30,6 @@ fn production_inventory_override_is_one_time_and_process_authority_is_singleton(
             queue_resources: Vec::new(),
             logical_cpu_threads: 2,
             performance_cpu_cores: CpuClassCapacity::Unknown,
-            cpu_data_working_set: CpuDataWorkingSetCapacity::Unknown,
             cache_capacity_bytes: 500,
             lock_capacity: 4,
             file_descriptor_capacity: 32,

@@ -10,9 +10,27 @@ use casa_tables::{
 use crate::{
     MeasurementSet, MsError, MsResult, VisibilityChannelReadRange,
     schema::main_table::VisibilityDataColumn,
+    visibility_buffer::modeled_main_column_physical_read_bytes,
 };
 
-const SELECTED_SCALAR_COLUMN_COUNT: u64 = 15;
+const SELECTED_SCALAR_COLUMNS: [&str; 15] = [
+    "DATA_DESC_ID",
+    "FIELD_ID",
+    "ANTENNA1",
+    "ANTENNA2",
+    "FEED1",
+    "FEED2",
+    "TIME",
+    "TIME_CENTROID",
+    "INTERVAL",
+    "EXPOSURE",
+    "SCAN_NUMBER",
+    "STATE_ID",
+    "OBSERVATION_ID",
+    "ARRAY_ID",
+    "FLAG_ROW",
+];
+const SELECTED_SCALAR_COLUMN_COUNT: u64 = SELECTED_SCALAR_COLUMNS.len() as u64;
 const SELECTED_ARRAY_COLUMN_COUNT: u64 = 4;
 const SELECTED_READ_OPERATION_COUNT: u64 =
     SELECTED_SCALAR_COLUMN_COUNT + SELECTED_ARRAY_COLUMN_COUNT;
@@ -871,6 +889,8 @@ impl MeasurementSet {
         let logical_output_bytes = retained_current_bytes
             .checked_sub(request_handoff_bytes)
             .ok_or_else(|| invalid("selected-observation logical byte accounting underflowed"))?;
+        let modeled_physical_read_bytes =
+            modeled_selected_observation_physical_read_bytes(self, request, correlation_count)?;
         let timings = SelectedObservationBufferTimings {
             total_fill_nanos: fill_started.elapsed().as_nanos(),
             visibility_read_nanos,
@@ -885,9 +905,7 @@ impl MeasurementSet {
             row_count,
             sample_count,
             logical_output_bytes,
-            // This private path does not yet expose trustworthy storage-manager
-            // granularity, so it deliberately reports no physical-byte model.
-            modeled_physical_read_bytes: None,
+            modeled_physical_read_bytes: Some(modeled_physical_read_bytes),
             read_operation_count: SELECTED_READ_OPERATION_COUNT,
             request_handoff_bytes,
             retained_current_bytes,
@@ -896,6 +914,68 @@ impl MeasurementSet {
             timings,
         })
     }
+}
+
+fn modeled_selected_observation_physical_read_bytes(
+    ms: &MeasurementSet,
+    request: &SelectedObservationBufferRequest<'_>,
+    correlation_count: usize,
+) -> MsResult<u64> {
+    let table = ms.main_table();
+    let row_count = request.row_indices.len();
+    let channel_start = request.channel_range.start;
+    let channel_count = request.channel_range.count;
+    let mut total = 0u64;
+    let mut add = |column_name: &str,
+                   channelized: bool,
+                   start: usize,
+                   channels: usize,
+                   elements_per_channel_or_row: usize|
+     -> MsResult<()> {
+        let bytes = modeled_main_column_physical_read_bytes(
+            table,
+            column_name,
+            channelized,
+            start,
+            channels,
+            elements_per_channel_or_row,
+            row_count,
+        )?;
+        total = total.checked_add(bytes).ok_or_else(|| {
+            invalid("selected-observation physical read bytes exceed diagnostics domain")
+        })?;
+        Ok(())
+    };
+
+    add(
+        request.visibility.name(),
+        true,
+        channel_start,
+        channel_count,
+        correlation_count,
+    )?;
+    add(
+        "FLAG",
+        true,
+        channel_start,
+        channel_count,
+        correlation_count,
+    )?;
+    match request.weight {
+        SelectedWeightColumn::Weight => add("WEIGHT", false, 0, 1, correlation_count)?,
+        SelectedWeightColumn::WeightSpectrum => add(
+            "WEIGHT_SPECTRUM",
+            true,
+            channel_start,
+            channel_count,
+            correlation_count,
+        )?,
+    }
+    for column_name in SELECTED_SCALAR_COLUMNS {
+        add(column_name, false, 0, 1, 1)?;
+    }
+    add("UVW", false, 0, 1, 3)?;
+    Ok(total)
 }
 
 fn validate_request(
@@ -1023,7 +1103,7 @@ mod tests {
         assert_eq!(report.row_count, 2);
         assert_eq!(report.sample_count, 8);
         assert_eq!(report.logical_output_bytes, 298);
-        assert_eq!(report.modeled_physical_read_bytes, None);
+        assert_eq!(report.modeled_physical_read_bytes, Some(402));
         assert_eq!(report.allocation.reused_storage_buffers, 0);
         assert_eq!(report.allocation.allocated_storage_buffers, 19);
         assert_eq!(report.retained_current_bytes, 314);
@@ -1203,8 +1283,11 @@ mod tests {
             VisibilityChannelReadRange::new(1, 2),
         );
         let mut buffer = SelectedObservationBuffer::default();
-        ms.fill_selected_observation_buffer(&request, &mut buffer)
+        let report = ms
+            .fill_selected_observation_buffer(&request, &mut buffer)
             .unwrap();
+
+        assert_eq!(report.modeled_physical_read_bytes, Some(173));
 
         let first_channel = buffer.sample(0, 0, 1).unwrap();
         let second_channel = buffer.sample(1, 0, 1).unwrap();

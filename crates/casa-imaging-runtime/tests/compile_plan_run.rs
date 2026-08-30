@@ -51,7 +51,7 @@ use casa_imaging_reconstruction::{
     begin_weighting_generation, plan_weighting,
     runtime_adapter::{
         CompleteDataOwnerResult, SpectralOperatorPass, gridded_normal_route_capacity_bytes,
-        prepare_spectral_operator, spectral_operator_workload,
+        gridded_normal_sector_residency, prepare_spectral_operator, spectral_operator_workload,
     },
 };
 use casa_imaging_runtime::{
@@ -62,16 +62,15 @@ use casa_imaging_runtime::{
     BindingKind, BuildIdentity, CacheDemand, CacheIdentity, CapabilityPredicate, CapacityDomainId,
     CapacityViewId, ClaimLifetime, CompiledProblemEvidence, CompleteDataOperatorResult,
     CompleteDataPlanFragment, CompleteDataPreparedState, CountDemand, CpuClassCapacity,
-    CpuDataWorkingSetCapacity, DemandAlternative, DemandEnvelope, ExecutionDag,
-    ExecutionDagSpecification, ExecutionError, ExecutionEvidenceError, ExecutionKnobs,
-    ExecutionOutcome, ExecutionPlanId, ExecutionProvenance, ExecutionReceipt,
-    ExecutionReceiptBinding, ExecutionReceiptStore, ExecutionStatus, ExternalPressure, FenceId,
-    FenceKind, FinalVisibilitySink, FrozenWeightingReservation, GriddedNormalReplayStorage,
-    HostInventory, ImplementationContractCatalog, ImplementationContractMetadata,
-    ImplementationRegistry, ImplementationRegistryId, InitializationPolicy, IoBufferDemand,
-    IoBufferKind, IoMeasurement, IoPrediction, LeaseResource, LogicalAllocation,
-    MajorCycleOperatorResult, MajorCycleOperatorState, MemoryCapacityDomain, MemoryCapacityKind,
-    MemoryDemand, MemoryView, MemoryViewKind, ObservationReadCompletionContext,
+    DemandAlternative, DemandEnvelope, ExecutionDag, ExecutionDagSpecification, ExecutionError,
+    ExecutionEvidenceError, ExecutionKnobs, ExecutionOutcome, ExecutionPlanId, ExecutionProvenance,
+    ExecutionReceipt, ExecutionReceiptBinding, ExecutionReceiptStore, ExecutionStatus,
+    ExternalPressure, FenceId, FenceKind, FinalVisibilitySink, FrozenWeightingReservation,
+    GriddedNormalReplayStorage, HostInventory, ImplementationContractCatalog,
+    ImplementationContractMetadata, ImplementationRegistry, ImplementationRegistryId,
+    InitializationPolicy, IoBufferDemand, IoBufferKind, IoMeasurement, IoPrediction, LeaseResource,
+    LogicalAllocation, MajorCycleOperatorResult, MajorCycleOperatorState, MemoryCapacityDomain,
+    MemoryCapacityKind, MemoryDemand, MemoryView, MemoryViewKind, ObservationReadCompletionContext,
     ObservationTransactionWork, PhysicalLayoutId, PhysicalSlot, PhysicalSlotId,
     PhysicalWorkBinding, PhysicalWorkBindingError, PlanError, PlanPrediction, PlannedArtifact,
     PlannerCostModelProfileBootstrap, PlannerCostModelProfileId, PlanningBindings,
@@ -3214,9 +3213,23 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
                 .starts_with("spectral-operator-grids-gridded-residual-refresh-")
         })
         .expect("gridded residual-refresh grid allocation");
+    let final_specification =
+        SpectralOperatorSpecification::new(&problem).expect("final spectral specification");
+    let expected_grid_bytes = gridded_normal_sector_residency(
+        final_specification.grid_shape(),
+        final_complete.slab().core_depth(),
+    )
+    .expect("gridded sector residency")
+    .peak_complex_values()
+        * std::mem::size_of::<num_complex::Complex64>();
     assert_eq!(
         residual_grid.bytes,
         final_complete.residency().grid_bytes() as u64
+    );
+    assert_eq!(
+        final_complete.residency().grid_bytes(),
+        expected_grid_bytes,
+        "the admitted grid allocation must cover resident sectors plus merge grids"
     );
     assert!(
         execution_plan
@@ -3260,15 +3273,48 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
         .expect("gridded replay route memory demand");
     assert_eq!(route_demand.hard_bytes, expected_route_bytes);
     assert_eq!(route_demand.preferred_bytes, expected_route_bytes);
-    assert_eq!(
-        final_complete.residency().gridded_route_bytes() as u64,
-        expected_route_bytes
-    );
     assert!(
         replay_nodes[0]
             .allocations
             .iter()
             .any(|use_| use_.allocation == route.id)
+    );
+    let schedule = final_physical
+        .execution_dag()
+        .logical_allocations()
+        .values()
+        .find(|allocation| {
+            allocation
+                .id
+                .as_str()
+                .starts_with("spectral-operator-gridded-replay-schedule-gridded-residual-refresh-")
+        })
+        .expect("gridded replay schedule allocation");
+    assert!(schedule.bytes > 0);
+    assert_eq!(
+        schedule.compatibility.layout,
+        AllocationLayout::new(
+            "spectral-operator-gridded-replay-window-counts-and-route-slot-capacities"
+        )
+    );
+    let schedule_slot = final_physical
+        .execution_dag()
+        .physical_slots()
+        .get(&schedule.physical_slot)
+        .expect("gridded replay schedule physical slot");
+    assert_eq!(schedule_slot.capacity_bytes, schedule.bytes);
+    let schedule_demand = final_demand
+        .memory
+        .iter()
+        .find(|demand| demand.allocation_id == schedule.id.as_str())
+        .expect("gridded replay schedule memory demand");
+    assert_eq!(schedule_demand.hard_bytes, schedule.bytes);
+    assert_eq!(schedule_demand.preferred_bytes, schedule.bytes);
+    assert!(
+        replay_nodes[0]
+            .allocations
+            .iter()
+            .any(|use_| use_.allocation == schedule.id)
     );
     let final_executor = SpectralCycleExecutor::new_gridded(
         implementation(73),
@@ -5654,7 +5700,6 @@ fn runtime_inventory(available_locks: u64) -> HostInventory {
             ],
             logical_cpu_threads: 4,
             performance_cpu_cores: CpuClassCapacity::Known(4),
-            cpu_data_working_set: CpuDataWorkingSetCapacity::Known(1 << 20),
             cache_capacity_bytes: 1_048_576,
             lock_capacity: 4,
             file_descriptor_capacity: 16,
@@ -8485,11 +8530,6 @@ fn t37_runtime_residency_tracks_core_and_sampler_halo_depth() {
         "the primitive lease covers prior invariants overlapping the new residual"
     );
     assert_eq!(
-        residual_refresh.residency().gridded_route_bytes(),
-        0,
-        "selected-observation residual work must not inherit artifact-route storage"
-    );
-    assert_eq!(
         two.primitive_output_bytes(),
         one.primitive_output_bytes() * 2
     );
@@ -8512,7 +8552,6 @@ fn t37_runtime_residency_tracks_core_and_sampler_halo_depth() {
                 + residency.fft_resident_bytes()
                 + residency.fft_planning_bytes()
                 + residency.forward_workspace_bytes()
-                + residency.gridded_route_bytes()
                 + residency.primitive_output_bytes()
                 + residency.major_cycle_model_bytes()
         );

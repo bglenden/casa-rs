@@ -208,15 +208,6 @@ pub enum CpuClassCapacity {
     Unknown,
 }
 
-/// Knowledge available about the effective CPU data working set per sharing lane.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CpuDataWorkingSetCapacity {
-    /// Effective resident data bytes available to one CPU sharing lane.
-    Known(u64),
-    /// The host did not expose enough reliable CPU-cache topology.
-    Unknown,
-}
-
 /// Accelerator implementation class.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AcceleratorKind {
@@ -341,8 +332,6 @@ pub struct ResourceTopology {
     pub logical_cpu_threads: u64,
     /// Performance-oriented CPU cores available to the process.
     pub performance_cpu_cores: CpuClassCapacity,
-    /// Effective CPU data working-set bytes per sharing lane.
-    pub cpu_data_working_set: CpuDataWorkingSetCapacity,
     /// Process-wide resident-cache capacity.
     pub cache_capacity_bytes: u64,
     /// Simultaneously held table or synchronization locks.
@@ -559,7 +548,6 @@ impl HostInventory {
         let performance_cpu_cores = detect_performance_cpu_cores()
             .map(|cores| CpuClassCapacity::Known(cores.clamp(1, logical_cpu_threads)))
             .unwrap_or(CpuClassCapacity::Unknown);
-        let cpu_data_working_set = detect_cpu_data_working_set(performance_cpu_cores);
         let unified_metal_available = detect_unified_metal_device();
         let host_domain = CapacityDomainId::new("host-memory");
         let host_view = CapacityViewId::new("host-memory");
@@ -623,7 +611,6 @@ impl HostInventory {
             queue_resources,
             logical_cpu_threads,
             performance_cpu_cores,
-            cpu_data_working_set,
             cache_capacity_bytes: physical_memory_bytes,
             // Table and synchronization capacity has no portable detector.
             // Zero fails closed until the embedding runtime supplies a profile.
@@ -1652,6 +1639,7 @@ struct AuthorityState {
 #[derive(Debug)]
 struct AuthorityInner {
     topology: ResourceTopology,
+    cpu_replay_capacity: Option<(u64, u64)>,
     production_storage_profile: Option<ProductionStorageProfile>,
     state: Mutex<AuthorityState>,
 }
@@ -1799,36 +1787,44 @@ impl ResourceAuthority {
         Ok(state.pressure_epoch)
     }
 
-    pub(crate) fn projected_worker_capacity(
-        &self,
-        policy: &ResourcePolicy,
-    ) -> Result<u64, ResourceError> {
-        validate_policy(&self.inner.topology, policy)?;
-        let state = self
-            .inner
-            .state
-            .lock()
-            .map_err(|_| ResourceError::AuthorityPoisoned)?;
-        let pressured = capacity_under_pressure(&self.inner.topology, &state);
-        let policy_capacity =
-            apply_concurrent_policies(&self.inner.topology, &state, policy, &pressured);
-        Ok(available_after_active_leases(&state, policy_capacity)?
-            .hard
-            .workers)
-    }
-
     pub(crate) fn with_inventory(inventory: HostInventory) -> Result<Self, ResourceError> {
         Self::with_inventory_and_storage_profile(inventory, None)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_inventory_and_cpu_replay_capacity(
+        inventory: HostInventory,
+        cpu_replay_capacity: Option<(u64, u64)>,
+    ) -> Result<Self, ResourceError> {
+        Self::build(inventory, None, cpu_replay_capacity)
     }
 
     fn with_inventory_and_storage_profile(
         inventory: HostInventory,
         production_storage_profile: Option<ProductionStorageProfile>,
     ) -> Result<Self, ResourceError> {
+        Self::build(
+            inventory,
+            production_storage_profile,
+            detected_cpu_replay_capacity(),
+        )
+    }
+
+    fn build(
+        inventory: HostInventory,
+        production_storage_profile: Option<ProductionStorageProfile>,
+        cpu_replay_capacity: Option<(u64, u64)>,
+    ) -> Result<Self, ResourceError> {
         validate_inventory(&inventory)?;
+        if cpu_replay_capacity.is_some_and(|(bytes, lanes)| bytes == 0 || lanes == 0) {
+            return Err(ResourceError::Invalid(
+                "CPU replay capacity must contain positive bytes and lanes".to_string(),
+            ));
+        }
         Ok(Self {
             inner: Arc::new(AuthorityInner {
                 topology: inventory.topology,
+                cpu_replay_capacity,
                 production_storage_profile,
                 state: Mutex::new(AuthorityState {
                     pressure: inventory.pressure,
@@ -1840,6 +1836,10 @@ impl ResourceAuthority {
                 }),
             }),
         })
+    }
+
+    pub(crate) fn cpu_replay_capacity(&self) -> Option<(u64, u64)> {
+        self.inner.cpu_replay_capacity
     }
 
     /// Atomically selects, admits, and reserves one complete demand alternative.
@@ -3830,14 +3830,6 @@ fn validate_inventory(inventory: &HostInventory) -> Result<(), ResourceError> {
             ));
         }
     }
-    if matches!(
-        topology.cpu_data_working_set,
-        CpuDataWorkingSetCapacity::Known(0)
-    ) {
-        return Err(ResourceError::Invalid(
-            "known CPU data working-set capacity must be nonzero".to_string(),
-        ));
-    }
     let mut domains = BTreeMap::new();
     for domain in &topology.memory_domains {
         if domain.id.as_str().is_empty()
@@ -4244,38 +4236,84 @@ fn detect_performance_cpu_cores() -> Option<u64> {
     None
 }
 
-#[cfg(any(target_os = "macos", test))]
-fn cpu_data_working_set_capacity(
-    l2_cache_bytes: Option<u64>,
-    performance_cpu_cores: CpuClassCapacity,
-) -> CpuDataWorkingSetCapacity {
-    let (Some(l2_cache_bytes), CpuClassCapacity::Known(performance_cpu_cores)) =
-        (l2_cache_bytes, performance_cpu_cores)
-    else {
-        return CpuDataWorkingSetCapacity::Unknown;
-    };
-    let bytes_per_sharing_lane = l2_cache_bytes.checked_div(performance_cpu_cores);
-    match bytes_per_sharing_lane {
-        Some(bytes) if bytes > 0 => CpuDataWorkingSetCapacity::Known(bytes),
-        _ => CpuDataWorkingSetCapacity::Unknown,
-    }
+fn detected_cpu_replay_capacity() -> Option<(u64, u64)> {
+    static CAPACITY: OnceLock<Option<(u64, u64)>> = OnceLock::new();
+    *CAPACITY.get_or_init(detect_cpu_replay_capacity)
 }
 
 #[cfg(target_os = "macos")]
-fn detect_cpu_data_working_set(
-    performance_cpu_cores: CpuClassCapacity,
-) -> CpuDataWorkingSetCapacity {
-    cpu_data_working_set_capacity(
-        command_u64("/usr/sbin/sysctl", &["-n", "hw.perflevel0.l2cachesize"]).ok(),
-        performance_cpu_cores,
-    )
+fn detect_cpu_replay_capacity() -> Option<(u64, u64)> {
+    let logical_cpu_threads = std::thread::available_parallelism().ok()?.get() as u64;
+    let performance_cpu_cores = detect_performance_cpu_cores()?.clamp(1, logical_cpu_threads);
+    let shared_l2_bytes =
+        command_u64("/usr/sbin/sysctl", &["-n", "hw.perflevel0.l2cachesize"]).ok()?;
+    let bytes_per_lane = shared_l2_bytes.checked_div(performance_cpu_cores)?;
+    (bytes_per_lane > 0).then_some((bytes_per_lane, performance_cpu_cores))
 }
 
-#[cfg(not(target_os = "macos"))]
-fn detect_cpu_data_working_set(
-    _performance_cpu_cores: CpuClassCapacity,
-) -> CpuDataWorkingSetCapacity {
-    CpuDataWorkingSetCapacity::Unknown
+#[cfg(target_os = "linux")]
+fn detect_cpu_replay_capacity() -> Option<(u64, u64)> {
+    let logical_cpu_threads = std::thread::available_parallelism().ok()?.get() as u64;
+    let cache_root = std::path::Path::new("/sys/devices/system/cpu/cpu0/cache");
+    let mut indexes = std::fs::read_dir(cache_root)
+        .ok()?
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with("index"))
+        .collect::<Vec<_>>();
+    indexes.sort_unstable_by_key(std::fs::DirEntry::file_name);
+    for index in indexes {
+        let path = index.path();
+        if std::fs::read_to_string(path.join("level")).ok()?.trim() != "2" {
+            continue;
+        }
+        let kind = std::fs::read_to_string(path.join("type")).ok()?;
+        if !matches!(kind.trim(), "Data" | "Unified") {
+            continue;
+        }
+        let bytes =
+            parse_linux_cache_bytes(std::fs::read_to_string(path.join("size")).ok()?.trim())?;
+        let sharing_lanes = parse_linux_cpu_list_count(
+            std::fs::read_to_string(path.join("shared_cpu_list"))
+                .ok()?
+                .trim(),
+        )?;
+        let bytes_per_lane = bytes.checked_div(sharing_lanes)?;
+        return (bytes_per_lane > 0).then_some((bytes_per_lane, logical_cpu_threads));
+    }
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn parse_linux_cache_bytes(value: &str) -> Option<u64> {
+    let split = value.find(|character: char| !character.is_ascii_digit())?;
+    let magnitude = value[..split].parse::<u64>().ok()?;
+    let multiplier = match value[split..].trim() {
+        "K" | "KB" => 1024,
+        "M" | "MB" => 1024 * 1024,
+        "B" => 1,
+        _ => return None,
+    };
+    magnitude.checked_mul(multiplier)
+}
+
+#[cfg(target_os = "linux")]
+fn parse_linux_cpu_list_count(value: &str) -> Option<u64> {
+    value.split(',').try_fold(0_u64, |total, range| {
+        let mut bounds = range.trim().split('-');
+        let first = bounds.next()?.parse::<u64>().ok()?;
+        let last = bounds
+            .next()
+            .map_or(Some(first), |value| value.parse::<u64>().ok())?;
+        if bounds.next().is_some() || last < first {
+            return None;
+        }
+        total.checked_add(last - first + 1)
+    })
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn detect_cpu_replay_capacity() -> Option<(u64, u64)> {
+    None
 }
 
 #[cfg(target_os = "macos")]

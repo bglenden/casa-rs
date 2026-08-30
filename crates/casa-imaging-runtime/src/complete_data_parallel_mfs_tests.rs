@@ -4,6 +4,22 @@
 
 use std::{collections::BTreeMap, convert::Infallible, fs, io, path::PathBuf, sync::OnceLock};
 
+use crate::spectral_cycle::CompleteDataStreamEvidence;
+use crate::{
+    AttemptBoundObservationCompletion, BuildIdentity, CapacityDomainId, CapacityViewId,
+    CpuClassCapacity, ExecutionAttemptId, ExecutionProvenance, ExecutionReceiptStore,
+    ExternalPressure, FenceKind, FrozenWeightingReservation, GriddedNormalReplayStorage,
+    HostInventory, ImplementationContractMetadata, ImplementationRegistry,
+    ImplementationRegistryId, MemoryCapacityDomain, MemoryCapacityKind, MemoryView, MemoryViewKind,
+    ObservationReadCompletionContext, PlannerCostModelProfileBootstrap, PlannerCostModelProfileId,
+    PlanningBindings, QueueResource, QueueResourceId, RateResource, RateResourceId, RateUnit,
+    ReceiptRetention, ResourceAuthority, ResourceOverride, ResourcePolicy, ResourceTopology,
+    RunBindings, RunToCompletion, SpectralCycleExecutionPolicy, SpectralCycleExecutor,
+    SpectralCyclePassInput, SpectralCyclePlan, SpectralCyclePlanParts, SpectralCycleRegistry,
+    StorageDomain, StorageDomainId, StorageIoResourceBinding, WorkExecutionContext,
+    WorkImplementation, WorkImplementationId, WorkMeasurements, plan as runtime_plan,
+    run as runtime_run,
+};
 use casa_imaging_model::{
     AntennaSelection, AxisOrder, CentreLaws, CorrelationProduct, CorrelationSelection,
     CorrelationType, DataDescriptionSelection, DeclaredInnerProducts, DelayCentreLaw,
@@ -28,24 +44,8 @@ use casa_imaging_model::{
     compile_observation,
 };
 use casa_imaging_reconstruction::{
-    ExecutableModelProblem, WeightingExecutionLimits,
-    runtime_adapter::gridded_normal_route_capacity_bytes,
-};
-use casa_imaging_runtime::{
-    AttemptBoundObservationCompletion, BuildIdentity, CapacityDomainId, CapacityViewId,
-    CompleteDataStreamEvidence, CpuClassCapacity, CpuDataWorkingSetCapacity, ExecutionAttemptId,
-    ExecutionProvenance, ExecutionReceiptStore, ExternalPressure, FenceKind,
-    FrozenWeightingReservation, GriddedNormalReplayStorage, HostInventory,
-    ImplementationContractMetadata, ImplementationRegistry, ImplementationRegistryId,
-    MemoryCapacityDomain, MemoryCapacityKind, MemoryView, MemoryViewKind,
-    ObservationReadCompletionContext, PlannerCostModelProfileBootstrap, PlannerCostModelProfileId,
-    PlanningBindings, QueueResource, QueueResourceId, RateResource, RateResourceId, RateUnit,
-    ReceiptRetention, ResourceAuthority, ResourceOverride, ResourcePolicy, ResourceTopology,
-    RunBindings, RunToCompletion, SpectralCycleExecutionPolicy, SpectralCycleExecutor,
-    SpectralCyclePassInput, SpectralCyclePlan, SpectralCyclePlanParts, SpectralCycleRegistry,
-    StorageDomain, StorageDomainId, StorageIoResourceBinding, WorkExecutionContext,
-    WorkImplementation, WorkImplementationId, WorkMeasurements, plan as runtime_plan,
-    run as runtime_run,
+    ExecutableModelProblem, SpectralOperatorSpecification, WeightingExecutionLimits,
+    runtime_adapter::{gridded_normal_route_capacity_bytes, gridded_normal_sector_residency},
 };
 use casa_ms::{
     SelectedObservationContentBudget, SelectedObservationResolutionRequest,
@@ -110,6 +110,7 @@ struct RunEvidence {
     sum_weights: Vec<f64>,
     initial_stream: StreamSummary,
     final_stream: StreamSummary,
+    expected_replay_grid_bytes: u64,
 }
 
 #[test]
@@ -145,6 +146,10 @@ fn complete_data_mfs_products_and_identities_are_exact_for_one_two_and_four_work
         );
         assert_eq!(run.initial_stream.planned_gridded_route_capacity_bytes, 0);
         assert_eq!(
+            run.final_stream.grid_resident_bytes, run.expected_replay_grid_bytes,
+            "the admitted grid allocation must cover resident sectors plus merge grids",
+        );
+        assert_eq!(
             run.final_stream.planned_gridded_route_capacity_bytes,
             gridded_normal_route_capacity_bytes(3, 3).unwrap(),
             "the shared route window must cover the three exact one-record frames",
@@ -164,6 +169,14 @@ fn complete_data_mfs_products_and_identities_are_exact_for_one_two_and_four_work
             "the variable route plan must bound the live three-frame window",
         );
     }
+}
+
+#[test]
+fn balanced_policy_keeps_the_production_serial_replay_baseline() {
+    let run = execute_complete_data_mfs_with_policy(ResourcePolicy::Balanced, 17, 1);
+    assert_eq!(run.initial_stream.planned_workers, 1);
+    assert_eq!(run.final_stream.planned_workers, 1);
+    assert_eq!(run.final_stream.actual_workers, 1);
 }
 
 fn assert_stream_contract(
@@ -214,6 +227,26 @@ fn assert_worker_independent_stream(serial: &StreamSummary, parallel: &StreamSum
 }
 
 fn execute_complete_data_mfs(worker_count: u64) -> RunEvidence {
+    execute_complete_data_mfs_with_policy(
+        ResourcePolicy::Explicit(ResourceOverride {
+            workers: Some(worker_count),
+            ..ResourceOverride::default()
+        }),
+        worker_count,
+        worker_count,
+    )
+}
+
+fn execute_complete_data_mfs_with_policy(
+    resource_policy: ResourcePolicy,
+    execution_id: u64,
+    gridded_replay_workers: u64,
+) -> RunEvidence {
+    let authority = ResourceAuthority::with_inventory_and_cpu_replay_capacity(
+        runtime_inventory(),
+        Some((1 << 20, 4)),
+    )
+    .expect("dedicated test authority");
     let weighting = WeightingContract::new(
         WeightingScheme::Uniform,
         WeightDensityScope::GlobalSelection,
@@ -230,6 +263,15 @@ fn execute_complete_data_mfs(worker_count: u64) -> RunEvidence {
         model_lifecycle(ModelStateIdentity::Empty),
     ))
     .expect("compile constant-basis MFS problem");
+    let spectral_specification =
+        SpectralOperatorSpecification::new(&problem).expect("fixture spectral specification");
+    let expected_replay_grid_bytes = gridded_normal_sector_residency(
+        spectral_specification.grid_shape(),
+        spectral_specification.slab().core_depth(),
+    )
+    .expect("fixture sector residency")
+    .peak_complex_values()
+        * std::mem::size_of::<Complex64>();
     let residency = initial_access
         .certify_residency(&problem)
         .expect("certify selected-content residency");
@@ -237,11 +279,7 @@ fn execute_complete_data_mfs(worker_count: u64) -> RunEvidence {
         .replay_proof_retained_heap_bytes(&problem)
         .expect("bounded replay-proof residency");
     let planning_registry = PlanningRegistry::new(&problem);
-    let resource_policy = ResourcePolicy::Explicit(ResourceOverride {
-        workers: Some(worker_count),
-        ..ResourceOverride::default()
-    });
-    let gridded_storage = artifact_storage(worker_count);
+    let gridded_storage = artifact_storage(&authority, execution_id);
     let execution_policy = || {
         SpectralCycleExecutionPolicy::new(
             implementation_id(),
@@ -252,9 +290,8 @@ fn execute_complete_data_mfs(worker_count: u64) -> RunEvidence {
             (IMAGE_PIXELS * std::mem::size_of::<Complex64>() * 3) as u64,
             900_000,
         )
-        .with_planned_workers(authority(), &resource_policy)
-        .expect("authorize requested worker count")
         .with_gridded_normal_storage(gridded_storage.clone())
+        .with_test_gridded_replay_workers(gridded_replay_workers)
     };
     let planned = SpectralCyclePlan::initial(&problem, &planning_registry, execution_policy())
         .expect("plan initial complete-data MFS pass");
@@ -272,7 +309,7 @@ fn execute_complete_data_mfs(worker_count: u64) -> RunEvidence {
         ..
     } = planned.into_parts();
     let frozen_reservation = FrozenWeightingReservation::acquire(
-        authority(),
+        &authority,
         resource_policy.clone(),
         weighting_plan.planned_residency(),
         replay_proof_bytes,
@@ -320,7 +357,7 @@ fn execute_complete_data_mfs(worker_count: u64) -> RunEvidence {
             resource_policy.clone(),
             PlannerCostModelProfileBootstrap::new(cost_model_id()),
         ),
-        authority(),
+        &authority,
         &initial_registry,
         &receipts,
         move |_, _| Ok::<_, Infallible>(vec![physical]),
@@ -328,13 +365,13 @@ fn execute_complete_data_mfs(worker_count: u64) -> RunEvidence {
     .expect("bind initial execution plan");
     let executable = ExecutableModelProblem::from_compiled(problem.clone()).expect("executable");
     let current = RunBindings::new(problem.inputs().clone(), &resource_policy, cost_model_id());
-    let initial_attempt = attempt_id(worker_count, 0);
+    let initial_attempt = attempt_id(execution_id, 0);
     runtime_run(
         &executable,
         &initial_plan,
         &current,
         &initial_registry,
-        authority(),
+        &authority,
         &mut RunToCompletion,
         receipts.bind(ExecutionProvenance::new(
             initial_attempt,
@@ -405,7 +442,7 @@ fn execute_complete_data_mfs(worker_count: u64) -> RunEvidence {
             resource_policy.clone(),
             PlannerCostModelProfileBootstrap::new(cost_model_id()),
         ),
-        authority(),
+        &authority,
         &final_registry,
         &receipts,
         move |_, _| Ok::<_, Infallible>(vec![final_physical]),
@@ -416,10 +453,10 @@ fn execute_complete_data_mfs(worker_count: u64) -> RunEvidence {
         &final_plan,
         &current,
         &final_registry,
-        authority(),
+        &authority,
         &mut RunToCompletion,
         receipts.bind(ExecutionProvenance::new(
-            attempt_id(worker_count, 1),
+            attempt_id(execution_id, 1),
             BuildIdentity::from_sha256([83; 32]),
         )),
     )
@@ -443,6 +480,7 @@ fn execute_complete_data_mfs(worker_count: u64) -> RunEvidence {
         sum_weights: completion.normal_state().sum_weights().to_vec(),
         initial_stream,
         final_stream,
+        expected_replay_grid_bytes: u64::try_from(expected_replay_grid_bytes).unwrap(),
     }
 }
 
@@ -672,21 +710,16 @@ fn fixture() -> &'static Fixture {
     })
 }
 
-fn artifact_storage(worker_count: u64) -> GriddedNormalReplayStorage {
+fn artifact_storage(
+    authority: &ResourceAuthority,
+    worker_count: u64,
+) -> GriddedNormalReplayStorage {
     let directory = fixture()
         .storage_root
         .join(format!("workers-{worker_count}"));
     fs::create_dir_all(&directory).expect("worker artifact directory");
-    GriddedNormalReplayStorage::bind(authority(), artifact_storage_io(), directory)
+    GriddedNormalReplayStorage::bind(authority, artifact_storage_io(), directory)
         .expect("bind gridded-normal storage")
-}
-
-fn authority() -> &'static ResourceAuthority {
-    static AUTHORITY: OnceLock<&'static ResourceAuthority> = OnceLock::new();
-    AUTHORITY.get_or_init(|| {
-        ResourceAuthority::install_production_inventory(runtime_inventory())
-            .expect("install dedicated deterministic authority")
-    })
 }
 
 fn runtime_inventory() -> HostInventory {
@@ -748,7 +781,6 @@ fn runtime_inventory() -> HostInventory {
             ],
             logical_cpu_threads: 4,
             performance_cpu_cores: CpuClassCapacity::Known(4),
-            cpu_data_working_set: CpuDataWorkingSetCapacity::Known(1 << 20),
             cache_capacity_bytes: 1 << 20,
             lock_capacity: 4,
             file_descriptor_capacity: 16,

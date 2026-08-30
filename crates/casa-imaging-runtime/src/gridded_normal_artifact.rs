@@ -4,7 +4,10 @@ use std::fs::File;
 use std::io::{self, Write};
 use std::os::unix::fs::{FileExt, MetadataExt};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 
 use sha2::{Digest, Sha256};
 use tempfile::{Builder, NamedTempFile, TempPath};
@@ -31,6 +34,7 @@ const FOOTER_BYTES: usize = 80;
 pub struct GriddedNormalReplayStorage {
     resources: StorageIoResourceBinding,
     directory: PathBuf,
+    cpu_replay_capacity: Option<(u64, u64)>,
 }
 
 impl GriddedNormalReplayStorage {
@@ -45,6 +49,7 @@ impl GriddedNormalReplayStorage {
         Ok(Self {
             resources,
             directory,
+            cpu_replay_capacity: authority.cpu_replay_capacity(),
         })
     }
 
@@ -52,6 +57,10 @@ impl GriddedNormalReplayStorage {
     #[must_use]
     pub const fn resources(&self) -> &StorageIoResourceBinding {
         &self.resources
+    }
+
+    pub(crate) const fn cpu_replay_capacity(&self) -> Option<(u64, u64)> {
+        self.cpu_replay_capacity
     }
 }
 
@@ -818,12 +827,12 @@ impl GriddedNormalReplayArtifact {
             remaining -= count;
         }
         let source_slot_bytes = self.budget.source_slot_bytes(maximum_frames_per_block)?;
-        self.planned_block_source(frame_counts.into_boxed_slice(), source_slot_bytes)
+        self.planned_block_source(Arc::from(frame_counts), source_slot_bytes)
     }
 
     pub(crate) fn planned_block_source(
         &self,
-        frame_counts: Box<[usize]>,
+        frame_counts: Arc<[usize]>,
         source_slot_bytes: u64,
     ) -> Result<GriddedNormalArtifactBlockSource, GriddedNormalArtifactError> {
         let maximum_frames_per_block = frame_counts.iter().copied().max().unwrap_or(0);
@@ -990,7 +999,7 @@ pub(crate) struct GriddedNormalArtifactBlockSource {
     payload_bytes: u64,
     measurements: MutableReadMeasurements,
     created_slots: AtomicUsize,
-    frame_counts: Box<[usize]>,
+    frame_counts: Arc<[usize]>,
     source_slot_bytes: u64,
     blocks_filled: u64,
     initialized: bool,
@@ -1581,10 +1590,9 @@ mod tests {
         WorkIdentity, execute_bounded,
     };
     use crate::resource_authority::{
-        CapacityDomainId, CpuClassCapacity, CpuDataWorkingSetCapacity, ExternalPressure,
-        HostInventory, MemoryCapacityDomain, MemoryCapacityKind, MemoryView, MemoryViewKind,
-        QueueResource, QueueResourceId, RateResource, RateResourceId, RateUnit, ResourceTopology,
-        StorageDomain, StorageDomainId,
+        CapacityDomainId, CpuClassCapacity, ExternalPressure, HostInventory, MemoryCapacityDomain,
+        MemoryCapacityKind, MemoryView, MemoryViewKind, QueueResource, QueueResourceId,
+        RateResource, RateResourceId, RateUnit, ResourceTopology, StorageDomain, StorageDomainId,
     };
 
     const TEST_CAPACITY_BYTES: u64 = 4_096;
@@ -1629,7 +1637,6 @@ mod tests {
             queue_resources: vec![QueueResource::new(queue.clone(), 1)],
             logical_cpu_threads: 1,
             performance_cpu_cores: CpuClassCapacity::Known(1),
-            cpu_data_working_set: CpuDataWorkingSetCapacity::Unknown,
             cache_capacity_bytes: 1 << 20,
             lock_capacity: 0,
             file_descriptor_capacity: 4,
@@ -1966,7 +1973,7 @@ mod tests {
         let (_root, artifact) = sealed_heterogeneous_window_artifact();
         let source_slot_bytes = 3_200 + FRAME_HEADER_BYTES as u64;
         let source = artifact
-            .planned_block_source(Box::new([1, 4]), source_slot_bytes)
+            .planned_block_source(Arc::from([1, 4]), source_slot_bytes)
             .expect("planned heterogeneous source");
         let outcome = execute_bounded(
             BoundedStreamPlan::new::<(), ()>(2, 1, source_slot_bytes * 2, 1, 0)
@@ -1994,7 +2001,7 @@ mod tests {
         let (_root, artifact) = sealed_heterogeneous_window_artifact();
         let source_slot_bytes = 3_200 + FRAME_HEADER_BYTES as u64 - 1;
         let source = artifact
-            .planned_block_source(Box::new([1, 4]), source_slot_bytes)
+            .planned_block_source(Arc::from([1, 4]), source_slot_bytes)
             .expect("underplanned source opens before reading");
         let failure = execute_bounded(
             BoundedStreamPlan::new::<(), ()>(2, 1, source_slot_bytes * 2, 1, 0)

@@ -39,7 +39,7 @@ use casa_imaging_reconstruction::{ReconstructionMaskPlan, WeightingExecutionLimi
 use casa_imaging_runtime::{
     BuildIdentity, ExecutionAttemptId, ExecutionReceiptStore, GriddedNormalReplayStorage,
     ImplementationRegistryId, PlannerCostModelProfileId, ProductionStorageProfile,
-    ReceiptRetention, ResourceAuthority, ResourceOverride, ResourcePolicy, WorkImplementationId,
+    ReceiptRetention, ResourceAuthority, ResourcePolicy, WorkImplementationId,
 };
 use casa_ms::{
     CubeAxisConfig, CubeInterpolation, CubeSpectralSetup, MeasurementSet, MsSelectionIoBudget,
@@ -254,8 +254,6 @@ pub struct ContinuumImagingRequest {
     pub save_model_column: bool,
     /// Persist continuum-subtracted output-role observations into existing `CORRECTED_DATA`.
     pub save_continuum_residual: bool,
-    /// Permit the runtime to select more than one complete-data CPU worker.
-    pub parallel: bool,
     /// Capability constraints derived by the task surface. Unsupported
     /// capabilities are rejected by the installed implementation registry
     /// before physical execution.
@@ -1423,14 +1421,6 @@ fn runtime(
         gridded_normal_storage,
         confidence_parts_per_million: 900_000,
         resource_policy: ResourcePolicy::Balanced,
-        spectral_cycle_worker_policy: if request.parallel {
-            ResourcePolicy::Balanced
-        } else {
-            ResourcePolicy::Explicit(ResourceOverride {
-                workers: Some(1),
-                ..ResourceOverride::default()
-            })
-        },
         cost_model: PlannerCostModelProfileId::from_sha256(hash(b"spectral-cycle-cost-v1"))
             .bootstrap(),
         authority,

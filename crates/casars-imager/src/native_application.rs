@@ -191,7 +191,6 @@ fn application_request(config: &CliConfig) -> Result<ContinuumImagingRequest, St
         },
         save_model_column: config.save_model == SaveModelMode::ModelColumn,
         save_continuum_residual: config.save_continuum_residual,
-        parallel: config.parallel,
         task_requirements: task_requirements(config),
     })
 }
@@ -342,21 +341,6 @@ mod tests {
     #[test]
     fn default_backend_choices_select_the_installed_native_cpu_implementation() {
         assert!(backend_requirements(&config(&[])).is_empty());
-    }
-
-    #[test]
-    fn parallel_control_reaches_the_native_application_request() {
-        assert!(!application_request(&config(&[])).unwrap().parallel);
-        assert!(
-            application_request(&config(&["--parallel"]))
-                .unwrap()
-                .parallel
-        );
-        assert!(
-            !application_request(&config(&["--parallel", "--no-parallel"]))
-                .unwrap()
-                .parallel
-        );
     }
 
     #[test]

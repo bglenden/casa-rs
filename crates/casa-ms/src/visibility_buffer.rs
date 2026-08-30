@@ -1716,8 +1716,24 @@ struct ColumnReportInput<'a> {
     row_count: usize,
 }
 
-fn column_report(input: ColumnReportInput<'_>) -> MsResult<VisibilityBufferColumnReport> {
-    let ColumnReportInput {
+struct ModeledColumnPhysicalRead {
+    element_bytes: usize,
+    granularity: VisibilityChannelReadGranularity,
+    bytes: u64,
+}
+
+/// Apply the visibility-buffer storage-manager model to one MAIN-table column.
+pub(crate) fn modeled_main_column_physical_read_bytes(
+    table: &Table,
+    column_name: &str,
+    channelized: bool,
+    channel_start: usize,
+    requested_channels: usize,
+    elements_per_channel_or_row: usize,
+    row_count: usize,
+) -> MsResult<u64> {
+    let primitive = main_column_primitive_type(table, column_name)?;
+    Ok(modeled_column_physical_read(&ColumnReportInput {
         table,
         column_name,
         primitive,
@@ -1726,49 +1742,77 @@ fn column_report(input: ColumnReportInput<'_>) -> MsResult<VisibilityBufferColum
         requested_channels,
         elements_per_channel_or_row,
         row_count,
+    })?
+    .bytes)
+}
+
+fn column_report(input: ColumnReportInput<'_>) -> MsResult<VisibilityBufferColumnReport> {
+    let physical_read = modeled_column_physical_read(&input)?;
+    let ColumnReportInput {
+        table,
+        column_name,
+        primitive,
+        channelized,
+        channel_start: _,
+        requested_channels,
+        elements_per_channel_or_row,
+        row_count,
     } = input;
-    let element_bytes = primitive.fixed_width_bytes().ok_or_else(|| {
-        MsError::InvalidInput(format!(
-            "{column_name} has variable-width type {primitive:?}"
-        ))
-    })?;
     let data_manager_types = data_manager_types_for_column(table, column_name);
-    let granularity = if channelized {
-        channel_granularity_for_column(table, column_name)
-    } else {
-        VisibilityChannelReadGranularity::NotChannelized
-    };
     let logical_elements = row_count
         .saturating_mul(requested_channels)
         .saturating_mul(elements_per_channel_or_row);
-    let logical_output_bytes = logical_elements.saturating_mul(element_bytes) as u64;
-    let physical_channels = match granularity {
-        VisibilityChannelReadGranularity::RequestedRange => modeled_tile_aligned_channel_count(
-            table,
-            column_name,
-            channel_start,
-            requested_channels,
-        )
-        .unwrap_or(requested_channels),
-        VisibilityChannelReadGranularity::FullCell if channelized => {
-            modeled_full_cell_channel_count(table, column_name).unwrap_or(requested_channels)
-        }
-        VisibilityChannelReadGranularity::FullCell
-        | VisibilityChannelReadGranularity::NotChannelized => requested_channels,
-    };
-    let physical_bytes = row_count
-        .saturating_mul(physical_channels)
-        .saturating_mul(elements_per_channel_or_row)
-        .saturating_mul(element_bytes) as u64;
+    let logical_output_bytes = logical_elements.saturating_mul(physical_read.element_bytes) as u64;
     Ok(VisibilityBufferColumnReport {
         column: column_name.to_string(),
         primitive_type: format!("{primitive:?}"),
         channelized,
-        channel_read_granularity: granularity,
-        element_bytes,
+        channel_read_granularity: physical_read.granularity,
+        element_bytes: physical_read.element_bytes,
         logical_output_bytes,
-        modeled_physical_read_bytes: physical_bytes,
+        modeled_physical_read_bytes: physical_read.bytes,
         data_manager_types,
+    })
+}
+
+fn modeled_column_physical_read(
+    input: &ColumnReportInput<'_>,
+) -> MsResult<ModeledColumnPhysicalRead> {
+    let element_bytes = input.primitive.fixed_width_bytes().ok_or_else(|| {
+        MsError::InvalidInput(format!(
+            "{} has variable-width type {:?}",
+            input.column_name, input.primitive
+        ))
+    })?;
+    let granularity = if input.channelized {
+        channel_granularity_for_column(input.table, input.column_name)
+    } else {
+        VisibilityChannelReadGranularity::NotChannelized
+    };
+    let physical_channels = match granularity {
+        VisibilityChannelReadGranularity::RequestedRange => modeled_tile_aligned_channel_count(
+            input.table,
+            input.column_name,
+            input.channel_start,
+            input.requested_channels,
+        )
+        .unwrap_or(input.requested_channels),
+        VisibilityChannelReadGranularity::FullCell if input.channelized => {
+            modeled_full_cell_channel_count(input.table, input.column_name)
+                .unwrap_or(input.requested_channels)
+        }
+        VisibilityChannelReadGranularity::FullCell
+        | VisibilityChannelReadGranularity::NotChannelized => input.requested_channels,
+    };
+    let bytes = input
+        .row_count
+        .saturating_mul(physical_channels)
+        .saturating_mul(input.elements_per_channel_or_row)
+        .saturating_mul(element_bytes) as u64;
+    Ok(ModeledColumnPhysicalRead {
+        element_bytes,
+        granularity,
+        bytes,
     })
 }
 

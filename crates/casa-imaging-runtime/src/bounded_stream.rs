@@ -82,12 +82,6 @@ fn fixed_kernel_window_capacity_bytes<Partition, Partial>(
         .checked_add(size_of::<WorkerExecution<Partial, BoundedStreamPlanError>>())
         .and_then(|bytes| bytes.checked_add(size_of::<u64>()))
         .and_then(|bytes| bytes.checked_add(size_of::<BoundedWorkerMeasurements>()))
-        .and_then(|bytes| {
-            bytes.checked_add(size_of::<(
-                WorkIdentity,
-                std::thread::ScopedJoinHandle<'static, ()>,
-            )>())
-        })
         .ok_or(BoundedStreamPlanError::KernelWindowCapacity)?;
     let vectors = per_worker
         .checked_mul(workers)
@@ -247,6 +241,9 @@ pub(crate) trait PartitionedKernel<S>: Sync {
     fn partition_dynamic_capacity_bytes(&self, _partition: &Self::Partition) -> u64 {
         0
     }
+    fn partition_measurements(&self, _partition: &Self::Partition) -> BoundedPartitionMeasurements {
+        BoundedPartitionMeasurements::default()
+    }
     fn execute(
         &self,
         work: WorkIdentity,
@@ -266,13 +263,32 @@ pub(crate) trait PartitionedKernel<S>: Sync {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct BoundedPartitionMeasurements {
+    pub(crate) samples: u64,
+    pub(crate) taps: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct BoundedWorkerMeasurements {
-    /// Partitions executed by this stable logical worker slot.
+    /// Partitions executed by this physical worker.
     pub(crate) work_units: u64,
+    /// Scientific samples executed by this physical worker.
+    pub(crate) samples: u64,
+    /// Convolutional taps visited by this physical worker.
+    pub(crate) taps: u64,
     /// Time spent inside the scientific kernel's execute callback.
     pub(crate) active_nanos: u128,
-    /// Scheduled-wave time outside that callback, including unassigned waves.
-    pub(crate) wait_nanos: u128,
+    /// Time from wave release until this physical worker began its callback.
+    pub(crate) ready_wait_nanos: u128,
+    /// Scheduled-wave time after the first callback that was not spent active,
+    /// including gaps between callbacks and the final barrier wait.
+    pub(crate) backpressure_wait_nanos: u128,
+    /// Deterministic commit/reduction time for this worker's partials.
+    pub(crate) reduction_nanos: u128,
+    /// Stable digest of this physical worker's ordered partition keys.
+    pub(crate) work_identity_digest: [u8; 32],
+    wave_first_start_nanos: Option<u128>,
+    wave_active_nanos: u128,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -318,6 +334,7 @@ pub(crate) struct BoundedStreamMeasurements {
     pub(crate) peak_partial_dynamic_capacity_bytes: u64,
     pub(crate) peak_worker_stack_capacity_bytes: u64,
     pub(crate) peak_kernel_window_capacity_bytes: u64,
+    pub(crate) process_peak_rss_bytes: Option<u64>,
     pub(crate) lease_return_nanos: u128,
     pub(crate) overlap_nanos: u128,
     pub(crate) wall_nanos: u128,
@@ -356,7 +373,10 @@ enum WorkerExecution<P, E> {
     Completed {
         identity: WorkIdentity,
         partial: P,
+        worker_index: Option<usize>,
+        work: BoundedPartitionMeasurements,
         active_nanos: u128,
+        started_nanos: u128,
     },
     Failed(Box<E>),
 }
@@ -412,8 +432,14 @@ impl FixedWorkerTeam {
         K: PartitionedKernel<S>,
     {
         completed.clear();
-        if wave.len() == 1 {
+        let wave_started = Instant::now();
+        if self.pool.is_none() {
+            if wave.len() != 1 {
+                return Err(BoundedStreamError::InvalidKernelPlan);
+            }
             let (identity, partition) = &wave[0];
+            let started_nanos = wave_started.elapsed().as_nanos();
+            let work = kernel.partition_measurements(&partition.payload);
             let active_started = Instant::now();
             let result = kernel.execute(*identity, storage, &partition.payload);
             let active_nanos = active_started.elapsed().as_nanos();
@@ -421,7 +447,10 @@ impl FixedWorkerTeam {
                 Ok(partial) => WorkerExecution::Completed {
                     identity: *identity,
                     partial,
+                    worker_index: Some(0),
+                    work,
                     active_nanos,
+                    started_nanos,
                 },
                 Err(error) => WorkerExecution::Failed(Box::new(error)),
             });
@@ -433,6 +462,9 @@ impl FixedWorkerTeam {
             pool.install(|| {
                 wave.par_iter()
                     .map(|(identity, partition)| {
+                        let worker_index = rayon::current_thread_index();
+                        let started_nanos = wave_started.elapsed().as_nanos();
+                        let work = kernel.partition_measurements(&partition.payload);
                         let active_started = Instant::now();
                         let result = kernel.execute(*identity, storage, &partition.payload);
                         let active_nanos = active_started.elapsed().as_nanos();
@@ -440,7 +472,10 @@ impl FixedWorkerTeam {
                             Ok(partial) => WorkerExecution::Completed {
                                 identity: *identity,
                                 partial,
+                                worker_index,
+                                work,
                                 active_nanos,
+                                started_nanos,
                             },
                             Err(error) => WorkerExecution::Failed(Box::new(error)),
                         }
@@ -584,6 +619,14 @@ fn record_work_identity(hasher: &mut Sha256, identity: WorkIdentity) {
     hasher.update(identity.local_ordinal.to_be_bytes());
 }
 
+fn extend_worker_work_identity_digest(previous: [u8; 32], identity: WorkIdentity) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"casa-rs-bounded-worker-work-v1");
+    hasher.update(previous);
+    record_work_identity(&mut hasher, identity);
+    hasher.finalize().into()
+}
+
 fn process_block<S, K>(
     plan: BoundedStreamPlan,
     block: BlockIdentity,
@@ -717,34 +760,83 @@ where
         let worker_stack_capacity_bytes = worker_team.stack_capacity_bytes();
         peak_worker_stack_capacity_bytes =
             peak_worker_stack_capacity_bytes.max(worker_stack_capacity_bytes);
+        for worker in worker_measurements.iter_mut() {
+            worker.wave_first_start_nanos = None;
+            worker.wave_active_nanos = 0;
+        }
         worker_team.execute_wave(&*kernel, storage, &wave, &mut completed)?;
         let wave_nanos = execute_started.elapsed().as_nanos();
         execute_nanos = execute_nanos
             .checked_add(wave_nanos)
             .ok_or(BoundedStreamError::MeasurementOverflow)?;
-        for (slot, execution) in completed.iter().enumerate() {
-            let WorkerExecution::Completed { active_nanos, .. } = execution else {
+        for execution in &completed {
+            let WorkerExecution::Completed {
+                identity,
+                worker_index,
+                work,
+                active_nanos,
+                started_nanos,
+                ..
+            } = execution
+            else {
                 return Err(BoundedStreamError::InvalidKernelPlan);
             };
-            let worker = &mut worker_measurements[slot];
+            let worker = worker_measurements
+                .get_mut(worker_index.ok_or(BoundedStreamError::InvalidKernelPlan)?)
+                .ok_or(BoundedStreamError::InvalidKernelPlan)?;
             worker.work_units = worker
                 .work_units
                 .checked_add(1)
+                .ok_or(BoundedStreamError::MeasurementOverflow)?;
+            worker.samples = worker
+                .samples
+                .checked_add(work.samples)
+                .ok_or(BoundedStreamError::MeasurementOverflow)?;
+            worker.taps = worker
+                .taps
+                .checked_add(work.taps)
                 .ok_or(BoundedStreamError::MeasurementOverflow)?;
             worker.active_nanos = worker
                 .active_nanos
                 .checked_add(*active_nanos)
                 .ok_or(BoundedStreamError::MeasurementOverflow)?;
-            worker.wait_nanos = worker
-                .wait_nanos
-                .checked_add(wave_nanos.saturating_sub(*active_nanos))
+            worker.work_identity_digest =
+                extend_worker_work_identity_digest(worker.work_identity_digest, *identity);
+            worker.wave_first_start_nanos = Some(
+                worker
+                    .wave_first_start_nanos
+                    .map_or(*started_nanos, |first| first.min(*started_nanos)),
+            );
+            worker.wave_active_nanos = worker
+                .wave_active_nanos
+                .checked_add(*active_nanos)
                 .ok_or(BoundedStreamError::MeasurementOverflow)?;
         }
-        for worker in &mut worker_measurements[completed.len()..] {
-            worker.wait_nanos = worker
-                .wait_nanos
-                .checked_add(wave_nanos)
+        for worker in worker_measurements.iter_mut() {
+            let Some(started_nanos) = worker.wave_first_start_nanos else {
+                worker.ready_wait_nanos = worker
+                    .ready_wait_nanos
+                    .checked_add(wave_nanos)
+                    .ok_or(BoundedStreamError::MeasurementOverflow)?;
+                continue;
+            };
+            let active_nanos = worker.wave_active_nanos;
+            let occupied_nanos = started_nanos
+                .checked_add(active_nanos)
                 .ok_or(BoundedStreamError::MeasurementOverflow)?;
+            let backpressure_nanos = wave_nanos
+                .checked_sub(occupied_nanos)
+                .ok_or(BoundedStreamError::InvalidKernelPlan)?;
+            worker.ready_wait_nanos = worker
+                .ready_wait_nanos
+                .checked_add(started_nanos)
+                .ok_or(BoundedStreamError::MeasurementOverflow)?;
+            worker.backpressure_wait_nanos = worker
+                .backpressure_wait_nanos
+                .checked_add(backpressure_nanos)
+                .ok_or(BoundedStreamError::MeasurementOverflow)?;
+            worker.wave_first_start_nanos = None;
+            worker.wave_active_nanos = 0;
         }
         partitions_executed = partitions_executed
             .checked_add(
@@ -786,14 +878,26 @@ where
         let commit_started = Instant::now();
         for execution in completed.drain(..) {
             let WorkerExecution::Completed {
-                identity, partial, ..
+                identity,
+                partial,
+                worker_index,
+                ..
             } = execution
             else {
                 return Err(BoundedStreamError::InvalidKernelPlan);
             };
+            let reduction_started = Instant::now();
             kernel
                 .commit(identity, storage, partial)
                 .map_err(BoundedStreamError::Kernel)?;
+            let reduction_nanos = reduction_started.elapsed().as_nanos();
+            let worker = worker_measurements
+                .get_mut(worker_index.ok_or(BoundedStreamError::InvalidKernelPlan)?)
+                .ok_or(BoundedStreamError::InvalidKernelPlan)?;
+            worker.reduction_nanos = worker
+                .reduction_nanos
+                .checked_add(reduction_nanos)
+                .ok_or(BoundedStreamError::MeasurementOverflow)?;
             record_work_identity(&mut committed_work_identity_hasher, identity);
             commits_completed = commits_completed
                 .checked_add(1)
@@ -989,7 +1093,37 @@ fn measurements_for_plan(plan: BoundedStreamPlan) -> BoundedStreamMeasurements {
         maximum_partitions_per_block: plan.maximum_partitions_per_block,
         planned_kernel_dynamic_capacity_bytes: plan.dynamic_kernel_window_capacity_bytes,
         planned_kernel_window_capacity_bytes: plan.kernel_window_capacity_bytes,
+        process_peak_rss_bytes: process_peak_rss_bytes(),
         ..BoundedStreamMeasurements::default()
+    }
+}
+
+fn process_peak_rss_bytes() -> Option<u64> {
+    #[cfg(unix)]
+    {
+        let mut usage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
+        if unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) } != 0 {
+            return None;
+        }
+        let maximum = u64::try_from(unsafe { usage.assume_init() }.ru_maxrss).ok()?;
+        #[cfg(target_os = "macos")]
+        return Some(maximum);
+        #[cfg(not(target_os = "macos"))]
+        return maximum.checked_mul(1_024);
+    }
+    #[cfg(not(unix))]
+    {
+        None
+    }
+}
+
+fn sample_process_peak_rss(measurements: &mut BoundedStreamMeasurements) {
+    if let Some(sample) = process_peak_rss_bytes() {
+        measurements.process_peak_rss_bytes = Some(
+            measurements
+                .process_peak_rss_bytes
+                .map_or(sample, |peak| peak.max(sample)),
+        );
     }
 }
 
@@ -1094,6 +1228,7 @@ where
         source.complete().map_err(BoundedStreamError::Source)
     })();
     measurements.worker_threads_started = worker_team.shutdown();
+    sample_process_peak_rss(&mut measurements);
     let result = source_result.and_then(|source_completion| {
         kernel
             .complete()
@@ -1608,6 +1743,7 @@ where
         completion.ok_or(BoundedStreamError::ProducerDisconnected)
     });
     measurements.worker_threads_started = worker_team.shutdown();
+    sample_process_peak_rss(&mut measurements);
     let producer_measurements = *producer_measurements
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -1823,6 +1959,16 @@ mod tests {
             Ok(values[*partition])
         }
 
+        fn partition_measurements(
+            &self,
+            _partition: &Self::Partition,
+        ) -> BoundedPartitionMeasurements {
+            BoundedPartitionMeasurements {
+                samples: 1,
+                taps: 1,
+            }
+        }
+
         fn commit(
             &mut self,
             work: WorkIdentity,
@@ -1923,13 +2069,10 @@ mod tests {
         assert_eq!(parallel.measurements.partitions_executed, 9);
         assert_eq!(parallel.measurements.commits_completed, 9);
         assert_eq!(parallel.measurements.workers_with_nonzero_partitions, 2);
-        assert_eq!(
-            parallel.measurements.minimum_partitions_per_active_worker,
-            4
-        );
-        assert_eq!(
-            parallel.measurements.maximum_partitions_per_active_worker,
-            5
+        assert!(parallel.measurements.minimum_partitions_per_active_worker > 0);
+        assert!(
+            parallel.measurements.minimum_partitions_per_active_worker
+                <= parallel.measurements.maximum_partitions_per_active_worker
         );
         assert_eq!(
             parallel.measurements.peak_worker_stack_capacity_bytes,
@@ -1953,15 +2096,43 @@ mod tests {
                 .worker_slots
                 .iter()
                 .map(|worker| worker.work_units)
-                .collect::<Vec<_>>(),
-            vec![5, 4]
+                .sum::<u64>(),
+            9
         );
-        assert!(
+        assert_eq!(
             parallel
                 .measurements
                 .worker_slots
                 .iter()
-                .all(|worker| worker.active_nanos > 0 && worker.wait_nanos > 0)
+                .map(|worker| worker.samples)
+                .sum::<u64>(),
+            9
+        );
+        assert_eq!(
+            parallel
+                .measurements
+                .worker_slots
+                .iter()
+                .map(|worker| worker.taps)
+                .sum::<u64>(),
+            9
+        );
+        assert!(parallel.measurements.worker_slots.iter().all(|worker| {
+            worker.work_units > 0
+                && worker.active_nanos > 0
+                && worker.ready_wait_nanos > 0
+                && worker.work_identity_digest != [0; 32]
+        }));
+        assert!(parallel.measurements.worker_slots.iter().all(|worker| {
+            worker.ready_wait_nanos + worker.active_nanos + worker.backpressure_wait_nanos
+                == parallel.measurements.execute_nanos
+        }));
+        #[cfg(unix)]
+        assert!(
+            parallel
+                .measurements
+                .process_peak_rss_bytes
+                .is_some_and(|bytes| bytes > 0)
         );
     }
 
@@ -1983,9 +2154,23 @@ mod tests {
                 .worker_slots
                 .iter()
                 .map(|worker| worker.work_units)
-                .collect::<Vec<_>>(),
-            vec![4, 4, 4]
+                .sum::<u64>(),
+            12
         );
+        assert_eq!(
+            parallel.measurements.workers_with_nonzero_partitions,
+            parallel
+                .measurements
+                .worker_slots
+                .iter()
+                .filter(|worker| worker.work_units > 0)
+                .count()
+        );
+        assert!(parallel.measurements.workers_with_nonzero_partitions >= 2);
+        assert!(parallel.measurements.worker_slots.iter().all(|worker| {
+            worker.ready_wait_nanos + worker.active_nanos + worker.backpressure_wait_nanos
+                == parallel.measurements.execute_nanos
+        }));
         assert_eq!(
             serial.measurements.executed_work_identity_digest,
             parallel.measurements.executed_work_identity_digest

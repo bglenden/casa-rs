@@ -24,6 +24,7 @@ use crate::{
     LeaseResource, PhysicalSlotId, PublicationLayoutLedger, ReceiptError, ReceiptFailureKind,
     ReceiptStatus, ResourceAuthority, ResourceError, ResourceIdentity, ResourceOverride,
     ResourcePolicy, WorkImplementationId, WorkKind, WorkNodeId,
+    bounded_stream::BOUNDED_WORKER_STACK_BYTES,
     cost_model::PlannerCostModelProfileRecord,
     execution::{
         ExecutionDag, ExecutionScheduler, PublicationReservation, SchedulerAction,
@@ -1687,6 +1688,37 @@ impl PhysicalWorkBinding {
 
     pub(crate) fn product_publication_authority(&self) -> ProductPublicationAuthority {
         self.product_publication.clone()
+    }
+
+    pub(crate) fn with_fixed_worker_count(self, workers: u64) -> Result<Self, ExecutionError> {
+        let thread_stack_bytes = if workers == 1 {
+            0
+        } else {
+            workers
+                .checked_mul(BOUNDED_WORKER_STACK_BYTES as u64)
+                .ok_or_else(|| {
+                    ExecutionError::InvalidPlan(
+                        "bounded worker stack projection overflowed".to_string(),
+                    )
+                })?
+        };
+        let execution_dag = self
+            .execution_dag
+            .fixed_worker_variant(workers, thread_stack_bytes)?;
+        let implementation_contract = self
+            .implementation_contract
+            .for_execution_dag(&execution_dag)
+            .map_err(|error| ExecutionError::InvalidPlan(error.to_string()))?;
+        Self::with_implementation_contract(
+            implementation_contract,
+            execution_dag,
+            self.prediction,
+            self.artifacts,
+            self.observation_transaction,
+            self.publication_layouts,
+            self.product_publication,
+        )
+        .map_err(|error| ExecutionError::InvalidPlan(error.to_string()))
     }
 
     fn bind_registry<R: ImplementationRegistry>(

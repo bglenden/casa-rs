@@ -350,8 +350,6 @@ pub struct CliConfig {
     pub aw_project: Option<AwProjectControls>,
     /// Dirty-only toggle.
     pub dirty_only: bool,
-    /// Whether the native complete-data runtime may use more than one worker.
-    pub parallel: bool,
     /// Cube chunk count.
     pub chanchunks: Option<usize>,
     /// Acceleration request.
@@ -755,7 +753,6 @@ impl CliConfig {
             w_project_planes: None,
             aw_project: None,
             dirty_only: false,
-            parallel: false,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Cpu,
             standard_mfs_backend: None,
@@ -886,9 +883,6 @@ pub(crate) fn apply_parallel_runtime_control(
     parallel: Option<bool>,
     config: &mut CliConfig,
 ) -> Result<(), String> {
-    if let Some(parallel) = parallel {
-        config.parallel = parallel;
-    }
     if parallel == Some(false) {
         config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Cpu;
     }

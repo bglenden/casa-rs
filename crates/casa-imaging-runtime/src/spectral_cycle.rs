@@ -755,7 +755,8 @@ pub struct SpectralCycleExecutor {
 /// schema. It reports physical scheduling and residency without exposing
 /// reconstruction state or MeasurementSet contents.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CompleteDataStreamEvidence {
+#[allow(dead_code)]
+pub(crate) struct CompleteDataStreamEvidence {
     planned_workers: u64,
     actual_workers: u64,
     active_worker_slots: u64,
@@ -775,6 +776,7 @@ pub struct CompleteDataStreamEvidence {
     grid_resident_bytes: u64,
 }
 
+#[allow(dead_code)]
 impl CompleteDataStreamEvidence {
     /// Return the worker count bound by the immutable stream plan.
     #[must_use]
@@ -1059,7 +1061,10 @@ impl SpectralCycleExecutor {
     /// Return transient scheduling and residency evidence for the latest
     /// completed complete-data stream.
     #[must_use]
-    pub fn latest_complete_data_stream_evidence(&self) -> Option<CompleteDataStreamEvidence> {
+    #[allow(dead_code)]
+    pub(crate) fn latest_complete_data_stream_evidence(
+        &self,
+    ) -> Option<CompleteDataStreamEvidence> {
         let state = self.state.lock().ok()?;
         let (stream, artifact_pass_count) = if let Some((replay, stream)) =
             state.gridded_replay.as_ref().and_then(|replay| {
@@ -1707,8 +1712,11 @@ impl SpectralCycleExecutor {
         ) else {
             return;
         };
+        let process_peak_rss_bytes = stream
+            .process_peak_rss_bytes
+            .map_or_else(|| "unavailable".to_owned(), |bytes| bytes.to_string());
         eprintln!(
-            "imaging_gridded_replay_summary ordinal={} blocks={} logical_frames={} planned_windows={} planned_working_set_bytes={} maximum_frames_per_window={} peak_frames_per_window={} artifact_bytes={} payload_bytes={} read_bytes={} read_operations={} payload_copy_bytes={} payload_copy_operations={} buffer_allocations={} buffer_reuses={} source_slots={} workers={} worker_threads_started={} dispatch_waves={} active_worker_slots={} minimum_partitions_per_active_worker={} maximum_partitions_per_active_worker={} worker_slots={:?} partitions_executed={} commits_completed={} executed_work_identity={:x?} committed_work_identity={:x?} planned_source_capacity_bytes={} planned_kernel_window_capacity_bytes={} planned_gridded_route_maximum_window_records={} planned_gridded_route_maximum_frame_groups={} planned_gridded_route_maximum_frames={} planned_gridded_route_capacity_bytes={} frames_routed={} encoded_records={} routed_record_memberships={} prediction_groups={} degrid_records={} grid_records={} sector_rescans={} peak_physical_route_capacity_bytes={} peak_partial_dynamic_capacity_bytes={} peak_worker_stack_capacity_bytes={} peak_kernel_window_capacity_bytes={} peak_live_source_blocks={} peak_live_source_current_bytes={} peak_live_source_capacity_bytes={} ready_queue_high_water={} producer_wait_nanos={} consumer_wait_nanos={} source_starved_nanos={} overlap_nanos={} source_fill_nanos={} prepare_nanos={} execute_nanos={} commit_nanos={} wall_nanos={}",
+            "imaging_gridded_replay_summary ordinal={} blocks={} logical_frames={} planned_windows={} planned_working_set_bytes={} maximum_frames_per_window={} peak_frames_per_window={} artifact_bytes={} payload_bytes={} read_bytes={} read_operations={} payload_copy_bytes={} payload_copy_operations={} buffer_allocations={} buffer_reuses={} source_slots={} workers={} worker_threads_started={} dispatch_waves={} active_worker_slots={} minimum_partitions_per_active_worker={} maximum_partitions_per_active_worker={} worker_slots={:?} partitions_executed={} commits_completed={} executed_work_identity={:x?} committed_work_identity={:x?} planned_source_capacity_bytes={} planned_kernel_window_capacity_bytes={} planned_gridded_route_maximum_window_records={} planned_gridded_route_maximum_frame_groups={} planned_gridded_route_maximum_frames={} planned_gridded_route_capacity_bytes={} frames_routed={} encoded_records={} routed_record_memberships={} prediction_groups={} degrid_records={} grid_records={} sector_rescans={} peak_physical_route_capacity_bytes={} peak_partial_dynamic_capacity_bytes={} peak_worker_stack_capacity_bytes={} peak_kernel_window_capacity_bytes={} process_peak_rss_bytes={} peak_live_source_blocks={} peak_live_source_current_bytes={} peak_live_source_capacity_bytes={} ready_queue_high_water={} producer_wait_nanos={} consumer_wait_nanos={} source_starved_nanos={} overlap_nanos={} source_fill_nanos={} prepare_nanos={} execute_nanos={} commit_nanos={} wall_nanos={}",
             self.pass.ordinal(),
             stream.blocks_filled,
             stream.logical_units_filled,
@@ -1762,6 +1770,7 @@ impl SpectralCycleExecutor {
             stream.peak_partial_dynamic_capacity_bytes,
             stream.peak_worker_stack_capacity_bytes,
             stream.peak_kernel_window_capacity_bytes,
+            process_peak_rss_bytes,
             stream.peak_live_source_blocks,
             stream.peak_live_source_current_bytes,
             stream.peak_live_source_capacity_bytes,
@@ -1830,8 +1839,11 @@ impl SpectralCycleExecutor {
         let modeled_physical_read_bytes = traversal
             .modeled_physical_read_bytes()
             .map_or_else(|| "unavailable".to_owned(), |bytes| bytes.to_string());
+        let process_peak_rss_bytes = stream
+            .process_peak_rss_bytes
+            .map_or_else(|| "unavailable".to_owned(), |bytes| bytes.to_string());
         eprintln!(
-            "imaging_source_read_ahead_summary mode=bounded_spectral stage={stage} phase={phase} ordinal={} enabled={} max_live_row_blocks={} queue_capacity={} live_row_block_high_water={} row_blocks={} pass_count={} stored_rows={} stored_samples={} selected_channel_runs={} streamed_samples={} source_bytes={} modeled_physical_read_bytes={} source_read_operations={} request_handoff_bytes={} selected_sample_handoff_bytes={} peak_consumer_scratch_current_bytes={} consumer_scratch_capacity_bytes={} allocated_storage_buffers={} reused_storage_buffers={} peak_live_current_bytes={} peak_live_capacity_bytes={} source_slots={} workers={} maximum_partitions_per_block={} planned_source_capacity_bytes={} ready_queue_high_water={} ready_queue_current_bytes_high_water={} ready_queue_capacity_bytes_high_water={} planned_kernel_window_capacity_bytes={} peak_kernel_window_capacity_bytes={} source_read_nanos={} source_fill_nanos={} source_arrangement_nanos={} stream_source_fill_nanos={} process_block_prepare_nanos={} process_block_execute_nanos={} route_consume_combined_nanos={} producer_wait_nanos={} source_starved_nanos={} terminal_wait_nanos={} consumer_wait_total_nanos={} lease_return_nanos={} producer_consumer_overlap_nanos={} wall_nanos={} consumer_recv_blocked_ms={:.3} producer_send_blocked_ms={:.3} producer_consumer_overlap_ms={:.3} source_read_ms={:.3} source_route_ms={:.3} consumer_ms={:.3} source_prepare_ms={:.3} effective_read_bandwidth_mib_s={:.3}",
+            "imaging_source_read_ahead_summary mode=bounded_spectral stage={stage} phase={phase} ordinal={} enabled={} max_live_row_blocks={} queue_capacity={} live_row_block_high_water={} row_blocks={} pass_count={} stored_rows={} stored_samples={} selected_channel_runs={} streamed_samples={} source_bytes={} modeled_physical_read_bytes={} source_read_operations={} request_handoff_bytes={} selected_sample_handoff_bytes={} peak_consumer_scratch_current_bytes={} consumer_scratch_capacity_bytes={} allocated_storage_buffers={} reused_storage_buffers={} peak_live_current_bytes={} peak_live_capacity_bytes={} source_slots={} workers={} maximum_partitions_per_block={} planned_source_capacity_bytes={} ready_queue_high_water={} ready_queue_current_bytes_high_water={} ready_queue_capacity_bytes_high_water={} planned_kernel_window_capacity_bytes={} peak_kernel_window_capacity_bytes={} process_peak_rss_bytes={} source_read_nanos={} source_fill_nanos={} source_arrangement_nanos={} stream_source_fill_nanos={} process_block_prepare_nanos={} process_block_execute_nanos={} route_consume_combined_nanos={} producer_wait_nanos={} source_starved_nanos={} terminal_wait_nanos={} consumer_wait_total_nanos={} lease_return_nanos={} producer_consumer_overlap_nanos={} wall_nanos={} consumer_recv_blocked_ms={:.3} producer_send_blocked_ms={:.3} producer_consumer_overlap_ms={:.3} source_read_ms={:.3} source_route_ms={:.3} consumer_ms={:.3} source_prepare_ms={:.3} effective_read_bandwidth_mib_s={:.3}",
             self.pass.ordinal(),
             stream.source_slots > 1,
             stream.source_slots,
@@ -1863,6 +1875,7 @@ impl SpectralCycleExecutor {
             stream.ready_queue_capacity_bytes_high_water,
             stream.planned_kernel_window_capacity_bytes,
             stream.peak_kernel_window_capacity_bytes,
+            process_peak_rss_bytes,
             traversal.source_read_nanos(),
             traversal.source_fill_nanos(),
             traversal.source_arrangement_nanos(),

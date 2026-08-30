@@ -89,7 +89,6 @@ fn inventory_with_views(memory_views: Vec<MemoryView>) -> HostInventory {
             queue_resources: Vec::new(),
             logical_cpu_threads: 4,
             performance_cpu_cores: CpuClassCapacity::Known(2),
-            cpu_data_working_set: CpuDataWorkingSetCapacity::Known(256),
             cache_capacity_bytes: 1_000,
             lock_capacity: 10,
             file_descriptor_capacity: 10,
@@ -294,7 +293,6 @@ fn unknown_cpu_class_is_preserved_without_logical_thread_fallback() {
         kind: MemoryViewKind::Host,
     }]);
     inventory.topology.performance_cpu_cores = CpuClassCapacity::Unknown;
-    inventory.topology.cpu_data_working_set = CpuDataWorkingSetCapacity::Unknown;
 
     let authority = ResourceAuthority::with_inventory(inventory)
         .expect("unknown CPU class is valid inventory knowledge");
@@ -302,56 +300,6 @@ fn unknown_cpu_class_is_preserved_without_logical_thread_fallback() {
         authority.topology().performance_cpu_cores,
         CpuClassCapacity::Unknown
     );
-    assert_eq!(
-        authority.topology().cpu_data_working_set,
-        CpuDataWorkingSetCapacity::Unknown
-    );
-}
-
-#[test]
-fn cpu_data_working_set_uses_l2_bytes_per_known_performance_core() {
-    assert_eq!(
-        cpu_data_working_set_capacity(Some(24 * 1024 * 1024), CpuClassCapacity::Known(8)),
-        CpuDataWorkingSetCapacity::Known(3 * 1024 * 1024)
-    );
-    assert_eq!(
-        cpu_data_working_set_capacity(Some(24 * 1024 * 1024), CpuClassCapacity::Unknown),
-        CpuDataWorkingSetCapacity::Unknown
-    );
-    assert_eq!(
-        cpu_data_working_set_capacity(None, CpuClassCapacity::Known(8)),
-        CpuDataWorkingSetCapacity::Unknown
-    );
-    assert_eq!(
-        cpu_data_working_set_capacity(Some(3), CpuClassCapacity::Known(4)),
-        CpuDataWorkingSetCapacity::Unknown
-    );
-}
-
-#[test]
-fn injected_cpu_data_working_set_is_retained_and_validated() {
-    let host = CapacityViewId::new("host-memory");
-    let domain = CapacityDomainId::new("unified-memory");
-    let mut inventory = inventory_with_views(vec![MemoryView {
-        id: host,
-        domain,
-        kind: MemoryViewKind::Host,
-    }]);
-    inventory.topology.cpu_data_working_set = CpuDataWorkingSetCapacity::Known(512);
-
-    let authority = ResourceAuthority::with_inventory(inventory.clone())
-        .expect("known CPU data working set is valid inventory knowledge");
-    assert_eq!(
-        authority.topology().cpu_data_working_set,
-        CpuDataWorkingSetCapacity::Known(512)
-    );
-
-    inventory.topology.cpu_data_working_set = CpuDataWorkingSetCapacity::Known(0);
-    assert!(matches!(
-        ResourceAuthority::with_inventory(inventory),
-        Err(ResourceError::Invalid(message))
-            if message == "known CPU data working-set capacity must be nonzero"
-    ));
 }
 
 #[test]
@@ -486,7 +434,6 @@ fn demand_is_admitted_against_named_storage_rate_and_queue_domains() {
             queue_resources: vec![QueueResource::new(queue.clone(), 8)],
             logical_cpu_threads: 8,
             performance_cpu_cores: CpuClassCapacity::Unknown,
-            cpu_data_working_set: CpuDataWorkingSetCapacity::Unknown,
             cache_capacity_bytes: 1_000,
             lock_capacity: 10,
             file_descriptor_capacity: 20,
@@ -1662,7 +1609,6 @@ fn storage_transfer_and_accelerator_demands_bind_their_topology_resources() {
             ],
             logical_cpu_threads: 4,
             performance_cpu_cores: CpuClassCapacity::Unknown,
-            cpu_data_working_set: CpuDataWorkingSetCapacity::Unknown,
             cache_capacity_bytes: 1_000,
             lock_capacity: 10,
             file_descriptor_capacity: 20,

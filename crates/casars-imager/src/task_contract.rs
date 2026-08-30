@@ -2184,7 +2184,7 @@ impl ImagerRunTaskRequest {
             w_project_planes: config.w_project_planes,
             aw_project: config.aw_project.as_ref().map(Into::into),
             dirty_only: config.dirty_only,
-            parallel: Some(config.parallel),
+            parallel: None,
             chanchunks: config.chanchunks,
             standard_mfs_acceleration: config.standard_mfs_acceleration,
             standard_mfs_backend: config.standard_mfs_backend.clone(),
@@ -2360,7 +2360,6 @@ impl ImagerRunTaskRequest {
                 .map(|aw_project| aw_project.into_runtime(self.w_project_planes, self.use_pointing))
                 .transpose()?,
             dirty_only: self.dirty_only,
-            parallel: false,
             chanchunks: self.chanchunks,
             standard_mfs_acceleration: self.standard_mfs_acceleration,
             standard_mfs_backend: self.standard_mfs_backend.clone(),
@@ -3196,7 +3195,6 @@ mod tests {
             OsString::from("--imaging-memory-pressure-policy"),
             OsString::from("stage-aware"),
             OsString::from("--dirty-only"),
-            OsString::from("--parallel"),
             OsString::from("--no-preview-pngs"),
         ])
         .unwrap();
@@ -3250,7 +3248,6 @@ mod tests {
             ImagingMemoryPressurePolicy::StageAware
         );
         assert!(restored.dirty_only);
-        assert!(restored.parallel);
         assert!(!restored.write_preview_pngs);
     }
 

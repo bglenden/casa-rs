@@ -42,6 +42,7 @@ const CHANNEL_KEY_BITS: u32 = 24;
 const CHANNEL_KEY_MASK: u64 = (1_u64 << CHANNEL_KEY_BITS) - 1;
 const GROUP_END_BIT: u64 = 1_u64 << (TAP_KEY_BITS + CHANNEL_KEY_BITS);
 const RECORD_KEY_MASK: u64 = (GROUP_END_BIT << 1) - 1;
+const GRIDDED_NORMAL_TAPS_PER_RECORD: u64 = ((SUPPORT * 2 + 1) * (SUPPORT * 2 + 1)) as u64;
 
 /// Width of every opaque gridded normal-operator record.
 pub const GRIDDED_NORMAL_OPERATOR_RECORD_BYTES: usize = 32;
@@ -1141,6 +1142,8 @@ pub struct GriddedNormalSectorWork {
     frame_count: u64,
     sector_id: usize,
     window_record_count: u64,
+    routed_record_count: u64,
+    tap_visit_count: u64,
     shared_route_capacity_bytes: u64,
 }
 
@@ -1155,6 +1158,18 @@ impl GriddedNormalSectorWork {
     #[must_use]
     pub const fn sector_id(self) -> u64 {
         self.sector_id as u64
+    }
+
+    /// Return exact encoded records owned by this sector.
+    #[must_use]
+    pub const fn routed_record_count(self) -> u64 {
+        self.routed_record_count
+    }
+
+    /// Return exact convolutional tap visits owned by this sector.
+    #[must_use]
+    pub const fn tap_visit_count(self) -> u64 {
+        self.tap_visit_count
     }
 
     /// Return shared reusable route capacity exactly once across the four works.
@@ -1346,12 +1361,28 @@ impl GriddedNormalOperatorApply {
         {
             return Err(SpectralOperatorError::BlockSequence);
         }
+        let routed_record_count =
+            (0..prepared.active_frames).try_fold(0_u64, |total, ordinal| {
+                let routes = prepared
+                    .active_block(ordinal)?
+                    .routes_for_sector(local_ordinal)?;
+                total
+                    .checked_add(
+                        u64::try_from(routes.len())
+                            .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
+                    )
+                    .ok_or(SpectralOperatorError::CoverageOverflow)
+            })?;
         Ok(GriddedNormalSectorWork {
             first_block_sequence: first_sequence,
             frame_count: u64::try_from(frame_count)
                 .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
             sector_id: local_ordinal,
             window_record_count: prepared.record_count,
+            routed_record_count,
+            tap_visit_count: routed_record_count
+                .checked_mul(GRIDDED_NORMAL_TAPS_PER_RECORD)
+                .ok_or(SpectralOperatorError::CoverageOverflow)?,
             shared_route_capacity_bytes: prepared.capacity_bytes()?,
         })
     }
@@ -2135,15 +2166,26 @@ mod tests {
                 .expect("route encoded frame once");
             let route_capacity_bytes = prepared.capacity_bytes().expect("route capacity");
             let identities = (0..GRIDDED_NORMAL_SECTOR_COUNT)
-                .map(|sector_id| GriddedNormalSectorWork {
-                    first_block_sequence: 7,
-                    frame_count: 1,
-                    sector_id,
-                    window_record_count: u64::try_from(
-                        encoded.len() / GRIDDED_NORMAL_OPERATOR_RECORD_BYTES,
+                .map(|sector_id| {
+                    let routed_record_count = u64::try_from(
+                        prepared
+                            .routes_for_sector(sector_id)
+                            .expect("sector routes")
+                            .len(),
                     )
-                    .expect("record count fits"),
-                    shared_route_capacity_bytes: route_capacity_bytes,
+                    .expect("routed record count fits");
+                    GriddedNormalSectorWork {
+                        first_block_sequence: 7,
+                        frame_count: 1,
+                        sector_id,
+                        window_record_count: u64::try_from(
+                            encoded.len() / GRIDDED_NORMAL_OPERATOR_RECORD_BYTES,
+                        )
+                        .expect("record count fits"),
+                        routed_record_count,
+                        tap_visit_count: routed_record_count * GRIDDED_NORMAL_TAPS_PER_RECORD,
+                        shared_route_capacity_bytes: route_capacity_bytes,
+                    }
                 })
                 .map(GriddedNormalSectorWork::partition_key)
                 .collect::<Vec<_>>();
