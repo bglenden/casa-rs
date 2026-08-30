@@ -129,3 +129,57 @@ Serial result:
 
 Four-worker result:
 `/private/tmp/issue581-pool-resident-ch16-parallel/20260830T000836Z-wave3-standard-mfs-single-term-turnaround-563580d5.json`
+
+## Rejected 64-frame execution-window discriminator
+
+The user approved one wider bounded candidate after the pool-residency result:
+coalesce at most 64 original artifact frames directly into each of the same
+two source slots, prepare one reconstruction-owned route window, and execute
+the same four deterministic sector owners once per window. Candidate
+`25d0e4944` retained the existing executor, public runtime API, persisted
+artifact and receipt schemas, fixed sector commit order, worker-independent
+scientific accumulation, and one common `workers = 1/2/4` path. It was
+rejected and reverted by `0932a2df8` after the predeclared serial falsifier
+fired. No multicore, medium, or full-data candidate run followed.
+
+The frozen route serial ceiling was 3.580817 seconds for replay and 3.367893
+seconds for prepare plus execute plus commit. The 64-frame candidate measured:
+
+| Measurement | Frozen route serial | 64-frame serial |
+| --- | ---: | ---: |
+| Full Rust wall | 86.970694 s | 88.937580 s |
+| Gridded replay wall | 3.580817 s | 3.711978 s |
+| Source fill | 1.431155 s | 1.374822 s |
+| Prepare | 1.744951 s | 1.649280 s |
+| Execute | 1.619612 s | 2.024469 s |
+| Commit | 0.003330 s | 0.000120 s |
+| Artifact blocks / logical frames | 31,985 / 31,985 | 500 / 31,985 |
+| Dispatch waves | 127,940 | 2,000 |
+| Planned / actual route peak | 114,708 / 57,364 B | 7,347,712 / 3,677,696 B |
+| Planned / peak live source capacity | 262,288 / 131,216 B | 16,786,432 / 16,786,432 B |
+
+Replay regressed 3.66 percent and the combined consumer stages regressed 9.08
+percent despite 98.44 percent fewer dispatch waves. Source fill and preparation
+improved, while execution regressed 25.00 percent. The evidence therefore
+rejects scheduling overhead as the dominant remaining serial cost at this
+window size; sweeping one sector across 64 prepared frames introduces a larger
+execution penalty, plausibly from the much wider route working set. That cache
+interpretation is a hypothesis, not a retained conclusion or permission for a
+window-size sweep.
+
+The run preserved exactly two source slots, 31,985 ordered logical frames,
+49,141,788 encoded/routed/degridded/gridded records, zero sector rescans, zero
+dynamic partial bytes, 500 bounded artifact windows, a 64-frame high-water,
+zero replay payload-copy bytes, 2 buffer allocations, and 498 reuses. Focused
+tests separately proved exact dirty, PSF, model, residual, sum-weight, work
+identity, and commit identity equality for one, two, and four workers, including
+multi-frame and partial-tail windows and fail-closed later-frame corruption.
+
+The benchmark bundle status is `failed_comparison` only because this
+turnaround manifest skipped CASA without binding a frozen CASA product prefix;
+the Rust science run completed and its timing and structural evidence were
+recorded. That harness bookkeeping failure does not change the serial
+performance rejection.
+
+Serial bundle:
+`/private/tmp/issue581-window-ch16-serial/20260830T012136Z-wave3-standard-mfs-single-term-turnaround-fdb15f77.json`
