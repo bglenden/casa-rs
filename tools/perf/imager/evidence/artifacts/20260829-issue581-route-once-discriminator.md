@@ -183,3 +183,80 @@ performance rejection.
 
 Serial bundle:
 `/private/tmp/issue581-window-ch16-serial/20260830T012136Z-wave3-standard-mfs-single-term-turnaround-fdb15f77.json`
+
+## Variable-budget replay study
+
+The 64-frame rejection did not establish that every bounded multi-frame
+window is slow. A current-format replay-only discriminator therefore swept
+seven byte budgets over one immutable capture from the directly mounted medium
+VLA MeasurementSet. Each observation rebuilt a matching private gridded
+artifact and science state outside the timed replay, then used the production
+planner, reader, route, kernel, and deterministic commit path with one worker.
+
+`target frames` is only the dataset-derived input used to compute a byte
+budget. It is not the resulting window width or a production constant. The
+planner admitted each ordered window from its exact payload and route demand.
+
+| Target frames | Requested bytes | Windows | Maximum frames | Actual working set | Median replay |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 188,680 | 8,227 | 1 | 188,680 B | 1.119142 s |
+| 2 | 377,360 | 6,278 | 3 | 377,288 B | 1.123125 s |
+| 4 | 754,720 | 5,402 | 5 | 754,664 B | 1.107823 s |
+| 8 | 1,509,184 | 4,915 | 10 | 1,509,136 B | 1.148036 s |
+| 16 | 3,015,808 | 5,191 | 21 | 3,015,744 B | 1.111195 s |
+| 32 | 6,029,120 | 5,330 | 44 | 6,029,108 B | 1.108707 s |
+| 64 | 12,057,408 | 5,310 | 89 | 12,057,164 B | 1.105714 s |
+
+The one-frame row uses its earlier clean three-observation cohort because a
+later repeat was disturbed by host noise. The remaining rows are from:
+`/private/tmp/issue581-budget-discriminator-release-r2.log`.
+
+Serial replay is essentially flat across the useful range. The sweep also
+shows that the retained per-ordinal capacity law is intentionally not
+monotonic in window count: more byte budget can retain wider ordinal maxima
+and produce more windows. Every row preserved two source slots, zero replay
+payload copies, exact planned versus actual dynamic residency, 14,520,731
+encoded/degridded/gridded records, and final normal-state identity
+`b49653403ac89ba12e2cb3b9e776742c1d6cc792a254e4e46e32a64c025d9077`.
+
+The smallest serial-safe useful cohort, 754,720 requested bytes, then ran as a
+same-binary matched serial/four-worker discriminator. One warmup per
+configuration preceded three alternating serial/parallel pairs. This avoids
+using the dirty probe worktree's `HEAD` string as binary provenance. The
+predeclared parallel ceiling was 95 percent of the contemporaneous serial
+median.
+
+Command:
+`CARGO_INCREMENTAL=0 CASA_RS_IMPERF_DATA_ROOT=/Volumes/GLENDENNING/casa-rs-imperformance cargo test -p casa-imaging-runtime --release --lib weighting::serial_compute_probe::medium_vla_64ch_gridded_replay_four_worker_754720 -- --exact --ignored --nocapture`
+
+| Measurement | Matched serial | Four workers |
+| --- | ---: | ---: |
+| Median replay | 1.081342125 s | 0.986170333 s |
+| Median source fill | 0.396024095 s | 0.407265410 s |
+| Median prepare | 0.491512131 s | 0.493869920 s |
+| Median execute | 0.544969940 s | 0.445014312 s |
+| Median commit | 0.000556786 s | 0.000702934 s |
+| Dispatch waves | 21,608 | 5,402 |
+| Worker-stack capacity | 0 B | 8,388,608 B |
+
+The computed ceiling was 1.027275018 seconds; the four-worker replay was 8.80
+percent faster and passed. All paired observations retained the exact 5,402
+window plan, five-frame high-water, two source slots, 492,432-byte source
+capacity, 262,232-byte route capacity, 754,664-byte combined dynamic replay
+residency, zero payload copies, zero dynamic partial bytes, 21,608 partitions
+and commits, exact work/commit identity
+`3750ca3f383911281303cb5f38e8031766e9b5e3105ac57005af8d4dd9aea573`,
+and the same final science identity quoted above. All four logical worker slots
+executed exactly 5,402 partitions; the worker result still contains substantial
+partition-dependent waiting, so this is an admission result rather than a
+claim of ideal scaling.
+
+The first mounted attempt exposed an over-constrained probe assertion: the
+bounded source metric excludes four artifact-envelope reads and is therefore
+24,591 operations while the full artifact reader reports 24,595. Correcting
+that harness-only distinction produced the one permitted focused retry above;
+no production behavior changed.
+
+This stage-local pass admits a matched 16-channel production discriminator. It
+does not by itself admit the all-channel, full CLEAN, or 32 GB gates, and CASA
+was not rerun.
