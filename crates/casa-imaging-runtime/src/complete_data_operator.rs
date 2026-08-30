@@ -610,12 +610,8 @@ impl FrozenGriddedNormalReplay {
         &mut self,
         capacity: GriddedNormalReplayPlanningCapacity,
     ) -> Result<GriddedNormalReplayWindowPlan, CompleteDataPlanError> {
-        if self.window_plan.is_some() {
-            return Err(CompleteDataPlanError::PlanMismatch);
-        }
         let plan = GriddedNormalReplayWindowPlan::for_program(&self.program, capacity)?;
-        self.window_plan = Some(plan.clone());
-        Ok(plan)
+        bind_gridded_replay_window_plan(&mut self.window_plan, plan)
     }
 
     pub(crate) fn retain_plan_storage(
@@ -789,6 +785,20 @@ impl FrozenGriddedNormalReplay {
         let (result, routing) = outcome.kernel_completion;
         self.latest_routing = Some(routing);
         Ok(result)
+    }
+}
+
+fn bind_gridded_replay_window_plan(
+    binding: &mut Option<GriddedNormalReplayWindowPlan>,
+    plan: GriddedNormalReplayWindowPlan,
+) -> Result<GriddedNormalReplayWindowPlan, CompleteDataPlanError> {
+    match binding {
+        Some(bound) if *bound == plan => Ok(bound.clone()),
+        Some(_) => Err(CompleteDataPlanError::PlanMismatch),
+        None => {
+            *binding = Some(plan.clone());
+            Ok(plan)
+        }
     }
 }
 
@@ -2591,7 +2601,7 @@ impl From<SpectralOperatorError> for CompleteDataOperatorError {
 mod tests {
     use super::{
         CompleteDataPlanError, GriddedNormalReplayPlanningCapacity, GriddedNormalReplayWindowPlan,
-        GriddedNormalRouteResidency,
+        GriddedNormalRouteResidency, bind_gridded_replay_window_plan,
     };
     #[test]
     fn gridded_route_residency_retains_exact_schedule_ordinal_capacities() {
@@ -2723,5 +2733,30 @@ mod tests {
                 available: 188_679,
             }
         ));
+    }
+
+    #[test]
+    fn replay_window_binding_reauthorizes_only_the_identical_plan() {
+        let frames = [(32, 1), (96, 3), (32, 1)];
+        let first = GriddedNormalReplayWindowPlan::for_frame_payloads(&frames, 1_030)
+            .expect("first window plan");
+        let changed = GriddedNormalReplayWindowPlan::for_frame_payloads(&frames, 540)
+            .expect("changed window plan");
+        let mut binding = None;
+
+        assert_eq!(
+            bind_gridded_replay_window_plan(&mut binding, first.clone()).expect("initial binding"),
+            first
+        );
+        assert_eq!(
+            bind_gridded_replay_window_plan(&mut binding, first.clone())
+                .expect("identical reauthorization"),
+            first
+        );
+        assert!(matches!(
+            bind_gridded_replay_window_plan(&mut binding, changed),
+            Err(CompleteDataPlanError::PlanMismatch)
+        ));
+        assert_eq!(binding.as_ref(), Some(&first));
     }
 }
