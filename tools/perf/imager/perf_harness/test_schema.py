@@ -1056,6 +1056,23 @@ class SchemaTests(unittest.TestCase):
                 evaluation, source="comparison.tolerance_evaluation"
             )
 
+    def test_optional_metadata_parity_uses_the_comparator_null_sentinel(self) -> None:
+        schema_contract._validate_comparison_metadata(
+            {"status": "not_required", "parity": None},
+            source="comparison.metadata",
+        )
+
+        with self.assertRaisesRegex(ContractError, "unused parity must be null"):
+            schema_contract._validate_comparison_metadata(
+                {"status": "not_required", "parity": False},
+                source="comparison.metadata",
+            )
+        with self.assertRaisesRegex(ContractError, "parity must be boolean"):
+            schema_contract._validate_comparison_metadata(
+                {"status": "matched", "parity": None},
+                source="comparison.metadata",
+            )
+
     def test_source_regions_are_full_mode_and_product_bound(self) -> None:
         workload = {
             "schema_version": 1,
