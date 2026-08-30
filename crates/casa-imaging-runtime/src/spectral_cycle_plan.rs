@@ -58,6 +58,7 @@ pub struct SpectralCycleExecutionPolicy {
     visibility_write: Option<SelectedVisibilityStoragePlan>,
     gridded_normal_storage: Option<GriddedNormalReplayStorage>,
     workers: u64,
+    gridded_replay_working_set_bytes: Option<u64>,
 }
 
 impl SpectralCycleExecutionPolicy {
@@ -83,6 +84,7 @@ impl SpectralCycleExecutionPolicy {
             visibility_write: None,
             gridded_normal_storage: None,
             workers: 1,
+            gridded_replay_working_set_bytes: None,
         }
     }
 
@@ -100,6 +102,15 @@ impl SpectralCycleExecutionPolicy {
             return Err(SpectralCyclePlanError::ZeroWorkers);
         }
         Ok(self)
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn with_gridded_replay_working_set_bytes_for_test(
+        mut self,
+        bytes: u64,
+    ) -> Self {
+        self.gridded_replay_working_set_bytes = Some(bytes);
+        self
     }
 
     /// Bind the runtime-private storage used by planned gridded-normal spill work.
@@ -369,7 +380,7 @@ impl SpectralCyclePlan {
         pass: SpectralPassIdentity,
         include_minor: bool,
         phase_input: Option<ArtifactIdentity>,
-        gridded_replay: Option<crate::FrozenGriddedNormalReplay>,
+        mut gridded_replay: Option<crate::FrozenGriddedNormalReplay>,
     ) -> Result<Self, SpectralCyclePlanError> {
         let weighting = plan_weighting(problem, policy.weighting_limits)?;
         let gridded_normal_storage = if include_minor || gridded_replay.is_some() {
@@ -393,6 +404,10 @@ impl SpectralCyclePlan {
             .map(crate::FrozenGriddedNormalReplay::descriptor);
         let retained_artifact_bytes =
             gridded_replay_descriptor.map(|descriptor| descriptor.bytes());
+        let gridded_window_plan = gridded_replay
+            .as_mut()
+            .map(|replay| replay.plan_windows(policy.gridded_replay_working_set_bytes))
+            .transpose()?;
         let (physical, source_resources, replay) = match pass.phase() {
             SpectralPassPhase::InitialMajor => {
                 let (base, source_resources) =
@@ -430,6 +445,7 @@ impl SpectralCyclePlan {
                         pass,
                         artifact_budget,
                         GriddedSpillDirection::Write,
+                        None,
                     )?;
                 }
                 (physical, source_resources, replay)
@@ -449,6 +465,9 @@ impl SpectralCyclePlan {
                     phase_input,
                     gridded_replay,
                     &replay,
+                    gridded_window_plan
+                        .as_ref()
+                        .ok_or(SpectralCyclePlanError::Overflow)?,
                 )?;
                 let physical = append_gridded_spill_resources(
                     registry,
@@ -458,6 +477,7 @@ impl SpectralCyclePlan {
                     pass,
                     artifact_budget,
                     GriddedSpillDirection::Read,
+                    gridded_window_plan.as_ref(),
                 )?;
                 (physical, source_resources, replay)
             }
@@ -477,6 +497,9 @@ impl SpectralCyclePlan {
                     weighting.limits().max_block_samples(),
                     replay.clone(),
                     preparation_node,
+                    gridded_window_plan
+                        .as_ref()
+                        .ok_or(SpectralCyclePlanError::Overflow)?,
                 )?
             }
         };
@@ -942,6 +965,7 @@ fn base_gridded_physical<R: ImplementationRegistry>(
     phase_input: Option<ArtifactIdentity>,
     gridded_replay: crate::GriddedNormalReplayDescriptor,
     replay: &WorkNodeId,
+    window_plan: &crate::complete_data_operator::GriddedNormalReplayWindowPlan,
 ) -> Result<(PhysicalWorkBinding, SelectedObservationSourceResources), SpectralCyclePlanError> {
     let check = pass_node(CHECK_NODE, pass);
     let model_preparation = pass_node(FINAL_MODEL_PREPARATION_NODE, pass);
@@ -1134,7 +1158,8 @@ fn base_gridded_physical<R: ImplementationRegistry>(
         scaling: ScalingMetadata {
             minimum_workers: policy.workers,
             maximum_workers: policy.workers,
-            maximum_batch_size: 1,
+            maximum_batch_size: u64::try_from(window_plan.maximum_frames())
+                .map_err(|_| SpectralCyclePlanError::Overflow)?,
             maximum_tile_width: 1,
             maximum_tile_height: 1,
             maximum_slab_depth: 1,
@@ -1147,6 +1172,8 @@ fn base_gridded_physical<R: ImplementationRegistry>(
     };
     let mut initial_knobs = ExecutionKnobs::serial();
     initial_knobs.workers = policy.workers;
+    initial_knobs.batch_size = u64::try_from(window_plan.maximum_frames())
+        .map_err(|_| SpectralCyclePlanError::Overflow)?;
     let dag = ExecutionDag::new(ExecutionDagSpecification {
         required_resource_capabilities: BTreeSet::new(),
         resource_alternative: alternative,
@@ -1251,6 +1278,7 @@ fn append_gridded_spill_resources<R: ImplementationRegistry>(
     pass: SpectralPassIdentity,
     budget: crate::gridded_normal_artifact::GriddedNormalArtifactBudget,
     direction: GriddedSpillDirection,
+    window_plan: Option<&crate::complete_data_operator::GriddedNormalReplayWindowPlan>,
 ) -> Result<PhysicalWorkBinding, SpectralCyclePlanError> {
     let storage = policy
         .gridded_normal_storage
@@ -1288,12 +1316,16 @@ fn append_gridded_spill_resources<R: ImplementationRegistry>(
         GriddedSpillDirection::Write => IoBufferKind::SpillWrite,
     };
     let source_slots = match direction {
-        GriddedSpillDirection::Read => u64::try_from(policy.selected_residency.peak_live_blocks())
-            .map_err(|_| SpectralCyclePlanError::Overflow)?,
+        GriddedSpillDirection::Read => 2,
         GriddedSpillDirection::Write => 1,
     };
-    let buffer_bytes = budget
-        .io_buffer_bytes()
+    let bytes_per_slot = match direction {
+        GriddedSpillDirection::Read => window_plan
+            .ok_or(SpectralCyclePlanError::Overflow)?
+            .source_slot_bytes(),
+        GriddedSpillDirection::Write => budget.io_buffer_bytes(),
+    };
+    let buffer_bytes = bytes_per_slot
         .checked_mul(source_slots)
         .ok_or(SpectralCyclePlanError::Overflow)?;
     let lifetime = ClaimLifetime::through_fence(FenceKind::Io);

@@ -52,6 +52,20 @@ pub const GRIDDED_NORMAL_OPERATOR_RECORD_BYTES: usize = 32;
 /// grid. They do not vary with record count or admitted worker count.
 pub const GRIDDED_NORMAL_SECTOR_COUNT: usize = 4;
 
+/// Project the exact reusable route capacity for a bounded frame window.
+///
+/// This is an internal runtime-planning contract. Every frame retains three
+/// record-capacity vectors (`Complex64`, `u32`, and an eight-byte route) plus
+/// one prepared-frame descriptor. The storage is shared by all workers.
+#[doc(hidden)]
+pub fn gridded_normal_route_capacity_bytes(record_count: usize, frame_count: usize) -> Option<u64> {
+    let record_bytes = record_count
+        .checked_mul(size_of::<Complex64>() + size_of::<u32>() + size_of::<GriddedNormalRoute>())?;
+    let frame_bytes = frame_count.checked_mul(size_of::<PreparedGriddedNormalBlock>())?;
+    let window = record_bytes.checked_add(frame_bytes)?;
+    u64::try_from(window).ok()
+}
+
 /// Exact reconstruction-owned work performed while routing gridded replay.
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -556,7 +570,7 @@ impl GriddedNormalOperatorProgram {
             next_block_sequence: 0,
             applied_records: 0,
             next_sector_commit: 0,
-            prepared: RwLock::new(PreparedGriddedNormalBlock::default()),
+            prepared: RwLock::new(PreparedGriddedNormalWindow::default()),
             routing: GriddedNormalRoutingCounters::default(),
             sectors: std::array::from_fn(|sector_id| {
                 Mutex::new(GriddedNormalSectorAccumulator::new(
@@ -578,7 +592,7 @@ pub struct GriddedNormalOperatorApply {
     next_block_sequence: u64,
     applied_records: u64,
     next_sector_commit: usize,
-    prepared: RwLock<PreparedGriddedNormalBlock>,
+    prepared: RwLock<PreparedGriddedNormalWindow>,
     routing: GriddedNormalRoutingCounters,
     sectors: [Mutex<GriddedNormalSectorAccumulator>; GRIDDED_NORMAL_SECTOR_COUNT],
 }
@@ -598,6 +612,48 @@ struct PreparedGriddedNormalBlock {
     classifications: Vec<u32>,
     routes: Vec<GriddedNormalRoute>,
     sector_offsets: [u32; GRIDDED_NORMAL_SECTOR_COUNT + 1],
+}
+
+#[derive(Default)]
+struct PreparedGriddedNormalWindow {
+    blocks: Vec<PreparedGriddedNormalBlock>,
+    active_frames: usize,
+    first_sequence: Option<u64>,
+    record_count: u64,
+}
+
+impl PreparedGriddedNormalWindow {
+    fn clear_active(&mut self) -> Result<(), SpectralOperatorError> {
+        for block in self.blocks.iter_mut().take(self.active_frames) {
+            let sequence = block.sequence.ok_or(SpectralOperatorError::BlockSequence)?;
+            block.finish_block(sequence, block.record_count)?;
+        }
+        self.active_frames = 0;
+        self.first_sequence = None;
+        self.record_count = 0;
+        Ok(())
+    }
+
+    fn capacity_bytes(&self) -> Result<u64, SpectralOperatorError> {
+        let block_metadata = capacity_bytes::<PreparedGriddedNormalBlock>(self.blocks.capacity())?;
+        self.blocks.iter().try_fold(block_metadata, |total, block| {
+            total
+                .checked_add(block.heap_capacity_bytes()?)
+                .ok_or(SpectralOperatorError::ResidencyOverflow)
+        })
+    }
+
+    fn active_block(
+        &self,
+        ordinal: usize,
+    ) -> Result<&PreparedGriddedNormalBlock, SpectralOperatorError> {
+        if ordinal >= self.active_frames {
+            return Err(SpectralOperatorError::BlockSequence);
+        }
+        self.blocks
+            .get(ordinal)
+            .ok_or(SpectralOperatorError::BlockSequence)
+    }
 }
 
 impl PreparedGriddedNormalBlock {
@@ -724,16 +780,20 @@ impl PreparedGriddedNormalBlock {
         prepared
     }
 
-    fn capacity_bytes(&self) -> Result<u64, SpectralOperatorError> {
+    fn heap_capacity_bytes(&self) -> Result<u64, SpectralOperatorError> {
         let prediction_bytes = capacity_bytes::<Complex64>(self.predictions.capacity())?;
         let classification_bytes = capacity_bytes::<u32>(self.classifications.capacity())?;
         let route_bytes = capacity_bytes::<GriddedNormalRoute>(self.routes.capacity())?;
         prediction_bytes
             .checked_add(classification_bytes)
             .and_then(|total| total.checked_add(route_bytes))
-            .and_then(|total| {
-                total.checked_add(size_of::<[u32; GRIDDED_NORMAL_SECTOR_COUNT + 1]>() as u64)
-            })
+            .ok_or(SpectralOperatorError::ResidencyOverflow)
+    }
+
+    #[cfg(test)]
+    fn capacity_bytes(&self) -> Result<u64, SpectralOperatorError> {
+        self.heap_capacity_bytes()?
+            .checked_add(size_of::<Self>() as u64)
             .ok_or(SpectralOperatorError::ResidencyOverflow)
     }
 
@@ -800,12 +860,13 @@ struct GriddedNormalRoutingCounters {
 impl GriddedNormalRoutingCounters {
     fn record_routing(
         &self,
+        frames: u64,
         encoded_records: u64,
         routed_record_memberships: u64,
         prediction_groups: u64,
         physical_capacity_bytes: u64,
     ) {
-        self.frames_routed.fetch_add(1, Ordering::Relaxed);
+        self.frames_routed.fetch_add(frames, Ordering::Relaxed);
         self.encoded_records
             .fetch_add(encoded_records, Ordering::Relaxed);
         self.routed_record_memberships
@@ -965,9 +1026,10 @@ impl GriddedNormalSectorAccumulator {
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GriddedNormalSectorWork {
-    block_sequence: u64,
+    first_block_sequence: u64,
+    frame_count: u64,
     sector_id: usize,
-    block_record_count: u64,
+    window_record_count: u64,
     shared_route_capacity_bytes: u64,
 }
 
@@ -1020,47 +1082,124 @@ impl GriddedNormalOperatorApply {
         sequence: u64,
         encoded: &[u8],
     ) -> Result<usize, SpectralOperatorError> {
-        let descriptor = self
-            .program
-            .manifest
-            .descriptors
-            .get(
-                usize::try_from(sequence)
-                    .map_err(|_| SpectralOperatorError::GriddedRecordMismatch)?,
-            )
-            .ok_or(SpectralOperatorError::GriddedRecordMismatch)?;
-        if sequence != self.next_block_sequence || self.next_sector_commit != 0 {
+        self.sector_window_partition_count(std::iter::once((sequence, encoded)))
+    }
+
+    /// Validate one ordered borrowed-frame window and prepare its shared routes.
+    pub fn sector_window_partition_count<'a, I>(
+        &self,
+        frames: I,
+    ) -> Result<usize, SpectralOperatorError>
+    where
+        I: IntoIterator<Item = (u64, &'a [u8])>,
+    {
+        if self.next_sector_commit != 0 {
             return Err(SpectralOperatorError::BlockSequence);
         }
-        validate_encoded_block(descriptor, encoded)?;
         let mut prepared = self
             .prepared
             .write()
             .map_err(|_| SpectralOperatorError::GriddedSectorPoisoned)?;
-        prepared.prepare(
-            sequence,
-            encoded,
-            self.program.manifest.specification.grid_shape(),
-            self.program.manifest.specification.slab().total_channels(),
-            |record| {
-                self.operator.predict_gridded_normal(
-                    record.output_channel,
-                    record.taps,
-                    record.forward_scale,
-                )
-            },
-        )?;
-        let routed_record_memberships = u64::try_from(prepared.routes.len())
-            .map_err(|_| SpectralOperatorError::CoverageOverflow)?;
-        if routed_record_memberships != descriptor.record_count {
-            return Err(SpectralOperatorError::IncompleteCoverage);
+        if prepared.active_frames != 0 {
+            return Err(SpectralOperatorError::BlockSequence);
         }
+        let frames = frames.into_iter();
+        let (minimum_frames, maximum_frames) = frames.size_hint();
+        let retained_frames = prepared.blocks.len();
+        if maximum_frames == Some(minimum_frames) && minimum_frames > retained_frames {
+            prepared
+                .blocks
+                .try_reserve_exact(minimum_frames - retained_frames)
+                .map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
+        }
+        let mut encoded_records = 0_u64;
+        let mut routed_record_memberships = 0_u64;
+        let mut prediction_groups = 0_u64;
+        let mut frame_count = 0usize;
+        let result = (|| {
+            for (ordinal, (sequence, encoded)) in frames.enumerate() {
+                let ordinal_u64 =
+                    u64::try_from(ordinal).map_err(|_| SpectralOperatorError::CoverageOverflow)?;
+                let expected = self
+                    .next_block_sequence
+                    .checked_add(ordinal_u64)
+                    .ok_or(SpectralOperatorError::CoverageOverflow)?;
+                if sequence != expected {
+                    return Err(SpectralOperatorError::BlockSequence);
+                }
+                let descriptor = self
+                    .program
+                    .manifest
+                    .descriptors
+                    .get(
+                        usize::try_from(sequence)
+                            .map_err(|_| SpectralOperatorError::GriddedRecordMismatch)?,
+                    )
+                    .ok_or(SpectralOperatorError::GriddedRecordMismatch)?;
+                validate_encoded_block(descriptor, encoded)?;
+                if ordinal == prepared.blocks.len() {
+                    prepared.blocks.push(PreparedGriddedNormalBlock::default());
+                }
+                let (routed, predictions) = {
+                    let block = prepared
+                        .blocks
+                        .get_mut(ordinal)
+                        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+                    block.prepare(
+                        sequence,
+                        encoded,
+                        self.program.manifest.specification.grid_shape(),
+                        self.program.manifest.specification.slab().total_channels(),
+                        |record| {
+                            self.operator.predict_gridded_normal(
+                                record.output_channel,
+                                record.taps,
+                                record.forward_scale,
+                            )
+                        },
+                    )?;
+                    (
+                        u64::try_from(block.routes.len())
+                            .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
+                        u64::try_from(block.predictions.len())
+                            .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
+                    )
+                };
+                prepared.active_frames = ordinal + 1;
+                encoded_records = encoded_records
+                    .checked_add(descriptor.record_count)
+                    .ok_or(SpectralOperatorError::CoverageOverflow)?;
+                if routed != descriptor.record_count {
+                    return Err(SpectralOperatorError::IncompleteCoverage);
+                }
+                routed_record_memberships = routed_record_memberships
+                    .checked_add(routed)
+                    .ok_or(SpectralOperatorError::CoverageOverflow)?;
+                prediction_groups = prediction_groups
+                    .checked_add(predictions)
+                    .ok_or(SpectralOperatorError::CoverageOverflow)?;
+                frame_count = ordinal + 1;
+            }
+            if frame_count == 0 {
+                return Err(SpectralOperatorError::IncompleteCoverage);
+            }
+            prepared.first_sequence = Some(self.next_block_sequence);
+            prepared.record_count = encoded_records;
+            prepared.capacity_bytes()
+        })();
+        let physical_capacity_bytes = match result {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                prepared.clear_active()?;
+                return Err(error);
+            }
+        };
         self.routing.record_routing(
-            descriptor.record_count,
+            u64::try_from(frame_count).map_err(|_| SpectralOperatorError::CoverageOverflow)?,
+            encoded_records,
             routed_record_memberships,
-            u64::try_from(prepared.predictions.len())
-                .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
-            prepared.capacity_bytes()?,
+            prediction_groups,
+            physical_capacity_bytes,
         );
         Ok(GRIDDED_NORMAL_SECTOR_COUNT)
     }
@@ -1081,30 +1220,34 @@ impl GriddedNormalOperatorApply {
                     .map_err(|_| SpectralOperatorError::GriddedRecordMismatch)?,
             )
             .ok_or(SpectralOperatorError::GriddedRecordMismatch)?;
-        if sequence != self.next_block_sequence {
-            return Err(SpectralOperatorError::BlockSequence);
-        }
-        let record_count = usize::try_from(descriptor.record_count)
-            .map_err(|_| SpectralOperatorError::CoverageOverflow)?;
-        if encoded.len()
-            != record_count
-                .checked_mul(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
-                .ok_or(SpectralOperatorError::ResidencyOverflow)?
-        {
-            return Err(SpectralOperatorError::GriddedRecordMismatch);
-        }
+        validate_encoded_block(descriptor, encoded)?;
+        self.sector_window_partition(sequence, 1, local_ordinal)
+    }
+
+    /// Return one worker-count-independent sector for the active frame window.
+    pub fn sector_window_partition(
+        &self,
+        first_sequence: u64,
+        frame_count: usize,
+        local_ordinal: usize,
+    ) -> Result<GriddedNormalSectorWork, SpectralOperatorError> {
         validate_sector_partition_ordinal(self.next_sector_commit, local_ordinal)?;
         let prepared = self
             .prepared
             .read()
             .map_err(|_| SpectralOperatorError::GriddedSectorPoisoned)?;
-        if prepared.sequence != Some(sequence) || prepared.record_count != descriptor.record_count {
+        if prepared.first_sequence != Some(first_sequence)
+            || prepared.active_frames != frame_count
+            || first_sequence != self.next_block_sequence
+        {
             return Err(SpectralOperatorError::BlockSequence);
         }
         Ok(GriddedNormalSectorWork {
-            block_sequence: sequence,
+            first_block_sequence: first_sequence,
+            frame_count: u64::try_from(frame_count)
+                .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
             sector_id: local_ordinal,
-            block_record_count: descriptor.record_count,
+            window_record_count: prepared.record_count,
             shared_route_capacity_bytes: prepared.capacity_bytes()?,
         })
     }
@@ -1115,39 +1258,65 @@ impl GriddedNormalOperatorApply {
         encoded: &[u8],
         work: GriddedNormalSectorWork,
     ) -> Result<GriddedNormalSectorPartial, SpectralOperatorError> {
-        if work.block_sequence != self.next_block_sequence {
+        self.execute_sector_window(std::iter::once((work.first_block_sequence, encoded)), work)
+    }
+
+    /// Apply one sector to every prepared frame in increasing source order.
+    pub fn execute_sector_window<'a, I>(
+        &self,
+        frames: I,
+        work: GriddedNormalSectorWork,
+    ) -> Result<GriddedNormalSectorPartial, SpectralOperatorError>
+    where
+        I: IntoIterator<Item = (u64, &'a [u8])>,
+    {
+        if work.first_block_sequence != self.next_block_sequence {
             return Err(SpectralOperatorError::BlockSequence);
-        }
-        let expected_bytes = usize::try_from(work.block_record_count)
-            .ok()
-            .and_then(|records| records.checked_mul(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES))
-            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-        if encoded.len() != expected_bytes {
-            return Err(SpectralOperatorError::GriddedRecordMismatch);
         }
         let prepared = self
             .prepared
             .read()
             .map_err(|_| SpectralOperatorError::GriddedSectorPoisoned)?;
-        if prepared.sequence != Some(work.block_sequence)
-            || prepared.record_count != work.block_record_count
+        if prepared.first_sequence != Some(work.first_block_sequence)
+            || u64::try_from(prepared.active_frames)
+                .map_err(|_| SpectralOperatorError::CoverageOverflow)?
+                != work.frame_count
+            || prepared.record_count != work.window_record_count
         {
             return Err(SpectralOperatorError::BlockSequence);
         }
-        let route_count = u64::try_from(prepared.routes_for_sector(work.sector_id)?.len())
-            .map_err(|_| SpectralOperatorError::CoverageOverflow)?;
         let mut sector = self.sectors[work.sector_id]
             .lock()
             .map_err(|_| SpectralOperatorError::GriddedSectorPoisoned)?;
         let operator = &self.operator;
-        execute_sector_routes(
-            encoded,
-            self.program.manifest.specification.grid_shape(),
-            self.program.manifest.specification.slab().total_channels(),
-            work.sector_id,
-            &prepared,
-            |record, predicted| sector.grid(operator, record, predicted),
-        )?;
+        let mut route_count = 0_u64;
+        let mut frame_count = 0usize;
+        for (ordinal, (sequence, encoded)) in frames.into_iter().enumerate() {
+            let block = prepared.active_block(ordinal)?;
+            if block.sequence != Some(sequence) {
+                return Err(SpectralOperatorError::BlockSequence);
+            }
+            route_count = route_count
+                .checked_add(
+                    u64::try_from(block.routes_for_sector(work.sector_id)?.len())
+                        .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
+                )
+                .ok_or(SpectralOperatorError::CoverageOverflow)?;
+            execute_sector_routes(
+                encoded,
+                self.program.manifest.specification.grid_shape(),
+                self.program.manifest.specification.slab().total_channels(),
+                work.sector_id,
+                block,
+                |record, predicted| sector.grid(operator, record, predicted),
+            )?;
+            frame_count = ordinal + 1;
+        }
+        if u64::try_from(frame_count).map_err(|_| SpectralOperatorError::CoverageOverflow)?
+            != work.frame_count
+        {
+            return Err(SpectralOperatorError::IncompleteCoverage);
+        }
         self.routing.record_grid(route_count);
         Ok(GriddedNormalSectorPartial { work })
     }
@@ -1158,7 +1327,7 @@ impl GriddedNormalOperatorApply {
         partial: GriddedNormalSectorPartial,
     ) -> Result<(), SpectralOperatorError> {
         let work = partial.work;
-        if work.block_sequence != self.next_block_sequence
+        if work.first_block_sequence != self.next_block_sequence
             || work.sector_id != self.next_sector_commit
         {
             return Err(SpectralOperatorError::BlockSequence);
@@ -1166,16 +1335,16 @@ impl GriddedNormalOperatorApply {
         if self.next_sector_commit + 1 == GRIDDED_NORMAL_SECTOR_COUNT {
             let applied_records = self
                 .applied_records
-                .checked_add(work.block_record_count)
+                .checked_add(work.window_record_count)
                 .ok_or(SpectralOperatorError::CoverageOverflow)?;
             let next_block_sequence = self
                 .next_block_sequence
-                .checked_add(1)
+                .checked_add(work.frame_count)
                 .ok_or(SpectralOperatorError::CoverageOverflow)?;
             self.prepared
                 .write()
                 .map_err(|_| SpectralOperatorError::GriddedSectorPoisoned)?
-                .finish_block(work.block_sequence, work.block_record_count)?;
+                .clear_active()?;
             self.applied_records = applied_records;
             self.next_block_sequence = next_block_sequence;
             self.next_sector_commit = 0;
@@ -1224,8 +1393,8 @@ impl GriddedNormalOperatorApply {
                 .prepared
                 .read()
                 .map_err(|_| SpectralOperatorError::GriddedSectorPoisoned)?
-                .sequence
-                .is_some()
+                .active_frames
+                != 0
         {
             return Err(SpectralOperatorError::IncompleteCoverage);
         }
@@ -1860,9 +2029,10 @@ mod tests {
             let route_capacity_bytes = prepared.capacity_bytes().expect("route capacity");
             let identities = (0..GRIDDED_NORMAL_SECTOR_COUNT)
                 .map(|sector_id| GriddedNormalSectorWork {
-                    block_sequence: 7,
+                    first_block_sequence: 7,
+                    frame_count: 1,
                     sector_id,
-                    block_record_count: u64::try_from(
+                    window_record_count: u64::try_from(
                         encoded.len() / GRIDDED_NORMAL_OPERATOR_RECORD_BYTES,
                     )
                     .expect("record count fits"),
@@ -1926,7 +2096,9 @@ mod tests {
         assert_eq!(prediction_groups, 2);
         assert_eq!(routed_records, record_count);
         assert_eq!(size_of::<GriddedNormalRoute>(), 8);
-        assert!(route_capacity_bytes <= (28 * record_count + 20) as u64);
+        assert!(
+            route_capacity_bytes <= gridded_normal_route_capacity_bytes(record_count, 1).unwrap()
+        );
         let squared_error = expected
             .iter()
             .zip(&serial_grid)
@@ -1959,10 +2131,10 @@ mod tests {
     #[test]
     fn routing_measurements_report_exact_work_and_physical_peak() {
         let counters = GriddedNormalRoutingCounters::default();
-        counters.record_routing(5, 5, 2, 160);
+        counters.record_routing(1, 5, 5, 2, 160);
         counters.record_grid(3);
         counters.record_grid(2);
-        counters.record_routing(2, 2, 1, 96);
+        counters.record_routing(1, 2, 2, 1, 96);
         assert_eq!(
             counters.snapshot(),
             GriddedNormalRoutingMeasurements {
@@ -2008,6 +2180,36 @@ mod tests {
             .expect("reuse storage for next frame");
         assert_eq!(prepared.capacity_bytes().unwrap(), capacity);
         assert_eq!(prepared.predictions, vec![Complex64::new(2.0, 0.0)]);
+    }
+
+    #[test]
+    fn prepared_window_metadata_and_routes_fit_the_exact_frame_bound() {
+        let geometry = geometry();
+        let gridder = StandardConvolution::new(&geometry);
+        let taps = gridder.taps([0.0, 0.0]).expect("central taps");
+        let encoded = encode_reduced(scalar_groups([(taps, 1.0)])).expect("encode record");
+
+        for frame_count in [1, 3, 64] {
+            let mut window = PreparedGriddedNormalWindow::default();
+            window
+                .blocks
+                .try_reserve_exact(frame_count)
+                .expect("bounded window metadata");
+            for sequence in 0..frame_count {
+                let mut block = PreparedGriddedNormalBlock::default();
+                block
+                    .prepare(sequence as u64, &encoded, geometry.grid_shape, 1, |_| {
+                        Ok(Complex64::new(1.0, 0.0))
+                    })
+                    .expect("prepare bounded frame");
+                window.blocks.push(block);
+            }
+            assert!(
+                window.capacity_bytes().unwrap()
+                    <= gridded_normal_route_capacity_bytes(frame_count, frame_count).unwrap(),
+                "{frame_count}-frame route exceeded its exact planner bound"
+            );
+        }
     }
 
     #[test]
