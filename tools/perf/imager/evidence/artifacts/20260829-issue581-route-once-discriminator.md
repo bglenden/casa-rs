@@ -260,3 +260,43 @@ no production behavior changed.
 This stage-local pass admits a matched 16-channel production discriminator. It
 does not by itself admit the all-channel, full CLEAN, or 32 GB gates, and CASA
 was not rerun.
+
+## Automatic topology-derived replay budget
+
+The admitted budget is now derived by the production planner rather than
+injected by the benchmark. For each dataset, the planner computes the exact
+two-source-slot plus one-frame route minimum from the observed frame geometry.
+It then requests the smaller of the detected CPU data working set and that
+minimum multiplied by the useful sector-parallel lane count. The lane count is
+bounded by both the detected performance-core count and the four scientific
+sector owners, and is deliberately independent of the requested worker count.
+Unknown topology fails replay planning instead of selecting a fallback.
+
+On this host, the detected 4 MiB CPU data working set and four performance
+cores combined with the mounted dataset's 188,680-byte one-frame minimum to
+produce a 754,720-byte request. The exact planner admitted the same 5,402
+windows and 754,664-byte actual working set for one and four workers. No test
+budget was injected.
+
+Command:
+`CARGO_INCREMENTAL=0 CASA_RS_IMPERF_DATA_ROOT=/Volumes/GLENDENNING/casa-rs-imperformance cargo test -p casa-imaging-runtime --release --lib weighting::serial_compute_probe::medium_vla_64ch_gridded_replay_automatic_budget_four_worker -- --exact --ignored --nocapture`
+
+| Measurement | Matched serial | Four workers |
+| --- | ---: | ---: |
+| Median replay | 1.092461875 s | 0.997648791 s |
+| Median source fill | 0.395719372 s | 0.406920622 s |
+| Median prepare | 0.504115448 s | 0.502593279 s |
+| Median execute | 0.542807551 s | 0.447922163 s |
+| Median commit | 0.000552389 s | 0.000693210 s |
+| Dispatch waves | 21,608 | 5,402 |
+| Worker-stack capacity | 0 B | 8,388,608 B |
+
+The computed ceiling was 1.037838781 seconds. Four-worker replay was 8.68
+percent faster and passed. All observations retained two source slots,
+492,432-byte source capacity, 262,232-byte route capacity, five-frame
+high-water, zero payload copies, zero dynamic partial bytes, exact work and
+commit identity, and final normal-state identity
+`b49653403ac89ba12e2cb3b9e776742c1d6cc792a254e4e46e32a64c025d9077`.
+This automatic-budget result admits the matched 16-channel production serial
+gate before any four-worker production comparison. It does not admit the
+all-channel, full CLEAN, or 32 GB gates, and CASA was not rerun.
