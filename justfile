@@ -89,6 +89,20 @@ imaging-t42-mtmfs-casa casa_npz:
     CASA_RS_T42_RUST_OUTPUT="{{justfile_directory()}}/target/t42-casa-oracle/rust-mtmfs-two-spw-normal.json" CARGO_INCREMENTAL=0 cargo test -p casa-imaging-runtime --test mtmfs_real_ms_normal t42_real_ms_mtmfs_normal_matches_casa_oracle_inputs -- --ignored --exact --nocapture
     python3 tools/science/t42_mtmfs_casa_compare.py --casa-npz "{{casa_npz}}" --rust-json "{{justfile_directory()}}/target/t42-casa-oracle/rust-mtmfs-two-spw-normal.json" --pretty
 
+# Focused #529 coupled MT-MFS minor-cycle and frozen-CASA clean gate.
+imaging-t43-mtmfs-clean testdata_root casa_python casa_prefix casa_result:
+    just arch-check
+    CARGO_INCREMENTAL=0 cargo test -p casa-numerics dynamic_casacore_ldlt_matches_fixed_solver
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-model --test compiled_problem
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-model --test measurement_equation_contract
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction --lib mtmfs_
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction --test mtmfs_minor_cycle
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application mtmfs_runtime_claim_grows_with_taylor_terms_and_scales
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-runtime --test compile_plan_run effective_problem_projection_carries_mtmfs_scales_and_bias -- --exact
+    python3 tools/science/t43_test_mtmfs_clean_compare.py
+    CASA_RS_TESTDATA_ROOT="{{testdata_root}}" CASA_RS_T43_RUST_OUTPUT="{{justfile_directory()}}/target/t43-t44-casa-oracle/rust-mtmfs-clean.json" CARGO_INCREMENTAL=0 cargo test -p casa-imaging-runtime --test mtmfs_clean_oracle t43_real_ms_mtmfs_clean_matches_frozen_casa -- --ignored --exact --nocapture
+    "{{casa_python}}" tools/science/t43_mtmfs_clean_compare.py --casa-prefix "{{casa_prefix}}" --casa-result "{{casa_result}}" --rust-json "{{justfile_directory()}}/target/t43-t44-casa-oracle/rust-mtmfs-clean.json" --summary-output "{{justfile_directory()}}/target/t43-t44-casa-oracle/t43-comparison.json"
+
 release-perf:
     bash scripts/test-release-perf.sh
 

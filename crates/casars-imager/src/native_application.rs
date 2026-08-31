@@ -102,6 +102,17 @@ fn application_request(config: &CliConfig) -> Result<ContinuumImagingRequest, St
             },
             Deconvolver::Mtmfs => ContinuumAlgorithm::Mtmfs {
                 terms: config.nterms,
+                scales_px: if config.multiscale_scales.is_empty() {
+                    vec![0.0]
+                } else {
+                    config
+                        .multiscale_scales
+                        .iter()
+                        .copied()
+                        .map(f64::from)
+                        .collect()
+                },
+                small_scale_bias: f64::from(config.small_scale_bias),
             },
         }
     };

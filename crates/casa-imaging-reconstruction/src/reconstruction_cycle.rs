@@ -11,7 +11,7 @@ use crate::{
     ComponentDivergence, Encoder, FinalNormalState, MinorCycleError, MinorCycleEvidence,
     MinorCycleModelPlane, MinorCycleProgram, MinorCycleStopReason, ModelDelta, ModelGeneration,
     ModelLifecycle, ModelLifecycleError, SpectralChannelValidity,
-    minor_cycle::run_minor_cycle_plane,
+    minor_cycle::{run_minor_cycle, run_minor_cycle_plane},
 };
 
 const RECONSTRUCTION_CYCLE_EVIDENCE_DOMAIN: &[u8] = b"casa-rs-reconstruction-cycle-evidence";
@@ -42,10 +42,10 @@ impl fmt::Debug for ReconstructionCycleEvidenceId {
 pub enum ChannelCyclePolicy {
     /// Each channel is solved against its own normal-state plane and stopping evidence.
     Independent,
-    /// A future jointly regularized or shared-component solve.
+    /// Solve one declared coupled Taylor block as a shared spatial/scale selection.
     ///
-    /// No coupled solver is part of T38, so this policy fails typed rather
-    /// than silently running the independent algorithm.
+    /// Non-Taylor normal-state catalogs fail typed rather than silently
+    /// running independent channel cycles.
     Coupled,
 }
 
@@ -337,7 +337,50 @@ impl ReconstructionCycle {
         mask: &crate::ReconstructionMask,
     ) -> Result<ReconstructionCycleResult, ReconstructionCycleError> {
         if self.policy == ChannelCyclePolicy::Coupled {
-            return Err(ReconstructionCycleError::UnsupportedCoupledPolicy);
+            if normal.catalog() != crate::NormalStateCatalog::UnnormalizedTaylorBlockV1 {
+                return Err(ReconstructionCycleError::UnsupportedCoupledPolicy);
+            }
+            let validity = normal
+                .support_validity()
+                .unwrap_or(SpectralChannelValidity::Unmapped);
+            if validity != SpectralChannelValidity::Valid {
+                let channels = vec![ChannelCycleEvidence {
+                    output_channel: normal.slab().core_range().start,
+                    validity,
+                    budget_exhausted: false,
+                    minor_cycle: None,
+                }];
+                let evidence_id =
+                    reconstruction_cycle_evidence_id(lifecycle, normal, self.policy, &channels);
+                return Ok(ReconstructionCycleResult {
+                    delta: None,
+                    evidence: ReconstructionCycleEvidence {
+                        evidence_id,
+                        problem: lifecycle.problem(),
+                        policy: self.policy,
+                        channels: channels.into_boxed_slice(),
+                    },
+                });
+            }
+            let result = run_minor_cycle(lifecycle, base, normal, mask, self.program.clone())?;
+            let (delta, minor_cycle) = result.into_parts();
+            let channels = vec![ChannelCycleEvidence {
+                output_channel: normal.slab().core_range().start,
+                validity,
+                budget_exhausted: false,
+                minor_cycle: Some(minor_cycle),
+            }];
+            let evidence_id =
+                reconstruction_cycle_evidence_id(lifecycle, normal, self.policy, &channels);
+            return Ok(ReconstructionCycleResult {
+                delta,
+                evidence: ReconstructionCycleEvidence {
+                    evidence_id,
+                    problem: lifecycle.problem(),
+                    policy: self.policy,
+                    channels: channels.into_boxed_slice(),
+                },
+            });
         }
         let shared_cycle_threshold = shared_cycle_threshold(&self.program, normal)?;
         let mut remaining_iterations = self.program.max_iterations();

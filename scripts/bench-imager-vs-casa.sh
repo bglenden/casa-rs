@@ -68,6 +68,8 @@ imaging_fft_backend="${IMAGER_BENCH_IMAGING_FFT_BACKEND:-auto}"
 hogbom_iteration_mode="${IMAGER_BENCH_HOGBOM_ITERATION_MODE:-strict}"
 nterms="${IMAGER_BENCH_NTERMS:-1}"
 scales="${IMAGER_BENCH_SCALES:-}"
+small_scale_bias="${IMAGER_BENCH_SMALL_SCALE_BIAS:-0.6}"
+restoring_beam="${IMAGER_BENCH_RESTORING_BEAM:-}"
 wterm="${IMAGER_BENCH_WTERM:-none}"
 wprojplanes="${IMAGER_BENCH_WPROJPLANES:-}"
 casa_wprojplanes="${IMAGER_BENCH_CASA_WPROJPLANES:-}"
@@ -101,6 +103,8 @@ skip_rust="${IMAGER_BENCH_SKIP_RUST:-0}"
 skip_profile="${IMAGER_BENCH_SKIP_PROFILE:-0}"
 reuse_rust_prefix="${IMAGER_BENCH_REUSE_RUST_PREFIX:-}"
 reuse_casa_prefix="${IMAGER_BENCH_REUSE_CASA_PREFIX:-}"
+casa_result_json="${IMAGER_BENCH_CASA_RESULT_JSON:-}"
+casa_log_file="${IMAGER_BENCH_CASA_LOG_FILE:-}"
 
 case "$gridder" in
   wproject|widefield|awproject|awp2|awphpg)
@@ -708,11 +712,13 @@ fi
 echo
 
 cat >"$tmpdir/casa-imager-bench.py" <<'PY'
+import json
 import os
 import statistics
 import tempfile
 import time
-from casatasks import tclean
+import numpy as np
+from casatasks import casalog, tclean
 
 vis = os.environ["CASA_RS_BENCH_MS_PATH"]
 repeats = int(os.environ["CASA_RS_BENCH_REPEATS"])
@@ -745,12 +751,31 @@ nterms = int(os.environ["CASA_RS_BENCH_NTERMS"])
 casa_gridder = os.environ.get("CASA_RS_BENCH_CASA_GRIDDER", os.environ["CASA_RS_BENCH_GRIDDER"])
 wprojplanes_env = os.environ.get("CASA_RS_BENCH_WPROJPLANES", "")
 scales = [] if os.environ["CASA_RS_BENCH_SCALES"] == "" else [int(float(v)) for v in os.environ["CASA_RS_BENCH_SCALES"].split(",")]
+smallscalebias = float(os.environ["CASA_RS_BENCH_SMALL_SCALE_BIAS"])
+restoringbeam = os.environ["CASA_RS_BENCH_RESTORING_BEAM"]
 specmode = os.environ["CASA_RS_BENCH_SPECMODE"]
 interpolation = os.environ["CASA_RS_BENCH_INTERPOLATION"]
 keep_output_root = os.environ.get("CASA_RS_BENCH_KEEP_OUTPUT_ROOT", "")
+casa_result_json = os.environ.get("CASA_RS_BENCH_CASA_RESULT_JSON", "")
+casa_log_file = os.environ.get("CASA_RS_BENCH_CASA_LOG_FILE", "")
 casa_keep_prefix = os.path.join(keep_output_root, "casa", "casa") if keep_output_root else ""
 spw_selector = f"{spw}:{chan_start}" if chan_count == 1 else f"{spw}:{chan_start}~{chan_start + chan_count - 1}"
 times = []
+
+def json_safe(value):
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, dict):
+        return {str(key): json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [json_safe(item) for item in value]
+    return value
+
+if casa_log_file:
+    os.makedirs(os.path.dirname(casa_log_file), exist_ok=True)
+    casalog.setlogfile(casa_log_file)
 
 with tempfile.TemporaryDirectory() as td:
     for run in range(repeats):
@@ -773,6 +798,7 @@ with tempfile.TemporaryDirectory() as td:
             deconvolver=deconvolver,
             nterms=nterms,
             scales=scales,
+            smallscalebias=smallscalebias,
             imsize=imsize,
             cell=f"{cell_arcsec}arcsec",
             niter=niter,
@@ -798,6 +824,8 @@ with tempfile.TemporaryDirectory() as td:
             savemodel="none",
             psfcutoff=psfcutoff,
         )
+        if restoringbeam:
+            kwargs["restoringbeam"] = restoringbeam
         if specmode in ("cube", "cubedata"):
             casa_start = int(cube_start) if cube_start else chan_start
             casa_width = int(cube_width) if cube_width else 1
@@ -818,10 +846,15 @@ with tempfile.TemporaryDirectory() as td:
             kwargs["wprojplanes"] = -1
         if phasecenter_field:
             kwargs["phasecenter"] = int(phasecenter_field)
-        tclean(**kwargs)
+        result = tclean(**kwargs)
         elapsed = time.perf_counter() - start
         times.append(elapsed)
         print(f"run={run + 1} real={elapsed:.6f}")
+        if casa_result_json and run == repeats - 1:
+            os.makedirs(os.path.dirname(casa_result_json), exist_ok=True)
+            with open(casa_result_json, "w", encoding="utf-8") as handle:
+                json.dump(json_safe(result), handle, indent=2, sort_keys=True)
+                handle.write("\n")
 
 print(f"median={statistics.median(times):.6f}")
 if casa_keep_prefix:
@@ -860,6 +893,8 @@ else
   CASA_RS_BENCH_DECONVOLVER="$deconvolver" \
   CASA_RS_BENCH_NTERMS="$nterms" \
   CASA_RS_BENCH_SCALES="$scales" \
+  CASA_RS_BENCH_SMALL_SCALE_BIAS="$small_scale_bias" \
+  CASA_RS_BENCH_RESTORING_BEAM="$restoring_beam" \
   CASA_RS_BENCH_NITER="$casa_niter" \
   CASA_RS_BENCH_NMAJOR="$nmajor" \
   CASA_RS_BENCH_GAIN="$gain" \
@@ -874,6 +909,8 @@ else
   CASA_RS_BENCH_MAX_PSFFRACTION="$max_psf_fraction" \
   CASA_RS_BENCH_INTERPOLATION="$interpolation" \
   CASA_RS_BENCH_KEEP_OUTPUT_ROOT="$keep_output_root" \
+  CASA_RS_BENCH_CASA_RESULT_JSON="$casa_result_json" \
+  CASA_RS_BENCH_CASA_LOG_FILE="$casa_log_file" \
     "$CASA_RS_CASA_PYTHON" "$tmpdir/casa-imager-bench.py" | sed 's/^/  /'
 fi
 echo

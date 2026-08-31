@@ -1020,6 +1020,48 @@ fn standard_problem_specification(
     )
 }
 
+fn mtmfs_problem_specification(small_scale_bias: f64) -> ProblemSpecification {
+    let numerics = NumericsContract::new(
+        vec![NumericPrecision::F64],
+        ReductionPolicy::Compensated,
+        FiniteValuePolicy::FlagInputRejectGenerated,
+        NumericalStage::ALL
+            .into_iter()
+            .map(|stage| (stage, StageErrorBudget::new(1.0e-7, 1.0e-3)))
+            .collect(),
+    );
+    ProblemSpecification::new(
+        ScientificContract::new(
+            SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
+            MeasurementEquationContract::new(
+                InstrumentResponse::Scalar,
+                DeclaredInnerProducts::new(
+                    ModelInnerProduct::HermitianEuclidean,
+                    VisibilityInnerProduct::HermitianEuclidean,
+                ),
+            ),
+        ),
+        ReconstructionContract::new(
+            ReconstructionBasis::Taylor { terms: 2 },
+            ReconstructionAlgorithm::Mtmfs {
+                scales_px: vec![0.0, 5.0],
+                small_scale_bias,
+            },
+            ReconstructionControls::new(8, 0.1, 0.0),
+            PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+        ),
+        WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
+        ProductRequirements::new(
+            vec![ProductKind::Psf, ProductKind::Residual, ProductKind::Model],
+            ProductNormalization::UnitResponse,
+            RestoringBeamPolicy::None,
+            product_validity(),
+        ),
+        ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
+        numerics,
+    )
+}
+
 fn registry(byte: u8) -> ImplementationRegistryId {
     ImplementationRegistryId::from_sha256([byte; 32])
 }
@@ -9578,6 +9620,46 @@ fn effective_problem_projection_normalizes_signed_zero_like_canonical_identities
 }
 
 #[test]
+fn effective_problem_projection_carries_mtmfs_scales_and_bias() {
+    let compile_with_bias = |observation, bias| {
+        compile(ImagingRequest::new(
+            mtmfs_problem_specification(bias),
+            geometry(255.0),
+            problem_inputs(observation, Vec::new(), ModelStateIdentity::Empty),
+            model_lifecycle(ModelStateIdentity::Empty),
+        ))
+        .expect("logical MT-MFS compilation")
+    };
+    let unbiased = compile_with_bias(91, 0.0);
+    let biased = compile_with_bias(91, 0.2);
+    let unbiased_projection = CompiledProblemEvidence::project(&unbiased);
+    let biased_projection = CompiledProblemEvidence::project(&biased);
+
+    assert_eq!(unbiased_projection.schema_version(), 10);
+    assert_eq!(
+        unbiased_projection.field("reconstruction.algorithm.kind"),
+        Some("mtmfs")
+    );
+    assert_eq!(
+        unbiased_projection.field("reconstruction.algorithm.scales_px.0"),
+        Some("f64:0000000000000000")
+    );
+    assert_eq!(
+        unbiased_projection.field("reconstruction.algorithm.scales_px.1"),
+        Some("f64:4014000000000000")
+    );
+    assert_eq!(
+        unbiased_projection.field("reconstruction.algorithm.small_scale_bias"),
+        Some("f64:0000000000000000")
+    );
+    assert_eq!(
+        biased_projection.field("reconstruction.algorithm.small_scale_bias"),
+        Some("f64:3fc999999999999a")
+    );
+    assert_ne!(unbiased_projection, biased_projection);
+}
+
+#[test]
 fn receipt_reopens_the_complete_versioned_effective_problem_projection() {
     let problem = compile(request_with_geometry_and_references(
         81,
@@ -9648,7 +9730,7 @@ fn receipt_reopens_the_complete_versioned_effective_problem_projection() {
         .expect("antenna generation")
         .to_string();
 
-    assert_eq!(projected.schema_version(), 9);
+    assert_eq!(projected.schema_version(), 10);
     assert_eq!(projected, &CompiledProblemEvidence::project(&problem));
     assert_eq!(
         reopened.model_lifecycle_identity(),

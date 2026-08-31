@@ -537,7 +537,12 @@ impl GriddedNormalReplayCompilation {
         max_block_samples: usize,
     ) -> io::Result<Self> {
         let budget = project_gridded_normal_artifact_budget(problem, max_block_samples)?;
-        validate_gridded_artifact_context(context, budget, crate::IoBufferKind::SpillWrite)?;
+        validate_gridded_artifact_context(
+            context,
+            budget,
+            crate::IoBufferKind::SpillWrite,
+            budget.io_buffer_bytes(),
+        )?;
         Self::create(
             problem,
             storage,
@@ -746,11 +751,12 @@ fn validate_gridded_artifact_context(
     context: WorkExecutionContext<'_>,
     budget: GriddedNormalArtifactBudget,
     io_kind: crate::IoBufferKind,
+    minimum_buffer_bytes: u64,
 ) -> io::Result<()> {
     let claims = &context.node().claims;
     let has_buffer = claims.iter().any(|claim| {
         claim.resource == LeaseResource::IoBuffer(io_kind)
-            && claim.amount >= budget.io_buffer_bytes()
+            && gridded_buffer_claim_satisfies(io_kind, claim.amount, minimum_buffer_bytes)
     });
     let has_storage = io_kind == crate::IoBufferKind::SpillRead
         || claims.iter().any(|claim| {
@@ -778,6 +784,18 @@ fn validate_gridded_artifact_context(
         Err(io::Error::other(
             "gridded-normal artifact work lacks its complete planned resource claims",
         ))
+    }
+}
+
+fn gridded_buffer_claim_satisfies(
+    io_kind: crate::IoBufferKind,
+    claimed_bytes: u64,
+    required_bytes: u64,
+) -> bool {
+    if io_kind == crate::IoBufferKind::SpillRead {
+        claimed_bytes == required_bytes
+    } else {
+        claimed_bytes >= required_bytes
     }
 }
 
@@ -864,7 +882,19 @@ impl FrozenGriddedNormalReplay {
         route_capacity_bytes: u64,
     ) -> io::Result<CompleteDataOperatorResult> {
         let budget = self.spill.budget();
-        validate_gridded_artifact_context(context, budget, crate::IoBufferKind::SpillRead)?;
+        let window_plan = self.window_plan.as_ref().ok_or_else(|| {
+            io::Error::other("gridded-normal replay lacks its sealed window plan")
+        })?;
+        let minimum_buffer_bytes = window_plan
+            .source_slot_bytes()
+            .checked_mul(2)
+            .ok_or_else(|| io::Error::other("gridded-normal replay buffer claim overflow"))?;
+        validate_gridded_artifact_context(
+            context,
+            budget,
+            crate::IoBufferKind::SpillRead,
+            minimum_buffer_bytes,
+        )?;
         let source_capacity_bytes = context
             .node()
             .claims
@@ -874,9 +904,6 @@ impl FrozenGriddedNormalReplay {
                     .then_some(claim.amount)
             })
             .ok_or_else(|| io::Error::other("gridded-normal replay buffer claim missing"))?;
-        let window_plan = self.window_plan.as_ref().ok_or_else(|| {
-            io::Error::other("gridded-normal replay lacks its sealed window plan")
-        })?;
         let maximum_frames_per_block = usize::try_from(context.knobs().batch_size)
             .map_err(|_| io::Error::other("gridded-normal replay window overflow"))?;
         if maximum_frames_per_block != window_plan.maximum_frames() {
@@ -2847,7 +2874,7 @@ mod tests {
     use super::{
         CompleteDataPlanError, GriddedNormalReplayPlanningCapacity, GriddedNormalReplayWindowPlan,
         GriddedNormalRouteResidency, bind_gridded_replay_window_plan,
-        gridded_normal_route_capacity_bytes,
+        gridded_buffer_claim_satisfies, gridded_normal_route_capacity_bytes,
     };
 
     const TEST_RECORD_BYTES: usize = 32;
@@ -2858,6 +2885,37 @@ mod tests {
             .checked_mul(super::GRIDDED_NORMAL_SOURCE_SLOTS)
             .and_then(|bytes| bytes.checked_add(route_capacity_bytes))
             .expect("small test working set")
+    }
+
+    #[test]
+    fn gridded_read_claim_is_exact_while_write_retains_projected_ceiling() {
+        use crate::IoBufferKind;
+
+        assert!(gridded_buffer_claim_satisfies(
+            IoBufferKind::SpillRead,
+            7_544,
+            7_544
+        ));
+        assert!(!gridded_buffer_claim_satisfies(
+            IoBufferKind::SpillRead,
+            7_543,
+            7_544
+        ));
+        assert!(!gridded_buffer_claim_satisfies(
+            IoBufferKind::SpillRead,
+            15_088,
+            7_544
+        ));
+        assert!(!gridded_buffer_claim_satisfies(
+            IoBufferKind::SpillWrite,
+            7_543,
+            7_544
+        ));
+        assert!(gridded_buffer_claim_satisfies(
+            IoBufferKind::SpillWrite,
+            15_088,
+            7_544
+        ));
     }
 
     #[test]

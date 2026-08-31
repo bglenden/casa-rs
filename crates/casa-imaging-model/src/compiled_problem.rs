@@ -31,7 +31,7 @@ use crate::transaction::{
 };
 
 const COMPILED_PROBLEM_IDENTITY_DOMAIN: &[u8] = b"casa-rs-compiled-problem";
-const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 13;
+const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 14;
 const COMPILED_PROBLEM_BASIS_DOMAIN: &[u8] = b"casa-rs-compiled-problem-basis";
 const COMPILED_PROBLEM_BASIS_VERSION: u32 = 2;
 const NUMERICS_CONTRACT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-numerics-contract";
@@ -502,7 +502,12 @@ pub enum ReconstructionAlgorithm {
         small_scale_bias: f64,
     },
     /// Multi-term multi-frequency synthesis minor cycle.
-    Mtmfs,
+    Mtmfs {
+        /// Canonical requested scale sizes shared with multiscale cleaning.
+        scales_px: Vec<f64>,
+        /// CASA small-scale preference in `[0, 1]`.
+        small_scale_bias: f64,
+    },
 }
 
 /// Accounting policy for Högbom's historical inclusive iteration loop.
@@ -709,7 +714,9 @@ impl ReconstructionContract {
 
     fn canonicalize(mut self) -> Result<Self, CompileProblemError> {
         self.polarization = self.polarization.canonicalize()?;
-        if let ReconstructionAlgorithm::Multiscale { scales_px, .. } = &mut self.algorithm {
+        if let ReconstructionAlgorithm::Multiscale { scales_px, .. }
+        | ReconstructionAlgorithm::Mtmfs { scales_px, .. } = &mut self.algorithm
+        {
             for scale in scales_px.iter_mut() {
                 if *scale == 0.0 {
                     *scale = 0.0;
@@ -1885,7 +1892,7 @@ fn validate_reconstruction(
             reconstruction_channels: channels,
         });
     }
-    if matches!(contract.algorithm, ReconstructionAlgorithm::Mtmfs)
+    if matches!(contract.algorithm, ReconstructionAlgorithm::Mtmfs { .. })
         != matches!(contract.basis, ReconstructionBasis::Taylor { .. })
     {
         return Err(CompileProblemError::InvalidCapabilityCombination {
@@ -1969,6 +1976,10 @@ fn validate_reconstruction(
     if let ReconstructionAlgorithm::Multiscale {
         scales_px,
         small_scale_bias,
+    }
+    | ReconstructionAlgorithm::Mtmfs {
+        scales_px,
+        small_scale_bias,
     } = &contract.algorithm
     {
         if scales_px.is_empty()
@@ -1977,12 +1988,12 @@ fn validate_reconstruction(
                 .any(|scale| !(scale.is_finite() && *scale >= 0.0))
         {
             return Err(CompileProblemError::InvalidCapabilityCombination {
-                reason: "multiscale reconstruction requires finite non-negative explicit scales",
+                reason: "scale-aware reconstruction requires finite non-negative explicit scales",
             });
         }
         if !small_scale_bias.is_finite() || !(0.0..=1.0).contains(small_scale_bias) {
             return Err(CompileProblemError::InvalidCapabilityCombination {
-                reason: "multiscale small-scale bias must be finite and in [0, 1]",
+                reason: "scale-aware small-scale bias must be finite and in [0, 1]",
             });
         }
     }
@@ -2212,7 +2223,7 @@ fn derive_capabilities(
         ReconstructionAlgorithm::Hogbom => RequiredCapability::HogbomReconstruction,
         ReconstructionAlgorithm::Clark => RequiredCapability::ClarkReconstruction,
         ReconstructionAlgorithm::Multiscale { .. } => RequiredCapability::MultiscaleReconstruction,
-        ReconstructionAlgorithm::Mtmfs => RequiredCapability::MtmfsReconstruction,
+        ReconstructionAlgorithm::Mtmfs { .. } => RequiredCapability::MtmfsReconstruction,
     });
     capabilities.insert(match weighting.scheme() {
         WeightingScheme::Natural => RequiredCapability::NaturalWeighting,
@@ -2383,7 +2394,17 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
             }
             encoder.f64(*small_scale_bias);
         }
-        ReconstructionAlgorithm::Mtmfs => encoder.u8(4),
+        ReconstructionAlgorithm::Mtmfs {
+            scales_px,
+            small_scale_bias,
+        } => {
+            encoder.u8(4);
+            encoder.usize(scales_px.len());
+            for scale in scales_px {
+                encoder.f64(*scale);
+            }
+            encoder.f64(*small_scale_bias);
+        }
     }
     encoder.usize(reconstruction.controls.max_minor_iterations);
     encoder.f64(reconstruction.controls.gain);

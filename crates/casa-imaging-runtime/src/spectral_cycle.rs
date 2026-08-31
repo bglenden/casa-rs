@@ -16,8 +16,8 @@ use casa_imaging_model::{
 use casa_imaging_reconstruction::{
     ChannelCyclePolicy, ExecutableModelProblem, FinalModelCompletion, FinalModelContinuation,
     FinalNormalState, MajorCycleCompletion, MajorCyclePreparation, MinorCycleProgram, ModelDeltaId,
-    ModelLifecycle, ReconstructionCycle, ReconstructionCycleError, ReconstructionCycleEvidence,
-    ReconstructionMaskPlan,
+    ModelLifecycle, NormalStateCatalog, ReconstructionCycle, ReconstructionCycleError,
+    ReconstructionCycleEvidence, ReconstructionMaskPlan,
 };
 
 use crate::complete_data_operator::GriddedNormalReplayCompilation;
@@ -2521,7 +2521,7 @@ impl InitialMajorPhaseCompletion {
         Self { result }
     }
 
-    /// Run one resource-admitted independent cycle over the complete channel slab.
+    /// Run one resource-admitted cycle using the normal state's declared coupling.
     pub fn run_reconstruction_cycle(
         self,
         lifecycle: &ModelLifecycle,
@@ -2533,7 +2533,12 @@ impl InitialMajorPhaseCompletion {
         let (mask, auto_mask) = mask_plan
             .materialize(continuation.generation(), &normal_state)
             .map_err(|error| ReconstructionCycleError::Minor(error.into()))?;
-        let cycle = ReconstructionCycle::new(ChannelCyclePolicy::Independent, program).run(
+        let policy = if normal_state.catalog() == NormalStateCatalog::UnnormalizedTaylorBlockV1 {
+            ChannelCyclePolicy::Coupled
+        } else {
+            ChannelCyclePolicy::Independent
+        };
+        let cycle = ReconstructionCycle::new(policy, program).run(
             lifecycle,
             continuation.generation(),
             &normal_state,

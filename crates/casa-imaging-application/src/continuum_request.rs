@@ -35,7 +35,9 @@ use casa_imaging_model::{
     VisibilityColumn as OwnerVisibilityColumn, VisibilityInnerProduct,
     WeightColumn as OwnerWeightColumn, WeightDensityScope, WeightingContract, WeightingScheme,
 };
-use casa_imaging_reconstruction::{ReconstructionMaskPlan, WeightingExecutionLimits};
+use casa_imaging_reconstruction::{
+    ReconstructionMaskPlan, WeightingExecutionLimits, minor_cycle_workspace_bytes,
+};
 use casa_imaging_runtime::{
     BuildIdentity, ExecutionAttemptId, ExecutionReceiptStore, GriddedNormalReplayStorage,
     ImplementationRegistryId, PlannerCostModelProfileId, ProductionStorageProfile,
@@ -79,6 +81,10 @@ pub enum ContinuumAlgorithm {
     Mtmfs {
         /// Number of Taylor coefficients.
         terms: usize,
+        /// Canonical scale sizes in image pixels.
+        scales_px: Vec<f64>,
+        /// CASA small-scale preference in `[0, 1]`.
+        small_scale_bias: f64,
     },
 }
 
@@ -1171,21 +1177,9 @@ fn specification(
     request: &ContinuumImagingRequest,
     spectral: &PreparedSpectralAxis,
 ) -> Result<ProblemSpecification, crate::ApplicationError> {
-    let algorithm = match &request.algorithm {
-        ContinuumAlgorithm::Dirty => ReconstructionAlgorithm::Dirty,
-        ContinuumAlgorithm::Hogbom => ReconstructionAlgorithm::Hogbom,
-        ContinuumAlgorithm::Clark => ReconstructionAlgorithm::Clark,
-        ContinuumAlgorithm::Multiscale {
-            scales_px,
-            small_scale_bias,
-        } => ReconstructionAlgorithm::Multiscale {
-            scales_px: scales_px.clone(),
-            small_scale_bias: *small_scale_bias,
-        },
-        ContinuumAlgorithm::Mtmfs { .. } => ReconstructionAlgorithm::Mtmfs,
-    };
+    let algorithm = reconstruction_algorithm(&request.algorithm);
     let basis = match &request.algorithm {
-        ContinuumAlgorithm::Mtmfs { terms } => ReconstructionBasis::Taylor { terms: *terms },
+        ContinuumAlgorithm::Mtmfs { terms, .. } => ReconstructionBasis::Taylor { terms: *terms },
         _ => spectral.basis,
     };
     let (weighting, density) = match request.weighting {
@@ -1296,6 +1290,29 @@ fn specification(
                 .collect(),
         ),
     ))
+}
+
+fn reconstruction_algorithm(algorithm: &ContinuumAlgorithm) -> ReconstructionAlgorithm {
+    match algorithm {
+        ContinuumAlgorithm::Dirty => ReconstructionAlgorithm::Dirty,
+        ContinuumAlgorithm::Hogbom => ReconstructionAlgorithm::Hogbom,
+        ContinuumAlgorithm::Clark => ReconstructionAlgorithm::Clark,
+        ContinuumAlgorithm::Multiscale {
+            scales_px,
+            small_scale_bias,
+        } => ReconstructionAlgorithm::Multiscale {
+            scales_px: scales_px.clone(),
+            small_scale_bias: *small_scale_bias,
+        },
+        ContinuumAlgorithm::Mtmfs {
+            scales_px,
+            small_scale_bias,
+            ..
+        } => ReconstructionAlgorithm::Mtmfs {
+            scales_px: scales_px.clone(),
+            small_scale_bias: *small_scale_bias,
+        },
+    }
 }
 
 fn visibility_column(
@@ -1410,13 +1427,11 @@ fn runtime(
         implementation: WorkImplementationId::new("spectral-cycle-cpu-v1"),
         weighting_limits: WeightingExecutionLimits::new(4096, 1)?,
         stage_nanos: 1_000_000,
-        minor_cycle_bytes: u64::try_from(
-            request
-                .image_size
-                .saturating_mul(request.image_size)
-                .saturating_mul(16),
-        )
-        .unwrap_or(u64::MAX),
+        minor_cycle_bytes: planned_minor_cycle_bytes(
+            request.image_size,
+            &request.algorithm,
+            request.iterations,
+        ),
         storage_io,
         gridded_normal_storage,
         confidence_parts_per_million: 900_000,
@@ -1432,6 +1447,24 @@ fn runtime(
             ExecutionAttemptId::from_sha256(scoped(digest, 2)),
         ],
     })
+}
+
+fn planned_minor_cycle_bytes(
+    image_size: usize,
+    algorithm: &ContinuumAlgorithm,
+    maximum_iterations: usize,
+) -> u64 {
+    let basis = match algorithm {
+        ContinuumAlgorithm::Mtmfs { terms, .. } => ReconstructionBasis::Taylor { terms: *terms },
+        _ => ReconstructionBasis::Constant,
+    };
+    minor_cycle_workspace_bytes(
+        [image_size, image_size],
+        basis,
+        &reconstruction_algorithm(algorithm),
+        maximum_iterations,
+        64,
+    )
 }
 
 fn resource_policy(task_requirements: &[TaskRequirement]) -> ResourcePolicy {
@@ -1543,7 +1576,10 @@ fn boxed(message: impl Into<String>) -> crate::ApplicationError {
 mod tests {
     use casa_imaging_runtime::{ResourceOverride, ResourcePolicy};
 
-    use super::{TaskRequirement, image_reference_pixel, model_plane_samples, resource_policy};
+    use super::{
+        ContinuumAlgorithm, TaskRequirement, image_reference_pixel, model_plane_samples,
+        planned_minor_cycle_bytes, resource_policy,
+    };
 
     #[test]
     fn casa_direction_reference_pixel_uses_half_the_image_extent() {
@@ -1554,6 +1590,25 @@ mod tests {
     #[test]
     fn model_delta_bound_covers_one_complete_multiscale_plane() {
         assert_eq!(model_plane_samples(64), 4096);
+    }
+
+    #[test]
+    fn mtmfs_runtime_claim_grows_with_taylor_terms_and_scales() {
+        let point = ContinuumAlgorithm::Mtmfs {
+            terms: 2,
+            scales_px: vec![0.0],
+            small_scale_bias: 0.0,
+        };
+        let higher_order = ContinuumAlgorithm::Mtmfs {
+            terms: 3,
+            scales_px: vec![0.0, 5.0],
+            small_scale_bias: 0.0,
+        };
+
+        assert!(
+            planned_minor_cycle_bytes(128, &higher_order, 8)
+                > planned_minor_cycle_bytes(128, &point, 8)
+        );
     }
 
     #[test]

@@ -398,11 +398,7 @@ where
             planned_gridded_normal
                 .ok_or_else(|| boxed("clean initial plan omitted gridded replay binding"))?,
         )?;
-        let program = MinorCycleProgram::for_algorithm(
-            algorithm.clone(),
-            problem.reconstruction().controls(),
-        )?
-        .record_component_sequence(64)?;
+        let program = MinorCycleProgram::for_problem(problem)?.record_component_sequence(64)?;
         executor = executor.with_reconstruction_cycle(
             minor_node.ok_or_else(|| boxed("initial plan omitted its minor-cycle node"))?,
             input.mask.clone(),
@@ -625,7 +621,7 @@ where
                     let remaining = controls
                         .max_minor_iterations()
                         .saturating_sub(total_iterations);
-                    let program = MinorCycleProgram::for_algorithm(algorithm.clone(), controls)?
+                    let program = MinorCycleProgram::for_problem(problem)?
                         .record_component_sequence(64)?
                         .limit_iterations(remaining)?;
                     executor = executor.with_reconstruction_cycle(
