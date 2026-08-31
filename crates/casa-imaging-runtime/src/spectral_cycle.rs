@@ -2521,7 +2521,7 @@ impl InitialMajorPhaseCompletion {
         Self { result }
     }
 
-    /// Run one resource-admitted independent cycle over the complete channel slab.
+    /// Run one resource-admitted cycle using the normal state's declared coupling.
     pub fn run_reconstruction_cycle(
         self,
         lifecycle: &ModelLifecycle,

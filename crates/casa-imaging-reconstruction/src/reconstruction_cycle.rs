@@ -42,10 +42,10 @@ impl fmt::Debug for ReconstructionCycleEvidenceId {
 pub enum ChannelCyclePolicy {
     /// Each channel is solved against its own normal-state plane and stopping evidence.
     Independent,
-    /// A future jointly regularized or shared-component solve.
+    /// Solve one declared coupled Taylor block as a shared spatial/scale selection.
     ///
-    /// No coupled solver is part of T38, so this policy fails typed rather
-    /// than silently running the independent algorithm.
+    /// Non-Taylor normal-state catalogs fail typed rather than silently
+    /// running independent channel cycles.
     Coupled,
 }
 

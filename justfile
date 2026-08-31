@@ -97,6 +97,8 @@ imaging-t43-mtmfs-clean testdata_root casa_python casa_prefix casa_result:
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-model --test measurement_equation_contract
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction --lib mtmfs_
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction --test mtmfs_minor_cycle
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application mtmfs_runtime_claim_grows_with_taylor_terms_and_scales
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-runtime --test compile_plan_run effective_problem_projection_carries_mtmfs_scales_and_bias -- --exact
     python3 tools/science/t43_test_mtmfs_clean_compare.py
     CASA_RS_TESTDATA_ROOT="{{testdata_root}}" CASA_RS_T43_RUST_OUTPUT="{{justfile_directory()}}/target/t43-t44-casa-oracle/rust-mtmfs-clean.json" CARGO_INCREMENTAL=0 cargo test -p casa-imaging-runtime --test mtmfs_clean_oracle t43_real_ms_mtmfs_clean_matches_frozen_casa -- --ignored --exact --nocapture
     "{{casa_python}}" tools/science/t43_mtmfs_clean_compare.py --casa-prefix "{{casa_prefix}}" --casa-result "{{casa_result}}" --rust-json "{{justfile_directory()}}/target/t43-t44-casa-oracle/rust-mtmfs-clean.json" --summary-output "{{justfile_directory()}}/target/t43-t44-casa-oracle/t43-comparison.json"

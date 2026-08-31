@@ -54,7 +54,7 @@ use crate::{
 
 const RECEIPT_SCHEMA: &str = "casa-rs-imaging-execution-receipt";
 const RECEIPT_SCHEMA_VERSION: u32 = 19;
-const COMPILED_PROBLEM_EVIDENCE_VERSION: u32 = 9;
+const COMPILED_PROBLEM_EVIDENCE_VERSION: u32 = 10;
 const RECEIPT_SUFFIX: &str = ".receipt.json";
 const RECEIPT_STAGING_PREFIX: &str = ".casa-rs-receipt-staging-";
 const RECEIPT_STAGING_SUFFIX: &str = ".tmp";
@@ -5726,6 +5726,10 @@ fn project_reconstruction(fields: &mut BTreeMap<String, String>, problem: &Compi
         reconstruction_algorithm(algorithm),
     );
     if let ReconstructionAlgorithm::Multiscale {
+        scales_px,
+        small_scale_bias,
+    }
+    | ReconstructionAlgorithm::Mtmfs {
         scales_px,
         small_scale_bias,
     } = algorithm

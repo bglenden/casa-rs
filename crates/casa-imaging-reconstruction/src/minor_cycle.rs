@@ -24,7 +24,7 @@ use std::{collections::BTreeMap, fmt};
 use casa_imaging_model::{
     CompiledProblem, CompiledProblemId, HogbomIterationAccounting, LogicalIdentity, ModelCell,
     ModelDeltaTerm, ModelExecutionAttemptId, ModelSupport, ModelValue, ReconstructionAlgorithm,
-    ReconstructionControls,
+    ReconstructionBasis, ReconstructionControls,
 };
 use casa_numerics::solve_symmetric_ldlt_casacore_dynamic;
 use thiserror::Error;
@@ -37,6 +37,100 @@ use crate::{
 
 const MINOR_CYCLE_EVIDENCE_DOMAIN: &[u8] = b"casa-rs-minor-cycle-evidence";
 const MINOR_CYCLE_EVIDENCE_VERSION: u32 = 5;
+
+/// Return the hard resident-memory envelope for one solver-owned Minor Cycle.
+///
+/// The envelope covers private residual planes, robust-statistics scratch,
+/// MT-MFS scale kernels and Taylor systems, candidate vectors, the bounded
+/// sparse Model Delta accumulator, and optional component diagnostics. Normal
+/// State and model-generation storage are owned by their existing plan slots
+/// and are therefore not counted again here.
+#[must_use]
+pub fn minor_cycle_workspace_bytes(
+    shape: [usize; 2],
+    basis: ReconstructionBasis,
+    algorithm: &ReconstructionAlgorithm,
+    maximum_iterations: usize,
+    recorded_components: usize,
+) -> u64 {
+    let cells = sat_u64(shape[0]).saturating_mul(sat_u64(shape[1]));
+    let scalar_workspace = cells.saturating_mul(16);
+    let (ReconstructionBasis::Taylor { terms }, ReconstructionAlgorithm::Mtmfs { scales_px, .. }) =
+        (basis, algorithm)
+    else {
+        return scalar_workspace;
+    };
+    let terms = sat_u64(terms);
+    let effective_sample_counts = scales_px
+        .iter()
+        .copied()
+        .filter(|scale| *scale <= (shape[0] / 2) as f64 && *scale <= (shape[1] / 2) as f64)
+        .map(|scale| {
+            if scale == 0.0 {
+                1
+            } else {
+                let diameter = (scale.ceil() as u64).saturating_mul(2).saturating_add(1);
+                diameter.saturating_mul(diameter)
+            }
+        })
+        .collect::<Vec<_>>();
+    let scale_count = sat_u64(effective_sample_counts.len());
+    let kernel_samples = effective_sample_counts
+        .iter()
+        .copied()
+        .fold(0_u64, u64::saturating_add);
+    let maximum_kernel_samples = effective_sample_counts.iter().copied().max().unwrap_or(1);
+    let term_cells = terms.saturating_mul(cells);
+    let possible_sparse_terms = sat_u64(maximum_iterations)
+        .saturating_mul(terms)
+        .saturating_mul(maximum_kernel_samples)
+        .min(term_cells);
+
+    // A BTreeMap entry's allocator/node overhead is implementation-private.
+    // Eight key/value pairs per possible term is a conservative 64-bit host
+    // envelope and deliberately dominates the current standard-library node.
+    const SPARSE_TERM_ENTRY_BOUND_BYTES: u64 = 128;
+    let residual_planes = term_cells.saturating_mul(size_of_u64::<f64>());
+    let plane_scratch = cells.saturating_mul(size_of_u64::<f64>());
+    let kernel_storage = kernel_samples
+        .saturating_mul(size_of_u64::<([isize; 2], f64)>())
+        .saturating_add(scale_count.saturating_mul(size_of_u64::<ScaleKernel>()));
+    let square_terms = terms.saturating_mul(terms);
+    let scale_systems = scale_count.saturating_mul(
+        square_terms
+            .saturating_mul(size_of_u64::<f64>())
+            .saturating_add(size_of_u64::<TaylorScaleSystem>()),
+    );
+    let system_and_candidate_scratch = square_terms
+        .saturating_mul(size_of_u64::<f64>())
+        .saturating_mul(4)
+        .saturating_add(terms.saturating_mul(size_of_u64::<f64>()).saturating_mul(6));
+    let sparse_delta = possible_sparse_terms.saturating_mul(SPARSE_TERM_ENTRY_BOUND_BYTES);
+    let diagnostics = sat_u64(recorded_components)
+        .min(sat_u64(maximum_iterations).saturating_mul(terms))
+        .saturating_mul(size_of_u64::<MinorCycleComponent>());
+    let container_overhead = terms
+        .saturating_add(scale_count.saturating_mul(2))
+        .saturating_add(8)
+        .saturating_mul(size_of_u64::<Vec<u8>>());
+
+    residual_planes
+        .saturating_add(plane_scratch)
+        .saturating_add(kernel_storage)
+        .saturating_add(scale_systems)
+        .saturating_add(system_and_candidate_scratch)
+        .saturating_add(sparse_delta)
+        .saturating_add(diagnostics)
+        .saturating_add(container_overhead)
+}
+
+fn sat_u64(value: usize) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
+}
+
+fn size_of_u64<T>() -> u64 {
+    sat_u64(std::mem::size_of::<T>())
+}
 
 macro_rules! minor_cycle_identity {
     ($name:ident, $version:ident, $summary:literal) => {
@@ -2780,14 +2874,52 @@ fn minor_cycle_evidence_id(
 
 #[cfg(test)]
 mod tests {
+    use casa_imaging_model::{ReconstructionAlgorithm, ReconstructionBasis};
     use num_complex::Complex64;
 
     use super::{
-        MinorCycleModelPlane, TaylorCandidate, TaylorSearchWindow, build_scale_kernels, model_cell,
-        multiscale_diverged, prefer_taylor_across_scales, prefer_taylor_within_scale, subtract_psf,
-        subtract_psf_circular, taylor_psf_peak_index, taylor_rows_nearly_dependent,
-        within_multiscale_border,
+        MinorCycleModelPlane, TaylorCandidate, TaylorSearchWindow, build_scale_kernels,
+        minor_cycle_workspace_bytes, model_cell, multiscale_diverged, prefer_taylor_across_scales,
+        prefer_taylor_within_scale, subtract_psf, subtract_psf_circular, taylor_psf_peak_index,
+        taylor_rows_nearly_dependent, within_multiscale_border,
     };
+
+    #[test]
+    fn mtmfs_workspace_claim_scales_with_terms_and_effective_kernels() {
+        let point = ReconstructionAlgorithm::Mtmfs {
+            scales_px: vec![0.0],
+            small_scale_bias: 0.0,
+        };
+        let multiscale = ReconstructionAlgorithm::Mtmfs {
+            scales_px: vec![0.0, 5.0],
+            small_scale_bias: 0.0,
+        };
+        let two_terms = minor_cycle_workspace_bytes(
+            [128, 128],
+            ReconstructionBasis::Taylor { terms: 2 },
+            &point,
+            8,
+            64,
+        );
+        let three_terms = minor_cycle_workspace_bytes(
+            [128, 128],
+            ReconstructionBasis::Taylor { terms: 3 },
+            &point,
+            8,
+            64,
+        );
+        let three_terms_multiscale = minor_cycle_workspace_bytes(
+            [128, 128],
+            ReconstructionBasis::Taylor { terms: 3 },
+            &multiscale,
+            8,
+            64,
+        );
+
+        assert!(three_terms > two_terms);
+        assert!(three_terms_multiscale > three_terms);
+        assert!(three_terms >= 128 * 128 * 3 * std::mem::size_of::<f64>() as u64);
+    }
 
     #[test]
     fn model_plane_coordinates_are_preserved_in_component_cells() {
