@@ -851,3 +851,4 @@ compatibility block facade or normal-path host full-grid upload is retained.
 | 0008 | Casacore storage and bounded MeasurementSet writes | accepted |
 | 0009 | Mathematical imaging architecture | accepted |
 | 0010 | Unified imaging resource authority | accepted |
+| 0011 | Distinct sequential and joint continuum-line reconstruction | accepted |

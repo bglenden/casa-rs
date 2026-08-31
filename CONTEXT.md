@@ -67,6 +67,24 @@ Whether spectral coefficients are independent, sequentially transformed,
 jointly reconstructed, regularized, or coupled through shared products.
 _Avoid_: Basis type, task mode
 
+**Sequential Continuum Transform**:
+A visibility-domain continuum fit and subtraction completed before an
+independent channel-local line reconstruction. Its fit coefficients describe
+the transform and are not a continuum image model.
+_Avoid_: Joint continuum-line reconstruction, image-domain subtraction
+
+**Joint Continuum-Line Reconstruction**:
+A single identifiable reconstruction whose continuum and line coefficient
+families share one measurement equation, complete block normal operator, model
+generation, residual, stopping decision, and product generation.
+_Avoid_: Sequential subtraction, combined final images
+
+**Continuum Anchor Set**:
+The declared spectral samples on which a joint reconstruction structurally
+forbids line coefficients so that the smooth continuum and channel-local line
+families remain identifiable.
+_Avoid_: Suggested fit channels, solver heuristic
+
 **Measurement Operator**:
 The complete logical forward map A from model coefficients to unweighted
 selected samples and its declared-inner-product adjoint A*, including paired
