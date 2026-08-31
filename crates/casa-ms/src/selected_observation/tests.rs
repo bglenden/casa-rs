@@ -30,18 +30,19 @@ use casa_imaging_model::{
     PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy,
     ProblemInputIdentities, ProblemSpecification, ProductBlankingPolicy, ProductKind,
     ProductNormalization, ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
-    Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
-    ReconstructionControls, ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy,
-    RowSelection, ScientificContract, SelectedColumns, SelectedInputWeightGroup, SelectedMainRow,
-    SelectedObservationGenerationId, SelectedObservationInspectionError,
-    SelectedObservationPassError, SelectedObservationRunChannel, SelectedObservationRunCorrelation,
-    SelectedObservationRunRow, SelectedObservationSample, SelectedRows, SelectedSpectralEvaluation,
-    SelectedVisibilitySample, SelectionBound, SkyDirection, SourceGenerations, SpectralContract,
-    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
-    SpectralWcs, SpectralWindowSelection, StageErrorBudget, TaylorSupportReference,
-    TaylorValidityPolicy, TimeRange, TimeScale, TimeSelection, UvSelection, UvwCoordinateLaw,
-    VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract,
-    WeightingScheme, compile, compile_observation,
+    Projection, PsfPhaseCentreLaw, ReconstructionAlgorithm, ReconstructionBasis,
+    ReconstructionContract, ReconstructionControls, ReductionPolicy, ReferenceDataKind,
+    RestFrequency, RestoringBeamPolicy, RowSelection, ScientificContract, SelectedColumns,
+    SelectedInputWeightGroup, SelectedMainRow, SelectedObservationGenerationId,
+    SelectedObservationInspectionError, SelectedObservationPassError,
+    SelectedObservationRunChannel, SelectedObservationRunCorrelation, SelectedObservationRunRow,
+    SelectedObservationSample, SelectedRows, SelectedSpectralEvaluation, SelectedVisibilitySample,
+    SelectionBound, SkyDirection, SourceGenerations, SpectralContract, SpectralCoordinateSpec,
+    SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs,
+    SpectralWindowSelection, StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy,
+    TimeRange, TimeScale, TimeSelection, UvSelection, UvwCoordinateLaw, VisibilityColumn,
+    VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract, WeightingScheme,
+    compile, compile_observation,
 };
 use casa_imaging_reconstruction::compile_spectral_stencil;
 use casa_tables::{ColumnSchema, LockMode, LockOptions, LockType, Table, TableOptions};
@@ -233,7 +234,7 @@ fn retained_selected_samples_are_bounded_and_block_partition_invariant() {
             (1, 2, 1),
         ]
     );
-    let first = one_row_samples[0];
+    let first = &one_row_samples[0];
     assert_eq!(first.address.frequency_centre_hz, 1.4e9);
     assert_eq!(first.address.frequency_lower_hz, 1.3995e9);
     assert_eq!(first.address.frequency_upper_hz, 1.4005e9);
@@ -270,6 +271,118 @@ fn retained_selected_samples_are_bounded_and_block_partition_invariant() {
         inspect_samples(&problem, one_row_samples).expect("inspect exact bounded stream"),
         inspect_samples(&problem, two_row_samples).expect("inspect repartitioned bounded stream")
     );
+}
+
+#[test]
+fn multidomain_row_projections_are_main_first_and_block_partition_invariant() {
+    let directory = tempfile::tempdir().expect("temporary multidomain projection fixture");
+    let path = directory.path().join("multidomain.ms");
+    generate_fixture_with_phase_center(&path, 2, [1.0, -0.5]);
+
+    let problem = compiled_problem_with_geometry(&path, 2, multidomain_geometry());
+    assert!(matches!(
+        problem.geometry().domains()[0].role(),
+        ImageDomainRole::Main
+    ));
+    assert!(matches!(
+        problem.geometry().domains()[1].role(),
+        ImageDomainRole::Outlier(name) if name == "alpha"
+    ));
+    assert!(matches!(
+        problem.geometry().domains()[2].role(),
+        ImageDomainRole::Outlier(name) if name == "zeta"
+    ));
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+
+    let traverse = |rows_per_block| {
+        let observation = BoundSelectedObservation::open(
+            &problem,
+            test_measures(&problem),
+            vec![ObservationSourceBinding::new(
+                source_state(source),
+                bound_content_budget_for_rows(&problem, source, rows_per_block, 1),
+            )],
+        )
+        .expect("bind multidomain traversal");
+        let (mut source, mut consumer) = observation
+            .into_block_stream(&problem)
+            .expect("split multidomain block traversal");
+        let mut storage = source.create_storage(0);
+        let mut projected_rows = Vec::new();
+        let mut peak_current = 0;
+        let mut peak_capacity = 0;
+        while source
+            .fill_next(&mut storage)
+            .expect("fill multidomain block")
+            .is_some()
+        {
+            peak_current = peak_current.max(
+                storage
+                    .resident_current_bytes()
+                    .expect("measure multidomain current bytes"),
+            );
+            peak_capacity = peak_capacity.max(
+                storage
+                    .resident_capacity_bytes()
+                    .expect("measure multidomain capacity bytes"),
+            );
+            consumer
+                .consume(&storage, |run| {
+                    for reported in run.samples() {
+                        let sample = reported.selected();
+                        let address = sample.address();
+                        if address.channel_index == 0 && address.correlation_index == 0 {
+                            projected_rows.push((
+                                address.physical_row,
+                                sample.coordinates().raw_uvw_m,
+                                sample.domain_projections().iter().collect::<Vec<_>>(),
+                            ));
+                        }
+                    }
+                    Ok::<_, Infallible>(())
+                })
+                .expect("consume multidomain block");
+        }
+        let mut terminal = source.complete().expect("complete multidomain source");
+        terminal
+            .record_runtime_residency(1, peak_current, peak_capacity)
+            .expect("record multidomain residency");
+        let (_, completion) = consumer
+            .complete(terminal)
+            .expect("complete multidomain inspection");
+        (projected_rows, completion)
+    };
+
+    let (one_row, one_row_completion) = traverse(1);
+    let (two_rows, two_row_completion) = traverse(2);
+    assert_eq!(
+        one_row, two_rows,
+        "physical block boundaries are not geometry"
+    );
+    assert_eq!(
+        one_row_completion.generation_id(),
+        two_row_completion.generation_id(),
+        "selected generation is invariant to block partitioning"
+    );
+    assert_eq!(one_row.len(), 2);
+    for (_, raw_uvw_m, projections) in one_row {
+        assert_eq!(
+            projections
+                .iter()
+                .map(|projection| projection.domain_ordinal())
+                .collect::<Vec<_>>(),
+            vec![0, 1, 2]
+        );
+        assert_eq!(projections[0].model().transformed_uvw_m(), raw_uvw_m);
+        assert_eq!(projections[0].model().phase_shift_m(), 0.0);
+        assert!(!projections[0].psf_shares_model());
+        assert!(projections[1].psf_shares_model());
+        assert!(!projections[2].psf_shares_model());
+        assert_ne!(
+            projections[1].model().transformed_uvw_m(),
+            projections[2].model().transformed_uvw_m()
+        );
+    }
 }
 
 #[test]
@@ -3433,6 +3546,31 @@ fn generate_fixture_with_rows(path: &std::path::Path, row_count: usize) {
     generate_synthetic_observation_ms(&request).expect("generate bounded disk fixture");
 }
 
+fn generate_fixture_with_phase_center(
+    path: &std::path::Path,
+    row_count: usize,
+    phase_center_rad: [f64; 2],
+) {
+    let mut antennas = tutorial_vla_a_antennas();
+    antennas.truncate(2);
+    let mut request = SyntheticObservationRequest::vla_ppdisk("unused.fits", path, antennas);
+    request.predict_model = false;
+    request.allow_below_elevation_limit = true;
+    request.duration_seconds = row_count as f64;
+    request.integration_seconds = 1.0;
+    request.phase_center_rad = phase_center_rad;
+    request.spectral_setup = SyntheticSpectralSetup {
+        name: "three-channel".to_string(),
+        start_frequency_hz: 1.4e9,
+        channel_width_hz: 1.0e6,
+        channel_count: 3,
+    };
+    request.worker_policy = SyntheticWorkerPolicy::Fixed;
+    request.row_workers = Some(1);
+    request.channel_workers = Some(1);
+    generate_synthetic_observation_ms(&request).expect("generate fixed-centre disk fixture");
+}
+
 #[cfg(unix)]
 fn owner_resolution_request(
     path: &std::path::Path,
@@ -3805,6 +3943,26 @@ fn compiled_problem_with_centres(
         model_lifecycle(snapshot.model()),
     ))
     .expect("compile fixed-centre problem")
+}
+
+fn compiled_problem_with_geometry(
+    path: &std::path::Path,
+    row_count: usize,
+    geometry: GeometryInput,
+) -> casa_imaging_model::CompiledProblem {
+    let snapshot = compile_observation(ObservationSnapshotInput::new(
+        vec![source_input(path, 1, row_count)],
+        vec![(ReferenceDataKind::Measures, identity(90))],
+        ModelStateIdentity::Empty,
+    ))
+    .expect("compile geometry fixture observation");
+    compile(ImagingRequest::new(
+        specification(),
+        geometry,
+        ProblemInputIdentities::new(snapshot.clone()),
+        model_lifecycle(snapshot.model()),
+    ))
+    .expect("compile geometry fixture problem")
 }
 
 fn compiled_problem_with_sources(
@@ -4231,6 +4389,73 @@ fn geometry_with_centres(centres: CentreLaws) -> GeometryInput {
             ]),
         )],
         centres,
+        UvwCoordinateLaw::PhaseTrackingCentre,
+        SpectralCoordinateSpec::new(
+            FrequencyFrame::Topocentric,
+            FrequencyFrame::Topocentric,
+            SpectralFrameAnchor::NotApplicable,
+            SpectralWcs::Linear {
+                channels: 3,
+                reference_pixel: 0.0,
+                reference_frequency_hz: 1.4e9,
+                increment_hz: 1.0e6,
+            },
+            RestFrequency::NotApplicable,
+            casa_imaging_model::DopplerConvention::NotApplicable,
+        ),
+    )
+}
+
+fn multidomain_geometry() -> GeometryInput {
+    let domain = |role, direction, psf_phase_centre| {
+        ImageDomainSpec::new(
+            role,
+            ImageShape::new(32, 32),
+            DirectionCoordinateSpec::new(
+                Projection::Sin,
+                direction,
+                [15.0, 15.0],
+                [-4.848_136_811_095_36e-6, 4.848_136_811_095_36e-6],
+                [[1.0, 0.0], [0.0, 1.0]],
+                [180.0, 0.0],
+            ),
+            FacetLayout::Single,
+            AxisOrder::new([
+                ImageAxis::DirectionLongitude,
+                ImageAxis::DirectionLatitude,
+                ImageAxis::Polarization,
+                ImageAxis::Spectral,
+            ]),
+        )
+        .with_psf_phase_centre(psf_phase_centre)
+    };
+    let main = SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5);
+    let alpha = SkyDirection::new(DirectionFrame::J2000, 1.01, -0.49);
+    let zeta = SkyDirection::new(DirectionFrame::J2000, 1.02, -0.48);
+    GeometryInput::new(
+        // Deliberately unordered input proves compiler order reaches selected rows.
+        vec![
+            domain(
+                ImageDomainRole::Outlier("zeta".to_string()),
+                zeta,
+                PsfPhaseCentreLaw::Fixed(SkyDirection::new(DirectionFrame::J2000, 1.025, -0.475)),
+            ),
+            domain(
+                ImageDomainRole::Main,
+                main,
+                PsfPhaseCentreLaw::Fixed(SkyDirection::new(DirectionFrame::J2000, 1.005, -0.495)),
+            ),
+            domain(
+                ImageDomainRole::Outlier("alpha".to_string()),
+                alpha,
+                PsfPhaseCentreLaw::ImageDomainReference,
+            ),
+        ],
+        CentreLaws::new(
+            PhaseCentreLaw::Observation,
+            DelayCentreLaw::PhaseTrackingCentre,
+            PointingCentreLaw::PhaseTrackingCentre,
+        ),
         UvwCoordinateLaw::PhaseTrackingCentre,
         SpectralCoordinateSpec::new(
             FrequencyFrame::Topocentric,

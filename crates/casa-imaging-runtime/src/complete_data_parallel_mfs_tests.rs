@@ -320,9 +320,12 @@ fn execute_complete_data_mfs_with_policy(
     .expect("bind gridded-normal compiler")
     .with_reconstruction_cycle(
         minor_node,
-        casa_imaging_reconstruction::ReconstructionMaskPlan::FullPlane {
-            coordinate: problem.geometry().domains()[0].direction(),
-        },
+        casa_imaging_reconstruction::ImageDomainReconstructionMaskPlans::new([
+            casa_imaging_reconstruction::ReconstructionMaskPlan::FullPlane {
+                coordinate: problem.geometry().domains()[0].direction(),
+            },
+        ])
+        .expect("one-domain mask plans"),
         casa_imaging_reconstruction::MinorCycleProgram::new(0.1, 0.0, 2)
             .expect("bounded minor-cycle controls"),
     );

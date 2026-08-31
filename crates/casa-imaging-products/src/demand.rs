@@ -83,10 +83,7 @@ impl PlannedContinuumGeneration {
     ) -> Result<ContinuumGenerationDemand, ProductsError> {
         if inputs.problem().problem_id() != self.problem_id()
             || inputs.final_model().generation_id() != self.final_model_generation()
-            || inputs
-                .reconstruction_mask()
-                .map(casa_imaging_reconstruction::ReconstructionMask::generation_id)
-                != self.reconstruction_mask_generation()
+            || inputs.reconstruction_mask_generation() != self.reconstruction_mask_generation()
             || inputs
                 .coupled_reconstruction_masks()
                 .map(|masks| masks.line().generation_id())
@@ -148,32 +145,36 @@ fn generic_scratch_bytes(
     planned: &PlannedContinuumGeneration,
     inputs: &ContinuumProductInputs<'_>,
 ) -> Result<u64, ProductsError> {
-    let shape = inputs.normal_state().shape();
-    let cells = checked_shape_values([shape[0], shape[1], 1, 1])?;
-    let plane = bytes_for::<f32>(cells, "generic plane")?;
-    let validity = bytes_for::<bool>(cells, "generic validity plane")?;
     let requires_validity = planned
         .members()
         .iter()
         .any(|member| member.validity() != ProductValidityRule::All);
-    let mut scratch = if requires_validity { validity } else { 0 };
-
-    // Normalization overlaps one converted source plane with its result.
-    scratch = scratch.max(checked_mul(plane, 2, "generic converted plane pair")?);
-    if planned
+    let requires_restoration = planned
         .members()
         .iter()
-        .any(|member| matches!(member.role(), ProductRole::RestoredImage(_)))
-    {
-        // Restoration retains its restored result and normalized residual while
-        // a Gaussian kernel and one exact rustfft convolution workspace live.
-        scratch = scratch.max(checked_add(
-            checked_mul(plane, 3, "generic restoration planes")?,
-            fft_convolution_workspace_bytes(shape)?,
-            "generic restoration scratch",
-        )?);
+        .any(|member| matches!(member.role(), ProductRole::RestoredImage(_)));
+    let mut maximum = 0;
+    for domain in inputs.normal_state().domains() {
+        let shape = domain.shape();
+        let cells = checked_shape_values([shape[0], shape[1], 1, 1])?;
+        let plane = bytes_for::<f32>(cells, "generic plane")?;
+        let validity = bytes_for::<bool>(cells, "generic validity plane")?;
+        let mut scratch = if requires_validity { validity } else { 0 };
+
+        // Normalization overlaps one converted source plane with its result.
+        scratch = scratch.max(checked_mul(plane, 2, "generic converted plane pair")?);
+        if requires_restoration {
+            // Restoration retains its restored result and normalized residual while
+            // a Gaussian kernel and one exact rustfft convolution workspace live.
+            scratch = scratch.max(checked_add(
+                checked_mul(plane, 3, "generic restoration planes")?,
+                fft_convolution_workspace_bytes(shape)?,
+                "generic restoration scratch",
+            )?);
+        }
+        maximum = maximum.max(scratch);
     }
-    Ok(scratch)
+    Ok(maximum)
 }
 
 fn taylor_scratch_bytes(inputs: &ContinuumProductInputs<'_>) -> Result<u64, ProductsError> {

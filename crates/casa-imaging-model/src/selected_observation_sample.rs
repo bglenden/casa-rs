@@ -2,7 +2,7 @@
 
 //! Backend-free values carried by a selected-observation sample.
 
-use std::fmt;
+use std::{fmt, mem::size_of, sync::Arc};
 
 use smallvec::SmallVec;
 
@@ -16,7 +16,7 @@ use crate::{
 };
 
 const SELECTED_OBSERVATION_GENERATION_DOMAIN: &[u8] = b"casa-rs-selected-observation-generation";
-const SELECTED_OBSERVATION_GENERATION_VERSION: u32 = 5;
+const SELECTED_OBSERVATION_GENERATION_VERSION: u32 = 6;
 const GENERATION_ROW_RUN_MARKER: u8 = 0xa1;
 const GENERATION_ROW_RUN_TERMINAL: u8 = 0xaf;
 const GENERATION_CHANNEL_RUN_MARKER: u8 = 0xb1;
@@ -93,6 +93,197 @@ pub struct SelectedPointingDirections {
     pub antenna2: SkyDirection,
 }
 
+/// One visibility-coordinate projection to a declared image phase centre.
+///
+/// Raw MeasurementSet coordinates remain row facts stored once in
+/// [`SelectedSampleCoordinates`]. This value carries only the operator-ready
+/// transform and signed geometric path to one compiled semantic centre.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SelectedPhaseCentreProjection {
+    transformed_uvw_m: [f64; 3],
+    phase_shift_m: f64,
+}
+
+impl SelectedPhaseCentreProjection {
+    /// Construct one finite UVW and phase-path projection.
+    #[must_use]
+    pub fn new(transformed_uvw_m: [f64; 3], phase_shift_m: f64) -> Option<Self> {
+        (transformed_uvw_m.iter().all(|value| value.is_finite()) && phase_shift_m.is_finite())
+            .then_some(Self {
+                transformed_uvw_m,
+                phase_shift_m,
+            })
+    }
+
+    /// Return operator-ready UVW coordinates in metres.
+    #[must_use]
+    pub const fn transformed_uvw_m(self) -> [f64; 3] {
+        self.transformed_uvw_m
+    }
+
+    /// Return the signed geometric phase-shift path in metres.
+    #[must_use]
+    pub const fn phase_shift_m(self) -> f64 {
+        self.phase_shift_m
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum SelectedPsfPhaseCentreProjection {
+    SharedWithModel,
+    Distinct(SelectedPhaseCentreProjection),
+}
+
+/// Model and PSF coordinate projections for one canonical image domain.
+///
+/// The ordinal indexes [`crate::CompiledGeometry::domains`] directly. Domain
+/// role strings therefore remain compiler-owned and are not repeated for each
+/// selected row.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SelectedImageDomainProjection {
+    domain_ordinal: u32,
+    model: SelectedPhaseCentreProjection,
+    psf: SelectedPsfPhaseCentreProjection,
+}
+
+impl SelectedImageDomainProjection {
+    /// Construct one domain with independently declared model and PSF projections.
+    #[must_use]
+    pub const fn new(
+        domain_ordinal: u32,
+        model: SelectedPhaseCentreProjection,
+        psf: SelectedPhaseCentreProjection,
+    ) -> Self {
+        Self {
+            domain_ordinal,
+            model,
+            psf: SelectedPsfPhaseCentreProjection::Distinct(psf),
+        }
+    }
+
+    /// Construct a domain whose compiled PSF and model centres are identical.
+    #[must_use]
+    pub const fn with_shared_psf(
+        domain_ordinal: u32,
+        model: SelectedPhaseCentreProjection,
+    ) -> Self {
+        Self {
+            domain_ordinal,
+            model,
+            psf: SelectedPsfPhaseCentreProjection::SharedWithModel,
+        }
+    }
+
+    /// Return the index into canonical compiled image domains.
+    #[must_use]
+    pub const fn domain_ordinal(self) -> u32 {
+        self.domain_ordinal
+    }
+
+    /// Return the chart-model phase-centre projection.
+    #[must_use]
+    pub const fn model(self) -> SelectedPhaseCentreProjection {
+        self.model
+    }
+
+    /// Return the point-spread-function phase-centre projection.
+    #[must_use]
+    pub const fn psf(self) -> SelectedPhaseCentreProjection {
+        match self.psf {
+            SelectedPsfPhaseCentreProjection::SharedWithModel => self.model,
+            SelectedPsfPhaseCentreProjection::Distinct(psf) => psf,
+        }
+    }
+
+    /// Return whether model and PSF centres share one evaluated projection.
+    #[must_use]
+    pub const fn psf_shares_model(self) -> bool {
+        matches!(self.psf, SelectedPsfPhaseCentreProjection::SharedWithModel)
+    }
+}
+
+/// Canonically ordered, compiled-domain-bounded projections for one selected row.
+///
+/// Entries are required to have ordinals `0..len` in order. The collection is
+/// immutable and cheaply shared between a retained source block, selected-run
+/// validation, and scientific consumers.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SelectedImageDomainProjections {
+    entries: Arc<[SelectedImageDomainProjection]>,
+}
+
+impl SelectedImageDomainProjections {
+    /// Construct the canonical one-domain collection when model and PSF centres are identical.
+    #[must_use]
+    pub fn one_domain_with_shared_psf(model: SelectedPhaseCentreProjection) -> Self {
+        Self {
+            entries: Arc::from([SelectedImageDomainProjection::with_shared_psf(0, model)]),
+        }
+    }
+
+    /// Construct a non-empty canonical projection sequence.
+    #[must_use]
+    pub fn new(entries: impl IntoIterator<Item = SelectedImageDomainProjection>) -> Option<Self> {
+        let entries = entries.into_iter().collect::<Vec<_>>();
+        if entries.is_empty()
+            || entries
+                .iter()
+                .enumerate()
+                .any(|(ordinal, entry)| u32::try_from(ordinal).ok() != Some(entry.domain_ordinal()))
+        {
+            return None;
+        }
+        Some(Self {
+            entries: Arc::from(entries.into_boxed_slice()),
+        })
+    }
+
+    /// Return the exact number of compiled-domain projections.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Return whether no domain projection is present.
+    ///
+    /// Canonically constructed collections are never empty.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Iterate in canonical compiled-domain order (main first, then outliers).
+    pub fn iter(&self) -> impl Iterator<Item = SelectedImageDomainProjection> + '_ {
+        self.entries.iter().copied()
+    }
+
+    /// Return one projection by canonical compiled-domain ordinal.
+    #[must_use]
+    pub fn get(&self, domain_ordinal: u32) -> Option<SelectedImageDomainProjection> {
+        usize::try_from(domain_ordinal)
+            .ok()
+            .and_then(|ordinal| self.entries.get(ordinal))
+            .copied()
+    }
+
+    /// Return retained heap payload bytes for residency accounting.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn retained_heap_bytes(&self) -> Option<usize> {
+        Self::retained_heap_bytes_for_len(self.entries.len())
+    }
+
+    /// Return retained heap payload bytes for a compiled domain cardinality.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn retained_heap_bytes_for_len(domain_count: usize) -> Option<usize> {
+        match domain_count.checked_mul(size_of::<SelectedImageDomainProjection>()) {
+            Some(payload) => payload.checked_add(2 * size_of::<usize>()),
+            None => None,
+        }
+    }
+}
+
 /// Reported evaluated coordinates consumed by weighting and paired operators.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SelectedSampleCoordinates {
@@ -151,7 +342,7 @@ pub struct SelectedSampleMetadata {
 /// separate lets a storage owner lend one evaluated row to all selected
 /// channel/correlation members without rebuilding the large row record for
 /// every scalar sample.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SelectedObservationRunRow {
     /// Logical MeasurementSet identity from the compiled observation commitment.
     pub measurement_set: MeasurementSetIdentity,
@@ -169,8 +360,18 @@ pub struct SelectedObservationRunRow {
     pub row_flag: bool,
     /// Evaluated science coordinates shared by the row.
     pub coordinates: SelectedSampleCoordinates,
+    /// Canonical model and PSF projections shared by every row member.
+    pub domain_projections: SelectedImageDomainProjections,
     /// Per-row MeasurementSet provenance.
     pub metadata: SelectedSampleMetadata,
+}
+
+impl SelectedObservationRunRow {
+    /// Return canonical compiled-domain projections for this selected row.
+    #[must_use]
+    pub const fn domain_projections(&self) -> &SelectedImageDomainProjections {
+        &self.domain_projections
+    }
 }
 
 /// Channel-shared portion of one selected-observation run.
@@ -415,7 +616,7 @@ impl SelectedSpectralEvaluation {
 /// This is a closed value schema only. Constructing it does not mint content
 /// identity, prove traversal coverage, bind retained access or an execution
 /// attempt, or authorize downstream weighting or publication.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SelectedObservationSample {
     /// Reported source and sample coordinate.
     pub address: SelectedSampleAddress,
@@ -437,13 +638,15 @@ pub struct SelectedObservationSample {
     pub input_weight: f32,
     /// Evaluated science coordinates.
     pub coordinates: SelectedSampleCoordinates,
+    /// Canonical model and PSF projections for every compiled image domain.
+    pub domain_projections: SelectedImageDomainProjections,
     /// Reported per-sample provenance.
     pub metadata: SelectedSampleMetadata,
 }
 
 impl SelectedObservationSample {
     /// Closed schema version of the selected-sample value record.
-    pub const SCHEMA_VERSION: u32 = 3;
+    pub const SCHEMA_VERSION: u32 = 4;
 
     /// Borrow this scalar record through the same interface used by a
     /// row/channel run.
@@ -678,6 +881,15 @@ impl<'a> SelectedObservationSampleView<'a> {
         }
     }
 
+    /// Return canonical per-domain projections.
+    #[must_use]
+    pub const fn domain_projections(self) -> &'a SelectedImageDomainProjections {
+        match self.storage {
+            SelectedObservationSampleStorage::Scalar(sample) => &sample.domain_projections,
+            SelectedObservationSampleStorage::Run { row, .. } => &row.domain_projections,
+        }
+    }
+
     /// Return per-row MeasurementSet provenance.
     #[must_use]
     pub const fn metadata(self) -> &'a SelectedSampleMetadata {
@@ -690,7 +902,7 @@ impl<'a> SelectedObservationSampleView<'a> {
     /// Materialize the closed scalar record only for an owner that must retain
     /// every field independently of the source block.
     #[must_use]
-    pub const fn to_owned(self) -> SelectedObservationSample {
+    pub fn to_owned(self) -> SelectedObservationSample {
         SelectedObservationSample {
             address: self.address(),
             visibility: self.visibility(),
@@ -700,6 +912,7 @@ impl<'a> SelectedObservationSampleView<'a> {
             row_flag: self.row_flag(),
             input_weight: self.input_weight(),
             coordinates: *self.coordinates(),
+            domain_projections: self.domain_projections().clone(),
             metadata: *self.metadata(),
         }
     }
@@ -759,13 +972,14 @@ pub(crate) struct SelectedObservationGenerationEncoder {
     sample_count: u64,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, PartialEq)]
 struct GenerationRowContent {
     data_description_id: i32,
     spectral_window_id: u32,
     polarization_id: u32,
     row_flag: bool,
     coordinates: SelectedSampleCoordinates,
+    domain_projections: SelectedImageDomainProjections,
     metadata: SelectedSampleMetadata,
 }
 
@@ -778,6 +992,7 @@ impl GenerationRowContent {
             polarization_id: address.polarization_id,
             row_flag: sample.row_flag(),
             coordinates: *sample.coordinates(),
+            domain_projections: sample.domain_projections().clone(),
             metadata: *sample.metadata(),
         }
     }
@@ -789,8 +1004,19 @@ impl GenerationRowContent {
             polarization_id: row.polarization_id,
             row_flag: row.row_flag,
             coordinates: row.coordinates,
+            domain_projections: row.domain_projections.clone(),
             metadata: row.metadata,
         }
+    }
+
+    fn matches_run(&self, row: &SelectedObservationRunRow) -> bool {
+        self.data_description_id == row.data_description_id
+            && self.spectral_window_id == row.spectral_window_id
+            && self.polarization_id == row.polarization_id
+            && self.row_flag == row.row_flag
+            && self.coordinates == row.coordinates
+            && self.domain_projections == row.domain_projections
+            && self.metadata == row.metadata
     }
 }
 
@@ -888,7 +1114,7 @@ impl SelectedObservationGenerationEncoder {
 
     pub(crate) fn push_view(&mut self, sample: SelectedObservationSampleView<'_>) {
         let row = GenerationRowContent::from_view(sample);
-        if self.row_run != Some(row) {
+        if self.row_run.as_ref() != Some(&row) {
             self.finish_row_run();
             self.encoder.u8(GENERATION_ROW_RUN_MARKER);
             encode_generation_row_content(&mut self.encoder, &row);
@@ -935,9 +1161,13 @@ impl SelectedObservationGenerationEncoder {
         correlations: &[SelectedObservationRunCorrelation],
     ) {
         debug_assert!(!correlations.is_empty());
-        let row_content = GenerationRowContent::from_run(row);
-        if self.row_run != Some(row_content) {
+        if !self
+            .row_run
+            .as_ref()
+            .is_some_and(|content| content.matches_run(row))
+        {
             self.finish_row_run();
+            let row_content = GenerationRowContent::from_run(row);
             self.encoder.u8(GENERATION_ROW_RUN_MARKER);
             encode_generation_row_content(&mut self.encoder, &row_content);
             self.row_run = Some(row_content);
@@ -1050,6 +1280,13 @@ fn encode_generation_row_content(encoder: &mut CanonicalEncoder, content: &Gener
         encoder.f64(value);
     }
     encoder.f64(coordinates.phase_shift_m);
+    encoder.usize(content.domain_projections.len());
+    for projection in content.domain_projections.iter() {
+        encoder.u32(projection.domain_ordinal());
+        encode_phase_centre_projection(encoder, projection.model());
+        encoder.u8(u8::from(projection.psf_shares_model()));
+        encode_phase_centre_projection(encoder, projection.psf());
+    }
     encoder.u8(match coordinates.uvw_law {
         UvwCoordinateLaw::PhaseTrackingCentre => 0,
     });
@@ -1070,6 +1307,16 @@ fn encode_generation_row_content(encoder: &mut CanonicalEncoder, content: &Gener
     encoder.i32(content.metadata.state_id);
     encoder.i32(content.metadata.observation_id);
     encoder.i32(content.metadata.array_id);
+}
+
+fn encode_phase_centre_projection(
+    encoder: &mut CanonicalEncoder,
+    projection: SelectedPhaseCentreProjection,
+) {
+    for value in projection.transformed_uvw_m() {
+        encoder.f64(value);
+    }
+    encoder.f64(projection.phase_shift_m());
 }
 
 fn encode_generation_channel_content(
@@ -1130,10 +1377,10 @@ mod tests {
 
     const GENERATION_FIXTURE: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../resources/imaging-architecture/baselines/selected-observation-generation-v5.txt"
+        "/../../resources/imaging-architecture/baselines/selected-observation-generation-v6.txt"
     ));
 
-    const ENCODED_FIELDS: [&str; 38] = [
+    const ENCODED_FIELDS: [&str; 45] = [
         "row.data_description_id:i32",
         "row.spectral_window_id:u32",
         "row.polarization_id:u32",
@@ -1142,6 +1389,13 @@ mod tests {
         "row.density_uvw_m:f64-x-y-z",
         "row.transformed_uvw_m:f64-x-y-z",
         "row.phase_shift_m:f64",
+        "row.domain_projection_count:usize",
+        "row.domain_projection.ordinal:u32",
+        "row.domain_projection.model_uvw_m:f64-x-y-z",
+        "row.domain_projection.model_phase_shift_m:f64",
+        "row.domain_projection.psf_shares_model:u8",
+        "row.domain_projection.psf_uvw_m:f64-x-y-z",
+        "row.domain_projection.psf_phase_shift_m:f64",
         "row.uvw_law:tag-u8",
         "row.time:mjd-days-f64-then-scale-tag-u8",
         "row.time_centroid:mjd-days-f64-then-scale-tag-u8",
@@ -1175,6 +1429,29 @@ mod tests {
     ];
 
     #[test]
+    fn image_domain_projections_require_canonical_ordinals_and_share_equal_psf_values() {
+        let model = SelectedPhaseCentreProjection::new([12.0, -4.0, 2.0], 0.125)
+            .expect("finite model projection");
+        let psf = SelectedPhaseCentreProjection::new([11.0, -3.0, 1.0], -0.25)
+            .expect("finite PSF projection");
+        let main = SelectedImageDomainProjection::with_shared_psf(0, model);
+        let outlier = SelectedImageDomainProjection::new(1, model, psf);
+        let projections = SelectedImageDomainProjections::new([main, outlier])
+            .expect("canonical main-first projections");
+
+        assert_eq!(projections.iter().collect::<Vec<_>>(), vec![main, outlier]);
+        assert_eq!(projections.get(0), Some(main));
+        assert_eq!(projections.get(1), Some(outlier));
+        assert!(main.psf_shares_model());
+        assert_eq!(main.psf(), main.model());
+        assert!(!outlier.psf_shares_model());
+        assert_eq!(outlier.psf(), psf);
+        assert!(SelectedImageDomainProjections::new([outlier, main]).is_none());
+        assert!(SelectedImageDomainProjections::new(std::iter::empty()).is_none());
+        assert!(SelectedPhaseCentreProjection::new([f64::NAN, 0.0, 0.0], 0.0).is_none());
+    }
+
+    #[test]
     fn spectral_contributions_are_bounded_values_outside_the_selected_sample_schema() {
         let first = SelectedSpectralContribution::new(2, 0.25, 1.4e9).expect("finite coefficient");
         let second = SelectedSpectralContribution::new(3, 0.75, 1.4e9).expect("finite coefficient");
@@ -1195,7 +1472,7 @@ mod tests {
         assert!(SelectedSpectralContribution::new(0, 1.0, f64::NAN).is_none());
         assert!(SelectedSpectralContributions::new([None, Some(first)]).is_none());
         assert!(SelectedSpectralContributions::new([Some(first), Some(first)]).is_none());
-        assert_eq!(SelectedObservationSample::SCHEMA_VERSION, 3);
+        assert_eq!(SelectedObservationSample::SCHEMA_VERSION, 4);
 
         let samples = generation_fixture_samples();
         assert_eq!(
@@ -1208,17 +1485,17 @@ mod tests {
     #[test]
     fn content_generation_is_block_independent_exhaustive_and_provenance_free() {
         let samples = generation_fixture_samples();
-        let [first, second] = samples;
+        let [first, second] = &samples;
 
         let one_block = generation(&[&samples]);
         let split = generation(&[&samples[..1], &samples[1..]]);
         assert_eq!(one_block, split, "block boundaries are physical choices");
         assert_ne!(
             one_block,
-            generation(&[&[second, first]]),
+            generation(&[&[second.clone(), first.clone()]]),
             "logical sample order participates in content identity"
         );
-        assert_eq!(SelectedObservationGenerationId::SCHEMA_VERSION, 5);
+        assert_eq!(SelectedObservationGenerationId::SCHEMA_VERSION, 6);
 
         let mutations: &[SampleMutation] = &[
             ("data description", |s| s.address.data_description_id += 1),
@@ -1293,9 +1570,9 @@ mod tests {
             ("observation", |s| s.metadata.observation_id += 1),
             ("array", |s| s.metadata.array_id += 1),
         ];
-        let baseline = generation(&[&[first]]);
+        let baseline = generation(&[&[first.clone()]]);
         for (name, mutate) in mutations {
-            let mut changed = first;
+            let mut changed = first.clone();
             mutate(&mut changed);
             assert_ne!(
                 baseline,
@@ -1304,7 +1581,7 @@ mod tests {
             );
         }
 
-        let mut relocated = first;
+        let mut relocated = first.clone();
         relocated.address.measurement_set =
             MeasurementSetIdentity::new(LogicalIdentity::from_sha256([9; 32]));
         relocated.address.physical_row = 999;
@@ -1313,16 +1590,16 @@ mod tests {
             generation(&[&[relocated]]),
             "external source identity and physical row are provenance only"
         );
-        let mut relocated_duplicate = first;
+        let mut relocated_duplicate = first.clone();
         relocated_duplicate.address.measurement_set =
             MeasurementSetIdentity::new(LogicalIdentity::from_sha256([9; 32]));
         relocated_duplicate.address.physical_row = 999;
         assert_eq!(
-            generation(&[&[first, first]]),
-            generation(&[&[first, relocated_duplicate]]),
+            generation(&[&[first.clone(), first.clone()]]),
+            generation(&[&[first.clone(), relocated_duplicate]]),
             "provenance cannot alter hierarchical run boundaries"
         );
-        let mut residual_input = first;
+        let mut residual_input = first.clone();
         residual_input.prediction_target = SelectedPredictionTarget::NotRequested;
         assert_eq!(
             baseline,
@@ -1331,31 +1608,31 @@ mod tests {
         );
         assert_ne!(
             baseline,
-            generation(&[&[first, first]]),
+            generation(&[&[first.clone(), first.clone()]]),
             "sample multiplicity participates in content identity"
         );
 
-        let mut negative_zero = first;
+        let mut negative_zero = first.clone();
         negative_zero.coordinates.phase_shift_m = -0.0;
-        let mut positive_zero = first;
+        let mut positive_zero = first.clone();
         positive_zero.coordinates.phase_shift_m = 0.0;
         assert_eq!(
             generation(&[&[negative_zero]]),
             generation(&[&[positive_zero]]),
             "IEEE signed zero is canonicalized"
         );
-        let mut negative_weight_zero = first;
+        let mut negative_weight_zero = first.clone();
         negative_weight_zero.input_weight = -0.0;
-        let mut positive_weight_zero = first;
+        let mut positive_weight_zero = first.clone();
         positive_weight_zero.input_weight = 0.0;
         assert_eq!(
             generation(&[&[negative_weight_zero]]),
             generation(&[&[positive_weight_zero]]),
             "f32 weight signed zero is canonicalized"
         );
-        let mut negative_visibility_zero = first;
+        let mut negative_visibility_zero = first.clone();
         negative_visibility_zero.visibility = SelectedVisibilitySample::Float32(-0.0);
-        let mut positive_visibility_zero = first;
+        let mut positive_visibility_zero = first.clone();
         positive_visibility_zero.visibility = SelectedVisibilitySample::Float32(0.0);
         assert_eq!(
             generation(&[&[negative_visibility_zero]]),
@@ -1366,17 +1643,17 @@ mod tests {
         assert_eq!(
             one_block.as_bytes(),
             [
-                147, 63, 213, 238, 122, 156, 28, 165, 222, 22, 226, 198, 138, 50, 236, 194, 223,
-                146, 186, 47, 248, 10, 112, 9, 20, 166, 149, 62, 223, 109, 1, 55,
+                68, 21, 2, 148, 153, 116, 237, 169, 202, 7, 105, 13, 192, 93, 183, 98, 69, 240,
+                218, 40, 200, 255, 204, 157, 45, 31, 196, 229, 19, 227, 51, 85,
             ],
-            "schema-5 golden ratchet"
+            "schema-6 golden ratchet"
         );
     }
 
     #[test]
     fn run_generation_matches_the_scalar_encoding() {
         let first = sample();
-        let mut second = first;
+        let mut second = first.clone();
         second.address.correlation_index = 2;
         second.address.correlation_type = CorrelationType::LinearYx;
         second.visibility = SelectedVisibilitySample::Complex32([-0.75, 0.25]);
@@ -1393,6 +1670,7 @@ mod tests {
             prediction_target: first.prediction_target,
             row_flag: first.row_flag,
             coordinates: first.coordinates,
+            domain_projections: first.domain_projections.clone(),
             metadata: first.metadata,
         };
         let channel = SelectedObservationRunChannel {
@@ -1426,8 +1704,23 @@ mod tests {
         run_encoder.push_run(&row, &channel, &correlations);
         let (run_generation, run_count) = run_encoder.finish();
 
-        assert_eq!(run_generation, generation(&[&[first, second]]));
+        assert_eq!(
+            run_generation,
+            generation(&[&[first.clone(), second.clone()]])
+        );
         assert_eq!(run_count, 2);
+
+        let mut changed_row = row.clone();
+        let changed = SelectedPhaseCentreProjection::new([12.5, -4.25, 3.25], 0.125)
+            .expect("finite changed projection");
+        changed_row.domain_projections =
+            SelectedImageDomainProjections::new([SelectedImageDomainProjection::with_shared_psf(
+                0, changed,
+            )])
+            .expect("canonical changed projection");
+        let mut changed_encoder = SelectedObservationGenerationEncoder::new();
+        changed_encoder.push_run(&changed_row, &channel, &correlations);
+        assert_ne!(run_generation, changed_encoder.finish().0);
     }
 
     #[test]
@@ -1436,7 +1729,7 @@ mod tests {
             fixture_value("identity_domain"),
             "casa-rs-selected-observation-generation"
         );
-        assert_eq!(fixture_value("generation_schema_version"), "5");
+        assert_eq!(fixture_value("generation_schema_version"), "6");
         assert_eq!(fixture_value("row_run_marker"), "0xa1");
         assert_eq!(fixture_value("row_run_terminal"), "0xaf");
         assert_eq!(fixture_value("channel_run_marker"), "0xb1");
@@ -1480,7 +1773,7 @@ mod tests {
 
         assert_eq!(
             (encoder.proof_bytes(), encoder.proof_hash_calls()),
-            (419, 80),
+            (504, 91),
         );
     }
 
@@ -1494,7 +1787,7 @@ mod tests {
 
     fn generation_fixture_samples() -> [SelectedObservationSample; 2] {
         let first = sample();
-        let mut second = first;
+        let mut second = first.clone();
         second.address.physical_row = 12;
         second.address.channel_index = 8;
         second.address.frequency_centre_hz += 1_000_000.0;
@@ -1509,7 +1802,38 @@ mod tests {
         encoder.finish().0
     }
 
+    fn one_domain_projections(
+        coordinates: &SelectedSampleCoordinates,
+    ) -> SelectedImageDomainProjections {
+        let projection = SelectedPhaseCentreProjection::new(
+            coordinates.transformed_uvw_m,
+            coordinates.phase_shift_m,
+        )
+        .expect("finite fixture projection");
+        SelectedImageDomainProjections::new([SelectedImageDomainProjection::with_shared_psf(
+            0, projection,
+        )])
+        .expect("canonical fixture projections")
+    }
+
     fn sample() -> SelectedObservationSample {
+        let coordinates = SelectedSampleCoordinates {
+            raw_uvw_m: [12.0, -4.0, 2.0],
+            density_uvw_m: [12.5, -4.25, 2.25],
+            transformed_uvw_m: [11.75, -3.75, 1.5],
+            phase_shift_m: 0.125,
+            uvw_law: UvwCoordinateLaw::PhaseTrackingCentre,
+            time: Epoch::new(59_000.0, TimeScale::Utc),
+            time_centroid: Epoch::new(59_000.000_001, TimeScale::Utc),
+            interval_seconds: 1.0,
+            exposure_seconds: 0.8,
+            phase_direction: SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
+            delay_direction: SkyDirection::new(DirectionFrame::J2000, 1.000_5, -0.500_5),
+            pointing_directions: SelectedPointingDirections {
+                antenna1: SkyDirection::new(DirectionFrame::J2000, 1.001, -0.499),
+                antenna2: SkyDirection::new(DirectionFrame::J2000, 1.002, -0.498),
+            },
+        };
         SelectedObservationSample {
             address: SelectedSampleAddress {
                 measurement_set: MeasurementSetIdentity::new(LogicalIdentity::from_sha256([1; 32])),
@@ -1532,23 +1856,8 @@ mod tests {
             parallel_hand_group_flag: true,
             row_flag: false,
             input_weight: 2.5,
-            coordinates: SelectedSampleCoordinates {
-                raw_uvw_m: [12.0, -4.0, 2.0],
-                density_uvw_m: [12.5, -4.25, 2.25],
-                transformed_uvw_m: [11.75, -3.75, 1.5],
-                phase_shift_m: 0.125,
-                uvw_law: UvwCoordinateLaw::PhaseTrackingCentre,
-                time: Epoch::new(59_000.0, TimeScale::Utc),
-                time_centroid: Epoch::new(59_000.000_001, TimeScale::Utc),
-                interval_seconds: 1.0,
-                exposure_seconds: 0.8,
-                phase_direction: SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
-                delay_direction: SkyDirection::new(DirectionFrame::J2000, 1.000_5, -0.500_5),
-                pointing_directions: SelectedPointingDirections {
-                    antenna1: SkyDirection::new(DirectionFrame::J2000, 1.001, -0.499),
-                    antenna2: SkyDirection::new(DirectionFrame::J2000, 1.002, -0.498),
-                },
-            },
+            coordinates,
+            domain_projections: one_domain_projections(&coordinates),
             metadata: SelectedSampleMetadata {
                 field_id: 14,
                 antenna1: 10,

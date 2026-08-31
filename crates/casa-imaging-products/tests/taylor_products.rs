@@ -23,7 +23,8 @@ use casa_imaging_model::{
     ProductUnit, ProductValidityPolicies, ProductValidityRule, Projection, ReconstructionAlgorithm,
     ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
     ReferenceDataKind, RestFrequency, RestoringBeamPolicy, RowSelection, ScientificContract,
-    SelectedColumns, SelectedMainRow, SelectedObservationGenerationId, SelectedObservationSample,
+    SelectedColumns, SelectedImageDomainProjections, SelectedMainRow,
+    SelectedObservationGenerationId, SelectedObservationSample, SelectedPhaseCentreProjection,
     SelectedPredictionTarget, SelectedRows, SelectedSampleAddress, SelectedSampleCoordinates,
     SelectedSampleMetadata, SelectedSpectralContribution, SelectedSpectralContributions,
     SelectedVisibilitySample, SkyDirection, SourceGenerations, SpectralContract,
@@ -487,6 +488,10 @@ fn samples(problem: &casa_imaging_model::CompiledProblem) -> Vec<SelectedObserva
                         antenna2: SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
                     },
                 },
+                domain_projections: SelectedImageDomainProjections::one_domain_with_shared_psf(
+                    SelectedPhaseCentreProjection::new([1.0 + row_index as f64, 0.0, 0.0], 0.0)
+                        .expect("finite one-domain projection"),
+                ),
                 metadata: SelectedSampleMetadata {
                     field_id: 0,
                     antenna1: 0,
@@ -527,7 +532,7 @@ fn selected_generation(
     samples: &[SelectedObservationSample],
 ) -> SelectedObservationGenerationId {
     problem
-        .inspect_selected_observation(samples.iter().copied().map(Ok::<_, Infallible>), |_| {
+        .inspect_selected_observation(samples.iter().cloned().map(Ok::<_, Infallible>), |_| {
             Ok::<_, Infallible>(())
         })
         .expect("inspect selected stream")

@@ -19,15 +19,16 @@ use casa_imaging_model::{
     ProductNormalization, ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
     Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
     ReconstructionControls, ReductionPolicy, RestFrequency, RestoringBeamPolicy, RowSelection,
-    ScientificContract, SelectedColumns, SelectedInputWeightGroup, SelectedMainRow,
-    SelectedObservationGenerationId, SelectedObservationSample, SelectedPredictionTarget,
-    SelectedRows, SelectedSampleAddress, SelectedSampleCoordinates, SelectedSampleMetadata,
-    SelectedSpectralContribution, SelectedSpectralContributions, SelectedVisibilitySample,
-    SkyDirection, SourceGenerations, SpectralContract, SpectralCoordinateSpec, SpectralCoupling,
-    SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection,
-    StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy, TimeScale, TimeSelection,
-    UvSelection, UvTaper, UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn,
-    WeightDensityScope, WeightingContract, WeightingScheme, compile, compile_observation,
+    ScientificContract, SelectedColumns, SelectedImageDomainProjections, SelectedInputWeightGroup,
+    SelectedMainRow, SelectedObservationGenerationId, SelectedObservationSample,
+    SelectedPhaseCentreProjection, SelectedPredictionTarget, SelectedRows, SelectedSampleAddress,
+    SelectedSampleCoordinates, SelectedSampleMetadata, SelectedSpectralContribution,
+    SelectedSpectralContributions, SelectedVisibilitySample, SkyDirection, SourceGenerations,
+    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
+    SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection, StageErrorBudget,
+    TaylorSupportReference, TaylorValidityPolicy, TimeScale, TimeSelection, UvSelection, UvTaper,
+    UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope,
+    WeightingContract, WeightingScheme, compile, compile_observation,
 };
 use casa_imaging_reconstruction::{
     FrozenWeightingCoverageProof, WeightingAlgorithmState, WeightingError,
@@ -323,6 +324,13 @@ fn exact_samples(problem: &casa_imaging_model::CompiledProblem) -> Vec<SelectedO
                         antenna2: SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
                     },
                 },
+                domain_projections: SelectedImageDomainProjections::one_domain_with_shared_psf(
+                    SelectedPhaseCentreProjection::new(
+                        [1.0 + row_index as f64, source_index as f64, 0.0],
+                        0.0,
+                    )
+                    .expect("finite one-domain projection"),
+                ),
                 metadata: SelectedSampleMetadata {
                     field_id: 0,
                     antenna1: 0,
@@ -357,7 +365,7 @@ fn selected_generation(
     samples: &[SelectedObservationSample],
 ) -> SelectedObservationGenerationId {
     problem
-        .inspect_selected_observation(samples.iter().copied().map(Ok::<_, Infallible>), |_| {
+        .inspect_selected_observation(samples.iter().cloned().map(Ok::<_, Infallible>), |_| {
             Ok::<_, Infallible>(())
         })
         .expect("inspect fixture selected stream")
@@ -591,7 +599,7 @@ fn one_correlation_group_preserves_its_casa_float_weight() {
         WeightDensityScope::NotApplicable,
         None,
     );
-    let mut sample = exact_samples(&problem)[0];
+    let mut sample = exact_samples(&problem)[0].clone();
     sample.input_weight = 3.0;
 
     let (weights, sum_weights) = grouped_weighting(
@@ -615,10 +623,10 @@ fn unequal_parallel_hands_share_the_casa_float_mean_for_natural_weighting() {
         (CorrelationType::CircularRr, CorrelationType::CircularLl),
         (CorrelationType::LinearXx, CorrelationType::LinearYy),
     ] {
-        let mut first = exact_samples(&problem)[0];
+        let mut first = exact_samples(&problem)[0].clone();
         first.address.correlation_type = first_type;
         first.input_weight = 16_777_216.0;
-        let mut last = first;
+        let mut last = first.clone();
         last.address.correlation_index = 1;
         last.address.correlation_type = last_type;
         last.input_weight = 1.0;
@@ -645,15 +653,15 @@ fn parallel_hand_groups_contribute_density_once_for_uniform_and_briggs() {
         WeightingScheme::Briggs { robust: 0.5 },
     ] {
         let problem = problem(scheme, WeightDensityScope::GlobalSelection, None);
-        let mut first = exact_samples(&problem)[0];
+        let mut first = exact_samples(&problem)[0].clone();
         first.address.correlation_type = CorrelationType::CircularRr;
         first.input_weight = 3.0;
         first.coordinates.density_uvw_m = [1.0, 0.0, 0.0];
-        let mut last = first;
+        let mut last = first.clone();
         last.address.correlation_index = 1;
         last.address.correlation_type = CorrelationType::CircularLl;
         last.input_weight = 7.0;
-        let mut single = first;
+        let mut single = first.clone();
         single.address.physical_row += 1;
         single.address.correlation_type = CorrelationType::StokesI;
         single.input_weight = 2.0;
@@ -694,7 +702,7 @@ fn four_correlation_cross_hands_do_not_add_uniform_density() {
         WeightDensityScope::GlobalSelection,
         None,
     );
-    let base = exact_samples(&problem)[0];
+    let base = exact_samples(&problem)[0].clone();
     let types = [
         CorrelationType::CircularRr,
         CorrelationType::CircularRl,
@@ -707,7 +715,7 @@ fn four_correlation_cross_hands_do_not_add_uniform_density() {
         .zip(raw_weights)
         .enumerate()
         .map(|(ordinal, (correlation_type, input_weight))| {
-            let mut sample = base;
+            let mut sample = base.clone();
             sample.address.correlation_index = ordinal as u32;
             sample.address.correlation_type = correlation_type;
             sample.input_weight = input_weight;
@@ -801,8 +809,8 @@ fn fit_only_samples_cannot_change_density_dependent_output_weights() {
         WeightingExecutionLimits::new(1, 2).expect("limits"),
     )
     .expect("plan");
-    let target = exact_samples(&problem)[0];
-    let mut fit_only = target;
+    let target = exact_samples(&problem)[0].clone();
+    let mut fit_only = target.clone();
     fit_only.input_weight = 1.0e30;
 
     let output_weight = |include_fit_only: bool| {
@@ -1230,7 +1238,7 @@ fn linear_contribution_coefficients_drive_per_output_density_and_replay() {
         WeightDensityScope::PerOutputChannel,
         None,
     );
-    let sample = exact_samples(&problem)[0];
+    let sample = exact_samples(&problem)[0].clone();
     let contributions = SelectedSpectralContributions::new([
         SelectedSpectralContribution::new(0, 0.25, sample.address.frequency_centre_hz),
         SelectedSpectralContribution::new(1, 0.75, sample.address.frequency_centre_hz),

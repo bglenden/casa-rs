@@ -9,6 +9,7 @@
 
 mod availability;
 mod casa_product_sink;
+mod continuum_domains;
 mod continuum_request;
 
 pub use availability::{
@@ -16,7 +17,7 @@ pub use availability::{
     validate_installed_implementation,
 };
 pub use casa_imaging_model::HogbomIterationAccounting;
-pub use casa_product_sink::CasaImageProductSink;
+pub use casa_product_sink::{CasaImageDomainOutput, CasaImageProductSink};
 pub use continuum_request::{
     ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumBeamPolicy, ContinuumImagingRequest,
     ContinuumImagingResult, ContinuumMask, ContinuumMaskBox, ContinuumStopReason,
@@ -36,8 +37,8 @@ use casa_imaging_products::{
     VisibilityProductCompletion,
 };
 use casa_imaging_reconstruction::{
-    ExecutableModelProblem, MajorCycleCompletion, MinorCycleProgram, MinorCycleStopReason,
-    ReconstructionMaskPlan, ReconstructionMaskSet, WeightingExecutionLimits,
+    ExecutableModelProblem, ImageDomainReconstructionMaskPlans, MajorCycleCompletion,
+    MinorCycleProgram, MinorCycleStopReason, ReconstructionMaskSet, WeightingExecutionLimits,
 };
 use casa_imaging_runtime::{
     AttemptBoundObservationCompletion, BuildIdentity, ExecutionAttemptId, ExecutionProvenance,
@@ -103,7 +104,7 @@ pub struct ApplicationRequest<S> {
     /// Initial-model lifecycle contract.
     pub model_lifecycle: ModelLifecycleRequirements,
     /// Deferred reconstruction-mask owner input.
-    pub mask: ReconstructionMaskPlan,
+    pub masks: ImageDomainReconstructionMaskPlans,
     /// Storage-owner request for the single selected MeasurementSet.
     pub observation: SelectedObservationResolutionRequest,
     /// Whether final paired-operator predictions are committed to `MODEL_DATA`.
@@ -308,7 +309,7 @@ where
         initial_access: access,
         write_model_column: request.write_model_column,
         write_corrected_data: request.write_corrected_data,
-        mask: request.mask,
+        masks: request.masks,
         native: request.native,
     };
     let output = run_native(&problem, input).map_err(ApplicationDispatchError::Native)?;
@@ -322,7 +323,7 @@ struct NativeInput<S> {
     initial_access: ResolvedSelectedObservationAccess,
     write_model_column: bool,
     write_corrected_data: bool,
-    mask: ReconstructionMaskPlan,
+    masks: ImageDomainReconstructionMaskPlans,
     native: Result<ApplicationNative<S>, ApplicationError>,
 }
 
@@ -410,7 +411,7 @@ where
         let program = MinorCycleProgram::for_problem(problem)?.record_component_sequence(64)?;
         executor = executor.with_reconstruction_cycle(
             minor_node.ok_or_else(|| boxed("initial plan omitted its minor-cycle node"))?,
-            input.mask.clone(),
+            input.masks.clone(),
             program,
         );
     }
@@ -514,7 +515,7 @@ where
             let mut cycle = 1_usize;
             let mut total_iterations = 0_usize;
             let mut total_actual_iterations = 0_usize;
-            let mut mask_plan = input.mask.clone();
+            let mut mask_plans = input.masks.clone();
             let mut minor_outcomes = Vec::new();
             loop {
                 let applied_masks = minor.masks().clone();
@@ -581,28 +582,41 @@ where
                 let continue_cleaning = cycle < maximum_cycles
                     && total_iterations < controls.max_minor_iterations()
                     && minor.evidence().requests_reconciliation();
-                let next_mask = match &applied_masks {
-                    ReconstructionMaskSet::Shared(mask) => mask_plan.next_cycle(
-                        mask,
-                        cycle,
-                        minor.evidence().cycle_threshold_is_global(),
-                        minor_outcome
-                            .auto_mask
-                            .is_some_and(|evidence| evidence.channel_stopped),
-                    ),
-                    ReconstructionMaskSet::Coupled(masks) => mask_plan.next_coupled_cycle(
+                let next_masks = match &applied_masks {
+                    ReconstructionMaskSet::Domains(masks) => mask_plans.next_cycle(
                         masks,
                         cycle,
                         minor.evidence().cycle_threshold_is_global(),
-                        [
-                            minor_outcome
-                                .auto_mask
-                                .is_some_and(|evidence| evidence.channel_stopped),
-                            minor_outcome
-                                .line_auto_mask
-                                .is_some_and(|evidence| evidence.channel_stopped),
-                        ],
-                    ),
+                        &(0..masks.len())
+                            .map(|ordinal| {
+                                minor
+                                    .domain_auto_mask_evidence(ordinal)
+                                    .is_some_and(|evidence| evidence.channel_stopped)
+                            })
+                            .collect::<Vec<_>>(),
+                    )?,
+                    ReconstructionMaskSet::Coupled(masks) => {
+                        ImageDomainReconstructionMaskPlans::new([mask_plans
+                            .primary()
+                            .next_coupled_cycle(
+                                masks,
+                                cycle,
+                                minor.evidence().cycle_threshold_is_global(),
+                                [
+                                    minor_outcome
+                                        .auto_mask
+                                        .is_some_and(|evidence| evidence.channel_stopped),
+                                    minor_outcome
+                                        .line_auto_mask
+                                        .is_some_and(|evidence| evidence.channel_stopped),
+                                ],
+                            )])?
+                    }
+                    ReconstructionMaskSet::Shared(_) => {
+                        return Err(boxed(
+                            "native application received a non-domain reconstruction mask",
+                        ));
+                    }
                 };
                 minor_outcomes.push(minor_outcome);
                 let final_input = minor.into_final_major_input();
@@ -658,7 +672,7 @@ where
                         .limit_iterations(remaining)?;
                     executor = executor.with_reconstruction_cycle(
                         minor_node.ok_or_else(|| boxed("continuing plan omitted minor node"))?,
-                        next_mask.clone(),
+                        next_masks.clone(),
                         program,
                     );
                 }
@@ -696,7 +710,7 @@ where
                         .implementation()
                         .take_reconstruction_cycle_completion()
                         .ok_or_else(|| boxed("continuing major omitted cycle evidence"))?;
-                    mask_plan = next_mask;
+                    mask_plans = next_masks;
                     cycle += 1;
                     continue;
                 }
@@ -966,6 +980,9 @@ where
                 masks,
             )?
         }
+        Some(ReconstructionMaskSet::Domains(masks)) => {
+            ContinuumSourceCatalog::from_major_cycle_with_domain_masks(problem, &scientific, masks)?
+        }
         None => ContinuumSourceCatalog::from_major_cycle(problem, &scientific)?,
     };
     let authority = ProductGenerationAuthority::bind(problem);
@@ -977,6 +994,9 @@ where
                 ReconstructionMaskSet::Shared(mask) => inputs.with_reconstruction_mask(mask)?,
                 ReconstructionMaskSet::Coupled(masks) => {
                     inputs.with_coupled_reconstruction_masks(masks)?
+                }
+                ReconstructionMaskSet::Domains(masks) => {
+                    inputs.with_domain_reconstruction_masks(masks)?
                 }
             };
         }

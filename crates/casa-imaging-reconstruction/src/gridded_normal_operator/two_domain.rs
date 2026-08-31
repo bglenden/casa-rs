@@ -143,6 +143,239 @@ pub(super) struct GriddedNormalTileCatalog {
     pub(super) geometries: Vec<GriddedNormalTileGeometry>,
 }
 
+pub(super) struct GriddedNormalDomainTileCatalogs {
+    catalogs: Vec<GriddedNormalTileCatalog>,
+    offsets: Vec<usize>,
+}
+
+impl GriddedNormalDomainTileCatalogs {
+    pub(super) fn new(
+        grid_shapes: impl IntoIterator<Item = [usize; 2]>,
+    ) -> Result<Self, SpectralOperatorError> {
+        let catalogs = grid_shapes
+            .into_iter()
+            .map(GriddedNormalTileCatalog::new)
+            .collect::<Result<Vec<_>, _>>()?;
+        if catalogs.is_empty() {
+            return Err(SpectralOperatorError::UnsupportedGeometry);
+        }
+        let mut offsets: Vec<usize> = Vec::with_capacity(catalogs.len() + 1);
+        offsets.push(0);
+        for catalog in &catalogs {
+            offsets.push(
+                offsets
+                    .last()
+                    .copied()
+                    .and_then(|offset| offset.checked_add(catalog.geometries.len()))
+                    .ok_or(SpectralOperatorError::ResidencyOverflow)?,
+            );
+        }
+        Ok(Self { catalogs, offsets })
+    }
+
+    pub(super) fn domain_count(&self) -> usize {
+        self.catalogs.len()
+    }
+
+    pub(super) fn tile_count(&self) -> usize {
+        self.offsets.last().copied().unwrap_or(0)
+    }
+
+    pub(super) fn grid_shape(&self, domain_ordinal: usize) -> Option<[usize; 2]> {
+        self.catalogs
+            .get(domain_ordinal)
+            .map(|catalog| catalog.grid_shape)
+    }
+
+    pub(super) fn tile_ordinal(
+        &self,
+        domain_ordinal: usize,
+        taps: SampleTaps,
+    ) -> Result<usize, SpectralOperatorError> {
+        let catalog = self
+            .catalogs
+            .get(domain_ordinal)
+            .ok_or(SpectralOperatorError::InvalidGriddedRecord)?;
+        self.offsets[domain_ordinal]
+            .checked_add(catalog.tile_ordinal(taps)?)
+            .ok_or(SpectralOperatorError::ResidencyOverflow)
+    }
+
+    pub(super) fn geometry(
+        &self,
+        global_tile_ordinal: usize,
+    ) -> Result<(usize, GriddedNormalTileGeometry), SpectralOperatorError> {
+        let domain_ordinal = self
+            .offsets
+            .windows(2)
+            .position(|window| window[0] <= global_tile_ordinal && global_tile_ordinal < window[1])
+            .ok_or(SpectralOperatorError::InvalidGriddedRecord)?;
+        let local = global_tile_ordinal - self.offsets[domain_ordinal];
+        self.catalogs[domain_ordinal]
+            .geometries
+            .get(local)
+            .copied()
+            .map(|geometry| (domain_ordinal, geometry))
+            .ok_or(SpectralOperatorError::InvalidGriddedRecord)
+    }
+
+    pub(super) fn accumulators(
+        &self,
+        core_depth: usize,
+    ) -> Result<Vec<Mutex<GriddedNormalTileAccumulator>>, SpectralOperatorError> {
+        let count = self
+            .tile_count()
+            .checked_add(GRIDDED_NORMAL_HOT_TILE_DUPLICATES)
+            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+        let mut accumulators = Vec::new();
+        accumulators
+            .try_reserve_exact(count)
+            .map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
+        for catalog in &self.catalogs {
+            for geometry in &catalog.geometries {
+                accumulators.push(Mutex::new(GriddedNormalTileAccumulator::new(
+                    geometry.shape,
+                    core_depth,
+                )));
+            }
+        }
+        let maximum_shape = self
+            .catalogs
+            .iter()
+            .flat_map(|catalog| &catalog.geometries)
+            .max_by_key(|geometry| geometry.cell_count())
+            .map(|geometry| geometry.shape)
+            .ok_or(SpectralOperatorError::UnsupportedGeometry)?;
+        for _ in 0..GRIDDED_NORMAL_HOT_TILE_DUPLICATES {
+            accumulators.push(Mutex::new(GriddedNormalTileAccumulator::new(
+                maximum_shape,
+                core_depth,
+            )));
+        }
+        if accumulators.len() != count || accumulators.capacity() != count {
+            return Err(SpectralOperatorError::ResidencyOverflow);
+        }
+        Ok(accumulators)
+    }
+}
+
+pub(super) fn domain_execution_residency(
+    grid_shapes: impl IntoIterator<Item = [usize; 2]>,
+    coefficient_terms: usize,
+) -> Result<GriddedNormalExecutionResidency, SpectralOperatorError> {
+    if coefficient_terms == 0 {
+        return Err(SpectralOperatorError::InvalidSlab);
+    }
+    let catalogs = GriddedNormalDomainTileCatalogs::new(grid_shapes)?;
+    let tile_halo_cells = catalogs
+        .catalogs
+        .iter()
+        .flat_map(|catalog| &catalog.geometries)
+        .try_fold(0_usize, |total, geometry| {
+            geometry
+                .cell_count()
+                .and_then(|cells| total.checked_add(cells))
+                .ok_or(SpectralOperatorError::ResidencyOverflow)
+        })?;
+    let duplicate_cells = catalogs
+        .catalogs
+        .iter()
+        .map(GriddedNormalTileCatalog::maximum_cell_count)
+        .max()
+        .unwrap_or(0)
+        .checked_mul(GRIDDED_NORMAL_HOT_TILE_DUPLICATES)
+        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+    let tile_accumulator_complex_values = tile_halo_cells
+        .checked_add(duplicate_cells)
+        .and_then(|cells| cells.checked_mul(coefficient_terms))
+        .and_then(|values| values.checked_mul(2))
+        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+    let merge_complex_values = catalogs
+        .catalogs
+        .iter()
+        .try_fold(0_usize, |total, catalog| {
+            catalog.grid_shape[0]
+                .checked_mul(catalog.grid_shape[1])
+                .and_then(|cells| total.checked_add(cells))
+                .ok_or(SpectralOperatorError::ResidencyOverflow)
+        })?
+        .checked_mul(coefficient_terms)
+        .and_then(|values| values.checked_mul(2))
+        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+    let peak_complex_values = tile_accumulator_complex_values
+        .checked_add(merge_complex_values)
+        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+    let tile_count = catalogs.tile_count();
+    let accumulator_count = tile_count
+        .checked_add(GRIDDED_NORMAL_HOT_TILE_DUPLICATES)
+        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+    let catalog_bytes = catalogs
+        .catalogs
+        .capacity()
+        .checked_mul(size_of::<GriddedNormalTileCatalog>())
+        .and_then(|bytes| {
+            catalogs
+                .offsets
+                .capacity()
+                .checked_mul(size_of::<usize>())
+                .and_then(|offsets| bytes.checked_add(offsets))
+        })
+        .and_then(|bytes| {
+            catalogs.catalogs.iter().try_fold(bytes, |total, catalog| {
+                catalog
+                    .geometries
+                    .capacity()
+                    .checked_mul(size_of::<GriddedNormalTileGeometry>())
+                    .and_then(|geometry| total.checked_add(geometry))
+            })
+        })
+        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+    let routing_bytes = tile_count
+        .checked_mul(size_of::<u32>() * 2)
+        .and_then(|bytes| {
+            tile_count
+                .checked_add(1)
+                .and_then(|count| count.checked_mul(size_of::<u32>()))
+                .and_then(|offsets| bytes.checked_add(offsets))
+        })
+        .and_then(|bytes| {
+            accumulator_count
+                .checked_mul(size_of::<GriddedNormalTileTask>())
+                .and_then(|tasks| bytes.checked_add(tasks))
+        })
+        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+    let accumulator_bytes = accumulator_count
+        .checked_mul(size_of::<Mutex<GriddedNormalTileAccumulator>>())
+        .and_then(|bytes| {
+            accumulator_count
+                .checked_mul(coefficient_terms)
+                .and_then(|planes| planes.checked_mul(size_of::<Array2<Complex64>>() * 2))
+                .and_then(|planes| bytes.checked_add(planes))
+        })
+        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+    let domain_count = catalogs.domain_count();
+    let merge_descriptor_bytes = domain_count
+        .checked_mul(size_of::<Vec<Array2<Complex64>>>() * 2)
+        .and_then(|bytes| {
+            domain_count
+                .checked_mul(coefficient_terms)
+                .and_then(|planes| planes.checked_mul(size_of::<Array2<Complex64>>() * 2))
+                .and_then(|planes| bytes.checked_add(planes))
+        })
+        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+    let metadata_bytes = catalog_bytes
+        .checked_add(routing_bytes)
+        .and_then(|bytes| bytes.checked_add(accumulator_bytes))
+        .and_then(|bytes| bytes.checked_add(merge_descriptor_bytes))
+        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+    Ok(GriddedNormalExecutionResidency {
+        tile_accumulator_complex_values,
+        merge_complex_values,
+        peak_complex_values,
+        metadata_bytes,
+    })
+}
+
 impl GriddedNormalTileCatalog {
     pub(super) fn tile_count(grid_shape: [usize; 2]) -> Option<usize> {
         Self::key_bounds(grid_shape)
@@ -263,43 +496,6 @@ impl GriddedNormalTileCatalog {
             .filter_map(|geometry| geometry.cell_count())
             .max()
             .unwrap_or(0)
-    }
-
-    pub(super) fn accumulators(
-        &self,
-        core_depth: usize,
-    ) -> Result<Vec<Mutex<GriddedNormalTileAccumulator>>, SpectralOperatorError> {
-        let count = self
-            .geometries
-            .len()
-            .checked_add(GRIDDED_NORMAL_HOT_TILE_DUPLICATES)
-            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-        let mut accumulators = Vec::new();
-        accumulators
-            .try_reserve_exact(count)
-            .map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
-        for geometry in &self.geometries {
-            accumulators.push(Mutex::new(GriddedNormalTileAccumulator::new(
-                geometry.shape,
-                core_depth,
-            )));
-        }
-        let maximum_shape = self
-            .geometries
-            .iter()
-            .max_by_key(|geometry| geometry.cell_count())
-            .map(|geometry| geometry.shape)
-            .ok_or(SpectralOperatorError::UnsupportedGeometry)?;
-        for _ in 0..GRIDDED_NORMAL_HOT_TILE_DUPLICATES {
-            accumulators.push(Mutex::new(GriddedNormalTileAccumulator::new(
-                maximum_shape,
-                core_depth,
-            )));
-        }
-        if accumulators.capacity() != count {
-            return Err(SpectralOperatorError::ResidencyOverflow);
-        }
-        Ok(accumulators)
     }
 }
 
@@ -465,7 +661,7 @@ impl PreparedGriddedNormalTwoDomainWindow {
         first_sequence: u64,
         descriptors: &[BlockDescriptor],
         frames: I,
-        catalog: &GriddedNormalTileCatalog,
+        catalogs: &GriddedNormalDomainTileCatalogs,
         output_channels: usize,
     ) -> Result<(), SpectralOperatorError>
     where
@@ -521,10 +717,11 @@ impl PreparedGriddedNormalTwoDomainWindow {
                         for (record_ordinal, bytes) in
                             encoded.chunks_exact(self.record_bytes).enumerate()
                         {
-                            let record = decode_record(bytes, catalog.grid_shape, output_channels)?;
+                            let record = decode_domain_record(bytes, catalogs, output_channels)?;
                             let group_ordinal = u32::try_from(self.groups.len())
                                 .map_err(|_| SpectralOperatorError::CoverageOverflow)?;
-                            let tile_ordinal = catalog.tile_ordinal(record.taps)?;
+                            let tile_ordinal =
+                                catalogs.tile_ordinal(record.domain_ordinal, record.taps)?;
                             self.classifications.push(GriddedNormalClassification {
                                 tile_ordinal: u32::try_from(tile_ordinal)
                                     .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
@@ -559,12 +756,14 @@ impl PreparedGriddedNormalTwoDomainWindow {
                         {
                             let record = decode_taylor_record(
                                 bytes,
-                                catalog.grid_shape,
+                                catalogs
+                                    .grid_shape(0)
+                                    .ok_or(SpectralOperatorError::InvalidGriddedRecord)?,
                                 plan.normal_moment_count(),
                             )?;
                             let group_ordinal = u32::try_from(self.groups.len())
                                 .map_err(|_| SpectralOperatorError::CoverageOverflow)?;
-                            let tile_ordinal = catalog.tile_ordinal(record.taps)?;
+                            let tile_ordinal = catalogs.tile_ordinal(0, record.taps)?;
                             self.classifications.push(GriddedNormalClassification {
                                 tile_ordinal: u32::try_from(tile_ordinal)
                                     .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
@@ -991,7 +1190,7 @@ impl GriddedNormalOperatorApply {
             self.next_block_sequence,
             &self.program.manifest.descriptors,
             frames,
-            &self.tile_catalog,
+            &self.tile_catalogs,
             self.program.manifest.specification.slab().total_channels(),
         )?;
         for task in &prepared.tasks {
@@ -1124,16 +1323,20 @@ impl GriddedNormalOperatorApply {
                                 .ok_or(SpectralOperatorError::InvalidGriddedRecord)?
                                 .chunks_exact(prepared.record_bytes)
                             {
-                                let record = decode_record(
+                                let record = decode_domain_record(
                                     bytes,
-                                    self.tile_catalog.grid_shape,
+                                    &self.tile_catalogs,
                                     self.program.manifest.specification.slab().total_channels(),
                                 )?;
-                                prediction += self.operator.predict_gridded_normal(
-                                    record.output_channel,
-                                    record.taps,
-                                    record.forward_scale,
-                                )?;
+                                prediction += self
+                                    .operators
+                                    .get(record.domain_ordinal)
+                                    .ok_or(SpectralOperatorError::InvalidGriddedRecord)?
+                                    .predict_gridded_normal(
+                                        record.output_channel,
+                                        record.taps,
+                                        record.forward_scale,
+                                    )?;
                             }
                             if !prediction.re.is_finite() || !prediction.im.is_finite() {
                                 return Err(SpectralOperatorError::GeneratedNonfinite);
@@ -1164,7 +1367,9 @@ impl GriddedNormalOperatorApply {
                                 encoded
                                     .get(start..end)
                                     .ok_or(SpectralOperatorError::InvalidGriddedRecord)?,
-                                self.tile_catalog.grid_shape,
+                                self.tile_catalogs
+                                    .grid_shape(0)
+                                    .ok_or(SpectralOperatorError::InvalidGriddedRecord)?,
                                 plan.normal_moment_count(),
                             )?;
                             let value_start = local
@@ -1180,7 +1385,7 @@ impl GriddedNormalOperatorApply {
                                 ..
                             } = &mut *owner;
                             record.fill_moments(moment_scratch)?;
-                            self.operator.predict_gridded_block_normal(
+                            self.operators[0].predict_gridded_block_normal(
                                 record.taps,
                                 moment_scratch,
                                 model_scratch,
@@ -1199,14 +1404,10 @@ impl GriddedNormalOperatorApply {
                         .iter()
                         .filter(|task| usize::from(task.lane) == work.lane)
                     {
-                        let geometry = *self
-                            .tile_catalog
-                            .geometries
-                            .get(
-                                usize::try_from(task.tile_ordinal)
-                                    .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
-                            )
-                            .ok_or(SpectralOperatorError::IncompleteCoverage)?;
+                        let (domain_ordinal, geometry) = self.tile_catalogs.geometry(
+                            usize::try_from(task.tile_ordinal)
+                                .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
+                        )?;
                         let mut accumulator =
                             self.tile_accumulators[usize::try_from(task.accumulator_ordinal)
                                 .map_err(|_| SpectralOperatorError::CoverageOverflow)?]
@@ -1260,16 +1461,19 @@ impl GriddedNormalOperatorApply {
                                 GriddedNormalRecordLayout::Scalar
                                 | GriddedNormalRecordLayout::ChannelLocal { .. }
                                 | GriddedNormalRecordLayout::Joint { .. } => {
-                                    let record = decode_record(
+                                    let record = decode_domain_record(
                                         record_bytes,
-                                        self.tile_catalog.grid_shape,
+                                        &self.tile_catalogs,
                                         self.program.manifest.specification.slab().total_channels(),
                                     )?;
+                                    if record.domain_ordinal != domain_ordinal {
+                                        return Err(SpectralOperatorError::GriddedRecordMismatch);
+                                    }
                                     let predicted = predicted
                                         .first()
                                         .copied()
                                         .ok_or(SpectralOperatorError::IncompleteCoverage)?;
-                                    self.operator.grid_gridded_normal_local(
+                                    self.operators[domain_ordinal].grid_gridded_normal_local(
                                         grids,
                                         compensations,
                                         geometry.translated_taps(record.taps)?,
@@ -1281,10 +1485,12 @@ impl GriddedNormalOperatorApply {
                                 GriddedNormalRecordLayout::Taylor(plan) => {
                                     let record = decode_taylor_record(
                                         record_bytes,
-                                        self.tile_catalog.grid_shape,
+                                        self.tile_catalogs
+                                            .grid_shape(0)
+                                            .ok_or(SpectralOperatorError::InvalidGriddedRecord)?,
                                         plan.normal_moment_count(),
                                     )?;
-                                    self.operator.grid_gridded_block_normal_local(
+                                    self.operators[0].grid_gridded_block_normal_local(
                                         grids,
                                         compensations,
                                         geometry.translated_taps(record.taps)?,
@@ -1322,19 +1528,15 @@ impl GriddedNormalOperatorApply {
                 .read()
                 .map_err(|_| SpectralOperatorError::GriddedSectorPoisoned)?;
             for task in &prepared.tasks {
-                let geometry = *self
-                    .tile_catalog
-                    .geometries
-                    .get(
-                        usize::try_from(task.tile_ordinal)
-                            .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
-                    )
-                    .ok_or(SpectralOperatorError::IncompleteCoverage)?;
+                let (domain_ordinal, geometry) = self.tile_catalogs.geometry(
+                    usize::try_from(task.tile_ordinal)
+                        .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
+                )?;
                 let accumulator = self.tile_accumulators[usize::try_from(task.accumulator_ordinal)
                     .map_err(|_| SpectralOperatorError::CoverageOverflow)?]
                 .lock()
                 .map_err(|_| SpectralOperatorError::GriddedSectorPoisoned)?;
-                for plane in 0..self.normal_grids.len() {
+                for plane in 0..self.normal_grids[domain_ordinal].len() {
                     for local_x in 0..geometry.shape[0] {
                         for local_y in 0..geometry.shape[1] {
                             let value = accumulator.grids[plane][(local_x, local_y)];
@@ -1343,8 +1545,9 @@ impl GriddedNormalOperatorApply {
                             }
                             let target =
                                 (geometry.origin[0] + local_x, geometry.origin[1] + local_y);
-                            let cell = &mut self.normal_grids[plane][target];
-                            let compensation = &mut self.normal_compensations[plane][target];
+                            let cell = &mut self.normal_grids[domain_ordinal][plane][target];
+                            let compensation =
+                                &mut self.normal_compensations[domain_ordinal][plane][target];
                             let contribution =
                                 value - accumulator.compensations[plane][(local_x, local_y)];
                             let updated = *cell + contribution;
@@ -1552,21 +1755,24 @@ mod tests {
     fn execution_metadata_projection_matches_all_retained_heap_descriptors() {
         let shape = [128, 128];
         let depth = 3;
-        let catalog = GriddedNormalTileCatalog::new(shape).unwrap();
+        let catalogs = GriddedNormalDomainTileCatalogs::new([shape]).unwrap();
         let prepared = PreparedGriddedNormalTwoDomainWindow::with_record_capacities(
             &[1],
-            catalog.geometries.len(),
+            catalogs.tile_count(),
             GriddedNormalRecordLayout::Scalar,
         )
         .unwrap();
-        let accumulators = catalog.accumulators(depth).unwrap();
+        let accumulators = catalogs.accumulators(depth).unwrap();
         let plane_shape = (shape[0], shape[1]);
-        let normal_grids = (0..depth)
-            .map(|_| Array2::<Complex64>::zeros(plane_shape))
-            .collect::<Vec<_>>();
-        let normal_compensations = (0..depth)
-            .map(|_| Array2::<Complex64>::zeros(plane_shape))
-            .collect::<Vec<_>>();
+        let domain_planes = || {
+            vec![
+                (0..depth)
+                    .map(|_| Array2::<Complex64>::zeros(plane_shape))
+                    .collect::<Vec<_>>(),
+            ]
+        };
+        let normal_grids = domain_planes();
+        let normal_compensations = domain_planes();
 
         let tile_plane_descriptors = accumulators
             .iter()
@@ -1576,16 +1782,31 @@ mod tests {
                     * size_of::<Array2<Complex64>>()
             })
             .sum::<usize>();
-        let actual_metadata_bytes = catalog.geometries.capacity()
-            * size_of::<GriddedNormalTileGeometry>()
+        let catalog_metadata_bytes = catalogs.catalogs.capacity()
+            * size_of::<GriddedNormalTileCatalog>()
+            + catalogs.offsets.capacity() * size_of::<usize>()
+            + catalogs
+                .catalogs
+                .iter()
+                .map(|catalog| {
+                    catalog.geometries.capacity() * size_of::<GriddedNormalTileGeometry>()
+                })
+                .sum::<usize>();
+        let merge_descriptor_bytes = (normal_grids.capacity() + normal_compensations.capacity())
+            * size_of::<Vec<Array2<Complex64>>>()
+            + normal_grids
+                .iter()
+                .chain(&normal_compensations)
+                .map(|planes| planes.capacity() * size_of::<Array2<Complex64>>())
+                .sum::<usize>();
+        let actual_metadata_bytes = catalog_metadata_bytes
             + prepared.tile_counts.capacity() * size_of::<u32>()
             + prepared.tile_cursors.capacity() * size_of::<u32>()
             + prepared.tile_offsets.capacity() * size_of::<u32>()
             + prepared.tasks.capacity() * size_of::<GriddedNormalTileTask>()
             + accumulators.capacity() * size_of::<Mutex<GriddedNormalTileAccumulator>>()
             + tile_plane_descriptors
-            + (normal_grids.capacity() + normal_compensations.capacity())
-                * size_of::<Array2<Complex64>>();
+            + merge_descriptor_bytes;
         assert_eq!(
             gridded_normal_execution_residency(shape, depth)
                 .unwrap()

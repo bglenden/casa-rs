@@ -10,8 +10,8 @@ use std::{
 
 use casa_imaging_model::{
     CompiledGeometryId, CompiledProblem, CompiledProblemId, ContinuumTransformGenerationId,
-    FiniteValuePolicy, InstrumentResponse, LogicalIdentity, NumericPrecision, NumericsContractId,
-    PolarizationCoordinate, Projection, ReconstructionBasis, ReductionPolicy,
+    FiniteValuePolicy, ImageDomainRole, InstrumentResponse, LogicalIdentity, NumericPrecision,
+    NumericsContractId, PolarizationCoordinate, Projection, ReconstructionBasis, ReductionPolicy,
     SelectedObservationGenerationId, SelectedSampleAddress, SelectedVisibilitySample,
     SpectralKernel, SpectralWcs, WeightingCommitmentId,
 };
@@ -336,10 +336,33 @@ pub struct SpectralOperatorSpecification {
     grid_shape: [usize; 2],
     image_blc: [usize; 2],
     increment_rad: [f64; 2],
+    domains: Box<[SpectralOperatorDomainSpecification]>,
     slab: SpectralSlabPlan,
     basis: SpectralBasisPlan,
     joint_line_term_by_channel: Box<[Option<usize>]>,
     output_channel_frequencies_hz: Box<[f64]>,
+}
+
+/// One canonical chart bound to the shared spectral operator.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct SpectralOperatorDomainSpecification {
+    ordinal: usize,
+    role: ImageDomainRole,
+    geometry: SpectralOperatorGeometry,
+}
+
+impl SpectralOperatorDomainSpecification {
+    pub(crate) const fn ordinal(&self) -> usize {
+        self.ordinal
+    }
+
+    pub(crate) const fn role(&self) -> &ImageDomainRole {
+        &self.role
+    }
+
+    pub(crate) const fn geometry(&self) -> SpectralOperatorGeometry {
+        self.geometry
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -365,7 +388,7 @@ impl SpectralOperatorSpecification {
     ) -> Result<Self, SpectralOperatorError> {
         let basis = spectral_basis_plan(problem)?;
         let channels = output_channel_count(problem)?;
-        if problem.geometry().domains().len() != 1
+        if problem.geometry().domains().is_empty()
             || problem.reconstruction().polarization().coordinates()
                 != [PolarizationCoordinate::StokesI]
             || problem
@@ -375,6 +398,13 @@ impl SpectralOperatorSpecification {
                 != InstrumentResponse::Scalar
         {
             return Err(SpectralOperatorError::UnsupportedProblem);
+        }
+        if problem.geometry().domains().len() > 1
+            && (!matches!(basis, SpectralBasisPlan::Polynomial(plan) if plan.coefficient_term_count() == 1)
+                || core_start != 0
+                || core_depth != 1)
+        {
+            return Err(SpectralOperatorError::UnsupportedMultiDomainProblem);
         }
         if basis.polynomial().is_some() && (core_start != 0 || core_depth != 1) {
             return Err(SpectralOperatorError::InvalidSlab);
@@ -394,43 +424,30 @@ impl SpectralOperatorSpecification {
                 problem.science().spectral().sampling().kernel()
             },
         )?;
-        let domain = &problem.geometry().domains()[0];
-        let image_shape = domain.shape().pixels();
-        let direction = domain.direction();
-        let grid_shape = [
-            casa_composite_padded_len(image_shape[0], 1.2),
-            casa_composite_padded_len(image_shape[1], 1.2),
-        ];
-        let reference_pixel = direction.reference_pixel();
-        if direction.projection() != Projection::Sin
-            || direction.pc() != [[1.0, 0.0], [0.0, 1.0]]
-            || direction.pole_deg() != [180.0, 0.0]
-            || reference_pixel
-                .iter()
-                .any(|value| !value.is_finite() || *value < 0.0 || value.fract() != 0.0)
-        {
-            return Err(SpectralOperatorError::UnsupportedGeometry);
-        }
-        let reference_pixel = [reference_pixel[0] as usize, reference_pixel[1] as usize];
-        let image_blc = [
-            grid_shape[0]
-                .checked_div(2)
-                .and_then(|centre| centre.checked_sub(reference_pixel[0]))
-                .ok_or(SpectralOperatorError::UnsupportedGeometry)?,
-            grid_shape[1]
-                .checked_div(2)
-                .and_then(|centre| centre.checked_sub(reference_pixel[1]))
-                .ok_or(SpectralOperatorError::UnsupportedGeometry)?,
-        ];
-        if image_blc[0]
-            .checked_add(image_shape[0])
-            .is_none_or(|end| end > grid_shape[0])
-            || image_blc[1]
-                .checked_add(image_shape[1])
-                .is_none_or(|end| end > grid_shape[1])
-        {
-            return Err(SpectralOperatorError::UnsupportedGeometry);
-        }
+        let domains = problem
+            .geometry()
+            .domains()
+            .iter()
+            .enumerate()
+            .map(|(ordinal, domain)| {
+                if domain.psf_phase_centre() != domain.model_phase_centre() {
+                    return Err(SpectralOperatorError::UnsupportedMultiDomainProblem);
+                }
+                Ok(SpectralOperatorDomainSpecification {
+                    ordinal,
+                    role: domain.role().clone(),
+                    geometry: compile_operator_geometry(
+                        domain.shape().pixels(),
+                        domain.direction(),
+                    )?,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?
+            .into_boxed_slice();
+        let primary = domains
+            .first()
+            .ok_or(SpectralOperatorError::UnsupportedProblem)?
+            .geometry;
         if !problem
             .numerics()
             .permitted_precisions()
@@ -449,10 +466,11 @@ impl SpectralOperatorSpecification {
             numerics: problem.numerics_id(),
             weighting_commitment: problem.weighting().commitment_id(),
             finite_values: problem.numerics().finite_values(),
-            image_shape,
-            grid_shape,
-            image_blc,
-            increment_rad: direction.increment_rad(),
+            image_shape: primary.image_shape,
+            grid_shape: primary.grid_shape,
+            image_blc: primary.image_blc,
+            increment_rad: primary.increment_rad,
+            domains,
             slab,
             basis,
             joint_line_term_by_channel: joint_line_term_by_channel(problem, basis)?,
@@ -478,6 +496,21 @@ impl SpectralOperatorSpecification {
     #[must_use]
     pub const fn grid_shape(&self) -> [usize; 2] {
         self.grid_shape
+    }
+
+    /// Return the number of image charts sharing this paired operator.
+    #[must_use]
+    pub fn domain_count(&self) -> usize {
+        self.domains.len()
+    }
+
+    /// Iterate padded grid shapes in canonical image-domain order.
+    pub fn domain_grid_shapes(&self) -> impl ExactSizeIterator<Item = [usize; 2]> + '_ {
+        self.domains.iter().map(|domain| domain.geometry.grid_shape)
+    }
+
+    pub(crate) const fn domains(&self) -> &[SpectralOperatorDomainSpecification] {
+        &self.domains
     }
 
     /// Return the exact compiled problem identity.
@@ -530,15 +563,52 @@ impl SpectralOperatorSpecification {
             SpectralBasisPlan::ChannelLocal | SpectralBasisPlan::Polynomial(_) => None,
         }
     }
+}
 
-    pub(crate) fn operator_geometry(&self) -> SpectralOperatorGeometry {
-        SpectralOperatorGeometry {
-            image_shape: self.image_shape,
-            grid_shape: self.grid_shape,
-            image_blc: self.image_blc,
-            increment_rad: self.increment_rad,
-        }
+fn compile_operator_geometry(
+    image_shape: [usize; 2],
+    direction: casa_imaging_model::DirectionCoordinateSpec,
+) -> Result<SpectralOperatorGeometry, SpectralOperatorError> {
+    let grid_shape = [
+        casa_composite_padded_len(image_shape[0], 1.2),
+        casa_composite_padded_len(image_shape[1], 1.2),
+    ];
+    let reference_pixel = direction.reference_pixel();
+    if direction.projection() != Projection::Sin
+        || direction.pc() != [[1.0, 0.0], [0.0, 1.0]]
+        || direction.pole_deg() != [180.0, 0.0]
+        || reference_pixel
+            .iter()
+            .any(|value| !value.is_finite() || *value < 0.0 || value.fract() != 0.0)
+    {
+        return Err(SpectralOperatorError::UnsupportedGeometry);
     }
+    let reference_pixel = [reference_pixel[0] as usize, reference_pixel[1] as usize];
+    let image_blc = [
+        grid_shape[0]
+            .checked_div(2)
+            .and_then(|centre| centre.checked_sub(reference_pixel[0]))
+            .ok_or(SpectralOperatorError::UnsupportedGeometry)?,
+        grid_shape[1]
+            .checked_div(2)
+            .and_then(|centre| centre.checked_sub(reference_pixel[1]))
+            .ok_or(SpectralOperatorError::UnsupportedGeometry)?,
+    ];
+    if image_blc[0]
+        .checked_add(image_shape[0])
+        .is_none_or(|end| end > grid_shape[0])
+        || image_blc[1]
+            .checked_add(image_shape[1])
+            .is_none_or(|end| end > grid_shape[1])
+    {
+        return Err(SpectralOperatorError::UnsupportedGeometry);
+    }
+    Ok(SpectralOperatorGeometry {
+        image_shape,
+        grid_shape,
+        image_blc,
+        increment_rad: direction.increment_rad(),
+    })
 }
 
 fn output_channel_count(problem: &CompiledProblem) -> Result<usize, SpectralOperatorError> {
@@ -815,8 +885,6 @@ pub fn spectral_operator_workload(
     if max_replay_block_samples == 0 {
         return Err(SpectralOperatorError::UnsupportedProblem);
     }
-    let cells = checked_cells(specification.grid_shape)?;
-    let image_cells = checked_cells(specification.image_shape)?;
     let coefficient_terms = specification.coefficient_terms();
     let normal_moments = specification.normal_moments();
     let joint_channels = usize::from(matches!(
@@ -845,44 +913,75 @@ pub fn spectral_operator_workload(
         }
     }
     .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-    let grid_complex_values = cells
-        .checked_mul(grid_planes)
-        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-    let convolution_f64_values = (OVERSAMPLING + 1)
-        .checked_mul(TAP_COUNT)
-        .and_then(|values| {
-            values.checked_add(specification.grid_shape[0] + specification.grid_shape[1])
-        })
-        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-    let max_axis = specification.grid_shape.into_iter().max().unwrap_or(0);
-    let opaque_plans = specification
-        .grid_shape
-        .into_iter()
-        .try_fold(0_usize, |total, length| {
-            length
-                .checked_mul(FFT_PLAN_COMPLEX_BOUND_PER_AXIS)
+    let grid_complex_values = specification
+        .domains
+        .iter()
+        .try_fold(0_usize, |total, domain| {
+            checked_cells(domain.geometry.grid_shape)?
+                .checked_mul(grid_planes)
                 .and_then(|values| total.checked_add(values))
-        })
-        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-    let reusable_lane_and_scratch = max_axis
-        .checked_mul(FFT_PLAN_COMPLEX_BOUND_PER_AXIS + 1)
-        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-    let fft_resident_complex_values = opaque_plans
-        .checked_add(reusable_lane_and_scratch)
-        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+                .ok_or(SpectralOperatorError::ResidencyOverflow)
+        })?;
+    let convolution_f64_values =
+        specification
+            .domains
+            .iter()
+            .try_fold(0_usize, |total, domain| {
+                (OVERSAMPLING + 1)
+                    .checked_mul(TAP_COUNT)
+                    .and_then(|values| {
+                        values.checked_add(
+                            domain.geometry.grid_shape[0] + domain.geometry.grid_shape[1],
+                        )
+                    })
+                    .and_then(|values| total.checked_add(values))
+                    .ok_or(SpectralOperatorError::ResidencyOverflow)
+            })?;
+    let fft_resident_complex_values =
+        specification
+            .domains
+            .iter()
+            .try_fold(0_usize, |total, domain| {
+                fft_resident_complex_values_for_shape(domain.geometry.grid_shape)?
+                    .checked_add(total)
+                    .ok_or(SpectralOperatorError::ResidencyOverflow)
+            })?;
     let fft_planning_words = specification
-        .grid_shape
-        .into_iter()
-        .try_fold(0_usize, |total, length| {
-            length
-                .checked_mul(FFT_PLANNING_WORD_BOUND_PER_POINT)
+        .domains
+        .iter()
+        .try_fold(0_usize, |total, domain| {
+            domain
+                .geometry
+                .grid_shape
+                .into_iter()
+                .try_fold(0_usize, |domain_total, length| {
+                    length
+                        .checked_mul(FFT_PLANNING_WORD_BOUND_PER_POINT)
+                        .and_then(|values| domain_total.checked_add(values))
+                })
                 .and_then(|values| total.checked_add(values))
-        })
+                .ok_or(SpectralOperatorError::ResidencyOverflow)
+        })?;
+    let forward_complex_values = specification
+        .domains
+        .iter()
+        .try_fold(0_usize, |total, domain| {
+            checked_cells(domain.geometry.grid_shape)?
+                .checked_mul(specification.resident_terms())
+                .and_then(|values| total.checked_add(values))
+                .ok_or(SpectralOperatorError::ResidencyOverflow)
+        })?
+        .checked_add(max_replay_block_samples)
         .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-    let forward_complex_values = cells
-        .checked_mul(specification.resident_terms())
-        .and_then(|values| values.checked_add(max_replay_block_samples))
-        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+    let image_cells = specification
+        .domains
+        .iter()
+        .try_fold(0_usize, |total, domain| {
+            checked_cells(domain.geometry.image_shape)?
+                .checked_add(total)
+                .ok_or(SpectralOperatorError::ResidencyOverflow)
+        })?;
+    let domain_count = specification.domains.len();
     Ok(SpectralOperatorWorkload {
         pass,
         slab: specification.slab,
@@ -907,10 +1006,18 @@ pub fn spectral_operator_workload(
             .ok_or(SpectralOperatorError::ResidencyOverflow)?,
         primitive_f64_values: image_cells
             .checked_mul(normal_moments)
-            .and_then(|values| values.checked_add(normal_moments))
-            .and_then(|values| values.checked_add(joint_channels))
+            .and_then(|values| {
+                normal_moments
+                    .checked_add(joint_channels)
+                    .and_then(|per_domain| per_domain.checked_mul(domain_count))
+                    .and_then(|metadata| values.checked_add(metadata))
+            })
             .ok_or(SpectralOperatorError::ResidencyOverflow)?,
-        primitive_validity_values: specification.basis.validity_entries(specification.slab),
+        primitive_validity_values: specification
+            .basis
+            .validity_entries(specification.slab)
+            .checked_mul(domain_count)
+            .ok_or(SpectralOperatorError::ResidencyOverflow)?,
         coefficient_terms,
         normal_moments,
         resident_model_terms: specification.resident_terms(),
@@ -919,12 +1026,30 @@ pub fn spectral_operator_workload(
     })
 }
 
+fn fft_resident_complex_values_for_shape(
+    shape: [usize; 2],
+) -> Result<usize, SpectralOperatorError> {
+    let max_axis = shape.into_iter().max().unwrap_or(0);
+    let opaque_plans = shape
+        .into_iter()
+        .try_fold(0_usize, |total, length| {
+            length
+                .checked_mul(FFT_PLAN_COMPLEX_BOUND_PER_AXIS)
+                .and_then(|values| total.checked_add(values))
+        })
+        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+    max_axis
+        .checked_mul(FFT_PLAN_COMPLEX_BOUND_PER_AXIS + 1)
+        .and_then(|workspace| opaque_plans.checked_add(workspace))
+        .ok_or(SpectralOperatorError::ResidencyOverflow)
+}
+
 /// FFT preparation retained by runtime between its explicit planning and replay nodes.
 #[doc(hidden)]
 pub struct PreparedSpectralOperator {
     specification: SpectralOperatorSpecification,
     workload: SpectralOperatorWorkload,
-    fft: PreparedFft,
+    ffts: Vec<PreparedFft>,
 }
 
 impl fmt::Debug for PreparedSpectralOperator {
@@ -960,9 +1085,9 @@ impl PreparedSpectralOperator {
     ) -> (
         SpectralOperatorSpecification,
         SpectralOperatorWorkload,
-        PreparedFft,
+        Vec<PreparedFft>,
     ) {
-        (self.specification, self.workload, self.fft)
+        (self.specification, self.workload, self.ffts)
     }
 }
 
@@ -981,14 +1106,20 @@ pub fn prepare_spectral_operator(
     {
         return Err(SpectralOperatorError::ProblemMismatch);
     }
-    let fft = PreparedFft::new(
-        specification.grid_shape,
-        workload.fft_resident_complex_values,
-    )?;
+    let ffts = specification
+        .domains
+        .iter()
+        .map(|domain| {
+            PreparedFft::new(
+                domain.geometry.grid_shape,
+                fft_resident_complex_values_for_shape(domain.geometry.grid_shape)?,
+            )
+        })
+        .collect::<Result<Vec<_>, SpectralOperatorError>>()?;
     Ok(PreparedSpectralOperator {
         specification,
         workload,
-        fft,
+        ffts,
     })
 }
 
@@ -1213,6 +1344,7 @@ impl SpectralOperatorPrimitives {
 }
 
 pub(crate) struct ReusableNormalState {
+    domain_ordinal: usize,
     problem: CompiledProblemId,
     geometry: CompiledGeometryId,
     numerics: NumericsContractId,
@@ -1236,6 +1368,7 @@ pub(crate) struct ReusableNormalState {
 impl ReusableNormalState {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
+        domain_ordinal: usize,
         problem: CompiledProblemId,
         geometry: CompiledGeometryId,
         numerics: NumericsContractId,
@@ -1260,6 +1393,7 @@ impl ReusableNormalState {
             ..
         } = primitives;
         Self {
+            domain_ordinal,
             problem,
             geometry,
             numerics,
@@ -1281,12 +1415,18 @@ impl ReusableNormalState {
         }
     }
 
-    fn matches(&self, specification: &SpectralOperatorSpecification) -> bool {
+    fn matches(
+        &self,
+        specification: &SpectralOperatorSpecification,
+        domain_ordinal: usize,
+        geometry: SpectralOperatorGeometry,
+    ) -> bool {
         self.problem == specification.problem
             && self.geometry == specification.geometry
             && self.numerics == specification.numerics
             && self.weighting_commitment == specification.weighting_commitment
-            && self.shape == specification.image_shape
+            && self.domain_ordinal == domain_ordinal
+            && self.shape == geometry.image_shape
             && self.slab == specification.slab
             && self.basis == specification.basis
             && self.joint_line_term_by_channel == specification.joint_line_term_by_channel
@@ -1449,18 +1589,147 @@ impl CompleteDataOwnerCompletion {
 }
 
 /// Complete unnormalized primitives paired with reconstruction-owned evidence.
+#[derive(Debug)]
+pub(crate) struct SpectralDomainPrimitives {
+    domain_ordinal: usize,
+    domain_role: ImageDomainRole,
+    primitives: SpectralOperatorPrimitives,
+}
+
+impl SpectralDomainPrimitives {
+    pub(crate) fn new(
+        domain_ordinal: usize,
+        domain_role: ImageDomainRole,
+        primitives: SpectralOperatorPrimitives,
+    ) -> Self {
+        Self {
+            domain_ordinal,
+            domain_role,
+            primitives,
+        }
+    }
+
+    pub(crate) const fn domain_ordinal(&self) -> usize {
+        self.domain_ordinal
+    }
+
+    pub(crate) const fn domain_role(&self) -> &ImageDomainRole {
+        &self.domain_role
+    }
+
+    pub(crate) const fn primitives(&self) -> &SpectralOperatorPrimitives {
+        &self.primitives
+    }
+
+    pub(crate) fn into_parts(self) -> (usize, ImageDomainRole, SpectralOperatorPrimitives) {
+        (self.domain_ordinal, self.domain_role, self.primitives)
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct SpectralPrimitiveDomains {
+    domains: Box<[SpectralDomainPrimitives]>,
+}
+
+impl SpectralPrimitiveDomains {
+    pub(crate) fn new(
+        domains: Box<[SpectralDomainPrimitives]>,
+    ) -> Result<Self, SpectralOperatorError> {
+        if domains.is_empty()
+            || domains
+                .iter()
+                .enumerate()
+                .any(|(ordinal, domain)| domain.domain_ordinal != ordinal)
+        {
+            return Err(SpectralOperatorError::DomainProjectionMismatch);
+        }
+        Ok(Self { domains })
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.domains.len()
+    }
+
+    pub(crate) fn iter(&self) -> std::slice::Iter<'_, SpectralDomainPrimitives> {
+        self.domains.iter()
+    }
+
+    pub(crate) fn primary(&self) -> &SpectralOperatorPrimitives {
+        &self.domains[0].primitives
+    }
+
+    pub(crate) fn get(&self, ordinal: usize) -> Option<&SpectralDomainPrimitives> {
+        self.domains.get(ordinal)
+    }
+
+    pub(crate) fn into_iter(self) -> impl Iterator<Item = SpectralDomainPrimitives> {
+        self.domains.into_vec().into_iter()
+    }
+
+    pub(crate) fn promote_major_cycle_residual(
+        self,
+        expected_model: ModelGenerationId,
+    ) -> Result<Self, SpectralOperatorError> {
+        let domains = self
+            .into_iter()
+            .map(|domain| {
+                domain
+                    .primitives
+                    .promote_major_cycle_residual(expected_model)
+                    .map(|primitives| SpectralDomainPrimitives {
+                        primitives,
+                        ..domain
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?
+            .into_boxed_slice();
+        Self::new(domains)
+    }
+
+    pub(crate) fn normal_state_content_identity(&self) -> LogicalIdentity {
+        let mut encoder = crate::Encoder::new(NORMAL_STATE_CONTENT_DOMAIN, 4);
+        encoder.usize(self.domains.len());
+        for domain in &self.domains {
+            encoder.usize(domain.domain_ordinal);
+            match &domain.domain_role {
+                ImageDomainRole::Main => encoder.u8(0),
+                ImageDomainRole::Outlier(name) => {
+                    encoder.u8(1);
+                    encoder.bytes(name.as_bytes());
+                }
+            }
+            encoder.identity(domain.primitives.normal_state_content_identity().as_bytes());
+        }
+        LogicalIdentity::from_sha256(encoder.finish())
+    }
+}
+
+impl std::ops::Deref for SpectralPrimitiveDomains {
+    type Target = SpectralOperatorPrimitives;
+
+    fn deref(&self) -> &Self::Target {
+        &self.domains[0].primitives
+    }
+}
+
 #[doc(hidden)]
 #[derive(Debug)]
 pub struct CompleteDataOwnerResult {
-    pub(crate) primitives: SpectralOperatorPrimitives,
+    pub(crate) domains: SpectralPrimitiveDomains,
     pub(crate) completion: CompleteDataOwnerCompletion,
 }
 
 impl CompleteDataOwnerResult {
     /// Return dirty, PSF, sensitivity, and sum-weight normal-state primitives.
     #[must_use]
-    pub const fn primitives(&self) -> &SpectralOperatorPrimitives {
-        &self.primitives
+    pub fn primitives(&self) -> &SpectralOperatorPrimitives {
+        self.domains.primary()
+    }
+
+    /// Return the canonical image-domain cardinality of this one completion.
+    #[must_use]
+    pub fn domain_count(&self) -> usize {
+        self.domains.len()
     }
 
     /// Return the owner-minted complete-data proof for these exact primitives.
@@ -1472,8 +1741,8 @@ impl CompleteDataOwnerResult {
     /// Consume the pairing without exposing either member separately outside
     /// this crate; the Major-Cycle owner is the only split consumer.
     #[must_use]
-    pub(crate) fn into_parts(self) -> (SpectralOperatorPrimitives, CompleteDataOwnerCompletion) {
-        (self.primitives, self.completion)
+    pub(crate) fn into_parts(self) -> (SpectralPrimitiveDomains, CompleteDataOwnerCompletion) {
+        (self.domains, self.completion)
     }
 }
 
@@ -1533,7 +1802,8 @@ pub struct CompleteDataOwnerState {
     model_binding: Option<ReconstructionModelBinding>,
     emit_final_visibilities: bool,
     predicted_selected: Vec<FinalVisibilitySample>,
-    operator: SpectralSlabOperator,
+    specification: SpectralOperatorSpecification,
+    operators: Vec<SpectralSlabOperator>,
 }
 
 impl CompleteDataOwnerState {
@@ -1546,6 +1816,18 @@ impl CompleteDataOwnerState {
         if specification != prepared.specification || !weighting.matches_problem(problem) {
             return Err(SpectralOperatorError::ProblemMismatch);
         }
+        let (prepared_specification, workload, ffts) = prepared.into_parts();
+        if specification != prepared_specification || ffts.len() != specification.domain_count() {
+            return Err(SpectralOperatorError::ProblemMismatch);
+        }
+        let operators = specification
+            .domains
+            .iter()
+            .zip(ffts)
+            .map(|(domain, fft)| {
+                SpectralSlabOperator::new_domain(&specification, domain, workload, fft, 0)
+            })
+            .collect();
         Ok(Self {
             problem: specification.problem,
             geometry: specification.geometry,
@@ -1558,8 +1840,9 @@ impl CompleteDataOwnerState {
             finite_values: specification.finite_values,
             model_binding: None,
             emit_final_visibilities: false,
-            predicted_selected: Vec::with_capacity(prepared.workload.max_replay_block_samples),
-            operator: SpectralSlabOperator::new(specification, prepared.workload, prepared.fft),
+            predicted_selected: Vec::with_capacity(workload.max_replay_block_samples),
+            specification,
+            operators,
         })
     }
 
@@ -1568,9 +1851,18 @@ impl CompleteDataOwnerState {
         prepared: PreparedSpectralOperator,
     ) -> Result<Self, SpectralOperatorError> {
         let specification = SpectralOperatorSpecification::new(problem)?;
-        if specification != prepared.specification {
+        let (prepared_specification, workload, ffts) = prepared.into_parts();
+        if specification != prepared_specification || ffts.len() != specification.domain_count() {
             return Err(SpectralOperatorError::ProblemMismatch);
         }
+        let operators = specification
+            .domains
+            .iter()
+            .zip(ffts)
+            .map(|(domain, fft)| {
+                SpectralSlabOperator::new_domain(&specification, domain, workload, fft, 0)
+            })
+            .collect();
         Ok(Self {
             problem: specification.problem,
             geometry: specification.geometry,
@@ -1583,8 +1875,9 @@ impl CompleteDataOwnerState {
             finite_values: specification.finite_values,
             model_binding: None,
             emit_final_visibilities: false,
-            predicted_selected: Vec::with_capacity(prepared.workload.max_replay_block_samples),
-            operator: SpectralSlabOperator::new(specification, prepared.workload, prepared.fft),
+            predicted_selected: Vec::with_capacity(workload.max_replay_block_samples),
+            specification,
+            operators,
         })
     }
 
@@ -1615,10 +1908,23 @@ impl CompleteDataOwnerState {
         if self.sample_count != 0 || self.next_block_sequence != 0 || self.model_binding.is_some() {
             return Err(SpectralOperatorError::MajorCycleAlreadyBound);
         }
-        self.model_binding = Some(self.operator.prepare_bound_residual_model(
-            generation,
-            prior_normal_state.map(crate::FinalNormalState::into_reusable),
-        )?);
+        let mut prior = prior_normal_state
+            .map(crate::FinalNormalState::into_reusable_domains)
+            .transpose()?
+            .unwrap_or_default()
+            .into_iter();
+        let mut binding = None;
+        for operator in &mut self.operators {
+            let domain_binding = operator.prepare_bound_residual_model(generation, prior.next())?;
+            if binding.is_some_and(|binding| binding != domain_binding) {
+                return Err(SpectralOperatorError::ModelMismatch);
+            }
+            binding = Some(domain_binding);
+        }
+        if prior.next().is_some() {
+            return Err(SpectralOperatorError::ReusableNormalStateMismatch);
+        }
+        self.model_binding = binding;
         Ok(())
     }
 
@@ -1630,7 +1936,9 @@ impl CompleteDataOwnerState {
         if self.sample_count != 0 || self.next_block_sequence != 0 || self.model_binding.is_some() {
             return Err(SpectralOperatorError::MajorCycleAlreadyBound);
         }
-        self.operator.prepare_selected_output_model(generation)?;
+        for operator in &mut self.operators {
+            operator.prepare_selected_output_model(generation)?;
+        }
         self.model_binding = Some(ReconstructionModelBinding::Evaluated(
             generation.generation_id(),
         ));
@@ -1671,46 +1979,80 @@ impl CompleteDataOwnerState {
             let accepted_input = self.accept_input(selected)?;
             let grids = contributes_to_stokes_i && accepted_input;
             let mut predicted_visibility = Complex64::default();
+            let mut prediction_compensation = Complex64::default();
             let mut touches_core = false;
             let has_spectral_support = weighted.spectral_values().next().is_some();
             if contributes_to_stokes_i {
-                let mut stencil = SmallVec::<[SpectralOperatorSample; 4]>::new();
-                for spectral in weighted.spectral_values() {
-                    let contribution = spectral.contribution();
-                    stencil.push(SpectralOperatorSample::new(
-                        usize::try_from(contribution.output_channel())
-                            .map_err(|_| SpectralOperatorError::InvalidSample)?,
-                        selected.transformed_uvw_m,
-                        contribution.evaluation_frequency_hz(),
-                        selected.phase_shift_m,
-                        if grids { visibility } else { [0.0, 0.0] },
-                        spectral.imaging_weight(),
-                        contribution.factor(),
-                    )?);
-                }
-                touches_core = stencil
-                    .iter()
-                    .any(|sample| self.operator.slab.owns(sample.output_channel));
                 let predicts_residual = self
                     .model_binding
                     .is_some_and(ReconstructionModelBinding::is_evaluated);
-                if predicts_residual && touches_core {
-                    predicted_visibility = self.operator.predict_stencil(&stencil)?;
+                for domain_ordinal in 0..self.operators.len() {
+                    let (uvw_m, phase_shift_m) = selected_model_projection(
+                        selected,
+                        self.specification.domain_count(),
+                        domain_ordinal,
+                    )?;
+                    let mut stencil = SmallVec::<[SpectralOperatorSample; 4]>::new();
+                    for spectral in weighted.spectral_values() {
+                        let contribution = spectral.contribution();
+                        stencil.push(SpectralOperatorSample::new(
+                            usize::try_from(contribution.output_channel())
+                                .map_err(|_| SpectralOperatorError::InvalidSample)?,
+                            uvw_m,
+                            contribution.evaluation_frequency_hz(),
+                            phase_shift_m,
+                            if grids { visibility } else { [0.0, 0.0] },
+                            spectral.imaging_weight(),
+                            contribution.factor(),
+                        )?);
+                    }
+                    touches_core |= stencil.iter().any(|sample| {
+                        self.operators[domain_ordinal]
+                            .slab
+                            .owns(sample.output_channel)
+                    });
+                    if predicts_residual && touches_core {
+                        let domain_prediction =
+                            self.operators[domain_ordinal].predict_stencil(&stencil)?;
+                        compensated_complex_add(
+                            &mut predicted_visibility,
+                            &mut prediction_compensation,
+                            domain_prediction,
+                        );
+                    }
                 }
                 if grids {
-                    for sample in stencil {
-                        if predicts_residual {
-                            self.operator
-                                .push_with_residual(sample, predicted_visibility)?;
-                        } else {
-                            self.operator.push(sample)?;
+                    for domain_ordinal in 0..self.operators.len() {
+                        let (uvw_m, phase_shift_m) = selected_model_projection(
+                            selected,
+                            self.specification.domain_count(),
+                            domain_ordinal,
+                        )?;
+                        for spectral in weighted.spectral_values() {
+                            let contribution = spectral.contribution();
+                            let sample = SpectralOperatorSample::new(
+                                usize::try_from(contribution.output_channel())
+                                    .map_err(|_| SpectralOperatorError::InvalidSample)?,
+                                uvw_m,
+                                contribution.evaluation_frequency_hz(),
+                                phase_shift_m,
+                                visibility,
+                                spectral.imaging_weight(),
+                                contribution.factor(),
+                            )?;
+                            if predicts_residual {
+                                self.operators[domain_ordinal]
+                                    .push_with_residual(sample, predicted_visibility)?;
+                            } else {
+                                self.operators[domain_ordinal].push(sample)?;
+                            }
                         }
                     }
                 }
             }
             if self.emit_final_visibilities
                 && has_spectral_support
-                && (touches_core || self.operator.slab.total_channels() == 1)
+                && (touches_core || self.specification.slab.total_channels() == 1)
             {
                 let observed = Complex64::new(visibility[0], visibility[1]);
                 // CASA degrids and writes the whole selected visibility
@@ -1724,7 +2066,9 @@ impl CompleteDataOwnerState {
                     residual: observed - predicted,
                 });
                 #[cfg(test)]
-                record_measurement(&mut self.operator.measurements.final_visibility_samples, 1);
+                for operator in &mut self.operators {
+                    record_measurement(&mut operator.measurements.final_visibility_samples, 1);
+                }
             }
         }
         self.sample_count = self
@@ -1752,7 +2096,7 @@ impl CompleteDataOwnerState {
         if block.sequence() != self.next_block_sequence {
             return Err(SpectralOperatorError::BlockSequence);
         }
-        if block.samples().len() > self.operator.workload.max_replay_block_samples {
+        if block.samples().len() > self.operators[0].workload.max_replay_block_samples {
             return Err(SpectralOperatorError::IncompleteCoverage);
         }
         self.coverage.adopt(block.coverage_checkpoint());
@@ -1767,35 +2111,54 @@ impl CompleteDataOwnerState {
                 }
             };
             let mut predicted_visibility = Complex64::default();
+            let mut prediction_compensation = Complex64::default();
             let mut touches_core = false;
             let has_spectral_support = weighted.spectral_values().next().is_some();
             if selected.address.correlation_type.contributes_to_stokes_i() {
-                let mut stencil = SmallVec::<[SpectralOperatorSample; 4]>::new();
-                for spectral in weighted.spectral_values() {
-                    let contribution = spectral.contribution();
-                    stencil.push(SpectralOperatorSample::new(
-                        usize::try_from(contribution.output_channel())
-                            .map_err(|_| SpectralOperatorError::InvalidSample)?,
-                        selected.transformed_uvw_m,
-                        contribution.evaluation_frequency_hz(),
-                        selected.phase_shift_m,
-                        [0.0, 0.0],
-                        spectral.imaging_weight(),
-                        contribution.factor(),
-                    )?);
-                }
-                touches_core = stencil
-                    .iter()
-                    .any(|sample| self.operator.slab.owns(sample.output_channel));
-                if touches_core
-                    && self
-                        .model_binding
-                        .is_some_and(ReconstructionModelBinding::is_evaluated)
-                {
-                    predicted_visibility = self.operator.predict_stencil(&stencil)?;
+                for domain_ordinal in 0..self.operators.len() {
+                    let (uvw_m, phase_shift_m) = selected_model_projection(
+                        selected,
+                        self.specification.domain_count(),
+                        domain_ordinal,
+                    )?;
+                    let mut stencil = SmallVec::<[SpectralOperatorSample; 4]>::new();
+                    for spectral in weighted.spectral_values() {
+                        let contribution = spectral.contribution();
+                        stencil.push(SpectralOperatorSample::new(
+                            usize::try_from(contribution.output_channel())
+                                .map_err(|_| SpectralOperatorError::InvalidSample)?,
+                            uvw_m,
+                            contribution.evaluation_frequency_hz(),
+                            phase_shift_m,
+                            [0.0, 0.0],
+                            spectral.imaging_weight(),
+                            contribution.factor(),
+                        )?);
+                    }
+                    let domain_touches = stencil.iter().any(|sample| {
+                        self.operators[domain_ordinal]
+                            .slab
+                            .owns(sample.output_channel)
+                    });
+                    touches_core |= domain_touches;
+                    if domain_touches
+                        && self
+                            .model_binding
+                            .is_some_and(ReconstructionModelBinding::is_evaluated)
+                    {
+                        let domain_prediction =
+                            self.operators[domain_ordinal].predict_stencil(&stencil)?;
+                        compensated_complex_add(
+                            &mut predicted_visibility,
+                            &mut prediction_compensation,
+                            domain_prediction,
+                        );
+                    }
                 }
             }
-            if has_spectral_support && (touches_core || self.operator.slab.total_channels() == 1) {
+            if has_spectral_support
+                && (touches_core || self.specification.slab.total_channels() == 1)
+            {
                 let observed = Complex64::new(visibility[0], visibility[1]);
                 let predicted = casa_persistent_complex(predicted_visibility);
                 self.predicted_selected.push(FinalVisibilitySample {
@@ -1805,7 +2168,9 @@ impl CompleteDataOwnerState {
                     residual: observed - predicted,
                 });
                 #[cfg(test)]
-                record_measurement(&mut self.operator.measurements.final_visibility_samples, 1);
+                for operator in &mut self.operators {
+                    record_measurement(&mut operator.measurements.final_visibility_samples, 1);
+                }
             }
         }
         self.sample_count = self
@@ -1831,14 +2196,18 @@ impl CompleteDataOwnerState {
         if self.model_binding.is_some() {
             return Err(SpectralOperatorError::PredictionAfterMajorCycleBinding);
         }
-        if block.samples().len() > self.operator.workload.max_replay_block_samples {
+        if self.operators.len() != 1 {
+            return Err(SpectralOperatorError::UnsupportedMultiDomainProblem);
+        }
+        let operator = &mut self.operators[0];
+        if block.samples().len() > operator.workload.max_replay_block_samples {
             return Err(SpectralOperatorError::IncompleteCoverage);
         }
-        self.operator.prepare_prediction_grid(model)?;
-        self.operator.prediction_len = 0;
+        operator.prepare_prediction_grid(model)?;
+        operator.prediction_len = 0;
         for weighted in block.samples() {
             let selected = weighted.selected();
-            if !self.accept_input(selected)?
+            if !accept_weighted_input(selected, self.finite_values)?
                 || !selected.address.correlation_type.contributes_to_stokes_i()
             {
                 continue;
@@ -1859,12 +2228,12 @@ impl CompleteDataOwnerState {
             }
             if stencil
                 .iter()
-                .any(|sample| self.operator.slab.owns(sample.output_channel))
+                .any(|sample| operator.slab.owns(sample.output_channel))
             {
-                self.operator.push_prediction(&stencil)?;
+                operator.push_prediction(&stencil)?;
             }
         }
-        Ok(&self.operator.predictions[..self.operator.prediction_len])
+        Ok(&operator.predictions[..operator.prediction_len])
     }
 
     /// Consume terminal T18 algorithm evidence and mint complete-data evidence.
@@ -1895,12 +2264,14 @@ impl CompleteDataOwnerState {
         if coverage != replay.coverage() {
             return Err(SpectralOperatorError::IncompleteCoverage);
         }
-        self.operator.validate_reused_lineage(
-            replay.weighting_generation(),
-            selected_generation,
-            continuum_transform_generation,
-        )?;
-        let primitives = match self.operator.basis {
+        for operator in &self.operators {
+            operator.validate_reused_lineage(
+                replay.weighting_generation(),
+                selected_generation,
+                continuum_transform_generation,
+            )?;
+        }
+        let primitive_catalog = match self.specification.basis {
             SpectralBasisPlan::Polynomial(plan) if plan.coefficient_term_count() > 1 => {
                 SpectralPrimitiveCatalog::UnnormalizedTaylorBlockV1
             }
@@ -1908,8 +2279,20 @@ impl CompleteDataOwnerState {
             SpectralBasisPlan::ChannelLocal => SpectralPrimitiveCatalog::UnnormalizedChannelSlabV1,
             SpectralBasisPlan::Joint { .. } => SpectralPrimitiveCatalog::UnnormalizedJointBlockV1,
         };
+        let domains = self
+            .operators
+            .into_iter()
+            .map(|operator| {
+                let domain_ordinal = operator.domain_ordinal;
+                let domain_role = operator.domain_role.clone();
+                operator.finish_bound(self.model_binding).map(|primitives| {
+                    SpectralDomainPrimitives::new(domain_ordinal, domain_role, primitives)
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?
+            .into_boxed_slice();
         Ok(CompleteDataOwnerResult {
-            primitives: self.operator.finish_bound(self.model_binding)?,
+            domains: SpectralPrimitiveDomains::new(domains)?,
             completion: CompleteDataOwnerCompletion {
                 problem: self.problem,
                 geometry: self.geometry,
@@ -1920,7 +2303,7 @@ impl CompleteDataOwnerState {
                 coverage,
                 coverage_proof_bytes: coverage_proof_work.bytes,
                 coverage_proof_hash_calls: coverage_proof_work.hash_calls,
-                primitives,
+                primitives: primitive_catalog,
                 selected_generation,
                 continuum_transform_generation,
                 sample_count: replay.sample_count(),
@@ -1935,6 +2318,37 @@ impl CompleteDataOwnerState {
     ) -> Result<bool, SpectralOperatorError> {
         accept_weighted_input(sample, self.finite_values)
     }
+}
+
+pub(crate) fn selected_model_projection(
+    sample: &crate::weighting::WeightingSelectedSample,
+    domain_count: usize,
+    domain_ordinal: usize,
+) -> Result<([f64; 3], f64), SpectralOperatorError> {
+    let projections = sample.domain_projections();
+    if projections.len() != domain_count {
+        return Err(SpectralOperatorError::DomainProjectionMismatch);
+    }
+    let projection = projections
+        .get(
+            u32::try_from(domain_ordinal)
+                .map_err(|_| SpectralOperatorError::DomainProjectionMismatch)?,
+        )
+        .ok_or(SpectralOperatorError::DomainProjectionMismatch)?
+        .model();
+    let uvw_m = projection.transformed_uvw_m();
+    let phase_shift_m = projection.phase_shift_m();
+    if uvw_m.iter().any(|value| !value.is_finite()) || !phase_shift_m.is_finite() {
+        return Err(SpectralOperatorError::InvalidSample);
+    }
+    Ok((uvw_m, phase_shift_m))
+}
+
+fn compensated_complex_add(sum: &mut Complex64, compensation: &mut Complex64, value: Complex64) {
+    let corrected = value - *compensation;
+    let updated = *sum + corrected;
+    *compensation = (updated - *sum) - corrected;
+    *sum = updated;
 }
 
 pub(crate) fn accept_weighted_input(
@@ -1983,6 +2397,8 @@ fn apply_input_policy(
 /// Reconstruction-owned serial CPU operator accumulator for one bounded slab.
 pub(crate) struct SpectralSlabOperator {
     specification: Option<SpectralOperatorSpecification>,
+    domain_ordinal: usize,
+    domain_role: ImageDomainRole,
     geometry: SpectralOperatorGeometry,
     slab: SpectralSlabPlan,
     basis: SpectralBasisPlan,
@@ -2027,56 +2443,6 @@ impl fmt::Debug for SpectralSlabOperator {
 }
 
 impl SpectralSlabOperator {
-    /// Allocate the runtime-projected buffers and no worker-local grid duplicate.
-    #[must_use]
-    pub(crate) fn new(
-        specification: SpectralOperatorSpecification,
-        workload: SpectralOperatorWorkload,
-        fft: PreparedFft,
-    ) -> Self {
-        let geometry = specification.operator_geometry();
-        let slab = specification.slab;
-        let basis = specification.basis;
-        let joint_line_term_by_channel = specification.joint_line_term_by_channel.clone();
-        let output_channel_frequencies_hz = specification.output_channel_frequencies_hz.clone();
-        Self::new_inner(
-            Some(specification),
-            geometry,
-            slab,
-            basis,
-            joint_line_term_by_channel,
-            output_channel_frequencies_hz,
-            workload,
-            fft,
-            workload.max_replay_block_samples,
-        )
-    }
-
-    /// Allocate gridded replay state without an ordinary per-record prediction buffer.
-    #[must_use]
-    pub(crate) fn new_gridded_normal(
-        specification: SpectralOperatorSpecification,
-        workload: SpectralOperatorWorkload,
-        fft: PreparedFft,
-    ) -> Self {
-        let geometry = specification.operator_geometry();
-        let slab = specification.slab;
-        let basis = specification.basis;
-        let joint_line_term_by_channel = specification.joint_line_term_by_channel.clone();
-        let output_channel_frequencies_hz = specification.output_channel_frequencies_hz.clone();
-        Self::new_inner(
-            Some(specification),
-            geometry,
-            slab,
-            basis,
-            joint_line_term_by_channel,
-            output_channel_frequencies_hz,
-            workload,
-            fft,
-            0,
-        )
-    }
-
     #[cfg(test)]
     fn new_with_geometry(
         geometry: SpectralOperatorGeometry,
@@ -2086,6 +2452,8 @@ impl SpectralSlabOperator {
     ) -> Self {
         Self::new_inner(
             None,
+            0,
+            ImageDomainRole::Main,
             geometry,
             slab,
             if slab.total_channels() == 1 {
@@ -2105,6 +2473,8 @@ impl SpectralSlabOperator {
 
     fn new_inner(
         specification: Option<SpectralOperatorSpecification>,
+        domain_ordinal: usize,
+        domain_role: ImageDomainRole,
         geometry: SpectralOperatorGeometry,
         slab: SpectralSlabPlan,
         basis: SpectralBasisPlan,
@@ -2129,6 +2499,8 @@ impl SpectralSlabOperator {
         };
         Self {
             specification,
+            domain_ordinal,
+            domain_role,
             geometry,
             slab,
             basis,
@@ -2162,6 +2534,28 @@ impl SpectralSlabOperator {
             #[cfg(test)]
             measurements: SpectralOperatorMeasurements::default(),
         }
+    }
+
+    pub(crate) fn new_domain(
+        specification: &SpectralOperatorSpecification,
+        domain: &SpectralOperatorDomainSpecification,
+        workload: SpectralOperatorWorkload,
+        fft: PreparedFft,
+        prediction_capacity: usize,
+    ) -> Self {
+        Self::new_inner(
+            Some(specification.clone()),
+            domain.ordinal,
+            domain.role.clone(),
+            domain.geometry,
+            specification.slab,
+            specification.basis,
+            specification.joint_line_term_by_channel.clone(),
+            specification.output_channel_frequencies_hz.clone(),
+            workload,
+            fft,
+            prediction_capacity,
+        )
     }
 
     /// Accumulate one already-weighted spectral contribution.
@@ -2430,10 +2824,9 @@ impl SpectralSlabOperator {
         match (self.workload.pass, reused_normal_state.as_ref()) {
             (SpectralOperatorPass::InitialMajor, None) => {}
             (SpectralOperatorPass::ResidualRefresh, Some(state))
-                if self
-                    .specification
-                    .as_ref()
-                    .is_some_and(|specification| state.matches(specification)) => {}
+                if self.specification.as_ref().is_some_and(|specification| {
+                    state.matches(specification, self.domain_ordinal, self.geometry)
+                }) => {}
             _ => return Err(SpectralOperatorError::ReusableNormalStateMismatch),
         }
         self.reused_normal_state = reused_normal_state;
@@ -2462,10 +2855,17 @@ impl SpectralSlabOperator {
         generation: &ModelGeneration,
     ) -> Result<(), SpectralOperatorError> {
         let shape = generation.shape();
-        if shape.domains().len() != 1
+        if shape.domains().len()
+            != self
+                .specification
+                .as_ref()
+                .map_or(1, SpectralOperatorSpecification::domain_count)
             || shape.coefficients() != self.basis.coefficient_terms(self.slab)
             || shape.polarizations() != 1
-            || shape.domains()[0].pixels() != self.geometry.image_shape
+            || shape
+                .domains()
+                .get(self.domain_ordinal)
+                .is_none_or(|domain| domain.pixels() != self.geometry.image_shape)
             || generation.samples().len() != shape.sample_count()
         {
             return Err(SpectralOperatorError::ModelShape);
@@ -2480,6 +2880,15 @@ impl SpectralSlabOperator {
         let width = self.geometry.image_shape[0];
         let height = self.geometry.image_shape[1];
         let cells = width * height;
+        let domain_start = generation
+            .shape()
+            .flat_index(casa_imaging_model::ModelCell::new(
+                self.domain_ordinal,
+                0,
+                0,
+                [0, 0],
+            ))
+            .ok_or(SpectralOperatorError::ModelShape)?;
         let coefficient_range = match self.basis {
             SpectralBasisPlan::ChannelLocal => self.slab.resident_range(),
             SpectralBasisPlan::Polynomial(plan) => 0..plan.coefficient_term_count(),
@@ -2493,7 +2902,8 @@ impl SpectralSlabOperator {
             grid.fill(Complex64::default());
             for y in 0..height {
                 for x in 0..width {
-                    let sample = generation.samples()[coefficient * cells + y * width + x];
+                    let sample =
+                        generation.samples()[domain_start + coefficient * cells + y * width + x];
                     if sample.support() == ModelSupport::Invalid {
                         continue;
                     }
@@ -3917,6 +4327,9 @@ pub enum SpectralOperatorError {
     /// The problem is outside the supported scalar-response Stokes-I bases.
     #[error("spectral operator requires a supported scalar-response Stokes-I reconstruction basis")]
     UnsupportedProblem,
+    /// Multi-domain execution is currently the constant-basis standard operator only.
+    #[error("multi-domain spectral execution requires constant-basis standard imaging")]
+    UnsupportedMultiDomainProblem,
     /// A requested output slab is empty or outside the compiled spectral axis.
     #[error("spectral operator slab is empty or outside the output spectral axis")]
     InvalidSlab,
@@ -3935,6 +4348,9 @@ pub enum SpectralOperatorError {
     /// A weighted contribution contains an invalid numerical value.
     #[error("spectral operator sample is non-finite or outside its numerical domain")]
     InvalidSample,
+    /// Selected row geometry did not provide one canonical projection per image domain.
+    #[error("selected row image-domain projections do not match the compiled geometry")]
+    DomainProjectionMismatch,
     /// The operator generated a non-finite value under a rejecting numerics contract.
     #[error("spectral operator generated a non-finite value")]
     GeneratedNonfinite,
@@ -4319,6 +4735,8 @@ mod tests {
             joint_line_term_by_channel: vec![None].into_boxed_slice(),
             dirty: [Complex64::new(2.0, -0.5), Complex64::new(-0.25, 0.125)].into(),
             invariant_dirty: None,
+            common_residual: None,
+            invariant_common_dirty: None,
             psf: [
                 Complex64::new(3.0, 0.0),
                 Complex64::new(-0.75, 0.0),
@@ -4327,6 +4745,7 @@ mod tests {
             .into(),
             sensitivity: [3.0, -0.75, 0.375].into(),
             sum_weights: [3.0, -0.75, 0.375].into(),
+            channel_sum_weights: Box::new([]),
             validity: [SpectralChannelValidity::Valid].into(),
             major_cycle_residual: None,
             major_cycle_residual_promoted: false,

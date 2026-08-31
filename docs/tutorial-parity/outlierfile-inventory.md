@@ -1,10 +1,9 @@
 # CASA `outlierfile` Inventory
 
 Truth class: source-backed implementation note
-Last reality check: 2026-05-07
+Last reality check: 2026-08-31
 Verification:
-- `cargo test -p casars-imager outlier_file -- --nocapture`
-- `cargo test -p casars-imager --features slow-tests outlierfile_ -- --nocapture`
+- `just imaging-t31-multidomain-geometry <testdata_root> <casa_prefix>`
 
 ## CASA Source Seams
 
@@ -20,7 +19,7 @@ Verification:
 
 ## Parsed Fields
 
-`casars-imager` now parses and reports the CASA new-format outlier fields that
+The application parser accepts the CASA new-format outlier fields that
 CASA documents for `tclean`:
 
 | Field | CASA role | casa-rs status |
@@ -29,7 +28,7 @@ CASA documents for `tclean`:
 | `imsize` | outlier image shape | executed for positive square sizes |
 | `cell` | outlier cell size | executed for positive square arcsec cells |
 | `phasecenter` | outlier image phase center | executed for supported J2000 text/radian directions |
-| `startmodel` | outlier start model image | parsed; executed through the single-plane startmodel loader when present |
+| `startmodel` | outlier start model image | parsed; non-empty values reject |
 | `usemask` | outlier mask mode | `user` is accepted for outlier masks; `auto-multithresh` remains rejected |
 | `mask` | outlier clean mask | CASA pixel circle regions such as `circle[[40pix,40pix],10pix]` are executed for the supported MFS/Hogbom slice; other region/image mask forms reject |
 | `specmode` | outlier spectral mode | executed for `mfs`/`cont`; other modes reject |
@@ -48,36 +47,41 @@ controls.
 
 ## Execution Boundary
 
-`casars-imager --outlierfile` now executes the main image and each supported
-outlier definition as a CASA-style MFS/Hogbom image set. The dirty path clones
-the main configuration, overlays the outlier image parameters, applies CASA's
-standard-gridder outlier semantics, and runs the same MeasurementSet preparation
-and image-writing path for each image definition.
+`casars-imager --outlierfile` compiles the main image and supported outliers as
+one canonical image-domain collection. `casa-ms` supplies one ordered selected
+observation stream with explicit GridFT projections for every domain;
+reconstruction predicts the summed domain model once, subtracts it once, and
+forms each domain's PSF and residual through the same bounded operator route.
+The runtime retains one shared major-cycle lineage and one atomic model
+generation rather than launching independent imaging runs.
 
-For `niter>0`, the supported slice uses a joint multi-image Hogbom controller:
-each image has its own residual/model/PSF plane, minor-cycle components are
-chosen across the image set, and each major-cycle refresh subtracts the summed
-models from the prepared visibilities using the per-image phase shifts captured
-by the preparation trace. This avoids the known-wrong independent single-image
-CLEAN behavior for cleaned outlier fields.
+For `niter>0`, each compiled field receives CASA's shared minor-cycle control
+record and runs a deterministic field-local Högbom controller in canonical
+domain order. The iteration budget is compared only after every field exits its
+minor cycle, so the aggregate may exceed `niter`. All accepted field terms are
+still combined into one model delta before the shared visibility-domain
+residual refresh.
 
 The source-backed parity gate now uses CASA's own
 `refim_twopoints_twochan.ms` multifield fixture and the same upstream
 `test_task_tclean.py` parameters: main `imsize=100`, `cell='8.0arcsec'`,
 main `phasecenter='J2000 19:59:28.500 +40.44.01.50'`, outlier
 `imsize=[80,80]`, outlier `phasecenter='J2000 19:58:40.895 +40.55.58.543'`,
-`usemask=user`, and `mask=circle[[40pix,40pix],10pix]`. The latest local
-evidence was:
+`usemask=user`, and `mask=circle[[40pix,40pix],10pix]`. The T31 frozen-CASA
+gate requires exact WCS and at most `1e-3` normalized RMS for every main and
+outlier PSF, residual, model, and restored image. The accepted evidence is:
 
 ```text
-outlierfile dirty parity: rust_elapsed=1.410s casa_elapsed=6.742s main_rms=6.209766e-8 main_max_abs=7.152557e-7 main_corr=1.000000e0 outlier_rms=1.086336e-2 outlier_max_abs=1.319971e-1 outlier_corr=9.996859e-1
-outlierfile clean parity: rust_elapsed=1.670s casa_elapsed=13.435s rust_minor=13 rust_major=2 main_image_50_50=1.072964e0/1.075265e0 outlier_image_40_40=5.588160e0/5.587516e0 main_residual_30_18=3.899402e-2/3.849955e-2 main_model_rms=2.384186e-9 main_model_max_abs=2.384186e-7 outlier_model_rms=1.394999e-5 outlier_model_max_abs=1.071334e-3
+dirty main:    psf=6.488577e-7 residual=7.482402e-8 model=0 image=7.482402e-8
+dirty outlier: psf=6.315367e-7 residual=5.605816e-7 model=0 image=5.605816e-7
+clean main:    psf=6.488577e-7 residual=8.047645e-7 model=8.472027e-7 image=6.778549e-7
+clean outlier: psf=6.315367e-7 residual=1.682477e-6 model=8.814884e-7 image=6.758271e-7
+clean controller: charged=13 actual=14 (main actual=3, outlier actual=11)
 ```
 
-Instrumentation of the niter>0 model split showed that CASA single-field
-`tclean` with the outlier phase center produces the same dirty residual and PSF
-as the outlierfile path. Rust and CASA differed in the dirty outlier residual at
-the standard gridding seam, and the first cleaned outlier source has near-tied
-pixels whose residuals differ by less than 0.1%. The joint Hogbom controller now
-keeps CASA's y-major scan order for those near ties, so the model split remains
-stable against that gridding roundoff.
+The GridFT projection boundary is distinct from direct `fixvis` reprojection:
+it applies CASA's negated-UV convention, rotates from source to target, restores
+the external UVW convention, and stores the opposite phase scalar required by
+the Rust adjoint exponent. Prediction consumes the conjugate of that same
+compiled phase. This shared projection removed the former outlier PSF-shape
+error without a mode-specific operator or spectral-sign exception.

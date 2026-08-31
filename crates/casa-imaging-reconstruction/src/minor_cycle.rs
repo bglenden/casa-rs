@@ -30,13 +30,14 @@ use casa_numerics::solve_symmetric_ldlt_casacore_dynamic;
 use thiserror::Error;
 
 use crate::{
-    CoupledReconstructionMask, Encoder, FinalNormalState, FinalNormalStateCompletionId, ModelDelta,
-    ModelGeneration, ModelGenerationId, ModelLifecycle, ModelLifecycleError, ReconstructionMask,
+    CoupledReconstructionMask, Encoder, FinalNormalState, FinalNormalStateCompletionId,
+    ImageDomainReconstructionMasks, ModelDelta, ModelGeneration, ModelGenerationId, ModelLifecycle,
+    ModelLifecycleError, ReconstructionMask, ReconstructionMaskGenerationId,
     major_cycle::FinalNormalStatePlane,
 };
 
 const MINOR_CYCLE_EVIDENCE_DOMAIN: &[u8] = b"casa-rs-minor-cycle-evidence";
-const MINOR_CYCLE_EVIDENCE_VERSION: u32 = 6;
+const MINOR_CYCLE_EVIDENCE_VERSION: u32 = 8;
 
 /// Return the hard resident-memory envelope for one solver-owned Minor Cycle.
 ///
@@ -775,6 +776,97 @@ pub struct MinorCycleEvidence {
     clark_refreshes: usize,
     recorded: Option<Box<[MinorCycleComponent]>>,
     cycle_threshold: Option<f64>,
+    image_domain_runs: Option<Box<[ImageDomainMinorCycleEvidence]>>,
+}
+
+/// One image field's contribution to a shared multi-domain minor-cycle set.
+///
+/// CASA gives every image field the same per-set iteration budget and shared
+/// absolute cycle threshold, but each field owns its own residual peak, noise
+/// threshold, controller, and stop decision. These records remain in canonical
+/// compiled-domain order and explain why the aggregate iteration count may
+/// exceed the requested per-set budget.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ImageDomainMinorCycleEvidence {
+    domain_ordinal: usize,
+    iterations: usize,
+    controller_iterations: usize,
+    total_flux: f64,
+    initial_peak_flux: f64,
+    final_peak_flux: f64,
+    noise_rms: Option<f64>,
+    global_threshold: f64,
+    effective_threshold: f64,
+    cycle_threshold: Option<f64>,
+    stop_reason: MinorCycleStopReason,
+}
+
+impl ImageDomainMinorCycleEvidence {
+    /// Return the canonical compiled image-domain ordinal.
+    #[must_use]
+    pub const fn domain_ordinal(self) -> usize {
+        self.domain_ordinal
+    }
+
+    /// Return the number of components applied in this field.
+    #[must_use]
+    pub const fn iterations(self) -> usize {
+        self.iterations
+    }
+
+    /// Return the iterations charged to this field's controller budget.
+    #[must_use]
+    pub const fn controller_iterations(self) -> usize {
+        self.controller_iterations
+    }
+
+    /// Return the cumulative absolute component flux for this field.
+    #[must_use]
+    pub const fn total_flux(self) -> f64 {
+        self.total_flux
+    }
+
+    /// Return this field's normalized residual peak at entry.
+    #[must_use]
+    pub const fn initial_peak_flux(self) -> f64 {
+        self.initial_peak_flux
+    }
+
+    /// Return this field's terminal normalized residual peak.
+    #[must_use]
+    pub const fn final_peak_flux(self) -> f64 {
+        self.final_peak_flux
+    }
+
+    /// Return this field's robust RMS when an `nsigma` stop was requested.
+    #[must_use]
+    pub const fn noise_rms(self) -> Option<f64> {
+        self.noise_rms
+    }
+
+    /// Return this field's absolute/noise threshold before cycle limiting.
+    #[must_use]
+    pub const fn global_threshold(self) -> f64 {
+        self.global_threshold
+    }
+
+    /// Return this field's effective threshold after cycle limiting.
+    #[must_use]
+    pub const fn effective_threshold(self) -> f64 {
+        self.effective_threshold
+    }
+
+    /// Return the shared set-entry PSF-sidelobe-derived cycle threshold.
+    #[must_use]
+    pub const fn cycle_threshold(self) -> Option<f64> {
+        self.cycle_threshold
+    }
+
+    /// Return why this field's controller stopped.
+    #[must_use]
+    pub const fn stop_reason(self) -> MinorCycleStopReason {
+        self.stop_reason
+    }
 }
 
 impl MinorCycleEvidence {
@@ -851,24 +943,36 @@ impl MinorCycleEvidence {
     }
 
     /// Return the robust RMS used by an `nsigma` stop.
+    ///
+    /// Multi-domain evidence returns the maximum of the independently derived
+    /// per-field values; use [`Self::image_domain_runs`] for each controller's
+    /// exact value.
     #[must_use]
     pub const fn noise_rms(&self) -> Option<f64> {
         self.noise_rms
     }
 
     /// Return the actual threshold after combining absolute and `nsigma` controls.
+    ///
+    /// Multi-domain evidence returns the maximum per-field effective threshold.
     #[must_use]
     pub const fn effective_threshold(&self) -> f64 {
         self.effective_threshold
     }
 
-    /// Return the global absolute/noise threshold before applying any cycle threshold.
+    /// Return the absolute/noise threshold before applying any cycle threshold.
+    ///
+    /// Multi-domain evidence returns the maximum per-field value; there is no
+    /// single shared field threshold.
     #[must_use]
     pub const fn global_threshold(&self) -> f64 {
         self.global_threshold
     }
 
     /// Return the PSF-sidelobe-derived cycle threshold, when configured.
+    ///
+    /// Multi-domain evidence returns the shared set-entry threshold applied to
+    /// every field controller.
     #[must_use]
     pub const fn cycle_threshold(&self) -> Option<f64> {
         self.cycle_threshold
@@ -916,6 +1020,15 @@ impl MinorCycleEvidence {
     #[must_use]
     pub fn recorded_component_sequence(&self) -> Option<&[MinorCycleComponent]> {
         self.recorded.as_deref()
+    }
+
+    /// Return per-field controller evidence for a multi-domain cycle set.
+    ///
+    /// Scalar/cube/Taylor solves return `None`. Image-domain collection
+    /// execution returns one record per compiled domain, including N=1.
+    #[must_use]
+    pub fn image_domain_runs(&self) -> Option<&[ImageDomainMinorCycleEvidence]> {
+        self.image_domain_runs.as_deref()
     }
 
     /// Compare this evidence's recorded sequence against another baseline.
@@ -1011,6 +1124,9 @@ pub enum MinorCycleError {
     /// The selected reconstruction algorithm has no minor-cycle implementation.
     #[error("reconstruction algorithm has no minor-cycle implementation")]
     UnsupportedAlgorithm,
+    /// T31 image-domain execution admits only one-channel constant-basis Högbom.
+    #[error("image-domain reconstruction requires one-channel constant-basis Högbom")]
+    UnsupportedImageDomainCycle,
     /// MT-MFS controls were not derived from their authoritative Compiled Problem.
     #[error("MT-MFS minor-cycle programs require an authoritative Compiled Problem")]
     CompiledProblemRequired,
@@ -1038,6 +1154,9 @@ pub enum MinorCycleError {
     /// The iteration bound was zero.
     #[error("Högbom iteration bound must be non-zero")]
     InvalidIterationBound,
+    /// Summed multi-domain iteration evidence exceeded the representable count.
+    #[error("multi-domain minor-cycle iteration count overflowed")]
+    IterationCountOverflow,
     /// A bounded view supplied a non-positive or non-finite update envelope.
     #[error("bounded minor-cycle validity requires a finite positive update envelope")]
     InvalidValidityBound,
@@ -1131,6 +1250,356 @@ pub fn run_minor_cycle(
         mask,
         controls,
     )
+}
+
+struct ImageDomainHogbomWork<'a> {
+    domain_ordinal: usize,
+    shape: [usize; 2],
+    psf: &'a [num_complex::Complex64],
+    model_plane: MinorCycleModelPlane,
+    psf_peak: f64,
+    psf_peak_pixel: [usize; 2],
+    valid_support: Box<[bool]>,
+    residual: Vec<f64>,
+    noise_rms: Option<f64>,
+}
+
+impl ImageDomainHogbomWork<'_> {
+    fn candidate(&self) -> Option<(usize, f64)> {
+        find_peak_abs(
+            &self.residual,
+            self.shape,
+            |value| *value,
+            |pixel| self.valid_support[pixel[0] * self.shape[1] + pixel[1]],
+        )
+        .map(|index| (index, self.residual[index] / self.psf_peak))
+    }
+}
+
+/// Run one CASA-style image-domain Högbom set under per-field controllers.
+///
+/// Fields execute in canonical compiled-domain order. Each receives the same
+/// per-set iteration budget and owns its own peak, noise threshold, and stop
+/// decision. CASA derives one absolute cycle threshold from the set's global
+/// entry peak and maximum PSF sidelobe, then applies it to every field.
+/// Accepted terms from every controller are still minted atomically as one
+/// model delta for the shared Major-Cycle lineage.
+pub(crate) fn run_image_domain_minor_cycle(
+    lifecycle: &ModelLifecycle,
+    base: &ModelGeneration,
+    view: &FinalNormalState,
+    masks: &ImageDomainReconstructionMasks,
+    controls: MinorCycleProgram,
+) -> Result<MinorCycleResult, MinorCycleError> {
+    if !matches!(controls.algorithm(), ReconstructionAlgorithm::Hogbom)
+        || view.catalog() != crate::NormalStateCatalog::UnnormalizedPlaneV1
+        || view.channel_count() != 1
+    {
+        return Err(MinorCycleError::UnsupportedImageDomainCycle);
+    }
+    if view.domain_count() != masks.len()
+        || view.domain_count() != base.shape().domains().len()
+        || controls.model_plane().coefficient() != 0
+        || controls.model_plane().polarization() >= base.shape().polarizations()
+    {
+        return Err(MinorCycleError::ModelShapeMismatch);
+    }
+    if base.generation_id() != view.final_model_generation() {
+        return Err(MinorCycleError::ForeignNormalState);
+    }
+
+    let mut work = Vec::with_capacity(view.domain_count());
+    let mut maximum_sidelobe = 0.0_f64;
+    for (domain, mask) in view.domains().zip(masks.iter()) {
+        let plane = domain.plane(0).ok_or(MinorCycleError::ModelShapeMismatch)?;
+        let shape = plane.shape();
+        let model_plane =
+            MinorCycleModelPlane::new(domain.ordinal(), 0, controls.model_plane().polarization());
+        if base
+            .shape()
+            .domains()
+            .get(domain.ordinal())
+            .is_none_or(|model_domain| model_domain.pixels() != shape)
+            || mask.shape() != shape
+        {
+            return Err(MinorCycleError::ModelShapeMismatch);
+        }
+        if mask.problem_id() != view.problem_id()
+            || mask.model_generation() != base.generation_id()
+            || mask
+                .normal_state_completion()
+                .is_some_and(|completion| completion != view.completion_id())
+        {
+            return Err(MinorCycleError::ForeignMask);
+        }
+        let psf_peak_index = find_peak_abs(
+            plane.normal_approximation(),
+            shape,
+            |value| value.re,
+            |_| true,
+        )
+        .ok_or(MinorCycleError::InvalidPsfPeak)?;
+        let psf_peak = plane.normal_approximation()[psf_peak_index].re;
+        if !psf_peak.is_finite() || psf_peak <= 0.0 {
+            return Err(MinorCycleError::InvalidPsfPeak);
+        }
+        let mut residual = Vec::with_capacity(shape[0] * shape[1]);
+        for value in plane.residual() {
+            if !value.re.is_finite() {
+                return Err(MinorCycleError::GeneratedNonfinite);
+            }
+            residual.push(value.re);
+        }
+        let noise_rms = controls
+            .noise_sigma()
+            .map(|_| robust_masked_rms(&residual, shape, base, model_plane, mask))
+            .transpose()?
+            .map(|rms| rms / psf_peak);
+        let psf = plane
+            .normal_approximation()
+            .iter()
+            .map(|value| value.re as f32)
+            .collect::<Vec<_>>();
+        maximum_sidelobe = maximum_sidelobe.max(crate::fitted_psf_sidelobe_fraction(&psf, shape)?);
+        let valid_support = (0..shape[0] * shape[1])
+            .map(|index| {
+                let pixel = plane_pixel(index, shape);
+                mask.contains(pixel) && valid_support(base, shape, model_plane, pixel)
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+        work.push(ImageDomainHogbomWork {
+            domain_ordinal: domain.ordinal(),
+            shape,
+            psf: plane.normal_approximation(),
+            model_plane,
+            psf_peak,
+            psf_peak_pixel: plane_pixel(psf_peak_index, shape),
+            valid_support,
+            residual,
+            noise_rms,
+        });
+    }
+
+    let global_initial_peak = work
+        .iter()
+        .filter_map(ImageDomainHogbomWork::candidate)
+        .map(|(_, strength)| strength.abs())
+        .fold(0.0_f64, f64::max);
+    let shared_cycle_threshold = controls
+        .fixed_cycle_threshold
+        .or_else(|| controls.cycle_threshold_for(global_initial_peak, maximum_sidelobe));
+    let mut terms = BTreeMap::<ModelCell, f64>::new();
+    let mut recorded = Vec::with_capacity(
+        controls
+            .component_sequence_limit()
+            .unwrap_or(0)
+            .min(controls.actual_iteration_limit().saturating_mul(work.len())),
+    );
+    let domain_runs = run_image_domain_hogbom_controllers(
+        &mut work,
+        &controls,
+        shared_cycle_threshold,
+        &mut terms,
+        &mut recorded,
+    )?;
+    let iterations = domain_runs
+        .iter()
+        .try_fold(0_usize, |total, run| total.checked_add(run.iterations))
+        .ok_or(MinorCycleError::IterationCountOverflow)?;
+    let controller_iterations = domain_runs
+        .iter()
+        .try_fold(0_usize, |total, run| {
+            total.checked_add(run.controller_iterations)
+        })
+        .ok_or(MinorCycleError::IterationCountOverflow)?;
+    let total_flux = domain_runs.iter().map(|run| run.total_flux).sum::<f64>();
+    if !total_flux.is_finite() {
+        return Err(MinorCycleError::GeneratedNonfinite);
+    }
+    let initial_peak_flux = domain_runs
+        .iter()
+        .map(|run| run.initial_peak_flux)
+        .fold(0.0_f64, f64::max);
+    let final_peak_flux = domain_runs
+        .iter()
+        .map(|run| run.final_peak_flux)
+        .fold(0.0_f64, f64::max);
+    let maximum_noise_rms = domain_runs
+        .iter()
+        .filter_map(|run| run.noise_rms)
+        .reduce(f64::max);
+    let global_threshold = domain_runs
+        .iter()
+        .map(|run| run.global_threshold)
+        .fold(0.0_f64, f64::max);
+    let effective_threshold = domain_runs
+        .iter()
+        .map(|run| run.effective_threshold)
+        .fold(0.0_f64, f64::max);
+    let cycle_threshold = domain_runs
+        .iter()
+        .filter_map(|run| run.cycle_threshold)
+        .reduce(f64::max);
+    let stop_reason = domain_runs
+        .iter()
+        .map(|run| run.stop_reason)
+        .max_by_key(|reason| image_domain_stop_priority(*reason))
+        .unwrap_or(MinorCycleStopReason::ThresholdReached);
+    terms.retain(|_, flux| *flux != 0.0);
+    let delta = if terms.is_empty() {
+        None
+    } else {
+        let mut deltas = terms
+            .iter()
+            .map(|(cell, flux)| {
+                let flat = base
+                    .shape()
+                    .flat_index(*cell)
+                    .ok_or(MinorCycleError::ModelShapeMismatch)?;
+                Ok((flat, ModelDeltaTerm::new(*cell, ModelValue::new(*flux)?)))
+            })
+            .collect::<Result<Vec<_>, MinorCycleError>>()?;
+        deltas.sort_unstable_by_key(|(flat, _)| *flat);
+        Some(lifecycle.compile_delta(base, deltas.into_iter().map(|(_, term)| term))?)
+    };
+    let mask_generations = masks
+        .iter()
+        .map(ReconstructionMask::generation_id)
+        .collect::<Vec<_>>();
+    let evidence_id = minor_cycle_evidence_id(
+        lifecycle.authority(),
+        lifecycle.attempt(),
+        lifecycle.epoch(),
+        base.generation_id(),
+        view.completion_id(),
+        view.content_identity(),
+        &mask_generations,
+        &controls,
+        iterations,
+        controller_iterations,
+        total_flux,
+        final_peak_flux,
+        maximum_noise_rms,
+        effective_threshold,
+        stop_reason,
+        None,
+        0,
+        Some(&domain_runs),
+    );
+    Ok(MinorCycleResult {
+        delta,
+        evidence: MinorCycleEvidence {
+            evidence_id,
+            problem: lifecycle.problem(),
+            attempt: lifecycle.attempt(),
+            epoch: lifecycle.epoch(),
+            input_generation: base.generation_id(),
+            normal_state_completion: view.completion_id(),
+            normal_state_content: view.content_identity(),
+            iterations,
+            controller_iterations,
+            total_flux,
+            initial_peak_flux,
+            final_peak_flux,
+            noise_rms: maximum_noise_rms,
+            global_threshold,
+            effective_threshold,
+            cycle_threshold,
+            stop_reason,
+            clark_approximation: None,
+            clark_refreshes: 0,
+            recorded: (!recorded.is_empty()).then(|| recorded.into_boxed_slice()),
+            image_domain_runs: Some(domain_runs.into_boxed_slice()),
+        },
+    })
+}
+
+fn run_image_domain_hogbom_controllers(
+    work: &mut [ImageDomainHogbomWork<'_>],
+    controls: &MinorCycleProgram,
+    shared_cycle_threshold: Option<f64>,
+    terms: &mut BTreeMap<ModelCell, f64>,
+    recorded: &mut Vec<MinorCycleComponent>,
+) -> Result<Vec<ImageDomainMinorCycleEvidence>, MinorCycleError> {
+    let mut outcomes = Vec::with_capacity(work.len());
+    for domain in work {
+        let initial_peak_flux = domain.candidate().map_or(0.0, |(_, value)| value.abs());
+        let global_threshold = domain
+            .noise_rms
+            .zip(controls.noise_sigma())
+            .map_or(controls.threshold(), |(rms, sigma)| {
+                controls.threshold().max(rms * sigma)
+            });
+        let cycle_threshold = shared_cycle_threshold;
+        let effective_threshold = cycle_threshold.map_or(global_threshold, |threshold| {
+            global_threshold.max(threshold)
+        });
+        let mut controller =
+            MinorCycleController::new(controls, effective_threshold, domain.candidate().is_some());
+        for _ in 0..controller.iteration_limit() {
+            let Some((peak_index, strength)) = domain.candidate() else {
+                controller.stop(MinorCycleStopReason::ThresholdReached);
+                break;
+            };
+            if !strength.is_finite() {
+                return Err(MinorCycleError::GeneratedNonfinite);
+            }
+            let flux = controls.gain() * strength;
+            if !flux.is_finite() {
+                return Err(MinorCycleError::GeneratedNonfinite);
+            }
+            if !controller.admit(strength, flux.abs(), false) {
+                break;
+            }
+            let peak_pixel = plane_pixel(peak_index, domain.shape);
+            subtract_psf(
+                &mut domain.residual,
+                domain.psf,
+                domain.shape,
+                peak_pixel,
+                domain.psf_peak_pixel,
+                flux,
+            )?;
+            controller.accepted(flux.abs());
+            let cell = model_cell(domain.model_plane, domain.shape, peak_pixel)
+                .expect("selected domain candidate lies inside its model plane");
+            *terms.entry(cell).or_insert(0.0) += flux;
+            if let Some(limit) = controls.component_sequence_limit()
+                && recorded.len() < limit
+            {
+                recorded.push(MinorCycleComponent {
+                    cell,
+                    flux,
+                    scale_px: 0.0,
+                });
+            }
+        }
+        let (iterations, total_flux, stop_reason) = controller.finish();
+        outcomes.push(ImageDomainMinorCycleEvidence {
+            domain_ordinal: domain.domain_ordinal,
+            iterations,
+            controller_iterations: controls.controller_iterations(iterations, stop_reason),
+            total_flux,
+            initial_peak_flux,
+            final_peak_flux: domain.candidate().map_or(0.0, |(_, value)| value.abs()),
+            noise_rms: domain.noise_rms,
+            global_threshold,
+            effective_threshold,
+            cycle_threshold,
+            stop_reason,
+        });
+    }
+    Ok(outcomes)
+}
+
+const fn image_domain_stop_priority(reason: MinorCycleStopReason) -> u8 {
+    match reason {
+        MinorCycleStopReason::ThresholdReached => 0,
+        MinorCycleStopReason::IterationBound => 1,
+        MinorCycleStopReason::StalenessBound => 2,
+        MinorCycleStopReason::MultiscaleDivergence => 3,
+    }
 }
 
 /// Run one atomic joint continuum-plus-line Minor Cycle.
@@ -1781,6 +2250,10 @@ fn finish_taylor_minor_cycle(
     let effective_threshold =
         cycle_threshold.map_or(global_threshold, |value| value.max(global_threshold));
     let controller_iterations = controls.controller_iterations(iterations, stop_reason);
+    let mask_generations = secondary_mask.map_or_else(
+        || vec![mask.generation_id()],
+        |secondary| vec![mask.generation_id(), secondary.generation_id()],
+    );
     let evidence_id = minor_cycle_evidence_id(
         lifecycle.authority(),
         lifecycle.attempt(),
@@ -1788,8 +2261,7 @@ fn finish_taylor_minor_cycle(
         base.generation_id(),
         view.completion_id(),
         view.content_identity(),
-        mask,
-        secondary_mask,
+        &mask_generations,
         &controls,
         iterations,
         controller_iterations,
@@ -1800,6 +2272,7 @@ fn finish_taylor_minor_cycle(
         stop_reason,
         None,
         0,
+        None,
     );
     Ok(MinorCycleResult {
         delta,
@@ -1824,6 +2297,7 @@ fn finish_taylor_minor_cycle(
             clark_approximation: None,
             clark_refreshes: 0,
             recorded: (!recorded.is_empty()).then(|| recorded.into_boxed_slice()),
+            image_domain_runs: None,
         },
     })
 }
@@ -2179,8 +2653,7 @@ pub(crate) fn run_minor_cycle_plane(
         base.generation_id(),
         view.completion_id(),
         view.content_identity(),
-        mask,
-        None,
+        &[mask.generation_id()],
         &controls,
         iterations,
         controller_iterations,
@@ -2191,6 +2664,7 @@ pub(crate) fn run_minor_cycle_plane(
         stop_reason,
         clark,
         clark_refreshes,
+        None,
     );
     Ok(MinorCycleResult {
         delta,
@@ -2215,6 +2689,7 @@ pub(crate) fn run_minor_cycle_plane(
             clark_approximation: clark,
             clark_refreshes,
             recorded: (!recorded.is_empty()).then(|| recorded.into_boxed_slice()),
+            image_domain_runs: None,
         },
     })
 }
@@ -3350,8 +3825,7 @@ fn minor_cycle_evidence_id(
     input_generation: ModelGenerationId,
     normal_state_completion: FinalNormalStateCompletionId,
     normal_state_content: LogicalIdentity,
-    mask: &ReconstructionMask,
-    secondary_mask: Option<&ReconstructionMask>,
+    mask_generations: &[ReconstructionMaskGenerationId],
     controls: &MinorCycleProgram,
     iterations: usize,
     controller_iterations: usize,
@@ -3362,6 +3836,7 @@ fn minor_cycle_evidence_id(
     stop_reason: MinorCycleStopReason,
     clark: Option<ClarkApproximation>,
     clark_refreshes: usize,
+    image_domain_runs: Option<&[ImageDomainMinorCycleEvidence]>,
 ) -> MinorCycleEvidenceId {
     let mut encoder = Encoder::new(MINOR_CYCLE_EVIDENCE_DOMAIN, MINOR_CYCLE_EVIDENCE_VERSION);
     encoder.identity(authority.as_bytes());
@@ -3370,13 +3845,9 @@ fn minor_cycle_evidence_id(
     encoder.identity(input_generation.as_bytes());
     encoder.identity(normal_state_completion.as_bytes());
     encoder.identity(normal_state_content.as_bytes());
-    encoder.identity(mask.generation_id().as_bytes());
-    match secondary_mask {
-        Some(mask) => {
-            encoder.u8(1);
-            encoder.identity(mask.generation_id().as_bytes());
-        }
-        None => encoder.u8(0),
+    encoder.usize(mask_generations.len());
+    for generation in mask_generations {
+        encoder.identity(generation.as_bytes());
     }
     encoder.usize(controls.model_plane().domain());
     encoder.usize(controls.model_plane().coefficient());
@@ -3502,20 +3973,189 @@ fn minor_cycle_evidence_id(
         }
     }
     encoder.usize(clark_refreshes);
+    match image_domain_runs {
+        None => encoder.u8(0),
+        Some(runs) => {
+            encoder.u8(1);
+            encoder.usize(runs.len());
+            for run in runs {
+                encoder.usize(run.domain_ordinal);
+                encoder.usize(run.iterations);
+                encoder.usize(run.controller_iterations);
+                encoder.u64(crate::canonical_f64_bits(run.total_flux));
+                encoder.u64(crate::canonical_f64_bits(run.initial_peak_flux));
+                encoder.u64(crate::canonical_f64_bits(run.final_peak_flux));
+                match run.noise_rms {
+                    Some(rms) => {
+                        encoder.u8(1);
+                        encoder.u64(crate::canonical_f64_bits(rms));
+                    }
+                    None => encoder.u8(0),
+                }
+                encoder.u64(crate::canonical_f64_bits(run.global_threshold));
+                encoder.u64(crate::canonical_f64_bits(run.effective_threshold));
+                match run.cycle_threshold {
+                    Some(threshold) => {
+                        encoder.u8(1);
+                        encoder.u64(crate::canonical_f64_bits(threshold));
+                    }
+                    None => encoder.u8(0),
+                }
+                encoder.u8(image_domain_stop_priority(run.stop_reason));
+            }
+        }
+    }
     MinorCycleEvidenceId(LogicalIdentity::from_sha256(encoder.finish()))
 }
 
 #[cfg(test)]
 mod tests {
-    use casa_imaging_model::{ReconstructionAlgorithm, ReconstructionBasis};
+    use std::collections::BTreeMap;
+
+    use casa_imaging_model::{
+        HogbomIterationAccounting, ModelCell, ReconstructionAlgorithm, ReconstructionBasis,
+        ReconstructionControls,
+    };
     use num_complex::Complex64;
 
     use super::{
-        MinorCycleModelPlane, TaylorCandidate, TaylorSearchWindow, build_scale_kernels,
+        ImageDomainHogbomWork, MinorCycleComponent, MinorCycleModelPlane, MinorCycleProgram,
+        MinorCycleStopReason, TaylorCandidate, TaylorSearchWindow, build_scale_kernels,
         minor_cycle_workspace_bytes, model_cell, multiscale_diverged, prefer_taylor_across_scales,
-        prefer_taylor_within_scale, subtract_psf, subtract_psf_circular, taylor_psf_peak_index,
-        taylor_rows_nearly_dependent, within_multiscale_border,
+        prefer_taylor_within_scale, run_image_domain_hogbom_controllers, subtract_psf,
+        subtract_psf_circular, taylor_psf_peak_index, taylor_rows_nearly_dependent,
+        within_multiscale_border,
     };
+
+    fn point_domain_work<'a>(
+        domain_ordinal: usize,
+        residual: f64,
+        psf: &'a [Complex64],
+    ) -> ImageDomainHogbomWork<'a> {
+        ImageDomainHogbomWork {
+            domain_ordinal,
+            shape: [1, 1],
+            psf,
+            model_plane: MinorCycleModelPlane::new(domain_ordinal, 0, 0),
+            psf_peak: 1.0,
+            psf_peak_pixel: [0, 0],
+            valid_support: vec![true].into_boxed_slice(),
+            residual: vec![residual],
+            noise_rms: None,
+        }
+    }
+
+    fn casa_inclusive_program(max_iterations: usize, gain: f64) -> MinorCycleProgram {
+        MinorCycleProgram::from_compiled(
+            ReconstructionControls::new(max_iterations, gain, 0.0)
+                .with_cycle_limits(max_iterations, None)
+                .with_hogbom_iteration_accounting(HogbomIterationAccounting::CasaInclusive),
+        )
+        .expect("CASA-inclusive point-clean program")
+        .record_component_sequence(32)
+        .expect("bounded diagnostic component sequence")
+    }
+
+    #[test]
+    fn image_domains_share_the_set_threshold_but_each_complete_the_full_set_budget() {
+        let psf = [Complex64::new(1.0, 0.0)];
+        let main_peak = 1.038_444_757_f64;
+        let outlier_peak = 5.569_267_75_f64;
+        let shared_cycle_threshold = 0.771_931_6_f64;
+        let mut work = [
+            point_domain_work(0, main_peak, &psf),
+            point_domain_work(1, outlier_peak, &psf),
+        ];
+        let controls = casa_inclusive_program(10, 0.1);
+        let mut terms = BTreeMap::new();
+        let mut recorded = Vec::<MinorCycleComponent>::new();
+
+        let evidence = run_image_domain_hogbom_controllers(
+            &mut work,
+            &controls,
+            Some(shared_cycle_threshold),
+            &mut terms,
+            &mut recorded,
+        )
+        .expect("two canonical field controllers");
+
+        assert_eq!(evidence.len(), 2);
+        assert_eq!(
+            (
+                evidence[0].iterations(),
+                evidence[0].controller_iterations(),
+                evidence[0].stop_reason(),
+            ),
+            (3, 3, MinorCycleStopReason::ThresholdReached)
+        );
+        assert_eq!(
+            (
+                evidence[1].iterations(),
+                evidence[1].controller_iterations(),
+                evidence[1].stop_reason(),
+            ),
+            (11, 10, MinorCycleStopReason::IterationBound)
+        );
+        assert!(
+            evidence
+                .iter()
+                .all(|run| run.cycle_threshold() == Some(shared_cycle_threshold))
+        );
+        assert_eq!(
+            evidence.iter().map(|run| run.iterations()).sum::<usize>(),
+            14
+        );
+        assert_eq!(
+            evidence
+                .iter()
+                .map(|run| run.controller_iterations())
+                .sum::<usize>(),
+            13,
+            "CASA compares niter only after every field finishes its controller"
+        );
+        let main_model = terms[&ModelCell::new(0, 0, 0, [0, 0])];
+        let outlier_model = terms[&ModelCell::new(1, 0, 0, [0, 0])];
+        assert!((main_model - main_peak * (1.0 - 0.9_f64.powi(3))).abs() < 1.0e-12);
+        assert!((outlier_model - outlier_peak * (1.0 - 0.9_f64.powi(11))).abs() < 1.0e-12);
+        assert_eq!(
+            recorded
+                .iter()
+                .map(|component| component.cell().domain())
+                .collect::<Vec<_>>(),
+            [vec![0; 3], vec![1; 11]].concat()
+        );
+    }
+
+    #[test]
+    fn one_domain_collection_uses_the_same_shared_threshold_controller_path() {
+        let psf = [Complex64::new(1.0, 0.0)];
+        let peak = 1.038_444_757_f64;
+        let shared_cycle_threshold = 0.771_931_6_f64;
+        let mut work = [point_domain_work(0, peak, &psf)];
+        let controls = casa_inclusive_program(10, 0.1);
+        let mut terms = BTreeMap::new();
+        let mut recorded = Vec::new();
+
+        let evidence = run_image_domain_hogbom_controllers(
+            &mut work,
+            &controls,
+            Some(shared_cycle_threshold),
+            &mut terms,
+            &mut recorded,
+        )
+        .expect("one-domain collection controller");
+
+        assert_eq!(evidence.len(), 1);
+        assert_eq!(evidence[0].domain_ordinal(), 0);
+        assert_eq!(evidence[0].iterations(), 3);
+        assert_eq!(evidence[0].controller_iterations(), 3);
+        assert_eq!(evidence[0].cycle_threshold(), Some(shared_cycle_threshold));
+        assert!(
+            (terms[&ModelCell::new(0, 0, 0, [0, 0])] - peak * (1.0 - 0.9_f64.powi(3))).abs()
+                < 1.0e-12
+        );
+        assert_eq!(recorded.len(), 3);
+    }
 
     #[test]
     fn mtmfs_workspace_claim_scales_with_terms_and_effective_kernels() {

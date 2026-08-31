@@ -131,6 +131,9 @@ fn application_request(config: &CliConfig) -> Result<ContinuumImagingRequest, St
         image_name: config.imagename.clone(),
         image_size: config.imsize,
         cell_arcsec: config.cell_arcsec,
+        phase_center_field: config.phasecenter_field,
+        phase_center: config.phasecenter.clone(),
+        outlier_file: config.outlier_file.clone(),
         field_ids: config.field_ids.clone(),
         uv_range: config.uvrange.clone(),
         intent: config.intent.clone(),
@@ -221,9 +224,6 @@ fn task_requirements(config: &CliConfig) -> Vec<TaskRequirement> {
     } else if config.use_pointing && !config.force_standard_gridder {
         requirements.push(TaskRequirement::MosaicGridder);
     }
-    if config.outlier_file.is_some() {
-        requirements.push(TaskRequirement::FacetsOutliers);
-    }
     if config.use_mask == CleanMaskMode::AutoMultiThreshold {
         requirements.push(TaskRequirement::Automasking);
     }
@@ -284,12 +284,10 @@ fn backend_requirements(config: &CliConfig) -> Vec<TaskRequirement> {
 
 fn unsupported_native_controls(config: &CliConfig) -> bool {
     let standard_mtmfs_products = matches!(config.deconvolver, Deconvolver::Mtmfs);
-    config.phasecenter_field.is_some()
-        || config.phasecenter.is_some()
-        || config
-            .correlation
-            .as_deref()
-            .is_some_and(|plane| !plane.eq_ignore_ascii_case("I"))
+    config
+        .correlation
+        .as_deref()
+        .is_some_and(|plane| !plane.eq_ignore_ascii_case("I"))
         || config.uv_taper.is_some()
         || config.fullsummary
         || ((config.pbcor || config.write_pb) && !standard_mtmfs_products)
@@ -429,6 +427,26 @@ mod tests {
             "3",
         ]));
         assert!(!requirements.contains(&TaskRequirement::UnsupportedControls));
+    }
+
+    #[test]
+    fn phase_center_and_outlier_file_are_transported_without_frontend_science() {
+        let config = config(&[
+            "--phasecenter",
+            "J2000 19:59:28.500 +40.44.01.50",
+            "--outlierfile",
+            "outliers.txt",
+        ]);
+        let request = application_request(&config).expect("native multi-domain request");
+        assert_eq!(
+            request.phase_center.as_deref(),
+            Some("J2000 19:59:28.500 +40.44.01.50")
+        );
+        assert_eq!(
+            request.outlier_file.as_deref(),
+            Some(std::path::Path::new("outliers.txt"))
+        );
+        assert!(!task_requirements(&config).contains(&TaskRequirement::UnsupportedControls));
     }
 
     #[test]

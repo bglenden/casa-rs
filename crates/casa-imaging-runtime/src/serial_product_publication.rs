@@ -12,8 +12,8 @@ use std::{
 use casa_imaging_model::CompiledProblem;
 use casa_imaging_products::{
     ContinuumGenerationDemand, ContinuumProducedMembers, ContinuumProductInputs,
-    PlannedContinuumGeneration, ProductGenerationAuthority, PublicationProjection,
-    PublishedContinuumGeneration, SealedContinuumGeneration, SealedMember,
+    ContinuumSourceCatalog, PlannedContinuumGeneration, ProductGenerationAuthority,
+    PublicationProjection, PublishedContinuumGeneration, SealedContinuumGeneration, SealedMember,
     produce_continuum_members,
 };
 use casa_imaging_reconstruction::{MajorCycleCompletion, ReconstructionMaskSet};
@@ -840,6 +840,17 @@ impl<S: SerialProductPublicationSink> WorkImplementation for SerialProductPublic
                         ReconstructionMaskSet::Shared(mask) => inputs
                             .with_reconstruction_mask(mask)
                             .map_err(SerialProductPublicationExecutionError::Products)?,
+                        ReconstructionMaskSet::Domains(masks) => {
+                            ContinuumSourceCatalog::from_major_cycle_with_domain_masks(
+                                &state.problem,
+                                scientific,
+                                masks,
+                            )
+                            .map_err(SerialProductPublicationExecutionError::Products)?;
+                            inputs
+                                .with_domain_reconstruction_masks(masks)
+                                .map_err(SerialProductPublicationExecutionError::Products)?
+                        }
                         ReconstructionMaskSet::Coupled(masks) => inputs
                             .with_coupled_reconstruction_masks(masks)
                             .map_err(SerialProductPublicationExecutionError::Products)?,

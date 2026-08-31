@@ -358,7 +358,7 @@ impl<'a> ContinuumTransformStream<'a> {
             .pending
             .iter()
             .map(|pending| ContinuumTransformedSample {
-                selected: pending.selected,
+                selected: pending.selected.clone(),
                 input_weight_group: pending.input_weight_group,
                 spectral_evaluation: pending.spectral_evaluation,
                 use_role: ContinuumChannelUse::ApplyOnly,
@@ -381,7 +381,7 @@ impl<'a> ContinuumTransformStream<'a> {
                 let samples = indices
                     .iter()
                     .map(|&index| {
-                        let selected = self.pending[index].selected;
+                        let selected = &self.pending[index].selected;
                         let use_role = rule
                             .channel_use(selected.address.channel_index)
                             .ok_or(ContinuumTransformError::UndeclaredChannel)?;
@@ -555,10 +555,10 @@ fn encode_output(digest: &mut Sha256, output: &ContinuumTransformedSample) {
 mod tests {
     use casa_imaging_model::{
         ContinuumChannelRole, ContinuumFitRule, CorrelationType, DirectionFrame, Epoch,
-        FrequencyFrame, LogicalIdentity, MeasurementSetIdentity, SelectedPointingDirections,
-        SelectedPredictionTarget, SelectedSampleAddress, SelectedSampleCoordinates,
-        SelectedSampleMetadata, SelectedSpectralInterval, SkyDirection, TimeScale,
-        UvwCoordinateLaw,
+        FrequencyFrame, LogicalIdentity, MeasurementSetIdentity, SelectedImageDomainProjections,
+        SelectedPhaseCentreProjection, SelectedPointingDirections, SelectedPredictionTarget,
+        SelectedSampleAddress, SelectedSampleCoordinates, SelectedSampleMetadata,
+        SelectedSpectralInterval, SkyDirection, TimeScale, UvwCoordinateLaw,
     };
 
     use super::*;
@@ -572,7 +572,7 @@ mod tests {
         for input in inputs {
             assert!(
                 stream
-                    .push(input, evaluation(input))
+                    .push(input.clone(), evaluation(&input))
                     .expect("push")
                     .is_empty(),
                 "one physical row is retained until its final member"
@@ -630,7 +630,7 @@ mod tests {
             stream
                 .push_view(
                     input.as_view().with_input_weight_group(group),
-                    evaluation(input),
+                    evaluation(&input),
                 )
                 .expect("buffer selected sample")
                 .is_empty()
@@ -665,7 +665,9 @@ mod tests {
         let plan = row_plan(&contract, 3);
         let mut stream = ContinuumTransformStream::new(&contract, plan).expect("planned stream");
         for input in row_samples(0) {
-            stream.push(input, evaluation(input)).expect("push row");
+            stream
+                .push(input.clone(), evaluation(&input))
+                .expect("push row");
         }
         let output = stream.finish_rows().expect("finish planned row");
 
@@ -711,8 +713,8 @@ mod tests {
             ContinuumTransformStream::new(contract, row_plan(contract, 3)).expect("planned stream");
         let mut output = Vec::new();
         for partition in partitions {
-            for &input in *partition {
-                output.extend(stream.push(input, evaluation(input)).expect("push"));
+            for input in *partition {
+                output.extend(stream.push(input.clone(), evaluation(input)).expect("push"));
             }
         }
         output.extend(stream.finish_rows().expect("finish"));
@@ -765,6 +767,10 @@ mod tests {
                     antenna2: direction,
                 },
             },
+            domain_projections: SelectedImageDomainProjections::one_domain_with_shared_psf(
+                SelectedPhaseCentreProjection::new([1.0, 2.0, 3.0], 0.0)
+                    .expect("finite one-domain projection"),
+            ),
             metadata: SelectedSampleMetadata {
                 field_id,
                 antenna1: 0,
@@ -791,7 +797,7 @@ mod tests {
         }
     }
 
-    fn evaluation(sample: SelectedObservationSample) -> SelectedSpectralEvaluation {
+    fn evaluation(sample: &SelectedObservationSample) -> SelectedSpectralEvaluation {
         let interval = SelectedSpectralInterval::new(
             sample.address.frequency_centre_hz,
             sample.address.frequency_lower_hz,

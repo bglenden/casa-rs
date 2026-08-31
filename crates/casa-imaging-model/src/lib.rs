@@ -37,8 +37,9 @@ pub use geometry::{
     ImageDomainRole, ImageDomainSpec, ImageShape, ItrfPosition, MissingPointingPolicy,
     ObservationPointingLaw, PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn,
     PointingDirectionSemantic, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
-    Projection, RestFrequency, SkyDirection, SpectralCoordinateSpec, SpectralFrameAnchor,
-    SpectralWcs, TimeScale, UvwAxes, UvwCoordinateLaw, UvwUnit, VisibilityPhaseConvention,
+    Projection, PsfPhaseCentreLaw, RestFrequency, SkyDirection, SpectralCoordinateSpec,
+    SpectralFrameAnchor, SpectralWcs, TimeScale, UvwAxes, UvwCoordinateLaw, UvwUnit,
+    VisibilityPhaseConvention,
 };
 
 pub use measurement_equation::{
@@ -88,12 +89,13 @@ pub use selected_observation::{
 };
 
 pub use selected_observation_sample::{
-    SelectedInputWeightGroup, SelectedObservationGenerationId, SelectedObservationRunChannel,
+    SelectedImageDomainProjection, SelectedImageDomainProjections, SelectedInputWeightGroup,
+    SelectedObservationGenerationId, SelectedObservationRunChannel,
     SelectedObservationRunCorrelation, SelectedObservationRunRow, SelectedObservationSample,
-    SelectedObservationSampleView, SelectedPointingDirections, SelectedPredictionTarget,
-    SelectedSampleAddress, SelectedSampleCoordinates, SelectedSampleMetadata,
-    SelectedSpectralContribution, SelectedSpectralContributions, SelectedSpectralEvaluation,
-    SelectedSpectralInterval, SelectedVisibilitySample,
+    SelectedObservationSampleView, SelectedPhaseCentreProjection, SelectedPointingDirections,
+    SelectedPredictionTarget, SelectedSampleAddress, SelectedSampleCoordinates,
+    SelectedSampleMetadata, SelectedSpectralContribution, SelectedSpectralContributions,
+    SelectedSpectralEvaluation, SelectedSpectralInterval, SelectedVisibilitySample,
 };
 
 pub use product_graph::{

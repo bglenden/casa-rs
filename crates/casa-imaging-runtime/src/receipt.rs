@@ -6457,6 +6457,16 @@ fn project_geometry(fields: &mut BTreeMap<String, String>, geometry: &CompiledGe
         evidence_field(fields, format!("{prefix}.shape.width"), width);
         evidence_field(fields, format!("{prefix}.shape.height"), height);
         project_direction(fields, &format!("{prefix}.direction"), domain.direction());
+        project_sky_direction(
+            fields,
+            &format!("{prefix}.model_phase_centre"),
+            domain.model_phase_centre(),
+        );
+        project_sky_direction(
+            fields,
+            &format!("{prefix}.psf_phase_centre"),
+            domain.psf_phase_centre(),
+        );
         for (facet_index, facet) in domain.facets().iter().enumerate() {
             let facet_prefix = format!("{prefix}.facets.{facet_index}");
             let origin = facet.origin();
@@ -7479,6 +7489,7 @@ fn numerical_stage(value: NumericalStage) -> &'static str {
 
 fn required_capability(value: RequiredCapability) -> String {
     match value {
+        RequiredCapability::MultiDomainGeometry => "multi_domain_geometry".to_string(),
         RequiredCapability::FacetedGeometry => "faceted_geometry".to_string(),
         RequiredCapability::SpectralFrameTransform => "spectral_frame_transform".to_string(),
         RequiredCapability::SpectralResampling => "spectral_resampling".to_string(),

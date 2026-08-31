@@ -7,11 +7,11 @@
 //! result carries its multiple distinct completions together and no role's
 //! evidence can be substituted for another.
 
-use casa_imaging_model::{CompiledProblem, LogicalIdentity, ProductGraphId};
+use casa_imaging_model::{CompiledProblem, ImageDomainRole, LogicalIdentity, ProductGraphId};
 use casa_imaging_reconstruction::{
     CoupledReconstructionMask, FinalNormalState, FinalNormalStateCompletionId,
-    MajorCycleCompletion, MajorCycleCompletionId, ModelGeneration, ModelGenerationId,
-    NormalStateCatalog, ReconstructionMask, ReconstructionMaskGenerationId,
+    ImageDomainReconstructionMasks, MajorCycleCompletion, MajorCycleCompletionId, ModelGeneration,
+    ModelGenerationId, NormalStateCatalog, ReconstructionMask, ReconstructionMaskGenerationId,
 };
 
 use crate::digest::{COMMITMENT_DOMAIN, COMMITMENT_VERSION, Encoder};
@@ -139,6 +139,31 @@ impl ContinuumSourceCatalog {
         Ok(catalog)
     }
 
+    /// Mint the catalog with one exact reconstruction support per image domain.
+    pub fn from_major_cycle_with_domain_masks(
+        problem: &CompiledProblem,
+        join: &MajorCycleCompletion,
+        masks: &ImageDomainReconstructionMasks,
+    ) -> Result<Self, ProductsError> {
+        if masks.len() != join.normal_state().domain_count()
+            || masks.len() != problem.geometry().domains().len()
+            || join.normal_state().image_domain_mask_generation() != Some(masks.generation_id())
+            || masks
+                .iter()
+                .zip(problem.geometry().domains())
+                .any(|(mask, domain)| {
+                    mask.problem_id() != problem.problem_id()
+                        || mask.shape() != domain.shape().pixels()
+                        || mask.coordinate() != domain.direction()
+                })
+        {
+            return Err(ProductsError::SourceLineageMismatch);
+        }
+        let mut catalog = Self::from_major_cycle(problem, join)?;
+        catalog.reconstruction_mask = Some(masks.generation_id());
+        Ok(catalog)
+    }
+
     /// Borrow the exact compiled problem this lineage reconciled.
     #[must_use]
     pub const fn problem(&self) -> &CompiledProblem {
@@ -236,6 +261,7 @@ pub struct ContinuumProductInputs<'a> {
     normal_state: &'a FinalNormalState,
     final_model: &'a ModelGeneration,
     reconstruction_mask: Option<&'a ReconstructionMask>,
+    domain_reconstruction_masks: Option<&'a ImageDomainReconstructionMasks>,
     coupled_masks: Option<&'a CoupledReconstructionMask>,
 }
 
@@ -257,6 +283,7 @@ impl<'a> ContinuumProductInputs<'a> {
             normal_state: join.normal_state(),
             final_model: join.final_model(),
             reconstruction_mask: None,
+            domain_reconstruction_masks: None,
             coupled_masks: None,
         })
     }
@@ -274,6 +301,7 @@ impl<'a> ContinuumProductInputs<'a> {
             return Err(ProductsError::SourceLineageMismatch);
         }
         self.reconstruction_mask = Some(mask);
+        self.domain_reconstruction_masks = None;
         self.coupled_masks = None;
         Ok(self)
     }
@@ -291,7 +319,33 @@ impl<'a> ContinuumProductInputs<'a> {
             }
         }
         self.reconstruction_mask = Some(masks.continuum());
+        self.domain_reconstruction_masks = None;
         self.coupled_masks = Some(masks);
+        Ok(self)
+    }
+
+    /// Bind the exact spatial support for every canonical image domain.
+    pub fn with_domain_reconstruction_masks(
+        mut self,
+        masks: &'a ImageDomainReconstructionMasks,
+    ) -> Result<Self, ProductsError> {
+        if masks.len() != self.normal_state.domain_count()
+            || masks.len() != self.problem.geometry().domains().len()
+            || self.normal_state.image_domain_mask_generation() != Some(masks.generation_id())
+            || masks
+                .iter()
+                .zip(self.problem.geometry().domains())
+                .any(|(mask, domain)| {
+                    mask.problem_id() != self.problem.problem_id()
+                        || mask.shape() != domain.shape().pixels()
+                        || mask.coordinate() != domain.direction()
+                })
+        {
+            return Err(ProductsError::SourceLineageMismatch);
+        }
+        self.reconstruction_mask = None;
+        self.coupled_masks = None;
+        self.domain_reconstruction_masks = Some(masks);
         Ok(self)
     }
 
@@ -304,9 +358,43 @@ impl<'a> ContinuumProductInputs<'a> {
     /// Return radians-per-pixel on each direction axis of the main domain.
     #[must_use]
     pub fn cell_size_rad(&self) -> [f64; 2] {
-        let domain = &self.problem.geometry().domains()[0];
+        self.cell_size_rad_for_domain(&ImageDomainRole::Main)
+            .expect("compiled geometry contains exactly one main domain")
+    }
+
+    /// Return radians-per-pixel on each direction axis of one image domain.
+    pub(crate) fn cell_size_rad_for_domain(
+        &self,
+        role: &ImageDomainRole,
+    ) -> Result<[f64; 2], ProductsError> {
+        let domain = self
+            .problem
+            .geometry()
+            .domains()
+            .iter()
+            .find(|domain| domain.role() == role)
+            .ok_or(ProductsError::SourceLineageMismatch)?;
         let increment = domain.direction().increment_rad();
-        [increment[0].abs(), increment[1].abs()]
+        Ok([increment[0].abs(), increment[1].abs()])
+    }
+
+    /// Resolve the canonical model-domain ordinal from a compiler-owned role.
+    pub(crate) fn model_domain_ordinal(
+        &self,
+        role: &ImageDomainRole,
+    ) -> Result<usize, ProductsError> {
+        let mut matches = self
+            .final_model
+            .shape()
+            .domain_roles()
+            .iter()
+            .enumerate()
+            .filter(|(_, candidate)| *candidate == role);
+        let (ordinal, _) = matches.next().ok_or(ProductsError::SourceLineageMismatch)?;
+        if matches.next().is_some() {
+            return Err(ProductsError::SourceLineageMismatch);
+        }
+        Ok(ordinal)
     }
 
     /// Borrow the authoritative normal state (residual, PSF, sensitivity).
@@ -325,6 +413,23 @@ impl<'a> ContinuumProductInputs<'a> {
     #[must_use]
     pub const fn reconstruction_mask(&self) -> Option<&ReconstructionMask> {
         self.reconstruction_mask
+    }
+
+    /// Borrow canonical per-domain CLEAN masks, when supplied.
+    #[must_use]
+    pub const fn domain_reconstruction_masks(&self) -> Option<&ImageDomainReconstructionMasks> {
+        self.domain_reconstruction_masks
+    }
+
+    /// Return the one mask or per-domain mask-set generation bound to the inputs.
+    #[must_use]
+    pub fn reconstruction_mask_generation(&self) -> Option<ReconstructionMaskGenerationId> {
+        self.domain_reconstruction_masks
+            .map(ImageDomainReconstructionMasks::generation_id)
+            .or_else(|| {
+                self.reconstruction_mask
+                    .map(ReconstructionMask::generation_id)
+            })
     }
 
     /// Borrow both joint reconstruction masks, when supplied.

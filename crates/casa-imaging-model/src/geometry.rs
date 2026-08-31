@@ -11,7 +11,7 @@ use crate::compiled_problem::{
 };
 
 const COMPILED_GEOMETRY_IDENTITY_DOMAIN: &[u8] = b"casa-rs-compiled-geometry";
-const COMPILED_GEOMETRY_IDENTITY_VERSION: u32 = 1;
+const COMPILED_GEOMETRY_IDENTITY_VERSION: u32 = 2;
 
 /// Stable compiler-derived identity of immutable compiled geometry.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -188,6 +188,13 @@ impl DirectionCoordinateSpec {
         self
     }
 
+    /// Replace the framed reference direction in an uncompiled specification.
+    #[must_use]
+    pub const fn with_reference_direction(mut self, reference_direction: SkyDirection) -> Self {
+        self.reference_direction = reference_direction;
+        self
+    }
+
     fn canonicalize(mut self) -> Result<Self, CompileGeometryError> {
         self.reference_direction = self.reference_direction.canonicalize()?;
         if self.reference_pixel.iter().any(|value| !value.is_finite()) {
@@ -288,6 +295,18 @@ pub enum ImageDomainRole {
     Outlier(String),
 }
 
+/// Phase centre used when constructing a chart's point-spread function.
+///
+/// This is a scientific image-domain law. It is deliberately independent of
+/// execution tiling and of the observation's phase-tracking centre.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PsfPhaseCentreLaw {
+    /// Use the chart's direction-coordinate reference direction.
+    ImageDomainReference,
+    /// Use one explicit framed direction.
+    Fixed(SkyDirection),
+}
+
 /// User-visible facet subdivision of an image domain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FacetLayout {
@@ -310,6 +329,7 @@ pub struct ImageDomainSpec {
     direction: DirectionCoordinateSpec,
     facets: FacetLayout,
     axes: AxisOrder,
+    psf_phase_centre: PsfPhaseCentreLaw,
 }
 
 impl ImageDomainSpec {
@@ -328,6 +348,7 @@ impl ImageDomainSpec {
             direction,
             facets,
             axes,
+            psf_phase_centre: PsfPhaseCentreLaw::ImageDomainReference,
         }
     }
 
@@ -359,6 +380,12 @@ impl ImageDomainSpec {
     #[must_use]
     pub const fn axes(&self) -> &AxisOrder {
         &self.axes
+    }
+
+    /// Return the requested PSF phase-centre law.
+    #[must_use]
+    pub const fn psf_phase_centre(&self) -> PsfPhaseCentreLaw {
+        self.psf_phase_centre
     }
 
     /// Replace the role in an uncompiled specification.
@@ -393,6 +420,13 @@ impl ImageDomainSpec {
     #[must_use]
     pub const fn with_axes(mut self, axes: AxisOrder) -> Self {
         self.axes = axes;
+        self
+    }
+
+    /// Replace the PSF phase-centre law in an uncompiled specification.
+    #[must_use]
+    pub const fn with_psf_phase_centre(mut self, psf_phase_centre: PsfPhaseCentreLaw) -> Self {
+        self.psf_phase_centre = psf_phase_centre;
         self
     }
 }
@@ -1080,6 +1114,7 @@ pub struct CompiledImageDomain {
     direction: DirectionCoordinateSpec,
     facets: Box<[FacetWindow]>,
     axes: AxisOrder,
+    psf_phase_centre: SkyDirection,
 }
 
 impl CompiledImageDomain {
@@ -1111,6 +1146,21 @@ impl CompiledImageDomain {
     #[must_use]
     pub const fn axes(&self) -> &AxisOrder {
         &self.axes
+    }
+
+    /// Return the model phase centre for this chart.
+    ///
+    /// Model coefficients are defined on the chart WCS, so this is exactly
+    /// the compiled direction-coordinate reference direction.
+    #[must_use]
+    pub const fn model_phase_centre(&self) -> SkyDirection {
+        self.direction.reference_direction()
+    }
+
+    /// Return the independently compiled PSF sampling phase centre.
+    #[must_use]
+    pub const fn psf_phase_centre(&self) -> SkyDirection {
+        self.psf_phase_centre
     }
 }
 
@@ -1279,6 +1329,10 @@ pub(crate) fn compile_geometry(
         }
         domain.axes.validate()?;
         let direction = domain.direction.canonicalize()?;
+        let psf_phase_centre = match domain.psf_phase_centre {
+            PsfPhaseCentreLaw::ImageDomainReference => direction.reference_direction(),
+            PsfPhaseCentreLaw::Fixed(direction) => direction.canonicalize()?,
+        };
         let facets = compile_facets(domain.shape, domain.facets)?;
         domains.push(CompiledImageDomain {
             role: domain.role,
@@ -1286,6 +1340,7 @@ pub(crate) fn compile_geometry(
             direction,
             facets,
             axes: domain.axes,
+            psf_phase_centre,
         });
     }
 
@@ -1598,6 +1653,7 @@ fn canonical_geometry_id(geometry: &CompiledGeometry) -> CompiledGeometryId {
         encoder.usize(domain.shape.width);
         encoder.usize(domain.shape.height);
         encode_direction_coordinate(&mut encoder, domain.direction);
+        encode_sky_direction(&mut encoder, domain.psf_phase_centre);
         encoder.usize(domain.facets.len());
         for facet in &domain.facets {
             for value in facet.origin.into_iter().chain(facet.end_exclusive) {

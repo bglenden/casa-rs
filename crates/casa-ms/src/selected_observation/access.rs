@@ -17,12 +17,15 @@ use casa_imaging_model::{
     DirectionFrame, Epoch, FrequencyFrame, MeasurementSetReadAccess, MissingPointingPolicy,
     ObservationSelection, ObservationSource, ObservationSourceState, PhaseCentreLaw,
     PointingCentreLaw, PointingDirectionColumn, PointingExtrapolation, PointingInterpolation,
-    PointingTimeSampling, SelectedInputWeightGroup, SelectedMainRow, SelectedObservationRunChannel,
+    PointingTimeSampling, SelectedImageDomainProjection, SelectedImageDomainProjections,
+    SelectedInputWeightGroup, SelectedMainRow, SelectedObservationRunChannel,
     SelectedObservationRunCorrelation, SelectedObservationRunRow, SelectedObservationSample,
-    SelectedObservationSampleView, SelectedPointingDirections, SelectedPredictionTarget,
-    SelectedRowsBuilder, SelectedSampleCoordinates, SelectedSampleMetadata,
-    SelectedVisibilitySample, SkyDirection, TimeScale, VisibilityColumn, WeightColumn,
+    SelectedObservationSampleView, SelectedPhaseCentreProjection, SelectedPointingDirections,
+    SelectedPredictionTarget, SelectedRowsBuilder, SelectedSampleCoordinates,
+    SelectedSampleMetadata, SelectedVisibilitySample, SkyDirection, TimeScale, VisibilityColumn,
+    WeightColumn,
 };
+use casa_types::measures::direction::DirectionRef;
 use thiserror::Error;
 
 use super::bound_observation::SelectedObservationTraversalMeasurementsBuilder;
@@ -652,7 +655,7 @@ impl BoundObservationSamples<'_> {
                         product,
                         stored,
                         parallel_hand_group_flag,
-                        block.row_geometry[self.row_offset],
+                        &block.row_geometry[self.row_offset],
                     );
                     self.advance(coordinates.channels.len(), coordinates.products.len());
                     if sample.is_err() {
@@ -789,7 +792,7 @@ impl BoundObservationSamples<'_> {
         product: CorrelationProduct,
         stored: SelectedStoredSample,
         parallel_hand_group_flag: bool,
-        geometry: EvaluatedRowGeometry,
+        geometry: &EvaluatedRowGeometry,
     ) -> Result<SelectedObservationSample, BoundObservationSourceError> {
         project_stored_sample(
             self.logical_source,
@@ -920,7 +923,7 @@ fn project_stored_sample(
     product: CorrelationProduct,
     stored: SelectedStoredSample,
     parallel_hand_group_flag: bool,
-    geometry: EvaluatedRowGeometry,
+    geometry: &EvaluatedRowGeometry,
 ) -> Result<SelectedObservationSample, BoundObservationSourceError> {
     let row = project_stored_run_row(
         logical_source,
@@ -941,7 +944,7 @@ fn project_stored_run_row(
     geometry_engine: &MsCalEngine,
     coordinates: &SelectedCoordinates,
     stored: SelectedStoredSample,
-    geometry: EvaluatedRowGeometry,
+    geometry: &EvaluatedRowGeometry,
 ) -> Result<SelectedObservationRunRow, BoundObservationSourceError> {
     let time_scale = time_scale(geometry_engine.time_reference().as_str())?;
     let physical_row = u64::try_from(stored.physical_row())
@@ -981,6 +984,7 @@ fn project_stored_run_row(
             delay_direction: geometry.delay_direction,
             pointing_directions: geometry.pointing_directions,
         },
+        domain_projections: geometry.domain_projections.clone(),
         metadata: SelectedSampleMetadata {
             field_id: stored.field_id(),
             antenna1: stored.antenna1(),
@@ -1158,7 +1162,7 @@ impl SelectedObservationBlock {
                 geometry_engine,
                 coordinates,
                 stored_row,
-                self.row_geometry[row],
+                &self.row_geometry[row],
             )
             .map_err(BlockVisitError::Source)?;
             for channel in coordinates.channels.iter().copied() {
@@ -1235,6 +1239,16 @@ impl SelectedObservationBlock {
             .len()
             .checked_mul(size_of::<EvaluatedRowGeometry>())
             .ok_or(BoundObservationSourceError::MeasurementOverflow)?;
+        let projection_payload = self
+            .row_geometry
+            .iter()
+            .try_fold(0_usize, |bytes, geometry| {
+                geometry
+                    .domain_projections
+                    .retained_heap_bytes()
+                    .and_then(|payload| bytes.checked_add(payload))
+            })
+            .ok_or(BoundObservationSourceError::MeasurementOverflow)?;
         let request = self
             .request_rows
             .len()
@@ -1243,6 +1257,7 @@ impl SelectedObservationBlock {
         u64::try_from(
             buffer
                 .checked_add(geometry)
+                .and_then(|bytes| bytes.checked_add(projection_payload))
                 .and_then(|bytes| bytes.checked_add(request))
                 .ok_or(BoundObservationSourceError::MeasurementOverflow)?,
         )
@@ -1259,6 +1274,16 @@ impl SelectedObservationBlock {
             .capacity()
             .checked_mul(size_of::<EvaluatedRowGeometry>())
             .ok_or(BoundObservationSourceError::MeasurementOverflow)?;
+        let projection_payload = self
+            .row_geometry
+            .iter()
+            .try_fold(0_usize, |bytes, geometry| {
+                geometry
+                    .domain_projections
+                    .retained_heap_bytes()
+                    .and_then(|payload| bytes.checked_add(payload))
+            })
+            .ok_or(BoundObservationSourceError::MeasurementOverflow)?;
         let request = self
             .request_rows
             .capacity()
@@ -1267,6 +1292,7 @@ impl SelectedObservationBlock {
         u64::try_from(
             buffer
                 .checked_add(geometry)
+                .and_then(|bytes| bytes.checked_add(projection_payload))
                 .and_then(|bytes| bytes.checked_add(request))
                 .ok_or(BoundObservationSourceError::MeasurementOverflow)?,
         )
@@ -1665,11 +1691,12 @@ pub(crate) fn validate_selected_coordinates(
     selected_coordinates(measurement_set, selection).map(drop)
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(super) struct EvaluatedRowGeometry {
     density_uvw_m: [f64; 3],
     transformed_uvw_m: [f64; 3],
     phase_shift_m: f64,
+    domain_projections: SelectedImageDomainProjections,
     phase_direction: SkyDirection,
     delay_direction: SkyDirection,
     pointing_directions: SelectedPointingDirections,
@@ -1730,17 +1757,86 @@ fn evaluate_row_geometry(
                 .reproject_raw_uvw_for_density_to_j2000(stored.uvw_m(), field_id, target)?;
             let (transformed_uvw_m, phase_shift_m) = source
                 .geometry_engine
-                .reproject_raw_uvw_to_j2000(stored.uvw_m(), field_id, target)?;
+                .reproject_raw_uvw_for_gridft_to_j2000(stored.uvw_m(), field_id, target)?;
             (density_uvw_m, transformed_uvw_m, phase_shift_m)
         };
+    let domain_projections = problem
+        .geometry()
+        .domains()
+        .iter()
+        .enumerate()
+        .map(|(domain_ordinal, domain)| {
+            let domain_ordinal = u32::try_from(domain_ordinal)
+                .map_err(|_| BoundObservationSourceError::InvalidRowGeometry)?;
+            let model = evaluate_phase_centre_projection(
+                source,
+                stored,
+                field_id,
+                observation_direction,
+                domain.model_phase_centre(),
+            )?;
+            let projection = if domain.psf_phase_centre() == domain.model_phase_centre() {
+                SelectedImageDomainProjection::with_shared_psf(domain_ordinal, model)
+            } else {
+                let psf = evaluate_phase_centre_projection(
+                    source,
+                    stored,
+                    field_id,
+                    observation_direction,
+                    domain.psf_phase_centre(),
+                )?;
+                SelectedImageDomainProjection::new(domain_ordinal, model, psf)
+            };
+            Ok(projection)
+        })
+        .collect::<Result<Vec<_>, BoundObservationSourceError>>()?;
+    let domain_projections = SelectedImageDomainProjections::new(domain_projections)
+        .ok_or(BoundObservationSourceError::InvalidRowGeometry)?;
     Ok(EvaluatedRowGeometry {
         density_uvw_m,
         transformed_uvw_m,
         phase_shift_m,
+        domain_projections,
         phase_direction,
         delay_direction,
         pointing_directions,
     })
+}
+
+fn evaluate_phase_centre_projection(
+    source: &BoundObservationSource,
+    stored: SelectedStoredSample,
+    field_id: usize,
+    observation_direction: SkyDirection,
+    target_direction: SkyDirection,
+) -> Result<SelectedPhaseCentreProjection, BoundObservationSourceError> {
+    let target_angles = source.geometry_engine.direction_angles_j2000(
+        stored.time_mjd_seconds(),
+        [
+            target_direction.longitude_rad(),
+            target_direction.latitude_rad(),
+        ],
+        direction_ref(target_direction.frame()),
+    )?;
+    let target_j2000 = SkyDirection::new(DirectionFrame::J2000, target_angles[0], target_angles[1]);
+    let (transformed_uvw_m, phase_shift_m) = if target_j2000 == observation_direction {
+        (stored.uvw_m(), 0.0)
+    } else {
+        source
+            .geometry_engine
+            .reproject_raw_uvw_for_gridft_to_j2000(stored.uvw_m(), field_id, target_angles)?
+    };
+    SelectedPhaseCentreProjection::new(transformed_uvw_m, phase_shift_m)
+        .ok_or(BoundObservationSourceError::InvalidRowGeometry)
+}
+
+const fn direction_ref(frame: DirectionFrame) -> DirectionRef {
+    match frame {
+        DirectionFrame::Icrs => DirectionRef::ICRS,
+        DirectionFrame::J2000 => DirectionRef::J2000,
+        DirectionFrame::B1950 => DirectionRef::B1950,
+        DirectionFrame::Galactic => DirectionRef::GALACTIC,
+    }
 }
 
 fn evaluate_observation_pointings(

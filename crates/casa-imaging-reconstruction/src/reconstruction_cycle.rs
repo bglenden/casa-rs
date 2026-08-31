@@ -11,7 +11,9 @@ use crate::{
     ComponentDivergence, Encoder, FinalNormalState, MinorCycleError, MinorCycleEvidence,
     MinorCycleModelPlane, MinorCycleProgram, MinorCycleStopReason, ModelDelta, ModelGeneration,
     ModelLifecycle, ModelLifecycleError, SpectralChannelValidity,
-    minor_cycle::{run_joint_minor_cycle, run_minor_cycle, run_minor_cycle_plane},
+    minor_cycle::{
+        run_image_domain_minor_cycle, run_joint_minor_cycle, run_minor_cycle, run_minor_cycle_plane,
+    },
 };
 
 const RECONSTRUCTION_CYCLE_EVIDENCE_DOMAIN: &[u8] = b"casa-rs-reconstruction-cycle-evidence";
@@ -326,6 +328,73 @@ impl ReconstructionCycle {
     #[must_use]
     pub const fn new(policy: ChannelCyclePolicy, program: MinorCycleProgram) -> Self {
         Self { policy, program }
+    }
+
+    /// Run one CASA-style Högbom minor-cycle set across all image domains.
+    ///
+    /// Every field receives the same per-set iteration budget and runs its own
+    /// controller in canonical domain order. The resulting terms are minted as
+    /// one combined model delta for the shared Major-Cycle lineage.
+    pub fn run_domains(
+        &self,
+        lifecycle: &ModelLifecycle,
+        base: &ModelGeneration,
+        normal: &FinalNormalState,
+        masks: &crate::ImageDomainReconstructionMasks,
+    ) -> Result<ReconstructionCycleResult, ReconstructionCycleError> {
+        if self.policy != ChannelCyclePolicy::Independent {
+            return Err(ReconstructionCycleError::UnsupportedCoupledPolicy);
+        }
+        let validity = normal
+            .domains()
+            .map(|domain| {
+                domain
+                    .channel_validity()
+                    .first()
+                    .copied()
+                    .unwrap_or(SpectralChannelValidity::Unmapped)
+            })
+            .find(|validity| *validity != SpectralChannelValidity::Valid)
+            .unwrap_or(SpectralChannelValidity::Valid);
+        if validity != SpectralChannelValidity::Valid {
+            let channels = vec![ChannelCycleEvidence {
+                output_channel: normal.slab().core_range().start,
+                validity,
+                budget_exhausted: false,
+                minor_cycle: None,
+            }];
+            let evidence_id =
+                reconstruction_cycle_evidence_id(lifecycle, normal, self.policy, &channels);
+            return Ok(ReconstructionCycleResult {
+                delta: None,
+                evidence: ReconstructionCycleEvidence {
+                    evidence_id,
+                    problem: lifecycle.problem(),
+                    policy: self.policy,
+                    channels: channels.into_boxed_slice(),
+                },
+            });
+        }
+        let result =
+            run_image_domain_minor_cycle(lifecycle, base, normal, masks, self.program.clone())?;
+        let (delta, minor_cycle) = result.into_parts();
+        let channels = vec![ChannelCycleEvidence {
+            output_channel: normal.slab().core_range().start,
+            validity,
+            budget_exhausted: false,
+            minor_cycle: Some(minor_cycle),
+        }];
+        let evidence_id =
+            reconstruction_cycle_evidence_id(lifecycle, normal, self.policy, &channels);
+        Ok(ReconstructionCycleResult {
+            delta,
+            evidence: ReconstructionCycleEvidence {
+                evidence_id,
+                problem: lifecycle.problem(),
+                policy: self.policy,
+                channels: channels.into_boxed_slice(),
+            },
+        })
     }
 
     /// Run all valid planes in deterministic output-channel order.

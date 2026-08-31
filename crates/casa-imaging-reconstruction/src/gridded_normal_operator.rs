@@ -19,9 +19,8 @@ use sha2::{Digest, Sha256};
 
 mod two_domain;
 use two_domain::{
-    GriddedNormalClassification, GriddedNormalGroupSpan, GriddedNormalRoute,
-    GriddedNormalTileAccumulator, GriddedNormalTileCatalog, GriddedNormalTileGeometry,
-    GriddedNormalTileTask, PreparedGriddedNormalTwoDomainWindow,
+    GriddedNormalClassification, GriddedNormalDomainTileCatalogs, GriddedNormalGroupSpan,
+    GriddedNormalRoute, GriddedNormalTileAccumulator, PreparedGriddedNormalTwoDomainWindow,
 };
 pub use two_domain::{GriddedNormalPartial, GriddedNormalWork};
 
@@ -30,9 +29,10 @@ use crate::{
     spectral_operator::{
         CompleteDataOwnerCompletion, CompleteDataOwnerResult, OVERSAMPLING,
         PreparedSpectralOperator, SPEED_OF_LIGHT_M_PER_S, SUPPORT, SampleTaps,
-        SpectralOperatorError, SpectralOperatorPass, SpectralOperatorSpecification,
-        SpectralPrimitiveCatalog, SpectralSlabOperator, StandardConvolution, TapSpan,
-        accept_weighted_input,
+        SpectralDomainPrimitives, SpectralOperatorError, SpectralOperatorPass,
+        SpectralOperatorSpecification, SpectralPrimitiveCatalog, SpectralPrimitiveDomains,
+        SpectralSlabOperator, StandardConvolution, TapSpan, accept_weighted_input,
+        selected_model_projection,
     },
     weighting::{
         CoverageEncoder, WeightingReplayChunk, WeightingReplayCoverageId, WeightingReplayId,
@@ -41,7 +41,7 @@ use crate::{
 };
 
 const RECORD_DOMAIN: &[u8] = b"casa-rs-gridded-normal-operator";
-const RECORD_VERSION: u32 = 3;
+const RECORD_VERSION: u32 = 4;
 const TAP_KEY_BITS: u32 = 38;
 const TAP_KEY_MASK: u64 = (1_u64 << TAP_KEY_BITS) - 1;
 const CHANNEL_KEY_BITS: u32 = 24;
@@ -56,7 +56,7 @@ const GRIDDED_NORMAL_HOT_TILE_DUPLICATES: usize = GRIDDED_NORMAL_LANE_COUNT - 1;
 ///
 /// Taylor records use the problem-derived width returned by
 /// [`gridded_normal_operator_record_bytes`].
-pub const GRIDDED_NORMAL_OPERATOR_RECORD_BYTES: usize = 32;
+pub const GRIDDED_NORMAL_OPERATOR_RECORD_BYTES: usize = 40;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum GriddedNormalRecordLayout {
@@ -263,95 +263,21 @@ pub fn gridded_normal_execution_residency(
     grid_shape: [usize; 2],
     coefficient_terms: usize,
 ) -> Result<GriddedNormalExecutionResidency, SpectralOperatorError> {
-    if coefficient_terms == 0 {
-        return Err(SpectralOperatorError::InvalidSlab);
-    }
-    let catalog = GriddedNormalTileCatalog::new(grid_shape)?;
-    let tile_halo_cells = catalog
-        .geometries
-        .iter()
-        .try_fold(0_usize, |total, geometry| {
-            geometry
-                .cell_count()
-                .and_then(|cells| total.checked_add(cells))
-                .ok_or(SpectralOperatorError::ResidencyOverflow)
-        })?;
-    let duplicate_cells = catalog
-        .maximum_cell_count()
-        .checked_mul(GRIDDED_NORMAL_HOT_TILE_DUPLICATES)
-        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-    let tile_accumulator_complex_values = tile_halo_cells
-        .checked_add(duplicate_cells)
-        .and_then(|cells| cells.checked_mul(coefficient_terms))
-        .and_then(|values| values.checked_mul(2))
-        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-    let merge_complex_values = grid_shape[0]
-        .checked_mul(grid_shape[1])
-        .and_then(|cells| cells.checked_mul(coefficient_terms))
-        .and_then(|values| values.checked_mul(2))
-        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-    let peak_complex_values = tile_accumulator_complex_values
-        .checked_add(merge_complex_values)
-        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-    let accumulator_count = catalog
-        .geometries
-        .len()
-        .checked_add(GRIDDED_NORMAL_HOT_TILE_DUPLICATES)
-        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-    let metadata_bytes = catalog
-        .geometries
-        .len()
-        .checked_mul(size_of::<GriddedNormalTileGeometry>())
-        .and_then(|bytes| {
-            catalog
-                .geometries
-                .len()
-                .checked_mul(size_of::<u32>() * 2)
-                .and_then(|tile_vectors| bytes.checked_add(tile_vectors))
-        })
-        .and_then(|bytes| {
-            catalog
-                .geometries
-                .len()
-                .checked_add(1)
-                .and_then(|tiles| tiles.checked_mul(size_of::<u32>()))
-                .and_then(|offsets| bytes.checked_add(offsets))
-        })
-        .and_then(|bytes| {
-            catalog
-                .geometries
-                .len()
-                .checked_add(GRIDDED_NORMAL_HOT_TILE_DUPLICATES)
-                .and_then(|tasks| tasks.checked_mul(size_of::<GriddedNormalTileTask>()))
-                .and_then(|tasks| bytes.checked_add(tasks))
-        })
-        .and_then(|bytes| {
-            accumulator_count
-                .checked_mul(size_of::<Mutex<GriddedNormalTileAccumulator>>())
-                .and_then(|accumulators| bytes.checked_add(accumulators))
-        })
-        .and_then(|bytes| {
-            accumulator_count
-                .checked_mul(coefficient_terms)
-                .and_then(|planes| planes.checked_mul(size_of::<Array2<Complex64>>() * 2))
-                .and_then(|planes| bytes.checked_add(planes))
-        })
-        .and_then(|bytes| {
-            coefficient_terms
-                .checked_mul(size_of::<Array2<Complex64>>() * 2)
-                .and_then(|planes| bytes.checked_add(planes))
-        })
-        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-    Ok(GriddedNormalExecutionResidency {
-        tile_accumulator_complex_values,
-        merge_complex_values,
-        peak_complex_values,
-        metadata_bytes,
-    })
+    gridded_normal_domain_execution_residency([grid_shape], coefficient_terms)
+}
+
+/// Project exact tiled accumulation and merge residency for all image domains.
+#[doc(hidden)]
+pub fn gridded_normal_domain_execution_residency(
+    grid_shapes: impl IntoIterator<Item = [usize; 2]>,
+    coefficient_terms: usize,
+) -> Result<GriddedNormalExecutionResidency, SpectralOperatorError> {
+    two_domain::domain_execution_residency(grid_shapes, coefficient_terms)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct ReducedRecordKey {
+    domain_ordinal: u32,
     output_channel: u32,
     taps: u64,
     forward_real: u64,
@@ -383,6 +309,7 @@ struct TaylorMomentAccumulator {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct DecodedRecord {
+    domain_ordinal: usize,
     output_channel: usize,
     taps: SampleTaps,
     forward_scale: Complex64,
@@ -515,7 +442,7 @@ pub struct GriddedNormalOperatorCompiler {
     record_layout: GriddedNormalRecordLayout,
     binding: LogicalIdentity,
     finite_values: casa_imaging_model::FiniteValuePolicy,
-    gridder: StandardConvolution,
+    gridders: Vec<StandardConvolution>,
     next_block_sequence: u64,
     sample_count: u64,
     record_count: u64,
@@ -534,11 +461,15 @@ impl GriddedNormalOperatorCompiler {
         let specification = SpectralOperatorSpecification::new(problem)?;
         validate_record_geometry(&specification)?;
         let record_layout = GriddedNormalRecordLayout::for_specification(&specification);
-        let geometry = specification.operator_geometry();
+        let gridders = specification
+            .domains()
+            .iter()
+            .map(|domain| StandardConvolution::new(&domain.geometry()))
+            .collect();
         let binding = static_binding(&specification);
         Ok(Self {
             finite_values: specification.finite_values(),
-            gridder: StandardConvolution::new(&geometry),
+            gridders,
             specification,
             record_layout,
             binding,
@@ -699,54 +630,62 @@ impl GriddedNormalOperatorCompiler {
             {
                 continue;
             }
-            let uvw_m = selected.transformed_uvw_m();
-            if !selected.phase_shift_m().is_finite() || uvw_m.iter().any(|value| !value.is_finite())
-            {
-                return Err(SpectralOperatorError::InvalidSample);
-            }
             let mut group = Vec::new();
             let mut has_positive_weight = false;
-            for spectral in weighted.spectral_values() {
-                let contribution = spectral.contribution();
-                let output_channel = usize::try_from(contribution.output_channel())
-                    .map_err(|_| SpectralOperatorError::InvalidSample)?;
-                let frequency_hz = contribution.evaluation_frequency_hz();
-                if output_channel >= self.specification.slab().total_channels()
-                    || !frequency_hz.is_finite()
-                    || frequency_hz <= 0.0
-                    || !spectral.imaging_weight().is_finite()
-                    || spectral.imaging_weight() < 0.0
-                    || !contribution.factor().is_finite()
-                    || contribution.factor() == 0.0
-                {
-                    return Err(SpectralOperatorError::InvalidSample);
-                }
-                let scale = frequency_hz / SPEED_OF_LIGHT_M_PER_S;
-                let Some(taps) = self.gridder.taps([uvw_m[0] * scale, uvw_m[1] * scale]) else {
-                    continue;
-                };
-                let phase_angle = std::f64::consts::TAU * selected.phase_shift_m() * frequency_hz
-                    / SPEED_OF_LIGHT_M_PER_S;
-                let forward_scale = Complex64::from_polar(contribution.factor(), -phase_angle);
-                if !forward_scale.re.is_finite() || !forward_scale.im.is_finite() {
-                    return Err(SpectralOperatorError::GeneratedNonfinite);
-                }
-                has_positive_weight |= spectral.imaging_weight() > 0.0;
-                let old_capacity = group.capacity();
-                group.push(ReducedRecordKey {
-                    output_channel: contribution.output_channel(),
-                    taps: encode_taps(taps)?,
-                    forward_real: canonical_zero_bits(forward_scale.re),
-                    forward_imaginary: canonical_zero_bits(forward_scale.im),
-                    imaging_weight: canonical_zero_bits(spectral.imaging_weight()),
-                });
-                record_vector_growth(
-                    old_capacity,
-                    group.capacity(),
-                    size_of::<ReducedRecordKey>(),
-                    &mut measurements.source_group_vector_allocations,
-                    &mut measurements.source_group_capacity_growth_bytes,
+            for domain_ordinal in 0..self.specification.domain_count() {
+                let (uvw_m, phase_shift_m) = selected_model_projection(
+                    selected,
+                    self.specification.domain_count(),
+                    domain_ordinal,
                 )?;
+                let gridder = self
+                    .gridders
+                    .get(domain_ordinal)
+                    .ok_or(SpectralOperatorError::DomainProjectionMismatch)?;
+                for spectral in weighted.spectral_values() {
+                    let contribution = spectral.contribution();
+                    let output_channel = usize::try_from(contribution.output_channel())
+                        .map_err(|_| SpectralOperatorError::InvalidSample)?;
+                    let frequency_hz = contribution.evaluation_frequency_hz();
+                    if output_channel >= self.specification.slab().total_channels()
+                        || !frequency_hz.is_finite()
+                        || frequency_hz <= 0.0
+                        || !spectral.imaging_weight().is_finite()
+                        || spectral.imaging_weight() < 0.0
+                        || !contribution.factor().is_finite()
+                        || contribution.factor() == 0.0
+                    {
+                        return Err(SpectralOperatorError::InvalidSample);
+                    }
+                    let scale = frequency_hz / SPEED_OF_LIGHT_M_PER_S;
+                    let Some(taps) = gridder.taps([uvw_m[0] * scale, uvw_m[1] * scale]) else {
+                        continue;
+                    };
+                    let phase_angle = std::f64::consts::TAU * phase_shift_m * frequency_hz
+                        / SPEED_OF_LIGHT_M_PER_S;
+                    let forward_scale = Complex64::from_polar(contribution.factor(), -phase_angle);
+                    if !forward_scale.re.is_finite() || !forward_scale.im.is_finite() {
+                        return Err(SpectralOperatorError::GeneratedNonfinite);
+                    }
+                    has_positive_weight |= spectral.imaging_weight() > 0.0;
+                    let old_capacity = group.capacity();
+                    group.push(ReducedRecordKey {
+                        domain_ordinal: u32::try_from(domain_ordinal)
+                            .map_err(|_| SpectralOperatorError::DomainProjectionMismatch)?,
+                        output_channel: contribution.output_channel(),
+                        taps: encode_taps(taps)?,
+                        forward_real: canonical_zero_bits(forward_scale.re),
+                        forward_imaginary: canonical_zero_bits(forward_scale.im),
+                        imaging_weight: canonical_zero_bits(spectral.imaging_weight()),
+                    });
+                    record_vector_growth(
+                        old_capacity,
+                        group.capacity(),
+                        size_of::<ReducedRecordKey>(),
+                        &mut measurements.source_group_vector_allocations,
+                        &mut measurements.source_group_capacity_growth_bytes,
+                    )?;
+                }
             }
             if !group.is_empty() && has_positive_weight {
                 source_groups.push(group);
@@ -802,7 +741,7 @@ impl GriddedNormalOperatorCompiler {
                 continue;
             }
             let scale = frequency_hz / SPEED_OF_LIGHT_M_PER_S;
-            let Some(taps) = self.gridder.taps([uvw_m[0] * scale, uvw_m[1] * scale]) else {
+            let Some(taps) = self.gridders[0].taps([uvw_m[0] * scale, uvw_m[1] * scale]) else {
                 continue;
             };
             let normal_weight = imaging_weight * factor * factor;
@@ -1059,7 +998,7 @@ impl GriddedNormalOperatorProgram {
         route_slot_record_capacities: &[usize],
     ) -> Result<GriddedNormalOperatorApply, SpectralOperatorError> {
         require_supported_basis(&problem.reconstruction().basis())?;
-        let (prepared_specification, workload, fft) = prepared.into_parts();
+        let (prepared_specification, workload, mut ffts) = prepared.into_parts();
         if problem.problem_id() != self.manifest.specification.problem_id()
             || prepared_specification != self.manifest.specification
             || workload.pass() != SpectralOperatorPass::ResidualRefresh
@@ -1094,39 +1033,74 @@ impl GriddedNormalOperatorProgram {
             || prior.channel_count() != self.manifest.specification.slab().core_depth()
             || prior.coefficient_term_count() != self.manifest.record_layout.coefficient_terms()
             || prior.normal_moment_count() != self.manifest.record_layout.normal_moments()
+            || prior.domain_count() != self.manifest.specification.domain_count()
         {
             return Err(SpectralOperatorError::GriddedRecordMismatch);
         }
+        if ffts.len() != prepared_specification.domain_count() {
+            return Err(SpectralOperatorError::GriddedRecordMismatch);
+        }
         let model_generation = model.generation_id();
-        let mut operator =
-            SpectralSlabOperator::new_gridded_normal(prepared_specification, workload, fft);
-        operator.prepare_gridded_normal_model(model, prior.into_reusable())?;
-        let grid_shape = self.manifest.specification.grid_shape();
+        let mut prior = prior.into_reusable_domains()?.into_iter();
+        let mut operators = Vec::with_capacity(prepared_specification.domain_count());
+        for (domain, fft) in prepared_specification.domains().iter().zip(ffts.drain(..)) {
+            let mut operator =
+                SpectralSlabOperator::new_domain(&prepared_specification, domain, workload, fft, 0);
+            operator.prepare_gridded_normal_model(
+                model,
+                prior
+                    .next()
+                    .ok_or(SpectralOperatorError::ReusableNormalStateMismatch)?,
+            )?;
+            operators.push(operator);
+        }
+        if prior.next().is_some() {
+            return Err(SpectralOperatorError::ReusableNormalStateMismatch);
+        }
         let core_depth = self
             .manifest
             .record_layout
             .accumulation_width(self.manifest.specification.slab().total_channels());
-        let tile_catalog = GriddedNormalTileCatalog::new(grid_shape)?;
+        let tile_catalogs = GriddedNormalDomainTileCatalogs::new(
+            self.manifest
+                .specification
+                .domains()
+                .iter()
+                .map(|domain| domain.geometry().grid_shape),
+        )?;
         let two_domain = PreparedGriddedNormalTwoDomainWindow::with_record_capacities(
             route_slot_record_capacities,
-            tile_catalog.geometries.len(),
+            tile_catalogs.tile_count(),
             self.manifest.record_layout,
         )?;
-        let tile_accumulators = tile_catalog.accumulators(core_depth)?;
-        let shape = (grid_shape[0], grid_shape[1]);
-        let planes = || (0..core_depth).map(|_| Array2::zeros(shape)).collect();
+        let tile_accumulators = tile_catalogs.accumulators(core_depth)?;
+        let domain_planes = || {
+            self.manifest
+                .specification
+                .domains()
+                .iter()
+                .map(|domain| {
+                    let shape = domain.geometry().grid_shape;
+                    (0..core_depth)
+                        .map(|_| Array2::zeros((shape[0], shape[1])))
+                        .collect()
+                })
+                .collect()
+        };
+        #[cfg(test)]
+        let primary_grid_shape = self.manifest.specification.grid_shape();
         Ok(GriddedNormalOperatorApply {
             program: self.clone(),
-            operator,
+            operators,
             model_generation,
             next_block_sequence: 0,
             applied_records: 0,
             next_partition_commit: 0,
             two_domain: RwLock::new(two_domain),
-            tile_catalog,
+            tile_catalogs,
             tile_accumulators,
-            normal_grids: planes(),
-            normal_compensations: planes(),
+            normal_grids: domain_planes(),
+            normal_compensations: domain_planes(),
             #[cfg(test)]
             next_sector_commit: 0,
             #[cfg(test)]
@@ -1136,7 +1110,9 @@ impl GriddedNormalOperatorProgram {
             #[cfg(test)]
             sectors: std::array::from_fn(|sector_id| {
                 Mutex::new(GriddedNormalSectorAccumulator::new(
-                    grid_shape, core_depth, sector_id,
+                    primary_grid_shape,
+                    core_depth,
+                    sector_id,
                 ))
             }),
         })
@@ -1147,16 +1123,16 @@ impl GriddedNormalOperatorProgram {
 #[doc(hidden)]
 pub struct GriddedNormalOperatorApply {
     program: GriddedNormalOperatorProgram,
-    operator: SpectralSlabOperator,
+    operators: Vec<SpectralSlabOperator>,
     model_generation: crate::ModelGenerationId,
     next_block_sequence: u64,
     applied_records: u64,
     next_partition_commit: usize,
     two_domain: RwLock<PreparedGriddedNormalTwoDomainWindow>,
-    tile_catalog: GriddedNormalTileCatalog,
+    tile_catalogs: GriddedNormalDomainTileCatalogs,
     tile_accumulators: Vec<Mutex<GriddedNormalTileAccumulator>>,
-    normal_grids: Vec<Array2<Complex64>>,
-    normal_compensations: Vec<Array2<Complex64>>,
+    normal_grids: Vec<Vec<Array2<Complex64>>>,
+    normal_compensations: Vec<Vec<Array2<Complex64>>>,
     #[cfg(test)]
     next_sector_commit: usize,
     #[cfg(test)]
@@ -1790,7 +1766,7 @@ impl GriddedNormalOperatorApply {
                         self.program.manifest.specification.grid_shape(),
                         self.program.manifest.specification.slab().total_channels(),
                         |record| {
-                            self.operator.predict_gridded_normal(
+                            self.operators[0].predict_gridded_normal(
                                 record.output_channel,
                                 record.taps,
                                 record.forward_scale,
@@ -1951,7 +1927,7 @@ impl GriddedNormalOperatorApply {
         let mut sector = self.sectors[work.sector_id]
             .lock()
             .map_err(|_| SpectralOperatorError::GriddedSectorPoisoned)?;
-        let operator = &self.operator;
+        let operator = &self.operators[0];
         let mut frame_count = 0usize;
         for (ordinal, (sequence, encoded)) in frames.into_iter().enumerate() {
             let block = prepared.active_block(ordinal)?;
@@ -2042,13 +2018,27 @@ impl GriddedNormalOperatorApply {
         let measurements = self.routing_measurements();
         let Self {
             program,
-            operator,
+            operators,
             model_generation,
             normal_grids,
             ..
         } = self;
-        let primitives =
-            operator.finish_gridded_normal_from_grids(model_generation, normal_grids)?;
+        let domains = operators
+            .into_iter()
+            .zip(normal_grids)
+            .zip(program.manifest.specification.domains())
+            .map(|((operator, grids), specification)| {
+                operator
+                    .finish_gridded_normal_from_grids(model_generation, grids)
+                    .map(|primitives| {
+                        SpectralDomainPrimitives::new(
+                            specification.ordinal(),
+                            specification.role().clone(),
+                            primitives,
+                        )
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let primitive_catalog = match program.manifest.record_layout {
             GriddedNormalRecordLayout::Taylor(_) => {
                 SpectralPrimitiveCatalog::UnnormalizedTaylorBlockV1
@@ -2063,7 +2053,7 @@ impl GriddedNormalOperatorApply {
         };
         Ok((
             CompleteDataOwnerResult {
-                primitives,
+                domains: SpectralPrimitiveDomains::new(domains.into_boxed_slice())?,
                 completion: CompleteDataOwnerCompletion {
                     problem: program.manifest.specification.problem_id(),
                     geometry: program.manifest.specification.geometry_id(),
@@ -2218,10 +2208,13 @@ fn validate_record_geometry(
     if specification.slab().core_depth() != specification.slab().total_channels()
         || specification.slab().resident_depth() != specification.slab().total_channels()
         || specification.slab().total_channels() > 1 << CHANNEL_KEY_BITS
-        || specification
-            .grid_shape()
-            .into_iter()
-            .any(|extent| extent > 1 << 12)
+        || specification.domains().iter().any(|domain| {
+            domain
+                .geometry()
+                .grid_shape
+                .into_iter()
+                .any(|extent| extent > 1 << 12)
+        })
     {
         return Err(SpectralOperatorError::UnsupportedGriddedReplay);
     }
@@ -2235,8 +2228,12 @@ fn static_binding(specification: &SpectralOperatorSpecification) -> LogicalIdent
     encoder.identity(specification.geometry_id().as_bytes());
     encoder.identity(specification.numerics_id().as_bytes());
     encoder.identity(specification.weighting_commitment_id().as_bytes());
-    encoder.usize(specification.grid_shape()[0]);
-    encoder.usize(specification.grid_shape()[1]);
+    encoder.usize(specification.domain_count());
+    for domain in specification.domains() {
+        encoder.usize(domain.ordinal());
+        encoder.usize(domain.geometry().grid_shape[0]);
+        encoder.usize(domain.geometry().grid_shape[1]);
+    }
     encoder.usize(specification.slab().total_channels());
     match record_layout {
         GriddedNormalRecordLayout::Scalar => {
@@ -2520,6 +2517,7 @@ fn encode_and_checksum(
                 return Err(SpectralOperatorError::GeneratedNonfinite);
             }
             encoded.extend_from_slice(&key.to_le_bytes());
+            encoded.extend_from_slice(&u64::from(record.domain_ordinal).to_le_bytes());
             encoded.extend_from_slice(&forward_real.to_le_bytes());
             encoded.extend_from_slice(&forward_imaginary.to_le_bytes());
             encoded.extend_from_slice(&imaging_weight.to_le_bytes());
@@ -2617,7 +2615,40 @@ fn encode_taps(taps: SampleTaps) -> Result<u64, SpectralOperatorError> {
         | ((taps.y.weight_index as u64) << 31))
 }
 
+#[cfg(test)]
 fn decode_record(
+    encoded: &[u8],
+    grid_shape: [usize; 2],
+    output_channels: usize,
+) -> Result<DecodedRecord, SpectralOperatorError> {
+    let record = decode_record_for_shape(encoded, grid_shape, output_channels)?;
+    if record.domain_ordinal != 0 {
+        return Err(SpectralOperatorError::InvalidGriddedRecord);
+    }
+    Ok(record)
+}
+
+fn decode_domain_record(
+    encoded: &[u8],
+    catalogs: &GriddedNormalDomainTileCatalogs,
+    output_channels: usize,
+) -> Result<DecodedRecord, SpectralOperatorError> {
+    if encoded.len() != GRIDDED_NORMAL_OPERATOR_RECORD_BYTES {
+        return Err(SpectralOperatorError::InvalidGriddedRecord);
+    }
+    let domain_ordinal = usize::try_from(u64::from_le_bytes(
+        encoded[8..16]
+            .try_into()
+            .map_err(|_| SpectralOperatorError::InvalidGriddedRecord)?,
+    ))
+    .map_err(|_| SpectralOperatorError::InvalidGriddedRecord)?;
+    let grid_shape = catalogs
+        .grid_shape(domain_ordinal)
+        .ok_or(SpectralOperatorError::InvalidGriddedRecord)?;
+    decode_record_for_shape(encoded, grid_shape, output_channels)
+}
+
+fn decode_record_for_shape(
     encoded: &[u8],
     grid_shape: [usize; 2],
     output_channels: usize,
@@ -2631,22 +2662,28 @@ fn decode_record(
             .map_err(|_| SpectralOperatorError::InvalidGriddedRecord)?,
     );
     let forward_real = f64::from_le_bytes(
-        encoded[8..16]
-            .try_into()
-            .map_err(|_| SpectralOperatorError::InvalidGriddedRecord)?,
-    );
-    let forward_imaginary = f64::from_le_bytes(
         encoded[16..24]
             .try_into()
             .map_err(|_| SpectralOperatorError::InvalidGriddedRecord)?,
     );
+    let forward_imaginary = f64::from_le_bytes(
+        encoded[24..32]
+            .try_into()
+            .map_err(|_| SpectralOperatorError::InvalidGriddedRecord)?,
+    );
     let imaging_weight = f64::from_le_bytes(
-        encoded[24..]
+        encoded[32..]
             .try_into()
             .map_err(|_| SpectralOperatorError::InvalidGriddedRecord)?,
     );
     let output_channel = usize::try_from((key >> TAP_KEY_BITS) & CHANNEL_KEY_MASK)
         .map_err(|_| SpectralOperatorError::InvalidGriddedRecord)?;
+    let domain_ordinal = usize::try_from(u64::from_le_bytes(
+        encoded[8..16]
+            .try_into()
+            .map_err(|_| SpectralOperatorError::InvalidGriddedRecord)?,
+    ))
+    .map_err(|_| SpectralOperatorError::InvalidGriddedRecord)?;
     if key & !RECORD_KEY_MASK != 0
         || output_channel >= output_channels
         || !forward_real.is_finite()
@@ -2659,6 +2696,7 @@ fn decode_record(
     }
     let taps = decode_tap_key(key & TAP_KEY_MASK, grid_shape)?;
     Ok(DecodedRecord {
+        domain_ordinal,
         output_channel,
         taps,
         forward_scale: Complex64::new(forward_real, forward_imaginary),
@@ -2787,10 +2825,10 @@ mod tests {
     }
 
     #[test]
-    fn t42_taylor_v3_codec_has_dynamic_width_and_rejects_truncation_and_nonfinite_moments() {
+    fn t42_taylor_v4_codec_has_dynamic_width_and_rejects_truncation_and_nonfinite_moments() {
         let plan = crate::block_normal::BlockNormalPlan::taylor(1.0e9, 3).unwrap();
         let layout = GriddedNormalRecordLayout::Taylor(plan);
-        assert_eq!(RECORD_VERSION, 3);
+        assert_eq!(RECORD_VERSION, 4);
         assert_eq!(layout.record_bytes().unwrap(), 48);
         assert_eq!(
             GriddedNormalRecordLayout::Taylor(
@@ -2831,7 +2869,7 @@ mod tests {
     }
 
     #[test]
-    fn t42_v2_scalar_width_collision_cannot_enter_a_v3_taylor_program() {
+    fn t42_v4_domain_scalar_cannot_enter_a_taylor_program() {
         fn common_static_binding(version: u32) -> Encoder {
             let mut encoder = Encoder::new(RECORD_DOMAIN, version);
             encoder.identity([1; 32]);
@@ -2850,39 +2888,41 @@ mod tests {
 
         let plan = crate::block_normal::BlockNormalPlan::taylor(1.0e9, 2).unwrap();
         let layout = GriddedNormalRecordLayout::Taylor(plan);
-        let mut taylor_v3 = common_static_binding(RECORD_VERSION);
-        taylor_v3.u8(1);
-        taylor_v3.usize(plan.coefficient_term_count());
-        taylor_v3.usize(plan.normal_moment_count());
-        taylor_v3.u64(plan.reference_frequency_hz().to_bits());
-        taylor_v3.usize(layout.record_bytes().unwrap());
-        let taylor_v3 = LogicalIdentity::from_sha256(taylor_v3.finish());
+        let mut taylor_v4 = common_static_binding(RECORD_VERSION);
+        taylor_v4.u8(1);
+        taylor_v4.usize(plan.coefficient_term_count());
+        taylor_v4.usize(plan.normal_moment_count());
+        taylor_v4.u64(plan.reference_frequency_hz().to_bits());
+        taylor_v4.usize(layout.record_bytes().unwrap());
+        let taylor_v4 = LogicalIdentity::from_sha256(taylor_v4.finish());
 
-        assert_eq!(RECORD_VERSION, 3);
+        assert_eq!(RECORD_VERSION, 4);
         assert_eq!(layout.record_bytes().unwrap(), 32);
         assert_ne!(
-            legacy_v2, taylor_v3,
-            "the v3 Taylor layout has a distinct static schema binding even at the legacy width"
+            legacy_v2, taylor_v4,
+            "the v4 Taylor layout has a distinct static schema binding"
         );
 
         let (legacy_scalar, _) =
             encode_reduced::<false>(scalar_groups([(t42_taps(), 1.0)])).unwrap();
-        assert_eq!(legacy_scalar.len(), layout.record_bytes().unwrap());
+        assert_eq!(legacy_scalar.len(), GRIDDED_NORMAL_OPERATOR_RECORD_BYTES);
+        assert_ne!(legacy_scalar.len(), layout.record_bytes().unwrap());
         let legacy_descriptor = BlockDescriptor {
             source_samples: 1,
             record_count: 1,
             digest: Sha256::digest(&legacy_scalar).into(),
         };
-        assert!(
-            validate_encoded_block(&legacy_descriptor, &legacy_scalar, 32).is_ok(),
-            "the collision reaches semantic decode only after exact framing and checksum"
+        assert_eq!(
+            validate_encoded_block(&legacy_descriptor, &legacy_scalar, 32),
+            Err(SpectralOperatorError::GriddedRecordMismatch),
+            "domain-tagged scalar framing cannot collide with Taylor framing"
         );
         assert!(
             matches!(
                 decode_taylor_record(&legacy_scalar, [10, 10], plan.normal_moment_count()),
                 Err(SpectralOperatorError::InvalidGriddedRecord)
             ),
-            "v3 Taylor never falls back to the legacy scalar decoder"
+            "v4 Taylor never falls back to the domain scalar decoder"
         );
 
         let (taylor, _) = encode_taylor_and_checksum(
@@ -2956,6 +2996,7 @@ mod tests {
         for (taps, coefficient) in contributions {
             groups
                 .entry(vec![ReducedRecordKey {
+                    domain_ordinal: 0,
                     output_channel: 0,
                     taps: encode_taps(taps).expect("encode scalar taps"),
                     forward_real: 1.0_f64.to_bits(),
@@ -2966,6 +3007,40 @@ mod tests {
                 .push(coefficient);
         }
         groups
+    }
+
+    #[test]
+    fn domain_records_share_one_prediction_group_and_retain_canonical_ordinals() {
+        let taps = t42_taps();
+        let record = |domain_ordinal, forward_real: f64| ReducedRecordKey {
+            domain_ordinal,
+            output_channel: 0,
+            taps: encode_taps(taps).expect("encode domain taps"),
+            forward_real: forward_real.to_bits(),
+            forward_imaginary: 0,
+            imaging_weight: 1.0_f64.to_bits(),
+        };
+        let mut groups = BTreeMap::new();
+        groups.insert(vec![record(0, 1.0), record(1, 2.0)], vec![1.0]);
+        let (encoded, _) = encode_reduced::<false>(groups).expect("encode shared domain group");
+        assert_eq!(encoded.len(), 2 * GRIDDED_NORMAL_OPERATOR_RECORD_BYTES);
+        let catalogs = GriddedNormalDomainTileCatalogs::new([[10, 10], [10, 10]])
+            .expect("two domain catalogs");
+        let decoded = encoded
+            .chunks_exact(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
+            .map(|record| decode_domain_record(record, &catalogs, 1).expect("decode domain record"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            decoded
+                .iter()
+                .map(|record| record.domain_ordinal)
+                .collect::<Vec<_>>(),
+            [0, 1]
+        );
+        assert!(!decoded[0].group_end);
+        assert!(decoded[1].group_end);
+        assert_eq!(decoded[0].forward_scale.re, 1.0);
+        assert_eq!(decoded[1].forward_scale.re, 2.0);
     }
 
     #[test]
@@ -3094,6 +3169,7 @@ mod tests {
             .copied()
             .enumerate()
             .map(|(index, taps)| ReducedRecordKey {
+                domain_ordinal: 0,
                 output_channel: 0,
                 taps: encode_taps(taps).expect("encode grouped taps"),
                 forward_real: (1.0 + index as f64 * 0.125).to_bits(),
@@ -3106,6 +3182,7 @@ mod tests {
         let second_taps = *taps_by_sector.get(&0).expect("lower sector taps");
         groups.insert(
             vec![ReducedRecordKey {
+                domain_ordinal: 0,
                 output_channel: 0,
                 taps: encode_taps(second_taps).expect("encode scalar taps"),
                 forward_real: 0.75_f64.to_bits(),
@@ -3402,13 +3479,13 @@ mod tests {
     }
 
     #[test]
-    fn two_domain_residency_formula_is_exact_and_worker_independent() {
-        let shape = [10, 10];
+    fn image_domain_residency_formula_is_exact_and_worker_independent() {
+        let shapes = [[10, 10], [14, 12]];
         let depth = 3;
-        let projected =
-            gridded_normal_execution_residency(shape, depth).expect("project residency");
-        let catalog = GriddedNormalTileCatalog::new(shape).expect("tile catalog");
-        let accumulators = catalog.accumulators(depth).expect("tile accumulators");
+        let projected = gridded_normal_domain_execution_residency(shapes, depth)
+            .expect("project domain residency");
+        let catalogs = GriddedNormalDomainTileCatalogs::new(shapes).expect("domain tile catalogs");
+        let accumulators = catalogs.accumulators(depth).expect("tile accumulators");
         let actual_tile_values = accumulators.iter().fold(0, |total, accumulator| {
             let accumulator = accumulator.lock().expect("tile owner");
             total
@@ -3425,7 +3502,12 @@ mod tests {
         );
         assert_eq!(
             projected.merge_complex_values(),
-            shape[0] * shape[1] * depth * 2
+            shapes
+                .iter()
+                .map(|shape| shape[0] * shape[1])
+                .sum::<usize>()
+                * depth
+                * 2
         );
         assert_eq!(
             projected.peak_complex_values(),
