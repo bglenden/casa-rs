@@ -17,6 +17,12 @@ use casa_imaging_reconstruction::{
 use crate::digest::{COMMITMENT_DOMAIN, COMMITMENT_VERSION, Encoder};
 use crate::error::ProductsError;
 
+#[derive(Debug, Clone, Copy)]
+enum ContinuumNormalStateCatalog {
+    PlaneV1,
+    ChannelSlabV1,
+}
+
 /// Identity catalog of every source role behind one continuum generation.
 ///
 /// Constructed only by [`ContinuumSourceCatalog::from_major_cycle`]; there is
@@ -29,7 +35,7 @@ pub struct ContinuumSourceCatalog {
     major_cycle_completion: MajorCycleCompletionId,
     normal_state_completion: FinalNormalStateCompletionId,
     normal_state_content: LogicalIdentity,
-    normal_state_catalog: NormalStateCatalog,
+    normal_state_catalog: ContinuumNormalStateCatalog,
     input_model_generation: ModelGenerationId,
     final_model_generation: ModelGenerationId,
     weighting_generation: casa_imaging_reconstruction::WeightingGenerationId,
@@ -75,12 +81,15 @@ impl ContinuumSourceCatalog {
         if join.model_completion().problem() != problem.problem_id() {
             return Err(ProductsError::SourceLineageMismatch);
         }
-        if !matches!(
-            normal_state.catalog(),
-            NormalStateCatalog::UnnormalizedPlaneV1 | NormalStateCatalog::UnnormalizedChannelSlabV1
-        ) {
-            return Err(ProductsError::UnsupportedProblem);
-        }
+        let normal_state_catalog = match normal_state.catalog() {
+            NormalStateCatalog::UnnormalizedPlaneV1 => ContinuumNormalStateCatalog::PlaneV1,
+            NormalStateCatalog::UnnormalizedChannelSlabV1 => {
+                ContinuumNormalStateCatalog::ChannelSlabV1
+            }
+            NormalStateCatalog::UnnormalizedTaylorBlockV1 => {
+                return Err(ProductsError::UnsupportedProblem);
+            }
+        };
         if mask.is_some_and(|mask| {
             mask.problem_id() != problem.problem_id() || mask.shape() != normal_state.shape()
         }) {
@@ -91,7 +100,7 @@ impl ContinuumSourceCatalog {
             major_cycle_completion: join.completion_id(),
             normal_state_completion: normal_state.completion_id(),
             normal_state_content: normal_state.content_identity(),
-            normal_state_catalog: normal_state.catalog(),
+            normal_state_catalog,
             input_model_generation: normal_state.input_model_generation(),
             final_model_generation: normal_state.final_model_generation(),
             weighting_generation: normal_state.weighting_generation(),
@@ -140,8 +149,8 @@ impl ContinuumSourceCatalog {
         encoder.identity(self.normal_state_completion.as_bytes());
         encoder.identity(self.normal_state_content.as_bytes());
         encoder.u8(match self.normal_state_catalog {
-            NormalStateCatalog::UnnormalizedPlaneV1 => 0,
-            NormalStateCatalog::UnnormalizedChannelSlabV1 => 1,
+            ContinuumNormalStateCatalog::PlaneV1 => 0,
+            ContinuumNormalStateCatalog::ChannelSlabV1 => 1,
         });
         encoder.identity(self.input_model_generation.as_bytes());
         encoder.identity(self.final_model_generation.as_bytes());

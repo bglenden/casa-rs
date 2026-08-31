@@ -69,6 +69,13 @@ imaging-t38-cube-clean:
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction --features cpp-interop-tests --test major_cycle t38_
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-runtime --test compile_plan_run t38_runtime_runs_one_shared_cycle_with_combined_channel_evidence
 
+# Focused #528 MT-MFS block-normal algebra, compact replay, persistence, and residency gate.
+imaging-t42-mtmfs-normal:
+    just arch-check
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction t42_
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-runtime --lib t42_
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-products t42_
+
 release-perf:
     bash scripts/test-release-perf.sh
 

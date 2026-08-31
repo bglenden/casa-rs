@@ -13,7 +13,7 @@ use casa_imaging_model::{
     FiniteValuePolicy, InstrumentResponse, LogicalIdentity, NumericPrecision, NumericsContractId,
     PolarizationCoordinate, Projection, ReconstructionBasis, ReductionPolicy,
     SelectedObservationGenerationId, SelectedSampleAddress, SelectedVisibilitySample,
-    SpectralKernel, WeightingCommitmentId,
+    SpectralKernel, SpectralWcs, WeightingCommitmentId,
 };
 use ndarray::{Array2, Axis};
 use num_complex::Complex64;
@@ -22,13 +22,65 @@ use smallvec::SmallVec;
 use thiserror::Error;
 
 use crate::{
-    ModelGeneration, ModelGenerationId, ModelGenerationOrigin, ModelSupport, canonical_f64_bits,
+    ModelGeneration, ModelGenerationId, ModelGenerationOrigin, ModelSupport,
+    block_normal::BlockNormalPlan,
+    canonical_f64_bits,
     weighting::{
         CoverageEncoder, FrozenWeightingCoverageProof, WeightingAlgorithmState,
         WeightingGenerationId, WeightingReplayChunk, WeightingReplayCoverageId, WeightingReplayId,
         WeightingReplaySummary,
     },
 };
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum SpectralBasisPlan {
+    ChannelLocal,
+    Polynomial(BlockNormalPlan),
+}
+
+impl SpectralBasisPlan {
+    const fn coefficient_terms(self, slab: SpectralSlabPlan) -> usize {
+        match self {
+            Self::ChannelLocal => slab.core_depth(),
+            Self::Polynomial(plan) => plan.coefficient_term_count(),
+        }
+    }
+
+    const fn resident_terms(self, slab: SpectralSlabPlan) -> usize {
+        match self {
+            Self::ChannelLocal => slab.resident_depth(),
+            Self::Polynomial(plan) => plan.coefficient_term_count(),
+        }
+    }
+
+    const fn total_model_terms(self, slab: SpectralSlabPlan) -> usize {
+        match self {
+            Self::ChannelLocal => slab.total_channels(),
+            Self::Polynomial(plan) => plan.coefficient_term_count(),
+        }
+    }
+
+    const fn normal_moments(self, slab: SpectralSlabPlan) -> usize {
+        match self {
+            Self::ChannelLocal => slab.core_depth(),
+            Self::Polynomial(plan) => plan.normal_moment_count(),
+        }
+    }
+
+    const fn validity_entries(self, slab: SpectralSlabPlan) -> usize {
+        match self {
+            Self::ChannelLocal => slab.core_depth(),
+            Self::Polynomial(_) => 1,
+        }
+    }
+
+    const fn polynomial(self) -> Option<BlockNormalPlan> {
+        match self {
+            Self::ChannelLocal => None,
+            Self::Polynomial(plan) => Some(plan),
+        }
+    }
+}
 
 pub(crate) const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
 const NORMAL_STATE_CONTENT_DOMAIN: &[u8] = b"casa-rs-normal-state-content";
@@ -242,6 +294,7 @@ pub struct SpectralOperatorSpecification {
     image_blc: [usize; 2],
     increment_rad: [f64; 2],
     slab: SpectralSlabPlan,
+    basis: SpectralBasisPlan,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -265,6 +318,7 @@ impl SpectralOperatorSpecification {
         core_start: usize,
         core_depth: usize,
     ) -> Result<Self, SpectralOperatorError> {
+        let basis = spectral_basis_plan(problem)?;
         let channels = output_channel_count(problem)?;
         if problem.geometry().domains().len() != 1
             || problem.reconstruction().polarization().coordinates()
@@ -277,11 +331,18 @@ impl SpectralOperatorSpecification {
         {
             return Err(SpectralOperatorError::UnsupportedProblem);
         }
+        if basis.polynomial().is_some() && (core_start != 0 || core_depth != 1) {
+            return Err(SpectralOperatorError::InvalidSlab);
+        }
         let slab = SpectralSlabPlan::compile(
             channels,
             core_start,
             core_depth,
-            problem.science().spectral().sampling().kernel(),
+            if basis.polynomial().is_some() {
+                SpectralKernel::Identity
+            } else {
+                problem.science().spectral().sampling().kernel()
+            },
         )?;
         let domain = &problem.geometry().domains()[0];
         let image_shape = domain.shape().pixels();
@@ -343,6 +404,7 @@ impl SpectralOperatorSpecification {
             image_blc,
             increment_rad: direction.increment_rad(),
             slab,
+            basis,
         })
     }
 
@@ -386,6 +448,22 @@ impl SpectralOperatorSpecification {
         self.slab
     }
 
+    pub(crate) const fn coefficient_terms(&self) -> usize {
+        self.basis.coefficient_terms(self.slab)
+    }
+
+    pub(crate) const fn normal_moments(&self) -> usize {
+        self.basis.normal_moments(self.slab)
+    }
+
+    pub(crate) const fn resident_terms(&self) -> usize {
+        self.basis.resident_terms(self.slab)
+    }
+
+    pub(crate) const fn block_normal_plan(&self) -> Option<BlockNormalPlan> {
+        self.basis.polynomial()
+    }
+
     pub(crate) fn operator_geometry(&self) -> SpectralOperatorGeometry {
         SpectralOperatorGeometry {
             image_shape: self.image_shape,
@@ -399,6 +477,7 @@ impl SpectralOperatorSpecification {
 fn output_channel_count(problem: &CompiledProblem) -> Result<usize, SpectralOperatorError> {
     match problem.reconstruction().basis() {
         ReconstructionBasis::Constant => Ok(1),
+        ReconstructionBasis::Taylor { terms } if terms >= 2 => Ok(1),
         ReconstructionBasis::ChannelLocal { channels }
             if channels == problem.geometry().spectral().output_channels() && channels > 0 =>
         {
@@ -407,6 +486,44 @@ fn output_channel_count(problem: &CompiledProblem) -> Result<usize, SpectralOper
         ReconstructionBasis::Taylor { .. } | ReconstructionBasis::ChannelLocal { .. } => {
             Err(SpectralOperatorError::UnsupportedProblem)
         }
+    }
+}
+
+fn spectral_basis_plan(
+    problem: &CompiledProblem,
+) -> Result<SpectralBasisPlan, SpectralOperatorError> {
+    match problem.reconstruction().basis() {
+        ReconstructionBasis::ChannelLocal { channels }
+            if channels == problem.geometry().spectral().output_channels() && channels > 0 =>
+        {
+            Ok(SpectralBasisPlan::ChannelLocal)
+        }
+        ReconstructionBasis::Constant => {
+            let reference_frequency_hz = problem
+                .geometry()
+                .spectral()
+                .channel_centre_hz(0)
+                .ok_or(SpectralOperatorError::UnsupportedProblem)?;
+            BlockNormalPlan::constant(reference_frequency_hz)
+                .map(SpectralBasisPlan::Polynomial)
+                .map_err(|_| SpectralOperatorError::UnsupportedProblem)
+        }
+        ReconstructionBasis::Taylor { terms } => {
+            let SpectralWcs::Linear {
+                reference_frequency_hz,
+                ..
+            } = problem.geometry().spectral().wcs()
+            else {
+                return Err(SpectralOperatorError::UnsupportedProblem);
+            };
+            if problem.geometry().spectral().output_channels() != 1 {
+                return Err(SpectralOperatorError::UnsupportedProblem);
+            }
+            BlockNormalPlan::taylor(*reference_frequency_hz, terms)
+                .map(SpectralBasisPlan::Polynomial)
+                .map_err(|_| SpectralOperatorError::UnsupportedProblem)
+        }
+        ReconstructionBasis::ChannelLocal { .. } => Err(SpectralOperatorError::UnsupportedProblem),
     }
 }
 
@@ -488,6 +605,11 @@ pub struct SpectralOperatorWorkload {
     forward_complex_values: usize,
     primitive_complex_values: usize,
     primitive_f64_values: usize,
+    primitive_validity_values: usize,
+    coefficient_terms: usize,
+    normal_moments: usize,
+    resident_model_terms: usize,
+    total_model_terms: usize,
     max_replay_block_samples: usize,
 }
 
@@ -544,6 +666,31 @@ impl SpectralOperatorWorkload {
     }
 
     #[must_use]
+    pub const fn primitive_validity_values(self) -> usize {
+        self.primitive_validity_values
+    }
+
+    #[must_use]
+    pub const fn coefficient_terms(self) -> usize {
+        self.coefficient_terms
+    }
+
+    #[must_use]
+    pub const fn normal_moments(self) -> usize {
+        self.normal_moments
+    }
+
+    #[must_use]
+    pub const fn resident_model_terms(self) -> usize {
+        self.resident_model_terms
+    }
+
+    #[must_use]
+    pub const fn total_model_terms(self) -> usize {
+        self.total_model_terms
+    }
+
+    #[must_use]
     pub const fn max_replay_block_samples(self) -> usize {
         self.max_replay_block_samples
     }
@@ -561,12 +708,19 @@ pub fn spectral_operator_workload(
     }
     let cells = checked_cells(specification.grid_shape)?;
     let image_cells = checked_cells(specification.image_shape)?;
+    let coefficient_terms = specification.coefficient_terms();
+    let normal_moments = specification.normal_moments();
+    let grid_planes = match pass {
+        SpectralOperatorPass::InitialMajor => coefficient_terms.checked_mul(4).and_then(|values| {
+            normal_moments
+                .checked_mul(2)
+                .and_then(|moments| values.checked_add(moments))
+        }),
+        SpectralOperatorPass::ResidualRefresh => coefficient_terms.checked_mul(2),
+    }
+    .ok_or(SpectralOperatorError::ResidencyOverflow)?;
     let grid_complex_values = cells
-        .checked_mul(match pass {
-            SpectralOperatorPass::InitialMajor => 6,
-            SpectralOperatorPass::ResidualRefresh => 2,
-        })
-        .and_then(|values| values.checked_mul(specification.slab.core_depth()))
+        .checked_mul(grid_planes)
         .ok_or(SpectralOperatorError::ResidencyOverflow)?;
     let convolution_f64_values = (OVERSAMPLING + 1)
         .checked_mul(TAP_COUNT)
@@ -600,7 +754,7 @@ pub fn spectral_operator_workload(
         })
         .ok_or(SpectralOperatorError::ResidencyOverflow)?;
     let forward_complex_values = cells
-        .checked_mul(specification.slab.resident_depth())
+        .checked_mul(specification.resident_terms())
         .and_then(|values| values.checked_add(max_replay_block_samples))
         .ok_or(SpectralOperatorError::ResidencyOverflow)?;
     Ok(SpectralOperatorWorkload {
@@ -612,13 +766,23 @@ pub fn spectral_operator_workload(
         fft_resident_complex_values,
         fft_planning_words,
         forward_complex_values,
-        primitive_complex_values: image_cells
-            .checked_mul(3)
-            .and_then(|values| values.checked_mul(specification.slab.core_depth()))
+        primitive_complex_values: coefficient_terms
+            .checked_mul(match pass {
+                SpectralOperatorPass::InitialMajor => 3,
+                SpectralOperatorPass::ResidualRefresh => 2,
+            })
+            .and_then(|values| values.checked_add(normal_moments))
+            .and_then(|planes| image_cells.checked_mul(planes))
             .ok_or(SpectralOperatorError::ResidencyOverflow)?,
         primitive_f64_values: image_cells
-            .checked_mul(specification.slab.core_depth())
+            .checked_mul(normal_moments)
+            .and_then(|values| values.checked_add(normal_moments))
             .ok_or(SpectralOperatorError::ResidencyOverflow)?,
+        primitive_validity_values: specification.basis.validity_entries(specification.slab),
+        coefficient_terms,
+        normal_moments,
+        resident_model_terms: specification.resident_terms(),
+        total_model_terms: specification.basis.total_model_terms(specification.slab),
         max_replay_block_samples,
     })
 }
@@ -701,6 +865,7 @@ pub fn prepare_spectral_operator(
 pub struct SpectralOperatorPrimitives {
     shape: [usize; 2],
     slab: SpectralSlabPlan,
+    basis: SpectralBasisPlan,
     dirty: Box<[Complex64]>,
     invariant_dirty: Option<Box<[Complex64]>>,
     psf: Box<[Complex64]>,
@@ -727,6 +892,35 @@ impl SpectralOperatorPrimitives {
         self.slab
     }
 
+    /// Return the number of model-coefficient residual terms.
+    #[must_use]
+    pub const fn coefficient_term_count(&self) -> usize {
+        self.basis.coefficient_terms(self.slab)
+    }
+
+    /// Return the number of retained normal moments.
+    #[must_use]
+    pub const fn normal_moment_count(&self) -> usize {
+        self.basis.normal_moments(self.slab)
+    }
+
+    /// Return the Taylor reference frequency, or `None` for channel-local state.
+    #[must_use]
+    pub const fn reference_frequency_hz(&self) -> Option<f64> {
+        match self.basis {
+            SpectralBasisPlan::Polynomial(plan) => Some(plan.reference_frequency_hz()),
+            SpectralBasisPlan::ChannelLocal => None,
+        }
+    }
+
+    /// Map one coefficient-block pair to its retained normal moment.
+    #[must_use]
+    pub fn normal_moment_index(&self, row: usize, column: usize) -> Option<usize> {
+        self.basis
+            .polynomial()
+            .and_then(|plan| plan.normal_moment_index(row, column))
+    }
+
     /// Return the unnormalized dirty normal-state plane.
     #[must_use]
     pub const fn dirty(&self) -> &[Complex64] {
@@ -751,7 +945,7 @@ impl SpectralOperatorPrimitives {
         &self.sum_weights
     }
 
-    /// Return channel validity in the same order as [`Self::sum_weights`].
+    /// Return per-channel validity, or the one order-zero-anchored Taylor support state.
     #[must_use]
     pub const fn channel_validity(&self) -> &[SpectralChannelValidity] {
         &self.validity
@@ -793,12 +987,24 @@ impl SpectralOperatorPrimitives {
     /// exact normal-state content without promising residency or density.
     #[must_use]
     pub fn normal_state_content_identity(&self) -> LogicalIdentity {
-        let mut encoder = crate::Encoder::new(NORMAL_STATE_CONTENT_DOMAIN, 1);
+        let taylor = self
+            .basis
+            .polynomial()
+            .filter(|plan| plan.coefficient_term_count() > 1);
+        let mut encoder = crate::Encoder::new(
+            NORMAL_STATE_CONTENT_DOMAIN,
+            if taylor.is_some() { 2 } else { 1 },
+        );
         encoder.usize(self.shape[0]);
         encoder.usize(self.shape[1]);
         encoder.usize(self.slab.total_channels);
         encoder.usize(self.slab.core_start);
         encoder.usize(self.slab.core_end);
+        if let Some(plan) = taylor {
+            encoder.u64(canonical_f64_bits(plan.reference_frequency_hz()));
+            encoder.usize(plan.coefficient_term_count());
+            encoder.usize(plan.normal_moment_count());
+        }
         for value in &self.dirty {
             encoder.u64(value.re.to_bits());
             encoder.u64(value.im.to_bits());
@@ -834,6 +1040,7 @@ pub(crate) struct ReusableNormalState {
     continuum_transform_generation: Option<ContinuumTransformGenerationId>,
     shape: [usize; 2],
     slab: SpectralSlabPlan,
+    basis: SpectralBasisPlan,
     invariant_dirty: Option<Box<[Complex64]>>,
     psf: Box<[Complex64]>,
     sensitivity: Box<[f64]>,
@@ -856,6 +1063,7 @@ impl ReusableNormalState {
         let SpectralOperatorPrimitives {
             shape,
             slab,
+            basis,
             invariant_dirty,
             psf,
             sensitivity,
@@ -873,6 +1081,7 @@ impl ReusableNormalState {
             continuum_transform_generation,
             shape,
             slab,
+            basis,
             invariant_dirty,
             psf,
             sensitivity,
@@ -888,6 +1097,7 @@ impl ReusableNormalState {
             && self.weighting_commitment == specification.weighting_commitment
             && self.shape == specification.image_shape
             && self.slab == specification.slab
+            && self.basis == specification.basis
     }
 
     fn matches_replay(
@@ -913,6 +1123,19 @@ pub enum SpectralChannelValidity {
     Unmapped,
 }
 
+const fn validity_from_support(
+    mapped_samples: u64,
+    order_zero_weight: f64,
+) -> SpectralChannelValidity {
+    if order_zero_weight > 0.0 {
+        SpectralChannelValidity::Valid
+    } else if mapped_samples > 0 {
+        SpectralChannelValidity::Blank
+    } else {
+        SpectralChannelValidity::Unmapped
+    }
+}
+
 /// Versioned unnormalized primitive set produced by the nterms=1 continuum operator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpectralPrimitiveCatalog {
@@ -920,6 +1143,8 @@ pub enum SpectralPrimitiveCatalog {
     UnnormalizedPlaneV1,
     /// Channel-major dirty, PSF, sensitivity, sum-weight, and validity planes.
     UnnormalizedChannelSlabV1,
+    /// Taylor-coefficient residuals and the `2T-1` signed block-normal moments.
+    UnnormalizedTaylorBlockV1,
 }
 
 /// Opaque reconstruction-owned proof that one complete weighted replay reached A/A*.
@@ -1481,10 +1706,12 @@ impl CompleteDataOwnerState {
             selected_generation,
             continuum_transform_generation,
         )?;
-        let primitives = if self.operator.slab.total_channels() == 1 {
-            SpectralPrimitiveCatalog::UnnormalizedPlaneV1
-        } else {
-            SpectralPrimitiveCatalog::UnnormalizedChannelSlabV1
+        let primitives = match self.operator.basis {
+            SpectralBasisPlan::Polynomial(plan) if plan.coefficient_term_count() > 1 => {
+                SpectralPrimitiveCatalog::UnnormalizedTaylorBlockV1
+            }
+            SpectralBasisPlan::Polynomial(_) => SpectralPrimitiveCatalog::UnnormalizedPlaneV1,
+            SpectralBasisPlan::ChannelLocal => SpectralPrimitiveCatalog::UnnormalizedChannelSlabV1,
         };
         Ok(CompleteDataOwnerResult {
             primitives: self.operator.finish_bound(self.model_binding)?,
@@ -1563,6 +1790,7 @@ pub(crate) struct SpectralSlabOperator {
     specification: Option<SpectralOperatorSpecification>,
     geometry: SpectralOperatorGeometry,
     slab: SpectralSlabPlan,
+    basis: SpectralBasisPlan,
     workload: SpectralOperatorWorkload,
     gridder: StandardConvolution,
     fft: PreparedFft,
@@ -1579,6 +1807,8 @@ pub(crate) struct SpectralSlabOperator {
     sum_weights: Vec<f64>,
     sum_weight_compensations: Vec<f64>,
     mapped_samples: Vec<u64>,
+    coefficient_basis: Vec<f64>,
+    normal_moment_weights: Vec<f64>,
     #[cfg(test)]
     measurements: SpectralOperatorMeasurements,
 }
@@ -1605,10 +1835,12 @@ impl SpectralSlabOperator {
     ) -> Self {
         let geometry = specification.operator_geometry();
         let slab = specification.slab;
+        let basis = specification.basis;
         Self::new_inner(
             Some(specification),
             geometry,
             slab,
+            basis,
             workload,
             fft,
             workload.max_replay_block_samples,
@@ -1624,7 +1856,8 @@ impl SpectralSlabOperator {
     ) -> Self {
         let geometry = specification.operator_geometry();
         let slab = specification.slab;
-        Self::new_inner(Some(specification), geometry, slab, workload, fft, 0)
+        let basis = specification.basis;
+        Self::new_inner(Some(specification), geometry, slab, basis, workload, fft, 0)
     }
 
     #[cfg(test)]
@@ -1638,6 +1871,13 @@ impl SpectralSlabOperator {
             None,
             geometry,
             slab,
+            if slab.total_channels() == 1 {
+                SpectralBasisPlan::Polynomial(
+                    BlockNormalPlan::constant(1.0).expect("positive test reference frequency"),
+                )
+            } else {
+                SpectralBasisPlan::ChannelLocal
+            },
             workload,
             fft,
             workload.max_replay_block_samples,
@@ -1648,6 +1888,7 @@ impl SpectralSlabOperator {
         specification: Option<SpectralOperatorSpecification>,
         geometry: SpectralOperatorGeometry,
         slab: SpectralSlabPlan,
+        basis: SpectralBasisPlan,
         workload: SpectralOperatorWorkload,
         fft: PreparedFft,
         prediction_capacity: usize,
@@ -1657,26 +1898,32 @@ impl SpectralSlabOperator {
         let plane_grids =
             |depth: usize| (0..depth).map(|_| Array2::zeros(shape)).collect::<Vec<_>>();
         let initial = workload.pass == SpectralOperatorPass::InitialMajor;
+        let coefficient_terms = basis.coefficient_terms(slab);
+        let normal_moments = basis.normal_moments(slab);
+        let resident_terms = basis.resident_terms(slab);
         Self {
             specification,
             geometry,
             slab,
+            basis,
             workload,
             gridder,
             fft,
-            dirty_grids: initial.then(|| plane_grids(slab.core_depth())),
-            dirty_compensations: initial.then(|| plane_grids(slab.core_depth())),
-            psf_grids: initial.then(|| plane_grids(slab.core_depth())),
-            psf_compensations: initial.then(|| plane_grids(slab.core_depth())),
+            dirty_grids: initial.then(|| plane_grids(coefficient_terms)),
+            dirty_compensations: initial.then(|| plane_grids(coefficient_terms)),
+            psf_grids: initial.then(|| plane_grids(normal_moments)),
+            psf_compensations: initial.then(|| plane_grids(normal_moments)),
             residual_grids: None,
             residual_compensations: None,
             reused_normal_state: None,
-            forward_grids: plane_grids(slab.resident_depth()),
+            forward_grids: plane_grids(resident_terms),
             predictions: vec![Complex64::default(); prediction_capacity].into_boxed_slice(),
             prediction_len: 0,
-            sum_weights: vec![0.0; slab.core_depth()],
-            sum_weight_compensations: vec![0.0; slab.core_depth()],
-            mapped_samples: vec![0; slab.core_depth()],
+            sum_weights: vec![0.0; normal_moments],
+            sum_weight_compensations: vec![0.0; normal_moments],
+            mapped_samples: vec![0; basis.validity_entries(slab)],
+            coefficient_basis: vec![0.0; coefficient_terms],
+            normal_moment_weights: vec![0.0; normal_moments],
             #[cfg(test)]
             measurements: SpectralOperatorMeasurements::default(),
         }
@@ -1684,12 +1931,27 @@ impl SpectralSlabOperator {
 
     /// Accumulate one already-weighted spectral contribution.
     fn push(&mut self, sample: SpectralOperatorSample) -> Result<(), SpectralOperatorError> {
-        let Some(plane) = self.slab.core_index(sample.output_channel) else {
-            return Ok(());
-        };
-        self.mapped_samples[plane] = self.mapped_samples[plane]
-            .checked_add(1)
-            .ok_or(SpectralOperatorError::CoverageOverflow)?;
+        let channel_plane = self.slab.core_index(sample.output_channel);
+        match self.basis {
+            SpectralBasisPlan::ChannelLocal => {
+                let Some(plane) = channel_plane else {
+                    return Ok(());
+                };
+                self.mapped_samples[plane] = self.mapped_samples[plane]
+                    .checked_add(1)
+                    .ok_or(SpectralOperatorError::CoverageOverflow)?;
+            }
+            SpectralBasisPlan::Polynomial(_) => {
+                if channel_plane.is_none() {
+                    return Ok(());
+                }
+                for mapped in &mut self.mapped_samples {
+                    *mapped = mapped
+                        .checked_add(1)
+                        .ok_or(SpectralOperatorError::CoverageOverflow)?;
+                }
+            }
+        }
         if sample.imaging_weight == 0.0 {
             return Ok(());
         }
@@ -1697,8 +1959,49 @@ impl SpectralSlabOperator {
             return Ok(());
         };
         let factor = sample.spectral_factor;
-        let weighted_visibility =
-            sample.visibility * sample.phase() * (sample.imaging_weight * factor);
+        match self.basis {
+            SpectralBasisPlan::ChannelLocal => {
+                let plane = channel_plane.expect("mapped channel-local sample has a core plane");
+                self.grid_dirty_term(
+                    plane,
+                    taps,
+                    sample.visibility * sample.phase() * (sample.imaging_weight * factor),
+                )?;
+                self.grid_normal_moment(plane, taps, sample.imaging_weight * factor * factor)?;
+            }
+            SpectralBasisPlan::Polynomial(plan) => {
+                plan.fill_weighted_coefficient_basis(
+                    sample.frequency_hz,
+                    sample.imaging_weight * factor,
+                    &mut self.coefficient_basis,
+                )
+                .map_err(|_| SpectralOperatorError::InvalidSample)?;
+                plan.fill_normal_moment_weights(
+                    sample.frequency_hz,
+                    sample.imaging_weight * factor * factor,
+                    &mut self.normal_moment_weights,
+                )
+                .map_err(|_| SpectralOperatorError::InvalidSample)?;
+                let visibility_scale = sample.visibility * sample.phase();
+                for plane in 0..self.coefficient_basis.len() {
+                    let coefficient = self.coefficient_basis[plane];
+                    self.grid_dirty_term(plane, taps, visibility_scale * coefficient)?;
+                }
+                for moment in 0..self.normal_moment_weights.len() {
+                    let weight = self.normal_moment_weights[moment];
+                    self.grid_normal_moment(moment, taps, weight)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn grid_dirty_term(
+        &mut self,
+        plane: usize,
+        taps: SampleTaps,
+        value: Complex64,
+    ) -> Result<(), SpectralOperatorError> {
         self.gridder.grid_compensated(
             &mut self
                 .dirty_grids
@@ -1709,35 +2012,43 @@ impl SpectralSlabOperator {
                 .as_mut()
                 .ok_or(SpectralOperatorError::ProblemMismatch)?[plane],
             taps,
-            weighted_visibility,
+            value,
         );
         #[cfg(test)]
         record_measurement(
             &mut self.measurements.dirty_grid_tap_visits,
             TAP_VISITS_PER_SAMPLE,
         );
-        let psf_weight = sample.imaging_weight * factor * factor;
+        Ok(())
+    }
+
+    fn grid_normal_moment(
+        &mut self,
+        moment: usize,
+        taps: SampleTaps,
+        weight: f64,
+    ) -> Result<(), SpectralOperatorError> {
         self.gridder.grid_compensated(
             &mut self
                 .psf_grids
                 .as_mut()
-                .ok_or(SpectralOperatorError::ProblemMismatch)?[plane],
+                .ok_or(SpectralOperatorError::ProblemMismatch)?[moment],
             &mut self
                 .psf_compensations
                 .as_mut()
-                .ok_or(SpectralOperatorError::ProblemMismatch)?[plane],
+                .ok_or(SpectralOperatorError::ProblemMismatch)?[moment],
             taps,
-            Complex64::new(psf_weight, 0.0),
+            Complex64::new(weight, 0.0),
         );
         #[cfg(test)]
         record_measurement(
             &mut self.measurements.psf_grid_tap_visits,
             TAP_VISITS_PER_SAMPLE,
         );
-        let corrected = psf_weight - self.sum_weight_compensations[plane];
-        let updated = self.sum_weights[plane] + corrected;
-        self.sum_weight_compensations[plane] = (updated - self.sum_weights[plane]) - corrected;
-        self.sum_weights[plane] = updated;
+        let corrected = weight - self.sum_weight_compensations[moment];
+        let updated = self.sum_weights[moment] + corrected;
+        self.sum_weight_compensations[moment] = (updated - self.sum_weights[moment]) - corrected;
+        self.sum_weights[moment] = updated;
         Ok(())
     }
 
@@ -1751,13 +2062,14 @@ impl SpectralSlabOperator {
             return Ok(binding);
         }
         let grid_shape = (self.geometry.grid_shape[0], self.geometry.grid_shape[1]);
+        let coefficient_terms = self.basis.coefficient_terms(self.slab);
         self.residual_grids = Some(
-            (0..self.slab.core_depth())
+            (0..coefficient_terms)
                 .map(|_| Array2::zeros(grid_shape))
                 .collect(),
         );
         self.residual_compensations = Some(
-            (0..self.slab.core_depth())
+            (0..coefficient_terms)
                 .map(|_| Array2::zeros(grid_shape))
                 .collect(),
         );
@@ -1821,7 +2133,7 @@ impl SpectralSlabOperator {
     ) -> Result<(), SpectralOperatorError> {
         let shape = generation.shape();
         if shape.domains().len() != 1
-            || shape.coefficients() != self.slab.total_channels()
+            || shape.coefficients() != self.basis.coefficient_terms(self.slab)
             || shape.polarizations() != 1
             || shape.domains()[0].pixels() != self.geometry.image_shape
             || generation.samples().len() != shape.sample_count()
@@ -1838,12 +2150,16 @@ impl SpectralSlabOperator {
         let width = self.geometry.image_shape[0];
         let height = self.geometry.image_shape[1];
         let cells = width * height;
-        for (resident, output_channel) in self.slab.resident_range().enumerate() {
+        let coefficient_range = match self.basis {
+            SpectralBasisPlan::ChannelLocal => self.slab.resident_range(),
+            SpectralBasisPlan::Polynomial(plan) => 0..plan.coefficient_term_count(),
+        };
+        for (resident, coefficient) in coefficient_range.enumerate() {
             let grid = &mut self.forward_grids[resident];
             grid.fill(Complex64::default());
             for y in 0..height {
                 for x in 0..width {
-                    let sample = generation.samples()[output_channel * cells + y * width + x];
+                    let sample = generation.samples()[coefficient * cells + y * width + x];
                     if sample.support() == ModelSupport::Invalid {
                         continue;
                     }
@@ -1874,12 +2190,27 @@ impl SpectralSlabOperator {
         sample: SpectralOperatorSample,
         predicted: Complex64,
     ) -> Result<(), SpectralOperatorError> {
-        let Some(plane) = self.slab.core_index(sample.output_channel) else {
-            return Ok(());
-        };
-        self.mapped_samples[plane] = self.mapped_samples[plane]
-            .checked_add(1)
-            .ok_or(SpectralOperatorError::CoverageOverflow)?;
+        let channel_plane = self.slab.core_index(sample.output_channel);
+        match self.basis {
+            SpectralBasisPlan::ChannelLocal => {
+                let Some(plane) = channel_plane else {
+                    return Ok(());
+                };
+                self.mapped_samples[plane] = self.mapped_samples[plane]
+                    .checked_add(1)
+                    .ok_or(SpectralOperatorError::CoverageOverflow)?;
+            }
+            SpectralBasisPlan::Polynomial(_) => {
+                if channel_plane.is_none() {
+                    return Ok(());
+                }
+                for mapped in &mut self.mapped_samples {
+                    *mapped = mapped
+                        .checked_add(1)
+                        .ok_or(SpectralOperatorError::CoverageOverflow)?;
+                }
+            }
+        }
         if sample.imaging_weight == 0.0 {
             return Ok(());
         }
@@ -1887,61 +2218,76 @@ impl SpectralSlabOperator {
             return Ok(());
         };
         let factor = sample.spectral_factor;
-        if let (Some(dirty), Some(compensation)) =
-            (&mut self.dirty_grids, &mut self.dirty_compensations)
-        {
-            let weighted_visibility =
-                sample.visibility * sample.phase() * (sample.imaging_weight * factor);
-            self.gridder.grid_compensated(
-                &mut dirty[plane],
-                &mut compensation[plane],
-                taps,
-                weighted_visibility,
-            );
-            #[cfg(test)]
-            record_measurement(
-                &mut self.measurements.dirty_grid_tap_visits,
-                TAP_VISITS_PER_SAMPLE,
-            );
-        }
-        let residual_visibility =
+        let observed_scale = sample.visibility * sample.phase() * (sample.imaging_weight * factor);
+        let residual_scale =
             (sample.visibility - predicted) * sample.phase() * (sample.imaging_weight * factor);
+        match self.basis {
+            SpectralBasisPlan::ChannelLocal => {
+                let plane = channel_plane.expect("mapped channel-local sample has a core plane");
+                if self.dirty_grids.is_some() {
+                    self.grid_dirty_term(plane, taps, observed_scale)?;
+                }
+                self.grid_residual_term(plane, taps, residual_scale)?;
+                if self.psf_grids.is_some() {
+                    self.grid_normal_moment(plane, taps, sample.imaging_weight * factor * factor)?;
+                }
+            }
+            SpectralBasisPlan::Polynomial(plan) => {
+                plan.fill_weighted_coefficient_basis(
+                    sample.frequency_hz,
+                    sample.imaging_weight * factor,
+                    &mut self.coefficient_basis,
+                )
+                .map_err(|_| SpectralOperatorError::InvalidSample)?;
+                let polynomial_observed_scale = sample.visibility * sample.phase();
+                let polynomial_residual_scale = (sample.visibility - predicted) * sample.phase();
+                for plane in 0..self.coefficient_basis.len() {
+                    let coefficient = self.coefficient_basis[plane];
+                    if self.dirty_grids.is_some() {
+                        self.grid_dirty_term(plane, taps, polynomial_observed_scale * coefficient)?;
+                    }
+                    self.grid_residual_term(plane, taps, polynomial_residual_scale * coefficient)?;
+                }
+                if self.psf_grids.is_some() {
+                    plan.fill_normal_moment_weights(
+                        sample.frequency_hz,
+                        sample.imaging_weight * factor * factor,
+                        &mut self.normal_moment_weights,
+                    )
+                    .map_err(|_| SpectralOperatorError::InvalidSample)?;
+                    for moment in 0..self.normal_moment_weights.len() {
+                        let weight = self.normal_moment_weights[moment];
+                        self.grid_normal_moment(moment, taps, weight)?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn grid_residual_term(
+        &mut self,
+        plane: usize,
+        taps: SampleTaps,
+        value: Complex64,
+    ) -> Result<(), SpectralOperatorError> {
         self.gridder.grid_compensated(
             &mut self
                 .residual_grids
                 .as_mut()
-                .expect("bound residual model owns its grids")[plane],
+                .ok_or(SpectralOperatorError::MissingMajorCycleResidual)?[plane],
             &mut self
                 .residual_compensations
                 .as_mut()
-                .expect("bound residual model owns compensation")[plane],
+                .ok_or(SpectralOperatorError::MissingMajorCycleResidual)?[plane],
             taps,
-            residual_visibility,
+            value,
         );
         #[cfg(test)]
         record_measurement(
             &mut self.measurements.residual_grid_tap_visits,
             TAP_VISITS_PER_SAMPLE,
         );
-        if let (Some(psf), Some(compensation)) = (&mut self.psf_grids, &mut self.psf_compensations)
-        {
-            let psf_weight = sample.imaging_weight * factor * factor;
-            self.gridder.grid_compensated(
-                &mut psf[plane],
-                &mut compensation[plane],
-                taps,
-                Complex64::new(psf_weight, 0.0),
-            );
-            #[cfg(test)]
-            record_measurement(
-                &mut self.measurements.psf_grid_tap_visits,
-                TAP_VISITS_PER_SAMPLE,
-            );
-            let corrected = psf_weight - self.sum_weight_compensations[plane];
-            let updated = self.sum_weights[plane] + corrected;
-            self.sum_weight_compensations[plane] = (updated - self.sum_weights[plane]) - corrected;
-            self.sum_weights[plane] = updated;
-        }
         Ok(())
     }
 
@@ -1988,12 +2334,16 @@ impl SpectralSlabOperator {
         let cells = checked_cells(self.geometry.image_shape)?;
         if model.len()
             != cells
-                .checked_mul(self.slab.total_channels())
+                .checked_mul(self.basis.total_model_terms(self.slab))
                 .ok_or(SpectralOperatorError::ResidencyOverflow)?
         {
             return Err(SpectralOperatorError::ModelShape);
         }
-        for (resident, output_channel) in self.slab.resident_range().enumerate() {
+        let coefficient_range = match self.basis {
+            SpectralBasisPlan::ChannelLocal => self.slab.resident_range(),
+            SpectralBasisPlan::Polynomial(plan) => 0..plan.coefficient_term_count(),
+        };
+        for (resident, coefficient) in coefficient_range.enumerate() {
             let grid = &mut self.forward_grids[resident];
             grid.fill(Complex64::default());
             for x in 0..self.geometry.image_shape[0] {
@@ -2002,7 +2352,7 @@ impl SpectralSlabOperator {
                     grid[(
                         self.geometry.image_blc[0] + x,
                         self.geometry.image_blc[1] + y,
-                    )] = model[output_channel * cells + x * self.geometry.image_shape[1] + y]
+                    )] = model[coefficient * cells + x * self.geometry.image_shape[1] + y]
                         * correction;
                 }
             }
@@ -2025,14 +2375,46 @@ impl SpectralSlabOperator {
         &mut self,
         sample: SpectralOperatorSample,
     ) -> Result<Complex64, SpectralOperatorError> {
-        let resident = self
-            .slab
-            .resident_index(sample.output_channel)
-            .ok_or(SpectralOperatorError::IncompleteSpectralHalo)?;
         let Some(taps) = self.gridder.taps(sample.uv_lambda()) else {
             return Ok(Complex64::new(0.0, 0.0));
         };
-        self.predict_one_with_taps(resident, sample, taps)
+        match self.basis {
+            SpectralBasisPlan::ChannelLocal => {
+                let resident = self
+                    .slab
+                    .resident_index(sample.output_channel)
+                    .ok_or(SpectralOperatorError::IncompleteSpectralHalo)?;
+                self.predict_one_with_taps(resident, sample, taps)
+            }
+            SpectralBasisPlan::Polynomial(plan) => {
+                plan.fill_coefficient_basis(sample.frequency_hz, &mut self.coefficient_basis)
+                    .map_err(|_| SpectralOperatorError::InvalidSample)?;
+                let mut contributions = self
+                    .forward_grids
+                    .iter()
+                    .zip(self.coefficient_basis.iter().copied());
+                let (first_grid, first_coefficient) = contributions
+                    .next()
+                    .ok_or(SpectralOperatorError::ModelShape)?;
+                let mut predicted = self.gridder.degrid(first_grid, taps) * first_coefficient;
+                for (grid, coefficient) in contributions {
+                    predicted += self.gridder.degrid(grid, taps) * coefficient;
+                }
+                predicted = predicted * sample.phase().conj() * sample.spectral_factor;
+                #[cfg(test)]
+                record_measurement(
+                    &mut self.measurements.prediction_degrid_tap_visits,
+                    TAP_VISITS_PER_SAMPLE
+                        * u64::try_from(plan.coefficient_term_count())
+                            .expect("coefficient count fits measurement"),
+                );
+                if predicted.re.is_finite() && predicted.im.is_finite() {
+                    Ok(predicted)
+                } else {
+                    Err(SpectralOperatorError::GeneratedNonfinite)
+                }
+            }
+        }
     }
 
     fn predict_one_with_taps(
@@ -2099,6 +2481,46 @@ impl SpectralSlabOperator {
         Ok(predicted)
     }
 
+    pub(crate) fn predict_gridded_block_normal(
+        &self,
+        taps: SampleTaps,
+        moments: &[f64],
+        model_values: &mut [Complex64],
+        normal_values: &mut [Complex64],
+    ) -> Result<(), SpectralOperatorError> {
+        let plan = self
+            .basis
+            .polynomial()
+            .filter(|plan| plan.coefficient_term_count() > 1)
+            .ok_or(SpectralOperatorError::GriddedRecordMismatch)?;
+        let terms = plan.coefficient_term_count();
+        if moments.len() != plan.normal_moment_count()
+            || model_values.len() != terms
+            || normal_values.len() != terms
+            || self.forward_grids.len() != terms
+            || moments.iter().any(|value| !value.is_finite())
+        {
+            return Err(SpectralOperatorError::GriddedRecordMismatch);
+        }
+        for (value, grid) in model_values.iter_mut().zip(&self.forward_grids) {
+            *value = self.gridder.degrid(grid, taps);
+        }
+        for (row, output) in normal_values.iter_mut().enumerate() {
+            let mut value = Complex64::default();
+            for (column, model) in model_values.iter().copied().enumerate() {
+                let moment = plan
+                    .normal_moment_index(row, column)
+                    .ok_or(SpectralOperatorError::GriddedRecordMismatch)?;
+                value += model * moments[moment];
+            }
+            if !value.re.is_finite() || !value.im.is_finite() {
+                return Err(SpectralOperatorError::GeneratedNonfinite);
+            }
+            *output = value;
+        }
+        Ok(())
+    }
+
     pub(crate) fn grid_gridded_normal_local(
         &self,
         grids: &mut [Array2<Complex64>],
@@ -2128,6 +2550,37 @@ impl SpectralSlabOperator {
         Ok(())
     }
 
+    pub(crate) fn grid_gridded_block_normal_local(
+        &self,
+        grids: &mut [Array2<Complex64>],
+        compensations: &mut [Array2<Complex64>],
+        local_taps: SampleTaps,
+        normal_values: &[Complex64],
+    ) -> Result<(), SpectralOperatorError> {
+        let terms = self
+            .basis
+            .polynomial()
+            .filter(|plan| plan.coefficient_term_count() > 1)
+            .map(BlockNormalPlan::coefficient_term_count)
+            .ok_or(SpectralOperatorError::GriddedRecordMismatch)?;
+        if grids.len() != terms || compensations.len() != terms || normal_values.len() != terms {
+            return Err(SpectralOperatorError::GriddedRecordMismatch);
+        }
+        for plane in 0..terms {
+            let value = normal_values[plane];
+            if !value.re.is_finite() || !value.im.is_finite() {
+                return Err(SpectralOperatorError::GeneratedNonfinite);
+            }
+            self.gridder.grid_compensated(
+                &mut grids[plane],
+                &mut compensations[plane],
+                local_taps,
+                value,
+            );
+        }
+        Ok(())
+    }
+
     pub(crate) fn finish_gridded_normal_from_grids(
         mut self,
         residual_model: ModelGenerationId,
@@ -2135,7 +2588,7 @@ impl SpectralSlabOperator {
     ) -> Result<SpectralOperatorPrimitives, SpectralOperatorError> {
         let expected_shape = (self.geometry.grid_shape[0], self.geometry.grid_shape[1]);
         if self.residual_grids.is_some()
-            || normal_grids.len() != self.slab.core_depth()
+            || normal_grids.len() != self.basis.coefficient_terms(self.slab)
             || normal_grids.iter().any(|grid| grid.dim() != expected_shape)
         {
             return Err(SpectralOperatorError::GriddedRecordMismatch);
@@ -2155,10 +2608,12 @@ impl SpectralSlabOperator {
             .residual_grids
             .take()
             .ok_or(SpectralOperatorError::MissingMajorCycleResidual)?;
-        if normal_grids.len() != self.slab.core_depth() {
+        let coefficient_terms = self.basis.coefficient_terms(self.slab);
+        let normal_moments = self.basis.normal_moments(self.slab);
+        if normal_grids.len() != coefficient_terms {
             return Err(SpectralOperatorError::MissingMajorCycleResidual);
         }
-        let planes = self.slab.core_depth();
+        let planes = coefficient_terms;
         let fft_started = imaging_stage_timing_started();
         for grid in &mut normal_grids {
             self.fft.transform(grid, true);
@@ -2171,16 +2626,19 @@ impl SpectralSlabOperator {
             .ok_or(SpectralOperatorError::ReusableNormalStateMismatch)?;
         let cells = checked_cells(self.geometry.image_shape)?;
         let output_cells = cells
-            .checked_mul(self.slab.core_depth())
+            .checked_mul(coefficient_terms)
+            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+        let normal_cells = cells
+            .checked_mul(normal_moments)
             .ok_or(SpectralOperatorError::ResidencyOverflow)?;
         let invariant_dirty = reused
             .invariant_dirty
             .ok_or(SpectralOperatorError::ReusableNormalStateMismatch)?;
         if invariant_dirty.len() != output_cells
-            || reused.psf.len() != output_cells
-            || reused.sensitivity.len() != output_cells
-            || reused.sum_weights.len() != self.slab.core_depth()
-            || reused.validity.len() != self.slab.core_depth()
+            || reused.psf.len() != normal_cells
+            || reused.sensitivity.len() != normal_cells
+            || reused.sum_weights.len() != normal_moments
+            || reused.validity.len() != self.basis.validity_entries(self.slab)
         {
             return Err(SpectralOperatorError::ReusableNormalStateMismatch);
         }
@@ -2211,6 +2669,7 @@ impl SpectralSlabOperator {
         let primitives = SpectralOperatorPrimitives {
             shape: self.geometry.image_shape,
             slab: self.slab,
+            basis: self.basis,
             dirty: residual.into_boxed_slice(),
             invariant_dirty: Some(invariant_dirty),
             psf: reused.psf,
@@ -2254,21 +2713,34 @@ impl SpectralSlabOperator {
         } else {
             "streaming_initial"
         };
-        let planes = self.slab.core_depth();
+        let coefficient_terms = self.basis.coefficient_terms(self.slab);
+        let normal_moments = self.basis.normal_moments(self.slab);
+        let planes = coefficient_terms
+            .checked_add(normal_moments)
+            .and_then(|planes| {
+                self.residual_grids
+                    .as_ref()
+                    .map_or(Some(planes), |_| planes.checked_add(coefficient_terms))
+            })
+            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
         let fft_started = imaging_stage_timing_started();
-        for plane in 0..self.slab.core_depth() {
-            if let Some(dirty) = self.dirty_grids.as_mut() {
-                self.fft.transform(&mut dirty[plane], true);
+        if let Some(dirty) = self.dirty_grids.as_mut() {
+            for grid in dirty {
+                self.fft.transform(grid, true);
                 #[cfg(test)]
                 record_measurement(&mut self.measurements.inverse_dirty_fft_planes, 1);
             }
-            if let Some(psf) = self.psf_grids.as_mut() {
-                self.fft.transform(&mut psf[plane], true);
+        }
+        if let Some(psf) = self.psf_grids.as_mut() {
+            for grid in psf {
+                self.fft.transform(grid, true);
                 #[cfg(test)]
                 record_measurement(&mut self.measurements.inverse_psf_fft_planes, 1);
             }
-            if let Some(residual) = self.residual_grids.as_mut() {
-                self.fft.transform(&mut residual[plane], true);
+        }
+        if let Some(residual) = self.residual_grids.as_mut() {
+            for grid in residual {
+                self.fft.transform(grid, true);
                 #[cfg(test)]
                 record_measurement(&mut self.measurements.inverse_residual_fft_planes, 1);
             }
@@ -2286,7 +2758,10 @@ impl SpectralSlabOperator {
         let formation_started = imaging_stage_timing_started();
         let cells = self.geometry.image_shape[0] * self.geometry.image_shape[1];
         let output_cells = cells
-            .checked_mul(self.slab.core_depth())
+            .checked_mul(coefficient_terms)
+            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+        let normal_cells = cells
+            .checked_mul(normal_moments)
             .ok_or(SpectralOperatorError::ResidencyOverflow)?;
         if let Some(reused) = self.reused_normal_state.take() {
             if residual_model.is_none()
@@ -2294,10 +2769,10 @@ impl SpectralSlabOperator {
                     .invariant_dirty
                     .as_ref()
                     .is_some_and(|dirty| dirty.len() != output_cells)
-                || reused.psf.len() != output_cells
-                || reused.sensitivity.len() != output_cells
-                || reused.sum_weights.len() != self.slab.core_depth()
-                || reused.validity.len() != self.slab.core_depth()
+                || reused.psf.len() != normal_cells
+                || reused.sensitivity.len() != normal_cells
+                || reused.sum_weights.len() != normal_moments
+                || reused.validity.len() != self.basis.validity_entries(self.slab)
             {
                 return Err(SpectralOperatorError::ReusableNormalStateMismatch);
             }
@@ -2331,6 +2806,7 @@ impl SpectralSlabOperator {
             let primitives = SpectralOperatorPrimitives {
                 shape: self.geometry.image_shape,
                 slab: self.slab,
+                basis: self.basis,
                 dirty: residual.into_boxed_slice(),
                 invariant_dirty: reused.invariant_dirty,
                 psf: reused.psf,
@@ -2360,13 +2836,13 @@ impl SpectralSlabOperator {
             .as_ref()
             .ok_or(SpectralOperatorError::ReusableNormalStateMismatch)?;
         let mut dirty = Vec::with_capacity(output_cells);
-        let mut psf = Vec::with_capacity(output_cells);
-        let mut sensitivity = Vec::with_capacity(output_cells);
+        let mut psf = Vec::with_capacity(normal_cells);
+        let mut sensitivity = Vec::with_capacity(normal_cells);
         let mut residual = self
             .residual_grids
             .as_ref()
             .map(|_| Vec::with_capacity(output_cells));
-        for plane in 0..self.slab.core_depth() {
+        for plane in 0..coefficient_terms {
             for x in 0..self.geometry.image_shape[0] {
                 for y in 0..self.geometry.image_shape[1] {
                     let correction = self.gridder.image_correction(x, y);
@@ -2376,13 +2852,6 @@ impl SpectralSlabOperator {
                             self.geometry.image_blc[1] + y,
                         )] * correction,
                     );
-                    psf.push(
-                        psf_grids[plane][(
-                            self.geometry.image_blc[0] + x,
-                            self.geometry.image_blc[1] + y,
-                        )] * correction,
-                    );
-                    sensitivity.push(self.sum_weights[plane]);
                     if let (Some(grids), Some(values)) = (&self.residual_grids, residual.as_mut()) {
                         values.push(
                             grids[plane][(
@@ -2391,6 +2860,20 @@ impl SpectralSlabOperator {
                             )] * correction,
                         );
                     }
+                }
+            }
+        }
+        for (moment, psf_grid) in psf_grids.iter().enumerate().take(normal_moments) {
+            for x in 0..self.geometry.image_shape[0] {
+                for y in 0..self.geometry.image_shape[1] {
+                    let correction = self.gridder.image_correction(x, y);
+                    psf.push(
+                        psf_grid[(
+                            self.geometry.image_blc[0] + x,
+                            self.geometry.image_blc[1] + y,
+                        )] * correction,
+                    );
+                    sensitivity.push(self.sum_weights[moment]);
                 }
             }
         }
@@ -2403,25 +2886,24 @@ impl SpectralSlabOperator {
         {
             return Err(SpectralOperatorError::GeneratedNonfinite);
         }
-        let validity = self
-            .mapped_samples
-            .iter()
-            .zip(&self.sum_weights)
-            .map(|(mapped, weight)| {
-                if *weight > 0.0 {
-                    SpectralChannelValidity::Valid
-                } else if *mapped > 0 {
-                    SpectralChannelValidity::Blank
-                } else {
-                    SpectralChannelValidity::Unmapped
-                }
-            })
-            .collect::<Vec<_>>();
+        let validity = match self.basis {
+            SpectralBasisPlan::ChannelLocal => self
+                .mapped_samples
+                .iter()
+                .zip(&self.sum_weights)
+                .map(|(mapped, weight)| validity_from_support(*mapped, *weight))
+                .collect::<Vec<_>>(),
+            SpectralBasisPlan::Polynomial(_) => vec![validity_from_support(
+                self.mapped_samples[0],
+                self.sum_weights[0],
+            )],
+        };
         let dirty = dirty.into_boxed_slice();
         let invariant_dirty = Some(dirty.clone());
         let primitives = SpectralOperatorPrimitives {
             shape: self.geometry.image_shape,
             slab: self.slab,
+            basis: self.basis,
             invariant_dirty,
             dirty,
             psf: psf.into_boxed_slice(),
@@ -2792,10 +3274,8 @@ pub enum SpectralOperatorError {
     /// Runtime supplied science or weighting state for another compiled problem.
     #[error("spectral operator science and weighting state do not match the compiled problem")]
     ProblemMismatch,
-    /// The problem is outside the scalar Stokes-I Constant/ChannelLocal surface.
-    #[error(
-        "spectral operator requires one scalar-response Stokes-I constant or channel-local domain"
-    )]
+    /// The problem is outside the supported scalar-response Stokes-I bases.
+    #[error("spectral operator requires a supported scalar-response Stokes-I reconstruction basis")]
     UnsupportedProblem,
     /// A requested output slab is empty or outside the compiled spectral axis.
     #[error("spectral operator slab is empty or outside the output spectral axis")]
@@ -2879,13 +3359,14 @@ mod tests {
     #[cfg(feature = "cpp-interop-tests")]
     use super::{OVERSAMPLING, SPEED_OF_LIGHT_M_PER_S};
     use super::{
-        PreparedFft, ReconstructionModelBinding, SUPPORT, SampleTaps, SpectralChannelValidity,
-        SpectralOperatorError, SpectralOperatorGeometry, SpectralOperatorPass,
-        SpectralOperatorPrimitives, SpectralOperatorSample, SpectralOperatorWorkload,
-        SpectralSlabOperator, SpectralSlabPlan, StandardConvolution, TapSpan,
-        apply_finite_value_policy, apply_input_policy, casa_persistent_complex, checked_cells,
-        reconstruction_model_binding,
+        PreparedFft, ReconstructionModelBinding, SUPPORT, SampleTaps, SpectralBasisPlan,
+        SpectralChannelValidity, SpectralOperatorError, SpectralOperatorGeometry,
+        SpectralOperatorMeasurements, SpectralOperatorPass, SpectralOperatorPrimitives,
+        SpectralOperatorSample, SpectralOperatorWorkload, SpectralSlabOperator, SpectralSlabPlan,
+        StandardConvolution, TapSpan, apply_finite_value_policy, apply_input_policy,
+        casa_persistent_complex, checked_cells, reconstruction_model_binding,
     };
+    use crate::block_normal::BlockNormalPlan;
     use crate::{ModelDeltaId, ModelGenerationId, ModelGenerationOrigin};
 
     fn geometry() -> SpectralOperatorGeometry {
@@ -2898,6 +3379,12 @@ mod tests {
     }
 
     fn workload() -> SpectralOperatorWorkload {
+        let grid_cells = 10 * 10;
+        let image_cells = 8 * 8;
+        let coefficient_terms = 1;
+        let normal_moments = 1;
+        let resident_model_terms = 1;
+        let total_model_terms = 1;
         SpectralOperatorWorkload {
             pass: SpectralOperatorPass::InitialMajor,
             slab: SpectralSlabPlan {
@@ -2908,13 +3395,18 @@ mod tests {
                 resident_end: 1,
             },
             grid_shape: [10, 10],
-            grid_complex_values: 600,
+            grid_complex_values: grid_cells * (4 * coefficient_terms + 2 * normal_moments),
             convolution_f64_values: 727,
             fft_resident_complex_values: 7_690,
             fft_planning_words: 320,
-            forward_complex_values: 103,
-            primitive_complex_values: 192,
-            primitive_f64_values: 64,
+            forward_complex_values: grid_cells * resident_model_terms + 3,
+            primitive_complex_values: image_cells * (3 * coefficient_terms + normal_moments),
+            primitive_f64_values: image_cells * normal_moments + normal_moments,
+            primitive_validity_values: 1,
+            coefficient_terms,
+            normal_moments,
+            resident_model_terms,
+            total_model_terms,
             max_replay_block_samples: 3,
         }
     }
@@ -2954,6 +3446,78 @@ mod tests {
             .sum()
     }
 
+    fn legacy_v1_normal_content_identity(
+        primitives: &SpectralOperatorPrimitives,
+    ) -> casa_imaging_model::LogicalIdentity {
+        let mut encoder = crate::Encoder::new(super::NORMAL_STATE_CONTENT_DOMAIN, 1);
+        encoder.usize(primitives.shape()[0]);
+        encoder.usize(primitives.shape()[1]);
+        encoder.usize(primitives.slab().total_channels());
+        encoder.usize(primitives.slab().core_range().start);
+        encoder.usize(primitives.slab().core_range().end);
+        for value in primitives.dirty() {
+            encoder.u64(value.re.to_bits());
+            encoder.u64(value.im.to_bits());
+        }
+        for value in primitives.psf() {
+            encoder.u64(value.re.to_bits());
+            encoder.u64(value.im.to_bits());
+        }
+        for value in primitives.sensitivity() {
+            encoder.u64(crate::canonical_f64_bits(*value));
+        }
+        for value in primitives.sum_weights() {
+            encoder.u64(crate::canonical_f64_bits(*value));
+        }
+        for validity in primitives.channel_validity() {
+            encoder.u8(match validity {
+                SpectralChannelValidity::Valid => 0,
+                SpectralChannelValidity::Blank => 1,
+                SpectralChannelValidity::Unmapped => 2,
+            });
+        }
+        casa_imaging_model::LogicalIdentity::from_sha256(encoder.finish())
+    }
+
+    fn t42_v2_normal_content_identity_with_metadata(
+        primitives: &SpectralOperatorPrimitives,
+        reference_frequency_hz: f64,
+        coefficient_terms: usize,
+        normal_moments: usize,
+    ) -> casa_imaging_model::LogicalIdentity {
+        let mut encoder = crate::Encoder::new(super::NORMAL_STATE_CONTENT_DOMAIN, 2);
+        encoder.usize(primitives.shape()[0]);
+        encoder.usize(primitives.shape()[1]);
+        encoder.usize(primitives.slab().total_channels());
+        encoder.usize(primitives.slab().core_range().start);
+        encoder.usize(primitives.slab().core_range().end);
+        encoder.u64(crate::canonical_f64_bits(reference_frequency_hz));
+        encoder.usize(coefficient_terms);
+        encoder.usize(normal_moments);
+        for value in primitives.dirty() {
+            encoder.u64(value.re.to_bits());
+            encoder.u64(value.im.to_bits());
+        }
+        for value in primitives.psf() {
+            encoder.u64(value.re.to_bits());
+            encoder.u64(value.im.to_bits());
+        }
+        for value in primitives.sensitivity() {
+            encoder.u64(crate::canonical_f64_bits(*value));
+        }
+        for value in primitives.sum_weights() {
+            encoder.u64(crate::canonical_f64_bits(*value));
+        }
+        for validity in primitives.channel_validity() {
+            encoder.u8(match validity {
+                SpectralChannelValidity::Valid => 0,
+                SpectralChannelValidity::Blank => 1,
+                SpectralChannelValidity::Unmapped => 2,
+            });
+        }
+        casa_imaging_model::LogicalIdentity::from_sha256(encoder.finish())
+    }
+
     fn cube_slab(core_start: usize, core_depth: usize) -> SpectralSlabPlan {
         SpectralSlabPlan::compile(4, core_start, core_depth, SpectralKernel::Linear)
             .expect("valid cube slab")
@@ -2968,17 +3532,27 @@ mod tests {
         geometry: SpectralOperatorGeometry,
     ) -> SpectralSlabOperator {
         let cells = 10 * 10;
+        let image_cells = 8 * 8;
+        let coefficient_terms = slab.core_depth();
+        let normal_moments = slab.core_depth();
+        let resident_model_terms = slab.resident_depth();
+        let total_model_terms = slab.total_channels();
         let workload = SpectralOperatorWorkload {
             pass: SpectralOperatorPass::InitialMajor,
             slab,
             grid_shape: [10, 10],
-            grid_complex_values: 6 * cells * slab.core_depth(),
+            grid_complex_values: cells * (4 * coefficient_terms + 2 * normal_moments),
             convolution_f64_values: 727,
             fft_resident_complex_values: 7_690,
             fft_planning_words: 320,
-            forward_complex_values: cells * slab.resident_depth() + 4,
-            primitive_complex_values: 3 * 8 * 8 * slab.core_depth(),
-            primitive_f64_values: 8 * 8 * slab.core_depth(),
+            forward_complex_values: cells * resident_model_terms + 4,
+            primitive_complex_values: image_cells * (3 * coefficient_terms + normal_moments),
+            primitive_f64_values: image_cells * normal_moments + normal_moments,
+            primitive_validity_values: slab.core_depth(),
+            coefficient_terms,
+            normal_moments,
+            resident_model_terms,
+            total_model_terms,
             max_replay_block_samples: 4,
         };
         let fft = PreparedFft::new([10, 10], workload.fft_resident_complex_values)
@@ -3073,6 +3647,72 @@ mod tests {
         let right = inner(&model, dirty.dirty());
         assert!((left - right).norm() <= 1.0e-9 * left.norm().max(right.norm()).max(1.0));
         assert_eq!(visibility.len(), prediction.len());
+    }
+
+    #[test]
+    fn t42_constant_and_channel_normal_content_identities_retain_the_v1_encoding() {
+        let mut constant = operator();
+        for sample in samples(&[[0.4, -0.7], [-1.2, 0.3], [0.8, 1.1]]) {
+            constant.push(sample).expect("constant sample");
+        }
+        let constant = constant.finish().expect("constant primitives");
+        let channel = cube_primitives(0, 4);
+
+        assert_eq!(
+            constant.normal_state_content_identity(),
+            legacy_v1_normal_content_identity(&constant)
+        );
+        assert_eq!(
+            channel.normal_state_content_identity(),
+            legacy_v1_normal_content_identity(&channel)
+        );
+    }
+
+    #[test]
+    fn t42_taylor_normal_content_v2_binds_reference_term_and_moment_metadata() {
+        let plan = BlockNormalPlan::taylor(1.0e9, 2).expect("two-term Taylor plan");
+        let primitives = SpectralOperatorPrimitives {
+            shape: [1, 1],
+            slab: SpectralSlabPlan::compile(1, 0, 1, SpectralKernel::Identity)
+                .expect("one-channel Taylor slab"),
+            basis: SpectralBasisPlan::Polynomial(plan),
+            dirty: [Complex64::new(2.0, -0.5), Complex64::new(-0.25, 0.125)].into(),
+            invariant_dirty: None,
+            psf: [
+                Complex64::new(3.0, 0.0),
+                Complex64::new(-0.75, 0.0),
+                Complex64::new(0.375, 0.0),
+            ]
+            .into(),
+            sensitivity: [3.0, -0.75, 0.375].into(),
+            sum_weights: [3.0, -0.75, 0.375].into(),
+            validity: [SpectralChannelValidity::Valid].into(),
+            major_cycle_residual: None,
+            major_cycle_residual_promoted: false,
+            residual_model: None,
+            measurements: SpectralOperatorMeasurements::default(),
+        };
+        let identity = primitives.normal_state_content_identity();
+        assert_eq!(
+            identity,
+            t42_v2_normal_content_identity_with_metadata(&primitives, 1.0e9, 2, 3),
+            "Taylor content must retain the exact v2 field order"
+        );
+        assert_ne!(
+            identity,
+            t42_v2_normal_content_identity_with_metadata(&primitives, 1.1e9, 2, 3),
+            "reference frequency is content identity"
+        );
+        assert_ne!(
+            identity,
+            t42_v2_normal_content_identity_with_metadata(&primitives, 1.0e9, 3, 3),
+            "coefficient-term cardinality is content identity"
+        );
+        assert_ne!(
+            identity,
+            t42_v2_normal_content_identity_with_metadata(&primitives, 1.0e9, 2, 4),
+            "normal-moment cardinality is independently content identity"
+        );
     }
 
     #[test]
@@ -3799,8 +4439,13 @@ mod tests {
         assert!(workload.fft_resident_complex_values() >= 4 * 10);
         assert_eq!(workload.fft_planning_words(), 16 * 20);
         assert_eq!(workload.forward_complex_values(), 10 * 10 + 3);
-        assert_eq!(workload.primitive_complex_values(), 3 * 8 * 8);
-        assert_eq!(workload.primitive_f64_values(), 8 * 8);
+        assert_eq!(workload.primitive_complex_values(), 4 * 8 * 8);
+        assert_eq!(workload.primitive_f64_values(), 8 * 8 + 1);
+        assert_eq!(workload.primitive_validity_values(), 1);
+        assert_eq!(workload.coefficient_terms(), 1);
+        assert_eq!(workload.normal_moments(), 1);
+        assert_eq!(workload.resident_model_terms(), 1);
+        assert_eq!(workload.total_model_terms(), 1);
     }
 
     #[test]
