@@ -208,45 +208,7 @@ impl ImagingCapabilityCatalogEntry {
 /// the current request/application contract with its exact installed status.
 #[must_use]
 pub fn installed_imaging_capability_catalog() -> Vec<ImagingCapabilityCatalogEntry> {
-    let mut requirements = vec![
-        RequiredCapability::MultiDomainGeometry,
-        RequiredCapability::FacetedGeometry,
-        RequiredCapability::SpectralFrameTransform,
-        RequiredCapability::SpectralResampling,
-        RequiredCapability::SequentialContinuumTransform,
-        RequiredCapability::CommonBeamSpectralCoupling,
-        RequiredCapability::PrimaryBeamResponse,
-        RequiredCapability::FullMuellerResponse,
-        RequiredCapability::UvTaper,
-        RequiredCapability::ConstantBasis,
-        RequiredCapability::TaylorBasis,
-        RequiredCapability::ChannelLocalBasis,
-        RequiredCapability::JointContinuumLineReconstruction,
-        RequiredCapability::DirtyReconstruction,
-        RequiredCapability::HogbomReconstruction,
-        RequiredCapability::ClarkReconstruction,
-        RequiredCapability::MultiscaleReconstruction,
-        RequiredCapability::MtmfsReconstruction,
-        RequiredCapability::NaturalWeighting,
-        RequiredCapability::UniformWeighting,
-        RequiredCapability::BriggsWeighting,
-        RequiredCapability::BriggsBandwidthTaperWeighting,
-        RequiredCapability::UnitResponseNormalization,
-        RequiredCapability::FlatNoiseNormalization,
-        RequiredCapability::FlatSkyNormalization,
-    ];
-    requirements.extend(
-        PolarizationCoordinate::ALL
-            .into_iter()
-            .map(RequiredCapability::Polarization),
-    );
-    requirements.extend(
-        ProductKind::ALL
-            .into_iter()
-            .map(RequiredCapability::Product),
-    );
-
-    let mut catalog = requirements
+    let mut catalog = RequiredCapability::catalog()
         .into_iter()
         .map(|requirement| ImagingCapabilityCatalogEntry {
             requirement: ImagingCapabilityRequirement::Scientific(requirement),

@@ -1630,6 +1630,48 @@ pub enum RequiredCapability {
 }
 
 impl RequiredCapability {
+    /// Return every stable compiler-derived capability in the current request
+    /// catalog, including every polarization coordinate and logical product.
+    #[must_use]
+    pub fn catalog() -> Vec<Self> {
+        let mut capabilities = vec![
+            Self::MultiDomainGeometry,
+            Self::FacetedGeometry,
+            Self::SpectralFrameTransform,
+            Self::SpectralResampling,
+            Self::SequentialContinuumTransform,
+            Self::CommonBeamSpectralCoupling,
+            Self::PrimaryBeamResponse,
+            Self::FullMuellerResponse,
+            Self::UvTaper,
+            Self::ConstantBasis,
+            Self::TaylorBasis,
+            Self::ChannelLocalBasis,
+            Self::JointContinuumLineReconstruction,
+            Self::DirtyReconstruction,
+            Self::HogbomReconstruction,
+            Self::ClarkReconstruction,
+            Self::MultiscaleReconstruction,
+            Self::MtmfsReconstruction,
+            Self::NaturalWeighting,
+            Self::UniformWeighting,
+            Self::BriggsWeighting,
+            Self::BriggsBandwidthTaperWeighting,
+            Self::UnitResponseNormalization,
+            Self::FlatNoiseNormalization,
+            Self::FlatSkyNormalization,
+        ];
+        capabilities.extend(Self::polarization_catalog());
+        capabilities.extend(ProductKind::ALL.into_iter().map(Self::Product));
+        capabilities
+    }
+
+    fn polarization_catalog() -> impl Iterator<Item = Self> {
+        PolarizationCoordinate::ALL
+            .into_iter()
+            .map(Self::Polarization)
+    }
+
     /// Return the stable request-catalog identity used by boundary projections.
     #[must_use]
     pub fn catalog_id(self) -> String {

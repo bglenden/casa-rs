@@ -9730,6 +9730,40 @@ mod tests {
     }
 
     #[test]
+    fn parameter_provider_invocation_uses_the_imager_typed_request() {
+        let values = HashMap::from([
+            (
+                "vis".to_string(),
+                SurfaceParameterValue::String {
+                    value: "input.ms".to_string(),
+                },
+            ),
+            (
+                "imagename".to_string(),
+                SurfaceParameterValue::String {
+                    value: "products/image".to_string(),
+                },
+            ),
+            (
+                "parallel".to_string(),
+                SurfaceParameterValue::Bool { value: false },
+            ),
+        ]);
+        let invocation = parameter_provider_invocation("imager".to_string(), values)
+            .expect("typed imager invocation");
+        assert_eq!(
+            invocation.args,
+            ["--managed-output", "true", "--json-run", "-"]
+        );
+        let request: serde_json::Value =
+            serde_json::from_str(invocation.stdin.as_deref().expect("stdin JSON")).unwrap();
+        assert_eq!(request["kind"], "run");
+        assert_eq!(request["request"]["measurement_set"], "input.ms");
+        assert_eq!(request["request"]["image_name"], "products/image");
+        assert_eq!(request["request"]["parallel"], false);
+    }
+
+    #[test]
     fn one_profile_matches_runtime_ui_projection_and_typed_uniffi() {
         let source_path = PathBuf::from("profiles/imager.toml");
         let profile_toml = include_str!(concat!(
