@@ -88,494 +88,496 @@
 <a href=#88 id=88 data-nosnippet>88</a>    // selected frequency rather than treating source-channel ordinal as a
 <a href=#89 id=89 data-nosnippet>89</a>    // model coefficient.
 <a href=#90 id=90 data-nosnippet>90</a>    </span><span class="kw">let </span>terms = <span class="kw">match </span>problem.reconstruction().basis() {
-<a href=#91 id=91 data-nosnippet>91</a>        ReconstructionBasis::Constant =&gt; one_term(<span class="number">0</span>, <span class="number">1.0</span>, frequency_hz)<span class="question-mark">?</span>,
-<a href=#92 id=92 data-nosnippet>92</a>        ReconstructionBasis::ChannelLocal { .. } | ReconstructionBasis::Taylor { .. } =&gt; {
-<a href=#93 id=93 data-nosnippet>93</a>            channel_local_terms(problem, sample, evaluation, frequency_hz)<span class="question-mark">?
-<a href=#94 id=94 data-nosnippet>94</a>        </span>}
-<a href=#95 id=95 data-nosnippet>95</a>    };
-<a href=#96 id=96 data-nosnippet>96</a>    <span class="kw">let </span>contributions = SelectedSpectralContributions::new(terms)
-<a href=#97 id=97 data-nosnippet>97</a>        .ok_or(SpectralStencilError::InvalidCoefficients)<span class="question-mark">?</span>;
-<a href=#98 id=98 data-nosnippet>98</a>    <span class="kw">let </span>validity = <span class="kw">if </span>!evaluation.is_valid() {
-<a href=#99 id=99 data-nosnippet>99</a>        SpectralStencilValidity::Flagged
-<a href=#100 id=100 data-nosnippet>100</a>    } <span class="kw">else if </span>contributions.is_empty() {
-<a href=#101 id=101 data-nosnippet>101</a>        SpectralStencilValidity::Unmapped
-<a href=#102 id=102 data-nosnippet>102</a>    } <span class="kw">else </span>{
-<a href=#103 id=103 data-nosnippet>103</a>        SpectralStencilValidity::Mapped
-<a href=#104 id=104 data-nosnippet>104</a>    };
-<a href=#105 id=105 data-nosnippet>105</a>    <span class="prelude-val">Ok</span>(receipt(
-<a href=#106 id=106 data-nosnippet>106</a>        contributions,
-<a href=#107 id=107 data-nosnippet>107</a>        evaluation,
-<a href=#108 id=108 data-nosnippet>108</a>        validity,
-<a href=#109 id=109 data-nosnippet>109</a>        law.covariance(),
-<a href=#110 id=110 data-nosnippet>110</a>    ))
-<a href=#111 id=111 data-nosnippet>111</a>}
-<a href=#112 id=112 data-nosnippet>112</a>
-<a href=#113 id=113 data-nosnippet>113</a><span class="kw">fn </span>channel_local_terms(
-<a href=#114 id=114 data-nosnippet>114</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
-<a href=#115 id=115 data-nosnippet>115</a>    sample: SelectedObservationSampleView&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#116 id=116 data-nosnippet>116</a>    evaluation: SelectedSpectralEvaluation,
-<a href=#117 id=117 data-nosnippet>117</a>    frequency_hz: f64,
-<a href=#118 id=118 data-nosnippet>118</a>) -&gt; <span class="prelude-ty">Result</span>&lt;SmallVec&lt;[SelectedSpectralContribution; <span class="number">4</span>]&gt;, SpectralStencilError&gt; {
-<a href=#119 id=119 data-nosnippet>119</a>    <span class="kw">let </span>law = problem.science().spectral().sampling();
-<a href=#120 id=120 data-nosnippet>120</a>    <span class="kw">let </span>spectral = problem.geometry().spectral();
-<a href=#121 id=121 data-nosnippet>121</a>    <span class="kw">let </span>centres = (<span class="number">0</span>..spectral.output_channels())
-<a href=#122 id=122 data-nosnippet>122</a>        .map(|channel| spectral.channel_centre_hz(channel))
-<a href=#123 id=123 data-nosnippet>123</a>        .collect::&lt;<span class="prelude-ty">Option</span>&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;&gt;()
-<a href=#124 id=124 data-nosnippet>124</a>        .ok_or(SpectralStencilError::InvalidOutputGeometry)<span class="question-mark">?</span>;
-<a href=#125 id=125 data-nosnippet>125</a>    <span class="kw">let </span>boundaries = (<span class="number">0</span>..=spectral.output_channels())
-<a href=#126 id=126 data-nosnippet>126</a>        .map(|boundary| spectral.channel_boundary_hz(boundary))
-<a href=#127 id=127 data-nosnippet>127</a>        .collect::&lt;<span class="prelude-ty">Option</span>&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;&gt;()
-<a href=#128 id=128 data-nosnippet>128</a>        .ok_or(SpectralStencilError::InvalidOutputGeometry)<span class="question-mark">?</span>;
-<a href=#129 id=129 data-nosnippet>129</a>    validate_axis(<span class="kw-2">&amp;</span>centres, <span class="kw-2">&amp;</span>boundaries)<span class="question-mark">?</span>;
-<a href=#130 id=130 data-nosnippet>130</a>    <span class="kw">match </span>law.kernel() {
-<a href=#131 id=131 data-nosnippet>131</a>        SpectralKernel::Identity =&gt; identity_terms(problem, sample, frequency_hz),
-<a href=#132 id=132 data-nosnippet>132</a>        SpectralKernel::Nearest =&gt; <span class="prelude-val">Ok</span>(nearest_terms(<span class="kw-2">&amp;</span>centres, <span class="kw-2">&amp;</span>boundaries, frequency_hz)),
-<a href=#133 id=133 data-nosnippet>133</a>        SpectralKernel::Linear =&gt; <span class="prelude-val">Ok</span>(linear_terms(<span class="kw-2">&amp;</span>centres, <span class="kw-2">&amp;</span>boundaries, frequency_hz)),
-<a href=#134 id=134 data-nosnippet>134</a>        SpectralKernel::Cubic =&gt; <span class="prelude-val">Ok</span>(cubic_terms(<span class="kw-2">&amp;</span>centres, frequency_hz)),
-<a href=#135 id=135 data-nosnippet>135</a>        SpectralKernel::ChannelIntegration { maximum_terms } =&gt; integration_terms(
-<a href=#136 id=136 data-nosnippet>136</a>            <span class="kw-2">&amp;</span>boundaries,
-<a href=#137 id=137 data-nosnippet>137</a>            evaluation.output_frame().boundaries_hz(),
-<a href=#138 id=138 data-nosnippet>138</a>            law.edge_policy(),
-<a href=#139 id=139 data-nosnippet>139</a>            maximum_terms,
-<a href=#140 id=140 data-nosnippet>140</a>            frequency_hz,
-<a href=#141 id=141 data-nosnippet>141</a>        ),
-<a href=#142 id=142 data-nosnippet>142</a>    }
-<a href=#143 id=143 data-nosnippet>143</a>}
-<a href=#144 id=144 data-nosnippet>144</a>
-<a href=#145 id=145 data-nosnippet>145</a><span class="kw">fn </span>receipt(
-<a href=#146 id=146 data-nosnippet>146</a>    contributions: SelectedSpectralContributions,
-<a href=#147 id=147 data-nosnippet>147</a>    evaluation: SelectedSpectralEvaluation,
-<a href=#148 id=148 data-nosnippet>148</a>    validity: SpectralStencilValidity,
-<a href=#149 id=149 data-nosnippet>149</a>    covariance: SpectralCovariance,
-<a href=#150 id=150 data-nosnippet>150</a>) -&gt; SpectralStencilReceipt {
-<a href=#151 id=151 data-nosnippet>151</a>    SpectralStencilReceipt {
-<a href=#152 id=152 data-nosnippet>152</a>        contributions,
-<a href=#153 id=153 data-nosnippet>153</a>        evaluation,
-<a href=#154 id=154 data-nosnippet>154</a>        validity,
-<a href=#155 id=155 data-nosnippet>155</a>        covariance,
-<a href=#156 id=156 data-nosnippet>156</a>    }
-<a href=#157 id=157 data-nosnippet>157</a>}
-<a href=#158 id=158 data-nosnippet>158</a>
-<a href=#159 id=159 data-nosnippet>159</a><span class="kw">fn </span>validate_axis(centres: <span class="kw-2">&amp;</span>[f64], boundaries: <span class="kw-2">&amp;</span>[f64]) -&gt; <span class="prelude-ty">Result</span>&lt;(), SpectralStencilError&gt; {
-<a href=#160 id=160 data-nosnippet>160</a>    <span class="kw">if </span>centres.is_empty()
-<a href=#161 id=161 data-nosnippet>161</a>        || boundaries.len() != centres.len() + <span class="number">1
-<a href=#162 id=162 data-nosnippet>162</a>        </span>|| centres
-<a href=#163 id=163 data-nosnippet>163</a>            .iter()
-<a href=#164 id=164 data-nosnippet>164</a>            .chain(boundaries)
-<a href=#165 id=165 data-nosnippet>165</a>            .any(|value| !value.is_finite() || <span class="kw-2">*</span>value &lt;= <span class="number">0.0</span>)
-<a href=#166 id=166 data-nosnippet>166</a>    {
-<a href=#167 id=167 data-nosnippet>167</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(SpectralStencilError::InvalidOutputGeometry);
-<a href=#168 id=168 data-nosnippet>168</a>    }
-<a href=#169 id=169 data-nosnippet>169</a>    <span class="kw">let </span>direction = (centres[centres.len() - <span class="number">1</span>] - centres[<span class="number">0</span>]).signum();
-<a href=#170 id=170 data-nosnippet>170</a>    <span class="kw">if </span>centres.len() &gt; <span class="number">1
-<a href=#171 id=171 data-nosnippet>171</a>        </span>&amp;&amp; (direction == <span class="number">0.0
-<a href=#172 id=172 data-nosnippet>172</a>            </span>|| centres
-<a href=#173 id=173 data-nosnippet>173</a>                .windows(<span class="number">2</span>)
-<a href=#174 id=174 data-nosnippet>174</a>                .any(|pair| (pair[<span class="number">1</span>] - pair[<span class="number">0</span>]).signum() != direction))
-<a href=#175 id=175 data-nosnippet>175</a>    {
-<a href=#176 id=176 data-nosnippet>176</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(SpectralStencilError::InvalidOutputGeometry);
-<a href=#177 id=177 data-nosnippet>177</a>    }
-<a href=#178 id=178 data-nosnippet>178</a>    <span class="prelude-val">Ok</span>(())
-<a href=#179 id=179 data-nosnippet>179</a>}
-<a href=#180 id=180 data-nosnippet>180</a>
-<a href=#181 id=181 data-nosnippet>181</a><span class="kw">fn </span>identity_terms(
-<a href=#182 id=182 data-nosnippet>182</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
-<a href=#183 id=183 data-nosnippet>183</a>    sample: SelectedObservationSampleView&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#184 id=184 data-nosnippet>184</a>    frequency_hz: f64,
-<a href=#185 id=185 data-nosnippet>185</a>) -&gt; <span class="prelude-ty">Result</span>&lt;SmallVec&lt;[SelectedSpectralContribution; <span class="number">4</span>]&gt;, SpectralStencilError&gt; {
-<a href=#186 id=186 data-nosnippet>186</a>    <span class="kw">let </span>address = sample.address();
-<a href=#187 id=187 data-nosnippet>187</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(transform) = problem.visibility_transform()
-<a href=#188 id=188 data-nosnippet>188</a>        &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(rule) = transform.rule(sample.metadata().field_id, address.spectral_window_id)
-<a href=#189 id=189 data-nosnippet>189</a>    {
-<a href=#190 id=190 data-nosnippet>190</a>        <span class="kw">let </span>ordinal = rule
-<a href=#191 id=191 data-nosnippet>191</a>            .channels()
-<a href=#192 id=192 data-nosnippet>192</a>            .iter()
-<a href=#193 id=193 data-nosnippet>193</a>            .filter(|channel| channel.use_role().contributes_to_output())
-<a href=#194 id=194 data-nosnippet>194</a>            .position(|channel| channel.channel_index() == address.channel_index)
-<a href=#195 id=195 data-nosnippet>195</a>            .ok_or(SpectralStencilError::IdentitySourceMismatch)<span class="question-mark">?</span>;
-<a href=#196 id=196 data-nosnippet>196</a>        <span class="kw">if </span>ordinal &gt;= problem.geometry().spectral().output_channels() {
-<a href=#197 id=197 data-nosnippet>197</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(SmallVec::new());
-<a href=#198 id=198 data-nosnippet>198</a>        }
-<a href=#199 id=199 data-nosnippet>199</a>        <span class="kw">return </span>one_term(ordinal, <span class="number">1.0</span>, frequency_hz);
-<a href=#200 id=200 data-nosnippet>200</a>    }
-<a href=#201 id=201 data-nosnippet>201</a>    <span class="kw">let </span>source = problem
-<a href=#202 id=202 data-nosnippet>202</a>        .inputs()
-<a href=#203 id=203 data-nosnippet>203</a>        .observation_snapshot()
-<a href=#204 id=204 data-nosnippet>204</a>        .sources()
-<a href=#205 id=205 data-nosnippet>205</a>        .iter()
-<a href=#206 id=206 data-nosnippet>206</a>        .find(|source| source.identity() == address.measurement_set)
-<a href=#207 id=207 data-nosnippet>207</a>        .ok_or(SpectralStencilError::IdentitySourceMismatch)<span class="question-mark">?</span>;
-<a href=#208 id=208 data-nosnippet>208</a>    <span class="kw">let </span>selection = source
-<a href=#209 id=209 data-nosnippet>209</a>        .selection()
-<a href=#210 id=210 data-nosnippet>210</a>        .spectral_windows()
-<a href=#211 id=211 data-nosnippet>211</a>        .iter()
-<a href=#212 id=212 data-nosnippet>212</a>        .find(|selection| selection.spectral_window_id() == address.spectral_window_id)
-<a href=#213 id=213 data-nosnippet>213</a>        .ok_or(SpectralStencilError::IdentitySourceMismatch)<span class="question-mark">?</span>;
-<a href=#214 id=214 data-nosnippet>214</a>    <span class="kw">let </span>ordinal = selection
-<a href=#215 id=215 data-nosnippet>215</a>        .channel_indices()
-<a href=#216 id=216 data-nosnippet>216</a>        .iter()
-<a href=#217 id=217 data-nosnippet>217</a>        .position(|channel| <span class="kw-2">*</span>channel == address.channel_index)
-<a href=#218 id=218 data-nosnippet>218</a>        .ok_or(SpectralStencilError::IdentitySourceMismatch)<span class="question-mark">?</span>;
-<a href=#219 id=219 data-nosnippet>219</a>    <span class="kw">if </span>ordinal &gt;= problem.geometry().spectral().output_channels() {
-<a href=#220 id=220 data-nosnippet>220</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(SmallVec::new());
-<a href=#221 id=221 data-nosnippet>221</a>    }
-<a href=#222 id=222 data-nosnippet>222</a>    one_term(ordinal, <span class="number">1.0</span>, frequency_hz)
-<a href=#223 id=223 data-nosnippet>223</a>}
-<a href=#224 id=224 data-nosnippet>224</a>
-<a href=#225 id=225 data-nosnippet>225</a><span class="kw">fn </span>nearest_terms(
-<a href=#226 id=226 data-nosnippet>226</a>    centres: <span class="kw-2">&amp;</span>[f64],
-<a href=#227 id=227 data-nosnippet>227</a>    boundaries: <span class="kw-2">&amp;</span>[f64],
-<a href=#228 id=228 data-nosnippet>228</a>    frequency_hz: f64,
-<a href=#229 id=229 data-nosnippet>229</a>) -&gt; SmallVec&lt;[SelectedSpectralContribution; <span class="number">4</span>]&gt; {
-<a href=#230 id=230 data-nosnippet>230</a>    <span class="kw">let </span><span class="prelude-val">Some</span>((index, <span class="kw">_</span>)) = centres.iter().enumerate().min_by(|(<span class="kw">_</span>, left), (<span class="kw">_</span>, right)| {
-<a href=#231 id=231 data-nosnippet>231</a>        (<span class="kw-2">*</span>left - frequency_hz)
-<a href=#232 id=232 data-nosnippet>232</a>            .abs()
-<a href=#233 id=233 data-nosnippet>233</a>            .total_cmp(<span class="kw-2">&amp;</span>(<span class="kw-2">*</span>right - frequency_hz).abs())
-<a href=#234 id=234 data-nosnippet>234</a>    }) <span class="kw">else </span>{
-<a href=#235 id=235 data-nosnippet>235</a>        <span class="kw">return </span>SmallVec::new();
-<a href=#236 id=236 data-nosnippet>236</a>    };
-<a href=#237 id=237 data-nosnippet>237</a>    <span class="kw">let </span>low = boundaries[index].min(boundaries[index + <span class="number">1</span>]);
-<a href=#238 id=238 data-nosnippet>238</a>    <span class="kw">let </span>high = boundaries[index].max(boundaries[index + <span class="number">1</span>]);
-<a href=#239 id=239 data-nosnippet>239</a>    <span class="kw">if </span>!(low..=high).contains(<span class="kw-2">&amp;</span>frequency_hz) {
-<a href=#240 id=240 data-nosnippet>240</a>        <span class="kw">return </span>SmallVec::new();
-<a href=#241 id=241 data-nosnippet>241</a>    }
-<a href=#242 id=242 data-nosnippet>242</a>    one_term(index, <span class="number">1.0</span>, frequency_hz).unwrap_or_default()
-<a href=#243 id=243 data-nosnippet>243</a>}
-<a href=#244 id=244 data-nosnippet>244</a>
-<a href=#245 id=245 data-nosnippet>245</a><span class="kw">fn </span>linear_terms(
-<a href=#246 id=246 data-nosnippet>246</a>    centres: <span class="kw-2">&amp;</span>[f64],
-<a href=#247 id=247 data-nosnippet>247</a>    boundaries: <span class="kw-2">&amp;</span>[f64],
-<a href=#248 id=248 data-nosnippet>248</a>    frequency_hz: f64,
-<a href=#249 id=249 data-nosnippet>249</a>) -&gt; SmallVec&lt;[SelectedSpectralContribution; <span class="number">4</span>]&gt; {
-<a href=#250 id=250 data-nosnippet>250</a>    <span class="kw">if </span>centres.len() == <span class="number">1 </span>{
-<a href=#251 id=251 data-nosnippet>251</a>        <span class="kw">return </span>nearest_terms(centres, boundaries, frequency_hz);
-<a href=#252 id=252 data-nosnippet>252</a>    }
-<a href=#253 id=253 data-nosnippet>253</a>    interpolation_interval(centres, frequency_hz)
-<a href=#254 id=254 data-nosnippet>254</a>        .and_then(|index| {
-<a href=#255 id=255 data-nosnippet>255</a>            <span class="kw">let </span>first = centres[index];
-<a href=#256 id=256 data-nosnippet>256</a>            <span class="kw">let </span>second = centres[index + <span class="number">1</span>];
-<a href=#257 id=257 data-nosnippet>257</a>            <span class="kw">let </span>upper = (frequency_hz - first) / (second - first);
-<a href=#258 id=258 data-nosnippet>258</a>            sparse_terms([(index, <span class="number">1.0 </span>- upper), (index + <span class="number">1</span>, upper)], frequency_hz)
-<a href=#259 id=259 data-nosnippet>259</a>        })
-<a href=#260 id=260 data-nosnippet>260</a>        .unwrap_or_default()
-<a href=#261 id=261 data-nosnippet>261</a>}
-<a href=#262 id=262 data-nosnippet>262</a>
-<a href=#263 id=263 data-nosnippet>263</a><span class="kw">fn </span>cubic_terms(centres: <span class="kw-2">&amp;</span>[f64], frequency_hz: f64) -&gt; SmallVec&lt;[SelectedSpectralContribution; <span class="number">4</span>]&gt; {
-<a href=#264 id=264 data-nosnippet>264</a>    <span class="kw">if </span>centres.len() &lt; <span class="number">4 </span>{
-<a href=#265 id=265 data-nosnippet>265</a>        <span class="kw">return </span>SmallVec::new();
-<a href=#266 id=266 data-nosnippet>266</a>    }
-<a href=#267 id=267 data-nosnippet>267</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(interval) = interpolation_interval(centres, frequency_hz) <span class="kw">else </span>{
-<a href=#268 id=268 data-nosnippet>268</a>        <span class="kw">return </span>SmallVec::new();
-<a href=#269 id=269 data-nosnippet>269</a>    };
-<a href=#270 id=270 data-nosnippet>270</a>    <span class="kw">let </span>bracket = interval + <span class="number">1</span>;
-<a href=#271 id=271 data-nosnippet>271</a>    <span class="kw">let </span>start = <span class="kw">if </span>bracket &gt; <span class="number">1 </span>&amp;&amp; bracket &lt; centres.len() - <span class="number">1 </span>{
-<a href=#272 id=272 data-nosnippet>272</a>        bracket - <span class="number">2
-<a href=#273 id=273 data-nosnippet>273</a>    </span>} <span class="kw">else if </span>bracket &lt;= <span class="number">1 </span>{
-<a href=#274 id=274 data-nosnippet>274</a>        <span class="number">0
-<a href=#275 id=275 data-nosnippet>275</a>    </span>} <span class="kw">else </span>{
-<a href=#276 id=276 data-nosnippet>276</a>        centres.len() - <span class="number">4
-<a href=#277 id=277 data-nosnippet>277</a>    </span>};
-<a href=#278 id=278 data-nosnippet>278</a>    <span class="kw">let </span><span class="kw-2">mut </span>terms = SmallVec::&lt;[(usize, f64); <span class="number">4</span>]&gt;::new();
-<a href=#279 id=279 data-nosnippet>279</a>    <span class="kw">for </span>index <span class="kw">in </span>start..start + <span class="number">4 </span>{
-<a href=#280 id=280 data-nosnippet>280</a>        <span class="kw">let </span><span class="kw-2">mut </span>coefficient = <span class="number">1.0</span>;
-<a href=#281 id=281 data-nosnippet>281</a>        <span class="kw">for </span>other <span class="kw">in </span>start..start + <span class="number">4 </span>{
-<a href=#282 id=282 data-nosnippet>282</a>            <span class="kw">if </span>other != index {
-<a href=#283 id=283 data-nosnippet>283</a>                coefficient <span class="kw-2">*</span>= (frequency_hz - centres[other]) / (centres[index] - centres[other]);
-<a href=#284 id=284 data-nosnippet>284</a>            }
-<a href=#285 id=285 data-nosnippet>285</a>        }
-<a href=#286 id=286 data-nosnippet>286</a>        terms.push((index, coefficient));
-<a href=#287 id=287 data-nosnippet>287</a>    }
-<a href=#288 id=288 data-nosnippet>288</a>    sparse_terms(terms, frequency_hz).unwrap_or_default()
-<a href=#289 id=289 data-nosnippet>289</a>}
-<a href=#290 id=290 data-nosnippet>290</a>
-<a href=#291 id=291 data-nosnippet>291</a><span class="kw">fn </span>integration_terms(
-<a href=#292 id=292 data-nosnippet>292</a>    output_boundaries_hz: <span class="kw-2">&amp;</span>[f64],
-<a href=#293 id=293 data-nosnippet>293</a>    source_boundaries_hz: [f64; <span class="number">2</span>],
-<a href=#294 id=294 data-nosnippet>294</a>    edge_policy: SpectralEdgePolicy,
-<a href=#295 id=295 data-nosnippet>295</a>    maximum_terms: usize,
-<a href=#296 id=296 data-nosnippet>296</a>    frequency_hz: f64,
-<a href=#297 id=297 data-nosnippet>297</a>) -&gt; <span class="prelude-ty">Result</span>&lt;SmallVec&lt;[SelectedSpectralContribution; <span class="number">4</span>]&gt;, SpectralStencilError&gt; {
-<a href=#298 id=298 data-nosnippet>298</a>    <span class="kw">let </span>source_low = source_boundaries_hz[<span class="number">0</span>].min(source_boundaries_hz[<span class="number">1</span>]);
-<a href=#299 id=299 data-nosnippet>299</a>    <span class="kw">let </span>source_high = source_boundaries_hz[<span class="number">0</span>].max(source_boundaries_hz[<span class="number">1</span>]);
-<a href=#300 id=300 data-nosnippet>300</a>    <span class="kw">let </span>axis_end = output_boundaries_hz[output_boundaries_hz.len() - <span class="number">1</span>];
-<a href=#301 id=301 data-nosnippet>301</a>    <span class="kw">let </span>axis_low = output_boundaries_hz[<span class="number">0</span>].min(axis_end);
-<a href=#302 id=302 data-nosnippet>302</a>    <span class="kw">let </span>axis_high = output_boundaries_hz[<span class="number">0</span>].max(axis_end);
-<a href=#303 id=303 data-nosnippet>303</a>    <span class="kw">if </span>edge_policy == SpectralEdgePolicy::CompleteSupport
-<a href=#304 id=304 data-nosnippet>304</a>        &amp;&amp; (source_low &lt; axis_low || source_high &gt; axis_high)
-<a href=#305 id=305 data-nosnippet>305</a>    {
-<a href=#306 id=306 data-nosnippet>306</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(SmallVec::new());
-<a href=#307 id=307 data-nosnippet>307</a>    }
-<a href=#308 id=308 data-nosnippet>308</a>    <span class="kw">let </span><span class="kw-2">mut </span>terms = SmallVec::&lt;[SelectedSpectralContribution; <span class="number">4</span>]&gt;::new();
-<a href=#309 id=309 data-nosnippet>309</a>    <span class="kw">for </span>(output_channel, pair) <span class="kw">in </span>output_boundaries_hz.windows(<span class="number">2</span>).enumerate() {
-<a href=#310 id=310 data-nosnippet>310</a>        <span class="kw">let </span>output_low = pair[<span class="number">0</span>].min(pair[<span class="number">1</span>]);
-<a href=#311 id=311 data-nosnippet>311</a>        <span class="kw">let </span>output_high = pair[<span class="number">0</span>].max(pair[<span class="number">1</span>]);
-<a href=#312 id=312 data-nosnippet>312</a>        <span class="kw">let </span>overlap = source_high.min(output_high) - source_low.max(output_low);
-<a href=#313 id=313 data-nosnippet>313</a>        <span class="kw">if </span>overlap &gt; <span class="number">0.0 </span>{
-<a href=#314 id=314 data-nosnippet>314</a>            <span class="kw">if </span>terms.len() == maximum_terms {
-<a href=#315 id=315 data-nosnippet>315</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(SpectralStencilError::PlannerTermBound);
-<a href=#316 id=316 data-nosnippet>316</a>            }
-<a href=#317 id=317 data-nosnippet>317</a>            terms.push(
-<a href=#318 id=318 data-nosnippet>318</a>                SelectedSpectralContribution::new(
-<a href=#319 id=319 data-nosnippet>319</a>                    u32::try_from(output_channel)
-<a href=#320 id=320 data-nosnippet>320</a>                        .map_err(|<span class="kw">_</span>| SpectralStencilError::InvalidCoefficients)<span class="question-mark">?</span>,
-<a href=#321 id=321 data-nosnippet>321</a>                    overlap / (output_high - output_low),
-<a href=#322 id=322 data-nosnippet>322</a>                    frequency_hz,
-<a href=#323 id=323 data-nosnippet>323</a>                )
-<a href=#324 id=324 data-nosnippet>324</a>                .ok_or(SpectralStencilError::InvalidCoefficients)<span class="question-mark">?</span>,
-<a href=#325 id=325 data-nosnippet>325</a>            );
-<a href=#326 id=326 data-nosnippet>326</a>        }
-<a href=#327 id=327 data-nosnippet>327</a>    }
-<a href=#328 id=328 data-nosnippet>328</a>    <span class="prelude-val">Ok</span>(terms)
-<a href=#329 id=329 data-nosnippet>329</a>}
-<a href=#330 id=330 data-nosnippet>330</a>
-<a href=#331 id=331 data-nosnippet>331</a><span class="kw">fn </span>interpolation_interval(centres: <span class="kw-2">&amp;</span>[f64], frequency_hz: f64) -&gt; <span class="prelude-ty">Option</span>&lt;usize&gt; {
-<a href=#332 id=332 data-nosnippet>332</a>    centres.windows(<span class="number">2</span>).position(|pair| {
-<a href=#333 id=333 data-nosnippet>333</a>        pair[<span class="number">0</span>].min(pair[<span class="number">1</span>]) &lt;= frequency_hz &amp;&amp; frequency_hz &lt;= pair[<span class="number">0</span>].max(pair[<span class="number">1</span>])
-<a href=#334 id=334 data-nosnippet>334</a>    })
-<a href=#335 id=335 data-nosnippet>335</a>}
-<a href=#336 id=336 data-nosnippet>336</a>
-<a href=#337 id=337 data-nosnippet>337</a><span class="kw">fn </span>one_term(
-<a href=#338 id=338 data-nosnippet>338</a>    output_channel: usize,
-<a href=#339 id=339 data-nosnippet>339</a>    factor: f64,
-<a href=#340 id=340 data-nosnippet>340</a>    frequency_hz: f64,
-<a href=#341 id=341 data-nosnippet>341</a>) -&gt; <span class="prelude-ty">Result</span>&lt;SmallVec&lt;[SelectedSpectralContribution; <span class="number">4</span>]&gt;, SpectralStencilError&gt; {
-<a href=#342 id=342 data-nosnippet>342</a>    sparse_terms([(output_channel, factor)], frequency_hz)
-<a href=#343 id=343 data-nosnippet>343</a>        .ok_or(SpectralStencilError::InvalidCoefficients)
-<a href=#344 id=344 data-nosnippet>344</a>}
-<a href=#345 id=345 data-nosnippet>345</a>
-<a href=#346 id=346 data-nosnippet>346</a><span class="kw">fn </span>sparse_terms(
-<a href=#347 id=347 data-nosnippet>347</a>    terms: <span class="kw">impl </span>IntoIterator&lt;Item = (usize, f64)&gt;,
-<a href=#348 id=348 data-nosnippet>348</a>    frequency_hz: f64,
-<a href=#349 id=349 data-nosnippet>349</a>) -&gt; <span class="prelude-ty">Option</span>&lt;SmallVec&lt;[SelectedSpectralContribution; <span class="number">4</span>]&gt;&gt; {
-<a href=#350 id=350 data-nosnippet>350</a>    terms
-<a href=#351 id=351 data-nosnippet>351</a>        .into_iter()
-<a href=#352 id=352 data-nosnippet>352</a>        .filter(|(<span class="kw">_</span>, factor)| <span class="kw-2">*</span>factor != <span class="number">0.0</span>)
-<a href=#353 id=353 data-nosnippet>353</a>        .map(|(output_channel, factor)| {
-<a href=#354 id=354 data-nosnippet>354</a>            SelectedSpectralContribution::new(
-<a href=#355 id=355 data-nosnippet>355</a>                u32::try_from(output_channel).ok()<span class="question-mark">?</span>,
-<a href=#356 id=356 data-nosnippet>356</a>                factor,
-<a href=#357 id=357 data-nosnippet>357</a>                frequency_hz,
-<a href=#358 id=358 data-nosnippet>358</a>            )
-<a href=#359 id=359 data-nosnippet>359</a>        })
-<a href=#360 id=360 data-nosnippet>360</a>        .collect()
-<a href=#361 id=361 data-nosnippet>361</a>}
-<a href=#362 id=362 data-nosnippet>362</a>
-<a href=#363 id=363 data-nosnippet>363</a><span class="attr">#[cfg(test)]
-<a href=#364 id=364 data-nosnippet>364</a></span><span class="kw">mod </span>tests {
-<a href=#365 id=365 data-nosnippet>365</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#366 id=366 data-nosnippet>366</a>
-<a href=#367 id=367 data-nosnippet>367</a>    <span class="attr">#[test]
-<a href=#368 id=368 data-nosnippet>368</a>    </span><span class="kw">fn </span>t35_one_channel_identity_matches_constant_basis_and_is_exactly_paired() {
-<a href=#369 id=369 data-nosnippet>369</a>        <span class="kw">let </span>stencil = one_term(<span class="number">0</span>, <span class="number">1.0</span>, <span class="number">1.4e9</span>).expect(<span class="string">"identity stencil"</span>);
-<a href=#370 id=370 data-nosnippet>370</a>        <span class="macro">assert_eq!</span>(
-<a href=#371 id=371 data-nosnippet>371</a>            stencil
-<a href=#372 id=372 data-nosnippet>372</a>                .iter()
-<a href=#373 id=373 data-nosnippet>373</a>                .map(|term| (term.output_channel(), term.factor()))
-<a href=#374 id=374 data-nosnippet>374</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
-<a href=#375 id=375 data-nosnippet>375</a>            <span class="macro">vec!</span>[(<span class="number">0</span>, <span class="number">1.0</span>)]
-<a href=#376 id=376 data-nosnippet>376</a>        );
-<a href=#377 id=377 data-nosnippet>377</a>
-<a href=#378 id=378 data-nosnippet>378</a>        <span class="kw">let </span>model = <span class="number">2.5_f64</span>;
-<a href=#379 id=379 data-nosnippet>379</a>        <span class="kw">let </span>visibility = -<span class="number">3.0_f64</span>;
-<a href=#380 id=380 data-nosnippet>380</a>        <span class="kw">let </span>weight = <span class="number">4.0_f64</span>;
-<a href=#381 id=381 data-nosnippet>381</a>        <span class="kw">let </span>channel_prediction = stencil
-<a href=#382 id=382 data-nosnippet>382</a>            .iter()
-<a href=#383 id=383 data-nosnippet>383</a>            .map(|term| term.factor() * model)
-<a href=#384 id=384 data-nosnippet>384</a>            .sum::&lt;f64&gt;();
-<a href=#385 id=385 data-nosnippet>385</a>        <span class="kw">let </span>channel_dirty = stencil
-<a href=#386 id=386 data-nosnippet>386</a>            .iter()
-<a href=#387 id=387 data-nosnippet>387</a>            .map(|term| term.factor() * weight * visibility)
-<a href=#388 id=388 data-nosnippet>388</a>            .sum::&lt;f64&gt;();
-<a href=#389 id=389 data-nosnippet>389</a>        <span class="kw">let </span>channel_psf = stencil
-<a href=#390 id=390 data-nosnippet>390</a>            .iter()
-<a href=#391 id=391 data-nosnippet>391</a>            .map(|term| term.factor() * weight * term.factor())
-<a href=#392 id=392 data-nosnippet>392</a>            .sum::&lt;f64&gt;();
-<a href=#393 id=393 data-nosnippet>393</a>        <span class="kw">let </span>channel_sum_weight = weight;
-<a href=#394 id=394 data-nosnippet>394</a>        <span class="macro">assert_eq!</span>(channel_prediction, model);
-<a href=#395 id=395 data-nosnippet>395</a>        <span class="macro">assert_eq!</span>(channel_dirty, weight * visibility);
-<a href=#396 id=396 data-nosnippet>396</a>        <span class="macro">assert_eq!</span>(channel_psf, weight);
-<a href=#397 id=397 data-nosnippet>397</a>        <span class="macro">assert_eq!</span>(channel_sum_weight, weight);
-<a href=#398 id=398 data-nosnippet>398</a>
-<a href=#399 id=399 data-nosnippet>399</a>        <span class="kw">let </span>lhs = channel_prediction * visibility;
-<a href=#400 id=400 data-nosnippet>400</a>        <span class="kw">let </span>adjoint_visibility = stencil
-<a href=#401 id=401 data-nosnippet>401</a>            .iter()
-<a href=#402 id=402 data-nosnippet>402</a>            .map(|term| term.factor() * visibility)
-<a href=#403 id=403 data-nosnippet>403</a>            .sum::&lt;f64&gt;();
-<a href=#404 id=404 data-nosnippet>404</a>        <span class="kw">let </span>rhs = model * adjoint_visibility;
-<a href=#405 id=405 data-nosnippet>405</a>        <span class="macro">assert_eq!</span>(lhs, rhs, <span class="string">"prediction and adjoint must use the same stencil"</span>);
-<a href=#406 id=406 data-nosnippet>406</a>    }
-<a href=#407 id=407 data-nosnippet>407</a>
-<a href=#408 id=408 data-nosnippet>408</a>    <span class="attr">#[test]
-<a href=#409 id=409 data-nosnippet>409</a>    </span><span class="kw">fn </span>t35_dense_oracle_matches_sparse_linear_and_signed_cubic_stencils() {
-<a href=#410 id=410 data-nosnippet>410</a>        <span class="kw">let </span>centres = [<span class="number">10.0</span>, <span class="number">20.0</span>, <span class="number">30.0</span>, <span class="number">40.0</span>];
-<a href=#411 id=411 data-nosnippet>411</a>        <span class="kw">let </span>linear = linear_terms(<span class="kw-2">&amp;</span>centres, <span class="kw-2">&amp;</span>[<span class="number">5.0</span>, <span class="number">15.0</span>, <span class="number">25.0</span>, <span class="number">35.0</span>, <span class="number">45.0</span>], <span class="number">25.0</span>);
-<a href=#412 id=412 data-nosnippet>412</a>        <span class="macro">assert_eq!</span>(
-<a href=#413 id=413 data-nosnippet>413</a>            linear
-<a href=#414 id=414 data-nosnippet>414</a>                .iter()
-<a href=#415 id=415 data-nosnippet>415</a>                .map(|term| (term.output_channel(), term.factor()))
-<a href=#416 id=416 data-nosnippet>416</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
-<a href=#417 id=417 data-nosnippet>417</a>            <span class="macro">vec!</span>[(<span class="number">1</span>, <span class="number">0.5</span>), (<span class="number">2</span>, <span class="number">0.5</span>)]
-<a href=#418 id=418 data-nosnippet>418</a>        );
-<a href=#419 id=419 data-nosnippet>419</a>
-<a href=#420 id=420 data-nosnippet>420</a>        <span class="kw">let </span>cubic = cubic_terms(<span class="kw-2">&amp;</span>centres, <span class="number">25.0</span>);
-<a href=#421 id=421 data-nosnippet>421</a>        <span class="kw">let </span>dense = cubic.iter().fold([<span class="number">0.0</span>; <span class="number">4</span>], |<span class="kw-2">mut </span>dense, term| {
-<a href=#422 id=422 data-nosnippet>422</a>            dense[term.output_channel() <span class="kw">as </span>usize] = term.factor();
-<a href=#423 id=423 data-nosnippet>423</a>            dense
-<a href=#424 id=424 data-nosnippet>424</a>        });
-<a href=#425 id=425 data-nosnippet>425</a>        <span class="macro">assert_eq!</span>(dense, [-<span class="number">0.0625</span>, <span class="number">0.5625</span>, <span class="number">0.5625</span>, -<span class="number">0.0625</span>]);
-<a href=#426 id=426 data-nosnippet>426</a>        <span class="kw">for </span>degree <span class="kw">in </span><span class="number">0_i32</span>..=<span class="number">3 </span>{
-<a href=#427 id=427 data-nosnippet>427</a>            <span class="kw">let </span>reconstructed = dense
-<a href=#428 id=428 data-nosnippet>428</a>                .iter()
-<a href=#429 id=429 data-nosnippet>429</a>                .zip(centres)
-<a href=#430 id=430 data-nosnippet>430</a>                .map(|(coefficient, centre)| coefficient * centre.powi(degree))
-<a href=#431 id=431 data-nosnippet>431</a>                .sum::&lt;f64&gt;();
-<a href=#432 id=432 data-nosnippet>432</a>            <span class="macro">assert!</span>((reconstructed - <span class="number">25.0_f64</span>.powi(degree)).abs() &lt; <span class="number">1.0e-9</span>);
-<a href=#433 id=433 data-nosnippet>433</a>        }
-<a href=#434 id=434 data-nosnippet>434</a>    }
-<a href=#435 id=435 data-nosnippet>435</a>
-<a href=#436 id=436 data-nosnippet>436</a>    <span class="attr">#[test]
-<a href=#437 id=437 data-nosnippet>437</a>    </span><span class="kw">fn </span>t40_one_channel_linear_sampling_degenerates_to_its_exact_constant_stencil() {
-<a href=#438 id=438 data-nosnippet>438</a>        <span class="kw">let </span>inside = linear_terms(<span class="kw-2">&amp;</span>[<span class="number">44.001e9</span>], <span class="kw-2">&amp;</span>[<span class="number">44.0005e9</span>, <span class="number">44.0015e9</span>], <span class="number">44.001e9</span>);
-<a href=#439 id=439 data-nosnippet>439</a>        <span class="macro">assert_eq!</span>(
-<a href=#440 id=440 data-nosnippet>440</a>            inside
-<a href=#441 id=441 data-nosnippet>441</a>                .iter()
-<a href=#442 id=442 data-nosnippet>442</a>                .map(|term| (term.output_channel(), term.factor()))
-<a href=#443 id=443 data-nosnippet>443</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
-<a href=#444 id=444 data-nosnippet>444</a>            <span class="macro">vec!</span>[(<span class="number">0</span>, <span class="number">1.0</span>)]
-<a href=#445 id=445 data-nosnippet>445</a>        );
-<a href=#446 id=446 data-nosnippet>446</a>        <span class="macro">assert!</span>(linear_terms(<span class="kw-2">&amp;</span>[<span class="number">44.001e9</span>], <span class="kw-2">&amp;</span>[<span class="number">44.0005e9</span>, <span class="number">44.0015e9</span>], <span class="number">44.002e9</span>).is_empty());
-<a href=#447 id=447 data-nosnippet>447</a>    }
-<a href=#448 id=448 data-nosnippet>448</a>
-<a href=#449 id=449 data-nosnippet>449</a>    <span class="attr">#[test]
-<a href=#450 id=450 data-nosnippet>450</a>    </span><span class="kw">fn </span>t36_descending_partial_overlap_and_planner_bounds_are_explicit() {
-<a href=#451 id=451 data-nosnippet>451</a>        <span class="kw">let </span>descending = [<span class="number">45.0</span>, <span class="number">35.0</span>, <span class="number">25.0</span>, <span class="number">15.0</span>, <span class="number">5.0</span>];
-<a href=#452 id=452 data-nosnippet>452</a>        <span class="kw">let </span>terms = integration_terms(
-<a href=#453 id=453 data-nosnippet>453</a>            <span class="kw-2">&amp;</span>descending,
-<a href=#454 id=454 data-nosnippet>454</a>            [<span class="number">42.0</span>, <span class="number">28.0</span>],
-<a href=#455 id=455 data-nosnippet>455</a>            SpectralEdgePolicy::PartialOverlap,
-<a href=#456 id=456 data-nosnippet>456</a>            <span class="number">2</span>,
-<a href=#457 id=457 data-nosnippet>457</a>            <span class="number">35.0</span>,
-<a href=#458 id=458 data-nosnippet>458</a>        )
-<a href=#459 id=459 data-nosnippet>459</a>        .unwrap();
-<a href=#460 id=460 data-nosnippet>460</a>        <span class="macro">assert_eq!</span>(
-<a href=#461 id=461 data-nosnippet>461</a>            terms
-<a href=#462 id=462 data-nosnippet>462</a>                .iter()
-<a href=#463 id=463 data-nosnippet>463</a>                .map(|term| (term.output_channel(), term.factor()))
-<a href=#464 id=464 data-nosnippet>464</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
-<a href=#465 id=465 data-nosnippet>465</a>            <span class="macro">vec!</span>[(<span class="number">0</span>, <span class="number">0.7</span>), (<span class="number">1</span>, <span class="number">0.7</span>)]
-<a href=#466 id=466 data-nosnippet>466</a>        );
-<a href=#467 id=467 data-nosnippet>467</a>        <span class="macro">assert_eq!</span>(
-<a href=#468 id=468 data-nosnippet>468</a>            integration_terms(
-<a href=#469 id=469 data-nosnippet>469</a>                <span class="kw-2">&amp;</span>descending,
-<a href=#470 id=470 data-nosnippet>470</a>                [<span class="number">42.0</span>, <span class="number">18.0</span>],
-<a href=#471 id=471 data-nosnippet>471</a>                SpectralEdgePolicy::PartialOverlap,
-<a href=#472 id=472 data-nosnippet>472</a>                <span class="number">2</span>,
-<a href=#473 id=473 data-nosnippet>473</a>                <span class="number">30.0</span>,
-<a href=#474 id=474 data-nosnippet>474</a>            ),
-<a href=#475 id=475 data-nosnippet>475</a>            <span class="prelude-val">Err</span>(SpectralStencilError::PlannerTermBound)
-<a href=#476 id=476 data-nosnippet>476</a>        );
-<a href=#477 id=477 data-nosnippet>477</a>    }
-<a href=#478 id=478 data-nosnippet>478</a>
-<a href=#479 id=479 data-nosnippet>479</a>    <span class="attr">#[test]
-<a href=#480 id=480 data-nosnippet>480</a>    </span><span class="kw">fn </span>t36_edge_validity_and_source_channel_order_are_deterministic() {
-<a href=#481 id=481 data-nosnippet>481</a>        <span class="macro">assert!</span>(linear_terms(<span class="kw-2">&amp;</span>[<span class="number">30.0</span>, <span class="number">20.0</span>, <span class="number">10.0</span>], <span class="kw-2">&amp;</span>[<span class="number">35.0</span>, <span class="number">25.0</span>, <span class="number">15.0</span>, <span class="number">5.0</span>], <span class="number">35.0</span>).is_empty());
-<a href=#482 id=482 data-nosnippet>482</a>        <span class="macro">assert_eq!</span>(
-<a href=#483 id=483 data-nosnippet>483</a>            linear_terms(<span class="kw-2">&amp;</span>[<span class="number">30.0</span>, <span class="number">20.0</span>, <span class="number">10.0</span>], <span class="kw-2">&amp;</span>[<span class="number">35.0</span>, <span class="number">25.0</span>, <span class="number">15.0</span>, <span class="number">5.0</span>], <span class="number">25.0</span>)
-<a href=#484 id=484 data-nosnippet>484</a>                .iter()
-<a href=#485 id=485 data-nosnippet>485</a>                .map(|term| term.output_channel())
-<a href=#486 id=486 data-nosnippet>486</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
-<a href=#487 id=487 data-nosnippet>487</a>            <span class="macro">vec!</span>[<span class="number">0</span>, <span class="number">1</span>]
-<a href=#488 id=488 data-nosnippet>488</a>        );
-<a href=#489 id=489 data-nosnippet>489</a>        <span class="macro">assert!</span>(cubic_terms(<span class="kw-2">&amp;</span>[<span class="number">10.0</span>, <span class="number">20.0</span>, <span class="number">30.0</span>], <span class="number">15.0</span>).is_empty());
-<a href=#490 id=490 data-nosnippet>490</a>    }
-<a href=#491 id=491 data-nosnippet>491</a>
-<a href=#492 id=492 data-nosnippet>492</a>    <span class="attr">#[cfg(feature = <span class="string">"cpp-interop-tests"</span>)]
-<a href=#493 id=493 data-nosnippet>493</a>    #[test]
-<a href=#494 id=494 data-nosnippet>494</a>    </span><span class="kw">fn </span>t36_nearest_linear_cubic_edge_and_covariance_match_casacore_oracles() {
-<a href=#495 id=495 data-nosnippet>495</a>        <span class="kw">use </span>casa_imaging_model::SpectralSamplingLaw;
-<a href=#496 id=496 data-nosnippet>496</a>        <span class="kw">use </span>casa_test_support::spectral_interop::{
-<a href=#497 id=497 data-nosnippet>497</a>            SpectralInterpolationMethod, SpectralInterpolationOracle,
-<a href=#498 id=498 data-nosnippet>498</a>        };
-<a href=#499 id=499 data-nosnippet>499</a>
-<a href=#500 id=500 data-nosnippet>500</a>        <span class="kw">let </span>centres = [<span class="number">10.0</span>, <span class="number">20.0</span>, <span class="number">30.0</span>, <span class="number">40.0</span>];
-<a href=#501 id=501 data-nosnippet>501</a>        <span class="kw">let </span>boundaries = [<span class="number">5.0</span>, <span class="number">15.0</span>, <span class="number">25.0</span>, <span class="number">35.0</span>, <span class="number">45.0</span>];
-<a href=#502 id=502 data-nosnippet>502</a>        <span class="kw">let </span>cases = [
-<a href=#503 id=503 data-nosnippet>503</a>            (
-<a href=#504 id=504 data-nosnippet>504</a>                SpectralInterpolationMethod::Nearest,
-<a href=#505 id=505 data-nosnippet>505</a>                nearest_terms(<span class="kw-2">&amp;</span>centres, <span class="kw-2">&amp;</span>boundaries, <span class="number">26.0</span>),
-<a href=#506 id=506 data-nosnippet>506</a>                <span class="number">26.0</span>,
-<a href=#507 id=507 data-nosnippet>507</a>            ),
-<a href=#508 id=508 data-nosnippet>508</a>            (
-<a href=#509 id=509 data-nosnippet>509</a>                SpectralInterpolationMethod::Linear,
-<a href=#510 id=510 data-nosnippet>510</a>                linear_terms(<span class="kw-2">&amp;</span>centres, <span class="kw-2">&amp;</span>boundaries, <span class="number">25.0</span>),
-<a href=#511 id=511 data-nosnippet>511</a>                <span class="number">25.0</span>,
-<a href=#512 id=512 data-nosnippet>512</a>            ),
-<a href=#513 id=513 data-nosnippet>513</a>            (
-<a href=#514 id=514 data-nosnippet>514</a>                SpectralInterpolationMethod::Cubic,
-<a href=#515 id=515 data-nosnippet>515</a>                cubic_terms(<span class="kw-2">&amp;</span>centres, <span class="number">25.0</span>),
-<a href=#516 id=516 data-nosnippet>516</a>                <span class="number">25.0</span>,
-<a href=#517 id=517 data-nosnippet>517</a>            ),
-<a href=#518 id=518 data-nosnippet>518</a>        ];
-<a href=#519 id=519 data-nosnippet>519</a>        <span class="kw">for </span>(method, rust, coordinate) <span class="kw">in </span>cases {
-<a href=#520 id=520 data-nosnippet>520</a>            <span class="kw">let </span>casa = SpectralInterpolationOracle::coefficients(<span class="kw-2">&amp;</span>centres, coordinate, method)
-<a href=#521 id=521 data-nosnippet>521</a>                .expect(<span class="string">"CASA/casacore spectral coefficient oracle"</span>);
-<a href=#522 id=522 data-nosnippet>522</a>            <span class="macro">assert!</span>(casa.valid);
-<a href=#523 id=523 data-nosnippet>523</a>            <span class="kw">let </span>dense = rust.iter().fold([<span class="number">0.0</span>; <span class="number">4</span>], |<span class="kw-2">mut </span>dense, term| {
-<a href=#524 id=524 data-nosnippet>524</a>                dense[term.output_channel() <span class="kw">as </span>usize] = term.factor();
-<a href=#525 id=525 data-nosnippet>525</a>                dense
-<a href=#526 id=526 data-nosnippet>526</a>            });
-<a href=#527 id=527 data-nosnippet>527</a>            <span class="macro">assert_eq!</span>(dense.as_slice(), casa.coefficients.as_slice());
-<a href=#528 id=528 data-nosnippet>528</a>        }
-<a href=#529 id=529 data-nosnippet>529</a>
-<a href=#530 id=530 data-nosnippet>530</a>        <span class="kw">for </span>method <span class="kw">in </span>[
-<a href=#531 id=531 data-nosnippet>531</a>            SpectralInterpolationMethod::Nearest,
-<a href=#532 id=532 data-nosnippet>532</a>            SpectralInterpolationMethod::Linear,
-<a href=#533 id=533 data-nosnippet>533</a>            SpectralInterpolationMethod::Cubic,
-<a href=#534 id=534 data-nosnippet>534</a>        ] {
-<a href=#535 id=535 data-nosnippet>535</a>            <span class="kw">let </span>edge = SpectralInterpolationOracle::coefficients(<span class="kw-2">&amp;</span>centres, <span class="number">45.1</span>, method)
-<a href=#536 id=536 data-nosnippet>536</a>                .expect(<span class="string">"CASA/casacore edge oracle"</span>);
-<a href=#537 id=537 data-nosnippet>537</a>            <span class="macro">assert!</span>(!edge.valid);
-<a href=#538 id=538 data-nosnippet>538</a>            <span class="macro">assert!</span>(
-<a href=#539 id=539 data-nosnippet>539</a>                edge.coefficients
-<a href=#540 id=540 data-nosnippet>540</a>                    .iter()
-<a href=#541 id=541 data-nosnippet>541</a>                    .all(|coefficient| <span class="kw-2">*</span>coefficient == <span class="number">0.0</span>)
-<a href=#542 id=542 data-nosnippet>542</a>            );
-<a href=#543 id=543 data-nosnippet>543</a>        }
-<a href=#544 id=544 data-nosnippet>544</a>        <span class="macro">assert!</span>(nearest_terms(<span class="kw-2">&amp;</span>centres, <span class="kw-2">&amp;</span>boundaries, <span class="number">45.1</span>).is_empty());
-<a href=#545 id=545 data-nosnippet>545</a>        <span class="macro">assert!</span>(linear_terms(<span class="kw-2">&amp;</span>centres, <span class="kw-2">&amp;</span>boundaries, <span class="number">45.1</span>).is_empty());
-<a href=#546 id=546 data-nosnippet>546</a>        <span class="macro">assert!</span>(cubic_terms(<span class="kw-2">&amp;</span>centres, <span class="number">45.1</span>).is_empty());
-<a href=#547 id=547 data-nosnippet>547</a>
-<a href=#548 id=548 data-nosnippet>548</a>        <span class="kw">let </span>integrated = integration_terms(
-<a href=#549 id=549 data-nosnippet>549</a>            <span class="kw-2">&amp;</span>boundaries,
-<a href=#550 id=550 data-nosnippet>550</a>            [<span class="number">12.0</span>, <span class="number">28.0</span>],
-<a href=#551 id=551 data-nosnippet>551</a>            SpectralEdgePolicy::PartialOverlap,
-<a href=#552 id=552 data-nosnippet>552</a>            <span class="number">3</span>,
-<a href=#553 id=553 data-nosnippet>553</a>            <span class="number">20.0</span>,
-<a href=#554 id=554 data-nosnippet>554</a>        )
-<a href=#555 id=555 data-nosnippet>555</a>        .expect(<span class="string">"bounded partial-overlap integration"</span>);
-<a href=#556 id=556 data-nosnippet>556</a>        <span class="macro">assert_eq!</span>(
-<a href=#557 id=557 data-nosnippet>557</a>            integrated
-<a href=#558 id=558 data-nosnippet>558</a>                .iter()
-<a href=#559 id=559 data-nosnippet>559</a>                .map(|term| (term.output_channel(), term.factor()))
-<a href=#560 id=560 data-nosnippet>560</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
-<a href=#561 id=561 data-nosnippet>561</a>            <span class="macro">vec!</span>[(<span class="number">0</span>, <span class="number">0.3</span>), (<span class="number">1</span>, <span class="number">1.0</span>), (<span class="number">2</span>, <span class="number">0.3</span>)]
-<a href=#562 id=562 data-nosnippet>562</a>        );
-<a href=#563 id=563 data-nosnippet>563</a>        <span class="macro">assert_eq!</span>(
-<a href=#564 id=564 data-nosnippet>564</a>            SpectralSamplingLaw::NEAREST.covariance(),
-<a href=#565 id=565 data-nosnippet>565</a>            SpectralCovariance::PropagateIndependentSourceNoise
-<a href=#566 id=566 data-nosnippet>566</a>        );
-<a href=#567 id=567 data-nosnippet>567</a>        <span class="macro">assert_eq!</span>(
-<a href=#568 id=568 data-nosnippet>568</a>            SpectralSamplingLaw::LINEAR.covariance(),
-<a href=#569 id=569 data-nosnippet>569</a>            SpectralCovariance::PropagateIndependentSourceNoise
-<a href=#570 id=570 data-nosnippet>570</a>        );
-<a href=#571 id=571 data-nosnippet>571</a>        <span class="macro">assert_eq!</span>(
-<a href=#572 id=572 data-nosnippet>572</a>            SpectralSamplingLaw::CUBIC.covariance(),
-<a href=#573 id=573 data-nosnippet>573</a>            SpectralCovariance::PropagateIndependentSourceNoise
-<a href=#574 id=574 data-nosnippet>574</a>        );
-<a href=#575 id=575 data-nosnippet>575</a>        <span class="macro">assert_eq!</span>(
-<a href=#576 id=576 data-nosnippet>576</a>            SpectralSamplingLaw::channel_integration(<span class="number">3</span>).covariance(),
-<a href=#577 id=577 data-nosnippet>577</a>            SpectralCovariance::PropagateIndependentSourceNoise
-<a href=#578 id=578 data-nosnippet>578</a>        );
-<a href=#579 id=579 data-nosnippet>579</a>    }
-<a href=#580 id=580 data-nosnippet>580</a>}
+<a href=#91 id=91 data-nosnippet>91</a>        ReconstructionBasis::Constant | ReconstructionBasis::Taylor { .. } =&gt; {
+<a href=#92 id=92 data-nosnippet>92</a>            one_term(<span class="number">0</span>, <span class="number">1.0</span>, frequency_hz)<span class="question-mark">?
+<a href=#93 id=93 data-nosnippet>93</a>        </span>}
+<a href=#94 id=94 data-nosnippet>94</a>        ReconstructionBasis::ChannelLocal { .. } =&gt; {
+<a href=#95 id=95 data-nosnippet>95</a>            channel_local_terms(problem, sample, evaluation, frequency_hz)<span class="question-mark">?
+<a href=#96 id=96 data-nosnippet>96</a>        </span>}
+<a href=#97 id=97 data-nosnippet>97</a>    };
+<a href=#98 id=98 data-nosnippet>98</a>    <span class="kw">let </span>contributions = SelectedSpectralContributions::new(terms)
+<a href=#99 id=99 data-nosnippet>99</a>        .ok_or(SpectralStencilError::InvalidCoefficients)<span class="question-mark">?</span>;
+<a href=#100 id=100 data-nosnippet>100</a>    <span class="kw">let </span>validity = <span class="kw">if </span>!evaluation.is_valid() {
+<a href=#101 id=101 data-nosnippet>101</a>        SpectralStencilValidity::Flagged
+<a href=#102 id=102 data-nosnippet>102</a>    } <span class="kw">else if </span>contributions.is_empty() {
+<a href=#103 id=103 data-nosnippet>103</a>        SpectralStencilValidity::Unmapped
+<a href=#104 id=104 data-nosnippet>104</a>    } <span class="kw">else </span>{
+<a href=#105 id=105 data-nosnippet>105</a>        SpectralStencilValidity::Mapped
+<a href=#106 id=106 data-nosnippet>106</a>    };
+<a href=#107 id=107 data-nosnippet>107</a>    <span class="prelude-val">Ok</span>(receipt(
+<a href=#108 id=108 data-nosnippet>108</a>        contributions,
+<a href=#109 id=109 data-nosnippet>109</a>        evaluation,
+<a href=#110 id=110 data-nosnippet>110</a>        validity,
+<a href=#111 id=111 data-nosnippet>111</a>        law.covariance(),
+<a href=#112 id=112 data-nosnippet>112</a>    ))
+<a href=#113 id=113 data-nosnippet>113</a>}
+<a href=#114 id=114 data-nosnippet>114</a>
+<a href=#115 id=115 data-nosnippet>115</a><span class="kw">fn </span>channel_local_terms(
+<a href=#116 id=116 data-nosnippet>116</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
+<a href=#117 id=117 data-nosnippet>117</a>    sample: SelectedObservationSampleView&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#118 id=118 data-nosnippet>118</a>    evaluation: SelectedSpectralEvaluation,
+<a href=#119 id=119 data-nosnippet>119</a>    frequency_hz: f64,
+<a href=#120 id=120 data-nosnippet>120</a>) -&gt; <span class="prelude-ty">Result</span>&lt;SmallVec&lt;[SelectedSpectralContribution; <span class="number">4</span>]&gt;, SpectralStencilError&gt; {
+<a href=#121 id=121 data-nosnippet>121</a>    <span class="kw">let </span>law = problem.science().spectral().sampling();
+<a href=#122 id=122 data-nosnippet>122</a>    <span class="kw">let </span>spectral = problem.geometry().spectral();
+<a href=#123 id=123 data-nosnippet>123</a>    <span class="kw">let </span>centres = (<span class="number">0</span>..spectral.output_channels())
+<a href=#124 id=124 data-nosnippet>124</a>        .map(|channel| spectral.channel_centre_hz(channel))
+<a href=#125 id=125 data-nosnippet>125</a>        .collect::&lt;<span class="prelude-ty">Option</span>&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;&gt;()
+<a href=#126 id=126 data-nosnippet>126</a>        .ok_or(SpectralStencilError::InvalidOutputGeometry)<span class="question-mark">?</span>;
+<a href=#127 id=127 data-nosnippet>127</a>    <span class="kw">let </span>boundaries = (<span class="number">0</span>..=spectral.output_channels())
+<a href=#128 id=128 data-nosnippet>128</a>        .map(|boundary| spectral.channel_boundary_hz(boundary))
+<a href=#129 id=129 data-nosnippet>129</a>        .collect::&lt;<span class="prelude-ty">Option</span>&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;&gt;()
+<a href=#130 id=130 data-nosnippet>130</a>        .ok_or(SpectralStencilError::InvalidOutputGeometry)<span class="question-mark">?</span>;
+<a href=#131 id=131 data-nosnippet>131</a>    validate_axis(<span class="kw-2">&amp;</span>centres, <span class="kw-2">&amp;</span>boundaries)<span class="question-mark">?</span>;
+<a href=#132 id=132 data-nosnippet>132</a>    <span class="kw">match </span>law.kernel() {
+<a href=#133 id=133 data-nosnippet>133</a>        SpectralKernel::Identity =&gt; identity_terms(problem, sample, frequency_hz),
+<a href=#134 id=134 data-nosnippet>134</a>        SpectralKernel::Nearest =&gt; <span class="prelude-val">Ok</span>(nearest_terms(<span class="kw-2">&amp;</span>centres, <span class="kw-2">&amp;</span>boundaries, frequency_hz)),
+<a href=#135 id=135 data-nosnippet>135</a>        SpectralKernel::Linear =&gt; <span class="prelude-val">Ok</span>(linear_terms(<span class="kw-2">&amp;</span>centres, <span class="kw-2">&amp;</span>boundaries, frequency_hz)),
+<a href=#136 id=136 data-nosnippet>136</a>        SpectralKernel::Cubic =&gt; <span class="prelude-val">Ok</span>(cubic_terms(<span class="kw-2">&amp;</span>centres, frequency_hz)),
+<a href=#137 id=137 data-nosnippet>137</a>        SpectralKernel::ChannelIntegration { maximum_terms } =&gt; integration_terms(
+<a href=#138 id=138 data-nosnippet>138</a>            <span class="kw-2">&amp;</span>boundaries,
+<a href=#139 id=139 data-nosnippet>139</a>            evaluation.output_frame().boundaries_hz(),
+<a href=#140 id=140 data-nosnippet>140</a>            law.edge_policy(),
+<a href=#141 id=141 data-nosnippet>141</a>            maximum_terms,
+<a href=#142 id=142 data-nosnippet>142</a>            frequency_hz,
+<a href=#143 id=143 data-nosnippet>143</a>        ),
+<a href=#144 id=144 data-nosnippet>144</a>    }
+<a href=#145 id=145 data-nosnippet>145</a>}
+<a href=#146 id=146 data-nosnippet>146</a>
+<a href=#147 id=147 data-nosnippet>147</a><span class="kw">fn </span>receipt(
+<a href=#148 id=148 data-nosnippet>148</a>    contributions: SelectedSpectralContributions,
+<a href=#149 id=149 data-nosnippet>149</a>    evaluation: SelectedSpectralEvaluation,
+<a href=#150 id=150 data-nosnippet>150</a>    validity: SpectralStencilValidity,
+<a href=#151 id=151 data-nosnippet>151</a>    covariance: SpectralCovariance,
+<a href=#152 id=152 data-nosnippet>152</a>) -&gt; SpectralStencilReceipt {
+<a href=#153 id=153 data-nosnippet>153</a>    SpectralStencilReceipt {
+<a href=#154 id=154 data-nosnippet>154</a>        contributions,
+<a href=#155 id=155 data-nosnippet>155</a>        evaluation,
+<a href=#156 id=156 data-nosnippet>156</a>        validity,
+<a href=#157 id=157 data-nosnippet>157</a>        covariance,
+<a href=#158 id=158 data-nosnippet>158</a>    }
+<a href=#159 id=159 data-nosnippet>159</a>}
+<a href=#160 id=160 data-nosnippet>160</a>
+<a href=#161 id=161 data-nosnippet>161</a><span class="kw">fn </span>validate_axis(centres: <span class="kw-2">&amp;</span>[f64], boundaries: <span class="kw-2">&amp;</span>[f64]) -&gt; <span class="prelude-ty">Result</span>&lt;(), SpectralStencilError&gt; {
+<a href=#162 id=162 data-nosnippet>162</a>    <span class="kw">if </span>centres.is_empty()
+<a href=#163 id=163 data-nosnippet>163</a>        || boundaries.len() != centres.len() + <span class="number">1
+<a href=#164 id=164 data-nosnippet>164</a>        </span>|| centres
+<a href=#165 id=165 data-nosnippet>165</a>            .iter()
+<a href=#166 id=166 data-nosnippet>166</a>            .chain(boundaries)
+<a href=#167 id=167 data-nosnippet>167</a>            .any(|value| !value.is_finite() || <span class="kw-2">*</span>value &lt;= <span class="number">0.0</span>)
+<a href=#168 id=168 data-nosnippet>168</a>    {
+<a href=#169 id=169 data-nosnippet>169</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(SpectralStencilError::InvalidOutputGeometry);
+<a href=#170 id=170 data-nosnippet>170</a>    }
+<a href=#171 id=171 data-nosnippet>171</a>    <span class="kw">let </span>direction = (centres[centres.len() - <span class="number">1</span>] - centres[<span class="number">0</span>]).signum();
+<a href=#172 id=172 data-nosnippet>172</a>    <span class="kw">if </span>centres.len() &gt; <span class="number">1
+<a href=#173 id=173 data-nosnippet>173</a>        </span>&amp;&amp; (direction == <span class="number">0.0
+<a href=#174 id=174 data-nosnippet>174</a>            </span>|| centres
+<a href=#175 id=175 data-nosnippet>175</a>                .windows(<span class="number">2</span>)
+<a href=#176 id=176 data-nosnippet>176</a>                .any(|pair| (pair[<span class="number">1</span>] - pair[<span class="number">0</span>]).signum() != direction))
+<a href=#177 id=177 data-nosnippet>177</a>    {
+<a href=#178 id=178 data-nosnippet>178</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(SpectralStencilError::InvalidOutputGeometry);
+<a href=#179 id=179 data-nosnippet>179</a>    }
+<a href=#180 id=180 data-nosnippet>180</a>    <span class="prelude-val">Ok</span>(())
+<a href=#181 id=181 data-nosnippet>181</a>}
+<a href=#182 id=182 data-nosnippet>182</a>
+<a href=#183 id=183 data-nosnippet>183</a><span class="kw">fn </span>identity_terms(
+<a href=#184 id=184 data-nosnippet>184</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
+<a href=#185 id=185 data-nosnippet>185</a>    sample: SelectedObservationSampleView&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#186 id=186 data-nosnippet>186</a>    frequency_hz: f64,
+<a href=#187 id=187 data-nosnippet>187</a>) -&gt; <span class="prelude-ty">Result</span>&lt;SmallVec&lt;[SelectedSpectralContribution; <span class="number">4</span>]&gt;, SpectralStencilError&gt; {
+<a href=#188 id=188 data-nosnippet>188</a>    <span class="kw">let </span>address = sample.address();
+<a href=#189 id=189 data-nosnippet>189</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(transform) = problem.visibility_transform()
+<a href=#190 id=190 data-nosnippet>190</a>        &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(rule) = transform.rule(sample.metadata().field_id, address.spectral_window_id)
+<a href=#191 id=191 data-nosnippet>191</a>    {
+<a href=#192 id=192 data-nosnippet>192</a>        <span class="kw">let </span>ordinal = rule
+<a href=#193 id=193 data-nosnippet>193</a>            .channels()
+<a href=#194 id=194 data-nosnippet>194</a>            .iter()
+<a href=#195 id=195 data-nosnippet>195</a>            .filter(|channel| channel.use_role().contributes_to_output())
+<a href=#196 id=196 data-nosnippet>196</a>            .position(|channel| channel.channel_index() == address.channel_index)
+<a href=#197 id=197 data-nosnippet>197</a>            .ok_or(SpectralStencilError::IdentitySourceMismatch)<span class="question-mark">?</span>;
+<a href=#198 id=198 data-nosnippet>198</a>        <span class="kw">if </span>ordinal &gt;= problem.geometry().spectral().output_channels() {
+<a href=#199 id=199 data-nosnippet>199</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(SmallVec::new());
+<a href=#200 id=200 data-nosnippet>200</a>        }
+<a href=#201 id=201 data-nosnippet>201</a>        <span class="kw">return </span>one_term(ordinal, <span class="number">1.0</span>, frequency_hz);
+<a href=#202 id=202 data-nosnippet>202</a>    }
+<a href=#203 id=203 data-nosnippet>203</a>    <span class="kw">let </span>source = problem
+<a href=#204 id=204 data-nosnippet>204</a>        .inputs()
+<a href=#205 id=205 data-nosnippet>205</a>        .observation_snapshot()
+<a href=#206 id=206 data-nosnippet>206</a>        .sources()
+<a href=#207 id=207 data-nosnippet>207</a>        .iter()
+<a href=#208 id=208 data-nosnippet>208</a>        .find(|source| source.identity() == address.measurement_set)
+<a href=#209 id=209 data-nosnippet>209</a>        .ok_or(SpectralStencilError::IdentitySourceMismatch)<span class="question-mark">?</span>;
+<a href=#210 id=210 data-nosnippet>210</a>    <span class="kw">let </span>selection = source
+<a href=#211 id=211 data-nosnippet>211</a>        .selection()
+<a href=#212 id=212 data-nosnippet>212</a>        .spectral_windows()
+<a href=#213 id=213 data-nosnippet>213</a>        .iter()
+<a href=#214 id=214 data-nosnippet>214</a>        .find(|selection| selection.spectral_window_id() == address.spectral_window_id)
+<a href=#215 id=215 data-nosnippet>215</a>        .ok_or(SpectralStencilError::IdentitySourceMismatch)<span class="question-mark">?</span>;
+<a href=#216 id=216 data-nosnippet>216</a>    <span class="kw">let </span>ordinal = selection
+<a href=#217 id=217 data-nosnippet>217</a>        .channel_indices()
+<a href=#218 id=218 data-nosnippet>218</a>        .iter()
+<a href=#219 id=219 data-nosnippet>219</a>        .position(|channel| <span class="kw-2">*</span>channel == address.channel_index)
+<a href=#220 id=220 data-nosnippet>220</a>        .ok_or(SpectralStencilError::IdentitySourceMismatch)<span class="question-mark">?</span>;
+<a href=#221 id=221 data-nosnippet>221</a>    <span class="kw">if </span>ordinal &gt;= problem.geometry().spectral().output_channels() {
+<a href=#222 id=222 data-nosnippet>222</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(SmallVec::new());
+<a href=#223 id=223 data-nosnippet>223</a>    }
+<a href=#224 id=224 data-nosnippet>224</a>    one_term(ordinal, <span class="number">1.0</span>, frequency_hz)
+<a href=#225 id=225 data-nosnippet>225</a>}
+<a href=#226 id=226 data-nosnippet>226</a>
+<a href=#227 id=227 data-nosnippet>227</a><span class="kw">fn </span>nearest_terms(
+<a href=#228 id=228 data-nosnippet>228</a>    centres: <span class="kw-2">&amp;</span>[f64],
+<a href=#229 id=229 data-nosnippet>229</a>    boundaries: <span class="kw-2">&amp;</span>[f64],
+<a href=#230 id=230 data-nosnippet>230</a>    frequency_hz: f64,
+<a href=#231 id=231 data-nosnippet>231</a>) -&gt; SmallVec&lt;[SelectedSpectralContribution; <span class="number">4</span>]&gt; {
+<a href=#232 id=232 data-nosnippet>232</a>    <span class="kw">let </span><span class="prelude-val">Some</span>((index, <span class="kw">_</span>)) = centres.iter().enumerate().min_by(|(<span class="kw">_</span>, left), (<span class="kw">_</span>, right)| {
+<a href=#233 id=233 data-nosnippet>233</a>        (<span class="kw-2">*</span>left - frequency_hz)
+<a href=#234 id=234 data-nosnippet>234</a>            .abs()
+<a href=#235 id=235 data-nosnippet>235</a>            .total_cmp(<span class="kw-2">&amp;</span>(<span class="kw-2">*</span>right - frequency_hz).abs())
+<a href=#236 id=236 data-nosnippet>236</a>    }) <span class="kw">else </span>{
+<a href=#237 id=237 data-nosnippet>237</a>        <span class="kw">return </span>SmallVec::new();
+<a href=#238 id=238 data-nosnippet>238</a>    };
+<a href=#239 id=239 data-nosnippet>239</a>    <span class="kw">let </span>low = boundaries[index].min(boundaries[index + <span class="number">1</span>]);
+<a href=#240 id=240 data-nosnippet>240</a>    <span class="kw">let </span>high = boundaries[index].max(boundaries[index + <span class="number">1</span>]);
+<a href=#241 id=241 data-nosnippet>241</a>    <span class="kw">if </span>!(low..=high).contains(<span class="kw-2">&amp;</span>frequency_hz) {
+<a href=#242 id=242 data-nosnippet>242</a>        <span class="kw">return </span>SmallVec::new();
+<a href=#243 id=243 data-nosnippet>243</a>    }
+<a href=#244 id=244 data-nosnippet>244</a>    one_term(index, <span class="number">1.0</span>, frequency_hz).unwrap_or_default()
+<a href=#245 id=245 data-nosnippet>245</a>}
+<a href=#246 id=246 data-nosnippet>246</a>
+<a href=#247 id=247 data-nosnippet>247</a><span class="kw">fn </span>linear_terms(
+<a href=#248 id=248 data-nosnippet>248</a>    centres: <span class="kw-2">&amp;</span>[f64],
+<a href=#249 id=249 data-nosnippet>249</a>    boundaries: <span class="kw-2">&amp;</span>[f64],
+<a href=#250 id=250 data-nosnippet>250</a>    frequency_hz: f64,
+<a href=#251 id=251 data-nosnippet>251</a>) -&gt; SmallVec&lt;[SelectedSpectralContribution; <span class="number">4</span>]&gt; {
+<a href=#252 id=252 data-nosnippet>252</a>    <span class="kw">if </span>centres.len() == <span class="number">1 </span>{
+<a href=#253 id=253 data-nosnippet>253</a>        <span class="kw">return </span>nearest_terms(centres, boundaries, frequency_hz);
+<a href=#254 id=254 data-nosnippet>254</a>    }
+<a href=#255 id=255 data-nosnippet>255</a>    interpolation_interval(centres, frequency_hz)
+<a href=#256 id=256 data-nosnippet>256</a>        .and_then(|index| {
+<a href=#257 id=257 data-nosnippet>257</a>            <span class="kw">let </span>first = centres[index];
+<a href=#258 id=258 data-nosnippet>258</a>            <span class="kw">let </span>second = centres[index + <span class="number">1</span>];
+<a href=#259 id=259 data-nosnippet>259</a>            <span class="kw">let </span>upper = (frequency_hz - first) / (second - first);
+<a href=#260 id=260 data-nosnippet>260</a>            sparse_terms([(index, <span class="number">1.0 </span>- upper), (index + <span class="number">1</span>, upper)], frequency_hz)
+<a href=#261 id=261 data-nosnippet>261</a>        })
+<a href=#262 id=262 data-nosnippet>262</a>        .unwrap_or_default()
+<a href=#263 id=263 data-nosnippet>263</a>}
+<a href=#264 id=264 data-nosnippet>264</a>
+<a href=#265 id=265 data-nosnippet>265</a><span class="kw">fn </span>cubic_terms(centres: <span class="kw-2">&amp;</span>[f64], frequency_hz: f64) -&gt; SmallVec&lt;[SelectedSpectralContribution; <span class="number">4</span>]&gt; {
+<a href=#266 id=266 data-nosnippet>266</a>    <span class="kw">if </span>centres.len() &lt; <span class="number">4 </span>{
+<a href=#267 id=267 data-nosnippet>267</a>        <span class="kw">return </span>SmallVec::new();
+<a href=#268 id=268 data-nosnippet>268</a>    }
+<a href=#269 id=269 data-nosnippet>269</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(interval) = interpolation_interval(centres, frequency_hz) <span class="kw">else </span>{
+<a href=#270 id=270 data-nosnippet>270</a>        <span class="kw">return </span>SmallVec::new();
+<a href=#271 id=271 data-nosnippet>271</a>    };
+<a href=#272 id=272 data-nosnippet>272</a>    <span class="kw">let </span>bracket = interval + <span class="number">1</span>;
+<a href=#273 id=273 data-nosnippet>273</a>    <span class="kw">let </span>start = <span class="kw">if </span>bracket &gt; <span class="number">1 </span>&amp;&amp; bracket &lt; centres.len() - <span class="number">1 </span>{
+<a href=#274 id=274 data-nosnippet>274</a>        bracket - <span class="number">2
+<a href=#275 id=275 data-nosnippet>275</a>    </span>} <span class="kw">else if </span>bracket &lt;= <span class="number">1 </span>{
+<a href=#276 id=276 data-nosnippet>276</a>        <span class="number">0
+<a href=#277 id=277 data-nosnippet>277</a>    </span>} <span class="kw">else </span>{
+<a href=#278 id=278 data-nosnippet>278</a>        centres.len() - <span class="number">4
+<a href=#279 id=279 data-nosnippet>279</a>    </span>};
+<a href=#280 id=280 data-nosnippet>280</a>    <span class="kw">let </span><span class="kw-2">mut </span>terms = SmallVec::&lt;[(usize, f64); <span class="number">4</span>]&gt;::new();
+<a href=#281 id=281 data-nosnippet>281</a>    <span class="kw">for </span>index <span class="kw">in </span>start..start + <span class="number">4 </span>{
+<a href=#282 id=282 data-nosnippet>282</a>        <span class="kw">let </span><span class="kw-2">mut </span>coefficient = <span class="number">1.0</span>;
+<a href=#283 id=283 data-nosnippet>283</a>        <span class="kw">for </span>other <span class="kw">in </span>start..start + <span class="number">4 </span>{
+<a href=#284 id=284 data-nosnippet>284</a>            <span class="kw">if </span>other != index {
+<a href=#285 id=285 data-nosnippet>285</a>                coefficient <span class="kw-2">*</span>= (frequency_hz - centres[other]) / (centres[index] - centres[other]);
+<a href=#286 id=286 data-nosnippet>286</a>            }
+<a href=#287 id=287 data-nosnippet>287</a>        }
+<a href=#288 id=288 data-nosnippet>288</a>        terms.push((index, coefficient));
+<a href=#289 id=289 data-nosnippet>289</a>    }
+<a href=#290 id=290 data-nosnippet>290</a>    sparse_terms(terms, frequency_hz).unwrap_or_default()
+<a href=#291 id=291 data-nosnippet>291</a>}
+<a href=#292 id=292 data-nosnippet>292</a>
+<a href=#293 id=293 data-nosnippet>293</a><span class="kw">fn </span>integration_terms(
+<a href=#294 id=294 data-nosnippet>294</a>    output_boundaries_hz: <span class="kw-2">&amp;</span>[f64],
+<a href=#295 id=295 data-nosnippet>295</a>    source_boundaries_hz: [f64; <span class="number">2</span>],
+<a href=#296 id=296 data-nosnippet>296</a>    edge_policy: SpectralEdgePolicy,
+<a href=#297 id=297 data-nosnippet>297</a>    maximum_terms: usize,
+<a href=#298 id=298 data-nosnippet>298</a>    frequency_hz: f64,
+<a href=#299 id=299 data-nosnippet>299</a>) -&gt; <span class="prelude-ty">Result</span>&lt;SmallVec&lt;[SelectedSpectralContribution; <span class="number">4</span>]&gt;, SpectralStencilError&gt; {
+<a href=#300 id=300 data-nosnippet>300</a>    <span class="kw">let </span>source_low = source_boundaries_hz[<span class="number">0</span>].min(source_boundaries_hz[<span class="number">1</span>]);
+<a href=#301 id=301 data-nosnippet>301</a>    <span class="kw">let </span>source_high = source_boundaries_hz[<span class="number">0</span>].max(source_boundaries_hz[<span class="number">1</span>]);
+<a href=#302 id=302 data-nosnippet>302</a>    <span class="kw">let </span>axis_end = output_boundaries_hz[output_boundaries_hz.len() - <span class="number">1</span>];
+<a href=#303 id=303 data-nosnippet>303</a>    <span class="kw">let </span>axis_low = output_boundaries_hz[<span class="number">0</span>].min(axis_end);
+<a href=#304 id=304 data-nosnippet>304</a>    <span class="kw">let </span>axis_high = output_boundaries_hz[<span class="number">0</span>].max(axis_end);
+<a href=#305 id=305 data-nosnippet>305</a>    <span class="kw">if </span>edge_policy == SpectralEdgePolicy::CompleteSupport
+<a href=#306 id=306 data-nosnippet>306</a>        &amp;&amp; (source_low &lt; axis_low || source_high &gt; axis_high)
+<a href=#307 id=307 data-nosnippet>307</a>    {
+<a href=#308 id=308 data-nosnippet>308</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(SmallVec::new());
+<a href=#309 id=309 data-nosnippet>309</a>    }
+<a href=#310 id=310 data-nosnippet>310</a>    <span class="kw">let </span><span class="kw-2">mut </span>terms = SmallVec::&lt;[SelectedSpectralContribution; <span class="number">4</span>]&gt;::new();
+<a href=#311 id=311 data-nosnippet>311</a>    <span class="kw">for </span>(output_channel, pair) <span class="kw">in </span>output_boundaries_hz.windows(<span class="number">2</span>).enumerate() {
+<a href=#312 id=312 data-nosnippet>312</a>        <span class="kw">let </span>output_low = pair[<span class="number">0</span>].min(pair[<span class="number">1</span>]);
+<a href=#313 id=313 data-nosnippet>313</a>        <span class="kw">let </span>output_high = pair[<span class="number">0</span>].max(pair[<span class="number">1</span>]);
+<a href=#314 id=314 data-nosnippet>314</a>        <span class="kw">let </span>overlap = source_high.min(output_high) - source_low.max(output_low);
+<a href=#315 id=315 data-nosnippet>315</a>        <span class="kw">if </span>overlap &gt; <span class="number">0.0 </span>{
+<a href=#316 id=316 data-nosnippet>316</a>            <span class="kw">if </span>terms.len() == maximum_terms {
+<a href=#317 id=317 data-nosnippet>317</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(SpectralStencilError::PlannerTermBound);
+<a href=#318 id=318 data-nosnippet>318</a>            }
+<a href=#319 id=319 data-nosnippet>319</a>            terms.push(
+<a href=#320 id=320 data-nosnippet>320</a>                SelectedSpectralContribution::new(
+<a href=#321 id=321 data-nosnippet>321</a>                    u32::try_from(output_channel)
+<a href=#322 id=322 data-nosnippet>322</a>                        .map_err(|<span class="kw">_</span>| SpectralStencilError::InvalidCoefficients)<span class="question-mark">?</span>,
+<a href=#323 id=323 data-nosnippet>323</a>                    overlap / (output_high - output_low),
+<a href=#324 id=324 data-nosnippet>324</a>                    frequency_hz,
+<a href=#325 id=325 data-nosnippet>325</a>                )
+<a href=#326 id=326 data-nosnippet>326</a>                .ok_or(SpectralStencilError::InvalidCoefficients)<span class="question-mark">?</span>,
+<a href=#327 id=327 data-nosnippet>327</a>            );
+<a href=#328 id=328 data-nosnippet>328</a>        }
+<a href=#329 id=329 data-nosnippet>329</a>    }
+<a href=#330 id=330 data-nosnippet>330</a>    <span class="prelude-val">Ok</span>(terms)
+<a href=#331 id=331 data-nosnippet>331</a>}
+<a href=#332 id=332 data-nosnippet>332</a>
+<a href=#333 id=333 data-nosnippet>333</a><span class="kw">fn </span>interpolation_interval(centres: <span class="kw-2">&amp;</span>[f64], frequency_hz: f64) -&gt; <span class="prelude-ty">Option</span>&lt;usize&gt; {
+<a href=#334 id=334 data-nosnippet>334</a>    centres.windows(<span class="number">2</span>).position(|pair| {
+<a href=#335 id=335 data-nosnippet>335</a>        pair[<span class="number">0</span>].min(pair[<span class="number">1</span>]) &lt;= frequency_hz &amp;&amp; frequency_hz &lt;= pair[<span class="number">0</span>].max(pair[<span class="number">1</span>])
+<a href=#336 id=336 data-nosnippet>336</a>    })
+<a href=#337 id=337 data-nosnippet>337</a>}
+<a href=#338 id=338 data-nosnippet>338</a>
+<a href=#339 id=339 data-nosnippet>339</a><span class="kw">fn </span>one_term(
+<a href=#340 id=340 data-nosnippet>340</a>    output_channel: usize,
+<a href=#341 id=341 data-nosnippet>341</a>    factor: f64,
+<a href=#342 id=342 data-nosnippet>342</a>    frequency_hz: f64,
+<a href=#343 id=343 data-nosnippet>343</a>) -&gt; <span class="prelude-ty">Result</span>&lt;SmallVec&lt;[SelectedSpectralContribution; <span class="number">4</span>]&gt;, SpectralStencilError&gt; {
+<a href=#344 id=344 data-nosnippet>344</a>    sparse_terms([(output_channel, factor)], frequency_hz)
+<a href=#345 id=345 data-nosnippet>345</a>        .ok_or(SpectralStencilError::InvalidCoefficients)
+<a href=#346 id=346 data-nosnippet>346</a>}
+<a href=#347 id=347 data-nosnippet>347</a>
+<a href=#348 id=348 data-nosnippet>348</a><span class="kw">fn </span>sparse_terms(
+<a href=#349 id=349 data-nosnippet>349</a>    terms: <span class="kw">impl </span>IntoIterator&lt;Item = (usize, f64)&gt;,
+<a href=#350 id=350 data-nosnippet>350</a>    frequency_hz: f64,
+<a href=#351 id=351 data-nosnippet>351</a>) -&gt; <span class="prelude-ty">Option</span>&lt;SmallVec&lt;[SelectedSpectralContribution; <span class="number">4</span>]&gt;&gt; {
+<a href=#352 id=352 data-nosnippet>352</a>    terms
+<a href=#353 id=353 data-nosnippet>353</a>        .into_iter()
+<a href=#354 id=354 data-nosnippet>354</a>        .filter(|(<span class="kw">_</span>, factor)| <span class="kw-2">*</span>factor != <span class="number">0.0</span>)
+<a href=#355 id=355 data-nosnippet>355</a>        .map(|(output_channel, factor)| {
+<a href=#356 id=356 data-nosnippet>356</a>            SelectedSpectralContribution::new(
+<a href=#357 id=357 data-nosnippet>357</a>                u32::try_from(output_channel).ok()<span class="question-mark">?</span>,
+<a href=#358 id=358 data-nosnippet>358</a>                factor,
+<a href=#359 id=359 data-nosnippet>359</a>                frequency_hz,
+<a href=#360 id=360 data-nosnippet>360</a>            )
+<a href=#361 id=361 data-nosnippet>361</a>        })
+<a href=#362 id=362 data-nosnippet>362</a>        .collect()
+<a href=#363 id=363 data-nosnippet>363</a>}
+<a href=#364 id=364 data-nosnippet>364</a>
+<a href=#365 id=365 data-nosnippet>365</a><span class="attr">#[cfg(test)]
+<a href=#366 id=366 data-nosnippet>366</a></span><span class="kw">mod </span>tests {
+<a href=#367 id=367 data-nosnippet>367</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#368 id=368 data-nosnippet>368</a>
+<a href=#369 id=369 data-nosnippet>369</a>    <span class="attr">#[test]
+<a href=#370 id=370 data-nosnippet>370</a>    </span><span class="kw">fn </span>t35_one_channel_identity_matches_constant_basis_and_is_exactly_paired() {
+<a href=#371 id=371 data-nosnippet>371</a>        <span class="kw">let </span>stencil = one_term(<span class="number">0</span>, <span class="number">1.0</span>, <span class="number">1.4e9</span>).expect(<span class="string">"identity stencil"</span>);
+<a href=#372 id=372 data-nosnippet>372</a>        <span class="macro">assert_eq!</span>(
+<a href=#373 id=373 data-nosnippet>373</a>            stencil
+<a href=#374 id=374 data-nosnippet>374</a>                .iter()
+<a href=#375 id=375 data-nosnippet>375</a>                .map(|term| (term.output_channel(), term.factor()))
+<a href=#376 id=376 data-nosnippet>376</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
+<a href=#377 id=377 data-nosnippet>377</a>            <span class="macro">vec!</span>[(<span class="number">0</span>, <span class="number">1.0</span>)]
+<a href=#378 id=378 data-nosnippet>378</a>        );
+<a href=#379 id=379 data-nosnippet>379</a>
+<a href=#380 id=380 data-nosnippet>380</a>        <span class="kw">let </span>model = <span class="number">2.5_f64</span>;
+<a href=#381 id=381 data-nosnippet>381</a>        <span class="kw">let </span>visibility = -<span class="number">3.0_f64</span>;
+<a href=#382 id=382 data-nosnippet>382</a>        <span class="kw">let </span>weight = <span class="number">4.0_f64</span>;
+<a href=#383 id=383 data-nosnippet>383</a>        <span class="kw">let </span>channel_prediction = stencil
+<a href=#384 id=384 data-nosnippet>384</a>            .iter()
+<a href=#385 id=385 data-nosnippet>385</a>            .map(|term| term.factor() * model)
+<a href=#386 id=386 data-nosnippet>386</a>            .sum::&lt;f64&gt;();
+<a href=#387 id=387 data-nosnippet>387</a>        <span class="kw">let </span>channel_dirty = stencil
+<a href=#388 id=388 data-nosnippet>388</a>            .iter()
+<a href=#389 id=389 data-nosnippet>389</a>            .map(|term| term.factor() * weight * visibility)
+<a href=#390 id=390 data-nosnippet>390</a>            .sum::&lt;f64&gt;();
+<a href=#391 id=391 data-nosnippet>391</a>        <span class="kw">let </span>channel_psf = stencil
+<a href=#392 id=392 data-nosnippet>392</a>            .iter()
+<a href=#393 id=393 data-nosnippet>393</a>            .map(|term| term.factor() * weight * term.factor())
+<a href=#394 id=394 data-nosnippet>394</a>            .sum::&lt;f64&gt;();
+<a href=#395 id=395 data-nosnippet>395</a>        <span class="kw">let </span>channel_sum_weight = weight;
+<a href=#396 id=396 data-nosnippet>396</a>        <span class="macro">assert_eq!</span>(channel_prediction, model);
+<a href=#397 id=397 data-nosnippet>397</a>        <span class="macro">assert_eq!</span>(channel_dirty, weight * visibility);
+<a href=#398 id=398 data-nosnippet>398</a>        <span class="macro">assert_eq!</span>(channel_psf, weight);
+<a href=#399 id=399 data-nosnippet>399</a>        <span class="macro">assert_eq!</span>(channel_sum_weight, weight);
+<a href=#400 id=400 data-nosnippet>400</a>
+<a href=#401 id=401 data-nosnippet>401</a>        <span class="kw">let </span>lhs = channel_prediction * visibility;
+<a href=#402 id=402 data-nosnippet>402</a>        <span class="kw">let </span>adjoint_visibility = stencil
+<a href=#403 id=403 data-nosnippet>403</a>            .iter()
+<a href=#404 id=404 data-nosnippet>404</a>            .map(|term| term.factor() * visibility)
+<a href=#405 id=405 data-nosnippet>405</a>            .sum::&lt;f64&gt;();
+<a href=#406 id=406 data-nosnippet>406</a>        <span class="kw">let </span>rhs = model * adjoint_visibility;
+<a href=#407 id=407 data-nosnippet>407</a>        <span class="macro">assert_eq!</span>(lhs, rhs, <span class="string">"prediction and adjoint must use the same stencil"</span>);
+<a href=#408 id=408 data-nosnippet>408</a>    }
+<a href=#409 id=409 data-nosnippet>409</a>
+<a href=#410 id=410 data-nosnippet>410</a>    <span class="attr">#[test]
+<a href=#411 id=411 data-nosnippet>411</a>    </span><span class="kw">fn </span>t35_dense_oracle_matches_sparse_linear_and_signed_cubic_stencils() {
+<a href=#412 id=412 data-nosnippet>412</a>        <span class="kw">let </span>centres = [<span class="number">10.0</span>, <span class="number">20.0</span>, <span class="number">30.0</span>, <span class="number">40.0</span>];
+<a href=#413 id=413 data-nosnippet>413</a>        <span class="kw">let </span>linear = linear_terms(<span class="kw-2">&amp;</span>centres, <span class="kw-2">&amp;</span>[<span class="number">5.0</span>, <span class="number">15.0</span>, <span class="number">25.0</span>, <span class="number">35.0</span>, <span class="number">45.0</span>], <span class="number">25.0</span>);
+<a href=#414 id=414 data-nosnippet>414</a>        <span class="macro">assert_eq!</span>(
+<a href=#415 id=415 data-nosnippet>415</a>            linear
+<a href=#416 id=416 data-nosnippet>416</a>                .iter()
+<a href=#417 id=417 data-nosnippet>417</a>                .map(|term| (term.output_channel(), term.factor()))
+<a href=#418 id=418 data-nosnippet>418</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
+<a href=#419 id=419 data-nosnippet>419</a>            <span class="macro">vec!</span>[(<span class="number">1</span>, <span class="number">0.5</span>), (<span class="number">2</span>, <span class="number">0.5</span>)]
+<a href=#420 id=420 data-nosnippet>420</a>        );
+<a href=#421 id=421 data-nosnippet>421</a>
+<a href=#422 id=422 data-nosnippet>422</a>        <span class="kw">let </span>cubic = cubic_terms(<span class="kw-2">&amp;</span>centres, <span class="number">25.0</span>);
+<a href=#423 id=423 data-nosnippet>423</a>        <span class="kw">let </span>dense = cubic.iter().fold([<span class="number">0.0</span>; <span class="number">4</span>], |<span class="kw-2">mut </span>dense, term| {
+<a href=#424 id=424 data-nosnippet>424</a>            dense[term.output_channel() <span class="kw">as </span>usize] = term.factor();
+<a href=#425 id=425 data-nosnippet>425</a>            dense
+<a href=#426 id=426 data-nosnippet>426</a>        });
+<a href=#427 id=427 data-nosnippet>427</a>        <span class="macro">assert_eq!</span>(dense, [-<span class="number">0.0625</span>, <span class="number">0.5625</span>, <span class="number">0.5625</span>, -<span class="number">0.0625</span>]);
+<a href=#428 id=428 data-nosnippet>428</a>        <span class="kw">for </span>degree <span class="kw">in </span><span class="number">0_i32</span>..=<span class="number">3 </span>{
+<a href=#429 id=429 data-nosnippet>429</a>            <span class="kw">let </span>reconstructed = dense
+<a href=#430 id=430 data-nosnippet>430</a>                .iter()
+<a href=#431 id=431 data-nosnippet>431</a>                .zip(centres)
+<a href=#432 id=432 data-nosnippet>432</a>                .map(|(coefficient, centre)| coefficient * centre.powi(degree))
+<a href=#433 id=433 data-nosnippet>433</a>                .sum::&lt;f64&gt;();
+<a href=#434 id=434 data-nosnippet>434</a>            <span class="macro">assert!</span>((reconstructed - <span class="number">25.0_f64</span>.powi(degree)).abs() &lt; <span class="number">1.0e-9</span>);
+<a href=#435 id=435 data-nosnippet>435</a>        }
+<a href=#436 id=436 data-nosnippet>436</a>    }
+<a href=#437 id=437 data-nosnippet>437</a>
+<a href=#438 id=438 data-nosnippet>438</a>    <span class="attr">#[test]
+<a href=#439 id=439 data-nosnippet>439</a>    </span><span class="kw">fn </span>t40_one_channel_linear_sampling_degenerates_to_its_exact_constant_stencil() {
+<a href=#440 id=440 data-nosnippet>440</a>        <span class="kw">let </span>inside = linear_terms(<span class="kw-2">&amp;</span>[<span class="number">44.001e9</span>], <span class="kw-2">&amp;</span>[<span class="number">44.0005e9</span>, <span class="number">44.0015e9</span>], <span class="number">44.001e9</span>);
+<a href=#441 id=441 data-nosnippet>441</a>        <span class="macro">assert_eq!</span>(
+<a href=#442 id=442 data-nosnippet>442</a>            inside
+<a href=#443 id=443 data-nosnippet>443</a>                .iter()
+<a href=#444 id=444 data-nosnippet>444</a>                .map(|term| (term.output_channel(), term.factor()))
+<a href=#445 id=445 data-nosnippet>445</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
+<a href=#446 id=446 data-nosnippet>446</a>            <span class="macro">vec!</span>[(<span class="number">0</span>, <span class="number">1.0</span>)]
+<a href=#447 id=447 data-nosnippet>447</a>        );
+<a href=#448 id=448 data-nosnippet>448</a>        <span class="macro">assert!</span>(linear_terms(<span class="kw-2">&amp;</span>[<span class="number">44.001e9</span>], <span class="kw-2">&amp;</span>[<span class="number">44.0005e9</span>, <span class="number">44.0015e9</span>], <span class="number">44.002e9</span>).is_empty());
+<a href=#449 id=449 data-nosnippet>449</a>    }
+<a href=#450 id=450 data-nosnippet>450</a>
+<a href=#451 id=451 data-nosnippet>451</a>    <span class="attr">#[test]
+<a href=#452 id=452 data-nosnippet>452</a>    </span><span class="kw">fn </span>t36_descending_partial_overlap_and_planner_bounds_are_explicit() {
+<a href=#453 id=453 data-nosnippet>453</a>        <span class="kw">let </span>descending = [<span class="number">45.0</span>, <span class="number">35.0</span>, <span class="number">25.0</span>, <span class="number">15.0</span>, <span class="number">5.0</span>];
+<a href=#454 id=454 data-nosnippet>454</a>        <span class="kw">let </span>terms = integration_terms(
+<a href=#455 id=455 data-nosnippet>455</a>            <span class="kw-2">&amp;</span>descending,
+<a href=#456 id=456 data-nosnippet>456</a>            [<span class="number">42.0</span>, <span class="number">28.0</span>],
+<a href=#457 id=457 data-nosnippet>457</a>            SpectralEdgePolicy::PartialOverlap,
+<a href=#458 id=458 data-nosnippet>458</a>            <span class="number">2</span>,
+<a href=#459 id=459 data-nosnippet>459</a>            <span class="number">35.0</span>,
+<a href=#460 id=460 data-nosnippet>460</a>        )
+<a href=#461 id=461 data-nosnippet>461</a>        .unwrap();
+<a href=#462 id=462 data-nosnippet>462</a>        <span class="macro">assert_eq!</span>(
+<a href=#463 id=463 data-nosnippet>463</a>            terms
+<a href=#464 id=464 data-nosnippet>464</a>                .iter()
+<a href=#465 id=465 data-nosnippet>465</a>                .map(|term| (term.output_channel(), term.factor()))
+<a href=#466 id=466 data-nosnippet>466</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
+<a href=#467 id=467 data-nosnippet>467</a>            <span class="macro">vec!</span>[(<span class="number">0</span>, <span class="number">0.7</span>), (<span class="number">1</span>, <span class="number">0.7</span>)]
+<a href=#468 id=468 data-nosnippet>468</a>        );
+<a href=#469 id=469 data-nosnippet>469</a>        <span class="macro">assert_eq!</span>(
+<a href=#470 id=470 data-nosnippet>470</a>            integration_terms(
+<a href=#471 id=471 data-nosnippet>471</a>                <span class="kw-2">&amp;</span>descending,
+<a href=#472 id=472 data-nosnippet>472</a>                [<span class="number">42.0</span>, <span class="number">18.0</span>],
+<a href=#473 id=473 data-nosnippet>473</a>                SpectralEdgePolicy::PartialOverlap,
+<a href=#474 id=474 data-nosnippet>474</a>                <span class="number">2</span>,
+<a href=#475 id=475 data-nosnippet>475</a>                <span class="number">30.0</span>,
+<a href=#476 id=476 data-nosnippet>476</a>            ),
+<a href=#477 id=477 data-nosnippet>477</a>            <span class="prelude-val">Err</span>(SpectralStencilError::PlannerTermBound)
+<a href=#478 id=478 data-nosnippet>478</a>        );
+<a href=#479 id=479 data-nosnippet>479</a>    }
+<a href=#480 id=480 data-nosnippet>480</a>
+<a href=#481 id=481 data-nosnippet>481</a>    <span class="attr">#[test]
+<a href=#482 id=482 data-nosnippet>482</a>    </span><span class="kw">fn </span>t36_edge_validity_and_source_channel_order_are_deterministic() {
+<a href=#483 id=483 data-nosnippet>483</a>        <span class="macro">assert!</span>(linear_terms(<span class="kw-2">&amp;</span>[<span class="number">30.0</span>, <span class="number">20.0</span>, <span class="number">10.0</span>], <span class="kw-2">&amp;</span>[<span class="number">35.0</span>, <span class="number">25.0</span>, <span class="number">15.0</span>, <span class="number">5.0</span>], <span class="number">35.0</span>).is_empty());
+<a href=#484 id=484 data-nosnippet>484</a>        <span class="macro">assert_eq!</span>(
+<a href=#485 id=485 data-nosnippet>485</a>            linear_terms(<span class="kw-2">&amp;</span>[<span class="number">30.0</span>, <span class="number">20.0</span>, <span class="number">10.0</span>], <span class="kw-2">&amp;</span>[<span class="number">35.0</span>, <span class="number">25.0</span>, <span class="number">15.0</span>, <span class="number">5.0</span>], <span class="number">25.0</span>)
+<a href=#486 id=486 data-nosnippet>486</a>                .iter()
+<a href=#487 id=487 data-nosnippet>487</a>                .map(|term| term.output_channel())
+<a href=#488 id=488 data-nosnippet>488</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
+<a href=#489 id=489 data-nosnippet>489</a>            <span class="macro">vec!</span>[<span class="number">0</span>, <span class="number">1</span>]
+<a href=#490 id=490 data-nosnippet>490</a>        );
+<a href=#491 id=491 data-nosnippet>491</a>        <span class="macro">assert!</span>(cubic_terms(<span class="kw-2">&amp;</span>[<span class="number">10.0</span>, <span class="number">20.0</span>, <span class="number">30.0</span>], <span class="number">15.0</span>).is_empty());
+<a href=#492 id=492 data-nosnippet>492</a>    }
+<a href=#493 id=493 data-nosnippet>493</a>
+<a href=#494 id=494 data-nosnippet>494</a>    <span class="attr">#[cfg(feature = <span class="string">"cpp-interop-tests"</span>)]
+<a href=#495 id=495 data-nosnippet>495</a>    #[test]
+<a href=#496 id=496 data-nosnippet>496</a>    </span><span class="kw">fn </span>t36_nearest_linear_cubic_edge_and_covariance_match_casacore_oracles() {
+<a href=#497 id=497 data-nosnippet>497</a>        <span class="kw">use </span>casa_imaging_model::SpectralSamplingLaw;
+<a href=#498 id=498 data-nosnippet>498</a>        <span class="kw">use </span>casa_test_support::spectral_interop::{
+<a href=#499 id=499 data-nosnippet>499</a>            SpectralInterpolationMethod, SpectralInterpolationOracle,
+<a href=#500 id=500 data-nosnippet>500</a>        };
+<a href=#501 id=501 data-nosnippet>501</a>
+<a href=#502 id=502 data-nosnippet>502</a>        <span class="kw">let </span>centres = [<span class="number">10.0</span>, <span class="number">20.0</span>, <span class="number">30.0</span>, <span class="number">40.0</span>];
+<a href=#503 id=503 data-nosnippet>503</a>        <span class="kw">let </span>boundaries = [<span class="number">5.0</span>, <span class="number">15.0</span>, <span class="number">25.0</span>, <span class="number">35.0</span>, <span class="number">45.0</span>];
+<a href=#504 id=504 data-nosnippet>504</a>        <span class="kw">let </span>cases = [
+<a href=#505 id=505 data-nosnippet>505</a>            (
+<a href=#506 id=506 data-nosnippet>506</a>                SpectralInterpolationMethod::Nearest,
+<a href=#507 id=507 data-nosnippet>507</a>                nearest_terms(<span class="kw-2">&amp;</span>centres, <span class="kw-2">&amp;</span>boundaries, <span class="number">26.0</span>),
+<a href=#508 id=508 data-nosnippet>508</a>                <span class="number">26.0</span>,
+<a href=#509 id=509 data-nosnippet>509</a>            ),
+<a href=#510 id=510 data-nosnippet>510</a>            (
+<a href=#511 id=511 data-nosnippet>511</a>                SpectralInterpolationMethod::Linear,
+<a href=#512 id=512 data-nosnippet>512</a>                linear_terms(<span class="kw-2">&amp;</span>centres, <span class="kw-2">&amp;</span>boundaries, <span class="number">25.0</span>),
+<a href=#513 id=513 data-nosnippet>513</a>                <span class="number">25.0</span>,
+<a href=#514 id=514 data-nosnippet>514</a>            ),
+<a href=#515 id=515 data-nosnippet>515</a>            (
+<a href=#516 id=516 data-nosnippet>516</a>                SpectralInterpolationMethod::Cubic,
+<a href=#517 id=517 data-nosnippet>517</a>                cubic_terms(<span class="kw-2">&amp;</span>centres, <span class="number">25.0</span>),
+<a href=#518 id=518 data-nosnippet>518</a>                <span class="number">25.0</span>,
+<a href=#519 id=519 data-nosnippet>519</a>            ),
+<a href=#520 id=520 data-nosnippet>520</a>        ];
+<a href=#521 id=521 data-nosnippet>521</a>        <span class="kw">for </span>(method, rust, coordinate) <span class="kw">in </span>cases {
+<a href=#522 id=522 data-nosnippet>522</a>            <span class="kw">let </span>casa = SpectralInterpolationOracle::coefficients(<span class="kw-2">&amp;</span>centres, coordinate, method)
+<a href=#523 id=523 data-nosnippet>523</a>                .expect(<span class="string">"CASA/casacore spectral coefficient oracle"</span>);
+<a href=#524 id=524 data-nosnippet>524</a>            <span class="macro">assert!</span>(casa.valid);
+<a href=#525 id=525 data-nosnippet>525</a>            <span class="kw">let </span>dense = rust.iter().fold([<span class="number">0.0</span>; <span class="number">4</span>], |<span class="kw-2">mut </span>dense, term| {
+<a href=#526 id=526 data-nosnippet>526</a>                dense[term.output_channel() <span class="kw">as </span>usize] = term.factor();
+<a href=#527 id=527 data-nosnippet>527</a>                dense
+<a href=#528 id=528 data-nosnippet>528</a>            });
+<a href=#529 id=529 data-nosnippet>529</a>            <span class="macro">assert_eq!</span>(dense.as_slice(), casa.coefficients.as_slice());
+<a href=#530 id=530 data-nosnippet>530</a>        }
+<a href=#531 id=531 data-nosnippet>531</a>
+<a href=#532 id=532 data-nosnippet>532</a>        <span class="kw">for </span>method <span class="kw">in </span>[
+<a href=#533 id=533 data-nosnippet>533</a>            SpectralInterpolationMethod::Nearest,
+<a href=#534 id=534 data-nosnippet>534</a>            SpectralInterpolationMethod::Linear,
+<a href=#535 id=535 data-nosnippet>535</a>            SpectralInterpolationMethod::Cubic,
+<a href=#536 id=536 data-nosnippet>536</a>        ] {
+<a href=#537 id=537 data-nosnippet>537</a>            <span class="kw">let </span>edge = SpectralInterpolationOracle::coefficients(<span class="kw-2">&amp;</span>centres, <span class="number">45.1</span>, method)
+<a href=#538 id=538 data-nosnippet>538</a>                .expect(<span class="string">"CASA/casacore edge oracle"</span>);
+<a href=#539 id=539 data-nosnippet>539</a>            <span class="macro">assert!</span>(!edge.valid);
+<a href=#540 id=540 data-nosnippet>540</a>            <span class="macro">assert!</span>(
+<a href=#541 id=541 data-nosnippet>541</a>                edge.coefficients
+<a href=#542 id=542 data-nosnippet>542</a>                    .iter()
+<a href=#543 id=543 data-nosnippet>543</a>                    .all(|coefficient| <span class="kw-2">*</span>coefficient == <span class="number">0.0</span>)
+<a href=#544 id=544 data-nosnippet>544</a>            );
+<a href=#545 id=545 data-nosnippet>545</a>        }
+<a href=#546 id=546 data-nosnippet>546</a>        <span class="macro">assert!</span>(nearest_terms(<span class="kw-2">&amp;</span>centres, <span class="kw-2">&amp;</span>boundaries, <span class="number">45.1</span>).is_empty());
+<a href=#547 id=547 data-nosnippet>547</a>        <span class="macro">assert!</span>(linear_terms(<span class="kw-2">&amp;</span>centres, <span class="kw-2">&amp;</span>boundaries, <span class="number">45.1</span>).is_empty());
+<a href=#548 id=548 data-nosnippet>548</a>        <span class="macro">assert!</span>(cubic_terms(<span class="kw-2">&amp;</span>centres, <span class="number">45.1</span>).is_empty());
+<a href=#549 id=549 data-nosnippet>549</a>
+<a href=#550 id=550 data-nosnippet>550</a>        <span class="kw">let </span>integrated = integration_terms(
+<a href=#551 id=551 data-nosnippet>551</a>            <span class="kw-2">&amp;</span>boundaries,
+<a href=#552 id=552 data-nosnippet>552</a>            [<span class="number">12.0</span>, <span class="number">28.0</span>],
+<a href=#553 id=553 data-nosnippet>553</a>            SpectralEdgePolicy::PartialOverlap,
+<a href=#554 id=554 data-nosnippet>554</a>            <span class="number">3</span>,
+<a href=#555 id=555 data-nosnippet>555</a>            <span class="number">20.0</span>,
+<a href=#556 id=556 data-nosnippet>556</a>        )
+<a href=#557 id=557 data-nosnippet>557</a>        .expect(<span class="string">"bounded partial-overlap integration"</span>);
+<a href=#558 id=558 data-nosnippet>558</a>        <span class="macro">assert_eq!</span>(
+<a href=#559 id=559 data-nosnippet>559</a>            integrated
+<a href=#560 id=560 data-nosnippet>560</a>                .iter()
+<a href=#561 id=561 data-nosnippet>561</a>                .map(|term| (term.output_channel(), term.factor()))
+<a href=#562 id=562 data-nosnippet>562</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
+<a href=#563 id=563 data-nosnippet>563</a>            <span class="macro">vec!</span>[(<span class="number">0</span>, <span class="number">0.3</span>), (<span class="number">1</span>, <span class="number">1.0</span>), (<span class="number">2</span>, <span class="number">0.3</span>)]
+<a href=#564 id=564 data-nosnippet>564</a>        );
+<a href=#565 id=565 data-nosnippet>565</a>        <span class="macro">assert_eq!</span>(
+<a href=#566 id=566 data-nosnippet>566</a>            SpectralSamplingLaw::NEAREST.covariance(),
+<a href=#567 id=567 data-nosnippet>567</a>            SpectralCovariance::PropagateIndependentSourceNoise
+<a href=#568 id=568 data-nosnippet>568</a>        );
+<a href=#569 id=569 data-nosnippet>569</a>        <span class="macro">assert_eq!</span>(
+<a href=#570 id=570 data-nosnippet>570</a>            SpectralSamplingLaw::LINEAR.covariance(),
+<a href=#571 id=571 data-nosnippet>571</a>            SpectralCovariance::PropagateIndependentSourceNoise
+<a href=#572 id=572 data-nosnippet>572</a>        );
+<a href=#573 id=573 data-nosnippet>573</a>        <span class="macro">assert_eq!</span>(
+<a href=#574 id=574 data-nosnippet>574</a>            SpectralSamplingLaw::CUBIC.covariance(),
+<a href=#575 id=575 data-nosnippet>575</a>            SpectralCovariance::PropagateIndependentSourceNoise
+<a href=#576 id=576 data-nosnippet>576</a>        );
+<a href=#577 id=577 data-nosnippet>577</a>        <span class="macro">assert_eq!</span>(
+<a href=#578 id=578 data-nosnippet>578</a>            SpectralSamplingLaw::channel_integration(<span class="number">3</span>).covariance(),
+<a href=#579 id=579 data-nosnippet>579</a>            SpectralCovariance::PropagateIndependentSourceNoise
+<a href=#580 id=580 data-nosnippet>580</a>        );
+<a href=#581 id=581 data-nosnippet>581</a>    }
+<a href=#582 id=582 data-nosnippet>582</a>}
 </code></pre></div></section></main></body></html>
