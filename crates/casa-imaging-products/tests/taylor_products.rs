@@ -644,7 +644,7 @@ fn t44_taylor_families_preserve_raw_state_and_share_one_restoring_beam() {
         .resolved_beam()
         .expect("common restoring beam");
     let kernel = gaussian_beam_image(SHAPE, beam, [1.0e-6, 1.0e-6]);
-    for term in 0..TERMS {
+    for (term, principal_term) in principal.iter().enumerate().take(TERMS) {
         let model = member(&sealed, &format!(".model.tt{term}"));
         let restored = member(&sealed, &format!(".image.tt{term}"));
         let convolved = fft_convolve(
@@ -655,7 +655,7 @@ fn t44_taylor_families_preserve_raw_state_and_share_one_restoring_beam() {
         for index in 0..convolved.len() {
             assert_close(
                 restored.payload()[index],
-                convolved[index] + principal[term][index],
+                convolved[index] + principal_term[index],
                 "principal-solution restoration",
             );
         }
@@ -682,8 +682,8 @@ fn t44_alpha_and_error_use_strict_principal_support_and_zero_false_blanking() {
     assert!(positive_max.is_finite());
     let floor = 0.1 * positive_max;
     let mut supported = 0;
-    for index in 0..alpha.payload().len() {
-        let valid = image0.payload()[index] > floor;
+    for (index, image0_value) in image0.payload().iter().copied().enumerate() {
+        let valid = image0_value > floor;
         assert_eq!(alpha.validity()[index], valid);
         assert_eq!(error.validity()[index], valid);
         if valid {
