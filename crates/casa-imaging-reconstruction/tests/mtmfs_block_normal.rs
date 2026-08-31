@@ -224,7 +224,10 @@ fn problem() -> casa_imaging_model::CompiledProblem {
             ),
             ReconstructionContract::new(
                 ReconstructionBasis::Taylor { terms: 2 },
-                ReconstructionAlgorithm::Mtmfs,
+                ReconstructionAlgorithm::Mtmfs {
+                    scales_px: vec![0.0],
+                    small_scale_bias: 0.0,
+                },
                 ReconstructionControls::new(1, 0.1, 0.0),
                 PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
             ),

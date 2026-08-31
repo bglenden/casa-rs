@@ -48,9 +48,9 @@ use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier};
 use casa_types::measures::{epoch::EpochRef, frequency::FrequencyRef};
 use serde_json::json;
 
-const DATASET: &str = "measurementset/vla/ref_vlass_wtsp_creation.ms";
+pub(crate) const DATASET: &str = "measurementset/vla/ref_vlass_wtsp_creation.ms";
 const OUTPUT_ENV: &str = "CASA_RS_T42_RUST_OUTPUT";
-const IMAGE_SIZE: usize = 128;
+pub(crate) const IMAGE_SIZE: usize = 128;
 const CHANNELS: usize = 16;
 const SELECTED_ROWS: usize = 24;
 const CORRELATIONS: usize = 4;
@@ -305,7 +305,7 @@ fn t42_real_ms_mtmfs_normal_matches_casa_oracle_inputs() -> Result<(), Box<dyn E
     Ok(())
 }
 
-fn build_problem(
+pub(crate) fn build_problem(
     path: &Path,
 ) -> Result<
     (
@@ -539,8 +539,13 @@ fn specification() -> Result<ProblemSpecification, Box<dyn Error>> {
         ),
         ReconstructionContract::new(
             ReconstructionBasis::Taylor { terms: 2 },
-            ReconstructionAlgorithm::Mtmfs,
-            ReconstructionControls::new(1, 0.1, 0.0),
+            ReconstructionAlgorithm::Mtmfs {
+                scales_px: vec![0.0, 5.0],
+                small_scale_bias: 0.0,
+            },
+            ReconstructionControls::new(8, 0.1, 0.0)
+                .with_cycle_limits(2, None)
+                .with_cycle_threshold(1.0, 0.05, 0.8),
             PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
         ),
         WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
@@ -639,7 +644,10 @@ fn correlation_type(code: i32) -> Result<CorrelationType, Box<dyn Error>> {
     })
 }
 
-fn copy_measurement_set(source: &Path, destination: &Path) -> Result<(), Box<dyn Error>> {
+pub(crate) fn copy_measurement_set(
+    source: &Path,
+    destination: &Path,
+) -> Result<(), Box<dyn Error>> {
     fs::create_dir_all(destination)?;
     for entry in fs::read_dir(source)? {
         let entry = entry?;

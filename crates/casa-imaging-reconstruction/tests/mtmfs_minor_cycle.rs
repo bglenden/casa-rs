@@ -45,7 +45,7 @@ use casa_imaging_reconstruction::{
 };
 
 const REFERENCE_FREQUENCY_HZ: f64 = 1.0e9;
-const IMAGE_WIDTH: usize = 8;
+const IMAGE_WIDTH: usize = 16;
 
 fn identity(seed: u8, scope: u8) -> LogicalIdentity {
     let mut bytes = [seed; 32];
@@ -159,6 +159,10 @@ fn validity() -> ProductValidityPolicies {
 }
 
 fn problem() -> casa_imaging_model::CompiledProblem {
+    problem_with_scales(vec![0.0])
+}
+
+fn problem_with_scales(scales_px: Vec<f64>) -> casa_imaging_model::CompiledProblem {
     let centre = IMAGE_WIDTH as f64 / 2.0;
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
@@ -222,10 +226,10 @@ fn problem() -> casa_imaging_model::CompiledProblem {
             ReconstructionContract::new(
                 ReconstructionBasis::Taylor { terms: 2 },
                 ReconstructionAlgorithm::Mtmfs {
-                    scales_px: vec![0.0],
+                    scales_px,
                     small_scale_bias: 0.0,
                 },
-                ReconstructionControls::new(1, 0.1, 0.0),
+                ReconstructionControls::new(8, 1.0, 0.0),
                 PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
             ),
             WeightingContract::new(
@@ -542,23 +546,51 @@ fn full_mask(normal: &FinalNormalState, model: &ModelGeneration) -> Reconstructi
     .expect("full Taylor reconstruction mask")
 }
 
-fn point_program(iterations: usize) -> MinorCycleProgram {
-    MinorCycleProgram::for_algorithm(
-        ReconstructionAlgorithm::Mtmfs {
-            scales_px: vec![0.0],
-            small_scale_bias: 0.0,
-        },
-        ReconstructionControls::new(iterations, 1.0, 0.0),
+fn one_pixel_mask(
+    normal: &FinalNormalState,
+    model: &ModelGeneration,
+    pixel: [usize; 2],
+) -> ReconstructionMask {
+    let centre = normal.shape()[0] as f64 / 2.0;
+    let coordinate = DirectionCoordinateSpec::new(
+        Projection::Sin,
+        SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
+        [centre, centre],
+        [-1.0e-6, 1.0e-6],
+        [[1.0, 0.0], [0.0, 1.0]],
+        [180.0, 0.0],
+    );
+    let mut support = vec![false; normal.shape()[0] * normal.shape()[1]];
+    support[pixel[0] * normal.shape()[1] + pixel[1]] = true;
+    ReconstructionMask::from_reprojected_support(
+        normal.problem_id(),
+        model.generation_id(),
+        coordinate,
+        normal.shape(),
+        &support,
+        coordinate,
+        normal.shape(),
     )
-    .expect("coupled point MT-MFS controls")
+    .expect("one-pixel Taylor mask")
+}
+
+fn point_program(
+    problem: &casa_imaging_model::CompiledProblem,
+    iterations: usize,
+) -> MinorCycleProgram {
+    MinorCycleProgram::for_problem(problem)
+        .expect("coupled point MT-MFS controls")
+        .limit_iterations(iterations)
+        .expect("positive point iteration limit")
 }
 
 fn run_point(
+    problem: casa_imaging_model::CompiledProblem,
     block_samples: usize,
     density_partitions: usize,
     program: MinorCycleProgram,
+    mask_pixel: Option<[usize; 2]>,
 ) -> casa_imaging_reconstruction::MinorCycleResult {
-    let problem = problem();
     let selected = samples(&problem);
     let (lifecycle, normal, model) =
         run_final_normal_state(&problem, &selected, block_samples, density_partitions);
@@ -567,14 +599,12 @@ fn run_point(
     assert_eq!(model.shape().coefficients(), 2);
     assert_eq!(model.shape().domains()[0].pixels(), normal.shape());
     assert_eq!(model.samples().len(), model.shape().sample_count());
-    run_minor_cycle(
-        &lifecycle,
-        &model,
-        &normal,
-        &full_mask(&normal, &model),
-        program,
-    )
-    .expect("coupled point MT-MFS solve")
+    let mask = mask_pixel.map_or_else(
+        || full_mask(&normal, &model),
+        |pixel| one_pixel_mask(&normal, &model, pixel),
+    );
+    run_minor_cycle(&lifecycle, &model, &normal, &mask, program)
+        .expect("coupled point MT-MFS solve")
 }
 
 fn assert_close(actual: f64, expected: f64, context: &str) {
@@ -598,7 +628,7 @@ fn t43_point_selection_solves_the_declared_cross_term_block_in_coefficient_order
         &model,
         &normal,
         &full_mask(&normal, &model),
-        point_program(1),
+        point_program(&problem, 1),
     )
     .expect("one coupled point selection");
 
@@ -675,7 +705,9 @@ fn t43_point_selection_solves_the_declared_cross_term_block_in_coefficient_order
 
 #[test]
 fn t43_validity_charges_all_coefficients_and_rejects_the_expiring_selection_atomically() {
-    let exact = run_point(1, 1, point_program(1));
+    let exact_problem = problem();
+    let exact_program = point_program(&exact_problem, 1);
+    let exact = run_point(exact_problem, 1, 1, exact_program, None);
     let charge = exact
         .delta()
         .expect("exact coupled delta")
@@ -689,15 +721,13 @@ fn t43_validity_charges_all_coefficients_and_rejects_the_expiring_selection_atom
         "coupled validity charge",
     );
 
-    let bounded = run_point(
-        1,
-        1,
-        point_program(8)
-            .with_validity(MinorCycleValidity::Bounded {
-                maximum_absolute_update: charge * 0.99,
-            })
-            .expect("positive Taylor validity envelope"),
-    );
+    let bounded_problem = problem();
+    let bounded_program = point_program(&bounded_problem, 8)
+        .with_validity(MinorCycleValidity::Bounded {
+            maximum_absolute_update: charge * 0.99,
+        })
+        .expect("positive Taylor validity envelope");
+    let bounded = run_point(bounded_problem, 1, 1, bounded_program, None);
     assert_eq!(bounded.evidence().iterations(), 0);
     assert_eq!(bounded.evidence().total_flux().to_bits(), 0.0_f64.to_bits());
     assert_eq!(
@@ -713,28 +743,25 @@ fn t43_validity_charges_all_coefficients_and_rejects_the_expiring_selection_atom
 
 #[test]
 fn t43_multiscale_reuses_canonical_scales_and_counts_one_coupled_selection() {
-    let program = MinorCycleProgram::for_algorithm(
-        ReconstructionAlgorithm::Mtmfs {
-            scales_px: vec![5.0, 0.0, 5.0],
-            small_scale_bias: 0.0,
-        },
-        ReconstructionControls::new(1, 1.0, 0.0),
-    )
-    .expect("coupled multiscale MT-MFS controls")
-    .record_component_sequence(1)
-    .expect("bounded component diagnostics");
+    let problem = problem_with_scales(vec![2.0, 0.0, 2.0]);
+    let program = MinorCycleProgram::for_problem(&problem)
+        .expect("coupled multiscale MT-MFS controls")
+        .limit_iterations(1)
+        .expect("one coupled iteration")
+        .record_component_sequence(1)
+        .expect("bounded component diagnostics");
     match program.algorithm() {
         ReconstructionAlgorithm::Mtmfs { scales_px, .. } => {
             assert_eq!(
                 scales_px,
-                &[0.0, 5.0],
+                &[0.0, 2.0],
                 "MT-MFS uses the canonical scale set"
             )
         }
         algorithm => panic!("unexpected algorithm {algorithm:?}"),
     }
 
-    let result = run_point(1, 1, program);
+    let result = run_point(problem, 1, 1, program, Some([10, 8]));
     assert_eq!(result.evidence().iterations(), 1);
     let terms = result
         .delta()
@@ -748,13 +775,29 @@ fn t43_multiscale_reuses_canonical_scales_and_counts_one_coupled_selection() {
         .expect("recorded coupled selection")
         .first()
         .expect("one coupled selection");
-    assert!([0.0, 5.0].contains(&component.scale_px()));
+    assert_eq!(
+        component.scale_px(),
+        2.0,
+        "the fixture must exercise a nonzero MT-MFS scale"
+    );
+    let coefficient_zero_cells = terms
+        .iter()
+        .filter(|term| term.cell().coefficient() == 0)
+        .count();
+    assert!(
+        coefficient_zero_cells > 1,
+        "a nonzero scale spreads each Taylor coefficient spatially"
+    );
 }
 
 #[test]
 fn t43_source_partitioning_is_backend_neutral_and_bitwise_deterministic() {
-    let serial = run_point(1, 1, point_program(2));
-    let partitioned = run_point(2, 2, point_program(2));
+    let serial_problem = problem();
+    let serial_program = point_program(&serial_problem, 2);
+    let serial = run_point(serial_problem, 1, 1, serial_program, None);
+    let partitioned_problem = problem();
+    let partitioned_program = point_program(&partitioned_problem, 2);
+    let partitioned = run_point(partitioned_problem, 2, 2, partitioned_program, None);
     assert_eq!(
         serial.delta().expect("serial delta").terms(),
         partitioned.delta().expect("partitioned delta").terms()
@@ -774,5 +817,40 @@ fn t43_source_partitioning_is_backend_neutral_and_bitwise_deterministic() {
     assert_eq!(
         serial.evidence().final_peak_flux().to_bits(),
         partitioned.evidence().final_peak_flux().to_bits()
+    );
+}
+
+#[test]
+fn t43_point_scale_can_select_an_image_edge() {
+    let problem = problem();
+    let program = point_program(&problem, 1);
+    let result = run_point(problem, 1, 1, program, Some([0, 0]));
+    let delta = result.delta().expect("edge point component");
+    assert!(
+        delta
+            .terms()
+            .iter()
+            .all(|term| term.cell().pixel() == [0, 0]),
+        "the zero scale must not inherit the nonzero-scale border"
+    );
+}
+
+#[test]
+fn t43_oversized_scales_are_pruned_before_bias_and_hessian_setup() {
+    let problem = problem_with_scales(vec![20.0, 0.0]);
+    let program = MinorCycleProgram::for_problem(&problem)
+        .expect("identity-bound MT-MFS program")
+        .limit_iterations(1)
+        .expect("one iteration")
+        .record_component_sequence(2)
+        .expect("bounded diagnostics");
+    let result = run_point(problem, 1, 1, program, None);
+    assert_eq!(
+        result
+            .evidence()
+            .recorded_component_sequence()
+            .expect("recorded point coefficient")[0]
+            .scale_px(),
+        0.0
     );
 }

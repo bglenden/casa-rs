@@ -73,7 +73,10 @@ fn numerics(reverse: bool) -> NumericsContract {
 fn reconstruction() -> ReconstructionContract {
     ReconstructionContract::new(
         ReconstructionBasis::Taylor { terms: 2 },
-        ReconstructionAlgorithm::Mtmfs,
+        ReconstructionAlgorithm::Mtmfs {
+            scales_px: vec![0.0],
+            small_scale_bias: 0.0,
+        },
         ReconstructionControls::new(100, 0.1, 0.0),
         PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
     )
@@ -636,7 +639,10 @@ fn incompatible_reconstruction_capabilities_fail_before_execution_inputs_exist()
         science(),
         ReconstructionContract::new(
             ReconstructionBasis::Constant,
-            ReconstructionAlgorithm::Mtmfs,
+            ReconstructionAlgorithm::Mtmfs {
+                scales_px: vec![0.0],
+                small_scale_bias: 0.0,
+            },
             ReconstructionControls::new(100, 0.1, 0.0),
             PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
         ),
@@ -707,7 +713,10 @@ fn one_term_mfs_uses_the_constant_basis_instead_of_taylor() {
         science(),
         ReconstructionContract::new(
             ReconstructionBasis::Taylor { terms: 1 },
-            ReconstructionAlgorithm::Mtmfs,
+            ReconstructionAlgorithm::Mtmfs {
+                scales_px: vec![0.0],
+                small_scale_bias: 0.0,
+            },
             ReconstructionControls::new(100, 0.1, 0.0),
             PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
         ),
@@ -973,7 +982,7 @@ fn canonical_identity_normalizes_signed_zero_but_changes_with_science() {
         positive_zero.weighting().commitment_id()
     );
     assert_ne!(positive_zero.problem_id(), changed.problem_id());
-    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 13);
+    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 14);
 }
 
 #[test]
@@ -1051,6 +1060,35 @@ fn multiscale_order_and_duplicate_scales_do_not_change_scientific_identity() {
 
     assert_eq!(canonical.problem_id(), reordered.problem_id());
     assert_eq!(canonical.reconstruction(), reordered.reconstruction());
+}
+
+#[test]
+fn mtmfs_scales_are_canonical_and_part_of_scientific_identity() {
+    let make = |scales_px| {
+        ProblemSpecification::new(
+            science(),
+            ReconstructionContract::new(
+                ReconstructionBasis::Taylor { terms: 2 },
+                ReconstructionAlgorithm::Mtmfs {
+                    scales_px,
+                    small_scale_bias: 0.3,
+                },
+                ReconstructionControls::new(100, 0.1, 0.0),
+                PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+            ),
+            weighting(),
+            products(false),
+            read_only_transaction(),
+            numerics(false),
+        )
+    };
+    let canonical = compile_request(make(vec![0.0, 3.0]), inputs(false)).expect("MT-MFS scales");
+    let reordered = compile_request(make(vec![3.0, -0.0, 3.0]), inputs(false))
+        .expect("canonical MT-MFS scales");
+    let changed = compile_request(make(vec![0.0, 5.0]), inputs(false)).expect("changed scales");
+
+    assert_eq!(canonical.problem_id(), reordered.problem_id());
+    assert_ne!(canonical.problem_id(), changed.problem_id());
 }
 
 #[test]
@@ -1350,13 +1388,13 @@ fn invalid_polarization_is_a_reconstruction_contract_error() {
 }
 
 #[test]
-fn compiled_problem_identity_has_a_pinned_schema_thirteen_digest() {
+fn compiled_problem_identity_has_a_pinned_schema_fourteen_digest() {
     let compiled = compile_request(specification(false), inputs(false)).expect("compile problem");
 
-    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 13);
+    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 14);
     assert_eq!(
         compiled.problem_id().to_string(),
-        "55ab2defa16c155595a17f18f9ea418e0539b1cc08a8a88954a466624c570937"
+        "40d663597ee1a0efd565045368bc1297069901d9cec8f0f20ef755da7a3355d0"
     );
     let lifecycle = casa_imaging_model::LogicalIdentity::from_sha256(
         compiled.model_lifecycle().contract_id().as_bytes(),

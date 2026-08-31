@@ -79,6 +79,10 @@ pub enum ContinuumAlgorithm {
     Mtmfs {
         /// Number of Taylor coefficients.
         terms: usize,
+        /// Canonical scale sizes in image pixels.
+        scales_px: Vec<f64>,
+        /// CASA small-scale preference in `[0, 1]`.
+        small_scale_bias: f64,
     },
 }
 
@@ -1182,10 +1186,17 @@ fn specification(
             scales_px: scales_px.clone(),
             small_scale_bias: *small_scale_bias,
         },
-        ContinuumAlgorithm::Mtmfs { .. } => ReconstructionAlgorithm::Mtmfs,
+        ContinuumAlgorithm::Mtmfs {
+            scales_px,
+            small_scale_bias,
+            ..
+        } => ReconstructionAlgorithm::Mtmfs {
+            scales_px: scales_px.clone(),
+            small_scale_bias: *small_scale_bias,
+        },
     };
     let basis = match &request.algorithm {
-        ContinuumAlgorithm::Mtmfs { terms } => ReconstructionBasis::Taylor { terms: *terms },
+        ContinuumAlgorithm::Mtmfs { terms, .. } => ReconstructionBasis::Taylor { terms: *terms },
         _ => spectral.basis,
     };
     let (weighting, density) = match request.weighting {

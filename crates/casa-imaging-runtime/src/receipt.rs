@@ -7188,7 +7188,7 @@ fn reconstruction_algorithm(value: &ReconstructionAlgorithm) -> &'static str {
         ReconstructionAlgorithm::Hogbom => "hogbom",
         ReconstructionAlgorithm::Clark => "clark",
         ReconstructionAlgorithm::Multiscale { .. } => "multiscale",
-        ReconstructionAlgorithm::Mtmfs => "mtmfs",
+        ReconstructionAlgorithm::Mtmfs { .. } => "mtmfs",
     }
 }
 

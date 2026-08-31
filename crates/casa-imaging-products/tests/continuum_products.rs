@@ -212,7 +212,7 @@ fn continuum_problem_with_reconstruction(
     algorithm: ReconstructionAlgorithm,
     channels: usize,
 ) -> casa_imaging_model::CompiledProblem {
-    let controls = if matches!(algorithm, ReconstructionAlgorithm::Mtmfs) {
+    let controls = if matches!(algorithm, ReconstructionAlgorithm::Mtmfs { .. }) {
         ReconstructionControls::new(1, 1.0, 0.0)
     } else {
         ReconstructionControls::new(0, 1.0, 0.0)
@@ -684,7 +684,10 @@ fn t42_prechange_product_commitments_remain_constant_channel_only() {
         RestoringBeamPolicy::None,
         InstrumentResponse::Scalar,
         ReconstructionBasis::Taylor { terms: 2 },
-        ReconstructionAlgorithm::Mtmfs,
+        ReconstructionAlgorithm::Mtmfs {
+            scales_px: vec![0.0],
+            small_scale_bias: 0.0,
+        },
         1,
     );
     let taylor_round = run_continuum_round(&taylor_problem, 136);

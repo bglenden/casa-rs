@@ -710,7 +710,10 @@ fn reprojection_converts_taylor_coefficients_to_channel_coordinates() {
         empty_requirements(NumericPrecision::F64),
         NumericPrecision::F64,
         ReconstructionBasis::Taylor { terms: 2 },
-        ReconstructionAlgorithm::Mtmfs,
+        ReconstructionAlgorithm::Mtmfs {
+            scales_px: vec![0.0],
+            small_scale_bias: 0.0,
+        },
         vec![PolarizationCoordinate::StokesI],
         vec![ProductKind::Psf],
     )

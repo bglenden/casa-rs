@@ -93,9 +93,69 @@ pub fn solve_symmetric_ldlt_casacore<const N: usize>(
     Some(solution)
 }
 
+/// Solve a dynamically sized symmetric system with casacore `LSQFit` ordering.
+///
+/// `normal` is a row-major square matrix whose upper triangle contains the
+/// symmetric system. This is the arbitrary-order counterpart of
+/// [`solve_symmetric_ldlt_casacore`] for polynomial reconstruction bases.
+#[must_use]
+pub fn solve_symmetric_ldlt_casacore_dynamic(
+    mut normal: Vec<f64>,
+    known: &[f64],
+) -> Option<Vec<f64>> {
+    let size = known.len();
+    if size == 0 || normal.len() != size.checked_mul(size)? {
+        return None;
+    }
+    for row in 0..size {
+        let diagonal_index = row * size + row;
+        let original_diagonal = normal[diagonal_index];
+        if original_diagonal == 0.0 {
+            return None;
+        }
+        let mut diagonal = original_diagonal;
+        for prior in 0..row {
+            let entry = normal[prior * size + row];
+            diagonal -= entry * entry / normal[prior * size + prior];
+        }
+        if !diagonal.is_finite() || diagonal * diagonal / original_diagonal <= 1.0e-12 {
+            return None;
+        }
+        normal[diagonal_index] = diagonal;
+        for column in row + 1..size {
+            let entry = row * size + column;
+            for prior in 0..row {
+                normal[entry] -= normal[prior * size + row] * normal[prior * size + column]
+                    / normal[prior * size + prior];
+            }
+        }
+    }
+
+    let mut solution = known.to_vec();
+    for row in 0..size {
+        for prior in 0..row {
+            solution[row] -=
+                normal[prior * size + row] * solution[prior] / normal[prior * size + prior];
+        }
+    }
+    for row in (0..size).rev() {
+        for later in row + 1..size {
+            solution[row] -= normal[row * size + later] * solution[later];
+        }
+        solution[row] /= normal[row * size + row];
+    }
+    solution
+        .iter()
+        .all(|value| value.is_finite())
+        .then_some(solution)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{solve_symmetric_ldlt_casacore, solve_weighted_least_squares};
+    use super::{
+        solve_symmetric_ldlt_casacore, solve_symmetric_ldlt_casacore_dynamic,
+        solve_weighted_least_squares,
+    };
 
     #[test]
     fn weighted_linear_fit_recovers_line() {
@@ -129,5 +189,17 @@ mod tests {
     #[test]
     fn casacore_ldlt_rejects_singular_system() {
         assert!(solve_symmetric_ldlt_casacore([[0.0]], [1.0]).is_none());
+    }
+
+    #[test]
+    fn dynamic_casacore_ldlt_matches_fixed_solver() {
+        let normal = [[4.0, 1.0], [0.0, 3.0]];
+        let fixed = solve_symmetric_ldlt_casacore(normal, [9.0, 7.0]).unwrap();
+        let dynamic = solve_symmetric_ldlt_casacore_dynamic(
+            vec![normal[0][0], normal[0][1], normal[1][0], normal[1][1]],
+            &[9.0, 7.0],
+        )
+        .unwrap();
+        assert_eq!(dynamic, fixed);
     }
 }
