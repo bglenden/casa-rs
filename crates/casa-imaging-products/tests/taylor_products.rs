@@ -803,3 +803,40 @@ fn t44_standard_pb_family_uses_pb_tt0_and_does_not_invent_weight_or_alpha_pbcor(
         }
     }
 }
+
+#[test]
+fn taylor_generation_demand_charges_retained_families_and_algorithm_scratch() {
+    let problem = taylor_problem(209, &TAYLOR_PRODUCTS, InstrumentResponse::Scalar);
+    let join = run_round(&problem, 210);
+    let catalog =
+        ContinuumSourceCatalog::from_major_cycle(&problem, &join).expect("Taylor catalog");
+    let planned = ProductGenerationAuthority::bind(&problem)
+        .plan(&catalog, &ContinuumProductControls::default())
+        .expect("Taylor plan");
+    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &join).expect("Taylor inputs");
+    let demand = planned.demand(&inputs).expect("Taylor demand");
+    let values = planned
+        .members()
+        .iter()
+        .map(|member| member.payload_values() as u64)
+        .sum::<u64>();
+    let maximum = planned
+        .members()
+        .iter()
+        .map(|member| member.payload_values() as u64)
+        .max()
+        .expect("Taylor members");
+    assert_eq!(demand.produced_residency_bytes(), values * 5);
+    assert_eq!(demand.sealed_residency_bytes(), values * 5);
+    assert_eq!(demand.maximum_member_payload_bytes(), maximum * 4);
+    assert_eq!(demand.maximum_member_validity_bytes(), maximum);
+    assert_eq!(
+        demand.algorithm_scratch_bytes(),
+        8_588,
+        "8x8, two-term Taylor owner retains exact families, solve and rustfft buffers"
+    );
+    assert_eq!(
+        demand.peak_residency_bytes(),
+        (values * 10).max(values * 5 + 8_588)
+    );
+}

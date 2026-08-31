@@ -596,6 +596,7 @@ dependencies = [
  "casa-imaging-reconstruction",
  "casa-imaging-runtime",
  "casa-ms",
+ "casa-test-support",
  "casa-types",
  "libc",
  "ndarray",

@@ -112,8 +112,8 @@ imaging-t44-mtmfs-products testdata_root casa_python casa_prefix:
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test availability
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-runtime --test compile_plan_run serial_product_publication -- --nocapture
     python3 tools/science/t44_test_mtmfs_products_compare.py
-    CASA_RS_TESTDATA_ROOT="{{testdata_root}}" CASA_RS_T44_RUST_OUTPUT="{{justfile_directory()}}/target/t43-t44-casa-oracle/rust-mtmfs-products.json" CARGO_INCREMENTAL=0 cargo test -p casa-imaging-runtime --test mtmfs_clean_oracle t44_real_ms_mtmfs_products_match_frozen_casa -- --ignored --exact --nocapture
-    "{{casa_python}}" tools/science/t44_mtmfs_products_compare.py --casa-prefix "{{casa_prefix}}" --rust-json "{{justfile_directory()}}/target/t43-t44-casa-oracle/rust-mtmfs-products.json" --summary-output "{{justfile_directory()}}/target/t43-t44-casa-oracle/t44-comparison.json"
+    CASA_RS_TESTDATA_ROOT="{{testdata_root}}" CASA_RS_T44_APPLICATION_PREFIX="{{justfile_directory()}}/target/t43-t44-casa-oracle/rust-application/casa" CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test mtmfs_publication_oracle t44_application_mtmfs_publishes_frozen_casa_product_contract -- --ignored --exact --nocapture
+    "{{casa_python}}" tools/science/t44_mtmfs_products_compare.py --casa-prefix "{{casa_prefix}}" --rust-prefix "{{justfile_directory()}}/target/t43-t44-casa-oracle/rust-application/casa" --summary-output "{{justfile_directory()}}/target/t43-t44-casa-oracle/t44-comparison.json"
 
 release-perf:
     bash scripts/test-release-perf.sh

@@ -32,8 +32,8 @@ use casa_imaging_model::{
 };
 use casa_imaging_products::{
     ContinuumProductControls, ContinuumProductInputs, ContinuumSourceCatalog,
-    PlannedContinuumGeneration, ProductGenerationAuthority, SealedContinuumGeneration,
-    VisibilityProductCompletion, produce_continuum_members,
+    PlannedContinuumGeneration, ProductGenerationAuthority, PublishedContinuumGeneration,
+    VisibilityProductCompletion,
 };
 use casa_imaging_reconstruction::{
     ExecutableModelProblem, MajorCycleCompletion, MinorCycleProgram, MinorCycleStopReason,
@@ -158,8 +158,8 @@ pub struct NativeApplicationOutcome {
     pub scientific: MajorCycleCompletion,
     /// Planned product generation used before member production.
     pub planned_products: PlannedContinuumGeneration,
-    /// Authorized product generation retained after publication.
-    pub products: SealedContinuumGeneration,
+    /// Payload-free authorized generation retained after publication.
+    pub products: PublishedContinuumGeneration,
 }
 
 /// Stable application projection of the T21 owner evidence.
@@ -931,6 +931,16 @@ where
     )?;
     let authority = ProductGenerationAuthority::bind(problem);
     let planned_products = authority.plan(&sources, &publication_config.controls)?;
+    let generation_demand = {
+        let mut inputs = ContinuumProductInputs::from_major_cycle(problem, &scientific)?;
+        if let Some(mask) = reconstruction_mask.as_ref() {
+            inputs = inputs.with_reconstruction_mask(mask)?;
+        }
+        planned_products.demand(&inputs)?
+    };
+    let staging_residency_bytes = publication_config
+        .sink
+        .staging_residency_bytes(&planned_products, &generation_demand)?;
 
     let visibility_write_receipt = prior
         .visibility_replay
@@ -951,6 +961,8 @@ where
     let publication_plan = SerialProductPublicationPlan::new(
         problem,
         &planned_products,
+        &generation_demand,
+        staging_residency_bytes,
         &planning_registry,
         SerialProductPublicationPolicy::new(
             runtime.implementation.clone(),
@@ -974,16 +986,13 @@ where
         &runtime.receipts,
         move |_, _| Ok::<_, std::convert::Infallible>(vec![physical]),
     )?;
-    let mut inputs = ContinuumProductInputs::from_major_cycle(problem, &scientific)?;
-    if let Some(mask) = reconstruction_mask.as_ref() {
-        inputs = inputs.with_reconstruction_mask(mask)?;
-    }
-    let produced = produce_continuum_members(&planned_products, &inputs)?;
-    let sealed = authority.authorize(&planned_products, &produced)?;
     let executor = SerialProductPublicationExecutor::new(
         runtime.implementation.clone(),
+        problem.clone(),
         publication,
-        sealed,
+        planned_products,
+        scientific,
+        reconstruction_mask,
         publication_config.sink,
     )?;
     let registry = SerialProductPublicationRegistry::new(
@@ -1011,10 +1020,11 @@ where
             .bind(ExecutionProvenance::new(runtime.attempts[2], runtime.build)),
     )?;
     let publication_receipt = runtime.receipts.open(runtime.attempts[2])?;
-    let products = registry
+    let completion = registry
         .implementation()
-        .take_sealed_generation()
-        .ok_or_else(|| boxed("publication execution omitted its sealed product generation"))?;
+        .take_completion()
+        .ok_or_else(|| boxed("publication execution omitted its product completion"))?;
+    let (planned_products, scientific, products) = completion.into_parts();
     Ok(NativeApplicationOutcome {
         initial_receipt: prior.initial_receipt,
         final_major_receipt: prior.final_major_receipt,

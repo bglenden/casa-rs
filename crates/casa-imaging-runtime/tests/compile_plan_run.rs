@@ -40,9 +40,9 @@ use casa_imaging_model::{
     WeightingContract, WeightingScheme, compile, compile_observation,
 };
 use casa_imaging_products::{
-    ContinuumProductControls, ContinuumProductInputs, ContinuumSourceCatalog,
-    ProductGenerationAuthority, PublicationProjection, SealedContinuumGeneration,
-    produce_continuum_members,
+    ContinuumGenerationDemand, ContinuumProductControls, ContinuumProductInputs,
+    ContinuumSourceCatalog, ProductGenerationAuthority, PublicationProjection,
+    SealedContinuumGeneration, produce_continuum_members,
 };
 use casa_imaging_reconstruction::{
     ExecutableModelProblem, MajorCycleCompletion, MajorCycleOwner, MajorCyclePreparation,
@@ -11099,6 +11099,24 @@ fn sealed_generation_for_problem(
     (planned, sealed)
 }
 
+fn pending_generation_for_problem(
+    problem: &casa_imaging_model::CompiledProblem,
+) -> (
+    casa_imaging_products::PlannedContinuumGeneration,
+    MajorCycleCompletion,
+    ContinuumGenerationDemand,
+) {
+    let join = sealed_products_round(problem, 202);
+    let catalog = ContinuumSourceCatalog::from_major_cycle(problem, &join)
+        .expect("source catalog from released join");
+    let planned = ProductGenerationAuthority::bind(problem)
+        .plan(&catalog, &ContinuumProductControls::default())
+        .expect("planned generation");
+    let inputs = ContinuumProductInputs::from_major_cycle(problem, &join).expect("inputs");
+    let demand = planned.demand(&inputs).expect("product generation demand");
+    (planned, join, demand)
+}
+
 fn sealed_publication_plan_for_problem(
     problem: &casa_imaging_model::CompiledProblem,
 ) -> (ProductPublicationPlan, PublicationProjection) {
@@ -11162,12 +11180,24 @@ struct InMemoryProductSink {
     staged: Mutex<Vec<ArtifactIdentity>>,
     visible: Mutex<Vec<ArtifactIdentity>>,
     publish_calls: AtomicUsize,
+    published_entries: Mutex<Vec<casa_imaging_runtime::AuthorizedProductPublicationEntry>>,
     fail_at: Option<usize>,
     uncertain: bool,
 }
 
 impl SerialProductPublicationSink for InMemoryProductSink {
     type Error = io::Error;
+
+    fn staging_residency_bytes(
+        &self,
+        _planned: &casa_imaging_products::PlannedContinuumGeneration,
+        demand: &ContinuumGenerationDemand,
+    ) -> Result<u64, Self::Error> {
+        demand
+            .maximum_member_payload_bytes()
+            .checked_add(demand.maximum_member_validity_bytes())
+            .ok_or_else(|| io::Error::other("in-memory staging residency overflow"))
+    }
 
     fn stage(
         &self,
@@ -11197,6 +11227,10 @@ impl SerialProductPublicationSink for InMemoryProductSink {
         if !visible.contains(&entry.observed_identity()) {
             visible.push(entry.observed_identity());
         }
+        self.published_entries
+            .lock()
+            .expect("published entries lock")
+            .push(entry);
         Ok(())
     }
 }
@@ -11204,7 +11238,11 @@ impl SerialProductPublicationSink for InMemoryProductSink {
 #[test]
 fn serial_product_publication_stages_privately_then_publishes_once() {
     let problem = compile(sealed_products_request(242)).expect("continuum compilation");
-    let (planned, sealed) = sealed_generation_for_problem(&problem);
+    let (planned, scientific, generation_demand) = pending_generation_for_problem(&problem);
+    let sink = InMemoryProductSink::default();
+    let staging_residency_bytes = sink
+        .staging_residency_bytes(&planned, &generation_demand)
+        .expect("in-memory staging demand");
     let planning_registry = ContractOnlyRegistry::new(
         registry(77),
         implementation_metadata(&problem),
@@ -11214,6 +11252,8 @@ fn serial_product_publication_stages_privately_then_publishes_once() {
     let planned_runtime = SerialProductPublicationPlan::new(
         &problem,
         &planned,
+        &generation_demand,
+        staging_residency_bytes,
         &planning_registry,
         SerialProductPublicationPolicy::new(implementation(77), storage_io.clone(), 1_000, 900_000),
     )
@@ -11280,24 +11320,37 @@ fn serial_product_publication_stages_privately_then_publishes_once() {
         .iter()
         .map(|entry| entry.payload_bytes())
         .sum::<u64>();
-    let value_count = payload_bytes / u64::try_from(std::mem::size_of::<f32>()).unwrap();
-    let generation_bytes = value_count * 10;
+    let writer_residency_bytes = payload_bytes.max(staging_residency_bytes);
     assert_eq!(
-        demand.io_buffers.serialization_bytes, payload_bytes,
-        "publication charges the sealed f32 serialization generation"
+        demand.io_buffers.serialization_bytes, writer_residency_bytes,
+        "publication charges the larger of the serialized payload and sink-owned staging envelope"
     );
     assert_eq!(
         publication_dag.logical_allocations()
-            [&casa_imaging_runtime::AllocationId::new("product-generation-residency")]
+            [&casa_imaging_runtime::AllocationId::new("product-generation-produced")]
             .bytes,
-        generation_bytes,
-        "production and sealing overlap charges two f32 payloads plus two validity bytes"
+        generation_demand.produced_residency_bytes(),
+        "generation charges the product-owner produced residency"
+    );
+    assert_eq!(
+        publication_dag.logical_allocations()
+            [&casa_imaging_runtime::AllocationId::new("product-generation-sealed")]
+            .bytes,
+        generation_demand.sealed_residency_bytes(),
+        "sealing charges the product-owner sealed residency"
+    );
+    assert_eq!(
+        publication_dag.logical_allocations()
+            [&casa_imaging_runtime::AllocationId::new("product-generation-scratch")]
+            .bytes,
+        generation_demand.algorithm_scratch_bytes(),
+        "generation charges the product-owner algorithm scratch"
     );
     assert_eq!(
         publication_dag.logical_allocations()
             [&casa_imaging_runtime::AllocationId::new("product-publication-writer-buffer")]
             .bytes,
-        payload_bytes,
+        writer_residency_bytes,
         "serialization has an independent admitted writer allocation"
     );
     assert_eq!(demand.rates.len(), 1);
@@ -11306,18 +11359,16 @@ fn serial_product_publication_stages_privately_then_publishes_once() {
         "publication must reserve only output write throughput"
     );
     let expected_members = planned_runtime.publication().entries().len();
-    let retry_entry = planned_runtime
-        .publication()
-        .authorize(&PublicationProjection::from_sealed(&sealed).expect("sealed projection"))
-        .expect("member authorization")
-        .entries()[0];
     let (physical, publication) = planned_runtime.into_parts();
     let expected_layouts = physical.publication_layouts().entries().to_vec();
     let executor = SerialProductPublicationExecutor::new(
         implementation(77),
+        problem.clone(),
         publication,
-        sealed,
-        InMemoryProductSink::default(),
+        planned,
+        scientific,
+        None,
+        sink,
     )
     .expect("sealed publication executor");
     let runtime_registry =
@@ -11375,12 +11426,22 @@ fn serial_product_publication_stages_privately_then_publishes_once() {
         expected_members
     );
     assert_eq!(sink.publish_calls.load(Ordering::SeqCst), expected_members);
+    let retry_entry = sink
+        .published_entries
+        .lock()
+        .expect("published entries lock")[0];
     sink.promote(retry_entry)
         .expect("same member identity is idempotent");
     assert_eq!(
         sink.visible.lock().expect("visible lock").len(),
         expected_members
     );
+    let (_, _, published) = runtime_registry
+        .implementation()
+        .take_completion()
+        .expect("payload-free publication completion")
+        .into_parts();
+    assert_eq!(published.payload_residency_bytes(), 0);
     let receipt = receipts.open(attempt).expect("publication receipt");
     assert_eq!(receipt.status(), ReceiptStatus::Completed);
     assert_eq!(receipt.publication_layout_count(), expected_members);
@@ -11439,7 +11500,10 @@ fn serial_product_publication_stages_privately_then_publishes_once() {
 #[test]
 fn production_storage_profile_admits_serial_scientific_and_publication_plans() {
     let problem = compile(sealed_products_request(245)).expect("continuum compilation");
-    let (planned, _) = sealed_generation_for_problem(&problem);
+    let (planned, _, generation_demand) = pending_generation_for_problem(&problem);
+    let staging_residency_bytes = InMemoryProductSink::default()
+        .staging_residency_bytes(&planned, &generation_demand)
+        .expect("in-memory staging demand");
     let residency = selected_content_residency(&problem);
     let planning_registry = ContractOnlyRegistry::new(
         registry(81),
@@ -11477,6 +11541,8 @@ fn production_storage_profile_admits_serial_scientific_and_publication_plans() {
     let planned_runtime = SerialProductPublicationPlan::new(
         &problem,
         &planned,
+        &generation_demand,
+        staging_residency_bytes,
         &planning_registry,
         SerialProductPublicationPolicy::new(
             implementation(81),
@@ -11518,7 +11584,10 @@ fn production_storage_profile_admits_serial_scientific_and_publication_plans() {
 #[test]
 fn profiled_serial_plans_bind_only_their_used_storage_identities() {
     let problem = compile(sealed_products_request(246)).expect("continuum compilation");
-    let (planned, _) = sealed_generation_for_problem(&problem);
+    let (planned, _, generation_demand) = pending_generation_for_problem(&problem);
+    let staging_residency_bytes = InMemoryProductSink::default()
+        .staging_residency_bytes(&planned, &generation_demand)
+        .expect("in-memory staging demand");
     let residency = selected_content_residency(&problem);
     let planning_registry = ContractOnlyRegistry::new(
         registry(82),
@@ -11612,6 +11681,8 @@ fn profiled_serial_plans_bind_only_their_used_storage_identities() {
         let publication = SerialProductPublicationPlan::new(
             &problem,
             &planned,
+            &generation_demand,
+            staging_residency_bytes,
             &planning_registry,
             SerialProductPublicationPolicy::new(implementation(82), substitution, 1_000, 900_000),
         )
@@ -11635,7 +11706,15 @@ fn profiled_serial_plans_bind_only_their_used_storage_identities() {
 
 fn assert_member_failure_receipt(uncertain: bool, expected: ArtifactDisposition) {
     let problem = compile(sealed_products_request(245)).expect("continuum compilation");
-    let (planned, sealed) = sealed_generation_for_problem(&problem);
+    let (planned, scientific, generation_demand) = pending_generation_for_problem(&problem);
+    let sink = InMemoryProductSink {
+        fail_at: Some(1),
+        uncertain,
+        ..Default::default()
+    };
+    let staging_residency_bytes = sink
+        .staging_residency_bytes(&planned, &generation_demand)
+        .expect("in-memory staging demand");
     let planning_registry = ContractOnlyRegistry::new(
         registry(81),
         implementation_metadata(&problem),
@@ -11644,6 +11723,8 @@ fn assert_member_failure_receipt(uncertain: bool, expected: ArtifactDisposition)
     let planned_runtime = SerialProductPublicationPlan::new(
         &problem,
         &planned,
+        &generation_demand,
+        staging_residency_bytes,
         &planning_registry,
         SerialProductPublicationPolicy::new(
             implementation(81),
@@ -11661,13 +11742,12 @@ fn assert_member_failure_receipt(uncertain: bool, expected: ArtifactDisposition)
     let (physical, publication) = planned_runtime.into_parts();
     let executor = SerialProductPublicationExecutor::new(
         implementation(81),
+        problem.clone(),
         publication,
-        sealed,
-        InMemoryProductSink {
-            fail_at: Some(1),
-            uncertain,
-            ..Default::default()
-        },
+        planned,
+        scientific,
+        None,
+        sink,
     )
     .expect("sealed publication executor");
     let runtime_registry =
@@ -11735,19 +11815,22 @@ fn serial_product_publication_records_uncertain_member_without_losing_published_
 }
 
 #[test]
-fn serial_product_publication_rejects_foreign_sealed_generation() {
+fn serial_product_publication_rejects_foreign_scientific_generation() {
     let problem = compile(sealed_products_request(243)).expect("continuum compilation");
     let foreign = compile(sealed_products_request(244)).expect("foreign compilation");
-    let (planned, _) = sealed_generation_for_problem(&problem);
-    let (_, foreign_sealed) = sealed_generation_for_problem(&foreign);
+    let (planned, _, _) = pending_generation_for_problem(&problem);
+    let (_, foreign_scientific, _) = pending_generation_for_problem(&foreign);
     let publication = ProductPublicationPlan::bind(&problem, &planned).expect("publication plan");
     let error = match SerialProductPublicationExecutor::new(
         implementation(80),
+        problem.clone(),
         publication,
-        foreign_sealed,
+        planned,
+        foreign_scientific,
+        None,
         InMemoryProductSink::default(),
     ) {
-        Ok(_) => panic!("foreign seal must be rejected before staging"),
+        Ok(_) => panic!("foreign scientific generation must be rejected before staging"),
         Err(error) => error,
     };
     assert!(error.to_string().contains("product publication"));

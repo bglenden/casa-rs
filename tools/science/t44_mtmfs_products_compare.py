@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Compare sealed T44 MT-MFS products with the frozen CASA oracle.
+"""Compare T44 MT-MFS products with the frozen CASA oracle.
 
-The Rust document represents members emitted by ``casa-imaging-products``.
-Units are the semantic ``ProductUnit`` values, not CASA brightness-unit strings;
-CASA leaves several physically meaningful product units blank.  CASA is read
-only.  This comparator never invokes ``tclean`` or regenerates the oracle.
+The Rust input may be the focused sealed-member JSON or the CASA-image prefix
+published by the production application. JSON units are semantic
+``ProductUnit`` values; persisted products use CASA brightness-unit strings.
+CASA leaves several physically meaningful product units blank. The frozen CASA
+prefix is read only. This comparator never invokes ``tclean`` or regenerates
+the oracle.
 """
 
 from __future__ import annotations
@@ -45,6 +47,16 @@ PRODUCT_UNITS = {
     ".sumwt.tt0": "visibility_weight",
     ".sumwt.tt1": "visibility_weight",
     ".sumwt.tt2": "visibility_weight",
+}
+PERSISTED_RUST_UNITS = {
+    name: (
+        "Jy/pixel"
+        if name.startswith(".model.")
+        else "Jy/beam"
+        if name.startswith((".psf.", ".residual.", ".image."))
+        else ""
+    )
+    for name in PRODUCT_UNITS
 }
 EXPECTED_PRODUCTS = frozenset(PRODUCT_UNITS)
 IMAGE_SHAPE = (128, 128, 1, 1)
@@ -154,21 +166,21 @@ def _casa_beam(tool: Any) -> Mapping[str, float] | None:
     }
 
 
-def load_casa_products(prefix: Path) -> dict[str, Product]:
+def load_image_products(prefix: Path, owner: str) -> dict[str, Product]:
     try:
         from casatools import image as image_tool
     except ImportError as error:
-        raise ComparisonError("reading frozen CASA images requires casatools") from error
+        raise ComparisonError(f"reading {owner} images requires casatools") from error
 
     products: dict[str, Product] = {}
     for name in sorted(EXPECTED_PRODUCTS):
         path = Path(f"{prefix}{name}")
         if not path.is_dir():
-            raise ComparisonError(f"frozen CASA product is missing: {path}")
+            raise ComparisonError(f"{owner} product is missing: {path}")
         tool = image_tool()
         try:
             if not tool.open(str(path)):
-                raise ComparisonError(f"frozen CASA product could not be opened: {path}")
+                raise ComparisonError(f"{owner} product could not be opened: {path}")
             shape = tuple(int(extent) for extent in tool.shape())
             values = np.asarray(tool.getchunk(), dtype=np.float64).reshape(shape)
             validity = np.asarray(tool.getchunk(getmask=True), dtype=bool).reshape(shape)
@@ -184,6 +196,14 @@ def load_casa_products(prefix: Path) -> dict[str, Product]:
             beam=beam,
         )
     return products
+
+
+def load_casa_products(prefix: Path) -> dict[str, Product]:
+    return load_image_products(prefix, "frozen CASA")
+
+
+def load_rust_products(prefix: Path) -> dict[str, Product]:
+    return load_image_products(prefix, "persisted casa-rs")
 
 
 def _metric(
@@ -232,7 +252,14 @@ def _beam_metric(candidate: Mapping[str, float], reference: Mapping[str, float])
 def compare_documents(
     casa: Mapping[str, Product], rust_document: Mapping[str, Any]
 ) -> dict[str, Any]:
-    rust = _rust_products(rust_document)
+    return compare_products(casa, _rust_products(rust_document), PRODUCT_UNITS)
+
+
+def compare_products(
+    casa: Mapping[str, Product],
+    rust: Mapping[str, Product],
+    expected_rust_units: Mapping[str, str],
+) -> dict[str, Any]:
     failures: list[str] = []
 
     def record(label: str, evidence: dict[str, Any]) -> dict[str, Any]:
@@ -264,8 +291,8 @@ def compare_documents(
         )
         unit = record(
             f"{name}_unit",
-            {"pass": candidate.unit == PRODUCT_UNITS[name],
-             "expected_product_unit": PRODUCT_UNITS[name], "casa_rs": candidate.unit,
+            {"pass": candidate.unit == expected_rust_units[name],
+             "expected_casa_rs_unit": expected_rust_units[name], "casa_rs": candidate.unit,
              "casa_brightness_unit": reference.unit},
         )
         masks_equal = candidate.validity.shape == reference.validity.shape and np.array_equal(
@@ -365,17 +392,26 @@ def compare_documents(
     }
 
 
-def compare(casa_prefix: Path, rust_json: Path) -> dict[str, Any]:
-    if not rust_json.is_file():
+def compare(
+    casa_prefix: Path,
+    rust_json: Path | None = None,
+    rust_prefix: Path | None = None,
+) -> dict[str, Any]:
+    casa = load_casa_products(casa_prefix)
+    if rust_prefix is not None:
+        return compare_products(casa, load_rust_products(rust_prefix), PERSISTED_RUST_UNITS)
+    if rust_json is None or not rust_json.is_file():
         raise ComparisonError(f"casa-rs product artifact is missing: {rust_json}")
     rust = _object(json.loads(rust_json.read_text(encoding="utf-8")), "casa-rs artifact")
-    return compare_documents(load_casa_products(casa_prefix), rust)
+    return compare_documents(casa, rust)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--casa-prefix", required=True, type=Path)
-    parser.add_argument("--rust-json", required=True, type=Path)
+    rust = parser.add_mutually_exclusive_group(required=True)
+    rust.add_argument("--rust-json", type=Path)
+    rust.add_argument("--rust-prefix", type=Path)
     parser.add_argument("--summary-output", type=Path)
     return parser.parse_args()
 
@@ -383,7 +419,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     try:
-        summary = compare(args.casa_prefix, args.rust_json)
+        summary = compare(args.casa_prefix, args.rust_json, args.rust_prefix)
     except (ComparisonError, OSError, ValueError, json.JSONDecodeError) as error:
         print(f"t44_mtmfs_products_compare: {error}", file=sys.stderr)
         return 2

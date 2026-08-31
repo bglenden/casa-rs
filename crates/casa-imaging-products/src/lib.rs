@@ -23,6 +23,7 @@
 
 mod authority;
 mod beam;
+mod demand;
 mod digest;
 mod error;
 mod projection;
@@ -35,10 +36,11 @@ pub use authority::{
     AnalyticPrimaryBeamModel, CONTINUUM_ALGORITHM_CATALOG_VERSION, ContinuumCommitmentId,
     ContinuumCompletionsId, ContinuumProducedMembers, ContinuumProductControls, ContinuumSealId,
     DEFAULT_PSF_CUTOFF, MemberArtifactId, PlannedContinuumGeneration, PlannedGenerationId,
-    PlannedMember, ProductGenerationAuthority, SealedContinuumGeneration, SealedMember,
-    SealedMemberContract, produce_continuum_members,
+    PlannedMember, ProductGenerationAuthority, PublishedContinuumGeneration, PublishedMember,
+    SealedContinuumGeneration, SealedMember, SealedMemberContract, produce_continuum_members,
 };
 pub use beam::{RestoringBeam, fit_restoring_beam};
+pub use demand::ContinuumGenerationDemand;
 pub use error::ProductsError;
 pub use projection::{PublicationMemberProjection, PublicationProjection};
 pub use restore::{

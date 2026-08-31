@@ -217,7 +217,7 @@ cutover are:
 | `casa-imaging-model` | none |
 | native Selected Observation path in `casa-ms` | `casa-imaging-model` plus storage/foundation crates; no displaced imaging, application, task-runtime, or imaging-runtime dependency |
 | `casa-imaging-reconstruction` | `casa-imaging-model` |
-| `casa-imaging-products` | `casa-imaging-model`, `casa-imaging-reconstruction` |
+| `casa-imaging-products` | `casa-imaging-model`, `casa-imaging-reconstruction`, `casa-numerics` |
 | `casa-imaging-runtime` | `casa-imaging-model`, `casa-ms`, `casa-imaging-reconstruction`, `casa-imaging-products` |
 
 - `casa-imaging-model` remains dependency-free and owns compiler commitments,

@@ -109,10 +109,10 @@ pub use resource_authority::{
     TransferLink, TransferLinkId,
 };
 pub use serial_product_publication::{
-    MemberPromotionFailure, MemberPromotionFailureKind, SerialProductPublicationExecutionError,
-    SerialProductPublicationExecutor, SerialProductPublicationPlan,
-    SerialProductPublicationPlanError, SerialProductPublicationPolicy,
-    SerialProductPublicationRegistry, SerialProductPublicationSink,
+    MemberPromotionFailure, MemberPromotionFailureKind, SerialProductPublicationCompletion,
+    SerialProductPublicationExecutionError, SerialProductPublicationExecutor,
+    SerialProductPublicationPlan, SerialProductPublicationPlanError,
+    SerialProductPublicationPolicy, SerialProductPublicationRegistry, SerialProductPublicationSink,
 };
 pub use spectral_cycle::{
     FinalMajorPhaseInput, FinalVisibilityReplay, FinalVisibilitySink, InitialMajorPhaseCompletion,

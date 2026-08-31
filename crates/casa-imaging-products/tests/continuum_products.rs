@@ -3,7 +3,7 @@
 //! T22 continuum product algorithms and the two-phase Product Generation
 //! Authority, driven through owner seams end to end.
 
-use std::convert::Infallible;
+use std::{convert::Infallible, mem::size_of};
 
 use casa_imaging_model::{
     AntennaSelection, AxisOrder, CentreLaws, ColumnGeneration, ConsistencyToken,
@@ -1001,6 +1001,90 @@ fn projection_publishes_the_sealed_set_once_and_retains_prepared_evidence() {
             sealed_member.payload().len() as u64 * 4
         );
     }
+
+    let seal_id = sealed.seal_id();
+    let generation_id = sealed.generation_id();
+    let completions_id = sealed.completions_id();
+    let member_evidence = sealed
+        .members()
+        .iter()
+        .map(|member| {
+            (
+                member.node(),
+                member.name().to_string(),
+                member.artifact_id(),
+                member.content_identity(),
+                member.contract().role(),
+                member.contract().unit(),
+                member.contract().schema(),
+                member.contract().validity(),
+                member.resolved_beams().to_vec(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let published = sealed.into_published_summary();
+    assert_eq!(published.seal_id(), seal_id);
+    assert_eq!(published.generation_id(), generation_id);
+    assert_eq!(published.completions_id(), completions_id);
+    assert_eq!(published.payload_residency_bytes(), 0);
+    assert_eq!(published.members().len(), member_evidence.len());
+    for (published, expected) in published.members().iter().zip(member_evidence) {
+        assert_eq!(published.node(), expected.0);
+        assert_eq!(published.name(), expected.1);
+        assert_eq!(published.artifact_id(), expected.2);
+        assert_eq!(published.content_identity(), expected.3);
+        assert_eq!(published.contract().role(), expected.4);
+        assert_eq!(published.contract().unit(), expected.5);
+        assert_eq!(published.contract().schema(), expected.6);
+        assert_eq!(published.contract().validity(), expected.7);
+        assert_eq!(published.resolved_beams(), expected.8);
+    }
+}
+
+#[test]
+fn generic_generation_demand_charges_exact_owned_arrays() {
+    let products = [
+        ProductKind::Psf,
+        ProductKind::Residual,
+        ProductKind::Model,
+        ProductKind::SumWeights,
+        ProductKind::Mask,
+    ];
+    let problem = continuum_problem_with_policy(94, &products, RestoringBeamPolicy::None);
+    let round = run_continuum_round(&problem, 95);
+    let catalog =
+        ContinuumSourceCatalog::from_major_cycle(&problem, &round.join).expect("source catalog");
+    let planned = ProductGenerationAuthority::bind(&problem)
+        .plan(&catalog, &ContinuumProductControls::default())
+        .expect("planned generation");
+    let inputs =
+        casa_imaging_products::ContinuumProductInputs::from_major_cycle(&problem, &round.join)
+            .expect("product inputs");
+    let demand = planned.demand(&inputs).expect("generic demand");
+    let values = planned
+        .members()
+        .iter()
+        .map(|member| member.payload_values() as u64)
+        .sum::<u64>();
+    let maximum = planned
+        .members()
+        .iter()
+        .map(|member| member.payload_values() as u64)
+        .max()
+        .expect("members");
+    assert_eq!(demand.produced_residency_bytes(), values * 5);
+    assert_eq!(demand.sealed_residency_bytes(), values * 5);
+    assert_eq!(demand.maximum_member_payload_bytes(), maximum * 4);
+    assert_eq!(demand.maximum_member_validity_bytes(), maximum);
+    assert_eq!(
+        demand.algorithm_scratch_bytes(),
+        (SHAPE[0] * SHAPE[1] * 2 * size_of::<f32>()) as u64,
+        "generic normalization overlaps one converted plane and one result"
+    );
+    assert_eq!(
+        demand.peak_residency_bytes(),
+        (values * 5 * 2).max(values * 5 + demand.algorithm_scratch_bytes())
+    );
 }
 
 #[test]

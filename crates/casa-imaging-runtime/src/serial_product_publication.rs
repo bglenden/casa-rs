@@ -11,13 +11,19 @@ use std::{
 
 use casa_imaging_model::CompiledProblem;
 use casa_imaging_products::{
-    PlannedContinuumGeneration, PublicationProjection, SealedContinuumGeneration, SealedMember,
+    ContinuumGenerationDemand, ContinuumProducedMembers, ContinuumProductInputs,
+    PlannedContinuumGeneration, ProductGenerationAuthority, PublicationProjection,
+    PublishedContinuumGeneration, SealedContinuumGeneration, SealedMember,
+    produce_continuum_members,
 };
+use casa_imaging_reconstruction::{MajorCycleCompletion, ReconstructionMask};
 use sha2::{Digest, Sha256};
 
 use crate::*;
 
 const CHECK: &str = "product-publication-check";
+const GENERATE: &str = "product-generation-generate";
+const SEAL: &str = "product-generation-seal";
 const STAGE: &str = "product-publication-stage";
 const COMMIT: &str = "product-publication-commit";
 const OUTPUT_FILE_DESCRIPTOR_BOUND: u64 = 1;
@@ -30,6 +36,17 @@ const OUTPUT_FILE_DESCRIPTOR_BOUND: u64 = 1;
 pub trait SerialProductPublicationSink {
     /// Sink-specific failure.
     type Error: Error + 'static;
+
+    /// Declare the peak sink-owned heap used while staging one member.
+    ///
+    /// This excludes the sealed member borrowed from the product owner and the
+    /// runtime-owned publication bookkeeping. It includes every payload,
+    /// validity, image-adapter, and registry allocation made by [`Self::stage`].
+    fn staging_residency_bytes(
+        &self,
+        planned: &PlannedContinuumGeneration,
+        demand: &ContinuumGenerationDemand,
+    ) -> Result<u64, Self::Error>;
 
     /// Privately stage one exact sealed member.
     fn stage(
@@ -137,11 +154,19 @@ impl SerialProductPublicationPlan {
     pub fn new<R: ImplementationRegistry>(
         problem: &CompiledProblem,
         planned: &PlannedContinuumGeneration,
+        generation_demand: &ContinuumGenerationDemand,
+        staging_residency_bytes: u64,
         registry: &R,
         policy: SerialProductPublicationPolicy,
     ) -> Result<Self, SerialProductPublicationPlanError> {
         let publication = ProductPublicationPlan::bind(problem, planned)?;
-        let physical = build_physical(registry, &policy, &publication)?;
+        let physical = build_physical(
+            registry,
+            &policy,
+            &publication,
+            generation_demand,
+            staging_residency_bytes,
+        )?;
         Ok(Self {
             physical,
             publication,
@@ -171,14 +196,20 @@ fn build_physical<R: ImplementationRegistry>(
     registry: &R,
     policy: &SerialProductPublicationPolicy,
     publication: &ProductPublicationPlan,
+    generation_demand: &ContinuumGenerationDemand,
+    staging_residency_bytes: u64,
 ) -> Result<PhysicalWorkBinding, SerialProductPublicationPlanError> {
     let check = WorkNodeId::new(CHECK);
+    let generate = WorkNodeId::new(GENERATE);
+    let seal = WorkNodeId::new(SEAL);
     let stage = WorkNodeId::new(STAGE);
     let commit = WorkNodeId::new(COMMIT);
+    let scratch_allocation = AllocationId::new("product-generation-scratch");
+    let produced_allocation = AllocationId::new("product-generation-produced");
+    let sealed_allocation = AllocationId::new("product-generation-sealed");
     let writer_allocation = AllocationId::new("product-publication-writer-buffer");
-    let writer_slot = PhysicalSlotId::new("product-publication-writer-slot");
-    let generation_allocation = AllocationId::new("product-generation-residency");
-    let generation_slot = PhysicalSlotId::new("product-generation-residency-slot");
+    let first_residency_slot = PhysicalSlotId::new("product-generation-residency-slot-a");
+    let second_residency_slot = PhysicalSlotId::new("product-generation-residency-slot-b");
     let commit_allocation = AllocationId::new("product-publication-commit-buffer");
     let commit_slot = PhysicalSlotId::new("product-publication-commit-slot");
     let payload_bytes = publication
@@ -189,14 +220,12 @@ fn build_physical<R: ImplementationRegistry>(
                 .checked_add(entry.payload_bytes())
                 .ok_or(SerialProductPublicationPlanError::Overflow)
         })?;
-    // Product production holds one produced payload plus one validity byte per
-    // value, and sealing briefly overlaps a second payload/validity generation.
-    // Charge both generations as ordinary data; the independent serialization
-    // allocation below adds the remaining four bytes per value.
-    let generation_bytes = payload_bytes
-        .checked_div(4)
-        .and_then(|values| values.checked_mul(10))
-        .ok_or(SerialProductPublicationPlanError::Overflow)?;
+    let scratch_bytes = generation_demand.algorithm_scratch_bytes();
+    let produced_bytes = generation_demand.produced_residency_bytes();
+    let sealed_bytes = generation_demand.sealed_residency_bytes();
+    let writer_bytes = staging_residency_bytes.max(payload_bytes).max(1);
+    let first_slot_bytes = scratch_bytes.max(sealed_bytes).max(1);
+    let second_slot_bytes = produced_bytes.max(writer_bytes).max(1);
     let publication_lifetime =
         ClaimLifetime::through_fences([FenceKind::Io, FenceKind::Publication]);
     let output_rate_demand = "product-publication-output-write-rate".to_string();
@@ -258,11 +287,51 @@ fn build_physical<R: ImplementationRegistry>(
             quiescence_after: BTreeSet::new(),
         },
         WorkNode {
+            id: generate.clone(),
+            kind: WorkKind::Compute,
+            domain: WorkDomain::Cpu,
+            implementation: policy.implementation.clone(),
+            dependencies: BTreeSet::from([WorkDependency::Work(check.clone())]),
+            claims: vec![claim(LeaseResource::Workers, 1, ClaimLifetime::Work)],
+            allocations: vec![
+                AllocationUse {
+                    allocation: scratch_allocation.clone(),
+                    lifetime: ClaimLifetime::Work,
+                },
+                AllocationUse {
+                    allocation: produced_allocation.clone(),
+                    lifetime: ClaimLifetime::Work,
+                },
+            ],
+            fences: BTreeSet::new(),
+            quiescence_after: BTreeSet::new(),
+        },
+        WorkNode {
+            id: seal.clone(),
+            kind: WorkKind::Compute,
+            domain: WorkDomain::Cpu,
+            implementation: policy.implementation.clone(),
+            dependencies: BTreeSet::from([WorkDependency::Work(generate.clone())]),
+            claims: vec![claim(LeaseResource::Workers, 1, ClaimLifetime::Work)],
+            allocations: vec![
+                AllocationUse {
+                    allocation: produced_allocation.clone(),
+                    lifetime: ClaimLifetime::Work,
+                },
+                AllocationUse {
+                    allocation: sealed_allocation.clone(),
+                    lifetime: ClaimLifetime::Work,
+                },
+            ],
+            fences: BTreeSet::new(),
+            quiescence_after: BTreeSet::new(),
+        },
+        WorkNode {
             id: stage.clone(),
             kind: WorkKind::Serialization,
             domain: WorkDomain::Cpu,
             implementation: policy.implementation.clone(),
-            dependencies: BTreeSet::from([WorkDependency::Work(check.clone())]),
+            dependencies: BTreeSet::from([WorkDependency::Work(seal.clone())]),
             claims: vec![
                 claim(LeaseResource::Workers, 1, ClaimLifetime::Work),
                 claim(
@@ -280,7 +349,7 @@ fn build_physical<R: ImplementationRegistry>(
                 ),
                 claim(
                     LeaseResource::IoBuffer(IoBufferKind::Serialization),
-                    payload_bytes,
+                    writer_bytes,
                     ClaimLifetime::Work,
                 ),
             ],
@@ -290,7 +359,7 @@ fn build_physical<R: ImplementationRegistry>(
                     lifetime: ClaimLifetime::Work,
                 },
                 AllocationUse {
-                    allocation: generation_allocation.clone(),
+                    allocation: sealed_allocation.clone(),
                     lifetime: ClaimLifetime::Work,
                 },
             ],
@@ -321,25 +390,42 @@ fn build_physical<R: ImplementationRegistry>(
         initialization: InitializationPolicy::OverwriteBeforeRead,
         access: AllocationAccess::ReadWrite,
     };
-    let writer_compat = compatibility("product-publication-writer");
-    let generation_compat = compatibility("product-generation-residency");
+    let residency_compat = compatibility("product-owner-residency");
     let commit_compat = compatibility("product-publication-commit");
     let allocations = vec![
         allocation(
-            writer_allocation.clone(),
-            payload_bytes,
-            AllocationPurpose::IoBuffer(IoBufferKind::Serialization),
-            writer_compat.clone(),
-            writer_slot.clone(),
-            stage.clone(),
+            scratch_allocation,
+            scratch_bytes.max(1),
+            AllocationPurpose::Data,
+            residency_compat.clone(),
+            first_residency_slot.clone(),
+            generate.clone(),
+            WorkDependency::Work(generate.clone()),
+        ),
+        allocation(
+            produced_allocation,
+            produced_bytes.max(1),
+            AllocationPurpose::Data,
+            residency_compat.clone(),
+            second_residency_slot.clone(),
+            generate.clone(),
+            WorkDependency::Work(seal.clone()),
+        ),
+        allocation(
+            sealed_allocation,
+            sealed_bytes.max(1),
+            AllocationPurpose::Data,
+            residency_compat.clone(),
+            first_residency_slot.clone(),
+            seal.clone(),
             WorkDependency::Work(stage.clone()),
         ),
         allocation(
-            generation_allocation,
-            generation_bytes,
-            AllocationPurpose::Data,
-            generation_compat.clone(),
-            generation_slot.clone(),
+            writer_allocation.clone(),
+            writer_bytes,
+            AllocationPurpose::IoBuffer(IoBufferKind::Serialization),
+            residency_compat.clone(),
+            second_residency_slot.clone(),
             stage.clone(),
             WorkDependency::Work(stage.clone()),
         ),
@@ -360,20 +446,20 @@ fn build_physical<R: ImplementationRegistry>(
     ];
     let slots = vec![
         slot(
-            writer_slot,
+            first_residency_slot,
             LeaseResource::Memory {
-                allocation_id: "product-publication-writer".to_string(),
+                allocation_id: "product-generation-residency-a".to_string(),
             },
-            payload_bytes,
-            writer_compat,
+            first_slot_bytes,
+            residency_compat.clone(),
         ),
         slot(
-            generation_slot,
+            second_residency_slot,
             LeaseResource::Memory {
-                allocation_id: "product-generation-residency".to_string(),
+                allocation_id: "product-generation-residency-b".to_string(),
             },
-            generation_bytes,
-            generation_compat,
+            second_slot_bytes,
+            residency_compat,
         ),
         slot(
             commit_slot,
@@ -390,8 +476,8 @@ fn build_physical<R: ImplementationRegistry>(
         demand: DemandEnvelope {
             host_memory_view: CapacityViewId::new("host-memory"),
             memory: vec![
-                memory("product-publication-writer", payload_bytes),
-                memory("product-generation-residency", generation_bytes),
+                memory("product-generation-residency-a", first_slot_bytes),
+                memory("product-generation-residency-b", second_slot_bytes),
                 memory("product-publication-commit", 1),
             ],
             workers: CountDemand::new(1, 1),
@@ -429,7 +515,7 @@ fn build_physical<R: ImplementationRegistry>(
             transfers: vec![],
             accelerators: vec![],
             io_buffers: IoBufferDemand {
-                serialization_bytes: payload_bytes,
+                serialization_bytes: writer_bytes,
                 publication_bytes: 1,
                 ..IoBufferDemand::zero()
             },
@@ -630,35 +716,80 @@ impl From<PublicationLayoutError> for SerialProductPublicationPlanError {
     }
 }
 
-/// Stateful serial staging and atomic-publication implementation.
+/// Payload-free completion returned after leased generation and staging.
+pub struct SerialProductPublicationCompletion {
+    planned: PlannedContinuumGeneration,
+    scientific: MajorCycleCompletion,
+    published: PublishedContinuumGeneration,
+}
+
+impl SerialProductPublicationCompletion {
+    /// Consume the completion into the application-owned lineage and summary.
+    #[must_use]
+    pub fn into_parts(
+        self,
+    ) -> (
+        PlannedContinuumGeneration,
+        MajorCycleCompletion,
+        PublishedContinuumGeneration,
+    ) {
+        (self.planned, self.scientific, self.published)
+    }
+}
+
+struct SerialProductPublicationState {
+    problem: CompiledProblem,
+    planned: Option<PlannedContinuumGeneration>,
+    scientific: Option<MajorCycleCompletion>,
+    reconstruction_mask: Option<ReconstructionMask>,
+    produced: Option<ContinuumProducedMembers>,
+    sealed: Option<SealedContinuumGeneration>,
+    projection: Option<PublicationProjection>,
+    published: Option<PublishedContinuumGeneration>,
+    staged_measurements: Option<Vec<ArtifactMeasurement>>,
+}
+
+/// Stateful leased generation, serial staging, and atomic publication implementation.
 pub struct SerialProductPublicationExecutor<S> {
     id: WorkImplementationId,
     publication: ProductPublicationPlan,
-    projection: PublicationProjection,
-    sealed: Mutex<Option<SealedContinuumGeneration>>,
-    staged_measurements: Mutex<Option<Vec<ArtifactMeasurement>>>,
+    state: Mutex<SerialProductPublicationState>,
     sink: S,
 }
 
 impl<S: SerialProductPublicationSink> SerialProductPublicationExecutor<S> {
-    /// Bind completed sealed members to their immutable pre-seal plan and sink.
+    /// Bind pending scientific inputs to their immutable pre-seal plan and sink.
     pub fn new(
         id: WorkImplementationId,
+        problem: CompiledProblem,
         publication: ProductPublicationPlan,
-        sealed: SealedContinuumGeneration,
+        planned: PlannedContinuumGeneration,
+        scientific: MajorCycleCompletion,
+        reconstruction_mask: Option<ReconstructionMask>,
         sink: S,
     ) -> Result<Self, SerialProductPublicationExecutionError<S::Error>> {
-        let projection = PublicationProjection::from_sealed(&sealed)
-            .map_err(SerialProductPublicationExecutionError::Products)?;
-        publication
-            .authorize(&projection)
-            .map_err(SerialProductPublicationExecutionError::Publication)?;
+        if publication.problem_id() != problem.problem_id()
+            || publication.graph_id() != problem.product_graph().graph_id()
+            || publication.generation_id() != planned.generation_id()
+            || scientific.normal_state().problem_id() != problem.problem_id()
+            || scientific.model_completion().problem() != problem.problem_id()
+        {
+            return Err(SerialProductPublicationExecutionError::State);
+        }
         Ok(Self {
             id,
             publication,
-            projection,
-            sealed: Mutex::new(Some(sealed)),
-            staged_measurements: Mutex::new(None),
+            state: Mutex::new(SerialProductPublicationState {
+                problem,
+                planned: Some(planned),
+                scientific: Some(scientific),
+                reconstruction_mask,
+                produced: None,
+                sealed: None,
+                projection: None,
+                published: None,
+                staged_measurements: None,
+            }),
             sink,
         })
     }
@@ -669,9 +800,14 @@ impl<S: SerialProductPublicationSink> SerialProductPublicationExecutor<S> {
         &self.sink
     }
 
-    /// Consume the sealed generation after a successful ordinary publication run.
-    pub fn take_sealed_generation(&self) -> Option<SealedContinuumGeneration> {
-        self.sealed.lock().ok()?.take()
+    /// Consume the payload-free completion after a successful publication run.
+    pub fn take_completion(&self) -> Option<SerialProductPublicationCompletion> {
+        let mut state = self.state.lock().ok()?;
+        Some(SerialProductPublicationCompletion {
+            planned: state.planned.take()?,
+            scientific: state.scientific.take()?,
+            published: state.published.take()?,
+        })
     }
 }
 
@@ -682,18 +818,74 @@ impl<S: SerialProductPublicationSink> WorkImplementation for SerialProductPublic
     }
     fn execute(&self, context: WorkExecutionContext<'_>) -> Result<WorkMeasurements, Self::Error> {
         let mut artifact_measurements = Vec::new();
-        if context.node().id.as_str() == STAGE {
-            let sealed = self
-                .sealed
+        if context.node().id.as_str() == GENERATE {
+            let mut state = self
+                .state
                 .lock()
                 .map_err(|_| SerialProductPublicationExecutionError::State)?;
-            let sealed = sealed
+            let produced = {
+                let planned = state
+                    .planned
+                    .as_ref()
+                    .ok_or(SerialProductPublicationExecutionError::State)?;
+                let scientific = state
+                    .scientific
+                    .as_ref()
+                    .ok_or(SerialProductPublicationExecutionError::State)?;
+                let mut inputs =
+                    ContinuumProductInputs::from_major_cycle(&state.problem, scientific)
+                        .map_err(SerialProductPublicationExecutionError::Products)?;
+                if let Some(mask) = state.reconstruction_mask.as_ref() {
+                    inputs = inputs
+                        .with_reconstruction_mask(mask)
+                        .map_err(SerialProductPublicationExecutionError::Products)?;
+                }
+                produce_continuum_members(planned, &inputs)
+                    .map_err(SerialProductPublicationExecutionError::Products)?
+            };
+            state.reconstruction_mask = None;
+            state.produced = Some(produced);
+        } else if context.node().id.as_str() == SEAL {
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| SerialProductPublicationExecutionError::State)?;
+            let produced = state
+                .produced
+                .take()
+                .ok_or(SerialProductPublicationExecutionError::State)?;
+            let authority = ProductGenerationAuthority::bind(&state.problem);
+            let planned = state
+                .planned
+                .as_ref()
+                .ok_or(SerialProductPublicationExecutionError::State)?;
+            let sealed = authority
+                .authorize(planned, &produced)
+                .map_err(SerialProductPublicationExecutionError::Products)?;
+            let projection = PublicationProjection::from_sealed(&sealed)
+                .map_err(SerialProductPublicationExecutionError::Products)?;
+            self.publication
+                .authorize(&projection)
+                .map_err(SerialProductPublicationExecutionError::Publication)?;
+            state.projection = Some(projection);
+            state.sealed = Some(sealed);
+        } else if context.node().id.as_str() == STAGE {
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| SerialProductPublicationExecutionError::State)?;
+            let projection = state
+                .projection
                 .as_ref()
                 .ok_or(SerialProductPublicationExecutionError::State)?;
             let authorization = self
                 .publication
-                .authorize(&self.projection)
+                .authorize(projection)
                 .map_err(SerialProductPublicationExecutionError::Publication)?;
+            let sealed = state
+                .sealed
+                .as_ref()
+                .ok_or(SerialProductPublicationExecutionError::State)?;
             for entry in authorization.entries() {
                 let member = sealed
                     .members()
@@ -714,16 +906,18 @@ impl<S: SerialProductPublicationSink> WorkImplementation for SerialProductPublic
                     .expect("staged is adapter-owned"),
                 );
             }
-            *self
-                .staged_measurements
-                .lock()
-                .map_err(|_| SerialProductPublicationExecutionError::State)? =
-                Some(std::mem::take(&mut artifact_measurements));
+            let sealed = state
+                .sealed
+                .take()
+                .ok_or(SerialProductPublicationExecutionError::State)?;
+            state.published = Some(sealed.into_published_summary());
+            state.staged_measurements = Some(std::mem::take(&mut artifact_measurements));
         } else if context.node().id.as_str() == COMMIT {
             artifact_measurements = self
-                .staged_measurements
+                .state
                 .lock()
                 .map_err(|_| SerialProductPublicationExecutionError::State)?
+                .staged_measurements
                 .take()
                 .ok_or(SerialProductPublicationExecutionError::State)?;
         }
@@ -773,7 +967,14 @@ impl<S: SerialProductPublicationSink> WorkImplementation for SerialProductPublic
         if context.node().id.as_str() != COMMIT {
             return Err(SerialProductPublicationExecutionError::State);
         }
-        Ok(Some(self.projection.clone()))
+        Ok(Some(
+            self.state
+                .lock()
+                .map_err(|_| SerialProductPublicationExecutionError::State)?
+                .projection
+                .clone()
+                .ok_or(SerialProductPublicationExecutionError::State)?,
+        ))
     }
     fn publish(&self, context: WorkExecutionContext<'_>) -> Result<(), Self::Error> {
         let _ = context;

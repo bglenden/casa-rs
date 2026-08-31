@@ -543,6 +543,12 @@ impl PlannedContinuumGeneration {
     pub const fn primary_beam_model(&self) -> Option<AnalyticPrimaryBeamModel> {
         self.primary_beam_model
     }
+
+    pub(crate) const fn reconstruction_mask_generation(
+        &self,
+    ) -> Option<casa_imaging_reconstruction::ReconstructionMaskGenerationId> {
+        self.reconstruction_mask_generation
+    }
 }
 
 /// One planned publication member in exact graph order.
@@ -1356,6 +1362,161 @@ impl SealedContinuumGeneration {
     /// Return the exact sealed member set in canonical publication order.
     #[must_use]
     pub const fn members(&self) -> &[SealedMember] {
+        &self.members
+    }
+
+    /// Consume staged sealed payloads into their payload-free terminal record.
+    ///
+    /// The publication runtime calls this only after all member arrays have
+    /// been staged. Consuming the seal releases those arrays while preserving
+    /// every identity, contract, name, and beam needed for terminal receipts.
+    #[must_use]
+    pub fn into_published_summary(self) -> PublishedContinuumGeneration {
+        PublishedContinuumGeneration {
+            problem_id: self.problem_id,
+            graph_id: self.graph_id,
+            seal_id: self.seal_id,
+            generation_id: self.generation_id,
+            completions_id: self.completions_id,
+            fitted_beams: self.fitted_beams,
+            restoring_beams: self.restoring_beams,
+            members: self
+                .members
+                .into_vec()
+                .into_iter()
+                .map(|member| PublishedMember {
+                    node: member.node,
+                    name: member.name,
+                    artifact_id: member.artifact_id,
+                    content_identity: member.content_identity,
+                    contract: member.contract,
+                    resolved_beams: member.resolved_beams,
+                })
+                .collect(),
+        }
+    }
+}
+
+/// Payload-free terminal record for one published member.
+///
+/// This type has no public constructor and is minted only when a sealed
+/// generation relinquishes its staged numeric and validity arrays.
+#[derive(Debug, Clone)]
+pub struct PublishedMember {
+    node: ProductNodeId,
+    name: String,
+    artifact_id: MemberArtifactId,
+    content_identity: MemberArtifactId,
+    contract: SealedMemberContract,
+    resolved_beams: Box<[Option<RestoringBeam>]>,
+}
+
+impl PublishedMember {
+    /// Return the graph-local node identity.
+    #[must_use]
+    pub const fn node(&self) -> ProductNodeId {
+        self.node
+    }
+
+    /// Return the compiled product name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Return the planned-and-published artifact identity.
+    #[must_use]
+    pub const fn artifact_id(&self) -> MemberArtifactId {
+        self.artifact_id
+    }
+
+    /// Return the exact published content identity.
+    #[must_use]
+    pub const fn content_identity(&self) -> MemberArtifactId {
+        self.content_identity
+    }
+
+    /// Return the complete compiled member contract.
+    #[must_use]
+    pub const fn contract(&self) -> &SealedMemberContract {
+        &self.contract
+    }
+
+    /// Return resolved beam metadata in output-channel order.
+    #[must_use]
+    pub const fn resolved_beams(&self) -> &[Option<RestoringBeam>] {
+        &self.resolved_beams
+    }
+}
+
+/// Payload-free terminal record for one published continuum generation.
+///
+/// This type has no public constructor and can only be obtained by consuming
+/// an authorized sealed generation after its member arrays have been staged.
+#[derive(Debug, Clone)]
+pub struct PublishedContinuumGeneration {
+    problem_id: CompiledProblemId,
+    graph_id: ProductGraphId,
+    seal_id: ContinuumSealId,
+    generation_id: PlannedGenerationId,
+    completions_id: ContinuumCompletionsId,
+    fitted_beams: Box<[Option<RestoringBeam>]>,
+    restoring_beams: Box<[Option<RestoringBeam>]>,
+    members: Box<[PublishedMember]>,
+}
+
+impl PublishedContinuumGeneration {
+    /// Return numeric and validity array residency retained after staging.
+    #[must_use]
+    pub const fn payload_residency_bytes(&self) -> u64 {
+        0
+    }
+
+    /// Return the exact compiled problem authorized by the publication seal.
+    #[must_use]
+    pub const fn problem_id(&self) -> CompiledProblemId {
+        self.problem_id
+    }
+
+    /// Return the exact compiled Product Graph authorized by the seal.
+    #[must_use]
+    pub const fn graph_id(&self) -> ProductGraphId {
+        self.graph_id
+    }
+
+    /// Return the terminal Product Generation seal identity.
+    #[must_use]
+    pub const fn seal_id(&self) -> ContinuumSealId {
+        self.seal_id
+    }
+
+    /// Return the planned generation authorized by the seal.
+    #[must_use]
+    pub const fn generation_id(&self) -> PlannedGenerationId {
+        self.generation_id
+    }
+
+    /// Return the typed completions identity behind this publication.
+    #[must_use]
+    pub const fn completions_id(&self) -> ContinuumCompletionsId {
+        self.completions_id
+    }
+
+    /// Return the fitted restoring beams retained as terminal metadata.
+    #[must_use]
+    pub const fn fitted_beams(&self) -> &[Option<RestoringBeam>] {
+        &self.fitted_beams
+    }
+
+    /// Return selected restoring beams retained as terminal metadata.
+    #[must_use]
+    pub const fn restoring_beams(&self) -> &[Option<RestoringBeam>] {
+        &self.restoring_beams
+    }
+
+    /// Return published members in exact graph order.
+    #[must_use]
+    pub const fn members(&self) -> &[PublishedMember] {
         &self.members
     }
 }

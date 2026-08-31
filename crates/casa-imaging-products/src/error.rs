@@ -64,4 +64,7 @@ pub enum ProductsError {
     /// Solver arithmetic produced a non-finite product value.
     #[error("product arithmetic generated a non-finite value")]
     GeneratedNonfinite,
+    /// Checked product-generation resource arithmetic exceeded `u64`.
+    #[error("continuum generation demand overflowed while calculating {0}")]
+    ResourceDemandOverflow(&'static str),
 }

@@ -25,4 +25,5 @@ ndarray.workspace = true
 sha2 = "0.10"
 
 [dev-dependencies]
+casa-test-support = { path = "../casa-test-support" }
 tempfile = "3"

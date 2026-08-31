@@ -225,30 +225,13 @@ impl TaylorProducts {
         {
             return Err(ProductsError::UnsupportedProblem);
         }
-        let threshold = principal_residual[0]
-            .iter()
-            .copied()
-            .fold(f32::NEG_INFINITY, f32::max)
-            * taylor_policy.peak_fraction();
-        let alpha_validity = restored[0]
-            .iter()
-            .map(|value| value.is_finite() && *value > threshold)
-            .collect::<Vec<_>>();
-        let mut alpha = vec![0.0; cells];
-        let mut alpha_error = vec![0.0; cells];
-        for cell in 0..cells {
-            if !alpha_validity[cell] {
-                continue;
-            }
-            let image0 = restored[0][cell];
-            let image1 = restored[1][cell];
-            let residual0 = principal_residual[0][cell];
-            let residual1 = principal_residual[1][cell];
-            alpha[cell] = image1 / image0;
-            alpha_error[cell] = ((image1 * residual0 / image0.powi(2)).powi(2)
-                + (residual1 / image0).powi(2))
-            .sqrt();
-        }
+        let (alpha, alpha_error, alpha_validity) = taylor_alpha_products(
+            &principal_residual[0],
+            &principal_residual[1],
+            &restored[0],
+            &restored[1],
+            taylor_policy.peak_fraction(),
+        );
         let clean_mask = weight[0]
             .iter()
             .enumerate()
@@ -340,6 +323,42 @@ impl TaylorProducts {
                 .collect()),
         }
     }
+}
+
+fn taylor_alpha_products(
+    principal_residual_taylor0: &[f32],
+    principal_residual_taylor1: &[f32],
+    restored_taylor0: &[f32],
+    restored_taylor1: &[f32],
+    peak_fraction: f32,
+) -> (Vec<f32>, Vec<f32>, Vec<bool>) {
+    let cells = restored_taylor0.len();
+    let mut alpha = vec![0.0; cells];
+    let mut alpha_error = vec![0.0; cells];
+    let mut validity = vec![false; cells];
+    let Some(positive_maximum) = principal_residual_taylor0
+        .iter()
+        .copied()
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .reduce(f32::max)
+    else {
+        return (alpha, alpha_error, validity);
+    };
+    let threshold = positive_maximum * peak_fraction;
+    for cell in 0..cells {
+        let image0 = restored_taylor0[cell];
+        if !(image0.is_finite() && image0 > threshold) {
+            continue;
+        }
+        let image1 = restored_taylor1[cell];
+        let residual0 = principal_residual_taylor0[cell];
+        let residual1 = principal_residual_taylor1[cell];
+        alpha[cell] = image1 / image0;
+        alpha_error[cell] =
+            ((image1 * residual0 / image0.powi(2)).powi(2) + (residual1 / image0).powi(2)).sqrt();
+        validity[cell] = true;
+    }
+    (alpha, alpha_error, validity)
 }
 
 fn primary_beam_from_weight(weight: &[f32]) -> Result<Vec<f32>, ProductsError> {
@@ -559,6 +578,20 @@ fn model_term(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn negative_only_principal_residual_has_no_taylor_support_or_payload() {
+        let (alpha, alpha_error, validity) = super::taylor_alpha_products(
+            &[f32::NEG_INFINITY, f32::NAN, -4.0, -1.0, 0.0],
+            &[1.0; 5],
+            &[8.0, 4.0, 2.0, 1.0, 0.5],
+            &[2.0; 5],
+            0.1,
+        );
+        assert!(validity.iter().all(|valid| !valid));
+        assert!(alpha.iter().all(|value| *value == 0.0));
+        assert!(alpha_error.iter().all(|value| *value == 0.0));
+    }
+
     #[test]
     fn evla_common_s_band_uses_casa_sampled_power_lookup() {
         let frequency_hz = 2.091_980_123e9_f64;
