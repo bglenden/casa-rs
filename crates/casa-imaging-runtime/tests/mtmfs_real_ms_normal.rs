@@ -314,6 +314,31 @@ pub(crate) fn build_problem(
     ),
     Box<dyn Error>,
 > {
+    build_problem_with_specification(path, specification()?)
+}
+
+pub(crate) fn build_t44_problem(
+    path: &Path,
+) -> Result<
+    (
+        casa_imaging_model::CompiledProblem,
+        casa_ms::BoundSelectedObservation,
+    ),
+    Box<dyn Error>,
+> {
+    build_problem_with_specification(path, t44_specification()?)
+}
+
+fn build_problem_with_specification(
+    path: &Path,
+    specification: ProblemSpecification,
+) -> Result<
+    (
+        casa_imaging_model::CompiledProblem,
+        casa_ms::BoundSelectedObservation,
+    ),
+    Box<dyn Error>,
+> {
     let ms = MeasurementSet::open(path)?;
     let data_description = ms.data_description()?;
     let spectral_window = ms.spectral_window()?;
@@ -491,7 +516,7 @@ pub(crate) fn build_problem(
     let observation = compile_observation(snapshot)?;
     let model_samples = IMAGE_SIZE * IMAGE_SIZE * 2;
     let problem = compile(ImagingRequest::new(
-        specification()?,
+        specification,
         geometry,
         ProblemInputIdentities::new(observation),
         ModelLifecycleRequirements::new(
@@ -513,6 +538,46 @@ pub(crate) fn build_problem(
 }
 
 fn specification() -> Result<ProblemSpecification, Box<dyn Error>> {
+    specification_with_products(
+        vec![
+            ProductKind::Psf,
+            ProductKind::Residual,
+            ProductKind::Model,
+            ProductKind::SumWeights,
+            ProductKind::Sensitivity,
+            ProductKind::TaylorTerms,
+        ],
+        SpectralCoupling::Independent,
+        RestoringBeamPolicy::None,
+    )
+}
+
+fn t44_specification() -> Result<ProblemSpecification, Box<dyn Error>> {
+    specification_with_products(
+        vec![
+            ProductKind::Psf,
+            ProductKind::Residual,
+            ProductKind::Model,
+            ProductKind::RestoredImage,
+            ProductKind::SumWeights,
+            ProductKind::Mask,
+            ProductKind::PrimaryBeam,
+            ProductKind::PbCorrectedImage,
+            ProductKind::TaylorTerms,
+            ProductKind::SpectralIndex,
+            ProductKind::SpectralIndexError,
+            ProductKind::Beam,
+        ],
+        SpectralCoupling::CommonRestoringBeam,
+        RestoringBeamPolicy::Common,
+    )
+}
+
+fn specification_with_products(
+    products: Vec<ProductKind>,
+    coupling: SpectralCoupling,
+    restoring_beam: RestoringBeamPolicy,
+) -> Result<ProblemSpecification, Box<dyn Error>> {
     let validity = ProductValidityPolicies::new(
         PrimaryBeamValidityPolicy::new(
             0.2,
@@ -528,7 +593,7 @@ fn specification() -> Result<ProblemSpecification, Box<dyn Error>> {
     );
     Ok(ProblemSpecification::new(
         ScientificContract::new(
-            SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
+            SpectralContract::new(SpectralSamplingLaw::IDENTITY, coupling),
             MeasurementEquationContract::new(
                 InstrumentResponse::Scalar,
                 DeclaredInnerProducts::new(
@@ -550,16 +615,9 @@ fn specification() -> Result<ProblemSpecification, Box<dyn Error>> {
         ),
         WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
         ProductRequirements::new(
-            vec![
-                ProductKind::Psf,
-                ProductKind::Residual,
-                ProductKind::Model,
-                ProductKind::SumWeights,
-                ProductKind::Sensitivity,
-                ProductKind::TaylorTerms,
-            ],
+            products,
             ProductNormalization::UnitResponse,
-            RestoringBeamPolicy::None,
+            restoring_beam,
             validity,
         ),
         ObservationTransactionRequirements::new(casa_imaging_model::ModelColumnWrite::Disabled),

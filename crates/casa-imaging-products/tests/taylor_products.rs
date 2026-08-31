@@ -34,9 +34,9 @@ use casa_imaging_model::{
     WeightingScheme, compile, compile_observation,
 };
 use casa_imaging_products::{
-    ContinuumProductControls, ContinuumProductInputs, ContinuumSourceCatalog,
-    ProductGenerationAuthority, SealedContinuumGeneration, SealedMember, fft_convolve,
-    gaussian_beam_image, produce_continuum_members,
+    AnalyticPrimaryBeamModel, ContinuumProductControls, ContinuumProductInputs,
+    ContinuumSourceCatalog, ProductGenerationAuthority, ProductsError, SealedContinuumGeneration,
+    SealedMember, fft_convolve, gaussian_beam_image, produce_continuum_members,
 };
 use casa_imaging_reconstruction::{
     ExecutableModelProblem, MajorCycleCompletion, MajorCycleOwner, MajorCyclePreparation,
@@ -504,11 +504,19 @@ fn seal(
     problem: &casa_imaging_model::CompiledProblem,
     join: &MajorCycleCompletion,
 ) -> SealedContinuumGeneration {
+    seal_with_controls(problem, join, ContinuumProductControls::default())
+}
+
+fn seal_with_controls(
+    problem: &casa_imaging_model::CompiledProblem,
+    join: &MajorCycleCompletion,
+    controls: ContinuumProductControls,
+) -> SealedContinuumGeneration {
     let catalog =
         ContinuumSourceCatalog::from_major_cycle(problem, join).expect("T44 Taylor source catalog");
     let authority = ProductGenerationAuthority::bind(problem);
     let planned = authority
-        .plan(&catalog, &ContinuumProductControls::default())
+        .plan(&catalog, &controls)
         .expect("T44 Taylor plan");
     let inputs = ContinuumProductInputs::from_major_cycle(problem, join).expect("Taylor inputs");
     let produced = produce_continuum_members(&planned, &inputs).expect("T44 Taylor product family");
@@ -708,7 +716,7 @@ fn t44_alpha_and_error_use_strict_principal_support_and_zero_false_blanking() {
 
 #[test]
 fn t44_standard_pb_family_uses_pb_tt0_and_does_not_invent_weight_or_alpha_pbcor() {
-    let problem = taylor_problem(205, &PB_PRODUCTS, InstrumentResponse::PrimaryBeam);
+    let problem = taylor_problem(205, &PB_PRODUCTS, InstrumentResponse::Scalar);
     let graph = problem.product_graph();
     let names = graph
         .nodes()
@@ -753,4 +761,45 @@ fn t44_standard_pb_family_uses_pb_tt0_and_does_not_invent_weight_or_alpha_pbcor(
             .all(|node| !matches!(node.role(), ProductRole::Weight(ProductTerm::Taylor(_)))),
         "the frozen standard CASA row emits no standalone weight family"
     );
+
+    let join = run_round(&problem, 206);
+    let catalog = ContinuumSourceCatalog::from_major_cycle(&problem, &join).expect("PB catalog");
+    let authority = ProductGenerationAuthority::bind(&problem);
+    let unmodelled = authority
+        .plan(&catalog, &ContinuumProductControls::default())
+        .expect("unmodelled PB plan");
+    let controls = ContinuumProductControls::default()
+        .with_primary_beam_model(AnalyticPrimaryBeamModel::CasaEvlaCommon);
+    let planned = authority
+        .plan(&catalog, &controls)
+        .expect("analytic PB plan");
+    assert_ne!(planned.generation_id(), unmodelled.generation_id());
+    assert_eq!(
+        planned.primary_beam_model(),
+        Some(AnalyticPrimaryBeamModel::CasaEvlaCommon)
+    );
+    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &join).expect("PB inputs");
+    assert_eq!(
+        produce_continuum_members(&unmodelled, &inputs).expect_err("requested PB needs a model"),
+        ProductsError::UnsupportedProblem
+    );
+    let sealed = seal_with_controls(&problem, &join, controls);
+    let pb0 = member(&sealed, ".pb.tt0");
+    let pb1 = member(&sealed, ".pb.tt1");
+    assert_eq!(pb0.payload()[4 * SHAPE[1] + 4], 1.0);
+    assert!(pb1.payload().iter().all(|value| *value == 0.0));
+    for term in 0..TERMS {
+        let restored = member(&sealed, &format!(".image.tt{term}"));
+        let corrected = member(&sealed, &format!(".image.tt{term}.pbcor"));
+        for index in 0..pb0.payload().len() {
+            let valid = pb0.payload()[index] > 0.2;
+            assert_eq!(corrected.validity()[index], valid);
+            let expected = if valid {
+                restored.payload()[index] / pb0.payload()[index]
+            } else {
+                0.0
+            };
+            assert_close(corrected.payload()[index], expected, "PB correction");
+        }
+    }
 }

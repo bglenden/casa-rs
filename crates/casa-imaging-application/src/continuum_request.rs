@@ -684,6 +684,15 @@ fn prepare(
         prepared_spectral.reference_frequency_hz,
         prepared_spectral.increment_hz,
     );
+    let primary_beam_model = (request.write_primary_beam || request.pbcor)
+        .then(|| standard_primary_beam_model(&ms))
+        .transpose()?;
+    let mut product_controls =
+        casa_imaging_products::ContinuumProductControls::new(request.psf_cutoff)
+            .expect("validated PSF cutoff");
+    if let Some(model) = primary_beam_model {
+        product_controls = product_controls.with_primary_beam_model(model);
+    }
     let native = production_storage_profile(&request, content_budget)
         .and_then(|profile| {
             profile.ok_or_else(|| {
@@ -694,8 +703,7 @@ fn prepare(
         .map(|runtime| ApplicationNative {
             runtime,
             publication: ApplicationPublication {
-                controls: casa_imaging_products::ContinuumProductControls::new(request.psf_cutoff)
-                    .expect("validated PSF cutoff"),
+                controls: product_controls,
                 sink: CasaImageProductSink::new(request.image_name.clone(), coordinates.clone()),
             },
         });
@@ -776,6 +784,39 @@ fn prepare(
         task_requirements: request.task_requirements,
         native,
     })
+}
+
+fn standard_primary_beam_model(
+    ms: &MeasurementSet,
+) -> Result<casa_imaging_products::AnalyticPrimaryBeamModel, crate::ApplicationError> {
+    let observation = ms.observation()?;
+    let telescopes = (0..observation.row_count())
+        .map(|row| {
+            observation
+                .string(row, "TELESCOPE_NAME")
+                .map(|name| name.trim().to_string())
+        })
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    analytic_primary_beam_model_for_telescopes(&telescopes)
+}
+
+fn analytic_primary_beam_model_for_telescopes(
+    telescopes: &BTreeSet<String>,
+) -> Result<casa_imaging_products::AnalyticPrimaryBeamModel, crate::ApplicationError> {
+    match telescopes
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .as_slice()
+    {
+        ["EVLA"] => Ok(casa_imaging_products::AnalyticPrimaryBeamModel::CasaEvlaCommon),
+        [] => Err(boxed(
+            "standard primary-beam publication requires OBSERVATION telescope metadata",
+        )),
+        names => Err(boxed(format!(
+            "standard primary-beam publication has no installed analytic model for telescope set {names:?}"
+        ))),
+    }
 }
 
 fn validate_request(request: &ContinuumImagingRequest) -> Result<(), crate::ApplicationError> {
@@ -1599,8 +1640,8 @@ mod tests {
     use casa_imaging_runtime::{ResourceOverride, ResourcePolicy};
 
     use super::{
-        ContinuumAlgorithm, TaskRequirement, image_reference_pixel, model_plane_samples,
-        planned_minor_cycle_bytes, resource_policy,
+        ContinuumAlgorithm, TaskRequirement, analytic_primary_beam_model_for_telescopes,
+        image_reference_pixel, model_plane_samples, planned_minor_cycle_bytes, resource_policy,
     };
 
     #[test]
@@ -1651,5 +1692,19 @@ mod tests {
             ResourcePolicy::Balanced
         );
         assert_eq!(resource_policy(&[]), ResourcePolicy::Balanced);
+    }
+
+    #[test]
+    fn standard_primary_beam_model_is_explicit_and_fails_closed() {
+        let evla = std::collections::BTreeSet::from(["EVLA".to_string()]);
+        assert_eq!(
+            analytic_primary_beam_model_for_telescopes(&evla).expect("EVLA model"),
+            casa_imaging_products::AnalyticPrimaryBeamModel::CasaEvlaCommon
+        );
+        let unsupported = std::collections::BTreeSet::from(["VLA".to_string()]);
+        assert!(analytic_primary_beam_model_for_telescopes(&unsupported).is_err());
+        assert!(
+            analytic_primary_beam_model_for_telescopes(&std::collections::BTreeSet::new()).is_err()
+        );
     }
 }

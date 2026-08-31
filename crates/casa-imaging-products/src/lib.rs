@@ -32,11 +32,11 @@ mod taylor;
 mod visibility;
 
 pub use authority::{
-    CONTINUUM_ALGORITHM_CATALOG_VERSION, ContinuumCommitmentId, ContinuumCompletionsId,
-    ContinuumProducedMembers, ContinuumProductControls, ContinuumSealId, DEFAULT_PSF_CUTOFF,
-    MemberArtifactId, PlannedContinuumGeneration, PlannedGenerationId, PlannedMember,
-    ProductGenerationAuthority, SealedContinuumGeneration, SealedMember, SealedMemberContract,
-    produce_continuum_members,
+    AnalyticPrimaryBeamModel, CONTINUUM_ALGORITHM_CATALOG_VERSION, ContinuumCommitmentId,
+    ContinuumCompletionsId, ContinuumProducedMembers, ContinuumProductControls, ContinuumSealId,
+    DEFAULT_PSF_CUTOFF, MemberArtifactId, PlannedContinuumGeneration, PlannedGenerationId,
+    PlannedMember, ProductGenerationAuthority, SealedContinuumGeneration, SealedMember,
+    SealedMemberContract, produce_continuum_members,
 };
 pub use beam::{RestoringBeam, fit_restoring_beam};
 pub use error::ProductsError;

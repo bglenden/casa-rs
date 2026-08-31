@@ -42,10 +42,18 @@ pub const CONTINUUM_ALGORITHM_CATALOG_VERSION: u32 = 5;
 /// Default main-lobe cutoff fraction for restoring-beam fitting.
 pub const DEFAULT_PSF_CUTOFF: f32 = casa_imaging_reconstruction::DEFAULT_PSF_FIT_CUTOFF;
 
+/// Explicit analytic primary-beam law available to product construction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnalyticPrimaryBeamModel {
+    /// CASA's common EVLA primary-beam power polynomial with sampled radial lookup.
+    CasaEvlaCommon,
+}
+
 /// Explicit continuum production controls.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ContinuumProductControls {
     psf_cutoff: f32,
+    primary_beam_model: Option<AnalyticPrimaryBeamModel>,
 }
 
 impl ContinuumProductControls {
@@ -58,7 +66,10 @@ impl ContinuumProductControls {
         if !psf_cutoff.is_finite() || psf_cutoff <= 0.0 || psf_cutoff >= 1.0 {
             return Err(ProductsError::InvalidControls);
         }
-        Ok(Self { psf_cutoff })
+        Ok(Self {
+            psf_cutoff,
+            primary_beam_model: None,
+        })
     }
 
     /// Return the main-lobe cutoff fraction used for beam fitting.
@@ -66,12 +77,26 @@ impl ContinuumProductControls {
     pub const fn psf_cutoff(self) -> f32 {
         self.psf_cutoff
     }
+
+    /// Select the exact analytic primary-beam law used by requested PB products.
+    #[must_use]
+    pub const fn with_primary_beam_model(mut self, model: AnalyticPrimaryBeamModel) -> Self {
+        self.primary_beam_model = Some(model);
+        self
+    }
+
+    /// Return the explicitly selected analytic primary-beam law, if any.
+    #[must_use]
+    pub const fn primary_beam_model(self) -> Option<AnalyticPrimaryBeamModel> {
+        self.primary_beam_model
+    }
 }
 
 impl Default for ContinuumProductControls {
     fn default() -> Self {
         Self {
             psf_cutoff: DEFAULT_PSF_CUTOFF,
+            primary_beam_model: None,
         }
     }
 }
@@ -228,6 +253,10 @@ impl ProductGenerationAuthority {
         encoder.identity(commitment_id.as_bytes());
         encoder.u32(CONTINUUM_ALGORITHM_CATALOG_VERSION);
         encoder.u32(controls.psf_cutoff().to_bits());
+        match controls.primary_beam_model() {
+            Some(AnalyticPrimaryBeamModel::CasaEvlaCommon) => encoder.u8(1),
+            None => encoder.u8(0),
+        }
         encoder.usize(members.len());
         for member in &members {
             encoder.identity(member.artifact_id.as_bytes());
@@ -239,6 +268,7 @@ impl ProductGenerationAuthority {
             generation_id: PlannedGenerationId(encoder.finish()),
             commitment_id,
             psf_cutoff: controls.psf_cutoff(),
+            primary_beam_model: controls.primary_beam_model(),
             members: members.into_boxed_slice(),
             final_model_generation: sources.final_model_generation(),
             reconstruction_mask_generation: sources.reconstruction_mask_generation(),
@@ -458,6 +488,7 @@ pub struct PlannedContinuumGeneration {
     generation_id: PlannedGenerationId,
     commitment_id: ContinuumCommitmentId,
     psf_cutoff: f32,
+    primary_beam_model: Option<AnalyticPrimaryBeamModel>,
     members: Box<[PlannedMember]>,
     final_model_generation: casa_imaging_reconstruction::ModelGenerationId,
     reconstruction_mask_generation:
@@ -505,6 +536,12 @@ impl PlannedContinuumGeneration {
     #[must_use]
     pub const fn psf_cutoff(&self) -> f32 {
         self.psf_cutoff
+    }
+
+    /// Return the analytic primary-beam law bound into this plan.
+    #[must_use]
+    pub const fn primary_beam_model(&self) -> Option<AnalyticPrimaryBeamModel> {
+        self.primary_beam_model
     }
 }
 
@@ -783,7 +820,7 @@ fn produce_taylor_members(
     planned: &PlannedContinuumGeneration,
     inputs: &ContinuumProductInputs<'_>,
 ) -> Result<ContinuumProducedMembers, ProductsError> {
-    let products = TaylorProducts::build(inputs, planned.psf_cutoff)?;
+    let products = TaylorProducts::build(inputs, planned.psf_cutoff, planned.primary_beam_model)?;
     let requires_beam = planned
         .members
         .iter()

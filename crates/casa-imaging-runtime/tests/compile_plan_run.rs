@@ -11274,6 +11274,32 @@ fn serial_product_publication_stages_privately_then_publishes_once() {
         "product-publication-output-queue"
     );
     assert_eq!(demand.io_buffers.source_read_ahead_bytes, 0);
+    let payload_bytes = planned_runtime
+        .publication()
+        .entries()
+        .iter()
+        .map(|entry| entry.payload_bytes())
+        .sum::<u64>();
+    let value_count = payload_bytes / u64::try_from(std::mem::size_of::<f32>()).unwrap();
+    let generation_bytes = value_count * 10;
+    assert_eq!(
+        demand.io_buffers.serialization_bytes, payload_bytes,
+        "publication charges the sealed f32 serialization generation"
+    );
+    assert_eq!(
+        publication_dag.logical_allocations()
+            [&casa_imaging_runtime::AllocationId::new("product-generation-residency")]
+            .bytes,
+        generation_bytes,
+        "production and sealing overlap charges two f32 payloads plus two validity bytes"
+    );
+    assert_eq!(
+        publication_dag.logical_allocations()
+            [&casa_imaging_runtime::AllocationId::new("product-publication-writer-buffer")]
+            .bytes,
+        payload_bytes,
+        "serialization has an independent admitted writer allocation"
+    );
     assert_eq!(demand.rates.len(), 1);
     assert_eq!(
         demand.rates[0].demand_id, "product-publication-output-write-rate",
