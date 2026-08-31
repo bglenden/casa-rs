@@ -2,6 +2,7 @@
 //! Canonical imager task request/result contracts shared by CLI, shell, and Python.
 
 use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -10,9 +11,10 @@ use casa_ms::{
     parse_rest_frequency_hz as parse_ms_rest_frequency_hz,
 };
 use casa_provider_contracts::{
-    ProviderCliMachineActions, ProviderCliProjection, ProviderProjectionMetadata,
-    ProviderProtocolDescriptor, ProviderSurfaceKind, TaskOperationDescriptor, TaskProviderContract,
-    TaskProviderSchemas, TaskSemanticContract, builtin_surface_bundle, merged_components,
+    ParameterValue, ProviderCliMachineActions, ProviderCliProjection, ProviderInvocation,
+    ProviderInvocationAdaptation, ProviderProjectionMetadata, ProviderProtocolDescriptor,
+    ProviderSurfaceKind, TaskOperationDescriptor, TaskProviderContract, TaskProviderSchemas,
+    TaskSemanticContract, builtin_surface_bundle, merged_components,
 };
 use casa_types::measures::doppler::DopplerRef;
 use casa_types::measures::frequency::FrequencyRef;
@@ -125,6 +127,59 @@ pub fn imager_task_schema_bundle() -> TaskProviderContract<ImagerAdditionalSchem
             },
         },
     }
+}
+
+/// Project one fully resolved canonical parameter set into the typed imager
+/// task request transported by the provider bundle.
+///
+/// Parameter resolution, defaults, activation, constraints, and textual value
+/// adaptation remain owned by the shared parameter catalog. This final
+/// provider-owned step parses that already projected CLI representation once,
+/// constructs the typed request used by every machine surface, and sends it
+/// through the provider's canonical JSON task action.
+pub fn imager_provider_invocation(
+    values: &BTreeMap<String, ParameterValue>,
+    direct_args: Vec<String>,
+) -> Result<ProviderInvocationAdaptation, String> {
+    let (managed_args, task_args) = split_managed_output_args(direct_args)?;
+    let config = CliConfig::parse(task_args.into_iter().map(OsString::from))?;
+    let request = ImagerTaskRequest::Run(ImagerRunTaskRequest::from_cli_config(&config));
+    let mut stdin = serde_json::to_string(&request)
+        .map_err(|error| format!("serialize canonical imager task request: {error}"))?;
+    stdin.push('\n');
+
+    let mut args = managed_args;
+    args.extend(["--json-run".to_string(), "-".to_string()]);
+    Ok(ProviderInvocationAdaptation {
+        invocation: ProviderInvocation {
+            args,
+            stdin: Some(stdin),
+        },
+        consumed_parameters: values.keys().cloned().collect(),
+    })
+}
+
+fn split_managed_output_args(args: Vec<String>) -> Result<(Vec<String>, Vec<String>), String> {
+    let mut managed = Vec::new();
+    let mut task = Vec::with_capacity(args.len());
+    let mut args = args.into_iter();
+    while let Some(argument) = args.next() {
+        if argument != "--managed-output" {
+            task.push(argument);
+            continue;
+        }
+        managed.push(argument);
+        let value = args
+            .next()
+            .ok_or_else(|| "--managed-output requires its projected boolean value".to_string())?;
+        if !matches!(value.as_str(), "true" | "false") {
+            return Err(format!(
+                "--managed-output expects true or false, found {value:?}"
+            ));
+        }
+        managed.push(value);
+    }
+    Ok((managed, task))
 }
 
 /// Opt-in controls for low-rate running imager progress telemetry.
@@ -3016,7 +3071,7 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use casa_ms::{CubeAxisConfig, CubeAxisValue, CubeInterpolation};
-    use casa_provider_contracts::ProviderSurfaceKind;
+    use casa_provider_contracts::{ParameterValue, ProviderSurfaceKind};
     use casa_types::measures::doppler::DopplerRef;
     use casa_types::measures::frequency::FrequencyRef;
     use tempfile::tempdir;
@@ -3030,7 +3085,7 @@ mod tests {
         ImagerPlaneSelection, ImagerProgressDetail, ImagerProgressEvent, ImagerProgressRuntime,
         ImagerProjection, ImagerRestoringBeamMode, ImagerRunTaskRequest, ImagerSaveModel,
         ImagerSpectralMode, ImagerTaskRequest, ImagerUvTaper, ImagerUvTaperSize, ImagerWTermMode,
-        ImagerWeighting, imager_task_schema_bundle,
+        ImagerWeighting, imager_provider_invocation, imager_task_schema_bundle,
     };
     use crate::{
         CleanStopReason, CliConfig, Deconvolver, GaussianUvTaper, ImagingFftBackendPolicy,
@@ -3388,6 +3443,102 @@ mod tests {
         let mut unsupported = serde_json::to_value(decoded).unwrap();
         unsupported["projection"] = serde_json::Value::String("TAN".to_string());
         assert!(serde_json::from_value::<ImagerRunTaskRequest>(unsupported).is_err());
+    }
+
+    #[test]
+    fn vlass_provider_projection_uses_the_typed_task_request() {
+        let direct_args = [
+            "--ms",
+            "ref_vlass_wtsp_creation.ms",
+            "--imagename",
+            "out/vlass",
+            "--imsize",
+            "12150",
+            "--cell-arcsec",
+            "1.0",
+            "--field",
+            "1525",
+            "--spw",
+            "2~17",
+            "--uvrange",
+            "<12km",
+            "--intent",
+            "OBSERVE_TARGET#UNSPECIFIED",
+            "--specmode",
+            "mfs",
+            "--deconvolver",
+            "mtmfs",
+            "--nterms",
+            "2",
+            "--gridder",
+            "awproject",
+            "--wprojplanes",
+            "32",
+            "--usepointing",
+            "--cfcache",
+            "cf-cache/vlass-spw2-17",
+            "--cf-resident-mb",
+            "384",
+            "--aterm",
+            "--no-psterm",
+            "--wbawp",
+            "--conjbeams",
+            "--computepastep",
+            "360",
+            "--rotatepastep",
+            "360",
+            "--pointingoffsetsigdev",
+            "0.0",
+            "--no-mosweight",
+            "--normtype",
+            "flatnoise",
+            "--managed-output",
+            "true",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+        let values = BTreeMap::from([
+            (
+                "gridder".to_string(),
+                ParameterValue::String("awproject".into()),
+            ),
+            ("usepointing".to_string(), ParameterValue::Bool(true)),
+            ("nterms".to_string(), ParameterValue::Integer(2)),
+        ]);
+
+        let projected = imager_provider_invocation(&values, direct_args).unwrap();
+        assert_eq!(
+            projected.invocation.args,
+            ["--managed-output", "true", "--json-run", "-"]
+        );
+        assert_eq!(
+            projected.consumed_parameters,
+            values.keys().cloned().collect()
+        );
+        let ImagerTaskRequest::Run(request) = serde_json::from_str(
+            projected
+                .invocation
+                .stdin
+                .as_deref()
+                .expect("typed request stdin"),
+        )
+        .unwrap();
+        assert_eq!(
+            request.measurement_set,
+            PathBuf::from("ref_vlass_wtsp_creation.ms")
+        );
+        assert_eq!(request.field_ids, Some(vec![1525]));
+        assert_eq!(request.spw_selector.as_deref(), Some("2~17"));
+        assert_eq!(request.uvrange.as_deref(), Some("<12km"));
+        assert!(request.use_pointing);
+        assert_eq!(request.nterms, 2);
+        let aw = request.aw_project.expect("AWProject controls");
+        assert_eq!(aw.cf_cache, PathBuf::from("cf-cache/vlass-spw2-17"));
+        assert_eq!(aw.cf_resident_mb, 384);
+        assert!(!aw.ps_term);
+        assert!(aw.wb_awp);
+        assert!(aw.conjugate_beams);
     }
 
     #[test]

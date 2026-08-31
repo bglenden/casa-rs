@@ -493,6 +493,7 @@ pub(crate) fn project_task_invocation(
     session: &ParameterSession,
 ) -> Result<ProviderInvocation, String> {
     project_provider_invocation(session, |family, values, direct| match family {
+        "imager" => casars_imager::imager_provider_invocation(values, direct.args),
         "simobserve" => {
             casa_ms::simulation_task::simobserve_provider_invocation(values, direct.args)
         }

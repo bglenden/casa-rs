@@ -956,6 +956,7 @@ dependencies = [
  "casa-types",
  "casars",
  "casars-imagebrowser-protocol",
+ "casars-imager",
  "casars-tablebrowser-protocol",
  "flate2",
  "image 0.25.10",

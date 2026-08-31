@@ -5668,6 +5668,7 @@ pub fn parameter_provider_invocation(
         .render_sparse()
         .map_err(|error| parameter_error("validate provider invocation parameters", error))?;
     let invocation = project_provider_invocation(&session, |family, values, direct| match family {
+        "imager" => casars_imager::imager_provider_invocation(values, direct.args),
         "simobserve" => {
             casa_ms::simulation_task::simobserve_provider_invocation(values, direct.args)
         }
