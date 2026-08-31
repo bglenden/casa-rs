@@ -165,6 +165,14 @@ pub struct MaskBox {
 /// Deferred static mask construction evaluated at an exact major-cycle boundary.
 #[derive(Debug, Clone)]
 pub enum ReconstructionMaskPlan {
+    /// Materialize the independently committed continuum and line supports of
+    /// one joint reconstruction boundary.
+    Coupled {
+        /// Continuum-component spatial support.
+        continuum: Box<ReconstructionMaskPlan>,
+        /// Channel-local line-component spatial support.
+        line: Box<ReconstructionMaskPlan>,
+    },
     /// Admit every model-support pixel.
     FullPlane {
         /// Target model direction coordinate.
@@ -216,6 +224,7 @@ impl ReconstructionMaskPlan {
         evolution_stopped: bool,
     ) -> Self {
         match self {
+            Self::Coupled { .. } => self.clone(),
             Self::AutoMultithresh {
                 coordinate,
                 controls,
@@ -242,6 +251,7 @@ impl ReconstructionMaskPlan {
         let model_generation = base.generation_id();
         let shape = normal.shape();
         match self {
+            Self::Coupled { .. } => Err(MaskError::CoupledPlanRequired),
             Self::FullPlane { coordinate } => Ok((
                 ReconstructionMask::full_plane(problem, model_generation, *coordinate, shape)?,
                 None,
@@ -300,6 +310,57 @@ impl ReconstructionMaskPlan {
                 )?;
                 Ok((mask, Some(evidence)))
             }
+        }
+    }
+
+    /// Materialize the two immutable supports of a joint reconstruction.
+    pub fn materialize_coupled(
+        &self,
+        base: &crate::ModelGeneration,
+        normal: &FinalNormalState,
+    ) -> Result<
+        (
+            CoupledReconstructionMask,
+            [Option<AutoMultithreshEvidence>; 2],
+        ),
+        MaskError,
+    > {
+        let Self::Coupled { continuum, line } = self else {
+            return Err(MaskError::CoupledPlanRequired);
+        };
+        let (continuum, continuum_evidence) = continuum.materialize(base, normal)?;
+        let (line, line_evidence) = line.materialize(base, normal)?;
+        Ok((
+            CoupledReconstructionMask::new(continuum, line)?,
+            [continuum_evidence, line_evidence],
+        ))
+    }
+
+    /// Advance both live supports to the next joint major-cycle boundary.
+    #[must_use]
+    pub fn next_coupled_cycle(
+        &self,
+        current: &CoupledReconstructionMask,
+        completed_major_cycles: usize,
+        cycle_threshold_reached: bool,
+        evolution_stopped: [bool; 2],
+    ) -> Self {
+        let Self::Coupled { continuum, line } = self else {
+            return self.clone();
+        };
+        Self::Coupled {
+            continuum: Box::new(continuum.next_cycle(
+                current.continuum(),
+                completed_major_cycles,
+                cycle_threshold_reached,
+                evolution_stopped[0],
+            )),
+            line: Box::new(line.next_cycle(
+                current.line(),
+                completed_major_cycles,
+                cycle_threshold_reached,
+                evolution_stopped[1],
+            )),
         }
     }
 }
@@ -397,6 +458,35 @@ pub struct ReconstructionMask {
 pub struct CoupledReconstructionMask {
     continuum: ReconstructionMask,
     line: ReconstructionMask,
+}
+
+/// Exact spatial-support generation consumed by one reconstruction cycle.
+#[derive(Debug, Clone)]
+pub enum ReconstructionMaskSet {
+    /// One support used by a scalar, cube, or Taylor solve.
+    Shared(ReconstructionMask),
+    /// Independently committed continuum and line supports.
+    Coupled(CoupledReconstructionMask),
+}
+
+impl ReconstructionMaskSet {
+    /// Return the primary (or continuum) support.
+    #[must_use]
+    pub const fn primary(&self) -> &ReconstructionMask {
+        match self {
+            Self::Shared(mask) => mask,
+            Self::Coupled(masks) => masks.continuum(),
+        }
+    }
+
+    /// Return both supports when this is a joint reconstruction.
+    #[must_use]
+    pub const fn coupled(&self) -> Option<&CoupledReconstructionMask> {
+        match self {
+            Self::Shared(_) => None,
+            Self::Coupled(masks) => Some(masks),
+        }
+    }
 }
 
 impl CoupledReconstructionMask {
@@ -827,6 +917,9 @@ pub fn auto_multithresh(
 /// Mask construction or lineage failure.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum MaskError {
+    /// A joint solve requires a plan carrying both component supports.
+    #[error("joint reconstruction requires a coupled mask plan")]
+    CoupledPlanRequired,
     /// Source and target direction grids cannot be mapped by the accepted law.
     #[error("mask direction grids require a supported exact reprojection")]
     UnsupportedReprojection,

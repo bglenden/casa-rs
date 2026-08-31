@@ -339,6 +339,7 @@ pub struct SpectralOperatorSpecification {
     slab: SpectralSlabPlan,
     basis: SpectralBasisPlan,
     joint_line_term_by_channel: Box<[Option<usize>]>,
+    output_channel_frequencies_hz: Box<[f64]>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -455,6 +456,15 @@ impl SpectralOperatorSpecification {
             slab,
             basis,
             joint_line_term_by_channel: joint_line_term_by_channel(problem, basis)?,
+            output_channel_frequencies_hz: (0..problem.geometry().spectral().output_channels())
+                .map(|channel| {
+                    problem
+                        .geometry()
+                        .spectral()
+                        .channel_centre_hz(channel)
+                        .expect("compiled channel has a finite centre")
+                })
+                .collect(),
         })
     }
 
@@ -512,6 +522,13 @@ impl SpectralOperatorSpecification {
 
     pub(crate) const fn block_normal_plan(&self) -> Option<BlockNormalPlan> {
         self.basis.polynomial()
+    }
+
+    pub(crate) const fn joint_continuum_term_count(&self) -> Option<usize> {
+        match self.basis {
+            SpectralBasisPlan::Joint { continuum, .. } => Some(continuum.coefficient_term_count()),
+            SpectralBasisPlan::ChannelLocal | SpectralBasisPlan::Polynomial(_) => None,
+        }
     }
 
     pub(crate) fn operator_geometry(&self) -> SpectralOperatorGeometry {
@@ -961,6 +978,8 @@ pub struct SpectralOperatorPrimitives {
     joint_line_term_by_channel: Box<[Option<usize>]>,
     dirty: Box<[Complex64]>,
     invariant_dirty: Option<Box<[Complex64]>>,
+    common_residual: Option<Box<[Complex64]>>,
+    invariant_common_dirty: Option<Box<[Complex64]>>,
     psf: Box<[Complex64]>,
     sensitivity: Box<[f64]>,
     sum_weights: Box<[f64]>,
@@ -1026,6 +1045,12 @@ impl SpectralOperatorPrimitives {
     #[must_use]
     pub const fn dirty(&self) -> &[Complex64] {
         &self.dirty
+    }
+
+    /// Return the channel-local common residual of a joint model.
+    #[must_use]
+    pub fn common_residual(&self) -> Option<&[Complex64]> {
+        self.common_residual.as_deref()
     }
 
     /// Return the unnormalized point-spread-function plane.
@@ -1094,7 +1119,13 @@ impl SpectralOperatorPrimitives {
             .filter(|plan| plan.coefficient_term_count() > 1);
         let mut encoder = crate::Encoder::new(
             NORMAL_STATE_CONTENT_DOMAIN,
-            if taylor.is_some() { 2 } else { 1 },
+            if matches!(self.basis, SpectralBasisPlan::Joint { .. }) {
+                3
+            } else if taylor.is_some() {
+                2
+            } else {
+                1
+            },
         );
         encoder.usize(self.shape[0]);
         encoder.usize(self.shape[1]);
@@ -1120,6 +1151,12 @@ impl SpectralOperatorPrimitives {
         for value in &self.dirty {
             encoder.u64(value.re.to_bits());
             encoder.u64(value.im.to_bits());
+        }
+        if let Some(residual) = &self.common_residual {
+            for value in residual {
+                encoder.u64(value.re.to_bits());
+                encoder.u64(value.im.to_bits());
+            }
         }
         for value in &self.psf {
             encoder.u64(value.re.to_bits());
@@ -1155,6 +1192,7 @@ pub(crate) struct ReusableNormalState {
     basis: SpectralBasisPlan,
     joint_line_term_by_channel: Box<[Option<usize>]>,
     invariant_dirty: Option<Box<[Complex64]>>,
+    invariant_common_dirty: Option<Box<[Complex64]>>,
     psf: Box<[Complex64]>,
     sensitivity: Box<[f64]>,
     sum_weights: Box<[f64]>,
@@ -1179,6 +1217,7 @@ impl ReusableNormalState {
             basis,
             joint_line_term_by_channel,
             invariant_dirty,
+            invariant_common_dirty,
             psf,
             sensitivity,
             sum_weights,
@@ -1198,6 +1237,7 @@ impl ReusableNormalState {
             basis,
             joint_line_term_by_channel,
             invariant_dirty,
+            invariant_common_dirty,
             psf,
             sensitivity,
             sum_weights,
@@ -1911,6 +1951,7 @@ pub(crate) struct SpectralSlabOperator {
     slab: SpectralSlabPlan,
     basis: SpectralBasisPlan,
     joint_line_term_by_channel: Box<[Option<usize>]>,
+    output_channel_frequencies_hz: Box<[f64]>,
     workload: SpectralOperatorWorkload,
     gridder: StandardConvolution,
     fft: PreparedFft,
@@ -1920,6 +1961,8 @@ pub(crate) struct SpectralSlabOperator {
     psf_compensations: Option<Vec<Array2<Complex64>>>,
     residual_grids: Option<Vec<Array2<Complex64>>>,
     residual_compensations: Option<Vec<Array2<Complex64>>>,
+    common_residual_grids: Option<Vec<Array2<Complex64>>>,
+    common_residual_compensations: Option<Vec<Array2<Complex64>>>,
     reused_normal_state: Option<ReusableNormalState>,
     forward_grids: Vec<Array2<Complex64>>,
     predictions: Box<[Complex64]>,
@@ -1957,12 +2000,14 @@ impl SpectralSlabOperator {
         let slab = specification.slab;
         let basis = specification.basis;
         let joint_line_term_by_channel = specification.joint_line_term_by_channel.clone();
+        let output_channel_frequencies_hz = specification.output_channel_frequencies_hz.clone();
         Self::new_inner(
             Some(specification),
             geometry,
             slab,
             basis,
             joint_line_term_by_channel,
+            output_channel_frequencies_hz,
             workload,
             fft,
             workload.max_replay_block_samples,
@@ -1980,12 +2025,14 @@ impl SpectralSlabOperator {
         let slab = specification.slab;
         let basis = specification.basis;
         let joint_line_term_by_channel = specification.joint_line_term_by_channel.clone();
+        let output_channel_frequencies_hz = specification.output_channel_frequencies_hz.clone();
         Self::new_inner(
             Some(specification),
             geometry,
             slab,
             basis,
             joint_line_term_by_channel,
+            output_channel_frequencies_hz,
             workload,
             fft,
             0,
@@ -2011,6 +2058,7 @@ impl SpectralSlabOperator {
                 SpectralBasisPlan::ChannelLocal
             },
             vec![None; slab.total_channels()].into_boxed_slice(),
+            vec![1.0; slab.total_channels()].into_boxed_slice(),
             workload,
             fft,
             workload.max_replay_block_samples,
@@ -2023,6 +2071,7 @@ impl SpectralSlabOperator {
         slab: SpectralSlabPlan,
         basis: SpectralBasisPlan,
         joint_line_term_by_channel: Box<[Option<usize>]>,
+        output_channel_frequencies_hz: Box<[f64]>,
         workload: SpectralOperatorWorkload,
         fft: PreparedFft,
         prediction_capacity: usize,
@@ -2041,6 +2090,7 @@ impl SpectralSlabOperator {
             slab,
             basis,
             joint_line_term_by_channel,
+            output_channel_frequencies_hz,
             workload,
             gridder,
             fft,
@@ -2050,6 +2100,11 @@ impl SpectralSlabOperator {
             psf_compensations: initial.then(|| plane_grids(normal_moments)),
             residual_grids: None,
             residual_compensations: None,
+            common_residual_grids: (initial && matches!(basis, SpectralBasisPlan::Joint { .. }))
+                .then(|| plane_grids(slab.total_channels())),
+            common_residual_compensations: (initial
+                && matches!(basis, SpectralBasisPlan::Joint { .. }))
+            .then(|| plane_grids(slab.total_channels())),
             reused_normal_state: None,
             forward_grids: plane_grids(resident_terms),
             predictions: vec![Complex64::default(); prediction_capacity].into_boxed_slice(),
@@ -2146,6 +2201,7 @@ impl SpectralSlabOperator {
                         visibility_scale * self.coefficient_basis[plane],
                     )?;
                 }
+                self.grid_common_residual_term(sample.output_channel, taps, visibility_scale)?;
                 self.fill_joint_normal_weights(sample.imaging_weight * factor * factor)?;
                 for moment in 0..self.normal_moment_weights.len() {
                     self.grid_normal_moment(moment, taps, self.normal_moment_weights[moment])?;
@@ -2280,6 +2336,18 @@ impl SpectralSlabOperator {
                 .map(|_| Array2::zeros(grid_shape))
                 .collect(),
         );
+        if matches!(self.basis, SpectralBasisPlan::Joint { .. }) {
+            self.common_residual_grids = Some(
+                (0..self.slab.total_channels())
+                    .map(|_| Array2::zeros(grid_shape))
+                    .collect(),
+            );
+            self.common_residual_compensations = Some(
+                (0..self.slab.total_channels())
+                    .map(|_| Array2::zeros(grid_shape))
+                    .collect(),
+            );
+        }
         Ok(binding)
     }
 
@@ -2489,6 +2557,7 @@ impl SpectralSlabOperator {
                     }
                     self.grid_residual_term(plane, taps, residual_scale * coefficient)?;
                 }
+                self.grid_common_residual_term(sample.output_channel, taps, residual_scale)?;
                 if self.psf_grids.is_some() {
                     self.fill_joint_normal_weights(sample.imaging_weight * factor * factor)?;
                     for moment in 0..self.normal_moment_weights.len() {
@@ -2523,6 +2592,27 @@ impl SpectralSlabOperator {
         record_measurement(
             &mut self.measurements.residual_grid_tap_visits,
             TAP_VISITS_PER_SAMPLE,
+        );
+        Ok(())
+    }
+
+    fn grid_common_residual_term(
+        &mut self,
+        output_channel: usize,
+        taps: SampleTaps,
+        value: Complex64,
+    ) -> Result<(), SpectralOperatorError> {
+        self.gridder.grid_compensated(
+            &mut self
+                .common_residual_grids
+                .as_mut()
+                .ok_or(SpectralOperatorError::MissingMajorCycleResidual)?[output_channel],
+            &mut self
+                .common_residual_compensations
+                .as_mut()
+                .ok_or(SpectralOperatorError::MissingMajorCycleResidual)?[output_channel],
+            taps,
+            value,
         );
         Ok(())
     }
@@ -2724,6 +2814,46 @@ impl SpectralSlabOperator {
         taps: SampleTaps,
         forward_scale: Complex64,
     ) -> Result<Complex64, SpectralOperatorError> {
+        if let SpectralBasisPlan::Joint {
+            continuum,
+            line_terms,
+        } = self.basis
+        {
+            let frequency = *self
+                .output_channel_frequencies_hz
+                .get(output_channel)
+                .ok_or(SpectralOperatorError::GriddedRecordMismatch)?;
+            let x = continuum
+                .normalized_frequency(frequency)
+                .map_err(|_| SpectralOperatorError::GriddedRecordMismatch)?;
+            let mut predicted = Complex64::default();
+            for term in 0..continuum.coefficient_term_count() {
+                predicted += self.gridder.degrid(&self.forward_grids[term], taps)
+                    * x.powi(
+                        i32::try_from(term)
+                            .map_err(|_| SpectralOperatorError::GriddedRecordMismatch)?,
+                    );
+            }
+            if let Some(line) = self
+                .joint_line_term_by_channel
+                .get(output_channel)
+                .copied()
+                .flatten()
+            {
+                if line >= line_terms {
+                    return Err(SpectralOperatorError::GriddedRecordMismatch);
+                }
+                predicted += self.gridder.degrid(
+                    &self.forward_grids[continuum.coefficient_term_count() + line],
+                    taps,
+                );
+            }
+            predicted *= forward_scale;
+            if !predicted.re.is_finite() || !predicted.im.is_finite() {
+                return Err(SpectralOperatorError::GeneratedNonfinite);
+            }
+            return Ok(predicted);
+        }
         let resident = self
             .slab
             .resident_index(output_channel)
@@ -2787,6 +2917,64 @@ impl SpectralSlabOperator {
         predicted: Complex64,
         adjoint_scale: Complex64,
     ) -> Result<(), SpectralOperatorError> {
+        if let SpectralBasisPlan::Joint {
+            continuum,
+            line_terms,
+        } = self.basis
+        {
+            let terms = continuum.coefficient_term_count() + line_terms;
+            let accumulation_terms = terms
+                .checked_add(self.slab.total_channels())
+                .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+            if grids.len() != accumulation_terms || compensations.len() != accumulation_terms {
+                return Err(SpectralOperatorError::GriddedRecordMismatch);
+            }
+            let frequency = *self
+                .output_channel_frequencies_hz
+                .get(output_channel)
+                .ok_or(SpectralOperatorError::GriddedRecordMismatch)?;
+            let x = continuum
+                .normalized_frequency(frequency)
+                .map_err(|_| SpectralOperatorError::GriddedRecordMismatch)?;
+            let gridded = predicted * adjoint_scale;
+            for term in 0..continuum.coefficient_term_count() {
+                let value = gridded
+                    * x.powi(
+                        i32::try_from(term)
+                            .map_err(|_| SpectralOperatorError::GriddedRecordMismatch)?,
+                    );
+                self.gridder.grid_compensated(
+                    &mut grids[term],
+                    &mut compensations[term],
+                    local_taps,
+                    value,
+                );
+            }
+            if let Some(line) = self
+                .joint_line_term_by_channel
+                .get(output_channel)
+                .copied()
+                .flatten()
+            {
+                let term = continuum.coefficient_term_count() + line;
+                self.gridder.grid_compensated(
+                    &mut grids[term],
+                    &mut compensations[term],
+                    local_taps,
+                    gridded,
+                );
+            }
+            let common_plane = terms
+                .checked_add(output_channel)
+                .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+            self.gridder.grid_compensated(
+                &mut grids[common_plane],
+                &mut compensations[common_plane],
+                local_taps,
+                gridded,
+            );
+            return Ok(());
+        }
         let plane = self
             .slab
             .core_index(output_channel)
@@ -2844,11 +3032,25 @@ impl SpectralSlabOperator {
         normal_grids: Vec<Array2<Complex64>>,
     ) -> Result<SpectralOperatorPrimitives, SpectralOperatorError> {
         let expected_shape = (self.geometry.grid_shape[0], self.geometry.grid_shape[1]);
+        let expected_planes = self
+            .basis
+            .coefficient_terms(self.slab)
+            .checked_add(if matches!(self.basis, SpectralBasisPlan::Joint { .. }) {
+                self.slab.total_channels()
+            } else {
+                0
+            })
+            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
         if self.residual_grids.is_some()
-            || normal_grids.len() != self.basis.coefficient_terms(self.slab)
+            || normal_grids.len() != expected_planes
             || normal_grids.iter().any(|grid| grid.dim() != expected_shape)
         {
             return Err(SpectralOperatorError::GriddedRecordMismatch);
+        }
+        let mut normal_grids = normal_grids;
+        if matches!(self.basis, SpectralBasisPlan::Joint { .. }) {
+            self.common_residual_grids =
+                Some(normal_grids.split_off(self.basis.coefficient_terms(self.slab)));
         }
         self.residual_grids = Some(normal_grids);
         self.finish_gridded_normal(residual_model)
@@ -2875,6 +3077,11 @@ impl SpectralSlabOperator {
         for grid in &mut normal_grids {
             self.fft.transform(grid, true);
         }
+        if let Some(grids) = self.common_residual_grids.as_mut() {
+            for grid in grids {
+                self.fft.transform(grid, true);
+            }
+        }
         log_imaging_stage_timing("residual_fft", "gridded", planes, fft_started);
         let formation_started = imaging_stage_timing_started();
         let reused = self
@@ -2891,6 +3098,7 @@ impl SpectralSlabOperator {
         let invariant_dirty = reused
             .invariant_dirty
             .ok_or(SpectralOperatorError::ReusableNormalStateMismatch)?;
+        let invariant_common_dirty = reused.invariant_common_dirty;
         if invariant_dirty.len() != output_cells
             || reused.psf.len() != normal_cells
             || reused.sensitivity.len() != normal_cells
@@ -2913,6 +3121,28 @@ impl SpectralSlabOperator {
                 }
             }
         }
+        let common_residual = match (
+            invariant_common_dirty.as_deref(),
+            self.common_residual_grids.as_deref(),
+        ) {
+            (Some(invariant), Some(grids)) => {
+                let normal = collect_image_planes(Some(grids), &self.geometry, &self.gridder)?
+                    .ok_or(SpectralOperatorError::MissingMajorCycleResidual)?;
+                if invariant.len() != normal.len() {
+                    return Err(SpectralOperatorError::ReusableNormalStateMismatch);
+                }
+                Some(
+                    invariant
+                        .iter()
+                        .zip(normal)
+                        .map(|(dirty, normal)| *dirty - normal)
+                        .collect::<Vec<_>>()
+                        .into_boxed_slice(),
+                )
+            }
+            (None, None) => None,
+            _ => return Err(SpectralOperatorError::ReusableNormalStateMismatch),
+        };
         if residual
             .iter()
             .chain(invariant_dirty.iter())
@@ -2930,6 +3160,8 @@ impl SpectralSlabOperator {
             joint_line_term_by_channel: self.joint_line_term_by_channel,
             dirty: residual.into_boxed_slice(),
             invariant_dirty: Some(invariant_dirty),
+            common_residual,
+            invariant_common_dirty,
             psf: reused.psf,
             sensitivity: reused.sensitivity,
             sum_weights: reused.sum_weights,
@@ -3003,6 +3235,11 @@ impl SpectralSlabOperator {
                 record_measurement(&mut self.measurements.inverse_residual_fft_planes, 1);
             }
         }
+        if let Some(residual) = self.common_residual_grids.as_mut() {
+            for grid in residual {
+                self.fft.transform(grid, true);
+            }
+        }
         log_imaging_stage_timing(
             if self.reused_normal_state.is_some() {
                 "residual_fft"
@@ -3038,6 +3275,11 @@ impl SpectralSlabOperator {
                 .residual_grids
                 .as_ref()
                 .ok_or(SpectralOperatorError::MissingMajorCycleResidual)?;
+            let common_residual = collect_image_planes(
+                self.common_residual_grids.as_deref(),
+                &self.geometry,
+                &self.gridder,
+            )?;
             let mut residual = Vec::with_capacity(output_cells);
             for residual_grid in residual_grids {
                 for x in 0..self.geometry.image_shape[0] {
@@ -3068,6 +3310,8 @@ impl SpectralSlabOperator {
                 joint_line_term_by_channel: self.joint_line_term_by_channel,
                 dirty: residual.into_boxed_slice(),
                 invariant_dirty: reused.invariant_dirty,
+                common_residual: common_residual.map(Vec::into_boxed_slice),
+                invariant_common_dirty: reused.invariant_common_dirty,
                 psf: reused.psf,
                 sensitivity: reused.sensitivity,
                 sum_weights: reused.sum_weights,
@@ -3101,6 +3345,11 @@ impl SpectralSlabOperator {
             .residual_grids
             .as_ref()
             .map(|_| Vec::with_capacity(output_cells));
+        let common_residual = collect_image_planes(
+            self.common_residual_grids.as_deref(),
+            &self.geometry,
+            &self.gridder,
+        )?;
         for plane in 0..coefficient_terms {
             for x in 0..self.geometry.image_shape[0] {
                 for y in 0..self.geometry.image_shape[1] {
@@ -3172,6 +3421,8 @@ impl SpectralSlabOperator {
         };
         let dirty = dirty.into_boxed_slice();
         let invariant_dirty = Some(dirty.clone());
+        let common_residual = common_residual.map(Vec::into_boxed_slice);
+        let invariant_common_dirty = common_residual.clone();
         let primitives = SpectralOperatorPrimitives {
             shape: self.geometry.image_shape,
             slab: self.slab,
@@ -3179,6 +3430,8 @@ impl SpectralSlabOperator {
             joint_line_term_by_channel: self.joint_line_term_by_channel,
             invariant_dirty,
             dirty,
+            common_residual,
+            invariant_common_dirty,
             psf: psf.into_boxed_slice(),
             sensitivity: sensitivity.into_boxed_slice(),
             sum_weights: self.sum_weights.into_boxed_slice(),
@@ -3196,6 +3449,39 @@ impl SpectralSlabOperator {
             formation_started,
         );
         Ok(primitives)
+    }
+}
+
+fn collect_image_planes(
+    grids: Option<&[Array2<Complex64>]>,
+    geometry: &SpectralOperatorGeometry,
+    gridder: &StandardConvolution,
+) -> Result<Option<Vec<Complex64>>, SpectralOperatorError> {
+    let Some(grids) = grids else {
+        return Ok(None);
+    };
+    let mut values = Vec::with_capacity(
+        checked_cells(geometry.image_shape)?
+            .checked_mul(grids.len())
+            .ok_or(SpectralOperatorError::ResidencyOverflow)?,
+    );
+    for grid in grids {
+        for x in 0..geometry.image_shape[0] {
+            for y in 0..geometry.image_shape[1] {
+                values.push(
+                    grid[(geometry.image_blc[0] + x, geometry.image_blc[1] + y)]
+                        * gridder.image_correction(x, y),
+                );
+            }
+        }
+    }
+    if values
+        .iter()
+        .any(|value| !value.re.is_finite() || !value.im.is_finite())
+    {
+        Err(SpectralOperatorError::GeneratedNonfinite)
+    } else {
+        Ok(Some(values))
     }
 }
 

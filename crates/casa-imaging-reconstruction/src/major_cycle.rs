@@ -199,6 +199,22 @@ impl FinalNormalState {
         self.primitives.dirty()
     }
 
+    /// Borrow one channel plane of the common joint-model residual.
+    #[must_use]
+    pub fn joint_common_residual(
+        &self,
+        output_channel: usize,
+    ) -> Option<&[num_complex::Complex64]> {
+        if self.catalog != NormalStateCatalog::UnnormalizedJointBlockV1 {
+            return None;
+        }
+        let cells = self.shape()[0].checked_mul(self.shape()[1])?;
+        let start = output_channel.checked_mul(cells)?;
+        self.primitives
+            .common_residual()?
+            .get(start..start.checked_add(cells)?)
+    }
+
     /// Return the exact unnormalized plane shape of every primitive.
     #[must_use]
     pub const fn shape(&self) -> [usize; 2] {

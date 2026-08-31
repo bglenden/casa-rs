@@ -212,6 +212,7 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
             | RequiredCapability::ClarkReconstruction
             | RequiredCapability::MultiscaleReconstruction
             | RequiredCapability::MtmfsReconstruction
+            | RequiredCapability::JointContinuumLineReconstruction
             | RequiredCapability::NaturalWeighting
             | RequiredCapability::UniformWeighting
             | RequiredCapability::BriggsWeighting
@@ -232,4 +233,16 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
             | RequiredCapability::Product(ProductKind::SpectralIndex)
             | RequiredCapability::Product(ProductKind::SpectralIndexError)
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn t46_joint_reconstruction_is_installed_at_the_application_boundary() {
+        assert!(supports_capability(
+            RequiredCapability::JointContinuumLineReconstruction
+        ));
+    }
 }

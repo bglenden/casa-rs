@@ -393,7 +393,7 @@ fn joint_problem(seed: u8, products: &[ProductKind]) -> casa_imaging_model::Comp
             ProductRequirements::new(
                 products.to_vec(),
                 ProductNormalization::UnitResponse,
-                RestoringBeamPolicy::None,
+                RestoringBeamPolicy::PerPlane,
                 validity(),
             ),
             ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
@@ -681,6 +681,7 @@ fn t46_joint_products_publish_one_lineage_without_component_residuals() {
             ProductKind::Psf,
             ProductKind::Residual,
             ProductKind::Model,
+            ProductKind::RestoredImage,
             ProductKind::SumWeights,
             ProductKind::Mask,
             ProductKind::Sensitivity,
@@ -722,6 +723,16 @@ fn t46_joint_products_publish_one_lineage_without_component_residuals() {
     );
     assert!(member(&sealed, ".line.model").payload().contains(&2.0));
     assert!(member(&sealed, ".total.model").payload().contains(&3.0));
+    assert_eq!(
+        member(&sealed, ".line.image").payload().len(),
+        2 * SHAPE[0] * SHAPE[1]
+    );
+    assert_eq!(
+        member(&sealed, ".total.image").payload().len(),
+        2 * SHAPE[0] * SHAPE[1]
+    );
+    assert_eq!(sealed.restoring_beams().len(), 2);
+    assert!(sealed.restoring_beams().iter().all(Option::is_some));
     assert!(
         member(&sealed, ".psf.joint0_1")
             .payload()

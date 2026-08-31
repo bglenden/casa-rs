@@ -548,7 +548,7 @@ impl<'a> GraphBuilder<'a> {
                 }
             }
             ProductKind::RestoredImage => {
-                for term in self.image_terms() {
+                for term in self.restored_terms() {
                     let residual = if matches!(
                         self.reconstruction.basis(),
                         ReconstructionBasis::JointContinuumLine { .. }
@@ -1013,6 +1013,17 @@ impl<'a> GraphBuilder<'a> {
             ReconstructionBasis::JointContinuumLine { .. }
         ) {
             vec![ProductTerm::Total]
+        } else {
+            self.image_terms()
+        }
+    }
+
+    fn restored_terms(&self) -> Vec<ProductTerm> {
+        if matches!(
+            self.reconstruction.basis(),
+            ReconstructionBasis::JointContinuumLine { .. }
+        ) {
+            vec![ProductTerm::Line, ProductTerm::Total]
         } else {
             self.image_terms()
         }

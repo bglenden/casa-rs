@@ -37,7 +37,7 @@ use casa_imaging_products::{
 };
 use casa_imaging_reconstruction::{
     ExecutableModelProblem, MajorCycleCompletion, MinorCycleProgram, MinorCycleStopReason,
-    ReconstructionMaskPlan, WeightingExecutionLimits,
+    ReconstructionMaskPlan, ReconstructionMaskSet, WeightingExecutionLimits,
 };
 use casa_imaging_runtime::{
     AttemptBoundObservationCompletion, BuildIdentity, ExecutionAttemptId, ExecutionProvenance,
@@ -211,6 +211,14 @@ pub struct NativeMinorCycleOutcome {
     pub mask_normal_state: Option<casa_imaging_reconstruction::FinalNormalStateCompletionId>,
     /// Auto-multithreshold diagnostics, when that mask mode generated support.
     pub auto_mask: Option<casa_imaging_reconstruction::AutoMultithreshEvidence>,
+    /// Exact line-component support for a joint solve.
+    pub line_mask_support: Option<Vec<bool>>,
+    /// Immutable line-mask generation for a joint solve.
+    pub line_mask_generation: Option<casa_imaging_reconstruction::ReconstructionMaskGenerationId>,
+    /// Current Normal State consumed to generate an automatic line mask.
+    pub line_mask_normal_state: Option<casa_imaging_reconstruction::FinalNormalStateCompletionId>,
+    /// Auto-multithreshold diagnostics for the line mask, when selected.
+    pub line_auto_mask: Option<casa_imaging_reconstruction::AutoMultithreshEvidence>,
 }
 
 /// Stable application spelling of the scientific minor-cycle terminal reason.
@@ -352,7 +360,8 @@ where
         ReconstructionAlgorithm::Hogbom
         | ReconstructionAlgorithm::Clark
         | ReconstructionAlgorithm::Multiscale { .. }
-        | ReconstructionAlgorithm::Mtmfs { .. } => {
+        | ReconstructionAlgorithm::Mtmfs { .. }
+        | ReconstructionAlgorithm::JointContinuumLine { .. } => {
             SpectralCyclePlan::initial(problem, &planning_registry, policy)?
         }
     };
@@ -480,7 +489,8 @@ where
         ReconstructionAlgorithm::Hogbom
         | ReconstructionAlgorithm::Clark
         | ReconstructionAlgorithm::Multiscale { .. }
-        | ReconstructionAlgorithm::Mtmfs { .. } => {
+        | ReconstructionAlgorithm::Mtmfs { .. }
+        | ReconstructionAlgorithm::JointContinuumLine { .. } => {
             let mut frozen_weighting = registry
                 .implementation()
                 .take_frozen_weighting()
@@ -507,6 +517,8 @@ where
             let mut mask_plan = input.mask.clone();
             let mut minor_outcomes = Vec::new();
             loop {
+                let applied_masks = minor.masks().clone();
+                let line_mask = applied_masks.coupled().map(|masks| masks.line());
                 let iterations_entering = total_iterations;
                 let actual_iterations_entering = total_actual_iterations;
                 total_iterations = total_iterations
@@ -539,6 +551,11 @@ where
                     mask_model_generation: minor.mask().model_generation(),
                     mask_normal_state: minor.mask().normal_state_completion(),
                     auto_mask: minor.auto_mask_evidence(),
+                    line_mask_support: line_mask.map(|mask| mask.support().to_vec()),
+                    line_mask_generation: line_mask.map(|mask| mask.generation_id()),
+                    line_mask_normal_state: line_mask
+                        .and_then(|mask| mask.normal_state_completion()),
+                    line_auto_mask: minor.line_auto_mask_evidence(),
                 };
                 eprintln!(
                     "imaging_minor_cycle_summary cycle={} associated_replay_ordinal={} controller_iterations_entering={} controller_iterations={} controller_iterations_total={} actual_iterations_entering={} actual_iterations={} actual_iterations_total={} initial_peak_flux={} final_peak_flux={} model_update_abs_flux={} global_threshold={} effective_threshold={} cycle_threshold={} stop_reason={:?} clark_refreshes={}",
@@ -564,15 +581,29 @@ where
                 let continue_cleaning = cycle < maximum_cycles
                     && total_iterations < controls.max_minor_iterations()
                     && minor.evidence().requests_reconciliation();
-                let next_mask = mask_plan.next_cycle(
-                    minor.mask(),
-                    cycle,
-                    minor.evidence().cycle_threshold_is_global(),
-                    minor_outcome
-                        .auto_mask
-                        .is_some_and(|evidence| evidence.channel_stopped),
-                );
-                let applied_mask = minor.mask().clone();
+                let next_mask = match &applied_masks {
+                    ReconstructionMaskSet::Shared(mask) => mask_plan.next_cycle(
+                        mask,
+                        cycle,
+                        minor.evidence().cycle_threshold_is_global(),
+                        minor_outcome
+                            .auto_mask
+                            .is_some_and(|evidence| evidence.channel_stopped),
+                    ),
+                    ReconstructionMaskSet::Coupled(masks) => mask_plan.next_coupled_cycle(
+                        masks,
+                        cycle,
+                        minor.evidence().cycle_threshold_is_global(),
+                        [
+                            minor_outcome
+                                .auto_mask
+                                .is_some_and(|evidence| evidence.channel_stopped),
+                            minor_outcome
+                                .line_auto_mask
+                                .is_some_and(|evidence| evidence.channel_stopped),
+                        ],
+                    ),
+                };
                 minor_outcomes.push(minor_outcome);
                 let final_input = minor.into_final_major_input();
                 let final_policy = execution_policy(&runtime, residency.clone());
@@ -677,7 +708,7 @@ where
                 if !visibility_write_requested {
                     break (
                         completion,
-                        Some(applied_mask),
+                        Some(applied_masks),
                         Some(receipt),
                         minor_outcomes,
                         cycle + 1,
@@ -760,7 +791,7 @@ where
                     .ok_or_else(|| boxed("selected-output traversal omitted scientific state"))?;
                 break (
                     completion,
-                    Some(applied_mask),
+                    Some(applied_masks),
                     Some(receipt),
                     minor_outcomes,
                     cycle + 1,
@@ -915,7 +946,7 @@ fn selected_output_attempt(science: ExecutionAttemptId) -> ExecutionAttemptId {
 fn publish_products<S>(
     problem: &CompiledProblem,
     scientific: MajorCycleCompletion,
-    reconstruction_mask: Option<casa_imaging_reconstruction::ReconstructionMask>,
+    reconstruction_masks: Option<ReconstructionMaskSet>,
     runtime: ApplicationRuntime,
     publication_config: ApplicationPublication<S>,
     prior: PriorPhaseOutcome,
@@ -924,17 +955,30 @@ where
     S: SerialProductPublicationSink + Send + 'static,
     S::Error: Send + Sync,
 {
-    let sources = ContinuumSourceCatalog::from_major_cycle_with_mask(
-        problem,
-        &scientific,
-        reconstruction_mask.as_ref(),
-    )?;
+    let sources = match reconstruction_masks.as_ref() {
+        Some(ReconstructionMaskSet::Shared(mask)) => {
+            ContinuumSourceCatalog::from_major_cycle_with_mask(problem, &scientific, Some(mask))?
+        }
+        Some(ReconstructionMaskSet::Coupled(masks)) => {
+            ContinuumSourceCatalog::from_major_cycle_with_coupled_masks(
+                problem,
+                &scientific,
+                masks,
+            )?
+        }
+        None => ContinuumSourceCatalog::from_major_cycle(problem, &scientific)?,
+    };
     let authority = ProductGenerationAuthority::bind(problem);
     let planned_products = authority.plan(&sources, &publication_config.controls)?;
     let generation_demand = {
         let mut inputs = ContinuumProductInputs::from_major_cycle(problem, &scientific)?;
-        if let Some(mask) = reconstruction_mask.as_ref() {
-            inputs = inputs.with_reconstruction_mask(mask)?;
+        if let Some(masks) = reconstruction_masks.as_ref() {
+            inputs = match masks {
+                ReconstructionMaskSet::Shared(mask) => inputs.with_reconstruction_mask(mask)?,
+                ReconstructionMaskSet::Coupled(masks) => {
+                    inputs.with_coupled_reconstruction_masks(masks)?
+                }
+            };
         }
         planned_products.demand(&inputs)?
     };
@@ -992,7 +1036,7 @@ where
         publication,
         planned_products,
         scientific,
-        reconstruction_mask,
+        reconstruction_masks,
         publication_config.sink,
     )?;
     let registry = SerialProductPublicationRegistry::new(

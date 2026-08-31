@@ -33,12 +33,13 @@ use casa_imaging_model::{
     WeightDensityScope, WeightingContract, WeightingScheme, compile, compile_observation,
 };
 use casa_imaging_reconstruction::{
-    CoupledReconstructionMask, ExecutableModelProblem, FinalNormalState, MajorCycleOwner,
-    MajorCyclePreparation, MinorCycleProgram, ModelGeneration, ModelLifecycle, NormalStateCatalog,
-    ReconstructionMask, SpectralChannelValidity, SpectralOperatorSpecification,
-    SpectralPrimitiveCatalog, SpectralStencilValidity, WeightingAlgorithmState,
-    WeightingExecutionLimits, WeightingPlan, WeightingReplayChunk, WeightingReplaySummary,
-    begin_weighting_generation, compile_spectral_stencil, plan_weighting, run_joint_minor_cycle,
+    ChannelCyclePolicy, CoupledReconstructionMask, ExecutableModelProblem, FinalNormalState,
+    MajorCycleOwner, MajorCyclePreparation, MinorCycleProgram, ModelGeneration, ModelLifecycle,
+    NormalStateCatalog, ReconstructionCycle, ReconstructionMask, ReconstructionMaskPlan,
+    SpectralChannelValidity, SpectralOperatorSpecification, SpectralPrimitiveCatalog,
+    SpectralStencilValidity, WeightingAlgorithmState, WeightingExecutionLimits, WeightingPlan,
+    WeightingReplayChunk, WeightingReplaySummary, begin_weighting_generation,
+    compile_spectral_stencil, plan_weighting,
     runtime_adapter::{
         CompleteDataOwnerResult, GRIDDED_NORMAL_PARTITION_COUNT, GriddedNormalExecutionResidency,
         GriddedNormalOperatorBlock, GriddedNormalOperatorCompiler, GriddedNormalOperatorProgram,
@@ -844,6 +845,7 @@ fn compile_compact_program(
 
 struct CompactTaylorResult {
     residual: Vec<num_complex::Complex64>,
+    common_residual: Option<Vec<num_complex::Complex64>>,
     routing: GriddedNormalRoutingMeasurements,
     grid_residency: GriddedNormalExecutionResidency,
 }
@@ -858,9 +860,11 @@ fn execute_compact_taylor(
     workers: usize,
 ) -> CompactTaylorResult {
     let specification = SpectralOperatorSpecification::new(problem).expect("Taylor operator");
-    let grid_residency =
-        gridded_normal_execution_residency(specification.grid_shape(), program.prediction_width())
-            .expect("exact Taylor compact grid residency");
+    let grid_residency = gridded_normal_execution_residency(
+        specification.grid_shape(),
+        program.accumulation_width(),
+    )
+    .expect("exact Taylor compact grid residency");
     let workload = spectral_operator_workload(
         &specification,
         frozen.plan.limits().max_block_samples(),
@@ -953,6 +957,7 @@ fn execute_compact_taylor(
         .expect("finish compact Taylor apply");
     CompactTaylorResult {
         residual: complete.primitives().dirty().to_vec(),
+        common_residual: complete.primitives().common_residual().map(<[_]>::to_vec),
         routing,
         grid_residency,
     }
@@ -1093,17 +1098,24 @@ fn t46_joint_minor_cycle_recovers_mixed_components_in_one_atomic_delta() {
     let problem = joint_problem();
     let selected = joint_samples(&problem);
     let (lifecycle, normal, model) = run_joint_final_normal_state(&problem, &selected);
-    let result = run_joint_minor_cycle(
-        &lifecycle,
-        &model,
-        &normal,
-        &full_joint_masks(&normal, &model),
+    let coordinate = full_joint_masks(&normal, &model).continuum().coordinate();
+    let mask_plan = ReconstructionMaskPlan::Coupled {
+        continuum: Box::new(ReconstructionMaskPlan::FullPlane { coordinate }),
+        line: Box::new(ReconstructionMaskPlan::FullPlane { coordinate }),
+    };
+    let (masks, auto_masks) = mask_plan
+        .materialize_coupled(&model, &normal)
+        .expect("materialize one coupled mask generation");
+    assert_eq!(auto_masks, [None, None]);
+    let result = ReconstructionCycle::new(
+        ChannelCyclePolicy::Coupled,
         MinorCycleProgram::for_problem(&problem)
             .expect("joint controls")
             .limit_iterations(1)
             .expect("one joint iteration"),
     )
-    .expect("joint block solve");
+    .run_coupled(&lifecycle, &model, &normal, &masks)
+    .expect("joint block solve through the shared reconstruction cycle");
 
     assert_eq!(result.evidence().iterations(), 1);
     let terms = result.delta().expect("one atomic joint delta").terms();
@@ -1303,4 +1315,73 @@ fn t42_compact_v3_replay_matches_direct_residual_and_is_worker_bitwise_stable() 
             + serial.grid_residency.merge_complex_values()
     );
     assert!(serial.grid_residency.metadata_bytes() > 0);
+}
+
+#[test]
+fn t46_joint_compact_replay_matches_direct_residual_and_is_worker_bitwise_stable() {
+    let problem = joint_problem();
+    let selected = joint_samples(&problem);
+    let frozen = freeze_taylor_replay(&problem, &selected);
+    let preparation = nonzero_taylor_model(&problem);
+    let (program, blocks) = compile_compact_program(&problem, &frozen);
+
+    assert_eq!(program.record_bytes(), 32);
+    assert_eq!(program.prediction_width(), 1);
+    let direct_prior = initial_normal_from_frozen(&problem, &frozen);
+    let initial_content = direct_prior.content_identity();
+    assert_eq!(direct_prior.coefficient_term_count(), 2);
+    assert_eq!(direct_prior.normal_moment_count(), 4);
+    let direct = complete_frozen_taylor_operator(
+        &problem,
+        &frozen,
+        &preparation,
+        SpectralOperatorPass::ResidualRefresh,
+        Some(direct_prior),
+    );
+    assert_eq!(
+        direct.completion().primitive_catalog(),
+        SpectralPrimitiveCatalog::UnnormalizedJointBlockV1
+    );
+    let expected = direct.primitives().dirty();
+    let expected_common = direct
+        .primitives()
+        .common_residual()
+        .expect("joint operator retains the channel-local common residual");
+    let mut serial_residual = None;
+
+    for workers in [1, 2] {
+        let prior = initial_normal_from_frozen(&problem, &frozen);
+        assert_eq!(prior.content_identity(), initial_content);
+        let compact = execute_compact_taylor(
+            &problem,
+            &frozen,
+            &program,
+            &blocks,
+            &preparation,
+            prior,
+            workers,
+        );
+        let nrms = complex_nrms(&compact.residual, expected);
+        assert!(
+            nrms <= 0.001,
+            "compact joint dirty-Hx must match selected-sample residual refresh: NRMS={nrms:e}"
+        );
+        let common = compact
+            .common_residual
+            .as_deref()
+            .expect("compact joint replay retains the common residual");
+        let common_nrms = complex_nrms(common, expected_common);
+        assert!(
+            common_nrms <= 0.001,
+            "compact joint common residual must match selected-sample refresh: NRMS={common_nrms:e}"
+        );
+        if let Some(serial) = &serial_residual {
+            assert_eq!(
+                &compact.residual, serial,
+                "workers=1 and workers=2 must commit bitwise-identical joint residuals"
+            );
+        } else {
+            serial_residual = Some(compact.residual);
+        }
+    }
 }

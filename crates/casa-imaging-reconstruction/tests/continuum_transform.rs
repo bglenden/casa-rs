@@ -137,3 +137,54 @@ fn continuum_transform_preserves_flags_weights_and_application_roles() {
     assert!(!result.samples()[0].use_role().contributes_to_output());
     assert!(result.samples()[1].use_role().contributes_to_output());
 }
+
+#[test]
+fn t46_sequential_uvcontsub_anchor_v1_matches_frozen_casa_row() {
+    // Frozen CASA 6.7 UVContSubTVI anchor: one row/correlation, one SPW,
+    // fitspw=0:0~2;5~7, fitorder=1, and all-channel application. Frequencies
+    // are equally spaced, so CASA's min/max basis spans exactly [-1, 1].
+    let frequencies_hz = [100.0, 200.0, 300.0, 400.0, 500.0, 600.0, 700.0, 800.0];
+    let coefficient0 = Complex64::new(3.0, -2.0);
+    let coefficient1 = Complex64::new(1.5, 0.5);
+    let line = [
+        Complex64::new(0.0, 0.0),
+        Complex64::new(0.0, 0.0),
+        Complex64::new(0.0, 0.0),
+        Complex64::new(5.0, -1.0),
+        Complex64::new(-2.0, 4.0),
+        Complex64::new(0.0, 0.0),
+        Complex64::new(0.0, 0.0),
+        Complex64::new(0.0, 0.0),
+    ];
+    let samples: [ContinuumSample; 8] = std::array::from_fn(|channel| {
+        let x = 1.0 - 2.0 * channel as f64 / 7.0;
+        let continuum = coefficient0 + coefficient1 * x;
+        let role = if matches!(channel, 3 | 4) {
+            ContinuumChannelUse::ApplyOnly
+        } else {
+            ContinuumChannelUse::FitAndApply
+        };
+        ContinuumSample::new(continuum + line[channel], false, 2.0 + channel as f64, role)
+    });
+
+    let result = fit_and_subtract_continuum(ContinuumRowInput::new(&frequencies_hz, &samples, 1))
+        .expect("frozen CASA linear anchor fit");
+
+    assert_eq!(result.fit_sample_indices(), &[0, 1, 2, 5, 6, 7]);
+    assert_complex_close(result.coefficients()[0], coefficient0);
+    assert_complex_close(result.coefficients()[1], coefficient1);
+    for channel in 0..8 {
+        assert_eq!(result.samples()[channel].flag(), samples[channel].flag());
+        assert_eq!(
+            result.samples()[channel].weight(),
+            samples[channel].weight()
+        );
+        assert_eq!(
+            result.samples()[channel].use_role(),
+            samples[channel].use_role()
+        );
+        assert_complex_close(result.residual()[channel], line[channel]);
+    }
+    let integrated_line = result.residual()[3] + result.residual()[4];
+    assert_complex_close(integrated_line, Complex64::new(3.0, 3.0));
+}

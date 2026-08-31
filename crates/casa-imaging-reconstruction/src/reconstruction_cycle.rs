@@ -11,7 +11,7 @@ use crate::{
     ComponentDivergence, Encoder, FinalNormalState, MinorCycleError, MinorCycleEvidence,
     MinorCycleModelPlane, MinorCycleProgram, MinorCycleStopReason, ModelDelta, ModelGeneration,
     ModelLifecycle, ModelLifecycleError, SpectralChannelValidity,
-    minor_cycle::{run_minor_cycle, run_minor_cycle_plane},
+    minor_cycle::{run_joint_minor_cycle, run_minor_cycle, run_minor_cycle_plane},
 };
 
 const RECONSTRUCTION_CYCLE_EVIDENCE_DOMAIN: &[u8] = b"casa-rs-reconstruction-cycle-evidence";
@@ -438,6 +438,65 @@ impl ReconstructionCycle {
             reconstruction_cycle_evidence_id(lifecycle, normal, self.policy, &channels);
         Ok(ReconstructionCycleResult {
             delta,
+            evidence: ReconstructionCycleEvidence {
+                evidence_id,
+                problem: lifecycle.problem(),
+                policy: self.policy,
+                channels: channels.into_boxed_slice(),
+            },
+        })
+    }
+
+    /// Run one joint continuum-line solve with independently committed masks.
+    pub fn run_coupled(
+        &self,
+        lifecycle: &ModelLifecycle,
+        base: &ModelGeneration,
+        normal: &FinalNormalState,
+        masks: &crate::CoupledReconstructionMask,
+    ) -> Result<ReconstructionCycleResult, ReconstructionCycleError> {
+        if self.policy != ChannelCyclePolicy::Coupled
+            || normal.catalog() != crate::NormalStateCatalog::UnnormalizedJointBlockV1
+        {
+            return Err(ReconstructionCycleError::UnsupportedCoupledPolicy);
+        }
+        let validity = normal
+            .support_validity()
+            .unwrap_or(SpectralChannelValidity::Unmapped);
+        let minor_cycle = if validity == SpectralChannelValidity::Valid {
+            let result =
+                run_joint_minor_cycle(lifecycle, base, normal, masks, self.program.clone())?;
+            let (delta, evidence) = result.into_parts();
+            let channels = vec![ChannelCycleEvidence {
+                output_channel: normal.slab().core_range().start,
+                validity,
+                budget_exhausted: false,
+                minor_cycle: Some(evidence),
+            }];
+            let evidence_id =
+                reconstruction_cycle_evidence_id(lifecycle, normal, self.policy, &channels);
+            return Ok(ReconstructionCycleResult {
+                delta,
+                evidence: ReconstructionCycleEvidence {
+                    evidence_id,
+                    problem: lifecycle.problem(),
+                    policy: self.policy,
+                    channels: channels.into_boxed_slice(),
+                },
+            });
+        } else {
+            None
+        };
+        let channels = vec![ChannelCycleEvidence {
+            output_channel: normal.slab().core_range().start,
+            validity,
+            budget_exhausted: false,
+            minor_cycle,
+        }];
+        let evidence_id =
+            reconstruction_cycle_evidence_id(lifecycle, normal, self.policy, &channels);
+        Ok(ReconstructionCycleResult {
+            delta: None,
             evidence: ReconstructionCycleEvidence {
                 evidence_id,
                 problem: lifecycle.problem(),

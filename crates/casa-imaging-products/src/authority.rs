@@ -933,6 +933,33 @@ fn produce_joint_members(
     if !normalization_weight.is_finite() || normalization_weight <= 0.0 {
         return Err(ProductsError::SourceLineageMismatch);
     }
+    let requires_beam = planned
+        .members
+        .iter()
+        .any(|member| member.beam_rule != ProductBeamRule::None);
+    let fitted_beam = requires_beam
+        .then(|| {
+            fit_restoring_beam(
+                &h00.normal_approximation()
+                    .iter()
+                    .map(|value| value.re as f32)
+                    .collect::<Vec<_>>(),
+                shape,
+                inputs.cell_size_rad(),
+                planned.psf_cutoff(),
+            )
+        })
+        .transpose()?;
+    let restoring_beam = match inputs.problem().products().restoring_beam() {
+        RestoringBeamPolicy::None => None,
+        RestoringBeamPolicy::PerPlane | RestoringBeamPolicy::Common => fitted_beam,
+    };
+    let fitted_beams = fitted_beam.map_or_else(Box::default, |beam| {
+        vec![Some(beam); channels].into_boxed_slice()
+    });
+    let restoring_beams = restoring_beam.map_or_else(Box::default, |beam| {
+        vec![Some(beam); channels].into_boxed_slice()
+    });
     let mut members = Vec::with_capacity(planned.members.len());
     for member in &planned.members {
         let (payload, validity) = produce_joint_member(
@@ -942,6 +969,8 @@ fn produce_joint_members(
             channels,
             continuum_terms,
             normalization_weight,
+            fitted_beam,
+            restoring_beam,
         )?;
         if payload.len() != member.payload_values || validity.len() != member.payload_values {
             return Err(ProductsError::PayloadLengthMismatch {
@@ -964,8 +993,8 @@ fn produce_joint_members(
     Ok(ContinuumProducedMembers {
         planned_generation: planned.generation_id,
         commitment_id: planned.commitment_id,
-        fitted_beams: Box::new([]),
-        restoring_beams: Box::new([]),
+        fitted_beams,
+        restoring_beams,
         members: members.into_boxed_slice(),
     })
 }
@@ -978,6 +1007,8 @@ fn produce_joint_member(
     channels: usize,
     continuum_terms: usize,
     normalization_weight: f64,
+    fitted_beam: Option<RestoringBeam>,
+    restoring_beam: Option<RestoringBeam>,
 ) -> Result<(Vec<f32>, Vec<bool>), ProductsError> {
     let mut payload = vec![0.0_f32; member.payload_values];
     let mut validity = vec![true; member.payload_values];
@@ -1043,6 +1074,50 @@ fn produce_joint_member(
                     required_normalization(member)?,
                 )?;
                 scatter_image_plane(&mut payload, member.axes(), channel, shape, &plane)?;
+                if inputs.normal_state().channel_validity()[channel]
+                    != SpectralChannelValidity::Valid
+                {
+                    let blank = vec![false; shape[0] * shape[1]];
+                    scatter_image_plane(&mut validity, member.axes(), channel, shape, &blank)?;
+                }
+            }
+        }
+        ProductRole::RestoredImage(ProductTerm::Line | ProductTerm::Total) => {
+            let fitted_beam = fitted_beam.ok_or_else(|| {
+                ProductsError::BeamFitFailed("joint restoration requires a fitted beam".to_string())
+            })?;
+            let restoring_beam = restoring_beam.ok_or_else(|| {
+                ProductsError::BeamFitFailed(
+                    "joint restoration requires a restoring beam".to_string(),
+                )
+            })?;
+            let line_only = member.role == ProductRole::RestoredImage(ProductTerm::Line);
+            let kernel = gaussian_beam_image(shape, &restoring_beam, inputs.cell_size_rad());
+            for channel in 0..channels {
+                let model =
+                    evaluate_joint_model_plane(inputs, shape, channel, continuum_terms, line_only)?;
+                let mut restored =
+                    fft_convolve(&model, kernel.as_slice().expect("contiguous"), shape);
+                let residual = evaluate_joint_residual_plane(
+                    inputs,
+                    shape,
+                    channel,
+                    continuum_terms,
+                    normalization_weight,
+                    required_normalization(member)?,
+                )?;
+                let residual = rescale_residual_to_beam(
+                    &residual,
+                    shape,
+                    inputs.cell_size_rad(),
+                    fitted_beam,
+                    restoring_beam,
+                )?
+                .into_values();
+                for (restored, residual) in restored.iter_mut().zip(residual) {
+                    *restored += residual;
+                }
+                scatter_image_plane(&mut payload, member.axes(), channel, shape, &restored)?;
                 if inputs.normal_state().channel_validity()[channel]
                     != SpectralChannelValidity::Valid
                 {
@@ -1127,41 +1202,21 @@ fn evaluate_joint_residual_plane(
     inputs: &ContinuumProductInputs<'_>,
     shape: [usize; 2],
     channel: usize,
-    continuum_terms: usize,
+    _continuum_terms: usize,
     normalization_weight: f64,
     normalization: ProductNormalization,
 ) -> Result<Vec<f32>, ProductsError> {
-    let reference = inputs
+    let residual = inputs
         .normal_state()
-        .reference_frequency_hz()
+        .joint_common_residual(channel)
         .ok_or(ProductsError::SourceLineageMismatch)?;
-    let frequency = inputs
-        .problem()
-        .geometry()
-        .spectral()
-        .channel_centre_hz(channel)
-        .ok_or(ProductsError::SourceLineageMismatch)?;
-    let x = (frequency - reference) / reference;
-    let mut output = vec![0.0_f32; shape[0] * shape[1]];
-    for term in 0..continuum_terms {
-        let residual = inputs
-            .normal_state()
-            .coefficient_term(term)
-            .ok_or(ProductsError::SourceLineageMismatch)?;
-        let factor = x.powi(i32::try_from(term).map_err(|_| ProductsError::UnsupportedProblem)?);
-        for (output, value) in output.iter_mut().zip(residual.residual()) {
-            *output += (factor * value.re) as f32;
-        }
+    if residual.len() != shape[0] * shape[1] {
+        return Err(ProductsError::SourceLineageMismatch);
     }
-    if let Some(line) = joint_line_term(inputs.problem(), channel)? {
-        let residual = inputs
-            .normal_state()
-            .coefficient_term(continuum_terms + line)
-            .ok_or(ProductsError::SourceLineageMismatch)?;
-        for (output, value) in output.iter_mut().zip(residual.residual()) {
-            *output += value.re as f32;
-        }
-    }
+    let output = residual
+        .iter()
+        .map(|value| value.re as f32)
+        .collect::<Vec<_>>();
     normalize_plane(&output, normalization, normalization_weight)
 }
 

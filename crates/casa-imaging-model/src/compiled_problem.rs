@@ -1845,7 +1845,7 @@ pub fn compile(request: ImagingRequest) -> Result<CompiledProblem, CompileProble
     let numerics = specification.numerics.canonicalize()?;
     let numerics_id = canonical_numerics_id(&numerics);
     validate_science(&science, &inputs)?;
-    validate_reconstruction(&specification.reconstruction, &geometry)?;
+    validate_reconstruction(&specification.reconstruction, &science, &geometry)?;
     if visibility_transform.is_some()
         && !matches!(
             specification.reconstruction.basis(),
@@ -1956,6 +1956,7 @@ fn validate_science(
 
 fn validate_reconstruction(
     contract: &ReconstructionContract,
+    science: &ScientificContract,
     geometry: &CompiledGeometry,
 ) -> Result<(), CompileProblemError> {
     match contract.basis {
@@ -2017,6 +2018,11 @@ fn validate_reconstruction(
     if let (Some((continuum_terms, line_terms)), Some(joint)) =
         (joint_basis, contract.joint_continuum_line.as_ref())
     {
+        if science.spectral().sampling() != SpectralSamplingLaw::IDENTITY {
+            return Err(CompileProblemError::InvalidCapabilityCombination {
+                reason: "the first joint continuum-line operator requires identity spectral sampling so every compact record retains its exact evaluation frequency",
+            });
+        }
         validate_joint_continuum_line(joint, continuum_terms, line_terms, geometry)?;
     }
     if matches!(contract.algorithm, ReconstructionAlgorithm::Dirty)

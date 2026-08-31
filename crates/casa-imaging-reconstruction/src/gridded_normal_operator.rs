@@ -62,10 +62,20 @@ pub const GRIDDED_NORMAL_OPERATOR_RECORD_BYTES: usize = 32;
 pub(super) enum GriddedNormalRecordLayout {
     Scalar,
     Taylor(crate::block_normal::BlockNormalPlan),
+    Joint {
+        coefficient_terms: usize,
+        normal_moments: usize,
+    },
 }
 
 impl GriddedNormalRecordLayout {
     fn for_specification(specification: &SpectralOperatorSpecification) -> Self {
+        if specification.joint_continuum_term_count().is_some() {
+            return Self::Joint {
+                coefficient_terms: specification.coefficient_terms(),
+                normal_moments: specification.normal_moments(),
+            };
+        }
         match specification.block_normal_plan() {
             Some(plan) if plan.coefficient_term_count() > 1 => Self::Taylor(plan),
             _ => Self::Scalar,
@@ -76,6 +86,9 @@ impl GriddedNormalRecordLayout {
         match self {
             Self::Scalar => 1,
             Self::Taylor(plan) => plan.coefficient_term_count(),
+            Self::Joint {
+                coefficient_terms, ..
+            } => coefficient_terms,
         }
     }
 
@@ -83,12 +96,31 @@ impl GriddedNormalRecordLayout {
         match self {
             Self::Scalar => 1,
             Self::Taylor(plan) => plan.normal_moment_count(),
+            Self::Joint { normal_moments, .. } => normal_moments,
+        }
+    }
+
+    pub(super) const fn prediction_width(self) -> usize {
+        match self {
+            Self::Scalar | Self::Joint { .. } => 1,
+            Self::Taylor(plan) => plan.coefficient_term_count(),
+        }
+    }
+
+    pub(super) const fn accumulation_width(self, output_channels: usize) -> usize {
+        match self {
+            Self::Joint {
+                coefficient_terms, ..
+            } => coefficient_terms + output_channels,
+            Self::Scalar => 1,
+            Self::Taylor(plan) => plan.coefficient_term_count(),
         }
     }
 
     pub(super) fn record_bytes(self) -> Result<usize, SpectralOperatorError> {
         match self {
             Self::Scalar => Ok(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES),
+            Self::Joint { .. } => Ok(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES),
             Self::Taylor(plan) => plan
                 .normal_moment_count()
                 .checked_add(1)
@@ -519,7 +551,13 @@ impl GriddedNormalOperatorCompiler {
             (GriddedNormalRecordLayout::Scalar, SourceCardinalityObservation::Disabled) => {
                 self.compile_block_inner::<false>(block)
             }
+            (GriddedNormalRecordLayout::Joint { .. }, SourceCardinalityObservation::Disabled) => {
+                self.compile_block_inner::<false>(block)
+            }
             (GriddedNormalRecordLayout::Scalar, SourceCardinalityObservation::Enabled) => {
+                self.compile_block_inner::<true>(block)
+            }
+            (GriddedNormalRecordLayout::Joint { .. }, SourceCardinalityObservation::Enabled) => {
                 self.compile_block_inner::<true>(block)
             }
             (GriddedNormalRecordLayout::Taylor(plan), SourceCardinalityObservation::Disabled) => {
@@ -550,7 +588,7 @@ impl GriddedNormalOperatorCompiler {
         let mut timings = GriddedNormalOperatorStageTimings::default();
 
         let (encoded, digest, measurements) = match self.record_layout {
-            GriddedNormalRecordLayout::Scalar => {
+            GriddedNormalRecordLayout::Scalar | GriddedNormalRecordLayout::Joint { .. } => {
                 let started = Instant::now();
                 self.begin_block(block)?;
                 let (source_groups, mut measurements) = self.construct_record_keys(block)?;
@@ -955,7 +993,15 @@ impl GriddedNormalOperatorProgram {
     /// Return the number of coefficient values predicted for each reduced record.
     #[must_use]
     pub fn prediction_width(&self) -> usize {
-        self.manifest.record_layout.coefficient_terms()
+        self.manifest.record_layout.prediction_width()
+    }
+
+    /// Return the coefficient and common-residual grids accumulated per tile.
+    #[must_use]
+    pub fn accumulation_width(&self) -> usize {
+        self.manifest
+            .record_layout
+            .accumulation_width(self.manifest.specification.slab().total_channels())
     }
 
     /// Return the exact encoded byte count for one block.
@@ -1024,6 +1070,9 @@ impl GriddedNormalOperatorProgram {
                     GriddedNormalRecordLayout::Taylor(_) => {
                         crate::NormalStateCatalog::UnnormalizedTaylorBlockV1
                     }
+                    GriddedNormalRecordLayout::Joint { .. } => {
+                        crate::NormalStateCatalog::UnnormalizedJointBlockV1
+                    }
                     GriddedNormalRecordLayout::Scalar
                         if self.manifest.specification.slab().total_channels() == 1 =>
                     {
@@ -1044,7 +1093,10 @@ impl GriddedNormalOperatorProgram {
             SpectralSlabOperator::new_gridded_normal(prepared_specification, workload, fft);
         operator.prepare_gridded_normal_model(model, prior.into_reusable())?;
         let grid_shape = self.manifest.specification.grid_shape();
-        let core_depth = self.manifest.record_layout.coefficient_terms();
+        let core_depth = self
+            .manifest
+            .record_layout
+            .accumulation_width(self.manifest.specification.slab().total_channels());
         let tile_catalog = GriddedNormalTileCatalog::new(grid_shape)?;
         let two_domain = PreparedGriddedNormalTwoDomainWindow::with_record_capacities(
             route_slot_record_capacities,
@@ -1992,6 +2044,9 @@ impl GriddedNormalOperatorApply {
             GriddedNormalRecordLayout::Taylor(_) => {
                 SpectralPrimitiveCatalog::UnnormalizedTaylorBlockV1
             }
+            GriddedNormalRecordLayout::Joint { .. } => {
+                SpectralPrimitiveCatalog::UnnormalizedJointBlockV1
+            }
             GriddedNormalRecordLayout::Scalar
                 if program.manifest.specification.slab().total_channels() == 1 =>
             {
@@ -2144,6 +2199,7 @@ fn require_supported_basis(basis: &ReconstructionBasis) -> Result<(), SpectralOp
         ReconstructionBasis::Constant
             | ReconstructionBasis::ChannelLocal { .. }
             | ReconstructionBasis::Taylor { terms: 2.. }
+            | ReconstructionBasis::JointContinuumLine { .. }
     ) {
         Ok(())
     } else {
@@ -2192,6 +2248,15 @@ fn static_binding(specification: &SpectralOperatorSpecification) -> LogicalIdent
                     .record_bytes()
                     .expect("validated Taylor record width"),
             );
+        }
+        GriddedNormalRecordLayout::Joint {
+            coefficient_terms,
+            normal_moments,
+        } => {
+            encoder.u8(2);
+            encoder.usize(coefficient_terms);
+            encoder.usize(normal_moments);
+            encoder.usize(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES);
         }
     }
     LogicalIdentity::from_sha256(encoder.finish())
