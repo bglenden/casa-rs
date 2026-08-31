@@ -9631,7 +9631,7 @@ fn effective_problem_projection_carries_mtmfs_scales_and_bias() {
         .expect("logical MT-MFS compilation")
     };
     let unbiased = compile_with_bias(91, 0.0);
-    let biased = compile_with_bias(92, 0.2);
+    let biased = compile_with_bias(91, 0.2);
     let unbiased_projection = CompiledProblemEvidence::project(&unbiased);
     let biased_projection = CompiledProblemEvidence::project(&biased);
 
@@ -9651,6 +9651,10 @@ fn effective_problem_projection_carries_mtmfs_scales_and_bias() {
     assert_eq!(
         unbiased_projection.field("reconstruction.algorithm.small_scale_bias"),
         Some("f64:0000000000000000")
+    );
+    assert_eq!(
+        biased_projection.field("reconstruction.algorithm.small_scale_bias"),
+        Some("f64:3fc999999999999a")
     );
     assert_ne!(unbiased_projection, biased_projection);
 }
