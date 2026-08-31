@@ -5,7 +5,7 @@
 use sha2::{Digest, Sha256};
 
 pub(crate) const COMMITMENT_DOMAIN: &[u8] = b"casa-rs-continuum-commitment";
-pub(crate) const COMMITMENT_VERSION: u32 = 2;
+pub(crate) const COMMITMENT_VERSION: u32 = 3;
 pub(crate) const PLANNED_GENERATION_DOMAIN: &[u8] = b"casa-rs-planned-product-generation";
 pub(crate) const PLANNED_GENERATION_VERSION: u32 = 1;
 pub(crate) const ARTIFACT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-product-artifact";

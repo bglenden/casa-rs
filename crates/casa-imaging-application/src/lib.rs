@@ -351,10 +351,10 @@ where
         }
         ReconstructionAlgorithm::Hogbom
         | ReconstructionAlgorithm::Clark
-        | ReconstructionAlgorithm::Multiscale { .. } => {
+        | ReconstructionAlgorithm::Multiscale { .. }
+        | ReconstructionAlgorithm::Mtmfs { .. } => {
             SpectralCyclePlan::initial(problem, &planning_registry, policy)?
         }
-        _ => unreachable!("native validation admits only continuum minor-cycle solvers"),
     };
     let minor_node = planned.minor_cycle_node().cloned();
     let SpectralCyclePlanParts {
@@ -479,7 +479,8 @@ where
         }
         ReconstructionAlgorithm::Hogbom
         | ReconstructionAlgorithm::Clark
-        | ReconstructionAlgorithm::Multiscale { .. } => {
+        | ReconstructionAlgorithm::Multiscale { .. }
+        | ReconstructionAlgorithm::Mtmfs { .. } => {
             let mut frozen_weighting = registry
                 .implementation()
                 .take_frozen_weighting()
@@ -771,7 +772,6 @@ where
                 );
             }
         }
-        _ => unreachable!("native validation admits only dirty or Högbom"),
     };
 
     publish_products(
@@ -959,13 +959,27 @@ where
             runtime.confidence_parts_per_million,
         ),
     )?;
+    let (physical, publication) = publication_plan.into_parts();
+    // Admission covers production, validity, sealing overlap, and staging.
+    // Obtain it before allocating any product payload.
+    let execution_plan = plan(
+        problem,
+        PlanningBindings::new(
+            runtime.registry,
+            runtime.resource_policy.clone(),
+            runtime.cost_model,
+        ),
+        &runtime.authority,
+        &planning_registry,
+        &runtime.receipts,
+        move |_, _| Ok::<_, std::convert::Infallible>(vec![physical]),
+    )?;
     let mut inputs = ContinuumProductInputs::from_major_cycle(problem, &scientific)?;
     if let Some(mask) = reconstruction_mask.as_ref() {
         inputs = inputs.with_reconstruction_mask(mask)?;
     }
     let produced = produce_continuum_members(&planned_products, &inputs)?;
     let sealed = authority.authorize(&planned_products, &produced)?;
-    let (physical, publication) = publication_plan.into_parts();
     let executor = SerialProductPublicationExecutor::new(
         runtime.implementation.clone(),
         publication,
@@ -978,18 +992,6 @@ where
         problem,
         executor,
     );
-    let execution_plan = plan(
-        problem,
-        PlanningBindings::new(
-            runtime.registry,
-            runtime.resource_policy.clone(),
-            runtime.cost_model,
-        ),
-        &runtime.authority,
-        &registry,
-        &runtime.receipts,
-        move |_, _| Ok::<_, std::convert::Infallible>(vec![physical]),
-    )?;
     let executable = ExecutableModelProblem::from_compiled(problem.clone())?;
     let current = RunBindings::new(
         problem.inputs().clone(),

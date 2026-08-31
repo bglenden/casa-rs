@@ -177,6 +177,8 @@ fn build_physical<R: ImplementationRegistry>(
     let commit = WorkNodeId::new(COMMIT);
     let writer_allocation = AllocationId::new("product-publication-writer-buffer");
     let writer_slot = PhysicalSlotId::new("product-publication-writer-slot");
+    let generation_allocation = AllocationId::new("product-generation-residency");
+    let generation_slot = PhysicalSlotId::new("product-generation-residency-slot");
     let commit_allocation = AllocationId::new("product-publication-commit-buffer");
     let commit_slot = PhysicalSlotId::new("product-publication-commit-slot");
     let payload_bytes = publication
@@ -187,6 +189,14 @@ fn build_physical<R: ImplementationRegistry>(
                 .checked_add(entry.payload_bytes())
                 .ok_or(SerialProductPublicationPlanError::Overflow)
         })?;
+    // Product production holds one produced payload plus one validity byte per
+    // value, and sealing briefly overlaps a second payload/validity generation.
+    // Charge both generations as ordinary data; the independent serialization
+    // allocation below adds the remaining four bytes per value.
+    let generation_bytes = payload_bytes
+        .checked_div(4)
+        .and_then(|values| values.checked_mul(10))
+        .ok_or(SerialProductPublicationPlanError::Overflow)?;
     let publication_lifetime =
         ClaimLifetime::through_fences([FenceKind::Io, FenceKind::Publication]);
     let output_rate_demand = "product-publication-output-write-rate".to_string();
@@ -274,10 +284,16 @@ fn build_physical<R: ImplementationRegistry>(
                     ClaimLifetime::Work,
                 ),
             ],
-            allocations: vec![AllocationUse {
-                allocation: writer_allocation.clone(),
-                lifetime: ClaimLifetime::Work,
-            }],
+            allocations: vec![
+                AllocationUse {
+                    allocation: writer_allocation.clone(),
+                    lifetime: ClaimLifetime::Work,
+                },
+                AllocationUse {
+                    allocation: generation_allocation.clone(),
+                    lifetime: ClaimLifetime::Work,
+                },
+            ],
             fences: BTreeSet::new(),
             quiescence_after: BTreeSet::new(),
         },
@@ -306,6 +322,7 @@ fn build_physical<R: ImplementationRegistry>(
         access: AllocationAccess::ReadWrite,
     };
     let writer_compat = compatibility("product-publication-writer");
+    let generation_compat = compatibility("product-generation-residency");
     let commit_compat = compatibility("product-publication-commit");
     let allocations = vec![
         allocation(
@@ -314,6 +331,15 @@ fn build_physical<R: ImplementationRegistry>(
             AllocationPurpose::IoBuffer(IoBufferKind::Serialization),
             writer_compat.clone(),
             writer_slot.clone(),
+            stage.clone(),
+            WorkDependency::Work(stage.clone()),
+        ),
+        allocation(
+            generation_allocation,
+            generation_bytes,
+            AllocationPurpose::Data,
+            generation_compat.clone(),
+            generation_slot.clone(),
             stage.clone(),
             WorkDependency::Work(stage.clone()),
         ),
@@ -342,6 +368,14 @@ fn build_physical<R: ImplementationRegistry>(
             writer_compat,
         ),
         slot(
+            generation_slot,
+            LeaseResource::Memory {
+                allocation_id: "product-generation-residency".to_string(),
+            },
+            generation_bytes,
+            generation_compat,
+        ),
+        slot(
             commit_slot,
             LeaseResource::Memory {
                 allocation_id: "product-publication-commit".to_string(),
@@ -357,6 +391,7 @@ fn build_physical<R: ImplementationRegistry>(
             host_memory_view: CapacityViewId::new("host-memory"),
             memory: vec![
                 memory("product-publication-writer", payload_bytes),
+                memory("product-generation-residency", generation_bytes),
                 memory("product-publication-commit", 1),
             ],
             workers: CountDemand::new(1, 1),

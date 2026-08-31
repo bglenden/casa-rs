@@ -1207,9 +1207,10 @@ fn specification(
         ScientificContract::new(
             SpectralContract::new(
                 spectral.sampling,
-                match request.beam_policy {
-                    ContinuumBeamPolicy::PerPlane => SpectralCoupling::Independent,
-                    ContinuumBeamPolicy::Common => SpectralCoupling::CommonRestoringBeam,
+                match (&request.algorithm, request.beam_policy) {
+                    (ContinuumAlgorithm::Mtmfs { .. }, _) => SpectralCoupling::CommonRestoringBeam,
+                    (_, ContinuumBeamPolicy::PerPlane) => SpectralCoupling::Independent,
+                    (_, ContinuumBeamPolicy::Common) => SpectralCoupling::CommonRestoringBeam,
                 },
             ),
             MeasurementEquationContract::new(
@@ -1272,9 +1273,10 @@ fn specification(
                 products
             },
             ProductNormalization::UnitResponse,
-            match request.beam_policy {
-                ContinuumBeamPolicy::PerPlane => RestoringBeamPolicy::PerPlane,
-                ContinuumBeamPolicy::Common => RestoringBeamPolicy::Common,
+            match (&request.algorithm, request.beam_policy) {
+                (ContinuumAlgorithm::Mtmfs { .. }, _) => RestoringBeamPolicy::Common,
+                (_, ContinuumBeamPolicy::PerPlane) => RestoringBeamPolicy::PerPlane,
+                (_, ContinuumBeamPolicy::Common) => RestoringBeamPolicy::Common,
             },
             ProductValidityPolicies::new(
                 PrimaryBeamValidityPolicy::new(
