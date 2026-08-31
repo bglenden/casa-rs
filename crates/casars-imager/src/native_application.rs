@@ -8,7 +8,7 @@ use casa_imaging_application::{
     ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumBeamPolicy, ContinuumImagingRequest,
     ContinuumMask, ContinuumMaskBox, ContinuumStopReason, ContinuumWeighting,
     HogbomIterationAccounting, SpectralImagingMode, TaskRequirement,
-    VisibilityContinuumSubtraction, execute_continuum,
+    VisibilityContinuumSubtraction, execute_continuum, resource_policy_for_task_requirements,
 };
 
 use super::{
@@ -65,7 +65,7 @@ pub(super) fn execute(config: &CliConfig) -> Result<RunSummary, String> {
     })
 }
 
-fn application_request(config: &CliConfig) -> Result<ContinuumImagingRequest, String> {
+pub(crate) fn application_request(config: &CliConfig) -> Result<ContinuumImagingRequest, String> {
     let spectral_mode = match config.spectral_mode {
         SpectralMode::Mfs => SpectralImagingMode::Continuum,
         SpectralMode::Cube | SpectralMode::Cubedata => {
@@ -126,6 +126,8 @@ fn application_request(config: &CliConfig) -> Result<ContinuumImagingRequest, St
     };
     let iterations = config.niter;
     let cycle_iterations = config.minor_cycle_length.min(iterations.max(1));
+    let task_requirements = task_requirements(config);
+    let resource_policy = resource_policy_for_task_requirements(&task_requirements);
     Ok(ContinuumImagingRequest {
         measurement_set: config.ms.clone(),
         image_name: config.imagename.clone(),
@@ -207,7 +209,8 @@ fn application_request(config: &CliConfig) -> Result<ContinuumImagingRequest, St
         save_continuum_residual: config.save_continuum_residual,
         write_primary_beam: config.write_pb,
         pbcor: config.pbcor,
-        task_requirements: task_requirements(config),
+        task_requirements,
+        resource_policy,
     })
 }
 
@@ -316,6 +319,8 @@ fn unsupported_native_controls(config: &CliConfig) -> bool {
 mod tests {
     use std::ffi::OsString;
 
+    use casa_imaging_application::ResourcePolicy;
+
     use super::{
         CliConfig, HogbomIterationAccounting, StandardMfsAccelerationPolicy, TaskRequirement,
         application_request, backend_requirements, task_requirements,
@@ -376,6 +381,17 @@ mod tests {
         assert_eq!(
             config(&["--parallel", "--no-parallel"]).standard_mfs_acceleration,
             StandardMfsAccelerationPolicy::Cpu
+        );
+
+        let ResourcePolicy::Explicit(serial_policy) =
+            application_request(&serial).unwrap().resource_policy
+        else {
+            panic!("serial request must carry an explicit Resource Policy")
+        };
+        assert_eq!(serial_policy.workers, Some(1));
+        assert_eq!(
+            application_request(&parallel).unwrap().resource_policy,
+            ResourcePolicy::Balanced
         );
     }
 

@@ -6,6 +6,7 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 use std::str::FromStr;
 
+use casa_imaging_application::installed_imaging_capability_catalog;
 use casa_ms::{
     CubeAxisConfig, CubeAxisValue, CubeInterpolation,
     parse_rest_frequency_hz as parse_ms_rest_frequency_hz,
@@ -103,7 +104,27 @@ pub fn imager_task_schema_bundle() -> TaskProviderContract<ImagerAdditionalSchem
             }],
         },
         components: merged_components([&request_schema, &result_schema, &progress_event_schema]),
-        annotations: serde_json::json!({}),
+        annotations: serde_json::json!({
+            "imaging_request_version": 3,
+            "capability_catalog": {
+                "schema_version": 1,
+                "owner": "casa-imaging-application",
+                "entries": installed_imaging_capability_catalog()
+                    .into_iter()
+                    .map(|entry| {
+                        let requirement = entry.requirement();
+                        serde_json::json!({
+                            "kind": requirement.catalog_kind(),
+                            "id": requirement.catalog_id(),
+                            "supported": entry.unsupported().is_none(),
+                            "unsupported_reason": entry
+                                .unsupported()
+                                .map(|reason| reason.catalog_id()),
+                        })
+                    })
+                    .collect::<Vec<_>>(),
+            }
+        }),
         projections: ProviderProjectionMetadata {
             cli: Some(ProviderCliProjection {
                 machine_actions: ProviderCliMachineActions {
@@ -2239,7 +2260,7 @@ impl ImagerRunTaskRequest {
             w_project_planes: config.w_project_planes,
             aw_project: config.aw_project.as_ref().map(Into::into),
             dirty_only: config.dirty_only,
-            parallel: None,
+            parallel: config.parallel,
             chanchunks: config.chanchunks,
             standard_mfs_acceleration: config.standard_mfs_acceleration,
             standard_mfs_backend: config.standard_mfs_backend.clone(),
@@ -2415,6 +2436,7 @@ impl ImagerRunTaskRequest {
                 .map(|aw_project| aw_project.into_runtime(self.w_project_planes, self.use_pointing))
                 .transpose()?,
             dirty_only: self.dirty_only,
+            parallel: self.parallel,
             chanchunks: self.chanchunks,
             standard_mfs_acceleration: self.standard_mfs_acceleration,
             standard_mfs_backend: self.standard_mfs_backend.clone(),
@@ -3106,6 +3128,17 @@ mod tests {
         assert_eq!(bundle.semantic.operations.len(), 1);
         assert_eq!(bundle.semantic.operations[0].request_kind, "run");
         assert!(bundle.components.contains_key("ImagerRunTaskRequest"));
+        assert_eq!(bundle.annotations["imaging_request_version"], 3);
+        let capabilities = bundle.annotations["capability_catalog"]["entries"]
+            .as_array()
+            .expect("application-owned capability entries");
+        let awproject = capabilities
+            .iter()
+            .find(|entry| entry["id"] == "task.aw_projection")
+            .expect("AWProject capability");
+        assert_eq!(awproject["kind"], "task");
+        assert_eq!(awproject["supported"], false);
+        assert_eq!(awproject["unsupported_reason"], "task.aw_projection");
         assert!(bundle.projections.cli.is_some());
         assert_eq!(bundle.parameter_surfaces.len(), 1);
         assert_eq!(bundle.parameter_surfaces[0].surface.id(), "imager");
@@ -3492,6 +3525,7 @@ mod tests {
             "--no-mosweight",
             "--normtype",
             "flatnoise",
+            "--no-parallel",
             "--managed-output",
             "true",
         ]
@@ -3533,6 +3567,7 @@ mod tests {
         assert_eq!(request.uvrange.as_deref(), Some("<12km"));
         assert!(request.use_pointing);
         assert_eq!(request.nterms, 2);
+        assert_eq!(request.parallel, Some(false));
         let aw = request.aw_project.expect("AWProject controls");
         assert_eq!(aw.cf_cache, PathBuf::from("cf-cache/vlass-spw2-17"));
         assert_eq!(aw.cf_resident_mb, 384);

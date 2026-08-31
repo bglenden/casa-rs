@@ -224,7 +224,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             surfaces.len(),
-            23,
+            22,
             "update the safety inventory intentionally"
         );
         for (surface, binding) in surfaces {
@@ -355,7 +355,31 @@ mod tests {
     fn imager_vlass_controls_share_one_catalog_owned_awproject_surface() {
         let catalog = builtin_surface_catalog().unwrap();
         let surface = catalog.surface("imager").unwrap();
-        assert_eq!(surface.contract_version(), 7);
+        assert_eq!(surface.contract_version(), 10);
+        assert_eq!(surface.bindings().len(), 94);
+        for binding in surface.bindings() {
+            let concept = catalog
+                .catalog
+                .concept(&binding.concept)
+                .unwrap_or_else(|| panic!("missing imager concept for {}", binding.name));
+            assert!(!concept.casa_name.is_empty(), "{}.casa_name", binding.name);
+            assert!(
+                !concept.documentation.summary.is_empty(),
+                "{}.documentation",
+                binding.name
+            );
+            assert!(binding.projections.cli.is_some(), "{}.cli", binding.name);
+            assert!(
+                binding.projections.provider.is_some(),
+                "{}.provider",
+                binding.name
+            );
+            assert!(
+                binding.projections.python.is_some(),
+                "{}.python",
+                binding.name
+            );
+        }
         let memory_target = catalog
             .catalog
             .concepts

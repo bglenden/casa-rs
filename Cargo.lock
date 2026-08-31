@@ -991,6 +991,7 @@ dependencies = [
  "casa-ms",
  "casa-provider-contracts",
  "casa-task-runtime",
+ "casa-test-support",
  "casa-types",
  "image 0.25.10",
  "ndarray",

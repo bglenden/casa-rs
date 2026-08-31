@@ -350,6 +350,8 @@ pub struct CliConfig {
     pub aw_project: Option<AwProjectControls>,
     /// Dirty-only toggle.
     pub dirty_only: bool,
+    /// Explicit CASA-like local parallel execution intent.
+    pub parallel: Option<bool>,
     /// Cube chunk count.
     pub chanchunks: Option<usize>,
     /// Acceleration request.
@@ -753,6 +755,7 @@ impl CliConfig {
             w_project_planes: None,
             aw_project: None,
             dirty_only: false,
+            parallel: None,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Cpu,
             standard_mfs_backend: None,
@@ -810,6 +813,16 @@ pub fn run_from_config(config: &CliConfig) -> Result<RunSummary, String> {
 /// Execute one canonical task request through the application owner.
 pub fn run_from_request(request: &ImagerRunTaskRequest) -> Result<RunSummary, String> {
     run_from_config(&request.to_cli_config()?)
+}
+
+/// Project one canonical task request into the sole native application request.
+/// This exposes the same seam used by execution so acceptance tests can inspect
+/// typed capability and Resource Policy outcomes without reproducing frontend
+/// conversion logic.
+pub fn project_application_request(
+    request: &ImagerRunTaskRequest,
+) -> Result<casa_imaging_application::ContinuumImagingRequest, String> {
+    native_application::application_request(&request.to_cli_config()?)
 }
 
 /// Run the machine or direct CLI surface.
@@ -884,6 +897,7 @@ pub(crate) fn apply_parallel_runtime_control(
     config: &mut CliConfig,
 ) -> Result<(), String> {
     if let Some(parallel) = parallel {
+        config.parallel = Some(parallel);
         config.standard_mfs_acceleration = if parallel {
             StandardMfsAccelerationPolicy::MultiCpu
         } else {

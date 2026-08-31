@@ -112,6 +112,12 @@ fn t44_application_mtmfs_publishes_frozen_casa_product_contract() -> Result<(), 
         write_primary_beam: true,
         pbcor: true,
         task_requirements: vec![TaskRequirement::SerialCpu],
+        resource_policy: casa_imaging_runtime::ResourcePolicy::Explicit(
+            casa_imaging_runtime::ResourceOverride {
+                workers: Some(1),
+                ..Default::default()
+            },
+        ),
     };
     let result = execute_continuum(request)?;
     let expected_names = PRODUCT_NAMES.map(str::to_string).to_vec();

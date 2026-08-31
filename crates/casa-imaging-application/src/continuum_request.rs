@@ -302,6 +302,8 @@ pub struct ContinuumImagingRequest {
     /// capabilities are rejected by the installed implementation registry
     /// before physical execution.
     pub task_requirements: Vec<TaskRequirement>,
+    /// User-selected host-use policy carried unchanged into physical planning.
+    pub resource_policy: ResourcePolicy,
 }
 
 /// Small presentation projection of one completed native continuum run.
@@ -1914,7 +1916,7 @@ fn runtime(
         storage_io,
         gridded_normal_storage,
         confidence_parts_per_million: 900_000,
-        resource_policy: resource_policy(&request.task_requirements),
+        resource_policy: request.resource_policy.clone(),
         cost_model: PlannerCostModelProfileId::from_sha256(hash(b"spectral-cycle-cost-v1"))
             .bootstrap(),
         authority,
@@ -1954,7 +1956,12 @@ fn planned_minor_cycle_bytes(
     )
 }
 
-fn resource_policy(task_requirements: &[TaskRequirement]) -> ResourcePolicy {
+/// Project stable task execution intent into the application-owned Resource
+/// Policy without inspecting the host or choosing a backend.
+#[must_use]
+pub fn resource_policy_for_task_requirements(
+    task_requirements: &[TaskRequirement],
+) -> ResourcePolicy {
     let serial_cpu = task_requirements.contains(&TaskRequirement::SerialCpu);
     let planner_selected_parallelism = task_requirements.iter().any(|requirement| {
         matches!(
@@ -2087,7 +2094,7 @@ mod tests {
     use super::{
         ContinuumAlgorithm, TaskRequirement, analytic_primary_beam_model_for_telescopes,
         image_reference_pixel, model_plane_samples, parse_phase_center_direction,
-        planned_minor_cycle_bytes, resource_policy,
+        planned_minor_cycle_bytes, resource_policy_for_task_requirements,
     };
 
     #[test]
@@ -2133,7 +2140,7 @@ mod tests {
     #[test]
     fn explicit_serial_cpu_requirement_caps_the_application_to_one_worker() {
         assert_eq!(
-            resource_policy(&[TaskRequirement::SerialCpu]),
+            resource_policy_for_task_requirements(&[TaskRequirement::SerialCpu]),
             ResourcePolicy::Explicit(ResourceOverride {
                 workers: Some(1),
                 ..ResourceOverride::default()
@@ -2144,10 +2151,16 @@ mod tests {
     #[test]
     fn fixed_tile_cpu_requirement_uses_balanced_application_planning() {
         assert_eq!(
-            resource_policy(&[TaskRequirement::SerialCpu, TaskRequirement::FixedTileCpu,]),
+            resource_policy_for_task_requirements(&[
+                TaskRequirement::SerialCpu,
+                TaskRequirement::FixedTileCpu,
+            ]),
             ResourcePolicy::Balanced
         );
-        assert_eq!(resource_policy(&[]), ResourcePolicy::Balanced);
+        assert_eq!(
+            resource_policy_for_task_requirements(&[]),
+            ResourcePolicy::Balanced
+        );
     }
 
     #[test]

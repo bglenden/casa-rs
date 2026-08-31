@@ -29,6 +29,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 casa-images = { path = "../casa-images" }
+casa-test-support = { path = "../casa-test-support" }
 image = { version = "0.25", default-features = false, features = ["png"] }
 ndarray.workspace = true
 tempfile = "3"
