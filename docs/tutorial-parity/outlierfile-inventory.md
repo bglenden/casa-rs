@@ -1,10 +1,9 @@
 # CASA `outlierfile` Inventory
 
 Truth class: source-backed implementation note
-Last reality check: 2026-05-07
+Last reality check: 2026-08-31
 Verification:
-- `cargo test -p casars-imager outlier_file -- --nocapture`
-- `cargo test -p casars-imager --features slow-tests outlierfile_ -- --nocapture`
+- `just imaging-t31-multidomain-geometry <testdata_root> <casa_prefix>`
 
 ## CASA Source Seams
 
@@ -20,7 +19,7 @@ Verification:
 
 ## Parsed Fields
 
-`casars-imager` now parses and reports the CASA new-format outlier fields that
+The application parser accepts the CASA new-format outlier fields that
 CASA documents for `tclean`:
 
 | Field | CASA role | casa-rs status |
@@ -29,7 +28,7 @@ CASA documents for `tclean`:
 | `imsize` | outlier image shape | executed for positive square sizes |
 | `cell` | outlier cell size | executed for positive square arcsec cells |
 | `phasecenter` | outlier image phase center | executed for supported J2000 text/radian directions |
-| `startmodel` | outlier start model image | parsed; executed through the single-plane startmodel loader when present |
+| `startmodel` | outlier start model image | parsed; non-empty values reject |
 | `usemask` | outlier mask mode | `user` is accepted for outlier masks; `auto-multithresh` remains rejected |
 | `mask` | outlier clean mask | CASA pixel circle regions such as `circle[[40pix,40pix],10pix]` are executed for the supported MFS/Hogbom slice; other region/image mask forms reject |
 | `specmode` | outlier spectral mode | executed for `mfs`/`cont`; other modes reject |

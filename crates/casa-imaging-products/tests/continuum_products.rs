@@ -40,11 +40,12 @@ use casa_imaging_products::{
     fit_restoring_beam, gaussian_beam_image, normalize_plane, produce_continuum_members,
 };
 use casa_imaging_reconstruction::{
-    ExecutableModelProblem, ImageDomainReconstructionMaskPlans, MajorCycleCompletion,
-    MajorCycleOwner, MajorCyclePreparation, MaskBox, ModelGenerationId, ModelLifecycle,
-    ReconstructionMask, ReconstructionMaskPlan, SpectralOperatorSpecification,
-    WeightingAlgorithmState, WeightingError, WeightingExecutionLimits, WeightingPlan,
-    WeightingReplayChunk, WeightingReplaySummary, begin_weighting_generation, plan_weighting,
+    ExecutableModelProblem, ImageDomainReconstructionMaskPlans, ImageDomainReconstructionMasks,
+    MajorCycleCompletion, MajorCycleOwner, MajorCyclePreparation, MaskBox, ModelGenerationId,
+    ModelLifecycle, ReconstructionMask, ReconstructionMaskPlan, ReconstructionMaskSet,
+    SpectralOperatorSpecification, WeightingAlgorithmState, WeightingError,
+    WeightingExecutionLimits, WeightingPlan, WeightingReplayChunk, WeightingReplaySummary,
+    begin_weighting_generation, plan_weighting,
     runtime_adapter::{
         CompleteDataOwnerResult, SpectralOperatorPass, prepare_spectral_operator,
         spectral_operator_workload,
@@ -740,6 +741,94 @@ fn run_two_domain_round(
     ContinuumRound { join: joined }
 }
 
+fn rerun_two_domain_with_masks(
+    problem: &casa_imaging_model::CompiledProblem,
+    attempt_byte: u8,
+    prior: MajorCycleCompletion,
+    masks: &ImageDomainReconstructionMasks,
+) -> ContinuumRound {
+    let runs = two_domain_fixture_runs(problem);
+    let (prior_normal, continuation) = prior.into_continuation();
+    let (mut lifecycle, named) = ModelLifecycle::continue_from(
+        ExecutableModelProblem::from_compiled(problem.clone()).expect("executable problem"),
+        attempt(attempt_byte),
+        8,
+        continuation,
+    )
+    .expect("continue model lifecycle");
+    let preparation =
+        MajorCyclePreparation::prepare(&lifecycle, named, None).expect("prepare continuation");
+    let plan = plan_weighting(
+        problem,
+        WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
+    )
+    .expect("weighting plan");
+    let mut inspection = problem.begin_selected_observation_inspection();
+    for run in &runs {
+        inspection
+            .push_view(run.view())
+            .expect("inspect run member");
+    }
+    let (selected_generation, _) = inspection.finish().expect("selected generation");
+    let mut density = begin_weighting_generation(problem, &plan).expect("density phase");
+    for run in &runs {
+        density
+            .consume(problem, run.view(), run.contributions.clone())
+            .expect("density sample");
+    }
+    let mut sum_weight = density.finish(problem).expect("sum-weight phase");
+    for run in &runs {
+        sum_weight
+            .consume(problem, run.view(), run.contributions.clone())
+            .expect("sum-weight sample");
+    }
+    let generation = sum_weight.finish().expect("weighting generation");
+    let mut replay = generation
+        .begin_replay(problem, &plan)
+        .expect("begin replay");
+    let mut blocks = Vec::new();
+    for run in &runs {
+        if let Some(block) = replay
+            .consume(problem, run.view(), run.contributions.clone())
+            .expect("replay sample")
+        {
+            blocks.push(block);
+        }
+    }
+    let (tail, summary) = replay.finish().expect("finish replay");
+    if let Some(block) = tail {
+        blocks.push(block);
+    }
+    let specification =
+        SpectralOperatorSpecification::new(problem).expect("two-domain specification");
+    let workload = spectral_operator_workload(
+        &specification,
+        plan.limits().max_block_samples(),
+        SpectralOperatorPass::ResidualRefresh,
+    )
+    .expect("two-domain refresh workload");
+    let prepared = prepare_spectral_operator(specification, workload).expect("prepare operator");
+    let mut state = prepared
+        .begin(problem, &generation)
+        .expect("begin complete-data owner");
+    state
+        .bind_major_cycle_model(preparation.final_model(), Some(prior_normal))
+        .expect("bind prior normal state");
+    for block in &blocks {
+        state.consume_block(block).expect("consume weighted block");
+    }
+    let evidence = state
+        .complete(&summary, selected_generation, None)
+        .expect("complete two-domain evidence");
+    let joined = MajorCycleOwner::from_complete_data(evidence, preparation)
+        .expect("major-cycle owner")
+        .bind_reconstruction_masks(&ReconstructionMaskSet::Domains(masks.clone()))
+        .expect("bind exact domain masks")
+        .reconcile(&mut lifecycle)
+        .expect("masked two-domain reconciliation");
+    ContinuumRound { join: joined }
+}
+
 fn freeze_weighting_generation(
     problem: &casa_imaging_model::CompiledProblem,
     plan: &WeightingPlan,
@@ -1134,9 +1223,8 @@ fn two_domain_members_consume_their_matching_normal_and_model_chart() {
         1,
         domains,
     );
-    let round = run_two_domain_round(&problem, 142);
-    let normal = round.join.normal_state();
-    assert_eq!(normal.domain_count(), 2);
+    let first_round = run_two_domain_round(&problem, 142);
+    assert_eq!(first_round.join.normal_state().domain_count(), 2);
     let mask_plans =
         ImageDomainReconstructionMaskPlans::new(problem.geometry().domains().iter().map(
             |domain| ReconstructionMaskPlan::FullPlane {
@@ -1145,8 +1233,48 @@ fn two_domain_members_consume_their_matching_normal_and_model_chart() {
         ))
         .expect("domain mask plans");
     let (masks, _) = mask_plans
-        .materialize(round.join.final_model(), normal)
+        .materialize(
+            first_round.join.final_model(),
+            first_round.join.normal_state(),
+        )
         .expect("domain masks");
+    let alternate_plans = ImageDomainReconstructionMaskPlans::new([
+        ReconstructionMaskPlan::FullPlane {
+            coordinate: main_direction,
+        },
+        ReconstructionMaskPlan::Boxes {
+            coordinate: outlier_direction,
+            boxes: vec![MaskBox::new([0, 0], [1, 1]).expect("alternate outlier box")],
+        },
+    ])
+    .expect("alternate mask plans");
+    let (alternate_masks, _) = alternate_plans
+        .materialize(
+            first_round.join.final_model(),
+            first_round.join.normal_state(),
+        )
+        .expect("alternate domain masks");
+    assert_ne!(masks.generation_id(), alternate_masks.generation_id());
+    let round = rerun_two_domain_with_masks(&problem, 143, first_round.join, &masks);
+    let normal = round.join.normal_state();
+    assert_eq!(
+        normal.image_domain_mask_generation(),
+        Some(masks.generation_id())
+    );
+    assert!(matches!(
+        ContinuumSourceCatalog::from_major_cycle_with_domain_masks(
+            &problem,
+            &round.join,
+            &alternate_masks,
+        ),
+        Err(ProductsError::SourceLineageMismatch)
+    ));
+    assert!(matches!(
+        casa_imaging_products::ContinuumProductInputs::from_major_cycle(&problem, &round.join)
+            .expect("alternate inputs")
+            .with_domain_reconstruction_masks(&alternate_masks),
+        Err(ProductsError::SourceLineageMismatch)
+    ));
     let catalog =
         ContinuumSourceCatalog::from_major_cycle_with_domain_masks(&problem, &round.join, &masks)
             .expect("two-domain catalog");

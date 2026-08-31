@@ -499,9 +499,13 @@ fn assert_standard_products(image_name: &Path, product_names: &[String]) {
 }
 
 fn product_plane(image_name: &Path, suffix: &str) -> ArrayD<f32> {
+    product_plane_with_size(image_name, suffix, 16)
+}
+
+fn product_plane_with_size(image_name: &Path, suffix: &str, image_size: usize) -> ArrayD<f32> {
     PagedImage::<f32>::open(PathBuf::from(format!("{}{}", image_name.display(), suffix)))
         .expect("open application product")
-        .get_slice(&[0, 0, 0, 0], &[16, 16, 1, 1])
+        .get_slice(&[0, 0, 0, 0], &[image_size, image_size, 1, 1])
         .expect("read application product plane")
 }
 
@@ -674,6 +678,117 @@ fn t31_application_executes_recentered_domains_through_one_scientific_route() {
             "hogbom" => assert_eq!(model_nonzero, 2),
             _ => unreachable!(),
         }
+    }
+}
+
+#[test]
+fn t31_application_canonicalizes_reversed_outliers_before_domain_indexed_derivations() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = tiny_measurement_set(root.path());
+    let main = root.path().join("main");
+    let alpha = root.path().join("alpha");
+    let zeta = root.path().join("zeta");
+    let outlier_file = root.path().join("reversed.outlier");
+    std::fs::write(
+        &outlier_file,
+        "imagename=zeta\nimsize=[10,10]\ncell=[1arcsec,1arcsec]\nphasecenter=J2000 1.003rad 0.497rad\nusemask=user\nmask=circle[[5pix,5pix],2pix]\n\
+         imagename=alpha\nimsize=[12,12]\ncell=[1arcsec,1arcsec]\nphasecenter=J2000 0.998rad 0.502rad\nusemask=user\nmask=circle[[3pix,3pix],1pix]\n",
+    )
+    .expect("write reversed CASA outlier fixture");
+    let mut imaging = request(measurement_set, main.clone(), ContinuumAlgorithm::Hogbom);
+    imaging.outlier_file = Some(outlier_file);
+    imaging.task_requirements = vec![TaskRequirement::SerialCpu, TaskRequirement::FixedTileCpu];
+
+    let result = execute_continuum(imaging).expect("execute canonical multi-domain application");
+    let expected = [
+        (ImageDomainRole::Main, main.as_path(), 16, [1.0, 0.5], 256),
+        (
+            ImageDomainRole::Outlier("alpha".to_string()),
+            alpha.as_path(),
+            12,
+            [0.998, 0.502],
+            5,
+        ),
+        (
+            ImageDomainRole::Outlier("zeta".to_string()),
+            zeta.as_path(),
+            10,
+            [1.003, 0.497],
+            13,
+        ),
+    ];
+
+    let normal_roles = result
+        .outcome
+        .output
+        .scientific
+        .normal_state()
+        .domains()
+        .map(|domain| domain.role().clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        normal_roles,
+        expected
+            .iter()
+            .map(|(role, ..)| role.clone())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        result.outcome.output.planned_products.generation_id(),
+        result.outcome.output.products.generation_id(),
+        "publication must retain the exact canonical domain generation"
+    );
+    for (planned, published) in result
+        .outcome
+        .output
+        .planned_products
+        .members()
+        .iter()
+        .zip(result.outcome.output.products.members())
+    {
+        assert_eq!(planned.artifact_id(), published.artifact_id());
+        assert_eq!(
+            planned.axes().domain(),
+            published.contract().axes().domain()
+        );
+    }
+
+    for (role, base, image_size, direction, expected_mask_pixels) in expected {
+        let members = result
+            .outcome
+            .output
+            .planned_products
+            .members()
+            .iter()
+            .filter(|member| member.axes().domain() == &role)
+            .collect::<Vec<_>>();
+        assert_eq!(members.len(), 6, "wrong product association for {role:?}");
+        assert!(members.iter().any(|member| member.name() == ".mask"));
+        assert!(
+            members
+                .iter()
+                .filter(|member| member.name() != ".sumwt")
+                .all(|member| member.shape()[..2] == [image_size, image_size])
+        );
+
+        let psf = PagedImage::<f32>::open(PathBuf::from(format!("{}.psf", base.display())))
+            .expect("open domain PSF");
+        let reference = image_size as f64 / 2.0;
+        let world = psf
+            .coordinates()
+            .to_world(&[reference, reference, 0.0, 0.0])
+            .expect("domain reference world coordinate");
+        assert!((world[0] - direction[0]).abs() < 1.0e-12);
+        assert!((world[1] - direction[1]).abs() < 1.0e-12);
+
+        let mask = product_plane_with_size(base, ".mask", image_size);
+        assert_eq!(
+            mask.iter().filter(|value| **value != 0.0).count(),
+            expected_mask_pixels,
+            "wrong mask support published for {role:?}"
+        );
     }
 }
 

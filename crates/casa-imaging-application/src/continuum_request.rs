@@ -884,6 +884,7 @@ fn prepare(
             });
         }
     }
+    prepared_domains.sort_by(|left, right| left.role.cmp(&right.role));
     let geometry = casa_imaging_model::GeometryInput::new(
         prepared_domains
             .iter()

@@ -147,6 +147,7 @@ impl ContinuumSourceCatalog {
     ) -> Result<Self, ProductsError> {
         if masks.len() != join.normal_state().domain_count()
             || masks.len() != problem.geometry().domains().len()
+            || join.normal_state().image_domain_mask_generation() != Some(masks.generation_id())
             || masks
                 .iter()
                 .zip(problem.geometry().domains())
@@ -330,6 +331,7 @@ impl<'a> ContinuumProductInputs<'a> {
     ) -> Result<Self, ProductsError> {
         if masks.len() != self.normal_state.domain_count()
             || masks.len() != self.problem.geometry().domains().len()
+            || self.normal_state.image_domain_mask_generation() != Some(masks.generation_id())
             || masks
                 .iter()
                 .zip(self.problem.geometry().domains())
