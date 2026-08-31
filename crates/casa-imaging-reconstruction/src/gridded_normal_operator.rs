@@ -28,11 +28,10 @@ use crate::{
     Encoder, FinalNormalState, ModelGeneration,
     spectral_operator::{
         CompleteDataOwnerCompletion, CompleteDataOwnerResult, OVERSAMPLING,
-        PreparedSpectralOperator, SPEED_OF_LIGHT_M_PER_S, SUPPORT, SampleTaps,
-        SpectralDomainPrimitives, SpectralOperatorError, SpectralOperatorPass,
-        SpectralOperatorSpecification, SpectralPrimitiveCatalog, SpectralPrimitiveDomains,
-        SpectralSlabOperator, StandardConvolution, TapSpan, accept_weighted_input,
-        selected_model_projection,
+        PreparedSpectralOperator, ReusableNormalState, SPEED_OF_LIGHT_M_PER_S, SUPPORT, SampleTaps,
+        SpectralOperatorError, SpectralOperatorPass, SpectralOperatorSpecification,
+        SpectralPrimitiveCatalog, SpectralSlabOperator, StandardConvolution, TapSpan,
+        accept_weighted_input, combine_chart_updates, selected_model_projection,
     },
     weighting::{
         CoverageEncoder, WeightingReplayChunk, WeightingReplayCoverageId, WeightingReplayId,
@@ -41,7 +40,7 @@ use crate::{
 };
 
 const RECORD_DOMAIN: &[u8] = b"casa-rs-gridded-normal-operator";
-const RECORD_VERSION: u32 = 4;
+const RECORD_VERSION: u32 = 5;
 const TAP_KEY_BITS: u32 = 38;
 const TAP_KEY_MASK: u64 = (1_u64 << TAP_KEY_BITS) - 1;
 const CHANNEL_KEY_BITS: u32 = 24;
@@ -277,7 +276,7 @@ pub fn gridded_normal_domain_execution_residency(
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct ReducedRecordKey {
-    domain_ordinal: u32,
+    chart_ordinal: u32,
     output_channel: u32,
     taps: u64,
     forward_real: u64,
@@ -309,7 +308,7 @@ struct TaylorMomentAccumulator {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct DecodedRecord {
-    domain_ordinal: usize,
+    chart_ordinal: usize,
     output_channel: usize,
     taps: SampleTaps,
     forward_scale: Complex64,
@@ -462,9 +461,9 @@ impl GriddedNormalOperatorCompiler {
         validate_record_geometry(&specification)?;
         let record_layout = GriddedNormalRecordLayout::for_specification(&specification);
         let gridders = specification
-            .domains()
+            .charts()
             .iter()
-            .map(|domain| StandardConvolution::new(&domain.geometry()))
+            .map(|chart| StandardConvolution::new(&chart.geometry()))
             .collect();
         let binding = static_binding(&specification);
         Ok(Self {
@@ -632,11 +631,13 @@ impl GriddedNormalOperatorCompiler {
             }
             let mut group = Vec::new();
             let mut has_positive_weight = false;
-            for domain_ordinal in 0..self.specification.domain_count() {
+            for domain_ordinal in 0..self.specification.chart_count() {
+                let chart = &self.specification.charts()[domain_ordinal];
                 let (uvw_m, phase_shift_m) = selected_model_projection(
                     selected,
-                    self.specification.domain_count(),
-                    domain_ordinal,
+                    self.specification.chart_count(),
+                    chart.domain_ordinal(),
+                    chart.facet_ordinal(),
                 )?;
                 let gridder = self
                     .gridders
@@ -670,7 +671,7 @@ impl GriddedNormalOperatorCompiler {
                     has_positive_weight |= spectral.imaging_weight() > 0.0;
                     let old_capacity = group.capacity();
                     group.push(ReducedRecordKey {
-                        domain_ordinal: u32::try_from(domain_ordinal)
+                        chart_ordinal: u32::try_from(domain_ordinal)
                             .map_err(|_| SpectralOperatorError::DomainProjectionMismatch)?,
                         output_channel: contribution.output_channel(),
                         taps: encode_taps(taps)?,
@@ -1037,24 +1038,19 @@ impl GriddedNormalOperatorProgram {
         {
             return Err(SpectralOperatorError::GriddedRecordMismatch);
         }
-        if ffts.len() != prepared_specification.domain_count() {
+        if ffts.len() != prepared_specification.chart_count() {
             return Err(SpectralOperatorError::GriddedRecordMismatch);
         }
         let model_generation = model.generation_id();
-        let mut prior = prior.into_reusable_domains()?.into_iter();
-        let mut operators = Vec::with_capacity(prepared_specification.domain_count());
-        for (domain, fft) in prepared_specification.domains().iter().zip(ffts.drain(..)) {
+        let reusable_domains = prior.into_reusable_domains()?;
+        let mut operators = Vec::with_capacity(prepared_specification.chart_count());
+        for (chart, fft) in prepared_specification.charts().iter().zip(ffts.drain(..)) {
             let mut operator =
-                SpectralSlabOperator::new_domain(&prepared_specification, domain, workload, fft, 0);
-            operator.prepare_gridded_normal_model(
-                model,
-                prior
-                    .next()
-                    .ok_or(SpectralOperatorError::ReusableNormalStateMismatch)?,
-            )?;
+                SpectralSlabOperator::new_chart(&prepared_specification, chart, workload, fft, 0);
+            operator.prepare_gridded_normal_model(model)?;
             operators.push(operator);
         }
-        if prior.next().is_some() {
+        if reusable_domains.len() != prepared_specification.domain_count() {
             return Err(SpectralOperatorError::ReusableNormalStateMismatch);
         }
         let core_depth = self
@@ -1064,9 +1060,9 @@ impl GriddedNormalOperatorProgram {
         let tile_catalogs = GriddedNormalDomainTileCatalogs::new(
             self.manifest
                 .specification
-                .domains()
+                .charts()
                 .iter()
-                .map(|domain| domain.geometry().grid_shape),
+                .map(|chart| chart.geometry().grid_shape),
         )?;
         let two_domain = PreparedGriddedNormalTwoDomainWindow::with_record_capacities(
             route_slot_record_capacities,
@@ -1077,10 +1073,10 @@ impl GriddedNormalOperatorProgram {
         let domain_planes = || {
             self.manifest
                 .specification
-                .domains()
+                .charts()
                 .iter()
-                .map(|domain| {
-                    let shape = domain.geometry().grid_shape;
+                .map(|chart| {
+                    let shape = chart.geometry().grid_shape;
                     (0..core_depth)
                         .map(|_| Array2::zeros((shape[0], shape[1])))
                         .collect()
@@ -1092,6 +1088,7 @@ impl GriddedNormalOperatorProgram {
         Ok(GriddedNormalOperatorApply {
             program: self.clone(),
             operators,
+            reusable_domains,
             model_generation,
             next_block_sequence: 0,
             applied_records: 0,
@@ -1124,6 +1121,7 @@ impl GriddedNormalOperatorProgram {
 pub struct GriddedNormalOperatorApply {
     program: GriddedNormalOperatorProgram,
     operators: Vec<SpectralSlabOperator>,
+    reusable_domains: Vec<ReusableNormalState>,
     model_generation: crate::ModelGenerationId,
     next_block_sequence: u64,
     applied_records: u64,
@@ -2019,26 +2017,21 @@ impl GriddedNormalOperatorApply {
         let Self {
             program,
             operators,
+            reusable_domains,
             model_generation,
             normal_grids,
             ..
         } = self;
-        let domains = operators
-            .into_iter()
-            .zip(normal_grids)
-            .zip(program.manifest.specification.domains())
-            .map(|((operator, grids), specification)| {
-                operator
-                    .finish_gridded_normal_from_grids(model_generation, grids)
-                    .map(|primitives| {
-                        SpectralDomainPrimitives::new(
-                            specification.ordinal(),
-                            specification.role().clone(),
-                            primitives,
-                        )
-                    })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let domains = combine_chart_updates(
+            &program.manifest.specification,
+            reusable_domains,
+            operators
+                .into_iter()
+                .zip(normal_grids)
+                .map(|(operator, grids)| {
+                    operator.finish_gridded_normal_from_grids(model_generation, grids)
+                }),
+        )?;
         let primitive_catalog = match program.manifest.record_layout {
             GriddedNormalRecordLayout::Taylor(_) => {
                 SpectralPrimitiveCatalog::UnnormalizedTaylorBlockV1
@@ -2053,7 +2046,7 @@ impl GriddedNormalOperatorApply {
         };
         Ok((
             CompleteDataOwnerResult {
-                domains: SpectralPrimitiveDomains::new(domains.into_boxed_slice())?,
+                domains,
                 completion: CompleteDataOwnerCompletion {
                     problem: program.manifest.specification.problem_id(),
                     geometry: program.manifest.specification.geometry_id(),
@@ -2208,8 +2201,13 @@ fn validate_record_geometry(
     if specification.slab().core_depth() != specification.slab().total_channels()
         || specification.slab().resident_depth() != specification.slab().total_channels()
         || specification.slab().total_channels() > 1 << CHANNEL_KEY_BITS
-        || specification.domains().iter().any(|domain| {
-            domain
+        || (specification.chart_count() > specification.domain_count()
+            && !matches!(
+                specification.block_normal_plan(),
+                Some(plan) if plan.coefficient_term_count() == 1
+            ))
+        || specification.charts().iter().any(|chart| {
+            chart
                 .geometry()
                 .grid_shape
                 .into_iter()
@@ -2228,11 +2226,21 @@ fn static_binding(specification: &SpectralOperatorSpecification) -> LogicalIdent
     encoder.identity(specification.geometry_id().as_bytes());
     encoder.identity(specification.numerics_id().as_bytes());
     encoder.identity(specification.weighting_commitment_id().as_bytes());
-    encoder.usize(specification.domain_count());
-    for domain in specification.domains() {
-        encoder.usize(domain.ordinal());
-        encoder.usize(domain.geometry().grid_shape[0]);
-        encoder.usize(domain.geometry().grid_shape[1]);
+    encoder.usize(specification.chart_count());
+    for chart in specification.charts() {
+        encoder.usize(chart.ordinal());
+        encoder.usize(chart.domain_ordinal());
+        encoder.usize(chart.facet_ordinal());
+        for value in chart
+            .window()
+            .origin()
+            .into_iter()
+            .chain(chart.window().end_exclusive())
+        {
+            encoder.usize(value);
+        }
+        encoder.usize(chart.geometry().grid_shape[0]);
+        encoder.usize(chart.geometry().grid_shape[1]);
     }
     encoder.usize(specification.slab().total_channels());
     match record_layout {
@@ -2517,7 +2525,7 @@ fn encode_and_checksum(
                 return Err(SpectralOperatorError::GeneratedNonfinite);
             }
             encoded.extend_from_slice(&key.to_le_bytes());
-            encoded.extend_from_slice(&u64::from(record.domain_ordinal).to_le_bytes());
+            encoded.extend_from_slice(&u64::from(record.chart_ordinal).to_le_bytes());
             encoded.extend_from_slice(&forward_real.to_le_bytes());
             encoded.extend_from_slice(&forward_imaginary.to_le_bytes());
             encoded.extend_from_slice(&imaging_weight.to_le_bytes());
@@ -2622,7 +2630,7 @@ fn decode_record(
     output_channels: usize,
 ) -> Result<DecodedRecord, SpectralOperatorError> {
     let record = decode_record_for_shape(encoded, grid_shape, output_channels)?;
-    if record.domain_ordinal != 0 {
+    if record.chart_ordinal != 0 {
         return Err(SpectralOperatorError::InvalidGriddedRecord);
     }
     Ok(record)
@@ -2636,14 +2644,14 @@ fn decode_domain_record(
     if encoded.len() != GRIDDED_NORMAL_OPERATOR_RECORD_BYTES {
         return Err(SpectralOperatorError::InvalidGriddedRecord);
     }
-    let domain_ordinal = usize::try_from(u64::from_le_bytes(
+    let chart_ordinal = usize::try_from(u64::from_le_bytes(
         encoded[8..16]
             .try_into()
             .map_err(|_| SpectralOperatorError::InvalidGriddedRecord)?,
     ))
     .map_err(|_| SpectralOperatorError::InvalidGriddedRecord)?;
     let grid_shape = catalogs
-        .grid_shape(domain_ordinal)
+        .grid_shape(chart_ordinal)
         .ok_or(SpectralOperatorError::InvalidGriddedRecord)?;
     decode_record_for_shape(encoded, grid_shape, output_channels)
 }
@@ -2678,7 +2686,7 @@ fn decode_record_for_shape(
     );
     let output_channel = usize::try_from((key >> TAP_KEY_BITS) & CHANNEL_KEY_MASK)
         .map_err(|_| SpectralOperatorError::InvalidGriddedRecord)?;
-    let domain_ordinal = usize::try_from(u64::from_le_bytes(
+    let chart_ordinal = usize::try_from(u64::from_le_bytes(
         encoded[8..16]
             .try_into()
             .map_err(|_| SpectralOperatorError::InvalidGriddedRecord)?,
@@ -2696,7 +2704,7 @@ fn decode_record_for_shape(
     }
     let taps = decode_tap_key(key & TAP_KEY_MASK, grid_shape)?;
     Ok(DecodedRecord {
-        domain_ordinal,
+        chart_ordinal,
         output_channel,
         taps,
         forward_scale: Complex64::new(forward_real, forward_imaginary),
@@ -2825,10 +2833,10 @@ mod tests {
     }
 
     #[test]
-    fn t42_taylor_v4_codec_has_dynamic_width_and_rejects_truncation_and_nonfinite_moments() {
+    fn t42_taylor_v5_codec_has_dynamic_width_and_rejects_truncation_and_nonfinite_moments() {
         let plan = crate::block_normal::BlockNormalPlan::taylor(1.0e9, 3).unwrap();
         let layout = GriddedNormalRecordLayout::Taylor(plan);
-        assert_eq!(RECORD_VERSION, 4);
+        assert_eq!(RECORD_VERSION, 5);
         assert_eq!(layout.record_bytes().unwrap(), 48);
         assert_eq!(
             GriddedNormalRecordLayout::Taylor(
@@ -2869,7 +2877,7 @@ mod tests {
     }
 
     #[test]
-    fn t42_v4_domain_scalar_cannot_enter_a_taylor_program() {
+    fn t42_v5_domain_scalar_cannot_enter_a_taylor_program() {
         fn common_static_binding(version: u32) -> Encoder {
             let mut encoder = Encoder::new(RECORD_DOMAIN, version);
             encoder.identity([1; 32]);
@@ -2896,11 +2904,11 @@ mod tests {
         taylor_v4.usize(layout.record_bytes().unwrap());
         let taylor_v4 = LogicalIdentity::from_sha256(taylor_v4.finish());
 
-        assert_eq!(RECORD_VERSION, 4);
+        assert_eq!(RECORD_VERSION, 5);
         assert_eq!(layout.record_bytes().unwrap(), 32);
         assert_ne!(
             legacy_v2, taylor_v4,
-            "the v4 Taylor layout has a distinct static schema binding"
+            "the v5 Taylor layout has a distinct static schema binding"
         );
 
         let (legacy_scalar, _) =
@@ -2996,7 +3004,7 @@ mod tests {
         for (taps, coefficient) in contributions {
             groups
                 .entry(vec![ReducedRecordKey {
-                    domain_ordinal: 0,
+                    chart_ordinal: 0,
                     output_channel: 0,
                     taps: encode_taps(taps).expect("encode scalar taps"),
                     forward_real: 1.0_f64.to_bits(),
@@ -3012,8 +3020,8 @@ mod tests {
     #[test]
     fn domain_records_share_one_prediction_group_and_retain_canonical_ordinals() {
         let taps = t42_taps();
-        let record = |domain_ordinal, forward_real: f64| ReducedRecordKey {
-            domain_ordinal,
+        let record = |chart_ordinal, forward_real: f64| ReducedRecordKey {
+            chart_ordinal,
             output_channel: 0,
             taps: encode_taps(taps).expect("encode domain taps"),
             forward_real: forward_real.to_bits(),
@@ -3033,7 +3041,7 @@ mod tests {
         assert_eq!(
             decoded
                 .iter()
-                .map(|record| record.domain_ordinal)
+                .map(|record| record.chart_ordinal)
                 .collect::<Vec<_>>(),
             [0, 1]
         );
@@ -3169,7 +3177,7 @@ mod tests {
             .copied()
             .enumerate()
             .map(|(index, taps)| ReducedRecordKey {
-                domain_ordinal: 0,
+                chart_ordinal: 0,
                 output_channel: 0,
                 taps: encode_taps(taps).expect("encode grouped taps"),
                 forward_real: (1.0 + index as f64 * 0.125).to_bits(),
@@ -3182,7 +3190,7 @@ mod tests {
         let second_taps = *taps_by_sector.get(&0).expect("lower sector taps");
         groups.insert(
             vec![ReducedRecordKey {
-                domain_ordinal: 0,
+                chart_ordinal: 0,
                 output_channel: 0,
                 taps: encode_taps(second_taps).expect("encode scalar taps"),
                 forward_real: 0.75_f64.to_bits(),

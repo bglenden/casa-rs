@@ -2128,7 +2128,7 @@ fn project_residency(
                 _ => workload.coefficient_terms(),
             };
             let residency = gridded_normal_domain_execution_residency(
-                specification.domain_grid_shapes(),
+                specification.chart_grid_shapes(),
                 accumulation_terms,
             )?;
             residency
