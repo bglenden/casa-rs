@@ -16,7 +16,7 @@ use casa_imaging_products::{
     PublishedContinuumGeneration, SealedContinuumGeneration, SealedMember,
     produce_continuum_members,
 };
-use casa_imaging_reconstruction::{MajorCycleCompletion, ReconstructionMask};
+use casa_imaging_reconstruction::{MajorCycleCompletion, ReconstructionMaskSet};
 use sha2::{Digest, Sha256};
 
 use crate::*;
@@ -741,7 +741,7 @@ struct SerialProductPublicationState {
     problem: CompiledProblem,
     planned: Option<PlannedContinuumGeneration>,
     scientific: Option<MajorCycleCompletion>,
-    reconstruction_mask: Option<ReconstructionMask>,
+    reconstruction_masks: Option<ReconstructionMaskSet>,
     produced: Option<ContinuumProducedMembers>,
     sealed: Option<SealedContinuumGeneration>,
     projection: Option<PublicationProjection>,
@@ -765,7 +765,7 @@ impl<S: SerialProductPublicationSink> SerialProductPublicationExecutor<S> {
         publication: ProductPublicationPlan,
         planned: PlannedContinuumGeneration,
         scientific: MajorCycleCompletion,
-        reconstruction_mask: Option<ReconstructionMask>,
+        reconstruction_masks: Option<ReconstructionMaskSet>,
         sink: S,
     ) -> Result<Self, SerialProductPublicationExecutionError<S::Error>> {
         if publication.problem_id() != problem.problem_id()
@@ -783,7 +783,7 @@ impl<S: SerialProductPublicationSink> SerialProductPublicationExecutor<S> {
                 problem,
                 planned: Some(planned),
                 scientific: Some(scientific),
-                reconstruction_mask,
+                reconstruction_masks,
                 produced: None,
                 sealed: None,
                 projection: None,
@@ -835,15 +835,20 @@ impl<S: SerialProductPublicationSink> WorkImplementation for SerialProductPublic
                 let mut inputs =
                     ContinuumProductInputs::from_major_cycle(&state.problem, scientific)
                         .map_err(SerialProductPublicationExecutionError::Products)?;
-                if let Some(mask) = state.reconstruction_mask.as_ref() {
-                    inputs = inputs
-                        .with_reconstruction_mask(mask)
-                        .map_err(SerialProductPublicationExecutionError::Products)?;
+                if let Some(masks) = state.reconstruction_masks.as_ref() {
+                    inputs = match masks {
+                        ReconstructionMaskSet::Shared(mask) => inputs
+                            .with_reconstruction_mask(mask)
+                            .map_err(SerialProductPublicationExecutionError::Products)?,
+                        ReconstructionMaskSet::Coupled(masks) => inputs
+                            .with_coupled_reconstruction_masks(masks)
+                            .map_err(SerialProductPublicationExecutionError::Products)?,
+                    };
                 }
                 produce_continuum_members(planned, &inputs)
                     .map_err(SerialProductPublicationExecutionError::Products)?
             };
-            state.reconstruction_mask = None;
+            state.reconstruction_masks = None;
             state.produced = Some(produced);
         } else if context.node().id.as_str() == SEAL {
             let mut state = self

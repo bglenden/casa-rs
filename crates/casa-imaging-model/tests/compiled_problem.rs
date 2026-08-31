@@ -5,9 +5,9 @@ use casa_imaging_model::{
     ContinuumChannelUse, ContinuumFitRule, DeclaredInnerProducts, DelayCentreLaw,
     DirectionCoordinateSpec, DirectionFrame, DopplerConvention, Epoch, FacetLayout,
     FiniteValuePolicy, FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec,
-    ImageShape, ImagingRequest, InstrumentResponse, ItrfPosition, MeasurementEquationContract,
-    MissingPointingPolicy, ModelColumnWrite, ModelInnerProduct, ModelStateIdentity,
-    NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
+    ImageShape, ImagingRequest, InstrumentResponse, ItrfPosition, JointContinuumLineContract,
+    MeasurementEquationContract, MissingPointingPolicy, ModelColumnWrite, ModelInnerProduct,
+    ModelStateIdentity, NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
     ObservationSnapshotInput, ObservationTransactionRequirements, PhaseCentreLaw,
     PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
     PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
@@ -195,6 +195,183 @@ fn geometry() -> GeometryInput {
     )
 }
 
+fn joint_geometry() -> GeometryInput {
+    let direction = DirectionCoordinateSpec::new(
+        Projection::Sin,
+        SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
+        [31.0, 31.0],
+        [-4.848_136_811_095_36e-6, 4.848_136_811_095_36e-6],
+        [[1.0, 0.0], [0.0, 1.0]],
+        [180.0, 0.0],
+    );
+    GeometryInput::new(
+        vec![ImageDomainSpec::new(
+            ImageDomainRole::Main,
+            ImageShape::new(64, 64),
+            direction,
+            FacetLayout::Single,
+            AxisOrder::new([
+                ImageAxis::DirectionLongitude,
+                ImageAxis::DirectionLatitude,
+                ImageAxis::Polarization,
+                ImageAxis::Spectral,
+            ]),
+        )],
+        CentreLaws::new(
+            PhaseCentreLaw::Fixed(direction.reference_direction()),
+            DelayCentreLaw::PhaseTrackingCentre,
+            PointingCentreLaw::PhaseTrackingCentre,
+        ),
+        UvwCoordinateLaw::PhaseTrackingCentre,
+        SpectralCoordinateSpec::new(
+            FrequencyFrame::Topocentric,
+            FrequencyFrame::Topocentric,
+            SpectralFrameAnchor::NotApplicable,
+            SpectralWcs::Linear {
+                channels: 8,
+                reference_pixel: 3.5,
+                reference_frequency_hz: 1.4e9,
+                increment_hz: 1.0e6,
+            },
+            RestFrequency::NotApplicable,
+            DopplerConvention::NotApplicable,
+        ),
+    )
+}
+
+fn joint_specification(contract: JointContinuumLineContract) -> ProblemSpecification {
+    ProblemSpecification::new(
+        science(),
+        ReconstructionContract::new(
+            ReconstructionBasis::JointContinuumLine {
+                continuum_terms: 2,
+                line_terms: 2,
+            },
+            ReconstructionAlgorithm::JointContinuumLine {
+                scales_px: vec![0.0],
+                small_scale_bias: 0.0,
+            },
+            ReconstructionControls::new(100, 0.1, 0.0),
+            PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+        )
+        .with_joint_continuum_line(contract),
+        weighting(),
+        ProductRequirements::new(
+            vec![
+                ProductKind::Psf,
+                ProductKind::Residual,
+                ProductKind::Model,
+                ProductKind::SumWeights,
+            ],
+            ProductNormalization::UnitResponse,
+            RestoringBeamPolicy::None,
+            product_validity(),
+        ),
+        read_only_transaction(),
+        numerics(false),
+    )
+}
+
+#[test]
+fn t46_joint_contract_is_canonical_identifiable_and_distinct() {
+    let first = compile_with_geometry(
+        joint_specification(JointContinuumLineContract::new(
+            [0, 1, 2, 5, 6, 7],
+            [3, 4],
+            1.0e8,
+        )),
+        joint_geometry(),
+        inputs(false),
+    )
+    .expect("compile identifiable joint contract");
+    let reordered = compile_with_geometry(
+        joint_specification(JointContinuumLineContract::new(
+            [7, 2, 6, 0, 5, 1],
+            [4, 3],
+            1.0e8,
+        )),
+        joint_geometry(),
+        inputs(false),
+    )
+    .expect("canonicalize support ordering");
+
+    assert_eq!(first.problem_id(), reordered.problem_id());
+    assert_eq!(
+        first.reconstruction().joint_continuum_line(),
+        reordered.reconstruction().joint_continuum_line()
+    );
+    assert!(
+        first
+            .required_capabilities()
+            .contains(&RequiredCapability::JointContinuumLineReconstruction)
+    );
+    let graph = first.product_graph();
+    assert!(
+        graph
+            .node(ProductRole::Residual(ProductTerm::Total))
+            .is_some()
+    );
+    assert!(
+        graph
+            .node(ProductRole::Residual(ProductTerm::Line))
+            .is_none()
+    );
+    for term in [
+        ProductTerm::Continuum(0),
+        ProductTerm::Continuum(1),
+        ProductTerm::Line,
+        ProductTerm::Total,
+    ] {
+        assert!(graph.node(ProductRole::Model(term)).is_some());
+    }
+    assert_eq!(
+        graph
+            .node(ProductRole::Model(ProductTerm::Continuum(0)))
+            .expect("continuum coefficient product")
+            .axes()
+            .shape()[3],
+        1
+    );
+    assert_eq!(
+        graph
+            .node(ProductRole::Model(ProductTerm::Line))
+            .expect("line cube product")
+            .axes()
+            .shape()[3],
+        8
+    );
+    assert_eq!(
+        graph
+            .nodes()
+            .iter()
+            .filter(|node| {
+                matches!(
+                    node.role(),
+                    ProductRole::Psf(ProductTerm::JointNormal { .. })
+                )
+            })
+            .count(),
+        16
+    );
+
+    for invalid in [
+        JointContinuumLineContract::new([], [0, 1, 2, 3, 4, 5, 6, 7], 1.0e8),
+        JointContinuumLineContract::new([0, 1, 2, 3, 4, 5, 6, 7], [], 1.0e8),
+        JointContinuumLineContract::new([0, 1, 2, 5, 6, 7], [2, 3], 1.0e8),
+        JointContinuumLineContract::new([0], [1, 2, 3, 4, 5, 6, 7], 1.0e8),
+        JointContinuumLineContract::new([0, 1, 2, 5, 6, 7], [3, 3], 1.0e8),
+    ] {
+        assert!(matches!(
+            compile_with_geometry(
+                joint_specification(invalid),
+                joint_geometry(),
+                inputs(false),
+            ),
+            Err(CompileProblemError::InvalidCapabilityCombination { .. })
+        ));
+    }
+}
+
 fn specification(reverse: bool) -> ProblemSpecification {
     ProblemSpecification::new(
         science(),
@@ -298,7 +475,7 @@ fn compiler_owns_the_exact_product_graph_and_atomic_publication_contract() {
     let reordered = compile_request(specification(true), inputs(true)).expect("compile reordered");
 
     assert_eq!(graph.graph_id(), reordered.product_graph().graph_id());
-    assert_eq!(graph.schema_version(), 2);
+    assert_eq!(graph.schema_version(), 3);
     assert_eq!(
         graph
             .nodes()
@@ -454,8 +631,8 @@ fn product_graph_identity_is_content_derived_and_stable_across_unrelated_problem
     assert_eq!(
         first.product_graph().graph_id().as_bytes(),
         [
-            215, 69, 55, 25, 33, 207, 246, 75, 127, 97, 39, 252, 48, 167, 26, 163, 137, 238, 241,
-            38, 74, 130, 171, 57, 145, 182, 214, 31, 234, 72, 93, 113,
+            235, 221, 234, 76, 221, 106, 227, 135, 121, 148, 175, 232, 82, 0, 166, 137, 236, 238,
+            165, 115, 143, 112, 173, 242, 205, 34, 87, 135, 86, 241, 132, 33,
         ]
     );
 }
@@ -982,7 +1159,7 @@ fn canonical_identity_normalizes_signed_zero_but_changes_with_science() {
         positive_zero.weighting().commitment_id()
     );
     assert_ne!(positive_zero.problem_id(), changed.problem_id());
-    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 14);
+    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 15);
 }
 
 #[test]
@@ -1388,13 +1565,13 @@ fn invalid_polarization_is_a_reconstruction_contract_error() {
 }
 
 #[test]
-fn compiled_problem_identity_has_a_pinned_schema_fourteen_digest() {
+fn compiled_problem_identity_has_a_pinned_schema_fifteen_digest() {
     let compiled = compile_request(specification(false), inputs(false)).expect("compile problem");
 
-    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 14);
+    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 15);
     assert_eq!(
         compiled.problem_id().to_string(),
-        "40d663597ee1a0efd565045368bc1297069901d9cec8f0f20ef755da7a3355d0"
+        "3c843adddc6f6c6d6be13da95a61b811ebd683422e0f63cef979856a2e5efd02"
     );
     let lifecycle = casa_imaging_model::LogicalIdentity::from_sha256(
         compiled.model_lifecycle().contract_id().as_bytes(),

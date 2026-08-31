@@ -44,6 +44,10 @@ fn spectral_line_measurement_set(root: &Path) -> PathBuf {
     measurement_set_fixture(root, "line-input.ms", true, 4, 1)
 }
 
+fn joint_measurement_set(root: &Path) -> PathBuf {
+    measurement_set_fixture(root, "joint-input.ms", false, 4, 1)
+}
+
 fn measurement_set_fixture(
     root: &Path,
     name: &str,
@@ -535,6 +539,60 @@ fn application_executes_single_ddid_stokes_i_mfs_dirty_and_publishes_products() 
         PagedImage::<f32>::open(PathBuf::from(format!("{}.mask", image_name.display())))
             .expect("reopen numeric CLEAN mask");
     assert_eq!(clean_mask.default_mask_name(), None);
+}
+
+#[test]
+fn t46_application_executes_joint_continuum_line_through_one_native_route() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = joint_measurement_set(root.path());
+    let image_name = root.path().join("joint-continuum-line");
+    let mut imaging = request(
+        measurement_set,
+        image_name.clone(),
+        ContinuumAlgorithm::JointContinuumLine {
+            continuum_terms: 1,
+            continuum_anchor_channels: vec![0, 1],
+            line_channels: vec![2, 3],
+            maximum_condition_number: 1.0e12,
+            scales_px: vec![0.0],
+            small_scale_bias: 0.0,
+        },
+    );
+    imaging.spectral_window = Some("0:0~3".to_string());
+    imaging.channel_count = Some(4);
+    imaging.spectral_mode = SpectralImagingMode::JointContinuumLine;
+    imaging.beam_policy = ContinuumBeamPolicy::Common;
+    imaging.mask = ContinuumMask::Coupled {
+        continuum: Box::new(ContinuumMask::FullPlane),
+        line: Box::new(ContinuumMask::Boxes(vec![ContinuumMaskBox {
+            blc: [7, 7],
+            trc: [8, 8],
+        }])),
+    };
+
+    let result = execute_continuum(imaging).expect("native joint application execution");
+    for suffix in [
+        ".total.residual",
+        ".continuum.model.ct0",
+        ".line.model",
+        ".total.model",
+        ".line.image",
+        ".total.image",
+        ".continuum.mask",
+        ".line.mask",
+    ] {
+        assert!(
+            result.product_names.iter().any(|name| name == suffix),
+            "missing joint product {suffix}: {:?}",
+            result.product_names
+        );
+        assert!(
+            PathBuf::from(format!("{}{suffix}", image_name.display())).is_dir(),
+            "missing persisted joint product {suffix}"
+        );
+    }
 }
 
 #[test]

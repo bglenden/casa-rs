@@ -26,7 +26,7 @@ impl BlockNormalPlan {
         Self::compile(reference_frequency_hz, coefficient_terms)
     }
 
-    fn compile(
+    pub(crate) fn compile(
         reference_frequency_hz: f64,
         coefficient_terms: usize,
     ) -> Result<Self, BlockNormalError> {

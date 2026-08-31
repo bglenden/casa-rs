@@ -1270,6 +1270,7 @@ fn project_gridded_normal_frame_bounds(
         // Taylor compilation reduces all `2T-1` signed moments for one spatial
         // convolution key into one reconstruction-owned opaque record.
         ReconstructionBasis::Taylor { .. } => 1,
+        ReconstructionBasis::JointContinuumLine { .. } => 1,
     };
     // Compilation contributes at most one prediction group per weighted sample;
     // BTree reduction can only lower that count. Each group contains at most the
@@ -2114,10 +2115,15 @@ fn project_residency(
             .checked_mul(complex_bytes)
             .ok_or(CompleteDataPlanError::ResidencyOverflow)?,
         CompleteDataExecutionRole::GriddedArtifact => {
-            let residency = gridded_normal_execution_residency(
-                workload.grid_shape(),
-                workload.coefficient_terms(),
-            )?;
+            let accumulation_terms = match problem.reconstruction().basis() {
+                ReconstructionBasis::JointContinuumLine { .. } => workload
+                    .coefficient_terms()
+                    .checked_add(problem.geometry().spectral().output_channels())
+                    .ok_or(CompleteDataPlanError::ResidencyOverflow)?,
+                _ => workload.coefficient_terms(),
+            };
+            let residency =
+                gridded_normal_execution_residency(workload.grid_shape(), accumulation_terms)?;
             residency
                 .peak_complex_values()
                 .checked_mul(complex_bytes)

@@ -17,8 +17,8 @@ mod visibility_transform;
 pub use compiled_problem::{
     CompileProblemError, CompiledProblem, CompiledProblemId, FiniteValuePolicy,
     HogbomIterationAccounting, ImagingRequest, ImagingRequestVersion, InstrumentResponse,
-    LogicalIdentity, MeasurementEquationContract, ModelStateIdentity, NumericPrecision,
-    NumericalStage, NumericsContract, NumericsContractId, PolarizationContract,
+    JointContinuumLineContract, LogicalIdentity, MeasurementEquationContract, ModelStateIdentity,
+    NumericPrecision, NumericalStage, NumericsContract, NumericsContractId, PolarizationContract,
     PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInputIdentities,
     ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
     ProductRequirements, ProductSupportComparison, ProductValidityPolicies,

@@ -115,6 +115,16 @@ imaging-t44-mtmfs-products testdata_root casa_python casa_prefix:
     CASA_RS_TESTDATA_ROOT="{{testdata_root}}" CASA_RS_T44_APPLICATION_PREFIX="{{justfile_directory()}}/target/t43-t44-casa-oracle/rust-application/casa" CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test mtmfs_publication_oracle t44_application_mtmfs_publishes_frozen_casa_product_contract -- --ignored --exact --nocapture
     "{{casa_python}}" tools/science/t44_mtmfs_products_compare.py --casa-prefix "{{casa_prefix}}" --rust-prefix "{{justfile_directory()}}/target/t43-t44-casa-oracle/rust-application/casa" --summary-output "{{justfile_directory()}}/target/t43-t44-casa-oracle/t44-comparison.json"
 
+# Focused #532 joint continuum-line reconstruction contract.
+imaging-t46-joint-continuum-line:
+    just arch-check
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-model --test compiled_problem t46_
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction --test continuum_transform t46_sequential_uvcontsub_anchor_v1_matches_frozen_casa_row -- --exact
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction --test mtmfs_block_normal t46_
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-products --test taylor_products t46_
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --lib t46_
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test continuum_application t46_application_executes_joint_continuum_line_through_one_native_route -- --exact
+
 release-perf:
     bash scripts/test-release-perf.sh
 
