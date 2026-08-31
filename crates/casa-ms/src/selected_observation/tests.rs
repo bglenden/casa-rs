@@ -3,7 +3,7 @@
 use super::{
     BoundObservationSource, BoundSelectedObservation, ObservationSourceBinding,
     SelectedObservationContentBudget, SelectedObservationRow, SelectedObservationTraversalError,
-    bound_observation::consume_validated_stream,
+    access::validate_input_weight_group, bound_observation::consume_validated_stream,
 };
 use crate::subtables::SubTable;
 use crate::{
@@ -32,7 +32,7 @@ use casa_imaging_model::{
     ProductNormalization, ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
     Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
     ReconstructionControls, ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy,
-    RowSelection, ScientificContract, SelectedColumns, SelectedMainRow,
+    RowSelection, ScientificContract, SelectedColumns, SelectedInputWeightGroup, SelectedMainRow,
     SelectedObservationGenerationId, SelectedObservationInspectionError,
     SelectedObservationPassError, SelectedObservationRunChannel, SelectedObservationRunCorrelation,
     SelectedObservationRunRow, SelectedObservationSample, SelectedRows, SelectedSpectralEvaluation,
@@ -327,6 +327,158 @@ fn selected_projection_preserves_cell_flags_and_derives_parallel_hand_group_flag
             .all(|sample| !sample.parallel_hand_group_flag),
         "other row/channel groups remain usable"
     );
+}
+
+#[test]
+fn block_traversal_reports_one_canonical_unequal_parallel_hand_weight_group() {
+    let directory = tempfile::tempdir().expect("temporary paired-weight fixture");
+    let path = directory.path().join("paired-weight.ms");
+    generate_fixture(&path);
+
+    let mut measurement_set = MeasurementSet::open(&path).expect("open paired-weight fixture");
+    let mut weights = match measurement_set
+        .main_table()
+        .cell_accessor(0, "WEIGHT")
+        .and_then(|cell| cell.array())
+        .expect("read WEIGHT cell")
+        .clone()
+    {
+        ArrayValue::Float32(weights) => weights,
+        other => panic!("WEIGHT must be Float32, found {:?}", other.primitive_type()),
+    };
+    {
+        let mut elements = weights.iter_mut();
+        *elements.next().expect("first parallel-hand weight") = 3.0;
+        *elements.next().expect("last parallel-hand weight") = 7.0;
+        assert!(elements.next().is_none(), "fixture has exactly two hands");
+    }
+    measurement_set
+        .main_table_mut()
+        .cell_accessor_mut(0, "WEIGHT")
+        .expect("open WEIGHT cell for mutation")
+        .set(Value::Array(ArrayValue::Float32(weights)))
+        .expect("persist unequal parallel-hand weights");
+    measurement_set.save().expect("save paired-weight fixture");
+    drop(measurement_set);
+
+    let problem = compiled_problem(&path, 2);
+    let logical_source = &problem.inputs().observation_snapshot().sources()[0];
+    let observation = BoundSelectedObservation::open(
+        &problem,
+        test_measures(&problem),
+        vec![ObservationSourceBinding::new(
+            source_state(logical_source),
+            bound_content_budget_for_rows(&problem, logical_source, 2, 1),
+        )],
+    )
+    .expect("bind paired-weight fixture");
+    let (mut source, mut consumer) = observation
+        .into_block_stream(&problem)
+        .expect("split paired-weight traversal");
+    let mut storage = source.create_storage(0);
+    assert!(
+        source
+            .fill_next(&mut storage)
+            .expect("fill paired-weight block")
+            .is_some()
+    );
+    let mut reported = Vec::new();
+    consumer
+        .consume(&storage, |run| {
+            reported.extend(run.samples().map(|sample| {
+                let selected = sample.selected();
+                (
+                    selected.address().physical_row,
+                    selected.address().channel_index,
+                    selected.address().correlation_index,
+                    selected.input_weight(),
+                    selected.input_weight_group().endpoints(),
+                    selected.input_weight_group().is_density_owner(),
+                )
+            }));
+            Ok::<_, Infallible>(())
+        })
+        .expect("consume paired-weight block");
+
+    assert_eq!(reported[0].0, 0);
+    assert_eq!(reported[0].1, reported[1].1);
+    assert_eq!(reported[0].2, 0);
+    assert_eq!(reported[1].2, 1);
+    assert_eq!(reported[0].3, 3.0);
+    assert_eq!(reported[1].3, 7.0);
+    assert_eq!(reported[0].4, (3.0, Some(7.0)));
+    assert_eq!(reported[1].4, (3.0, Some(7.0)));
+    assert!(reported[0].5, "first correlation owns density");
+    assert!(!reported[1].5, "paired correlation reuses that density");
+}
+
+#[test]
+fn imaging_weight_groups_reject_ambiguous_or_mixed_multi_correlation_layouts() {
+    let products = |types: &[CorrelationType]| {
+        types
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(index, correlation_type)| {
+                CorrelationProduct::new(index as u32, correlation_type)
+            })
+            .collect::<Vec<_>>()
+    };
+    for valid in [
+        products(&[CorrelationType::CircularRl]),
+        products(&[CorrelationType::CircularRr, CorrelationType::CircularLl]),
+        products(&[
+            CorrelationType::CircularRr,
+            CorrelationType::CircularRl,
+            CorrelationType::CircularLl,
+        ]),
+        products(&[
+            CorrelationType::CircularRr,
+            CorrelationType::CircularRl,
+            CorrelationType::CircularLr,
+            CorrelationType::CircularLl,
+        ]),
+        products(&[
+            CorrelationType::LinearXx,
+            CorrelationType::LinearXy,
+            CorrelationType::LinearYx,
+            CorrelationType::LinearYy,
+        ]),
+    ] {
+        validate_input_weight_group(&valid, 0).expect("canonical imaging-weight group");
+    }
+    for invalid in [
+        products(&[]),
+        products(&[CorrelationType::CircularRr, CorrelationType::CircularRl]),
+        products(&[CorrelationType::CircularRl, CorrelationType::CircularLr]),
+        products(&[
+            CorrelationType::CircularRr,
+            CorrelationType::LinearXy,
+            CorrelationType::CircularLl,
+        ]),
+        products(&[
+            CorrelationType::CircularRr,
+            CorrelationType::CircularLr,
+            CorrelationType::CircularRl,
+            CorrelationType::CircularLl,
+        ]),
+        products(&[
+            CorrelationType::CircularRr,
+            CorrelationType::CircularRl,
+            CorrelationType::CircularRl,
+            CorrelationType::CircularLl,
+        ]),
+        products(&[CorrelationType::CircularRr, CorrelationType::LinearYy]),
+    ] {
+        assert!(matches!(
+            validate_input_weight_group(&invalid, 7),
+            Err(
+                super::BoundObservationSourceError::UnsupportedImagingWeightCorrelationGroup {
+                    polarization_id: 7
+                }
+            )
+        ));
+    }
 }
 
 #[test]
@@ -2363,7 +2515,8 @@ fn refillable_block_stream_matches_scalar_traversal_and_returns_the_owner() {
     );
     let expected_scratch = 2
         * (size_of::<SelectedObservationRunCorrelation>()
-            + size_of::<SelectedSpectralEvaluation>());
+            + size_of::<SelectedSpectralEvaluation>())
+        + size_of::<SelectedInputWeightGroup>();
     assert_eq!(
         measurements.peak_consumer_scratch_current_bytes(),
         expected_scratch as u64

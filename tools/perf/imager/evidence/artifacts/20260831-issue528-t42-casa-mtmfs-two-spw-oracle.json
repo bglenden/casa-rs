@@ -1,0 +1,696 @@
+{
+  "schema": "casa-rs-t42-casa-mtmfs-oracle-receipt-v1",
+  "role": "focused_small_multi_spw_casa_correctness_oracle_not_performance_evidence",
+  "issue": 528,
+  "ticket": "T42",
+  "status": "complete",
+  "created_utc": "2026-08-31T00:58:47Z",
+  "distribution": {
+    "binary_oracle_committed": false,
+    "source_payload_committed": false,
+    "reason": "The NPZ contains selected real visibility data and the local casatestdata checkout has no recorded redistribution license.",
+    "reproduction": "Resolve the source through CASA_RS_TESTDATA_ROOT and run the checked-in corrected recipe. The original frozen payload remains identified by frozen_extractor_sha256 and is intentionally not regenerated."
+  },
+  "casa": {
+    "casatasks_version": "6.7.6.14",
+    "casatools_version": "6.7.6-14",
+    "python": "3.12.4 (v3.12.4:8e8a4baf65, Jun  6 2024, 17:33:18) [Clang 13.0.0 (clang-1300.0.29.30)]",
+    "platform": "macOS-26.6.2-arm64-arm-64bit",
+    "successful_log_sha256": "c07c9c5797f49ec8f29bb3b35e34ca778d89f3f0eec77fb6959b614393f1818b",
+    "tclean_wall_seconds": 0.333386,
+    "successful_runner_wall_seconds": 12.690741041999999,
+    "direct_mount_attempt": {
+      "reason": "casacore Operation not supported when releasing SMB table.lock",
+      "runner_wall_seconds": 3.166301417,
+      "status": "failed_before_imaging"
+    }
+  },
+  "repositories": {
+    "casa_rs_head": "6f66432f5a95df1e098d3347cba1ce837ca14e83",
+    "runner": "scripts/bench-imager-vs-casa.sh",
+    "runner_sha256": "4b58520d6871bfd269b26066a84f95bc3e1c0762308672a342ba8b72ab7064f1",
+    "reproduction_recipe": "tools/perf/imager/experiments/issue528_t42_mtmfs_casa_oracle.py",
+    "reproduction_recipe_sha256": "46756d54aedf47dd2147f3ea4b33f915faa478e5a1937905b607e8cafe27816d",
+    "frozen_extractor_sha256": "2b20796534e0537c59ad6f6c402e6ec4f0fa7f3ae3c7eb301c717e069d06f065",
+    "casa_source_normalization": {
+      "multi_term": "CASA/casatools/src/code/synthesis/ImagerObjects/SIImageStoreMultiTerm.cc:845,891",
+      "common": "CASA/casatools/src/code/synthesis/ImagerObjects/SIImageStore.cc:2923,2971",
+      "taylor_weighting": "CASA/casatools/src/code/synthesis/TransformMachines2/MultiTermFTNew.cc:217"
+    },
+    "casatestdata": {
+      "remote": "https://open-bitbucket.nrao.edu/scm/CASA/casatestdata.git",
+      "observed_checkout_head_at_receipt_capture": "f661170943a0c6eafd6cd0b51ed09ddcb7b36f78",
+      "dataset_last_change_commit": "b9761ca7b47f85559ac3491a284703cbb29d44ec",
+      "dataset_git_tree": "c4d43d66b2ad562ce88be5a737399dd7287d1ac5"
+    }
+  },
+  "input_fixture": {
+    "resolver": "CASA_RS_TESTDATA_ROOT",
+    "tier": "slow-parity",
+    "relative_path": "measurementset/vla/ref_vlass_wtsp_creation.ms",
+    "tree_sha256_excluding_table_lock": "9ddc680001586f6133c7f0c1dd15902d640e58244b4a4f8f38d1bd246b22608d",
+    "file_count_excluding_table_lock": 104,
+    "bytes_excluding_table_lock": 105705862,
+    "physical_row_count": 1956,
+    "selected_row_count": 24,
+    "selected_physical_row_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23
+    ],
+    "selection_rule": "FIELD_ID == 0 and DATA_DESC_ID in [0,1], matching CASA spw='0~1:0~15'",
+    "field_name": "1232080+635024",
+    "spectral_windows": [
+      {
+        "measurement_frequency_reference_code": 5,
+        "name": "EVLA_S#A0C0#2",
+        "num_channels": 16,
+        "reference_frequency_hz": 1968000000,
+        "spw_id": 0,
+        "total_bandwidth_hz": 128000000
+      },
+      {
+        "measurement_frequency_reference_code": 5,
+        "name": "EVLA_S#A0C0#3",
+        "num_channels": 16,
+        "reference_frequency_hz": 2096000000,
+        "spw_id": 1,
+        "total_bandwidth_hz": 128000000
+      }
+    ]
+  },
+  "run": {
+    "preflight": "cargo run -q -p casa-test-support --bin casatestdata-preflight -- --tier slow-parity --require measurementset/vla/ref_vlass_wtsp_creation.ms",
+    "runner": "scripts/bench-imager-vs-casa.sh",
+    "runner_environment": {
+      "CASA_RS_CASA_PYTHON": "<CASA_PYTHON>",
+      "BENCH_REPEATS": "1",
+      "IMAGER_BENCH_SKIP_RUST": "1",
+      "IMAGER_BENCH_SKIP_PROFILE": "1",
+      "IMAGER_BENCH_KEEP_OUTPUT_ROOT": "<ARTIFACT_ROOT>/raw-run-local",
+      "IMAGER_BENCH_FIELD": "0",
+      "IMAGER_BENCH_PHASECENTER_FIELD": "0",
+      "IMAGER_BENCH_SPW": "0~1",
+      "IMAGER_BENCH_CHANNEL_START": "0",
+      "IMAGER_BENCH_CHANNEL_COUNT": "16",
+      "IMAGER_BENCH_SPECMODE": "mfs",
+      "IMAGER_BENCH_GRIDDER": "standard",
+      "IMAGER_BENCH_CASA_GRIDDER": "standard",
+      "IMAGER_BENCH_WEIGHTING": "natural",
+      "IMAGER_BENCH_DECONVOLVER": "mtmfs",
+      "IMAGER_BENCH_NTERMS": "2",
+      "IMAGER_BENCH_MODE": "dirty",
+      "IMAGER_BENCH_NITER": "0",
+      "IMAGER_BENCH_IMSIZE": "128",
+      "IMAGER_BENCH_CELL_ARCSEC": "2.5",
+      "IMAGER_BENCH_MS_STAGING": "copy",
+      "IMAGER_BENCH_TMP_ROOT": "<ARTIFACT_ROOT>/tmp"
+    },
+    "runner_argument": "<CASA_RS_TESTDATA_ROOT>/measurementset/vla/ref_vlass_wtsp_creation.ms",
+    "extractor_invocation": "<CASA_PYTHON> tools/perf/imager/experiments/issue528_t42_mtmfs_casa_oracle.py --artifact-root <ARTIFACT_ROOT> --casa-prefix <ARTIFACT_ROOT>/raw-run-local/casa/casa --casa-log <CASA_LOG> --tclean-wall-seconds 0.333386 --runner-wall-seconds 12.690741042 --created-utc 2026-08-31T00:58:47Z",
+    "parameters": {
+      "cell_arcsec": [
+        2.5,
+        2.5
+      ],
+      "datacolumn": "data",
+      "deconvolver": "mtmfs",
+      "field": "0",
+      "gridder": "standard",
+      "imsize": [
+        128,
+        128
+      ],
+      "niter": 0,
+      "normtype": "flatnoise",
+      "nterms": 2,
+      "outframe": "LSRK",
+      "parallel": false,
+      "pblimit": 0.2,
+      "perchanweightdensity": false,
+      "phasecenter_field": 0,
+      "specmode": "mfs",
+      "spw": "0~1:0~15",
+      "stokes": "I",
+      "weighting": "natural"
+    }
+  },
+  "spectral": {
+    "reference_frequency_hz": 2091980123.1178617,
+    "reference_frequency_f64_bits": 4746561208592076000,
+    "reference_frequency_hex": "0x1.f2c4556c78b0cp+30",
+    "input_frequency_frame": "TOPO",
+    "imaging_frequency_frame": "LSRK",
+    "taylor_basis_f32_bits_by_spw_channel": {
+      "0": [
+        3178416352,
+        3177389821,
+        3176363305,
+        3175336774,
+        3174310259,
+        3173283744,
+        3172257212,
+        3171230697,
+        3169514506,
+        3167461476,
+        3165408446,
+        3163355383,
+        3160099489,
+        3155993363,
+        3149657996,
+        3136988106
+      ],
+      "1": [
+        989501608,
+        1002173635,
+        1008509424,
+        1012615484,
+        1015871557,
+        1017924620,
+        1019977650,
+        1022030713,
+        1023746943,
+        1024773475,
+        1025800006,
+        1026826538,
+        1027853037,
+        1028879568,
+        1029906100,
+        1030932599
+      ]
+    },
+    "taylor_basis_f32_variant_counts_by_spw_channel": {
+      "0": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "1": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    }
+  },
+  "normalization": {
+    "dirty_taylor_terms": "CASA divides every residual/dirty Taylor term by sumwt.tt0; standard gridding has no additional spatial weight-image division",
+    "observed_psf0_peak_xy_casa_axis_order": [
+      64,
+      64
+    ],
+    "observed_psf0_positive_peak": 1,
+    "observed_psf_centres": [
+      1,
+      -0.009804494678974152,
+      0.0007522772648371756
+    ],
+    "observed_sum_weight_ratios_to_w0": [
+      1,
+      -0.009804493747651577,
+      0.0007522772066295147
+    ],
+    "psf_moments": "CASA divides P0, P1, and P2 by the positive maximum of unnormalized P0, processing P2 to P0; persisted P0 peak is one",
+    "sum_weights": "persisted raw Float moment sums W0, W1, W2"
+  },
+  "comparator": {
+    "basis": {
+      "comparison": "term 0 and each implementation's own formula are exact; CASA versus casa-rs term 1 uses the common normalized-RMS ceiling of 0.001",
+      "formula": "x=f32((f64(f32(frequency_lsrk_hz))-reference_frequency_hz)/reference_frequency_hz); basis=[f32(1),x]"
+    },
+    "frequency": {
+      "comparison": "CASA versus casa-rs uses the common normalized-RMS ceiling of 0.001; exact-bit differences remain diagnostic because the frozen CASA cvelfreqs extraction used verbose=false",
+      "frozen_oracle_note": "The frozen payload is retained without rerunning CASA. Future reproduction uses verbose=true so CASA initializes the observatory position on this cvelfreqs path."
+    },
+    "normal_block_mapping": {
+      "H[0,0]": "P0",
+      "H[0,1]": "P1",
+      "H[1,0]": "P1",
+      "H[1,1]": "P2"
+    },
+    "normalized_rms": {
+      "ceiling": 0.001,
+      "formula": "sqrt(mean((candidate-reference)^2 on shared valid support))/max(sqrt(mean(reference^2 on shared valid support)), reference_scale*1e-7)",
+      "reason_for_floor": "avoid an unstable relative denominator for symmetry-cancelled odd Taylor terms while retaining a scale-bound absolute test",
+      "reference_scale": {
+        "dirty_taylor_terms": "positive absolute peak of CASA D0",
+        "psf_moments": "positive peak of CASA P0"
+      }
+    },
+    "sum_weights": {
+      "ceiling": 0.001,
+      "formula": "abs(candidate-reference)/max(abs(reference),abs(W0)*1e-7)"
+    },
+    "valid_support": {
+      "array": "valid_support_bool",
+      "formula": "logical AND of CASA psf.tt0/1/2 and residual.tt0/1 masks and finite payloads",
+      "required_candidate_rule": "compare only where both candidate support and CASA valid_support_bool are true; report support disagreement separately"
+    }
+  },
+  "oracle_artifacts": {
+    "npz_file": "casa-mtmfs-two-spw-oracle.npz",
+    "npz_size_bytes": 309356,
+    "npz_sha256": "f2e2530de34771209589d97c720ec6cd6647e963c613b0284f10d5287741e648",
+    "frozen_manifest_sha256": "8058c47986ed28fef86a9a723137400b977caefe19f63c2ffd3b2d242efc29db",
+    "raw_product_tree_sha256_excluding_table_lock": "a99f197e1fb7cfd0b4a7cf85cce3eff24a7dd6e76a830bf057301efc00f5b45b",
+    "raw_product_file_count_excluding_table_lock": 133,
+    "raw_product_bytes_excluding_table_lock": 2438140,
+    "valid_support": {
+      "bytes_sha256": "111ce3c2a38d83a2e4706bde4abddd509d7f8248116c6832b06745bdc349e09f",
+      "false_count": 0,
+      "shape": [
+        128,
+        128
+      ],
+      "true_count": 16384
+    },
+    "arrays": {
+      "channel_flag_bool": {
+        "shape": [
+          24,
+          4,
+          16
+        ],
+        "dtype": "|b1",
+        "bytes_sha256": "c3179d8a31f1f1099a1d703cd1f93c3e807f79fd1f1e68da1e4fde4389432ee2",
+        "finite_count": 1536,
+        "support_count": 1536
+      },
+      "channel_width_hz_f64": {
+        "shape": [
+          2,
+          16
+        ],
+        "dtype": "<f8",
+        "bytes_sha256": "598df828932b2da9525db9c0d5e323febf19656cae58d3673f9021c1407c85a9",
+        "finite_count": 32,
+        "support_count": 32
+      },
+      "correlation_product_i32": {
+        "shape": [
+          2,
+          4
+        ],
+        "dtype": "<i4",
+        "bytes_sha256": "b7af13e1e62ba4d41770eb9a42700a44c15c8b9a8e3421d67fed09b3c3b521c6",
+        "finite_count": 8,
+        "support_count": 8
+      },
+      "correlation_type_code_i32": {
+        "shape": [
+          4
+        ],
+        "dtype": "<i4",
+        "bytes_sha256": "f3e0813c89d0991f07fbb5027a68c0cb809e1effc0c1e8974664bd2e57b50024",
+        "finite_count": 4,
+        "support_count": 4
+      },
+      "data_description_polarization_id_i32": {
+        "shape": [
+          3
+        ],
+        "dtype": "<i4",
+        "bytes_sha256": "15ec7bf0b50732b49f8228e07d24365338f9e3ab994b00af08e5a3bffe55fd8b",
+        "finite_count": 3,
+        "support_count": 3
+      },
+      "data_description_spw_id_i32": {
+        "shape": [
+          3
+        ],
+        "dtype": "<i4",
+        "bytes_sha256": "ad5dc1478de06a4c2728ea528bd9361a4b945e92a414bf4d180cedaaeaa5f4cc",
+        "finite_count": 3,
+        "support_count": 3
+      },
+      "dirty_masks_bool": {
+        "shape": [
+          2,
+          128,
+          128
+        ],
+        "dtype": "|b1",
+        "bytes_sha256": "bfa5a24faa8ddf576edcc46f4f05e2459ee4a383b8dc14ff7dba0056b9c59ed0",
+        "finite_count": 32768,
+        "support_count": 32768
+      },
+      "dirty_taylor_normalized_f32": {
+        "shape": [
+          2,
+          128,
+          128
+        ],
+        "dtype": "<f4",
+        "bytes_sha256": "afc7f46ad54328632035d9efb84719903b0d8509d3ddfa26267e4b26b06ef503",
+        "finite_count": 32768,
+        "support_count": 32768
+      },
+      "exposure_seconds_f64": {
+        "shape": [
+          24
+        ],
+        "dtype": "<f8",
+        "bytes_sha256": "fe706d6e4a049c000de4e3755c3ad348ef802b994e7371be881b1b1770ccc3ef",
+        "finite_count": 24,
+        "support_count": 24
+      },
+      "field_phase_direction_rad_f64": {
+        "shape": [
+          2,
+          1
+        ],
+        "dtype": "<f8",
+        "bytes_sha256": "df98e4330be243e492d410e352949282ab8bbe3abdb0774c3fcf1132f2eafc53",
+        "finite_count": 2,
+        "support_count": 2
+      },
+      "frequency_lsrk_by_row_hz_f64": {
+        "shape": [
+          24,
+          16
+        ],
+        "dtype": "<f8",
+        "bytes_sha256": "b5bb1282ae7e8e6d1eb8eaf3582802b08c0962616b9f1199d50fc3876392b51c",
+        "finite_count": 384,
+        "support_count": 384
+      },
+      "frequency_topo_hz_f64": {
+        "shape": [
+          2,
+          16
+        ],
+        "dtype": "<f8",
+        "bytes_sha256": "1d60014e08e8537915805a3c82eaa15898634a8755627dad2b0c137cf2cedf64",
+        "finite_count": 32,
+        "support_count": 32
+      },
+      "input_weight_f32": {
+        "shape": [
+          24,
+          4
+        ],
+        "dtype": "<f4",
+        "bytes_sha256": "47e0da879a8aa6404342856a6b17c92bc2eaeb4a56a3b1f1183c1e4addea4e37",
+        "finite_count": 96,
+        "support_count": 96
+      },
+      "interval_seconds_f64": {
+        "shape": [
+          24
+        ],
+        "dtype": "<f8",
+        "bytes_sha256": "fe706d6e4a049c000de4e3755c3ad348ef802b994e7371be881b1b1770ccc3ef",
+        "finite_count": 24,
+        "support_count": 24
+      },
+      "main_antenna1_i32": {
+        "shape": [
+          24
+        ],
+        "dtype": "<i4",
+        "bytes_sha256": "03eb597594ee572c206e1f8222067fa555d11996dcef47931e50aeda489d2737",
+        "finite_count": 24,
+        "support_count": 24
+      },
+      "main_antenna2_i32": {
+        "shape": [
+          24
+        ],
+        "dtype": "<i4",
+        "bytes_sha256": "b2f40d5719bae2455328afaa5b685e8b264fec18bbac1d89ded951c5c3a33ba9",
+        "finite_count": 24,
+        "support_count": 24
+      },
+      "main_array_id_i32": {
+        "shape": [
+          24
+        ],
+        "dtype": "<i4",
+        "bytes_sha256": "2ea9ab9198d1638007400cd2c3bef1cc745b864b76011a0e1bc52180ac6452d4",
+        "finite_count": 24,
+        "support_count": 24
+      },
+      "main_data_desc_id_i32": {
+        "shape": [
+          24
+        ],
+        "dtype": "<i4",
+        "bytes_sha256": "fb4716091f372c837f2ca66d83224ce872545512d5f2d9172e923771b1125d91",
+        "finite_count": 24,
+        "support_count": 24
+      },
+      "main_feed1_i32": {
+        "shape": [
+          24
+        ],
+        "dtype": "<i4",
+        "bytes_sha256": "2ea9ab9198d1638007400cd2c3bef1cc745b864b76011a0e1bc52180ac6452d4",
+        "finite_count": 24,
+        "support_count": 24
+      },
+      "main_feed2_i32": {
+        "shape": [
+          24
+        ],
+        "dtype": "<i4",
+        "bytes_sha256": "2ea9ab9198d1638007400cd2c3bef1cc745b864b76011a0e1bc52180ac6452d4",
+        "finite_count": 24,
+        "support_count": 24
+      },
+      "main_field_id_i32": {
+        "shape": [
+          24
+        ],
+        "dtype": "<i4",
+        "bytes_sha256": "2ea9ab9198d1638007400cd2c3bef1cc745b864b76011a0e1bc52180ac6452d4",
+        "finite_count": 24,
+        "support_count": 24
+      },
+      "main_observation_id_i32": {
+        "shape": [
+          24
+        ],
+        "dtype": "<i4",
+        "bytes_sha256": "2ea9ab9198d1638007400cd2c3bef1cc745b864b76011a0e1bc52180ac6452d4",
+        "finite_count": 24,
+        "support_count": 24
+      },
+      "main_scan_number_i32": {
+        "shape": [
+          24
+        ],
+        "dtype": "<i4",
+        "bytes_sha256": "b4e3c7b03ba3523083254133d0002f91ad1571890149a15eb0413adab11f9d3a",
+        "finite_count": 24,
+        "support_count": 24
+      },
+      "main_state_id_i32": {
+        "shape": [
+          24
+        ],
+        "dtype": "<i4",
+        "bytes_sha256": "e727c12294ad04ff6a20df51f8a36147cc425ebba101080480038b2f906173f5",
+        "finite_count": 24,
+        "support_count": 24
+      },
+      "ms_row_id": {
+        "shape": [
+          24
+        ],
+        "dtype": "<i8",
+        "bytes_sha256": "088889b8071756d3559dc2172e525644f0be09d4b3fb26a697070bddcb805338",
+        "finite_count": 24,
+        "support_count": 24
+      },
+      "psf_masks_bool": {
+        "shape": [
+          3,
+          128,
+          128
+        ],
+        "dtype": "|b1",
+        "bytes_sha256": "47eda198d99419c3aa80cb0420bcdf4f707a5238567cdeb4c621c2a8215e328c",
+        "finite_count": 49152,
+        "support_count": 49152
+      },
+      "psf_moments_normalized_f32": {
+        "shape": [
+          3,
+          128,
+          128
+        ],
+        "dtype": "<f4",
+        "bytes_sha256": "6f2539c93002a1de2e4b43c304ccb8c344b443bdf564887b0c2392d4eb385358",
+        "finite_count": 49152,
+        "support_count": 49152
+      },
+      "reference_frequency_f64_bits": {
+        "shape": [],
+        "dtype": "<u8",
+        "bytes_sha256": "247559d0697be7617b4998f974bf136ec4e674979f143bb966fd36a74a853239",
+        "finite_count": 1,
+        "support_count": 1
+      },
+      "reference_frequency_hz_f64": {
+        "shape": [],
+        "dtype": "<f8",
+        "bytes_sha256": "247559d0697be7617b4998f974bf136ec4e674979f143bb966fd36a74a853239",
+        "finite_count": 1,
+        "support_count": 1
+      },
+      "row_flag_bool": {
+        "shape": [
+          24
+        ],
+        "dtype": "|b1",
+        "bytes_sha256": "9d908ecfb6b256def8b49a7c504e6c889c4b0e41fe6ce3e01863dd7b61a20aa0",
+        "finite_count": 24,
+        "support_count": 24
+      },
+      "selected_spw_id_i32": {
+        "shape": [
+          2
+        ],
+        "dtype": "<i4",
+        "bytes_sha256": "01acecb507abfe1a354aa8064f4af5d3f1acd019e37db3c11c97523b71c76e9d",
+        "finite_count": 2,
+        "support_count": 2
+      },
+      "sum_weight_masks_bool": {
+        "shape": [
+          3
+        ],
+        "dtype": "|b1",
+        "bytes_sha256": "75c8fd04ad916aec3e3d5cb76a452b116b3d4d0912a0a485e9fb8e3d240e210c",
+        "finite_count": 3,
+        "support_count": 3
+      },
+      "sum_weights_f32": {
+        "shape": [
+          3
+        ],
+        "dtype": "<f4",
+        "bytes_sha256": "f7b25fd91e271bbbe1849d8f075c5d7716972a8cfd4cfbfe11833d5723038de9",
+        "finite_count": 3,
+        "support_count": 3
+      },
+      "taylor_basis_f32": {
+        "shape": [
+          2,
+          24,
+          16
+        ],
+        "dtype": "<f4",
+        "bytes_sha256": "74c115c0ab381b3df431d31b27d68f3ccc8ea0816fb4fe810ec7c7d875111d1c",
+        "finite_count": 768,
+        "support_count": 768
+      },
+      "taylor_basis_f32_bits": {
+        "shape": [
+          2,
+          24,
+          16
+        ],
+        "dtype": "<u4",
+        "bytes_sha256": "74c115c0ab381b3df431d31b27d68f3ccc8ea0816fb4fe810ec7c7d875111d1c",
+        "finite_count": 768,
+        "support_count": 768
+      },
+      "time_centroid_mjd_seconds_f64": {
+        "shape": [
+          24
+        ],
+        "dtype": "<f8",
+        "bytes_sha256": "a6644681d4ec90806650742f4f2ed3e66a6b6e4addd8e2f29a221bdb74c7c238",
+        "finite_count": 24,
+        "support_count": 24
+      },
+      "time_mjd_seconds_f64": {
+        "shape": [
+          24
+        ],
+        "dtype": "<f8",
+        "bytes_sha256": "a6644681d4ec90806650742f4f2ed3e66a6b6e4addd8e2f29a221bdb74c7c238",
+        "finite_count": 24,
+        "support_count": 24
+      },
+      "uvw_m_f64": {
+        "shape": [
+          24,
+          3
+        ],
+        "dtype": "<f8",
+        "bytes_sha256": "50a1bab6c2940726d5bb791ba1078d07c153e7398bb0d756ffd2ae561fa6ef4d",
+        "finite_count": 72,
+        "support_count": 72
+      },
+      "valid_support_bool": {
+        "shape": [
+          128,
+          128
+        ],
+        "dtype": "|b1",
+        "bytes_sha256": "111ce3c2a38d83a2e4706bde4abddd509d7f8248116c6832b06745bdc349e09f",
+        "finite_count": 16384,
+        "support_count": 16384
+      },
+      "visibility_data_complex64": {
+        "shape": [
+          24,
+          4,
+          16
+        ],
+        "dtype": "<c8",
+        "bytes_sha256": "b2c11840cf91a5d228f8ff966d253c2b3a65fa80f3d998343bf19fa08603d6e3",
+        "finite_count": 1536,
+        "support_count": 1536
+      }
+    }
+  }
+}

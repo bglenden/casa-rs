@@ -3,14 +3,14 @@
 use casa_imaging_model::{
     CompiledGeometryId, CompiledProblem, CompiledProblemId, MeasurementSetIdentity,
     ObservationProvenanceId, ObservationSnapshotId, ObservationSourceState,
-    SelectedObservationCommitmentId, SelectedObservationGenerationId,
+    SelectedInputWeightGroup, SelectedObservationCommitmentId, SelectedObservationGenerationId,
     SelectedObservationInspection, SelectedObservationInspectionError,
     SelectedObservationPassError, SelectedObservationRunChannel, SelectedObservationRunCorrelation,
     SelectedObservationRunRow, SelectedObservationSample, SelectedObservationSampleView,
     SelectedSpectralEvaluation,
 };
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     error::Error,
     fmt,
     mem::size_of,
@@ -24,7 +24,7 @@ use thiserror::Error;
 
 use crate::selected_observation_buffer::SelectedObservationBufferFillReport;
 
-use super::access::{BlockVisitError, SelectedRowReplay};
+use super::access::{BlockVisitError, ProjectedSelectedObservationSample, SelectedRowReplay};
 use super::{
     BoundObservationSamples, BoundObservationSource, BoundObservationSourceError,
     SelectedObservationBlock, SelectedObservationContentBudget, SelectedObservationMeasures,
@@ -733,22 +733,40 @@ impl BoundSelectedObservation {
             .checked_add(1)
             .ok_or(SelectedObservationTraversalError::TraversalIdentityExhausted)?;
         let access_binding = self.access_binding;
-        let samples = self
+        let mut samples = self
             .selected_samples(problem)
             .map_err(SelectedObservationTraversalError::Binding)?;
         let measurements = Rc::clone(&samples.measurements);
         let sources = &self.sources;
         let mut spectral_evaluator = SpectralEvaluationProjector::new();
-        let selected = samples.map(|sample| sample.map_err(TraversalPassError::Source));
+        let pending_weight_group = Cell::new(None);
+        let selected = std::iter::from_fn(|| {
+            samples.next_projected().map(|projected| {
+                projected
+                    .map(|projected| {
+                        pending_weight_group.set(Some(projected.input_weight_group));
+                        projected.selected
+                    })
+                    .map_err(TraversalPassError::Source)
+            })
+        });
         let (generation_id, sample_count) =
             match problem.inspect_selected_observation(selected, |sample| {
+                let input_weight_group = pending_weight_group
+                    .take()
+                    .ok_or(BoundObservationSourceError::StoredSampleShapeMismatch)
+                    .map_err(TraversalPassError::Source)?;
                 let source = sources
                     .iter()
                     .find(|source| source.source_identity() == sample.address.measurement_set)
                     .ok_or(BoundObservationSourceError::ProblemSourceMismatch)
                     .map_err(TraversalPassError::Source)?;
                 let projected = spectral_evaluator
-                    .project(problem, sample.as_view(), source.geometry_engine())
+                    .project(
+                        problem,
+                        sample.as_view().with_input_weight_group(input_weight_group),
+                        source.geometry_engine(),
+                    )
                     .map_err(TraversalPassError::Source)?;
                 consume(projected).map_err(TraversalPassError::Consumer)
             }) {
@@ -1054,6 +1072,9 @@ impl SelectedObservationBlockConsumer<'_> {
                                     .checked_mul(size_of::<SelectedSpectralEvaluation>())
                                     .and_then(|evaluations| bytes.checked_add(evaluations))
                             })
+                            .and_then(|bytes| {
+                                bytes.checked_add(size_of::<SelectedInputWeightGroup>())
+                            })
                             .ok_or(SelectedObservationTraversalError::MeasurementOverflow)?,
                     );
                     consume(SelectedObservationTraversalRun::new(
@@ -1089,6 +1110,7 @@ impl SelectedObservationBlockConsumer<'_> {
                     .checked_mul(size_of::<SelectedSpectralEvaluation>())
                     .and_then(|evaluations| bytes.checked_add(evaluations))
             })
+            .and_then(|bytes| bytes.checked_add(size_of::<SelectedInputWeightGroup>()))
             .ok_or(SelectedObservationTraversalError::MeasurementOverflow)?;
         let peak_scratch_current_bytes = self.peak_scratch_current_bytes;
         let rebound_sample_count = self.rebound_sample_count;
@@ -1800,12 +1822,21 @@ impl Iterator for BoundSelectedObservationSamples<'_> {
     type Item = Result<SelectedObservationSample, BoundObservationSourceError>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        self.next_projected()
+            .map(|result| result.map(|projected| projected.selected))
+    }
+}
+
+impl BoundSelectedObservationSamples<'_> {
+    fn next_projected(
+        &mut self,
+    ) -> Option<Result<ProjectedSelectedObservationSample, BoundObservationSourceError>> {
         if self.finished {
             return None;
         }
         loop {
             if let Some(current) = &mut self.current {
-                if let Some(sample) = current.next() {
+                if let Some(sample) = current.next_projected() {
                     if sample.is_err() {
                         self.finished = true;
                     }

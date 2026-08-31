@@ -17,7 +17,7 @@ use casa_imaging_model::{
     DirectionFrame, Epoch, FrequencyFrame, MeasurementSetReadAccess, MissingPointingPolicy,
     ObservationSelection, ObservationSource, ObservationSourceState, PhaseCentreLaw,
     PointingCentreLaw, PointingDirectionColumn, PointingExtrapolation, PointingInterpolation,
-    PointingTimeSampling, SelectedMainRow, SelectedObservationRunChannel,
+    PointingTimeSampling, SelectedInputWeightGroup, SelectedMainRow, SelectedObservationRunChannel,
     SelectedObservationRunCorrelation, SelectedObservationRunRow, SelectedObservationSample,
     SelectedObservationSampleView, SelectedPointingDirections, SelectedPredictionTarget,
     SelectedRowsBuilder, SelectedSampleCoordinates, SelectedSampleMetadata,
@@ -563,10 +563,24 @@ pub(crate) struct BoundObservationSamples<'a> {
     measurements: Rc<RefCell<SelectedObservationTraversalMeasurementsBuilder>>,
 }
 
+pub(super) struct ProjectedSelectedObservationSample {
+    pub(super) selected: SelectedObservationSample,
+    pub(super) input_weight_group: SelectedInputWeightGroup,
+}
+
 impl Iterator for BoundObservationSamples<'_> {
     type Item = Result<SelectedObservationSample, BoundObservationSourceError>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        self.next_projected()
+            .map(|result| result.map(|projected| projected.selected))
+    }
+}
+
+impl BoundObservationSamples<'_> {
+    pub(super) fn next_projected(
+        &mut self,
+    ) -> Option<Result<ProjectedSelectedObservationSample, BoundObservationSourceError>> {
         if self.finished {
             return None;
         }
@@ -590,6 +604,20 @@ impl Iterator for BoundObservationSamples<'_> {
                     let Some(stored) = stored else {
                         self.finished = true;
                         return Some(Err(BoundObservationSourceError::StoredSampleShapeMismatch));
+                    };
+                    let input_weight_group = match selected_input_weight_group(
+                        &block.buffer,
+                        coordinates,
+                        channel_offset,
+                        self.row_offset,
+                    ) {
+                        Some(group) => group.with_density_owner(self.correlation_ordinal == 0),
+                        None => {
+                            self.finished = true;
+                            return Some(Err(
+                                BoundObservationSourceError::StoredSampleShapeMismatch,
+                            ));
+                        }
                     };
                     let parallel_hand_group_flag =
                         if product.correlation_type().contributes_to_stokes_i() {
@@ -630,7 +658,10 @@ impl Iterator for BoundObservationSamples<'_> {
                     if sample.is_err() {
                         self.finished = true;
                     }
-                    return Some(sample);
+                    return Some(sample.map(|selected| ProjectedSelectedObservationSample {
+                        selected,
+                        input_weight_group,
+                    }));
                 }
             }
             self.recycle_active_block();
@@ -662,9 +693,7 @@ impl Iterator for BoundObservationSamples<'_> {
             return None;
         }
     }
-}
 
-impl BoundObservationSamples<'_> {
     fn advance(&mut self, channel_count: usize, product_count: usize) {
         self.correlation_ordinal += 1;
         if self.correlation_ordinal == product_count {
@@ -996,6 +1025,38 @@ fn project_stored_run_correlation(
     }
 }
 
+fn selected_input_weight_group(
+    buffer: &SelectedObservationBuffer,
+    coordinates: &SelectedCoordinates,
+    channel: Option<usize>,
+    row: usize,
+) -> Option<SelectedInputWeightGroup> {
+    let channel = channel?;
+    let first = coordinates.products.first()?;
+    let first_weight = buffer
+        .sample(
+            channel,
+            row,
+            usize::try_from(first.correlation_index()).ok()?,
+        )?
+        .input_weight();
+    if coordinates.products.len() == 1 {
+        return Some(SelectedInputWeightGroup::single(first_weight));
+    }
+    let last = coordinates.products.last()?;
+    let last_weight = buffer
+        .sample(
+            channel,
+            row,
+            usize::try_from(last.correlation_index()).ok()?,
+        )?
+        .input_weight();
+    Some(SelectedInputWeightGroup::parallel_hands(
+        first_weight,
+        last_weight,
+    ))
+}
+
 /// Opaque caller-owned selected-observation storage block.
 ///
 /// Its retained storage can be returned to the source and refilled only after
@@ -1308,6 +1369,14 @@ pub enum BoundObservationSourceError {
         /// Polarization row whose correlation products differed.
         polarization_id: u32,
     },
+    /// Selected correlations do not define CASA's one unpolarized imaging-weight group.
+    #[error(
+        "selected POLARIZATION_ID {polarization_id} is not one correlation or a canonical circular/linear parallel-hand group"
+    )]
+    UnsupportedImagingWeightCorrelationGroup {
+        /// Polarization row whose selected products were ambiguous.
+        polarization_id: u32,
+    },
     /// A physical MAIN row index did not fit the host storage index domain.
     #[error("selected physical MAIN row index exceeds the host storage index domain")]
     PhysicalRowIndexOverflow,
@@ -1516,6 +1585,7 @@ fn selected_coordinates(
                 });
             }
         }
+        validate_input_weight_group(polarization.products(), data_description.polarization_id())?;
         coordinates.push(SelectedCoordinates {
             data_description,
             channels: channels.into_boxed_slice(),
@@ -1525,6 +1595,67 @@ fn selected_coordinates(
         });
     }
     Ok(coordinates.into_boxed_slice())
+}
+
+pub(super) fn validate_input_weight_group(
+    products: &[CorrelationProduct],
+    polarization_id: u32,
+) -> Result<(), BoundObservationSourceError> {
+    if products.len() == 1 {
+        return Ok(());
+    }
+    let valid = match (products.first(), products.last()) {
+        (Some(first), Some(last))
+            if first.correlation_type() == CorrelationType::CircularRr
+                && last.correlation_type() == CorrelationType::CircularLl =>
+        {
+            matches_canonical_correlation_order(
+                products,
+                &[
+                    CorrelationType::CircularRr,
+                    CorrelationType::CircularRl,
+                    CorrelationType::CircularLr,
+                    CorrelationType::CircularLl,
+                ],
+            )
+        }
+        (Some(first), Some(last))
+            if first.correlation_type() == CorrelationType::LinearXx
+                && last.correlation_type() == CorrelationType::LinearYy =>
+        {
+            matches_canonical_correlation_order(
+                products,
+                &[
+                    CorrelationType::LinearXx,
+                    CorrelationType::LinearXy,
+                    CorrelationType::LinearYx,
+                    CorrelationType::LinearYy,
+                ],
+            )
+        }
+        _ => false,
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(
+            BoundObservationSourceError::UnsupportedImagingWeightCorrelationGroup {
+                polarization_id,
+            },
+        )
+    }
+}
+
+fn matches_canonical_correlation_order(
+    products: &[CorrelationProduct],
+    canonical: &[CorrelationType; 4],
+) -> bool {
+    let mut remaining = canonical.iter();
+    products.iter().all(|product| {
+        remaining
+            .by_ref()
+            .any(|candidate| *candidate == product.correlation_type())
+    })
 }
 
 pub(crate) fn validate_selected_coordinates(
