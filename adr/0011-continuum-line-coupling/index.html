@@ -1,0 +1,1172 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>ADR-0011: Distinct sequential and joint continuum-line reconstruction - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#adr-0011-distinct-sequential-and-joint-continuum-line-reconstruction" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              ADR-0011: Distinct sequential and joint continuum-line reconstruction
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Task Parameters
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Task Parameters
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generated Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scientific Workbench
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Scientific Workbench
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../scientific-notebooks-and-assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Notebooks, Tutorials, Python, and AI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mac-native-gui-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Native macOS Product Spec
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Decision">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#coupled-measurement-and-normal-operators" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Coupled measurement and normal operators
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#identifiability-masks-and-regularization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Identifiability, masks, and regularization
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cycles-and-authoritative-generations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cycles and authoritative generations
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#products-and-error-propagation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Products and error propagation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ownership-seam" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ownership seam
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#acceptance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Acceptance
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#consequences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Consequences
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#alternatives-considered" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Alternatives considered
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#enforcement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Enforcement
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#drift-detection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Drift detection
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="adr-0011-distinct-sequential-and-joint-continuum-line-reconstruction">ADR-0011: Distinct sequential and joint continuum-line reconstruction<a class="headerlink" href="#adr-0011-distinct-sequential-and-joint-continuum-line-reconstruction" title="Permanent link">&para;</a></h1>
+<p>Status: accepted
+Date: 2026-08-31
+Truth class: normative
+Supersedes:
+Superseded by:</p>
+<h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
+<p>CASA-RS already supports CASA-compatible visibility-domain continuum fitting
+and subtraction followed by channel-local line reconstruction. That sequential
+transform is not a joint reconstruction: it fits each row and correlation,
+preserves the input sample weights, and does not represent covariance induced by
+the fit.</p>
+<p>The programme also calls for a true continuum-plus-line reconstruction. An
+unrestricted channel-local line basis contains the smooth continuum subspace,
+so merely placing Taylor and channel-local coefficients in one vector creates a
+singular, scientifically ambiguous decomposition. CASA supplies oracles for
+sequential subtraction, line cubes, and MT-MFS Taylor coupling, but source
+inspection found no same-field, same-pixel additive continuum-plus-line solver.</p>
+<p>Brian approved the decision below on issue #531 after the mathematical,
+product, error, CASA, and synthetic-evidence contracts were proposed.</p>
+<p>The CASA source study used checkout
+<code>61020062cee290f5466cffed5ec5032e0c7a3434</code>. Its relevant paths are
+<code>casatasks/src/private/task_uvcontsub.py</code> and
+<code>casatools/src/code/mstransform/TVI/UVContSubTVI.cc</code> for sequential
+visibility subtraction; <code>casatools/src/tools/image/image_cmpt.cc</code> and
+<code>casatools/src/code/imageanalysis/ImageAnalysis/ImageProfileFitter.cc</code> for
+post-imaging subtraction; <code>SynthesisImagerVi2.cc</code>, <code>SIMapperCollection.cc</code>, and
+<code>SIMapper.cc</code> for shared-residual multi-mapper execution; and
+<code>MultiTermMatrixCleaner.cc</code> for Taylor-only block coupling. The 2026 NRAO
+Synthesis Imaging Workshop spectral-line material independently describes
+<code>uvcontsub</code>, <code>imcontsub</code>, and <code>uvsub</code> as subtraction workflows, not a joint
+same-support inverse problem.</p>
+<h2 id="decision">Decision<a class="headerlink" href="#decision" title="Permanent link">&para;</a></h2>
+<p>CASA-RS supports two distinct spectral-coupling workflows:</p>
+<ol>
+<li><strong>Sequential continuum transform.</strong> The existing visibility-domain fit and
+   subtraction remains a complete native workflow composed before independent
+   channel-local line reconstruction.</li>
+<li><strong>Joint continuum-line reconstruction.</strong> A separate capability reconstructs
+   smooth continuum coefficients and channel-local line coefficients together
+   under an identifiable coupled contract.</li>
+</ol>
+<p>Neither workflow may silently degrade into the other. Joint reconstruction is
+not image-domain subtraction, two independent imaging runs, a shared restoring
+beam, CASA mixed-mapper overlap ownership, or MT-MFS Taylor coupling relabelled
+as continuum-line coupling.</p>
+<h3 id="coupled-measurement-and-normal-operators">Coupled measurement and normal operators<a class="headerlink" href="#coupled-measurement-and-normal-operators" title="Permanent link">&para;</a></h3>
+<p>Let <code>c</code> belong to the declared continuum coefficient space, <code>l</code> belong to the
+channel-local line coefficient space, and <code>d</code> be the selected unweighted
+visibility data. The joint measurement equation is</p>
+<div class="codehilite"><pre><span></span><code>d = A_c c + A_l l + n,             A = [ A_c  A_l ].
+</code></pre></div>
+
+<p>For one frozen data metric <code>W</code>, the authoritative right-hand side, residual,
+and normal operator are</p>
+<div class="codehilite"><pre><span></span><code>b = [ A_c* W d ]
+    [ A_l* W d ],
+
+g(c,l) = [ A_c* W (d - A_c c - A_l l) ]
+         [ A_l* W (d - A_c c - A_l l) ],
+
+H = [ A_c* W A_c   A_c* W A_l ]
+    [ A_l* W A_c   A_l* W A_l ].
+</code></pre></div>
+
+<p>Both off-diagonal blocks are mandatory and are adjoints under the declared
+inner products. The same globally frozen <code>W</code> owns flags, input weights, taper,
+and uniform or Briggs density weighting for all four blocks. No continuum or
+line owner may independently reinterpret or renormalize it.</p>
+<h3 id="identifiability-masks-and-regularization">Identifiability, masks, and regularization<a class="headerlink" href="#identifiability-masks-and-regularization" title="Permanent link">&para;</a></h3>
+<p>Joint reconstruction requires a declared nonempty Continuum Anchor Set on which
+the line coefficients are structurally zero. Continuum contributes across the
+whole selected spectral domain; line coefficients exist only on declared line
+support. The Continuum Anchor Set and line support are scientific commitments,
+not solver hints.</p>
+<p>Continuum and line spatial masks are independent and are bound with the
+spectral support into one immutable coupled reconstruction-mask generation. A
+shared mask is allowed only when explicitly compiled as the same two
+commitments; it is not an implicit default.</p>
+<p>The anchor samples must provide enough positively weighted, spectrally
+independent support for the continuum basis. Every active coupled solve must
+satisfy the Numerics Contract's rank and conditioning limits. Compilation or
+reconstruction fails closed when the support is empty, contradictory,
+underdetermined, nonfinite, or numerically dependent.</p>
+<p>The first joint capability introduces no tunable smoothness penalty and no
+covariance-blind soft prior. Its new regularization is the explicit hard anchor,
+line-support, and mask constraint. It may reuse already accepted continuum and
+line solver priors. A future soft spectral, spatial, positivity, or statistical
+prior is a new scientific contract rather than a compatible implementation
+detail.</p>
+<h3 id="cycles-and-authoritative-generations">Cycles and authoritative generations<a class="headerlink" href="#cycles-and-authoritative-generations" title="Permanent link">&para;</a></h3>
+<p>One joint Minor Cycle consumes one coupled view, makes one spatial/scale choice
+under one validity envelope, and returns one atomic Model Delta that may update
+continuum and line coefficients. Separate stopping decisions or independently
+committed component updates do not satisfy this contract.</p>
+<p>Every Major Cycle predicts the sum <code>A_c c + A_l l</code>, forms the one common
+complete-data residual, and retains all four normal blocks. Final complete-data
+reconciliation remains mandatory.</p>
+<p>One coupled Model Generation owns both coefficient families. The final Normal
+State Generation binds that model, the Selected Observation generation, frozen
+Weighting Generation, coupled mask generation, all four normal blocks, shared
+residual, Numerics Contract, and provenance. A continuum or line projection is
+not an independently authoritative model generation.</p>
+<h3 id="products-and-error-propagation">Products and error propagation<a class="headerlink" href="#products-and-error-propagation" title="Permanent link">&para;</a></h3>
+<p>One planned and sealed Product Generation publishes projections of the same
+coupled state:</p>
+<ul>
+<li>continuum coefficients and derived continuum products;</li>
+<li>the channel-local line model and restored line cube;</li>
+<li>the total model evaluated on the output spectral sampling;</li>
+<li>the one common residual from the final Normal State Generation; and</li>
+<li>masks, weights, PSFs, sensitivity/PB, beams, validity, and PB-corrected
+  members required by the selected Product Contract.</li>
+</ul>
+<p>A component-only residual is not authoritative. A restored total is legal only
+when the Product Contract gives the component restorations a compatible beam
+and normalization; it is never formed by adding products from independent
+runs.</p>
+<p>Joint parameter-error or covariance products may be published only from a
+declared approximation to the full active block inverse, including the
+continuum-line cross covariance. An MT-MFS-only covariance submatrix or CASA's
+empirical spectral-index error arithmetic may not be relabelled as a joint
+error. The first joint contract explicitly omits such products when that full
+error contract is unavailable; omission never means zero uncertainty.</p>
+<p>Sequential products continue to name their Continuum Transform Generation.
+Their row-fit coefficients and chi-square evidence are transform provenance,
+not an authoritative continuum image model, and the unchanged output weights
+do not claim propagated fit covariance.</p>
+<h3 id="ownership-seam">Ownership seam<a class="headerlink" href="#ownership-seam" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>casa-imaging-model</code> owns the distinct coupling commitments, composite model
+  space, masks, product requirements, and identities.</li>
+<li><code>casa-imaging-reconstruction</code> owns the paired operators, four normal blocks,
+  coupled Model Delta, stopping, and deterministic reduction.</li>
+<li><code>casa-imaging-runtime</code> owns only bounded execution, resources, buffers,
+  scheduling, and measurements.</li>
+<li><code>casa-imaging-products</code> extends its single product-generation authority for
+  coupled sources and members.</li>
+<li>applications compose the owners, and frontends project parameters and units.</li>
+</ul>
+<p>There is one production execution path. This decision adds no mode runner,
+compatibility fallback, alternate fast path, MeasurementSet materialization,
+CASA-visible persisted format, or frontend scientific calculation.</p>
+<h2 id="acceptance">Acceptance<a class="headerlink" href="#acceptance" title="Permanent link">&para;</a></h2>
+<p>Semantics that CASA implements use exact small source-backed reference cases:</p>
+<ul>
+<li>sequential fitting/subtraction retains
+  <code>continuum_transform_matches_casa_minmax_basis</code>,
+  <code>continuum_transform_reduces_order_like_casa</code>, and
+  <code>continuum_transform_preserves_flags_weights_and_application_roles</code>. T46
+  adds pinned case <code>t46-sequential-uvcontsub-anchor-v1</code>: one field, one SPW,
+  eight channels, a complex linear continuum, an injected line in channels
+  3-4, fit channels <code>0~2;5~7</code>, fit order one, and all-channel application. CASA
+  and Rust compare fit roles, coefficients, residual visibilities, unchanged
+  flags/weights, and downstream line observables;</li>
+<li>the <code>l = 0</code> reduction uses <code>just imaging-t42-mtmfs-casa</code> with
+  <code>tools/perf/imager/evidence/artifacts/20260831-issue528-t42-casa-mtmfs-two-spw-oracle.json</code>,
+  followed by the T43 clean and T44 publication comparators for that same
+  frozen small multi-SPW source; and</li>
+<li>the <code>c = 0</code> reduction uses
+  <code>t37_casacore_cube_dirty_psf_sum_weight_and_normal_state_match</code> and
+  <code>t38_casacore_minor_cycle_and_paired_final_residual_are_split_oracles</code>, plus
+  their <code>just imaging-t37-cube-operator</code> and <code>just imaging-t38-cube-clean</code>
+  gates.</li>
+</ul>
+<p>CASA has no oracle for the novel same-support joint cross terms. The mixed case
+therefore requires pinned synthetic recovery and law evidence covering all four
+normal blocks, adjointness, partition and worker invariance, cross-talk,
+rank/conditioning rejection, masks, coupled stopping, the common residual, and
+authoritative product lineage. Evidence must state that this is synthetic law
+and recovery validation rather than CASA parity.</p>
+<h2 id="consequences">Consequences<a class="headerlink" href="#consequences" title="Permanent link">&para;</a></h2>
+<p>Positive:</p>
+<ul>
+<li>sequential subtraction remains stable and honestly described while joint
+  reconstruction gains a distinct scientific identity;</li>
+<li>the anchor constraint makes the first joint decomposition identifiable
+  without hiding a soft prior; and</li>
+<li>cross terms, generations, residuals, products, and errors have one
+  authoritative coupled interpretation.</li>
+</ul>
+<p>Negative:</p>
+<ul>
+<li>users must declare scientifically defensible continuum anchors and separate
+  component support;</li>
+<li>datasets without adequate line-free support cannot use the first joint
+  capability; and</li>
+<li>CASA cannot directly validate the novel mixed solve, while full
+  continuum-line covariance is required before publishing joint error products.</li>
+</ul>
+<p>Neutral / tradeoffs:</p>
+<ul>
+<li>hard support is deliberately less flexible than a learned or soft spectral
+  prior, but is inspectable and testable;</li>
+<li>coupled normal state and reduction require more bounded work than either
+  degenerate operator alone; and</li>
+<li>the implementation may omit optional error members rather than publish a
+  covariance-blind approximation.</li>
+</ul>
+<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
+<ol>
+<li>Keep only sequential visibility-domain subtraction. Rejected because it
+   cannot represent direction-dependent continuum structure and line emission
+   in one coupled inference, and would make T46 provide no new capability.</li>
+<li>Permit an unrestricted line basis and rely on CLEAN choices to separate the
+   components. Rejected because the continuum subspace is contained in that
+   basis, making the decomposition non-identifiable.</li>
+<li>Fit in the image domain after constructing a cube. Retained as an analysis
+   operation, not a reconstruction contract.</li>
+<li>Run MT-MFS and cube reconstruction separately and combine their final
+   images. Rejected because it omits both cross-normal blocks, has no common
+   residual or stopping decision, and cannot produce authoritative covariance.</li>
+<li>Copy CASA's mixed-mapper mechanism. Rejected because CASA prevents
+   overlapping image models from representing the same sky support; it is
+   multi-field ownership, not additive continuum-line decomposition.</li>
+</ol>
+<h2 id="enforcement">Enforcement<a class="headerlink" href="#enforcement" title="Permanent link">&para;</a></h2>
+<p>This decision is enforced by:</p>
+<ul>
+<li>tests: T40 sequential-transform laws, T37-T38 line-only CASA/casacore gates,
+  T42-T44 continuum-only frozen-CASA gates, and T46 mixed synthetic block,
+  recovery, identity, and product-lineage laws;</li>
+<li>lint/import/dependency rules: model, reconstruction, runtime, products,
+  application, and frontend ownership follows ADR-0009 with no second runner or
+  frontend scientific implementation;</li>
+<li>CI checks: <code>just docs-check</code>, <code>just arch-check</code>, and the migration-matrix
+  ratchet keep joint reconstruction unavailable until T46 transfers the exact
+  accepted capability;</li>
+<li>review trigger: stop before admitting line coefficients on anchor channels,
+  adding a soft prior, publishing a joint error without cross covariance,
+  changing component authority, or adding an alternate execution path; and</li>
+<li>none / guidance only:</li>
+</ul>
+<h2 id="drift-detection">Drift detection<a class="headerlink" href="#drift-detection" title="Permanent link">&para;</a></h2>
+<p>Suspect drift if:</p>
+<ul>
+<li>sequential and joint requests share an ambiguous coupling value or silently
+  route into one another;</li>
+<li>either off-diagonal normal block is absent or assembled with a different
+  weighting generation;</li>
+<li>line coefficients are admitted on anchor channels without a newly accepted
+  identifiability contract;</li>
+<li>continuum and line updates, stopping decisions, or model generations commit
+  independently;</li>
+<li>a component residual is presented as the common final residual;</li>
+<li>an error product ignores continuum-line cross covariance; or</li>
+<li>joint products are assembled from separately restored runs.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
