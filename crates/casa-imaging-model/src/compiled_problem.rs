@@ -1491,6 +1491,8 @@ impl ProblemSpecification {
 /// Backend-independent capability required to plan and execute a problem.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RequiredCapability {
+    /// More than one user-visible image-domain chart.
+    MultiDomainGeometry,
     /// Multiple image-domain facets.
     FacetedGeometry,
     /// Spectral reference-frame transformation.
@@ -2449,6 +2451,9 @@ fn derive_capabilities(
     products: &ProductRequirements,
 ) -> BTreeSet<RequiredCapability> {
     let mut capabilities = BTreeSet::new();
+    if geometry.domains().len() > 1 {
+        capabilities.insert(RequiredCapability::MultiDomainGeometry);
+    }
     if geometry
         .domains()
         .iter()

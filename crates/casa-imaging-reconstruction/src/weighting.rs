@@ -7,10 +7,10 @@ use std::{collections::BTreeMap, fmt, mem::size_of};
 
 use casa_imaging_model::{
     CompiledProblem, CompiledProblemId, ContinuumTransformGenerationId, FiniteValuePolicy,
-    ImageDomainRole, LogicalIdentity, SelectedInputWeightGroup, SelectedObservationGenerationId,
-    SelectedObservationSampleView, SelectedSampleAddress, SelectedSpectralContribution,
-    SelectedSpectralContributions, SelectedVisibilitySample, UvTaper, WeightDensityScope,
-    WeightingCommitmentId, WeightingScheme,
+    ImageDomainRole, LogicalIdentity, SelectedImageDomainProjections, SelectedInputWeightGroup,
+    SelectedObservationGenerationId, SelectedObservationSampleView, SelectedSampleAddress,
+    SelectedSpectralContribution, SelectedSpectralContributions, SelectedVisibilitySample, UvTaper,
+    WeightDensityScope, WeightingCommitmentId, WeightingScheme,
 };
 use sha2::{Digest, Sha256};
 use smallvec::SmallVec;
@@ -1100,7 +1100,7 @@ impl WeightingSpectralValue {
 /// Row-level geometry that is needed only for source validation is deliberately
 /// absent. Bounded weighting/reconstruction blocks retain only the coordinates,
 /// flags, visibility, and address consumed by the scientific kernels.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct WeightingSelectedSample {
     pub(crate) address: SelectedSampleAddress,
     pub(crate) visibility: SelectedVisibilitySample,
@@ -1112,6 +1112,7 @@ pub struct WeightingSelectedSample {
     pub(crate) density_uvw_m: [f64; 3],
     pub(crate) transformed_uvw_m: [f64; 3],
     pub(crate) phase_shift_m: f64,
+    domain_projections: SelectedImageDomainProjections,
 }
 
 impl WeightingSelectedSample {
@@ -1128,6 +1129,7 @@ impl WeightingSelectedSample {
             density_uvw_m: coordinates.density_uvw_m,
             transformed_uvw_m: coordinates.transformed_uvw_m,
             phase_shift_m: coordinates.phase_shift_m,
+            domain_projections: sample.domain_projections().clone(),
         }
     }
 
@@ -1171,6 +1173,12 @@ impl WeightingSelectedSample {
     #[must_use]
     pub const fn phase_shift_m(&self) -> f64 {
         self.phase_shift_m
+    }
+
+    /// Return the projections for every compiled image domain.
+    #[must_use]
+    pub const fn domain_projections(&self) -> &SelectedImageDomainProjections {
+        &self.domain_projections
     }
 }
 

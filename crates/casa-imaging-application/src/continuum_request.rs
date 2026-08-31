@@ -56,9 +56,11 @@ use casa_types::measures::{
 };
 use sha2::{Digest, Sha256};
 
+use crate::continuum_domains::read_outlier_domains;
 use crate::{
     ApplicationDispatchError, ApplicationNative, ApplicationOutcome, ApplicationPublication,
-    ApplicationRequest, ApplicationRuntime, CasaImageProductSink, TaskRequirement,
+    ApplicationRequest, ApplicationRuntime, CasaImageDomainOutput, CasaImageProductSink,
+    TaskRequirement,
 };
 
 /// Native continuum reconstruction accepted by the application boundary.
@@ -141,6 +143,8 @@ pub enum ContinuumMask {
     Boxes(Vec<ContinuumMaskBox>),
     /// Reproject non-zero pixels from a CASA image mask onto the model grid.
     Image(PathBuf),
+    /// Exact row-major target-grid support compiled from a task-domain region.
+    PixelSupport(Box<[bool]>),
     /// Generate CASA auto-multithreshold support from the current Normal State.
     AutoMultithresh(ContinuumAutoMaskControls),
 }
@@ -230,6 +234,12 @@ pub struct ContinuumImagingRequest {
     pub image_size: usize,
     /// Direction pixel size in arcseconds.
     pub cell_arcsec: f64,
+    /// Optional main-chart phase-centre field selected from the MeasurementSet.
+    pub phase_center_field: Option<i32>,
+    /// Optional CASA-style main-chart phase-centre literal.
+    pub phase_center: Option<String>,
+    /// Optional CASA outlier definition file compiled into additional image domains.
+    pub outlier_file: Option<PathBuf>,
     /// Optional selected field identifiers.
     pub field_ids: Option<Vec<i32>>,
     /// Optional UV-distance predicate.
@@ -364,6 +374,15 @@ struct PreparedSpectralAxis {
     output_channels: usize,
     reference_frequency_hz: f64,
     increment_hz: f64,
+}
+
+struct PreparedImageDomain {
+    role: ImageDomainRole,
+    output: PathBuf,
+    image_size: usize,
+    direction: DirectionCoordinateSpec,
+    coordinates: CoordinateSystem,
+    mask: ContinuumMask,
 }
 
 struct SourceSpectralWindow {
@@ -614,7 +633,7 @@ fn spectral_frame_anchor(
 }
 
 fn prepare(
-    mut request: ContinuumImagingRequest,
+    request: ContinuumImagingRequest,
 ) -> Result<ApplicationRequest<CasaImageProductSink>, crate::ApplicationError> {
     validate_request(&request)?;
     let ms = MeasurementSet::open(&request.measurement_set)?;
@@ -635,10 +654,12 @@ fn prepare(
     );
     let mut selected_rows_error = None;
     let mut selected_ddids = BTreeSet::new();
-    let mut selected_field = None;
-    let mut multiple_fields = false;
+    let mut selected_fields = BTreeSet::new();
     let mut first_selected_time_mjd_seconds = None;
     let mut selected_time_bounds_mjd_seconds = [f64::INFINITY, f64::NEG_INFINITY];
+    let main_table = ms.main_table();
+    let mut weight_spectrum_complete = main_table.column_accessor("WEIGHT_SPECTRUM").is_ok();
+    let mut weight_spectrum_error = None;
     ms.visit_selected_observation_rows(
         &row_selection,
         MsSelectionIoBudget {
@@ -648,9 +669,14 @@ fn prepare(
             storage_alignment_rows: None,
         },
         |row| {
+            if weight_spectrum_complete {
+                match main_table.is_cell_defined(row.physical_row(), "WEIGHT_SPECTRUM") {
+                    Ok(defined) => weight_spectrum_complete = defined,
+                    Err(error) => weight_spectrum_error = Some(error),
+                }
+            }
             selected_ddids.insert(row.data_description_id());
-            multiple_fields |= selected_field.is_some_and(|value| value != row.field_id());
-            selected_field.get_or_insert(row.field_id());
+            selected_fields.insert(row.field_id());
             first_selected_time_mjd_seconds.get_or_insert(row.time_mjd_seconds());
             selected_time_bounds_mjd_seconds[0] =
                 selected_time_bounds_mjd_seconds[0].min(row.time_mjd_seconds());
@@ -670,17 +696,23 @@ fn prepare(
     if let Some(error) = selected_rows_error {
         return Err(Box::new(error));
     }
+    if let Some(error) = weight_spectrum_error {
+        return Err(Box::new(error));
+    }
     let rows = selected_rows.finish();
     if rows.selected_row_count() == 0 {
         return Err(boxed("selection resolved to no rows"));
     }
-    if multiple_fields {
-        request
-            .task_requirements
-            .push(TaskRequirement::UnsupportedControls);
+    let selected_field = request
+        .phase_center_field
+        .unwrap_or_else(|| *selected_fields.first().expect("nonempty selection"));
+    if !selected_fields.contains(&selected_field) {
+        return Err(boxed(format!(
+            "phase-center FIELD_ID {selected_field} is not part of selected fields {selected_fields:?}"
+        )));
     }
-    let field_id = usize::try_from(selected_field.expect("nonempty selection"))
-        .map_err(|_| boxed("selected FIELD_ID is negative"))?;
+    let field_id =
+        usize::try_from(selected_field).map_err(|_| boxed("selected FIELD_ID is negative"))?;
     let bindings = selected_ddids
         .into_iter()
         .map(|ddid| {
@@ -711,8 +743,25 @@ fn prepare(
         });
     }
     let phase = casa_ms::derived::engine::resolve_field_phase_direction_j2000(&ms, field_id)?;
-    let (right_ascension, declination) = phase.as_angles();
-    let direction = direction_spec(&request, right_ascension, declination);
+    let default_main_direction = SkyDirection::new(
+        DirectionFrame::J2000,
+        phase.as_angles().0,
+        phase.as_angles().1,
+    );
+    let main_direction = request
+        .phase_center
+        .as_deref()
+        .map(parse_phase_center_direction)
+        .transpose()?
+        .unwrap_or(default_main_direction);
+    let right_ascension = main_direction.longitude_rad();
+    let declination = main_direction.latitude_rad();
+    let direction = direction_spec(
+        request.image_size,
+        request.cell_arcsec,
+        right_ascension,
+        declination,
+    );
     let frequency_reference = source_frequency_reference.expect("nonempty selected SPWs");
     let frame_engine = casa_ms::derived::engine::MsCalEngine::new(&ms)?;
     let anchor_time_mjd_seconds =
@@ -794,19 +843,65 @@ fn prepare(
         spectral_window_selections,
         correlation_selections,
     );
+    let mut prepared_domains = vec![PreparedImageDomain {
+        role: ImageDomainRole::Main,
+        output: request.image_name.clone(),
+        image_size: request.image_size,
+        direction,
+        coordinates: image_coordinates(
+            request.image_size,
+            request.cell_arcsec,
+            [right_ascension, declination],
+            prepared_spectral.output_frequency_reference,
+            prepared_spectral.reference_frequency_hz,
+            prepared_spectral.increment_hz,
+        ),
+        mask: request.mask.clone(),
+    }];
+    if let Some(path) = request.outlier_file.as_deref() {
+        for input in read_outlier_domains(path, request.image_size, request.cell_arcsec)? {
+            let centre = parse_phase_center_direction(&input.phase_center)?;
+            let direction = direction_spec(
+                input.image_size,
+                input.cell_arcsec,
+                centre.longitude_rad(),
+                centre.latitude_rad(),
+            );
+            prepared_domains.push(PreparedImageDomain {
+                role: ImageDomainRole::Outlier(input.name),
+                output: input.output,
+                image_size: input.image_size,
+                direction,
+                coordinates: image_coordinates(
+                    input.image_size,
+                    input.cell_arcsec,
+                    [centre.longitude_rad(), centre.latitude_rad()],
+                    prepared_spectral.output_frequency_reference,
+                    prepared_spectral.reference_frequency_hz,
+                    prepared_spectral.increment_hz,
+                ),
+                mask: input.mask,
+            });
+        }
+    }
     let geometry = casa_imaging_model::GeometryInput::new(
-        vec![ImageDomainSpec::new(
-            ImageDomainRole::Main,
-            ImageShape::new(request.image_size, request.image_size),
-            direction,
-            FacetLayout::Single,
-            AxisOrder::new([
-                ImageAxis::DirectionLongitude,
-                ImageAxis::DirectionLatitude,
-                ImageAxis::Polarization,
-                ImageAxis::Spectral,
-            ]),
-        )],
+        prepared_domains
+            .iter()
+            .map(|domain| {
+                ImageDomainSpec::new(
+                    domain.role.clone(),
+                    ImageShape::new(domain.image_size, domain.image_size),
+                    domain.direction,
+                    FacetLayout::Single,
+                    AxisOrder::new([
+                        ImageAxis::DirectionLongitude,
+                        ImageAxis::DirectionLatitude,
+                        ImageAxis::Polarization,
+                        ImageAxis::Spectral,
+                    ]),
+                )
+            })
+            .collect(),
         CentreLaws::new(
             PhaseCentreLaw::Fixed(direction.reference_direction()),
             DelayCentreLaw::PhaseTrackingCentre,
@@ -822,13 +917,6 @@ fn prepare(
             prepared_spectral.doppler,
         ),
     );
-    let coordinates = image_coordinates(
-        &request,
-        [right_ascension, declination],
-        prepared_spectral.output_frequency_reference,
-        prepared_spectral.reference_frequency_hz,
-        prepared_spectral.increment_hz,
-    );
     let primary_beam_model = (request.write_primary_beam || request.pbcor)
         .then(|| standard_primary_beam_model(&ms))
         .transpose()?;
@@ -838,18 +926,25 @@ fn prepare(
     if let Some(model) = primary_beam_model {
         product_controls = product_controls.with_primary_beam_model(model);
     }
-    let native = production_storage_profile(&request, content_budget)
+    let product_sink = CasaImageProductSink::for_domains(prepared_domains.iter().map(|domain| {
+        CasaImageDomainOutput::new(
+            domain.role.clone(),
+            domain.output.clone(),
+            domain.coordinates.clone(),
+        )
+    }))?;
+    let native = production_storage_profile(&request, &prepared_domains, content_budget)
         .and_then(|profile| {
             profile.ok_or_else(|| {
                 boxed("native continuum requires input and output on one filesystem")
             })
         })
-        .and_then(|profile| runtime(&request, &profile))
+        .and_then(|profile| runtime(&request, &prepared_domains, &profile))
         .map(|runtime| ApplicationNative {
             runtime,
             publication: ApplicationPublication {
                 controls: product_controls,
-                sink: CasaImageProductSink::new(request.image_name.clone(), coordinates.clone()),
+                sink: product_sink,
             },
         });
     let digest = request_digest(&request, b"selection");
@@ -862,7 +957,13 @@ fn prepare(
         } => continuum_terms.saturating_add(line_channels.len()),
         _ => prepared_spectral.output_channels,
     };
-    let model_samples = model_plane_samples(request.image_size)
+    let model_samples = prepared_domains
+        .iter()
+        .try_fold(0_usize, |total, domain| {
+            model_plane_samples(domain.image_size)
+                .checked_add(total)
+                .ok_or_else(|| boxed("reconstruction model sample count overflowed"))
+        })?
         .checked_mul(reconstruction_planes)
         .ok_or_else(|| boxed("reconstruction model sample count overflowed"))?;
     let specification = match continuum_transform {
@@ -871,6 +972,14 @@ fn prepare(
         }
         None => specification(&request, &prepared_spectral)?,
     };
+    let masks = casa_imaging_reconstruction::ImageDomainReconstructionMaskPlans::new(
+        prepared_domains
+            .iter()
+            .map(|domain| {
+                reconstruction_mask_plan(domain.mask.clone(), domain.direction, domain.image_size)
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+    )?;
     Ok(ApplicationRequest {
         specification,
         geometry,
@@ -886,13 +995,13 @@ fn prepare(
             NumericPrecision::F64,
             ModelInputCommitment::Empty,
         ),
-        mask: reconstruction_mask_plan(request.mask, direction, request.image_size)?,
+        masks,
         observation: SelectedObservationResolutionRequest::new(
             request.measurement_set.display().to_string(),
             LogicalIdentity::from_sha256(digest),
             observation_selection,
             visibility_column(&ms, request.data_column.as_deref())?,
-            if ms.main_table().column_accessor("WEIGHT_SPECTRUM").is_ok() {
+            if weight_spectrum_complete {
                 OwnerWeightColumn::WeightSpectrum
             } else {
                 OwnerWeightColumn::Weight
@@ -943,6 +1052,11 @@ fn analytic_primary_beam_model_for_telescopes(
 }
 
 fn validate_request(request: &ContinuumImagingRequest) -> Result<(), crate::ApplicationError> {
+    if request.phase_center_field.is_some() && request.phase_center.is_some() {
+        return Err(boxed(
+            "phase_center and phase_center_field are mutually exclusive",
+        ));
+    }
     if request.image_size == 0
         || !request.cell_arcsec.is_finite()
         || request.cell_arcsec <= 0.0
@@ -975,6 +1089,18 @@ fn validate_request(request: &ContinuumImagingRequest) -> Result<(), crate::Appl
     {
         return Err(boxed(
             "visibility-domain continuum subtraction requires channel-local cube imaging",
+        ));
+    }
+    if request.outlier_file.is_some()
+        && (!matches!(request.spectral_mode, SpectralImagingMode::Continuum)
+            || !matches!(
+                request.algorithm,
+                ContinuumAlgorithm::Dirty | ContinuumAlgorithm::Hogbom
+            )
+            || request.weighting != ContinuumWeighting::Natural)
+    {
+        return Err(boxed(
+            "the installed multi-domain slice requires MFS, natural weighting, and dirty or Hogbom reconstruction",
         ));
     }
     Ok(())
@@ -1177,12 +1303,13 @@ fn explicit_spw_channels(
 }
 
 fn direction_spec(
-    request: &ContinuumImagingRequest,
+    image_size: usize,
+    cell_arcsec: f64,
     right_ascension: f64,
     declination: f64,
 ) -> DirectionCoordinateSpec {
-    let cell = request.cell_arcsec * std::f64::consts::PI / (180.0 * 3600.0);
-    let reference_pixel = image_reference_pixel(request.image_size);
+    let cell = cell_arcsec * std::f64::consts::PI / (180.0 * 3600.0);
+    let reference_pixel = image_reference_pixel(image_size);
     DirectionCoordinateSpec::new(
         Projection::Sin,
         SkyDirection::new(DirectionFrame::J2000, right_ascension, declination),
@@ -1194,14 +1321,15 @@ fn direction_spec(
 }
 
 fn image_coordinates(
-    request: &ContinuumImagingRequest,
+    image_size: usize,
+    cell_arcsec: f64,
     phase: [f64; 2],
     frequency_reference: FrequencyRef,
     reference_frequency: f64,
     increment_hz: f64,
 ) -> CoordinateSystem {
-    let cell = request.cell_arcsec * std::f64::consts::PI / (180.0 * 3600.0);
-    let reference_pixel = image_reference_pixel(request.image_size);
+    let cell = cell_arcsec * std::f64::consts::PI / (180.0 * 3600.0);
+    let reference_pixel = image_reference_pixel(image_size);
     let mut coordinates = CoordinateSystem::new();
     coordinates.add_coordinate(DirectionCoordinate::new(
         DirectionRef::J2000,
@@ -1219,6 +1347,78 @@ fn image_coordinates(
         reference_frequency,
     ));
     coordinates
+}
+
+fn parse_phase_center_direction(text: &str) -> Result<SkyDirection, crate::ApplicationError> {
+    let parts = text.split_whitespace().collect::<Vec<_>>();
+    if parts.len() != 3 || !parts[0].eq_ignore_ascii_case("J2000") {
+        return Err(boxed(
+            "phasecenter must be 'J2000 lon lat', for example 'J2000 19:59:28.500 +40.44.01.50'",
+        ));
+    }
+    Ok(SkyDirection::new(
+        DirectionFrame::J2000,
+        parse_phase_center_angle(parts[1], true)?,
+        parse_phase_center_angle(parts[2], false)?,
+    ))
+}
+
+fn parse_phase_center_angle(text: &str, longitude: bool) -> Result<f64, crate::ApplicationError> {
+    let lower = text.to_ascii_lowercase();
+    if let Some(radians) = lower.strip_suffix("rad") {
+        return radians
+            .trim()
+            .parse::<f64>()
+            .map_err(|error| Box::new(error) as crate::ApplicationError);
+    }
+    if let Some(degrees) = lower.strip_suffix("deg") {
+        return Ok(degrees.trim().parse::<f64>()? * std::f64::consts::PI / 180.0);
+    }
+    if longitude {
+        if let Some(hours) = parse_sexagesimal(text, true) {
+            return Ok(hours * std::f64::consts::PI / 12.0);
+        }
+    } else if let Some(degrees) = parse_sexagesimal(text, false) {
+        return Ok(degrees * std::f64::consts::PI / 180.0);
+    }
+    Err(boxed(format!("unsupported phasecenter angle {text:?}")))
+}
+
+fn parse_sexagesimal(text: &str, hours: bool) -> Option<f64> {
+    let trimmed = text.trim();
+    let sign = if trimmed.starts_with('-') { -1.0 } else { 1.0 };
+    let body = trimmed.trim_start_matches(['+', '-']);
+    let fields = if body.contains(':') {
+        body.split(':').map(str::to_owned).collect::<Vec<_>>()
+    } else if body.contains('h') || body.contains('d') || body.contains('m') || body.contains('s') {
+        body.replace(['h', 'd', 'm', 's'], " ")
+            .split_whitespace()
+            .map(str::to_owned)
+            .collect()
+    } else if !hours && body.matches('.').count() >= 2 {
+        let mut split = body.split('.');
+        let major = split.next()?.to_owned();
+        let minutes = split.next()?.to_owned();
+        let seconds = split.collect::<Vec<_>>().join(".");
+        vec![major, minutes, seconds]
+    } else {
+        return None;
+    };
+    let [major, minutes, seconds] = fields.as_slice() else {
+        return None;
+    };
+    let major = major.parse::<f64>().ok()?;
+    let minutes = minutes.parse::<f64>().ok()?;
+    let seconds = seconds.parse::<f64>().ok()?;
+    if !(major.is_finite()
+        && minutes.is_finite()
+        && seconds.is_finite()
+        && (0.0..60.0).contains(&minutes)
+        && (0.0..60.0).contains(&seconds))
+    {
+        return None;
+    }
+    Some(sign * (major.abs() + minutes / 60.0 + seconds / 3600.0))
 }
 
 fn image_reference_pixel(image_size: usize) -> f64 {
@@ -1314,6 +1514,20 @@ fn reconstruction_mask_plan(
                 .collect::<Result<Vec<_>, _>>()?,
         },
         ContinuumMask::Image(path) => reproject_image_mask(&path, coordinate, image_size)?,
+        ContinuumMask::PixelSupport(support) => {
+            if image_size
+                .checked_mul(image_size)
+                .is_none_or(|expected| support.len() != expected)
+            {
+                return Err(boxed("pixel mask support does not match its image domain"));
+            }
+            ReconstructionMaskPlan::Reprojected {
+                coordinate,
+                source_coordinate: coordinate,
+                source_shape: [image_size, image_size],
+                support,
+            }
+        }
         ContinuumMask::AutoMultithresh(controls) => ReconstructionMaskPlan::AutoMultithresh {
             coordinate,
             controls: casa_imaging_reconstruction::AutoMultithreshControls {
@@ -1641,24 +1855,22 @@ fn correlation_type(code: i32) -> Result<CorrelationType, crate::ApplicationErro
 
 fn production_storage_profile(
     request: &ContinuumImagingRequest,
+    domains: &[PreparedImageDomain],
     content_budget: SelectedObservationContentBudget,
 ) -> Result<Option<ProductionStorageProfile>, crate::ApplicationError> {
-    let output_parent = request
-        .image_name
-        .parent()
-        .unwrap_or_else(|| Path::new("."));
-    std::fs::create_dir_all(output_parent)?;
-    let output_directory = output_parent.canonicalize()?;
-    let output_root = filesystem_root(&output_directory)?;
     let input_root = filesystem_root(&request.measurement_set.canonicalize()?)?;
-    if output_root != input_root {
-        return Ok(None);
+    for domain in domains {
+        let output_parent = domain.output.parent().unwrap_or_else(|| Path::new("."));
+        std::fs::create_dir_all(output_parent)?;
+        if filesystem_root(&output_parent.canonicalize()?)? != input_root {
+            return Ok(None);
+        }
     }
-    let (capacity, available) = filesystem_capacity(&output_root)?;
+    let (capacity, available) = filesystem_capacity(&input_root)?;
     let read_rate = positive_environment("CASA_RS_IMAGING_SPILL_READ_BYTES_PER_SECOND")?;
     let write_rate = positive_environment("CASA_RS_IMAGING_SPILL_WRITE_BYTES_PER_SECOND")?;
     Ok(Some(ProductionStorageProfile::new(
-        output_root,
+        input_root,
         capacity,
         available,
         read_rate,
@@ -1670,6 +1882,7 @@ fn production_storage_profile(
 
 fn runtime(
     request: &ContinuumImagingRequest,
+    domains: &[PreparedImageDomain],
     profile: &ProductionStorageProfile,
 ) -> Result<ApplicationRuntime, crate::ApplicationError> {
     let digest = request_digest(request, b"attempt");
@@ -1688,11 +1901,15 @@ fn runtime(
         implementation: WorkImplementationId::new("spectral-cycle-cpu-v1"),
         weighting_limits: WeightingExecutionLimits::new(4096, 1)?,
         stage_nanos: 1_000_000,
-        minor_cycle_bytes: planned_minor_cycle_bytes(
-            request.image_size,
-            &request.algorithm,
-            request.iterations,
-        ),
+        minor_cycle_bytes: domains.iter().try_fold(0_u64, |total, domain| {
+            total
+                .checked_add(planned_minor_cycle_bytes(
+                    domain.image_size,
+                    &request.algorithm,
+                    request.iterations,
+                ))
+                .ok_or_else(|| boxed("multi-domain minor-cycle residency overflowed"))
+        })?,
         storage_io,
         gridded_normal_storage,
         confidence_parts_per_million: 900_000,
@@ -1821,6 +2038,27 @@ fn request_digest(request: &ContinuumImagingRequest, domain: &[u8]) -> [u8; 32] 
     hasher.update(request.image_name.as_os_str().as_encoded_bytes());
     hasher.update(request.image_size.to_le_bytes());
     hasher.update(request.cell_arcsec.to_bits().to_le_bytes());
+    if let Some(field) = request.phase_center_field {
+        hasher.update([1]);
+        hasher.update(field.to_le_bytes());
+    } else {
+        hasher.update([0]);
+    }
+    if let Some(phase_center) = request.phase_center.as_deref() {
+        hasher.update([1]);
+        hasher.update(phase_center.as_bytes());
+    } else {
+        hasher.update([0]);
+    }
+    if let Some(outlier_file) = request.outlier_file.as_deref() {
+        hasher.update([1]);
+        hasher.update(outlier_file.as_os_str().as_encoded_bytes());
+        if let Ok(contents) = std::fs::read(outlier_file) {
+            hasher.update(Sha256::digest(contents));
+        }
+    } else {
+        hasher.update([0]);
+    }
     hasher.finalize().into()
 }
 
@@ -1847,13 +2085,24 @@ mod tests {
 
     use super::{
         ContinuumAlgorithm, TaskRequirement, analytic_primary_beam_model_for_telescopes,
-        image_reference_pixel, model_plane_samples, planned_minor_cycle_bytes, resource_policy,
+        image_reference_pixel, model_plane_samples, parse_phase_center_direction,
+        planned_minor_cycle_bytes, resource_policy,
     };
 
     #[test]
     fn casa_direction_reference_pixel_uses_half_the_image_extent() {
         assert_eq!(image_reference_pixel(16), 8.0);
         assert_eq!(image_reference_pixel(15), 7.5);
+    }
+
+    #[test]
+    fn casa_phase_center_literal_preserves_recentered_chart_coordinates() {
+        let direction = parse_phase_center_direction("J2000 19:58:40.895 +40.55.58.543")
+            .expect("CASA outlier phase center");
+        let expected_ra = (19.0 + 58.0 / 60.0 + 40.895 / 3600.0) * std::f64::consts::PI / 12.0;
+        let expected_dec = (40.0 + 55.0 / 60.0 + 58.543 / 3600.0) * std::f64::consts::PI / 180.0;
+        assert!((direction.longitude_rad() - expected_ra).abs() < 1.0e-14);
+        assert!((direction.latitude_rad() - expected_dec).abs() < 1.0e-14);
     }
 
     #[test]

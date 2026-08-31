@@ -29,7 +29,7 @@ use casa_imaging_reconstruction::{
         GriddedNormalOperatorProgram, GriddedNormalPartial, GriddedNormalRoutingMeasurements,
         GriddedNormalSourceCardinality, GriddedNormalWork, PreparedSpectralOperator,
         SourceCardinalityObservation, SpectralOperatorPass, SpectralOperatorWorkload,
-        gridded_normal_execution_residency, gridded_normal_operator_record_bytes,
+        gridded_normal_domain_execution_residency, gridded_normal_operator_record_bytes,
         gridded_normal_route_capacity_bytes, prepare_spectral_operator, spectral_operator_workload,
     },
 };
@@ -1257,7 +1257,7 @@ fn project_gridded_normal_frame_bounds(
         .and_then(|samples| samples.checked_div(max_block))
         .ok_or_else(|| io::Error::other("gridded-normal frame bound overflow"))?
         .max(1);
-    let maximum_contributions_per_sample = match problem.reconstruction().basis() {
+    let spectral_contributions_per_sample = match problem.reconstruction().basis() {
         ReconstructionBasis::Constant => 1_usize,
         ReconstructionBasis::ChannelLocal { .. } => {
             match problem.science().spectral().sampling().kernel() {
@@ -1272,9 +1272,12 @@ fn project_gridded_normal_frame_bounds(
         ReconstructionBasis::Taylor { .. } => 1,
         ReconstructionBasis::JointContinuumLine { .. } => 1,
     };
+    let maximum_contributions_per_sample = spectral_contributions_per_sample
+        .checked_mul(problem.geometry().domains().len())
+        .ok_or_else(|| io::Error::other("image-domain contribution bound overflow"))?;
     // Compilation contributes at most one prediction group per weighted sample;
     // BTree reduction can only lower that count. Each group contains at most the
-    // spectral-kernel contribution bound resolved above.
+    // product of the spectral-kernel and image-domain contribution bounds.
     let maximum_frame_groups = usize::try_from(maximum_samples.min(max_block))
         .map_err(|_| io::Error::other("gridded-normal frame group bound overflow"))?
         .max(1);
@@ -1549,6 +1552,7 @@ impl CompleteDataPlanFragment {
             .unwrap_or(0);
         let residency = project_residency(
             problem,
+            &specification,
             workload,
             execution_role,
             gridded_route_residency,
@@ -2103,6 +2107,7 @@ fn operator_allocation_suffix(
 
 fn project_residency(
     problem: &CompiledProblem,
+    specification: &SpectralOperatorSpecification,
     workload: SpectralOperatorWorkload,
     execution_role: CompleteDataExecutionRole,
     gridded_route_residency: Option<GriddedNormalRouteResidency>,
@@ -2122,8 +2127,10 @@ fn project_residency(
                     .ok_or(CompleteDataPlanError::ResidencyOverflow)?,
                 _ => workload.coefficient_terms(),
             };
-            let residency =
-                gridded_normal_execution_residency(workload.grid_shape(), accumulation_terms)?;
+            let residency = gridded_normal_domain_execution_residency(
+                specification.domain_grid_shapes(),
+                accumulation_terms,
+            )?;
             residency
                 .peak_complex_values()
                 .checked_mul(complex_bytes)
@@ -2591,7 +2598,7 @@ pub struct CompleteDataOperatorResult {
 impl CompleteDataOperatorResult {
     /// Return reconstruction-owned unnormalized primitives.
     #[must_use]
-    pub const fn primitives(&self) -> &SpectralOperatorPrimitives {
+    pub fn primitives(&self) -> &SpectralOperatorPrimitives {
         self.evidence.primitives()
     }
 

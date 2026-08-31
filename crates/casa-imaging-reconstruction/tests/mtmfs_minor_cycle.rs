@@ -22,15 +22,15 @@ use casa_imaging_model::{
     ProductRequirements, ProductSupportComparison, ProductValidityPolicies, Projection,
     ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
     ReductionPolicy, RestFrequency, RestoringBeamPolicy, RowSelection, ScientificContract,
-    SelectedColumns, SelectedMainRow, SelectedObservationSample, SelectedPredictionTarget,
-    SelectedRows, SelectedSampleAddress, SelectedSampleCoordinates, SelectedSampleMetadata,
-    SelectedSpectralContributions, SelectedSpectralEvaluation, SelectedSpectralInterval,
-    SelectedVisibilitySample, SkyDirection, SourceGenerations, SpectralContract,
-    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
-    SpectralWcs, SpectralWindowSelection, StageErrorBudget, TaylorSupportReference,
-    TaylorValidityPolicy, TimeScale, TimeSelection, UvSelection, UvwCoordinateLaw,
-    VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract,
-    WeightingScheme, compile, compile_observation,
+    SelectedColumns, SelectedImageDomainProjections, SelectedMainRow, SelectedObservationSample,
+    SelectedPhaseCentreProjection, SelectedPredictionTarget, SelectedRows, SelectedSampleAddress,
+    SelectedSampleCoordinates, SelectedSampleMetadata, SelectedSpectralContributions,
+    SelectedSpectralEvaluation, SelectedSpectralInterval, SelectedVisibilitySample, SkyDirection,
+    SourceGenerations, SpectralContract, SpectralCoordinateSpec, SpectralCoupling,
+    SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection,
+    StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy, TimeScale, TimeSelection,
+    UvSelection, UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn,
+    WeightDensityScope, WeightingContract, WeightingScheme, compile, compile_observation,
 };
 use casa_imaging_reconstruction::{
     ExecutableModelProblem, FinalNormalState, MajorCycleOwner, MajorCyclePreparation,
@@ -327,6 +327,10 @@ fn sample(
                 antenna2: SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
             },
         },
+        domain_projections: SelectedImageDomainProjections::one_domain_with_shared_psf(
+            SelectedPhaseCentreProjection::new([1.0, 1.0, 0.0], 0.0)
+                .expect("finite one-domain projection"),
+        ),
         metadata: SelectedSampleMetadata {
             field_id: 0,
             antenna1: 0,
@@ -433,7 +437,7 @@ fn run_operator(
     }
 
     let (selected_generation, selected_count) = problem
-        .inspect_selected_observation(samples.iter().copied().map(Ok::<_, Infallible>), |_| {
+        .inspect_selected_observation(samples.iter().cloned().map(Ok::<_, Infallible>), |_| {
             Ok::<_, Infallible>(())
         })
         .expect("inspect exact T42 selected stream");

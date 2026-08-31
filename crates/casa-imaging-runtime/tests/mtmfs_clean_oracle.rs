@@ -13,8 +13,8 @@ use casa_imaging_products::{
     ContinuumSourceCatalog, ProductGenerationAuthority, produce_continuum_members,
 };
 use casa_imaging_reconstruction::{
-    ExecutableModelProblem, MinorCycleProgram, MinorCycleStopReason, ModelGeneration,
-    ReconstructionMaskPlan, WeightingExecutionLimits,
+    ExecutableModelProblem, ImageDomainReconstructionMaskPlans, MinorCycleProgram,
+    MinorCycleStopReason, ModelGeneration, ReconstructionMaskPlan, WeightingExecutionLimits,
 };
 use casa_imaging_runtime::{
     AttemptBoundObservationCompletion, BuildIdentity, CapacityDomainId, CapacityViewId,
@@ -195,9 +195,9 @@ fn execute_four_cycle_clean(t44_products: bool) -> Result<CleanRun, Box<dyn Erro
     )?
     .with_reconstruction_cycle(
         minor_node,
-        ReconstructionMaskPlan::FullPlane {
+        ImageDomainReconstructionMaskPlans::new([ReconstructionMaskPlan::FullPlane {
             coordinate: problem.geometry().domains()[0].direction(),
-        },
+        }])?,
         program.clone(),
     );
     let registry =
@@ -463,6 +463,12 @@ fn product_role_name(role: ProductRole) -> String {
     let term = |prefix: &str, term: ProductTerm| match term {
         ProductTerm::Single => prefix.to_string(),
         ProductTerm::Taylor(term) => format!("{prefix}.tt{term}"),
+        ProductTerm::Continuum(term) => format!("{prefix}.continuum{term}"),
+        ProductTerm::Line => format!("{prefix}.line"),
+        ProductTerm::Total => format!("{prefix}.total"),
+        ProductTerm::JointNormal { row, column } => {
+            format!("{prefix}.normal{row}_{column}")
+        }
     };
     match role {
         ProductRole::Psf(value) => term("psf", value),
@@ -471,6 +477,8 @@ fn product_role_name(role: ProductRole) -> String {
         ProductRole::RestoredImage(value) => term("restored_image", value),
         ProductRole::SumWeights(value) => term("sum_weights", value),
         ProductRole::CleanMask => "clean_mask".to_string(),
+        ProductRole::ContinuumCleanMask => "continuum_clean_mask".to_string(),
+        ProductRole::LineCleanMask => "line_clean_mask".to_string(),
         ProductRole::Weight(value) => term("weight", value),
         ProductRole::PrimaryBeam(value) => term("primary_beam", value),
         ProductRole::PrimaryBeamSpectralIndex => "primary_beam_spectral_index".to_string(),
@@ -591,9 +599,9 @@ fn execute_continuing_cycle(
     .with_frozen_weighting(frozen_weighting)
     .with_reconstruction_cycle(
         minor_node,
-        ReconstructionMaskPlan::FullPlane {
+        ImageDomainReconstructionMaskPlans::new([ReconstructionMaskPlan::FullPlane {
             coordinate: problem.geometry().domains()[0].direction(),
-        },
+        }])?,
         program,
     );
     let registry =

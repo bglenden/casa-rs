@@ -10,8 +10,8 @@ use crate::{
 };
 use casa_imaging_model::{
     CompiledProblem, CorrelationProduct, ObservationSource, PointingCentreLaw,
-    SelectedObservationRunCorrelation, SelectedPointingDirections, SelectedSpectralEvaluation,
-    VisibilityColumn, WeightColumn,
+    SelectedImageDomainProjections, SelectedObservationRunCorrelation, SelectedPointingDirections,
+    SelectedSpectralEvaluation, VisibilityColumn, WeightColumn,
 };
 use thiserror::Error;
 
@@ -263,6 +263,11 @@ pub(crate) fn selected_content_plan(
         .selected_observation()
         .inspection_scratch_bytes()
         .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
+    let domain_projection_payload_bytes =
+        SelectedImageDomainProjections::retained_heap_bytes_for_len(
+            problem.geometry().domains().len(),
+        )
+        .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
     let run_scratch_bytes = maximum_selected_correlations(problem)
         .checked_mul(
             size_of::<SelectedObservationRunCorrelation>()
@@ -283,6 +288,9 @@ pub(crate) fn selected_content_plan(
         .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
     let traversal_base_bytes = retained_bytes
         .checked_add(inspection_bytes)
+        // The generation encoder may retain the final row's shared projection
+        // payload while its source block is recycled.
+        .and_then(|bytes| bytes.checked_add(domain_projection_payload_bytes))
         .and_then(|bytes| bytes.checked_add(run_scratch_bytes))
         .and_then(|bytes| bytes.checked_add(block_container_bytes))
         .and_then(|bytes| bytes.checked_add(row_replay_fixed_bytes))
@@ -354,11 +362,14 @@ pub(crate) fn selected_content_plan(
         let resident = buffer
             .resident_bytes
             .checked_add(size_of::<EvaluatedRowGeometry>())
+            .and_then(|bytes| bytes.checked_add(domain_projection_payload_bytes))
             .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
         // A recycled block keeps its row-geometry allocation until the new
         // storage buffer and POINTING output are ready. Charge that allocation
         // during both preparation phases, not only after the block is complete.
-        let retained_geometry = size_of::<EvaluatedRowGeometry>();
+        let retained_geometry = size_of::<EvaluatedRowGeometry>()
+            .checked_add(domain_projection_payload_bytes)
+            .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
         let fill = buffer
             .fill_peak_bytes
             .checked_sub(fill_fixed_bytes)
@@ -367,6 +378,13 @@ pub(crate) fn selected_content_plan(
         let geometry_build = buffer
             .resident_bytes
             .checked_add(size_of::<EvaluatedRowGeometry>())
+            // Vec-to-Arc construction can hold source and destination payloads
+            // simultaneously for the row currently being arranged.
+            .and_then(|bytes| {
+                domain_projection_payload_bytes
+                    .checked_mul(2)
+                    .and_then(|payload| bytes.checked_add(payload))
+            })
             .and_then(|bytes| {
                 let pointing_output = if pointing_direction_column.is_some() {
                     size_of::<SelectedPointingDirections>()

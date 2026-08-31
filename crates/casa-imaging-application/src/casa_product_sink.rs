@@ -11,7 +11,7 @@ use std::{
 
 use casa_coordinates::CoordinateSystem;
 use casa_images::{GaussianBeam, ImageBeamSet, ImageInfo, ImageType, PagedImage};
-use casa_imaging_model::{ProductRole, ProductUnit, ProductValidityRule};
+use casa_imaging_model::{ImageDomainRole, ProductRole, ProductUnit, ProductValidityRule};
 use casa_imaging_products::{
     ContinuumGenerationDemand, PlannedContinuumGeneration, RestoringBeam, SealedMember,
 };
@@ -30,20 +30,66 @@ struct StagedProduct {
 
 /// Production sink for conventional independently published CASA image members.
 pub struct CasaImageProductSink {
+    domains: BTreeMap<ImageDomainRole, CasaImageDomainOutput>,
+    staged: Mutex<BTreeMap<ArtifactIdentity, StagedProduct>>,
+}
+
+/// Storage binding for one compiled user-visible image domain.
+#[derive(Clone)]
+pub struct CasaImageDomainOutput {
+    role: ImageDomainRole,
     base: PathBuf,
     coordinates: CoordinateSystem,
-    staged: Mutex<BTreeMap<ArtifactIdentity, StagedProduct>>,
+}
+
+impl CasaImageDomainOutput {
+    /// Bind one compiled domain role to its output root and exact coordinates.
+    #[must_use]
+    pub fn new(role: ImageDomainRole, base: PathBuf, coordinates: CoordinateSystem) -> Self {
+        Self {
+            role,
+            base,
+            coordinates,
+        }
+    }
 }
 
 impl CasaImageProductSink {
     /// Bind an output prefix and its complete CASA coordinate system.
     #[must_use]
     pub fn new(base: PathBuf, coordinates: CoordinateSystem) -> Self {
-        Self {
+        Self::for_domains([CasaImageDomainOutput::new(
+            ImageDomainRole::Main,
             base,
             coordinates,
-            staged: Mutex::new(BTreeMap::new()),
+        )])
+        .expect("one main image-domain output is valid")
+    }
+
+    /// Bind every compiled image-domain role to one unique output root and WCS.
+    pub fn for_domains(
+        domains: impl IntoIterator<Item = CasaImageDomainOutput>,
+    ) -> Result<Self, std::io::Error> {
+        let mut outputs = BTreeMap::new();
+        let mut roots = std::collections::BTreeSet::new();
+        for output in domains {
+            if !roots.insert(output.base.clone())
+                || outputs.insert(output.role.clone(), output).is_some()
+            {
+                return Err(std::io::Error::other(
+                    "CASA image-domain output roles and roots must be unique",
+                ));
+            }
         }
+        if outputs.is_empty() || !outputs.contains_key(&ImageDomainRole::Main) {
+            return Err(std::io::Error::other(
+                "CASA image-domain outputs require one main domain",
+            ));
+        }
+        Ok(Self {
+            domains: outputs,
+            staged: Mutex::new(BTreeMap::new()),
+        })
     }
 }
 
@@ -57,9 +103,12 @@ impl SerialProductPublicationSink for CasaImageProductSink {
     ) -> Result<u64, Self::Error> {
         const IMAGE_ADAPTER_ENVELOPE_BYTES: u64 = 4_096;
         const STAGED_MEMBER_RECORD_BYTES: u64 = 512;
-        let base_bytes = u64::try_from(self.base.to_string_lossy().len())
-            .map_err(|_| std::io::Error::other("product path length exceeds u64"))?;
         let registry_bytes = planned.members().iter().try_fold(0_u64, |total, member| {
+            let output = self.domains.get(member.axes().domain()).ok_or_else(|| {
+                std::io::Error::other("product domain has no CASA output binding")
+            })?;
+            let base_bytes = u64::try_from(output.base.to_string_lossy().len())
+                .map_err(|_| std::io::Error::other("product path length exceeds u64"))?;
             let name_bytes = u64::try_from(member.name().len())
                 .map_err(|_| std::io::Error::other("product name length exceeds u64"))?;
             let path_bytes = base_bytes
@@ -86,7 +135,11 @@ impl SerialProductPublicationSink for CasaImageProductSink {
         observed: ArtifactIdentity,
         member: &SealedMember,
     ) -> Result<(), Self::Error> {
-        let target = PathBuf::from(format!("{}{}", self.base.display(), member.name()));
+        let output = self
+            .domains
+            .get(member.contract().axes().domain())
+            .ok_or_else(|| std::io::Error::other("product domain has no CASA output binding"))?;
+        let target = PathBuf::from(format!("{}{}", output.base.display(), member.name()));
         let parent = target.parent().unwrap_or_else(|| Path::new("."));
         fs::create_dir_all(parent)?;
         let target_name = target
@@ -104,7 +157,7 @@ impl SerialProductPublicationSink for CasaImageProductSink {
             Array4::from_shape_vec(member.contract().axes().shape(), member.payload().to_vec())
                 .map_err(|error| std::io::Error::other(error.to_string()))?;
         let mut image =
-            PagedImage::<f32>::create(data.shape().to_vec(), self.coordinates.clone(), &staging)
+            PagedImage::<f32>::create(data.shape().to_vec(), output.coordinates.clone(), &staging)
                 .map_err(|error| std::io::Error::other(error.to_string()))?;
         image
             .put_slice_view(data.view().into_dyn(), &[0, 0, 0, 0])
@@ -252,8 +305,36 @@ fn beam_area(beam: RestoringBeam) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::persisted_beam_set;
+    use super::{CasaImageDomainOutput, CasaImageProductSink, persisted_beam_set};
+    use casa_coordinates::CoordinateSystem;
+    use casa_imaging_model::ImageDomainRole;
     use casa_imaging_products::RestoringBeam;
+
+    #[test]
+    fn domain_outputs_require_unique_roles_roots_and_one_main() {
+        let main = CasaImageDomainOutput::new(
+            ImageDomainRole::Main,
+            "main".into(),
+            CoordinateSystem::new(),
+        );
+        let outlier = CasaImageDomainOutput::new(
+            ImageDomainRole::Outlier("north".into()),
+            "north".into(),
+            CoordinateSystem::new(),
+        );
+        let sink = CasaImageProductSink::for_domains([main.clone(), outlier])
+            .expect("unique domain outputs");
+        assert_eq!(sink.domains.len(), 2);
+        assert!(CasaImageProductSink::for_domains([main.clone(), main]).is_err());
+        assert!(
+            CasaImageProductSink::for_domains([CasaImageDomainOutput::new(
+                ImageDomainRole::Outlier("north".into()),
+                "north".into(),
+                CoordinateSystem::new(),
+            )])
+            .is_err()
+        );
+    }
 
     #[test]
     fn blank_beam_slots_use_the_largest_valid_casa_persistence_filler() {

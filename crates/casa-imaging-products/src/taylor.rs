@@ -40,6 +40,13 @@ impl TaylorProducts {
         primary_beam_model: Option<AnalyticPrimaryBeamModel>,
     ) -> Result<Self, ProductsError> {
         let state = inputs.normal_state();
+        if state.domain_count() != 1 || inputs.final_model().shape().domains().len() != 1 {
+            return Err(ProductsError::SourceLineageMismatch);
+        }
+        let domain_role = state
+            .domain(0)
+            .ok_or(ProductsError::SourceLineageMismatch)?
+            .role();
         let shape = state.shape();
         let cells = shape[0] * shape[1];
         let terms = state.coefficient_term_count();
@@ -147,14 +154,22 @@ impl TaylorProducts {
                     != casa_imaging_model::ProductBeamRule::None
             });
         let fitted_beam = needs_beam
-            .then(|| fit_restoring_beam(&psf[0], shape, inputs.cell_size_rad(), psf_cutoff))
+            .then(|| {
+                fit_restoring_beam(
+                    &psf[0],
+                    shape,
+                    inputs.cell_size_rad_for_domain(domain_role)?,
+                    psf_cutoff,
+                )
+            })
             .transpose()?;
         let restoring_beam = match inputs.problem().products().restoring_beam() {
             RestoringBeamPolicy::None => None,
             RestoringBeamPolicy::PerPlane | RestoringBeamPolicy::Common => fitted_beam,
         };
         let restored = if let Some(beam) = restoring_beam {
-            let kernel = gaussian_beam_image(shape, &beam, inputs.cell_size_rad());
+            let kernel =
+                gaussian_beam_image(shape, &beam, inputs.cell_size_rad_for_domain(domain_role)?);
             model
                 .iter()
                 .zip(&principal_residual)
@@ -563,7 +578,12 @@ fn model_term(
     let model = inputs.final_model();
     if model.shape().domains().len() != 1
         || model.shape().polarizations() != 1
-        || model.shape().domains()[0].pixels() != shape
+        || model
+            .shape()
+            .domains()
+            .first()
+            .map(|domain| domain.pixels())
+            != Some(shape)
     {
         return Err(ProductsError::SourceLineageMismatch);
     }

@@ -21,8 +21,6 @@ pub enum TaskRequirement {
     WProjection,
     /// A/W-projection gridder request.
     AwProjection,
-    /// Facet or outlier-file request.
-    FacetsOutliers,
     /// Auto-multithreshold masking request.
     Automasking,
     /// Standalone CLEAN-mask product request.
@@ -66,8 +64,6 @@ pub enum UnsupportedRequirement {
     Task(TaskRequirement),
     /// The implementation requires exactly one observation source.
     SingleObservationSource,
-    /// The implementation requires exactly one main image domain.
-    SingleMainImageDomain,
     /// The implementation requires one facet.
     SingleFacet,
     /// The implementation requires a fixed phase centre.
@@ -130,11 +126,10 @@ pub fn validate_installed_implementation(
     if problem.inputs().observation_snapshot().sources().len() != 1 {
         unsupported.push(UnsupportedRequirement::SingleObservationSource);
     }
-    if problem.geometry().domains().len() != 1
-        || *problem.geometry().domains()[0].role() != ImageDomainRole::Main
-    {
-        unsupported.push(UnsupportedRequirement::SingleMainImageDomain);
-    }
+    debug_assert_eq!(
+        problem.geometry().domains()[0].role(),
+        &ImageDomainRole::Main
+    );
     if problem
         .geometry()
         .domains()
@@ -205,6 +200,7 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
             | RequiredCapability::CommonBeamSpectralCoupling
             | RequiredCapability::SequentialContinuumTransform
             | RequiredCapability::ConstantBasis
+            | RequiredCapability::MultiDomainGeometry
             | RequiredCapability::TaylorBasis
             | RequiredCapability::ChannelLocalBasis
             | RequiredCapability::DirtyReconstruction

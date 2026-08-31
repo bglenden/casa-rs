@@ -2,7 +2,8 @@
 
 use casa_imaging_model::{
     CorrelationType, DirectionFrame, Epoch, FrequencyFrame, MeasurementSetIdentity,
-    SelectedObservationSample, SelectedPredictionTarget, SelectedSampleAddress,
+    SelectedImageDomainProjection, SelectedImageDomainProjections, SelectedObservationSample,
+    SelectedPhaseCentreProjection, SelectedPredictionTarget, SelectedSampleAddress,
     SelectedSampleCoordinates, SelectedSampleMetadata, SelectedVisibilitySample, SkyDirection,
     TimeScale, UvwCoordinateLaw,
 };
@@ -14,6 +15,33 @@ use common::identity;
 #[test]
 fn selected_observation_sample_schema_carries_exact_science_and_provenance() {
     let measurement_set = MeasurementSetIdentity::new(identity(1));
+    let coordinates = SelectedSampleCoordinates {
+        raw_uvw_m: [12.0, -4.0, 2.0],
+        density_uvw_m: [12.5, -4.25, 2.25],
+        transformed_uvw_m: [11.75, -3.75, 1.5],
+        phase_shift_m: 0.125,
+        uvw_law: UvwCoordinateLaw::PhaseTrackingCentre,
+        time: Epoch::new(59_000.0, TimeScale::Utc),
+        time_centroid: Epoch::new(59_000.000_001, TimeScale::Utc),
+        interval_seconds: 1.0,
+        exposure_seconds: 0.8,
+        phase_direction: SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
+        delay_direction: SkyDirection::new(DirectionFrame::J2000, 1.000_5, -0.500_5),
+        pointing_directions: casa_imaging_model::SelectedPointingDirections {
+            antenna1: SkyDirection::new(DirectionFrame::J2000, 1.001, -0.499),
+            antenna2: SkyDirection::new(DirectionFrame::J2000, 1.002, -0.498),
+        },
+    };
+    let projection = SelectedPhaseCentreProjection::new(
+        coordinates.transformed_uvw_m,
+        coordinates.phase_shift_m,
+    )
+    .expect("finite one-domain projection");
+    let domain_projections =
+        SelectedImageDomainProjections::new([SelectedImageDomainProjection::with_shared_psf(
+            0, projection,
+        )])
+        .expect("canonical one-domain projections");
     let sample = SelectedObservationSample {
         address: SelectedSampleAddress {
             measurement_set,
@@ -36,23 +64,8 @@ fn selected_observation_sample_schema_carries_exact_science_and_provenance() {
         parallel_hand_group_flag: true,
         row_flag: false,
         input_weight: 2.5,
-        coordinates: SelectedSampleCoordinates {
-            raw_uvw_m: [12.0, -4.0, 2.0],
-            density_uvw_m: [12.5, -4.25, 2.25],
-            transformed_uvw_m: [11.75, -3.75, 1.5],
-            phase_shift_m: 0.125,
-            uvw_law: UvwCoordinateLaw::PhaseTrackingCentre,
-            time: Epoch::new(59_000.0, TimeScale::Utc),
-            time_centroid: Epoch::new(59_000.000_001, TimeScale::Utc),
-            interval_seconds: 1.0,
-            exposure_seconds: 0.8,
-            phase_direction: SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
-            delay_direction: SkyDirection::new(DirectionFrame::J2000, 1.000_5, -0.500_5),
-            pointing_directions: casa_imaging_model::SelectedPointingDirections {
-                antenna1: SkyDirection::new(DirectionFrame::J2000, 1.001, -0.499),
-                antenna2: SkyDirection::new(DirectionFrame::J2000, 1.002, -0.498),
-            },
-        },
+        coordinates,
+        domain_projections: domain_projections.clone(),
         metadata: SelectedSampleMetadata {
             field_id: 14,
             antenna1: 10,
@@ -66,7 +79,12 @@ fn selected_observation_sample_schema_carries_exact_science_and_provenance() {
         },
     };
 
-    assert_eq!(SelectedObservationSample::SCHEMA_VERSION, 3);
+    assert_eq!(SelectedObservationSample::SCHEMA_VERSION, 4);
+    assert_eq!(sample.as_view().domain_projections(), &domain_projections);
+    assert_eq!(
+        sample.as_view().to_owned().domain_projections,
+        domain_projections
+    );
     assert_eq!(sample.address.measurement_set, measurement_set);
     assert_eq!(sample.address.physical_row, 11);
     assert_eq!(sample.address.data_description_id, 2);

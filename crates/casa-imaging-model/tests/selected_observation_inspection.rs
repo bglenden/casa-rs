@@ -17,16 +17,17 @@ use casa_imaging_model::{
     ProductKind, ProductNormalization, ProductRequirements, ProductSupportComparison,
     ProductValidityPolicies, Projection, ReconstructionAlgorithm, ReconstructionBasis,
     ReconstructionContract, ReconstructionControls, ReductionPolicy, ReferenceDataKind,
-    RestFrequency, RestoringBeamPolicy, ScientificContract, SelectedColumns, SelectedMainRow,
+    RestFrequency, RestoringBeamPolicy, ScientificContract, SelectedColumns,
+    SelectedImageDomainProjection, SelectedImageDomainProjections, SelectedMainRow,
     SelectedObservationGenerationId, SelectedObservationInspectionError,
-    SelectedObservationPassError, SelectedObservationSample, SelectedPredictionTarget,
-    SelectedRows, SelectedSampleAddress, SelectedSampleCoordinates, SelectedSampleMetadata,
-    SelectedVisibilitySample, SkyDirection, SourceGenerations, SpectralContract,
-    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
-    SpectralWcs, SpectralWindowSelection, StageErrorBudget, TaylorSupportReference,
-    TaylorValidityPolicy, TimeScale, UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct,
-    WeightColumn, WeightDensityScope, WeightingContract, WeightingScheme, compile,
-    compile_observation,
+    SelectedObservationPassError, SelectedObservationSample, SelectedPhaseCentreProjection,
+    SelectedPredictionTarget, SelectedRows, SelectedSampleAddress, SelectedSampleCoordinates,
+    SelectedSampleMetadata, SelectedVisibilitySample, SkyDirection, SourceGenerations,
+    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
+    SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection, StageErrorBudget,
+    TaylorSupportReference, TaylorValidityPolicy, TimeScale, UvwCoordinateLaw, VisibilityColumn,
+    VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract, WeightingScheme,
+    compile, compile_observation,
 };
 
 mod common;
@@ -38,10 +39,10 @@ fn selected_observation_inspection_rejects_any_departure_from_compiled_coverage(
     let problem = compiled_problem();
     let samples = exact_samples(&problem);
 
-    let contiguous = inspect(&problem, samples.iter().copied()).expect("inspect exact stream");
+    let contiguous = inspect(&problem, samples.iter().cloned()).expect("inspect exact stream");
     let differently_chunked = inspect(
         &problem,
-        samples.chunks(2).flat_map(|block| block.iter().copied()),
+        samples.chunks(2).flat_map(|block| block.iter().cloned()),
     )
     .expect("inspect the same logical stream through different borrowed chunks");
     assert_eq!(contiguous.1, samples.len() as u64);
@@ -56,7 +57,7 @@ fn selected_observation_inspection_rejects_any_departure_from_compiled_coverage(
         }
     }
     assert!(matches!(
-        inspect(&problem, wrong_rows.iter().copied()),
+        inspect(&problem, wrong_rows.iter().cloned()),
         Err(SelectedObservationInspectionError::SelectedRowSequenceMismatch { .. })
     ));
 
@@ -77,14 +78,14 @@ fn selected_observation_inspection_rejects_any_departure_from_compiled_coverage(
         ],
     );
     assert!(matches!(
-        inspect(&problem, substituted_data_description.iter().copied()),
+        inspect(&problem, substituted_data_description.iter().cloned()),
         Err(SelectedObservationInspectionError::SelectedRowSequenceMismatch { .. })
     ));
 
     let mut wrong_data_description = samples.clone();
     wrong_data_description[0].address.polarization_id = 1;
     assert!(matches!(
-        inspect(&problem, wrong_data_description.iter().copied()),
+        inspect(&problem, wrong_data_description.iter().cloned()),
         Err(SelectedObservationInspectionError::DataDescriptionCoordinateMismatch { .. })
     ));
 
@@ -99,42 +100,42 @@ fn selected_observation_inspection_rejects_any_departure_from_compiled_coverage(
         .expect("selected channel fixture");
     missing_channel.remove(missing_index);
     assert!(matches!(
-        inspect(&problem, missing_channel.iter().copied()),
+        inspect(&problem, missing_channel.iter().cloned()),
         Err(SelectedObservationInspectionError::MissingSample { .. })
     ));
 
     let mut replaced_channel = samples.clone();
     replaced_channel[missing_index].address.channel_index = 7;
     assert!(matches!(
-        inspect(&problem, replaced_channel.iter().copied()),
+        inspect(&problem, replaced_channel.iter().cloned()),
         Err(SelectedObservationInspectionError::UnexpectedSample { .. })
     ));
 
     let mut duplicate = samples.clone();
-    duplicate.insert(1, duplicate[0]);
+    duplicate.insert(1, duplicate[0].clone());
     assert!(matches!(
-        inspect(&problem, duplicate.iter().copied()),
+        inspect(&problem, duplicate.iter().cloned()),
         Err(SelectedObservationInspectionError::DuplicateSample { .. })
     ));
 
     let mut reversed = samples.clone();
     reversed.reverse();
     assert!(matches!(
-        inspect(&problem, reversed.iter().copied()),
+        inspect(&problem, reversed.iter().cloned()),
         Err(SelectedObservationInspectionError::NonCanonicalSampleOrder { .. })
     ));
 
     let mut wrong_prediction_target = samples.clone();
     wrong_prediction_target[0].prediction_target = SelectedPredictionTarget::NotRequested;
     assert!(matches!(
-        inspect(&problem, wrong_prediction_target.iter().copied()),
+        inspect(&problem, wrong_prediction_target.iter().cloned()),
         Err(SelectedObservationInspectionError::PredictionTargetMismatch { .. })
     ));
 
     let mut wrong_visibility_storage = samples.clone();
     wrong_visibility_storage[0].visibility = SelectedVisibilitySample::Float32(1.0);
     assert!(matches!(
-        inspect(&problem, wrong_visibility_storage.iter().copied()),
+        inspect(&problem, wrong_visibility_storage.iter().cloned()),
         Err(SelectedObservationInspectionError::VisibilityStorageMismatch { .. })
     ));
 
@@ -154,7 +155,7 @@ fn selected_observation_inspection_rejects_any_departure_from_compiled_coverage(
     }
     inspect(
         &weight_problem,
-        per_correlation_broadcast_weight.iter().copied(),
+        per_correlation_broadcast_weight.iter().cloned(),
     )
     .expect("WEIGHT may differ between correlations while repeating across channels");
 
@@ -170,7 +171,7 @@ fn selected_observation_inspection_rejects_any_departure_from_compiled_coverage(
         .expect("second selected channel and correlation");
     second_channel_second_correlation.input_weight = 6.0;
     assert!(matches!(
-        inspect(&weight_problem, varying_broadcast_weight.iter().copied()),
+        inspect(&weight_problem, varying_broadcast_weight.iter().cloned()),
         Err(SelectedObservationInspectionError::WeightBroadcastMismatch { .. })
     ));
 
@@ -184,7 +185,7 @@ fn selected_observation_inspection_rejects_any_departure_from_compiled_coverage(
     let float_problem =
         compiled_problem_with_columns(VisibilityColumn::FloatData, WeightColumn::Weight);
     let float_samples = exact_samples(&float_problem);
-    inspect(&float_problem, float_samples.iter().copied())
+    inspect(&float_problem, float_samples.iter().cloned())
         .expect("FLOAT_DATA reports single-precision real samples");
     let mut wrong_float_storage = float_samples;
     wrong_float_storage[0].visibility = SelectedVisibilitySample::Complex32([1.0, 0.0]);
@@ -300,6 +301,31 @@ fn sample(
     let centre_hz = 1_400_000_000.0
         + f64::from(data_description.spectral_window_id()) * 10_000_000.0
         + f64::from(channel_index) * 1_000_000.0;
+    let coordinates = SelectedSampleCoordinates {
+        raw_uvw_m: [12.0 + physical_row as f64, -4.0, 2.0],
+        density_uvw_m: [12.5 + physical_row as f64, -4.25, 2.25],
+        transformed_uvw_m: [11.75 + physical_row as f64, -3.75, 1.5],
+        phase_shift_m: 0.125,
+        uvw_law: UvwCoordinateLaw::PhaseTrackingCentre,
+        time: Epoch::new(59_000.0 + physical_row as f64 * 1.0e-6, TimeScale::Utc),
+        time_centroid: Epoch::new(
+            59_000.000_001 + physical_row as f64 * 1.0e-6,
+            TimeScale::Utc,
+        ),
+        interval_seconds: 1.0,
+        exposure_seconds: 0.8,
+        phase_direction: SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
+        delay_direction: SkyDirection::new(DirectionFrame::J2000, 1.000_5, -0.500_5),
+        pointing_directions: casa_imaging_model::SelectedPointingDirections {
+            antenna1: SkyDirection::new(DirectionFrame::J2000, 1.001, -0.499),
+            antenna2: SkyDirection::new(DirectionFrame::J2000, 1.002, -0.498),
+        },
+    };
+    let projection = SelectedPhaseCentreProjection::new(
+        coordinates.transformed_uvw_m,
+        coordinates.phase_shift_m,
+    )
+    .expect("finite one-domain projection");
     SelectedObservationSample {
         address: SelectedSampleAddress {
             measurement_set,
@@ -325,26 +351,11 @@ fn sample(
         parallel_hand_group_flag: false,
         row_flag: false,
         input_weight: 2.0,
-        coordinates: SelectedSampleCoordinates {
-            raw_uvw_m: [12.0 + physical_row as f64, -4.0, 2.0],
-            density_uvw_m: [12.5 + physical_row as f64, -4.25, 2.25],
-            transformed_uvw_m: [11.75 + physical_row as f64, -3.75, 1.5],
-            phase_shift_m: 0.125,
-            uvw_law: UvwCoordinateLaw::PhaseTrackingCentre,
-            time: Epoch::new(59_000.0 + physical_row as f64 * 1.0e-6, TimeScale::Utc),
-            time_centroid: Epoch::new(
-                59_000.000_001 + physical_row as f64 * 1.0e-6,
-                TimeScale::Utc,
-            ),
-            interval_seconds: 1.0,
-            exposure_seconds: 0.8,
-            phase_direction: SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
-            delay_direction: SkyDirection::new(DirectionFrame::J2000, 1.000_5, -0.500_5),
-            pointing_directions: casa_imaging_model::SelectedPointingDirections {
-                antenna1: SkyDirection::new(DirectionFrame::J2000, 1.001, -0.499),
-                antenna2: SkyDirection::new(DirectionFrame::J2000, 1.002, -0.498),
-            },
-        },
+        coordinates,
+        domain_projections: SelectedImageDomainProjections::new([
+            SelectedImageDomainProjection::with_shared_psf(0, projection),
+        ])
+        .expect("canonical one-domain projections"),
         metadata: SelectedSampleMetadata {
             field_id: 0,
             antenna1: 0,

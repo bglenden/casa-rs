@@ -23,23 +23,26 @@ use casa_imaging_model::{
     ProductRequirements, ProductRole, ProductSupportComparison, ProductValidityPolicies,
     Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
     ReconstructionControls, ReductionPolicy, RestFrequency, RestoringBeamPolicy, RowSelection,
-    ScientificContract, SelectedColumns, SelectedMainRow, SelectedObservationGenerationId,
-    SelectedObservationSample, SelectedPredictionTarget, SelectedRows, SelectedSampleAddress,
-    SelectedSampleCoordinates, SelectedSampleMetadata, SelectedSpectralContribution,
-    SelectedSpectralContributions, SelectedVisibilitySample, SkyDirection, SourceGenerations,
-    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection, StageErrorBudget,
-    TaylorSupportReference, TaylorValidityPolicy, TimeScale, TimeSelection, UvSelection,
-    UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope,
-    WeightingContract, WeightingScheme, compile, compile_observation,
+    ScientificContract, SelectedColumns, SelectedImageDomainProjection,
+    SelectedImageDomainProjections, SelectedMainRow, SelectedObservationGenerationId,
+    SelectedObservationRunChannel, SelectedObservationRunCorrelation, SelectedObservationRunRow,
+    SelectedObservationSample, SelectedPhaseCentreProjection, SelectedPredictionTarget,
+    SelectedRows, SelectedSampleAddress, SelectedSampleCoordinates, SelectedSampleMetadata,
+    SelectedSpectralContribution, SelectedSpectralContributions, SelectedVisibilitySample,
+    SkyDirection, SourceGenerations, SpectralContract, SpectralCoordinateSpec, SpectralCoupling,
+    SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection,
+    StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy, TimeScale, TimeSelection,
+    UvSelection, UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn,
+    WeightDensityScope, WeightingContract, WeightingScheme, compile, compile_observation,
 };
 use casa_imaging_products::{
     ContinuumProductControls, ContinuumSourceCatalog, ProductGenerationAuthority, ProductsError,
     fit_restoring_beam, gaussian_beam_image, normalize_plane, produce_continuum_members,
 };
 use casa_imaging_reconstruction::{
-    ExecutableModelProblem, MajorCycleCompletion, MajorCycleOwner, MajorCyclePreparation, MaskBox,
-    ModelGenerationId, ModelLifecycle, ReconstructionMask, SpectralOperatorSpecification,
+    ExecutableModelProblem, ImageDomainReconstructionMaskPlans, MajorCycleCompletion,
+    MajorCycleOwner, MajorCyclePreparation, MaskBox, ModelGenerationId, ModelLifecycle,
+    ReconstructionMask, ReconstructionMaskPlan, SpectralOperatorSpecification,
     WeightingAlgorithmState, WeightingError, WeightingExecutionLimits, WeightingPlan,
     WeightingReplayChunk, WeightingReplaySummary, begin_weighting_generation, plan_weighting,
     runtime_adapter::{
@@ -212,11 +215,6 @@ fn continuum_problem_with_reconstruction(
     algorithm: ReconstructionAlgorithm,
     channels: usize,
 ) -> casa_imaging_model::CompiledProblem {
-    let controls = if matches!(algorithm, ReconstructionAlgorithm::Mtmfs { .. }) {
-        ReconstructionControls::new(1, 1.0, 0.0)
-    } else {
-        ReconstructionControls::new(0, 1.0, 0.0)
-    };
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
         SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
@@ -225,7 +223,14 @@ fn continuum_problem_with_reconstruction(
         [[1.0, 0.0], [0.0, 1.0]],
         [180.0, 0.0],
     );
-    let geometry = GeometryInput::new(
+    continuum_problem_with_domains_and_reconstruction(
+        observation,
+        products,
+        restoring_beam,
+        response,
+        basis,
+        algorithm,
+        channels,
         vec![ImageDomainSpec::new(
             ImageDomainRole::Main,
             ImageShape::new(SHAPE[0], SHAPE[1]),
@@ -238,8 +243,35 @@ fn continuum_problem_with_reconstruction(
                 ImageAxis::Spectral,
             ]),
         )],
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn continuum_problem_with_domains_and_reconstruction(
+    observation: u8,
+    products: &[ProductKind],
+    restoring_beam: RestoringBeamPolicy,
+    response: InstrumentResponse,
+    basis: ReconstructionBasis,
+    algorithm: ReconstructionAlgorithm,
+    channels: usize,
+    domains: Vec<ImageDomainSpec>,
+) -> casa_imaging_model::CompiledProblem {
+    let controls = if matches!(algorithm, ReconstructionAlgorithm::Mtmfs { .. }) {
+        ReconstructionControls::new(1, 1.0, 0.0)
+    } else {
+        ReconstructionControls::new(0, 1.0, 0.0)
+    };
+    let phase_centre = domains
+        .iter()
+        .find(|domain| domain.role() == &ImageDomainRole::Main)
+        .expect("one main domain")
+        .direction()
+        .reference_direction();
+    let geometry = GeometryInput::new(
+        domains,
         CentreLaws::new(
-            PhaseCentreLaw::Fixed(direction.reference_direction()),
+            PhaseCentreLaw::Fixed(phase_centre),
             DelayCentreLaw::PhaseTrackingCentre,
             PointingCentreLaw::PhaseTrackingCentre,
         ),
@@ -373,6 +405,13 @@ fn fixture_samples_with_flux(
                         antenna2: SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
                     },
                 },
+                domain_projections: SelectedImageDomainProjections::one_domain_with_shared_psf(
+                    SelectedPhaseCentreProjection::new(
+                        [1.0 + row_index as f64, source_index as f64, 0.0],
+                        0.0,
+                    )
+                    .expect("finite one-domain projection"),
+                ),
                 metadata: SelectedSampleMetadata {
                     field_id: 0,
                     antenna1: 0,
@@ -388,6 +427,83 @@ fn fixture_samples_with_flux(
         }
     }
     samples
+}
+
+struct TwoDomainFixtureRun {
+    row: SelectedObservationRunRow,
+    channel: SelectedObservationRunChannel,
+    correlation: SelectedObservationRunCorrelation,
+    contributions: SelectedSpectralContributions,
+}
+
+impl TwoDomainFixtureRun {
+    fn view(&self) -> casa_imaging_model::SelectedObservationSampleView<'_> {
+        casa_imaging_model::SelectedObservationSampleView::from_run(
+            &self.row,
+            &self.channel,
+            &self.correlation,
+        )
+    }
+}
+
+fn two_domain_fixture_runs(
+    problem: &casa_imaging_model::CompiledProblem,
+) -> Vec<TwoDomainFixtureRun> {
+    fixture_samples(problem)
+        .into_iter()
+        .map(|sample| {
+            let main = SelectedPhaseCentreProjection::new(
+                sample.coordinates.transformed_uvw_m,
+                sample.coordinates.phase_shift_m,
+            )
+            .expect("main projection");
+            let outlier = SelectedPhaseCentreProjection::new(
+                [
+                    sample.coordinates.transformed_uvw_m[0] * 1.7,
+                    sample.coordinates.transformed_uvw_m[1] + 0.4,
+                    sample.coordinates.transformed_uvw_m[2],
+                ],
+                sample.coordinates.phase_shift_m + 0.2,
+            )
+            .expect("outlier projection");
+            let address = sample.address;
+            TwoDomainFixtureRun {
+                row: SelectedObservationRunRow {
+                    measurement_set: address.measurement_set,
+                    physical_row: address.physical_row,
+                    data_description_id: address.data_description_id,
+                    spectral_window_id: address.spectral_window_id,
+                    polarization_id: address.polarization_id,
+                    prediction_target: sample.prediction_target,
+                    row_flag: sample.row_flag,
+                    coordinates: sample.coordinates,
+                    domain_projections: SelectedImageDomainProjections::new([
+                        SelectedImageDomainProjection::with_shared_psf(0, main),
+                        SelectedImageDomainProjection::with_shared_psf(1, outlier),
+                    ])
+                    .expect("canonical projections"),
+                    metadata: sample.metadata,
+                },
+                channel: SelectedObservationRunChannel {
+                    channel_index: address.channel_index,
+                    frequency_centre_hz: address.frequency_centre_hz,
+                    frequency_lower_hz: address.frequency_lower_hz,
+                    frequency_upper_hz: address.frequency_upper_hz,
+                    channel_width_hz: address.channel_width_hz,
+                    frequency_frame: address.frequency_frame,
+                },
+                correlation: SelectedObservationRunCorrelation {
+                    correlation_index: address.correlation_index,
+                    correlation_type: address.correlation_type,
+                    visibility: sample.visibility,
+                    channel_flag: sample.channel_flag,
+                    parallel_hand_group_flag: sample.parallel_hand_group_flag,
+                    input_weight: sample.input_weight,
+                },
+                contributions: exact_contributions(&sample),
+            }
+        })
+        .collect()
 }
 
 fn exact_contributions(sample: &SelectedObservationSample) -> SelectedSpectralContributions {
@@ -415,7 +531,7 @@ fn replay_selected_generation(
     samples: &[SelectedObservationSample],
 ) -> SelectedObservationGenerationId {
     let (generation, count) = problem
-        .inspect_selected_observation(samples.iter().copied().map(Ok::<_, Infallible>), |_| {
+        .inspect_selected_observation(samples.iter().cloned().map(Ok::<_, Infallible>), |_| {
             Ok::<_, Infallible>(())
         })
         .expect("inspect fixture sample stream");
@@ -522,6 +638,108 @@ fn run_round_with_contributions(
     ContinuumRound { join: joined }
 }
 
+fn run_two_domain_round(
+    problem: &casa_imaging_model::CompiledProblem,
+    attempt_byte: u8,
+) -> ContinuumRound {
+    let runs = two_domain_fixture_runs(problem);
+    let mut lifecycle = ModelLifecycle::bind(
+        ExecutableModelProblem::from_compiled(problem.clone()).expect("executable problem"),
+        attempt(attempt_byte),
+        7,
+    )
+    .expect("bind model lifecycle");
+    let named = lifecycle.initial_empty().expect("empty named generation");
+    let delta = lifecycle
+        .compile_delta(
+            &named,
+            [
+                casa_imaging_model::ModelDeltaTerm::new(
+                    casa_imaging_model::ModelCell::new(0, 0, 0, [4, 4]),
+                    casa_imaging_model::ModelValue::new(0.75).expect("main model value"),
+                ),
+                casa_imaging_model::ModelDeltaTerm::new(
+                    casa_imaging_model::ModelCell::new(1, 0, 0, [2, 1]),
+                    casa_imaging_model::ModelValue::new(0.25).expect("outlier model value"),
+                ),
+            ],
+        )
+        .expect("two-domain delta");
+    let preparation =
+        MajorCyclePreparation::prepare(&lifecycle, named, Some(delta)).expect("prepare model");
+    let plan = plan_weighting(
+        problem,
+        WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
+    )
+    .expect("weighting plan");
+
+    let mut inspection = problem.begin_selected_observation_inspection();
+    for run in &runs {
+        inspection
+            .push_view(run.view())
+            .expect("inspect run member");
+    }
+    let (selected_generation, selected_count) = inspection.finish().expect("selected generation");
+    assert_eq!(selected_count as usize, runs.len());
+
+    let mut density = begin_weighting_generation(problem, &plan).expect("density phase");
+    for run in &runs {
+        density
+            .consume(problem, run.view(), run.contributions.clone())
+            .expect("density sample");
+    }
+    let mut sum_weight = density.finish(problem).expect("sum-weight phase");
+    for run in &runs {
+        sum_weight
+            .consume(problem, run.view(), run.contributions.clone())
+            .expect("sum-weight sample");
+    }
+    let generation = sum_weight.finish().expect("weighting generation");
+    let mut replay = generation
+        .begin_replay(problem, &plan)
+        .expect("begin replay");
+    let mut blocks = Vec::new();
+    for run in &runs {
+        if let Some(block) = replay
+            .consume(problem, run.view(), run.contributions.clone())
+            .expect("replay sample")
+        {
+            blocks.push(block);
+        }
+    }
+    let (tail, summary) = replay.finish().expect("finish replay");
+    if let Some(block) = tail {
+        blocks.push(block);
+    }
+
+    let specification =
+        SpectralOperatorSpecification::new(problem).expect("two-domain specification");
+    let workload = spectral_operator_workload(
+        &specification,
+        plan.limits().max_block_samples(),
+        SpectralOperatorPass::InitialMajor,
+    )
+    .expect("two-domain workload");
+    let prepared = prepare_spectral_operator(specification, workload).expect("prepare operator");
+    let mut state = prepared
+        .begin(problem, &generation)
+        .expect("begin complete-data owner");
+    state
+        .bind_major_cycle_model(preparation.final_model(), None)
+        .expect("bind two-domain model");
+    for block in &blocks {
+        state.consume_block(block).expect("consume weighted block");
+    }
+    let evidence = state
+        .complete(&summary, selected_generation, None)
+        .expect("complete two-domain evidence");
+    let joined = MajorCycleOwner::from_complete_data(evidence, preparation)
+        .expect("major-cycle owner")
+        .reconcile(&mut lifecycle)
+        .expect("two-domain reconciliation");
+    ContinuumRound { join: joined }
+}
+
 fn freeze_weighting_generation(
     problem: &casa_imaging_model::CompiledProblem,
     plan: &WeightingPlan,
@@ -620,29 +838,29 @@ fn prechange_commitment_bytes(
 #[test]
 fn v2_commitments_stay_pinned_and_v3_adds_exact_taylor_identity() {
     const CONSTANT_DIGEST: [u8; 32] = [
-        0x6c, 0x1c, 0x00, 0x08, 0xde, 0xe8, 0x1b, 0x8d, 0x7e, 0xa7, 0x4d, 0x93, 0x3c, 0x2a, 0xba,
-        0xed, 0x44, 0xa6, 0x96, 0xdd, 0xb8, 0x56, 0x2a, 0xc2, 0x49, 0x97, 0xc2, 0x3a, 0xb4, 0x1c,
-        0xec, 0x53,
+        0xb8, 0x4f, 0xbb, 0xdd, 0xb3, 0x27, 0x13, 0xb7, 0x1d, 0x0c, 0x95, 0x8c, 0x30, 0x35, 0xcf,
+        0xb4, 0x23, 0x6f, 0xd8, 0x71, 0xc4, 0xe3, 0x04, 0x4f, 0xab, 0x3d, 0x29, 0xe3, 0x3a, 0x2a,
+        0xad, 0x7a,
     ];
     const CHANNEL_DIGEST: [u8; 32] = [
-        0x6c, 0x64, 0x65, 0x99, 0x3d, 0xfe, 0xc0, 0x3c, 0x2a, 0xff, 0x2f, 0xdb, 0x0c, 0x08, 0xbc,
-        0x0e, 0x50, 0x37, 0x90, 0x5a, 0x61, 0x94, 0x8f, 0x11, 0xef, 0x0b, 0xaa, 0x1e, 0x1c, 0xa6,
-        0x4e, 0x9b,
+        0xb5, 0xae, 0x50, 0xfb, 0xf1, 0x3f, 0xf7, 0x43, 0x79, 0xd0, 0xa1, 0xbb, 0xa2, 0xbf, 0x25,
+        0xbf, 0xfb, 0x3e, 0x5e, 0xa1, 0x6b, 0x14, 0x29, 0xbf, 0x26, 0x5e, 0x93, 0x4e, 0x98, 0xb3,
+        0x9d, 0xad,
     ];
     const CONSTANT_V3_DIGEST: [u8; 32] = [
-        0xc8, 0xa4, 0xcf, 0x1c, 0x51, 0x0d, 0x52, 0xd5, 0xc9, 0x0d, 0x75, 0x8a, 0x21, 0x38, 0x31,
-        0x50, 0xd4, 0xbf, 0x25, 0x68, 0x2e, 0xdb, 0xdb, 0x20, 0xa4, 0x1b, 0x96, 0xf9, 0x4b, 0x41,
-        0xd2, 0xf2,
+        0xd5, 0x8e, 0x97, 0x26, 0x1a, 0x0d, 0x6c, 0xb4, 0xd0, 0xb6, 0x97, 0x95, 0xca, 0x80, 0xa2,
+        0x41, 0x0e, 0x6e, 0xe0, 0x71, 0x39, 0x39, 0xa3, 0x24, 0x36, 0x1f, 0xff, 0xc3, 0x61, 0x77,
+        0x0f, 0xb7,
     ];
     const CHANNEL_V3_DIGEST: [u8; 32] = [
-        0x6d, 0x64, 0xcf, 0x4a, 0x0b, 0x77, 0x0e, 0x7e, 0x65, 0x26, 0x50, 0xd6, 0xed, 0x9f, 0x9b,
-        0x7b, 0x99, 0x70, 0x6b, 0x02, 0xe1, 0x60, 0x3d, 0xea, 0x25, 0xe3, 0x0d, 0xf8, 0x0f, 0x37,
-        0xb4, 0x06,
+        0xec, 0x10, 0xa6, 0xad, 0x76, 0x97, 0x36, 0x7f, 0x68, 0x55, 0x71, 0x73, 0x9a, 0x8d, 0x21,
+        0xa5, 0x3f, 0x1c, 0x7d, 0x84, 0xa9, 0x51, 0x37, 0xd4, 0x76, 0x9c, 0xe8, 0x53, 0xff, 0x33,
+        0x92, 0x19,
     ];
     const TAYLOR_V3_DIGEST: [u8; 32] = [
-        0xb4, 0xc8, 0xdb, 0x5b, 0xcd, 0xb1, 0xdd, 0xef, 0x12, 0x1a, 0x64, 0x39, 0x92, 0x61, 0x85,
-        0x6d, 0xbb, 0x6b, 0x1e, 0xe1, 0x4c, 0xfa, 0x23, 0xc1, 0x08, 0x49, 0xa0, 0x6d, 0xdc, 0xf3,
-        0xcf, 0xa2,
+        0x3c, 0xc5, 0xf5, 0x49, 0x88, 0x44, 0x2b, 0x85, 0x04, 0x2d, 0xea, 0xf5, 0x5b, 0x9d, 0x11,
+        0xcc, 0xb5, 0xdf, 0xc0, 0x25, 0x35, 0xca, 0xd3, 0xab, 0x26, 0x8c, 0x8f, 0x22, 0x5d, 0x0c,
+        0x2b, 0x5c,
     ];
 
     let constant_problem = continuum_problem(131, &CONTINUUM_PRODUCTS);
@@ -851,6 +1069,179 @@ fn produce_then_authorize_seals_the_exact_member_set_once() {
         .expect("resealed");
     assert_eq!(sealed.seal_id(), reproduced.seal_id());
     assert_eq!(sealed.completions_id(), reproduced.completions_id());
+}
+
+#[test]
+fn two_domain_members_consume_their_matching_normal_and_model_chart() {
+    let main_direction = DirectionCoordinateSpec::new(
+        Projection::Sin,
+        SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
+        [4.0, 4.0],
+        [-1.0e-6, 1.0e-6],
+        [[1.0, 0.0], [0.0, 1.0]],
+        [180.0, 0.0],
+    );
+    let outlier_shape = [6, 4];
+    let outlier_direction = DirectionCoordinateSpec::new(
+        Projection::Sin,
+        SkyDirection::new(DirectionFrame::J2000, 1.02, -0.48),
+        [3.0, 2.0],
+        [-1.5e-6, 1.5e-6],
+        [[1.0, 0.0], [0.0, 1.0]],
+        [180.0, 0.0],
+    );
+    let domains = vec![
+        ImageDomainSpec::new(
+            ImageDomainRole::Main,
+            ImageShape::new(SHAPE[0], SHAPE[1]),
+            main_direction,
+            FacetLayout::Single,
+            AxisOrder::new([
+                ImageAxis::DirectionLongitude,
+                ImageAxis::DirectionLatitude,
+                ImageAxis::Polarization,
+                ImageAxis::Spectral,
+            ]),
+        ),
+        ImageDomainSpec::new(
+            ImageDomainRole::Outlier("east".into()),
+            ImageShape::new(outlier_shape[0], outlier_shape[1]),
+            outlier_direction,
+            FacetLayout::Single,
+            AxisOrder::new([
+                ImageAxis::DirectionLongitude,
+                ImageAxis::DirectionLatitude,
+                ImageAxis::Polarization,
+                ImageAxis::Spectral,
+            ]),
+        ),
+    ];
+    let products = [
+        ProductKind::Psf,
+        ProductKind::Residual,
+        ProductKind::Model,
+        ProductKind::SumWeights,
+        ProductKind::Weight,
+        ProductKind::Mask,
+    ];
+    let problem = continuum_problem_with_domains_and_reconstruction(
+        141,
+        &products,
+        RestoringBeamPolicy::None,
+        InstrumentResponse::Scalar,
+        ReconstructionBasis::Constant,
+        ReconstructionAlgorithm::Dirty,
+        1,
+        domains,
+    );
+    let round = run_two_domain_round(&problem, 142);
+    let normal = round.join.normal_state();
+    assert_eq!(normal.domain_count(), 2);
+    let mask_plans =
+        ImageDomainReconstructionMaskPlans::new(problem.geometry().domains().iter().map(
+            |domain| ReconstructionMaskPlan::FullPlane {
+                coordinate: domain.direction(),
+            },
+        ))
+        .expect("domain mask plans");
+    let (masks, _) = mask_plans
+        .materialize(round.join.final_model(), normal)
+        .expect("domain masks");
+    let catalog =
+        ContinuumSourceCatalog::from_major_cycle_with_domain_masks(&problem, &round.join, &masks)
+            .expect("two-domain catalog");
+    let authority = ProductGenerationAuthority::bind(&problem);
+    let planned = authority
+        .plan(&catalog, &ContinuumProductControls::default())
+        .expect("two-domain plan");
+    let inputs =
+        casa_imaging_products::ContinuumProductInputs::from_major_cycle(&problem, &round.join)
+            .expect("two-domain inputs")
+            .with_domain_reconstruction_masks(&masks)
+            .expect("domain-mask inputs");
+    planned
+        .demand(&inputs)
+        .expect("two-domain product residency demand");
+    let produced = produce_continuum_members(&planned, &inputs).expect("two-domain production");
+    let sealed = authority
+        .authorize(&planned, &produced)
+        .expect("two-domain seal");
+    assert_eq!(sealed.members().len(), products.len() * 2);
+
+    for (ordinal, role) in [
+        ImageDomainRole::Main,
+        ImageDomainRole::Outlier("east".into()),
+    ]
+    .iter()
+    .enumerate()
+    {
+        let domain = normal.domain_by_role(role).expect("domain normal state");
+        let expected_shape = problem.geometry().domains()[ordinal].shape().pixels();
+        let model_member = sealed
+            .members()
+            .iter()
+            .find(|member| {
+                member.contract().axes().domain() == role
+                    && member.contract().role()
+                        == ProductRole::Model(casa_imaging_model::ProductTerm::Single)
+            })
+            .expect("domain model member");
+        assert_eq!(
+            model_member.payload().len(),
+            expected_shape[0] * expected_shape[1]
+        );
+        let expected_model_peak = if ordinal == 0 { 0.75 } else { 0.25 };
+        assert_eq!(
+            model_member
+                .payload()
+                .iter()
+                .copied()
+                .fold(f32::NEG_INFINITY, f32::max),
+            expected_model_peak
+        );
+
+        let psf_member = sealed
+            .members()
+            .iter()
+            .find(|member| {
+                member.contract().axes().domain() == role
+                    && member.contract().role()
+                        == ProductRole::Psf(casa_imaging_model::ProductTerm::Single)
+            })
+            .expect("domain PSF member");
+        let sum_weight = domain.sum_weights()[0] as f32;
+        let expected_psf = if sum_weight.is_finite() && sum_weight > 0.0 {
+            domain
+                .normal_approximation()
+                .iter()
+                .map(|value| value.re as f32 / sum_weight)
+                .collect::<Vec<_>>()
+        } else {
+            vec![0.0; expected_shape[0] * expected_shape[1]]
+        };
+        assert_eq!(psf_member.payload(), expected_psf);
+
+        let mask_member = sealed
+            .members()
+            .iter()
+            .find(|member| {
+                member.contract().axes().domain() == role
+                    && member.contract().role() == ProductRole::CleanMask
+            })
+            .expect("domain mask member");
+        let expected_mask = domain
+            .sensitivity()
+            .iter()
+            .map(|value| {
+                if sum_weight > 0.0 && value.is_finite() && *value > 0.0 {
+                    1.0
+                } else {
+                    0.0
+                }
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(mask_member.payload(), expected_mask);
+    }
 }
 
 #[test]

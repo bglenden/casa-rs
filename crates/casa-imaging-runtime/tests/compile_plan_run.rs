@@ -2959,9 +2959,12 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
     .expect("gridded-normal compiler and spill writer")
     .with_reconstruction_cycle(
         minor_node.clone(),
-        casa_imaging_reconstruction::ReconstructionMaskPlan::FullPlane {
-            coordinate: problem.geometry().domains()[0].direction(),
-        },
+        casa_imaging_reconstruction::ImageDomainReconstructionMaskPlans::new([
+            casa_imaging_reconstruction::ReconstructionMaskPlan::FullPlane {
+                coordinate: problem.geometry().domains()[0].direction(),
+            },
+        ])
+        .expect("one-domain mask plans"),
         casa_imaging_reconstruction::MinorCycleProgram::new(0.1, 0.0, 2).expect("controls"),
     );
     let runtime_registry =
@@ -3514,9 +3517,12 @@ fn execute_initial_reconstruction_cycle(
     .expect("channel-cycle gridded-normal compiler")
     .with_reconstruction_cycle(
         cycle_node.clone(),
-        casa_imaging_reconstruction::ReconstructionMaskPlan::FullPlane {
-            coordinate: problem.geometry().domains()[0].direction(),
-        },
+        casa_imaging_reconstruction::ImageDomainReconstructionMaskPlans::new([
+            casa_imaging_reconstruction::ReconstructionMaskPlan::FullPlane {
+                coordinate: problem.geometry().domains()[0].direction(),
+            },
+        ])
+        .expect("one-domain mask plans"),
         program,
     );
     let runtime_registry =
@@ -10874,7 +10880,8 @@ fn sealed_products_samples(
     problem: &casa_imaging_model::CompiledProblem,
 ) -> Vec<casa_imaging_model::SelectedObservationSample> {
     use casa_imaging_model::{
-        Epoch as FixtureEpoch, FrequencyFrame as FixtureFrequencyFrame, SelectedSampleAddress,
+        Epoch as FixtureEpoch, FrequencyFrame as FixtureFrequencyFrame,
+        SelectedImageDomainProjections, SelectedPhaseCentreProjection, SelectedSampleAddress,
         SelectedSampleCoordinates, SelectedSampleMetadata, SelectedVisibilitySample, TimeScale,
         UvwCoordinateLaw,
     };
@@ -10936,6 +10943,10 @@ fn sealed_products_samples(
                     antenna2: SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
                 },
             },
+            domain_projections: SelectedImageDomainProjections::one_domain_with_shared_psf(
+                SelectedPhaseCentreProjection::new([12.0 + source_index as f64, 4.0, 0.0], 0.0)
+                    .expect("finite one-domain projection"),
+            ),
             metadata: SelectedSampleMetadata {
                 field_id: 0,
                 antenna1: 0,
@@ -11043,7 +11054,7 @@ fn sealed_products_round(
         .inspect_selected_observation(
             samples
                 .iter()
-                .copied()
+                .cloned()
                 .map(Ok::<_, std::convert::Infallible>),
             |_| Ok::<_, std::convert::Infallible>(()),
         )

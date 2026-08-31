@@ -135,6 +135,7 @@ fn direction_world_to_pixel(
 const MASK_DOMAIN: &[u8] = b"casa-rs-reconstruction-mask";
 const MASK_VERSION: u32 = 1;
 const COUPLED_MASK_DOMAIN: &[u8] = b"casa-rs-coupled-reconstruction-mask";
+const IMAGE_DOMAIN_MASKS_DOMAIN: &[u8] = b"casa-rs-image-domain-reconstruction-masks";
 
 /// Stable identity of one immutable reconstruction-mask generation.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -450,6 +451,23 @@ pub struct ReconstructionMask {
     support: Box<[bool]>,
 }
 
+/// Canonical per-image-domain mask plans for one shared reconstruction cycle.
+///
+/// Plan ordinal is the compiled image-domain ordinal. Construction rejects an
+/// empty collection; materialization additionally proves exact cardinality,
+/// shape, problem, model-generation, and Normal-State lineage.
+#[derive(Debug, Clone)]
+pub struct ImageDomainReconstructionMaskPlans {
+    plans: Box<[ReconstructionMaskPlan]>,
+}
+
+/// Immutable per-image-domain mask generations bound to one shared cycle.
+#[derive(Debug, Clone)]
+pub struct ImageDomainReconstructionMasks {
+    generation: ReconstructionMaskGenerationId,
+    masks: Box<[ReconstructionMask]>,
+}
+
 /// The two independently committed spatial supports of one joint solve.
 ///
 /// Continuum and line components may occupy different sky regions. This value
@@ -466,6 +484,8 @@ pub struct CoupledReconstructionMask {
 pub enum ReconstructionMaskSet {
     /// One support used by a scalar, cube, or Taylor solve.
     Shared(ReconstructionMask),
+    /// One canonical spatial support for every compiled image domain.
+    Domains(ImageDomainReconstructionMasks),
     /// Independently committed continuum and line supports.
     Coupled(CoupledReconstructionMask),
 }
@@ -476,6 +496,7 @@ impl ReconstructionMaskSet {
     pub const fn primary(&self) -> &ReconstructionMask {
         match self {
             Self::Shared(mask) => mask,
+            Self::Domains(masks) => masks.primary(),
             Self::Coupled(masks) => masks.continuum(),
         }
     }
@@ -484,9 +505,210 @@ impl ReconstructionMaskSet {
     #[must_use]
     pub const fn coupled(&self) -> Option<&CoupledReconstructionMask> {
         match self {
-            Self::Shared(_) => None,
+            Self::Shared(_) | Self::Domains(_) => None,
             Self::Coupled(masks) => Some(masks),
         }
+    }
+
+    /// Return canonical image-domain supports when this is a multi-chart cycle.
+    #[must_use]
+    pub const fn domains(&self) -> Option<&ImageDomainReconstructionMasks> {
+        match self {
+            Self::Domains(masks) => Some(masks),
+            Self::Shared(_) | Self::Coupled(_) => None,
+        }
+    }
+}
+
+impl ImageDomainReconstructionMaskPlans {
+    /// Adopt one non-empty plan for each image domain in compiled order.
+    pub fn new(plans: impl IntoIterator<Item = ReconstructionMaskPlan>) -> Result<Self, MaskError> {
+        let plans = plans.into_iter().collect::<Vec<_>>().into_boxed_slice();
+        if plans.is_empty() {
+            return Err(MaskError::DomainCardinalityMismatch);
+        }
+        Ok(Self { plans })
+    }
+
+    /// Return the number of canonical domain plans.
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.plans.len()
+    }
+
+    /// Borrow the primary-domain plan.
+    #[must_use]
+    pub const fn primary(&self) -> &ReconstructionMaskPlan {
+        &self.plans[0]
+    }
+
+    /// Advance every domain plan to the next shared major-cycle boundary.
+    ///
+    /// The T31 slice admits live auto-masking only for a one-domain
+    /// collection. Multi-domain auto-mask evolution fails typed instead of
+    /// silently sharing or independently inventing support.
+    pub fn next_cycle(
+        &self,
+        current: &ImageDomainReconstructionMasks,
+        completed_major_cycles: usize,
+        cycle_threshold_reached: bool,
+        evolution_stopped: &[bool],
+    ) -> Result<Self, MaskError> {
+        if self.plans.len() != current.len() || self.plans.len() != evolution_stopped.len() {
+            return Err(MaskError::DomainCardinalityMismatch);
+        }
+        if self.plans.len() > 1
+            && self
+                .plans
+                .iter()
+                .any(|plan| matches!(plan, ReconstructionMaskPlan::AutoMultithresh { .. }))
+        {
+            return Err(MaskError::UnsupportedMultiDomainPlan);
+        }
+        let plans = self
+            .plans
+            .iter()
+            .zip(current.iter())
+            .zip(evolution_stopped)
+            .map(|((plan, mask), stopped)| {
+                plan.next_cycle(
+                    mask,
+                    completed_major_cycles,
+                    cycle_threshold_reached,
+                    *stopped,
+                )
+            });
+        Self::new(plans)
+    }
+
+    /// Materialize every domain support against one shared Normal State.
+    pub fn materialize(
+        &self,
+        base: &crate::ModelGeneration,
+        normal: &FinalNormalState,
+    ) -> Result<
+        (
+            ImageDomainReconstructionMasks,
+            Box<[Option<AutoMultithreshEvidence>]>,
+        ),
+        MaskError,
+    > {
+        if self.plans.len() != normal.domain_count()
+            || self.plans.len() != base.shape().domains().len()
+        {
+            return Err(MaskError::DomainCardinalityMismatch);
+        }
+        if self.plans.len() == 1 {
+            let (mask, evidence) = self.plans[0].materialize(base, normal)?;
+            return Ok((
+                ImageDomainReconstructionMasks::new([mask])?,
+                vec![evidence].into_boxed_slice(),
+            ));
+        }
+        let mut masks = Vec::with_capacity(self.plans.len());
+        for (plan, domain) in self.plans.iter().zip(normal.domains()) {
+            let problem = normal.problem_id();
+            let model_generation = base.generation_id();
+            let shape = domain.shape();
+            let mask = match plan {
+                ReconstructionMaskPlan::FullPlane { coordinate } => {
+                    ReconstructionMask::full_plane(problem, model_generation, *coordinate, shape)?
+                }
+                ReconstructionMaskPlan::Boxes { coordinate, boxes } => {
+                    ReconstructionMask::from_boxes(
+                        problem,
+                        model_generation,
+                        *coordinate,
+                        shape,
+                        boxes.iter().copied(),
+                    )?
+                }
+                ReconstructionMaskPlan::Reprojected {
+                    coordinate,
+                    source_coordinate,
+                    source_shape,
+                    support,
+                } => ReconstructionMask::from_reprojected_support(
+                    problem,
+                    model_generation,
+                    *coordinate,
+                    shape,
+                    support,
+                    *source_coordinate,
+                    *source_shape,
+                )?,
+                ReconstructionMaskPlan::Coupled { .. }
+                | ReconstructionMaskPlan::AutoMultithresh { .. } => {
+                    return Err(MaskError::UnsupportedMultiDomainPlan);
+                }
+            };
+            masks.push(mask);
+        }
+        let evidence = vec![None; masks.len()].into_boxed_slice();
+        Ok((ImageDomainReconstructionMasks::new(masks)?, evidence))
+    }
+}
+
+impl ImageDomainReconstructionMasks {
+    fn new(masks: impl IntoIterator<Item = ReconstructionMask>) -> Result<Self, MaskError> {
+        let masks = masks.into_iter().collect::<Vec<_>>().into_boxed_slice();
+        let Some(primary) = masks.first() else {
+            return Err(MaskError::DomainCardinalityMismatch);
+        };
+        if masks.iter().any(|mask| {
+            mask.problem != primary.problem
+                || mask.model_generation != primary.model_generation
+                || mask.normal_state != primary.normal_state
+        }) {
+            return Err(MaskError::ShapeMismatch);
+        }
+        let mut encoder = Encoder::new(IMAGE_DOMAIN_MASKS_DOMAIN, 1);
+        encoder.usize(masks.len());
+        for (ordinal, mask) in masks.iter().enumerate() {
+            encoder.usize(ordinal);
+            encoder.identity(mask.generation_id().as_bytes());
+        }
+        Ok(Self {
+            generation: ReconstructionMaskGenerationId(LogicalIdentity::from_sha256(
+                encoder.finish(),
+            )),
+            masks,
+        })
+    }
+
+    /// Return the immutable identity binding all supports in domain order.
+    #[must_use]
+    pub const fn generation_id(&self) -> ReconstructionMaskGenerationId {
+        self.generation
+    }
+
+    /// Return the canonical domain count.
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.masks.len()
+    }
+
+    /// Return whether no domain supports are present (always false for valid values).
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.masks.is_empty()
+    }
+
+    /// Borrow the primary-domain support.
+    #[must_use]
+    pub const fn primary(&self) -> &ReconstructionMask {
+        &self.masks[0]
+    }
+
+    /// Borrow one support by canonical domain ordinal.
+    #[must_use]
+    pub fn get(&self, domain_ordinal: usize) -> Option<&ReconstructionMask> {
+        self.masks.get(domain_ordinal)
+    }
+
+    /// Iterate supports in canonical domain order.
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = &ReconstructionMask> {
+        self.masks.iter()
     }
 }
 
@@ -927,6 +1149,12 @@ pub fn auto_multithresh(
 /// Mask construction or lineage failure.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum MaskError {
+    /// Mask-plan cardinality does not equal the compiled image-domain count.
+    #[error("reconstruction mask plans must name every compiled image domain exactly once")]
+    DomainCardinalityMismatch,
+    /// This multi-domain slice supports only static full-plane, box, or reprojected masks.
+    #[error("multi-domain reconstruction does not support this mask plan")]
+    UnsupportedMultiDomainPlan,
     /// A joint solve requires a plan carrying both component supports.
     #[error("joint reconstruction requires a coupled mask plan")]
     CoupledPlanRequired,

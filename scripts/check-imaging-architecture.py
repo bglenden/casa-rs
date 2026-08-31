@@ -57,9 +57,9 @@ ACCEPTED_MATRIX_ROWS_SHA256 = (
     "ecf58b8e1c95c1d7c193a42f73dd408afc238ca07cf1fb213a8825f2d4ff2951"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "cd08c1f71d416b3e3b63cd2d40c5573a40bc657e4e0dc94eef5c9bd558807bc8"
+    "64fcea15c94ad452327e8f2937c55ea2571ca1166dc815f1c7c6f2d1ad682e66"
 )
-ACCEPTED_MATRIX_CONTRACT_REVISION = 68
+ACCEPTED_MATRIX_CONTRACT_REVISION = 69
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "scientific-products-v1",
@@ -1934,7 +1934,7 @@ def validate_t18_global_weighting_sources(
         )
     if (
         "spectral_contributions" in selected_sample_fields
-        or "pub const SCHEMA_VERSION: u32 = 3;" not in sample_model
+        or "pub const SCHEMA_VERSION: u32 = 4;" not in sample_model
     ):
         raise ArchitectureError(
             "T18 spectral contributions must remain outside the persisted selected-sample schema"
@@ -2235,6 +2235,7 @@ def validate_t18_global_weighting_sources(
             "density_uvw_m": "[f64;3]",
             "transformed_uvw_m": "[f64;3]",
             "phase_shift_m": "f64",
+            "domain_projections": "SelectedImageDomainProjections",
         }
         or "input" in replay_phase_fields
         or replay_phase_fields.get("block") != "Vec<WeightingSampleValue>"

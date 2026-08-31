@@ -15,9 +15,10 @@ use casa_imaging_model::{
 };
 use casa_imaging_reconstruction::{
     ChannelCyclePolicy, ExecutableModelProblem, FinalModelCompletion, FinalModelContinuation,
-    FinalNormalState, MajorCycleCompletion, MajorCyclePreparation, MinorCycleProgram, ModelDeltaId,
-    ModelLifecycle, NormalStateCatalog, ReconstructionCycle, ReconstructionCycleError,
-    ReconstructionCycleEvidence, ReconstructionMaskPlan, ReconstructionMaskSet,
+    FinalNormalState, ImageDomainReconstructionMaskPlans, MajorCycleCompletion,
+    MajorCyclePreparation, MinorCycleProgram, ModelDeltaId, ModelLifecycle, NormalStateCatalog,
+    ReconstructionCycle, ReconstructionCycleError, ReconstructionCycleEvidence,
+    ReconstructionMaskSet,
 };
 
 use crate::complete_data_operator::GriddedNormalReplayCompilation;
@@ -1079,7 +1080,7 @@ impl FinalMajorPhaseInput {
 
 struct SerialReconstructionCycleExecution {
     node: crate::WorkNodeId,
-    mask: ReconstructionMaskPlan,
+    masks: ImageDomainReconstructionMaskPlans,
     program: MinorCycleProgram,
 }
 
@@ -1334,12 +1335,12 @@ impl SpectralCycleExecutor {
     pub fn with_reconstruction_cycle(
         mut self,
         node: crate::WorkNodeId,
-        mask: ReconstructionMaskPlan,
+        masks: ImageDomainReconstructionMaskPlans,
         program: MinorCycleProgram,
     ) -> Self {
         self.reconstruction_cycle = Some(SerialReconstructionCycleExecution {
             node,
-            mask,
+            masks,
             program,
         });
         self
@@ -2300,7 +2301,7 @@ impl WorkImplementation for SpectralCycleExecutor {
                     .ok_or_else(|| io::Error::other("model lifecycle missing"))?;
                 let started = imaging_stage_timing_started();
                 let completion = InitialMajorPhaseCompletion::new(result)
-                    .run_reconstruction_cycle(lifecycle, &cycle.mask, cycle.program.clone())
+                    .run_reconstruction_cycle(lifecycle, &cycle.masks, cycle.program.clone())
                     .map_err(io::Error::other)?;
                 log_imaging_stage_timing("minor_cycle", self.pass, started);
                 state.reconstruction_cycle_completion = Some(completion);
@@ -2543,7 +2544,7 @@ impl InitialMajorPhaseCompletion {
     pub fn run_reconstruction_cycle(
         self,
         lifecycle: &ModelLifecycle,
-        mask_plan: &ReconstructionMaskPlan,
+        mask_plans: &ImageDomainReconstructionMaskPlans,
         program: MinorCycleProgram,
     ) -> Result<ReconstructionCyclePhaseCompletion, ReconstructionCycleError> {
         let completion = self.result.into_completion();
@@ -2559,7 +2560,15 @@ impl InitialMajorPhaseCompletion {
         };
         let (masks, auto_masks, cycle) =
             if normal_state.catalog() == NormalStateCatalog::UnnormalizedJointBlockV1 {
-                let (masks, auto_masks) = mask_plan
+                if mask_plans.len() != 1 {
+                    return Err(ReconstructionCycleError::Minor(
+                        casa_imaging_reconstruction::MinorCycleError::Mask(
+                            casa_imaging_reconstruction::MaskError::DomainCardinalityMismatch,
+                        ),
+                    ));
+                }
+                let (masks, auto_masks) = mask_plans
+                    .primary()
                     .materialize_coupled(continuation.generation(), &normal_state)
                     .map_err(|error| ReconstructionCycleError::Minor(error.into()))?;
                 let cycle = ReconstructionCycle::new(policy, program).run_coupled(
@@ -2568,22 +2577,34 @@ impl InitialMajorPhaseCompletion {
                     &normal_state,
                     &masks,
                 )?;
-                (ReconstructionMaskSet::Coupled(masks), auto_masks, cycle)
-            } else {
-                let (mask, auto_mask) = mask_plan
-                    .materialize(continuation.generation(), &normal_state)
-                    .map_err(|error| ReconstructionCycleError::Minor(error.into()))?;
-                let cycle = ReconstructionCycle::new(policy, program).run(
-                    lifecycle,
-                    continuation.generation(),
-                    &normal_state,
-                    &mask,
-                )?;
                 (
-                    ReconstructionMaskSet::Shared(mask),
-                    [auto_mask, None],
+                    ReconstructionMaskSet::Coupled(masks),
+                    auto_masks
+                        .into_iter()
+                        .collect::<Vec<_>>()
+                        .into_boxed_slice(),
                     cycle,
                 )
+            } else {
+                let (masks, auto_masks) = mask_plans
+                    .materialize(continuation.generation(), &normal_state)
+                    .map_err(|error| ReconstructionCycleError::Minor(error.into()))?;
+                let cycle = if normal_state.catalog() == NormalStateCatalog::UnnormalizedPlaneV1 {
+                    ReconstructionCycle::new(policy, program).run_domains(
+                        lifecycle,
+                        continuation.generation(),
+                        &normal_state,
+                        &masks,
+                    )?
+                } else {
+                    ReconstructionCycle::new(policy, program).run(
+                        lifecycle,
+                        continuation.generation(),
+                        &normal_state,
+                        masks.primary(),
+                    )?
+                };
+                (ReconstructionMaskSet::Domains(masks), auto_masks, cycle)
             };
         let (delta, evidence) = cycle.into_parts();
         Ok(ReconstructionCyclePhaseCompletion {
@@ -2604,7 +2625,7 @@ pub struct ReconstructionCyclePhaseCompletion {
     masks: ReconstructionMaskSet,
     delta: Option<casa_imaging_reconstruction::ModelDelta>,
     evidence: ReconstructionCycleEvidence,
-    auto_masks: [Option<casa_imaging_reconstruction::AutoMultithreshEvidence>; 2],
+    auto_masks: Box<[Option<casa_imaging_reconstruction::AutoMultithreshEvidence>]>,
 }
 
 impl ReconstructionCyclePhaseCompletion {
@@ -2627,7 +2648,20 @@ impl ReconstructionCyclePhaseCompletion {
     pub const fn line_auto_mask_evidence(
         &self,
     ) -> Option<casa_imaging_reconstruction::AutoMultithreshEvidence> {
-        self.auto_masks[1]
+        if self.auto_masks.len() > 1 {
+            self.auto_masks[1]
+        } else {
+            None
+        }
+    }
+
+    /// Return auto-mask evidence by canonical image-domain ordinal.
+    #[must_use]
+    pub fn domain_auto_mask_evidence(
+        &self,
+        domain_ordinal: usize,
+    ) -> Option<casa_imaging_reconstruction::AutoMultithreshEvidence> {
+        self.auto_masks.get(domain_ordinal).copied().flatten()
     }
 
     /// Return the immutable mask generation used for component placement.

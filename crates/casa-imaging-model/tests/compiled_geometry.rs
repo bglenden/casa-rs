@@ -10,10 +10,10 @@ use casa_imaging_model::{
     ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn,
     PointingDirectionSemantic, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
     PolarizationContract, PolarizationCoordinate, ProblemSpecification, ProductKind,
-    ProductNormalization, ProductRequirements, Projection, ReconstructionAlgorithm,
-    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
-    ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection,
-    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
+    ProductNormalization, ProductRequirements, Projection, PsfPhaseCentreLaw,
+    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
+    ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract,
+    SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
     SpectralSamplingLaw, SpectralWcs, StageErrorBudget, TimeScale, UvwAxes, UvwCoordinateLaw,
     UvwUnit, VisibilityInnerProduct, VisibilityPhaseConvention, WeightDensityScope,
     WeightingContract, WeightingScheme, compile,
@@ -390,6 +390,62 @@ fn canonical_geometry_identity_normalizes_signed_zero_and_outlier_order() {
         second.geometry().geometry_id()
     );
     assert_eq!(first.problem_id(), second.problem_id());
+}
+
+#[test]
+fn multi_domain_centres_are_canonical_explicit_and_identity_bearing() {
+    let main = geometry().domains()[0].clone();
+    let outlier_direction = main
+        .direction()
+        .with_reference_pixel([39.0, 39.0])
+        .with_reference_direction(SkyDirection::new(DirectionFrame::J2000, 1.6, -0.4));
+    let outlier_spec = main
+        .clone()
+        .with_role(ImageDomainRole::Outlier("outlier".into()))
+        .with_shape(ImageShape::new(80, 80))
+        .with_direction(outlier_direction)
+        .with_psf_phase_centre(PsfPhaseCentreLaw::Fixed(SkyDirection::new(
+            DirectionFrame::J2000,
+            1.7,
+            -0.4,
+        )));
+    let input = geometry().with_domains(vec![outlier_spec.clone(), main]);
+    let compiled = compile(request(input, Vec::new())).expect("compile multi-domain geometry");
+
+    assert_eq!(compiled.geometry().domains().len(), 2);
+    assert_eq!(
+        compiled.geometry().domains()[0].role(),
+        &ImageDomainRole::Main
+    );
+    let outlier = &compiled.geometry().domains()[1];
+    assert_eq!(outlier.role(), &ImageDomainRole::Outlier("outlier".into()));
+    assert_eq!(outlier.shape().pixels(), [80, 80]);
+    assert_eq!(
+        outlier.model_phase_centre(),
+        outlier.direction().reference_direction()
+    );
+    assert_eq!(outlier.psf_phase_centre().longitude_rad(), 1.7);
+    assert!(
+        compiled
+            .required_capabilities()
+            .contains(&casa_imaging_model::RequiredCapability::MultiDomainGeometry)
+    );
+
+    let changed = geometry().with_domains(vec![
+        geometry().domains()[0].clone(),
+        outlier_spec
+            .clone()
+            .with_psf_phase_centre(PsfPhaseCentreLaw::Fixed(SkyDirection::new(
+                DirectionFrame::J2000,
+                1.8,
+                -0.4,
+            ))),
+    ]);
+    let changed = compile(request(changed, Vec::new())).expect("compile changed PSF centre");
+    assert_ne!(
+        compiled.geometry().geometry_id(),
+        changed.geometry().geometry_id()
+    );
 }
 
 #[test]

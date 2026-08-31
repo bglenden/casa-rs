@@ -58,8 +58,9 @@ pub mod runtime_adapter {
         GriddedNormalOperatorBlockMeasurements, GriddedNormalOperatorCompiler,
         GriddedNormalOperatorProgram, GriddedNormalOperatorStageTimings, GriddedNormalPartial,
         GriddedNormalRoutingMeasurements, GriddedNormalSourceCardinality, GriddedNormalWork,
-        SourceCardinalityObservation, gridded_normal_execution_residency,
-        gridded_normal_operator_record_bytes, gridded_normal_route_capacity_bytes,
+        SourceCardinalityObservation, gridded_normal_domain_execution_residency,
+        gridded_normal_execution_residency, gridded_normal_operator_record_bytes,
+        gridded_normal_route_capacity_bytes,
     };
     pub use crate::spectral_operator::{
         CompleteDataOwnerCompletion, CompleteDataOwnerResult, CompleteDataOwnerState,
@@ -77,20 +78,21 @@ pub use continuum_transform::{
     fit_and_subtract_continuum,
 };
 pub use major_cycle::{
-    FinalNormalState, FinalNormalStateCoefficientTerm, FinalNormalStateNormalMoment,
-    FinalNormalStatePlane, MajorCycleCompletion, MajorCycleError, MajorCycleOwner,
-    MajorCyclePreparation, NormalStateCatalog,
+    FinalNormalDomainState, FinalNormalState, FinalNormalStateCoefficientTerm,
+    FinalNormalStateNormalMoment, FinalNormalStatePlane, MajorCycleCompletion, MajorCycleError,
+    MajorCycleOwner, MajorCyclePreparation, NormalStateCatalog,
 };
 pub use mask::{
-    AutoMultithreshControls, AutoMultithreshEvidence, CoupledReconstructionMask, MaskBox,
-    MaskError, ReconstructionMask, ReconstructionMaskGenerationId, ReconstructionMaskPlan,
+    AutoMultithreshControls, AutoMultithreshEvidence, CoupledReconstructionMask,
+    ImageDomainReconstructionMaskPlans, ImageDomainReconstructionMasks, MaskBox, MaskError,
+    ReconstructionMask, ReconstructionMaskGenerationId, ReconstructionMaskPlan,
     ReconstructionMaskSet, auto_multithresh, reproject_mask_support,
 };
 pub use minor_cycle::{
-    ClarkApproximation, ComponentDivergence, MinorCycleComponent, MinorCycleError,
-    MinorCycleEvidence, MinorCycleEvidenceId, MinorCycleModelPlane, MinorCycleProgram,
-    MinorCycleResult, MinorCycleStopReason, MinorCycleValidity, minor_cycle_workspace_bytes,
-    run_joint_minor_cycle, run_minor_cycle,
+    ClarkApproximation, ComponentDivergence, ImageDomainMinorCycleEvidence, MinorCycleComponent,
+    MinorCycleError, MinorCycleEvidence, MinorCycleEvidenceId, MinorCycleModelPlane,
+    MinorCycleProgram, MinorCycleResult, MinorCycleStopReason, MinorCycleValidity,
+    minor_cycle_workspace_bytes, run_joint_minor_cycle, run_minor_cycle,
 };
 pub use psf_beam::{
     DEFAULT_PSF_FIT_CUTOFF, PsfBeamFitError, RestoringBeam, fit_restoring_beam,
@@ -129,7 +131,7 @@ const REPROJECTED_PROOF_VERSION: u32 = 1;
 const FINAL_COMPLETION_DOMAIN: &[u8] = b"casa-rs-final-model-completion";
 const FINAL_COMPLETION_VERSION: u32 = 2;
 const FINAL_NORMAL_STATE_DOMAIN: &[u8] = b"casa-rs-final-normal-state";
-const FINAL_NORMAL_STATE_VERSION: u32 = 2;
+const FINAL_NORMAL_STATE_VERSION: u32 = 3;
 const MAJOR_CYCLE_DOMAIN: &[u8] = b"casa-rs-major-cycle-completion";
 const MAJOR_CYCLE_VERSION: u32 = 2;
 

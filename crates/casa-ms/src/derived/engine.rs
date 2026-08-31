@@ -667,15 +667,14 @@ impl MsCalEngine {
     ///
     /// The input UVW is assumed to be stored in native MeasurementSet
     /// convention for `source_field_id`. This applies the same
-    /// `FTMachine::rotateUVW()` / `fixvis` geometry transform CASA uses on
-    /// `MAIN.UVW` for a phase-center change between fixed J2000 field
-    /// directions and returns the corresponding geometric phase shift in
-    /// meters.
+    /// direct `fixvis` geometry transform CASA applies to `MAIN.UVW` for a
+    /// phase-center change between fixed J2000 field directions and returns
+    /// the corresponding geometric phase shift in meters.
     ///
-    /// Important: CASA has two distinct UVW-shift call paths. The imaging /
-    /// `fixvis` path operates directly on `MAIN.UVW`, while
-    /// `PhaseShiftingTVI` wraps a different sign convention. For imaging
-    /// parity we match the `FTMachine::rotateUVW()` behavior here.
+    /// Important: CASA's `GridFT` imaging path first applies `negateUV` and is
+    /// represented separately by
+    /// [`Self::reproject_raw_uvw_for_gridft_to_j2000`]. This method preserves
+    /// the direct `fixvis` convention only.
     pub fn reproject_raw_uvw_between_fields(
         &self,
         raw_uvw_m: [f64; 3],
@@ -688,8 +687,8 @@ impl MsCalEngine {
 
         let source_dir = self.field_dir(source_field_id)?;
         let target_dir = self.field_dir(target_field_id)?;
-        // CASA's `FTMachine::rotateUVW()` drives `UVWMachine` directly on the
-        // stored MAIN.UVW row vector. Matching the imaging path therefore
+        // CASA's direct fixvis transform drives UVWMachine on the stored
+        // MAIN.UVW row vector. Matching that path therefore
         // requires the target/source order opposite to the intuitive
         // source->target helper naming used elsewhere.
         let uvrot = uvw_rotation_matrix(target_dir, source_dir);
@@ -704,7 +703,7 @@ impl MsCalEngine {
     /// CASA's `MosaicFT` uses `FTMachine::girarUVW()`, which starts from
     /// `negateUV(vb)` and then applies the image-center phase shifter with
     /// only the image-plane terms contributing to the new u/v coordinates.
-    /// That differs subtly from the standard `rotateUVW()` / `fixvis` path
+    /// That differs subtly from the direct `fixvis` path
     /// matched by [`Self::reproject_raw_uvw_between_fields`].
     pub fn reproject_raw_uvw_for_mosaic_between_fields(
         &self,
@@ -744,45 +743,48 @@ impl MsCalEngine {
         Ok((imaging_uvw_m, phase_shift_m))
     }
 
-    /// Reproject raw MS UVW coordinates to an explicit fixed J2000 direction.
+    /// Reproject raw MS UVW coordinates for CASA `GridFT` at a fixed J2000 centre.
     ///
-    /// This is the scalar-angle form of [`Self::reproject_raw_uvw_to_direction`]
-    /// for callers that do not otherwise need to depend on the Measures value
-    /// types.
-    pub(crate) fn reproject_raw_uvw_to_j2000(
+    /// `GridFT` enters `FTMachine::rotateUVW()` through `negateUV`: native MS
+    /// `(u, v)` are negated before `UVWMachine(output=target, input=source)` and
+    /// restored afterwards for casa-rs' operator convention. Keep this paired
+    /// UVW/phase result distinct from the direct `fixvis` transform exposed by
+    /// [`Self::reproject_raw_uvw_to_direction`]. CASA's gridding phasor is
+    /// `exp(-i dphase)` while the reconstruction adjoint consumes
+    /// `exp(+i phase_shift)`, so the stored path length is `-dphase`.
+    pub(crate) fn reproject_raw_uvw_for_gridft_to_j2000(
         &self,
         raw_uvw_m: [f64; 3],
         source_field_id: usize,
         target_direction_rad: [f64; 2],
     ) -> MsResult<([f64; 3], f64)> {
-        let target = MDirection::from_angles(
-            target_direction_rad[0],
-            target_direction_rad[1],
-            DirectionRef::J2000,
-        );
-        self.reproject_raw_uvw_to_direction(raw_uvw_m, source_field_id, &target)
-    }
-
-    /// Reproject raw MS UVW for CASA GridFT density evaluation at a fixed J2000 centre.
-    ///
-    /// GridFT enters its UVW rotation through CASA's `negateUV` convention.
-    /// This operation therefore remains distinct from the operator-phase
-    /// transform returned by [`Self::reproject_raw_uvw_to_j2000`].
-    pub(crate) fn reproject_raw_uvw_for_density_to_j2000(
-        &self,
-        raw_uvw_m: [f64; 3],
-        source_field_id: usize,
-        target_direction_rad: [f64; 2],
-    ) -> MsResult<[f64; 3]> {
         let source = self.field_dir(source_field_id)?;
         let target = MDirection::from_angles(
             target_direction_rad[0],
             target_direction_rad[1],
             DirectionRef::J2000,
         );
+        let transform = CasaUvwMachine::new(&target, source);
         let casa_input = [-raw_uvw_m[0], -raw_uvw_m[1], raw_uvw_m[2]];
-        let casa_output = row_vec3_mul_mat3(casa_input, uvw_rotation_matrix(source, &target));
-        Ok([-casa_output[0], -casa_output[1], casa_output[2]])
+        let (casa_output, casa_dphase_m) = transform.convert_uvw(casa_input);
+        Ok((
+            [-casa_output[0], -casa_output[1], casa_output[2]],
+            -casa_dphase_m,
+        ))
+    }
+
+    /// Reproject raw MS UVW for CASA GridFT density evaluation at a fixed J2000 centre.
+    ///
+    /// Density evaluation consumes the UV coordinates from the same paired
+    /// GridFT projection while deliberately discarding its phase path.
+    pub(crate) fn reproject_raw_uvw_for_density_to_j2000(
+        &self,
+        raw_uvw_m: [f64; 3],
+        source_field_id: usize,
+        target_direction_rad: [f64; 2],
+    ) -> MsResult<[f64; 3]> {
+        self.reproject_raw_uvw_for_gridft_to_j2000(raw_uvw_m, source_field_id, target_direction_rad)
+            .map(|(uvw_m, _)| uvw_m)
     }
 
     /// Reproject raw MS UVW coordinates to an explicit fixed J2000 direction
@@ -1899,8 +1901,8 @@ mod tests {
         let (uvw_m, phase_shift_m) = engine
             .reproject_raw_uvw_between_fields([24.4234, -31.0309, 17.6013], 1, 0)
             .unwrap();
-        // Reference values captured from CASA `fixvis`, which exercises the
-        // same `FTMachine::rotateUVW()` path used by standard imaging.
+        // Reference values captured from CASA `fixvis`; this direct transform
+        // is intentionally distinct from GridFT's negateUV boundary.
         assert!((uvw_m[0] - 24.4234).abs() < 1.0e-12, "u={}", uvw_m[0]);
         assert!(
             (uvw_m[1] - -30.953_804_692_483_43).abs() < 1.0e-12,
@@ -1967,6 +1969,47 @@ mod tests {
             (phase_shift_m - -0.090_130_307_463_740_37).abs() < 1.0e-12,
             "phase_shift_m={phase_shift_m}"
         );
+    }
+
+    #[test]
+    fn reproject_raw_uvw_for_gridft_uses_negated_uv_boundary_and_adjoint_phase_sign() {
+        let target = MDirection::from_angles(
+            -1.058_214_942_099_811_3,
+            0.702_211_407_924_268_5,
+            DirectionRef::J2000,
+        );
+        let target_angles = target.as_angles();
+        let engine = MsCalEngine::from_parts(
+            vec![MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z)],
+            vec![
+                target,
+                MDirection::from_angles(
+                    -1.053_851_618_969_825_7,
+                    0.706_574_731_054_254_4,
+                    DirectionRef::J2000,
+                ),
+            ],
+            MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z),
+            casa_test_support::deterministic_measures_provider(),
+        );
+        let (uvw_m, phase_shift_m) = engine
+            .reproject_raw_uvw_for_gridft_to_j2000(
+                [
+                    27.073_056_790_908_41,
+                    -29.672_968_936_171_65,
+                    15.993_460_382_965_498,
+                ],
+                1,
+                [target_angles.0, target_angles.1],
+            )
+            .unwrap();
+        // Fixed evaluation of GridFT's negateUV -> UVWMachine -> restore-UV
+        // equations. The phase value is the casa-rs adjoint sign, opposite
+        // CASA's `locuvw` dphase because CASA forms `exp(-i dphase)`.
+        assert!((uvw_m[0] - 27.209_934_044_771_824).abs() < 1.0e-12);
+        assert!((uvw_m[1] - -29.526_408_975_072_36).abs() < 1.0e-12);
+        assert!((uvw_m[2] - 16.032_371_216_641_046).abs() < 1.0e-12);
+        assert!((phase_shift_m - -0.038_910_833_675_543_17).abs() < 1.0e-12);
     }
 
     #[test]

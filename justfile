@@ -47,6 +47,19 @@ release-cpp-interop:
 imaging-solver-crosscheck input_ms output_dir:
     python tools/science/casa_rust_solver_crosscheck.py "{{input_ms}}" "{{output_dir}}"
 
+# Focused #517 compiled multi-domain geometry and frozen-CASA product gate.
+imaging-t31-multidomain-geometry testdata_root casa_prefix:
+    just arch-check
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-model image_domain_projections_require_canonical_ordinals_and_share_equal_psf_values
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-model --test compiled_geometry multi_domain_centres_are_canonical_explicit_and_identity_bearing -- --exact
+    CARGO_INCREMENTAL=0 cargo test -p casa-ms reproject_raw_uvw --lib
+    CARGO_INCREMENTAL=0 cargo test -p casa-ms multidomain_row_projections_are_main_first_and_block_partition_invariant --lib
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction --lib minor_cycle
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-products --test continuum_products two_domain_members_consume_their_matching_normal_and_model_chart -- --exact
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test continuum_application application_uses_weight_when_selected_weight_spectrum_cells_are_undefined -- --exact
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test continuum_application t31_application_executes_recentered_domains_through_one_scientific_route -- --exact
+    CASA_RS_TESTDATA_ROOT="{{testdata_root}}" CASA_RS_T31_CASA_PREFIX="{{casa_prefix}}" CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test t31_multidomain_casa_oracle t31_multidomain_geometry_matches_frozen_casa_dirty_and_hogbom -- --ignored --exact --nocapture
+
 # Focused #521 source-backed spectral identity/tracer foundation.
 imaging-t35-spectral-tracer:
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction t35_

@@ -12,13 +12,12 @@
 //! construction path for the records they mint.
 
 use casa_imaging_model::{
-    CompiledProblem, CompiledProblemId, ImageAxis, ModelCell, ProductAxes, ProductBeamRule,
-    ProductGraphId, ProductNodeId, ProductNormalization, ProductRole, ProductSchema, ProductTerm,
-    ProductUnit, ProductValidityRule, ReconstructionBasis, RestoringBeamPolicy,
+    CompiledProblem, CompiledProblemId, ImageAxis, ImageDomainRole, ModelCell, ProductAxes,
+    ProductBeamRule, ProductGraphId, ProductNodeId, ProductNormalization, ProductRole,
+    ProductSchema, ProductTerm, ProductUnit, ProductValidityRule, ReconstructionBasis,
+    RestoringBeamPolicy,
 };
-use casa_imaging_reconstruction::{
-    FinalNormalStatePlane, ModelGeneration, NormalStateCatalog, SpectralChannelValidity,
-};
+use casa_imaging_reconstruction::{ModelGeneration, NormalStateCatalog, SpectralChannelValidity};
 
 use crate::beam::{RestoringBeam, fit_restoring_beam};
 use crate::digest::{
@@ -362,29 +361,34 @@ impl ProductGenerationAuthority {
             .members
             .iter()
             .zip(&completions.members)
-            .map(|(member, produced)| SealedMember {
-                node: member.node,
-                name: member.name.clone(),
-                artifact_id: member.artifact_id,
-                content_identity: produced.digest,
-                contract: SealedMemberContract {
-                    role: member.role,
-                    unit: member.unit,
-                    schema: member.schema,
-                    axes: member.axes.clone(),
-                    beam_rule: member.beam_rule,
-                    validity: member.validity,
-                    dependencies: member.dependencies.clone(),
-                },
-                resolved_beams: sealed_beams(
-                    member.beam_rule,
-                    &completions.fitted_beams,
-                    &completions.restoring_beams,
-                ),
-                payload: produced.payload.clone(),
-                validity: produced.validity.clone().into_boxed_slice(),
+            .map(|(member, produced)| {
+                Ok(SealedMember {
+                    node: member.node,
+                    name: member.name.clone(),
+                    artifact_id: member.artifact_id,
+                    content_identity: produced.digest,
+                    contract: SealedMemberContract {
+                        role: member.role,
+                        unit: member.unit,
+                        schema: member.schema,
+                        axes: member.axes.clone(),
+                        beam_rule: member.beam_rule,
+                        validity: member.validity,
+                        dependencies: member.dependencies.clone(),
+                    },
+                    resolved_beams: sealed_beams_for_member(
+                        member,
+                        &planned.members,
+                        member.beam_rule,
+                        &completions.fitted_beams,
+                        &completions.restoring_beams,
+                    )?,
+                    payload: produced.payload.clone(),
+                    validity: produced.validity.clone().into_boxed_slice(),
+                })
             })
-            .collect::<Box<[_]>>();
+            .collect::<Result<Vec<_>, ProductsError>>()?
+            .into_boxed_slice();
         Ok(SealedContinuumGeneration {
             problem_id: self.problem_id,
             graph_id: self.graph_id,
@@ -699,11 +703,7 @@ pub fn produce_continuum_members(
     if inputs.final_model().generation_id() != planned.final_model_generation {
         return Err(ProductsError::CommitmentMismatch);
     }
-    if inputs
-        .reconstruction_mask()
-        .map(casa_imaging_reconstruction::ReconstructionMask::generation_id)
-        != planned.reconstruction_mask_generation
-    {
+    if inputs.reconstruction_mask_generation() != planned.reconstruction_mask_generation {
         return Err(ProductsError::CommitmentMismatch);
     }
     if inputs
@@ -720,11 +720,13 @@ pub fn produce_continuum_members(
         return produce_joint_members(planned, inputs);
     }
     let normal_state = inputs.normal_state();
-    let plane_shape = normal_state.shape();
     let channel_count = normal_state.channel_count();
     if normal_state.slab().core_range() != (0..normal_state.slab().total_channels())
         || channel_count != normal_state.slab().total_channels()
         || inputs.final_model().shape().coefficients() != channel_count
+        || normal_state.domain_count() != inputs.problem().geometry().domains().len()
+        || inputs.final_model().shape().domains().len()
+            != inputs.problem().geometry().domains().len()
     {
         return Err(ProductsError::SourceLineageMismatch);
     }
@@ -733,16 +735,19 @@ pub fn produce_continuum_members(
         .iter()
         .any(|member| member.beam_rule != ProductBeamRule::None);
     let fitted_beams = if requires_beam {
-        (0..channel_count)
-            .map(|local_channel| {
-                let plane = normal_state
-                    .plane(local_channel)
-                    .ok_or(ProductsError::SourceLineageMismatch)?;
-                if plane.validity() == SpectralChannelValidity::Valid {
+        inputs
+            .problem()
+            .geometry()
+            .domains()
+            .iter()
+            .flat_map(|domain| (0..channel_count).map(move |local_channel| (domain, local_channel)))
+            .map(|(domain, local_channel)| {
+                let plane = domain_plane(normal_state, domain.role(), local_channel)?;
+                if plane.validity == SpectralChannelValidity::Valid {
                     fit_restoring_beam(
-                        &psf_real_plane(plane),
-                        plane_shape,
-                        inputs.cell_size_rad(),
+                        &psf_real_plane(&plane),
+                        plane.shape,
+                        inputs.cell_size_rad_for_domain(domain.role())?,
                         planned.psf_cutoff(),
                     )
                     .map(Some)
@@ -758,31 +763,44 @@ pub fn produce_continuum_members(
         RestoringBeamPolicy::None => Box::new([]),
         RestoringBeamPolicy::PerPlane => fitted_beams.clone(),
         RestoringBeamPolicy::Common => {
-            let valid = fitted_beams.iter().flatten().copied().collect::<Vec<_>>();
-            if valid.is_empty() {
-                fitted_beams.clone()
-            } else {
-                let common = RestoringBeam::common_enclosing(&valid)
-                    .map_err(|error| ProductsError::BeamFitFailed(error.to_string()))?;
-                fitted_beams
-                    .iter()
-                    .map(|fitted| fitted.map(|_| common))
-                    .collect()
+            let mut selected = Vec::with_capacity(fitted_beams.len());
+            for domain_beams in fitted_beams.chunks(channel_count) {
+                let valid = domain_beams.iter().flatten().copied().collect::<Vec<_>>();
+                if valid.is_empty() {
+                    selected.extend_from_slice(domain_beams);
+                } else {
+                    let common = RestoringBeam::common_enclosing(&valid)
+                        .map_err(|error| ProductsError::BeamFitFailed(error.to_string()))?;
+                    selected.extend(domain_beams.iter().map(|fitted| fitted.map(|_| common)));
+                }
             }
+            selected.into_boxed_slice()
         }
     };
 
     let mut members = Vec::with_capacity(planned.members.len());
     for member in &planned.members {
+        let domain_ordinal = inputs.model_domain_ordinal(member.axes().domain())?;
+        let plane_shape = inputs
+            .final_model()
+            .shape()
+            .domains()
+            .get(domain_ordinal)
+            .ok_or(ProductsError::SourceLineageMismatch)?
+            .pixels();
+        let beam_offset = domain_ordinal
+            .checked_mul(channel_count)
+            .ok_or(ProductsError::SourceLineageMismatch)?;
         let mut payload = vec![0.0_f32; member.payload_values];
         let mut validity = vec![true; member.payload_values];
         for local_channel in 0..channel_count {
-            let plane = normal_state
-                .plane(local_channel)
-                .ok_or(ProductsError::SourceLineageMismatch)?;
-            let output_channel = plane.output_channel();
+            let plane = domain_plane(normal_state, member.axes().domain(), local_channel)?;
+            if plane.shape != plane_shape {
+                return Err(ProductsError::SourceLineageMismatch);
+            }
+            let output_channel = plane.output_channel;
             if member.validity != ProductValidityRule::All {
-                let plane_validity = product_plane_validity(member.validity, plane, plane_shape)?;
+                let plane_validity = product_plane_validity(member.validity, &plane)?;
                 scatter_image_plane(
                     &mut validity,
                     member.axes(),
@@ -796,16 +814,23 @@ pub fn produce_continuum_members(
                     &mut payload,
                     member.axes(),
                     output_channel,
-                    plane.sum_weight() as f32,
+                    plane.sum_weight as f32,
                 )?;
                 continue;
             }
             let plane_payload = produce_plane_member(
                 member,
                 inputs,
-                plane,
-                fitted_beams.get(local_channel).copied().flatten(),
-                restoring_beams.get(local_channel).copied().flatten(),
+                &plane,
+                domain_ordinal,
+                fitted_beams
+                    .get(beam_offset + local_channel)
+                    .copied()
+                    .flatten(),
+                restoring_beams
+                    .get(beam_offset + local_channel)
+                    .copied()
+                    .flatten(),
             )?;
             scatter_image_plane(
                 &mut payload,
@@ -906,6 +931,14 @@ fn produce_joint_members(
     inputs: &ContinuumProductInputs<'_>,
 ) -> Result<ContinuumProducedMembers, ProductsError> {
     let normal = inputs.normal_state();
+    if normal.domain_count() != 1 || inputs.final_model().shape().domains().len() != 1 {
+        return Err(ProductsError::SourceLineageMismatch);
+    }
+    let domain_role = normal
+        .domain(0)
+        .ok_or(ProductsError::SourceLineageMismatch)?
+        .role()
+        .clone();
     let shape = normal.shape();
     let channels = normal.slab().total_channels();
     if normal.slab().core_range() != (0..channels)
@@ -946,7 +979,7 @@ fn produce_joint_members(
                     .map(|value| value.re as f32)
                     .collect::<Vec<_>>(),
                 shape,
-                inputs.cell_size_rad(),
+                inputs.cell_size_rad_for_domain(&domain_role)?,
                 planned.psf_cutoff(),
             )
         })
@@ -1050,7 +1083,7 @@ fn produce_joint_member(
                 .collect();
         }
         ProductRole::Model(ProductTerm::Continuum(term)) => {
-            payload = model_real_plane(inputs.final_model(), term, shape)?;
+            payload = model_real_plane(inputs.final_model(), 0, term, shape)?;
         }
         ProductRole::Model(ProductTerm::Line) | ProductRole::Model(ProductTerm::Total) => {
             for channel in 0..channels {
@@ -1091,7 +1124,8 @@ fn produce_joint_member(
                 )
             })?;
             let line_only = member.role == ProductRole::RestoredImage(ProductTerm::Line);
-            let kernel = gaussian_beam_image(shape, &restoring_beam, inputs.cell_size_rad());
+            let cell_size = inputs.cell_size_rad_for_domain(member.axes().domain())?;
+            let kernel = gaussian_beam_image(shape, &restoring_beam, cell_size);
             for channel in 0..channels {
                 let model =
                     evaluate_joint_model_plane(inputs, shape, channel, continuum_terms, line_only)?;
@@ -1106,7 +1140,7 @@ fn produce_joint_member(
                 let residual = rescale_residual_to_beam(
                     &residual,
                     shape,
-                    inputs.cell_size_rad(),
+                    cell_size,
                     fitted_beam,
                     restoring_beam,
                 )?
@@ -1178,7 +1212,7 @@ fn evaluate_joint_model_plane(
             .ok_or(ProductsError::SourceLineageMismatch)?;
         let x = (frequency - reference) / reference;
         for term in 0..continuum_terms {
-            let plane = model_real_plane(inputs.final_model(), term, shape)?;
+            let plane = model_real_plane(inputs.final_model(), 0, term, shape)?;
             let factor =
                 x.powi(i32::try_from(term).map_err(|_| ProductsError::UnsupportedProblem)?);
             for (output, value) in output.iter_mut().zip(plane) {
@@ -1187,7 +1221,7 @@ fn evaluate_joint_model_plane(
         }
     }
     if let Some(line) = joint_line_term(inputs.problem(), channel)? {
-        let plane = model_real_plane(inputs.final_model(), continuum_terms + line, shape)?;
+        let plane = model_real_plane(inputs.final_model(), 0, continuum_terms + line, shape)?;
         for (output, value) in output.iter_mut().zip(plane) {
             *output += value;
         }
@@ -1242,18 +1276,75 @@ fn h00_sensitivity(inputs: &ContinuumProductInputs<'_>) -> Result<Vec<f32>, Prod
         .collect())
 }
 
+struct DomainPlane<'a> {
+    output_channel: usize,
+    shape: [usize; 2],
+    residual: &'a [num_complex::Complex64],
+    psf: &'a [num_complex::Complex64],
+    sensitivity: &'a [f64],
+    sum_weight: f64,
+    validity: SpectralChannelValidity,
+}
+
+fn domain_plane<'a>(
+    normal: &'a casa_imaging_reconstruction::FinalNormalState,
+    role: &ImageDomainRole,
+    local_channel: usize,
+) -> Result<DomainPlane<'a>, ProductsError> {
+    let domain = normal
+        .domain_by_role(role)
+        .ok_or(ProductsError::SourceLineageMismatch)?;
+    if local_channel >= normal.channel_count() {
+        return Err(ProductsError::SourceLineageMismatch);
+    }
+    let cells = domain.shape()[0]
+        .checked_mul(domain.shape()[1])
+        .ok_or(ProductsError::SourceLineageMismatch)?;
+    let start = local_channel
+        .checked_mul(cells)
+        .ok_or(ProductsError::SourceLineageMismatch)?;
+    let end = start
+        .checked_add(cells)
+        .ok_or(ProductsError::SourceLineageMismatch)?;
+    Ok(DomainPlane {
+        output_channel: normal.slab().core_range().start + local_channel,
+        shape: domain.shape(),
+        residual: domain
+            .residual()
+            .get(start..end)
+            .ok_or(ProductsError::SourceLineageMismatch)?,
+        psf: domain
+            .normal_approximation()
+            .get(start..end)
+            .ok_or(ProductsError::SourceLineageMismatch)?,
+        sensitivity: domain
+            .sensitivity()
+            .get(start..end)
+            .ok_or(ProductsError::SourceLineageMismatch)?,
+        sum_weight: *domain
+            .sum_weights()
+            .get(local_channel)
+            .ok_or(ProductsError::SourceLineageMismatch)?,
+        validity: *domain
+            .channel_validity()
+            .get(local_channel)
+            .ok_or(ProductsError::SourceLineageMismatch)?,
+    })
+}
+
 fn produce_plane_member(
     member: &PlannedMember,
     inputs: &ContinuumProductInputs<'_>,
-    plane: FinalNormalStatePlane<'_>,
+    plane: &DomainPlane<'_>,
+    domain_ordinal: usize,
     fitted_beam: Option<RestoringBeam>,
     restoring_beam: Option<RestoringBeam>,
 ) -> Result<Vec<f32>, ProductsError> {
-    let sensitivity = plane.sum_weight();
-    let valid = plane.validity() == SpectralChannelValidity::Valid
+    let sensitivity = plane.sum_weight;
+    let valid = plane.validity == SpectralChannelValidity::Valid
         && sensitivity.is_finite()
         && sensitivity > 0.0;
-    let shape = plane.shape();
+    let shape = plane.shape;
     let cells = shape[0] * shape[1];
     let invalid_residual = || vec![0.0; cells];
     match member.role {
@@ -1286,12 +1377,17 @@ fn produce_plane_member(
         }
         ProductRole::Model(
             casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
-        ) => model_real_plane(inputs.final_model(), plane.output_channel(), shape),
+        ) => model_real_plane(
+            inputs.final_model(),
+            domain_ordinal,
+            plane.output_channel,
+            shape,
+        ),
         ProductRole::Weight(
             casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
         )
         | ProductRole::Sensitivity => Ok(plane
-            .sensitivity()
+            .sensitivity
             .iter()
             .map(|value| *value as f32)
             .collect()),
@@ -1306,8 +1402,14 @@ fn produce_plane_member(
                     "restoration requires a fitted beam for every valid plane".to_string(),
                 ));
             };
-            let model = model_real_plane(inputs.final_model(), plane.output_channel(), shape)?;
-            let kernel = gaussian_beam_image(shape, beam, inputs.cell_size_rad());
+            let model = model_real_plane(
+                inputs.final_model(),
+                domain_ordinal,
+                plane.output_channel,
+                shape,
+            )?;
+            let cell_size = inputs.cell_size_rad_for_domain(member.axes().domain())?;
+            let kernel = gaussian_beam_image(shape, beam, cell_size);
             let mut restored = fft_convolve(&model, kernel.as_slice().expect("contiguous"), shape);
             let residual = normalize_plane(
                 &residual_real_plane(plane),
@@ -1319,38 +1421,62 @@ fn produce_plane_member(
                     "restoration requires a fitted beam for every valid plane".to_string(),
                 )
             })?;
-            let residual = rescale_residual_to_beam(
-                &residual,
-                shape,
-                inputs.cell_size_rad(),
-                fitted_beam,
-                *beam,
-            )?
-            .into_values();
+            let residual =
+                rescale_residual_to_beam(&residual, shape, cell_size, fitted_beam, *beam)?
+                    .into_values();
             for (restored, residual) in restored.iter_mut().zip(residual) {
                 *restored += residual;
             }
             Ok(restored)
         }
-        ProductRole::CleanMask => Ok(plane
-            .sensitivity()
-            .iter()
-            .enumerate()
-            .map(|(index, value)| {
-                let selected = inputs
-                    .reconstruction_mask()
-                    .is_none_or(|mask| mask.support()[index]);
-                if valid && selected && *value > 0.0 && value.is_finite() {
-                    1.0
-                } else {
-                    0.0
-                }
-            })
-            .collect()),
+        ProductRole::CleanMask => {
+            let mask = reconstruction_mask_for_domain(inputs, member.axes().domain())?;
+            Ok(plane
+                .sensitivity
+                .iter()
+                .enumerate()
+                .map(|(index, value)| {
+                    let selected = mask.is_none_or(|mask| mask.support()[index]);
+                    if valid && selected && *value > 0.0 && value.is_finite() {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                })
+                .collect())
+        }
         role => Err(ProductsError::UnsupportedProductRole {
             role,
             catalog: CONTINUUM_ALGORITHM_CATALOG_VERSION,
         }),
+    }
+}
+
+fn reconstruction_mask_for_domain<'a>(
+    inputs: &'a ContinuumProductInputs<'_>,
+    role: &ImageDomainRole,
+) -> Result<Option<&'a casa_imaging_reconstruction::ReconstructionMask>, ProductsError> {
+    let Some(mask) = inputs.reconstruction_mask() else {
+        let Some(masks) = inputs.domain_reconstruction_masks() else {
+            return Ok(None);
+        };
+        let ordinal = inputs.model_domain_ordinal(role)?;
+        return masks
+            .get(ordinal)
+            .ok_or(ProductsError::SourceLineageMismatch)
+            .map(Some);
+    };
+    let domain = inputs
+        .problem()
+        .geometry()
+        .domains()
+        .iter()
+        .find(|domain| domain.role() == role)
+        .ok_or(ProductsError::SourceLineageMismatch)?;
+    if mask.shape() == domain.shape().pixels() && mask.coordinate() == domain.direction() {
+        Ok(Some(mask))
+    } else {
+        Err(ProductsError::SourceLineageMismatch)
     }
 }
 
@@ -1360,33 +1486,25 @@ fn required_normalization(member: &PlannedMember) -> Result<ProductNormalization
         .ok_or(ProductsError::UnsupportedProblem)
 }
 
-fn psf_real_plane(plane: FinalNormalStatePlane<'_>) -> Vec<f32> {
-    plane
-        .normal_approximation()
-        .iter()
-        .map(|value| value.re as f32)
-        .collect()
+fn psf_real_plane(plane: &DomainPlane<'_>) -> Vec<f32> {
+    plane.psf.iter().map(|value| value.re as f32).collect()
 }
 
-fn residual_real_plane(plane: FinalNormalStatePlane<'_>) -> Vec<f32> {
-    plane
-        .residual()
-        .iter()
-        .map(|value| value.re as f32)
-        .collect()
+fn residual_real_plane(plane: &DomainPlane<'_>) -> Vec<f32> {
+    plane.residual.iter().map(|value| value.re as f32).collect()
 }
 
 fn product_plane_validity(
     rule: ProductValidityRule,
-    plane: FinalNormalStatePlane<'_>,
-    shape: [usize; 2],
+    plane: &DomainPlane<'_>,
 ) -> Result<Vec<bool>, ProductsError> {
+    let shape = plane.shape;
     match rule {
         ProductValidityRule::All => Ok(vec![true; shape[0] * shape[1]]),
         ProductValidityRule::FinalNormalState => {
-            let valid = plane.validity() == SpectralChannelValidity::Valid
-                && plane.sum_weight().is_finite()
-                && plane.sum_weight() > 0.0;
+            let valid = plane.validity == SpectralChannelValidity::Valid
+                && plane.sum_weight.is_finite()
+                && plane.sum_weight > 0.0;
             Ok(vec![valid; shape[0] * shape[1]])
         }
         ProductValidityRule::PrimaryBeam(_)
@@ -1399,14 +1517,19 @@ fn product_plane_validity(
 
 fn model_real_plane(
     model: &ModelGeneration,
+    domain_ordinal: usize,
     output_channel: usize,
     plane_shape: [usize; 2],
 ) -> Result<Vec<f32>, ProductsError> {
     let [width, height] = plane_shape;
-    if model.shape().domains().len() != 1
-        || output_channel >= model.shape().coefficients()
+    if output_channel >= model.shape().coefficients()
         || model.shape().polarizations() != 1
-        || model.shape().domains()[0].pixels() != plane_shape
+        || model
+            .shape()
+            .domains()
+            .get(domain_ordinal)
+            .map(|shape| shape.pixels())
+            != Some(plane_shape)
         || model.samples().len() != model.shape().sample_count()
     {
         return Err(ProductsError::SourceLineageMismatch);
@@ -1418,7 +1541,7 @@ fn model_real_plane(
         for x in 0..width {
             let index = model
                 .shape()
-                .flat_index(ModelCell::new(0, output_channel, 0, [x, y]))
+                .flat_index(ModelCell::new(domain_ordinal, output_channel, 0, [x, y]))
                 .ok_or(ProductsError::SourceLineageMismatch)?;
             plane[x * height + y] = model.samples()[index].value().value() as f32;
         }
@@ -1622,6 +1745,51 @@ impl SealedMember {
 }
 
 /// Resolve one member's compiled beam rule against the fitted generation beam.
+fn sealed_beams_for_member(
+    member: &PlannedMember,
+    members: &[PlannedMember],
+    rule: ProductBeamRule,
+    fitted: &[Option<RestoringBeam>],
+    restoring: &[Option<RestoringBeam>],
+) -> Result<Box<[Option<RestoringBeam>]>, ProductsError> {
+    let mut roles = Vec::<&ImageDomainRole>::new();
+    for planned in members {
+        let role = planned.axes().domain();
+        if !roles.contains(&role) {
+            roles.push(role);
+        }
+    }
+    let domain_ordinal = roles
+        .iter()
+        .position(|role| *role == member.axes().domain())
+        .ok_or(ProductsError::SourceLineageMismatch)?;
+    Ok(sealed_beams(
+        rule,
+        domain_beam_slice(fitted, domain_ordinal, roles.len())?,
+        domain_beam_slice(restoring, domain_ordinal, roles.len())?,
+    ))
+}
+
+fn domain_beam_slice(
+    beams: &[Option<RestoringBeam>],
+    domain_ordinal: usize,
+    domain_count: usize,
+) -> Result<&[Option<RestoringBeam>], ProductsError> {
+    if beams.is_empty() {
+        return Ok(beams);
+    }
+    if domain_count == 0 || !beams.len().is_multiple_of(domain_count) {
+        return Err(ProductsError::SourceLineageMismatch);
+    }
+    let channels = beams.len() / domain_count;
+    let start = domain_ordinal
+        .checked_mul(channels)
+        .ok_or(ProductsError::SourceLineageMismatch)?;
+    beams
+        .get(start..start + channels)
+        .ok_or(ProductsError::SourceLineageMismatch)
+}
+
 fn sealed_beams(
     rule: ProductBeamRule,
     fitted: &[Option<RestoringBeam>],
@@ -1706,13 +1874,15 @@ impl SealedContinuumGeneration {
         }
     }
 
-    /// Return all selected restoring beams in output-channel order.
+    /// Return all selected restoring beams in canonical domain-major,
+    /// output-channel-minor order.
     #[must_use]
     pub const fn restoring_beams(&self) -> &[Option<RestoringBeam>] {
         &self.restoring_beams
     }
 
-    /// Return all independently fitted PSF beams in output-channel order.
+    /// Return all independently fitted PSF beams in canonical domain-major,
+    /// output-channel-minor order.
     ///
     /// Common restoration may select a different beam while PSF and residual
     /// products retain this fitted topology.

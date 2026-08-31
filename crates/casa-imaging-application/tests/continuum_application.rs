@@ -12,6 +12,7 @@ use casa_imaging_application::{
     ContinuumMask, ContinuumMaskBox, ContinuumStopReason, ContinuumWeighting, SpectralImagingMode,
     TaskRequirement, VisibilityContinuumSubtraction, execute_continuum,
 };
+use casa_imaging_model::ImageDomainRole;
 use casa_ms::{
     CubeAxisConfig, CubeAxisValue, MeasurementSet, MeasurementSetBuilder, OptionalMainColumn,
     SubtableId, VisibilityDataColumn,
@@ -29,23 +30,27 @@ const PRODUCT_SUFFIXES: [&str; 6] = [".psf", ".residual", ".model", ".image", ".
 static EXECUTION_LOCK: Mutex<()> = Mutex::new(());
 
 fn tiny_measurement_set(root: &Path) -> PathBuf {
-    measurement_set_fixture(root, "input.ms", false, 1, 1)
+    measurement_set_fixture(root, "input.ms", false, 1, 1, false)
 }
 
 fn multi_row_measurement_set(root: &Path) -> PathBuf {
-    measurement_set_fixture(root, "multi-row-input.ms", false, 1, 8)
+    measurement_set_fixture(root, "multi-row-input.ms", false, 1, 8, false)
 }
 
 fn flagged_polarized_measurement_set(root: &Path) -> PathBuf {
-    measurement_set_fixture(root, "polarized-input.ms", true, 2, 1)
+    measurement_set_fixture(root, "polarized-input.ms", true, 2, 1, false)
 }
 
 fn spectral_line_measurement_set(root: &Path) -> PathBuf {
-    measurement_set_fixture(root, "line-input.ms", true, 4, 1)
+    measurement_set_fixture(root, "line-input.ms", true, 4, 1, false)
 }
 
 fn joint_measurement_set(root: &Path) -> PathBuf {
-    measurement_set_fixture(root, "joint-input.ms", false, 4, 1)
+    measurement_set_fixture(root, "joint-input.ms", false, 4, 1, false)
+}
+
+fn undefined_weight_spectrum_measurement_set(root: &Path) -> PathBuf {
+    measurement_set_fixture(root, "undefined-weight-spectrum.ms", false, 1, 1, true)
 }
 
 fn measurement_set_fixture(
@@ -54,9 +59,13 @@ fn measurement_set_fixture(
     polarized: bool,
     channel_count: usize,
     main_row_count: usize,
+    undefined_weight_spectrum: bool,
 ) -> PathBuf {
     let output = root.join(name);
     let mut builder = MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data);
+    if undefined_weight_spectrum {
+        builder = builder.with_main_column(OptionalMainColumn::WeightSpectrum);
+    }
     if polarized {
         builder = builder.with_main_column(OptionalMainColumn::ModelData);
     }
@@ -428,6 +437,9 @@ fn request(
         image_name,
         image_size: 16,
         cell_arcsec: 1.0,
+        phase_center_field: None,
+        phase_center: None,
+        outlier_file: None,
         field_ids: Some(vec![0]),
         uv_range: None,
         intent: None,
@@ -539,6 +551,130 @@ fn application_executes_single_ddid_stokes_i_mfs_dirty_and_publishes_products() 
         PagedImage::<f32>::open(PathBuf::from(format!("{}.mask", image_name.display())))
             .expect("reopen numeric CLEAN mask");
     assert_eq!(clean_mask.default_mask_name(), None);
+}
+
+#[test]
+fn application_uses_weight_when_selected_weight_spectrum_cells_are_undefined() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = undefined_weight_spectrum_measurement_set(root.path());
+    let image_name = root.path().join("undefined-weight-spectrum-dirty");
+
+    let result = execute_continuum(request(
+        measurement_set,
+        image_name.clone(),
+        ContinuumAlgorithm::Dirty,
+    ))
+    .expect("undefined WEIGHT_SPECTRUM cells select scalar WEIGHT before traversal");
+
+    assert_standard_products(&image_name, &result.product_names);
+}
+
+#[test]
+fn t31_application_executes_recentered_domains_through_one_scientific_route() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = tiny_measurement_set(root.path());
+
+    for (label, algorithm) in [
+        ("dirty", ContinuumAlgorithm::Dirty),
+        ("hogbom", ContinuumAlgorithm::Hogbom),
+    ] {
+        let image_name = root.path().join(format!("t31-{label}-main"));
+        let outlier_name = root.path().join(format!("t31-{label}-outlier"));
+        let outlier_file = root.path().join(format!("t31-{label}.outlier"));
+        std::fs::write(
+            &outlier_file,
+            format!(
+                "imagename={}\nimsize=[16,16]\ncell=[1arcsec,1arcsec]\nphasecenter=J2000 1.001rad 0.499rad\nusemask=user\nmask=circle[[8pix,8pix],4pix]\nspecmode=mfs\nnchan=1\nnterms=1\ngridder=standard\ndeconvolver=hogbom\nwprojplanes=1\n",
+                outlier_name.display()
+            ),
+        )
+        .expect("write CASA outlier fixture");
+        let mut imaging = request(measurement_set.clone(), image_name.clone(), algorithm);
+        imaging.outlier_file = Some(outlier_file);
+        imaging.task_requirements = vec![TaskRequirement::SerialCpu, TaskRequirement::FixedTileCpu];
+
+        let result = execute_continuum(imaging).expect("execute T31 multi-domain application");
+        assert_eq!(
+            result
+                .outcome
+                .output
+                .scientific
+                .normal_state()
+                .domain_count(),
+            2
+        );
+        assert_eq!(result.outcome.output.planned_products.members().len(), 12);
+        assert_eq!(
+            result
+                .outcome
+                .output
+                .planned_products
+                .members()
+                .iter()
+                .filter(|member| member.axes().domain() == &ImageDomainRole::Main)
+                .count(),
+            6
+        );
+        assert_eq!(
+            result
+                .outcome
+                .output
+                .planned_products
+                .members()
+                .iter()
+                .filter(|member| {
+                    member.axes().domain()
+                        == &ImageDomainRole::Outlier(outlier_name.display().to_string())
+                })
+                .count(),
+            6
+        );
+
+        for (base, expected) in [(&image_name, [1.0, 0.5]), (&outlier_name, [1.001, 0.499])] {
+            for suffix in PRODUCT_SUFFIXES {
+                assert!(
+                    PathBuf::from(format!("{}{suffix}", base.display())).is_dir(),
+                    "missing {label} domain product {}{suffix}",
+                    base.display()
+                );
+            }
+            let psf = PagedImage::<f32>::open(PathBuf::from(format!("{}.psf", base.display())))
+                .expect("open domain PSF");
+            let world = psf
+                .coordinates()
+                .to_world(&[8.0, 8.0, 0.0, 0.0])
+                .expect("domain reference world coordinate");
+            assert!((world[0] - expected[0]).abs() < 1.0e-12);
+            assert!((world[1] - expected[1]).abs() < 1.0e-12);
+            for suffix in [".psf", ".residual", ".model", ".image"] {
+                assert!(
+                    product_plane(base, suffix)
+                        .iter()
+                        .all(|value| value.is_finite()),
+                    "{label} {suffix} must be finite on valid support"
+                );
+            }
+        }
+
+        let model_nonzero = result
+            .outcome
+            .output
+            .scientific
+            .final_model()
+            .samples()
+            .iter()
+            .filter(|sample| sample.value().value() != 0.0)
+            .count();
+        match label {
+            "dirty" => assert_eq!(model_nonzero, 0),
+            "hogbom" => assert_eq!(model_nonzero, 2),
+            _ => unreachable!(),
+        }
+    }
 }
 
 #[test]

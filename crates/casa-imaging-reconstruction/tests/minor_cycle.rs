@@ -23,15 +23,16 @@ use casa_imaging_model::{
     ProductNormalization, ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
     Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
     ReconstructionControls, ReductionPolicy, RestFrequency, RestoringBeamPolicy, RowSelection,
-    ScientificContract, SelectedColumns, SelectedMainRow, SelectedObservationGenerationId,
-    SelectedObservationSample, SelectedPredictionTarget, SelectedRows, SelectedSampleAddress,
-    SelectedSampleCoordinates, SelectedSampleMetadata, SelectedSpectralContribution,
-    SelectedSpectralContributions, SelectedVisibilitySample, SkyDirection, SourceGenerations,
-    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection, StageErrorBudget,
-    TaylorSupportReference, TaylorValidityPolicy, TimeScale, TimeSelection, UvSelection,
-    UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope,
-    WeightingContract, WeightingScheme, compile, compile_observation,
+    ScientificContract, SelectedColumns, SelectedImageDomainProjections, SelectedMainRow,
+    SelectedObservationGenerationId, SelectedObservationSample, SelectedPhaseCentreProjection,
+    SelectedPredictionTarget, SelectedRows, SelectedSampleAddress, SelectedSampleCoordinates,
+    SelectedSampleMetadata, SelectedSpectralContribution, SelectedSpectralContributions,
+    SelectedVisibilitySample, SkyDirection, SourceGenerations, SpectralContract,
+    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
+    SpectralWcs, SpectralWindowSelection, StageErrorBudget, TaylorSupportReference,
+    TaylorValidityPolicy, TimeScale, TimeSelection, UvSelection, UvwCoordinateLaw,
+    VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract,
+    WeightingScheme, compile, compile_observation,
 };
 use casa_imaging_reconstruction::{
     AutoMultithreshControls, ExecutableModelProblem, FinalModelCompletion, FinalNormalState,
@@ -398,6 +399,13 @@ fn fixture_samples_scaled(
                         antenna2: SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
                     },
                 },
+                domain_projections: SelectedImageDomainProjections::one_domain_with_shared_psf(
+                    SelectedPhaseCentreProjection::new(
+                        [1.0 + row_index as f64, source_index as f64, 0.0],
+                        0.0,
+                    )
+                    .expect("finite one-domain projection"),
+                ),
                 metadata: SelectedSampleMetadata {
                     field_id: 0,
                     antenna1: 0,
@@ -516,7 +524,7 @@ fn replay_selected_generation(
     samples: &[SelectedObservationSample],
 ) -> SelectedObservationGenerationId {
     let (generation, count) = problem
-        .inspect_selected_observation(samples.iter().copied().map(Ok::<_, Infallible>), |_| {
+        .inspect_selected_observation(samples.iter().cloned().map(Ok::<_, Infallible>), |_| {
             Ok::<_, Infallible>(())
         })
         .expect("inspect fixture sample stream");
