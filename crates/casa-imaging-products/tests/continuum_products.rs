@@ -47,6 +47,7 @@ use casa_imaging_reconstruction::{
         spectral_operator_workload,
     },
 };
+use sha2::{Digest, Sha256};
 
 const SHAPE: [usize; 2] = [8, 8];
 
@@ -191,6 +192,31 @@ fn continuum_problem_with_policy_and_response(
     restoring_beam: RestoringBeamPolicy,
     response: InstrumentResponse,
 ) -> casa_imaging_model::CompiledProblem {
+    continuum_problem_with_reconstruction(
+        observation,
+        products,
+        restoring_beam,
+        response,
+        ReconstructionBasis::Constant,
+        ReconstructionAlgorithm::Dirty,
+        1,
+    )
+}
+
+fn continuum_problem_with_reconstruction(
+    observation: u8,
+    products: &[ProductKind],
+    restoring_beam: RestoringBeamPolicy,
+    response: InstrumentResponse,
+    basis: ReconstructionBasis,
+    algorithm: ReconstructionAlgorithm,
+    channels: usize,
+) -> casa_imaging_model::CompiledProblem {
+    let controls = if matches!(algorithm, ReconstructionAlgorithm::Mtmfs) {
+        ReconstructionControls::new(1, 1.0, 0.0)
+    } else {
+        ReconstructionControls::new(0, 1.0, 0.0)
+    };
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
         SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
@@ -223,7 +249,7 @@ fn continuum_problem_with_policy_and_response(
             FrequencyFrame::Topocentric,
             SpectralFrameAnchor::NotApplicable,
             SpectralWcs::Linear {
-                channels: 1,
+                channels,
                 reference_pixel: 0.0,
                 reference_frequency_hz: 1.4e9,
                 increment_hz: 1.0e6,
@@ -251,9 +277,9 @@ fn continuum_problem_with_policy_and_response(
                 ),
             ),
             ReconstructionContract::new(
-                ReconstructionBasis::Constant,
-                ReconstructionAlgorithm::Dirty,
-                ReconstructionControls::new(0, 1.0, 0.0),
+                basis,
+                algorithm,
+                controls,
                 PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
             ),
             WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
@@ -372,6 +398,18 @@ fn exact_contributions(sample: &SelectedObservationSample) -> SelectedSpectralCo
     .expect("one exact output contribution")
 }
 
+fn channel_contributions(sample: &SelectedObservationSample) -> SelectedSpectralContributions {
+    SelectedSpectralContributions::new([
+        SelectedSpectralContribution::new(
+            sample.address.channel_index,
+            1.0,
+            sample.address.frequency_centre_hz,
+        ),
+        None,
+    ])
+    .expect("one exact channel-local contribution")
+}
+
 fn replay_selected_generation(
     problem: &casa_imaging_model::CompiledProblem,
     samples: &[SelectedObservationSample],
@@ -415,6 +453,15 @@ fn run_round_with_samples(
     attempt_byte: u8,
     samples: Vec<SelectedObservationSample>,
 ) -> ContinuumRound {
+    run_round_with_contributions(problem, attempt_byte, samples, exact_contributions)
+}
+
+fn run_round_with_contributions(
+    problem: &casa_imaging_model::CompiledProblem,
+    attempt_byte: u8,
+    samples: Vec<SelectedObservationSample>,
+    contributions: fn(&SelectedObservationSample) -> SelectedSpectralContributions,
+) -> ContinuumRound {
     let mut lifecycle = ModelLifecycle::bind(
         ExecutableModelProblem::from_compiled(problem.clone()).expect("executable problem"),
         attempt(attempt_byte),
@@ -442,9 +489,9 @@ fn run_round_with_samples(
     )
     .expect("weighting residency plan");
     let selected_generation = replay_selected_generation(problem, &samples);
-    let generation = freeze_weighting_generation(problem, &plan, &samples)
+    let generation = freeze_weighting_generation(problem, &plan, &samples, contributions)
         .expect("freeze global weighting generation");
-    let (blocks, summary) = replay(&generation, problem, &plan, &samples);
+    let (blocks, summary) = replay(&generation, problem, &plan, &samples, contributions);
     assert!(!blocks.is_empty(), "replay must emit bounded blocks");
 
     let specification =
@@ -479,14 +526,15 @@ fn freeze_weighting_generation(
     problem: &casa_imaging_model::CompiledProblem,
     plan: &WeightingPlan,
     samples: &[SelectedObservationSample],
+    contributions: fn(&SelectedObservationSample) -> SelectedSpectralContributions,
 ) -> Result<WeightingAlgorithmState, WeightingError> {
     let mut density = begin_weighting_generation(problem, plan)?;
     for sample in samples {
-        density.consume(problem, sample, exact_contributions(sample))?;
+        density.consume(problem, sample, contributions(sample))?;
     }
     let mut sum_weight = density.finish(problem)?;
     for sample in samples {
-        sum_weight.consume(problem, sample, exact_contributions(sample))?;
+        sum_weight.consume(problem, sample, contributions(sample))?;
     }
     sum_weight.finish()
 }
@@ -496,6 +544,7 @@ fn replay(
     problem: &casa_imaging_model::CompiledProblem,
     plan: &WeightingPlan,
     samples: &[SelectedObservationSample],
+    contributions: fn(&SelectedObservationSample) -> SelectedSpectralContributions,
 ) -> (Vec<WeightingReplayChunk>, WeightingReplaySummary) {
     let mut blocks = Vec::new();
     let mut phase = generation
@@ -503,7 +552,7 @@ fn replay(
         .expect("begin replay");
     for sample in samples {
         if let Some(block) = phase
-            .consume(problem, sample, exact_contributions(sample))
+            .consume(problem, sample, contributions(sample))
             .expect("weight sample")
         {
             blocks.push(block);
@@ -524,6 +573,136 @@ const CONTINUUM_PRODUCTS: [ProductKind; 6] = [
     ProductKind::SumWeights,
     ProductKind::Mask,
 ];
+
+fn prechange_commitment_bytes(
+    problem: &casa_imaging_model::CompiledProblem,
+    join: &MajorCycleCompletion,
+    normal_state_catalog_tag: u8,
+) -> Vec<u8> {
+    fn bytes(encoded: &mut Vec<u8>, value: &[u8]) {
+        encoded.extend_from_slice(&(value.len() as u64).to_le_bytes());
+        encoded.extend_from_slice(value);
+    }
+
+    fn identity(encoded: &mut Vec<u8>, value: [u8; 32]) {
+        encoded.extend_from_slice(&value);
+    }
+
+    let normal = join.normal_state();
+    let mut encoded = Vec::new();
+    bytes(&mut encoded, b"casa-rs-continuum-commitment");
+    encoded.extend_from_slice(&2_u32.to_le_bytes());
+    identity(&mut encoded, problem.problem_id().as_bytes());
+    identity(&mut encoded, problem.product_graph().graph_id().as_bytes());
+    identity(&mut encoded, join.completion_id().as_bytes());
+    identity(&mut encoded, normal.completion_id().as_bytes());
+    identity(&mut encoded, normal.content_identity().as_bytes());
+    encoded.push(normal_state_catalog_tag);
+    identity(&mut encoded, normal.input_model_generation().as_bytes());
+    identity(&mut encoded, normal.final_model_generation().as_bytes());
+    identity(&mut encoded, normal.weighting_generation().as_bytes());
+    identity(&mut encoded, normal.replay_id().as_bytes());
+    identity(&mut encoded, normal.coverage().as_bytes());
+    identity(&mut encoded, normal.selected_generation().as_bytes());
+    match normal.continuum_transform_generation() {
+        Some(generation) => {
+            encoded.push(1);
+            identity(&mut encoded, generation.as_bytes());
+        }
+        None => encoded.push(0),
+    }
+    encoded.extend_from_slice(&normal.sample_count().to_le_bytes());
+    encoded.extend_from_slice(&normal.block_count().to_le_bytes());
+    encoded.push(0);
+    encoded
+}
+
+#[test]
+fn t42_prechange_product_commitments_remain_constant_channel_only() {
+    const CONSTANT_DIGEST: [u8; 32] = [
+        0x0e, 0x01, 0xcd, 0x6e, 0x01, 0x57, 0xa3, 0xfc, 0x11, 0x7b, 0x70, 0x8c, 0x05, 0x01, 0xa9,
+        0xf2, 0x6f, 0x8f, 0xa6, 0x8d, 0x00, 0x6e, 0x44, 0x30, 0xb6, 0xdf, 0xa6, 0xf7, 0xef, 0x39,
+        0xdc, 0x14,
+    ];
+    const CHANNEL_DIGEST: [u8; 32] = [
+        0xd1, 0xcd, 0xc5, 0xa3, 0x3e, 0xe6, 0x13, 0xea, 0x8e, 0x41, 0xdf, 0xfa, 0x92, 0x9f, 0x0c,
+        0x5f, 0xaa, 0xad, 0x0b, 0x90, 0x19, 0xcd, 0x90, 0x29, 0x0b, 0x22, 0xfa, 0x7d, 0xc9, 0xa6,
+        0x96, 0x27,
+    ];
+
+    let constant_problem = continuum_problem(131, &CONTINUUM_PRODUCTS);
+    let constant_round = run_continuum_round(&constant_problem, 132);
+    let constant_catalog =
+        ContinuumSourceCatalog::from_major_cycle(&constant_problem, &constant_round.join)
+            .expect("constant source catalog");
+    let constant_bytes = prechange_commitment_bytes(&constant_problem, &constant_round.join, 0);
+    let constant_digest = <[u8; 32]>::from(Sha256::digest(&constant_bytes));
+    assert_eq!(constant_bytes.len(), 411);
+    assert_eq!(constant_bytes[200], 0, "PlaneV1 retains catalog tag zero");
+    assert_eq!(constant_digest, CONSTANT_DIGEST);
+    assert_eq!(constant_catalog.commitment_id(), constant_digest);
+
+    let channel_problem = continuum_problem_with_reconstruction(
+        133,
+        &CONTINUUM_PRODUCTS,
+        RestoringBeamPolicy::PerPlane,
+        InstrumentResponse::Scalar,
+        ReconstructionBasis::ChannelLocal { channels: 2 },
+        ReconstructionAlgorithm::Dirty,
+        2,
+    );
+    let channel_round = run_round_with_contributions(
+        &channel_problem,
+        134,
+        fixture_samples(&channel_problem),
+        channel_contributions,
+    );
+    let channel_catalog =
+        ContinuumSourceCatalog::from_major_cycle(&channel_problem, &channel_round.join)
+            .expect("channel source catalog");
+    let channel_bytes = prechange_commitment_bytes(&channel_problem, &channel_round.join, 1);
+    let channel_digest = <[u8; 32]>::from(Sha256::digest(&channel_bytes));
+    assert_eq!(channel_bytes.len(), 411);
+    assert_eq!(
+        channel_bytes[200], 1,
+        "ChannelSlabV1 retains catalog tag one"
+    );
+    assert_eq!(channel_digest, CHANNEL_DIGEST);
+    assert_eq!(channel_catalog.commitment_id(), channel_digest);
+
+    let taylor_products = [
+        ProductKind::Psf,
+        ProductKind::Residual,
+        ProductKind::Model,
+        ProductKind::SumWeights,
+        ProductKind::Sensitivity,
+        ProductKind::TaylorTerms,
+    ];
+    let taylor_problem = continuum_problem_with_reconstruction(
+        135,
+        &taylor_products,
+        RestoringBeamPolicy::None,
+        InstrumentResponse::Scalar,
+        ReconstructionBasis::Taylor { terms: 2 },
+        ReconstructionAlgorithm::Mtmfs,
+        1,
+    );
+    let taylor_round = run_continuum_round(&taylor_problem, 136);
+    assert_eq!(
+        ContinuumSourceCatalog::from_major_cycle(&taylor_problem, &taylor_round.join)
+            .expect_err("Taylor catalog remains outside the continuum commitment schema"),
+        ProductsError::UnsupportedProblem
+    );
+
+    assert_eq!(
+        constant_catalog.commitment_id(),
+        <[u8; 32]>::from(Sha256::digest(&constant_bytes))
+    );
+    assert_eq!(
+        channel_catalog.commitment_id(),
+        <[u8; 32]>::from(Sha256::digest(&channel_bytes))
+    );
+}
 
 #[test]
 fn planned_generation_binds_the_exact_graph_and_commitments() {

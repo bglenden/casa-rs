@@ -28,7 +28,8 @@ use crate::{
 };
 
 const WEIGHTING_COMMITMENT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-weighting-commitment";
-const WEIGHTING_COMMITMENT_IDENTITY_VERSION: u32 = 3;
+const WEIGHTING_COMMITMENT_IDENTITY_VERSION: u32 = 4;
+const CASA_UNPOLARIZED_WEIGHT_GROUP_LAW_V1: u8 = 0;
 
 /// Inner product on the model-coefficient space.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -700,6 +701,7 @@ fn weighting_commitment_id(
     hasher.update([match visibility_inner_product {
         VisibilityInnerProduct::HermitianEuclidean => 0,
     }]);
+    hasher.update([CASA_UNPOLARIZED_WEIGHT_GROUP_LAW_V1]);
     match weighting.scheme() {
         WeightingScheme::Natural => hasher.update([0]),
         WeightingScheme::Uniform => hasher.update([1]),

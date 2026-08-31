@@ -88,8 +88,10 @@ pub fn compile_spectral_stencil<'a>(
     // selected frequency rather than treating source-channel ordinal as a
     // model coefficient.
     let terms = match problem.reconstruction().basis() {
-        ReconstructionBasis::Constant => one_term(0, 1.0, frequency_hz)?,
-        ReconstructionBasis::ChannelLocal { .. } | ReconstructionBasis::Taylor { .. } => {
+        ReconstructionBasis::Constant | ReconstructionBasis::Taylor { .. } => {
+            one_term(0, 1.0, frequency_hz)?
+        }
+        ReconstructionBasis::ChannelLocal { .. } => {
             channel_local_terms(problem, sample, evaluation, frequency_hz)?
         }
     };

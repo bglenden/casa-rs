@@ -88,7 +88,7 @@ pub use selected_observation::{
 };
 
 pub use selected_observation_sample::{
-    SelectedObservationGenerationId, SelectedObservationRunChannel,
+    SelectedInputWeightGroup, SelectedObservationGenerationId, SelectedObservationRunChannel,
     SelectedObservationRunCorrelation, SelectedObservationRunRow, SelectedObservationSample,
     SelectedObservationSampleView, SelectedPointingDirections, SelectedPredictionTarget,
     SelectedSampleAddress, SelectedSampleCoordinates, SelectedSampleMetadata,

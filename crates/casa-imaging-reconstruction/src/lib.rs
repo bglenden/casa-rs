@@ -28,6 +28,7 @@ use casa_imaging_model::{
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+mod block_normal;
 mod continuum_transform;
 mod gridded_normal_operator;
 mod major_cycle;
@@ -58,7 +59,7 @@ pub mod runtime_adapter {
         GriddedNormalOperatorProgram, GriddedNormalOperatorStageTimings, GriddedNormalPartial,
         GriddedNormalRoutingMeasurements, GriddedNormalSourceCardinality, GriddedNormalWork,
         SourceCardinalityObservation, gridded_normal_execution_residency,
-        gridded_normal_route_capacity_bytes,
+        gridded_normal_operator_record_bytes, gridded_normal_route_capacity_bytes,
     };
     pub use crate::spectral_operator::{
         CompleteDataOwnerCompletion, CompleteDataOwnerResult, CompleteDataOwnerState,
@@ -76,8 +77,9 @@ pub use continuum_transform::{
     fit_and_subtract_continuum,
 };
 pub use major_cycle::{
-    FinalNormalState, FinalNormalStatePlane, MajorCycleCompletion, MajorCycleError,
-    MajorCycleOwner, MajorCyclePreparation, NormalStateCatalog,
+    FinalNormalState, FinalNormalStateCoefficientTerm, FinalNormalStateNormalMoment,
+    FinalNormalStatePlane, MajorCycleCompletion, MajorCycleError, MajorCycleOwner,
+    MajorCyclePreparation, NormalStateCatalog,
 };
 pub use mask::{
     AutoMultithreshControls, AutoMultithreshEvidence, MaskBox, MaskError, ReconstructionMask,

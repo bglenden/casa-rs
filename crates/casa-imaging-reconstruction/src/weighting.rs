@@ -7,7 +7,7 @@ use std::{collections::BTreeMap, fmt, mem::size_of};
 
 use casa_imaging_model::{
     CompiledProblem, CompiledProblemId, ContinuumTransformGenerationId, FiniteValuePolicy,
-    ImageDomainRole, LogicalIdentity, SelectedObservationGenerationId,
+    ImageDomainRole, LogicalIdentity, SelectedInputWeightGroup, SelectedObservationGenerationId,
     SelectedObservationSampleView, SelectedSampleAddress, SelectedSpectralContribution,
     SelectedSpectralContributions, SelectedVisibilitySample, UvTaper, WeightDensityScope,
     WeightingCommitmentId, WeightingScheme,
@@ -674,7 +674,9 @@ impl WeightingDensityPhase {
         {
             return Err(WeightingError::ProblemMismatch);
         }
-        let sample = WeightingSelectedSample::from_selected(sample.into());
+        let sample = sample.into();
+        let density_owner = sample.input_weight_group().is_density_owner();
+        let sample = WeightingSelectedSample::from_selected(sample);
         for contribution in contributions.iter() {
             extend_frequency_range(
                 &mut self.frequency_range_hz,
@@ -682,7 +684,10 @@ impl WeightingDensityPhase {
             );
         }
         let input = input_weight(problem, &sample)?;
-        if input > 0.0 && !matches!(problem.weighting().scheme(), WeightingScheme::Natural) {
+        if density_owner
+            && input > 0.0
+            && !matches!(problem.weighting().scheme(), WeightingScheme::Natural)
+        {
             match problem.weighting().density_scope() {
                 WeightDensityScope::NotApplicable => {}
                 WeightDensityScope::GlobalSelection => {
@@ -1102,6 +1107,7 @@ pub struct WeightingSelectedSample {
     pub(crate) channel_flag: bool,
     pub(crate) parallel_hand_group_flag: bool,
     pub(crate) row_flag: bool,
+    // Reconstruction-derived CASA imaging weight, not raw per-correlation storage weight.
     pub(crate) input_weight: f32,
     pub(crate) density_uvw_m: [f64; 3],
     pub(crate) transformed_uvw_m: [f64; 3],
@@ -1111,13 +1117,14 @@ pub struct WeightingSelectedSample {
 impl WeightingSelectedSample {
     fn from_selected(sample: SelectedObservationSampleView<'_>) -> Self {
         let coordinates = sample.coordinates();
+        let input_weight_group = sample.input_weight_group();
         Self {
             address: sample.address(),
             visibility: sample.visibility(),
             channel_flag: sample.channel_flag(),
             parallel_hand_group_flag: sample.parallel_hand_group_flag(),
             row_flag: sample.row_flag(),
-            input_weight: sample.input_weight(),
+            input_weight: casa_unpolarized_input_weight(input_weight_group),
             density_uvw_m: coordinates.density_uvw_m,
             transformed_uvw_m: coordinates.transformed_uvw_m,
             phase_shift_m: coordinates.phase_shift_m,
@@ -1164,6 +1171,14 @@ impl WeightingSelectedSample {
     #[must_use]
     pub const fn phase_shift_m(&self) -> f64 {
         self.phase_shift_m
+    }
+}
+
+fn casa_unpolarized_input_weight(group: SelectedInputWeightGroup) -> f32 {
+    let (first, last) = group.endpoints();
+    match last {
+        Some(last) => (first + last) / 2.0_f32,
+        None => first,
     }
 }
 

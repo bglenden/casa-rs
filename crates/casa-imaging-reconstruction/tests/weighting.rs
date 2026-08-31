@@ -19,15 +19,15 @@ use casa_imaging_model::{
     ProductNormalization, ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
     Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
     ReconstructionControls, ReductionPolicy, RestFrequency, RestoringBeamPolicy, RowSelection,
-    ScientificContract, SelectedColumns, SelectedMainRow, SelectedObservationGenerationId,
-    SelectedObservationSample, SelectedPredictionTarget, SelectedRows, SelectedSampleAddress,
-    SelectedSampleCoordinates, SelectedSampleMetadata, SelectedSpectralContribution,
-    SelectedSpectralContributions, SelectedVisibilitySample, SkyDirection, SourceGenerations,
-    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection, StageErrorBudget,
-    TaylorSupportReference, TaylorValidityPolicy, TimeScale, TimeSelection, UvSelection, UvTaper,
-    UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope,
-    WeightingContract, WeightingScheme, compile, compile_observation,
+    ScientificContract, SelectedColumns, SelectedInputWeightGroup, SelectedMainRow,
+    SelectedObservationGenerationId, SelectedObservationSample, SelectedPredictionTarget,
+    SelectedRows, SelectedSampleAddress, SelectedSampleCoordinates, SelectedSampleMetadata,
+    SelectedSpectralContribution, SelectedSpectralContributions, SelectedVisibilitySample,
+    SkyDirection, SourceGenerations, SpectralContract, SpectralCoordinateSpec, SpectralCoupling,
+    SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection,
+    StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy, TimeScale, TimeSelection,
+    UvSelection, UvTaper, UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn,
+    WeightDensityScope, WeightingContract, WeightingScheme, compile, compile_observation,
 };
 use casa_imaging_reconstruction::{
     FrozenWeightingCoverageProof, WeightingAlgorithmState, WeightingError,
@@ -455,6 +455,68 @@ fn replay_weights(
         .collect()
 }
 
+fn grouped_weighting(
+    problem: &casa_imaging_model::CompiledProblem,
+    samples: &[SelectedObservationSample],
+    groups: &[SelectedInputWeightGroup],
+) -> (Vec<f64>, Vec<f64>) {
+    assert_eq!(samples.len(), groups.len());
+    let plan = plan_weighting(
+        problem,
+        WeightingExecutionLimits::new(samples.len(), 1).expect("grouped weighting limits"),
+    )
+    .expect("grouped weighting plan");
+    let mut density = begin_weighting_generation(problem, &plan).expect("grouped density");
+    for (sample, group) in samples.iter().zip(groups.iter().copied()) {
+        density
+            .consume(
+                problem,
+                sample.as_view().with_input_weight_group(group),
+                exact_contributions(sample),
+            )
+            .expect("grouped density sample");
+    }
+    let mut sum_weight = density.finish(problem).expect("grouped sum-weight phase");
+    for (sample, group) in samples.iter().zip(groups.iter().copied()) {
+        sum_weight
+            .consume(
+                problem,
+                sample.as_view().with_input_weight_group(group),
+                exact_contributions(sample),
+            )
+            .expect("grouped sum-weight sample");
+    }
+    let generation = sum_weight.finish().expect("freeze grouped weighting");
+    let sum_weights = generation.sum_weights().to_vec();
+    let mut replay = generation
+        .begin_replay(problem, &plan)
+        .expect("begin grouped replay");
+    let mut blocks = Vec::new();
+    for (sample, group) in samples.iter().zip(groups.iter().copied()) {
+        if let Some(block) = replay
+            .consume(
+                problem,
+                sample.as_view().with_input_weight_group(group),
+                exact_contributions(sample),
+            )
+            .expect("grouped replay sample")
+        {
+            blocks.push(block);
+        }
+    }
+    let (terminal, _) = replay.finish().expect("finish grouped replay");
+    if let Some(block) = terminal {
+        blocks.push(block);
+    }
+    let weights = blocks
+        .iter()
+        .flat_map(WeightingReplayChunk::samples)
+        .flat_map(|sample| sample.spectral_values())
+        .map(|value| value.imaging_weight())
+        .collect();
+    (weights, sum_weights)
+}
+
 fn fused_stream(
     problem: &casa_imaging_model::CompiledProblem,
     plan: &casa_imaging_reconstruction::WeightingPlan,
@@ -520,6 +582,148 @@ fn compiler_commitment_freezes_only_after_two_exhaustive_owner_passes() {
     assert_eq!(generation.sample_count(), samples.len() as u64);
     assert_eq!(generation.sum_weights().len(), 1);
     assert!(generation.sum_weights()[0] > 0.0);
+}
+
+#[test]
+fn one_correlation_group_preserves_its_casa_float_weight() {
+    let problem = problem(
+        WeightingScheme::Natural,
+        WeightDensityScope::NotApplicable,
+        None,
+    );
+    let mut sample = exact_samples(&problem)[0];
+    sample.input_weight = 3.0;
+
+    let (weights, sum_weights) = grouped_weighting(
+        &problem,
+        &[sample],
+        &[SelectedInputWeightGroup::single(3.0)],
+    );
+
+    assert_eq!(weights, [3.0]);
+    assert_eq!(sum_weights, [3.0]);
+}
+
+#[test]
+fn unequal_parallel_hands_share_the_casa_float_mean_for_natural_weighting() {
+    let problem = problem(
+        WeightingScheme::Natural,
+        WeightDensityScope::NotApplicable,
+        None,
+    );
+    for (first_type, last_type) in [
+        (CorrelationType::CircularRr, CorrelationType::CircularLl),
+        (CorrelationType::LinearXx, CorrelationType::LinearYy),
+    ] {
+        let mut first = exact_samples(&problem)[0];
+        first.address.correlation_type = first_type;
+        first.input_weight = 16_777_216.0;
+        let mut last = first;
+        last.address.correlation_index = 1;
+        last.address.correlation_type = last_type;
+        last.input_weight = 1.0;
+        let group = SelectedInputWeightGroup::parallel_hands(first.input_weight, last.input_weight);
+
+        let (weights, sum_weights) = grouped_weighting(
+            &problem,
+            &[first, last],
+            &[
+                group.with_density_owner(true),
+                group.with_density_owner(false),
+            ],
+        );
+
+        assert_eq!(weights, [8_388_608.0; 2]);
+        assert_eq!(sum_weights, [16_777_216.0]);
+    }
+}
+
+#[test]
+fn parallel_hand_groups_contribute_density_once_for_uniform_and_briggs() {
+    for scheme in [
+        WeightingScheme::Uniform,
+        WeightingScheme::Briggs { robust: 0.5 },
+    ] {
+        let problem = problem(scheme, WeightDensityScope::GlobalSelection, None);
+        let mut first = exact_samples(&problem)[0];
+        first.address.correlation_type = CorrelationType::CircularRr;
+        first.input_weight = 3.0;
+        first.coordinates.density_uvw_m = [1.0, 0.0, 0.0];
+        let mut last = first;
+        last.address.correlation_index = 1;
+        last.address.correlation_type = CorrelationType::CircularLl;
+        last.input_weight = 7.0;
+        let mut single = first;
+        single.address.physical_row += 1;
+        single.address.correlation_type = CorrelationType::StokesI;
+        single.input_weight = 2.0;
+        single.coordinates.density_uvw_m = [5.0, 0.0, 0.0];
+        let pair = SelectedInputWeightGroup::parallel_hands(3.0, 7.0);
+
+        let (weights, sum_weights) = grouped_weighting(
+            &problem,
+            &[first, last, single],
+            &[
+                pair.with_density_owner(true),
+                pair.with_density_owner(false),
+                SelectedInputWeightGroup::single(2.0),
+            ],
+        );
+
+        match scheme {
+            WeightingScheme::Uniform => {
+                assert_eq!(weights, [1.0; 3]);
+                assert_eq!(sum_weights, [3.0]);
+            }
+            WeightingScheme::Briggs { robust } => {
+                let robust_f2 = (5.0_f64 * 10_f64.powf(-robust)).powi(2) / (29.0 / 7.0);
+                let paired = 5.0 / (5.0 * robust_f2 + 1.0);
+                let unpaired = 2.0 / (2.0 * robust_f2 + 1.0);
+                assert_eq!(weights, [paired, paired, unpaired]);
+                assert_eq!(sum_weights, [paired * 2.0 + unpaired]);
+            }
+            _ => unreachable!("test covers density-weighted schemes"),
+        }
+    }
+}
+
+#[test]
+fn four_correlation_cross_hands_do_not_add_uniform_density() {
+    let problem = problem(
+        WeightingScheme::Uniform,
+        WeightDensityScope::GlobalSelection,
+        None,
+    );
+    let base = exact_samples(&problem)[0];
+    let types = [
+        CorrelationType::CircularRr,
+        CorrelationType::CircularRl,
+        CorrelationType::CircularLr,
+        CorrelationType::CircularLl,
+    ];
+    let raw_weights = [3.0, 100.0, 200.0, 7.0];
+    let samples = types
+        .into_iter()
+        .zip(raw_weights)
+        .enumerate()
+        .map(|(ordinal, (correlation_type, input_weight))| {
+            let mut sample = base;
+            sample.address.correlation_index = ordinal as u32;
+            sample.address.correlation_type = correlation_type;
+            sample.input_weight = input_weight;
+            sample.coordinates.density_uvw_m = [1.0, 0.0, 0.0];
+            sample
+        })
+        .collect::<Vec<_>>();
+    let group = SelectedInputWeightGroup::parallel_hands(3.0, 7.0);
+    let groups = (0..4)
+        .map(|ordinal| group.with_density_owner(ordinal == 0))
+        .collect::<Vec<_>>();
+
+    let (weights, sum_weights) = grouped_weighting(&problem, &samples, &groups);
+
+    assert_eq!(weights, [1.0; 4]);
+    assert_eq!(sum_weights, [4.0]);
 }
 
 #[test]

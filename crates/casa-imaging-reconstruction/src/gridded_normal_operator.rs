@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Run-scoped, disk-streamable normal-operator replay for constant and channel-local bases.
+//! Run-scoped, disk-streamable normal-operator replay for bounded spectral bases.
 
 use std::{
     collections::{BTreeMap, btree_map::Entry},
@@ -41,7 +41,7 @@ use crate::{
 };
 
 const RECORD_DOMAIN: &[u8] = b"casa-rs-gridded-normal-operator";
-const RECORD_VERSION: u32 = 2;
+const RECORD_VERSION: u32 = 3;
 const TAP_KEY_BITS: u32 = 38;
 const TAP_KEY_MASK: u64 = (1_u64 << TAP_KEY_BITS) - 1;
 const CHANNEL_KEY_BITS: u32 = 24;
@@ -52,8 +52,60 @@ const GRIDDED_NORMAL_TAPS_PER_RECORD: u64 = ((SUPPORT * 2 + 1) * (SUPPORT * 2 + 
 const GRIDDED_NORMAL_TILE_EDGE: usize = 32;
 const GRIDDED_NORMAL_HOT_TILE_DUPLICATES: usize = GRIDDED_NORMAL_LANE_COUNT - 1;
 
-/// Width of every opaque gridded normal-operator record.
+/// Width of an opaque scalar gridded normal-operator record.
+///
+/// Taylor records use the problem-derived width returned by
+/// [`gridded_normal_operator_record_bytes`].
 pub const GRIDDED_NORMAL_OPERATOR_RECORD_BYTES: usize = 32;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum GriddedNormalRecordLayout {
+    Scalar,
+    Taylor(crate::block_normal::BlockNormalPlan),
+}
+
+impl GriddedNormalRecordLayout {
+    fn for_specification(specification: &SpectralOperatorSpecification) -> Self {
+        match specification.block_normal_plan() {
+            Some(plan) if plan.coefficient_term_count() > 1 => Self::Taylor(plan),
+            _ => Self::Scalar,
+        }
+    }
+
+    pub(super) const fn coefficient_terms(self) -> usize {
+        match self {
+            Self::Scalar => 1,
+            Self::Taylor(plan) => plan.coefficient_term_count(),
+        }
+    }
+
+    pub(super) const fn normal_moments(self) -> usize {
+        match self {
+            Self::Scalar => 1,
+            Self::Taylor(plan) => plan.normal_moment_count(),
+        }
+    }
+
+    pub(super) fn record_bytes(self) -> Result<usize, SpectralOperatorError> {
+        match self {
+            Self::Scalar => Ok(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES),
+            Self::Taylor(plan) => plan
+                .normal_moment_count()
+                .checked_add(1)
+                .and_then(|values| values.checked_mul(size_of::<u64>()))
+                .ok_or(SpectralOperatorError::ResidencyOverflow),
+        }
+    }
+}
+
+/// Return the opaque record width selected by reconstruction for this problem.
+#[doc(hidden)]
+pub fn gridded_normal_operator_record_bytes(
+    problem: &CompiledProblem,
+) -> Result<usize, SpectralOperatorError> {
+    let specification = SpectralOperatorSpecification::new(problem)?;
+    GriddedNormalRecordLayout::for_specification(&specification).record_bytes()
+}
 
 /// Stable logical fanout within each gridded-normal execution phase.
 pub const GRIDDED_NORMAL_LANE_COUNT: usize = 4;
@@ -67,11 +119,17 @@ const GRIDDED_NORMAL_SECTOR_COUNT: usize = GRIDDED_NORMAL_LANE_COUNT;
 /// Project exact reusable route capacity for retained frame ordinals.
 ///
 /// `record_count` is the sum of the planned per-ordinal record capacities.
-/// Every ordinal retains three such vectors (`Complex64`, `u32`, and an
-/// eight-byte route) plus one prepared-frame descriptor. The storage is shared
-/// by all workers.
+/// The storage is shared by all workers and includes the exact Taylor-width
+/// prediction values and reusable per-lane algebra scratch.
 #[doc(hidden)]
-pub fn gridded_normal_route_capacity_bytes(record_count: usize, frame_count: usize) -> Option<u64> {
+pub fn gridded_normal_route_capacity_bytes(
+    record_count: usize,
+    frame_count: usize,
+    prediction_width: usize,
+) -> Option<u64> {
+    if prediction_width == 0 {
+        return None;
+    }
     let prediction_capacity = record_count
         .div_ceil(GRIDDED_NORMAL_LANE_COUNT)
         .checked_add(1)?;
@@ -82,13 +140,28 @@ pub fn gridded_normal_route_capacity_bytes(record_count: usize, frame_count: usi
     )?;
     let prediction_bytes = prediction_capacity
         .checked_mul(GRIDDED_NORMAL_LANE_COUNT)?
+        .checked_mul(prediction_width)?
         .checked_mul(size_of::<Complex64>())?;
     let frame_bytes =
         frame_count.checked_mul(size_of::<usize>() + size_of::<u64>() + size_of::<u32>())?;
+    let scratch_bytes = if prediction_width > 1 {
+        prediction_width
+            .checked_mul(size_of::<Complex64>())?
+            .checked_add(
+                prediction_width
+                    .checked_mul(2)?
+                    .checked_sub(1)?
+                    .checked_mul(size_of::<f64>())?,
+            )?
+            .checked_mul(GRIDDED_NORMAL_LANE_COUNT)?
+    } else {
+        0
+    };
     u64::try_from(
         record_bytes
             .checked_add(prediction_bytes)?
-            .checked_add(frame_bytes)?,
+            .checked_add(frame_bytes)?
+            .checked_add(scratch_bytes)?,
     )
     .ok()
 }
@@ -147,9 +220,9 @@ impl GriddedNormalExecutionResidency {
 #[doc(hidden)]
 pub fn gridded_normal_execution_residency(
     grid_shape: [usize; 2],
-    core_depth: usize,
+    coefficient_terms: usize,
 ) -> Result<GriddedNormalExecutionResidency, SpectralOperatorError> {
-    if core_depth == 0 {
+    if coefficient_terms == 0 {
         return Err(SpectralOperatorError::InvalidSlab);
     }
     let catalog = GriddedNormalTileCatalog::new(grid_shape)?;
@@ -168,12 +241,12 @@ pub fn gridded_normal_execution_residency(
         .ok_or(SpectralOperatorError::ResidencyOverflow)?;
     let tile_accumulator_complex_values = tile_halo_cells
         .checked_add(duplicate_cells)
-        .and_then(|cells| cells.checked_mul(core_depth))
+        .and_then(|cells| cells.checked_mul(coefficient_terms))
         .and_then(|values| values.checked_mul(2))
         .ok_or(SpectralOperatorError::ResidencyOverflow)?;
     let merge_complex_values = grid_shape[0]
         .checked_mul(grid_shape[1])
-        .and_then(|cells| cells.checked_mul(core_depth))
+        .and_then(|cells| cells.checked_mul(coefficient_terms))
         .and_then(|values| values.checked_mul(2))
         .ok_or(SpectralOperatorError::ResidencyOverflow)?;
     let peak_complex_values = tile_accumulator_complex_values
@@ -218,12 +291,12 @@ pub fn gridded_normal_execution_residency(
         })
         .and_then(|bytes| {
             accumulator_count
-                .checked_mul(core_depth)
+                .checked_mul(coefficient_terms)
                 .and_then(|planes| planes.checked_mul(size_of::<Array2<Complex64>>() * 2))
                 .and_then(|planes| bytes.checked_add(planes))
         })
         .and_then(|bytes| {
-            core_depth
+            coefficient_terms
                 .checked_mul(size_of::<Array2<Complex64>>() * 2)
                 .and_then(|planes| bytes.checked_add(planes))
         })
@@ -250,6 +323,23 @@ struct ReducedRecordGroup {
     multiplicity: f64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct TaylorRecordKey {
+    taps: u64,
+    frequency_hz: u64,
+    imaging_weight: u64,
+}
+
+struct ReducedTaylorRecord {
+    taps: u64,
+    moments: Box<[f64]>,
+}
+
+struct TaylorMomentAccumulator {
+    moments: Vec<f64>,
+    compensations: Vec<f64>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct DecodedRecord {
     output_channel: usize,
@@ -257,6 +347,34 @@ struct DecodedRecord {
     forward_scale: Complex64,
     imaging_weight: f64,
     group_end: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) struct DecodedTaylorRecord<'a> {
+    pub(super) taps: SampleTaps,
+    moment_bytes: &'a [u8],
+}
+
+impl DecodedTaylorRecord<'_> {
+    pub(super) fn fill_moments(self, moments: &mut [f64]) -> Result<(), SpectralOperatorError> {
+        if self.moment_bytes.len() != std::mem::size_of_val(moments) {
+            return Err(SpectralOperatorError::InvalidGriddedRecord);
+        }
+        for (value, bytes) in moments
+            .iter_mut()
+            .zip(self.moment_bytes.chunks_exact(size_of::<f64>()))
+        {
+            *value = f64::from_le_bytes(
+                bytes
+                    .try_into()
+                    .map_err(|_| SpectralOperatorError::InvalidGriddedRecord)?,
+            );
+            if !value.is_finite() {
+                return Err(SpectralOperatorError::InvalidGriddedRecord);
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -274,6 +392,7 @@ struct BlockDescriptor {
 #[derive(Debug)]
 pub struct GriddedNormalOperatorBlock {
     sequence: u64,
+    record_bytes: usize,
     encoded: Box<[u8]>,
     measurements: GriddedNormalOperatorBlockMeasurements,
 }
@@ -332,8 +451,7 @@ impl GriddedNormalOperatorBlock {
     /// Return the number of fixed-width records after block-local reduction.
     #[must_use]
     pub fn record_count(&self) -> u64 {
-        u64::try_from(self.encoded.len() / GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
-            .expect("record count fits u64")
+        u64::try_from(self.encoded.len() / self.record_bytes).expect("record count fits u64")
     }
 
     /// Borrow the private fixed-width encoding for bounded runtime streaming.
@@ -353,6 +471,7 @@ impl GriddedNormalOperatorBlock {
 #[doc(hidden)]
 pub struct GriddedNormalOperatorCompiler {
     specification: SpectralOperatorSpecification,
+    record_layout: GriddedNormalRecordLayout,
     binding: LogicalIdentity,
     finite_values: casa_imaging_model::FiniteValuePolicy,
     gridder: StandardConvolution,
@@ -373,12 +492,14 @@ impl GriddedNormalOperatorCompiler {
         require_supported_basis(&problem.reconstruction().basis())?;
         let specification = SpectralOperatorSpecification::new(problem)?;
         validate_record_geometry(&specification)?;
+        let record_layout = GriddedNormalRecordLayout::for_specification(&specification);
         let geometry = specification.operator_geometry();
         let binding = static_binding(&specification);
         Ok(Self {
             finite_values: specification.finite_values(),
             gridder: StandardConvolution::new(&geometry),
             specification,
+            record_layout,
             binding,
             next_block_sequence: 0,
             sample_count: 0,
@@ -394,9 +515,19 @@ impl GriddedNormalOperatorCompiler {
         &mut self,
         block: &WeightingReplayChunk,
     ) -> Result<GriddedNormalOperatorBlock, SpectralOperatorError> {
-        match self.source_cardinality_observation {
-            SourceCardinalityObservation::Disabled => self.compile_block_inner::<false>(block),
-            SourceCardinalityObservation::Enabled => self.compile_block_inner::<true>(block),
+        match (self.record_layout, self.source_cardinality_observation) {
+            (GriddedNormalRecordLayout::Scalar, SourceCardinalityObservation::Disabled) => {
+                self.compile_block_inner::<false>(block)
+            }
+            (GriddedNormalRecordLayout::Scalar, SourceCardinalityObservation::Enabled) => {
+                self.compile_block_inner::<true>(block)
+            }
+            (GriddedNormalRecordLayout::Taylor(plan), SourceCardinalityObservation::Disabled) => {
+                self.compile_taylor_block_inner::<false>(block, plan)
+            }
+            (GriddedNormalRecordLayout::Taylor(plan), SourceCardinalityObservation::Enabled) => {
+                self.compile_taylor_block_inner::<true>(block, plan)
+            }
         }
     }
 
@@ -418,20 +549,43 @@ impl GriddedNormalOperatorCompiler {
         );
         let mut timings = GriddedNormalOperatorStageTimings::default();
 
-        let started = Instant::now();
-        self.begin_block(block)?;
-        let (source_groups, mut measurements) = self.construct_record_keys(block)?;
-        timings.record_key_construction = started.elapsed();
+        let (encoded, digest, measurements) = match self.record_layout {
+            GriddedNormalRecordLayout::Scalar => {
+                let started = Instant::now();
+                self.begin_block(block)?;
+                let (source_groups, mut measurements) = self.construct_record_keys(block)?;
+                timings.record_key_construction = started.elapsed();
 
-        let started = Instant::now();
-        let (groups, source_cardinality) =
-            group_and_reduce::<true>(source_groups, &mut measurements)?;
-        measurements.source_cardinality = source_cardinality;
-        timings.grouping_reduction = started.elapsed();
+                let started = Instant::now();
+                let (groups, source_cardinality) =
+                    group_and_reduce::<true>(source_groups, &mut measurements)?;
+                measurements.source_cardinality = source_cardinality;
+                timings.grouping_reduction = started.elapsed();
 
-        let started = Instant::now();
-        let (encoded, digest) = encode_and_checksum(groups, &mut measurements)?;
-        timings.encoding_checksum = started.elapsed();
+                let started = Instant::now();
+                let (encoded, digest) = encode_and_checksum(groups, &mut measurements)?;
+                timings.encoding_checksum = started.elapsed();
+                (encoded, digest, measurements)
+            }
+            GriddedNormalRecordLayout::Taylor(plan) => {
+                let started = Instant::now();
+                self.begin_block(block)?;
+                let (keys, mut measurements) = self.construct_taylor_record_keys(block)?;
+                timings.record_key_construction = started.elapsed();
+
+                let started = Instant::now();
+                let (records, source_cardinality) =
+                    group_and_reduce_taylor::<true>(keys, plan, &mut measurements)?;
+                measurements.source_cardinality = source_cardinality;
+                timings.grouping_reduction = started.elapsed();
+
+                let started = Instant::now();
+                let (encoded, digest) =
+                    encode_taylor_and_checksum(records, plan, &mut measurements)?;
+                timings.encoding_checksum = started.elapsed();
+                (encoded, digest, measurements)
+            }
+        };
 
         let started = Instant::now();
         let result = self.commit_block(block, encoded, digest, measurements)?;
@@ -449,6 +603,20 @@ impl GriddedNormalOperatorCompiler {
             group_and_reduce::<OBSERVE_SOURCE_CARDINALITY>(source_groups, &mut measurements)?;
         measurements.source_cardinality = source_cardinality;
         let (encoded, digest) = encode_and_checksum(groups, &mut measurements)?;
+        self.commit_block(block, encoded, digest, measurements)
+    }
+
+    fn compile_taylor_block_inner<const OBSERVE_SOURCE_CARDINALITY: bool>(
+        &mut self,
+        block: &WeightingReplayChunk,
+        plan: crate::block_normal::BlockNormalPlan,
+    ) -> Result<GriddedNormalOperatorBlock, SpectralOperatorError> {
+        self.begin_block(block)?;
+        let (keys, mut measurements) = self.construct_taylor_record_keys(block)?;
+        let (records, source_cardinality) =
+            group_and_reduce_taylor::<OBSERVE_SOURCE_CARDINALITY>(keys, plan, &mut measurements)?;
+        measurements.source_cardinality = source_cardinality;
+        let (encoded, digest) = encode_taylor_and_checksum(records, plan, &mut measurements)?;
         self.commit_block(block, encoded, digest, measurements)
     }
 
@@ -538,6 +706,77 @@ impl GriddedNormalOperatorCompiler {
         Ok((source_groups, measurements))
     }
 
+    fn construct_taylor_record_keys(
+        &self,
+        block: &WeightingReplayChunk,
+    ) -> Result<(Vec<TaylorRecordKey>, GriddedNormalOperatorBlockMeasurements), SpectralOperatorError>
+    {
+        let mut keys = Vec::new();
+        let mut measurements = GriddedNormalOperatorBlockMeasurements::default();
+        for weighted in block.samples() {
+            let selected = weighted.selected();
+            if !accept_weighted_input(selected, self.finite_values)?
+                || !selected
+                    .address()
+                    .correlation_type
+                    .contributes_to_stokes_i()
+            {
+                continue;
+            }
+            let uvw_m = selected.transformed_uvw_m();
+            if !selected.phase_shift_m().is_finite() || uvw_m.iter().any(|value| !value.is_finite())
+            {
+                return Err(SpectralOperatorError::InvalidSample);
+            }
+            let mut spectral_values = weighted.spectral_values();
+            let spectral = spectral_values
+                .next()
+                .ok_or(SpectralOperatorError::InvalidSample)?;
+            if spectral_values.next().is_some() {
+                return Err(SpectralOperatorError::InvalidSample);
+            }
+            let contribution = spectral.contribution();
+            let frequency_hz = contribution.evaluation_frequency_hz();
+            let factor = contribution.factor();
+            let imaging_weight = spectral.imaging_weight();
+            if contribution.output_channel() != 0
+                || !frequency_hz.is_finite()
+                || frequency_hz <= 0.0
+                || !factor.is_finite()
+                || factor == 0.0
+                || !imaging_weight.is_finite()
+                || imaging_weight < 0.0
+            {
+                return Err(SpectralOperatorError::InvalidSample);
+            }
+            if imaging_weight == 0.0 {
+                continue;
+            }
+            let scale = frequency_hz / SPEED_OF_LIGHT_M_PER_S;
+            let Some(taps) = self.gridder.taps([uvw_m[0] * scale, uvw_m[1] * scale]) else {
+                continue;
+            };
+            let normal_weight = imaging_weight * factor * factor;
+            if !normal_weight.is_finite() || normal_weight < 0.0 {
+                return Err(SpectralOperatorError::InvalidSample);
+            }
+            let old_capacity = keys.capacity();
+            keys.push(TaylorRecordKey {
+                taps: encode_taps(taps)?,
+                frequency_hz: canonical_zero_bits(frequency_hz),
+                imaging_weight: canonical_zero_bits(normal_weight),
+            });
+            record_vector_growth(
+                old_capacity,
+                keys.capacity(),
+                size_of::<TaylorRecordKey>(),
+                &mut measurements.source_group_vector_allocations,
+                &mut measurements.source_group_capacity_growth_bytes,
+            )?;
+        }
+        Ok((keys, measurements))
+    }
+
     fn commit_block(
         &mut self,
         block: &WeightingReplayChunk,
@@ -547,7 +786,11 @@ impl GriddedNormalOperatorCompiler {
     ) -> Result<GriddedNormalOperatorBlock, SpectralOperatorError> {
         let source_samples = u64::try_from(block.samples().len())
             .map_err(|_| SpectralOperatorError::CoverageOverflow)?;
-        let record_count = u64::try_from(encoded.len() / GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
+        let record_bytes = self.record_layout.record_bytes()?;
+        if encoded.len() % record_bytes != 0 {
+            return Err(SpectralOperatorError::InvalidGriddedRecord);
+        }
+        let record_count = u64::try_from(encoded.len() / record_bytes)
             .map_err(|_| SpectralOperatorError::CoverageOverflow)?;
         self.sample_count = self
             .sample_count
@@ -572,6 +815,7 @@ impl GriddedNormalOperatorCompiler {
         )?;
         let result = GriddedNormalOperatorBlock {
             sequence: self.next_block_sequence,
+            record_bytes,
             encoded,
             measurements,
         };
@@ -622,6 +866,7 @@ impl GriddedNormalOperatorCompiler {
                 continuum_transform_generation,
                 sample_count: replay.sample_count(),
                 record_count: self.record_count,
+                record_layout: self.record_layout,
                 descriptors: self.descriptors.into_boxed_slice(),
             }),
         })
@@ -662,6 +907,7 @@ struct GriddedNormalOperatorManifest {
     continuum_transform_generation: Option<ContinuumTransformGenerationId>,
     sample_count: u64,
     record_count: u64,
+    record_layout: GriddedNormalRecordLayout,
     descriptors: Box<[BlockDescriptor]>,
 }
 
@@ -697,6 +943,21 @@ impl GriddedNormalOperatorProgram {
         self.manifest.record_count
     }
 
+    /// Return the private record width bound into this exact program.
+    #[must_use]
+    pub fn record_bytes(&self) -> usize {
+        self.manifest
+            .record_layout
+            .record_bytes()
+            .expect("sealed record layout has representable width")
+    }
+
+    /// Return the number of coefficient values predicted for each reduced record.
+    #[must_use]
+    pub fn prediction_width(&self) -> usize {
+        self.manifest.record_layout.coefficient_terms()
+    }
+
     /// Return the exact encoded byte count for one block.
     #[must_use]
     pub fn block_encoded_bytes(&self, sequence: u64) -> Option<usize> {
@@ -706,7 +967,7 @@ impl GriddedNormalOperatorProgram {
             .get(usize::try_from(sequence).ok()?)?;
         usize::try_from(descriptor.record_count)
             .ok()?
-            .checked_mul(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
+            .checked_mul(self.record_bytes())
     }
 
     /// Bind a model and prior invariant normal state to the gridded apply owner.
@@ -759,12 +1020,22 @@ impl GriddedNormalOperatorProgram {
             || prior.sample_count() != self.manifest.sample_count
             || prior.block_count() != self.block_count()
             || prior.catalog()
-                != if self.manifest.specification.slab().total_channels() == 1 {
-                    crate::NormalStateCatalog::UnnormalizedPlaneV1
-                } else {
-                    crate::NormalStateCatalog::UnnormalizedChannelSlabV1
+                != match self.manifest.record_layout {
+                    GriddedNormalRecordLayout::Taylor(_) => {
+                        crate::NormalStateCatalog::UnnormalizedTaylorBlockV1
+                    }
+                    GriddedNormalRecordLayout::Scalar
+                        if self.manifest.specification.slab().total_channels() == 1 =>
+                    {
+                        crate::NormalStateCatalog::UnnormalizedPlaneV1
+                    }
+                    GriddedNormalRecordLayout::Scalar => {
+                        crate::NormalStateCatalog::UnnormalizedChannelSlabV1
+                    }
                 }
             || prior.channel_count() != self.manifest.specification.slab().core_depth()
+            || prior.coefficient_term_count() != self.manifest.record_layout.coefficient_terms()
+            || prior.normal_moment_count() != self.manifest.record_layout.normal_moments()
         {
             return Err(SpectralOperatorError::GriddedRecordMismatch);
         }
@@ -773,11 +1044,12 @@ impl GriddedNormalOperatorProgram {
             SpectralSlabOperator::new_gridded_normal(prepared_specification, workload, fft);
         operator.prepare_gridded_normal_model(model, prior.into_reusable())?;
         let grid_shape = self.manifest.specification.grid_shape();
-        let core_depth = self.manifest.specification.slab().core_depth();
+        let core_depth = self.manifest.record_layout.coefficient_terms();
         let tile_catalog = GriddedNormalTileCatalog::new(grid_shape)?;
         let two_domain = PreparedGriddedNormalTwoDomainWindow::with_record_capacities(
             route_slot_record_capacities,
             tile_catalog.geometries.len(),
+            self.manifest.record_layout,
         )?;
         let tile_accumulators = tile_catalog.accumulators(core_depth)?;
         let shape = (grid_shape[0], grid_shape[1]);
@@ -1445,7 +1717,7 @@ impl GriddedNormalOperatorApply {
                             .map_err(|_| SpectralOperatorError::GriddedRecordMismatch)?,
                     )
                     .ok_or(SpectralOperatorError::GriddedRecordMismatch)?;
-                validate_encoded_block(descriptor, encoded)?;
+                validate_encoded_block(descriptor, encoded, self.program.record_bytes())?;
                 let (routed, predictions) = {
                     let block = prepared
                         .blocks
@@ -1531,7 +1803,7 @@ impl GriddedNormalOperatorApply {
                     .map_err(|_| SpectralOperatorError::GriddedRecordMismatch)?,
             )
             .ok_or(SpectralOperatorError::GriddedRecordMismatch)?;
-        validate_encoded_block(descriptor, encoded)?;
+        validate_encoded_block(descriptor, encoded, self.program.record_bytes())?;
         self.sector_window_partition(sequence, 1, local_ordinal)
     }
 
@@ -1716,10 +1988,18 @@ impl GriddedNormalOperatorApply {
         } = self;
         let primitives =
             operator.finish_gridded_normal_from_grids(model_generation, normal_grids)?;
-        let primitive_catalog = if program.manifest.specification.slab().total_channels() == 1 {
-            SpectralPrimitiveCatalog::UnnormalizedPlaneV1
-        } else {
-            SpectralPrimitiveCatalog::UnnormalizedChannelSlabV1
+        let primitive_catalog = match program.manifest.record_layout {
+            GriddedNormalRecordLayout::Taylor(_) => {
+                SpectralPrimitiveCatalog::UnnormalizedTaylorBlockV1
+            }
+            GriddedNormalRecordLayout::Scalar
+                if program.manifest.specification.slab().total_channels() == 1 =>
+            {
+                SpectralPrimitiveCatalog::UnnormalizedPlaneV1
+            }
+            GriddedNormalRecordLayout::Scalar => {
+                SpectralPrimitiveCatalog::UnnormalizedChannelSlabV1
+            }
         };
         Ok((
             CompleteDataOwnerResult {
@@ -1861,7 +2141,9 @@ fn merge_sector_accumulators(
 fn require_supported_basis(basis: &ReconstructionBasis) -> Result<(), SpectralOperatorError> {
     if matches!(
         basis,
-        ReconstructionBasis::Constant | ReconstructionBasis::ChannelLocal { .. }
+        ReconstructionBasis::Constant
+            | ReconstructionBasis::ChannelLocal { .. }
+            | ReconstructionBasis::Taylor { terms: 2.. }
     ) {
         Ok(())
     } else {
@@ -1886,6 +2168,7 @@ fn validate_record_geometry(
 }
 
 fn static_binding(specification: &SpectralOperatorSpecification) -> LogicalIdentity {
+    let record_layout = GriddedNormalRecordLayout::for_specification(specification);
     let mut encoder = Encoder::new(RECORD_DOMAIN, RECORD_VERSION);
     encoder.identity(specification.problem_id().as_bytes());
     encoder.identity(specification.geometry_id().as_bytes());
@@ -1894,7 +2177,23 @@ fn static_binding(specification: &SpectralOperatorSpecification) -> LogicalIdent
     encoder.usize(specification.grid_shape()[0]);
     encoder.usize(specification.grid_shape()[1]);
     encoder.usize(specification.slab().total_channels());
-    encoder.usize(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES);
+    match record_layout {
+        GriddedNormalRecordLayout::Scalar => {
+            encoder.u8(0);
+            encoder.usize(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES);
+        }
+        GriddedNormalRecordLayout::Taylor(plan) => {
+            encoder.u8(1);
+            encoder.usize(plan.coefficient_term_count());
+            encoder.usize(plan.normal_moment_count());
+            encoder.u64(plan.reference_frequency_hz().to_bits());
+            encoder.usize(
+                record_layout
+                    .record_bytes()
+                    .expect("validated Taylor record width"),
+            );
+        }
+    }
     LogicalIdentity::from_sha256(encoder.finish())
 }
 
@@ -1963,6 +2262,104 @@ fn group_and_reduce<const OBSERVE_SOURCE_CARDINALITY: bool>(
         )?;
     }
     reduce_groups::<OBSERVE_SOURCE_CARDINALITY>(groups)
+}
+
+fn group_and_reduce_taylor<const OBSERVE_SOURCE_CARDINALITY: bool>(
+    keys: Vec<TaylorRecordKey>,
+    plan: crate::block_normal::BlockNormalPlan,
+    measurements: &mut GriddedNormalOperatorBlockMeasurements,
+) -> Result<
+    (
+        Vec<ReducedTaylorRecord>,
+        Option<GriddedNormalSourceCardinality>,
+    ),
+    SpectralOperatorError,
+> {
+    let source_cardinality = if OBSERVE_SOURCE_CARDINALITY {
+        let count =
+            u64::try_from(keys.len()).map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
+        Some(GriddedNormalSourceCardinality {
+            groups: count,
+            records: count,
+        })
+    } else {
+        None
+    };
+    let normal_moments = plan.normal_moment_count();
+    let mut scratch = measured_zeroed_f64_buffer(normal_moments, measurements)?;
+    let mut grouped = BTreeMap::<u64, TaylorMomentAccumulator>::new();
+    for key in keys {
+        plan.fill_normal_moment_weights(
+            f64::from_bits(key.frequency_hz),
+            f64::from_bits(key.imaging_weight),
+            &mut scratch,
+        )
+        .map_err(|_| SpectralOperatorError::InvalidSample)?;
+        let accumulator = match grouped.entry(key.taps) {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => {
+                measurements.reduction_map_entry_insertions = measurements
+                    .reduction_map_entry_insertions
+                    .checked_add(1)
+                    .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+                entry.insert(TaylorMomentAccumulator {
+                    moments: measured_zeroed_f64_buffer(normal_moments, measurements)?,
+                    compensations: measured_zeroed_f64_buffer(normal_moments, measurements)?,
+                })
+            }
+        };
+        for ((sum, compensation), value) in accumulator
+            .moments
+            .iter_mut()
+            .zip(&mut accumulator.compensations)
+            .zip(&scratch)
+        {
+            let contribution = *value - *compensation;
+            let updated = *sum + contribution;
+            *compensation = (updated - *sum) - contribution;
+            *sum = updated;
+            if !sum.is_finite() || !compensation.is_finite() {
+                return Err(SpectralOperatorError::GeneratedNonfinite);
+            }
+        }
+    }
+    let records = grouped
+        .into_iter()
+        .map(|(taps, accumulator)| ReducedTaylorRecord {
+            taps,
+            moments: accumulator
+                .moments
+                .into_iter()
+                .map(|value| f64::from_bits(canonical_zero_bits(value)))
+                .collect(),
+        })
+        .collect();
+    Ok((records, source_cardinality))
+}
+
+fn measured_zeroed_f64_buffer(
+    length: usize,
+    measurements: &mut GriddedNormalOperatorBlockMeasurements,
+) -> Result<Vec<f64>, SpectralOperatorError> {
+    let mut values = Vec::new();
+    values
+        .try_reserve_exact(length)
+        .map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
+    values.resize(length, 0.0);
+    measurements.multiplicity_vector_allocations = measurements
+        .multiplicity_vector_allocations
+        .checked_add(u64::from(length != 0))
+        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+    let capacity_bytes = values
+        .capacity()
+        .checked_mul(size_of::<f64>())
+        .and_then(|bytes| u64::try_from(bytes).ok())
+        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+    measurements.multiplicity_capacity_growth_bytes = measurements
+        .multiplicity_capacity_growth_bytes
+        .checked_add(capacity_bytes)
+        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+    Ok(values)
 }
 
 fn reduce_groups<const OBSERVE_SOURCE_CARDINALITY: bool>(
@@ -2063,6 +2460,42 @@ fn encode_and_checksum(
     Ok((encoded, digest))
 }
 
+fn encode_taylor_and_checksum(
+    records: Vec<ReducedTaylorRecord>,
+    plan: crate::block_normal::BlockNormalPlan,
+    measurements: &mut GriddedNormalOperatorBlockMeasurements,
+) -> Result<(Box<[u8]>, [u8; 32]), SpectralOperatorError> {
+    let record_bytes = GriddedNormalRecordLayout::Taylor(plan).record_bytes()?;
+    let capacity = records
+        .len()
+        .checked_mul(record_bytes)
+        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+    let mut encoded = Vec::with_capacity(capacity);
+    for record in records {
+        if record.taps & !TAP_KEY_MASK != 0
+            || record.moments.len() != plan.normal_moment_count()
+            || record.moments.iter().any(|value| !value.is_finite())
+        {
+            return Err(SpectralOperatorError::GeneratedNonfinite);
+        }
+        encoded.extend_from_slice(&record.taps.to_le_bytes());
+        for moment in record.moments {
+            encoded.extend_from_slice(&moment.to_le_bytes());
+        }
+    }
+    if encoded.len() != capacity {
+        return Err(SpectralOperatorError::ResidencyOverflow);
+    }
+    let encoded = encoded.into_boxed_slice();
+    if !encoded.is_empty() {
+        measurements.encoded_buffer_allocations = 1;
+    }
+    measurements.encoded_buffer_bytes =
+        u64::try_from(encoded.len()).map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
+    let digest = Sha256::digest(&encoded).into();
+    Ok((encoded, digest))
+}
+
 #[cfg(test)]
 fn encode_reduced<const OBSERVE_SOURCE_CARDINALITY: bool>(
     groups: BTreeMap<Vec<ReducedRecordKey>, Vec<f64>>,
@@ -2149,7 +2582,60 @@ fn decode_record(
     {
         return Err(SpectralOperatorError::InvalidGriddedRecord);
     }
-    let tap_key = key & TAP_KEY_MASK;
+    let taps = decode_tap_key(key & TAP_KEY_MASK, grid_shape)?;
+    Ok(DecodedRecord {
+        output_channel,
+        taps,
+        forward_scale: Complex64::new(forward_real, forward_imaginary),
+        imaging_weight,
+        group_end: key & GROUP_END_BIT != 0,
+    })
+}
+
+pub(super) fn decode_taylor_record(
+    encoded: &[u8],
+    grid_shape: [usize; 2],
+    normal_moments: usize,
+) -> Result<DecodedTaylorRecord<'_>, SpectralOperatorError> {
+    let expected_bytes = normal_moments
+        .checked_add(1)
+        .and_then(|values| values.checked_mul(size_of::<u64>()))
+        .ok_or(SpectralOperatorError::InvalidGriddedRecord)?;
+    if encoded.len() != expected_bytes || normal_moments == 0 {
+        return Err(SpectralOperatorError::InvalidGriddedRecord);
+    }
+    let key = u64::from_le_bytes(
+        encoded[..8]
+            .try_into()
+            .map_err(|_| SpectralOperatorError::InvalidGriddedRecord)?,
+    );
+    if key & !TAP_KEY_MASK != 0 {
+        return Err(SpectralOperatorError::InvalidGriddedRecord);
+    }
+    let moment_bytes = &encoded[8..];
+    for bytes in moment_bytes.chunks_exact(size_of::<f64>()) {
+        let value = f64::from_le_bytes(
+            bytes
+                .try_into()
+                .map_err(|_| SpectralOperatorError::InvalidGriddedRecord)?,
+        );
+        if !value.is_finite() {
+            return Err(SpectralOperatorError::InvalidGriddedRecord);
+        }
+    }
+    Ok(DecodedTaylorRecord {
+        taps: decode_tap_key(key, grid_shape)?,
+        moment_bytes,
+    })
+}
+
+fn decode_tap_key(
+    tap_key: u64,
+    grid_shape: [usize; 2],
+) -> Result<SampleTaps, SpectralOperatorError> {
+    if tap_key & !TAP_KEY_MASK != 0 {
+        return Err(SpectralOperatorError::InvalidGriddedRecord);
+    }
     let taps = SampleTaps {
         x: TapSpan {
             start: (tap_key & 0x0fff) as usize,
@@ -2175,22 +2661,17 @@ fn decode_record(
     {
         return Err(SpectralOperatorError::InvalidGriddedRecord);
     }
-    Ok(DecodedRecord {
-        output_channel,
-        taps,
-        forward_scale: Complex64::new(forward_real, forward_imaginary),
-        imaging_weight,
-        group_end: key & GROUP_END_BIT != 0,
-    })
+    Ok(taps)
 }
 
 fn validate_encoded_block(
     descriptor: &BlockDescriptor,
     encoded: &[u8],
+    record_bytes: usize,
 ) -> Result<(), SpectralOperatorError> {
     let expected_bytes = usize::try_from(descriptor.record_count)
         .ok()
-        .and_then(|records| records.checked_mul(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES))
+        .and_then(|records| records.checked_mul(record_bytes))
         .ok_or(SpectralOperatorError::GriddedRecordMismatch)?;
     if encoded.len() != expected_bytes
         || <[u8; 32]>::from(Sha256::digest(encoded)) != descriptor.digest
@@ -2215,6 +2696,182 @@ mod tests {
             image_blc: [1, 1],
             increment_rad: [-2.0e-3, 2.0e-3],
         }
+    }
+
+    fn t42_taps() -> SampleTaps {
+        SampleTaps {
+            x: TapSpan {
+                start: 1,
+                weight_index: 0,
+            },
+            y: TapSpan {
+                start: 2,
+                weight_index: 0,
+            },
+        }
+    }
+
+    #[test]
+    fn t42_taylor_v3_codec_has_dynamic_width_and_rejects_truncation_and_nonfinite_moments() {
+        let plan = crate::block_normal::BlockNormalPlan::taylor(1.0e9, 3).unwrap();
+        let layout = GriddedNormalRecordLayout::Taylor(plan);
+        assert_eq!(RECORD_VERSION, 3);
+        assert_eq!(layout.record_bytes().unwrap(), 48);
+        assert_eq!(
+            GriddedNormalRecordLayout::Taylor(
+                crate::block_normal::BlockNormalPlan::taylor(1.0e9, 2).unwrap()
+            )
+            .record_bytes()
+            .unwrap(),
+            32
+        );
+
+        let moments = [2.0, -0.25, 0.125, -0.03125, 0.0078125];
+        let (encoded, _) = encode_taylor_and_checksum(
+            vec![ReducedTaylorRecord {
+                taps: encode_taps(t42_taps()).unwrap(),
+                moments: moments.into(),
+            }],
+            plan,
+            &mut GriddedNormalOperatorBlockMeasurements::default(),
+        )
+        .unwrap();
+        assert_eq!(encoded.len(), 48);
+        let decoded = decode_taylor_record(&encoded, [10, 10], 5).unwrap();
+        assert_eq!(decoded.taps, t42_taps());
+        let mut decoded_moments = [0.0; 5];
+        decoded.fill_moments(&mut decoded_moments).unwrap();
+        assert_eq!(decoded_moments, moments);
+        assert!(matches!(
+            decode_taylor_record(&encoded[..32], [10, 10], 5),
+            Err(SpectralOperatorError::InvalidGriddedRecord)
+        ));
+
+        let mut corrupt = encoded.into_vec();
+        corrupt[8..16].copy_from_slice(&f64::NAN.to_le_bytes());
+        assert!(matches!(
+            decode_taylor_record(&corrupt, [10, 10], 5),
+            Err(SpectralOperatorError::InvalidGriddedRecord)
+        ));
+    }
+
+    #[test]
+    fn t42_v2_scalar_width_collision_cannot_enter_a_v3_taylor_program() {
+        fn common_static_binding(version: u32) -> Encoder {
+            let mut encoder = Encoder::new(RECORD_DOMAIN, version);
+            encoder.identity([1; 32]);
+            encoder.identity([2; 32]);
+            encoder.identity([3; 32]);
+            encoder.identity([4; 32]);
+            encoder.usize(10);
+            encoder.usize(10);
+            encoder.usize(1);
+            encoder
+        }
+
+        let mut legacy_v2 = common_static_binding(2);
+        legacy_v2.usize(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES);
+        let legacy_v2 = LogicalIdentity::from_sha256(legacy_v2.finish());
+
+        let plan = crate::block_normal::BlockNormalPlan::taylor(1.0e9, 2).unwrap();
+        let layout = GriddedNormalRecordLayout::Taylor(plan);
+        let mut taylor_v3 = common_static_binding(RECORD_VERSION);
+        taylor_v3.u8(1);
+        taylor_v3.usize(plan.coefficient_term_count());
+        taylor_v3.usize(plan.normal_moment_count());
+        taylor_v3.u64(plan.reference_frequency_hz().to_bits());
+        taylor_v3.usize(layout.record_bytes().unwrap());
+        let taylor_v3 = LogicalIdentity::from_sha256(taylor_v3.finish());
+
+        assert_eq!(RECORD_VERSION, 3);
+        assert_eq!(layout.record_bytes().unwrap(), 32);
+        assert_ne!(
+            legacy_v2, taylor_v3,
+            "the v3 Taylor layout has a distinct static schema binding even at the legacy width"
+        );
+
+        let (legacy_scalar, _) =
+            encode_reduced::<false>(scalar_groups([(t42_taps(), 1.0)])).unwrap();
+        assert_eq!(legacy_scalar.len(), layout.record_bytes().unwrap());
+        let legacy_descriptor = BlockDescriptor {
+            source_samples: 1,
+            record_count: 1,
+            digest: Sha256::digest(&legacy_scalar).into(),
+        };
+        assert!(
+            validate_encoded_block(&legacy_descriptor, &legacy_scalar, 32).is_ok(),
+            "the collision reaches semantic decode only after exact framing and checksum"
+        );
+        assert!(
+            matches!(
+                decode_taylor_record(&legacy_scalar, [10, 10], plan.normal_moment_count()),
+                Err(SpectralOperatorError::InvalidGriddedRecord)
+            ),
+            "v3 Taylor never falls back to the legacy scalar decoder"
+        );
+
+        let (taylor, _) = encode_taylor_and_checksum(
+            vec![ReducedTaylorRecord {
+                taps: encode_taps(t42_taps()).unwrap(),
+                moments: [1.0, -0.25, 0.0625].into(),
+            }],
+            plan,
+            &mut GriddedNormalOperatorBlockMeasurements::default(),
+        )
+        .unwrap();
+        let taylor_descriptor = BlockDescriptor {
+            source_samples: 1,
+            record_count: 1,
+            digest: Sha256::digest(&taylor).into(),
+        };
+        assert_eq!(
+            validate_encoded_block(&taylor_descriptor, &legacy_scalar, 32),
+            Err(SpectralOperatorError::GriddedRecordMismatch),
+            "a sealed Taylor descriptor rejects same-width legacy bytes before decode"
+        );
+    }
+
+    #[test]
+    fn t42_taylor_reduction_is_compensated_signed_and_observer_free_by_default() {
+        let plan = crate::block_normal::BlockNormalPlan::taylor(1.0e9, 2).unwrap();
+        let taps = encode_taps(t42_taps()).unwrap();
+        let keys = [0.8e9_f64, 1.2e9_f64]
+            .map(|frequency_hz| TaylorRecordKey {
+                taps,
+                frequency_hz: frequency_hz.to_bits(),
+                imaging_weight: 1.0_f64.to_bits(),
+            })
+            .to_vec();
+        let mut unobserved_measurements = GriddedNormalOperatorBlockMeasurements::default();
+        let (unobserved, cardinality) =
+            group_and_reduce_taylor::<false>(keys.clone(), plan, &mut unobserved_measurements)
+                .unwrap();
+        assert_eq!(cardinality, None);
+        assert_eq!(unobserved.len(), 1);
+
+        let mut observed_measurements = GriddedNormalOperatorBlockMeasurements::default();
+        let (observed, cardinality) =
+            group_and_reduce_taylor::<true>(keys, plan, &mut observed_measurements).unwrap();
+        assert_eq!(
+            cardinality,
+            Some(GriddedNormalSourceCardinality {
+                groups: 2,
+                records: 2,
+            })
+        );
+        assert_eq!(observed.len(), 1);
+        assert_eq!(unobserved[0].taps, observed[0].taps);
+        assert_eq!(unobserved[0].moments, observed[0].moments);
+
+        let mut low = [0.0; 3];
+        let mut high = [0.0; 3];
+        plan.fill_normal_moment_weights(0.8e9, 1.0, &mut low)
+            .unwrap();
+        plan.fill_normal_moment_weights(1.2e9, 1.0, &mut high)
+            .unwrap();
+        let expected = [low[0] + high[0], 0.0, low[2] + high[2]];
+        assert_eq!(&*observed[0].moments, &expected);
+        assert_eq!(observed[0].moments[1].to_bits(), 0.0_f64.to_bits());
     }
 
     fn scalar_groups(
@@ -2515,7 +3172,8 @@ mod tests {
         assert_eq!(routed_records, record_count);
         assert_eq!(size_of::<GriddedNormalSectorRoute>(), 8);
         assert!(
-            route_capacity_bytes <= gridded_normal_route_capacity_bytes(record_count, 1).unwrap()
+            route_capacity_bytes
+                <= gridded_normal_route_capacity_bytes(record_count, 1, 1).unwrap()
         );
         let squared_error = expected
             .iter()
@@ -2718,15 +3376,22 @@ mod tests {
             record_count: 1,
             digest: Sha256::digest(&encoded).into(),
         };
-        assert!(validate_encoded_block(&descriptor, &encoded).is_ok());
+        assert!(
+            validate_encoded_block(&descriptor, &encoded, GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
+                .is_ok()
+        );
         assert_eq!(
-            validate_encoded_block(&descriptor, &encoded[..15]),
+            validate_encoded_block(
+                &descriptor,
+                &encoded[..15],
+                GRIDDED_NORMAL_OPERATOR_RECORD_BYTES
+            ),
             Err(SpectralOperatorError::GriddedRecordMismatch)
         );
         let mut corrupt = encoded.to_vec();
         corrupt[0] ^= 1;
         assert_eq!(
-            validate_encoded_block(&descriptor, &corrupt),
+            validate_encoded_block(&descriptor, &corrupt, GRIDDED_NORMAL_OPERATOR_RECORD_BYTES),
             Err(SpectralOperatorError::GriddedRecordMismatch)
         );
 
@@ -2740,13 +3405,14 @@ mod tests {
     }
 
     #[test]
-    fn constant_and_channel_local_bases_are_admitted() {
+    fn t42_constant_channel_local_and_taylor_bases_are_admitted() {
         assert!(require_supported_basis(&ReconstructionBasis::Constant).is_ok());
         assert!(
             require_supported_basis(&ReconstructionBasis::ChannelLocal { channels: 2 }).is_ok()
         );
+        assert!(require_supported_basis(&ReconstructionBasis::Taylor { terms: 2 }).is_ok());
         assert_eq!(
-            require_supported_basis(&ReconstructionBasis::Taylor { terms: 2 }),
+            require_supported_basis(&ReconstructionBasis::Taylor { terms: 1 }),
             Err(SpectralOperatorError::UnsupportedGriddedReplay)
         );
     }

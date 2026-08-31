@@ -449,7 +449,69 @@ impl SelectedObservationSample {
     /// row/channel run.
     #[must_use]
     pub const fn as_view(&self) -> SelectedObservationSampleView<'_> {
-        SelectedObservationSampleView::Scalar(self)
+        SelectedObservationSampleView::from_scalar(self)
+    }
+}
+
+/// Raw selected weight values that define one CASA unpolarized imaging-weight group.
+///
+/// This traversal-only descriptor is not part of [`SelectedObservationSample`]'s
+/// value schema or content identity. Its values and grouping are already bound by
+/// the ordered selected correlations and their exact [`SelectedObservationSample::input_weight`]
+/// values. Reconstruction owns the scientific rule that turns these raw values
+/// into one imaging weight.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SelectedInputWeightGroup {
+    kind: SelectedInputWeightGroupKind,
+    density_owner: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum SelectedInputWeightGroupKind {
+    Single(f32),
+    ParallelHands { first: f32, last: f32 },
+}
+
+impl SelectedInputWeightGroup {
+    /// Describe one selected correlation with no paired parallel hand.
+    #[must_use]
+    pub const fn single(input_weight: f32) -> Self {
+        Self {
+            kind: SelectedInputWeightGroupKind::Single(input_weight),
+            density_owner: true,
+        }
+    }
+
+    /// Describe the canonical first and last parallel-hand weights.
+    #[must_use]
+    pub const fn parallel_hands(first: f32, last: f32) -> Self {
+        Self {
+            kind: SelectedInputWeightGroupKind::ParallelHands { first, last },
+            density_owner: true,
+        }
+    }
+
+    /// Mark whether this member canonically owns the group's one density contribution.
+    #[must_use]
+    pub const fn with_density_owner(mut self, density_owner: bool) -> Self {
+        self.density_owner = density_owner;
+        self
+    }
+
+    /// Return whether this member owns the group's one density contribution.
+    #[must_use]
+    pub const fn is_density_owner(self) -> bool {
+        self.density_owner
+    }
+
+    /// Return the canonical first weight and an optional last parallel-hand weight.
+    #[must_use]
+    pub const fn endpoints(self) -> (f32, Option<f32>) {
+        match self.kind {
+            SelectedInputWeightGroupKind::Single(weight) => (weight, None),
+            SelectedInputWeightGroupKind::ParallelHands { first, last } => (first, Some(last)),
+        }
     }
 }
 
@@ -460,27 +522,35 @@ impl SelectedObservationSample {
 /// It gives validators and scientific owners one interface while allowing the
 /// storage owner to keep repeated row and channel fields shared.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum SelectedObservationSampleView<'a> {
-    /// Borrow one existing scalar report.
+pub struct SelectedObservationSampleView<'a> {
+    storage: SelectedObservationSampleStorage<'a>,
+    input_weight_group: SelectedInputWeightGroup,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum SelectedObservationSampleStorage<'a> {
     Scalar(&'a SelectedObservationSample),
-    /// Borrow shared run components.
     Run {
-        /// Row-shared values.
         row: &'a SelectedObservationRunRow,
-        /// Channel-shared values.
         channel: &'a SelectedObservationRunChannel,
-        /// Correlation-local values.
         correlation: &'a SelectedObservationRunCorrelation,
     },
 }
 
 impl<'a> From<&'a SelectedObservationSample> for SelectedObservationSampleView<'a> {
     fn from(sample: &'a SelectedObservationSample) -> Self {
-        Self::Scalar(sample)
+        Self::from_scalar(sample)
     }
 }
 
 impl<'a> SelectedObservationSampleView<'a> {
+    const fn from_scalar(sample: &'a SelectedObservationSample) -> Self {
+        Self {
+            storage: SelectedObservationSampleStorage::Scalar(sample),
+            input_weight_group: SelectedInputWeightGroup::single(sample.input_weight),
+        }
+    }
+
     /// Borrow one member of a row/channel run.
     #[must_use]
     pub const fn from_run(
@@ -488,19 +558,40 @@ impl<'a> SelectedObservationSampleView<'a> {
         channel: &'a SelectedObservationRunChannel,
         correlation: &'a SelectedObservationRunCorrelation,
     ) -> Self {
-        Self::Run {
-            row,
-            channel,
-            correlation,
+        Self {
+            storage: SelectedObservationSampleStorage::Run {
+                row,
+                channel,
+                correlation,
+            },
+            input_weight_group: SelectedInputWeightGroup::single(correlation.input_weight),
         }
+    }
+
+    /// Attach the storage owner's raw weight-group descriptor to this borrowed view.
+    ///
+    /// The descriptor is deliberately absent from [`Self::to_owned`]: every raw
+    /// member already participates in selected-observation content identity.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn with_input_weight_group(mut self, group: SelectedInputWeightGroup) -> Self {
+        self.input_weight_group = group;
+        self
+    }
+
+    /// Return the raw weight group used by shared reconstruction weighting.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn input_weight_group(self) -> SelectedInputWeightGroup {
+        self.input_weight_group
     }
 
     /// Return the exact selected-sample address.
     #[must_use]
     pub const fn address(self) -> SelectedSampleAddress {
-        match self {
-            Self::Scalar(sample) => sample.address,
-            Self::Run {
+        match self.storage {
+            SelectedObservationSampleStorage::Scalar(sample) => sample.address,
+            SelectedObservationSampleStorage::Run {
                 row,
                 channel,
                 correlation,
@@ -525,72 +616,74 @@ impl<'a> SelectedObservationSampleView<'a> {
     /// Return the selected visibility value.
     #[must_use]
     pub const fn visibility(self) -> SelectedVisibilitySample {
-        match self {
-            Self::Scalar(sample) => sample.visibility,
-            Self::Run { correlation, .. } => correlation.visibility,
+        match self.storage {
+            SelectedObservationSampleStorage::Scalar(sample) => sample.visibility,
+            SelectedObservationSampleStorage::Run { correlation, .. } => correlation.visibility,
         }
     }
 
     /// Return the declared prediction destination.
     #[must_use]
     pub const fn prediction_target(self) -> SelectedPredictionTarget {
-        match self {
-            Self::Scalar(sample) => sample.prediction_target,
-            Self::Run { row, .. } => row.prediction_target,
+        match self.storage {
+            SelectedObservationSampleStorage::Scalar(sample) => sample.prediction_target,
+            SelectedObservationSampleStorage::Run { row, .. } => row.prediction_target,
         }
     }
 
     /// Return the selected cell flag.
     #[must_use]
     pub const fn channel_flag(self) -> bool {
-        match self {
-            Self::Scalar(sample) => sample.channel_flag,
-            Self::Run { correlation, .. } => correlation.channel_flag,
+        match self.storage {
+            SelectedObservationSampleStorage::Scalar(sample) => sample.channel_flag,
+            SelectedObservationSampleStorage::Run { correlation, .. } => correlation.channel_flag,
         }
     }
 
     /// Return the complete selected parallel-hand flag.
     #[must_use]
     pub const fn parallel_hand_group_flag(self) -> bool {
-        match self {
-            Self::Scalar(sample) => sample.parallel_hand_group_flag,
-            Self::Run { correlation, .. } => correlation.parallel_hand_group_flag,
+        match self.storage {
+            SelectedObservationSampleStorage::Scalar(sample) => sample.parallel_hand_group_flag,
+            SelectedObservationSampleStorage::Run { correlation, .. } => {
+                correlation.parallel_hand_group_flag
+            }
         }
     }
 
     /// Return the MAIN row flag.
     #[must_use]
     pub const fn row_flag(self) -> bool {
-        match self {
-            Self::Scalar(sample) => sample.row_flag,
-            Self::Run { row, .. } => row.row_flag,
+        match self.storage {
+            SelectedObservationSampleStorage::Scalar(sample) => sample.row_flag,
+            SelectedObservationSampleStorage::Run { row, .. } => row.row_flag,
         }
     }
 
     /// Return the selected input weight.
     #[must_use]
     pub const fn input_weight(self) -> f32 {
-        match self {
-            Self::Scalar(sample) => sample.input_weight,
-            Self::Run { correlation, .. } => correlation.input_weight,
+        match self.storage {
+            SelectedObservationSampleStorage::Scalar(sample) => sample.input_weight,
+            SelectedObservationSampleStorage::Run { correlation, .. } => correlation.input_weight,
         }
     }
 
     /// Return evaluated row coordinates.
     #[must_use]
     pub const fn coordinates(self) -> &'a SelectedSampleCoordinates {
-        match self {
-            Self::Scalar(sample) => &sample.coordinates,
-            Self::Run { row, .. } => &row.coordinates,
+        match self.storage {
+            SelectedObservationSampleStorage::Scalar(sample) => &sample.coordinates,
+            SelectedObservationSampleStorage::Run { row, .. } => &row.coordinates,
         }
     }
 
     /// Return per-row MeasurementSet provenance.
     #[must_use]
     pub const fn metadata(self) -> &'a SelectedSampleMetadata {
-        match self {
-            Self::Scalar(sample) => &sample.metadata,
-            Self::Run { row, .. } => &row.metadata,
+        match self.storage {
+            SelectedObservationSampleStorage::Scalar(sample) => &sample.metadata,
+            SelectedObservationSampleStorage::Run { row, .. } => &row.metadata,
         }
     }
 

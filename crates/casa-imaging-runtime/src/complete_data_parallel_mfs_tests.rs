@@ -143,7 +143,7 @@ fn complete_data_mfs_products_and_identities_are_exact_for_one_two_and_four_work
         );
         assert_eq!(
             run.final_stream.planned_gridded_route_capacity_bytes,
-            gridded_normal_route_capacity_bytes(3, 3).unwrap(),
+            gridded_normal_route_capacity_bytes(3, 3, 1).unwrap(),
             "the shared route window must cover the three exact one-record frames",
         );
         assert_eq!(
@@ -152,12 +152,12 @@ fn complete_data_mfs_products_and_identities_are_exact_for_one_two_and_four_work
         );
         assert!(
             run.final_stream.peak_kernel_window_capacity_bytes
-                >= gridded_normal_route_capacity_bytes(3, 3).unwrap(),
+                >= gridded_normal_route_capacity_bytes(3, 3, 1).unwrap(),
             "the measured kernel window must include all three live frame routes",
         );
         assert!(
             run.final_stream.planned_gridded_route_capacity_bytes
-                >= gridded_normal_route_capacity_bytes(3, 3).unwrap(),
+                >= gridded_normal_route_capacity_bytes(3, 3, 1).unwrap(),
             "the variable route plan must bound the live three-frame window",
         );
     }

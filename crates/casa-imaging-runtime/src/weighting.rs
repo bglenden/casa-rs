@@ -116,7 +116,7 @@ fn transformed_spectral_contributions(
     }
     Ok(compile_spectral_stencil(
         problem,
-        transformed.selected().as_view(),
+        transformed.selected_view(),
         transformed.spectral_evaluation(),
     )?
     .contributions()
@@ -462,10 +462,7 @@ where
 {
     if let Some(transform) = continuum {
         let completed = transform
-            .push(
-                reported.selected().to_owned(),
-                reported.spectral_evaluation(),
-            )
+            .push_view(reported.selected(), reported.spectral_evaluation())
             .map_err(ReplayCallbackError::Transform)?;
         for transformed in completed {
             let contributions = transformed_spectral_contributions(problem, &transformed)
@@ -477,7 +474,7 @@ where
                     )?;
             }
             if let Some(block) = weights
-                .consume_sample(problem, transformed.selected().as_view(), contributions)
+                .consume_sample(problem, transformed.selected_view(), contributions)
                 .map_err(ReplayCallbackError::Owner)?
             {
                 emit(&block).map_err(ReplayCallbackError::Consumer)?;
@@ -566,11 +563,7 @@ where
                 }
                 if let Some(block) = self
                     .weights
-                    .consume_sample(
-                        self.problem,
-                        transformed.selected().as_view(),
-                        contributions,
-                    )
+                    .consume_sample(self.problem, transformed.selected_view(), contributions)
                     .map_err(WeightingBlockKernelError::Owner)?
                 {
                     (self.emit)(&block).map_err(WeightingBlockKernelError::Consumer)?;

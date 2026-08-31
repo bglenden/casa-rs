@@ -3253,7 +3253,7 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
                 .starts_with("spectral-operator-gridded-route-gridded-residual-refresh-")
         })
         .expect("gridded replay route allocation");
-    let expected_route_bytes = gridded_normal_route_capacity_bytes(0, 1).unwrap();
+    let expected_route_bytes = gridded_normal_route_capacity_bytes(0, 1, 1).unwrap();
     assert_eq!(route.bytes, expected_route_bytes);
     assert_eq!(
         route.compatibility.layout,

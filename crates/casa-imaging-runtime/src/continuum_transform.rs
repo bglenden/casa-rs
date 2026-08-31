@@ -6,9 +6,9 @@ use std::{collections::BTreeMap, mem::size_of};
 
 use casa_imaging_model::{
     CompiledProblem, ContinuumChannelUse, ContinuumFitWeightGenerationId,
-    ContinuumTransformContractId, ContinuumTransformGenerationId, SelectedObservationGenerationId,
-    SelectedObservationSample, SelectedSpectralEvaluation, SelectedVisibilitySample,
-    SequentialContinuumTransform,
+    ContinuumTransformContractId, ContinuumTransformGenerationId, SelectedInputWeightGroup,
+    SelectedObservationGenerationId, SelectedObservationSample, SelectedObservationSampleView,
+    SelectedSpectralEvaluation, SelectedVisibilitySample, SequentialContinuumTransform,
 };
 use casa_imaging_reconstruction::{
     ContinuumFitError, ContinuumFitStatus, ContinuumRowInput, ContinuumSample,
@@ -22,6 +22,7 @@ use thiserror::Error;
 #[derive(Debug, Clone, PartialEq)]
 pub struct ContinuumTransformedSample {
     selected: SelectedObservationSample,
+    input_weight_group: SelectedInputWeightGroup,
     spectral_evaluation: SelectedSpectralEvaluation,
     use_role: ContinuumChannelUse,
     prediction: Complex64,
@@ -32,6 +33,14 @@ impl ContinuumTransformedSample {
     #[must_use]
     pub const fn selected(&self) -> &SelectedObservationSample {
         &self.selected
+    }
+
+    /// Borrow the transformed sample with its raw imaging-weight group.
+    #[must_use]
+    pub(crate) const fn selected_view(&self) -> SelectedObservationSampleView<'_> {
+        self.selected
+            .as_view()
+            .with_input_weight_group(self.input_weight_group)
     }
 
     /// Return the source/output spectral coordinate evaluation.
@@ -126,6 +135,7 @@ impl ContinuumTransformCompletion {
 #[derive(Debug, Clone)]
 struct PendingSample {
     selected: SelectedObservationSample,
+    input_weight_group: SelectedInputWeightGroup,
     spectral_evaluation: SelectedSpectralEvaluation,
 }
 
@@ -189,7 +199,11 @@ pub fn plan_continuum_transform_row(
         return Err(ContinuumTransformError::InvalidSelectedShape);
     }
     let bytes = maximum_samples
-        .checked_mul(size_of::<PendingSample>())
+        .checked_mul(
+            size_of::<PendingSample>()
+                .checked_add(size_of::<ContinuumTransformedSample>())
+                .ok_or(ContinuumTransformError::Overflow)?,
+        )
         .ok_or(ContinuumTransformError::Overflow)?;
     Ok(Some(ContinuumTransformRowPlan {
         contract: transform.contract_id(),
@@ -250,6 +264,16 @@ impl<'a> ContinuumTransformStream<'a> {
         selected: SelectedObservationSample,
         spectral_evaluation: SelectedSpectralEvaluation,
     ) -> Result<Vec<ContinuumTransformedSample>, ContinuumTransformError> {
+        self.push_view(selected.as_view(), spectral_evaluation)
+    }
+
+    pub(crate) fn push_view(
+        &mut self,
+        selected: SelectedObservationSampleView<'_>,
+        spectral_evaluation: SelectedSpectralEvaluation,
+    ) -> Result<Vec<ContinuumTransformedSample>, ContinuumTransformError> {
+        let input_weight_group = selected.input_weight_group();
+        let selected = selected.to_owned();
         let row = (
             selected.address.measurement_set,
             selected.address.physical_row,
@@ -265,6 +289,7 @@ impl<'a> ContinuumTransformStream<'a> {
         }
         self.pending.push(PendingSample {
             selected,
+            input_weight_group,
             spectral_evaluation,
         });
         self.peak_row_samples = self.peak_row_samples.max(self.pending.len());
@@ -306,7 +331,11 @@ impl<'a> ContinuumTransformStream<'a> {
             peak_row_samples: self.peak_row_samples,
             peak_row_bytes: self
                 .peak_row_samples
-                .checked_mul(size_of::<PendingSample>())
+                .checked_mul(
+                    size_of::<PendingSample>()
+                        .checked_add(size_of::<ContinuumTransformedSample>())
+                        .ok_or(ContinuumTransformError::Overflow)?,
+                )
                 .ok_or(ContinuumTransformError::Overflow)?,
         })
     }
@@ -330,6 +359,7 @@ impl<'a> ContinuumTransformStream<'a> {
             .iter()
             .map(|pending| ContinuumTransformedSample {
                 selected: pending.selected,
+                input_weight_group: pending.input_weight_group,
                 spectral_evaluation: pending.spectral_evaluation,
                 use_role: ContinuumChannelUse::ApplyOnly,
                 prediction: Complex64::new(0.0, 0.0),
@@ -589,6 +619,38 @@ mod tests {
     }
 
     #[test]
+    fn traversal_weight_group_survives_continuum_buffering() {
+        let contract = contract_for_field(0);
+        let input = sample(1, 0, 200.0, [1.0, -1.0]);
+        let group = SelectedInputWeightGroup::parallel_hands(3.0, 7.0).with_density_owner(false);
+        let mut stream = ContinuumTransformStream::new(&contract, row_plan(&contract, 1))
+            .expect("planned stream");
+
+        assert!(
+            stream
+                .push_view(
+                    input.as_view().with_input_weight_group(group),
+                    evaluation(input),
+                )
+                .expect("buffer selected sample")
+                .is_empty()
+        );
+        let output = stream.finish_rows().expect("finish selected row");
+
+        assert_eq!(output.len(), 1);
+        assert_eq!(
+            output[0].selected_view().input_weight_group().endpoints(),
+            (3.0, Some(7.0))
+        );
+        assert!(
+            !output[0]
+                .selected_view()
+                .input_weight_group()
+                .is_density_owner()
+        );
+    }
+
+    #[test]
     fn row_plan_from_another_transform_contract_is_rejected() {
         let first = contract_for_field(0);
         let second = contract_for_field(1);
@@ -605,11 +667,14 @@ mod tests {
         for input in row_samples(0) {
             stream.push(input, evaluation(input)).expect("push row");
         }
+        let output = stream.finish_rows().expect("finish planned row");
 
         assert_eq!(stream.pending.capacity(), plan.maximum_samples());
         assert!(
-            stream.pending.capacity() * size_of::<PendingSample>() <= plan.bytes(),
-            "resource claim must cover the actual row-buffer allocation"
+            stream.pending.capacity() * size_of::<PendingSample>()
+                + output.capacity() * size_of::<ContinuumTransformedSample>()
+                <= plan.bytes(),
+            "resource claim must cover retained input and transformed handoff buffers"
         );
     }
 
@@ -721,7 +786,8 @@ mod tests {
         ContinuumTransformRowPlan {
             contract: contract.contract_id(),
             maximum_samples,
-            bytes: maximum_samples * size_of::<PendingSample>(),
+            bytes: maximum_samples
+                * (size_of::<PendingSample>() + size_of::<ContinuumTransformedSample>()),
         }
     }
 

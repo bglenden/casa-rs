@@ -39,6 +39,8 @@ pub enum NormalStateCatalog {
     /// Unnormalized channel-major normal-state slab whose planes follow the
     /// exact output-channel interval named by the paired spectral operator.
     UnnormalizedChannelSlabV1,
+    /// Unnormalized Taylor residual terms and `2T-1` signed block-normal moments.
+    UnnormalizedTaylorBlockV1,
 }
 
 /// Reconstruction-owned proof that the final Normal State generation exists.
@@ -213,6 +215,24 @@ impl FinalNormalState {
         self.primitives.slab().core_depth()
     }
 
+    /// Return the number of reconstruction-coefficient residual terms.
+    #[must_use]
+    pub const fn coefficient_term_count(&self) -> usize {
+        self.primitives.coefficient_term_count()
+    }
+
+    /// Return the number of retained normal moments.
+    #[must_use]
+    pub const fn normal_moment_count(&self) -> usize {
+        self.primitives.normal_moment_count()
+    }
+
+    /// Return the polynomial reference frequency when this is continuum state.
+    #[must_use]
+    pub const fn reference_frequency_hz(&self) -> Option<f64> {
+        self.primitives.reference_frequency_hz()
+    }
+
     /// Return the T19 normal approximation paired with the residual.
     #[must_use]
     pub const fn normal_approximation(&self) -> &[num_complex::Complex64] {
@@ -243,9 +263,69 @@ impl FinalNormalState {
         self.primitives.channel_validity()
     }
 
+    /// Return the principal support state for a polynomial normal family.
+    #[must_use]
+    pub fn support_validity(&self) -> Option<crate::SpectralChannelValidity> {
+        if self.catalog != NormalStateCatalog::UnnormalizedTaylorBlockV1 {
+            return None;
+        }
+        self.primitives.channel_validity().first().copied()
+    }
+
+    /// Borrow one reconstruction-coefficient residual term.
+    #[must_use]
+    pub fn coefficient_term(
+        &self,
+        coefficient: usize,
+    ) -> Option<FinalNormalStateCoefficientTerm<'_>> {
+        if self.catalog != NormalStateCatalog::UnnormalizedTaylorBlockV1 {
+            return None;
+        }
+        let cells = self.shape()[0].checked_mul(self.shape()[1])?;
+        let start = coefficient.checked_mul(cells)?;
+        let end = start.checked_add(cells)?;
+        Some(FinalNormalStateCoefficientTerm {
+            owner: self,
+            coefficient,
+            residual: self.primitives.dirty().get(start..end)?,
+        })
+    }
+
+    /// Borrow one retained normal moment.
+    #[must_use]
+    pub fn normal_moment(&self, moment: usize) -> Option<FinalNormalStateNormalMoment<'_>> {
+        if self.catalog != NormalStateCatalog::UnnormalizedTaylorBlockV1 {
+            return None;
+        }
+        let cells = self.shape()[0].checked_mul(self.shape()[1])?;
+        let start = moment.checked_mul(cells)?;
+        let end = start.checked_add(cells)?;
+        Some(FinalNormalStateNormalMoment {
+            owner: self,
+            moment,
+            normal_approximation: self.primitives.psf().get(start..end)?,
+            sensitivity: self.primitives.sensitivity().get(start..end)?,
+            sum_weight: *self.primitives.sum_weights().get(moment)?,
+        })
+    }
+
+    /// Borrow the Hankel normal block `H[row,column] = P[row+column]`.
+    #[must_use]
+    pub fn normal_block(
+        &self,
+        row: usize,
+        column: usize,
+    ) -> Option<FinalNormalStateNormalMoment<'_>> {
+        let moment = self.primitives.normal_moment_index(row, column)?;
+        self.normal_moment(moment)
+    }
+
     /// Borrow one channel plane from this bounded Normal State slab.
     #[must_use]
     pub fn plane(&self, local_channel: usize) -> Option<FinalNormalStatePlane<'_>> {
+        if self.catalog == NormalStateCatalog::UnnormalizedTaylorBlockV1 {
+            return None;
+        }
         let cells = self.shape()[0].checked_mul(self.shape()[1])?;
         let start = local_channel.checked_mul(cells)?;
         let end = start.checked_add(cells)?;
@@ -259,6 +339,76 @@ impl FinalNormalState {
             psf: self.primitives.psf().get(start..end)?,
             sensitivity: self.primitives.sensitivity().get(start..end)?,
         })
+    }
+}
+
+/// Borrowed model-dependent residual for one reconstruction coefficient.
+#[derive(Debug, Clone, Copy)]
+pub struct FinalNormalStateCoefficientTerm<'a> {
+    owner: &'a FinalNormalState,
+    coefficient: usize,
+    residual: &'a [num_complex::Complex64],
+}
+
+impl<'a> FinalNormalStateCoefficientTerm<'a> {
+    /// Return the state owner.
+    #[must_use]
+    pub const fn owner(self) -> &'a FinalNormalState {
+        self.owner
+    }
+
+    /// Return the zero-based Taylor coefficient ordinal.
+    #[must_use]
+    pub const fn coefficient(self) -> usize {
+        self.coefficient
+    }
+
+    /// Return this coefficient's unnormalized model-dependent residual.
+    #[must_use]
+    pub const fn residual(self) -> &'a [num_complex::Complex64] {
+        self.residual
+    }
+}
+
+/// Borrowed `P[k]` member of a polynomial block-normal family.
+#[derive(Debug, Clone, Copy)]
+pub struct FinalNormalStateNormalMoment<'a> {
+    owner: &'a FinalNormalState,
+    moment: usize,
+    normal_approximation: &'a [num_complex::Complex64],
+    sensitivity: &'a [f64],
+    sum_weight: f64,
+}
+
+impl<'a> FinalNormalStateNormalMoment<'a> {
+    /// Return the state owner.
+    #[must_use]
+    pub const fn owner(self) -> &'a FinalNormalState {
+        self.owner
+    }
+
+    /// Return the zero-based polynomial moment ordinal.
+    #[must_use]
+    pub const fn moment(self) -> usize {
+        self.moment
+    }
+
+    /// Return this moment's unnormalized PSF approximation.
+    #[must_use]
+    pub const fn normal_approximation(self) -> &'a [num_complex::Complex64] {
+        self.normal_approximation
+    }
+
+    /// Return this moment's unnormalized scalar sensitivity.
+    #[must_use]
+    pub const fn sensitivity(self) -> &'a [f64] {
+        self.sensitivity
+    }
+
+    /// Return this moment's signed accumulated sum weight.
+    #[must_use]
+    pub const fn sum_weight(self) -> f64 {
+        self.sum_weight
     }
 }
 
@@ -576,6 +726,9 @@ impl MajorCycleOwner {
                 }
                 SpectralPrimitiveCatalog::UnnormalizedChannelSlabV1 => {
                     NormalStateCatalog::UnnormalizedChannelSlabV1
+                }
+                SpectralPrimitiveCatalog::UnnormalizedTaylorBlockV1 => {
+                    NormalStateCatalog::UnnormalizedTaylorBlockV1
                 }
             },
             content,
