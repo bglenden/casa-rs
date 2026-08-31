@@ -265,7 +265,14 @@ pub(crate) fn selected_content_plan(
         .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
     let domain_projection_payload_bytes =
         SelectedImageDomainProjections::retained_heap_bytes_for_len(
-            problem.geometry().domains().len(),
+            problem
+                .geometry()
+                .domains()
+                .iter()
+                .try_fold(0_usize, |count, domain| {
+                    count.checked_add(domain.facets().len())
+                })
+                .ok_or(SelectedObservationContentPlanError::ByteOverflow)?,
         )
         .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
     let run_scratch_bytes = maximum_selected_correlations(problem)

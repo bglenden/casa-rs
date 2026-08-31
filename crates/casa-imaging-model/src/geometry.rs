@@ -11,7 +11,7 @@ use crate::compiled_problem::{
 };
 
 const COMPILED_GEOMETRY_IDENTITY_DOMAIN: &[u8] = b"casa-rs-compiled-geometry";
-const COMPILED_GEOMETRY_IDENTITY_VERSION: u32 = 2;
+const COMPILED_GEOMETRY_IDENTITY_VERSION: u32 = 3;
 
 /// Stable compiler-derived identity of immutable compiled geometry.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -1086,10 +1086,12 @@ impl GeometryInput {
 }
 
 /// Exact rectangular window of one user-visible facet.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FacetWindow {
     origin: [usize; 2],
     end_exclusive: [usize; 2],
+    direction: DirectionCoordinateSpec,
+    phase_centre: SkyDirection,
 }
 
 impl FacetWindow {
@@ -1103,6 +1105,30 @@ impl FacetWindow {
     #[must_use]
     pub const fn end_exclusive(self) -> [usize; 2] {
         self.end_exclusive
+    }
+
+    /// Return CASA's integer centre pixel in facet-local coordinates.
+    #[must_use]
+    pub const fn local_centre_pixel(self) -> [usize; 2] {
+        [
+            (self.end_exclusive[0] - self.origin[0]) / 2,
+            (self.end_exclusive[1] - self.origin[1]) / 2,
+        ]
+    }
+
+    /// Return the exact parent-WCS subwindow used by this facet chart.
+    ///
+    /// The chart retains the domain's common tangent direction and shifts only
+    /// the reference pixel into facet-local coordinates.
+    #[must_use]
+    pub const fn direction(self) -> DirectionCoordinateSpec {
+        self.direction
+    }
+
+    /// Return the phase centre used by paired facet operators.
+    #[must_use]
+    pub const fn phase_centre(self) -> SkyDirection {
+        self.phase_centre
     }
 }
 
@@ -1262,6 +1288,9 @@ pub enum CompileGeometryError {
     /// Facet count cannot be represented or reserved.
     #[error("regular facet layout is too large to represent")]
     FacetLayoutTooLarge,
+    /// A facet centre fell outside the compiled direction projection.
+    #[error("a facet centre pixel falls outside the direction projection")]
+    FacetCentreOutsideProjection,
     /// A centre law contained an invalid direction or target.
     #[error("phase, delay, and pointing centre laws must be explicit and valid")]
     InvalidCentreLaw,
@@ -1333,7 +1362,7 @@ pub(crate) fn compile_geometry(
             PsfPhaseCentreLaw::ImageDomainReference => direction.reference_direction(),
             PsfPhaseCentreLaw::Fixed(direction) => direction.canonicalize()?,
         };
-        let facets = compile_facets(domain.shape, domain.facets)?;
+        let facets = compile_facets(domain.shape, domain.facets, direction)?;
         domains.push(CompiledImageDomain {
             role: domain.role,
             shape: domain.shape,
@@ -1380,6 +1409,7 @@ pub(crate) fn compile_geometry(
 fn compile_facets(
     shape: ImageShape,
     layout: FacetLayout,
+    direction: DirectionCoordinateSpec,
 ) -> Result<Box<[FacetWindow]>, CompileGeometryError> {
     let (columns, rows) = match layout {
         FacetLayout::Single => (1, 1),
@@ -1407,13 +1437,55 @@ fn compile_facets(
         .map_err(|_| CompileGeometryError::FacetLayoutTooLarge)?;
     for row in 0..rows {
         for column in 0..columns {
+            let origin = [column * width, row * height];
+            let end_exclusive = [(column + 1) * width, (row + 1) * height];
+            let facet_direction = direction.with_reference_pixel([
+                direction.reference_pixel()[0] - origin[0] as f64,
+                direction.reference_pixel()[1] - origin[1] as f64,
+            ]);
+            let phase_centre = if columns == 1 && rows == 1 {
+                direction.reference_direction()
+            } else {
+                direction_at_pixel(facet_direction, [(width / 2) as f64, (height / 2) as f64])?
+            };
             facets.push(FacetWindow {
-                origin: [column * width, row * height],
-                end_exclusive: [(column + 1) * width, (row + 1) * height],
+                origin,
+                end_exclusive,
+                direction: facet_direction,
+                phase_centre,
             });
         }
     }
     Ok(facets.into_boxed_slice())
+}
+
+fn direction_at_pixel(
+    direction: DirectionCoordinateSpec,
+    pixel: [f64; 2],
+) -> Result<SkyDirection, CompileGeometryError> {
+    let delta = [
+        pixel[0] - direction.reference_pixel()[0],
+        pixel[1] - direction.reference_pixel()[1],
+    ];
+    let pc = direction.pc();
+    let increment = direction.increment_rad();
+    let projected = [
+        increment[0] * (pc[0][0] * delta[0] + pc[0][1] * delta[1]),
+        increment[1] * (pc[1][0] * delta[0] + pc[1][1] * delta[1]),
+    ];
+    let radius_squared = projected[0] * projected[0] + projected[1] * projected[1];
+    if !radius_squared.is_finite() || radius_squared > 1.0 {
+        return Err(CompileGeometryError::FacetCentreOutsideProjection);
+    }
+    let reference = direction.reference_direction();
+    let (sin_latitude, cos_latitude) = reference.latitude_rad().sin_cos();
+    let normal = (1.0 - radius_squared).sqrt();
+    let latitude = (projected[1] * cos_latitude + normal * sin_latitude)
+        .clamp(-1.0, 1.0)
+        .asin();
+    let longitude = reference.longitude_rad()
+        + projected[0].atan2(normal * cos_latitude - projected[1] * sin_latitude);
+    SkyDirection::new(reference.frame(), longitude, latitude).canonicalize()
 }
 
 fn canonicalize_centres(centres: &mut CentreLaws) -> Result<(), CompileGeometryError> {
@@ -1659,6 +1731,8 @@ fn canonical_geometry_id(geometry: &CompiledGeometry) -> CompiledGeometryId {
             for value in facet.origin.into_iter().chain(facet.end_exclusive) {
                 encoder.usize(value);
             }
+            encode_direction_coordinate(&mut encoder, facet.direction);
+            encode_sky_direction(&mut encoder, facet.phase_centre);
         }
         for axis in domain.axes.positions {
             encoder.u8(image_axis_tag(axis));

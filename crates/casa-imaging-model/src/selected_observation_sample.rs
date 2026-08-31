@@ -142,6 +142,7 @@ enum SelectedPsfPhaseCentreProjection {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SelectedImageDomainProjection {
     domain_ordinal: u32,
+    facet_ordinal: u32,
     model: SelectedPhaseCentreProjection,
     psf: SelectedPsfPhaseCentreProjection,
 }
@@ -154,8 +155,20 @@ impl SelectedImageDomainProjection {
         model: SelectedPhaseCentreProjection,
         psf: SelectedPhaseCentreProjection,
     ) -> Self {
+        Self::new_facet(domain_ordinal, 0, model, psf)
+    }
+
+    /// Construct one facet chart with independently declared model and PSF projections.
+    #[must_use]
+    pub const fn new_facet(
+        domain_ordinal: u32,
+        facet_ordinal: u32,
+        model: SelectedPhaseCentreProjection,
+        psf: SelectedPhaseCentreProjection,
+    ) -> Self {
         Self {
             domain_ordinal,
+            facet_ordinal,
             model,
             psf: SelectedPsfPhaseCentreProjection::Distinct(psf),
         }
@@ -167,8 +180,19 @@ impl SelectedImageDomainProjection {
         domain_ordinal: u32,
         model: SelectedPhaseCentreProjection,
     ) -> Self {
+        Self::facet_with_shared_psf(domain_ordinal, 0, model)
+    }
+
+    /// Construct a facet chart whose compiled PSF and model centres are identical.
+    #[must_use]
+    pub const fn facet_with_shared_psf(
+        domain_ordinal: u32,
+        facet_ordinal: u32,
+        model: SelectedPhaseCentreProjection,
+    ) -> Self {
         Self {
             domain_ordinal,
+            facet_ordinal,
             model,
             psf: SelectedPsfPhaseCentreProjection::SharedWithModel,
         }
@@ -178,6 +202,12 @@ impl SelectedImageDomainProjection {
     #[must_use]
     pub const fn domain_ordinal(self) -> u32 {
         self.domain_ordinal
+    }
+
+    /// Return the index into the domain's canonical compiled facet charts.
+    #[must_use]
+    pub const fn facet_ordinal(self) -> u32 {
+        self.facet_ordinal
     }
 
     /// Return the chart-model phase-centre projection.
@@ -202,11 +232,11 @@ impl SelectedImageDomainProjection {
     }
 }
 
-/// Canonically ordered, compiled-domain-bounded projections for one selected row.
+/// Canonically ordered, compiled-chart-bounded projections for one selected row.
 ///
-/// Entries are required to have ordinals `0..len` in order. The collection is
-/// immutable and cheaply shared between a retained source block, selected-run
-/// validation, and scientific consumers.
+/// Entries are required to be contiguous in domain-major, facet-minor order.
+/// The collection is immutable and cheaply shared between a retained source
+/// block, selected-run validation, and scientific consumers.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SelectedImageDomainProjections {
     entries: Arc<[SelectedImageDomainProjection]>,
@@ -225,11 +255,17 @@ impl SelectedImageDomainProjections {
     #[must_use]
     pub fn new(entries: impl IntoIterator<Item = SelectedImageDomainProjection>) -> Option<Self> {
         let entries = entries.into_iter().collect::<Vec<_>>();
-        if entries.is_empty()
-            || entries
-                .iter()
-                .enumerate()
-                .any(|(ordinal, entry)| u32::try_from(ordinal).ok() != Some(entry.domain_ordinal()))
+        if entries
+            .first()
+            .is_none_or(|entry| entry.domain_ordinal() != 0 || entry.facet_ordinal() != 0)
+            || entries.windows(2).any(|pair| {
+                let previous = pair[0];
+                let next = pair[1];
+                !((next.domain_ordinal() == previous.domain_ordinal()
+                    && previous.facet_ordinal().checked_add(1) == Some(next.facet_ordinal()))
+                    || (previous.domain_ordinal().checked_add(1) == Some(next.domain_ordinal())
+                        && next.facet_ordinal() == 0))
+            })
         {
             return None;
         }
@@ -257,13 +293,25 @@ impl SelectedImageDomainProjections {
         self.entries.iter().copied()
     }
 
-    /// Return one projection by canonical compiled-domain ordinal.
+    /// Return facet zero for one canonical compiled-domain ordinal.
     #[must_use]
     pub fn get(&self, domain_ordinal: u32) -> Option<SelectedImageDomainProjection> {
-        usize::try_from(domain_ordinal)
+        self.get_facet(domain_ordinal, 0)
+    }
+
+    /// Return one projection by canonical compiled domain and facet ordinals.
+    #[must_use]
+    pub fn get_facet(
+        &self,
+        domain_ordinal: u32,
+        facet_ordinal: u32,
+    ) -> Option<SelectedImageDomainProjection> {
+        self.entries
+            .binary_search_by_key(&(domain_ordinal, facet_ordinal), |entry| {
+                (entry.domain_ordinal(), entry.facet_ordinal())
+            })
             .ok()
-            .and_then(|ordinal| self.entries.get(ordinal))
-            .copied()
+            .map(|index| self.entries[index])
     }
 
     /// Return retained heap payload bytes for residency accounting.
@@ -1435,18 +1483,25 @@ mod tests {
         let psf = SelectedPhaseCentreProjection::new([11.0, -3.0, 1.0], -0.25)
             .expect("finite PSF projection");
         let main = SelectedImageDomainProjection::with_shared_psf(0, model);
+        let main_second = SelectedImageDomainProjection::facet_with_shared_psf(0, 1, psf);
         let outlier = SelectedImageDomainProjection::new(1, model, psf);
-        let projections = SelectedImageDomainProjections::new([main, outlier])
+        let projections = SelectedImageDomainProjections::new([main, main_second, outlier])
             .expect("canonical main-first projections");
 
-        assert_eq!(projections.iter().collect::<Vec<_>>(), vec![main, outlier]);
+        assert_eq!(
+            projections.iter().collect::<Vec<_>>(),
+            vec![main, main_second, outlier]
+        );
         assert_eq!(projections.get(0), Some(main));
         assert_eq!(projections.get(1), Some(outlier));
+        assert_eq!(projections.get_facet(0, 1), Some(main_second));
         assert!(main.psf_shares_model());
         assert_eq!(main.psf(), main.model());
         assert!(!outlier.psf_shares_model());
         assert_eq!(outlier.psf(), psf);
         assert!(SelectedImageDomainProjections::new([outlier, main]).is_none());
+        assert!(SelectedImageDomainProjections::new([main, outlier, main_second]).is_none());
+        assert!(SelectedImageDomainProjections::new([main, outlier]).is_some());
         assert!(SelectedImageDomainProjections::new(std::iter::empty()).is_none());
         assert!(SelectedPhaseCentreProjection::new([f64::NAN, 0.0, 0.0], 0.0).is_none());
     }

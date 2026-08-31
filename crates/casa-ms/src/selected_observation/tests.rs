@@ -274,12 +274,12 @@ fn retained_selected_samples_are_bounded_and_block_partition_invariant() {
 }
 
 #[test]
-fn multidomain_row_projections_are_main_first_and_block_partition_invariant() {
+fn facet_chart_projections_are_domain_major_and_block_partition_invariant() {
     let directory = tempfile::tempdir().expect("temporary multidomain projection fixture");
     let path = directory.path().join("multidomain.ms");
-    generate_fixture_with_phase_center(&path, 2, [1.0, -0.5]);
+    generate_fixture_with_phase_center(&path, 32, [1.0, -0.5]);
 
-    let problem = compiled_problem_with_geometry(&path, 2, multidomain_geometry());
+    let problem = compiled_problem_with_geometry(&path, 480, multidomain_geometry());
     assert!(matches!(
         problem.geometry().domains()[0].role(),
         ImageDomainRole::Main
@@ -353,8 +353,8 @@ fn multidomain_row_projections_are_main_first_and_block_partition_invariant() {
         (projected_rows, completion)
     };
 
-    let (one_row, one_row_completion) = traverse(1);
-    let (two_rows, two_row_completion) = traverse(2);
+    let (one_row, one_row_completion) = traverse(7);
+    let (two_rows, two_row_completion) = traverse(19);
     assert_eq!(
         one_row, two_rows,
         "physical block boundaries are not geometry"
@@ -364,23 +364,24 @@ fn multidomain_row_projections_are_main_first_and_block_partition_invariant() {
         two_row_completion.generation_id(),
         "selected generation is invariant to block partitioning"
     );
-    assert_eq!(one_row.len(), 2);
+    assert_eq!(one_row.len(), 480);
     for (_, raw_uvw_m, projections) in one_row {
         assert_eq!(
             projections
                 .iter()
-                .map(|projection| projection.domain_ordinal())
+                .map(|projection| (projection.domain_ordinal(), projection.facet_ordinal()))
                 .collect::<Vec<_>>(),
-            vec![0, 1, 2]
+            vec![(0, 0), (0, 1), (0, 2), (0, 3), (1, 0), (2, 0)]
         );
-        assert_eq!(projections[0].model().transformed_uvw_m(), raw_uvw_m);
-        assert_eq!(projections[0].model().phase_shift_m(), 0.0);
+        assert_ne!(projections[0].model().transformed_uvw_m(), raw_uvw_m);
+        assert_ne!(projections[0].model(), projections[1].model());
         assert!(!projections[0].psf_shares_model());
-        assert!(projections[1].psf_shares_model());
-        assert!(!projections[2].psf_shares_model());
+        assert_eq!(projections[0].psf(), projections[3].psf());
+        assert!(projections[4].psf_shares_model());
+        assert!(!projections[5].psf_shares_model());
         assert_ne!(
-            projections[1].model().transformed_uvw_m(),
-            projections[2].model().transformed_uvw_m()
+            projections[4].model().transformed_uvw_m(),
+            projections[5].model().transformed_uvw_m()
         );
     }
 }
@@ -3552,7 +3553,7 @@ fn generate_fixture_with_phase_center(
     phase_center_rad: [f64; 2],
 ) {
     let mut antennas = tutorial_vla_a_antennas();
-    antennas.truncate(2);
+    antennas.truncate(6);
     let mut request = SyntheticObservationRequest::vla_ppdisk("unused.fits", path, antennas);
     request.predict_model = false;
     request.allow_below_elevation_limit = true;
@@ -4407,19 +4408,19 @@ fn geometry_with_centres(centres: CentreLaws) -> GeometryInput {
 }
 
 fn multidomain_geometry() -> GeometryInput {
-    let domain = |role, direction, psf_phase_centre| {
+    let domain = |role, direction, facets, psf_phase_centre| {
         ImageDomainSpec::new(
             role,
-            ImageShape::new(32, 32),
+            ImageShape::new(512, 512),
             DirectionCoordinateSpec::new(
                 Projection::Sin,
                 direction,
-                [15.0, 15.0],
+                [255.0, 255.0],
                 [-4.848_136_811_095_36e-6, 4.848_136_811_095_36e-6],
                 [[1.0, 0.0], [0.0, 1.0]],
                 [180.0, 0.0],
             ),
-            FacetLayout::Single,
+            facets,
             AxisOrder::new([
                 ImageAxis::DirectionLongitude,
                 ImageAxis::DirectionLatitude,
@@ -4438,16 +4439,22 @@ fn multidomain_geometry() -> GeometryInput {
             domain(
                 ImageDomainRole::Outlier("zeta".to_string()),
                 zeta,
+                FacetLayout::Single,
                 PsfPhaseCentreLaw::Fixed(SkyDirection::new(DirectionFrame::J2000, 1.025, -0.475)),
             ),
             domain(
                 ImageDomainRole::Main,
                 main,
+                FacetLayout::Regular {
+                    columns: 2,
+                    rows: 2,
+                },
                 PsfPhaseCentreLaw::Fixed(SkyDirection::new(DirectionFrame::J2000, 1.005, -0.495)),
             ),
             domain(
                 ImageDomainRole::Outlier("alpha".to_string()),
                 alpha,
+                FacetLayout::Single,
                 PsfPhaseCentreLaw::ImageDomainReference,
             ),
         ],
