@@ -305,6 +305,54 @@ fn t46_joint_contract_is_canonical_identifiable_and_distinct() {
             .required_capabilities()
             .contains(&RequiredCapability::JointContinuumLineReconstruction)
     );
+    let graph = first.product_graph();
+    assert!(
+        graph
+            .node(ProductRole::Residual(ProductTerm::Total))
+            .is_some()
+    );
+    assert!(
+        graph
+            .node(ProductRole::Residual(ProductTerm::Line))
+            .is_none()
+    );
+    for term in [
+        ProductTerm::Continuum(0),
+        ProductTerm::Continuum(1),
+        ProductTerm::Line,
+        ProductTerm::Total,
+    ] {
+        assert!(graph.node(ProductRole::Model(term)).is_some());
+    }
+    assert_eq!(
+        graph
+            .node(ProductRole::Model(ProductTerm::Continuum(0)))
+            .expect("continuum coefficient product")
+            .axes()
+            .shape()[3],
+        1
+    );
+    assert_eq!(
+        graph
+            .node(ProductRole::Model(ProductTerm::Line))
+            .expect("line cube product")
+            .axes()
+            .shape()[3],
+        8
+    );
+    assert_eq!(
+        graph
+            .nodes()
+            .iter()
+            .filter(|node| {
+                matches!(
+                    node.role(),
+                    ProductRole::Psf(ProductTerm::JointNormal { .. })
+                )
+            })
+            .count(),
+        16
+    );
 
     for invalid in [
         JointContinuumLineContract::new([], [0, 1, 2, 3, 4, 5, 6, 7], 1.0e8),
@@ -426,7 +474,7 @@ fn compiler_owns_the_exact_product_graph_and_atomic_publication_contract() {
     let reordered = compile_request(specification(true), inputs(true)).expect("compile reordered");
 
     assert_eq!(graph.graph_id(), reordered.product_graph().graph_id());
-    assert_eq!(graph.schema_version(), 2);
+    assert_eq!(graph.schema_version(), 3);
     assert_eq!(
         graph
             .nodes()
@@ -582,8 +630,8 @@ fn product_graph_identity_is_content_derived_and_stable_across_unrelated_problem
     assert_eq!(
         first.product_graph().graph_id().as_bytes(),
         [
-            215, 69, 55, 25, 33, 207, 246, 75, 127, 97, 39, 252, 48, 167, 26, 163, 137, 238, 241,
-            38, 74, 130, 171, 57, 145, 182, 214, 31, 234, 72, 93, 113,
+            235, 221, 234, 76, 221, 106, 227, 135, 121, 148, 175, 232, 82, 0, 166, 137, 236, 238,
+            165, 115, 143, 112, 173, 242, 205, 34, 87, 135, 86, 241, 132, 33,
         ]
     );
 }
@@ -1110,7 +1158,7 @@ fn canonical_identity_normalizes_signed_zero_but_changes_with_science() {
         positive_zero.weighting().commitment_id()
     );
     assert_ne!(positive_zero.problem_id(), changed.problem_id());
-    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 14);
+    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 15);
 }
 
 #[test]
@@ -1516,13 +1564,13 @@ fn invalid_polarization_is_a_reconstruction_contract_error() {
 }
 
 #[test]
-fn compiled_problem_identity_has_a_pinned_schema_fourteen_digest() {
+fn compiled_problem_identity_has_a_pinned_schema_fifteen_digest() {
     let compiled = compile_request(specification(false), inputs(false)).expect("compile problem");
 
-    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 14);
+    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 15);
     assert_eq!(
         compiled.problem_id().to_string(),
-        "40d663597ee1a0efd565045368bc1297069901d9cec8f0f20ef755da7a3355d0"
+        "3c843adddc6f6c6d6be13da95a61b811ebd683422e0f63cef979856a2e5efd02"
     );
     let lifecycle = casa_imaging_model::LogicalIdentity::from_sha256(
         compiled.model_lifecycle().contract_id().as_bytes(),

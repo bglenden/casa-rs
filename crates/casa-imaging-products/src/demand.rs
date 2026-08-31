@@ -87,6 +87,10 @@ impl PlannedContinuumGeneration {
                 .reconstruction_mask()
                 .map(casa_imaging_reconstruction::ReconstructionMask::generation_id)
                 != self.reconstruction_mask_generation()
+            || inputs
+                .coupled_reconstruction_masks()
+                .map(|masks| masks.line().generation_id())
+                != self.line_reconstruction_mask_generation()
         {
             return Err(ProductsError::CommitmentMismatch);
         }
@@ -114,7 +118,8 @@ impl PlannedContinuumGeneration {
         }
 
         let algorithm_scratch_bytes = match inputs.normal_state().catalog() {
-            NormalStateCatalog::UnnormalizedTaylorBlockV1 => taylor_scratch_bytes(inputs)?,
+            NormalStateCatalog::UnnormalizedTaylorBlockV1
+            | NormalStateCatalog::UnnormalizedJointBlockV1 => taylor_scratch_bytes(inputs)?,
             NormalStateCatalog::UnnormalizedPlaneV1
             | NormalStateCatalog::UnnormalizedChannelSlabV1 => generic_scratch_bytes(self, inputs)?,
         };

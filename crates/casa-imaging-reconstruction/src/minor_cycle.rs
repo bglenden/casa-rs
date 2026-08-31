@@ -36,7 +36,7 @@ use crate::{
 };
 
 const MINOR_CYCLE_EVIDENCE_DOMAIN: &[u8] = b"casa-rs-minor-cycle-evidence";
-const MINOR_CYCLE_EVIDENCE_VERSION: u32 = 5;
+const MINOR_CYCLE_EVIDENCE_VERSION: u32 = 6;
 
 /// Return the hard resident-memory envelope for one solver-owned Minor Cycle.
 ///

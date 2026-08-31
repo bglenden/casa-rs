@@ -9,9 +9,9 @@
 
 use casa_imaging_model::{CompiledProblem, LogicalIdentity, ProductGraphId};
 use casa_imaging_reconstruction::{
-    FinalNormalState, FinalNormalStateCompletionId, MajorCycleCompletion, MajorCycleCompletionId,
-    ModelGeneration, ModelGenerationId, NormalStateCatalog, ReconstructionMask,
-    ReconstructionMaskGenerationId,
+    CoupledReconstructionMask, FinalNormalState, FinalNormalStateCompletionId,
+    MajorCycleCompletion, MajorCycleCompletionId, ModelGeneration, ModelGenerationId,
+    NormalStateCatalog, ReconstructionMask, ReconstructionMaskGenerationId,
 };
 
 use crate::digest::{COMMITMENT_DOMAIN, COMMITMENT_VERSION, Encoder};
@@ -48,6 +48,7 @@ pub struct ContinuumSourceCatalog {
     sample_count: u64,
     block_count: u64,
     reconstruction_mask: Option<ReconstructionMaskGenerationId>,
+    line_reconstruction_mask: Option<ReconstructionMaskGenerationId>,
 }
 
 impl ContinuumSourceCatalog {
@@ -116,8 +117,25 @@ impl ContinuumSourceCatalog {
             sample_count: normal_state.sample_count(),
             block_count: normal_state.block_count(),
             reconstruction_mask: mask.map(ReconstructionMask::generation_id),
+            line_reconstruction_mask: None,
             problem: problem.clone(),
         })
+    }
+
+    /// Mint the catalog with both exact spatial supports of a joint solve.
+    pub fn from_major_cycle_with_coupled_masks(
+        problem: &CompiledProblem,
+        join: &MajorCycleCompletion,
+        masks: &CoupledReconstructionMask,
+    ) -> Result<Self, ProductsError> {
+        let mut catalog = Self::from_major_cycle_with_mask(problem, join, Some(masks.continuum()))?;
+        if masks.line().problem_id() != problem.problem_id()
+            || masks.line().shape() != join.normal_state().shape()
+        {
+            return Err(ProductsError::SourceLineageMismatch);
+        }
+        catalog.line_reconstruction_mask = Some(masks.line().generation_id());
+        Ok(catalog)
     }
 
     /// Borrow the exact compiled problem this lineage reconciled.
@@ -181,6 +199,13 @@ impl ContinuumSourceCatalog {
             }
             None => encoder.u8(0),
         }
+        match self.line_reconstruction_mask {
+            Some(generation) => {
+                encoder.u8(1);
+                encoder.identity(generation.as_bytes());
+            }
+            None => encoder.u8(0),
+        }
         encoder.finish()
     }
 
@@ -188,6 +213,14 @@ impl ContinuumSourceCatalog {
     #[must_use]
     pub const fn reconstruction_mask_generation(&self) -> Option<ReconstructionMaskGenerationId> {
         self.reconstruction_mask
+    }
+
+    /// Return the line-mask generation committed by a joint lineage.
+    #[must_use]
+    pub const fn line_reconstruction_mask_generation(
+        &self,
+    ) -> Option<ReconstructionMaskGenerationId> {
+        self.line_reconstruction_mask
     }
 }
 
@@ -202,6 +235,7 @@ pub struct ContinuumProductInputs<'a> {
     normal_state: &'a FinalNormalState,
     final_model: &'a ModelGeneration,
     reconstruction_mask: Option<&'a ReconstructionMask>,
+    coupled_masks: Option<&'a CoupledReconstructionMask>,
 }
 
 impl<'a> ContinuumProductInputs<'a> {
@@ -222,6 +256,7 @@ impl<'a> ContinuumProductInputs<'a> {
             normal_state: join.normal_state(),
             final_model: join.final_model(),
             reconstruction_mask: None,
+            coupled_masks: None,
         })
     }
 
@@ -238,6 +273,24 @@ impl<'a> ContinuumProductInputs<'a> {
             return Err(ProductsError::SourceLineageMismatch);
         }
         self.reconstruction_mask = Some(mask);
+        self.coupled_masks = None;
+        Ok(self)
+    }
+
+    /// Bind both exact spatial supports used by a joint solve.
+    pub fn with_coupled_reconstruction_masks(
+        mut self,
+        masks: &'a CoupledReconstructionMask,
+    ) -> Result<Self, ProductsError> {
+        for mask in [masks.continuum(), masks.line()] {
+            if mask.problem_id() != self.problem.problem_id()
+                || mask.shape() != self.normal_state.shape()
+            {
+                return Err(ProductsError::SourceLineageMismatch);
+            }
+        }
+        self.reconstruction_mask = Some(masks.continuum());
+        self.coupled_masks = Some(masks);
         Ok(self)
     }
 
@@ -271,5 +324,11 @@ impl<'a> ContinuumProductInputs<'a> {
     #[must_use]
     pub const fn reconstruction_mask(&self) -> Option<&ReconstructionMask> {
         self.reconstruction_mask
+    }
+
+    /// Borrow both joint reconstruction masks, when supplied.
+    #[must_use]
+    pub const fn coupled_reconstruction_masks(&self) -> Option<&CoupledReconstructionMask> {
+        self.coupled_masks
     }
 }

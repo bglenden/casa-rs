@@ -13,8 +13,8 @@
 
 use casa_imaging_model::{
     CompiledProblem, CompiledProblemId, ImageAxis, ModelCell, ProductAxes, ProductBeamRule,
-    ProductGraphId, ProductNodeId, ProductNormalization, ProductRole, ProductSchema, ProductUnit,
-    ProductValidityRule, RestoringBeamPolicy,
+    ProductGraphId, ProductNodeId, ProductNormalization, ProductRole, ProductSchema, ProductTerm,
+    ProductUnit, ProductValidityRule, ReconstructionBasis, RestoringBeamPolicy,
 };
 use casa_imaging_reconstruction::{
     FinalNormalStatePlane, ModelGeneration, NormalStateCatalog, SpectralChannelValidity,
@@ -37,7 +37,7 @@ use crate::taylor::TaylorProducts;
 ///
 /// The identity binds every product algorithm's semantics; changing any
 /// algorithm changes every derived artifact identity and seal.
-pub const CONTINUUM_ALGORITHM_CATALOG_VERSION: u32 = 5;
+pub const CONTINUUM_ALGORITHM_CATALOG_VERSION: u32 = 6;
 
 /// Default main-lobe cutoff fraction for restoring-beam fitting.
 pub const DEFAULT_PSF_CUTOFF: f32 = casa_imaging_reconstruction::DEFAULT_PSF_FIT_CUTOFF;
@@ -272,6 +272,7 @@ impl ProductGenerationAuthority {
             members: members.into_boxed_slice(),
             final_model_generation: sources.final_model_generation(),
             reconstruction_mask_generation: sources.reconstruction_mask_generation(),
+            line_reconstruction_mask_generation: sources.line_reconstruction_mask_generation(),
         })
     }
 
@@ -425,7 +426,9 @@ fn ensure_producible(role: ProductRole) -> Result<(), ProductsError> {
         | ProductRole::SpectralIndex
         | ProductRole::SpectralIndexError
         | ProductRole::Sensitivity
-        | ProductRole::CleanMask => Ok(()),
+        | ProductRole::CleanMask
+        | ProductRole::ContinuumCleanMask
+        | ProductRole::LineCleanMask => Ok(()),
         role => Err(ProductsError::UnsupportedProductRole {
             role,
             catalog: CONTINUUM_ALGORITHM_CATALOG_VERSION,
@@ -493,6 +496,8 @@ pub struct PlannedContinuumGeneration {
     final_model_generation: casa_imaging_reconstruction::ModelGenerationId,
     reconstruction_mask_generation:
         Option<casa_imaging_reconstruction::ReconstructionMaskGenerationId>,
+    line_reconstruction_mask_generation:
+        Option<casa_imaging_reconstruction::ReconstructionMaskGenerationId>,
 }
 
 impl PlannedContinuumGeneration {
@@ -548,6 +553,12 @@ impl PlannedContinuumGeneration {
         &self,
     ) -> Option<casa_imaging_reconstruction::ReconstructionMaskGenerationId> {
         self.reconstruction_mask_generation
+    }
+
+    pub(crate) const fn line_reconstruction_mask_generation(
+        &self,
+    ) -> Option<casa_imaging_reconstruction::ReconstructionMaskGenerationId> {
+        self.line_reconstruction_mask_generation
     }
 }
 
@@ -695,8 +706,18 @@ pub fn produce_continuum_members(
     {
         return Err(ProductsError::CommitmentMismatch);
     }
+    if inputs
+        .coupled_reconstruction_masks()
+        .map(|masks| masks.line().generation_id())
+        != planned.line_reconstruction_mask_generation
+    {
+        return Err(ProductsError::CommitmentMismatch);
+    }
     if inputs.normal_state().catalog() == NormalStateCatalog::UnnormalizedTaylorBlockV1 {
         return produce_taylor_members(planned, inputs);
+    }
+    if inputs.normal_state().catalog() == NormalStateCatalog::UnnormalizedJointBlockV1 {
+        return produce_joint_members(planned, inputs);
     }
     let normal_state = inputs.normal_state();
     let plane_shape = normal_state.shape();
@@ -878,6 +899,292 @@ fn produce_taylor_members(
         restoring_beams,
         members: members.into_boxed_slice(),
     })
+}
+
+fn produce_joint_members(
+    planned: &PlannedContinuumGeneration,
+    inputs: &ContinuumProductInputs<'_>,
+) -> Result<ContinuumProducedMembers, ProductsError> {
+    let normal = inputs.normal_state();
+    let shape = normal.shape();
+    let channels = normal.slab().total_channels();
+    if normal.slab().core_range() != (0..channels)
+        || inputs.coupled_reconstruction_masks().is_none()
+    {
+        return Err(ProductsError::SourceLineageMismatch);
+    }
+    let ReconstructionBasis::JointContinuumLine {
+        continuum_terms,
+        line_terms,
+    } = inputs.problem().reconstruction().basis()
+    else {
+        return Err(ProductsError::SourceLineageMismatch);
+    };
+    if normal.coefficient_term_count() != continuum_terms + line_terms
+        || normal.normal_moment_count() != (continuum_terms + line_terms).pow(2)
+        || inputs.final_model().shape().coefficients() != continuum_terms + line_terms
+    {
+        return Err(ProductsError::SourceLineageMismatch);
+    }
+    let h00 = normal
+        .normal_block(0, 0)
+        .ok_or(ProductsError::SourceLineageMismatch)?;
+    let normalization_weight = h00.sum_weight();
+    if !normalization_weight.is_finite() || normalization_weight <= 0.0 {
+        return Err(ProductsError::SourceLineageMismatch);
+    }
+    let mut members = Vec::with_capacity(planned.members.len());
+    for member in &planned.members {
+        let (payload, validity) = produce_joint_member(
+            member,
+            inputs,
+            shape,
+            channels,
+            continuum_terms,
+            normalization_weight,
+        )?;
+        if payload.len() != member.payload_values || validity.len() != member.payload_values {
+            return Err(ProductsError::PayloadLengthMismatch {
+                expected: member.payload_values,
+                actual: payload.len(),
+            });
+        }
+        if payload.iter().any(|value| !value.is_finite()) {
+            return Err(ProductsError::GeneratedNonfinite);
+        }
+        let digest = MemberArtifactId(member_content_digest(&payload, &validity));
+        members.push(ProducedMember {
+            node: member.node,
+            artifact_id: member.artifact_id,
+            digest,
+            payload,
+            validity,
+        });
+    }
+    Ok(ContinuumProducedMembers {
+        planned_generation: planned.generation_id,
+        commitment_id: planned.commitment_id,
+        fitted_beams: Box::new([]),
+        restoring_beams: Box::new([]),
+        members: members.into_boxed_slice(),
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn produce_joint_member(
+    member: &PlannedMember,
+    inputs: &ContinuumProductInputs<'_>,
+    shape: [usize; 2],
+    channels: usize,
+    continuum_terms: usize,
+    normalization_weight: f64,
+) -> Result<(Vec<f32>, Vec<bool>), ProductsError> {
+    let mut payload = vec![0.0_f32; member.payload_values];
+    let mut validity = vec![true; member.payload_values];
+    match member.role {
+        ProductRole::Psf(ProductTerm::JointNormal { row, column }) => {
+            let block = inputs
+                .normal_state()
+                .normal_block(row, column)
+                .ok_or(ProductsError::SourceLineageMismatch)?;
+            payload = normalize_plane(
+                &block
+                    .normal_approximation()
+                    .iter()
+                    .map(|value| value.re as f32)
+                    .collect::<Vec<_>>(),
+                member
+                    .normalization
+                    .unwrap_or(ProductNormalization::UnitResponse),
+                normalization_weight,
+            )?;
+        }
+        ProductRole::SumWeights(ProductTerm::JointNormal { row, column }) => {
+            let block = inputs
+                .normal_state()
+                .normal_block(row, column)
+                .ok_or(ProductsError::SourceLineageMismatch)?;
+            scatter_plane_state(&mut payload, member.axes(), 0, block.sum_weight() as f32)?;
+        }
+        ProductRole::Weight(ProductTerm::JointNormal { row, column }) => {
+            let block = inputs
+                .normal_state()
+                .normal_block(row, column)
+                .ok_or(ProductsError::SourceLineageMismatch)?;
+            payload = block
+                .sensitivity()
+                .iter()
+                .map(|value| *value as f32)
+                .collect();
+        }
+        ProductRole::Model(ProductTerm::Continuum(term)) => {
+            payload = model_real_plane(inputs.final_model(), term, shape)?;
+        }
+        ProductRole::Model(ProductTerm::Line) | ProductRole::Model(ProductTerm::Total) => {
+            for channel in 0..channels {
+                let plane = evaluate_joint_model_plane(
+                    inputs,
+                    shape,
+                    channel,
+                    continuum_terms,
+                    matches!(member.role, ProductRole::Model(ProductTerm::Line)),
+                )?;
+                scatter_image_plane(&mut payload, member.axes(), channel, shape, &plane)?;
+            }
+        }
+        ProductRole::Residual(ProductTerm::Total) => {
+            for channel in 0..channels {
+                let plane = evaluate_joint_residual_plane(
+                    inputs,
+                    shape,
+                    channel,
+                    continuum_terms,
+                    normalization_weight,
+                    required_normalization(member)?,
+                )?;
+                scatter_image_plane(&mut payload, member.axes(), channel, shape, &plane)?;
+                if inputs.normal_state().channel_validity()[channel]
+                    != SpectralChannelValidity::Valid
+                {
+                    let blank = vec![false; shape[0] * shape[1]];
+                    scatter_image_plane(&mut validity, member.axes(), channel, shape, &blank)?;
+                }
+            }
+        }
+        ProductRole::ContinuumCleanMask | ProductRole::LineCleanMask => {
+            let masks = inputs
+                .coupled_reconstruction_masks()
+                .ok_or(ProductsError::SourceLineageMismatch)?;
+            let mask = if member.role == ProductRole::ContinuumCleanMask {
+                masks.continuum()
+            } else {
+                masks.line()
+            };
+            for channel in 0..channels {
+                let plane = mask
+                    .support()
+                    .iter()
+                    .map(|selected| if *selected { 1.0 } else { 0.0 })
+                    .collect::<Vec<_>>();
+                scatter_image_plane(&mut payload, member.axes(), channel, shape, &plane)?;
+            }
+        }
+        ProductRole::Sensitivity => {
+            for channel in 0..channels {
+                let plane = h00_sensitivity(inputs)?;
+                scatter_image_plane(&mut payload, member.axes(), channel, shape, &plane)?;
+            }
+        }
+        role => {
+            return Err(ProductsError::UnsupportedProductRole {
+                role,
+                catalog: CONTINUUM_ALGORITHM_CATALOG_VERSION,
+            });
+        }
+    }
+    Ok((payload, validity))
+}
+
+fn evaluate_joint_model_plane(
+    inputs: &ContinuumProductInputs<'_>,
+    shape: [usize; 2],
+    channel: usize,
+    continuum_terms: usize,
+    line_only: bool,
+) -> Result<Vec<f32>, ProductsError> {
+    let mut output = vec![0.0_f32; shape[0] * shape[1]];
+    if !line_only {
+        let reference = inputs
+            .normal_state()
+            .reference_frequency_hz()
+            .ok_or(ProductsError::SourceLineageMismatch)?;
+        let frequency = inputs
+            .problem()
+            .geometry()
+            .spectral()
+            .channel_centre_hz(channel)
+            .ok_or(ProductsError::SourceLineageMismatch)?;
+        let x = (frequency - reference) / reference;
+        for term in 0..continuum_terms {
+            let plane = model_real_plane(inputs.final_model(), term, shape)?;
+            let factor =
+                x.powi(i32::try_from(term).map_err(|_| ProductsError::UnsupportedProblem)?);
+            for (output, value) in output.iter_mut().zip(plane) {
+                *output += (factor * f64::from(value)) as f32;
+            }
+        }
+    }
+    if let Some(line) = joint_line_term(inputs.problem(), channel)? {
+        let plane = model_real_plane(inputs.final_model(), continuum_terms + line, shape)?;
+        for (output, value) in output.iter_mut().zip(plane) {
+            *output += value;
+        }
+    }
+    Ok(output)
+}
+
+fn evaluate_joint_residual_plane(
+    inputs: &ContinuumProductInputs<'_>,
+    shape: [usize; 2],
+    channel: usize,
+    continuum_terms: usize,
+    normalization_weight: f64,
+    normalization: ProductNormalization,
+) -> Result<Vec<f32>, ProductsError> {
+    let reference = inputs
+        .normal_state()
+        .reference_frequency_hz()
+        .ok_or(ProductsError::SourceLineageMismatch)?;
+    let frequency = inputs
+        .problem()
+        .geometry()
+        .spectral()
+        .channel_centre_hz(channel)
+        .ok_or(ProductsError::SourceLineageMismatch)?;
+    let x = (frequency - reference) / reference;
+    let mut output = vec![0.0_f32; shape[0] * shape[1]];
+    for term in 0..continuum_terms {
+        let residual = inputs
+            .normal_state()
+            .coefficient_term(term)
+            .ok_or(ProductsError::SourceLineageMismatch)?;
+        let factor = x.powi(i32::try_from(term).map_err(|_| ProductsError::UnsupportedProblem)?);
+        for (output, value) in output.iter_mut().zip(residual.residual()) {
+            *output += (factor * value.re) as f32;
+        }
+    }
+    if let Some(line) = joint_line_term(inputs.problem(), channel)? {
+        let residual = inputs
+            .normal_state()
+            .coefficient_term(continuum_terms + line)
+            .ok_or(ProductsError::SourceLineageMismatch)?;
+        for (output, value) in output.iter_mut().zip(residual.residual()) {
+            *output += value.re as f32;
+        }
+    }
+    normalize_plane(&output, normalization, normalization_weight)
+}
+
+fn joint_line_term(
+    problem: &CompiledProblem,
+    channel: usize,
+) -> Result<Option<usize>, ProductsError> {
+    let contract = problem
+        .reconstruction()
+        .joint_continuum_line()
+        .ok_or(ProductsError::SourceLineageMismatch)?;
+    Ok(contract.line_channels().binary_search(&channel).ok())
+}
+
+fn h00_sensitivity(inputs: &ContinuumProductInputs<'_>) -> Result<Vec<f32>, ProductsError> {
+    Ok(inputs
+        .normal_state()
+        .normal_block(0, 0)
+        .ok_or(ProductsError::SourceLineageMismatch)?
+        .sensitivity()
+        .iter()
+        .map(|value| *value as f32)
+        .collect())
 }
 
 fn produce_plane_member(
