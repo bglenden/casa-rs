@@ -193,11 +193,13 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
             | RequiredCapability::CommonBeamSpectralCoupling
             | RequiredCapability::SequentialContinuumTransform
             | RequiredCapability::ConstantBasis
+            | RequiredCapability::TaylorBasis
             | RequiredCapability::ChannelLocalBasis
             | RequiredCapability::DirtyReconstruction
             | RequiredCapability::HogbomReconstruction
             | RequiredCapability::ClarkReconstruction
             | RequiredCapability::MultiscaleReconstruction
+            | RequiredCapability::MtmfsReconstruction
             | RequiredCapability::NaturalWeighting
             | RequiredCapability::UniformWeighting
             | RequiredCapability::BriggsWeighting
@@ -212,5 +214,11 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
             | RequiredCapability::Product(ProductKind::SumWeights)
             | RequiredCapability::Product(ProductKind::Mask)
             | RequiredCapability::Product(ProductKind::Beam)
+            | RequiredCapability::Product(ProductKind::Weight)
+            | RequiredCapability::Product(ProductKind::PrimaryBeam)
+            | RequiredCapability::Product(ProductKind::PbCorrectedImage)
+            | RequiredCapability::Product(ProductKind::TaylorTerms)
+            | RequiredCapability::Product(ProductKind::SpectralIndex)
+            | RequiredCapability::Product(ProductKind::SpectralIndexError)
     )
 }

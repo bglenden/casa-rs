@@ -17,7 +17,7 @@ use casa_imaging_model::{
     ProductValidityRule, RestoringBeamPolicy,
 };
 use casa_imaging_reconstruction::{
-    FinalNormalStatePlane, ModelGeneration, SpectralChannelValidity,
+    FinalNormalStatePlane, ModelGeneration, NormalStateCatalog, SpectralChannelValidity,
 };
 
 use crate::beam::{RestoringBeam, fit_restoring_beam};
@@ -31,12 +31,13 @@ use crate::restore::{
     fft_convolve, gaussian_beam_image, normalize_plane, rescale_residual_to_beam,
 };
 use crate::source::{ContinuumProductInputs, ContinuumSourceCatalog};
+use crate::taylor::TaylorProducts;
 
 /// Version of the native continuum product-algorithm catalog.
 ///
 /// The identity binds every product algorithm's semantics; changing any
 /// algorithm changes every derived artifact identity and seal.
-pub const CONTINUUM_ALGORITHM_CATALOG_VERSION: u32 = 4;
+pub const CONTINUUM_ALGORITHM_CATALOG_VERSION: u32 = 5;
 
 /// Default main-lobe cutoff fraction for restoring-beam fitting.
 pub const DEFAULT_PSF_CUTOFF: f32 = casa_imaging_reconstruction::DEFAULT_PSF_FIT_CUTOFF;
@@ -383,34 +384,18 @@ fn encode_beams(encoder: &mut Encoder, beams: &[Option<RestoringBeam>]) {
 
 fn ensure_producible(role: ProductRole) -> Result<(), ProductsError> {
     match role {
-        ProductRole::Psf(
-            casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
-        )
-        | ProductRole::Residual(
-            casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
-        )
-        | ProductRole::Model(
-            casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
-        )
-        | ProductRole::Weight(
-            casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
-        )
-        | ProductRole::RestoredImage(
-            casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
-        )
+        ProductRole::Psf(_)
+        | ProductRole::Residual(_)
+        | ProductRole::Model(_)
+        | ProductRole::Weight(_)
+        | ProductRole::RestoredImage(_)
         | ProductRole::SumWeights(_)
+        | ProductRole::PrimaryBeam(_)
+        | ProductRole::PbCorrectedImage(_)
+        | ProductRole::SpectralIndex
+        | ProductRole::SpectralIndexError
         | ProductRole::Sensitivity
         | ProductRole::CleanMask => Ok(()),
-        ProductRole::Psf(casa_imaging_model::ProductTerm::Taylor(_))
-        | ProductRole::Residual(casa_imaging_model::ProductTerm::Taylor(_))
-        | ProductRole::Model(casa_imaging_model::ProductTerm::Taylor(_))
-        | ProductRole::Weight(casa_imaging_model::ProductTerm::Taylor(_))
-        | ProductRole::RestoredImage(casa_imaging_model::ProductTerm::Taylor(_)) => {
-            Err(ProductsError::UnsupportedProductRole {
-                role,
-                catalog: CONTINUUM_ALGORITHM_CATALOG_VERSION,
-            })
-        }
         role => Err(ProductsError::UnsupportedProductRole {
             role,
             catalog: CONTINUUM_ALGORITHM_CATALOG_VERSION,
@@ -667,6 +652,9 @@ pub fn produce_continuum_members(
     {
         return Err(ProductsError::CommitmentMismatch);
     }
+    if inputs.normal_state().catalog() == NormalStateCatalog::UnnormalizedTaylorBlockV1 {
+        return produce_taylor_members(planned, inputs);
+    }
     let normal_state = inputs.normal_state();
     let plane_shape = normal_state.shape();
     let channel_count = normal_state.channel_count();
@@ -782,6 +770,64 @@ pub fn produce_continuum_members(
         });
     }
 
+    Ok(ContinuumProducedMembers {
+        planned_generation: planned.generation_id,
+        commitment_id: planned.commitment_id,
+        fitted_beams,
+        restoring_beams,
+        members: members.into_boxed_slice(),
+    })
+}
+
+fn produce_taylor_members(
+    planned: &PlannedContinuumGeneration,
+    inputs: &ContinuumProductInputs<'_>,
+) -> Result<ContinuumProducedMembers, ProductsError> {
+    let products = TaylorProducts::build(inputs, planned.psf_cutoff)?;
+    let requires_beam = planned
+        .members
+        .iter()
+        .any(|member| member.beam_rule != ProductBeamRule::None);
+    let fitted_beams = if requires_beam {
+        vec![products.fitted_beam()].into_boxed_slice()
+    } else {
+        Box::new([])
+    };
+    let restoring_beams = match inputs.problem().products().restoring_beam() {
+        RestoringBeamPolicy::None => Box::new([]),
+        RestoringBeamPolicy::PerPlane | RestoringBeamPolicy::Common => {
+            vec![products.restoring_beam()].into_boxed_slice()
+        }
+    };
+    let mut members = Vec::with_capacity(planned.members.len());
+    for member in &planned.members {
+        let payload = products.payload(member.role)?;
+        let validity = if matches!(
+            member.validity,
+            ProductValidityRule::All | ProductValidityRule::FinalNormalState
+        ) {
+            vec![true; member.payload_values]
+        } else {
+            products.validity(member.validity)?
+        };
+        if payload.len() != member.payload_values || validity.len() != member.payload_values {
+            return Err(ProductsError::PayloadLengthMismatch {
+                expected: member.payload_values,
+                actual: payload.len().max(validity.len()),
+            });
+        }
+        if payload.iter().any(|value| !value.is_finite()) {
+            return Err(ProductsError::GeneratedNonfinite);
+        }
+        let digest = MemberArtifactId(member_content_digest(&payload, &validity));
+        members.push(ProducedMember {
+            node: member.node,
+            artifact_id: member.artifact_id,
+            digest,
+            payload,
+            validity,
+        });
+    }
     Ok(ContinuumProducedMembers {
         planned_generation: planned.generation_id,
         commitment_id: planned.commitment_id,

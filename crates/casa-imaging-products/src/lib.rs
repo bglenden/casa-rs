@@ -28,6 +28,7 @@ mod error;
 mod projection;
 mod restore;
 mod source;
+mod taylor;
 mod visibility;
 
 pub use authority::{

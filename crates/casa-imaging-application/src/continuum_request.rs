@@ -260,6 +260,10 @@ pub struct ContinuumImagingRequest {
     pub save_model_column: bool,
     /// Persist continuum-subtracted output-role observations into existing `CORRECTED_DATA`.
     pub save_continuum_residual: bool,
+    /// Publish the scalar-response primary-beam Taylor family.
+    pub write_primary_beam: bool,
+    /// Publish primary-beam-corrected restored Taylor images.
+    pub pbcor: bool,
     /// Capability constraints derived by the task surface. Unsupported
     /// capabilities are rejected by the installed implementation registry
     /// before physical execution.
@@ -1242,15 +1246,31 @@ fn specification(
         ),
         WeightingContract::new(weighting, density),
         ProductRequirements::new(
-            vec![
-                ProductKind::Psf,
-                ProductKind::Residual,
-                ProductKind::Model,
-                ProductKind::RestoredImage,
-                ProductKind::SumWeights,
-                ProductKind::Mask,
-                ProductKind::Beam,
-            ],
+            {
+                let mut products = vec![
+                    ProductKind::Psf,
+                    ProductKind::Residual,
+                    ProductKind::Model,
+                    ProductKind::RestoredImage,
+                    ProductKind::SumWeights,
+                    ProductKind::Mask,
+                    ProductKind::Beam,
+                ];
+                if matches!(request.algorithm, ContinuumAlgorithm::Mtmfs { .. }) {
+                    products.extend([
+                        ProductKind::TaylorTerms,
+                        ProductKind::SpectralIndex,
+                        ProductKind::SpectralIndexError,
+                    ]);
+                }
+                if request.write_primary_beam || request.pbcor {
+                    products.push(ProductKind::PrimaryBeam);
+                }
+                if request.pbcor {
+                    products.push(ProductKind::PbCorrectedImage);
+                }
+                products
+            },
             ProductNormalization::UnitResponse,
             match request.beam_policy {
                 ContinuumBeamPolicy::PerPlane => RestoringBeamPolicy::PerPlane,

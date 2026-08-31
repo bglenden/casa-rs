@@ -2094,13 +2094,6 @@ fn validate_products(
             reason: "a PB-corrected image requires restored-image and primary-beam products",
         });
     }
-    if products.contains(ProductKind::PrimaryBeam)
-        && science.measurement_equation.instrument_response == InstrumentResponse::Scalar
-    {
-        return Err(CompileProblemError::InvalidProductCombination {
-            reason: "a primary-beam product requires a primary-beam or full-Mueller response",
-        });
-    }
     let taylor_terms = match reconstruction.basis {
         ReconstructionBasis::Taylor { terms } => terms,
         ReconstructionBasis::Constant | ReconstructionBasis::ChannelLocal { .. } => 0,

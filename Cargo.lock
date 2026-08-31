@@ -618,6 +618,7 @@ version = "0.27.0"
 dependencies = [
  "casa-imaging-model",
  "casa-imaging-reconstruction",
+ "casa-numerics",
  "ndarray",
  "num-complex",
  "rustfft",
