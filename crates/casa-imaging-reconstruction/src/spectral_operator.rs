@@ -1007,6 +1007,15 @@ impl SpectralOperatorPrimitives {
         }
     }
 
+    /// Return the smooth-coefficient prefix length for a joint block.
+    #[must_use]
+    pub const fn joint_continuum_term_count(&self) -> Option<usize> {
+        match self.basis {
+            SpectralBasisPlan::Joint { continuum, .. } => Some(continuum.coefficient_term_count()),
+            SpectralBasisPlan::ChannelLocal | SpectralBasisPlan::Polynomial(_) => None,
+        }
+    }
+
     /// Map one coefficient-block pair to its retained normal moment.
     #[must_use]
     pub fn normal_moment_index(&self, row: usize, column: usize) -> Option<usize> {

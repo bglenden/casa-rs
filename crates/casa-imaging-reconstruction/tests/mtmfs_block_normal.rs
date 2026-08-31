@@ -10,9 +10,9 @@ use casa_imaging_model::{
     DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame,
     DopplerConvention, Epoch, FacetLayout, FiniteValuePolicy, FlagPolicy, FrequencyFrame,
     GeometryInput, IdSelection, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
-    ImagingRequest, InstrumentResponse, IntentSelection, LogicalIdentity,
-    MeasurementEquationContract, MeasurementSetIdentity, MetadataGeneration, MetadataTableKind,
-    ModelBounds, ModelCell, ModelColumnState, ModelColumnWrite, ModelDeltaTerm,
+    ImagingRequest, InstrumentResponse, IntentSelection, JointContinuumLineContract,
+    LogicalIdentity, MeasurementEquationContract, MeasurementSetIdentity, MetadataGeneration,
+    MetadataTableKind, ModelBounds, ModelCell, ModelColumnState, ModelColumnWrite, ModelDeltaTerm,
     ModelExecutionAttemptId, ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements,
     ModelStateIdentity, ModelValue, MsColumnKind, NumericPrecision, NumericalStage,
     NumericsContract, ObservationSelection, ObservationSnapshotInput, ObservationSourceInput,
@@ -33,11 +33,12 @@ use casa_imaging_model::{
     WeightDensityScope, WeightingContract, WeightingScheme, compile, compile_observation,
 };
 use casa_imaging_reconstruction::{
-    ExecutableModelProblem, FinalNormalState, MajorCycleOwner, MajorCyclePreparation,
-    ModelLifecycle, NormalStateCatalog, SpectralChannelValidity, SpectralOperatorSpecification,
+    CoupledReconstructionMask, ExecutableModelProblem, FinalNormalState, MajorCycleOwner,
+    MajorCyclePreparation, MinorCycleProgram, ModelGeneration, ModelLifecycle, NormalStateCatalog,
+    ReconstructionMask, SpectralChannelValidity, SpectralOperatorSpecification,
     SpectralPrimitiveCatalog, SpectralStencilValidity, WeightingAlgorithmState,
     WeightingExecutionLimits, WeightingPlan, WeightingReplayChunk, WeightingReplaySummary,
-    begin_weighting_generation, compile_spectral_stencil, plan_weighting,
+    begin_weighting_generation, compile_spectral_stencil, plan_weighting, run_joint_minor_cycle,
     runtime_adapter::{
         CompleteDataOwnerResult, GRIDDED_NORMAL_PARTITION_COUNT, GriddedNormalExecutionResidency,
         GriddedNormalOperatorBlock, GriddedNormalOperatorCompiler, GriddedNormalOperatorProgram,
@@ -56,7 +57,7 @@ fn identity(seed: u8, scope: u8) -> LogicalIdentity {
     LogicalIdentity::from_sha256(bytes)
 }
 
-fn source() -> ObservationSourceInput {
+fn source_with_selection(selection: ObservationSelection) -> ObservationSourceInput {
     let columns = [
         MsColumnKind::Data,
         MsColumnKind::Flag,
@@ -100,35 +101,7 @@ fn source() -> ObservationSourceInput {
     ObservationSourceInput::new(
         MeasurementSetIdentity::new(identity(42, 1)),
         ObservationSourceProvenance::new("fixture://t42/multi-spw".to_owned(), identity(42, 2)),
-        ObservationSelection::new(
-            SelectedRows::from_ordered_main_rows(
-                2,
-                [SelectedMainRow::new(0, 0), SelectedMainRow::new(1, 1)],
-            )
-            .expect("two selected rows"),
-            RowSelection::new(
-                IdSelection::All,
-                TimeSelection::All,
-                UvSelection::All,
-                AntennaSelection::All,
-                IdSelection::All,
-                IdSelection::All,
-                IntentSelection::All,
-                IdSelection::All,
-            ),
-            vec![
-                DataDescriptionSelection::new(0, 0, 0),
-                DataDescriptionSelection::new(1, 1, 0),
-            ],
-            vec![
-                SpectralWindowSelection::new(0, vec![0]),
-                SpectralWindowSelection::new(1, vec![0]),
-            ],
-            vec![CorrelationSelection::new(
-                0,
-                vec![CorrelationProduct::new(0, CorrelationType::StokesI)],
-            )],
-        ),
+        selection,
         SourceGenerations::new(
             ConsistencyToken::new(identity(42, 3)),
             SelectedColumns::new(
@@ -141,6 +114,57 @@ fn source() -> ObservationSourceInput {
             ModelColumnState::Absent,
         ),
     )
+}
+
+fn row_selection() -> RowSelection {
+    RowSelection::new(
+        IdSelection::All,
+        TimeSelection::All,
+        UvSelection::All,
+        AntennaSelection::All,
+        IdSelection::All,
+        IdSelection::All,
+        IntentSelection::All,
+        IdSelection::All,
+    )
+}
+
+fn correlations() -> Vec<CorrelationSelection> {
+    vec![CorrelationSelection::new(
+        0,
+        vec![CorrelationProduct::new(0, CorrelationType::StokesI)],
+    )]
+}
+
+fn source() -> ObservationSourceInput {
+    source_with_selection(ObservationSelection::new(
+        SelectedRows::from_ordered_main_rows(
+            2,
+            [SelectedMainRow::new(0, 0), SelectedMainRow::new(1, 1)],
+        )
+        .expect("two selected rows"),
+        row_selection(),
+        vec![
+            DataDescriptionSelection::new(0, 0, 0),
+            DataDescriptionSelection::new(1, 1, 0),
+        ],
+        vec![
+            SpectralWindowSelection::new(0, vec![0]),
+            SpectralWindowSelection::new(1, vec![0]),
+        ],
+        correlations(),
+    ))
+}
+
+fn joint_source() -> ObservationSourceInput {
+    source_with_selection(ObservationSelection::new(
+        SelectedRows::from_ordered_main_rows(1, [SelectedMainRow::new(0, 0)])
+            .expect("one selected row"),
+        row_selection(),
+        vec![DataDescriptionSelection::new(0, 0, 0)],
+        vec![SpectralWindowSelection::new(0, vec![0, 1])],
+        correlations(),
+    ))
 }
 
 fn validity() -> ProductValidityPolicies {
@@ -161,7 +185,24 @@ fn validity() -> ProductValidityPolicies {
     )
 }
 
-fn problem() -> casa_imaging_model::CompiledProblem {
+fn problem_with(
+    reconstruction: ReconstructionContract,
+    spectral_channels: usize,
+) -> casa_imaging_model::CompiledProblem {
+    let is_joint = matches!(
+        reconstruction.basis(),
+        ReconstructionBasis::JointContinuumLine { .. }
+    );
+    let mut product_kinds = vec![
+        ProductKind::Psf,
+        ProductKind::Residual,
+        ProductKind::Model,
+        ProductKind::SumWeights,
+        ProductKind::Sensitivity,
+    ];
+    if matches!(reconstruction.basis(), ReconstructionBasis::Taylor { .. }) {
+        product_kinds.push(ProductKind::TaylorTerms);
+    }
     let centre = IMAGE_WIDTH as f64 / 2.0;
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
@@ -195,7 +236,7 @@ fn problem() -> casa_imaging_model::CompiledProblem {
             FrequencyFrame::Topocentric,
             SpectralFrameAnchor::NotApplicable,
             SpectralWcs::Linear {
-                channels: 1,
+                channels: spectral_channels,
                 reference_pixel: 0.0,
                 reference_frequency_hz: REFERENCE_FREQUENCY_HZ,
                 increment_hz: 1.0e6,
@@ -205,7 +246,7 @@ fn problem() -> casa_imaging_model::CompiledProblem {
         ),
     );
     let snapshot = compile_observation(ObservationSnapshotInput::new(
-        vec![source()],
+        vec![if is_joint { joint_source() } else { source() }],
         Vec::new(),
         ModelStateIdentity::Empty,
     ))
@@ -222,28 +263,13 @@ fn problem() -> casa_imaging_model::CompiledProblem {
                     ),
                 ),
             ),
-            ReconstructionContract::new(
-                ReconstructionBasis::Taylor { terms: 2 },
-                ReconstructionAlgorithm::Mtmfs {
-                    scales_px: vec![0.0],
-                    small_scale_bias: 0.0,
-                },
-                ReconstructionControls::new(1, 0.1, 0.0),
-                PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
-            ),
+            reconstruction,
             WeightingContract::new(
                 WeightingScheme::Briggs { robust: 0.5 },
                 WeightDensityScope::GlobalSelection,
             ),
             ProductRequirements::new(
-                vec![
-                    ProductKind::Psf,
-                    ProductKind::Residual,
-                    ProductKind::Model,
-                    ProductKind::SumWeights,
-                    ProductKind::Sensitivity,
-                    ProductKind::TaylorTerms,
-                ],
+                product_kinds,
                 ProductNormalization::UnitResponse,
                 RestoringBeamPolicy::None,
                 validity(),
@@ -270,11 +296,53 @@ fn problem() -> casa_imaging_model::CompiledProblem {
     .expect("compile T42 MT-MFS problem")
 }
 
+fn problem() -> casa_imaging_model::CompiledProblem {
+    problem_with(
+        ReconstructionContract::new(
+            ReconstructionBasis::Taylor { terms: 2 },
+            ReconstructionAlgorithm::Mtmfs {
+                scales_px: vec![0.0],
+                small_scale_bias: 0.0,
+            },
+            ReconstructionControls::new(1, 0.1, 0.0),
+            PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+        ),
+        1,
+    )
+}
+
+fn joint_problem() -> casa_imaging_model::CompiledProblem {
+    problem_with(
+        ReconstructionContract::new(
+            ReconstructionBasis::JointContinuumLine {
+                continuum_terms: 1,
+                line_terms: 1,
+            },
+            ReconstructionAlgorithm::JointContinuumLine {
+                scales_px: vec![0.0],
+                small_scale_bias: 0.0,
+            },
+            ReconstructionControls::new(16, 1.0, 1.0e-9),
+            PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+        )
+        .with_joint_continuum_line(JointContinuumLineContract::new([0], [1], 1.0e6)),
+        2,
+    )
+}
+
 fn samples(problem: &casa_imaging_model::CompiledProblem) -> [SelectedObservationSample; 2] {
     let measurement_set = problem.selected_observation().read_set().sources()[0].measurement_set();
     [
-        sample(measurement_set, 0, 0, 0.8e9, 2.0, [1.0, 0.25]),
-        sample(measurement_set, 1, 1, 1.2e9, 1.0, [0.5, -0.75]),
+        sample(measurement_set, 0, 0, 0, 0.8e9, 2.0, [1.0, 0.25]),
+        sample(measurement_set, 1, 1, 0, 1.2e9, 1.0, [0.5, -0.75]),
+    ]
+}
+
+fn joint_samples(problem: &casa_imaging_model::CompiledProblem) -> [SelectedObservationSample; 2] {
+    let measurement_set = problem.selected_observation().read_set().sources()[0].measurement_set();
+    [
+        sample(measurement_set, 0, 0, 0, 1.0e9, 2.0, [1.0, 0.0]),
+        sample(measurement_set, 0, 0, 1, 1.001e9, 2.0, [3.0, 0.0]),
     ]
 }
 
@@ -282,6 +350,7 @@ fn sample(
     measurement_set: MeasurementSetIdentity,
     physical_row: u64,
     data_description_id: i32,
+    channel_index: u32,
     frequency_hz: f64,
     input_weight: f32,
     visibility: [f32; 2],
@@ -293,7 +362,7 @@ fn sample(
             data_description_id,
             spectral_window_id: u32::try_from(data_description_id)
                 .expect("non-negative fixture DDID"),
-            channel_index: 0,
+            channel_index,
             frequency_centre_hz: frequency_hz,
             frequency_lower_hz: frequency_hz - 1.0e6,
             frequency_upper_hz: frequency_hz + 1.0e6,
@@ -357,8 +426,13 @@ fn stencil(
         .expect("compile reconstruction-owned Taylor source stencil");
     assert_eq!(receipt.validity(), SpectralStencilValidity::Mapped);
     let terms = receipt.contributions().iter().collect::<Vec<_>>();
-    assert_eq!(terms.len(), 1, "Taylor algebra remains inside the operator");
-    assert_eq!(terms[0].output_channel(), 0);
+    assert_eq!(terms.len(), 1, "basis algebra remains inside the operator");
+    if matches!(
+        problem.reconstruction().basis(),
+        ReconstructionBasis::Taylor { .. }
+    ) {
+        assert_eq!(terms[0].output_channel(), 0);
+    }
     assert_eq!(terms[0].factor(), 1.0);
     assert_eq!(
         terms[0].evaluation_frequency_hz().to_bits(),
@@ -517,6 +591,55 @@ fn run_final_normal_state(
         "normal state binds the exact authoritative final model"
     );
     (normal, expected)
+}
+
+fn run_joint_final_normal_state(
+    problem: &casa_imaging_model::CompiledProblem,
+    selected: &[SelectedObservationSample],
+) -> (ModelLifecycle, FinalNormalState, ModelGeneration) {
+    let executable =
+        ExecutableModelProblem::from_compiled(problem.clone()).expect("executable joint problem");
+    let mut lifecycle = ModelLifecycle::bind(
+        executable,
+        ModelExecutionAttemptId::new(identity(46, 120)),
+        1,
+    )
+    .expect("bind joint model lifecycle");
+    let initial = lifecycle.initial_empty().expect("empty joint model");
+    let preparation =
+        MajorCyclePreparation::prepare(&lifecycle, initial, None).expect("prepare joint model");
+    let (complete_data, _) = run_operator(problem, selected, 1, 1, Some(&preparation));
+    let completion = MajorCycleOwner::from_complete_data(complete_data, preparation)
+        .expect("join joint complete-data evidence")
+        .reconcile(&mut lifecycle)
+        .expect("reconcile joint normal state");
+    let (normal, _, model) = completion.into_parts();
+    (lifecycle, normal, model)
+}
+
+fn full_joint_masks(
+    normal: &FinalNormalState,
+    model: &ModelGeneration,
+) -> CoupledReconstructionMask {
+    let centre = normal.shape()[0] as f64 / 2.0;
+    let coordinate = DirectionCoordinateSpec::new(
+        Projection::Sin,
+        SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
+        [centre, centre],
+        [-1.0e-6, 1.0e-6],
+        [[1.0, 0.0], [0.0, 1.0]],
+        [180.0, 0.0],
+    );
+    let mask = || {
+        ReconstructionMask::full_plane(
+            normal.problem_id(),
+            model.generation_id(),
+            coordinate,
+            normal.shape(),
+        )
+        .expect("full joint mask")
+    };
+    CoupledReconstructionMask::new(mask(), mask()).expect("same-lineage joint masks")
 }
 
 struct FrozenTaylorReplay {
@@ -920,6 +1043,77 @@ fn t42_multi_spw_block_normal_is_global_signed_and_partition_deterministic() {
         &[SpectralChannelValidity::Valid],
         "an exactly cancelled odd moment does not erase principal Taylor support"
     );
+}
+
+#[test]
+fn t46_joint_block_accumulates_cross_terms_once_and_is_partition_deterministic() {
+    let problem = joint_problem();
+    let samples = joint_samples(&problem);
+    let (one_sample_blocks, _) = run_operator(&problem, &samples, 1, 1, None);
+    let (one_full_block, _) = run_operator(&problem, &samples, samples.len(), 2, None);
+
+    for result in [&one_sample_blocks, &one_full_block] {
+        assert_eq!(
+            result.completion().primitive_catalog(),
+            SpectralPrimitiveCatalog::UnnormalizedJointBlockV1
+        );
+        let primitives = result.primitives();
+        assert_eq!(primitives.coefficient_term_count(), 2);
+        assert_eq!(primitives.joint_continuum_term_count(), Some(1));
+        assert_eq!(primitives.normal_moment_count(), 4);
+        assert_eq!(primitives.normal_moment_index(0, 0), Some(0));
+        assert_eq!(primitives.normal_moment_index(0, 1), Some(1));
+        assert_eq!(primitives.normal_moment_index(1, 0), Some(2));
+        assert_eq!(primitives.normal_moment_index(1, 1), Some(3));
+
+        let cells = IMAGE_WIDTH * IMAGE_WIDTH;
+        let cross = &primitives.psf()[cells..2 * cells];
+        assert!(
+            cross.iter().any(|value| value.norm() > 0.0),
+            "the line-bearing visibility must contribute the continuum-line cross block"
+        );
+        assert_eq!(
+            &primitives.psf()[cells..2 * cells],
+            &primitives.psf()[2 * cells..3 * cells],
+            "the two explicitly retained cross blocks must be Hermitian-equal for real weights"
+        );
+    }
+
+    assert_eq!(
+        one_sample_blocks
+            .primitives()
+            .normal_state_content_identity(),
+        one_full_block.primitives().normal_state_content_identity(),
+        "block size and density partitioning cannot alter the joint reduction"
+    );
+}
+
+#[test]
+fn t46_joint_minor_cycle_recovers_mixed_components_in_one_atomic_delta() {
+    let problem = joint_problem();
+    let selected = joint_samples(&problem);
+    let (lifecycle, normal, model) = run_joint_final_normal_state(&problem, &selected);
+    let result = run_joint_minor_cycle(
+        &lifecycle,
+        &model,
+        &normal,
+        &full_joint_masks(&normal, &model),
+        MinorCycleProgram::for_problem(&problem)
+            .expect("joint controls")
+            .limit_iterations(1)
+            .expect("one joint iteration"),
+    )
+    .expect("joint block solve");
+
+    assert_eq!(result.evidence().iterations(), 1);
+    let terms = result.delta().expect("one atomic joint delta").terms();
+    assert_eq!(terms.len(), 2);
+    assert_eq!(terms[0].cell().coefficient(), 0);
+    assert_eq!(terms[1].cell().coefficient(), 1);
+    assert_eq!(terms[0].cell().pixel(), terms[1].cell().pixel());
+    assert!((terms[0].increment().value() - 1.0).abs() < 1.0e-6);
+    assert!((terms[1].increment().value() - 2.0).abs() < 1.0e-6);
+    assert!(result.evidence().final_peak_flux() < 1.0e-6);
 }
 
 #[test]

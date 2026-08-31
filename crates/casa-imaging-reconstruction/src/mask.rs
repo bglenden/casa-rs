@@ -388,6 +388,44 @@ pub struct ReconstructionMask {
     support: Box<[bool]>,
 }
 
+/// The two independently committed spatial supports of one joint solve.
+///
+/// Continuum and line components may occupy different sky regions. This value
+/// keeps both immutable generations together and rejects mixed lineage before
+/// the coupled solver observes either support.
+#[derive(Debug, Clone)]
+pub struct CoupledReconstructionMask {
+    continuum: ReconstructionMask,
+    line: ReconstructionMask,
+}
+
+impl CoupledReconstructionMask {
+    /// Bind distinct continuum and line masks from the same model grid.
+    pub fn new(continuum: ReconstructionMask, line: ReconstructionMask) -> Result<Self, MaskError> {
+        if continuum.problem != line.problem
+            || continuum.model_generation != line.model_generation
+            || continuum.normal_state != line.normal_state
+            || continuum.coordinate != line.coordinate
+            || continuum.shape != line.shape
+        {
+            return Err(MaskError::ShapeMismatch);
+        }
+        Ok(Self { continuum, line })
+    }
+
+    /// Return the continuum-component support.
+    #[must_use]
+    pub const fn continuum(&self) -> &ReconstructionMask {
+        &self.continuum
+    }
+
+    /// Return the channel-local line-component support.
+    #[must_use]
+    pub const fn line(&self) -> &ReconstructionMask {
+        &self.line
+    }
+}
+
 impl ReconstructionMask {
     /// Mint the all-valid default support for one exact model grid.
     pub fn full_plane(

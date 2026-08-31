@@ -82,15 +82,15 @@ pub use major_cycle::{
     MajorCyclePreparation, NormalStateCatalog,
 };
 pub use mask::{
-    AutoMultithreshControls, AutoMultithreshEvidence, MaskBox, MaskError, ReconstructionMask,
-    ReconstructionMaskGenerationId, ReconstructionMaskPlan, auto_multithresh,
-    reproject_mask_support,
+    AutoMultithreshControls, AutoMultithreshEvidence, CoupledReconstructionMask, MaskBox,
+    MaskError, ReconstructionMask, ReconstructionMaskGenerationId, ReconstructionMaskPlan,
+    auto_multithresh, reproject_mask_support,
 };
 pub use minor_cycle::{
     ClarkApproximation, ComponentDivergence, MinorCycleComponent, MinorCycleError,
     MinorCycleEvidence, MinorCycleEvidenceId, MinorCycleModelPlane, MinorCycleProgram,
     MinorCycleResult, MinorCycleStopReason, MinorCycleValidity, minor_cycle_workspace_bytes,
-    run_minor_cycle,
+    run_joint_minor_cycle, run_minor_cycle,
 };
 pub use psf_beam::{
     DEFAULT_PSF_FIT_CUTOFF, PsfBeamFitError, RestoringBeam, fit_restoring_beam,

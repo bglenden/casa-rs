@@ -334,6 +334,12 @@ impl FinalNormalState {
         self.normal_moment(moment)
     }
 
+    /// Return the smooth-coefficient prefix length for a joint normal block.
+    #[must_use]
+    pub const fn joint_continuum_term_count(&self) -> Option<usize> {
+        self.primitives.joint_continuum_term_count()
+    }
+
     /// Borrow one channel plane from this bounded Normal State slab.
     #[must_use]
     pub fn plane(&self, local_channel: usize) -> Option<FinalNormalStatePlane<'_>> {
